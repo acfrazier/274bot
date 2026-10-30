@@ -1676,7 +1676,6 @@ fn set_quester_queue(d: &mut HeadlessDriver, profile: &str, quests: &[&str]) {
             .outcome(profile),
         Some(&crate::operations::Outcome::Completed)
     );
-    d.poll();
 }
 
 fn plan(d: &mut HeadlessDriver, action: crate::FleetAction) -> Option<Terminal> {
@@ -2230,6 +2229,7 @@ fn quester_fleet_start_discloses_each_queue_and_skips_changed_consent() {
 
     set_quester_queue(&mut d, "alice", &["desertrescue"]);
     set_quester_queue(&mut d, "bob", &["sheep"]);
+    d.poll();
     set_card(&mut d, crate::FleetCard::OWN);
     assert_eq!(plan(&mut d, crate::FleetAction::Start), Some(done()));
     let waiting = d.session().fleet_plan().expect("Quester Start plan");
@@ -2312,6 +2312,7 @@ fn unplanned_bulk_start_refuses_quester_without_a_disclosure_plan() {
     run_plan(&mut d);
     set_quester_queue(&mut d, "alice", &["cook"]);
     set_quester_queue(&mut d, "bob", &["cook"]);
+    d.poll();
 
     let start = d
         .submit(OperatorCommand::StartScript, Targets::Everyone)
