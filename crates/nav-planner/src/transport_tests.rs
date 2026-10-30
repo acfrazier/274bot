@@ -100,3 +100,40 @@ fn relative_landing_returns_none_on_coordinate_overflow() {
         })
     );
 }
+
+#[test]
+fn crossing_identity_keeps_one_anchor_and_distinguishes_both_wall_directions() {
+    let mut inward = members_check_edge(TransportKind::Door, 3507, 1);
+    inward.dir = Some(super::DoorDir::S);
+    inward.to = WorldTile {
+        z: inward.at.z - 1,
+        ..inward.at
+    };
+    let mut outward = inward.clone();
+    outward.dir = Some(super::DoorDir::N);
+    outward.to = inward.at;
+    let inward_id = inward.crossing_id().unwrap();
+    let outward_id = outward.crossing_id().unwrap();
+    assert_eq!(inward_id.at, inward.at);
+    assert_eq!(outward_id.at, inward.at);
+    assert_eq!(inward_id.takeoff, inward.at);
+    assert_eq!(outward_id.takeoff, inward.to);
+    assert_ne!(inward_id, outward_id);
+}
+
+#[test]
+fn crossing_identity_distinguishes_exact_takeoffs_on_both_sides_of_one_anchor() {
+    let mut edge = members_check_edge(TransportKind::Door, 3443, 1);
+    let mut identities = Vec::new();
+    for dz in [-1, 1] {
+        edge.takeoff = Some(WorldTile {
+            z: edge.at.z + dz,
+            ..edge.at
+        });
+        let identity = edge.crossing_id().unwrap();
+        assert_eq!(identity.at, edge.at);
+        assert_eq!(Some(identity.takeoff), edge.takeoff);
+        identities.push(identity);
+    }
+    assert_ne!(identities[0], identities[1]);
+}

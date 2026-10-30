@@ -561,6 +561,34 @@ content entrances and binds its digest and schema into the graph. Supported
 quest-complete predicates become canonical `QuestGate::Complete` requirements;
 an intermediate or exact hidden quest stage is not inferred from completion.
 
+### Prerequisite crossing steps
+
+Ordinary walks can repair the generated holy-barrier and Mort Myre gates
+through the native Quester runner. Global and script dialogue/quest-start
+grants are additive; only a request-level prohibition narrows them. The
+runner records witnessed effects, passes and refusals for the current run,
+and resumes the original walk without changing its target or options.
+
+`api::prereq_steps::CrossingId` identifies the loc, menu option, transport
+kind, loc anchor `at`, exact directed interaction stand `takeoff`, and final
+landing `to`. `at` is always the same loc anchor as `TransportEdge.at`; it
+is never replaced by a player position. Two directions of one loc have
+distinct identities. The holy barrier also has distinct entries for its two
+legal stands on opposite sides of its blocked anchor.
+
+Generate these identities from the actual pack, not an authored coordinate
+table: `nav-pack --export-crossings PACK --out JSON` loads the pack and
+its `navflags` sidecar, checks identity uniqueness over ordinary and teleport
+edges, and records standability and transport admission for each takeoff.
+The prerequisite generator consumes this projection through
+`GAME_DATA_289_PREREQ_CROSSINGS` and verifies it against
+`GAME_DATA_289_NAV_PACK`. Catalog schema 2 includes the required takeoff.
+The probe walks to that exact legal stand, then clicks the exact loc anchor.
+It never walks onto a blocked anchor or substitutes an arbitrary nearby tile.
+Loc interaction reach remains the engine's shape-, rotation-, footprint-
+and wall-aware rule; a route endpoint alone does not prove operability.
+
+
 ## Router (`nav_planner::router`)
 
 `find(collision, graph, from, to) -> Result<Route, RouteError>` is Dijkstra

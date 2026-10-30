@@ -36,7 +36,10 @@ pub enum CrossingKind {
 pub struct CrossingId {
     pub loc_id: i32,
     pub option: u8,
+    /// Loc interaction anchor, not the tile on which the player stands.
     pub at: WorldTile,
+    /// Exact content-proven interaction stand for this direction.
+    pub takeoff: WorldTile,
     pub to: WorldTile,
     pub kind: CrossingKind,
 }
@@ -443,6 +446,11 @@ mod tests {
                 z: 3458,
                 level: 0,
             },
+            takeoff: WorldTile {
+                x: 3443,
+                z: 3458,
+                level: 0,
+            },
             to: WorldTile {
                 x: 3443,
                 z: 3457,
@@ -451,7 +459,7 @@ mod tests {
             kind: CrossingKind::Door,
         };
         let reversed = CrossingId {
-            at: crossing.to,
+            takeoff: crossing.to,
             to: crossing.at,
             ..crossing
         };
@@ -461,5 +469,14 @@ mod tests {
             ..crossing
         };
         assert_ne!(crossing, other_kind);
+        let other_stand = CrossingId {
+            takeoff: WorldTile {
+                z: crossing.takeoff.z + 1,
+                ..crossing.takeoff
+            },
+            ..crossing
+        };
+        assert_ne!(crossing, other_stand);
+        assert_eq!(crossing.at, reversed.at);
     }
 }

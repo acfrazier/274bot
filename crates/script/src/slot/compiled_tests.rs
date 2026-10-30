@@ -313,6 +313,7 @@ fn manual_walk_memory_alias_follows_the_fact_writer_run() {
         loc_id: 1,
         option: 0,
         at: here,
+        takeoff: here,
         to,
         kind: CrossingKind::Door,
     };

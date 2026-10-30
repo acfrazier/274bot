@@ -374,7 +374,7 @@ impl PrereqRun {
                     if cx
                         .snapshot()
                         .here()
-                        .is_some_and(|here| here.value == self.gate.crossing.at)
+                        .is_some_and(|here| here.value == self.gate.crossing.takeoff)
                     {
                         drop(handle);
                         let Some((tile, op)) = probe_target(cx, &self.gate.crossing) else {
@@ -399,7 +399,7 @@ impl PrereqRun {
                             return Poll::Pending;
                         }
                         match actions.begin::<Walk>(
-                            repair.request(self.gate.crossing.at, 0, cx.evidence()),
+                            repair.request(self.gate.crossing.takeoff, 0, cx.evidence()),
                             cx,
                         ) {
                             Ok(walk) => handle = Some(walk),
@@ -947,15 +947,7 @@ fn probe_target(
     let locs = cx.snapshot().locs()?;
     locs.value
         .iter()
-        .filter(|loc| {
-            loc.id == crossing.loc_id
-                && loc.tile.level == crossing.at.level
-                && (loc.tile.x - crossing.at.x)
-                    .abs()
-                    .max((loc.tile.z - crossing.at.z).abs())
-                    <= 1
-        })
-        .min_by_key(|loc| (loc.tile.x - crossing.at.x).abs() + (loc.tile.z - crossing.at.z).abs())
+        .find(|loc| loc.id == crossing.loc_id && loc.tile == crossing.at)
         .and_then(|loc| Some((loc.tile, Arc::from(loc.actions.get(option)?.as_deref()?))))
 }
 

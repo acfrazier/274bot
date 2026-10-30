@@ -8144,6 +8144,11 @@ mod diagnostic_tests {
                 z: 1,
                 level: 0,
             },
+            takeoff: WorldTile {
+                x: 1,
+                z: 1,
+                level: 0,
+            },
             to: WorldTile {
                 x: 2,
                 z: 1,

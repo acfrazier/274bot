@@ -117,7 +117,7 @@ fn full_pack(snapshot: &mut GameSnapshot) {
     );
 }
 fn crossing_snapshot(crossing: &PrereqCrossing) -> GameSnapshot {
-    let mut snapshot = snapshot(crossing.crossing.at);
+    let mut snapshot = snapshot(crossing.crossing.takeoff);
     snapshot.seed_locs(vec![LocView {
         id: crossing.crossing.loc_id,
         name: Some("Authored crossing".into()),
@@ -479,6 +479,75 @@ fn pass_message_and_landing_settle_the_probe() {
             );
             assert_eq!(budget.talks, 0);
         }
+    }
+}
+
+#[test]
+fn probe_walks_to_each_pack_takeoff_and_clicks_the_blocked_barrier_anchor() {
+    let (_, row) = row(ConsentSwitch::PrereqDialogue);
+    assert_eq!(row.crossings.len(), 2, "the pack contains both A1 takeoffs");
+    for crossing in row.crossings.iter() {
+        let identity = crossing.crossing;
+        assert_ne!(identity.takeoff, identity.at);
+        let state = state();
+        let mut snapshot = crossing_snapshot(crossing);
+        let mut loc = snapshot.locs()[0].clone();
+        loc.layer = LocLayer::Ground;
+        loc.shape = 10;
+        loc.angle = 1;
+        loc.block_walk = true;
+        loc.actions = vec![Some("Pass-through".into())];
+        let mut scene = api::snapshot::SceneView {
+            available: true,
+            base_x: identity.at.x - 2,
+            base_z: identity.at.z - 2,
+            level: identity.at.level,
+            width: 5,
+            height: 5,
+            collision_flags: vec![0; 25],
+        };
+        scene.collision_flags[12] = client::dash3d::CollisionFlag::SQ_BLOCKED;
+        assert!(api::query::loc_approach::can_operate_from(
+            &loc,
+            &scene,
+            identity.takeoff
+        ));
+        snapshot.seed_locs(vec![loc]);
+        snapshot.seed_scene(scene);
+        snapshot.seed_local_player(local_player(WorldTile {
+            x: identity.takeoff.x - 1,
+            ..identity.takeoff
+        }));
+        let mut run = runner(row, crossing, Truth::Unknown);
+        let mut budget = PrereqBudget::default();
+        let mut ledger = None;
+        assert!(poll(&mut run, &snapshot, &mut ledger, 1, &state, &mut budget).is_pending());
+        let HostEffect::Walk(request) = &ledger.as_ref().unwrap().outbox.last().unwrap().effect
+        else {
+            panic!("a probe must approach its exact directed takeoff");
+        };
+        assert_eq!(request.target, identity.takeoff);
+        assert_ne!(request.target, identity.at, "the loc anchor is blocked");
+        arrive(&mut ledger, 1);
+        snapshot.seed_local_player(local_player(identity.takeoff));
+        assert!(poll(&mut run, &snapshot, &mut ledger, 2, &state, &mut budget).is_pending());
+        assert_eq!(
+            last_interaction(&ledger),
+            &InteractReq::Loc {
+                x: identity.at.x,
+                z: identity.at.z,
+                level: identity.at.level,
+                action: "Pass-through".into(),
+                id: Some(identity.loc_id),
+            }
+        );
+        accept_last(&mut ledger, 2, 10);
+        snapshot.seed_local_player(local_player(crossing.pass.landing));
+        message(&mut snapshot, 11, &crossing.pass.message);
+        assert!(matches!(
+            poll(&mut run, &snapshot, &mut ledger, 3, &state, &mut budget),
+            Poll::Ready(Ok(Done { crossed: true }))
+        ));
     }
 }
 
@@ -1686,7 +1755,7 @@ fn approach_walk_inherits_protect_and_allow() {
             if truth == Truth::False {
                 row.target.anchor
             } else {
-                crossing.crossing.at
+                crossing.crossing.takeoff
             }
         );
         assert!(request.protect && request.food_guard);

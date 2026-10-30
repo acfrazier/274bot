@@ -1,5 +1,6 @@
 //! Content-gated entrances and the resource regions they serve on the real 289 pack.
 
+use std::collections::HashMap;
 use std::num::NonZeroU32;
 use std::sync::{Arc, LazyLock};
 use std::time::{Duration, Instant};
@@ -437,6 +438,23 @@ fn morytania_sites_compare_proof_unknown_and_false_gate_routes() {
         ("woodcutting.temple", [3430, 3457, 3443, 3498]),
     ];
 
+    let mut crossing_ids = HashMap::new();
+    for (index, edge) in world()
+        .graph
+        .edges
+        .iter()
+        .chain(&world().graph.teleports)
+        .enumerate()
+    {
+        let crossing = edge.crossing_id().expect("representable real-pack crossing");
+        assert_eq!(
+            crossing_ids.insert(crossing, index),
+            None,
+            "duplicate CrossingId at edge {index}: {crossing:?}"
+        );
+    }
+    println!("real-pack unique crossing ids: {}", crossing_ids.len());
+
     let a1 = ingress(3443, |edge| {
         edge.option == 1 && edge.at == tile(3440, 9886) && edge.to == tile(3423, 3485)
     });
@@ -446,6 +464,28 @@ fn morytania_sites_compare_proof_unknown_and_false_gate_routes() {
             .is_some_and(|gates| gates.gates().iter().any(is_a1_gate)),
         "the real A1 crossing carries the exact [61,61] stage gate"
     );
+    let a1_directions: Vec<_> = world()
+        .graph
+        .edges
+        .iter()
+        .enumerate()
+        .filter(|(_, edge)| edge.loc_id == a1.loc_id && edge.at == a1.at && edge.to == a1.to)
+        .collect();
+    assert_eq!(a1_directions.len(), 2, "both exact A1 takeoffs are retained");
+    assert!(!world().collision.standable(a1.at), "the barrier anchor is blocked");
+    for (index, edge) in &a1_directions {
+        let crossing = edge.crossing_id().unwrap();
+        assert_eq!(crossing.at, a1.at);
+        assert_ne!(crossing.takeoff, crossing.at);
+        assert!(world().collision.standable(crossing.takeoff));
+        assert!(world().graph.admissible_from(&world().collision, *index, crossing.takeoff));
+    }
+    let mut a1_takeoffs: Vec<_> = a1_directions
+        .iter()
+        .map(|(_, edge)| edge.crossing_id().unwrap().takeoff)
+        .collect();
+    a1_takeoffs.sort_by_key(|at| (at.x, at.z, at.level));
+    assert_eq!(a1_takeoffs, [tile(3440, 9885), tile(3440, 9887)]);
     let a2: Vec<_> = world()
         .graph
         .edges
@@ -453,17 +493,21 @@ fn morytania_sites_compare_proof_unknown_and_false_gate_routes() {
         .filter(|edge| matches!(edge.loc_id, 3506 | 3507))
         .collect();
     assert_eq!(a2.len(), 4, "both leaves carry both directed crossings");
-    for (loc_id, at, to) in [
-        (3507, tile(3443, 3458), tile(3443, 3457)),
-        (3506, tile(3444, 3458), tile(3444, 3457)),
-        (3507, tile(3443, 3457), tile(3443, 3458)),
-        (3506, tile(3444, 3457), tile(3444, 3458)),
+    for (loc_id, anchor, takeoff, to) in [
+        (3507, tile(3443, 3458), tile(3443, 3458), tile(3443, 3457)),
+        (3506, tile(3444, 3458), tile(3444, 3458), tile(3444, 3457)),
+        (3507, tile(3443, 3458), tile(3443, 3457), tile(3443, 3458)),
+        (3506, tile(3444, 3458), tile(3444, 3457), tile(3444, 3458)),
     ] {
         assert!(
             a2.iter().any(|edge| {
-                edge.loc_id == loc_id && edge.option == 1 && edge.at == at && edge.to == to
+                edge.loc_id == loc_id
+                    && edge.option == 1
+                    && edge.at == anchor
+                    && edge.to == to
+                    && edge.crossing_id().unwrap().takeoff == takeoff
             }),
-            "missing A2 directed crossing {loc_id} {at:?} -> {to:?}"
+            "missing A2 directed crossing {loc_id} anchor {anchor:?}: {takeoff:?} -> {to:?}"
         );
     }
     assert!(
@@ -483,7 +527,11 @@ fn morytania_sites_compare_proof_unknown_and_false_gate_routes() {
     let family = QuestFamilyId::new(identity.sha256, identity.schema);
     let catalog = prerequisite_catalog();
     let establishable = catalog.establishable_windows();
-    for edge in std::iter::once(a1).chain(a2.iter().copied()) {
+    for edge in a1_directions
+        .iter()
+        .map(|(_, edge)| *edge)
+        .chain(a2.iter().copied())
+    {
         let crossing = edge.crossing_id().expect("representable directed crossing");
         for gate in edge
             .quest_gates

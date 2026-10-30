@@ -1899,19 +1899,20 @@ fn catalog_gated_group_walk_without_snapshot_cannot_start_a_prerequisite() {
         .flat_map(|(_, row)| row.crossings.iter().map(move |entry| (row, entry)))
         .find(|(_, entry)| {
             let crossing = &entry.crossing;
-            crossing.at.level == crossing.to.level
-                && crossing.at.x.abs_diff(crossing.to.x) <= 4
-                && crossing.at.z.abs_diff(crossing.to.z) <= 4
+            crossing.takeoff != crossing.to
+                && crossing.takeoff.level == crossing.to.level
+                && crossing.takeoff.x.abs_diff(crossing.to.x) <= 4
+                && crossing.takeoff.z.abs_diff(crossing.to.z) <= 4
         })
         .expect("selected catalog has a local gated crossing");
     let crossing = &entry.crossing;
-    let origin = t(crossing.at.x, crossing.at.z, crossing.at.level);
+    let origin = t(crossing.takeoff.x, crossing.takeoff.z, crossing.takeoff.level);
     let destination = t(crossing.to.x, crossing.to.z, crossing.to.level);
     let size = crossing
-        .at
+        .takeoff
         .x
         .abs_diff(crossing.to.x)
-        .max(crossing.at.z.abs_diff(crossing.to.z)) as usize
+        .max(crossing.takeoff.z.abs_diff(crossing.to.z)) as usize
         + 3;
     // Both endpoints are valid stands, but no ordinary walking edge exists.
     let (walk, blocked) = pack_walk(&vec![
@@ -1921,6 +1922,7 @@ fn catalog_gated_group_walk_without_snapshot_cannot_start_a_prerequisite() {
     let mut gate_edge = edge(TransportKind::Door, crossing.at, crossing.to);
     gate_edge.loc_id = crossing.loc_id;
     gate_edge.option = i32::from(crossing.option);
+    gate_edge.takeoff = Some(crossing.takeoff);
     gate_edge.quest_gates = Some(
         QuestGates::new(
             family(7),
@@ -1932,7 +1934,7 @@ fn catalog_gated_group_walk_without_snapshot_cannot_start_a_prerequisite() {
         quest_family: Some(family(7)),
         ..TransportGraph::default()
     };
-    graph.at.insert(crossing.at, vec![0]);
+    graph.at.insert(crossing.takeoff, vec![0]);
     graph.edges.push(gate_edge);
     let nav = NavWorld::from_parts(
         WorldCollision {

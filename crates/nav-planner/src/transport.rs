@@ -182,7 +182,7 @@ impl TransportEdge {
         }
     }
 
-    /// Stable API identity of this directed edge.
+    /// Stable API identity: the loc anchor and exact directed takeoff stay separate.
     ///
     /// An option that cannot be represented by the shared `u8` identity is
     /// unavailable rather than truncated.
@@ -191,6 +191,10 @@ impl TransportEdge {
             loc_id: self.loc_id,
             option: u8::try_from(self.option).ok()?,
             at: self.at,
+            takeoff: self
+                .takeoff
+                .or_else(|| wall_door_takeoff_geometry(self))
+                .unwrap_or(self.at),
             to: self.to,
             kind: match self.kind {
                 TransportKind::Door => CrossingKind::Door,
@@ -352,6 +356,11 @@ impl TransportGraph {
 /// neighbour, `transport/doors.rs` `diagonal_door_crossings`).
 #[inline(always)]
 fn wall_door_takeoff(edge: &TransportEdge, collision: &WorldCollision) -> Option<WorldTile> {
+    let takeoff = wall_door_takeoff_geometry(edge)?;
+    (takeoff != edge.at || collision.standable(edge.at)).then_some(takeoff)
+}
+
+fn wall_door_takeoff_geometry(edge: &TransportEdge) -> Option<WorldTile> {
     if edge.kind != TransportKind::Door || edge.player_delta.is_some() {
         return None;
     }
@@ -366,7 +375,7 @@ fn wall_door_takeoff(edge: &TransportEdge, collision: &WorldCollision) -> Option
     let forward = edge.to.x == edge.at.x + dx
         && edge.to.z == edge.at.z + dz
         && edge.to.level == edge.at.level;
-    (forward && collision.standable(edge.at)).then_some(edge.at)
+    forward.then_some(edge.at)
 }
 /// The `(dx, dz)` tile step of a crossing direction.
 fn dir_delta(dir: DoorDir) -> (i32, i32) {
