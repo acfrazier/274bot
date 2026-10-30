@@ -1218,6 +1218,24 @@ fn resource_approach_retries_then_shuns_and_fails_with_last_detail() {
         "the retry must wait for a newer observed game tick"
     );
 
+    let mut observed = snapshot.local_player().unwrap().clone();
+    if alternate_tile.x.abs_diff(first.tile.x) >= alternate_tile.z.abs_diff(first.tile.z) {
+        observed.player.network.x = if alternate_tile.x > first.tile.x {
+            alternate_tile.x.saturating_add(3)
+        } else {
+            alternate_tile.x.saturating_sub(3)
+        };
+        observed.player.network.z = alternate_tile.z;
+    } else {
+        observed.player.network.x = alternate_tile.x;
+        observed.player.network.z = if alternate_tile.z > first.tile.z {
+            alternate_tile.z.saturating_add(3)
+        } else {
+            alternate_tile.z.saturating_sub(3)
+        };
+    }
+    snapshot.seed_local_player(observed);
+    snapshot.seed_locs(vec![first_loc.clone(), alternate_loc.clone()]);
     let mut retry_evidence = None;
     with_tick(&snapshot, &mut ledger, 4, |tick| {
         retry_evidence = Some(tick.cx.evidence());

@@ -1732,7 +1732,9 @@ impl Gatherer {
                         self.set_event("retrying bank access from the observed position");
                     }
                     TripStep::Idle => {
-                        self.target = None;
+                        if self.hazard_escape.is_some() {
+                            self.target = None;
+                        }
                         self.set_event(if self.hazard_escape.is_some() {
                             "retrying hazard escape from the observed position"
                         } else {
@@ -2145,6 +2147,10 @@ impl Gatherer {
             return;
         };
         if let Some(plan) = self.target.take() {
+            // Replan this identity before ranking can reset its retry budget.
+            let retrying = self.scratch.return_stall_recovery.pending()
+                && self.scratch.walk_retry_target
+                    == Some(WalkRetryTarget::Resource(plan.entity, plan.tile));
             let observation = observe_target(snapshot, &self.prepared.catalog, &plan);
             let enabled = self
                 .prepared
@@ -2157,7 +2163,8 @@ impl Gatherer {
             };
             if enabled
                 && observation == Some(TargetObservation::Active)
-                && (selected.plan.npc_index >= 0
+                && (retrying
+                    || selected.plan.npc_index >= 0
                     || super::select::resource_arrived(
                         Some(snapshot),
                         selected.plan.entity,
