@@ -775,6 +775,15 @@ impl SlotScript {
             && current.slot == run.slot
             && current.session == run.session;
         if (current != run && !manual_current) || observation.fact.observed.run != run {
+            api::host_log!(
+                api::hostlog::Category::ScriptLifecycle,
+                api::hostlog::Level::Info,
+                "[DEBUG-nav-refusal-identity] current={current:?} requested={run:?} manual={:?} raw_manual={:?} work_epoch={} observed={:?}",
+                self.manual_route_run(),
+                self.manual_route_run,
+                self.work_epoch,
+                observation.fact.observed.run
+            );
             return false;
         }
         let Some(api::identity::Scope::Slot(key)) = self.work_scope() else {
