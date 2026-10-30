@@ -649,15 +649,6 @@ mod tests {
             })
             .count()
     }
-    fn walks(ledger: &Option<Box<crate::native::ledger::Ledger>>) -> usize {
-        ledger
-            .as_ref()
-            .unwrap()
-            .outbox
-            .iter()
-            .filter(|action| matches!(&action.effect, HostEffect::Walk(_)))
-            .count()
-    }
 
     fn buttons(ledger: &Option<Box<crate::native::ledger::Ledger>>) -> usize {
         ledger
