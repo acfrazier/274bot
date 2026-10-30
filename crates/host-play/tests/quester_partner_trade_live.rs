@@ -144,7 +144,11 @@ fn live_quester_partner_trade_moves_the_phoenix_key() {
     let folder = write_folder_path(&evidence).expect("write the folder Path");
     let source = scenario::quester::reload_quester_path_source(QUEST, Some(&folder))
         .expect("publish the folder Path");
-    assert_eq!(source, "folder", "the cell must run its own Path document");
+    // A folder Path the bundled index does not list is served as a draft.
+    assert!(
+        matches!(source, "folder" | "draft"),
+        "the cell must run its own Path document, not a bundled one (source {source})"
+    );
     let (path, _) = scenario::quester::load_quester_path_document(QUEST).expect("load the Path");
     let selected = api::game_data::for_revision(ClientRevision::R289).expect("selected R289 data");
     let key = selected
