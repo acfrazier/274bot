@@ -680,9 +680,29 @@ impl GameSnapshot {
         let side_pack =
             inv_items(client, TRADESIDE_INV, ItemContainer::TradeSidePack).unwrap_or_default();
         let (accept_component_id, decline_component_id) = trade_controls(client);
+        let confirm_open = client.main_modal_id == TRADECONFIRM;
+        // The engine stops the offer containers at the mutual accept
+        // (`trade.rs2:80-86`) and the client empties a stopped container, so
+        // the confirm lists are the only record of the agreed trade.
+        let confirm = confirm_open.then(|| {
+            Box::new(TradeConfirmView {
+                mine: confirm_rows(
+                    client,
+                    TRADECONFIRM_INV1,
+                    TRADECONFIRM_INV2,
+                    ItemContainer::TradeMyOffer,
+                ),
+                theirs: confirm_rows(
+                    client,
+                    TRADECONFIRM_OTHER_INV1,
+                    TRADECONFIRM_OTHER_INV2,
+                    ItemContainer::TradeTheirOffer,
+                ),
+            })
+        });
         self.trade = TradeView {
             offer_open: client.main_modal_id == TRADEMAIN,
-            confirm_open: client.main_modal_id == TRADECONFIRM,
+            confirm_open,
             my_offer,
             their_offer,
             side_pack,
@@ -699,6 +719,7 @@ impl GameSnapshot {
             their_offer_stopped,
             my_offer_available,
             their_offer_available,
+            confirm,
         };
         true
     }
@@ -1951,6 +1972,40 @@ fn read_inv_component(cache: &Cache, com: &IfTypeView, container: ItemContainer)
     out
 }
 
+/// One confirm-screen list: the rows of the `small` component followed by
+/// those of the `large` one. The engine fills exactly one of them
+/// (`trade.rs2:111-145`), so the other adds nothing. The rows are display
+/// only: no action family and no ops, and a list with no rows allocates
+/// nothing.
+fn confirm_rows(
+    client: &Client,
+    small: i32,
+    large: i32,
+    container: ItemContainer,
+) -> Vec<ItemView> {
+    let mut rows = Vec::new();
+    for com_id in [small, large] {
+        let Some(com) = client.if_(com_id as usize) else {
+            continue;
+        };
+        let Some(ids) = &com.link_obj_type else {
+            continue;
+        };
+        let n = com.link_obj_number.as_ref().map_or(0, |n| n.len());
+        for slot in 0..ids.len().min(n) {
+            rows.extend(item_view(
+                &client.cache,
+                &com,
+                slot,
+                container,
+                ItemActionFamily::None,
+                Vec::new(),
+            ));
+        }
+    }
+    rows
+}
+
 /// The items of the iface-table component `com_id` (component ops).
 fn inv_items(client: &Client, com_id: i32, container: ItemContainer) -> Option<Vec<ItemView>> {
     if com_id < 0 {
@@ -2037,6 +2092,13 @@ const TRADEMAIN_INV: i32 = 3415;
 const TRADEMAIN_OTHER_INV: i32 = 3416;
 const TRADEMAIN_OTHER_PLAYER: i32 = 3417;
 const TRADESIDE_INV: i32 = 3322;
+/// The confirm screen's four lists (`interface.pack:3543, 3539, 3533, 3540`).
+/// `trade.rs2:111-145` transmits each offer to `inv1`/`otherinv1` when it
+/// holds fewer than 14 items and to `inv2`/`otherinv2` otherwise.
+const TRADECONFIRM_INV1: i32 = 3542;
+const TRADECONFIRM_INV2: i32 = 3538;
+const TRADECONFIRM_OTHER_INV1: i32 = 3532;
+const TRADECONFIRM_OTHER_INV2: i32 = 3539;
 
 /// The trade partner's name: the `otherplayer` label ("Trading With: X")
 /// with the prefix stripped and whitespace trimmed (m8aq

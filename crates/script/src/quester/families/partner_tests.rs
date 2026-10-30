@@ -4,7 +4,7 @@ use crate::quester::families::tests::{def, with_tick};
 use api::selected::{Knowledge, RunKey};
 
 use api::snapshot::SnapshotView;
-use api::snapshot::{GameSnapshot, ItemActionFamily, ItemContainer};
+use api::snapshot::{GameSnapshot, ItemActionFamily, ItemContainer, TradeConfirmView};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Instant;
 
@@ -170,6 +170,23 @@ fn mutual_accept_offer_screen() -> TradeView {
         my_offer_stopped: true,
         their_offer_stopped: true,
         ..offer(0)
+    }
+}
+
+/// The confirm screen as the client shows it: the offer containers stay
+/// stopped and empty, and the engine's `tradeconfirm` lists carry the trade
+/// (`trade.rs2:111-145`; rows are tagged with the offer they mirror).
+fn confirm_screen() -> TradeView {
+    TradeView {
+        offer_open: false,
+        confirm_open: true,
+        accept_component_id: 12,
+        decline_component_id: 18,
+        confirm: Some(Box::new(TradeConfirmView {
+            mine: vec![item(1, 2, ItemContainer::TradeMyOffer)],
+            theirs: vec![item(2, 1, ItemContainer::TradeTheirOffer)],
+        })),
+        ..mutual_accept_offer_screen()
     }
 }
 
@@ -392,8 +409,8 @@ fn failed_begin_missing_quest_item_declines_existing_trade_screen() {
     .is_pending());
     assert_eq!(
         ack(&mut ledger, 2),
-        InteractReq::IfButton { component_id: 17 },
-        "a permanent begin validation failure must decline the existing trade"
+        InteractReq::CloseModal,
+        "a permanent begin validation failure must close the existing trade"
     );
 
     snapshot.seed_trade(TradeView::default());
@@ -426,8 +443,8 @@ fn failed_trade_offer_mismatch_declines_and_waits_for_closed_screen() {
     assert!(poll(&snapshot, &mut ledger, &handle, 3, epoch).is_pending());
     assert_eq!(
         ack(&mut ledger, 3),
-        InteractReq::IfButton { component_id: 17 },
-        "mismatched offer cleanup must click the posted decline button"
+        InteractReq::CloseModal,
+        "mismatched offer cleanup must send the packet the engine honours"
     );
 
     snapshot.seed_trade(TradeView::default());
@@ -452,8 +469,8 @@ fn unexpected_confirmation_declines_instead_of_leaving_the_trade_open() {
     assert!(poll(&snapshot, &mut ledger, &handle, 2, epoch).is_pending());
     assert_eq!(
         ack(&mut ledger, 2),
-        InteractReq::IfButton { component_id: 18 },
-        "unexpected confirmation cleanup must click its posted decline button"
+        InteractReq::CloseModal,
+        "unexpected confirmation cleanup must send the packet the engine honours"
     );
     snapshot.seed_trade(TradeView::default());
     assert!(poll(&snapshot, &mut ledger, &handle, 3, epoch).is_pending());
@@ -465,33 +482,50 @@ fn unexpected_confirmation_declines_instead_of_leaving_the_trade_open() {
 }
 
 #[test]
-fn timed_out_trade_falls_back_to_close_modal_and_preserves_failure() {
+fn timed_out_trade_closes_the_screen_at_once_and_preserves_failure() {
     let (mut snapshot, mut ledger, handle, _) = fixture(2);
     let epoch = Instant::now();
     assert!(poll(&snapshot, &mut ledger, &handle, 2, epoch).is_pending());
     assert!(poll(&snapshot, &mut ledger, &handle, 3, epoch).is_pending());
     assert_eq!(
         ack(&mut ledger, 3),
-        InteractReq::IfButton { component_id: 17 },
-        "timeout cleanup must first click the posted decline button"
-    );
-    assert!(poll(&snapshot, &mut ledger, &handle, 5, epoch).is_pending());
-    assert_eq!(
-        ack(&mut ledger, 5),
         InteractReq::CloseModal,
-        "an unclosed decline screen must fall back to the shared close path"
+        "cleanup must send the packet the engine honours, not the inert Decline button"
     );
     snapshot.seed_trade(TradeView::default());
-    assert!(poll(&snapshot, &mut ledger, &handle, 6, epoch).is_pending());
+    assert!(poll(&snapshot, &mut ledger, &handle, 4, epoch).is_pending());
     assert!(matches!(
-        poll(&snapshot, &mut ledger, &handle, 7, epoch),
+        poll(&snapshot, &mut ledger, &handle, 5, epoch),
+        Poll::Ready(Err(ActionError::Blocked(reason)))
+            if reason.as_ref() == "partner trade deadline exhausted"
+    ));
+    assert!(ledger.as_ref().unwrap().outbox.is_empty());
+}
+
+#[test]
+fn a_screen_that_stays_open_ends_cleanup_after_one_close_with_the_original_failure() {
+    let (snapshot, mut ledger, handle, _) = fixture(2);
+    let epoch = Instant::now();
+    assert!(poll(&snapshot, &mut ledger, &handle, 2, epoch).is_pending());
+    assert!(poll(&snapshot, &mut ledger, &handle, 3, epoch).is_pending());
+    assert_eq!(ack(&mut ledger, 3), InteractReq::CloseModal);
+    // 3 000 ms of close grace (5 server ticks) pass with the screen still open.
+    for tick in 4..8 {
+        assert!(poll(&snapshot, &mut ledger, &handle, tick, epoch).is_pending());
+        assert!(
+            ledger.as_ref().unwrap().outbox.is_empty(),
+            "one close request, never a repeat"
+        );
+    }
+    assert!(matches!(
+        poll(&snapshot, &mut ledger, &handle, 8, epoch),
         Poll::Ready(Err(ActionError::Blocked(reason)))
             if reason.as_ref() == "partner trade deadline exhausted"
     ));
 }
 
 #[test]
-fn deadline_cleanup_supersedes_unacknowledged_accept_and_decline() {
+fn deadline_cleanup_supersedes_the_unacknowledged_accept_with_a_close() {
     let (mut snapshot, mut ledger, handle, port) = fixture(4);
     let epoch = Instant::now();
     assert!(poll(&snapshot, &mut ledger, &handle, 2, epoch).is_pending());
@@ -515,8 +549,9 @@ fn deadline_cleanup_supersedes_unacknowledged_accept_and_decline() {
     assert_eq!(live.len(), 1);
     assert!(matches!(
         &live[0].effect,
-        HostEffect::Interaction(InteractReq::IfButton { component_id: 17 })
+        HostEffect::Interaction(InteractReq::CloseModal)
     ));
+    // The close is not repeated while it is unacknowledged.
     assert!(poll(&snapshot, &mut ledger, &handle, 7, epoch).is_pending());
     let live: Vec<_> = ledger
         .as_ref()
@@ -537,7 +572,7 @@ fn deadline_cleanup_supersedes_unacknowledged_accept_and_decline() {
 }
 
 #[test]
-fn refused_trade_dispatch_still_declines_the_open_screen() {
+fn refused_trade_dispatch_still_closes_the_open_screen() {
     let (mut snapshot, mut ledger, handle, port) = fixture(40);
     let epoch = Instant::now();
     assert!(poll(&snapshot, &mut ledger, &handle, 2, epoch).is_pending());
@@ -552,8 +587,8 @@ fn refused_trade_dispatch_still_declines_the_open_screen() {
     assert!(poll(&snapshot, &mut ledger, &handle, 4, epoch).is_pending());
     assert_eq!(
         ack(&mut ledger, 4),
-        InteractReq::IfButton { component_id: 17 },
-        "refused accept cleanup must decline the still-open trade"
+        InteractReq::CloseModal,
+        "refused accept cleanup must close the still-open trade"
     );
     snapshot.seed_trade(TradeView::default());
     assert!(poll(&snapshot, &mut ledger, &handle, 5, epoch).is_pending());
@@ -564,8 +599,51 @@ fn refused_trade_dispatch_still_declines_the_open_screen() {
     ));
 }
 
+/// Drive a trade to the moment after the second accept: our accept click is
+/// acknowledged and the client shows the stopped, emptied offer containers
+/// under the still-open offer screen.
+fn agreed_offers() -> (
+    GameSnapshot,
+    Ledger,
+    ActionHandle<TradeMachine>,
+    Arc<Port>,
+    Instant,
+) {
+    let (mut snapshot, mut ledger, handle, port) = fixture(40);
+    let epoch = Instant::now();
+    assert!(poll(&snapshot, &mut ledger, &handle, 2, epoch).is_pending());
+    snapshot.seed_trade(offer(2));
+    port.offer.store(true, Ordering::Relaxed);
+    assert!(poll(&snapshot, &mut ledger, &handle, 3, epoch).is_pending());
+    assert!(matches!(
+        ack(&mut ledger, 3),
+        InteractReq::IfButton { component_id: 9 }
+    ));
+    // Neither side changed an offer: the engine stopped both containers.
+    snapshot.seed_trade(mutual_accept_offer_screen());
+    assert!(poll(&snapshot, &mut ledger, &handle, 4, epoch).is_pending());
+    assert!(
+        ledger.as_ref().unwrap().outbox.is_empty(),
+        "stopped, emptied offers are not a changed offer: no cleanup may start"
+    );
+    (snapshot, ledger, handle, port, epoch)
+}
+
 #[test]
 fn mutual_accept_stops_the_offer_containers_and_the_trade_waits_for_the_confirm_screen() {
+    let (mut snapshot, mut ledger, handle, _port, epoch) = agreed_offers();
+    assert!(poll(&snapshot, &mut ledger, &handle, 5, epoch).is_pending());
+    assert!(ledger.as_ref().unwrap().outbox.is_empty());
+    snapshot.seed_trade(confirm_screen());
+    assert!(poll(&snapshot, &mut ledger, &handle, 6, epoch).is_pending());
+    assert!(
+        ledger.as_ref().unwrap().outbox.is_empty(),
+        "the confirm screen opens without a cleanup or an early accept"
+    );
+}
+
+#[test]
+fn an_offer_that_changes_while_its_container_transmits_fails_after_agreement() {
     let (mut snapshot, mut ledger, handle, port) = fixture(40);
     let epoch = Instant::now();
     assert!(poll(&snapshot, &mut ledger, &handle, 2, epoch).is_pending());
@@ -577,13 +655,110 @@ fn mutual_accept_stops_the_offer_containers_and_the_trade_waits_for_the_confirm_
         InteractReq::IfButton { component_id: 9 }
     ));
 
-    // Neither side changed an offer: the engine stopped both containers.
-    snapshot.seed_trade(mutual_accept_offer_screen());
+    // The partner pulled the item back: the container still transmits and the
+    // engine reset the agreement (`trade.rs2:313,317`).
+    let mut changed = offer(2);
+    changed.their_offer.clear();
+    snapshot.seed_trade(changed);
     assert!(poll(&snapshot, &mut ledger, &handle, 4, epoch).is_pending());
+    assert_eq!(ack(&mut ledger, 4), InteractReq::CloseModal);
+    snapshot.seed_trade(TradeView::default());
+    assert!(poll(&snapshot, &mut ledger, &handle, 5, epoch).is_pending());
+    assert!(matches!(
+        poll(&snapshot, &mut ledger, &handle, 6, epoch),
+        Poll::Ready(Err(ActionError::Blocked(reason)))
+            if reason.as_ref() == "partner offers changed after agreement"
+    ));
+}
+
+#[test]
+fn the_confirm_screen_must_list_exactly_the_agreed_trade_before_the_final_accept() {
+    for fault in 0..3 {
+        let (mut snapshot, mut ledger, handle, port, epoch) = agreed_offers();
+        port.confirm.store(true, Ordering::Relaxed);
+        let mut confirm = confirm_screen();
+        let lists = confirm.confirm.as_deref_mut().unwrap();
+        match fault {
+            0 => lists
+                .theirs
+                .push(item(99, 1, ItemContainer::TradeTheirOffer)),
+            1 => lists.mine[0].count = 3,
+            2 => lists.theirs[0].def.noted = true,
+            _ => unreachable!(),
+        }
+        snapshot.seed_trade(confirm);
+        // The first poll on the confirm screen ends the offer wait.
+        assert!(poll(&snapshot, &mut ledger, &handle, 5, epoch).is_pending());
+        assert!(poll(&snapshot, &mut ledger, &handle, 6, epoch).is_pending());
+        assert_eq!(
+            ack(&mut ledger, 6),
+            InteractReq::CloseModal,
+            "a confirm list that differs from the agreement must close, never accept (fault {fault})"
+        );
+        snapshot.seed_trade(TradeView::default());
+        assert!(poll(&snapshot, &mut ledger, &handle, 7, epoch).is_pending());
+        assert!(matches!(
+            poll(&snapshot, &mut ledger, &handle, 8, epoch),
+            Poll::Ready(Err(ActionError::Blocked(reason)))
+                if reason.as_ref() == "partner confirmation does not match exact transfer"
+        ));
+    }
+}
+
+#[test]
+fn a_confirm_list_that_has_not_arrived_waits_instead_of_accepting_or_failing() {
+    let (mut snapshot, mut ledger, handle, port, epoch) = agreed_offers();
+    port.confirm.store(true, Ordering::Relaxed);
+    let mut confirm = confirm_screen();
+    confirm.confirm.as_deref_mut().unwrap().theirs.clear();
+    snapshot.seed_trade(confirm);
+    // The first poll on the confirm screen ends the offer wait.
+    assert!(poll(&snapshot, &mut ledger, &handle, 5, epoch).is_pending());
+    assert!(poll(&snapshot, &mut ledger, &handle, 6, epoch).is_pending());
     assert!(
         ledger.as_ref().unwrap().outbox.is_empty(),
-        "stopped, emptied offers are not a changed offer: no cleanup may start"
+        "an incomplete confirm list is neither accepted nor declined"
     );
+    snapshot.seed_trade(confirm_screen());
+    assert!(poll(&snapshot, &mut ledger, &handle, 7, epoch).is_pending());
+    assert!(matches!(
+        ack(&mut ledger, 7),
+        InteractReq::IfButton { component_id: 12 }
+    ));
+}
+
+#[test]
+fn confirm_lists_emptied_by_the_closing_trade_do_not_fail_but_a_foreign_row_does() {
+    for foreign in [false, true] {
+        let (mut snapshot, mut ledger, handle, port, epoch) = agreed_offers();
+        port.confirm.store(true, Ordering::Relaxed);
+        snapshot.seed_trade(confirm_screen());
+        // The first poll on the confirm screen ends the offer wait.
+        assert!(poll(&snapshot, &mut ledger, &handle, 5, epoch).is_pending());
+        assert!(poll(&snapshot, &mut ledger, &handle, 6, epoch).is_pending());
+        assert!(matches!(
+            ack(&mut ledger, 6),
+            InteractReq::IfButton { component_id: 12 }
+        ));
+        let mut closing = confirm_screen();
+        let lists = closing.confirm.as_deref_mut().unwrap();
+        if foreign {
+            lists
+                .theirs
+                .push(item(99, 1, ItemContainer::TradeTheirOffer));
+        } else {
+            // `[if_close,tradeconfirm]` stops the lists (`trade.rs2:279-283`).
+            lists.mine.clear();
+            lists.theirs.clear();
+        }
+        snapshot.seed_trade(closing);
+        assert!(poll(&snapshot, &mut ledger, &handle, 7, epoch).is_pending());
+        if foreign {
+            assert_eq!(ack(&mut ledger, 7), InteractReq::CloseModal);
+        } else {
+            assert!(ledger.as_ref().unwrap().outbox.is_empty());
+        }
+    }
 }
 
 #[test]
@@ -616,33 +791,31 @@ fn transfer_requires_both_screens_then_closed_ui_and_fresh_inventory_delta() {
         ack(&mut ledger, 6),
         InteractReq::IfButton { component_id: 9 }
     ));
-    let mut confirm = offer(2);
-    confirm.offer_open = false;
-    confirm.confirm_open = true;
-    confirm.accept_component_id = 12;
-    snapshot.seed_trade(confirm);
+    snapshot.seed_trade(mutual_accept_offer_screen());
     assert!(poll(&snapshot, &mut ledger, &handle, 7, epoch).is_pending());
+    snapshot.seed_trade(confirm_screen());
     assert!(poll(&snapshot, &mut ledger, &handle, 8, epoch).is_pending());
+    assert!(poll(&snapshot, &mut ledger, &handle, 9, epoch).is_pending());
     assert!(
         ledger.as_ref().unwrap().outbox.is_empty(),
         "a local confirmation does not satisfy the mutual barrier"
     );
     port.confirm.store(true, Ordering::Relaxed);
-    assert!(poll(&snapshot, &mut ledger, &handle, 9, epoch).is_pending());
+    assert!(poll(&snapshot, &mut ledger, &handle, 10, epoch).is_pending());
     assert!(matches!(
-        ack(&mut ledger, 9),
+        ack(&mut ledger, 10),
         InteractReq::IfButton { component_id: 12 }
     ));
     snapshot.seed_trade(TradeView::default());
-    assert!(poll(&snapshot, &mut ledger, &handle, 10, epoch).is_pending());
     assert!(poll(&snapshot, &mut ledger, &handle, 11, epoch).is_pending());
+    assert!(poll(&snapshot, &mut ledger, &handle, 12, epoch).is_pending());
     assert!(
-        poll(&snapshot, &mut ledger, &handle, 12, epoch).is_pending(),
+        poll(&snapshot, &mut ledger, &handle, 13, epoch).is_pending(),
         "closed screens and accepts are not a transfer receipt"
     );
     snapshot.seed_inventory(vec![item(2, 1, ItemContainer::Inventory)], 28);
 
-    with_tick(&snapshot, &mut ledger, 13, |frame| {
+    with_tick(&snapshot, &mut ledger, 14, |frame| {
         let stale = EvidenceStamp {
             run: frame.cx.run(),
             tick: 1,
@@ -654,8 +827,8 @@ fn transfer_requires_both_screens_then_closed_ui_and_fresh_inventory_delta() {
             "matching counts in stale inventory cannot settle"
         );
     });
-    match poll(&snapshot, &mut ledger, &handle, 14, epoch) {
-        Poll::Ready(Ok(outcome)) => assert_eq!(outcome.evidence.tick, 14),
+    match poll(&snapshot, &mut ledger, &handle, 15, epoch) {
+        Poll::Ready(Ok(outcome)) => assert_eq!(outcome.evidence.tick, 15),
         _ => panic!("fresh exact inventory deltas must settle"),
     }
 }
@@ -680,8 +853,8 @@ fn counterpart_extra_noted_or_excessive_offer_blocks_before_accept() {
         assert!(poll(&snapshot, &mut ledger, &handle, 3, epoch).is_pending());
         assert_eq!(
             ack(&mut ledger, 3),
-            InteractReq::IfButton { component_id: 17 },
-            "an invalid trade must decline, never accept"
+            InteractReq::CloseModal,
+            "an invalid trade must close, never accept"
         );
         snapshot.seed_trade(TradeView::default());
         assert!(poll(&snapshot, &mut ledger, &handle, 4, epoch).is_pending());
@@ -718,8 +891,8 @@ fn cancelled_or_expired_phase_never_emits_an_accept() {
             assert!(result.is_pending());
             assert_eq!(
                 ack(&mut ledger, 3),
-                InteractReq::IfButton { component_id: 17 },
-                "a locally expired trade must decline, never accept"
+                InteractReq::CloseModal,
+                "a locally expired trade must close, never accept"
             );
             snapshot.seed_trade(TradeView::default());
             assert!(poll(&snapshot, &mut ledger, &handle, 4, epoch).is_pending());

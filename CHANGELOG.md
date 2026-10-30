@@ -5,6 +5,20 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.8` 
 
 ## Unreleased
 
+### Quester
+
+- A Quester trade between two of your own accounts (the Arrav shield halves and
+  certificate, for example) no longer fails with "partner offers changed after
+  agreement". When both accounts accept, the game empties both offer lists
+  before it opens the confirm screen, and the Quester took that for a changed
+  offer. It now waits for the confirm screen and checks the items on that
+  screen against what the two accounts agreed before it makes the final accept.
+  Each bot holds 8 bytes more for this, and the confirm lists only while the
+  confirm screen is open.
+- When a Quester trade fails, the Quester now closes the trade screen with the
+  one request the game honours. Before, it clicked the Decline button, which
+  does nothing, and the trade screen stayed open for about a second more.
+
 ## [0.2.8] — 2026-10-29 — Beta 2
 
 ### Panel and terminal app

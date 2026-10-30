@@ -541,53 +541,38 @@ enum TradePhase {
     Transfer,
     Cleanup(TradeCleanup),
 }
-const TRADE_DECLINE_GRACE_MS: u64 = TRADE_CLOSE_DEBOUNCE_MS * 2;
 const TRADE_CLOSE_GRACE_MS: u64 = TRADE_CLOSE_DEBOUNCE_MS * 5;
-const TRADE_FAILURE_CLEANUP_MS: u64 =
-    TRADE_DECLINE_GRACE_MS + TRADE_CLOSE_GRACE_MS + TRADE_CLOSE_DEBOUNCE_MS;
-#[derive(Clone, Copy)]
-enum CleanupStage {
-    Decline,
-    Close,
-}
-#[derive(Clone, Copy)]
-enum CleanupRequestKind {
-    Decline,
-    Close,
-}
+const TRADE_FAILURE_CLEANUP_MS: u64 = TRADE_CLOSE_GRACE_MS + TRADE_CLOSE_DEBOUNCE_MS;
 #[derive(Clone, Copy)]
 struct CleanupRequest {
     id: u64,
     before: EvidenceStamp,
-    kind: CleanupRequestKind,
 }
+/// Failure cleanup declines through the one packet the engine honours:
+/// `CLOSE_MODAL` (`CloseModalHandler.ts:13`, applied at `Player.ts:882-885`)
+/// runs the open screen's `[if_close]` script, which returns the offers and
+/// closes the partner's screen too (`trade.rs2:240-255`, `:279-291`). The
+/// screens' Decline buttons are `buttontype=close` with no `[if_button]`
+/// script (`trademain.if:865-869`, `tradeconfirm.if:871-878`), so
+/// `IfButtonHandler.ts:17-36` does nothing for them.
 struct TradeCleanup {
     failure: ActionError,
-    stage: CleanupStage,
     request: Option<CleanupRequest>,
-    decline_sent: bool,
     close_sent: bool,
-    stage_deadline: Duration,
+    close_deadline: Duration,
     deadline: Duration,
     closes: CloseDriver,
 }
 impl TradeCleanup {
-    fn new(failure: ActionError, now: Duration, stage: CleanupStage) -> Self {
+    fn new(failure: ActionError, now: Duration) -> Self {
         Self {
             failure,
-            stage,
             request: None,
-            decline_sent: false,
             close_sent: false,
-            stage_deadline: now,
+            close_deadline: now,
             deadline: now + Duration::from_millis(TRADE_FAILURE_CLEANUP_MS),
             closes: CloseDriver::default(),
         }
-    }
-    fn begin_close(&mut self, now: Duration) {
-        self.stage = CleanupStage::Close;
-        self.close_sent = false;
-        self.stage_deadline = now + Duration::from_millis(TRADE_CLOSE_GRACE_MS);
     }
 }
 struct TradeMachine {
@@ -633,13 +618,6 @@ impl TradeMachine {
         self.request = Some((cx.emit(request)?, cx.evidence()));
         Ok(())
     }
-    fn cleanup_stage(trade: &TradeView) -> CleanupStage {
-        if trade.decline_component_id >= 0 {
-            CleanupStage::Decline
-        } else {
-            CleanupStage::Close
-        }
-    }
     fn failed_begin(
         args: TradeArgs,
         cx: &mut ActionContext<'_>,
@@ -651,12 +629,11 @@ impl TradeMachine {
         if !ScreenKind::observed(trade.value.offer_open, trade.value.confirm_open).active() {
             return Err(error);
         }
-        let stage = Self::cleanup_stage(trade.value);
         let now = cx.active_now();
         Ok(Self {
             partner_id: api::snapshot::player_account_id(&args.partner.0).unwrap_or_default(),
             args,
-            phase: TradePhase::Cleanup(TradeCleanup::new(error, now, stage)),
+            phase: TradePhase::Cleanup(TradeCleanup::new(error, now)),
             checks: [InventoryCheck::default(); 8],
             check_len: 0,
             before: cx.evidence(),
@@ -677,11 +654,10 @@ impl TradeMachine {
         if !ScreenKind::observed(trade.value.offer_open, trade.value.confirm_open).active() {
             return Poll::Ready(Err(error));
         }
-        let stage = Self::cleanup_stage(trade.value);
-        // Decline/close supersedes any unacknowledged acceptance. Emitting the
+        // Closing supersedes any unacknowledged acceptance. Emitting the
         // cleanup request replaces its native dispatch authority too.
         self.request = None;
-        self.phase = TradePhase::Cleanup(TradeCleanup::new(error, cx.active_now(), stage));
+        self.phase = TradePhase::Cleanup(TradeCleanup::new(error, cx.active_now()));
         self.poll_cleanup(cx)
     }
     fn cleanup_expired(&self, now: Duration) -> bool {
@@ -699,11 +675,8 @@ impl TradeMachine {
         cx: &mut ActionContext<'_>,
     ) -> Poll<Result<StepOutcome, ActionError>> {
         let now = cx.active_now();
-        let (screen, decline_component_id) = match cx.snapshot().trade() {
-            Some(trade) => (
-                ScreenKind::observed(trade.value.offer_open, trade.value.confirm_open),
-                trade.value.decline_component_id,
-            ),
+        let screen = match cx.snapshot().trade() {
+            Some(trade) => ScreenKind::observed(trade.value.offer_open, trade.value.confirm_open),
             None => {
                 return if self.cleanup_expired(now) {
                     self.finish_cleanup()
@@ -712,119 +685,49 @@ impl TradeMachine {
                 };
             }
         };
-        let closed = {
-            let TradePhase::Cleanup(cleanup) = &mut self.phase else {
-                unreachable!()
-            };
-            cleanup.closes.poll(screen, cx.wall_now)
+        let TradePhase::Cleanup(cleanup) = &mut self.phase else {
+            unreachable!("cleanup polls only in the cleanup phase")
         };
+        let closed = cleanup.closes.poll(screen, cx.wall_now);
         if closed || self.cleanup_expired(now) {
             return self.finish_cleanup();
         }
         if !screen.active() {
             return Poll::Pending;
         }
-        let cleanup_request = match &self.phase {
-            TradePhase::Cleanup(cleanup) => cleanup.request,
-            _ => return Poll::Pending,
+        let TradePhase::Cleanup(cleanup) = &mut self.phase else {
+            unreachable!("cleanup polls only in the cleanup phase")
         };
-        if let Some(request) = cleanup_request {
+        if let Some(request) = cleanup.request {
             match cx.interaction_receipt(request.id) {
                 Some(receipt)
                     if !receipt.accepted
                         || (cx.evidence().meets(request.before)
                             && cx.evidence() != request.before) =>
                 {
-                    let TradePhase::Cleanup(cleanup) = &mut self.phase else {
-                        unreachable!()
-                    };
                     cleanup.request = None;
-                    if !receipt.accepted && matches!(request.kind, CleanupRequestKind::Decline) {
-                        cleanup.begin_close(now);
-                    }
                 }
-                _ => {
-                    let TradePhase::Cleanup(cleanup) = &mut self.phase else {
-                        unreachable!()
-                    };
-                    if now >= cleanup.stage_deadline
-                        && matches!(request.kind, CleanupRequestKind::Decline)
-                    {
-                        cleanup.request = None;
-                        cleanup.begin_close(now);
-                    } else {
-                        return if self.cleanup_expired(now) {
-                            self.finish_cleanup()
-                        } else {
-                            Poll::Pending
-                        };
-                    }
-                }
+                _ => return Poll::Pending,
             }
         }
-        let mut action = None;
-        let mut finish = false;
-        {
-            let TradePhase::Cleanup(cleanup) = &mut self.phase else {
-                unreachable!()
+        if cleanup.close_sent {
+            return if now >= cleanup.close_deadline {
+                self.finish_cleanup()
+            } else {
+                Poll::Pending
             };
-            match cleanup.stage {
-                CleanupStage::Decline if !cleanup.decline_sent => {
-                    if decline_component_id >= 0 {
-                        action = Some((
-                            InteractReq::IfButton {
-                                component_id: decline_component_id,
-                            },
-                            CleanupRequestKind::Decline,
-                        ));
-                    } else {
-                        cleanup.begin_close(now);
-                        action = Some((InteractReq::CloseModal, CleanupRequestKind::Close));
-                    }
-                }
-                CleanupStage::Decline if now >= cleanup.stage_deadline => {
-                    cleanup.begin_close(now);
-                    action = Some((InteractReq::CloseModal, CleanupRequestKind::Close));
-                }
-                CleanupStage::Decline => return Poll::Pending,
-                CleanupStage::Close if !cleanup.close_sent => {
-                    action = Some((InteractReq::CloseModal, CleanupRequestKind::Close));
-                }
-                CleanupStage::Close if now >= cleanup.stage_deadline => {
-                    finish = true;
-                }
-                CleanupStage::Close => return Poll::Pending,
-            }
         }
-        if finish {
-            return self.finish_cleanup();
-        }
-        let Some((request, kind)) = action else {
-            return Poll::Pending;
-        };
-        let id = match cx.emit(request) {
+        let id = match cx.emit(InteractReq::CloseModal) {
             Ok(id) => id,
             Err(ActionError::Held | ActionError::BudgetExhausted) => return Poll::Pending,
             Err(error) => return Poll::Ready(Err(error)),
         };
-        let TradePhase::Cleanup(cleanup) = &mut self.phase else {
-            unreachable!()
-        };
         cleanup.request = Some(CleanupRequest {
             id,
             before: cx.evidence(),
-            kind,
         });
-        match kind {
-            CleanupRequestKind::Decline => {
-                cleanup.decline_sent = true;
-                cleanup.stage_deadline = now + Duration::from_millis(TRADE_DECLINE_GRACE_MS);
-            }
-            CleanupRequestKind::Close => {
-                cleanup.close_sent = true;
-                cleanup.stage_deadline = now + Duration::from_millis(TRADE_CLOSE_GRACE_MS);
-            }
-        }
+        cleanup.close_sent = true;
+        cleanup.close_deadline = now + Duration::from_millis(TRADE_CLOSE_GRACE_MS);
         Poll::Pending
     }
 }
@@ -1035,9 +938,17 @@ impl NativeMachine for TradeMachine {
                     };
                 }
                 TradePhase::OfferWait { driver, deadline } => {
+                    // The mutual accept stops both offer containers (`trade.rs2:80-86`)
+                    // and the client empties a stopped container
+                    // (`client.rs:8389-8404`), so a stopped container holds no offer to
+                    // compare: the confirm screen carries the agreed lists. Only a
+                    // container that still transmits can show a changed offer
+                    // (`trade.rs2:313,352` reset the agreement on such a change).
                     if screen.active()
-                        && (!exact(&trade.value.my_offer, &self.args.give)
-                            || !exact(&trade.value.their_offer, &self.args.take))
+                        && ((!trade.value.my_offer_stopped
+                            && !exact(&trade.value.my_offer, &self.args.give))
+                            || (!trade.value.their_offer_stopped
+                                && !exact(&trade.value.their_offer, &self.args.take)))
                     {
                         return Poll::Ready(Err(failure("partner offers changed after agreement")));
                     }
@@ -1052,13 +963,30 @@ impl NativeMachine for TradeMachine {
                     }
                 }
                 TradePhase::Confirm => {
-                    if screen != ScreenKind::Confirm
-                        || !exact(&trade.value.my_offer, &self.args.give)
-                        || !exact(&trade.value.their_offer, &self.args.take)
+                    // The offer containers are stopped and empty here; the confirm
+                    // screen's own lists are what the engine will trade.
+                    let Some(confirm) = trade
+                        .value
+                        .confirm
+                        .as_deref()
+                        .filter(|_| screen == ScreenKind::Confirm)
+                    else {
+                        return Poll::Ready(Err(failure(
+                            "partner confirmation does not match exact transfer",
+                        )));
+                    };
+                    if !subset(&confirm.mine, &self.args.give)
+                        || !subset(&confirm.theirs, &self.args.take)
                     {
                         return Poll::Ready(Err(failure(
                             "partner confirmation does not match exact transfer",
                         )));
+                    }
+                    if !exact(&confirm.mine, &self.args.give)
+                        || !exact(&confirm.theirs, &self.args.take)
+                    {
+                        // A list not yet transmitted; the trade deadline bounds the wait.
+                        return Poll::Pending;
                     }
                     let ready = match self.args.port.trade_ready(
                         &self.args.token,
@@ -1088,10 +1016,20 @@ impl NativeMachine for TradeMachine {
                     };
                 }
                 TradePhase::ConfirmWait { driver, deadline } => {
-                    if screen.active()
-                        && (!exact(&trade.value.my_offer, &self.args.give)
-                            || !exact(&trade.value.their_offer, &self.args.take))
-                    {
+                    // Closing the confirm screen stops its lists (`trade.rs2:279-283`),
+                    // so a list may empty before the screen closes; a row that is not
+                    // part of the agreed trade, or any offer screen, may not appear.
+                    let changed = match screen {
+                        ScreenKind::Offer => true,
+                        ScreenKind::Confirm => {
+                            trade.value.confirm.as_deref().is_none_or(|confirm| {
+                                !subset(&confirm.mine, &self.args.give)
+                                    || !subset(&confirm.theirs, &self.args.take)
+                            })
+                        }
+                        ScreenKind::Closed => false,
+                    };
+                    if changed {
                         return Poll::Ready(Err(failure(
                             "partner confirmation changed after acceptance",
                         )));
