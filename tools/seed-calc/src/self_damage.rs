@@ -1441,4 +1441,85 @@ mod tests {
     fn level_one_crafting_matches_the_61_of_256_guide_fact() {
         assert_eq!(stat_random_successes(1, 60, 150), 61);
     }
+
+    fn sorted_probability_bits(states: &Distribution) -> Vec<((u8, u8, u8, u8), u64)> {
+        let mut rows: Vec<((u8, u8, u8, u8), u64)> = states
+            .iter()
+            .map(|(state, probability)| {
+                (
+                    (
+                        state.hp,
+                        state.regen_phase,
+                        state.food,
+                        state.food_cooldown,
+                    ),
+                    probability.to_bits(),
+                )
+            })
+            .collect();
+        rows.sort_unstable();
+        rows
+    }
+
+    #[test]
+    fn the_same_model_twice_stores_bit_identical_probabilities() {
+        // Every roll ends a full regeneration timer, so many paths fold into one state and each
+        // stored probability is a sum of several terms. Floating-point addition is not
+        // associative, so a map that visits those terms in a different order changes the last
+        // bits of the stored number.
+        let regen_step = |index: u8| {
+            Operation::Bounded(BoundedStep {
+                id: format!("regen-{index}"),
+                attempts: 3,
+                stop: format!("regen-{index}-exhausted"),
+                hazard: Hazard {
+                    id: "regen",
+                    skill: Skill::Agility,
+                    level: 1,
+                    low: 0,
+                    high: 0,
+                    damage: Damage::Fixed(1),
+                    timing: Timing {
+                        first_attempt_before_roll: PreRoll::default(),
+                        retry_before_roll: PreRoll::default(),
+                        failure_before_damage: 0,
+                        after_failure: REGEN_TICKS,
+                        after_success: REGEN_TICKS,
+                    },
+                    source: "test",
+                    timing_note: "test",
+                }
+                .with_test_successes(96),
+                entries_per_parent_pass: 1,
+            })
+        };
+        let mut plan: Vec<Operation> = (1..=4u8).map(regen_step).collect();
+        plan.push(Operation::Bounded(BoundedStep {
+            id: "damage".into(),
+            attempts: 3,
+            stop: "damage-exhausted".into(),
+            hazard: test_hazard(96, Damage::Fixed(3)),
+            entries_per_parent_pass: 1,
+        }));
+        let initial = State {
+            hp: 2,
+            regen_phase: 0,
+            food: 0,
+            food_cooldown: 0,
+        };
+
+        let first = execute(&plan, initial, 4, None);
+        let second = execute(&plan, initial, 4, None);
+
+        assert_eq!(
+            first.death_probability.to_bits(),
+            second.death_probability.to_bits(),
+            "death probability changed between two runs of the same model"
+        );
+        assert_eq!(
+            sorted_probability_bits(&first.live),
+            sorted_probability_bits(&second.live),
+            "stored probabilities changed between two runs of the same model"
+        );
+    }
 }
