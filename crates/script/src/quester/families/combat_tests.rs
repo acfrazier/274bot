@@ -5037,6 +5037,87 @@ fn until_drop_no_kill_outcomes_do_not_spend_the_kill_budget() {
 }
 
 #[test]
+fn nonkill_combat_outcomes_reengage_with_a_bounded_content_budget() {
+    let selected = api::game_data::for_revision(ClientRevision::R289).unwrap();
+    let item = selected.item_by_alias("bones").unwrap();
+    let item_name: Arc<str> = Arc::from(item.name.as_deref().unwrap_or("Bones"));
+    let mut snapshot = GameSnapshot::new();
+    snapshot.seed_ingame(2);
+    snapshot.seed_inventory(Vec::new(), 28);
+    super::super::tests::seed_dialogue_combat(&mut snapshot, false);
+    let mut ledger = None;
+
+    let mut until_drop =
+        until_drop_test_run(imp_target(&selected), None, item.id, Arc::clone(&item_name), 1);
+    assert!(with_step_context(&snapshot, &mut ledger, 20, |cx| {
+        until_drop.on_combat_report(report(CombatEnd::NoTarget), cx)
+    })
+    .is_pending());
+    let exhausted = with_step_context(&snapshot, &mut ledger, 21, |cx| {
+        until_drop.on_combat_report(report(CombatEnd::Budget), cx)
+    });
+    assert!(matches!(
+        exhausted,
+        Poll::Ready(Err(ActionError::Failed(detail))) if detail.contains("Budget")
+    ));
+    assert_eq!(until_drop.kills, 0);
+    assert_eq!(
+        last_test_combat_receipt(&until_drop).report.end,
+        CombatEnd::Budget
+    );
+
+    let target = Target::Npc {
+        types: Arc::from([
+            selected.npc_by_config("imp").unwrap().id,
+            selected.npc_by_config("delrith").unwrap().id,
+        ]),
+        pick: crate::combat::request::Pick::Nearest,
+        not_targeting_others: false,
+    };
+    let mut until = combat_test_run(target.clone(), None, Some(Arc::new(NeverStop)), vec![]);
+    for (tick, end) in [
+        (30, CombatEnd::NoTarget),
+        (31, CombatEnd::Budget),
+    ] {
+        assert!(with_step_context(&snapshot, &mut ledger, tick, |cx| {
+            until.on_combat_report(report(end), cx)
+        })
+        .is_pending());
+    }
+    let exhausted = with_step_context(&snapshot, &mut ledger, 32, |cx| {
+        until.on_combat_report(report(CombatEnd::TargetGone), cx)
+    });
+    assert!(matches!(
+        exhausted,
+        Poll::Ready(Err(ActionError::Failed(detail))) if detail.contains("TargetGone")
+    ));
+    assert_eq!(
+        last_test_combat_receipt(&until).report.end,
+        CombatEnd::TargetGone
+    );
+
+    let mut win = combat_test_run(target, None, None, vec![]);
+    win.win = Some(Arc::new(NeverStop));
+    for (tick, end) in [
+        (40, CombatEnd::Budget),
+        (41, CombatEnd::TargetGone),
+    ] {
+        assert!(with_step_context(&snapshot, &mut ledger, tick, |cx| {
+            win.on_combat_report(report(end), cx)
+        })
+        .is_pending());
+    }
+    let exhausted = with_step_context(&snapshot, &mut ledger, 42, |cx| {
+        win.on_combat_report(report(CombatEnd::NoTarget), cx)
+    });
+    assert!(matches!(
+        exhausted,
+        Poll::Ready(Err(ActionError::Failed(detail))) if detail.contains("NoTarget")
+    ));
+    assert_eq!(last_test_combat_receipt(&win).report.end, CombatEnd::NoTarget);
+}
+
+#[test]
 fn combat_state_size_tripwire_reports_config_run_and_receipt_sizes() {
     println!(
         "CombatPlan={} CombatRun={} CombatReceipt={}",

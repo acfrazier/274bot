@@ -978,9 +978,9 @@ mod tests {
     }
 
     #[test]
-    fn main_make_repeats_bounded_fixed_actions_until_held_target() {
+    fn main_make_returns_partial_target_when_content_closes_menu() {
         let menu_id = 1737;
-        let client = main_make_client(menu_id, "Bronze bar", &["Make 1", "Make 5", "Make 10"]);
+        let mut client = main_make_client(menu_id, "Bronze bar", &["Make 1", "Make 5", "Make 10"]);
         let mut snapshot = main_make_snapshot(&client);
         let mut ledger = None;
         let handle = start_machine(
@@ -1001,44 +1001,50 @@ mod tests {
         assert!(matches!(
             first,
             HostEffect::Interaction(InteractReq::MakePanel {
-                id: 1737,
-                slot: 0,
-                component: 2210,
                 operation: 2,
+                ..
             })
         ));
 
+        client.main_modal_id = -1;
+        client.bump_gens(ServerProt::IF_CLOSE);
+        snapshot.rebuild_family(&client, api::snapshot::Family::MainMake);
         snapshot.seed_inventory(vec![held_product(5)], 28);
         assert!(with_tick(&snapshot, &mut ledger, 3, |tick| {
             tick.actions.poll(&handle, &mut tick.cx)
         })
         .is_pending());
-        let second = with_tick(&snapshot, &mut ledger, 6, |tick| {
+        assert!(matches!(
+            with_tick(&snapshot, &mut ledger, 6, |tick| {
+                tick.actions.poll(&handle, &mut tick.cx)
+            }),
+            Poll::Ready(Ok(MakeReceipt { held: 5 }))
+        ));
+    }
+
+    #[test]
+    fn fixed_main_make_counts_processes_for_item_targets() {
+        let menu_id = 1737;
+        let client = main_make_client(menu_id, "Logs", &["Make 1", "Make 5", "Make 10"]);
+        let snapshot = main_make_snapshot(&client);
+        let mut ledger = None;
+        let mut request = request_with_qty(false, 15);
+        request.product_id = 52;
+        request.menu_id = menu_id;
+        let handle = start_machine(&snapshot, &mut ledger, request);
+        let effect = with_tick(&snapshot, &mut ledger, 2, |tick| {
             assert!(tick.actions.poll(&handle, &mut tick.cx).is_pending());
             acknowledge_current(&mut tick.cx)
         });
         assert!(matches!(
-            second,
+            effect,
             HostEffect::Interaction(InteractReq::MakePanel {
-                id: 1737,
-                slot: 0,
-                component: 2210,
                 operation: 1,
+                ..
             })
         ));
-
-        snapshot.seed_inventory(vec![held_product(7)], 28);
-        assert!(with_tick(&snapshot, &mut ledger, 9, |tick| {
-            tick.actions.poll(&handle, &mut tick.cx)
-        })
-        .is_pending());
-        assert!(matches!(
-            with_tick(&snapshot, &mut ledger, 12, |tick| {
-                tick.actions.poll(&handle, &mut tick.cx)
-            }),
-            Poll::Ready(Ok(MakeReceipt { held: 7 }))
-        ));
     }
+
     #[test]
     fn production_adapter_state_sizes_stay_within_explicit_bounds() {
         let request = std::mem::size_of::<MakeRequest>();
