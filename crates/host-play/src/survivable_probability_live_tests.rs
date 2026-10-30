@@ -575,6 +575,11 @@ fn exercise(rig: &mut Rig, mut cell: Cell, receipt: &mut Value) {
     let watchdog = Instant::now() + Duration::from_secs(1200);
     loop {
         rig.frame(true);
+        let hp = rig.navs.lock().unwrap()[&rig.name].condition.published().hp;
+        if hp == 0 {
+            receipt["deaths"] = json!(1);
+            panic!("death observed during the accepted walk");
+        }
         let (refusal, hold_wait, poison) = {
             let navs = rig.navs.lock().unwrap();
             let bot = &navs[&rig.name];
