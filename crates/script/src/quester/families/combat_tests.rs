@@ -5561,8 +5561,8 @@ fn lifecycle_followups_unreachable_loot_walk_retries_before_skipping_to_the_next
         level: here.level,
     };
     let second_tile = api::WorldTile {
-        x: 3201,
-        z: 3201,
+        x: here.x + 1,
+        z: here.z,
         level: 0,
     };
     let mut run = combat_test_run_with_radius(
@@ -5606,8 +5606,12 @@ fn lifecycle_followups_unreachable_loot_walk_retries_before_skipping_to_the_next
         ground(1, "First drop", first_tile, 15),
         ground(2, "Second drop", second_tile, 1),
     ]);
-    let reach = seed_loot_route(&mut snapshot, here, 20);
-    snapshot.seed_chat_lines(vec![]);
+    // The open test flood defaults every adjacency rank to zero. Give the
+    // distant item's stand its real rank so Reach plans an approach walk.
+    let mut reach = seed_loot_route(&mut snapshot, here, 20);
+    let first_index = (first_tile.x - reach.base_x) as usize * reach.height as usize
+        + (first_tile.z - reach.base_z) as usize;
+    reach.adjacent_rank[first_index] = 14;
     let mut ledger = None;
     assert!(
         with_step_context_reach(&snapshot, &reach, &mut ledger, 12, |cx| {
@@ -5618,10 +5622,18 @@ fn lifecycle_followups_unreachable_loot_walk_retries_before_skipping_to_the_next
     assert!(
         with_step_context_reach(&snapshot, &reach, &mut ledger, 13, |cx| run.poll(cx)).is_pending()
     );
-    assert!(matches!(
-        &ledger.as_ref().unwrap().outbox.last().unwrap().effect,
-        crate::native::HostEffect::Walk(_)
-    ));
+    let last_effect = &ledger.as_ref().unwrap().outbox.last().unwrap().effect;
+    let effect_kind = match last_effect {
+        crate::native::HostEffect::Interaction(_) => "interaction",
+        crate::native::HostEffect::Walk(_) => "walk",
+        crate::native::HostEffect::BankPick(_) => "bank pick",
+        crate::native::HostEffect::AssessWalk(_) => "walk assessment",
+        crate::native::HostEffect::ServerOrdered(_) => "server ordered",
+    };
+    assert!(
+        matches!(last_effect, crate::native::HostEffect::Walk(_)),
+        "expected an approach walk, got {effect_kind}"
+    );
     assert_eq!(run.loot_index, 0);
     assert!(matches!(run.action.as_ref(), Some(Action::Loot(_))));
 
