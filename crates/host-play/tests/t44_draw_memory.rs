@@ -1612,7 +1612,7 @@ fn t44_cpu_draw_memory_ab() {
     let bound = options
         .resolve(None)
         .expect("resolve local Engine A profile")
-        .bind()
+        .bind_runtime()
         .expect("bind local Engine A profile");
     let names = mint_live_names(n);
     let draw = Arc::new(AtomicBool::new(false));
@@ -2588,7 +2588,7 @@ fn real_region_crossing_draws_loading_splash_and_current_overlays() {
     let profile = options
         .resolve(None)
         .expect("resolve local Engine L profile")
-        .bind()
+        .bind_runtime()
         .expect("bind local Engine L profile");
     let template = SharedClientTemplate::load(Arc::clone(&profile)).expect("load real profile");
     let world = template.world().expect("load the profile's real nav pack");
