@@ -3723,7 +3723,15 @@ mod tests {
             })
             .collect();
         inventory.push(antipoison_item(3));
-        let bank_side = inventory.clone();
+        let bank_side: Vec<_> = inventory
+            .iter()
+            .cloned()
+            .map(|mut item| {
+                item.action_family = ItemActionFamily::Component;
+                item.actions = vec![Some("Deposit-All".into())];
+                item
+            })
+            .collect();
         snapshot.seed_inventory(inventory, 28);
         snapshot.seed_bank_observation(10, 1, Some(Vec::new()), bank_side);
         let clear = || survival_condition(PoisonState::Clear, 60, FoodSummary::default());

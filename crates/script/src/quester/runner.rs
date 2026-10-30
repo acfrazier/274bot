@@ -6251,6 +6251,62 @@ mod tests {
             cures: CureDoses::default(),
         };
 
+        let stand = api::WorldTile {
+            x: 3210,
+            z: 3210,
+            level: 0,
+        };
+        let bank = api::named_banks::NamedBank::new("Test bank", stand);
+        let access = Arc::new(crate::bank::BankStandAccess {
+            bank,
+            stand_tile: stand,
+            kind: crate::bank::AccessKind::Booth,
+            stand_op: 1,
+            name: None,
+            choose: None,
+        });
+        let mut responded_bank_pick = None;
+        let mut respond_bank_pick = |tick: &mut crate::native::NativeTick<'_>| {
+            let Some(action) = tick
+                .cx
+                .ledger
+                .as_ref()
+                .and_then(|ledger| ledger.outbox.last())
+                .filter(|action| {
+                    matches!(
+                        &action.effect,
+                        crate::native::HostEffect::BankPick(_)
+                    )
+                })
+            else {
+                return;
+            };
+            let authority = action.authority();
+            let request_id = authority.request_id().get();
+            if responded_bank_pick == Some(request_id) {
+                return;
+            }
+            let evidence = tick.cx.evidence();
+            tick.cx
+                .ledger
+                .as_mut()
+                .unwrap()
+                .complete_bank_pick(
+                    &authority,
+                    crate::bank::BankPickReceipt {
+                        request_id,
+                        evidence,
+                        selected: crate::bank::SelectedBank {
+                            bank_index: 0,
+                            access_tile: stand,
+                            kind: crate::bank::PickKind::Reachable,
+                            access: Some(Arc::clone(&access)),
+                        },
+                    },
+                );
+            responded_bank_pick = Some(request_id);
+        };
+
         let mut saw_withdraw = false;
         super::super::families::tests::with_tick_bank(
             &snapshot,
@@ -6261,6 +6317,7 @@ mod tests {
                 tick.cx.condition = Some(condition(PoisonState::Clear, 60));
                 tick.cx.cure_poison = CurePoison::WhenNeeded;
                 script.tick(tick).unwrap();
+                respond_bank_pick(tick);
                 let (withdraw, interaction) =
                     tick.cx
                         .ledger
@@ -6303,29 +6360,26 @@ mod tests {
                         tick.cx.condition = Some(condition(PoisonState::Clear, 60));
                         tick.cx.cure_poison = CurePoison::WhenNeeded;
                         script.tick(tick).unwrap();
+                        respond_bank_pick(tick);
                         let (withdraw, interaction) =
-                            tick.cx
-                                .ledger
-                                .as_ref()
-                                .map_or((false, false), |ledger| {
-                                    let new_action = ledger.outbox.len() > outbox_before;
-                                    let last =
-                                        ledger.outbox.last().map(|action| &action.effect);
-                                    (
-                                        new_action
-                                            && matches!(
-                                                last,
-                                                Some(crate::native::HostEffect::Interaction(
-                                                    crate::shim::InteractReq::WithdrawX { .. }
-                                                ))
-                                            ),
-                                        new_action
-                                            && matches!(
-                                                last,
-                                                Some(crate::native::HostEffect::Interaction(_))
-                                            ),
-                                    )
-                                });
+                            tick.cx.ledger.as_ref().map_or((false, false), |ledger| {
+                                let new_action = ledger.outbox.len() > outbox_before;
+                                let last = ledger.outbox.last().map(|action| &action.effect);
+                                (
+                                    new_action
+                                        && matches!(
+                                            last,
+                                            Some(crate::native::HostEffect::Interaction(
+                                                crate::shim::InteractReq::WithdrawX { .. }
+                                            ))
+                                        ),
+                                    new_action
+                                        && matches!(
+                                            last,
+                                            Some(crate::native::HostEffect::Interaction(_))
+                                        ),
+                                )
+                            });
                         saw_withdraw |= withdraw;
                         if interaction {
                             accept_last_interaction(tick);
