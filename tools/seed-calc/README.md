@@ -185,7 +185,7 @@ Omitted route facts remain absent.
 Run these commands on the designated build host:
 
 ```sh
-BOT_NAV_BUILD=skip cargo test -p seed-calc -- --include-ignored
+CROSS_CALC_NAVPACK=/Volumes/dev-scratch/274bot-evidence/NAV-GATED-ENTRANCES/reference-v17/274bot-289-v17.navpack BOT_NAV_BUILD=skip cargo test -p seed-calc -- --include-ignored
 BOT_NAV_BUILD=skip cargo clippy -p seed-calc --all-targets -- -D warnings
 cargo fmt -p seed-calc -- --check
 cargo fmt --all -- --check
