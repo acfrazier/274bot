@@ -5925,7 +5925,7 @@ fn s2b_admission_per_bot_layouts() {
             std::mem::size_of::<script::combat::Combat>(),
             std::mem::size_of::<script::combat::WalkGuard>()
         ),
-        (3816, 1544, 512, 264)
+        (3816, 1544, 520, 264)
     );
     #[cfg(all(
         target_os = "linux",
@@ -5940,9 +5940,10 @@ fn s2b_admission_per_bot_layouts() {
             std::mem::size_of::<script::combat::Combat>(),
             std::mem::size_of::<script::combat::WalkGuard>()
         ),
-        (3816, 1544, 512, 264)
+        (3816, 1544, 520, 264)
     );
-    assert!(std::mem::size_of::<script::combat::Combat>() <= 512);
+    // Combat is 520 B with bounded approach retries; retain 8 B of headroom.
+    assert!(std::mem::size_of::<script::combat::Combat>() <= 528);
     assert!(std::mem::size_of::<script::combat::WalkGuard>() <= 264);
 }
 
