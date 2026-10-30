@@ -2271,6 +2271,7 @@ fn quester_fleet_start_discloses_each_queue_and_skips_changed_consent() {
     let alice = d.session().profile_identity_or_synthetic("alice");
     let bob = d.session().profile_identity_or_synthetic("bob");
     let queue_operation = stage_quester_queue(&mut d, "alice", &["sheep"]);
+    d.session_mut().poll_host();
     let plan = d.session().fleet_plan().expect("plan waits");
     let (registry, revision) = script::quester::registry::snapshot_with_revision();
     assert_eq!(
