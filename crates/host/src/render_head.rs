@@ -671,7 +671,8 @@ impl GpuFrame {
                         };
                         // record_fault writes exactly one host_log line for
                         // this consumed reservation's incident, gate on or off.
-                        if let Err(error) = service.record_fault(frame.identity(), kind, Instant::now())
+                        if let Err(error) =
+                            service.record_fault(frame.identity(), kind, Instant::now())
                         {
                             host_log!(Category::Lifecycle, Level::Warn, "render fault: {error}");
                         }
@@ -1074,7 +1075,11 @@ mod tests {
         assert_eq!(frame.scenes, 1);
         assert_eq!(service.fault_stats().totals(), [0, 0, 1]);
         let lines = lock(&CAPTURE.0);
-        assert_eq!(lines.len(), 1, "one host_log line per failed scene incident");
+        assert_eq!(
+            lines.len(),
+            1,
+            "one host_log line per failed scene incident"
+        );
         assert_eq!(lines[0].0, Level::Warn);
         assert!(lines[0].1.starts_with("render fault #1 ResourceLimit "));
     }
