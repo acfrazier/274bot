@@ -1326,6 +1326,10 @@ impl Play {
             .and_then(|bot| bot.slot_escape())
     }
 
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "Borrow the manual-arm owner registry without storing another registry or allocating a dispatch context."
+    )]
     pub fn map_walk(
         &self,
         command: MapCommand,
@@ -1339,6 +1343,10 @@ impl Play {
         self.map_walk_with_snapshot(command, current, Some(snapshot), state, bank, input, arms)
     }
 
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "Borrow the manual-arm owner registry without storing another registry or allocating a dispatch context."
+    )]
     /// Dispatch from a validated status origin even before a frame is present.
     /// A missing snapshot cannot create prerequisite context for a gated route.
     pub fn map_walk_with_snapshot(
