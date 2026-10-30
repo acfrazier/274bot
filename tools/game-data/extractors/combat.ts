@@ -447,15 +447,14 @@ function ordinaryMeleeAttackHandlers(relevant: { script: CombatScript; section: 
         if (!ordinaryMeleeBodyIsSafe(section.body, script, scripts)) return false;
         const dispatchCount = ordinaryMeleeDispatchCount(section.body, script, scripts);
         if (dispatchCount === null || dispatchCount > 1) return false;
+        if (dispatchCount === 1) {
+            hasMeleeDispatch = true;
+            continue;
+        }
         const expanded = expandSections(section.body, script, scripts, true);
         const modes = expanded.flatMap(({ body }) =>
             [...body.matchAll(/\bnpc_setmode\s*\(\s*\^?([A-Za-z][A-Za-z0-9_]*)\s*\)/g)].map((match) => match[1]!),
         );
-        if (dispatchCount === 1) {
-            if (modes.some((mode) => mode !== 'null')) return false;
-            hasMeleeDispatch = true;
-            continue;
-        }
         if (section.kind === 'ai_opplayer2' && hasApHandler && hasModeRoute(modes, 'applayer2')) continue;
         if (section.kind === 'ai_applayer2' && hasOpHandler && hasModeRoute(modes, 'opplayer2')) continue;
         if (section.kind === 'ai_applayer2' && defaultOpMelee && hasModeRoute(modes, 'opplayer2')) {
