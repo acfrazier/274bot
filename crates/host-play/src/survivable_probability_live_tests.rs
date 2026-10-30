@@ -802,7 +802,7 @@ fn exercise(rig: &mut Rig, mut cell: Cell, receipt: &mut Value) {
             .find(|frame| frame["poison"] == "Clear")
             .expect("the observed approach must establish Clear");
         let path = script::combat::risk::RoutePath::new(
-            nav_planner::producer::route_view(&rig.world, &route).unwrap(),
+            nav_planner::producer::route_view(rig.world.as_ref(), &route).unwrap(),
         )
         .unwrap();
         assert!(
@@ -838,8 +838,7 @@ fn qualify_probability_poison_starts() {
     let selected = api::game_data::for_revision(api::selected::ClientRevision::R289).unwrap();
     let combat = script::combat::tables::CombatTables::build(Arc::clone(&selected)).unwrap();
     let risks = RiskTables::build(&combat);
-    let mut world =
-        NavWorld::load_pack(Path::new(&std::env::var_os("WORLD_NAV_PACK").unwrap())).unwrap();
+    let world = NavWorld::load_pack(Path::new(&std::env::var_os("WORLD_NAV_PACK").unwrap())).unwrap();
     world.bind_named_bank_facts(&selected).unwrap();
     let state = WorldState::default().with_map_members(true);
     let mut input = RiskInput {
