@@ -11,7 +11,7 @@
 //! GATHERER_TICK_EVIDENCE paths. The evidence destination must not already exist.
 
 use super::{mint_profile, required, selected_profile, TempRoot};
-use api::interact::{self, Interactions};
+use api::interact;
 use api::snapshot::{GameSnapshot, WorldTile};
 use client::client::Client;
 use client::io::ClientProt289;
@@ -675,7 +675,10 @@ impl LiveRun {
         self.play_mut()
             .try_spawn_slot(profile, None, None, None)
             .map_err(|error| format!("spawn Engine L account: {error}"))?;
-        self.play_mut().focus(&self.account);
+        self.play
+            .as_mut()
+            .expect("live tick Play missing")
+            .focus(&self.account);
         self.wait_setup_ready()?;
         let after = self.hook.observed_host_frame();
         self.hook
@@ -697,7 +700,9 @@ impl LiveRun {
             self.case.name(), self.account, self.profile_identity, self.world_members,
             baseline.game_tick, self.case.target(), self.case.seeds()
         );
-        self.play_mut()
+        self.play
+            .as_mut()
+            .expect("live tick Play missing")
             .script_start(
                 &self.account,
                 script::CompiledId("Gatherer"),
@@ -1121,14 +1126,14 @@ fn status_json(status: &StatusObservation) -> Value {
 
 fn opcode_name(opcode: u8) -> &'static str {
     let candidates = [
-        (ClientProt289::OPNPC1.id, "OPNPC1"),
-        (ClientProt289::OPLOC1.id, "OPLOC1"),
-        (ClientProt289::MOVE_OPCLICK.id, "MOVE_OPCLICK"),
-        (ClientProt289::OPHELDU.id, "OPHELDU"),
-        (ClientProt289::IF_BUTTON.id, "IF_BUTTON"),
-        (ClientProt289::CLOSE_MODAL.id, "CLOSE_MODAL"),
-        (ClientProt289::CLIENT_CHEAT.id, "CLIENT_CHEAT"),
-        (ClientProt289::MOVE_GAMECLICK.id, "MOVE_GAMECLICK"),
+        (ClientProt289::OPNPC1.id as u8, "OPNPC1"),
+        (ClientProt289::OPLOC1.id as u8, "OPLOC1"),
+        (ClientProt289::MOVE_OPCLICK.id as u8, "MOVE_OPCLICK"),
+        (ClientProt289::OPHELDU.id as u8, "OPHELDU"),
+        (ClientProt289::IF_BUTTON.id as u8, "IF_BUTTON"),
+        (ClientProt289::CLOSE_MODAL.id as u8, "CLOSE_MODAL"),
+        (ClientProt289::CLIENT_CHEAT.id as u8, "CLIENT_CHEAT"),
+        (ClientProt289::MOVE_GAMECLICK.id as u8, "MOVE_GAMECLICK"),
     ];
     candidates
         .iter()
@@ -1194,11 +1199,14 @@ mod tests {
 
     #[test]
     fn opcode_names_match_revision_289_user_action_rows() {
-        assert_eq!(opcode_name(ClientProt289::MOVE_OPCLICK.id), "MOVE_OPCLICK");
-        assert_eq!(opcode_name(ClientProt289::OPNPC1.id), "OPNPC1");
-        assert_eq!(opcode_name(ClientProt289::OPLOC1.id), "OPLOC1");
-        assert_eq!(opcode_name(ClientProt289::OPHELDU.id), "OPHELDU");
-        assert_eq!(opcode_name(ClientProt289::IF_BUTTON.id), "IF_BUTTON");
+        assert_eq!(
+            opcode_name(ClientProt289::MOVE_OPCLICK.id as u8),
+            "MOVE_OPCLICK"
+        );
+        assert_eq!(opcode_name(ClientProt289::OPNPC1.id as u8), "OPNPC1");
+        assert_eq!(opcode_name(ClientProt289::OPLOC1.id as u8), "OPLOC1");
+        assert_eq!(opcode_name(ClientProt289::OPHELDU.id as u8), "OPHELDU");
+        assert_eq!(opcode_name(ClientProt289::IF_BUTTON.id as u8), "IF_BUTTON");
     }
 }
 

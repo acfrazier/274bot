@@ -115,9 +115,9 @@ mod tests {
     #[test]
     fn separates_handler_charge_from_script_refusal_and_account() {
         let text = row(10, "tmxother", true, true, "accepted")
-            + &row(11, "tmxmine", true, true, "refused")
-            + &row(12, "tmxmine", true, false, "deferred")
-            + &row(13, "tmxmine", false, false, "refused");
+            + row(11, "tmxmine", true, true, "refused").as_str()
+            + row(12, "tmxmine", true, false, "deferred").as_str()
+            + row(13, "tmxmine", false, false, "refused").as_str();
         let packets = parse(&text, "tmxmine").unwrap();
         assert_eq!(packets.len(), 3);
         assert!(packets[0].handler_accepted);
@@ -133,7 +133,7 @@ mod tests {
         assert!(parse(&row(10, "tmxother", true, true, "accepted"), "tmxmine").is_err());
         let complete = row(10, "tmxmine", true, true, "accepted");
         assert!(parse(complete.trim_end(), "tmxmine").is_err());
-        let gap = complete + &row(12, "tmxmine", true, true, "accepted");
+        let gap = complete + row(12, "tmxmine", true, true, "accepted").as_str();
         assert!(parse(&gap, "tmxmine").is_err());
     }
 

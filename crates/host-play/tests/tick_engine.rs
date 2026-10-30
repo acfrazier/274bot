@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-use api::interact::{self, Interactions};
+use api::interact;
 use api::snapshot::{GameSnapshot, WorldTile};
 use client::client::Client;
 use client::io::ClientProt289;
@@ -621,7 +621,7 @@ fn send_pre_batch_user_events(
         .filter(|wire| {
             wire.host_frame == host_frame
                 && wire.request_id.is_none()
-                && wire.opcode == ClientProt289::MOVE_GAMECLICK.id
+                && wire.opcode == ClientProt289::MOVE_GAMECLICK.id as u8
         })
         .count();
     let mut state = state
@@ -693,10 +693,10 @@ impl LiveRun {
         let catalog_root = required_dir("GATHERER_CATALOG_ROOT")?;
         let temp = TempRoot::new(scenario.name)?;
         let proxy = if scenario.use_proxy {
-            Some(Arc::new(LoopbackProxy::start(SocketAddr::from((
-                [127, 0, 0, 1],
-                ENGINE_GAME_PORT,
-            )))?))
+            Some(Arc::new(
+                LoopbackProxy::start(SocketAddr::from(([127, 0, 0, 1], ENGINE_GAME_PORT)))
+                    .map_err(|error| format!("start Engine T loopback proxy: {error}"))?,
+            ))
         } else {
             None
         };
@@ -778,7 +778,7 @@ impl LiveRun {
         let hook = TickEngineTestHook::new(account.clone());
         hook.install();
         if let Some(proxy) = &proxy {
-            hook.set_transport_controller(Arc::clone(proxy));
+            hook.set_transport_controller(proxy.clone());
         }
         let frame_setup = Arc::clone(&setup);
         let frame_foreign_events = Arc::clone(&foreign_events);
@@ -852,7 +852,10 @@ impl LiveRun {
         self.play_mut()
             .try_spawn_slot(profile, None, None, None)
             .map_err(|error| format!("spawn Engine T account: {error}"))?;
-        self.play_mut().focus(&self.account);
+        self.play
+            .as_mut()
+            .expect("live Play exists until shutdown")
+            .focus(&self.account);
         self.wait_setup_ready()?;
         self.engine_log = Some(EnginePacketLog::capture(required_file(
             "TICK_ENGINE_PACKET_LOG",
@@ -893,7 +896,9 @@ impl LiveRun {
                 .map_err(|_| "tick-engine foreign event state poisoned")?
                 .armed = true;
         }
-        self.play_mut()
+        self.play
+            .as_mut()
+            .expect("live Play exists until shutdown")
             .script_start(
                 &self.account,
                 script::CompiledId("Gatherer"),
@@ -1213,12 +1218,12 @@ fn correlate_engine_packets(evidence: &RunEvidence) -> Result<(), String> {
         .map_err(|error| format!("Engine T packet capture failed: {error}"))?;
     let relevant = |opcode| {
         [
-            ClientProt289::OPHELDU.id,
-            ClientProt289::IF_BUTTON.id,
-            ClientProt289::MOVE_GAMECLICK.id,
-            ClientProt289::MOVE_OPCLICK.id,
-            ClientProt289::OPLOC1.id,
-            ClientProt289::OPNPC1.id,
+            ClientProt289::OPHELDU.id as u8,
+            ClientProt289::IF_BUTTON.id as u8,
+            ClientProt289::MOVE_GAMECLICK.id as u8,
+            ClientProt289::MOVE_OPCLICK.id as u8,
+            ClientProt289::OPLOC1.id as u8,
+            ClientProt289::OPNPC1.id as u8,
         ]
         .contains(&opcode)
     };
@@ -1327,7 +1332,7 @@ fn engine_accepted_user_event(packet: &EnginePacket) -> bool {
 fn assert_engine_accepted_make_prefix(packets: &[EnginePacket]) -> Result<(), String> {
     let Some(opener_index) = packets
         .iter()
-        .position(|packet| packet.opcode == ClientProt289::OPHELDU.id)
+        .position(|packet| packet.opcode == ClientProt289::OPHELDU.id as u8)
     else {
         return Err("Engine T log has no Knife opener for accepted-Make case".into());
     };
@@ -1335,7 +1340,7 @@ fn assert_engine_accepted_make_prefix(packets: &[EnginePacket]) -> Result<(), St
     let make = packets
         .iter()
         .skip(opener_index + 1)
-        .find(|packet| packet.opcode == ClientProt289::IF_BUTTON.id);
+        .find(|packet| packet.opcode == ClientProt289::IF_BUTTON.id as u8);
     if !make.is_some_and(|make| {
         make.tick == opener.tick
             && make.sequence > opener.sequence
@@ -1368,27 +1373,27 @@ fn assert_deferred_terminal_row(
         let movement: Vec<_> = rows
             .iter()
             .copied()
-            .filter(|packet| packet.opcode == ClientProt289::MOVE_GAMECLICK.id)
+            .filter(|packet| packet.opcode == ClientProt289::MOVE_GAMECLICK.id as u8)
             .collect();
         let opener: Vec<_> = rows
             .iter()
             .copied()
-            .filter(|packet| packet.opcode == ClientProt289::OPHELDU.id)
+            .filter(|packet| packet.opcode == ClientProt289::OPHELDU.id as u8)
             .collect();
         let make: Vec<_> = rows
             .iter()
             .copied()
-            .filter(|packet| packet.opcode == ClientProt289::IF_BUTTON.id)
+            .filter(|packet| packet.opcode == ClientProt289::IF_BUTTON.id as u8)
             .collect();
         let deferred_move: Vec<_> = rows
             .iter()
             .copied()
-            .filter(|packet| packet.opcode == ClientProt289::MOVE_OPCLICK.id)
+            .filter(|packet| packet.opcode == ClientProt289::MOVE_OPCLICK.id as u8)
             .collect();
         let deferred_loc: Vec<_> = rows
             .iter()
             .copied()
-            .filter(|packet| packet.opcode == ClientProt289::OPLOC1.id)
+            .filter(|packet| packet.opcode == ClientProt289::OPLOC1.id as u8)
             .collect();
         if movement.len() != 3
             || opener.len() != 1
@@ -1800,9 +1805,9 @@ fn checked_click_pairs(trace: &TickEngineTrace, tick: u64) -> usize {
             opcodes
                 .windows(2)
                 .filter(|pair| {
-                    pair[0] == ClientProt289::MOVE_OPCLICK.id
-                        && (pair[1] == ClientProt289::OPLOC1.id
-                            || pair[1] == ClientProt289::OPNPC1.id)
+                    pair[0] == ClientProt289::MOVE_OPCLICK.id as u8
+                        && (pair[1] == ClientProt289::OPLOC1.id as u8
+                            || pair[1] == ClientProt289::OPNPC1.id as u8)
                 })
                 .count()
         })
@@ -2018,10 +2023,10 @@ fn assert_proxy_drop_after_make(run: &LiveRun, request_id: u64) -> Result<(), St
         || observation.mutation != "DropSuffixAfterPacket(2)"
         || packet_opcodes.as_slice()
             != [
-                ClientProt289::OPHELDU.id,
-                ClientProt289::IF_BUTTON.id,
-                ClientProt289::MOVE_OPCLICK.id,
-                ClientProt289::OPLOC1.id,
+                ClientProt289::OPHELDU.id as u8,
+                ClientProt289::IF_BUTTON.id as u8,
+                ClientProt289::MOVE_OPCLICK.id as u8,
+                ClientProt289::OPLOC1.id as u8,
             ]
         || observation.packet_requests != expected_packets
         || observation.packet_opcodes != packet_opcodes
@@ -2088,13 +2093,13 @@ fn assert_pre_batch_user_events(
         .filter_map(|(index, wire)| {
             (wire.host_frame == host_frame
                 && wire.request_id.is_none()
-                && wire.opcode == ClientProt289::MOVE_GAMECLICK.id)
+                && wire.opcode == ClientProt289::MOVE_GAMECLICK.id as u8)
                 .then_some(index)
         })
         .collect();
     let opener_position = trace.wire.iter().position(|wire| {
         wire.request_id == Some(dispatch.receipt.request_id)
-            && wire.opcode == ClientProt289::OPHELDU.id
+            && wire.opcode == ClientProt289::OPHELDU.id as u8
     });
     if events.requested != 3
         || !events.sent
@@ -2146,7 +2151,7 @@ fn assert_click_target(
         .into_iter()
         .map(|wire| wire.opcode)
         .collect();
-    let expected = [ClientProt289::MOVE_OPCLICK.id, target_opcode];
+    let expected = [ClientProt289::MOVE_OPCLICK.id as u8, target_opcode];
     if observed.as_slice() != expected.as_slice() {
         return Err(run.failure(format!(
             "checked click at tick {tick} encoded {observed:?}, expected {expected:?}"
@@ -2423,10 +2428,10 @@ fn tick_engine_clean_continuing_river() {
             &trace,
             &dispatch,
             &[
-                ClientProt289::OPHELDU.id,
-                ClientProt289::IF_BUTTON.id,
-                ClientProt289::MOVE_OPCLICK.id,
-                ClientProt289::OPLOC1.id,
+                ClientProt289::OPHELDU.id as u8,
+                ClientProt289::IF_BUTTON.id as u8,
+                ClientProt289::MOVE_OPCLICK.id as u8,
+                ClientProt289::OPLOC1.id as u8,
             ],
         )?;
         if !dispatch.request_debug.as_deref().is_some_and(|request| {
@@ -2486,7 +2491,10 @@ fn tick_engine_clean_ending_net_twenty_cycles() {
             run,
             &trace,
             &dispatch,
-            &[ClientProt289::OPHELDU.id, ClientProt289::IF_BUTTON.id],
+            &[
+                ClientProt289::OPHELDU.id as u8,
+                ClientProt289::IF_BUTTON.id as u8,
+            ],
         )?;
         if !dispatch
             .request_debug
@@ -2501,7 +2509,7 @@ fn tick_engine_clean_ending_net_twenty_cycles() {
                 .is_some_and(|status| status.tick_unobserved.unwrap_or(0) >= NET_REQUIRED_CYCLES)
         })?;
         let trace = run.hook.trace();
-        assert_click_target(run, &trace, origin + 2, ClientProt289::OPNPC1.id)?;
+        assert_click_target(run, &trace, origin + 2, ClientProt289::OPNPC1.id as u8)?;
         if run.product_gain(&trace) <= 0 && run.skill_xp_gain(&trace) <= 0 {
             return Err(run.failure("ending net produced neither a real fish nor Fishing XP"));
         }
@@ -2530,7 +2538,7 @@ fn tick_engine_stale_menu_guard_late_case_two() {
         let first = first_knife(&trace).map_err(|error| run.failure(error))?;
         let origin = first.receipt.dispatch_tick;
         assert_batch(run, &first, 1, 1)?;
-        assert_knife_wire_order(run, &trace, &first, &[ClientProt289::OPHELDU.id])?;
+        assert_knife_wire_order(run, &trace, &first, &[ClientProt289::OPHELDU.id as u8])?;
         let baseline = run
             .baseline
             .as_ref()
@@ -2564,10 +2572,10 @@ fn tick_engine_stale_menu_guard_late_case_two() {
             &trace,
             second,
             &[
-                ClientProt289::OPHELDU.id,
-                ClientProt289::IF_BUTTON.id,
-                ClientProt289::MOVE_OPCLICK.id,
-                ClientProt289::OPLOC1.id,
+                ClientProt289::OPHELDU.id as u8,
+                ClientProt289::IF_BUTTON.id as u8,
+                ClientProt289::MOVE_OPCLICK.id as u8,
+                ClientProt289::OPLOC1.id as u8,
             ],
         )?;
         if !frames_in_tick(&trace, origin + 1)
@@ -2616,7 +2624,7 @@ fn tick_engine_split_opener_late_case_one() {
         if trace
             .wire
             .iter()
-            .any(|wire| wire.opcode == ClientProt289::RESUME_PAUSEBUTTON.id)
+            .any(|wire| wire.opcode == ClientProt289::RESUME_PAUSEBUTTON.id as u8)
         {
             return Err(run.failure("split-opener branch unexpectedly emitted a pause press"));
         }
@@ -2624,10 +2632,10 @@ fn tick_engine_split_opener_late_case_one() {
             run,
             first.receipt.request_id,
             &[
-                ClientProt289::OPHELDU.id,
-                ClientProt289::IF_BUTTON.id,
-                ClientProt289::MOVE_OPCLICK.id,
-                ClientProt289::OPLOC1.id,
+                ClientProt289::OPHELDU.id as u8,
+                ClientProt289::IF_BUTTON.id as u8,
+                ClientProt289::MOVE_OPCLICK.id as u8,
+                ClientProt289::OPLOC1.id as u8,
             ],
             origin as u32 + 1,
         )?;
@@ -2677,10 +2685,10 @@ fn tick_engine_plain_late_river_and_mithril_iron() {
             run,
             first.receipt.request_id,
             &[
-                ClientProt289::OPHELDU.id,
-                ClientProt289::IF_BUTTON.id,
-                ClientProt289::MOVE_OPCLICK.id,
-                ClientProt289::OPLOC1.id,
+                ClientProt289::OPHELDU.id as u8,
+                ClientProt289::IF_BUTTON.id as u8,
+                ClientProt289::MOVE_OPCLICK.id as u8,
+                ClientProt289::OPLOC1.id as u8,
             ],
             origin as u32 + 1,
         )?;
@@ -2724,10 +2732,10 @@ fn tick_engine_plain_late_river_and_mithril_iron() {
             run,
             first.receipt.request_id,
             &[
-                ClientProt289::OPHELDU.id,
-                ClientProt289::IF_BUTTON.id,
-                ClientProt289::MOVE_OPCLICK.id,
-                ClientProt289::OPLOC1.id,
+                ClientProt289::OPHELDU.id as u8,
+                ClientProt289::IF_BUTTON.id as u8,
+                ClientProt289::MOVE_OPCLICK.id as u8,
+                ClientProt289::OPLOC1.id as u8,
             ],
             origin as u32 + 1,
         )?;
@@ -2748,10 +2756,10 @@ fn copper_history(scenario: Scenario, expect_held_join: bool) -> Result<RunEvide
             &initial_trace,
             &first,
             &[
-                ClientProt289::OPHELDU.id,
-                ClientProt289::IF_BUTTON.id,
-                ClientProt289::MOVE_OPCLICK.id,
-                ClientProt289::OPLOC1.id,
+                ClientProt289::OPHELDU.id as u8,
+                ClientProt289::IF_BUTTON.id as u8,
+                ClientProt289::MOVE_OPCLICK.id as u8,
+                ClientProt289::OPLOC1.id as u8,
             ],
         )?;
         run.wait_until(origin as u32, COPPER_BUDGET, |trace, statuses| {
@@ -2780,10 +2788,10 @@ fn copper_history(scenario: Scenario, expect_held_join: bool) -> Result<RunEvide
             &trace,
             &batches[1],
             &[
-                ClientProt289::OPHELDU.id,
-                ClientProt289::IF_BUTTON.id,
-                ClientProt289::MOVE_OPCLICK.id,
-                ClientProt289::OPLOC1.id,
+                ClientProt289::OPHELDU.id as u8,
+                ClientProt289::IF_BUTTON.id as u8,
+                ClientProt289::MOVE_OPCLICK.id as u8,
+                ClientProt289::OPLOC1.id as u8,
             ],
         )?;
         if run.product_gain(&trace) <= 0 && run.skill_xp_gain(&trace) <= 0 {
@@ -2801,10 +2809,10 @@ fn copper_history(scenario: Scenario, expect_held_join: bool) -> Result<RunEvide
                 .as_ref()
                 .map_or_else(Vec::new, |proxy| proxy.observations());
             let expected_opcodes = vec![
-                ClientProt289::OPHELDU.id,
-                ClientProt289::IF_BUTTON.id,
-                ClientProt289::MOVE_OPCLICK.id,
-                ClientProt289::OPLOC1.id,
+                ClientProt289::OPHELDU.id as u8,
+                ClientProt289::IF_BUTTON.id as u8,
+                ClientProt289::MOVE_OPCLICK.id as u8,
+                ClientProt289::OPLOC1.id as u8,
             ];
             let complete = observations.first().is_some_and(|observation| {
                 let expected_bytes: usize = observation.packet_lengths.iter().sum();
@@ -2913,7 +2921,10 @@ fn tick_engine_accepted_make_without_click() {
             run,
             &run.hook.trace(),
             &first,
-            &[ClientProt289::OPHELDU.id, ClientProt289::IF_BUTTON.id],
+            &[
+                ClientProt289::OPHELDU.id as u8,
+                ClientProt289::IF_BUTTON.id as u8,
+            ],
         )?;
         assert_make_without_click_outcome(run, origin)
     })
@@ -2933,10 +2944,10 @@ fn tick_engine_deferred_terminal_row_is_a_slip_after_three_foreign_events() {
             &run.hook.trace(),
             &first,
             &[
-                ClientProt289::OPHELDU.id,
-                ClientProt289::IF_BUTTON.id,
-                ClientProt289::MOVE_OPCLICK.id,
-                ClientProt289::OPLOC1.id,
+                ClientProt289::OPHELDU.id as u8,
+                ClientProt289::IF_BUTTON.id as u8,
+                ClientProt289::MOVE_OPCLICK.id as u8,
+                ClientProt289::OPLOC1.id as u8,
             ],
         )?;
         assert_pre_batch_user_events(run, &first)?;
@@ -3010,10 +3021,10 @@ fn tick_engine_proxy_drop_after_make_keeps_full_host_receipt() {
             &run.hook.trace(),
             &first,
             &[
-                ClientProt289::OPHELDU.id,
-                ClientProt289::IF_BUTTON.id,
-                ClientProt289::MOVE_OPCLICK.id,
-                ClientProt289::OPLOC1.id,
+                ClientProt289::OPHELDU.id as u8,
+                ClientProt289::IF_BUTTON.id as u8,
+                ClientProt289::MOVE_OPCLICK.id as u8,
+                ClientProt289::OPLOC1.id as u8,
             ],
         )?;
         assert_make_without_click_outcome(run, origin)?;
@@ -3031,7 +3042,12 @@ fn lone_opener_history(name: &'static str, suppress: bool) -> Result<RunEvidence
         let first = first_knife(&run.hook.trace()).map_err(|error| run.failure(error))?;
         let origin = first.receipt.dispatch_tick;
         assert_batch(run, &first, 1, 1)?;
-        assert_knife_wire_order(run, &run.hook.trace(), &first, &[ClientProt289::OPHELDU.id])?;
+        assert_knife_wire_order(
+            run,
+            &run.hook.trace(),
+            &first,
+            &[ClientProt289::OPHELDU.id as u8],
+        )?;
         let baseline = run
             .baseline
             .as_ref()
@@ -3048,8 +3064,8 @@ fn lone_opener_history(name: &'static str, suppress: bool) -> Result<RunEvidence
         let trace = run.hook.trace();
         assert_click(run, &trace, origin + 1)?;
         if trace.wire.iter().any(|wire| {
-            wire.opcode == ClientProt289::IF_BUTTON.id
-                || wire.opcode == ClientProt289::CLOSE_MODAL.id
+            wire.opcode == ClientProt289::IF_BUTTON.id as u8
+                || wire.opcode == ClientProt289::CLOSE_MODAL.id as u8
         }) {
             return Err(run.failure("lone opener emitted IF_BUTTON or host CLOSE_MODAL"));
         }
@@ -3111,7 +3127,7 @@ fn tick_engine_free_world_disables_members_only_knife_arm() {
         let knife_wires = wires_for_request(&trace, knife_dispatches[0].receipt.request_id);
         if !knife_wires
             .iter()
-            .any(|wire| wire.opcode == ClientProt289::OPHELDU.id)
+            .any(|wire| wire.opcode == ClientProt289::OPHELDU.id as u8)
         {
             return Err(run.failure("free-world KnifeArm did not encode OPHELDU"));
         }
@@ -3131,7 +3147,7 @@ fn tick_engine_free_world_disables_members_only_knife_arm() {
                 "free-world run did not expose the authored Fletching members-only message",
             ));
         }
-        assert_click_target(run, &trace, start + 1, ClientProt289::OPLOC1.id)?;
+        assert_click_target(run, &trace, u64::from(start + 1), ClientProt289::OPLOC1.id as u8)?;
         if run.latest_tick_method() != Some("Knife (off: members-only-arm)") {
             return Err(run.failure("tick_method did not report Knife (off: members-only-arm)"));
         }
@@ -3199,6 +3215,7 @@ mod packet_oracle_tests {
             profile: "test".into(),
             world_members: "unknown".into(),
             product_ids: Vec::new(),
+            pre_batch_user_events: ForeignEventState::default(),
             start_tick: Some(7),
             baseline: None,
             trace: TickEngineTrace {
@@ -3243,10 +3260,10 @@ mod packet_oracle_tests {
     fn engine_correlation_accepts_byte_preserving_make_suffix_drop() {
         let request = 11;
         let make_opcodes = vec![
-            ClientProt289::OPHELDU.id,
-            ClientProt289::IF_BUTTON.id,
-            ClientProt289::MOVE_OPCLICK.id,
-            ClientProt289::OPLOC1.id,
+            ClientProt289::OPHELDU.id as u8,
+            ClientProt289::IF_BUTTON.id as u8,
+            ClientProt289::MOVE_OPCLICK.id as u8,
+            ClientProt289::OPLOC1.id as u8,
         ];
         let make_lengths = vec![6, 4, 7, 5];
         let mut wire_packets: Vec<_> = make_opcodes
@@ -3254,7 +3271,10 @@ mod packet_oracle_tests {
             .zip(&make_lengths)
             .map(|(opcode, length)| wire(*opcode, request, *length))
             .collect();
-        let click_opcodes = [ClientProt289::MOVE_OPCLICK.id, ClientProt289::OPNPC1.id];
+        let click_opcodes = [
+            ClientProt289::MOVE_OPCLICK.id as u8,
+            ClientProt289::OPNPC1.id as u8,
+        ];
         wire_packets.extend(
             click_opcodes
                 .iter()
@@ -3283,10 +3303,10 @@ mod packet_oracle_tests {
     fn engine_correlation_rejects_proxy_dropped_packets_reported_by_engine() {
         let request = 21;
         let opcodes = vec![
-            ClientProt289::OPHELDU.id,
-            ClientProt289::IF_BUTTON.id,
-            ClientProt289::MOVE_OPCLICK.id,
-            ClientProt289::OPLOC1.id,
+            ClientProt289::OPHELDU.id as u8,
+            ClientProt289::IF_BUTTON.id as u8,
+            ClientProt289::MOVE_OPCLICK.id as u8,
+            ClientProt289::OPLOC1.id as u8,
         ];
         let lengths = vec![6, 4, 7, 5];
         let wire_packets = opcodes
@@ -3309,10 +3329,10 @@ mod packet_oracle_tests {
     fn engine_correlation_rejects_non_packet_aligned_proxy_accounting() {
         let request = 31;
         let opcodes = vec![
-            ClientProt289::OPHELDU.id,
-            ClientProt289::IF_BUTTON.id,
-            ClientProt289::MOVE_OPCLICK.id,
-            ClientProt289::OPLOC1.id,
+            ClientProt289::OPHELDU.id as u8,
+            ClientProt289::IF_BUTTON.id as u8,
+            ClientProt289::MOVE_OPCLICK.id as u8,
+            ClientProt289::OPLOC1.id as u8,
         ];
         let lengths = vec![6, 4, 7, 5];
         let wire_packets = opcodes
