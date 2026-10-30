@@ -60,6 +60,17 @@ pub(super) const DIALOGUE_APPROACH_SLACK_TICKS: u32 = 2;
 /// failure is never terminal until its bounded retries are spent"). A replan
 /// after an NPC move restores the count.
 const DIALOGUE_WALK_RETRIES: u8 = 1;
+/// Observed ticks to wait for the router's answer to one route assessment.
+/// The host publishes the answer on the first observation after its route
+/// job ends (`script_observe.rs:2116-2119`). A route cleanup drops a pending
+/// advisory without an answer (`script_nav.rs:7109-7126`). In the live clean
+/// Cook's Assistant run `d3c1` (QUESTER-DIALOGUE-OPEN r3), the Dialogue asked
+/// on the tick that its Talk pre-walk ended, and no answer came for 2,000
+/// ticks until the watchdog restarted the script. The cause is not proven.
+/// No content signal exists for host compute time, so this bound only tells a
+/// lost request from a slow one. An unanswered request is a walk failure with
+/// the same one fresh plan.
+const DIALOGUE_ASSESS_TICKS: u64 = 8;
 pub const DRIVE_STEPS: u32 = 120;
 pub const PAGE_ACK_MS: u64 = 3_000;
 /// Ticks before acting on a page that changed text on the same root (a same-
@@ -336,7 +347,8 @@ pub struct Dialogue {
     npc_index: i32,
     npc_action: Arc<str>,
     deadline_ms: u64,
-    /// Deadline for the current approach route or first-page wait.
+    /// Deadline for the current approach route, route assessment or first-page
+    /// wait.
     content_deadline_tick: u64,
     walk_request_id: u64,
     /// Remaining routes to replan after the NPC wanders.
@@ -817,6 +829,10 @@ impl Dialogue {
                 "the walk did not reach the NPC by observed tick {}",
                 self.content_deadline_tick
             ),
+            WalkFailure::NoAnswer => format!(
+                "the router did not answer the route assessment by observed tick {}",
+                self.content_deadline_tick
+            ),
             WalkFailure::NpcKeepsMoving => "the NPC kept moving through every replan".to_owned(),
         };
         let reason = if self.refusal_recovery_active {
@@ -867,6 +883,10 @@ impl Dialogue {
                 self.assess_request_id = cx.assess_walk(request)?;
                 self.walk_request_id = 0;
                 self.phase = Phase::Plan;
+                self.content_deadline_tick = cx
+                    .evidence()
+                    .tick
+                    .saturating_add(DIALOGUE_ASSESS_TICKS);
             }
         }
         if previous != 0 && previous != self.walk_request_id {
@@ -933,6 +953,9 @@ impl Dialogue {
             return Poll::Pending;
         }
         let Some(receipt) = cx.assess_receipt(self.assess_request_id) else {
+            if tick >= self.content_deadline_tick {
+                return self.walk_failed(cx, tick, WalkFailure::NoAnswer);
+            }
             return Poll::Pending;
         };
         let route_ticks = receipt.route_ticks;
@@ -1633,6 +1656,8 @@ enum WalkFailure {
     Ended(Arc<str>),
     /// The route's observed-tick budget ran out.
     Late,
+    /// The router did not answer a route assessment in time.
+    NoAnswer,
     /// Every replan was spent on a moving NPC.
     NpcKeepsMoving,
 }

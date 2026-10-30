@@ -94,13 +94,14 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.7` 
   planned walking tile, plus two slack ticks. When the live reach map cannot
   reach the NPC, the budget is the route length that the route planner reports
   for the same walk, plus the two slack ticks. A request with no route fails
-  with a named reason after one fresh plan. A route that ends short while the
-  NPC stands still also gets one fresh plan. A replan, one for each tile other
-  than the NPC's home tile in its legal wander square, is spent only when the
-  NPC has moved. The first-page clock counts four observed ticks from the
-  engine's read of the accepted Talk-to click, or from the bot's arrival beside
-  the NPC if that comes later. The NPC's first game message restarts it. A page
-  on the deadline tick is accepted.
+  with a named reason after one fresh plan. A route planner that gives no
+  answer within eight observed ticks counts the same way. A route that ends
+  short while the NPC stands still also gets one fresh plan. A replan, one for
+  each tile other than the NPC's home tile in its legal wander square, is spent
+  only when the NPC has moved. The first-page clock counts four observed ticks
+  from the engine's read of the accepted Talk-to click, or from the bot's
+  arrival beside the NPC if that comes later. The NPC's first game message
+  restarts it. A page on the deadline tick is accepted.
 - Damage from quest dialogue no longer looks like an attack when no visible
   NPC or player targets the bot.
 - A failed walk also reports where its route ended.

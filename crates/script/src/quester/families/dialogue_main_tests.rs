@@ -1479,6 +1479,105 @@ fn dialogue_no_route_is_a_named_walk_failure_after_one_fresh_plan() {
     assert_eq!(walks_requested(&ledger), 0, "no route, no walk");
 }
 
+fn begin_far_cook() -> (
+    Option<Box<ledger::Ledger>>,
+    crate::native::ActionHandle<Dialogue>,
+    GameSnapshot,
+    api::WorldTile,
+) {
+    let cook_id = content_npc_id("cook");
+    let cook_tile = api::WorldTile {
+        x: 0,
+        z: 5,
+        level: 0,
+    };
+    let mut before = snapshot();
+    before.seed_local_player(super::tests::local_player(api::WorldTile {
+        x: 10,
+        z: 5,
+        level: 0,
+    }));
+    before.seed_npcs(vec![content_dialogue_npc(cook_id, "Cook", 10, cook_tile)]);
+    let mut ledger = None;
+    let handle = with_tick(&before, &mut ledger, 1, |tick| {
+        let handle = tick
+            .actions
+            .begin::<Dialogue>(npc_args_for(cook_id, "Cook"), &mut tick.cx)
+            .unwrap();
+        assert!(tick.actions.poll(&handle, &mut tick.cx).is_pending());
+        handle
+    });
+    (ledger, handle, before, cook_tile)
+}
+
+/// The host dropped the route assessment and never answered (live run `d3c1`).
+/// The wait is 8 observed ticks, then one fresh plan, then a named failure.
+#[test]
+fn dialogue_unanswered_route_assessment_is_asked_again_once_then_named_failure() {
+    let (mut ledger, handle, before, _) = begin_far_cook();
+    let first = last_assessment_id(&ledger);
+    for observed in 2..9 {
+        assert!(
+            with_tick(&before, &mut ledger, observed, |tick| {
+                tick.actions.poll(&handle, &mut tick.cx)
+            })
+            .is_pending(),
+            "tick {observed} is inside the 8-tick wait"
+        );
+        assert_eq!(last_assessment_id(&ledger), first);
+    }
+    // Tick 9 ends the wait; the fresh plan follows one tick later.
+    assert!(with_tick(&before, &mut ledger, 9, |tick| {
+        tick.actions.poll(&handle, &mut tick.cx)
+    })
+    .is_pending());
+    assert!(ledger.as_ref().unwrap().outbox.is_empty());
+    assert!(with_tick(&before, &mut ledger, 10, |tick| {
+        tick.actions.poll(&handle, &mut tick.cx)
+    })
+    .is_pending());
+    assert_ne!(last_assessment_id(&ledger), first);
+    for observed in 11..18 {
+        assert!(with_tick(&before, &mut ledger, observed, |tick| {
+            tick.actions.poll(&handle, &mut tick.cx)
+        })
+        .is_pending());
+    }
+    assert!(matches!(
+        with_tick(&before, &mut ledger, 18, |tick| {
+            tick.actions.poll(&handle, &mut tick.cx)
+        }),
+        Poll::Ready(Err(ActionError::Failed(reason)))
+            if reason.as_ref()
+                == "dialogue approach failed: the router did not answer the route assessment by observed tick 18"
+    ));
+    assert_eq!(walks_requested(&ledger), 0);
+}
+
+#[test]
+fn dialogue_route_assessment_answered_after_one_lost_request_sets_the_walk_budget() {
+    let (mut ledger, handle, before, cook_tile) = begin_far_cook();
+    for observed in 2..11 {
+        assert!(with_tick(&before, &mut ledger, observed, |tick| {
+            tick.actions.poll(&handle, &mut tick.cx)
+        })
+        .is_pending());
+    }
+    // The second request, asked at tick 10, is answered with 15 route ticks.
+    super::tests::post_assess_receipt(&mut ledger, 10, 15, None);
+    assert!(with_tick(&before, &mut ledger, 11, |tick| {
+        tick.actions.poll(&handle, &mut tick.cx)
+    })
+    .is_pending());
+    assert_eq!(live_walk_target(&ledger), Some(cook_tile));
+    // The walk was requested at tick 11: 15 route ticks plus 2 slack ticks.
+    assert!(with_tick(&before, &mut ledger, 27, |tick| {
+        tick.actions.poll(&handle, &mut tick.cx)
+    })
+    .is_pending());
+    assert_eq!(live_walk_target(&ledger), Some(cook_tile));
+}
+
 #[test]
 fn dialogue_route_ending_short_with_a_still_npc_is_a_walk_failure_not_a_replan() {
     let brundt_id = content_npc_id("viking_brundt");
