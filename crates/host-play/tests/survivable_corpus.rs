@@ -26,6 +26,10 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
+#[path = "survivable_corpus/qualification.rs"]
+mod qualification;
+use qualification::GuideQualificationFixture;
+
 const DEFAULT_PACK: &str = "/Volumes/dev-scratch/274bot-evidence/NAV-GATED-ENTRANCES/reference-v17/274bot-289-v17.navpack";
 const DEFAULT_QUERY: &str = "/Volumes/dev-scratch/274bot-evidence/SEED-CALC/queries.jsonl";
 const DEFAULT_GUIDE_25: &str = "/Volumes/dev-scratch-2/274bot-worktrees/survivable-accuracy-src";
@@ -141,7 +145,8 @@ fn export() -> Result<(), String> {
     inputs.extend(query_inputs(&world, &query_path, &query_bytes, &query_source)?);
     inputs.extend(live_inputs(&world, &path_schema_source)?);
     inputs.extend(path_schema_probes(&world, &source_roots, &path_schema_source)?);
-    inputs.extend(guide_inputs(&world, &source_roots)?);
+    inputs.extend(guide_inputs(&world, &source_roots, &selected)?);
+    write_qualification_fixture(&output, &inputs)?;
 
     let mut records = Vec::new();
     let mut source_rows: BTreeMap<String, usize> = BTreeMap::new();
@@ -724,8 +729,8 @@ fn loadouts(selected: &api::game_data::SelectedGameData) -> Result<Vec<Loadout>,
         },
         Loadout {
             id: "consent_def1_hp10_unworn_no_food",
-            attack: 40,
-            strength: 40,
+            attack: 1,
+            strength: 1,
             defence: 1,
             hp: 10,
             prayer: 0,
@@ -1225,7 +1230,11 @@ fn path_schema_probes(
     Ok(inputs)
 }
 
-fn guide_inputs(world: &NavWorld, roots: &Value) -> Result<Vec<CorpusInput>, String> {
+fn guide_inputs(
+    world: &NavWorld,
+    roots: &Value,
+    selected: &api::game_data::SelectedGameData,
+) -> Result<Vec<CorpusInput>, String> {
     let mut out = Vec::new();
     for set in ["guide_25", "guide_67"] {
         let root = PathBuf::from(roots[set]["root"].as_str().unwrap_or_default());
@@ -1251,7 +1260,10 @@ fn guide_inputs(world: &NavWorld, roots: &Value) -> Result<Vec<CorpusInput>, Str
                 "index_status": entry.get("status").cloned().unwrap_or(Value::Null),
             });
             let steps = collect_guide_steps(&document);
-            for (role_index, role, container, stage, step_index, step) in steps {
+            let mut fixtures = HashMap::<usize, GuideQualificationFixture>::new();
+            let mut previous_sequence = None;
+            let mut previous_target = None;
+            for (role_index, role, container, sequence_index, stage, step_index, step) in steps {
                 let kind = step["kind"].as_str().unwrap_or("unknown");
                 if kind != "walk" && kind != "combat" && kind != "fight" {
                     continue;
@@ -1260,8 +1272,24 @@ fn guide_inputs(world: &NavWorld, roots: &Value) -> Result<Vec<CorpusInput>, Str
                 let args = &step["args"];
                 let target = args.get("tile").and_then(parse_tile)
                     .or_else(|| args.pointer("/stand/tile").and_then(parse_tile));
-                let from = step.get("from").and_then(parse_tile)
+                let authored_from = step.get("from").and_then(parse_tile)
                     .or_else(|| args.get("from").and_then(parse_tile));
+                let fixture = match fixtures.entry(role_index) {
+                    std::collections::hash_map::Entry::Occupied(entry) => entry.into_mut(),
+                    std::collections::hash_map::Entry::Vacant(entry) => {
+                        entry.insert(GuideQualificationFixture::load(&id, &role, selected)?)
+                    }
+                };
+                let sequence = (role_index, sequence_index);
+                let (from, start_rule) = if previous_sequence != Some(sequence) {
+                    (Some(fixture.start), fixture.first_start_rule)
+                } else if previous_target.is_some() {
+                    (previous_target, "preceding_authored_destination")
+                } else {
+                    (None, "no_usable_preceding_destination")
+                };
+                previous_sequence = Some(sequence);
+                previous_target = target;
                 let arg_grants = args.get("cross").cloned().unwrap_or(Value::Null);
                 let stage_grants = container.get("cross").cloned().unwrap_or(Value::Null);
                 let names = combine_grant_names(&arg_grants, &stage_grants);
@@ -1274,7 +1302,7 @@ fn guide_inputs(world: &NavWorld, roots: &Value) -> Result<Vec<CorpusInput>, Str
                 } else {
                     (FindOptions::default(), Some(format!("unresolved named grant identities: {unresolved:?}")))
                 };
-                let state = WorldState::empty();
+                let state = fixture.state.clone();
                 let route_result = if grant_error.is_none() {
                     match (from, target) {
                         (Some(from), Some(target)) => Some(find_with_avoid(
@@ -1294,23 +1322,27 @@ fn guide_inputs(world: &NavWorld, roots: &Value) -> Result<Vec<CorpusInput>, Str
                             target: target.expect("route result requires an authored target"),
                             route: Some(route),
                             search_error: None,
-                            route_source: "guide-authored from/tile plus its exact named cross list".into(),
+                            route_source: "qualification fixture start and seed state; authored destination and named cross list".into(),
                         }], None),
                         Some(Err(error)) => (vec![FrozenRoute {
                             id: step_id.to_owned(),
                             target: target.expect("route result requires an authored target"),
                             route: None,
                             search_error: Some(format!("{error:?}")),
-                            route_source: "guide-authored from/tile plus its exact named cross list".into(),
+                            route_source: "qualification fixture start and seed state; authored destination and named cross list".into(),
                         }], None),
                         None => (Vec::new(), Some(if from.is_none() {
-                            "underspecified_missing_authored_start".to_owned()
+                            "qualification_missing_preceding_destination".to_owned()
                         } else {
                             "underspecified_missing_authored_destination".to_owned()
                         })),
                     }
                 };
-                let record_id = format!("{set}/{id}/role-{role_index}/{container}/{stage}/step-{step_index}/{step_id}");
+                let container_id = sequence_index.map_or_else(
+                    || "prelude".to_owned(),
+                    |index| format!("sequence-{index}"),
+                );
+                let record_id = format!("{set}/{id}/role-{role_index}/{container_id}/{stage}/step-{step_index}/{step_id}");
                 let raw = json!({
                     "guide_id":id,
                     "role":role,
@@ -1320,7 +1352,8 @@ fn guide_inputs(world: &NavWorld, roots: &Value) -> Result<Vec<CorpusInput>, Str
                     "step_index":step_index,
                     "step":step,
                     "target":target.map(tile_json),
-                    "authored_from":from.map(tile_json),
+                    "authored_from":authored_from.map(tile_json),
+                    "qualification_from":from.map(tile_json),
                     "stage_required":container.get("required").cloned().unwrap_or(Value::Null),
                     "sequence_cross":stage_grants,
                     "step_cross":arg_grants,
@@ -1336,7 +1369,7 @@ fn guide_inputs(world: &NavWorld, roots: &Value) -> Result<Vec<CorpusInput>, Str
                     from,
                     targets: target.into_iter().collect(),
                     state: state.clone(),
-                    state_json: json!({ "status": if from.is_none() { "no authored navigation start" } else { "WorldState::empty; no guide route_state field" } }),
+                    state_json: fixture.state_json.clone(),
                     route_options: options,
                     grant_names: names,
                     frozen,
@@ -1344,7 +1377,16 @@ fn guide_inputs(world: &NavWorld, roots: &Value) -> Result<Vec<CorpusInput>, Str
                     status_without_route: status,
                     provenance: json!({
                         "source_coverage": "every indexed walk/combat/fight step is preserved",
-                        "navigation": if from.is_none() { "no authored from/start; not routed and not dropped" } else { "route uses only authored from, target and named grants" },
+                        "navigation": "Main-authorized qualification fixture, not an authored start or dynamic quest progress",
+                        "qualification_fixture": {
+                            "start_rule":start_rule,
+                            "start":from.map(tile_json),
+                            "initial_start":tile_json(fixture.start),
+                            "seed_source":fixture.source,
+                            "role":role,
+                            "sequence":container_id,
+                            "stage":stage,
+                        },
                         "walk_target_or_fight_stand": target.map(tile_json),
                         "grants_are_metadata_and_exact_named_route_options_only": true,
                         "grant_resolution_error": grant_error.as_deref(),
@@ -1376,7 +1418,7 @@ fn guide_placeholder(set: &str, id: &str, entry: Value) -> CorpusInput {
     }
 }
 
-fn collect_guide_steps(document: &Value) -> Vec<(usize, String, Value, String, usize, Value)> {
+fn collect_guide_steps(document: &Value) -> Vec<(usize, String, Value, Option<usize>, String, usize, Value)> {
     let mut out = Vec::new();
     let Some(roles) = document["roles"].as_array() else {
         return out;
@@ -1386,7 +1428,7 @@ fn collect_guide_steps(document: &Value) -> Vec<(usize, String, Value, String, u
         if let Some(prelude) = role["prelude"].as_array() {
             for (step_index, step) in prelude.iter().enumerate() {
                 if is_route_step(step) {
-                    out.push((role_index, role_name.clone(), role.clone(), "prelude".into(), step_index, step.clone()));
+                    out.push((role_index, role_name.clone(), role.clone(), None, "prelude".into(), step_index, step.clone()));
                 }
             }
         }
@@ -1396,7 +1438,7 @@ fn collect_guide_steps(document: &Value) -> Vec<(usize, String, Value, String, u
                 if let Some(steps) = sequence["steps"].as_array() {
                     for (step_index, step) in steps.iter().enumerate() {
                         if is_route_step(step) {
-                            out.push((role_index, role_name.clone(), sequence.clone(), stage.clone(), step_index, step.clone()));
+                            out.push((role_index, role_name.clone(), sequence.clone(), Some(sequence_index), stage.clone(), step_index, step.clone()));
                         }
                     }
                 }
@@ -1413,8 +1455,8 @@ fn is_route_step(step: &Value) -> bool {
 fn find_guide_step(document: &Value, id: &str) -> Option<Value> {
     collect_guide_steps(document)
         .into_iter()
-        .find(|(_, _, _, _, _, step)| step["id"].as_str() == Some(id))
-        .map(|(_, _, _, _, _, step)| step)
+        .find(|(_, _, _, _, _, _, step)| step["id"].as_str() == Some(id))
+        .map(|(_, _, _, _, _, _, step)| step)
 }
 
 fn combine_grant_names(args_cross: &Value, stage_cross: &Value) -> Vec<String> {
@@ -1427,6 +1469,52 @@ fn combine_grant_names(args_cross: &Value, stage_cross: &Value) -> Vec<String> {
         }
     }
     names
+}
+
+fn write_qualification_fixture(output: &Path, inputs: &[CorpusInput]) -> Result<(), String> {
+    let mut counts = BTreeMap::<String, usize>::new();
+    let mut coordinate_counts = BTreeMap::<String, usize>::new();
+    let mut fallback_guides = HashSet::new();
+    let mut no_start = Vec::new();
+    let mut no_destination = Vec::new();
+    let mut steps = Vec::new();
+    for input in inputs {
+        let fixture = &input.provenance["qualification_fixture"];
+        let Some(rule) = fixture["start_rule"].as_str() else { continue; };
+        *counts.entry(rule.to_owned()).or_default() += 1;
+        if input.from.is_some() && !input.targets.is_empty() {
+            *coordinate_counts.entry(rule.to_owned()).or_default() += 1;
+        }
+        if fixture["seed_source"].is_null() {
+            fallback_guides.insert(format!(
+                "{}/{}",
+                input.source["set"].as_str().unwrap_or("unknown"),
+                input.source["guide_id"].as_str().unwrap_or("unknown"),
+            ));
+        }
+        let step = json!({
+            "input_id":input.id,"source":input.source,"fixture":fixture,
+            "authored_start":input.raw["authored_from"],
+            "authored_destination":input.targets.iter().copied().map(tile_json).collect::<Vec<_>>(),
+        });
+        if input.from.is_none() { no_start.push(step.clone()); }
+        if input.targets.is_empty() { no_destination.push(step.clone()); }
+        steps.push(step);
+    }
+    let mut fallback_guides: Vec<_> = fallback_guides.into_iter().collect();
+    fallback_guides.sort_unstable();
+    write_json(&output.join("guide-qualification-starts.json"), &json!({
+        "fixture":"guide_seed_qualification_v1",
+        "authority":"Main 2026-10-30: each sequence starts at its QUEST-TERRA seed, or Lumbridge only without a seed; later spatial steps start at the preceding authored destination",
+        "navigation_state":"seed state remains constant; authored guide facts are not changed",
+        "lumbridge_fallback_authority":"W4 reachable_lumbridge_falador from [3222,3218,0]",
+        "start_rule_step_counts":counts,
+        "usable_coordinate_pairs_by_start_rule":coordinate_counts,
+        "guides_without_seed":fallback_guides,
+        "steps_without_usable_start":no_start,
+        "steps_without_authored_destination":no_destination,
+        "steps":steps,
+    }))
 }
 
 fn export_record(
