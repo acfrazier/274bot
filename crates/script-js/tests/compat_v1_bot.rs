@@ -364,10 +364,12 @@ export default class T extends LoopingBot {
         try { isBotManifest(throwing); } catch (caught) { getterErrorPreserved = caught === error; }
         const boxed = new String('manifest');
         boxed.__rs2b0tManifest = 1;
+        const callable = Object.assign(function () {}, { __rs2b0tManifest: 1 });
         globalThis.__probe = {
             marked: isBotManifest({ __rs2b0tManifest: 1 }),
             array: isBotManifest(Object.assign([], { __rs2b0tManifest: 1 })),
             boxed: isBotManifest(boxed),
+            functionMarker: isBotManifest(callable),
             stringMarker: isBotManifest({ __rs2b0tManifest: '1' }),
             plain: isBotManifest({}),
             nullValue: isBotManifest(null),
@@ -385,6 +387,7 @@ export default class T extends LoopingBot {
             "marked": true,
             "array": true,
             "boxed": true,
+            "functionMarker": false,
             "stringMarker": false,
             "plain": false,
             "nullValue": false,
