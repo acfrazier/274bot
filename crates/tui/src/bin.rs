@@ -4131,6 +4131,7 @@ impl TuiSession {
         if self.live_name.is_none() {
             return result;
         }
+        self.core.live_runner().clear();
         let logout = self.clean_logout_live(app);
         self.quit(app);
         match (result, logout) {
