@@ -239,6 +239,10 @@ pub(super) fn gate_pass_watch(
     })
 }
 
+#[expect(
+    clippy::too_many_arguments,
+    reason = "Keep the observed content-wait count separate from its stamps and the reused hop budget."
+)]
 fn log_prereq_hop_wait(
     wait: &'static str,
     crossing: api::prereq_steps::CrossingId,
