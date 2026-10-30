@@ -196,3 +196,20 @@ withContent({
         [fact],
     ), /leaves stage domain/);
 });
+
+withContent({
+    [constants]: '^zero = 0\n^one = 1\n',
+    'scripts/condition-call.rs2': [
+        '[oploc1,root]',
+        'if (~update = true) { return; }',
+        '[proc,update]()(boolean)',
+        '%progress = ^one;',
+        'return(true);',
+    ].join('\n'),
+}, (content) => {
+    assertPrereqPreservation(content, [], undefined, [journal([0, 0], [0, 1])]);
+    assert.throws(
+        () => assertPrereqPreservation(content, [], undefined, [journal([0, 0], [0, 0])]),
+        /after \[0,0\] is \[0,1\]/,
+    );
+});

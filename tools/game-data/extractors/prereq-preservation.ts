@@ -672,8 +672,12 @@ export function assertPrereqPreservation(
     for (const journal of journals) {
         const variable = journal.establishes.signal;
         const graph = buildGraph(content, variable, constants);
-        const unreviewedUncalled = graph.writers.find((writer) => !hasEntryPath(writer, graph) && !writer.reviewed);
-        if (unreviewedUncalled) throw new Error(`prereq preservation: writer path set is empty at ${unreviewedUncalled.file}:${unreviewedUncalled.line}`);
+        // A proc call inside an expression can be absent from this call graph.
+        // Treat its local writer guards as a possible entry, never as dead code.
+        // This loses caller restrictions and can only widen the preserved range.
+        for (const writer of graph.writers) {
+            if (!hasEntryPath(writer, graph)) writer.block.entry = true;
+        }
         const domain = questRows ? productionJournalStageDomain(questRows, journal) : { min: 0, max: 2147483647 };
         if (questRows) assertJournalRangesInsideDomain(journal, domain);
         for (const rule of journal.after) {
