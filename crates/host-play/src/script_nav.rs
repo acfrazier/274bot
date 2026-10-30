@@ -4325,10 +4325,8 @@ fn native_route_exclusions(
         }
     });
     for name in avoid {
-        if compat.is_none_or(|original| {
-            !original.avoid_wire.iter().any(|entry| {
-                matches!(entry, script::shim::InspectAvoidWire::Catalog(existing) if existing == name.as_ref())
-            })
+        if !exclusions.avoid_wire.iter().any(|entry| {
+            matches!(entry, script::shim::InspectAvoidWire::Catalog(existing) if existing == name.as_ref())
         }) {
             exclusions
                 .avoid_wire
@@ -4336,7 +4334,7 @@ fn native_route_exclusions(
         }
     }
     for name in cross {
-        if compat.is_none_or(|original| !original.cross.contains(name)) {
+        if !exclusions.cross.contains(name) {
             exclusions.cross.push(Arc::clone(name));
         }
     }

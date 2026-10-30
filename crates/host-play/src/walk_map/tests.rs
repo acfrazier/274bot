@@ -1914,11 +1914,22 @@ fn catalog_gated_group_walk_without_snapshot_cannot_start_a_prerequisite() {
         .abs_diff(crossing.to.x)
         .max(crossing.takeoff.z.abs_diff(crossing.to.z)) as usize
         + 3;
-    // Both endpoints are valid stands, but no ordinary walking edge exists.
-    let (walk, blocked) = pack_walk(&vec![
+    let grid_origin = wt(
+        crossing.takeoff.x.min(crossing.at.x).min(crossing.to.x) - 1,
+        crossing.takeoff.z.min(crossing.at.z).min(crossing.to.z) - 1,
+        0,
+    );
+    // Both endpoints are valid stands, but the blocked anchor separates them.
+    let mut flags = vec![
         client::dash3d::CollisionFlag::WALK_BLOCK_FLAGS as u32;
         4 * size * size
-    ]);
+    ];
+    for stand in [crossing.takeoff, crossing.to] {
+        let x = (stand.x - grid_origin.x) as usize;
+        let z = (stand.z - grid_origin.z) as usize;
+        flags[stand.level as usize * size * size + z * size + x] = 0;
+    }
+    let (walk, blocked) = pack_walk(&flags);
     let mut gate_edge = edge(TransportKind::Door, crossing.at, crossing.to);
     gate_edge.loc_id = crossing.loc_id;
     gate_edge.option = i32::from(crossing.option);
@@ -1938,11 +1949,7 @@ fn catalog_gated_group_walk_without_snapshot_cannot_start_a_prerequisite() {
     graph.edges.push(gate_edge);
     let nav = NavWorld::from_parts(
         WorldCollision {
-            origin: wt(
-                crossing.at.x.min(crossing.to.x) - 1,
-                crossing.at.z.min(crossing.to.z) - 1,
-                0,
-            ),
+            origin: grid_origin,
             width: size,
             height: size,
             walk,
@@ -1963,7 +1970,7 @@ fn catalog_gated_group_walk_without_snapshot_cannot_start_a_prerequisite() {
         nav_planner::router::find_actionable_quest_gates(
             &nav.collision,
             &nav.graph,
-            crossing.at,
+            crossing.takeoff,
             &[crossing.to],
             FindOptions::default(),
             &state,

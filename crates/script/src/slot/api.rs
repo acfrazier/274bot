@@ -33,7 +33,6 @@ pub(super) struct ApiSeat {
     pub(super) progress_page: Option<crate::api_progress::ProgressPage>,
     progress_retiring: Vec<progress::ProgressJob>,
     compat_walk: CompatWalkSeat,
-    compat_walk_terminal: Option<(RunKey, RequestId, Result<WalkReceipt, ActionError>)>,
     #[cfg(feature = "test-hooks")]
     journal_evidence: Option<(
         api::quest_progress::EvidenceStamp,
@@ -45,24 +44,26 @@ pub(super) struct ApiSeat {
 enum CompatWalkSeat {
     #[default]
     Idle,
-    Running {
+    Owned {
         run: RunKey,
         request_id: RequestId,
-        walk: Box<PrereqWalk>,
+        owner: Box<CompatWalkOwner>,
         pin: Arc<SelectedPin>,
     },
-    Finished {
-        request_id: RequestId,
-    },
+}
+
+/// The completed receipt replaces the runner in its existing allocation.
+/// Unrelated native API seats reserve neither an inline receipt nor a box.
+enum CompatWalkOwner {
+    Walking(PrereqWalk),
+    Finished(Result<WalkReceipt, ActionError>),
 }
 
 impl CompatWalkSeat {
     fn request_id(&self) -> Option<RequestId> {
         match self {
             Self::Idle => None,
-            Self::Running { request_id, .. } | Self::Finished { request_id, .. } => {
-                Some(*request_id)
-            }
+            Self::Owned { request_id, .. } => Some(*request_id),
         }
     }
 
@@ -303,10 +304,10 @@ impl SlotScript {
         self.retained
             .get_or_insert_with(|| Arc::new(Mutex::new(RetainedMemory::default())));
         let seat = self.api.get_or_insert_with(|| Box::new(ApiSeat::default()));
-        seat.compat_walk = CompatWalkSeat::Running {
+        seat.compat_walk = CompatWalkSeat::Owned {
             run,
             request_id,
-            walk: Box::new(PrereqWalk::from_handover(handover)),
+            owner: Box::new(CompatWalkOwner::Walking(PrereqWalk::from_handover(handover))),
             pin,
         };
         Ok(())
@@ -317,7 +318,19 @@ impl SlotScript {
     pub fn take_compat_walk_terminal(
         &self,
     ) -> Option<(RunKey, RequestId, Result<WalkReceipt, ActionError>)> {
-        self.api.as_ref()?.compat_walk_terminal.clone()
+        let CompatWalkSeat::Owned {
+            run,
+            request_id,
+            owner,
+            ..
+        } = &self.api.as_ref()?.compat_walk
+        else {
+            return None;
+        };
+        let CompatWalkOwner::Finished(result) = owner.as_ref() else {
+            return None;
+        };
+        Some((*run, *request_id, result.clone()))
     }
 
     /// Cancel only the exact compatibility walk seat that the host owns.
@@ -328,28 +341,23 @@ impl SlotScript {
         let Some(seat) = self.api.as_mut() else {
             return false;
         };
-        let state = std::mem::take(&mut seat.compat_walk);
-        match state {
-            CompatWalkSeat::Running {
-                run,
-                request_id: live,
-                mut walk,
-                ..
-            } if live == request_id => {
-                walk.cancel();
-                seat.compat_walk = CompatWalkSeat::Finished { request_id };
-                seat.compat_walk_terminal.get_or_insert((
-                    run,
-                    request_id,
-                    Err(ActionError::Cancelled),
-                ));
-                true
-            }
-            other => {
-                seat.compat_walk = other;
-                false
-            }
+        let CompatWalkSeat::Owned {
+            request_id: live,
+            owner,
+            ..
+        } = &mut seat.compat_walk
+        else {
+            return false;
+        };
+        if *live != request_id {
+            return false;
         }
+        let CompatWalkOwner::Walking(walk) = owner.as_mut() else {
+            return false;
+        };
+        walk.cancel();
+        **owner = CompatWalkOwner::Finished(Err(ActionError::Cancelled));
+        true
     }
 
     /// Retire the exact completed or cancelled compatibility walk seat.
@@ -364,7 +372,6 @@ impl SlotScript {
             return false;
         }
         seat.compat_walk = CompatWalkSeat::Idle;
-        seat.compat_walk_terminal = None;
         if let Some(owner) = self.seat.as_mut() {
             owner.walk_terminal(request_id);
         }
@@ -936,59 +943,37 @@ impl SlotScript {
     }
 
     fn tick_api_compat_walk(&mut self, seat: &mut ApiSeat, ctx: &mut ScriptCtx<'_>) {
-        let (run, request_id, mut walk, pin) = match std::mem::take(&mut seat.compat_walk) {
-            CompatWalkSeat::Running {
-                run,
-                request_id,
-                walk,
-                pin,
-            } => (run, request_id, walk, pin),
-            other => {
-                seat.compat_walk = other;
-                return;
-            }
-        };
-
-        if !self.compat_walk_run_is_current(run) {
-            walk.cancel();
-            seat.compat_walk = CompatWalkSeat::Finished { request_id };
-            seat.compat_walk_terminal
-                .get_or_insert((run, request_id, Err(ActionError::Cancelled)));
-            return;
-        }
-
-        let Some(retained) = self.retained.as_ref() else {
-            walk.cancel();
-            seat.compat_walk = CompatWalkSeat::Finished { request_id };
-            seat.compat_walk_terminal.get_or_insert((
-                run,
-                request_id,
-                Err(ActionError::Unavailable(
-                    "compatibility walk lost retained memory".into(),
-                )),
-            ));
+        let CompatWalkSeat::Owned {
+            run, owner, pin, ..
+        } = &mut seat.compat_walk
+        else {
             return;
         };
-        let mut retained = retained
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
-        let mut actions = NativeActions { _private: () };
-        let mut cx =
-            compiled::frame_context(ctx, run, &pin, &mut retained, &mut self.native_runtime);
-        match walk.poll(&mut actions, &mut cx, self.local_state.as_deref()) {
-            std::task::Poll::Pending => {
-                seat.compat_walk = CompatWalkSeat::Running {
-                    run,
-                    request_id,
-                    walk,
-                    pin,
-                };
+        let CompatWalkOwner::Walking(walk) = owner.as_mut() else {
+            return;
+        };
+        let result = if !self.compat_walk_run_is_current(*run) {
+            walk.cancel();
+            Some(Err(ActionError::Cancelled))
+        } else if let Some(retained) = self.retained.as_ref() {
+            let mut retained = retained
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            let mut actions = NativeActions { _private: () };
+            let mut cx =
+                compiled::frame_context(ctx, *run, pin, &mut retained, &mut self.native_runtime);
+            match walk.poll(&mut actions, &mut cx, self.local_state.as_deref()) {
+                std::task::Poll::Pending => None,
+                std::task::Poll::Ready(result) => Some(result),
             }
-            std::task::Poll::Ready(result) => {
-                seat.compat_walk = CompatWalkSeat::Finished { request_id };
-                seat.compat_walk_terminal
-                    .get_or_insert((run, request_id, result));
-            }
+        } else {
+            walk.cancel();
+            Some(Err(ActionError::Unavailable(
+                "compatibility walk lost retained memory".into(),
+            )))
+        };
+        if let Some(result) = result {
+            **owner = CompatWalkOwner::Finished(result);
         }
     }
 

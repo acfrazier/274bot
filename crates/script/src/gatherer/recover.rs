@@ -18,7 +18,7 @@ impl Gatherer {
             && (self.retained.recovery != RecoveryState::Idle || !self.retained.haul_since_death);
         self.cancel_active();
         self.trip = TripStep::Idle;
-        self.selected_bank = None;
+        self.scratch.selected_bank = None;
         self.scratch.withdrawals = None;
         self.supply_missing = None;
         self.observed_progress = None;

@@ -95,8 +95,8 @@ fn prerequisite_handoff_reissues_original_walk_once_and_cancel_revokes_it() {
         .local_player()
         .expect("fixture has a local player")
         .clone();
-    player.player.network = crossing.at;
-    player.player.actor.tile = crossing.at;
+    player.player.network = crossing.takeoff;
+    player.player.actor.tile = crossing.takeoff;
     player.player.actor.moving = false;
     snapshot.seed_local_player(player);
     let mut actions = vec![None; usize::from(crossing.option)];

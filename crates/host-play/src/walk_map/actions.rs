@@ -1339,7 +1339,9 @@ impl Play {
         self.map_walk_with_snapshot(command, current, Some(snapshot), state, bank, input, arms)
     }
 
-    fn map_walk_with_snapshot(
+    /// Dispatch from a validated status origin even before a frame is present.
+    /// A missing snapshot cannot create prerequisite context for a gated route.
+    pub fn map_walk_with_snapshot(
         &self,
         command: MapCommand,
         current: &MapContext,

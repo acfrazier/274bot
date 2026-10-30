@@ -2230,7 +2230,7 @@ fn return_prerequisite_handoff_reissues_once_and_cancel_keeps_anchor_state() {
         leg: 0,
         crossing: crossing.clone(),
     };
-    set_position(&mut snapshot, crossing.at);
+    set_position(&mut snapshot, crossing.takeoff);
     let mut loc_actions = vec![None; usize::from(crossing.option)];
     loc_actions[usize::from(crossing.option) - 1] = Some("Open".to_owned());
     snapshot.seed_locs(vec![LocView {
@@ -2281,7 +2281,7 @@ fn return_prerequisite_handoff_reissues_once_and_cancel_keeps_anchor_state() {
             quest_start: true,
         }),
     });
-    let reach = reach_view(crossing.at, &[]);
+    let reach = reach_view(crossing.takeoff, &[]);
     require_continue(driver.tick(&mut *script, &snapshot, Some(&reach), None, 8));
     assert!(matches!(status(&driver).phase, NativePhase::Working));
     assert_eq!(text_field(status(&driver), "status"), "returning to start");

@@ -5847,8 +5847,53 @@ fn combat_lifting_is_by_tile_and_never_bypasses_wilderness_permission() {
     ));
 }
 
+/// This routing fixture knows the six listed quests are complete and explicitly
+/// seeds every other selected quest signal at zero. Display names in
+/// `WorldState::quests` do not themselves prove a typed quest-stage gate.
+struct ZonesQuestProfile {
+    facts: Arc<api::game_data::QuestIdentityFacts>,
+    complete: std::collections::HashSet<String>,
+}
+
+impl api::quest_progress::EvidenceProvider for ZonesQuestProfile {
+    fn observe_gate(
+        &self,
+        gate: &QuestGate,
+        required_after: api::quest_progress::EvidenceStamp,
+    ) -> Option<api::prereq_knowledge::Observation> {
+        let observed = stamp(10);
+        if !observed.meets(required_after) {
+            return None;
+        }
+        let key = match gate {
+            QuestGate::Complete(key) => key,
+            QuestGate::Window(window) => &window.quest,
+        };
+        let row = self.facts.rows.iter().find(|row| row.id == key.as_ref())?;
+        let complete = self.complete.contains(&row.display);
+        let truth = match gate {
+            QuestGate::Complete(_) => {
+                if complete {
+                    api::selected::Truth::True
+                } else {
+                    api::selected::Truth::False
+                }
+            }
+            QuestGate::Window(window) if window.signal.as_ref() == row.varp => {
+                let stage = if complete { row.complete } else { 0 };
+                window.values.test(&gate_range(Some(stage), Some(stage)))
+            }
+            QuestGate::Window(_) => api::selected::Truth::Unknown,
+        };
+        Some(api::prereq_knowledge::Observation {
+            truth,
+            observed: Some(observed),
+        })
+    }
+}
+
 fn zones_rich_289_state(combat_level: Option<i32>) -> WorldState {
-    WorldState {
+    let mut state = WorldState {
         combat_level,
         map_members: true,
         quests: [
@@ -5874,7 +5919,28 @@ fn zones_rich_289_state(combat_level: Option<i32>) -> WorldState {
         ]),
         stats: (0..21).map(|skill| (skill, 99)).collect(),
         ..WorldState::empty()
-    }
+    };
+    static QUESTS: std::sync::LazyLock<(
+        Arc<api::game_data::QuestIdentityFacts>,
+        crate::quest_gates::QuestFamilyId,
+    )> = std::sync::LazyLock::new(|| {
+        let selected = api::game_data::for_revision(client::io::ClientRevision::R289).unwrap();
+        let (facts, family) = selected.quest_identity_for_bake().unwrap();
+        (
+            Arc::new(facts),
+            crate::quest_gates::QuestFamilyId::new(family.sha256, family.schema),
+        )
+    });
+    let (facts, family) = &*QUESTS;
+    state.quest_evidence = Some(QuestEvidence::new(
+        Arc::new(ZonesQuestProfile {
+            facts: Arc::clone(facts),
+            complete: state.quests.clone(),
+        }),
+        *family,
+        stamp(10),
+    ));
+    state
 }
 
 fn zone_route_cell_count(route: &crate::router::Route) -> usize {

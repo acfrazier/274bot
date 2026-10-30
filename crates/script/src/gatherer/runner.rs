@@ -240,6 +240,7 @@ fn hazard_retreat_stand(
 struct GatherScratch {
     fishing: FishingSurvey,
     withdrawals: Option<Arc<[bank::Withdrawal]>>,
+    selected_bank: Option<SelectedBank>,
     bank_open_attempts: u8,
     bank_close_attempts: u8,
     /// Last tick a catch or XP was credited; bounds fishing surveys.
@@ -271,7 +272,6 @@ pub struct Gatherer {
     tried_groups: [TriedGroup; 4],
     hazard_escape: Option<WorldTile>,
     trip: TripStep,
-    selected_bank: Option<SelectedBank>,
     supply_missing: Option<Arc<str>>,
     bank_label: Arc<str>,
     trips: u16,
@@ -329,7 +329,6 @@ impl Gatherer {
             tried_groups: [TriedGroup::default(); 4],
             hazard_escape: None,
             trip: TripStep::Idle,
-            selected_bank: None,
             supply_missing: None,
             bank_label: Arc::from("—"),
             trips: 0,
@@ -366,7 +365,7 @@ impl Gatherer {
 
     fn advance_trip(&mut self, step: TripStep) {
         self.trip = step;
-        if let Some(selected) = &self.selected_bank {
+        if let Some(selected) = &self.scratch.selected_bank {
             if let Some(bank) = self
                 .prepared
                 .banks
@@ -398,7 +397,7 @@ impl Gatherer {
         );
         self.target = None;
         self.wait_until = None;
-        self.selected_bank = None;
+        self.scratch.selected_bank = None;
         self.scratch.bank_open_attempts = 0;
         self.scratch.bank_close_attempts = 0;
         self.scratch.withdrawals = None;
@@ -413,7 +412,7 @@ impl Gatherer {
     /// The packed stand the current trip opened, for the transfer verbs'
     /// re-open (`native_bank::MAX_BANK_REOPENS`).
     fn selected_access(&self) -> Option<Arc<bank::BankStandAccess>> {
-        self.selected_bank
+        self.scratch.selected_bank
             .as_ref()
             .and_then(|selected| selected.access.clone())
     }
@@ -607,12 +606,12 @@ impl Gatherer {
                 }
             }
             TripStep::Access => {
-                if let Some(selected) = &self.selected_bank {
+                if let Some(selected) = &self.scratch.selected_bank {
                     self.trip_walk(selected.access_tile, 1, ArrivalKind::Reach, None, tick);
                 }
             }
             TripStep::Open => {
-                let Some(selected) = &self.selected_bank else {
+                let Some(selected) = &self.scratch.selected_bank else {
                     return;
                 };
                 let Some(access) = &selected.access else {
@@ -1615,7 +1614,7 @@ impl Gatherer {
         }
         match self.trip {
             TripStep::Access => {
-                if self.selected_bank.is_some() {
+                if self.scratch.selected_bank.is_some() {
                     self.advance_trip(TripStep::Open);
                 }
                 return;
@@ -1733,7 +1732,7 @@ impl Gatherer {
                             format!("bank-unavailable:{}", self.settings().bank),
                         );
                     } else {
-                        self.selected_bank = Some(selected);
+                        self.scratch.selected_bank = Some(selected);
                         self.advance_trip(TripStep::Access);
                         self.set_event("bank selected");
                     }
@@ -3288,7 +3287,7 @@ mod tests {
             choose: None,
         });
         gatherer.trip = TripStep::Open;
-        gatherer.selected_bank = Some(SelectedBank {
+        gatherer.scratch.selected_bank = Some(SelectedBank {
             bank_index: 0,
             access_tile: bank_tile,
             kind: PickKind::Reachable,
@@ -3307,7 +3306,15 @@ mod tests {
             });
             assert!(gatherer.failure.is_none());
             assert_eq!(gatherer.trip, TripStep::Open);
-            assert!(gatherer.selected_bank.as_ref().unwrap().access.is_some());
+            assert!(
+                gatherer
+                    .scratch
+                    .selected_bank
+                    .as_ref()
+                    .unwrap()
+                    .access
+                    .is_some()
+            );
             assert!(matches!(gatherer.active, Active::Open(_)));
         }
         assert_eq!(gatherer.scratch.bank_open_attempts, MAX_BANK_OPEN_ATTEMPTS);
