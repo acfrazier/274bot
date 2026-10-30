@@ -983,17 +983,23 @@ mod tests {
             "consumption":consumption,
             "pickpocket":[],
             "prayers":prayers,
-            "npc_names":{"rows":[
+            "npc_names":{"combat_facts_version":1,"rows":[
                 {
                     "id":7,"config":"test_npc","display":"Test NPC","ops":["Attack"],
                     "size":1,"wanderrange":0,"maxrange":1,"attackrange":1,"huntrange":1,
                     "vislevel":0,"hitpoints":30,"damagetype":null,
+                    "attack":1,"defence":1,"magic":1,"attackbonus":0,
+                    "rangeattack":0,"magicattack":0,"stabdefence":0,"slashdefence":0,
+                    "crushdefence":0,"magicdefence":0,"rangedefence":0,"max_dealt":1000,
                     "ap_attack":true,"attack_kind":null,"forced_max_hit":null,
                     "dragonfire":null,"attackrate":6,"bespoke":false
                 },
                 {
                     "id":8,"config":"not_attackable","display":"Not attackable","ops":["attack"],
                     "size":1,"wanderrange":0,"maxrange":0,"attackrange":0,"huntrange":0,
+                    "attack":1,"defence":1,"magic":1,"attackbonus":0,
+                    "rangeattack":0,"magicattack":0,"stabdefence":0,"slashdefence":0,
+                    "crushdefence":0,"magicdefence":0,"rangedefence":0,"max_dealt":1000,
                     "vislevel":0,"hitpoints":10,"damagetype":null
                 }
             ]},

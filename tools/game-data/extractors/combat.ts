@@ -840,6 +840,15 @@ export function extractCombatStyleFacts(content: string, objects: readonly Comba
     const meleeModes = combatModeFacts(content, interfacePack, combatTabs, MELEE_MODE_CONSTANTS);
     const rangedModes = combatModeFacts(content, interfacePack, combatTabs, RANGED_MODE_CONSTANTS, RANGED_MODE_CODES);
     const paramIds = packParameterIds(content);
+    if (!paramIds.has('attackrate')) throw new Error('combat styles: pack/param.pack is missing attackrate');
+    const rateDefinition = parseParamDefinitions(requireGatherText(content, 'scripts/skill_combat/configs/combat.param')).get('attackrate');
+    const rawDefaultRate = rateDefinition?.default;
+    const defaultAttackrate = rawDefaultRate !== undefined && /^-?\d+$/.test(rawDefaultRate)
+        ? Number(rawDefaultRate) : Number.NaN;
+    if (rateDefinition?.type?.toLowerCase() !== 'int'
+        || !Number.isSafeInteger(defaultAttackrate) || defaultAttackrate < 0 || defaultAttackrate > 255) {
+        throw new Error('combat styles: attackrate has no valid content default');
+    }
     const categoryNames = new Map([...categoryPack.entries()].map(([name, id]) => [id, name]));
     const ranged = rangedObjectFacts(content, objects, categoryNames, paramIds);
     const sequences = new Map<number, number>();
@@ -871,7 +880,7 @@ export function extractCombatStyleFacts(content: string, objects: readonly Comba
         const style = categoryCode >= 1 && categoryCode <= 4 ? STYLE.RANGED : categoryCode === 5 ? STYLE.MAGIC : STYLE.MELEE;
         const rawRate = parameterValue(object.params, paramIds, 'attackrate');
         if (rawRate !== undefined && typeof rawRate !== 'number') throw new Error(`obj ${object.id}: attackrate is not numeric`);
-        const attackrate = rawRate ?? 4;
+        const attackrate = rawRate ?? defaultAttackrate;
         if (!Number.isInteger(attackrate) || attackrate < 0 || attackrate > 255) throw new Error(`obj ${object.id}: attackrate ${attackrate} is out of range`);
         const tab = combatTabs.byCategory.has(category)
             ? combatTabs.byCategory.get(category) ?? null

@@ -1198,7 +1198,7 @@ fn slot_condition_size_of_pinned() {
             std::mem::size_of::<client::client::ClientGens>(),
             std::mem::size_of::<script::combat::risk::RiskInput>(),
         ),
-        (104, 28, 8, 120, 120),
+        (104, 28, 8, 120, 124),
         "SlotCondition is 104 B: pending fruit uses existing padding; no allocation"
     );
     assert!(

@@ -799,6 +799,24 @@ assert.deepEqual(weaponSlotsFor(53), [
     [0, 1, 0, [0, 0, 0]], [1, 1, 1, [0, 3, 0]],
     [2, 1, 1, [0, 3, 0]], [3, 1, 2, [0, 0, 3]],
 ]);
+// Old: an omitted weapon rate was always 4. New: only the declared default applies.
+const defaultRateStyles = () => extractCombatStyleFacts(
+    content, [{ id: 64, category: 13, params: new Map() }], npcFacts.combatNpcs, combatScripts,
+).weapon_styles;
+const declaredRate = '[attackrate]\ntype=int\ndefault=4';
+assert.ok(combatParams.includes(declaredRate), 'weapon-rate fixture has a declared default');
+try {
+    fs.writeFileSync(combatParamFile, combatParams.replace(declaredRate, '[attackrate]\ntype=int\ndefault=6'));
+    const rows = defaultRateStyles();
+    assert.ok(rows.length > 0, 'the fixture has selected weapon style slots');
+    assert.ok(rows.every((row) => row.attackrate === 6), 'omitted weapon attackrate uses declared 6, not product 4');
+    for (const badDefault of ['[attackrate]\ntype=int', '[attackrate]\ntype=int\ndefault=', '[attackrate]\ntype=int\ndefault=300']) {
+        fs.writeFileSync(combatParamFile, combatParams.replace(declaredRate, badDefault));
+        assert.throws(defaultRateStyles, /attackrate has no valid content default/);
+    }
+} finally {
+    fs.writeFileSync(combatParamFile, combatParams);
+}
 const combatParamIds = parsePack(fs.readFileSync(path.join(pack, 'param.pack'), 'utf8'));
 const itemCombatBonuses = extractItemCombatBonus(content, [
     {

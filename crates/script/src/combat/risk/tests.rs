@@ -1364,7 +1364,7 @@ fn t5_1_each_zone_classifies_as_the_kind_its_pack_row_names() {
         "the first unsupported zone on the walk is the magic firewarrior"
     );
     assert!(
-        assessment.reason.contains("ikov_firewarrior: Some(Magic)"),
+        assessment.reason.contains("ikov-firewarrior: Some(Magic)"),
         "{}",
         assessment.reason
     );

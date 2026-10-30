@@ -5981,6 +5981,14 @@ mod s2b_admission_contract {
         snapshot.seed_equipment(Vec::new());
         snapshot.seed_stats(vec![
             api::snapshot::StatView {
+                index: 1,
+                name: "defence".into(),
+                base: 1,
+                effective: 1,
+                xp: 0,
+                used: true,
+            },
+            api::snapshot::StatView {
                 index: 3,
                 name: "hitpoints".into(),
                 base: 50,
@@ -6129,6 +6137,14 @@ mod s2b_admission_contract {
             nav_snapshot_at(&mut rig.client, &mut rig.snap, 0, 0);
             observed_loadout(&mut rig.snap);
             rig.snap.seed_stats(vec![
+                api::snapshot::StatView {
+                    index: 1,
+                    name: "defence".into(),
+                    base: 1,
+                    effective: 1,
+                    xp: 0,
+                    used: true,
+                },
                 api::snapshot::StatView {
                     index: 3,
                     name: "hitpoints".into(),

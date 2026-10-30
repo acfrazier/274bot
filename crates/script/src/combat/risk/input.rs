@@ -823,8 +823,8 @@ mod tests {
         let new = std::mem::size_of::<RiskInput>();
         eprintln!("RiskInput legacy={old} new={new} delta={}", new - old);
         assert_eq!(old, 120);
-        assert_eq!(new, 128);
-        assert_eq!(new - old, 8);
+        assert_eq!(new, 124);
+        assert_eq!(new - old, 4);
         assert!(new <= 128);
     }
 
@@ -858,12 +858,12 @@ mod tests {
         for setter in &setters {
             setter(&mut input, false);
         }
-        for selected in 0..getters.len() {
-            setters[selected](&mut input, true);
+        for (selected, setter) in setters.iter().enumerate() {
+            setter(&mut input, true);
             for (index, getter) in getters.iter().enumerate() {
                 assert_eq!(getter(&input), index == selected, "flag {selected}/{index}");
             }
-            setters[selected](&mut input, false);
+            setter(&mut input, false);
         }
     }
 
