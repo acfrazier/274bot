@@ -73,6 +73,11 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.7` 
 
 ### Navigation
 
+- Quest walks can use the quest-list colour to place a quest at progress 0
+  or at its content-declared completion value. An in-progress colour proves
+  a window only when the full in-progress value range lies inside it. A walk
+  reports the quest, window bounds and unknown evidence state.
+
 - Bots now wait and try again when another player is using a shortcut,
   instead of giving up. The Yanille dungeon ledge ("The ledge is being
   used") stays held for at most 9 game ticks after a refusal, so the bot

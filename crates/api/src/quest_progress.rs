@@ -2,7 +2,10 @@
 
 use crate::game_data::QuestFamilyIdentity;
 use crate::quest_facts::QuestCatalog;
-use crate::selected::{FactKey, Knowledge, QuestGate, RunKey, SelectedPin, SignalRange, Truth};
+use crate::selected::{
+    FactKey, InclusiveRange, Knowledge, QuestGate, RunKey, SelectedPin, SignalRange, StageWindow,
+    Truth,
+};
 use crate::snapshot::{Observed, QuestListStatus, QuestStatusView, SnapshotView};
 use std::sync::Arc;
 
@@ -103,12 +106,15 @@ fn status_for_display(display: &str, rows: &[QuestStatusView]) -> Option<QuestLi
 struct QuestListStatusEvidence {
     quest: FactKey,
     status: QuestListStatus,
+    progress_signal: Option<FactKey>,
+    completion_value: Option<i32>,
 }
 
-/// Completion evidence copied from one observed quest-list frame.
+/// Quest-list evidence copied from one observed frame.
 ///
-/// This provider retains only canonical quest IDs, their observed list status,
-/// and the frame stamp. It does not retain the snapshot or the quest catalog.
+/// This provider retains canonical quest IDs, their observed list status, the
+/// content-declared progress signal and completion value, and the frame stamp.
+/// It does not retain the snapshot or the quest catalog.
 #[derive(Debug, Clone)]
 pub struct QuestListEvidenceProvider {
     stamp: Option<EvidenceStamp>,
@@ -147,6 +153,8 @@ impl QuestListEvidenceProvider {
                     quest: facts.id.clone(),
                     status: status_for_display(&facts.display, observed.value)
                         .unwrap_or(QuestListStatus::Unknown),
+                    progress_signal: facts.progress_signal.clone(),
+                    completion_value: facts.completion_value,
                 })
                 .collect()
         } else {
@@ -165,25 +173,69 @@ impl QuestListEvidenceProvider {
         self.statuses.capacity() * std::mem::size_of::<QuestListStatusEvidence>()
     }
 }
+fn exact_range(value: i32) -> InclusiveRange {
+    InclusiveRange {
+        min: Some(value),
+        max: Some(value),
+    }
+}
+
+fn test_window_status(status: &QuestListStatusEvidence, window: &StageWindow) -> Truth {
+    if status.progress_signal.as_ref() != Some(&window.signal) {
+        return Truth::Unknown;
+    }
+    match status.status {
+        QuestListStatus::NotStarted => window.values.test(&exact_range(0)),
+        QuestListStatus::Complete => status
+            .completion_value
+            .map(|complete| window.values.test(&exact_range(complete)))
+            .unwrap_or(Truth::Unknown),
+        QuestListStatus::InProgress => {
+            // quests.rs2 colors zero red and values at or above completion
+            // green. Values in 1..complete-1 remain yellow, so only a window
+            // that contains the entire interval proves this stage.
+            // Partial and disjoint windows remain unknown.
+            let Some(last_in_progress) = status
+                .completion_value
+                .and_then(|complete| complete.checked_sub(1))
+                .filter(|last| *last >= 1)
+            else {
+                return Truth::Unknown;
+            };
+            let possible = InclusiveRange {
+                min: Some(1),
+                max: Some(last_in_progress),
+            };
+            if window.values.test(&possible) == Truth::True {
+                Truth::True
+            } else {
+                Truth::Unknown
+            }
+        }
+        QuestListStatus::Unknown => Truth::Unknown,
+    }
+}
+
 
 impl EvidenceProvider for QuestListEvidenceProvider {
     fn test_gate(&self, gate: &QuestGate, required_after: EvidenceStamp) -> Truth {
-        let QuestGate::Complete(quest) = gate else {
-            return Truth::Unknown;
-        };
         if !self.family_matches || !self.stamp.is_some_and(|stamp| stamp.meets(required_after)) {
             return Truth::Unknown;
         }
-        match self
-            .statuses
-            .iter()
-            .find(|status| status.quest == *quest)
-            .map(|status| status.status)
-            .unwrap_or(QuestListStatus::Unknown)
-        {
-            QuestListStatus::Complete => Truth::True,
-            QuestListStatus::NotStarted | QuestListStatus::InProgress => Truth::False,
-            QuestListStatus::Unknown => Truth::Unknown,
+        let quest = match gate {
+            QuestGate::Complete(quest) => quest,
+            QuestGate::Window(window) => &window.quest,
+        };
+        let Some(status) = self.statuses.iter().find(|status| status.quest == *quest) else {
+            return Truth::Unknown;
+        };
+        match gate {
+            QuestGate::Complete(_) => match status.status {
+                QuestListStatus::Complete => Truth::True,
+                QuestListStatus::NotStarted | QuestListStatus::InProgress => Truth::False,
+                QuestListStatus::Unknown => Truth::Unknown,
+            },
+            QuestGate::Window(window) => test_window_status(status, window),
         }
     }
 }

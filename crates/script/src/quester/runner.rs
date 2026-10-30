@@ -286,6 +286,47 @@ fn trace_error_reason(error: &ActionError) -> &str {
         _ => "step error",
     }
 }
+fn quest_gate_evidence_detail(gates: &[api::selected::QuestGate]) -> Arc<str> {
+    let mut detail = String::from("needs evidence:");
+    for (index, gate) in gates.iter().enumerate() {
+        if index > 0 {
+            detail.push(';');
+        }
+        detail.push_str(" quest ");
+        match gate {
+            api::selected::QuestGate::Complete(quest) => {
+                let _ = write!(
+                    detail,
+                    "{}; completion; evidence state unknown",
+                    quest.0
+                );
+            }
+            api::selected::QuestGate::Window(window) => {
+                let _ = write!(
+                    detail,
+                    "{}; window; minimum ",
+                    window.quest.0
+                );
+                match window.values.min {
+                    Some(minimum) => {
+                        let _ = write!(detail, "{minimum}");
+                    }
+                    None => detail.push_str("none"),
+                }
+                detail.push_str("; maximum ");
+                match window.values.max {
+                    Some(maximum) => {
+                        let _ = write!(detail, "{maximum}");
+                    }
+                    None => detail.push_str("none"),
+                }
+                detail.push_str("; evidence state unknown");
+            }
+        }
+    }
+    Arc::from(detail)
+}
+
 
 pub struct Quester {
     run: RunKey,
@@ -1054,7 +1095,7 @@ impl Quester {
                         None => Arc::from("needs evidence: no current wait detail"),
                     }
                 } else {
-                    Arc::from("walk needs authoritative quest-gate evidence")
+                    quest_gate_evidence_detail(gates.as_ref())
                 };
                 self.set_last_error(QuesterFailureKind::NeedsEvidence, message);
                 return;
