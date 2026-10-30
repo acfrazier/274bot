@@ -68,9 +68,9 @@ use host::Pump;
 use host_play::evidence_writer::{EvidenceJob, EvidenceRequest, EvidenceWriter, PngColor};
 use host_play::{ProfileOptions, ScriptStartHandle, SharedClientTemplate};
 use scenario::{RunnerStatus, Scenario, ScenarioRunner};
-use script::native::{NativePhase, ScriptStatus, StatusValue};
 use script::ScriptLifecycleReceipt;
-use serde_json::{json, Map, Value};
+use script::native::{NativePhase, ScriptStatus, StatusValue};
+use serde_json::{Map, Value, json};
 use vault::{Profile, ProfileSettings};
 
 const POLL_INTERVAL: Duration = Duration::from_millis(20);
@@ -911,12 +911,14 @@ fn owned_combat_json(combat: &OwnedCombat) -> Value {
 }
 
 fn inventory_receipt(snapshot: &GameSnapshot) -> Value {
-    json!(snapshot
-        .inventory()
-        .iter()
-        .filter(|item| item.count > 0)
-        .map(|item| [item.def.id, item.count])
-        .collect::<Vec<_>>())
+    json!(
+        snapshot
+            .inventory()
+            .iter()
+            .filter(|item| item.count > 0)
+            .map(|item| [item.def.id, item.count])
+            .collect::<Vec<_>>()
+    )
 }
 fn inventory_count(snapshot: &GameSnapshot, item_id: i32) -> i32 {
     snapshot
@@ -1445,7 +1447,8 @@ fn run_cells(
                             let command = format!("~macro_event {}", plan.event);
                             if interact::cheat(client, &command).is_sent() {
                                 plan.sent = true;
-                                plan.before = actor.snapshot.npcs().iter().map(|npc| npc.index).collect();
+                                plan.before =
+                                    actor.snapshot.npcs().iter().map(|npc| npc.index).collect();
                                 plan.chat_baseline = actor
                                     .snapshot
                                     .chat_lines()
@@ -1610,33 +1613,41 @@ fn run_cells(
                 for (label, mut receipt) in pending {
                     receipt["tile"] =
                         json!(actor.last_tile.map(|tile| [tile.x, tile.z, tile.level]));
-                    receipt["inventory"] = json!(actor
-                        .snapshot
-                        .inventory()
-                        .iter()
-                        .filter(|item| item.count > 0)
-                        .map(|item| [item.def.id, item.count])
-                        .collect::<Vec<_>>());
-                    receipt["equipment"] = json!(actor
-                        .snapshot
-                        .equipment()
-                        .iter()
-                        .map(|item| item.def.id)
-                        .collect::<Vec<_>>());
-                    receipt["stats"] = json!(actor
-                        .snapshot
-                        .stats()
-                        .iter()
-                        .map(|stat| json!([stat.name, stat.base, stat.effective]))
-                        .collect::<Vec<_>>());
-                    receipt["chat"] = json!(actor
-                        .snapshot
-                        .chat_lines()
-                        .iter()
-                        .rev()
-                        .take(12)
-                        .map(|line| line.text.to_string())
-                        .collect::<Vec<_>>());
+                    receipt["inventory"] = json!(
+                        actor
+                            .snapshot
+                            .inventory()
+                            .iter()
+                            .filter(|item| item.count > 0)
+                            .map(|item| [item.def.id, item.count])
+                            .collect::<Vec<_>>()
+                    );
+                    receipt["equipment"] = json!(
+                        actor
+                            .snapshot
+                            .equipment()
+                            .iter()
+                            .map(|item| item.def.id)
+                            .collect::<Vec<_>>()
+                    );
+                    receipt["stats"] = json!(
+                        actor
+                            .snapshot
+                            .stats()
+                            .iter()
+                            .map(|stat| json!([stat.name, stat.base, stat.effective]))
+                            .collect::<Vec<_>>()
+                    );
+                    receipt["chat"] = json!(
+                        actor
+                            .snapshot
+                            .chat_lines()
+                            .iter()
+                            .rev()
+                            .take(12)
+                            .map(|line| line.text.to_string())
+                            .collect::<Vec<_>>()
+                    );
                     actor.capture_seq += 1;
                     let sequence = actor.capture_seq;
                     match submit_capture(
@@ -3124,27 +3135,31 @@ mod tests {
 
     #[test]
     fn pair_targets_reject_unknown_roles_and_empty_keys() {
-        assert!(validate_pair_mode(&PairMode::Restart {
-            at: [
-                PairStage {
-                    role: 0,
-                    stage: "blackarmgang:3".into(),
+        assert!(
+            validate_pair_mode(&PairMode::Restart {
+                at: [
+                    PairStage {
+                        role: 0,
+                        stage: "blackarmgang:3".into(),
+                    },
+                    PairStage {
+                        role: 2,
+                        stage: "blackarmgang:4".into(),
+                    },
+                ],
+            })
+            .is_err()
+        );
+        assert!(
+            validate_pair_mode(&PairMode::Death {
+                at: PairStage {
+                    role: 1,
+                    stage: String::new(),
                 },
-                PairStage {
-                    role: 2,
-                    stage: "blackarmgang:4".into(),
-                },
-            ],
-        })
-        .is_err());
-        assert!(validate_pair_mode(&PairMode::Death {
-            at: PairStage {
-                role: 1,
-                stage: String::new(),
-            },
-            step: "hand-in".into(),
-        })
-        .is_err());
+                step: "hand-in".into(),
+            })
+            .is_err()
+        );
     }
 
     #[test]
