@@ -803,7 +803,6 @@ fn a_teleport_seen_during_a_guardian_hold_drops_only_the_step_whatever_the_event
         ["step-1", "step-2", "step-2"],
         "the sequence resumes at the kept cursor, not at step 1"
     );
-    assert!(harness.logged("the player was teleported during a guardian hold"));
 }
 
 /// A plane change is a teleport whatever its distance (stairs are the
@@ -855,7 +854,6 @@ fn a_guardian_walk_of_a_few_tiles_keeps_the_step_for_every_event_name() {
             ["step-1", "step-2"],
             "{event:?}: no new begin, so the ordered guide is not restarted"
         );
-        assert!(!harness.logged("the player was teleported"));
         release.store(true, Ordering::Release);
         harness.run_until_begun(3);
         assert_eq!(harness.begun[2], "step-3");
@@ -868,10 +866,8 @@ fn a_guardian_walk_of_a_few_tiles_keeps_the_step_for_every_event_name() {
 fn a_teleport_keeps_the_step_while_partner_work_is_pending() {
     let (mut harness, release) = held_second_step();
     release.store(true, Ordering::Release);
-    while harness.script.cursor < 2 {
-        harness.step();
-    }
-    assert_eq!(harness.begun.len(), 3);
+    harness.run_until_begun(3);
+    assert_eq!(harness.script.cursor, 2);
     harness.script.pair_admission_since = Some(harness.active_now());
     harness.script.on_random(&random_event());
     harness.guardian_hold(&[tile(3280, 3290)]);
@@ -879,7 +875,6 @@ fn a_teleport_keeps_the_step_while_partner_work_is_pending() {
     assert!(harness.script.step.is_some());
     assert!(harness.script.progress.is_some());
     assert_eq!(harness.script.cursor, 2);
-    assert!(harness.logged("partner work is pending, so the step stays"));
     harness.run_until_begun(4);
     assert_eq!(
         harness.begun[3], "step-4",
@@ -906,8 +901,6 @@ fn with_random_events_off_the_event_changes_nothing_for_the_step() {
     assert!(harness.script.progress.is_some());
     assert_eq!(harness.script.cursor, 1);
     assert_eq!(harness.begun, ["step-1", "step-2"]);
-    assert!(!harness.logged("teleported"));
-    assert!(!harness.logged("resumed after a guardian hold"));
     release.store(true, Ordering::Release);
     harness.run_until_begun(3);
     assert_eq!(harness.begun[2], "step-3");

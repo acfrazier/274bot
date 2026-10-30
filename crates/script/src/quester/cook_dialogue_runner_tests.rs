@@ -1,6 +1,7 @@
 use super::*;
 use crate::native::{HostEffect, InteractionReceipt, NativeOutput};
-use crate::quester::families::tests::{def, local_player, with_tick_output};
+use crate::native::ledger::TickBudget;
+use crate::quester::families::tests::{def, local_player, with_tick_budget_output};
 use crate::shim::InteractReq;
 use api::named_banks::{NamedBank, NamedBankFacts};
 use api::quest_progress::EvidenceStamp;
@@ -28,6 +29,11 @@ struct CookDialogueFixture {
     script: Quester,
     snapshot: GameSnapshot,
     ledger: Option<Box<crate::native::ledger::Ledger>>,
+    /// The slot's budget, which carries a guardian hold across ticks.
+    budget: TickBudget,
+    /// The host's reply to a Talk-to: the Cook's page opens. A guardian that
+    /// took the player's interaction over leaves it unset.
+    talk_opens_page: bool,
     output: Capture,
     completion_scroll_root: i32,
     cook_name: String,
@@ -135,6 +141,8 @@ impl CookDialogueFixture {
             script,
             snapshot,
             ledger: None,
+            budget: TickBudget::default(),
+            talk_opens_page: true,
             output: Capture::default(),
             completion_scroll_root: selected.dialogue_ui().unwrap().quest_scroll_root,
             cook_name,
@@ -146,9 +154,10 @@ impl CookDialogueFixture {
     }
 
     fn tick(&mut self, tick: u64) -> ScriptFlow {
-        let flow = with_tick_output(
+        let flow = with_tick_budget_output(
             &self.snapshot,
             &mut self.ledger,
+            &mut self.budget,
             tick,
             &mut self.output,
             |native| self.script.tick(native).unwrap(),
@@ -172,8 +181,10 @@ impl CookDialogueFixture {
                             assert_eq!(name, self.cook_name);
                             assert_eq!(action, "Talk-to");
                             self.talks += 1;
-                            self.snapshot.seed_chat_modal(4882, vec![]);
-                            self.snapshot.seed_chat_options(vec![], 4883);
+                            if self.talk_opens_page {
+                                self.snapshot.seed_chat_modal(4882, vec![]);
+                                self.snapshot.seed_chat_options(vec![], 4883);
+                            }
                         }
                         InteractReq::ContinueDialog { .. } => {
                             self.continues += 1;
@@ -272,4 +283,61 @@ fn original_cook_hand_in_settles_after_owned_dialogue_transitions_to_completion_
     assert!(!fixture.output.logs.iter().any(|line| {
         line.contains("quester cook: stage cook:1 step hand-in (talk) failed: dialogue failed")
     }));
+}
+
+/// QUESTER-READ-KEEPS-STEP-R2, finding R1, on the real compiled Cook path: a
+/// random event takes the player's Talk-to over (the guardian's own
+/// interaction replaces the one the server accepted), so the Cook's page never
+/// opens. The hand-in must neither begin again (the ordered guide is not
+/// restarted: one begin of the step, progress and cursor kept) nor fail at its
+/// first-page deadline: it sends exactly one more Talk-to, after the settle
+/// tick, and then completes as an ordinary hand-in.
+#[test]
+fn a_random_event_that_takes_the_hand_in_talk_over_resends_it_once_without_a_restart() {
+    let mut fixture = CookDialogueFixture::new();
+    fixture.talk_opens_page = false;
+    let mut tick = 1;
+    while fixture.talks == 0 {
+        assert_eq!(fixture.tick(tick), ScriptFlow::Continue);
+        tick += 1;
+        assert!(tick < 60, "the hand-in sends its Talk-to");
+    }
+    let begun_before = fixture.script.begun.len();
+    let cursor_before = fixture.script.cursor;
+    assert!(fixture.script.step.is_some());
+
+    // The event arrives, the guardian holds the slot for eight ticks.
+    let event = DetectedRandom {
+        kind: api::random::RandomKind::Dialog,
+        name: "genie".into(),
+        ours: true,
+        npc_index: Some(0),
+    };
+    fixture.script.on_random(&event);
+    fixture.budget.hold_begin();
+    fixture.budget.hold_end();
+    tick += 8;
+    // The settle tick sends nothing; the next sends one Talk-to; then the
+    // host's reply opens the page this time.
+    assert_eq!(fixture.tick(tick), ScriptFlow::Continue);
+    assert_eq!(fixture.talks, 1, "the first observed tick after the hold sends nothing");
+    tick += 1;
+    fixture.talk_opens_page = true;
+    assert_eq!(fixture.tick(tick), ScriptFlow::Continue);
+    assert_eq!(fixture.talks, 2, "exactly one Talk-to is sent again");
+    assert_eq!(fixture.script.begun.len(), begun_before, "no new begin");
+    assert_eq!(fixture.script.cursor, cursor_before);
+    assert!(fixture.script.progress.is_some());
+
+    let mut flow = ScriptFlow::Continue;
+    for _ in 0..80 {
+        tick += 1;
+        flow = fixture.tick(tick);
+        if flow == ScriptFlow::Complete {
+            break;
+        }
+    }
+    assert_eq!(flow, ScriptFlow::Complete, "the hand-in completes");
+    assert_eq!(fixture.talks, 2, "no third Talk-to");
+    assert!(!fixture.output.logs.iter().any(|line| line.contains("failed")));
 }
