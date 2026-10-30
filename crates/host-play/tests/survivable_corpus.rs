@@ -552,7 +552,8 @@ fn w4_inputs(world: &NavWorld, source: &Value) -> Result<Vec<CorpusInput>, Strin
         state_json: rich_289_state_json(),
         frozen_options: legacy,
         route_options: FindOptions::default(),
-        route_source: "unmodified W4 all-zone FindMany baseline; grants remain empty for assessment",
+        route_source:
+            "unmodified W4 all-zone FindMany baseline; grants remain empty for assessment",
     }));
 
     let center = tile(2553, 3406, 0);
@@ -1440,7 +1441,8 @@ fn guide_inputs(
                 stage,
                 step_index,
                 step,
-            } in steps {
+            } in steps
+            {
                 let kind = step["kind"].as_str().unwrap_or("unknown");
                 if kind != "walk" && kind != "combat" && kind != "fight" {
                     continue;

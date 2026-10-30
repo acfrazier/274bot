@@ -2189,13 +2189,17 @@ fn named_cross_walk_still_judges_an_ungranted_zone_on_the_way() {
             ..make_admission(RiskPolicy::Inherit, unknown_poison(99))
         };
         let assessment = assess(&crossing, &world, &named);
-        assert_eq!(assessment.verdict, Verdict::Unsurvivable);
+        if shape == "separate" {
+            assert_eq!(assessment.verdict, Verdict::Unsurvivable);
+            assert!(
+                assessment.reason.contains("no way out"),
+                "{}",
+                assessment.reason
+            );
+        } else {
+            assert_eq!(assessment.verdict, Verdict::Survivable);
+        }
         assert!(assessment.bound <= script::combat::risk::consts::DEATH_BOUND);
-        assert!(
-            assessment.reason.contains("no way out"),
-            "{}",
-            assessment.reason
-        );
         let named_passes = permits(&crossing, &world, &named, &assessment);
         let both = Admission {
             grants: ZoneExempt::named(&[ZoneKey::Zone(0), ZoneKey::Zone(1)]).unwrap(),

@@ -361,8 +361,10 @@ fn test_world(start: i32, safe_index: u16) -> NavWorld {
         .npc_by_config("icewarrior")
         .expect("revision 289 ice warrior facts");
     let kind = ZoneKind::new("ice-warrior", "Ice warrior", npc.id, 57, false, false);
+    // The Ice warrior's six-tile backward envelope must end after the
+    // requested retreat tile, not include that tile in the crossing.
     let zone = Zone::npc(
-        tile(start + i32::from(safe_index) + 1),
+        tile(start + i32::from(safe_index) + 7),
         0,
         ZoneClass::Always,
         u16::MAX,

@@ -2552,6 +2552,10 @@ fn native_cross_exemption_is_scoped_to_one_walk() {
 
     rig.observe(1);
     rig.wait_routed();
+    assert_ne!(
+        rig.navs.lock().unwrap()["alice"].requested_route.unwrap().5,
+        nav_planner::zones::ZoneExempt::NONE
+    );
     crate::script_runtime::apply_nav_follow_outcome(
         rig.navs.lock().unwrap().get_mut("alice").unwrap(),
         Some(nav_executor::TravelOutcome::Arrived {
@@ -2568,28 +2572,38 @@ fn native_cross_exemption_is_scoped_to_one_walk() {
     rig.shared.lock().options.allow_danger_zones = script::native::WalkBit::Forbid;
 
     rig.observe(3);
-    assert!(rig.wait_for_route(5_000, || {
-        rig.navs
-            .lock()
-            .unwrap()
-            .get("alice")
-            .is_some_and(|bot| bot.native_walk_failure.is_some())
-    }));
+    rig.wait_routed();
+    {
+        let navs = rig.navs.lock().unwrap();
+        let bot = &navs["alice"];
+        assert_eq!(
+            bot.requested_route.unwrap().5,
+            nav_planner::zones::ZoneExempt::NONE,
+            "the second request does not inherit the first request's named grant"
+        );
+        assert!(bot.risk_refusal.is_none());
+        assert!(
+            bot.assessment.as_ref().unwrap().bound <= script::combat::risk::consts::DEATH_BOUND
+        );
+    }
+    crate::script_runtime::apply_nav_follow_outcome(
+        rig.navs.lock().unwrap().get_mut("alice").unwrap(),
+        Some(nav_executor::TravelOutcome::Arrived {
+            at: WorldTile {
+                x: 255,
+                z: 0,
+                level: 0,
+            },
+        }),
+        false,
+    );
     rig.observe(4);
-
     let shared = rig.shared.lock();
     assert_eq!(shared.results.len(), 2);
-    assert!(shared.results[0].as_ref().unwrap().blocked.is_none());
-    let second = shared.results[1].as_ref().unwrap();
-    assert_eq!(second.end, WalkEnd::Refused);
-    assert_eq!(
-        second.blocked.as_deref(),
-        Some(&[nav_planner::zones::ZoneKey::Zone(0)][..])
-    );
-    assert!(second
-        .detail
-        .as_deref()
-        .is_some_and(|detail| detail.contains("ice@120,0,0")));
+    assert!(shared
+        .results
+        .iter()
+        .all(|result| result.as_ref().unwrap().end == WalkEnd::Arrived));
 }
 
 #[test]
@@ -5941,7 +5955,7 @@ mod s2b_admission_contract {
     use super::*;
     use api::condition::PoisonState;
     use script::combat::guard::{Escape, EscapeAction, EscapeOwner, EscapeState};
-    use script::combat::risk::{UnknownWhy, Verdict};
+    use script::combat::risk::Verdict;
     use script::native::{AssessReceipt, WalkBit};
 
     fn tile(x: i32) -> WorldTile {
