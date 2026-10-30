@@ -1510,7 +1510,7 @@ fn begin_far_cook() -> (
     (ledger, handle, before, cook_tile)
 }
 
-/// The host dropped the route assessment and never answered (live run `d3c1`).
+/// The host never answers the route assessment (the stall seen in live run `d3c1`).
 /// The wait is 8 observed ticks, then one fresh plan, then a named failure.
 #[test]
 fn dialogue_unanswered_route_assessment_is_asked_again_once_then_named_failure() {

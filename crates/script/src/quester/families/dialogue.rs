@@ -64,12 +64,12 @@ const DIALOGUE_WALK_RETRIES: u8 = 1;
 /// The host publishes the answer on the first observation after its route
 /// job ends (`script_observe.rs:2116-2119`). A route cleanup drops a pending
 /// advisory without an answer (`script_nav.rs:7109-7126`). In the live clean
-/// Cook's Assistant run `d3c1` (QUESTER-DIALOGUE-OPEN r3), the Dialogue asked
-/// on the tick that its Talk pre-walk ended, and no answer came for 2,000
-/// ticks until the watchdog restarted the script. The cause is not proven.
-/// No content signal exists for host compute time, so this bound only tells a
-/// lost request from a slow one. An unanswered request is a walk failure with
-/// the same one fresh plan.
+/// Cook's Assistant run `d3c1` (QUESTER-DIALOGUE-OPEN r3), no walk and no
+/// Talk-to followed the Talk pre-walk for 2,000 ticks, until the
+/// watchdog restarted the script. [INFERENCE] The Dialogue waited for an
+/// answer that never came. The cause is not proven. No content signal exists
+/// for host compute time, so this bound only tells a lost request from a slow
+/// one. An unanswered request is a walk failure with the same one fresh plan.
 const DIALOGUE_ASSESS_TICKS: u64 = 8;
 pub const DRIVE_STEPS: u32 = 120;
 pub const PAGE_ACK_MS: u64 = 3_000;
