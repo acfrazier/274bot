@@ -797,6 +797,54 @@ mod compat {
         }
 
         #[test]
+        fn make_one_waits_for_the_product_receipt_after_page_close() {
+            let products = [product_with_id(1737, "Wool", &[(1, 881)])];
+            let before_inventory = [ItemRow {
+                id: 1737,
+                count: 2,
+                ..ItemRow::default()
+            }];
+            let at = Probe {
+                inventory: Some(&before_inventory),
+                chat_modal_id: Some(4882),
+                ..probe(&products, None, false, 3000)
+            };
+            let (out, ops, machine) = begin(|cx| begin_make_one(&at, "wool", cx));
+            assert_eq!(out, None);
+            assert_eq!(ops, vec![InteractReq::IfButton { component_id: 881 }]);
+            let mut machine = machine.expect("running");
+            let mut clock = armed(MODAL_WAIT_MS);
+
+            let page_closed = Probe {
+                chat_modal_id: Some(-1),
+                tick: Some(3),
+                ..at
+            };
+            assert_eq!(step(&mut machine, &mut clock, &page_closed), (None, vec![]));
+            let before_product_receipt = Probe {
+                tick: Some(6),
+                ..page_closed
+            };
+            assert_eq!(
+                step(&mut machine, &mut clock, &before_product_receipt),
+                (None, vec![]),
+                "the page can close before its inventory receipt arrives"
+            );
+
+            let after_inventory = [ItemRow {
+                id: 1737,
+                count: 3,
+                ..ItemRow::default()
+            }];
+            let receipt = Probe {
+                inventory: Some(&after_inventory),
+                tick: Some(8),
+                ..page_closed
+            };
+            assert_eq!(step(&mut machine, &mut clock, &receipt), (Some(true), vec![]));
+        }
+
+        #[test]
         fn make_settles_on_the_modal_it_pressed_from_changing() {
             let products = [product("Bronze bar", &[(5, 11)])];
             let at = probe(&products, None, false, 3000);
