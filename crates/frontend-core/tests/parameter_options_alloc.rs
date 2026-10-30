@@ -1,5 +1,5 @@
-//! Own test binary: shared preserved-label detail lookup must not allocate
-//! while a renderer repeatedly asks for cached unavailable-quest labels.
+//! Own test binary: shared preserved-label lookup and warm Quester zone text must not allocate.
+//! Renderers use cached values when they show unavailable-quest labels or Quester scope.
 use std::alloc::{GlobalAlloc, Layout, System};
 use std::cell::Cell;
 

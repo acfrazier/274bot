@@ -1498,15 +1498,9 @@ fn browse_rows_select_a_card_for_start() {
         Some(ScriptChoice::loaded(CardSource::Catalog, "BoneBurier")),
         "clicking the first card row selects it"
     );
-    assert_eq!(
-        app.on_key(ch('t')),
-        AppAction::None,
-        "Browse keeps the keys while it is open: t does not start yet"
-    );
-    assert_eq!(app.on_key(key(KeyCode::Enter)), AppAction::None);
     assert!(
         !app.script_browse_open,
-        "Enter closes Browse; the pick stays"
+        "a mouse pick closes Browse; the selected card stays"
     );
     assert_eq!(
         app.on_key(ch('t')),
@@ -2128,7 +2122,18 @@ fn mouse_browse_pick_discloses_quester_zones_before_start() {
             "{width}x{height}: a mouse pick closes Browse before Start"
         );
 
-        let shown = text(&draw(&mut app, width, height));
+        let mut shown = text(&draw(&mut app, width, height));
+        for _ in 0..8 {
+            if shown.contains("Guide reason:") {
+                break;
+            }
+            assert_eq!(
+                app.on_key(key(KeyCode::PageDown)),
+                AppAction::None,
+                "{width}x{height}: reading the zone list does not start Quester"
+            );
+            shown = text(&draw(&mut app, width, height));
+        }
         assert!(
             shown.contains(frontend_core::scripts::START_ZONE_SCOPE_TITLE),
             "{width}x{height}: the selected guide's zone scope is shown before Start: {shown}"
@@ -2136,6 +2141,10 @@ fn mouse_browse_pick_discloses_quester_zones_before_start() {
         assert!(
             shown.contains("Start accepts only these zones."),
             "{width}x{height}: the shared Start notice is shown: {shown}"
+        );
+        assert!(
+            shown.contains("renegade_knight@2773,3399,0"),
+            "{width}x{height}: the selected guide's declared zone is shown: {shown}"
         );
         assert!(
             shown.contains("Guide reason:"),

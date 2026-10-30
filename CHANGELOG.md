@@ -79,6 +79,8 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.7` 
   Even a Quester scope with no grants avoids every danger zone, even when the
   global setting allows danger routing. Desert Rescue declares the same zones
   for both walks to the captain.
+- Guide `walk` steps that set `args.allow_danger_zones` now fail to compile.
+  Use `cross` to declare the danger zones that a step may cross.
 
 - Quest guides now respond to an NPC's "I can't reach that!" message at once:
   they recover from the NPC's current location when possible, or report the
