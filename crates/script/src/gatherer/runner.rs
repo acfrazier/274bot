@@ -2234,10 +2234,8 @@ impl Gatherer {
             && self.scratch.last_walk_failure.is_some()
             && matches!(
                 &selected.outcome,
-                Selection::Exhausted {
-                    wait_until,
-                    absent: 0,
-                } if *wait_until == u64::from(u32::MAX)
+                Selection::Exhausted { wait_until, .. }
+                    if *wait_until == u64::from(u32::MAX)
             )
         {
             let reason =
