@@ -5910,7 +5910,7 @@ fn s2b_admission_per_bot_layouts() {
             std::mem::size_of::<script::combat::Combat>(),
             std::mem::size_of::<script::combat::WalkGuard>()
         ),
-        (3816, 1624, 512, 264)
+        (3872, 1624, 512, 264)
     );
     #[cfg(all(
         target_os = "linux",

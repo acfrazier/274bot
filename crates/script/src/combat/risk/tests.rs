@@ -1013,12 +1013,10 @@ fn replay_no_crossing_walk_admits_poison_despite_failed_baseline() {
     assert!(assessment.plan.crossings.is_empty());
     assert_eq!(assessment.verdict, Verdict::Survivable);
     assert_eq!(assessment.hp_after, 20);
-    assert!(
-        assessment
-            .supplies
-            .iter()
-            .all(|need| !matches!(need, SupplyNeed::Food { .. }))
-    );
+    assert!(assessment
+        .supplies
+        .iter()
+        .all(|need| !matches!(need, SupplyNeed::Food { .. })));
 }
 
 #[test]
@@ -1408,7 +1406,9 @@ fn t5_1_each_zone_classifies_as_the_kind_its_pack_row_names() {
         "the first unsupported zone on the walk is the magic firewarrior"
     );
     assert!(
-        assessment.reason.contains("Route crosses Ice warrior at 10,100"),
+        assessment
+            .reason
+            .contains("Route crosses Ice warrior at 10,100"),
         "{}",
         assessment.reason
     );

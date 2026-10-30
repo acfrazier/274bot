@@ -793,7 +793,10 @@ fn known_clear_or_poisoned_fact_with_no_world_never_becomes_unsettled() {
         .is_some());
     clear.pump(tile(0), false);
     assert!(!matches!(
-        clear.bot()[ALICE].risk_refusal.as_deref().map(|entry| entry.1),
+        clear.bot()[ALICE]
+            .risk_refusal
+            .as_deref()
+            .map(|entry| entry.1),
         Some(WalkRefusal::PoisonUnsettled { .. })
     ));
 
@@ -812,7 +815,10 @@ fn known_clear_or_poisoned_fact_with_no_world_never_becomes_unsettled() {
     ));
     poisoned.pump(tile(0), false);
     assert!(!matches!(
-        poisoned.bot()[ALICE].risk_refusal.as_deref().map(|entry| entry.1),
+        poisoned.bot()[ALICE]
+            .risk_refusal
+            .as_deref()
+            .map(|entry| entry.1),
         Some(WalkRefusal::PoisonUnsettled { .. })
     ));
 }

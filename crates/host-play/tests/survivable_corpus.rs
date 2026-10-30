@@ -2376,9 +2376,7 @@ fn source_content_identity(value: &Value) -> Value {
                     .collect(),
             )
         }
-        Value::Array(items) => {
-            Value::Array(items.iter().map(source_content_identity).collect())
-        }
+        Value::Array(items) => Value::Array(items.iter().map(source_content_identity).collect()),
         value => value.clone(),
     }
 }
@@ -2405,7 +2403,10 @@ fn corpus_input_identity_uses_source_content_not_clone_location() {
     assert_ne!(input_signature(&[changed_input]).unwrap(), signature);
     let mut changed_unhashed_path = old;
     changed_unhashed_path["source"]["unhashed_locator"]["path"] = json!("/different/path");
-    assert_ne!(input_signature(&[changed_unhashed_path]).unwrap(), signature);
+    assert_ne!(
+        input_signature(&[changed_unhashed_path]).unwrap(),
+        signature
+    );
 }
 
 fn input_signature(records: &[Value]) -> Result<String, String> {
