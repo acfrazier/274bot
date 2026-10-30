@@ -103,10 +103,14 @@ pub(crate) fn step_poison_hold_on_bot<D: Driver>(
             .as_deref()
             .and_then(|route| legacy_route_tile(route, until_index))
     };
-    let here = snapshot.tile().map(|(x, z, level)| WorldTile { x, z, level });
+    let here = snapshot
+        .tile()
+        .map(|(x, z, level)| WorldTile { x, z, level });
     let at_retreat = retreat.is_some() && here == retreat;
     let window = fact.and_then(|fact| fact.poison_window);
-    let remaining = window.map_or(crate::slot_condition::CLEAN_TICKS, |window| window.remaining);
+    let remaining = window.map_or(crate::slot_condition::CLEAN_TICKS, |window| {
+        window.remaining
+    });
     let accepted = window.is_some_and(|window| window.accepted);
 
     if at_retreat {

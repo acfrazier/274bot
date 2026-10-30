@@ -613,10 +613,13 @@ pub(crate) fn publish(
                 bot.condition.current().expect("current poison fact").poison,
             );
         } else {
-            api::host_log!(api::hostlog::Category::NavEvent, api::hostlog::Level::Info,
+            api::host_log!(
+                api::hostlog::Category::NavEvent,
+                api::hostlog::Level::Info,
                 slot = slot.unwrap_or("?"),
                 "poison_hold=end until_index={} reason=fact_before_retreat fact={:?}",
-                hold.until_index, bot.condition.current().expect("current poison fact").poison,
+                hold.until_index,
+                bot.condition.current().expect("current poison fact").poison,
             );
         }
         bot.admission_pending = true;
@@ -664,12 +667,14 @@ pub(crate) fn publish(
         .requested_route
         .map_or(route.destination(), |request| request.0);
     if permits_view(route, world, &admission, assessment) {
-        let enforced = admission.enforce
-            && !admission.compat_v1
-            && admission.policy != RiskPolicy::Proceed;
+        let enforced =
+            admission.enforce && !admission.compat_v1 && admission.policy != RiskPolicy::Proceed;
         if let risk::PoisonTest::WaitForClear { until_index, .. } = assessment.poison_test {
             if enforced
-                && bot.poison_hold.as_ref().is_none_or(|hold| hold.until_index != until_index)
+                && bot
+                    .poison_hold
+                    .as_ref()
+                    .is_none_or(|hold| hold.until_index != until_index)
             {
                 bot.poison_hold = Some(crate::poison_hold::PoisonHold {
                     until_index,

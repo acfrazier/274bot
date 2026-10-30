@@ -185,6 +185,7 @@ impl FollowRun {
                 hop.cursor = hop.aim_index + 1;
                 hop.sent = false;
                 self.send_walk_hop(d, snapshot, options, hop, here)
+            }
             // A disconnect ends the watch; the hop was effectively dropped.
             Some(Outcome::Expired { .. }) => {
                 self.note_walk_stall_idle(&mut hop, snapshot, here);

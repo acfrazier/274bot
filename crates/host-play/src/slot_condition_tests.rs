@@ -932,7 +932,10 @@ fn poison_window_not_accepted_needs_one_edge() {
     let checkpoint = owner.dispatch_checkpoint(&client).unwrap();
     queue_packet(&mut client, ClientProt::MOVE_GAMECLICK);
     owner.observe_dispatch(&client, checkpoint);
-    assert_eq!(owner.window.clean, 31, "movement accepts without resetting clean");
+    assert_eq!(
+        owner.window.clean, 31,
+        "movement accepts without resetting clean"
+    );
     assert!(owner.window.accepted);
     owner.observe_frame(&frame(32), &drain(true, true), false);
     assert_eq!(

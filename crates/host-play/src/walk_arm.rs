@@ -487,13 +487,7 @@ pub fn observe_walk_arm_admission(
     with_walk_arm_bot(arm, |bot| {
         crate::admission::publish(bot, world, snapshot, map_members, slot);
     });
-    finish_walk_arm_refusal(
-        before,
-        snapshot,
-        arm,
-        slot,
-        world.graph.zones.is_none(),
-    )
+    finish_walk_arm_refusal(before, snapshot, arm, slot, world.graph.zones.is_none())
 }
 
 fn finish_walk_arm_refusal(
@@ -634,10 +628,7 @@ pub fn step_walk_arm_follow<D: Driver>(
         close_enough: 0,
         teleports: world.map(|world| world.graph.teleports.as_slice()),
         edges: world.map(|world| world.graph.edges.as_slice()),
-        route_index_limit: arm
-            .poison_hold
-            .as_ref()
-            .map(|hold| hold.until_index),
+        route_index_limit: arm.poison_hold.as_ref().map(|hold| hold.until_index),
         ..TravelOptions::default()
     };
     let outcome = arm

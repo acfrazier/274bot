@@ -937,9 +937,7 @@ impl FollowRun {
                 let here = here(snapshot);
                 let hop = WalkHop {
                     leg: route_leg,
-                    route_index_start: self
-                        .current_route_index
-                        .expect("route leg has an index"),
+                    route_index_start: self.current_route_index.expect("route leg has an index"),
                     cursor: 0,
                     aim: here,
                     aim_index: 0,

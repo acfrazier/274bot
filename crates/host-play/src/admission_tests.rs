@@ -498,7 +498,10 @@ fn u6_unknown_witness_refuses_but_max_hit_boundary_gets_a_full_assessment() {
         let options = FindOptions::default();
         let keys = real_witness(&world, from, to, options, &state, &[]).unwrap();
         assert_eq!(keys, [ZoneKey::Zone(0)]);
-        assert_eq!(witness_admissible(&world, &input, &keys), expected_unknown.is_none());
+        assert_eq!(
+            witness_admissible(&world, &input, &keys),
+            expected_unknown.is_none()
+        );
         if let Some(why) = expected_unknown {
             let kind = kind_facts(&world, 0);
             assert!(kind.unknown_for().is_some());
@@ -532,7 +535,10 @@ fn u6_unknown_witness_refuses_but_max_hit_boundary_gets_a_full_assessment() {
             assert_eq!(result.tried, 0);
             assert_eq!(
                 result.refusal,
-                Some(WalkRefusal::NoRouteWithinBounds { tried: 0, last: None })
+                Some(WalkRefusal::NoRouteWithinBounds {
+                    tried: 0,
+                    last: None
+                })
             );
             assert!(result.assessment.is_none());
         } else {
@@ -952,7 +958,10 @@ fn c1_unknown_poison_is_charged_without_refusing_safe_crossings_or_forging_clear
         PoisonState::Unknown { since: 0 }
     );
     assert_eq!(unknown_assessment.verdict, Verdict::Survivable);
-    assert!(matches!(unknown_assessment.poison_test, risk::PoisonTest::PassesCharged { .. }));
+    assert!(matches!(
+        unknown_assessment.poison_test,
+        risk::PoisonTest::PassesCharged { .. }
+    ));
 
     let override_admission = make_admission(RiskPolicy::Proceed, uncertain);
     let (overridden, override_kernels) = count_kernels(|| {
@@ -968,7 +977,9 @@ fn c1_unknown_poison_is_charged_without_refusing_safe_crossings_or_forging_clear
     assert!(overridden.refusal.is_none());
     let override_assessment = overridden.assessment.as_ref().unwrap();
     assert_eq!(override_assessment.verdict, Verdict::Survivable);
-    assert!(override_assessment.reason.starts_with("walk proceeds without the check (Always)"));
+    assert!(override_assessment
+        .reason
+        .starts_with("walk proceeds without the check (Always)"));
 
     let safe_world = empty_corridor();
     let safe_to = tile(10, 1);
@@ -1771,11 +1782,7 @@ fn s2b_admission_route_and_publication_microbenchmarks() {
     for iteration in 0..(WARMUPS + SAMPLES) {
         let started = Instant::now();
         assert!(!fresh(&worker_assessment, changed.input));
-        let assessment = std::hint::black_box(assess(
-            &long_route,
-            &long_world,
-            &changed,
-        ));
+        let assessment = std::hint::black_box(assess(&long_route, &long_world, &changed));
         let elapsed = started.elapsed().as_nanos();
         assert!(assessment.plan.complete);
         assert_eq!(assessment.input.hp, 98);
@@ -1867,7 +1874,10 @@ fn witness_retry_is_assessed_with_unknown_poison() {
     assert_eq!(result.tried, 1);
     assert_eq!(result.blocked.as_ref(), &[ZoneKey::Zone(0)]);
     assert!(result.assessment.is_some());
-    assert_ne!(result.refusal, Some(WalkRefusal::Unknown(UnknownWhy::Poison)));
+    assert_ne!(
+        result.refusal,
+        Some(WalkRefusal::Unknown(UnknownWhy::Poison))
+    );
 }
 
 #[test]
@@ -2184,7 +2194,10 @@ fn named_cross_walk_still_judges_an_ungranted_zone_on_the_way() {
         };
         let both_assessment = assess(&crossing, &world, &both);
         assert_eq!(assessment.bound, both_assessment.bound, "{shape}");
-        assert_eq!(named_passes, permits(&crossing, &world, &both, &both_assessment));
+        assert_eq!(
+            named_passes,
+            permits(&crossing, &world, &both, &both_assessment)
+        );
         let held = Admission {
             enforce: false,
             ..named
@@ -2328,7 +2341,9 @@ fn real_squire_ice_chain_admits_named_and_destination_zones_with_unknown_poison(
             &Estimate {
                 zones: Some(zones),
                 wilderness: producer::wilderness_view(&world).unwrap(),
-                grants: Some(risk::Grants::named(producer::bind_exempt(zones, grants).unwrap())),
+                grants: Some(risk::Grants::named(
+                    producer::bind_exempt(zones, grants).unwrap(),
+                )),
                 risks: &tables(&world).unwrap().risks,
                 combat: &tables(&world).unwrap().combat,
                 allow: WalkAllow::default(),
@@ -2337,7 +2352,10 @@ fn real_squire_ice_chain_admits_named_and_destination_zones_with_unknown_poison(
             assessment.input,
         );
         assert_eq!(assessment.bound, named_assessment.bound, "{step}");
-        assert_eq!(assessment.verdict, named_assessment.verdict, "{step}: endpoint completion is not a physics grant");
+        assert_eq!(
+            assessment.verdict, named_assessment.verdict,
+            "{step}: endpoint completion is not a physics grant"
+        );
         let _ = endpoint_granted;
         from = route.dest;
     }
@@ -2755,9 +2773,13 @@ fn poison_deadline_without_world_preserves_the_typed_refusal() {
         &world.graph,
         tile(0, 1),
         tile(23, 1),
-        FindOptions { zones: ZoneExempt::all(), ..FindOptions::default() },
+        FindOptions {
+            zones: ZoneExempt::all(),
+            ..FindOptions::default()
+        },
         &WorldState::default(),
-    ).unwrap();
+    )
+    .unwrap();
     let admission = make_admission(RiskPolicy::Inherit, input(99));
     let assessment = assess(&route, &world, &admission);
     let mut bot = crate::script_runtime::NavBot {
@@ -2773,6 +2795,12 @@ fn poison_deadline_without_world_preserves_the_typed_refusal() {
     refuse(&mut bot, None, tile(23, 1), refusal);
     assert!(bot.route.is_none());
     assert_eq!(bot.risk_refusal.as_deref(), Some(&(19, refusal)));
-    assert!(Arc::ptr_eq(bot.last_assessment.as_ref().unwrap(), &assessment));
-    assert_eq!(bot.walk_outcome_detail.as_deref(), Some(refusal.to_string().as_str()));
+    assert!(Arc::ptr_eq(
+        bot.last_assessment.as_ref().unwrap(),
+        &assessment
+    ));
+    assert_eq!(
+        bot.walk_outcome_detail.as_deref(),
+        Some(refusal.to_string().as_str())
+    );
 }
