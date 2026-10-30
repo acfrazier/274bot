@@ -1401,6 +1401,27 @@ fn observed_quest_stage(fixture: &LiveFixture, quest: &str, stage: i32) -> serde
     })
 }
 
+fn drezel_advice_page_matches(texts: &[String]) -> bool {
+    texts
+        .join("\n")
+        .contains("I cannot let you pass without warning you.")
+}
+
+#[test]
+fn drezel_advice_match_uses_rendered_widget_boundaries() {
+    let warning = [
+        "Ah, adventurer. For all the assistance you",
+        "have given both myself and Misthalin in",
+        "your actions, I cannot let you pass without",
+        "warning you.",
+    ]
+    .map(str::to_owned);
+    assert!(drezel_advice_page_matches(&warning));
+    assert!(!drezel_advice_page_matches(
+        &["Here, take it again, but please try and be more careful this time.".to_owned()]
+    ));
+}
+
 fn wait_for_drezel_advice_page(fixture: &LiveFixture) -> (ChatWitness, String, Vec<String>) {
     wait_for(
         &fixture.play,
@@ -1426,10 +1447,7 @@ fn wait_for_drezel_advice_page(fixture: &LiveFixture) -> (ChatWitness, String, V
                 return None;
             }
             let page = first_chat_witness(&snapshot)?;
-            if !page
-                .text
-                .contains("I cannot let you pass without warning you.")
-            {
+            if !drezel_advice_page_matches(snapshot.chat_modal_texts()) {
                 return None;
             }
             Some((page, w3, logs))
