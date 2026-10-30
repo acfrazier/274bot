@@ -70,6 +70,10 @@ pub enum PanelError {
     EventLoop(#[from] winit::error::EventLoopError),
     #[error("live harness failed: {0}")]
     LiveHarnessFailure(String),
+    #[error("memory run failed: {0}")]
+    MemoryRunFailure(String),
+    #[error("startup failed: {0}")]
+    StartupFailure(String),
     #[error("window creation failed: {0}")]
     WindowCreation(#[source] winit::error::OsError),
     #[error("WGPU surface creation failed: {0}; {help}", help = GRAPHICS_HELP)]

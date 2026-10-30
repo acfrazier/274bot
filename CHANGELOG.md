@@ -7,14 +7,26 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.7` 
 
 ### Panel and terminal app
 
+- In the panel, **Copy settings** now follows a bot if you rename it in
+  **Profiles** before **Confirm**. The copy is still cancelled if the
+  target is deleted or the vault becomes unavailable.
+
 - Source builds can now omit the JavaScript runtime with
   `--no-default-features`. These builds keep Gatherer, Grinch and Quester,
   their settings, and native Start, Pause, Stop and paint controls. They do
   not offer Load, Reload, catalog or rs2b0t profile import. Default builds
   still include JavaScript. Sherlock needs the JS-runtime build until its
   native clue rewrite, although Sherlock itself creates no V8 isolate.
+- When a `--live` or `--smoke` run of the panel fails during startup, the panel
+  now stops its bot workers before it closes its window. Before, the panel
+  could crash while it exited.
 - The terminal app's script pane now marks the selected compiled (native)
   script card with `>` the same way as a selected JavaScript card.
+- On Linux, the known issue where the panel could close right after start
+  on a desktop with two graphics chips no longer happens with current
+  graphics drivers and desktop versions, so it is no longer listed. 274bot
+  did not change for this. If you still see "importing the supplied dmabufs
+  failed", start the panel with `WGPU_POWER_PREF=high ./panel-play`.
 
 ### Combat
 
@@ -25,27 +37,39 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.7` 
   real max hit. A cow's max hit is 1, so a bot eats at 3 hitpoints and
   stops for lack of food at 2. Imps cannot damage the bot at all (max hit
   0), so the bot does not raise Protect from Melee against them.
-- When a quest fight cannot attack its attacker, the bot now asks the route
-  planner for a safe place to walk to. It offers the quest's own stand first,
-  then places beyond the attacker's chase range, then places that are only
-  farther away. The planner picks the nearest place it can reach. Before, the
-  bot could pick a spot it could not reach, stand still, eat all its food and
-  die. The static hostile tree near Draynor Manor is one such attacker. If a
-  route fails, the bot plans again from where it stands and prefers the next
-  kind of place. A route that neither arrives nor fails also ends: the bot
-  counts game ticks, and when the walk takes longer than the measured walk
-  distance plus a margin of 12 ticks, it gives up on that route and starts
-  the next. When the walk distance cannot be measured, the limit is the
-  planner's own limit on route length, and the walk machine's ten-minute
-  deadline ends the walk first. A pass makes one request for each kind of
-  place that has candidates, so up to three requests (two when the quest
-  names no stand). The places of different kinds can overlap. A second pass
-  can follow the first when the food runs out, so the bot makes at most six
-  requests. While food remains, the first pass keeps eating as it walks; the
-  second pass, after the food is gone, does not eat. The quest's own walk
-  starts only after the bot sees that the attacker is gone. If every route
-  fails, the quest stops with the last route failure. This does not promise
-  that an escape exists.
+- When a quest fight cannot attack its target, the bot asks the route planner
+  to choose among exact escape goals. It offers the quest's stand first, then
+  tiles beyond the attacker's chase range, then tiles farther from the attacker
+  than the player is. The baked collision check removes blocked tiles,
+  including the dead-tree thicket near Draynor Manor. The route planner decides
+  which remaining goals it can reach.
+
+  After a walk fails, the bot plans again from its current tile and tries the
+  next tier with unrequested goals. Each request names one tier. Across both
+  passes, later requests never resend a tile named by an earlier failed request.
+  The second pass keeps this exclusion after food runs out. Six fixed 32-byte
+  request records and a one-byte count add 200 bytes to each bot's combat-run
+  state after alignment. The fixed history does not grow on game ticks. The
+  live Reach flood measures walking depth to a goal in that tier. It does not
+  remove goals. A walk that neither arrives nor fails ends after the measured
+  depth plus 12 game ticks. The bot counts game ticks. When it cannot measure
+  the depth, this tick limit does not apply. The route planner's own length
+  limit applies. The walk machine's ten-minute deadline ends the walk first.
+
+  Each pass makes at most one request per tier with unrequested goals. It makes
+  up to three requests, or two when the quest gives no stand. A second pass can
+  follow when food runs out, so the bot makes at most six requests. The first
+  pass keeps eating during each walk while food remains. The second pass does
+  not eat after food runs out. The quest's own walk starts only after the bot
+  sees that the attacker is gone. If every route fails, the quest stops with
+  the last route failure. The bot does not promise that an escape exists.
+
+### Survival
+
+- After a bot eats a Strange fruit, it now counts its poison as cured even
+  when it sees the eat message and the loss of the fruit in different game
+  ticks. Before, the bot and scripts that read its poison state could still
+  see it as poisoned.
 
 ### Navigation
 
@@ -108,10 +132,28 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.7` 
 
 ### Scripting
 
+- Bank opening now waits for its own walk to finish. A completed walk from
+  a script could reuse the bank walk's request number and end the bank walk
+  before the bot reached the bank. The host now checks the route generation
+  before it sends a walk result to a native action.
+
+- A native script that asked the host for a route assessment could wait for
+  an answer that never came. This happened when the script's earlier walk had
+  just ended: the host cleared the old walk and, with it, the new assessment.
+  The host now clears only the old walk's own work, so the assessment still
+  answers once. If the host itself cancels a live assessment (a pause or a
+  relog), the script now gets one refusal that says so.
+
 - The script API documentation now states that moving the bot by hand during a
   fight ends `api.combat.fight` as `aborted` with reason `user-input`. The host
   has settled it that way since 0.2.4; the declarations and pages still
   described an `interrupted` result.
+- Fare recovery chooses a free tile next to Luthas that the bot can reach,
+  using the shortest route and the closest tile as a tie-breaker.
+  If Luthas is not in view, the bot first walks to where he works, then chooses
+  a free tile next to him.
+  The bot makes up to three attempts each time the bot goes to talk to Luthas.
+  The bot logs each failed attempt and the final failure.
 
 - A saved setting now takes effect only after its save has reached the disk.
   Before, the panel and the terminal app applied a checkbox at once and kept it
@@ -164,6 +206,17 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.7` 
   without a new action. "Don't show again" in the panel's render-all warning
   now renders every wall member only when the acknowledgement is saved; if
   the save fails, **only render focused** stays on.
+
+### Fixed during development
+
+#### Scenario checks
+
+- The chicken bank check now uses a guaranteed Bones drop for its pickup and
+  deposit checks. It requires fresh combat XP after the bank return instead
+  of waiting for a random Feather drop. Up to three further bank returns may
+  restart the same 150-tick combat window. Each return follows a fresh bank
+  visit. A stalled return or a spent restart limit still fails. The 12-minute
+  deadline is the outer wall-clock limit.
 
 ## [0.2.7] — 2026-10-26 — Beta 2
 
