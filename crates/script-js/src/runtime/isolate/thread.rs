@@ -191,8 +191,11 @@ pub(super) fn isolate_main(
     compat_journal: Option<std::sync::Arc<crate::quest_journal::CompatJournalLease>>,
     paint_generation: std::sync::Arc<std::sync::atomic::AtomicU64>,
     teardown: std::sync::Arc<Mutex<TeardownState>>,
+    frame_interest: std::sync::Arc<std::sync::atomic::AtomicUsize>,
+    frame_ack_tx: std::sync::mpsc::SyncSender<()>,
     proof: std::sync::Arc<TeardownProofInner>,
     execution: Option<api::identity::ExecutionId>,
+    local_state: Option<std::sync::Arc<script::local_state::SlotState>>,
     #[cfg(feature = "memory-profile")] counters: std::sync::Arc<crate::memory_profile::Counters>,
 ) {
     #[cfg(feature = "memory-profile")]
@@ -249,10 +252,22 @@ pub(super) fn isolate_main(
         return;
     }
     let wired = super::super::lineage_v8::enter_root(&mut runtime, |runtime| {
-        wire_runtime(runtime, &source, shape, &siblings, game_data, named_banks)
+        wire_runtime(
+            runtime,
+            &source,
+            shape,
+            &siblings,
+            game_data,
+            named_banks,
+            local_state,
+            std::sync::Arc::clone(&frame_interest),
+        )
     });
     if let Err(e) = wired {
         let _ = setup.send(SetupMessage::Ready(Err(e)));
+        crate::bindings::event_callbacks::clear_all();
+        super::super::lifecycle_v8::clear_all(&mut runtime);
+        super::super::activity_v8::clear_all(&mut runtime);
         return;
     }
     // The native-event consumer ships only with the compat runner
@@ -283,6 +298,8 @@ pub(super) fn isolate_main(
         compat_journal,
         paint_generation,
         teardown,
+        frame_interest,
+        frame_ack_tx,
         proof,
         v2_native,
         events_consumed,
@@ -1014,6 +1031,44 @@ fn fire_tick_listeners(runtime: &mut Runtime, teardown: &Mutex<TeardownState>) {
     });
 }
 
+fn fire_frame_listeners(
+    runtime: &mut Runtime,
+    teardown: &Mutex<TeardownState>,
+    out: &Sender<ThreadMsg>,
+    frame_interest: &std::sync::atomic::AtomicUsize,
+    generation: u64,
+) {
+    if frame_interest.load(std::sync::atomic::Ordering::Acquire) == 0
+        || !begin_frame_execution(teardown, super::FRAME_CALLBACK_TICK, generation)
+    {
+        return;
+    }
+    let started = Instant::now();
+    let result = call_interruptible(runtime, teardown, |runtime| {
+        crate::bindings::event_callbacks::emit_no_args(runtime, "frame")
+            .map_err(rustyscript::Error::Runtime)
+    });
+    let interrupt = finish_interruptible_execution(runtime, teardown);
+    let was_cut = interrupt.is_some_and(|interrupt| interrupt.consumed);
+    report_interrupted_execution(
+        interrupt,
+        out,
+        super::FRAME_CALLBACK_TICK,
+        generation,
+    );
+    if !was_cut {
+        if let Err(error) = result {
+            let _ = out.send(ThreadMsg::Log(format!("frame listener dispatch: {error}")));
+        }
+        if started.elapsed() > EXECUTION_WATCHDOG_HORIZON {
+            let _ = out.send(ThreadMsg::Log(format!(
+                "slow client-frame callback: {:?}",
+                started.elapsed()
+            )));
+        }
+    }
+}
+
 /// One eligible non-v2 tick, in the phase order the isolate owns (the
 /// tick is already recorded and machines stepped): tick listeners, wait
 /// settle, `onStart` once (compat), native events once started, then
@@ -1193,10 +1248,16 @@ return String((e && (e.message || e.stack)) || e);
   if (user) {
     ignored = [];
     try {
-      const b = globalThis.__rs_bot;
-      if (b && typeof b.ignoredRandoms === 'function') {
-        const l = b.ignoredRandoms();
-        if (Array.isArray(l)) ignored = l.filter((x) => typeof x === 'string');
+      const activity = globalThis.__rs2b0t_script_activity;
+      const child = typeof activity === 'function' ? activity('ignoredRandoms') : undefined;
+      if (child !== undefined) {
+        if (Array.isArray(child)) ignored = child.filter((x) => typeof x === 'string');
+      } else {
+        const b = globalThis.__rs_bot;
+        if (b && typeof b.ignoredRandoms === 'function') {
+          const l = b.ignoredRandoms();
+          if (Array.isArray(l)) ignored = l.filter((x) => typeof x === 'string');
+        }
       }
     } catch (_) {}
   }
@@ -1344,6 +1405,8 @@ fn tick_loop(
     compat_journal: Option<std::sync::Arc<crate::quest_journal::CompatJournalLease>>,
     paint_generation: std::sync::Arc<std::sync::atomic::AtomicU64>,
     teardown: std::sync::Arc<Mutex<TeardownState>>,
+    frame_interest: std::sync::Arc<std::sync::atomic::AtomicUsize>,
+    frame_ack_tx: std::sync::mpsc::SyncSender<()>,
     proof: std::sync::Arc<TeardownProofInner>,
     v2_native: bool,
     events_consumed: bool,
@@ -2407,19 +2470,79 @@ fn tick_loop(
                     generation: reset_generation,
                 });
             }
+            IsolateCmd::ClientFrame => {
+                if frame_interest.load(std::sync::atomic::Ordering::Acquire) > 0 {
+                    let generation =
+                        work_generation.load(std::sync::atomic::Ordering::Acquire);
+                    fire_frame_listeners(
+                        &mut runtime,
+                        &teardown,
+                        &out,
+                        &frame_interest,
+                        generation,
+                    );
+                }
+                let _ = frame_ack_tx.send(());
+            }
+            IsolateCmd::RuntimeContext(context) => {
+                let bind = super::super::lifecycle_v8::bind_runtime_context(
+                    &mut runtime,
+                    std::sync::Arc::clone(&context),
+                )
+                .and_then(|()| {
+                    super::super::activity_v8::bind_runtime_context(&mut runtime, context)
+                });
+                if let Err(error) = bind {
+                    let _ = out.send(ThreadMsg::Log(format!(
+                        "runtime context bind failed: {error}"
+                    )));
+                }
+            }
             IsolateCmd::Pause => {
+                let just_paused = !paused;
                 paused = true;
                 let _ = event_producer.set_paused(true);
                 sync_work_freeze(&mut work_frozen, true);
                 clear_unconsumed_paint_click(&mut runtime);
+                if compat && just_paused {
+                    match runtime.call_function_immediate::<Option<String>>(
+                        None,
+                        "__rs2b0t_compat_on_pause",
+                        json_args!(),
+                    ) {
+                        Ok(Some(message)) => {
+                            let _ = out.send(ThreadMsg::Log(format!("onPause threw: {message}")));
+                        }
+                        Ok(None) => {}
+                        Err(error) => {
+                            let _ = out.send(ThreadMsg::Log(format!("onPause failed: {error}")));
+                        }
+                    }
+                }
             }
             IsolateCmd::ManualWalkTakeover(seq) => {
                 crate::machine::on_manual_walk_takeover(seq);
             }
             IsolateCmd::Resume => {
+                let was_paused = paused;
                 paused = false;
                 let _ = event_producer.set_paused(false);
                 sync_work_freeze(&mut work_frozen, session_held);
+                if compat && was_paused {
+                    match runtime.call_function_immediate::<Option<String>>(
+                        None,
+                        "__rs2b0t_compat_on_resume",
+                        json_args!(),
+                    ) {
+                        Ok(Some(message)) => {
+                            let _ = out.send(ThreadMsg::Log(format!("onResume threw: {message}")));
+                        }
+                        Ok(None) => {}
+                        Err(error) => {
+                            let _ = out.send(ThreadMsg::Log(format!("onResume failed: {error}")));
+                        }
+                    }
+                }
             }
             IsolateCmd::PaintClick { id, generation } => {
                 if paused
@@ -2519,4 +2642,7 @@ fn tick_loop(
             }
         }
     }
+    super::super::lifecycle_v8::clear_all(&mut runtime);
+    super::super::activity_v8::clear_all(&mut runtime);
+    crate::bindings::event_callbacks::clear_all();
 }

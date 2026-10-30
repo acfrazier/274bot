@@ -161,6 +161,7 @@ export async function tick(api) {{
                 None,
                 None,
                 0,
+                None,
                 |input, native| {
                     assert!(slot.post_snapshot_delta(input, native, false));
                 },

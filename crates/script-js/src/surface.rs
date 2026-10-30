@@ -11,9 +11,9 @@ use script::native::snapshot_source::{NativeFactsInput, SnapshotInput};
 use script::native::SettingsBag;
 use script::paint::ScriptPaint;
 use script::surface::{
-    PostedSnapshotFacts, RouteInspectIdentities, ScriptStopReceipt, SurfaceCard, SurfaceError,
-    SurfaceFactory, SurfaceFamily, SurfaceKind, SurfaceReady, SurfaceRun, SurfaceStart,
-    TickOutcome,
+    PostedSnapshotFacts, RouteInspectIdentities, ScriptRuntimeContext, ScriptStopReceipt,
+    SurfaceCard, SurfaceError, SurfaceFactory, SurfaceFamily, SurfaceKind, SurfaceReady,
+    SurfaceRun, SurfaceStart, TickOutcome,
 };
 use std::any::Any;
 use std::sync::{mpsc::Sender, Arc};
@@ -52,16 +52,13 @@ pub struct JsSurfaceFactory {
     gameplay: GameplayFactory,
 }
 
-impl SurfaceFactory for JsSurfaceFactory {
-    fn kind(&self) -> SurfaceKind {
-        SurfaceKind::Js
-    }
-
-    fn spawn(
+impl JsSurfaceFactory {
+    fn spawn_inner(
         &self,
         start: &SurfaceStart,
         execution: ExecutionId,
         recovery_hints: Arc<RecoveryHintsCell>,
+        local_state: Option<Arc<script::local_state::SlotState>>,
     ) -> Result<Box<dyn SurfaceRun>, SurfaceError> {
         let card = start
             .card
@@ -70,13 +67,14 @@ impl SurfaceFactory for JsSurfaceFactory {
             .ok_or(SurfaceError::ForeignCard(SurfaceKind::Js))?;
         let isolate = self
             .gameplay
-            .spawn_with_content(
+            .spawn_with_content_and_state(
                 card.source.to_string(),
                 card.shape,
                 card.siblings.iter().cloned().collect(),
                 start.game_data.clone(),
                 Arc::clone(&start.named_banks),
                 Some(execution),
+                local_state,
             )
             .map_err(|error| SurfaceError::Spawn(error.to_string()))?;
         isolate.post_loadouts(&start.loadouts);
@@ -89,6 +87,31 @@ impl SurfaceFactory for JsSurfaceFactory {
             ipc: IsolateBuf::new(),
             last_snapshot: None,
         }))
+    }
+}
+
+impl SurfaceFactory for JsSurfaceFactory {
+    fn kind(&self) -> SurfaceKind {
+        SurfaceKind::Js
+    }
+
+    fn spawn(
+        &self,
+        start: &SurfaceStart,
+        execution: ExecutionId,
+        recovery_hints: Arc<RecoveryHintsCell>,
+    ) -> Result<Box<dyn SurfaceRun>, SurfaceError> {
+        self.spawn_inner(start, execution, recovery_hints, None)
+    }
+
+    fn spawn_with_state(
+        &self,
+        start: &SurfaceStart,
+        execution: ExecutionId,
+        recovery_hints: Arc<RecoveryHintsCell>,
+        local_state: Option<Arc<script::local_state::SlotState>>,
+    ) -> Result<Box<dyn SurfaceRun>, SurfaceError> {
+        self.spawn_inner(start, execution, recovery_hints, local_state)
     }
 }
 
@@ -165,6 +188,9 @@ impl SurfaceRun for JsSurfaceRun {
     fn generation(&self) -> u64 {
         self.isolate.generation()
     }
+    fn bind_runtime_context(&mut self, context: Arc<ScriptRuntimeContext>) {
+        self.isolate.bind_runtime_context(context);
+    }
 
     fn execution_active(&self) -> bool {
         self.isolate.execution_active()
@@ -194,6 +220,9 @@ impl SurfaceRun for JsSurfaceRun {
 
     fn resume(&self) {
         self.isolate.resume();
+    }
+    fn on_client_frame(&mut self) {
+        self.isolate.on_client_frame();
     }
 
     fn stop(self: Box<Self>, done: Sender<Vec<String>>) {

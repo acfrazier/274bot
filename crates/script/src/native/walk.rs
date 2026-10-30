@@ -14,6 +14,40 @@ use std::time::Duration;
 /// hold, not-ready and Blocked intervals do not spend it.
 pub const WALK_DEADLINE: Duration = Duration::from_secs(10 * 60);
 
+/// Clockwise adjacent tiles from east, stably ranked farthest from `away`.
+pub fn step_off_candidates(from: api::WorldTile, away: (i32, i32)) -> [api::WorldTile; 8] {
+    const COMPASS: [(i32, i32); 8] = [
+        (1, 0),
+        (1, 1),
+        (0, 1),
+        (-1, 1),
+        (-1, 0),
+        (-1, -1),
+        (0, -1),
+        (1, -1),
+    ];
+    let mut candidates = COMPASS.map(|(dx, dz)| api::WorldTile {
+        x: from.x + dx,
+        z: from.z + dz,
+        level: from.level,
+    });
+    let distance = |tile: api::WorldTile| {
+        tile.x
+            .abs_diff(away.0)
+            .max(tile.z.abs_diff(away.1))
+    };
+    for index in 1..candidates.len() {
+        let candidate = candidates[index];
+        let score = distance(candidate);
+        let mut at = index;
+        while at > 0 && distance(candidates[at - 1]) < score {
+            candidates.swap(at - 1, at);
+            at -= 1;
+        }
+    }
+    candidates
+}
+
 pub struct Walk {
     key: WalkKey,
     loc_id: Option<i32>,

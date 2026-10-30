@@ -162,15 +162,14 @@ pub(super) fn machines_halted(teardown: &Mutex<TeardownState>) -> bool {
     st.phase != TeardownPhase::Running || st.execution_interrupt.is_some()
 }
 
-/// Claim the next tick/recovery eval. This closes the race where Pause sees no
-/// active eval immediately before the isolate thread enters a queued one.
-pub(super) fn begin_interruptible_execution(
+fn begin_execution(
     teardown: &Mutex<TeardownState>,
     tick: u64,
     generation: u64,
+    honor_pause: bool,
 ) -> bool {
     let mut st = teardown.lock().unwrap();
-    if st.phase != TeardownPhase::Running || st.pause_requested {
+    if st.phase != TeardownPhase::Running || (honor_pause && st.pause_requested) {
         return false;
     }
     st.execution_id = st.execution_id.wrapping_add(1);
@@ -181,6 +180,26 @@ pub(super) fn begin_interruptible_execution(
     st.execution_deadline_armed = false;
     st.execution_deadline_owner = None;
     true
+}
+
+/// Claim the next tick/recovery eval. This closes the race where Pause sees no
+/// active eval immediately before the isolate thread enters a queued one.
+pub(super) fn begin_interruptible_execution(
+    teardown: &Mutex<TeardownState>,
+    tick: u64,
+    generation: u64,
+) -> bool {
+    begin_execution(teardown, tick, generation, true)
+}
+
+/// Client-frame listeners belong to BotHost, not the paused ScriptRunner
+/// work loop, so they remain deliverable while the operator has paused it.
+pub(super) fn begin_frame_execution(
+    teardown: &Mutex<TeardownState>,
+    tick: u64,
+    generation: u64,
+) -> bool {
+    begin_execution(teardown, tick, generation, false)
 }
 
 /// Finish the active eval and cancel its terminate while holding the same lock
