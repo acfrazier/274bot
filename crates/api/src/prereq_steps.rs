@@ -292,6 +292,7 @@ pub struct PrereqJournal {
     pub quest: FactKey,
     pub establishes: StageWindow,
     pub after: Arc<[AfterRule]>,
+    pub reviewed_writes: Arc<[ReviewedWrite]>,
     pub rules: Arc<[JournalRule]>,
     pub source: PrereqSource,
 }
