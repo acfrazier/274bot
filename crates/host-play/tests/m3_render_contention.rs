@@ -787,9 +787,9 @@ fn m3_fair_oracle(
             }
         }
         if head.gpu && head.background {
-            let age = head.since_scene_consume.ok_or_else(|| {
-                format!("{}: missing scene-consumption timestamp", head.name)
-            })?;
+            let age = head
+                .since_scene_consume
+                .ok_or_else(|| format!("{}: missing scene-consumption timestamp", head.name))?;
             if head.max_scene_consume_gap > BACKGROUND_SCENE_GAP || age > BACKGROUND_SCENE_GAP {
                 return Err(format!(
                     "{}: background scene-consumption gap exceeds {}ms: maximum {:.3}ms, current {:.3}ms",
