@@ -78,11 +78,11 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.7` 
   a window only when the full in-progress value range lies inside it. A walk
   reports the quest, window bounds and unknown evidence state.
 
-- When a quest-gated walk fails because its route snapshot has no quest-list
-  status, it waits for at most one observed game tick. If the status arrives,
-  it sends one fresh route request. A not-started row proves `Complete(q)`
-  false, so the planner can choose another route. If the status stays
-  unavailable, the walk stops with the original named gate.
+- When a quest-gated walk needs `Complete(q)`, it waits at most one observed
+  game tick for that gate's own usable quest-list row, not any coloured row.
+  If the row arrives, the walk sends one fresh route request. If the row stays
+  unavailable, the retry treats only that unproven gate as closed. The planner
+  can then avoid the unprovable edge instead of parking on missing evidence.
 
 - Bots now wait and try again when another player is using a shortcut,
   instead of giving up. The Yanille dungeon ledge ("The ledge is being

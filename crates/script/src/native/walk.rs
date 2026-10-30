@@ -1,9 +1,12 @@
 //! Native adapter for the shared walk correlation and arrival core.
 use super::walk_wait::{HostOutcome, Observation, WalkKey, WalkSlot};
 use super::{ActionContext, ActionError, NativeMachine, WalkEnd, WalkReceipt, WalkRequest};
+use api::quest_progress::EvidenceProvider;
+use api::selected::{QuestGate, Truth};
 use api::snapshot::SnapshotView;
 use nav_planner::contract::ArrivalKind;
 use std::num::NonZeroU64;
+use std::sync::Arc;
 use std::task::Poll;
 use std::time::Duration;
 
@@ -13,7 +16,8 @@ use std::time::Duration;
 /// hold, not-ready and Blocked intervals do not spend it.
 pub const WALK_DEADLINE: Duration = Duration::from_secs(10 * 60);
 /// Login's `initalltabs` opens the quest tab and calls `update_questlist`.
-/// Allow one later observed game tick for that UI state to reach the snapshot.
+/// Give each unresolved `Complete(q)` gate one later tick for its own row's
+/// `IF_SETCOLOUR` update to reach the snapshot before closing that gate.
 const QUEST_LIST_STATUS_WAIT_TICKS: u64 = 1;
 
 pub struct Walk {
@@ -35,21 +39,95 @@ struct Frame<'a> {
     goal: Option<api::WorldTile>,
 }
 
-fn walk_key(request: &WalkRequest) -> WalkKey {
-    WalkKey {
-        tile: request.target,
-        radius: i32::from(request.radius),
-        allow_teleports: request.options.allow_teleports.explicit(),
-    }
+fn quest_key_matches_row(key: &str, row_name: &str) -> bool {
+    let key = key
+        .chars()
+        .filter(|character| character.is_ascii_alphanumeric())
+        .map(|character| character.to_ascii_lowercase());
+    let row_name = row_name
+        .chars()
+        .filter(|character| character.is_ascii_alphanumeric())
+        .map(|character| character.to_ascii_lowercase());
+    key.eq(row_name)
+}
+
+fn quest_list_gate_observed(
+    gate: &QuestGate,
+    rows: Option<&[api::snapshot::QuestStatusView]>,
+) -> bool {
+    let QuestGate::Complete(quest) = gate else {
+        return false;
+    };
+    rows.is_some_and(|rows| {
+        rows.iter()
+            .find(|row| quest_key_matches_row(&quest.0, &row.name))
+            .is_some_and(|row| row.status() != api::snapshot::QuestListStatus::Unknown)
+    })
 }
 
 fn quest_list_status_observed(
+    gates: &[QuestGate],
     rows: Option<&[api::snapshot::QuestStatusView]>,
 ) -> bool {
+    let mut has_complete_gate = false;
+    for gate in gates {
+        if matches!(gate, QuestGate::Complete(_)) {
+            has_complete_gate = true;
+            if !quest_list_gate_observed(gate, rows) {
+                return false;
+            }
+        }
+    }
+    if has_complete_gate {
+        return true;
+    }
     rows.is_some_and(|rows| {
         rows.iter()
-            .any(|status| status.status() != api::snapshot::QuestListStatus::Unknown)
+            .any(|row| row.status() != api::snapshot::QuestListStatus::Unknown)
     })
+}
+
+fn unproven_complete_gates(
+    gates: &[QuestGate],
+    rows: Option<&[api::snapshot::QuestStatusView]>,
+) -> Option<Arc<[QuestGate]>> {
+    let unproven: Vec<_> = gates
+        .iter()
+        .filter_map(|gate| match gate {
+            QuestGate::Complete(_) if !quest_list_gate_observed(gate, rows) => {
+                Some(gate.clone())
+            }
+            _ => None,
+        })
+        .collect();
+    if unproven.is_empty() {
+        None
+    } else {
+        Some(Arc::from(unproven))
+    }
+}
+
+// A missing row cannot prove Complete(q). Close only the still-unproven
+// Complete gates on the bounded retry so the planner can choose another route.
+struct ClosedUnprovenQuestGates {
+    gates: Arc<[QuestGate]>,
+    prior: Option<Arc<dyn EvidenceProvider>>,
+}
+
+impl EvidenceProvider for ClosedUnprovenQuestGates {
+    fn test_gate(
+        &self,
+        gate: &QuestGate,
+        required_after: api::quest_progress::EvidenceStamp,
+    ) -> Truth {
+        if self.gates.contains(gate) {
+            Truth::False
+        } else {
+            self.prior.as_ref().map_or(Truth::Unknown, |provider| {
+                provider.test_gate(gate, required_after)
+            })
+        }
+    }
 }
 
 impl Observation for Frame<'_> {
@@ -105,12 +183,21 @@ impl Walk {
     fn replan_after_quest_list_wait(
         &mut self,
         cx: &mut ActionContext<'_>,
+        close_unproven_gates: Option<Arc<[QuestGate]>>,
     ) -> Result<(), ActionError> {
         let required_after = cx.evidence();
         let mut request = self.request.as_ref().clone();
         request.required_after = required_after;
+        if let Some(gates) = close_unproven_gates {
+            request.evidence = Some(Arc::new(ClosedUnprovenQuestGates {
+                gates,
+                prior: request.evidence.take(),
+            }));
+        }
+        let evidence = request.evidence.clone();
         let request_id = cx.walk(request)?;
         self.request.required_after = required_after;
+        self.request.evidence = evidence;
         self.request_id = request_id;
         self.quest_list_wait_since = None;
         self.quest_list_retry_used = true;
@@ -182,11 +269,14 @@ impl NativeMachine for Walk {
                 .clone();
             if self.quest_list_retry_used {
                 let mut refused = receipt;
-                refused.detail = Some(std::sync::Arc::from(
-                    "fresh route still needs the named quest gate after one observed game tick",
+                refused.detail = Some(Arc::from(
+                    "fresh route still needs quest evidence after one bounded retry",
                 ));
                 return Poll::Ready(Ok(refused));
             }
+            let WalkEnd::NeedsEvidence(gates) = &receipt.end else {
+                unreachable!("quest-evidence receipt was checked above");
+            };
             let first_observation = self.quest_list_wait_since.is_none();
             let tick = cx.evidence().tick;
             let started = self.quest_list_wait_since.get_or_insert(tick);
@@ -194,27 +284,42 @@ impl NativeMachine for Walk {
             let quest_rows = snapshot
                 .quest_statuses()
                 .map(|statuses| statuses.value);
+            let gate_status_observed = quest_list_status_observed(gates, quest_rows);
             if first_observation || tick != *started {
                 api::host_log!(
                     api::hostlog::Category::NavTrace,
                     api::hostlog::Level::Debug,
-                    "walk-quest-list-observation request={} tick={} rows={quest_rows:?}",
+                    "walk-quest-list-observation request={} tick={} gates={gates:?} gate_status_observed={} rows={quest_rows:?}",
                     self.request_id,
                     tick,
+                    gate_status_observed,
                 );
+            }
+            if gate_status_observed {
+                if let Err(error) = self.replan_after_quest_list_wait(cx, None) {
+                    return Poll::Ready(Err(error));
+                }
+                return Poll::Pending;
             }
             if tick.saturating_sub(*started) < QUEST_LIST_STATUS_WAIT_TICKS {
                 return Poll::Pending;
             }
-            if quest_list_status_observed(quest_rows) {
-                if let Err(error) = self.replan_after_quest_list_wait(cx) {
+            if let Some(unproven_gates) = unproven_complete_gates(gates, quest_rows) {
+                api::host_log!(
+                    api::hostlog::Category::NavTrace,
+                    api::hostlog::Level::Debug,
+                    "walk-quest-list-unproven-gates-closed request={} tick={} gates={unproven_gates:?}",
+                    self.request_id,
+                    tick,
+                );
+                if let Err(error) = self.replan_after_quest_list_wait(cx, Some(unproven_gates)) {
                     return Poll::Ready(Err(error));
                 }
                 return Poll::Pending;
             }
             let mut refused = receipt;
-            refused.detail = Some(std::sync::Arc::from(
-                "quest-list status was not observed after one game tick",
+            refused.detail = Some(Arc::from(
+                "no usable quest-list status was observed after one game tick",
             ));
             return Poll::Ready(Ok(refused));
         }
@@ -538,7 +643,7 @@ mod tests {
     }
 
     #[test]
-    fn unresolved_quest_evidence_waits_one_observed_game_tick_then_refuses() {
+    fn unresolved_biohazard_waits_for_its_row_then_closes_the_gate() {
         let run = RunKey {
             slot: 1,
             run: 1,
@@ -551,6 +656,14 @@ mod tests {
         };
         let mut snapshot = GameSnapshot::new();
         snapshot.seed_ingame(2);
+        snapshot.seed_quest_statuses(
+            vec![api::snapshot::QuestStatusView {
+                component_id: 13,
+                name: "The Restless Ghost".to_owned(),
+                colour: 0xF80000,
+            }],
+            true,
+        );
         let mut ledger = None;
         let handle = with_tick(&snapshot, &mut ledger, 1, |tick| {
             tick.actions
@@ -579,23 +692,6 @@ mod tests {
                 Poll::Pending
             ));
         }
-
-        let Poll::Ready(Ok(receipt)) = with_tick(&snapshot, &mut ledger, 2, |tick| {
-            tick.actions.poll(&handle, &mut tick.cx)
-        }) else {
-            panic!("missing journal status must refuse after one observed tick");
-        };
-        assert_eq!(receipt.request_id, original);
-        assert!(matches!(
-            &receipt.end,
-            WalkEnd::NeedsEvidence(gates) if gates.as_ref() == [biohazard_complete_gate()]
-        ));
-        assert!(
-            receipt
-                .failure_detail()
-                .is_some_and(|detail| detail.contains("quest-list status was not observed")),
-            "the bounded refusal names the missing journal observation"
-        );
         assert_eq!(
             ledger
                 .as_ref()
@@ -605,7 +701,51 @@ mod tests {
                 .filter(|entry| matches!(&entry.effect, crate::native::HostEffect::Walk(_)))
                 .count(),
             1,
-            "no route is retried when quest-list statuses are still missing"
+            "an unrelated coloured row must not end Biohazard's wait"
+        );
+
+        assert!(matches!(
+            with_tick(&snapshot, &mut ledger, 2, |tick| tick
+                .actions
+                .poll(&handle, &mut tick.cx)),
+            Poll::Pending
+        ));
+        let retried = ledger
+            .as_ref()
+            .unwrap()
+            .outbox
+            .last()
+            .expect("unproven gate queues one fresh route");
+        assert_ne!(retried.request_id.get(), original);
+        let crate::native::HostEffect::Walk(request) = &retried.effect else {
+            panic!("fresh route must retain the walk request");
+        };
+        assert_eq!(request.required_after.tick, 2);
+        let provider = request
+            .evidence
+            .as_ref()
+            .expect("the unproven gate is explicitly closed for route choice");
+        assert_eq!(
+            provider.test_gate(&biohazard_complete_gate(), request.required_after),
+            Truth::False
+        );
+        assert_eq!(
+            provider.test_gate(
+                &api::selected::QuestGate::Complete(api::selected::FactKey::new("cook")),
+                request.required_after,
+            ),
+            Truth::Unknown,
+            "only the gate without a usable row is closed"
+        );
+        assert_eq!(
+            ledger
+                .as_ref()
+                .unwrap()
+                .outbox
+                .iter()
+                .filter(|entry| matches!(&entry.effect, crate::native::HostEffect::Walk(_)))
+                .count(),
+            2
         );
     }
 
