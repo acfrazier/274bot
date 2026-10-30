@@ -128,7 +128,17 @@ Unless `quest.owns_inventory` bypasses preparation, missing required or acquirab
 
 For a gather step, the Provisioner withdraws one method-usable tool only when none is carried or equipped and the bank has one. This uses the same bank scan, capacity planning, and withdrawal route as recipes.
 
-An observed bank without a compatible tool does not block provisioning; the gather family reports its normal missing-tool failure. `quest.tools` remain preservation hints only, not withdrawal hints or extra requirements: absent entries alone never cause a bank visit. The initial scan and ingredient/tool withdrawals share the open bank session. When provisioning ends (ready, blocked, or about to start a recipe), the Provisioner closes the bank if its own trips opened it, and waits in observed game ticks until the bank window is gone before any Path step acts. A bank that was already open when its first trip began is left open. An authored `bank` step opens the bank again when it needs it.
+An observed bank without a compatible tool does not block provisioning; the gather family reports its normal missing-tool failure. `quest.tools` remain preservation hints only, not withdrawal hints or extra requirements: absent entries alone never cause a bank visit. The initial scan and ingredient/tool withdrawals share the open bank session.
+
+Closing the bank:
+
+- A bank session ends when provisioning is ready, is blocked, or is about to start a recipe. Then the Provisioner closes the bank, and waits in observed game ticks until the bank window is gone. A Path step does not act before that.
+- The Provisioner closes only a bank that its own trip opened. It records this only when a game frame shows the bank open after a trip began with the bank shut. A bank that was already open when the first trip began stays open.
+- The record names the login session and the bank session. After a relog, or when the bank was closed and opened again by someone else, the record is void and nothing is closed.
+- If a trip fails, or the run is paused and resumed, the open bank is closed as soon as the host allows input again, and before the journal is read. A restart by the watchdog keeps the record, so the new instance does the same.
+- A bank that does not close after the bounded retries is logged and left. Provisioning does not retry without limit.
+- An operator Stop sends no close and discards the record.
+- An authored `bank` step opens the bank again when it needs it.
 
 Bank memory has three states. A bank never seen (`Unknown`) costs one scan trip. A shortage known only from an earlier login (`Hint`) costs one verifying trip. Only a shortage in a bank seen open this login (`Session`) blocks in place. The Quester keeps no other bank record.
 

@@ -67,12 +67,16 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.7` 
 ### Quester
 
 - The Quester now closes the bank when it has finished taking what a quest
-  needs. Before, a bot that looked in its bank, or took items from it, could
-  start the next step with the bank window still open. A step such as using a
-  spinning wheel then waited until the watchdog restarted the script, and the
-  journal read after that stopped with a message about the bank window. Now
-  the bot waits until the bank window is gone before it starts the step. It
-  closes only a bank it opened itself. A bank that you opened stays open.
+  needs. Before, the bank window stayed open until the next step happened to
+  walk. The bot now waits until the bank window is gone before it starts the
+  next step. It closes only a bank that it opened itself. A bank that you
+  opened stays open.
+- The same close now also happens when a bank trip fails, when you pause and
+  resume the bot, and when the watchdog restarts the script. In each case the
+  bank window is closed before the bot reads the quest journal. The bot sends
+  no input while you hold control or while it is at zero hitpoints. If the
+  window does not close after three tries, the bot logs this and goes on.
+  Stop does not send a close.
 - When a quest starts without something the bot only wanted to carry (for
   example the coins it keeps for buying things), the log now has one line that
   names the item and how many are missing. The bot does the same as before.
