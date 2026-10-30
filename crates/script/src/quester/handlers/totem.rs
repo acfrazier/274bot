@@ -157,7 +157,7 @@ impl StepRun for Run {
                     self.walk = None;
                     if self
                         .walk_retry
-                        .observe_failure(&receipt, cx.tick.cx.evidence().tick)
+                        .observe_approach_failure(&receipt, cx.tick.cx.evidence().tick)
                     {
                         return Poll::Pending;
                     }
@@ -471,7 +471,9 @@ fn dial_button(index: usize, current: char, target: char) -> i32 {
 
 #[cfg(test)]
 mod tests {
-    use super::{dial_button, DIAL_DOWN, DIAL_UP};
+    use super::*;
+    use crate::quester::families::tests::{local_player, post_walk_receipt, with_tick};
+    use api::snapshot::GameSnapshot;
 
     #[test]
     fn dial_picks_the_shorter_rotation() {
@@ -493,5 +495,75 @@ mod tests {
             DIAL_DOWN[0],
             "ten steps back beats sixteen forward"
         );
+    }
+
+    fn with_step<R>(
+        tick: &mut crate::native::NativeTick<'_>,
+        f: impl FnOnce(&mut crate::quester::compile::StepContext<'_, '_>) -> R,
+    ) -> R {
+        let quests = api::quest_facts::QuestCatalog::empty();
+        let banks = Arc::new(api::named_banks::NamedBankFacts::empty());
+        let choices = crate::quester::choices::QuestChoices::default();
+        let required_after = tick.cx.evidence();
+        f(&mut crate::quester::compile::StepContext {
+            tick,
+            quests: &quests,
+            progress: &[],
+            required_after,
+            banks: &banks,
+            choices: &choices,
+        })
+    }
+
+    #[test]
+    fn totem_door_retries_a_failed_walk_on_the_next_tick() {
+        let tile = WorldTile {
+            x: 12,
+            z: 34,
+            level: 0,
+        };
+        let mut snapshot = GameSnapshot::new();
+        snapshot.seed_ingame(2);
+        snapshot.seed_local_player(local_player(WorldTile {
+            x: 30,
+            z: 40,
+            level: 0,
+        }));
+        let mut ledger = None;
+        let plan = Plan {
+            word: Arc::from("KURT"),
+            door_id: 41,
+            door_name: Arc::from("Tribal door"),
+            tile,
+            radius: 1,
+        };
+        let mut run = with_tick(&snapshot, &mut ledger, 1, |tick| {
+            with_step(tick, |cx| plan.begin(cx).unwrap())
+        });
+        assert!(with_tick(&snapshot, &mut ledger, 2, |tick| {
+            with_step(tick, |cx| run.poll(cx))
+        })
+        .is_pending());
+        post_walk_receipt(
+            &mut ledger,
+            2,
+            crate::native::WalkEnd::NoPath,
+            Some("totem approach failed"),
+        );
+        assert!(with_tick(&snapshot, &mut ledger, 2, |tick| {
+            with_step(tick, |cx| run.poll(cx))
+        })
+        .is_pending());
+        assert!(with_tick(&snapshot, &mut ledger, 3, |tick| {
+            with_step(tick, |cx| run.poll(cx))
+        })
+        .is_pending());
+
+        let retry = ledger.as_ref().unwrap().outbox.last().unwrap();
+        let crate::native::HostEffect::Walk(request) = &retry.effect else {
+            panic!("the next attempt should be a fresh totem approach walk");
+        };
+        assert_eq!(request.target, tile);
+        assert_eq!(request.required_after.tick, 3);
     }
 }

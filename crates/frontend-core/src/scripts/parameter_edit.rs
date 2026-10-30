@@ -1985,7 +1985,7 @@ mod tests {
         let registry = FamilyPreparation::run(move |worker| {
             let quests =
                 api::quest_facts::QuestCatalog::from_identity(selected.quest_identity()).unwrap();
-            PathRegistry::load(&source, &selected, &quests, worker).unwrap()
+            PathRegistry::load(&source, &selected, &quests, worker, None).unwrap()
         })
         .expect("spawn Path compilation")
         .join()

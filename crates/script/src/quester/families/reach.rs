@@ -122,6 +122,8 @@ pub struct Reach {
     avoid: Avoid,
     walk: Option<Walk>,
     walk_retry: crate::native::WalkRetryState,
+    /// The last retryable walk failure, used if a fresh target cannot be planned.
+    last_walk_failure: Option<Arc<str>>,
     request_id: u64,
     /// The last emitted target click was within interaction range on the
     /// snapshot that chose it, before the server could transform the loc or
@@ -203,6 +205,7 @@ impl NativeMachine for Reach {
             walk: None,
             request_id: 0,
             walk_retry: crate::native::WalkRetryState::default(),
+            last_walk_failure: None,
             in_range_at_click: false,
             ground_attempt: None,
             ground_outcome: None,
@@ -330,7 +333,13 @@ impl NativeMachine for Reach {
                             self.walk_retry.defer_until_next_tick(tick);
                             return Poll::Pending;
                         }
-                        Poll::Ready(Err(error)) => return Poll::Ready(Err(error)),
+                        Poll::Ready(Err(error)) => {
+                            let error = self
+                                .last_walk_failure
+                                .take()
+                                .map_or(error, ActionError::Blocked);
+                            return Poll::Ready(Err(error));
+                        }
                         Poll::Ready(Ok(())) => return Poll::Pending,
                     }
                 }
@@ -339,8 +348,10 @@ impl NativeMachine for Reach {
                     Poll::Ready(Ok(receipt)) => {
                         if self
                             .walk_retry
-                            .observe_failure(&receipt, cx.evidence().tick)
+                            .observe_approach_failure(&receipt, cx.evidence().tick)
                         {
+                            self.last_walk_failure =
+                                Some(receipt.failure_detail_or_fallback());
                             self.walk = None;
                             return Poll::Pending;
                         }
@@ -350,6 +361,7 @@ impl NativeMachine for Reach {
                             return Poll::Ready(Err(error));
                         }
                         self.walk_retry.reset();
+                        self.last_walk_failure = None;
                         self.phase = match door {
                             Some((id, tile)) => Phase::OpenDoor { id, tile },
                             None => Phase::Seek,
@@ -1581,7 +1593,7 @@ fn saw_cant_reach(cx: &ActionContext<'_>, since: i32) -> bool {
     saw_game_message(cx, since, CANT_REACH)
 }
 
-pub(super) fn saw_game_message(cx: &ActionContext<'_>, since: i32, message: &str) -> bool {
+pub(crate) fn saw_game_message(cx: &ActionContext<'_>, since: i32, message: &str) -> bool {
     cx.snapshot().chat_lines(since).is_some_and(|lines| {
         lines.value.iter().any(|line| {
             line.username.is_none()
@@ -1654,8 +1666,12 @@ pub fn duration_ms(ms: u64) -> Duration {
 mod tests {
     use super::*;
     use crate::native::HostEffect;
-    use crate::quester::families::tests::{local_player, with_tick, with_tick_snapshots};
-    use api::snapshot::{GameSnapshot, LocLayer, LocView, SnapshotView, WorldStateView};
+    use crate::quester::families::tests::{
+        local_player, post_walk_receipt, with_tick, with_tick_snapshots,
+    };
+    use api::snapshot::{
+        GameSnapshot, GroundItemView, LocLayer, LocView, SnapshotView, WorldStateView,
+    };
 
     fn tile(x: i32, z: i32) -> WorldTile {
         WorldTile { x, z, level: 0 }
@@ -1749,6 +1765,7 @@ mod tests {
             avoid: Avoid::default(),
             walk: None,
             walk_retry: crate::native::WalkRetryState::default(),
+            last_walk_failure: None,
             request_id: 0,
             in_range_at_click: false,
             ground_attempt: None,
@@ -1884,6 +1901,60 @@ mod tests {
             ));
         });
     }
+    #[test]
+    fn retry_replanning_failure_keeps_the_walk_receipt_detail() {
+        let target = tile(6, 5);
+        let mut seen = scene((3200, 3200), tile(5, 5), Vec::new());
+        seen.seed_ground_items(vec![GroundItemView {
+            def: crate::quester::families::tests::def(1944, "Egg"),
+            count: 1,
+            actions: vec![Some("Take".into())],
+            tile: target,
+            distance: 1,
+        }]);
+        let missing = scene((3200, 3200), tile(5, 5), Vec::new());
+        let mut reach = reach_in_phase(
+            seek_args(),
+            Phase::WaitWalk { door: None },
+            None,
+        );
+        let mut ledger = None;
+        assert!(with_tick(&seen, &mut ledger, 1, |tick| {
+            reach.walk = Some(
+                Walk::begin(
+                    walk_request(target, 1, None, tick.cx.evidence()),
+                    &mut tick.cx,
+                )
+                .unwrap(),
+            );
+            reach.walk_retry.action_submitted();
+            NativeMachine::poll(&mut reach, &mut tick.cx)
+        })
+        .is_pending());
+
+        post_walk_receipt(
+            &mut ledger,
+            2,
+            WalkEnd::NoPath,
+            Some("the specific first route failure"),
+        );
+        assert!(with_tick(&seen, &mut ledger, 2, |tick| {
+            NativeMachine::poll(&mut reach, &mut tick.cx)
+        })
+        .is_pending());
+        assert!(with_tick(&seen, &mut ledger, 2, |tick| {
+            NativeMachine::poll(&mut reach, &mut tick.cx)
+        })
+        .is_pending());
+        assert!(matches!(
+            with_tick(&missing, &mut ledger, 3, |tick| {
+                NativeMachine::poll(&mut reach, &mut tick.cx)
+            }),
+            Poll::Ready(Err(ActionError::Blocked(detail)))
+                if detail.as_ref() == "the specific first route failure"
+        ));
+    }
+
 }
 
 #[cfg(test)]

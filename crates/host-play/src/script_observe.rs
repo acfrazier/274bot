@@ -384,13 +384,14 @@ impl DrainedRunPolicyUpdate {
 
 pub(crate) fn drain_observed_host_interacts(
     slot: &mut SlotScript,
+    nav: Option<&nav_planner::contract::NavLease>,
 ) -> (
     Option<DrainedRunPolicyUpdate>,
     Vec<script::interact::QueuedInteract>,
     bool,
 ) {
     let producer_generation = slot.runtime_generation();
-    let (update, interacts, owned) = slot.drain_host_interacts();
+    let (update, interacts, owned) = slot.drain_host_interacts(nav);
     (
         update.map(|policy| DrainedRunPolicyUpdate {
             producer_generation,
@@ -503,6 +504,9 @@ pub(crate) fn script_observe_cached_with_channels(
         let Ok(mut slot) = slot.lock() else {
             break 'script_slot;
         };
+        let nav = world
+            .as_ref()
+            .and_then(|world| nav_planner::producer::lease(world).ok());
         slot.observe_lifecycle();
         let bank_selection = slot.bank_selection_input();
         let work_scope = slot.work_scope();
@@ -550,7 +554,7 @@ pub(crate) fn script_observe_cached_with_channels(
             script::RunState::Starting | script::RunState::Paused
         ) && slot.surface_active()
         {
-            let (update, queued, _) = drain_observed_host_interacts(&mut slot);
+            let (update, queued, _) = drain_observed_host_interacts(&mut slot, nav.as_ref());
             if let Some(update) = update {
                 run_policy_update = Some(update);
             }
@@ -602,7 +606,7 @@ pub(crate) fn script_observe_cached_with_channels(
                     owner.live() && owner.request_id().get() == bot.walk_outcome_request_id
                 });
             deliver_native_walk_end(&mut slot, bot, tick);
-            host_results_dirty |= deliver_native_advice(&mut slot, bot);
+            host_results_dirty |= deliver_native_advice(&mut slot, bot, tick);
             // A newly armed walk may already have replaced the completed
             // route. Its predecessor still owns a release slot. Only when
             // the same request id remains armed must the route generation
@@ -1051,6 +1055,7 @@ pub(crate) fn script_observe_cached_with_channels(
                         collision: world
                             .as_deref()
                             .and_then(|world| nav_planner::producer::collision_view(world).ok()),
+                        nav: nav.as_ref(),
                         walk_danger: walk_danger
                             .as_ref()
                             .map(|query| query as &dyn script::native::WalkDangerQuery),
@@ -1218,7 +1223,7 @@ pub(crate) fn script_observe_cached_with_channels(
                 // The seat admits controls and filters captured gameplay before
                 // this host stage. A live API Session still fences a carried
                 // pre-seat route, not releases or already-admitted rows.
-                let (update, reqs, owned) = drain_observed_host_interacts(&mut slot);
+                let (update, reqs, owned) = drain_observed_host_interacts(&mut slot, nav.as_ref());
                 if slot.watchdog().holds_script_actions() || owned {
                     if owned {
                         let _ = take_carried_walk(navs, name, slot.runtime_generation());
@@ -1274,7 +1279,7 @@ pub(crate) fn script_observe_cached_with_channels(
             && !prayer_cleanup_hold)
             || slot.completed_seat_dispatch_open()
         {
-            let (update, reqs, _) = drain_observed_host_interacts(&mut slot);
+            let (update, reqs, _) = drain_observed_host_interacts(&mut slot, nav.as_ref());
             if let Some(update) = update {
                 run_policy_update = Some(update);
             }
@@ -2024,6 +2029,11 @@ fn deliver_native_walk_end(slot: &mut script::SlotScript, bot: &mut NavBot, tick
         let refusal = risk.as_deref().and_then(|risk| risk.refusal);
         let escape = risk.as_deref().and_then(|risk| risk.escape);
         let blocked = risk.as_deref().and_then(|risk| risk.blocked.clone());
+        api::host_log!(
+            api::hostlog::Category::NavTrace,
+            api::hostlog::Level::Debug,
+            "native-walk-deliver tick={tick} request_id={request_id} source=terminal end={end:?}"
+        );
         slot.complete_native_walk(
             &owner,
             receipt(
@@ -2037,10 +2047,13 @@ fn deliver_native_walk_end(slot: &mut script::SlotScript, bot: &mut NavBot, tick
     let Some(owner) = bot.native_walk.as_ref() else {
         return;
     };
+    // Compatibility walks and native actions can reuse request ids. Only
+    // the current route generation can complete the owner's walk.
     if !owner.live()
         || bot.walk_outcome_seq == 0
         || bot.native_receipt_seq == bot.walk_outcome_seq
         || bot.walk_outcome_request_id != owner.request_id().get()
+        || bot.walk_outcome_generation != bot.route_generation
     {
         return;
     }
@@ -2091,6 +2104,11 @@ fn deliver_native_walk_end(slot: &mut script::SlotScript, bot: &mut NavBot, tick
             z: bot.walk_outcome_z,
             level: bot.walk_outcome_level,
         });
+    api::host_log!(
+        api::hostlog::Category::NavTrace,
+        api::hostlog::Level::Debug,
+        "native-walk-deliver tick={tick} request_id={request_id} source=outcome end={end:?}"
+    );
     slot.complete_native_walk(
         owner,
         receipt(
@@ -2102,7 +2120,7 @@ fn deliver_native_walk_end(slot: &mut script::SlotScript, bot: &mut NavBot, tick
     bot.walk_outcome_detail = None;
 }
 
-fn deliver_native_advice(slot: &mut script::SlotScript, bot: &mut NavBot) -> bool {
+fn deliver_native_advice(slot: &mut script::SlotScript, bot: &mut NavBot, tick: u64) -> bool {
     let mut completed = false;
     if let Some((authority, receipt)) = bot.bank_pick.take_native_receipt() {
         slot.complete_native_bank_pick(&authority, receipt);
@@ -2110,6 +2128,16 @@ fn deliver_native_advice(slot: &mut script::SlotScript, bot: &mut NavBot) -> boo
     }
     if let Some(result) = bot.assess_result.take() {
         let (authority, receipt) = *result;
+        api::host_log!(
+            api::hostlog::Category::NavTrace,
+            api::hostlog::Level::Debug,
+            "assess-deliver tick={tick} request_id={} live={} route_ticks={} refusal={:?} detail={:?}",
+            receipt.request_id,
+            authority.live(),
+            receipt.route_ticks,
+            receipt.refusal,
+            receipt.detail
+        );
         slot.complete_native_assess_walk(&authority, receipt);
         completed = true;
     }

@@ -3560,7 +3560,7 @@ fn manual_walk_options_refresh_durable_peer_changes_and_clear_one_shot() {
 }
 
 #[test]
-fn restored_enabled_folder_loads_when_game_data_becomes_ready() {
+fn restored_enabled_folder_loads_when_game_data_and_navigation_are_ready() {
     let iso = IsolatedStores::enter("panel-quester-paths-startup");
     let folder = iso.dir().join("paths");
     std::fs::create_dir_all(&folder).unwrap();
@@ -3602,6 +3602,28 @@ fn restored_enabled_folder_loads_when_game_data_becomes_ready() {
     .expect("selected data worker");
 
     session.advance_quester_paths_reload(Some(Arc::clone(&selected)));
+    assert!(
+        !session.quester_paths.is_running(),
+        "saved folder waits for its actual navigation catalog"
+    );
+    let Some(world) = NavWorld::load_default_pack_or_skip() else {
+        return;
+    };
+    let fixture = MapFixture::new(&world, "public-289");
+    session.core.set_play(Some(fixture.play(Tile {
+        x: 2778,
+        z: 3401,
+        level: 0,
+    })));
+    let deadline = Instant::now() + Duration::from_secs(60);
+    while !session.quester_paths.is_running() {
+        assert!(
+            Instant::now() < deadline,
+            "startup Path reload did not receive its navigation catalog"
+        );
+        session.advance_quester_paths_reload(Some(Arc::clone(&selected)));
+        thread::yield_now();
+    }
     assert!(
         session.quester_paths.is_running(),
         "saved folder starts a reload without a user action"
@@ -4327,6 +4349,131 @@ fn walk_count_follows_marks_made_elsewhere_while_the_picker_is_open() {
     assert_eq!(label_after_frame(&mut s), "Walk 1 bots");
     s.fleet_model.clear_marks_for_test();
     assert_eq!(label_after_frame(&mut s), "Walk 0 bots");
+}
+
+/// A Fleet mark change while WalkTo is open updates the count and checked rows.
+/// Confirming then walks the current marks, not the set from when the picker opened.
+#[test]
+fn picker_group_walk_uses_fleet_marks_changed_while_open() {
+    let _guard = crate::test_support::imgui_context_guard();
+    let _statics = crate::picker::lock_nav_statics();
+    let mut s = session_with_vault("walk-live-targets.vault", &["alice", "bob", "carol"]);
+    let world = open_world(3, 3);
+    let origin = Tile {
+        x: 0,
+        z: 1,
+        level: 0,
+    };
+    let dest = Tile {
+        x: 2,
+        z: 2,
+        level: 0,
+    };
+    let _fixture = bind_picker_session(&mut s, &world, origin);
+    push_session_slot(
+        &mut s,
+        "bob",
+        Tile {
+            x: 1,
+            z: 1,
+            level: 0,
+        },
+        None,
+        true,
+        true,
+    );
+    push_session_slot(
+        &mut s,
+        "carol",
+        Tile {
+            x: 2,
+            z: 1,
+            level: 0,
+        },
+        None,
+        true,
+        true,
+    );
+    s.statuses.refresh_from_play(&s.core);
+    for name in ["alice", "bob", "carol"] {
+        s.core.fleet_mut().add(name);
+    }
+    assert!(
+        s.submit(
+            frontend_core::OperatorCommand::SetMark(true),
+            frontend_core::Targets::Profile("alice"),
+        )
+        .is_some(),
+        "initial Fleet mark"
+    );
+    s.open_walkto_for_fleet();
+    s.walk_send.open = true;
+
+    let mut ctx = crate::test_support::imgui_context();
+    let mut label_after_frame = |s: &mut Session| {
+        ctx.prepare_frame(
+            dear_imgui_rs::FramePrepareOptions::new([900.0, 700.0], 1.0 / 60.0)
+                .renderer_has_textures(),
+        );
+        {
+            let mut open = true;
+            let mut map = crate::walk_map::WalkMapRenderer::new();
+            crate::picker::picker_map_window(ctx.frame(), s, &world, &mut open, None, &mut map);
+        }
+        ctx.render();
+        s.walk_send.walk_label().to_string()
+    };
+    assert_eq!(label_after_frame(&mut s), "Walk 1 bots");
+
+    assert!(
+        s.submit(
+            frontend_core::OperatorCommand::SetMark(false),
+            frontend_core::Targets::Profile("alice"),
+        )
+        .is_some(),
+        "unmark alice in Fleet"
+    );
+    assert_eq!(label_after_frame(&mut s), "Walk 0 bots");
+    assert!(
+        s.submit(
+            frontend_core::OperatorCommand::SetMark(true),
+            frontend_core::Targets::Profile("bob"),
+        )
+        .is_some(),
+        "mark bob in Fleet"
+    );
+    assert_eq!(label_after_frame(&mut s), "Walk 1 bots");
+    assert!(
+        s.submit(
+            frontend_core::OperatorCommand::SetMark(true),
+            frontend_core::Targets::Profile("carol"),
+        )
+        .is_some(),
+        "mark carol in Fleet"
+    );
+    assert_eq!(label_after_frame(&mut s), "Walk 2 bots");
+
+    let checked: Vec<(&str, bool)> = s
+        .walk_send
+        .rows()
+        .iter()
+        .map(|row| (row.name(), row.checked(s.fleet_model.marks())))
+        .collect();
+    assert_eq!(checked, [("alice", false), ("bob", true), ("carol", true)]);
+    assert_eq!(s.select_picker_tile(&world, dest), Some(dest));
+    assert!(s.confirm_picker_group_walk(&world));
+
+    assert!(
+        !s.core.walk_route_armed("alice"),
+        "the picker no longer walks the mark that was set when it opened"
+    );
+    for name in ["bob", "carol"] {
+        assert_eq!(
+            s.core.manual_walk_route(name).unwrap().dest,
+            world_tile(dest),
+            "the current Fleet mark for {name} receives the group walk"
+        );
+    }
 }
 
 /// The 50 fps choices are saved when changed and restored at the next launch;
@@ -5532,6 +5679,8 @@ fn headed_stress_spawns_every_member_prefers_and_arms_s00() {
         ..Default::default()
     });
     let mut s = Session::new();
+    s.mainland.store(false, Ordering::Relaxed);
+    s.scatter.store(false, Ordering::Relaxed);
     s.live_prepare_stress(3, false).expect("prepare");
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(60);
     while std::time::Instant::now() < deadline {
@@ -5569,6 +5718,10 @@ fn headed_stress_spawns_every_member_prefers_and_arms_s00() {
         "RAM watch does not raise sidecar/game to 50 fps overlay"
     );
     assert!(
+        !s.mainland.load(Ordering::Relaxed),
+        "headed stress wall must not use mainland seeding"
+    );
+    assert!(
         s.scatter.load(Ordering::Relaxed),
         "stress wall scatter-seeds after scene 2"
     );
@@ -5600,7 +5753,17 @@ fn headed_stress_full_paints_every_member_at_50fps() {
         ..Default::default()
     });
     let mut s = Session::new();
+    s.mainland.store(false, Ordering::Relaxed);
+    s.scatter.store(false, Ordering::Relaxed);
     s.live_prepare_stress(2, true).expect("prepare");
+    assert!(
+        !s.mainland.load(Ordering::Relaxed),
+        "headed stress wall must not use mainland seeding"
+    );
+    assert!(
+        s.scatter.load(Ordering::Relaxed),
+        "the separate stress-wall workload still scatter-seeds"
+    );
     let f = s.focus.lock().unwrap();
     assert!(
         !f.only_render_selected,
@@ -5611,6 +5774,163 @@ fn headed_stress_full_paints_every_member_at_50fps() {
     for name in ["s00", "s01"] {
         let slot = s.core.slot_io(name).expect("slot");
         assert!(slot.input.full_rate(), "{name} must run the 50 fps cadence");
+    }
+}
+
+#[cfg(feature = "memory-profile")]
+struct MemoryRunFixture {
+    run: Option<frontend_core::bench::BenchRun>,
+    temp_dir: PathBuf,
+}
+
+#[cfg(feature = "memory-profile")]
+impl MemoryRunFixture {
+    fn prepare() -> Self {
+        let config = frontend_core::bench::BenchConfig::from_env()
+            .expect("memory benchmark config")
+            .expect("memory benchmark enabled");
+        let run = frontend_core::bench::BenchRun::prepare(config, "panel")
+            .expect("prepare memory benchmark fixture");
+        let temp_dir = run
+            .vault()
+            .parent()
+            .expect("memory vault parent")
+            .to_path_buf();
+        Self {
+            run: Some(run),
+            temp_dir,
+        }
+    }
+
+    fn run(&self) -> &frontend_core::bench::BenchRun {
+        self.run.as_ref().expect("memory run")
+    }
+}
+
+#[cfg(feature = "memory-profile")]
+impl Drop for MemoryRunFixture {
+    fn drop(&mut self) {
+        drop(self.run.take());
+        let _ = std::fs::remove_dir_all(&self.temp_dir);
+    }
+}
+
+#[cfg(feature = "memory-profile")]
+struct MemoryRunEnv {
+    _lock: std::sync::MutexGuard<'static, ()>,
+    saved: Vec<(&'static str, Option<std::ffi::OsString>)>,
+}
+
+#[cfg(feature = "memory-profile")]
+impl MemoryRunEnv {
+    fn new() -> Self {
+        static LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+        const KEYS: &[&str] = &[
+            "BOT_MEMORY_N",
+            "BOT_MEMORY_WORKLOAD",
+            "BOT_MEMORY_WARMUP_S",
+            "BOT_MEMORY_OBSERVE_S",
+            "BOT_MEMORY_TEARDOWN_S",
+            "BOT_MEMORY_SCENARIO",
+            "BOT_MEMORY_SUSTAIN",
+            "BOT_MEMORY_DIAGNOSTICS",
+            "BOT_MEMORY_SINGLE_RENDERER",
+            "BOT_MEMORY_RENDER_POLICY",
+            "BOT_MEMORY_OUTPUT",
+            "RS2B0T",
+        ];
+        let lock = LOCK.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        let saved = KEYS
+            .iter()
+            .map(|key| (*key, std::env::var_os(key)))
+            .collect();
+        for key in KEYS {
+            std::env::remove_var(key);
+        }
+        std::env::set_var("BOT_MEMORY_N", "10");
+        std::env::set_var("BOT_MEMORY_WARMUP_S", "1");
+        std::env::set_var("BOT_MEMORY_OBSERVE_S", "1");
+        std::env::set_var("BOT_MEMORY_TEARDOWN_S", "1");
+        // Native Gatherer lets the fixture exercise Workload::Active without
+        // requiring an external rs2b0t checkout.
+        std::env::set_var("BOT_MEMORY_SCENARIO", "gatherer");
+        Self { _lock: lock, saved }
+    }
+
+    fn set_run(&self, workload: &str, policy: &str) {
+        std::env::set_var("BOT_MEMORY_WORKLOAD", workload);
+        std::env::set_var("BOT_MEMORY_RENDER_POLICY", policy);
+    }
+}
+
+#[cfg(feature = "memory-profile")]
+impl Drop for MemoryRunEnv {
+    fn drop(&mut self) {
+        for (key, value) in &self.saved {
+            match value {
+                Some(value) => std::env::set_var(key, value),
+                None => std::env::remove_var(key),
+            }
+        }
+    }
+}
+
+#[cfg(feature = "memory-profile")]
+#[test]
+fn memory_stress_policies_keep_seed_placement_by_workload() {
+    let env = MemoryRunEnv::new();
+    for (case, workload, policy, scatter) in [
+        ("M1 running", "active", "stress50", false),
+        ("M1 running", "active", "stress50-full", false),
+        ("W3 idle", "idle", "stress50", true),
+        ("W3 idle", "idle", "stress50-full", true),
+    ] {
+        env.set_run(workload, policy);
+        let run = MemoryRunFixture::prepare();
+        let mut session = preparation_only_session();
+        session.mainland.store(false, Ordering::Relaxed);
+        session.scatter.store(!scatter, Ordering::Relaxed);
+        session
+            .prepare_memory(run.run())
+            .expect("prepare benchmark session");
+
+        assert!(
+            session.mainland.load(Ordering::Relaxed),
+            "{case} must keep mainland seeding"
+        );
+        assert_eq!(
+            session.scatter.load(Ordering::Relaxed),
+            scatter,
+            "{case} with {policy} has the expected scatter seed"
+        );
+
+        let focus = session.focus.lock().unwrap();
+        let full_rate = policy == "stress50-full";
+        assert_eq!(focus.live_full_rate, full_rate, "{case} with {policy}");
+        assert_eq!(
+            focus.only_render_selected, !full_rate,
+            "{case} with {policy}"
+        );
+        let drawn = run
+            .run()
+            .names()
+            .iter()
+            .filter(|name| draw_for_slot(&focus, name))
+            .count();
+        let expected_drawn = if full_rate {
+            run.run().names().len()
+        } else {
+            1
+        };
+        assert_eq!(drawn, expected_drawn, "{case} with {policy}");
+        if full_rate {
+            assert!(run
+                .run()
+                .names()
+                .iter()
+                .all(|name| crate::focus::full_rate_for(&focus, name)));
+        }
+        drop(focus);
     }
 }
 

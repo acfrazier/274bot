@@ -169,6 +169,8 @@ pub struct CombatRequest {
     /// Use the shared Quester walk retry budget for this approach walk.
     pub retry_approach_walks: bool,
     pub search_bounds: Option<Arc<[SceneRegionInput]>>,
+    /// Named zone grants for this fight's approach, return, and escape routes.
+    pub cross: Option<Arc<[Arc<str>]>>,
     pub engage_radius: u8,
     pub lost_radius: u8,
     pub budget_ticks: u16,
@@ -196,6 +198,7 @@ impl Default for CombatRequest {
             stand: None,
             retry_approach_walks: false,
             search_bounds: None,
+            cross: None,
             engage_radius: 12,
             lost_radius: 20,
             budget_ticks: 1500,

@@ -129,7 +129,7 @@ impl NativeMachine for BuyMachine {
                     };
                     if self
                         .walk_retry
-                        .observe_failure(&receipt, cx.evidence().tick)
+                        .observe_approach_failure(&receipt, cx.evidence().tick)
                     {
                         self.phase = Phase::RetryWalk(target);
                         return Poll::Pending;

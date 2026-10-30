@@ -284,13 +284,14 @@ impl StepRun for Run {
                 Poll::Ready(Ok(receipt)) => {
                     if self
                         .walk_retry
-                        .observe_failure(&receipt, cx.tick.cx.evidence().tick)
+                        .observe_approach_failure(&receipt, cx.tick.cx.evidence().tick)
                     {
                         self.walk = None;
                         return Poll::Pending;
                     }
                     super::walk_step_evidence(receipt)?;
                     self.walk_retry.reset();
+                    self.approach = None;
                     self.walk = None;
                     false
                 }
@@ -480,7 +481,9 @@ impl StepRun for Run {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::quester::families::tests::{def, local_player, with_tick};
+    use crate::quester::families::tests::{
+        def, local_player, post_walk_receipt, with_tick,
+    };
     use api::snapshot::{
         GameSnapshot, ItemActionFamily, ItemContainer, ItemView, LocLayer, LocView, StatView,
         WorldStateView,
@@ -860,6 +863,49 @@ mod tests {
     fn quest_gather_allowed_permissions_keep_resource_approach_unchanged() {
         assert_quest_mixed_resource_walk(false);
     }
+    #[test]
+    fn gather_arrival_clears_authored_approach_before_stale_tile_can_rewalk() {
+        let mut plan = plan("mining.copper", 1);
+        let mut snapshot = snapshot(&plan, 1);
+        let here = snapshot.local_player().unwrap().player.actor.tile;
+        let anchor = WorldTile {
+            x: here.x + 20,
+            ..here
+        };
+        plan.anchor = Some(anchor);
+        plan.radius = 2;
+
+        let mut ledger = None;
+        let mut run = with_tick(&snapshot, &mut ledger, 1, |tick| {
+            with_step(tick, |cx| plan.begin(cx).unwrap())
+        });
+        assert!(with_tick(&snapshot, &mut ledger, 2, |tick| {
+            with_step(tick, |cx| run.poll(cx))
+        })
+        .is_pending());
+        let walk_count = |ledger: &Option<Box<crate::native::ledger::Ledger>>| {
+            ledger
+                .as_ref()
+                .unwrap()
+                .outbox
+                .iter()
+                .filter(|action| matches!(&action.effect, crate::native::HostEffect::Walk(_)))
+                .count()
+        };
+        assert_eq!(walk_count(&ledger), 1);
+
+        post_walk_receipt(&mut ledger, 3, crate::native::WalkEnd::Arrived, None);
+        assert!(with_tick(&snapshot, &mut ledger, 3, |tick| {
+            with_step(tick, |cx| run.poll(cx))
+        })
+        .is_pending());
+        assert_eq!(
+            walk_count(&ledger),
+            1,
+            "arrival clears the authored approach even if the snapshot tile lags"
+        );
+    }
+
 
     #[test]
     fn gather_uses_native_resource_action_and_finishes_only_at_exact_goal() {

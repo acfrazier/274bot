@@ -1,6 +1,6 @@
 use super::*;
-use crate::native::{HostEffect, InteractionReceipt};
-use crate::quester::families::tests::{def, with_tick};
+use crate::native::{HostEffect, InteractionReceipt, WalkEnd};
+use crate::quester::families::tests::{def, post_walk_receipt, with_tick};
 use api::selected::{Knowledge, RunKey};
 
 use api::snapshot::SnapshotView;
@@ -360,6 +360,56 @@ fn trade_run_retains_args_for_each_transient_begin_error_then_starts() {
         );
     }
 }
+
+#[test]
+fn trade_run_retries_a_failed_approach_on_the_next_tick() {
+    let snapshot = trade_snapshot();
+    let tile = api::WorldTile {
+        x: 12,
+        z: 34,
+        level: 0,
+    };
+    let mut ledger = None;
+    let first_walk = with_tick(&snapshot, &mut ledger, 1, |tick| {
+        tick.actions
+            .begin::<crate::native::walk::Walk>(
+                crate::quester::families::reach::walk_request(
+                    tile,
+                    1,
+                    None,
+                    tick.cx.evidence(),
+                ),
+                &mut tick.cx,
+            )
+            .unwrap()
+    });
+    let port = Arc::new(Port::default());
+    let mut run = TradeRun {
+        walk: Some(first_walk),
+        walk_retry: crate::native::WalkRetryState::default(),
+        tile,
+        trade: None,
+        args: Some(trade_args(&port, 40)),
+    };
+
+    post_walk_receipt(
+        &mut ledger,
+        2,
+        WalkEnd::NoPath,
+        Some("partner approach failed"),
+    );
+    assert!(with_step(&snapshot, &mut ledger, 2, |cx| run.poll(cx)).is_pending());
+    assert!(run.walk.is_none());
+
+    assert!(with_step(&snapshot, &mut ledger, 3, |cx| run.poll(cx)).is_pending());
+    let retry = ledger.as_ref().unwrap().outbox.last().unwrap();
+    let HostEffect::Walk(request) = &retry.effect else {
+        panic!("the retry should submit a fresh partner approach walk");
+    };
+    assert_eq!(request.target, tile);
+    assert_eq!(request.required_after.tick, 3);
+}
+
 
 #[test]
 fn failed_begin_missing_quest_item_declines_existing_trade_screen() {

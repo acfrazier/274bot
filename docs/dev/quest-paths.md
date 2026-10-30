@@ -10,7 +10,13 @@ Schema 3 is the only accepted document version. `PATH_SCHEMA` is `3` (`crates/sc
 2. Add `"$schema": "../path.schema.json"` to every file in `crates/script/paths/289/`, or the matching relative path in another guide directory.
 3. Add `"advances": true` or `"advances": false` to every Explicit step kind: `talk`, `interact`, `use_on`, `make`, `combat`, `gather`, and `thieve`. Use `true` when the server changes quest progress, and `false` when it does not. Default-class kinds may omit the key, which compiles as `false`.
 
-The compiler rejects a missing `advances` on an Explicit kind with `advances-undeclared`, and a direct progress fact in `settle` without `advances: true` with `settle-needs-advance` (`crates/script/src/quester/compile.rs:1239-1252`). A direct progress fact is any of `stage_in`, `flag`, or `quest_colour`, matched through the handler's `ProgressRead` class (`crates/script/src/quester/compile.rs:1330-1341`). A journal count used as an item quantity (`qty: { "progress": ... }`) is inventory evidence, not a direct progress fact, and does not require it (`crates/script/src/quester/families/s2.rs:57-62`, `crates/script/src/quester/families/mod.rs:849-854`).
+The compiler rejects a missing `advances` on an Explicit kind with `advances-undeclared` (`crates/script/src/quester/compile.rs:1714-1719`), and a direct progress fact in `settle` without `advances: true` with `settle-needs-advance` (`crates/script/src/quester/compile.rs:1720-1729`). A direct progress fact is any of `stage_in`, `flag`, or `quest_colour`, matched through the handler's `ProgressRead` class (`crates/script/src/quester/compile.rs:1806-1815`). A journal count used as an item quantity (`qty: { "progress": ... }`) is inventory evidence, not a direct progress fact, and does not require it (`crates/script/src/quester/families/s2.rs:57-62`, `crates/script/src/quester/families/mod.rs:849-854`).
+
+An optional step budget uses `max_attempts` from 1 to 32 and a nonblank `stop` name. Authors must justify the limit from quest content. The generated schema rejects missing partners, zero, values above 32, and blank names. The compiler rejects budgets on acquisition-recipe and `progress_reader` steps. Only prelude and sequence steps accept budgets.
+
+Failed begins, soft poll failures, and settle timeouts count against the step budget. A user-input cancel does not count. A successful settle is included in its receipt and resets the run-wide failure count. Hard poll failures park at once and retain their failure kind. Spending the step limit parks with its named stop.
+
+The runner also stops after 32 consecutive counted failures across budgeted steps, even if selection changes steps after a failure. The no-progress watchdog still observes budgeted failures. Steps without a budget retain the legacy five-failure park rule. An advancing step requests a fresh progress read after a settle timeout and before any retry.
 
 ## Register a step or fact handler
 
@@ -20,11 +26,130 @@ Each `step!` row declares an `AdvanceClass`: `Explicit` or `Default` (`crates/sc
 
 ## Generated schema and shape checks
 
-`crates/script/src/quester/schema.rs:193` renders `paths/path.schema.json` from the Rust document and handler types, and `:212` resolves the output path. The `#[ignore]` test `regen_path_schema` rewrites the file (`crates/script/tests/path_schema.rs:336`). Numeric constraints use standard JSON Schema `type`, `minimum`, and `maximum`, with no custom format plugin (`crates/script/tests/path_schema.rs:300-335`).
+`crates/script/src/quester/schema.rs:201` renders `paths/path.schema.json` from the Rust document and handler types, and `:220` resolves the output path. The `#[ignore]` test `regen_path_schema` rewrites the file (`crates/script/tests/path_schema.rs:336`). Numeric constraints use standard JSON Schema `type`, `minimum`, and `maximum`, with no custom format plugin (`crates/script/tests/path_schema.rs:300-335`).
 
 `npx --yes -p ajv-cli@5.0.0 ajv validate --spec=draft2020 --errors=text -s crates/script/paths/path.schema.json -d crates/script/paths/289/<id>.json`
 
 Rerun a failing large guide with `--errors=json --verbose`. JSON gives `instancePath`, `schemaPath`, and data, plus the applicable schema fragment (`parentSchema`) that names the `Args` shape. The text form names only the data path.
+
+## Bounded content acquisitions
+
+### Kill until the required item drops
+
+Use the combat family's `until_drop` policy for a chance-only required item:
+
+```json
+{
+  "until_drop": {
+    "obj": "bronze_axe",
+    "max_kills": 24,
+    "stop": "GAP-entrana-zombie-axe-budget"
+  }
+}
+```
+
+Add this object to the usual `combat` arguments, alongside the target and tactic.
+The policy takes the required item through the combat family's existing loot phase.
+It completes only when the item reaches the inventory.
+The kill count persists across native re-engagements within that step.
+Only a confirmed `Killed` result spends the budget.
+Disappearance, a missing target, or an attempt timeout does not count as a kill.
+
+The final permitted kill still receives the normal loot wait and pickup.
+The appearance deadline does not cancel a pickup that already started.
+If the item remains absent, the runner parks with the authored `stop`.
+The combat receipt and the `combat_kills` status field retain the total kill count.
+The policy cannot share a step with `finish`, `until`, or `win`.
+The compiler rejects a zero budget, an empty stop, or an unresolved item.
+
+The guide author derives the kill budget from the content's drop rate.
+Cite that rate and the budget calculation in the guide.
+For Lost City's zombie axe, `drop tables/scripts/zombie.rs2:102-110` gives a rate of 50/128.
+A 24-kill budget leaves a miss probability of `(78/128)^24`, about 0.0007%.
+This is a bound, not a promise that an item will drop.
+Lost City and Eadgar can use this policy for their chance-only axe and key sources.
+
+### Select a production menu opened by item use
+
+Use the existing `use_on` family to open the menu.
+Set its `settle` predicate to `{"All": []}`.
+The item-use step confirms accepted dispatch and leaves the production menu for `make`.
+The next `make` step observes the posted chat or main menu.
+`modal_open` covers main interfaces only and does not detect chat production menus.
+The item-use step does not adopt the menu as dialogue or answer its buttons.
+Then use `make` with neither `loc` nor `anchor`:
+
+```json
+{
+  "product": "unstrung_shortbow",
+  "menu": {
+    "obj": "shortbow",
+    "source": "skill_fletching/scripts/cut_logs.rs2:18-47"
+  },
+  "qty": 1,
+  "make_x": false
+}
+```
+
+The `product` names the output item.
+The optional `menu.obj` names the item represented by the posted menu row.
+Some menus show an input item instead of the output.
+`qty` is a held target: hold at least this many output items after production.
+It is not an instruction to make that many additional items.
+The machine selects the named product and a quantity that does not exceed the remaining target.
+The compiler rejects a missing half of the `loc` and `anchor` trigger pair.
+Existing loc-triggered `make` steps retain both fields.
+
+The same selector works after item-on-item and item-on-loc use.
+Ikov can use it after a knife on logs.
+Zombie Queen can use it for bronze wire smithing.
+Nature Spirit can use it for the silver sickle.
+Dragon Slayer can use it for the unfired bowl.
+These steps reuse the shared production machines and do not add another production loop.
+
+### Take a temporary ground item
+
+Add `max_ticks` to a ground-item `interact` with operation `Take`:
+
+```json
+{
+  "target": { "ground": "jail_key" },
+  "op": "Take",
+  "anchor": {
+    "tile": [2931, 9690, 0],
+    "source": "Use the guide's content-derived Jailer combat stand."
+  },
+  "radius": 8,
+  "max_ticks": 100
+}
+```
+
+Use the guide's actual combat stand, not the example tile.
+The bound starts when the step begins.
+It covers both the missing-spawn wait and inventory settlement.
+Repeated host polls do not spend observed game ticks.
+The step waits for the item without a separate `wait_if_missing` setting.
+A successful Take needs an inventory increase, not merely an accepted click.
+An inventory increase at the final permitted tick still completes.
+An increase first observed after that tick does not complete.
+Expiry parks with `ground pickup exceeded its tick budget`.
+The typed receipt records the observed tick count and the final held count.
+The status fields expose these values as `ground_waited_ticks` and `ground_held`.
+The terminal `Complete` status keeps the final step's receipt.
+
+The compiler rejects zero, other target kinds, and operations other than `Take`.
+This form cannot combine `max_ticks` with:
+
+- `settle_ms`
+- `dialogue`
+- `until`
+- `wait_until`
+- An exact target tile
+- `reachable_only`
+
+Use the ordinary form for those contracts.
+Scorpion Catcher can use this form for the Jailer key.
+The content posts that key for 100 ticks in `drop tables/scripts/jailer.rs2:10`.
 
 ## Ship a bundled guide
 
@@ -56,7 +181,7 @@ Probe every multi-step sequence at each state it should resume from, and every `
 
 Sequence order is `SequenceOrder::Authored`, `Nearest`, or `Ordered` (`crates/script/src/quester/path.rs:44-62`). The ordered cursor restarts on every run start, resume, death, or stage change, so every step must be safe to replay (`crates/script/src/quester/runner.rs:1944-1985`). One exception keeps the cursor while paired work is pending (`crates/script/src/quester/runner.rs:3197-3199`).
 
-Journal latency never spends the family's post-read settle window (`crates/script/src/quester/runner.rs:1991-1992`). The no-progress watchdog warns at three unchanged step boundaries and parks at eight (`crates/script/src/quester/watchdog.rs:1-2,83-100`). The run trace keeps 32 events and folds repeats into `(repeated N additional times)` (`crates/script/src/quester/runner.rs:126,212`). An `acquire` recipe restarts at most 8 times past its last settled child (`crates/script/src/quester/families/mod.rs:3633-3648`).
+Journal latency never spends the family's post-read settle window (`crates/script/src/quester/runner.rs:1991-1992`). The no-progress watchdog warns at three unchanged step boundaries and parks at eight (`crates/script/src/quester/watchdog.rs:1-2,83-100`); budgeted failed attempts use their per-step stop instead of the watchdog. A step receipt reports the attempt count and named stop. The run trace keeps 32 events and folds repeats into `(repeated N additional times)` (`crates/script/src/quester/runner.rs:126,212`). An `acquire` recipe restarts at most 8 times past its last settled child (`crates/script/src/quester/families/mod.rs:3633-3648`).
 
 Paired validation compiles each declared gang role before the guide is available, and names the failing gang alongside the per-file error (`crates/script/src/quester/registry.rs:1159-1180`). A run activates only the account's effective gang after owned membership admission (`crates/script/src/quester/pair.rs:65`, `crates/script/src/quester/gang.rs:132-160`).
 

@@ -214,6 +214,15 @@ impl NativeMachine for Thieve {
         let mut core_observation = observation;
         core_observation.inventory_ready &=
             !walk_pending && self.reach.is_none() && !chat_dialog_open;
+        if !walk_pending
+            && self.area_anchor.is_some_and(|center| {
+                here.is_some_and(|here| {
+                    reach::within(here, center, i32::from(self.args.radius))
+                })
+            })
+        {
+            self.walk_retry.reset();
+        }
         let decision = self.core.poll(now, core_observation);
 
         if decision == Decision::Dispatch
@@ -412,7 +421,7 @@ impl Thieve {
                 self.walk = None;
                 if self
                     .walk_retry
-                    .observe_failure(&receipt, cx.evidence().tick)
+                    .observe_approach_failure(&receipt, cx.evidence().tick)
                 {
                     return Ok(false);
                 }
@@ -973,6 +982,48 @@ mod tests {
         assert_eq!(walk_count(&ledger), 2);
         drop(run);
     }
+
+    #[test]
+    fn reaching_the_thieve_area_without_a_walk_clears_the_old_retry() {
+        let anchor = WorldTile {
+            x: 3,
+            z: 4,
+            level: 0,
+        };
+        let outside = game_snapshot(
+            WorldTile {
+                x: 30,
+                z: 40,
+                level: 0,
+            },
+            vec![npc(19, 1, 1)],
+            vec![],
+        );
+        let mut ledger = None;
+        let mut run = with_tick(&outside, &mut ledger, 1, |tick| {
+            let mut run = Thieve::begin(args(anchor, 2), &mut tick.cx).unwrap();
+            run.begin_walk(anchor, 2, &mut tick.cx).unwrap();
+            run
+        });
+        post_walk_receipt(
+            &mut ledger,
+            2,
+            WalkEnd::NoPath,
+            Some("old approach failed"),
+        );
+        assert!(with_tick(&outside, &mut ledger, 2, |tick| {
+            run.poll(&mut tick.cx).is_pending()
+        }));
+        assert!(run.walk_retry.pending());
+
+        let inside = game_snapshot(anchor, vec![npc(19, 1, 1)], vec![]);
+        assert!(with_tick(&inside, &mut ledger, 3, |tick| {
+            run.poll(&mut tick.cx).is_pending()
+        }));
+        assert!(!run.walk_retry.pending());
+        assert_eq!(run.walk_retry.actions(), 0);
+    }
+
 
     #[test]
     fn effective_level_not_base_controls_the_selected_requirement() {

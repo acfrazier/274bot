@@ -1,0 +1,99 @@
+{
+  "$schema": "../path.schema.json",
+  "schema": 3,
+  "id": "sheepherder",
+  "display_name": "Sheep Herder",
+  "required": [],
+  "tested_stats": null,
+  "partner": null,
+  "quest": {
+    "members": true,
+    "quest_points": 4,
+    "requirements": [],
+    "items": [],
+    "acquire": {},
+    "bank": "nearest",
+    "coin_float": 100,
+    "loadouts": {},
+    "areas": { "pen": { "boxes": [[2595, 3351, 2609, 3364, 0]], "source": "C:scripts/quests/quest_sheepherder/configs/sheepherder_area.dbrow:1-3" } },
+    "tools": ["obj:poisoned_feed", "obj:cattleprod", "obj:plague_jacket", "obj:plague_trousers"],
+    "owns_inventory": false
+  },
+  "roles": [{
+    "role": null,
+    "progress_binding": "journal:sheepherder",
+    "progress": {
+      "colour": { "not_started": "sheepherder:0", "in_progress": "sheepherder:1", "complete": "sheepherder:complete" },
+      "rules": [
+        { "stage": "sheepherder:2", "all": ["i bought some protective clothing from dr orbon"] },
+        { "stage": "sheepherder:1", "all": ["i need to get some protective clothing from", "orbon"] }
+      ],
+      "flags": [],
+      "monotonic": false
+    },
+    "prelude": [],
+    "sequences": [
+      {
+        "stage": "sheepherder:0", "required": [], "terminal": false, "recovery_entry": null,
+        "steps": [{
+          "id": "accept-task", "kind": "talk", "version": 1, "advances": true,
+          "args": { "npc": "councillor_halgrive", "anchor": { "tile": [2617, 3299, 0], "source": "C:maps/m40_51.jm2:10817; C:pack/npc.pack:290" }, "leash": 8, "prefer": ["What's wrong?", "I can do that for you."], "strict": true },
+          "comment": "C:scripts/quests/quest_sheepherder/scripts/npcs/councillor_halgrive.rs2:9-29,35-46: accept the task and receive poisoned feed.",
+          "skip_if": { "Any": [] },
+          "settle": { "Fact": { "kind": "stage_in", "version": 1, "args": { "quest": "sheepherder", "any": ["sheepherder:1"] } } }
+        }]
+      },
+      {
+        "stage": "sheepherder:1", "required": [], "terminal": false, "recovery_entry": null,
+        "steps": [{
+          "id": "buy-protection", "kind": "talk", "version": 1, "advances": true,
+          "args": { "npc": "doctor_orbon", "anchor": { "tile": [2614, 3306, 0], "source": "C:maps/m40_51.jm2:10810; C:pack/npc.pack:291" }, "leash": 8, "prefer": ["Ok, I'll take it."], "strict": true },
+          "comment": "C:scripts/quests/quest_sheepherder/scripts/npcs/doctor_orbon.rs2:33-60: pay 100 coins for the jacket and trousers and advance the quest.",
+          "skip_if": { "Any": [] },
+          "settle": { "Fact": { "kind": "stage_in", "version": 1, "args": { "quest": "sheepherder", "any": ["sheepherder:2"] } } }
+        }]
+      },
+      {
+        "stage": "sheepherder:2", "required": [], "terminal": false, "recovery_entry": null,
+        "steps": [
+          {
+            "id": "wear-jacket", "kind": "equip", "version": 1,
+            "args": { "obj": "plague_jacket" },
+            "comment": "C:scripts/quests/quest_sheepherder/scripts/npcs/diseased_sheep.rs2:36-41 requires the worn jacket and trousers.",
+            "skip_if": { "Fact": { "kind": "worn", "version": 1, "args": { "obj": "plague_jacket" } } },
+            "settle": { "Fact": { "kind": "worn", "version": 1, "args": { "obj": "plague_jacket" } } }
+          },
+          {
+            "id": "wear-trousers", "kind": "equip", "version": 1,
+            "args": { "obj": "plague_trousers" },
+            "comment": "C:scripts/quests/quest_sheepherder/scripts/npcs/diseased_sheep.rs2:36-41 requires the worn jacket and trousers.",
+            "skip_if": { "Fact": { "kind": "worn", "version": 1, "args": { "obj": "plague_trousers" } } },
+            "settle": { "Fact": { "kind": "worn", "version": 1, "args": { "obj": "plague_trousers" } } }
+          },
+          {
+            "id": "open-pen-gate", "kind": "interact", "version": 1, "advances": false,
+            "args": { "target": { "loc": "plaguesheep_gatel" }, "op": "Open", "anchor": { "tile": [2594, 3362, 0], "source": "C:maps/m40_52.jm2:5587; C:pack/loc.pack:167" }, "radius": 2 },
+            "comment": "C:scripts/quests/quest_sheepherder/scripts/locs/sheepherder_gate.rs2:1-18 requires both suit pieces and moves the player into the pen.",
+            "skip_if": { "Fact": { "kind": "in_area", "version": 1, "args": { "area": "pen" } } },
+            "settle": { "Fact": { "kind": "in_area", "version": 1, "args": { "area": "pen" } } }
+          },
+          {
+            "id": "take-prod", "kind": "interact", "version": 1, "advances": false,
+            "args": { "target": { "ground": "cattleprod" }, "op": "Take", "anchor": { "tile": [2604, 3357, 0], "source": "C:maps/m40_52.jm2:7350; C:pack/obj.pack:279" }, "radius": 2, "wait_if_missing": true },
+            "comment": "C:scripts/quests/quest_sheepherder/scripts/npcs/farmer_brumty.rs2:19-25 directs the player to the prod in the barn.",
+            "skip_if": { "Any": [{ "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "cattleprod" } } }, { "Fact": { "kind": "worn", "version": 1, "args": { "obj": "cattleprod" } } }] },
+            "settle": { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "cattleprod" } } }
+          },
+          {
+            "id": "wield-prod", "kind": "equip", "version": 1,
+            "args": { "obj": "cattleprod" },
+            "comment": "C:scripts/quests/quest_sheepherder/scripts/npcs/diseased_sheep.rs2:43-53 requires the prod in the right hand.",
+            "skip_if": { "Fact": { "kind": "worn", "version": 1, "args": { "obj": "cattleprod" } } },
+            "settle": { "Fact": { "kind": "worn", "version": 1, "args": { "obj": "cattleprod" } } }
+          }
+        ]
+      },
+      { "stage": "sheepherder:complete", "required": [], "terminal": true, "recovery_entry": null, "steps": [] }
+    ]
+  }]
+}

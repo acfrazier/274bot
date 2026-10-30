@@ -659,10 +659,19 @@ impl TuiApp {
         }
     }
 
-    /// The Script tab's letters (`SCRIPT_KEYS`). Its Browse, Load and
-    /// catalog popups never get here: they own the keys while open.
+    /// The Script tab's letters (`SCRIPT_KEYS`) and the Quester disclosure's
+    /// vertical scrolling. Browse and Load popups own their keys while open.
     fn script_pane_key(&mut self, key: KeyEvent) -> AppAction {
+        let page = i32::from(self.script_area.height.saturating_sub(12).max(1));
         match key.code {
+            KeyCode::Char('j') if is_text(&key) && self.scroll_quester_start_zones(1) => {
+                AppAction::None
+            }
+            KeyCode::Char('k') if is_text(&key) && self.scroll_quester_start_zones(-1) => {
+                AppAction::None
+            }
+            KeyCode::PageDown if self.scroll_quester_start_zones(page) => AppAction::None,
+            KeyCode::PageUp if self.scroll_quester_start_zones(-page) => AppAction::None,
             KeyCode::Char(c) if is_text(&key) => {
                 script_key_command(c).map_or(AppAction::None, |command| self.run_command(command))
             }

@@ -206,17 +206,21 @@ fn quest_paths_is_synchronous_and_lists_every_released_path() {
                 serde_json::from_slice(&std::fs::read(root.join(&file)).unwrap()).unwrap();
             assert_eq!(document.id.0.as_ref(), entry.id);
             let role = &document.roles[0];
-            let mut stages: Vec<_> = role
-                .sequences
-                .iter()
-                .map(|sequence| sequence.stage.0.as_ref())
-                .collect();
-            stages.sort_unstable_by_key(|stage| {
-                stage
-                    .rsplit_once(':')
-                    .and_then(|(_, ordinal)| ordinal.parse::<u32>().ok())
-                    .unwrap_or(u32::MAX)
-            });
+            let mut stages = Vec::new();
+            for role in &document.roles {
+                let mut role_stages: Vec<_> = role
+                    .sequences
+                    .iter()
+                    .map(|sequence| sequence.stage.0.as_ref())
+                    .collect();
+                role_stages.sort_by_key(|stage| {
+                    stage
+                        .rsplit_once(':')
+                        .and_then(|(_, ordinal)| ordinal.parse::<u32>().ok())
+                        .unwrap_or(u32::MAX)
+                });
+                stages.extend(role_stages);
+            }
             serde_json::json!({
                 "id": entry.id,
                 "display": document.display_name,

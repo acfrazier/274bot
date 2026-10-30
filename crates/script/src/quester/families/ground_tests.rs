@@ -1,8 +1,10 @@
 //! Exact-ground chooser and Reach integration regressions.
 
 use super::*;
-use crate::native::{ledger, ActionHandle, HostEffect, InteractionReceipt};
-use crate::quester::families::tests::{def, local_player, with_tick, with_tick_reach};
+use crate::native::{ledger, ActionHandle, HostEffect, InteractionReceipt, WalkEnd};
+use crate::quester::families::tests::{
+    def, local_player, post_walk_receipt, with_tick, with_tick_reach,
+};
 use api::snapshot::{
     ChatLineView, GameSnapshot, GroundItemView, ItemActionFamily, ItemContainer, ItemView,
     WorldStateView,
@@ -680,6 +682,36 @@ fn selected_id_exclusions_cover_the_last_bit_and_reject_oversized_selections() {
             );
         });
     }
+}
+
+#[test]
+fn failed_exact_ground_retry_keeps_walk_detail_when_item_disappears() {
+    let here = tile(3216, 3216);
+    let target = tile(3218, 3216);
+    let mut snapshot = snapshot(here, vec![row(1959, target, here)]);
+    let reach = flood(here, &[target]);
+    let mut ledger = None;
+    let handle = begin(1959, target, &snapshot, &reach, &mut ledger);
+
+    post_walk_receipt(
+        &mut ledger,
+        2,
+        WalkEnd::NoPath,
+        Some("last route failure"),
+    );
+    assert!(with_tick_reach(&snapshot, &reach, &mut ledger, 2, |tick| {
+        tick.actions.poll(&handle, &mut tick.cx)
+    })
+    .is_pending());
+
+    snapshot.seed_ground_items(vec![]);
+    assert!(matches!(
+        with_tick_reach(&snapshot, &reach, &mut ledger, 3, |tick| {
+            tick.actions.poll(&handle, &mut tick.cx)
+        }),
+        Poll::Ready(Err(ActionError::Blocked(reason)))
+            if reason.as_ref() == "last route failure"
+    ));
 }
 
 #[cfg(target_pointer_width = "64")]

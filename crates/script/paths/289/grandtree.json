@@ -1,0 +1,2255 @@
+{
+  "$schema": "../path.schema.json",
+  "schema": 3,
+  "id": "grandtree",
+  "display_name": "The Grand Tree",
+  "required": [
+    "agility-25"
+  ],
+  "tested_stats": null,
+  "partner": null,
+  "quest": {
+    "members": true,
+    "quest_points": 5,
+    "requirements": [
+      {
+        "id": "agility-25",
+        "kind": {
+          "Skill": {
+            "skill": "agility",
+            "level": 25
+          }
+        },
+        "at": "start",
+        "source": "content/scripts/quests/quest_grandtree/scripts/quest_grandtree.rs2:23-29; grandtree_journal.rs2:8-14"
+      }
+    ],
+    "items": [],
+    "acquire": {},
+    "bank": "nearest",
+    "coin_float": 0,
+    "loadouts": {},
+    "areas": {
+      "karamja_trip": {
+        "boxes": [[2880, 3008, 3007, 3071, 0]],
+        "source": "content/scripts/areas/area_gnome/scripts/gnome_glider.rs2:86-109; content/maps/m46_47.jm2:4513,5713"
+      },
+      "shipyard": {
+        "boxes": [[2945, 3008, 3007, 3071, 0]],
+        "source": "content/scripts/quests/quest_grandtree/scripts/quest_grandtree.rs2:112-135; content/maps/m46_47.jm2:4513"
+      }
+    },
+    "tools": [
+      "obj:grandtree_barksample",
+      "obj:grandtree_translationbook",
+      "obj:grandtree_scroll",
+      "obj:grandtree_journal",
+      "obj:grandtree_order",
+      "obj:grandtree_gloughskey",
+      "obj:grandtree_invasionplans",
+      "obj:grandtree_twigt",
+      "obj:grandtree_twigu",
+      "obj:grandtree_twigz",
+      "obj:grandtree_twigo",
+      "obj:grandtree_daconiarock"
+    ],
+    "owns_inventory": true
+  },
+  "roles": [
+    {
+      "role": null,
+      "progress_binding": "journal:grandtree",
+      "progress": {
+        "colour": {
+          "not_started": "grandtree:0",
+          "in_progress": "grandtree:10",
+          "complete": "grandtree:160"
+        },
+        "rules": [
+          {
+            "stage": "grandtree:150",
+            "all": [
+              "king narnode",
+              "has seen the light"
+            ],
+            "any": [],
+            "not": [],
+            "varp": 150
+          },
+          {
+            "stage": "grandtree:140",
+            "all": [
+              "i defeated the black demon"
+            ],
+            "any": [],
+            "not": [],
+            "varp": 140
+          },
+          {
+            "stage": "grandtree:130",
+            "all": [
+              "i should investigate what's behind the"
+            ],
+            "any": [],
+            "not": [],
+            "varp": 130
+          },
+          {
+            "stage": "grandtree:120",
+            "all": [
+              "king narnode",
+              "isn't convinced but gave me some"
+            ],
+            "any": [],
+            "not": [],
+            "varp": 120
+          },
+          {
+            "stage": "grandtree:110",
+            "all": [
+              "i should talk to the king and see what he says"
+            ],
+            "any": [],
+            "not": [],
+            "varp": 110
+          },
+          {
+            "stage": "grandtree:100",
+            "all": [
+              "has suggested i ask",
+              "anita"
+            ],
+            "any": [],
+            "not": [],
+            "varp": 100
+          },
+          {
+            "stage": "grandtree:90",
+            "all": [
+              "i have an",
+              "invoice",
+              "the foreman had"
+            ],
+            "any": [],
+            "not": [],
+            "varp": 90
+          },
+          {
+            "stage": "grandtree:80",
+            "all": [
+              "has told me to use the",
+              "glider"
+            ],
+            "any": [],
+            "not": [],
+            "varp": 80
+          },
+          {
+            "stage": "grandtree:70",
+            "all": [
+              "i found",
+              "glough's journal",
+              "tree house"
+            ],
+            "any": [],
+            "not": [],
+            "varp": 70
+          },
+          {
+            "stage": "grandtree:60",
+            "all": [
+              "agreed to",
+              "search glough's house"
+            ],
+            "any": [],
+            "not": [],
+            "varp": 60
+          },
+          {
+            "stage": "grandtree:50",
+            "all": [
+              "said i can speak to",
+              "charlie"
+            ],
+            "any": [],
+            "not": [],
+            "varp": 50
+          },
+          {
+            "stage": "grandtree:40",
+            "all": [
+              "i told",
+              "glough",
+              "he blames it on"
+            ],
+            "any": [],
+            "not": [],
+            "varp": 40
+          },
+          {
+            "stage": "grandtree:30",
+            "all": [
+              "the king wants me to tell"
+            ],
+            "any": [],
+            "not": [],
+            "varp": 30
+          },
+          {
+            "stage": "grandtree:20",
+            "all": [
+              "took the bark sample and gave me a"
+            ],
+            "any": [],
+            "not": [],
+            "varp": 20
+          },
+          {
+            "stage": "grandtree:10",
+            "all": [
+              "has asked me to take a",
+              "sample of"
+            ],
+            "any": [],
+            "not": [],
+            "varp": 10
+          }
+        ],
+        "flags": [],
+        "monotonic": false
+      },
+      "prelude": [],
+      "sequences": [
+        {
+          "stage": "grandtree:0",
+          "required": [],
+          "terminal": false,
+          "recovery_entry": null,
+          "steps": [
+            {
+              "id": "start",
+              "kind": "talk",
+              "version": 1,
+              "args": {
+                "npc": "grandtree_narnode",
+                "anchor": {
+                  "tile": [
+                    2466,
+                    3497,
+                    0
+                  ],
+                  "source": "content/maps/m38_54.jm2:8820; content/pack/npc.pack:671"
+                },
+                "leash": 10,
+                "prefer": [
+                  "You seem worried",
+                  "I'd be happy to help"
+                ]
+              },
+              "skip_if": {
+                "Any": []
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "stage_in",
+                  "version": 1,
+                  "args": {
+                    "quest": "grandtree",
+                    "any": [
+                      "grandtree:10"
+                    ]
+                  }
+                }
+              },
+              "comment": "content/scripts/quests/quest_grandtree/scripts/king_narnode.rs2:199-242,271-305.",
+              "advances": true
+            }
+          ]
+        },
+        {
+          "stage": "grandtree:10",
+          "required": [],
+          "terminal": false,
+          "recovery_entry": null,
+          "steps": [
+            {
+              "id": "hazelmere",
+              "kind": "talk",
+              "version": 1,
+              "args": {
+                "npc": "grandtree_hazelmere",
+                "anchor": {
+                  "tile": [
+                    2678,
+                    3086,
+                    1
+                  ],
+                  "source": "content/maps/m41_48.jm2:5288; content/pack/npc.pack:670"
+                },
+                "leash": 10,
+                "prefer": []
+              },
+              "skip_if": {
+                "Any": []
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "stage_in",
+                  "version": 1,
+                  "args": {
+                    "quest": "grandtree",
+                    "any": [
+                      "grandtree:20"
+                    ]
+                  }
+                }
+              },
+              "comment": "content/scripts/areas/area_gnome/scripts/hazelmere.rs2:1-18; content/maps/m41_48.jm2:5288.",
+              "advances": true
+            }
+          ]
+        },
+        {
+          "stage": "grandtree:20",
+          "required": [],
+          "terminal": false,
+          "recovery_entry": null,
+          "steps": [
+            {
+              "id": "translate-message",
+              "kind": "talk",
+              "version": 1,
+              "args": {
+                "npc": "grandtree_narnode",
+                "anchor": {
+                  "tile": [
+                    2466,
+                    3497,
+                    0
+                  ],
+                  "source": "content/maps/m38_54.jm2:8820; content/pack/npc.pack:671"
+                },
+                "leash": 10,
+                "prefer": [
+                  "I think so",
+                  "A man came to me with the King's seal",
+                  "I gave the man Daconia rocks",
+                  "And Daconia rocks will kill the tree",
+                  "None of the above"
+                ]
+              },
+              "skip_if": {
+                "Any": []
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "stage_in",
+                  "version": 1,
+                  "args": {
+                    "quest": "grandtree",
+                    "any": [
+                      "grandtree:30"
+                    ]
+                  }
+                }
+              },
+              "comment": "content/scripts/quests/quest_grandtree/scripts/king_narnode.rs2:170-185,324-330,343-350,363-370,383-410.",
+              "advances": true
+            }
+          ]
+        },
+        {
+          "stage": "grandtree:30",
+          "required": [],
+          "terminal": false,
+          "recovery_entry": null,
+          "steps": [
+            {
+              "id": "tell-glough",
+              "kind": "talk",
+              "version": 1,
+              "args": {
+                "npc": "grandtree_glough",
+                "anchor": {
+                  "tile": [
+                    2478,
+                    3463,
+                    1
+                  ],
+                  "source": "content/maps/m38_54.jm2:8878; content/pack/npc.pack:672"
+                },
+                "leash": 10,
+                "prefer": []
+              },
+              "skip_if": {
+                "Any": []
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "stage_in",
+                  "version": 1,
+                  "args": {
+                    "quest": "grandtree",
+                    "any": [
+                      "grandtree:40"
+                    ]
+                  }
+                }
+              },
+              "comment": "content/scripts/quests/quest_grandtree/scripts/glough.rs2:69-81.",
+              "advances": true
+            }
+          ]
+        },
+        {
+          "stage": "grandtree:40",
+          "required": [],
+          "terminal": false,
+          "recovery_entry": null,
+          "steps": [
+            {
+              "id": "find-prisoner",
+              "kind": "talk",
+              "version": 1,
+              "args": {
+                "npc": "grandtree_narnode",
+                "anchor": {
+                  "tile": [
+                    2466,
+                    3497,
+                    0
+                  ],
+                  "source": "content/maps/m38_54.jm2:8820; content/pack/npc.pack:671"
+                },
+                "leash": 10,
+                "prefer": []
+              },
+              "skip_if": {
+                "Any": []
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "stage_in",
+                  "version": 1,
+                  "args": {
+                    "quest": "grandtree",
+                    "any": [
+                      "grandtree:50"
+                    ]
+                  }
+                }
+              },
+              "comment": "content/scripts/quests/quest_grandtree/scripts/king_narnode.rs2:157-165.",
+              "advances": true
+            }
+          ]
+        },
+        {
+          "stage": "grandtree:50",
+          "required": [],
+          "terminal": false,
+          "recovery_entry": null,
+          "steps": [
+            {
+              "id": "speak-charlie",
+              "kind": "talk",
+              "version": 1,
+              "args": {
+                "npc": "grandtree_charlie",
+                "anchor": {
+                  "tile": [
+                    2464,
+                    3495,
+                    3
+                  ],
+                  "source": "content/scripts/quests/quest_grandtree/configs/quest_grandtree.constant:19; scripts/quests/quest_grandtree/scripts/quest_grandtree.rs2:17-20"
+                },
+                "leash": 10,
+                "prefer": []
+              },
+              "skip_if": {
+                "Any": []
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "stage_in",
+                  "version": 1,
+                  "args": {
+                    "quest": "grandtree",
+                    "any": [
+                      "grandtree:60"
+                    ]
+                  }
+                }
+              },
+              "comment": "content/scripts/quests/quest_grandtree/scripts/charlie.rs2:38-53.",
+              "advances": true
+            }
+          ]
+        },
+        {
+          "stage": "grandtree:60",
+          "required": [],
+          "terminal": false,
+          "recovery_entry": null,
+          "steps": [
+            {
+              "id": "open-cupboard",
+              "kind": "interact",
+              "version": 1,
+              "args": {
+                "target": {
+                  "loc": "grandtree_cupboardclosed"
+                },
+                "op": "Open",
+                "anchor": {
+                  "tile": [
+                    2476,
+                    3465,
+                    1
+                  ],
+                  "source": "content/maps/m38_54.jm2:7858; content/pack/loc.pack:2435"
+                },
+                "radius": 5
+              },
+              "skip_if": {
+                "Fact": {
+                  "kind": "loc_present",
+                  "version": 1,
+                  "args": {
+                    "loc": "grandtree_cupboardopen"
+                  }
+                }
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "loc_present",
+                  "version": 1,
+                  "args": {
+                    "loc": "grandtree_cupboardopen"
+                  }
+                }
+              },
+              "comment": "content/scripts/quests/quest_grandtree/scripts/quest_grandtree.rs2:94-105; content/maps/m38_54.jm2:7858.",
+              "advances": false
+            },
+            {
+              "id": "search-cupboard",
+              "kind": "interact",
+              "version": 1,
+              "args": {
+                "target": {
+                  "loc": "grandtree_cupboardopen"
+                },
+                "op": "Search",
+                "anchor": {
+                  "tile": [
+                    2476,
+                    3465,
+                    1
+                  ],
+                  "source": "content/maps/m38_54.jm2:7858; content/pack/loc.pack:2435"
+                },
+                "radius": 5
+              },
+              "skip_if": {
+                "Any": []
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "stage_in",
+                  "version": 1,
+                  "args": {
+                    "quest": "grandtree",
+                    "any": [
+                      "grandtree:70"
+                    ]
+                  }
+                }
+              },
+              "comment": "content/scripts/quests/quest_grandtree/scripts/quest_grandtree.rs2:96-105.",
+              "advances": true
+            }
+          ]
+        },
+        {
+          "stage": "grandtree:70",
+          "required": [],
+          "terminal": false,
+          "recovery_entry": null,
+          "steps": [
+            {
+              "id": "accuse-glough",
+              "kind": "talk",
+              "version": 1,
+              "args": {
+                "npc": "grandtree_glough",
+                "anchor": {
+                  "tile": [
+                    2478,
+                    3463,
+                    1
+                  ],
+                  "source": "content/maps/m38_54.jm2:8878; content/pack/npc.pack:672"
+                },
+                "leash": 10,
+                "prefer": []
+              },
+              "skip_if": {
+                "Any": []
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "stage_in",
+                  "version": 1,
+                  "args": {
+                    "quest": "grandtree",
+                    "any": [
+                      "grandtree:80"
+                    ]
+                  }
+                }
+              },
+              "comment": "content/scripts/quests/quest_grandtree/scripts/glough.rs2:33-68; scripts/quests/quest_grandtree/scripts/charlie.rs2:58-83; king_narnode.rs2:420-425.",
+              "advances": true
+            }
+          ]
+        },
+        {
+          "stage": "grandtree:80",
+          "required": [],
+          "terminal": false,
+          "recovery_entry": null,
+          "steps": [
+            {
+              "id": "fly-to-karamja",
+              "kind": "talk",
+              "version": 1,
+              "args": {
+                "npc": "gnomepilot",
+                "anchor": {
+                  "tile": [
+                    2464,
+                    3501,
+                    3
+                  ],
+                  "source": "content/maps/m38_54.jm2:8913; content/pack/npc.pack:171"
+                },
+                "leash": 8,
+                "prefer": [
+                  "Take me to Karamja please!"
+                ]
+              },
+              "skip_if": {
+                "Fact": {
+                  "kind": "in_area",
+                  "version": 1,
+                  "args": { "area": "karamja_trip" }
+                }
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "near",
+                  "version": 1,
+                  "args": {
+                    "tile": [
+                      2917,
+                      3058,
+                      0
+                    ],
+                    "radius": 20
+                  }
+                }
+              },
+              "comment": "content/scripts/areas/area_gnome/scripts/gnome_glider.rs2:86-109; content/maps/m38_54.jm2:8913.",
+              "advances": false
+            },
+            {
+              "id": "enter-shipyard",
+              "kind": "interact",
+              "version": 1,
+              "args": {
+                "target": {
+                  "loc": "grandtree_fencegate_l",
+                  "tile": [
+                    2945,
+                    3041,
+                    0
+                  ],
+                  "source": "content/maps/m46_47.jm2:4513; content/pack/loc.pack:2439"
+                },
+                "op": "Open",
+                "anchor": {
+                  "tile": [
+                    2945,
+                    3041,
+                    0
+                  ],
+                  "source": "content/maps/m46_47.jm2:4513"
+                },
+                "radius": 5,
+                "dialogue": {
+                  "prefer": [
+                    "Glough sent me.",
+                    "Ka.",
+                    "Lu.",
+                    "Min."
+                  ]
+                }
+              },
+              "skip_if": {
+                "Fact": {
+                  "kind": "in_area",
+                  "version": 1,
+                  "args": { "area": "shipyard" }
+                }
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "in_area",
+                  "version": 1,
+                  "args": { "area": "shipyard" }
+                }
+              },
+              "comment": "content/scripts/quests/quest_grandtree/scripts/quest_grandtree.rs2:112-135; shipyardworker.rs2:65-89,116-139.",
+              "advances": false
+            },
+            {
+              "id": "foreman-order",
+              "kind": "talk",
+              "version": 1,
+              "args": {
+                "npc": "grandtree_foreman",
+                "anchor": {
+                  "tile": [
+                    2999,
+                    3043,
+                    0
+                  ],
+                  "source": "content/maps/m46_47.jm2:5713; content/pack/npc.pack:675"
+                },
+                "leash": 10,
+                "prefer": [
+                  "Sadly his wife is no longer with us",
+                  "He loves worm holes",
+                  "Anita."
+                ]
+              },
+              "skip_if": {
+                "Any": []
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "stage_in",
+                  "version": 1,
+                  "args": {
+                    "quest": "grandtree",
+                    "any": [
+                      "grandtree:90"
+                    ]
+                  }
+                }
+              },
+              "comment": "content/scripts/quests/quest_grandtree/scripts/foreman.rs2:1-38,40-53,60-69,79-84,97-115.",
+              "advances": true
+            }
+          ]
+        },
+        {
+          "stage": "grandtree:90",
+          "required": [],
+          "terminal": false,
+          "recovery_entry": null,
+          "steps": [
+            {
+              "id": "charlie-clue",
+              "kind": "talk",
+              "version": 1,
+              "args": {
+                "npc": "grandtree_charlie",
+                "anchor": {
+                  "tile": [
+                    2464,
+                    3495,
+                    3
+                  ],
+                  "source": "content/scripts/quests/quest_grandtree/configs/quest_grandtree.constant:19; scripts/quests/quest_grandtree/scripts/quest_grandtree.rs2:17-20"
+                },
+                "leash": 10,
+                "prefer": []
+              },
+              "skip_if": {
+                "Any": []
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "stage_in",
+                  "version": 1,
+                  "args": {
+                    "quest": "grandtree",
+                    "any": [
+                      "grandtree:100"
+                    ]
+                  }
+                }
+              },
+              "comment": "content/scripts/quests/quest_grandtree/scripts/charlie.rs2:9-20.",
+              "advances": true
+            }
+          ]
+        },
+        {
+          "stage": "grandtree:100",
+          "required": [],
+          "terminal": false,
+          "recovery_entry": null,
+          "steps": [
+            {
+              "id": "anita-key",
+              "kind": "talk",
+              "version": 1,
+              "args": {
+                "npc": "grandtree_anita",
+                "anchor": {
+                  "tile": [
+                    2390,
+                    3514,
+                    1
+                  ],
+                  "source": "content/maps/m37_54.jm2:6968; content/pack/npc.pack:673"
+                },
+                "leash": 8,
+                "prefer": []
+              },
+              "skip_if": {
+                "Fact": {
+                  "kind": "has_item",
+                  "version": 1,
+                  "args": {
+                    "obj": "grandtree_gloughskey"
+                  }
+                }
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "has_item",
+                  "version": 1,
+                  "args": {
+                    "obj": "grandtree_gloughskey"
+                  }
+                }
+              },
+              "comment": "content/scripts/quests/quest_grandtree/scripts/anita.rs2:1-20; content/maps/m37_54.jm2:6968.",
+              "advances": false
+            },
+            {
+              "id": "open-invasion-chest",
+              "kind": "use_on",
+              "version": 1,
+              "args": {
+                "item": "grandtree_gloughskey",
+                "target": {
+                  "loc": "grandtree_chestclosed"
+                },
+                "anchor": {
+                  "tile": [
+                    2482,
+                    3462,
+                    1
+                  ],
+                  "source": "content/maps/m38_54.jm2:7995; content/pack/loc.pack:2437"
+                },
+                "radius": 5
+              },
+              "skip_if": {
+                "Any": []
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "stage_in",
+                  "version": 1,
+                  "args": {
+                    "quest": "grandtree",
+                    "any": [
+                      "grandtree:110"
+                    ]
+                  }
+                }
+              },
+              "comment": "content/scripts/quests/quest_grandtree/scripts/quest_grandtree.rs2:68-87; content/maps/m38_54.jm2:7995.",
+              "advances": true
+            }
+          ]
+        },
+        {
+          "stage": "grandtree:110",
+          "required": [],
+          "terminal": false,
+          "recovery_entry": null,
+          "steps": [
+            {
+              "id": "give-invasion-plans",
+              "kind": "talk",
+              "version": 1,
+              "args": {
+                "npc": "grandtree_narnode",
+                "anchor": {
+                  "tile": [
+                    2466,
+                    3497,
+                    0
+                  ],
+                  "source": "content/maps/m38_54.jm2:8820; content/pack/npc.pack:671"
+                },
+                "leash": 10,
+                "prefer": []
+              },
+              "skip_if": {
+                "Any": []
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "stage_in",
+                  "version": 1,
+                  "args": {
+                    "quest": "grandtree",
+                    "any": [
+                      "grandtree:120"
+                    ]
+                  }
+                }
+              },
+              "comment": "content/scripts/quests/quest_grandtree/scripts/king_narnode.rs2:100-117. Four free inventory slots are required.",
+              "advances": true
+            }
+          ]
+        },
+        {
+          "stage": "grandtree:120",
+          "required": [],
+          "terminal": false,
+          "recovery_entry": null,
+          "steps": [
+            {
+              "id": "place-twig-t",
+              "kind": "use_on",
+              "version": 1,
+              "args": {
+                "item": "grandtree_twigt",
+                "target": {
+                  "loc": "grandtree_pillart"
+                },
+                "anchor": {
+                  "tile": [
+                    2485,
+                    3467,
+                    2
+                  ],
+                  "source": "content/maps/m38_54.jm2:8665"
+                },
+                "radius": 3
+              },
+              "skip_if": {
+                "Not": {
+                  "Fact": {
+                    "kind": "has_item",
+                    "version": 1,
+                    "args": {
+                      "obj": "grandtree_twigt"
+                    }
+                  }
+                }
+              },
+              "settle": {
+                "Not": {
+                  "Fact": {
+                    "kind": "has_item",
+                    "version": 1,
+                    "args": {
+                      "obj": "grandtree_twigt"
+                    }
+                  }
+                }
+              },
+              "comment": "content/scripts/quests/quest_grandtree/scripts/quest_grandtree.rs2:23-45; content/maps/m38_54.jm2:8665.",
+              "advances": false
+            },
+            {
+              "id": "place-twig-u",
+              "kind": "use_on",
+              "version": 1,
+              "args": {
+                "item": "grandtree_twigu",
+                "target": {
+                  "loc": "grandtree_pillaru"
+                },
+                "anchor": {
+                  "tile": [
+                    2486,
+                    3467,
+                    2
+                  ],
+                  "source": "content/maps/m38_54.jm2:8674"
+                },
+                "radius": 3
+              },
+              "skip_if": {
+                "Not": {
+                  "Fact": {
+                    "kind": "has_item",
+                    "version": 1,
+                    "args": {
+                      "obj": "grandtree_twigu"
+                    }
+                  }
+                }
+              },
+              "settle": {
+                "Not": {
+                  "Fact": {
+                    "kind": "has_item",
+                    "version": 1,
+                    "args": {
+                      "obj": "grandtree_twigu"
+                    }
+                  }
+                }
+              },
+              "comment": "content/scripts/quests/quest_grandtree/scripts/quest_grandtree.rs2:23-45; content/maps/m38_54.jm2:8674.",
+              "advances": false
+            },
+            {
+              "id": "place-twig-z",
+              "kind": "use_on",
+              "version": 1,
+              "args": {
+                "item": "grandtree_twigz",
+                "target": {
+                  "loc": "grandtree_pillarz"
+                },
+                "anchor": {
+                  "tile": [
+                    2487,
+                    3467,
+                    2
+                  ],
+                  "source": "content/maps/m38_54.jm2:8681"
+                },
+                "radius": 3
+              },
+              "skip_if": {
+                "Not": {
+                  "Fact": {
+                    "kind": "has_item",
+                    "version": 1,
+                    "args": {
+                      "obj": "grandtree_twigz"
+                    }
+                  }
+                }
+              },
+              "settle": {
+                "Not": {
+                  "Fact": {
+                    "kind": "has_item",
+                    "version": 1,
+                    "args": {
+                      "obj": "grandtree_twigz"
+                    }
+                  }
+                }
+              },
+              "comment": "content/scripts/quests/quest_grandtree/scripts/quest_grandtree.rs2:23-45; content/maps/m38_54.jm2:8681.",
+              "advances": false
+            },
+            {
+              "id": "place-twig-o",
+              "kind": "use_on",
+              "version": 1,
+              "args": {
+                "item": "grandtree_twigo",
+                "target": {
+                  "loc": "grandtree_pillaro"
+                },
+                "anchor": {
+                  "tile": [
+                    2488,
+                    3467,
+                    2
+                  ],
+                  "source": "content/maps/m38_54.jm2:8693"
+                },
+                "radius": 3
+              },
+              "skip_if": {
+                "Not": {
+                  "Fact": {
+                    "kind": "has_item",
+                    "version": 1,
+                    "args": {
+                      "obj": "grandtree_twigo"
+                    }
+                  }
+                }
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "stage_in",
+                  "version": 1,
+                  "args": {
+                    "quest": "grandtree",
+                    "any": [
+                      "grandtree:130"
+                    ]
+                  }
+                }
+              },
+              "comment": "content/scripts/quests/quest_grandtree/scripts/quest_grandtree.rs2:23-45; content/maps/m38_54.jm2:8693.",
+              "advances": true
+            }
+          ]
+        },
+        {
+          "stage": "grandtree:130",
+          "required": [],
+          "terminal": false,
+          "recovery_entry": null,
+          "steps": [
+            {
+              "id": "open-trapdoor",
+              "kind": "interact",
+              "version": 1,
+              "args": {
+                "target": {
+                  "loc": "grandtree_trapdoorclosed"
+                },
+                "op": "Open",
+                "anchor": {
+                  "tile": [
+                    2487,
+                    3464,
+                    2
+                  ],
+                  "source": "content/maps/m38_54.jm2:8677"
+                },
+                "radius": 5
+              },
+              "skip_if": {
+                "Fact": {
+                  "kind": "near",
+                  "version": 1,
+                  "args": {
+                    "tile": [
+                      2491,
+                      9864,
+                      0
+                    ],
+                    "radius": 4
+                  }
+                }
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "near",
+                  "version": 1,
+                  "args": {
+                    "tile": [
+                      2491,
+                      9864,
+                      0
+                    ],
+                    "radius": 4
+                  }
+                }
+              },
+              "comment": "content/scripts/quests/quest_grandtree/scripts/quest_grandtree.rs2:53-63; scripts/quests/quest_grandtree/scripts/glough.rs2:92-126.",
+              "advances": false
+            },
+            {
+              "id": "defeat-demon",
+              "kind": "combat",
+              "version": 1,
+              "args": {
+                "target": {
+                  "npc": "grandtree_blackdemon",
+                  "not_targeting_others": true,
+                  "pick": "nearest"
+                },
+                "stand": {
+                  "tile": [
+                    2479,
+                    9867,
+                    0
+                  ],
+                  "source": "content/scripts/quests/quest_grandtree/scripts/glough.rs2:111-126"
+                },
+                "lost_radius": 20,
+                "kill_budget_ticks": 600,
+                "tactic": {
+                  "kind": "open",
+                  "style": "melee",
+                  "engage_radius": 12,
+                  "auto_retaliate": true
+                }
+              },
+              "skip_if": {
+                "Any": []
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "stage_in",
+                  "version": 1,
+                  "args": {
+                    "quest": "grandtree",
+                    "any": [
+                      "grandtree:140"
+                    ]
+                  }
+                }
+              },
+              "comment": "The demon must die to advance: content/scripts/quests/quest_grandtree/scripts/grandtree_black_demon.rs2:24-39; content/scripts/quests/quest_grandtree/scripts/glough.rs2:111-126. The five quest points are the award, not a prerequisite: content/scripts/general/configs/quest.constant:95; content/scripts/quests/quest_grandtree/scripts/quest_grandtree.rs2:202-203.",
+              "advances": true
+            }
+          ]
+        },
+        {
+          "stage": "grandtree:140",
+          "required": [],
+          "terminal": false,
+          "recovery_entry": null,
+          "steps": [
+            {
+              "id": "tell-underground-king",
+              "kind": "talk",
+              "version": 1,
+              "args": {
+                "npc": "grandtree_narnode",
+                "anchor": {
+                  "tile": [
+                    2464,
+                    9897,
+                    0
+                  ],
+                  "source": "content/maps/m38_154.jm2:8128; content/pack/npc.pack:671"
+                },
+                "leash": 10,
+                "prefer": []
+              },
+              "skip_if": {
+                "Any": []
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "stage_in",
+                  "version": 1,
+                  "args": {
+                    "quest": "grandtree",
+                    "any": [
+                      "grandtree:150"
+                    ]
+                  }
+                }
+              },
+              "comment": "content/scripts/quests/quest_grandtree/scripts/king_narnode.rs2:41-71.",
+              "advances": true
+            }
+          ]
+        },
+        {
+          "stage": "grandtree:150",
+          "required": [],
+          "terminal": false,
+          "recovery_entry": null,
+          "steps": [
+            {
+              "id": "search-root-1",
+              "kind": "interact",
+              "version": 1,
+              "args": {
+                "target": {
+                  "loc": "largeroot_gnome",
+                  "tile": [
+                    2456,
+                    9886,
+                    0
+                  ],
+                  "source": "content/maps/m38_154.jm2:5742; scripts/quests/quest_grandtree/configs/daconia_coords.enum:5"
+                },
+                "op": "Search",
+                "anchor": {
+                  "tile": [
+                    2456,
+                    9886,
+                    0
+                  ],
+                  "source": "content/maps/m38_154.jm2:5742; scripts/quests/quest_grandtree/configs/daconia_coords.enum:5"
+                },
+                "radius": 5
+              },
+              "skip_if": {
+                "Fact": {
+                  "kind": "has_item",
+                  "version": 1,
+                  "args": {
+                    "obj": "grandtree_daconiarock"
+                  }
+                }
+              },
+              "settle": {
+                "Any": [
+                  {
+                    "Fact": {
+                      "kind": "has_item",
+                      "version": 1,
+                      "args": {
+                        "obj": "grandtree_daconiarock"
+                      }
+                    }
+                  },
+                  {
+                    "Fact": {
+                      "kind": "message",
+                      "version": 1,
+                      "args": {
+                        "any": [
+                          "you think you find something nice",
+                          "you don't find anything interesting",
+                          "you search the root but don't find anything"
+                        ]
+                      }
+                    }
+                  }
+                ]
+              },
+              "comment": "content/scripts/quests/quest_grandtree/scripts/quest_grandtree.rs2:170-192; content/maps/m38_154.jm2:5742; scripts/quests/quest_grandtree/configs/daconia_coords.enum:5.",
+              "advances": false
+            },
+            {
+              "id": "search-root-2",
+              "kind": "interact",
+              "version": 1,
+              "args": {
+                "target": {
+                  "loc": "largeroot2_gnome",
+                  "tile": [
+                    2457,
+                    9881,
+                    0
+                  ],
+                  "source": "content/maps/m38_154.jm2:5777; scripts/quests/quest_grandtree/configs/daconia_coords.enum:6"
+                },
+                "op": "Search",
+                "anchor": {
+                  "tile": [
+                    2457,
+                    9881,
+                    0
+                  ],
+                  "source": "content/maps/m38_154.jm2:5777; scripts/quests/quest_grandtree/configs/daconia_coords.enum:6"
+                },
+                "radius": 5
+              },
+              "skip_if": {
+                "Fact": {
+                  "kind": "has_item",
+                  "version": 1,
+                  "args": {
+                    "obj": "grandtree_daconiarock"
+                  }
+                }
+              },
+              "settle": {
+                "Any": [
+                  {
+                    "Fact": {
+                      "kind": "has_item",
+                      "version": 1,
+                      "args": {
+                        "obj": "grandtree_daconiarock"
+                      }
+                    }
+                  },
+                  {
+                    "Fact": {
+                      "kind": "message",
+                      "version": 1,
+                      "args": {
+                        "any": [
+                          "you think you find something nice",
+                          "you don't find anything interesting",
+                          "you search the root but don't find anything"
+                        ]
+                      }
+                    }
+                  }
+                ]
+              },
+              "comment": "content/scripts/quests/quest_grandtree/scripts/quest_grandtree.rs2:170-192; content/maps/m38_154.jm2:5777; scripts/quests/quest_grandtree/configs/daconia_coords.enum:6.",
+              "advances": false
+            },
+            {
+              "id": "search-root-3",
+              "kind": "interact",
+              "version": 1,
+              "args": {
+                "target": {
+                  "loc": "largeroot2_gnome",
+                  "tile": [
+                    2455,
+                    9874,
+                    0
+                  ],
+                  "source": "content/maps/m38_154.jm2:5696; scripts/quests/quest_grandtree/configs/daconia_coords.enum:7"
+                },
+                "op": "Search",
+                "anchor": {
+                  "tile": [
+                    2455,
+                    9874,
+                    0
+                  ],
+                  "source": "content/maps/m38_154.jm2:5696; scripts/quests/quest_grandtree/configs/daconia_coords.enum:7"
+                },
+                "radius": 5
+              },
+              "skip_if": {
+                "Fact": {
+                  "kind": "has_item",
+                  "version": 1,
+                  "args": {
+                    "obj": "grandtree_daconiarock"
+                  }
+                }
+              },
+              "settle": {
+                "Any": [
+                  {
+                    "Fact": {
+                      "kind": "has_item",
+                      "version": 1,
+                      "args": {
+                        "obj": "grandtree_daconiarock"
+                      }
+                    }
+                  },
+                  {
+                    "Fact": {
+                      "kind": "message",
+                      "version": 1,
+                      "args": {
+                        "any": [
+                          "you think you find something nice",
+                          "you don't find anything interesting",
+                          "you search the root but don't find anything"
+                        ]
+                      }
+                    }
+                  }
+                ]
+              },
+              "comment": "content/scripts/quests/quest_grandtree/scripts/quest_grandtree.rs2:170-192; content/maps/m38_154.jm2:5696; scripts/quests/quest_grandtree/configs/daconia_coords.enum:7.",
+              "advances": false
+            },
+            {
+              "id": "search-root-4",
+              "kind": "interact",
+              "version": 1,
+              "args": {
+                "target": {
+                  "loc": "largeroot_gnome",
+                  "tile": [
+                    2443,
+                    9878,
+                    0
+                  ],
+                  "source": "content/maps/m38_154.jm2:5163; scripts/quests/quest_grandtree/configs/daconia_coords.enum:8"
+                },
+                "op": "Search",
+                "anchor": {
+                  "tile": [
+                    2443,
+                    9878,
+                    0
+                  ],
+                  "source": "content/maps/m38_154.jm2:5163; scripts/quests/quest_grandtree/configs/daconia_coords.enum:8"
+                },
+                "radius": 5
+              },
+              "skip_if": {
+                "Fact": {
+                  "kind": "has_item",
+                  "version": 1,
+                  "args": {
+                    "obj": "grandtree_daconiarock"
+                  }
+                }
+              },
+              "settle": {
+                "Any": [
+                  {
+                    "Fact": {
+                      "kind": "has_item",
+                      "version": 1,
+                      "args": {
+                        "obj": "grandtree_daconiarock"
+                      }
+                    }
+                  },
+                  {
+                    "Fact": {
+                      "kind": "message",
+                      "version": 1,
+                      "args": {
+                        "any": [
+                          "you think you find something nice",
+                          "you don't find anything interesting",
+                          "you search the root but don't find anything"
+                        ]
+                      }
+                    }
+                  }
+                ]
+              },
+              "comment": "content/scripts/quests/quest_grandtree/scripts/quest_grandtree.rs2:170-192; content/maps/m38_154.jm2:5163; scripts/quests/quest_grandtree/configs/daconia_coords.enum:8.",
+              "advances": false
+            },
+            {
+              "id": "search-root-5",
+              "kind": "interact",
+              "version": 1,
+              "args": {
+                "target": {
+                  "loc": "largeroot2_gnome",
+                  "tile": [
+                    2439,
+                    9881,
+                    0
+                  ],
+                  "source": "content/maps/m38_154.jm2:4992; scripts/quests/quest_grandtree/configs/daconia_coords.enum:9"
+                },
+                "op": "Search",
+                "anchor": {
+                  "tile": [
+                    2439,
+                    9881,
+                    0
+                  ],
+                  "source": "content/maps/m38_154.jm2:4992; scripts/quests/quest_grandtree/configs/daconia_coords.enum:9"
+                },
+                "radius": 5
+              },
+              "skip_if": {
+                "Fact": {
+                  "kind": "has_item",
+                  "version": 1,
+                  "args": {
+                    "obj": "grandtree_daconiarock"
+                  }
+                }
+              },
+              "settle": {
+                "Any": [
+                  {
+                    "Fact": {
+                      "kind": "has_item",
+                      "version": 1,
+                      "args": {
+                        "obj": "grandtree_daconiarock"
+                      }
+                    }
+                  },
+                  {
+                    "Fact": {
+                      "kind": "message",
+                      "version": 1,
+                      "args": {
+                        "any": [
+                          "you think you find something nice",
+                          "you don't find anything interesting",
+                          "you search the root but don't find anything"
+                        ]
+                      }
+                    }
+                  }
+                ]
+              },
+              "comment": "content/scripts/quests/quest_grandtree/scripts/quest_grandtree.rs2:170-192; content/maps/m38_154.jm2:4992; scripts/quests/quest_grandtree/configs/daconia_coords.enum:9.",
+              "advances": false
+            },
+            {
+              "id": "search-root-6",
+              "kind": "interact",
+              "version": 1,
+              "args": {
+                "target": {
+                  "loc": "largeroot2_gnome",
+                  "tile": [
+                    2444,
+                    9893,
+                    0
+                  ],
+                  "source": "content/maps/m38_154.jm2:5221; scripts/quests/quest_grandtree/configs/daconia_coords.enum:10"
+                },
+                "op": "Search",
+                "anchor": {
+                  "tile": [
+                    2444,
+                    9893,
+                    0
+                  ],
+                  "source": "content/maps/m38_154.jm2:5221; scripts/quests/quest_grandtree/configs/daconia_coords.enum:10"
+                },
+                "radius": 5
+              },
+              "skip_if": {
+                "Fact": {
+                  "kind": "has_item",
+                  "version": 1,
+                  "args": {
+                    "obj": "grandtree_daconiarock"
+                  }
+                }
+              },
+              "settle": {
+                "Any": [
+                  {
+                    "Fact": {
+                      "kind": "has_item",
+                      "version": 1,
+                      "args": {
+                        "obj": "grandtree_daconiarock"
+                      }
+                    }
+                  },
+                  {
+                    "Fact": {
+                      "kind": "message",
+                      "version": 1,
+                      "args": {
+                        "any": [
+                          "you think you find something nice",
+                          "you don't find anything interesting",
+                          "you search the root but don't find anything"
+                        ]
+                      }
+                    }
+                  }
+                ]
+              },
+              "comment": "content/scripts/quests/quest_grandtree/scripts/quest_grandtree.rs2:170-192; content/maps/m38_154.jm2:5221; scripts/quests/quest_grandtree/configs/daconia_coords.enum:10.",
+              "advances": false
+            },
+            {
+              "id": "search-root-7",
+              "kind": "interact",
+              "version": 1,
+              "args": {
+                "target": {
+                  "loc": "largeroot_gnome",
+                  "tile": [
+                    2452,
+                    9893,
+                    0
+                  ],
+                  "source": "content/maps/m38_154.jm2:5587; scripts/quests/quest_grandtree/configs/daconia_coords.enum:11"
+                },
+                "op": "Search",
+                "anchor": {
+                  "tile": [
+                    2452,
+                    9893,
+                    0
+                  ],
+                  "source": "content/maps/m38_154.jm2:5587; scripts/quests/quest_grandtree/configs/daconia_coords.enum:11"
+                },
+                "radius": 5
+              },
+              "skip_if": {
+                "Fact": {
+                  "kind": "has_item",
+                  "version": 1,
+                  "args": {
+                    "obj": "grandtree_daconiarock"
+                  }
+                }
+              },
+              "settle": {
+                "Any": [
+                  {
+                    "Fact": {
+                      "kind": "has_item",
+                      "version": 1,
+                      "args": {
+                        "obj": "grandtree_daconiarock"
+                      }
+                    }
+                  },
+                  {
+                    "Fact": {
+                      "kind": "message",
+                      "version": 1,
+                      "args": {
+                        "any": [
+                          "you think you find something nice",
+                          "you don't find anything interesting",
+                          "you search the root but don't find anything"
+                        ]
+                      }
+                    }
+                  }
+                ]
+              },
+              "comment": "content/scripts/quests/quest_grandtree/scripts/quest_grandtree.rs2:170-192; content/maps/m38_154.jm2:5587; scripts/quests/quest_grandtree/configs/daconia_coords.enum:11.",
+              "advances": false
+            },
+            {
+              "id": "search-root-8",
+              "kind": "interact",
+              "version": 1,
+              "args": {
+                "target": {
+                  "loc": "largeroot2_gnome",
+                  "tile": [
+                    2465,
+                    9891,
+                    0
+                  ],
+                  "source": "content/maps/m38_154.jm2:6111; scripts/quests/quest_grandtree/configs/daconia_coords.enum:12"
+                },
+                "op": "Search",
+                "anchor": {
+                  "tile": [
+                    2465,
+                    9891,
+                    0
+                  ],
+                  "source": "content/maps/m38_154.jm2:6111; scripts/quests/quest_grandtree/configs/daconia_coords.enum:12"
+                },
+                "radius": 5
+              },
+              "skip_if": {
+                "Fact": {
+                  "kind": "has_item",
+                  "version": 1,
+                  "args": {
+                    "obj": "grandtree_daconiarock"
+                  }
+                }
+              },
+              "settle": {
+                "Any": [
+                  {
+                    "Fact": {
+                      "kind": "has_item",
+                      "version": 1,
+                      "args": {
+                        "obj": "grandtree_daconiarock"
+                      }
+                    }
+                  },
+                  {
+                    "Fact": {
+                      "kind": "message",
+                      "version": 1,
+                      "args": {
+                        "any": [
+                          "you think you find something nice",
+                          "you don't find anything interesting",
+                          "you search the root but don't find anything"
+                        ]
+                      }
+                    }
+                  }
+                ]
+              },
+              "comment": "content/scripts/quests/quest_grandtree/scripts/quest_grandtree.rs2:170-192; content/maps/m38_154.jm2:6111; scripts/quests/quest_grandtree/configs/daconia_coords.enum:12.",
+              "advances": false
+            },
+            {
+              "id": "search-root-9",
+              "kind": "interact",
+              "version": 1,
+              "args": {
+                "target": {
+                  "loc": "largeroot2_gnome",
+                  "tile": [
+                    2468,
+                    9890,
+                    0
+                  ],
+                  "source": "content/maps/m38_154.jm2:6220; scripts/quests/quest_grandtree/configs/daconia_coords.enum:13"
+                },
+                "op": "Search",
+                "anchor": {
+                  "tile": [
+                    2468,
+                    9890,
+                    0
+                  ],
+                  "source": "content/maps/m38_154.jm2:6220; scripts/quests/quest_grandtree/configs/daconia_coords.enum:13"
+                },
+                "radius": 5
+              },
+              "skip_if": {
+                "Fact": {
+                  "kind": "has_item",
+                  "version": 1,
+                  "args": {
+                    "obj": "grandtree_daconiarock"
+                  }
+                }
+              },
+              "settle": {
+                "Any": [
+                  {
+                    "Fact": {
+                      "kind": "has_item",
+                      "version": 1,
+                      "args": {
+                        "obj": "grandtree_daconiarock"
+                      }
+                    }
+                  },
+                  {
+                    "Fact": {
+                      "kind": "message",
+                      "version": 1,
+                      "args": {
+                        "any": [
+                          "you think you find something nice",
+                          "you don't find anything interesting",
+                          "you search the root but don't find anything"
+                        ]
+                      }
+                    }
+                  }
+                ]
+              },
+              "comment": "content/scripts/quests/quest_grandtree/scripts/quest_grandtree.rs2:170-192; content/maps/m38_154.jm2:6220; scripts/quests/quest_grandtree/configs/daconia_coords.enum:13.",
+              "advances": false
+            },
+            {
+              "id": "search-root-10",
+              "kind": "interact",
+              "version": 1,
+              "args": {
+                "target": {
+                  "loc": "largeroot_gnome",
+                  "tile": [
+                    2467,
+                    9896,
+                    0
+                  ],
+                  "source": "content/maps/m38_154.jm2:6184; scripts/quests/quest_grandtree/configs/daconia_coords.enum:14"
+                },
+                "op": "Search",
+                "anchor": {
+                  "tile": [
+                    2467,
+                    9896,
+                    0
+                  ],
+                  "source": "content/maps/m38_154.jm2:6184; scripts/quests/quest_grandtree/configs/daconia_coords.enum:14"
+                },
+                "radius": 5
+              },
+              "skip_if": {
+                "Fact": {
+                  "kind": "has_item",
+                  "version": 1,
+                  "args": {
+                    "obj": "grandtree_daconiarock"
+                  }
+                }
+              },
+              "settle": {
+                "Any": [
+                  {
+                    "Fact": {
+                      "kind": "has_item",
+                      "version": 1,
+                      "args": {
+                        "obj": "grandtree_daconiarock"
+                      }
+                    }
+                  },
+                  {
+                    "Fact": {
+                      "kind": "message",
+                      "version": 1,
+                      "args": {
+                        "any": [
+                          "you think you find something nice",
+                          "you don't find anything interesting",
+                          "you search the root but don't find anything"
+                        ]
+                      }
+                    }
+                  }
+                ]
+              },
+              "comment": "content/scripts/quests/quest_grandtree/scripts/quest_grandtree.rs2:170-192; content/maps/m38_154.jm2:6184; scripts/quests/quest_grandtree/configs/daconia_coords.enum:14.",
+              "advances": false
+            },
+            {
+              "id": "search-root-11",
+              "kind": "interact",
+              "version": 1,
+              "args": {
+                "target": {
+                  "loc": "largeroot_gnome",
+                  "tile": [
+                    2473,
+                    9897,
+                    0
+                  ],
+                  "source": "content/maps/m38_154.jm2:6427; scripts/quests/quest_grandtree/configs/daconia_coords.enum:15"
+                },
+                "op": "Search",
+                "anchor": {
+                  "tile": [
+                    2473,
+                    9897,
+                    0
+                  ],
+                  "source": "content/maps/m38_154.jm2:6427; scripts/quests/quest_grandtree/configs/daconia_coords.enum:15"
+                },
+                "radius": 5
+              },
+              "skip_if": {
+                "Fact": {
+                  "kind": "has_item",
+                  "version": 1,
+                  "args": {
+                    "obj": "grandtree_daconiarock"
+                  }
+                }
+              },
+              "settle": {
+                "Any": [
+                  {
+                    "Fact": {
+                      "kind": "has_item",
+                      "version": 1,
+                      "args": {
+                        "obj": "grandtree_daconiarock"
+                      }
+                    }
+                  },
+                  {
+                    "Fact": {
+                      "kind": "message",
+                      "version": 1,
+                      "args": {
+                        "any": [
+                          "you think you find something nice",
+                          "you don't find anything interesting",
+                          "you search the root but don't find anything"
+                        ]
+                      }
+                    }
+                  }
+                ]
+              },
+              "comment": "content/scripts/quests/quest_grandtree/scripts/quest_grandtree.rs2:170-192; content/maps/m38_154.jm2:6427; scripts/quests/quest_grandtree/configs/daconia_coords.enum:15.",
+              "advances": false
+            },
+            {
+              "id": "search-root-12",
+              "kind": "interact",
+              "version": 1,
+              "args": {
+                "target": {
+                  "loc": "largeroot2_gnome",
+                  "tile": [
+                    2481,
+                    9904,
+                    0
+                  ],
+                  "source": "content/maps/m38_154.jm2:6716; scripts/quests/quest_grandtree/configs/daconia_coords.enum:16"
+                },
+                "op": "Search",
+                "anchor": {
+                  "tile": [
+                    2481,
+                    9904,
+                    0
+                  ],
+                  "source": "content/maps/m38_154.jm2:6716; scripts/quests/quest_grandtree/configs/daconia_coords.enum:16"
+                },
+                "radius": 5
+              },
+              "skip_if": {
+                "Fact": {
+                  "kind": "has_item",
+                  "version": 1,
+                  "args": {
+                    "obj": "grandtree_daconiarock"
+                  }
+                }
+              },
+              "settle": {
+                "Any": [
+                  {
+                    "Fact": {
+                      "kind": "has_item",
+                      "version": 1,
+                      "args": {
+                        "obj": "grandtree_daconiarock"
+                      }
+                    }
+                  },
+                  {
+                    "Fact": {
+                      "kind": "message",
+                      "version": 1,
+                      "args": {
+                        "any": [
+                          "you think you find something nice",
+                          "you don't find anything interesting",
+                          "you search the root but don't find anything"
+                        ]
+                      }
+                    }
+                  }
+                ]
+              },
+              "comment": "content/scripts/quests/quest_grandtree/scripts/quest_grandtree.rs2:170-192; content/maps/m38_154.jm2:6716; scripts/quests/quest_grandtree/configs/daconia_coords.enum:16.",
+              "advances": false
+            },
+            {
+              "id": "search-root-13",
+              "kind": "interact",
+              "version": 1,
+              "args": {
+                "target": {
+                  "loc": "largeroot_gnome",
+                  "tile": [
+                    2485,
+                    9885,
+                    0
+                  ],
+                  "source": "content/maps/m38_154.jm2:6870; scripts/quests/quest_grandtree/configs/daconia_coords.enum:17"
+                },
+                "op": "Search",
+                "anchor": {
+                  "tile": [
+                    2485,
+                    9885,
+                    0
+                  ],
+                  "source": "content/maps/m38_154.jm2:6870; scripts/quests/quest_grandtree/configs/daconia_coords.enum:17"
+                },
+                "radius": 5
+              },
+              "skip_if": {
+                "Fact": {
+                  "kind": "has_item",
+                  "version": 1,
+                  "args": {
+                    "obj": "grandtree_daconiarock"
+                  }
+                }
+              },
+              "settle": {
+                "Any": [
+                  {
+                    "Fact": {
+                      "kind": "has_item",
+                      "version": 1,
+                      "args": {
+                        "obj": "grandtree_daconiarock"
+                      }
+                    }
+                  },
+                  {
+                    "Fact": {
+                      "kind": "message",
+                      "version": 1,
+                      "args": {
+                        "any": [
+                          "you think you find something nice",
+                          "you don't find anything interesting",
+                          "you search the root but don't find anything"
+                        ]
+                      }
+                    }
+                  }
+                ]
+              },
+              "comment": "content/scripts/quests/quest_grandtree/scripts/quest_grandtree.rs2:170-192; content/maps/m38_154.jm2:6870; scripts/quests/quest_grandtree/configs/daconia_coords.enum:17.",
+              "advances": false
+            },
+            {
+              "id": "search-root-14",
+              "kind": "interact",
+              "version": 1,
+              "args": {
+                "target": {
+                  "loc": "largeroot_gnome",
+                  "tile": [
+                    2490,
+                    9889,
+                    0
+                  ],
+                  "source": "content/maps/m38_154.jm2:7088; scripts/quests/quest_grandtree/configs/daconia_coords.enum:18"
+                },
+                "op": "Search",
+                "anchor": {
+                  "tile": [
+                    2490,
+                    9889,
+                    0
+                  ],
+                  "source": "content/maps/m38_154.jm2:7088; scripts/quests/quest_grandtree/configs/daconia_coords.enum:18"
+                },
+                "radius": 5
+              },
+              "skip_if": {
+                "Fact": {
+                  "kind": "has_item",
+                  "version": 1,
+                  "args": {
+                    "obj": "grandtree_daconiarock"
+                  }
+                }
+              },
+              "settle": {
+                "Any": [
+                  {
+                    "Fact": {
+                      "kind": "has_item",
+                      "version": 1,
+                      "args": {
+                        "obj": "grandtree_daconiarock"
+                      }
+                    }
+                  },
+                  {
+                    "Fact": {
+                      "kind": "message",
+                      "version": 1,
+                      "args": {
+                        "any": [
+                          "you think you find something nice",
+                          "you don't find anything interesting",
+                          "you search the root but don't find anything"
+                        ]
+                      }
+                    }
+                  }
+                ]
+              },
+              "comment": "content/scripts/quests/quest_grandtree/scripts/quest_grandtree.rs2:170-192; content/maps/m38_154.jm2:7088; scripts/quests/quest_grandtree/configs/daconia_coords.enum:18.",
+              "advances": false
+            },
+            {
+              "id": "search-root-15",
+              "kind": "interact",
+              "version": 1,
+              "args": {
+                "target": {
+                  "loc": "largeroot2_gnome",
+                  "tile": [
+                    2467,
+                    9872,
+                    0
+                  ],
+                  "source": "content/maps/m38_154.jm2:6177; scripts/quests/quest_grandtree/configs/daconia_coords.enum:19"
+                },
+                "op": "Search",
+                "anchor": {
+                  "tile": [
+                    2467,
+                    9872,
+                    0
+                  ],
+                  "source": "content/maps/m38_154.jm2:6177; scripts/quests/quest_grandtree/configs/daconia_coords.enum:19"
+                },
+                "radius": 5
+              },
+              "skip_if": {
+                "Fact": {
+                  "kind": "has_item",
+                  "version": 1,
+                  "args": {
+                    "obj": "grandtree_daconiarock"
+                  }
+                }
+              },
+              "settle": {
+                "Any": [
+                  {
+                    "Fact": {
+                      "kind": "has_item",
+                      "version": 1,
+                      "args": {
+                        "obj": "grandtree_daconiarock"
+                      }
+                    }
+                  },
+                  {
+                    "Fact": {
+                      "kind": "message",
+                      "version": 1,
+                      "args": {
+                        "any": [
+                          "you think you find something nice",
+                          "you don't find anything interesting",
+                          "you search the root but don't find anything"
+                        ]
+                      }
+                    }
+                  }
+                ]
+              },
+              "comment": "content/scripts/quests/quest_grandtree/scripts/quest_grandtree.rs2:170-192; content/maps/m38_154.jm2:6177; scripts/quests/quest_grandtree/configs/daconia_coords.enum:19.",
+              "advances": false
+            },
+            {
+              "id": "give-rock",
+              "kind": "talk",
+              "version": 1,
+              "args": {
+                "npc": "grandtree_narnode",
+                "anchor": {
+                  "tile": [
+                    2464,
+                    9897,
+                    0
+                  ],
+                  "source": "content/maps/m38_154.jm2:8128; content/pack/npc.pack:671"
+                },
+                "leash": 12,
+                "prefer": []
+              },
+              "skip_if": {
+                "Any": []
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "quest_colour",
+                  "version": 1,
+                  "args": {
+                    "quest": "grandtree",
+                    "is": "complete"
+                  }
+                }
+              },
+              "comment": "content/scripts/quests/quest_grandtree/scripts/king_narnode.rs2:15-35; quest_grandtree.rs2:195-203.",
+              "advances": true
+            }
+          ],
+          "order": "ordered"
+        },
+        {
+          "stage": "grandtree:160",
+          "required": [],
+          "terminal": true,
+          "recovery_entry": null,
+          "steps": []
+        }
+      ]
+    }
+  ]
+}

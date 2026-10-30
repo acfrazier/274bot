@@ -219,7 +219,7 @@ fn run_policy_tick(slot: &mut SlotScript, tick: u64) {
 }
 
 fn drain_run_policy_update(slot: &mut SlotScript) -> Option<RunPolicyOverride> {
-    let (policy, requests, _) = slot.drain_host_interacts();
+    let (policy, requests, _) = slot.drain_host_interacts(None);
     assert!(
         requests
             .iter()
@@ -510,7 +510,7 @@ export default class T extends LoopingBot {
     run_policy_tick(&mut slot, 1);
 
     slot.reset_session_work();
-    let _ = slot.drain_host_interacts();
+    let _ = slot.drain_host_interacts(None);
     slot.on_is_up(true);
     run_policy_tick(&mut slot, 2);
     assert_eq!(
@@ -846,6 +846,7 @@ fn start_sherlock(incarnation: u64, data: Arc<api::game_data::SelectedGameData>)
         Arc::new(script::native::SettingsBag::new()),
         Arc::clone(&data),
         Arc::new(api::named_banks::NamedBankFacts::empty()),
+        None,
     )
     .expect("start registered Sherlock card");
     wait_state(&mut slot, RunState::Running);
@@ -1011,7 +1012,7 @@ fn held_walk_tick(slot: &mut SlotScript, n: u64, now: Instant) {
     assert!(slot.post_snapshot_delta(&input, NativeFactsInput::default(), false));
     slot_tick(slot, n, Some(here));
     slot.probe("true").unwrap();
-    let (_, game_rows, _) = slot.drain_host_interacts();
+    let (_, game_rows, _) = slot.drain_host_interacts(None);
     assert!(
         game_rows.iter().all(|row| !matches!(
             &row.req,
@@ -1222,7 +1223,7 @@ export default class T extends LoopingBot {
         slot_tick(&mut slot, tick, None);
         let _ = probe(&mut slot, "true");
         tick += 1;
-        let _ = slot.drain_host_interacts();
+        let _ = slot.drain_host_interacts(None);
         std::thread::yield_now();
     }
     assert_eq!(slot.ignored_randoms(), ["Maze", "Mime"]);

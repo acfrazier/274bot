@@ -1,0 +1,1822 @@
+{
+  "$schema": "../path.schema.json",
+  "schema": 3,
+  "id": "biohazard",
+  "display_name": "Biohazard",
+  "required": [
+    "quest:elena"
+  ],
+  "tested_stats": null,
+  "partner": null,
+  "quest": {
+    "members": true,
+    "quest_points": 3,
+    "requirements": [
+      {
+        "id": "quest:elena",
+        "kind": {
+          "Quest": "elena"
+        },
+        "at": "Start",
+        "source": "content/scripts/quests/quest_elena/scripts/edmond.rs2:38-41; scripts/areas/area_ardougne_east/scripts/elena.rs2:118-134"
+      }
+    ],
+    "items": [],
+    "acquire": {},
+    "bank": "nearest",
+    "coin_float": 0,
+    "loadouts": {},
+    "areas": {
+      "west-ardougne": {
+        "boxes": [
+          [
+            2496,
+            3264,
+            2556,
+            3350,
+            0
+          ],
+          [
+            2496,
+            3264,
+            2556,
+            3350,
+            1
+          ]
+        ],
+        "source": "content/scripts/areas/area_ardougne_west/scripts/kilron.rs2:1-12; maps/m39_51.jm2:8782"
+      },
+      "varrock": {
+        "boxes": [
+          [
+            3200,
+            3370,
+            3327,
+            3520,
+            0
+          ]
+        ],
+        "source": "content/maps/m51_52.jm2:6243-6248; scripts/areas/area_varrock/scripts/east_gate.rs2:14-38"
+      }
+    },
+    "tools": [
+      "obj:birdfeed",
+      "obj:pigeons",
+      "obj:rottenapples",
+      "obj:doctor_gown",
+      "obj:mournerkeytw",
+      "obj:distillator",
+      "obj:priest_gown",
+      "obj:priest_robe",
+      "obj:plaguesample",
+      "obj:liquid_honey",
+      "obj:ethenea",
+      "obj:sulphuric_broline",
+      "obj:touch_paper"
+    ],
+    "owns_inventory": true
+  },
+  "roles": [
+    {
+      "role": null,
+      "progress_binding": "journal:biohazard",
+      "progress": {
+        "colour": {
+          "not_started": "biohazard:0",
+          "in_progress": "biohazard:1",
+          "complete": "biohazard:done"
+        },
+        "rules": [
+          {
+            "stage": "biohazard:15",
+            "all": [
+              "i need to confront the king of east ardougne"
+            ],
+            "any": [],
+            "not": [],
+            "varp": 15
+          },
+          {
+            "stage": "biohazard:14",
+            "all": [
+              "guidor's findings were very interesting"
+            ],
+            "any": [],
+            "not": [],
+            "varp": 14
+          },
+          {
+            "stage": "biohazard:12",
+            "all": [
+              "the varrock guards are out looking for someone carrying"
+            ],
+            "any": [],
+            "not": [],
+            "varp": 12
+          },
+          {
+            "stage": "biohazard:10",
+            "all": [
+              "elena's asked me to take the following items to guidor"
+            ],
+            "any": [],
+            "not": [],
+            "varp": 10
+          },
+          {
+            "stage": "biohazard:7",
+            "all": [
+              "i managed to find elena's distillator"
+            ],
+            "any": [],
+            "not": [],
+            "varp": 7
+          },
+          {
+            "stage": "biohazard:6",
+            "all": [
+              "i have rather unkindly poisoned the mourners"
+            ],
+            "any": [],
+            "not": [],
+            "varp": 6
+          },
+          {
+            "stage": "biohazard:5",
+            "all": [
+              "somewhere in this city is elena's distillator"
+            ],
+            "any": [],
+            "not": [],
+            "varp": 5
+          },
+          {
+            "stage": "biohazard:4",
+            "all": [
+              "the watch tower is now surrounded by flapping pigeons"
+            ],
+            "any": [],
+            "not": [],
+            "varp": 4
+          },
+          {
+            "stage": "biohazard:3",
+            "all": [
+              "i've chucked some birdfeed onto the watch tower"
+            ],
+            "any": [],
+            "not": [],
+            "varp": 3
+          },
+          {
+            "stage": "biohazard:2",
+            "all": [
+              "omart will be able to get me over the wall"
+            ],
+            "any": [],
+            "not": [],
+            "varp": 2
+          },
+          {
+            "stage": "biohazard:1",
+            "all": [
+              "i need to talk to jerico about getting over the wall"
+            ],
+            "any": [],
+            "not": [],
+            "varp": 1
+          }
+        ],
+        "flags": [],
+        "monotonic": false
+      },
+      "prelude": [],
+      "sequences": [
+        {
+          "stage": "biohazard:0",
+          "required": [],
+          "terminal": false,
+          "recovery_entry": null,
+          "order": "authored",
+          "steps": [
+            {
+              "id": "start-elena",
+              "kind": "talk",
+              "version": 1,
+              "args": {
+                "npc": "elena2",
+                "anchor": {
+                  "tile": [
+                    2592,
+                    3336,
+                    0
+                  ],
+                  "source": "content/maps/m40_52.jm2:7332; pack/npc.pack:336"
+                },
+                "leash": 10,
+                "prefer": [
+                  "I'll try to retrieve it for you."
+                ],
+                "strict": true
+              },
+              "skip_if": {
+                "Any": []
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "quest_colour",
+                  "version": 1,
+                  "args": {
+                    "quest": "biohazard",
+                    "is": "in_progress"
+                  }
+                }
+              },
+              "comment": "content/scripts/areas/area_ardougne_east/scripts/elena.rs2:118-134",
+              "advances": true
+            }
+          ]
+        },
+        {
+          "stage": "biohazard:1",
+          "required": [],
+          "terminal": false,
+          "recovery_entry": null,
+          "order": "authored",
+          "steps": [
+            {
+              "id": "speak-jerico",
+              "kind": "talk",
+              "version": 1,
+              "args": {
+                "npc": "jerico",
+                "anchor": {
+                  "tile": [
+                    2612,
+                    3324,
+                    0
+                  ],
+                  "source": "content/maps/m40_51.jm2:10807; pack/npc.pack:367"
+                },
+                "leash": 10,
+                "prefer": [],
+                "strict": true
+              },
+              "skip_if": {
+                "Any": []
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "stage_in",
+                  "version": 1,
+                  "args": {
+                    "quest": "biohazard",
+                    "any": [
+                      "biohazard:2"
+                    ]
+                  }
+                }
+              },
+              "comment": "content/scripts/quests/quest_biohazard/scripts/jerico.rs2:36-45",
+              "advances": true
+            }
+          ]
+        },
+        {
+          "stage": "biohazard:2",
+          "required": [],
+          "terminal": false,
+          "recovery_entry": null,
+          "order": "ordered",
+          "steps": [
+            {
+              "id": "open-jerico-cupboard",
+              "kind": "interact",
+              "version": 1,
+              "args": {
+                "target": {
+                  "loc": "jericoscupboardshut"
+                },
+                "op": "Open",
+                "anchor": {
+                  "tile": [
+                    2611,
+                    3326,
+                    0
+                  ],
+                  "source": "content/maps/m40_51.jm2:7689; pack/loc.pack:2057"
+                },
+                "radius": 12
+              },
+              "skip_if": {
+                "Any": [
+                  {
+                    "Fact": {
+                      "kind": "has_item",
+                      "version": 1,
+                      "args": {
+                        "obj": "birdfeed"
+                      }
+                    }
+                  },
+                  {
+                    "Fact": {
+                      "kind": "loc_present",
+                      "version": 1,
+                      "args": {
+                        "loc": "jericoscupboardopen"
+                      }
+                    }
+                  }
+                ]
+              },
+              "settle": {
+                "All": []
+              },
+              "comment": "content/scripts/quests/quest_biohazard/configs/quest_biohazard.loc:65-84",
+              "advances": false
+            },
+            {
+              "id": "take-birdfeed",
+              "kind": "interact",
+              "version": 1,
+              "args": {
+                "target": {
+                  "loc": "jericoscupboardopen"
+                },
+                "op": "Search",
+                "anchor": {
+                  "tile": [
+                    2611,
+                    3326,
+                    0
+                  ],
+                  "source": "content/maps/m40_51.jm2:7689; pack/loc.pack:2058"
+                },
+                "radius": 12
+              },
+              "skip_if": {
+                "Fact": {
+                  "kind": "has_item",
+                  "version": 1,
+                  "args": {
+                    "obj": "birdfeed"
+                  }
+                }
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "has_item",
+                  "version": 1,
+                  "args": {
+                    "obj": "birdfeed"
+                  }
+                }
+              },
+              "comment": "content/scripts/quests/quest_biohazard/scripts/quest_biohazard.rs2:44-60",
+              "advances": false
+            },
+            {
+              "id": "take-pigeons",
+              "kind": "interact",
+              "version": 1,
+              "args": {
+                "target": {
+                  "ground": "pigeons"
+                },
+                "op": "Take",
+                "anchor": {
+                  "tile": [
+                    2618,
+                    3323,
+                    0
+                  ],
+                  "source": "content/maps/m40_51.jm2:10852; pack/obj.pack:425"
+                },
+                "radius": 8,
+                "wait_if_missing": true
+              },
+              "skip_if": {
+                "Fact": {
+                  "kind": "has_item",
+                  "version": 1,
+                  "args": {
+                    "obj": "pigeons"
+                  }
+                }
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "has_item",
+                  "version": 1,
+                  "args": {
+                    "obj": "pigeons"
+                  }
+                }
+              },
+              "comment": "content/maps/m40_51.jm2:10852-10854; scripts/quests/quest_biohazard/configs/quest_biohazard.obj:132-145",
+              "advances": false
+            },
+            {
+              "id": "feed-watchtower",
+              "kind": "use_on",
+              "version": 1,
+              "args": {
+                "item": "birdfeed",
+                "target": {
+                  "loc": "biowatchtower"
+                },
+                "anchor": {
+                  "tile": [
+                    2560,
+                    3301,
+                    0
+                  ],
+                  "source": "content/maps/m40_51.jm2:5432; pack/loc.pack:2068"
+                },
+                "radius": 12
+              },
+              "skip_if": {
+                "Any": []
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "stage_in",
+                  "version": 1,
+                  "args": {
+                    "quest": "biohazard",
+                    "any": [
+                      "biohazard:3"
+                    ]
+                  }
+                }
+              },
+              "comment": "content/scripts/quests/quest_biohazard/scripts/quest_biohazard.rs2:32-39",
+              "advances": true
+            }
+          ]
+        },
+        {
+          "stage": "biohazard:3",
+          "required": [],
+          "terminal": false,
+          "recovery_entry": null,
+          "order": "ordered",
+          "steps": [
+            {
+              "id": "approach-watchtower",
+              "kind": "walk",
+              "version": 1,
+              "args": {
+                "tile": [
+                  2564,
+                  3304,
+                  0
+                ],
+                "source": "content/scripts/quests/quest_biohazard/scripts/quest_biohazard.rs2:63-64",
+                "radius": 1
+              },
+              "skip_if": {
+                "Fact": {
+                  "kind": "near",
+                  "version": 1,
+                  "args": {
+                    "tile": [
+                      2564,
+                      3304,
+                      0
+                    ],
+                    "radius": 1
+                  }
+                }
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "near",
+                  "version": 1,
+                  "args": {
+                    "tile": [
+                      2564,
+                      3304,
+                      0
+                    ],
+                    "radius": 1
+                  }
+                }
+              },
+              "comment": "content/scripts/quests/quest_biohazard/scripts/quest_biohazard.rs2:63-64"
+            },
+            {
+              "id": "release-pigeons",
+              "kind": "interact",
+              "version": 1,
+              "args": {
+                "target": {
+                  "held": "pigeons"
+                },
+                "op": "Open"
+              },
+              "skip_if": {
+                "Any": []
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "stage_in",
+                  "version": 1,
+                  "args": {
+                    "quest": "biohazard",
+                    "any": [
+                      "biohazard:4"
+                    ]
+                  }
+                }
+              },
+              "comment": "content/scripts/quests/quest_biohazard/scripts/quest_biohazard.rs2:63-73",
+              "advances": true
+            }
+          ]
+        },
+        {
+          "stage": "biohazard:4",
+          "required": [],
+          "terminal": false,
+          "recovery_entry": null,
+          "order": "authored",
+          "steps": [
+            {
+              "id": "cross-wall",
+              "kind": "talk",
+              "version": 1,
+              "args": {
+                "npc": "omart",
+                "anchor": {
+                  "tile": [
+                    2559,
+                    3266,
+                    0
+                  ],
+                  "source": "content/maps/m39_51.jm2:8783; pack/npc.pack:351"
+                },
+                "leash": 10,
+                "prefer": [
+                  "Ok, lets do it."
+                ],
+                "strict": true,
+                "gap_ticks": 6
+              },
+              "skip_if": {
+                "Any": []
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "stage_in",
+                  "version": 1,
+                  "args": {
+                    "quest": "biohazard",
+                    "any": [
+                      "biohazard:5"
+                    ]
+                  }
+                }
+              },
+              "comment": "content/scripts/areas/area_ardougne_west/scripts/omart.rs2:10-20,35-37; scripts/quests/quest_biohazard/scripts/quest_biohazard.rs2:79-93",
+              "advances": true
+            }
+          ]
+        },
+        {
+          "stage": "biohazard:5",
+          "required": [],
+          "terminal": false,
+          "recovery_entry": null,
+          "order": "ordered",
+          "steps": [
+            {
+              "id": "take-rotten-apples",
+              "kind": "interact",
+              "version": 1,
+              "args": {
+                "target": {
+                  "ground": "rottenapples"
+                },
+                "op": "Take",
+                "anchor": {
+                  "tile": [
+                    2535,
+                    3333,
+                    0
+                  ],
+                  "source": "content/maps/m39_52.jm2:6559; pack/obj.pack:1985"
+                },
+                "radius": 8,
+                "wait_if_missing": true
+              },
+              "skip_if": {
+                "Fact": {
+                  "kind": "has_item",
+                  "version": 1,
+                  "args": {
+                    "obj": "rottenapples"
+                  }
+                }
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "has_item",
+                  "version": 1,
+                  "args": {
+                    "obj": "rottenapples"
+                  }
+                }
+              },
+              "comment": "content/maps/m39_52.jm2:6559; pack/obj.pack:1985",
+              "advances": false
+            },
+            {
+              "id": "poison-stew",
+              "kind": "use_on",
+              "version": 1,
+              "args": {
+                "item": "rottenapples",
+                "target": {
+                  "loc": "mournercauldron"
+                },
+                "anchor": {
+                  "tile": [
+                    2543,
+                    3332,
+                    0
+                  ],
+                  "source": "content/maps/m39_52.jm2:5597; pack/loc.pack:2044"
+                },
+                "radius": 12
+              },
+              "skip_if": {
+                "Any": []
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "stage_in",
+                  "version": 1,
+                  "args": {
+                    "quest": "biohazard",
+                    "any": [
+                      "biohazard:6"
+                    ]
+                  }
+                }
+              },
+              "comment": "content/scripts/quests/quest_biohazard/scripts/quest_biohazard.rs2:95-104",
+              "advances": true
+            }
+          ]
+        },
+        {
+          "stage": "biohazard:6",
+          "required": [],
+          "terminal": false,
+          "recovery_entry": null,
+          "order": "ordered",
+          "steps": [
+            {
+              "id": "open-nurse-cupboard",
+              "kind": "interact",
+              "version": 1,
+              "args": {
+                "target": {
+                  "loc": "bionursescupboardshut"
+                },
+                "op": "Open",
+                "anchor": {
+                  "tile": [
+                    2517,
+                    3276,
+                    0
+                  ],
+                  "source": "content/maps/m39_51.jm2:5302; pack/loc.pack:2063"
+                },
+                "radius": 12
+              },
+              "skip_if": {
+                "Any": [
+                  {
+                    "Any": [
+                      {
+                        "Fact": {
+                          "kind": "has_item",
+                          "version": 1,
+                          "args": {
+                            "obj": "doctor_gown"
+                          }
+                        }
+                      },
+                      {
+                        "Fact": {
+                          "kind": "worn",
+                          "version": 1,
+                          "args": {
+                            "obj": "doctor_gown"
+                          }
+                        }
+                      }
+                    ]
+                  },
+                  {
+                    "Fact": {
+                      "kind": "loc_present",
+                      "version": 1,
+                      "args": {
+                        "loc": "bionursescupboardopen"
+                      }
+                    }
+                  }
+                ]
+              },
+              "settle": {
+                "All": []
+              },
+              "comment": "content/scripts/quests/quest_biohazard/configs/quest_biohazard.loc:111-130",
+              "advances": false
+            },
+            {
+              "id": "take-doctor-gown",
+              "kind": "interact",
+              "version": 1,
+              "args": {
+                "target": {
+                  "loc": "bionursescupboardopen"
+                },
+                "op": "Search",
+                "anchor": {
+                  "tile": [
+                    2517,
+                    3276,
+                    0
+                  ],
+                  "source": "content/maps/m39_51.jm2:5302; pack/loc.pack:2064"
+                },
+                "radius": 12
+              },
+              "skip_if": {
+                "Any": [
+                  {
+                    "Fact": {
+                      "kind": "has_item",
+                      "version": 1,
+                      "args": {
+                        "obj": "doctor_gown"
+                      }
+                    }
+                  },
+                  {
+                    "Fact": {
+                      "kind": "worn",
+                      "version": 1,
+                      "args": {
+                        "obj": "doctor_gown"
+                      }
+                    }
+                  }
+                ]
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "has_item",
+                  "version": 1,
+                  "args": {
+                    "obj": "doctor_gown"
+                  }
+                }
+              },
+              "comment": "content/scripts/quests/quest_biohazard/scripts/quest_biohazard.rs2:109-114",
+              "advances": false
+            },
+            {
+              "id": "wear-doctor-gown",
+              "kind": "equip",
+              "version": 1,
+              "args": {
+                "obj": "doctor_gown"
+              },
+              "skip_if": {
+                "Fact": {
+                  "kind": "worn",
+                  "version": 1,
+                  "args": {
+                    "obj": "doctor_gown"
+                  }
+                }
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "worn",
+                  "version": 1,
+                  "args": {
+                    "obj": "doctor_gown"
+                  }
+                }
+              },
+              "comment": "content/scripts/areas/area_ardougne_west/scripts/doors.rs2:56-62"
+            },
+            {
+              "id": "open-headquarters",
+              "kind": "interact",
+              "version": 1,
+              "args": {
+                "target": {
+                  "loc": "mournerstewdoor"
+                },
+                "op": "Open",
+                "anchor": {
+                  "tile": [
+                    2551,
+                    3320,
+                    0
+                  ],
+                  "source": "content/maps/m39_51.jm2:6712; pack/loc.pack:2037"
+                },
+                "radius": 12
+              },
+              "skip_if": {
+                "Fact": {
+                  "kind": "near",
+                  "version": 1,
+                  "args": {
+                    "tile": [
+                      2551,
+                      3324,
+                      1
+                    ],
+                    "radius": 8
+                  }
+                }
+              },
+              "settle": {
+                "All": []
+              },
+              "comment": "content/scripts/areas/area_ardougne_west/scripts/doors.rs2:8-12,56-62",
+              "advances": false
+            },
+            {
+              "id": "open-sickroom",
+              "kind": "interact",
+              "version": 1,
+              "args": {
+                "target": {
+                  "loc": "mournerstewdoorup"
+                },
+                "op": "Open",
+                "anchor": {
+                  "tile": [
+                    2547,
+                    3325,
+                    1
+                  ],
+                  "source": "content/maps/m39_51.jm2:8036; pack/loc.pack:2035"
+                },
+                "radius": 12
+              },
+              "skip_if": {
+                "Fact": {
+                  "kind": "has_item",
+                  "version": 1,
+                  "args": {
+                    "obj": "mournerkeytw"
+                  }
+                }
+              },
+              "settle": {
+                "All": []
+              },
+              "comment": "content/scripts/areas/area_ardougne_west/scripts/doors.rs2:1-6",
+              "advances": false
+            },
+            {
+              "id": "defeat-sick-mourner",
+              "kind": "combat",
+              "version": 1,
+              "args": {
+                "target": {
+                  "npc": "mournerstew2",
+                  "not_targeting_others": true,
+                  "pick": "nearest"
+                },
+                "stand": {
+                  "tile": [
+                    2551,
+                    3324,
+                    1
+                  ],
+                  "source": "content/maps/m39_51.jm2:8786; pack/npc.pack:371"
+                },
+                "lost_radius": 12,
+                "kill_budget_ticks": 240,
+                "tactic": {
+                  "kind": "open",
+                  "style": "melee",
+                  "engage_radius": 8,
+                  "auto_retaliate": true
+                },
+                "win": {
+                  "Fact": {
+                    "kind": "has_item",
+                    "version": 1,
+                    "args": {
+                      "obj": "mournerkeytw"
+                    }
+                  }
+                }
+              },
+              "skip_if": {
+                "Fact": {
+                  "kind": "has_item",
+                  "version": 1,
+                  "args": {
+                    "obj": "mournerkeytw"
+                  }
+                }
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "has_item",
+                  "version": 1,
+                  "args": {
+                    "obj": "mournerkeytw"
+                  }
+                }
+              },
+              "comment": "content/scripts/areas/area_ardougne_west/scripts/mourner.rs2:68-79; scripts/areas/area_ardougne_west/configs/mourner.npc:145-173",
+              "advances": false
+            },
+            {
+              "id": "open-mourner-gate",
+              "kind": "interact",
+              "version": 1,
+              "args": {
+                "target": {
+                  "loc": "mournerquaters_gatel"
+                },
+                "op": "Open",
+                "anchor": {
+                  "tile": [
+                    2551,
+                    3326,
+                    1
+                  ],
+                  "source": "content/maps/m39_51.jm2:8087; pack/loc.pack:2059"
+                },
+                "radius": 12
+              },
+              "skip_if": {
+                "Fact": {
+                  "kind": "has_item",
+                  "version": 1,
+                  "args": {
+                    "obj": "distillator"
+                  }
+                }
+              },
+              "settle": {
+                "All": []
+              },
+              "comment": "content/scripts/quests/quest_biohazard/scripts/quest_biohazard.rs2:118-145",
+              "advances": false
+            },
+            {
+              "id": "find-distillator",
+              "kind": "interact",
+              "version": 1,
+              "args": {
+                "target": {
+                  "loc": "mournercrateup"
+                },
+                "op": "Search",
+                "anchor": {
+                  "tile": [
+                    2554,
+                    3327,
+                    1
+                  ],
+                  "source": "content/maps/m39_51.jm2:8142; pack/loc.pack:2065"
+                },
+                "radius": 12
+              },
+              "skip_if": {
+                "Fact": {
+                  "kind": "has_item",
+                  "version": 1,
+                  "args": {
+                    "obj": "distillator"
+                  }
+                }
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "stage_in",
+                  "version": 1,
+                  "args": {
+                    "quest": "biohazard",
+                    "any": [
+                      "biohazard:7"
+                    ]
+                  }
+                }
+              },
+              "comment": "content/scripts/quests/quest_biohazard/scripts/quest_biohazard.rs2:147-156",
+              "advances": true
+            }
+          ]
+        },
+        {
+          "stage": "biohazard:7",
+          "required": [],
+          "terminal": false,
+          "recovery_entry": null,
+          "order": "ordered",
+          "steps": [
+            {
+              "id": "return-east",
+              "kind": "talk",
+              "version": 1,
+              "args": {
+                "npc": "kilron",
+                "anchor": {
+                  "tile": [
+                    2556,
+                    3266,
+                    0
+                  ],
+                  "source": "content/maps/m39_51.jm2:8782; pack/npc.pack:350"
+                },
+                "leash": 10,
+                "prefer": [
+                  "Yes I do."
+                ],
+                "strict": true
+              },
+              "skip_if": {
+                "Not": {
+                  "Fact": {
+                    "kind": "in_area",
+                    "version": 1,
+                    "args": {
+                      "area": "west-ardougne"
+                    }
+                  }
+                }
+              },
+              "settle": {
+                "Not": {
+                  "Fact": {
+                    "kind": "in_area",
+                    "version": 1,
+                    "args": {
+                      "area": "west-ardougne"
+                    }
+                  }
+                }
+              },
+              "comment": "content/scripts/areas/area_ardougne_west/scripts/kilron.rs2:1-12",
+              "advances": false
+            },
+            {
+              "id": "return-distillator",
+              "kind": "talk",
+              "version": 1,
+              "args": {
+                "npc": "elena2",
+                "anchor": {
+                  "tile": [
+                    2592,
+                    3336,
+                    0
+                  ],
+                  "source": "content/maps/m40_52.jm2:7332; pack/npc.pack:336"
+                },
+                "leash": 10,
+                "prefer": [],
+                "strict": true,
+                "gap_ticks": 3
+              },
+              "skip_if": {
+                "Any": []
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "stage_in",
+                  "version": 1,
+                  "args": {
+                    "quest": "biohazard",
+                    "any": [
+                      "biohazard:10"
+                    ]
+                  }
+                }
+              },
+              "comment": "content/scripts/areas/area_ardougne_east/scripts/elena.rs2:61-99",
+              "advances": true
+            }
+          ]
+        },
+        {
+          "stage": "biohazard:10",
+          "required": [],
+          "terminal": false,
+          "recovery_entry": null,
+          "order": "ordered",
+          "steps": [
+            {
+              "id": "replace-lost-samples",
+              "kind": "talk",
+              "version": 1,
+              "args": {
+                "npc": "elena2",
+                "anchor": {
+                  "tile": [
+                    2592,
+                    3336,
+                    0
+                  ],
+                  "source": "content/maps/m40_52.jm2:7332; pack/npc.pack:336"
+                },
+                "leash": 10,
+                "prefer": [
+                  "I'm afraid I've lost some of the stuff that you gave me"
+                ],
+                "strict": true
+              },
+              "skip_if": {
+                "All": [
+                  {
+                    "Fact": {
+                      "kind": "has_item",
+                      "version": 1,
+                      "args": {
+                        "obj": "ethenea"
+                      }
+                    }
+                  },
+                  {
+                    "Fact": {
+                      "kind": "has_item",
+                      "version": 1,
+                      "args": {
+                        "obj": "liquid_honey"
+                      }
+                    }
+                  },
+                  {
+                    "Fact": {
+                      "kind": "has_item",
+                      "version": 1,
+                      "args": {
+                        "obj": "sulphuric_broline"
+                      }
+                    }
+                  },
+                  {
+                    "Fact": {
+                      "kind": "has_item",
+                      "version": 1,
+                      "args": {
+                        "obj": "plaguesample"
+                      }
+                    }
+                  }
+                ]
+              },
+              "settle": {
+                "All": [
+                  {
+                    "Fact": {
+                      "kind": "has_item",
+                      "version": 1,
+                      "args": {
+                        "obj": "ethenea"
+                      }
+                    }
+                  },
+                  {
+                    "Fact": {
+                      "kind": "has_item",
+                      "version": 1,
+                      "args": {
+                        "obj": "liquid_honey"
+                      }
+                    }
+                  },
+                  {
+                    "Fact": {
+                      "kind": "has_item",
+                      "version": 1,
+                      "args": {
+                        "obj": "sulphuric_broline"
+                      }
+                    }
+                  },
+                  {
+                    "Fact": {
+                      "kind": "has_item",
+                      "version": 1,
+                      "args": {
+                        "obj": "plaguesample"
+                      }
+                    }
+                  }
+                ]
+              },
+              "comment": "content/scripts/areas/area_ardougne_east/scripts/elena.rs2:29-53",
+              "advances": false
+            },
+            {
+              "id": "speak-chemist",
+              "kind": "talk",
+              "version": 1,
+              "args": {
+                "npc": "chemist",
+                "anchor": {
+                  "tile": [
+                    2934,
+                    3210,
+                    0
+                  ],
+                  "source": "content/maps/m45_50.jm2:7922; pack/npc.pack:368"
+                },
+                "leash": 10,
+                "prefer": [
+                  "It's ok, I'm Elena's friend.",
+                  "I just need some touch paper for a guy called Guidor."
+                ],
+                "strict": true
+              },
+              "skip_if": {
+                "Any": []
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "stage_in",
+                  "version": 1,
+                  "args": {
+                    "quest": "biohazard",
+                    "any": [
+                      "biohazard:12"
+                    ]
+                  }
+                }
+              },
+              "comment": "content/scripts/quests/quest_biohazard/scripts/chemist.rs2:43-56,70-84",
+              "advances": true
+            }
+          ]
+        },
+        {
+          "stage": "biohazard:12",
+          "required": [],
+          "terminal": false,
+          "recovery_entry": null,
+          "order": "ordered",
+          "steps": [
+            {
+              "id": "give-ethenea",
+              "kind": "talk",
+              "version": 1,
+              "args": {
+                "npc": "artist1",
+                "anchor": {
+                  "tile": [
+                    2933,
+                    3219,
+                    0
+                  ],
+                  "source": "content/maps/m45_50.jm2:7919; pack/npc.pack:337"
+                },
+                "leash": 10,
+                "prefer": [
+                  "You give him the vial of ethenea"
+                ],
+                "strict": true
+              },
+              "skip_if": {
+                "Any": [
+                  {
+                    "Not": {
+                      "Fact": {
+                        "kind": "has_item",
+                        "version": 1,
+                        "args": {
+                          "obj": "ethenea"
+                        }
+                      }
+                    }
+                  },
+                  {
+                    "Fact": {
+                      "kind": "in_area",
+                      "version": 1,
+                      "args": {
+                        "area": "varrock"
+                      }
+                    }
+                  }
+                ]
+              },
+              "settle": {
+                "Not": {
+                  "Fact": {
+                    "kind": "has_item",
+                    "version": 1,
+                    "args": {
+                      "obj": "ethenea"
+                    }
+                  }
+                }
+              },
+              "comment": "content/scripts/quests/quest_biohazard/scripts/devinci.rs2:10-17,20-53",
+              "advances": false
+            },
+            {
+              "id": "give-liquid_honey",
+              "kind": "talk",
+              "version": 1,
+              "args": {
+                "npc": "gambler1",
+                "anchor": {
+                  "tile": [
+                    2935,
+                    3219,
+                    0
+                  ],
+                  "source": "content/maps/m45_50.jm2:7924; pack/npc.pack:339"
+                },
+                "leash": 10,
+                "prefer": [
+                  "You give him the vial of liquid honey"
+                ],
+                "strict": true
+              },
+              "skip_if": {
+                "Any": [
+                  {
+                    "Not": {
+                      "Fact": {
+                        "kind": "has_item",
+                        "version": 1,
+                        "args": {
+                          "obj": "liquid_honey"
+                        }
+                      }
+                    }
+                  },
+                  {
+                    "Fact": {
+                      "kind": "in_area",
+                      "version": 1,
+                      "args": {
+                        "area": "varrock"
+                      }
+                    }
+                  }
+                ]
+              },
+              "settle": {
+                "Not": {
+                  "Fact": {
+                    "kind": "has_item",
+                    "version": 1,
+                    "args": {
+                      "obj": "liquid_honey"
+                    }
+                  }
+                }
+              },
+              "comment": "content/scripts/quests/quest_biohazard/scripts/chancy.rs2:10-17,20-53",
+              "advances": false
+            },
+            {
+              "id": "give-sulphuric_broline",
+              "kind": "talk",
+              "version": 1,
+              "args": {
+                "npc": "drunk1",
+                "anchor": {
+                  "tile": [
+                    2931,
+                    3219,
+                    0
+                  ],
+                  "source": "content/maps/m45_50.jm2:7917; pack/npc.pack:341"
+                },
+                "leash": 10,
+                "prefer": [
+                  "You give him the vial of sulphuric broline"
+                ],
+                "strict": true
+              },
+              "skip_if": {
+                "Any": [
+                  {
+                    "Not": {
+                      "Fact": {
+                        "kind": "has_item",
+                        "version": 1,
+                        "args": {
+                          "obj": "sulphuric_broline"
+                        }
+                      }
+                    }
+                  },
+                  {
+                    "Fact": {
+                      "kind": "in_area",
+                      "version": 1,
+                      "args": {
+                        "area": "varrock"
+                      }
+                    }
+                  }
+                ]
+              },
+              "settle": {
+                "Not": {
+                  "Fact": {
+                    "kind": "has_item",
+                    "version": 1,
+                    "args": {
+                      "obj": "sulphuric_broline"
+                    }
+                  }
+                }
+              },
+              "comment": "content/scripts/quests/quest_biohazard/scripts/hops.rs2:10-17,20-53",
+              "advances": false
+            },
+            {
+              "id": "collect-ethenea",
+              "kind": "talk",
+              "version": 1,
+              "args": {
+                "npc": "artist2",
+                "anchor": {
+                  "tile": [
+                    3274,
+                    3390,
+                    0
+                  ],
+                  "source": "content/maps/m51_52.jm2:6245; pack/npc.pack:338"
+                },
+                "leash": 10,
+                "prefer": [],
+                "strict": true
+              },
+              "skip_if": {
+                "Fact": {
+                  "kind": "has_item",
+                  "version": 1,
+                  "args": {
+                    "obj": "ethenea"
+                  }
+                }
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "has_item",
+                  "version": 1,
+                  "args": {
+                    "obj": "ethenea"
+                  }
+                }
+              },
+              "comment": "content/scripts/quests/quest_biohazard/scripts/devinci.rs2:55-72",
+              "advances": false
+            },
+            {
+              "id": "collect-liquid_honey",
+              "kind": "talk",
+              "version": 1,
+              "args": {
+                "npc": "gambler2",
+                "anchor": {
+                  "tile": [
+                    3270,
+                    3391,
+                    0
+                  ],
+                  "source": "content/maps/m51_52.jm2:6244; pack/npc.pack:340"
+                },
+                "leash": 10,
+                "prefer": [],
+                "strict": true,
+                "gap_ticks": 3
+              },
+              "skip_if": {
+                "Fact": {
+                  "kind": "has_item",
+                  "version": 1,
+                  "args": {
+                    "obj": "liquid_honey"
+                  }
+                }
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "has_item",
+                  "version": 1,
+                  "args": {
+                    "obj": "liquid_honey"
+                  }
+                }
+              },
+              "comment": "content/scripts/quests/quest_biohazard/scripts/chancy.rs2:55-72",
+              "advances": false
+            },
+            {
+              "id": "collect-sulphuric_broline",
+              "kind": "talk",
+              "version": 1,
+              "args": {
+                "npc": "drunk2",
+                "anchor": {
+                  "tile": [
+                    3268,
+                    3389,
+                    0
+                  ],
+                  "source": "content/maps/m51_52.jm2:6243; pack/npc.pack:342"
+                },
+                "leash": 10,
+                "prefer": [],
+                "strict": true,
+                "gap_ticks": 3
+              },
+              "skip_if": {
+                "Fact": {
+                  "kind": "has_item",
+                  "version": 1,
+                  "args": {
+                    "obj": "sulphuric_broline"
+                  }
+                }
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "has_item",
+                  "version": 1,
+                  "args": {
+                    "obj": "sulphuric_broline"
+                  }
+                }
+              },
+              "comment": "content/scripts/quests/quest_biohazard/scripts/hops.rs2:55-72",
+              "advances": false
+            },
+            {
+              "id": "buy-priest-gown", "kind": "buy", "version": 1, "advances": false,
+              "args": {"shop": {"npc": "tailorp", "anchor": {"tile": [3281, 3398, 0], "source": "content/maps/m51_53.jm2:6739; content/pack/npc.pack:555"}}, "obj": "priest_gown", "qty": 1, "est_gp": 6},
+              "skip_if": {"Any": [{"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "priest_gown"}}}, {"Fact": {"kind": "worn", "version": 1, "args": {"obj": "priest_gown"}}}]},
+              "settle": {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "priest_gown"}}},
+              "comment": "At full stock the gown costs 6 coins: content/scripts/quests/quest_biohazard/configs/quest_biohazard.obj:159-162; content/scripts/areas/area_varrock/configs/varrock.npc:363-397; content/scripts/shop/scripts/shop.rs2:138-147,182-187."
+            },
+            {
+              "id": "buy-priest-robe", "kind": "buy", "version": 1, "advances": false,
+              "args": {"shop": {"npc": "tailorp", "anchor": {"tile": [3281, 3398, 0], "source": "content/maps/m51_53.jm2:6739; content/pack/npc.pack:555"}}, "obj": "priest_robe", "qty": 1, "est_gp": 6},
+              "skip_if": {"Any": [{"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "priest_robe"}}}, {"Fact": {"kind": "worn", "version": 1, "args": {"obj": "priest_robe"}}}]},
+              "settle": {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "priest_robe"}}},
+              "comment": "At full stock the robe costs 6 coins: content/scripts/quests/quest_biohazard/configs/quest_biohazard.obj:179-182; content/scripts/areas/area_varrock/configs/varrock.npc:363-397; content/scripts/shop/scripts/shop.rs2:138-147,182-187."
+            },
+            {
+              "id": "wear-priest_gown",
+              "kind": "equip",
+              "version": 1,
+              "args": {
+                "obj": "priest_gown"
+              },
+              "skip_if": {
+                "Fact": {
+                  "kind": "worn",
+                  "version": 1,
+                  "args": {
+                    "obj": "priest_gown"
+                  }
+                }
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "worn",
+                  "version": 1,
+                  "args": {
+                    "obj": "priest_gown"
+                  }
+                }
+              },
+              "comment": "content/scripts/quests/quest_biohazard/scripts/quest_biohazard.rs2:7-16"
+            },
+            {
+              "id": "wear-priest_robe",
+              "kind": "equip",
+              "version": 1,
+              "args": {
+                "obj": "priest_robe"
+              },
+              "skip_if": {
+                "Fact": {
+                  "kind": "worn",
+                  "version": 1,
+                  "args": {
+                    "obj": "priest_robe"
+                  }
+                }
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "worn",
+                  "version": 1,
+                  "args": {
+                    "obj": "priest_robe"
+                  }
+                }
+              },
+              "comment": "content/scripts/quests/quest_biohazard/scripts/quest_biohazard.rs2:7-16"
+            },
+            {
+              "id": "open-guidor-door",
+              "kind": "interact",
+              "version": 1,
+              "args": {
+                "target": {
+                  "loc": "guidordoor"
+                },
+                "op": "Open",
+                "anchor": {
+                  "tile": [
+                    3282,
+                    3382,
+                    0
+                  ],
+                  "source": "content/maps/m51_52.jm2:4993; pack/loc.pack:2033"
+                },
+                "radius": 12
+              },
+              "skip_if": {
+                "Fact": {
+                  "kind": "near",
+                  "version": 1,
+                  "args": {
+                    "tile": [
+                      3285,
+                      3381,
+                      0
+                    ],
+                    "radius": 2
+                  }
+                }
+              },
+              "settle": {
+                "All": []
+              },
+              "comment": "content/scripts/quests/quest_biohazard/scripts/quest_biohazard.rs2:1-16",
+              "advances": false
+            },
+            {
+              "id": "consult-guidor",
+              "kind": "talk",
+              "version": 1,
+              "args": {
+                "npc": "guidor",
+                "anchor": {
+                  "tile": [
+                    3285,
+                    3381,
+                    0
+                  ],
+                  "source": "content/maps/m51_52.jm2:6248; pack/npc.pack:344"
+                },
+                "leash": 10,
+                "prefer": [
+                  "I've come to ask your assistance in stopping a plague.",
+                  "I've been sent by your old pupil Elena.",
+                  "So what does that mean exactly?"
+                ],
+                "strict": true
+              },
+              "skip_if": {
+                "Any": []
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "stage_in",
+                  "version": 1,
+                  "args": {
+                    "quest": "biohazard",
+                    "any": [
+                      "biohazard:14"
+                    ]
+                  }
+                }
+              },
+              "comment": "content/scripts/quests/quest_biohazard/scripts/guidor.rs2:13-72",
+              "advances": true
+            }
+          ]
+        },
+        {
+          "stage": "biohazard:14",
+          "required": [],
+          "terminal": false,
+          "recovery_entry": null,
+          "order": "authored",
+          "steps": [
+            {
+              "id": "report-guidor-to-elena",
+              "kind": "talk",
+              "version": 1,
+              "args": {
+                "npc": "elena2",
+                "anchor": {
+                  "tile": [
+                    2592,
+                    3336,
+                    0
+                  ],
+                  "source": "content/maps/m40_52.jm2:7332; pack/npc.pack:336"
+                },
+                "leash": 10,
+                "prefer": [],
+                "strict": true
+              },
+              "skip_if": {
+                "Any": []
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "stage_in",
+                  "version": 1,
+                  "args": {
+                    "quest": "biohazard",
+                    "any": [
+                      "biohazard:15"
+                    ]
+                  }
+                }
+              },
+              "comment": "content/scripts/areas/area_ardougne_east/scripts/elena.rs2:18-28",
+              "advances": true
+            }
+          ]
+        },
+        {
+          "stage": "biohazard:15",
+          "required": [],
+          "terminal": false,
+          "recovery_entry": null,
+          "order": "authored",
+          "steps": [
+            {
+              "id": "confront-king",
+              "kind": "talk",
+              "version": 1,
+              "args": {
+                "npc": "kinglathas",
+                "anchor": {
+                  "tile": [
+                    2578,
+                    3293,
+                    1
+                  ],
+                  "source": "content/maps/m40_51.jm2:10832; pack/npc.pack:365"
+                },
+                "leash": 10,
+                "prefer": [
+                  "I don't understand"
+                ],
+                "strict": true
+              },
+              "skip_if": {
+                "Any": []
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "quest_colour",
+                  "version": 1,
+                  "args": {
+                    "quest": "biohazard",
+                    "is": "complete"
+                  }
+                }
+              },
+              "comment": "content/scripts/areas/area_ardougne_east/scripts/king_lathas.rs2:41-68",
+              "advances": true
+            }
+          ]
+        },
+        {
+          "stage": "biohazard:done",
+          "required": [],
+          "terminal": true,
+          "recovery_entry": null,
+          "order": "authored",
+          "steps": []
+        }
+      ]
+    }
+  ]
+}

@@ -327,8 +327,8 @@ fn session_boundaries_clear_posted_facts_without_replacing_the_run() {
 fn slot_size_stays_within_the_full_build_parent_layout() {
     let actual = std::mem::size_of::<SlotScript>();
     println!("S0d SlotScript layout: {actual} bytes");
-    assert_eq!(
-        actual, 1624,
-        "the surface slot changed from its measured size"
+    assert!(
+        actual <= 1624,
+        "the surface slot exceeds its parent's 1624-byte budget"
     );
 }

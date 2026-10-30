@@ -261,7 +261,7 @@ export default class T extends LoopingBot {
     ready.tick_posted(1);
     assert_eq!(ready.probe("__queued").unwrap(), true);
     assert_eq!(ready.probe("__qty").unwrap(), 10);
-    let (_, reqs, _) = ready.slot.drain_host_interacts();
+    let (_, reqs, _) = ready.slot.drain_host_interacts(None);
     let mut actions = Vec::new();
     for tick in 2..=4 {
         snap.tick = tick;

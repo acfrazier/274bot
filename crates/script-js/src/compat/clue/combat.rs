@@ -116,6 +116,7 @@ impl Delegation {
             }),
             retry_approach_walks: false,
             search_bounds: None,
+            cross: None,
             engage_radius,
             lost_radius,
             budget_ticks: 500,

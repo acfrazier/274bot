@@ -652,7 +652,7 @@ impl AcquireRun {
                 Poll::Ready(Err(error)) => return Poll::Ready(Err(error)),
                 Poll::Ready(Ok(receipt)) => {
                     if self.walk_retry.as_mut().is_some_and(|retry| {
-                        retry.observe_failure(&receipt, tick.cx.evidence().tick)
+                        retry.observe_approach_failure(&receipt, tick.cx.evidence().tick)
                     }) {
                         self.phase = Phase::Walk;
                         return Poll::Ready(Ok(()));

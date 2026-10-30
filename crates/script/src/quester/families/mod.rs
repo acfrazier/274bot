@@ -10,6 +10,7 @@ pub mod reach;
 pub mod s2;
 pub mod setting;
 pub mod thieve;
+pub mod timed_ground;
 
 use super::compile::{
     AcquisitionTraceOutcome, CompileContext, CompileError, PredicateContext, PredicatePlan,
@@ -45,13 +46,13 @@ pub(super) fn manual_movement_message() -> Arc<str> {
 }
 
 /// Map a native walk receipt to arrival evidence or its typed error.
-/// Approach owners use the same retry state as the `walk` step.
 fn walk_step_evidence(
     receipt: WalkReceipt,
 ) -> Result<api::quest_progress::EvidenceStamp, ActionError> {
     receipt.into_arrival()
 }
 
+/// Approach owners use the same retry state as the `walk` step.
 fn begin_approach_walk(
     retry: &mut crate::native::WalkRetryState,
     request: crate::native::WalkRequest,
@@ -1212,8 +1213,6 @@ fn parse_walk_plan(arg: WalkArgs) -> Result<WalkPlan, CompileError> {
     })
 }
 
-/// Walk-step and approach owners share one receipt filter, budget and retry state.
-
 #[derive(Clone)]
 struct WalkPlan {
     tile: WorldTile,
@@ -1365,6 +1364,12 @@ pub(crate) struct DialogueOptionsDocument {
     /// Refuse missing or ambiguous answer text instead of choosing a fallback.
     #[serde(default)]
     strict: bool,
+    /// Skip a `prefer` entry that already answered a page in this
+    /// conversation, so a repeated menu can be answered once and left.
+    /// `line_rules` and `choose` are unaffected. With this option on,
+    /// `prefer` holds at most 32 entries; a longer list fails compilation.
+    #[serde(default)]
+    answer_once: bool,
     /// Quiet ticks after the chat closes before the conversation counts as
     /// over (default 1). Author it only where the NPC's script closes the chat
     /// and delays before its next page, citing the content lines: the client
@@ -1406,6 +1411,7 @@ fn compile_dialogue_options(
         || args
             .gap_ticks
             .is_some_and(|ticks| !(1..=MAX_GAP_TICKS).contains(&ticks))
+        || (args.answer_once && args.prefer.len() > dialogue::ANSWER_ONCE_PREFER_MAX)
         || args
             .line_rules
             .iter()
@@ -1425,6 +1431,7 @@ fn compile_dialogue_options(
             })
             .collect(),
         strict: args.strict,
+        answer_once: args.answer_once,
         chat_only: false,
         gap_ticks: args.gap_ticks,
     })
@@ -1489,6 +1496,12 @@ pub(crate) struct TalkArgs {
     /// Adopted pages always require authored answers, even when this is false.
     #[serde(default)]
     strict: bool,
+    /// Skip a `prefer` entry that already answered a page in this
+    /// conversation, so a repeated menu can be answered once and left.
+    /// `line_rules` and `choose` are unaffected. With this option on,
+    /// `prefer` holds at most 32 entries; a longer list fails compilation.
+    #[serde(default)]
+    answer_once: bool,
     /// Quiet ticks after the chat closes before the conversation counts as
     /// over (default 1). Author it only where the NPC's script closes the chat
     /// and delays before its next page, citing the content lines: the client
@@ -1552,6 +1565,7 @@ pub(crate) fn compile_talk(
         choose: arg.choose,
         line_rules: arg.line_rules,
         strict: arg.strict || arg.continue_only,
+        answer_once: arg.answer_once,
         gap_ticks: arg.gap_ticks,
     })?;
     let expect_combat = arg
@@ -1575,11 +1589,10 @@ struct TalkPlan {
     options: dialogue::DialogueOptions,
     expect_combat: Option<i32>,
 }
-impl StepPlan for TalkPlan {
-    fn anchor(&self) -> Option<WorldTile> {
-        self.tile
-    }
-    fn begin(&self, _cx: &mut StepContext<'_, '_>) -> Result<Box<dyn StepRun>, ActionError> {
+impl TalkPlan {
+    /// `open_page`: the step's retry found its dialogue page still open; the
+    /// run continues that page from the current tile without the anchor walk.
+    fn run(&self, open_page: bool) -> Result<Box<dyn StepRun>, ActionError> {
         Ok(Box::new(TalkRun {
             target: self.target.clone(),
             tile: self.tile,
@@ -1590,7 +1603,22 @@ impl StepPlan for TalkPlan {
             walk_retry: crate::native::WalkRetryState::default(),
             dialogue: None,
             started: false,
+            open_page,
         }))
+    }
+}
+impl StepPlan for TalkPlan {
+    fn anchor(&self) -> Option<WorldTile> {
+        self.tile
+    }
+    fn begin(&self, _cx: &mut StepContext<'_, '_>) -> Result<Box<dyn StepRun>, ActionError> {
+        self.run(false)
+    }
+    fn begin_open_page(
+        &self,
+        cx: &mut StepContext<'_, '_>,
+    ) -> Result<Box<dyn StepRun>, ActionError> {
+        self.run(dialogue::page_open(&cx.tick.cx))
     }
 }
 
@@ -1604,7 +1632,11 @@ struct TalkRun {
     walk_retry: crate::native::WalkRetryState,
     dialogue: Option<ActionHandle<dialogue::Dialogue>>,
     started: bool,
+    /// The retry of a step that failed with its dialogue page open: no anchor walk.
+    open_page: bool,
 }
+// 664 B measured (+32 B headroom): both inline action handles store machine state; the dialogue approach round 3 fix grew `Dialogue` by 56 B (see `dialogue.rs`).
+const _: [(); 1] = [(); (std::mem::size_of::<TalkRun>() <= 696) as usize];
 impl StepRun for TalkRun {
     fn poll(&mut self, cx: &mut StepContext<'_, '_>) -> Poll<Result<StepOutcome, ActionError>> {
         let now_tick = cx.tick.cx.evidence().tick;
@@ -1614,7 +1646,7 @@ impl StepRun for TalkRun {
                 Poll::Ready(Err(error)) => return Poll::Ready(Err(error)),
                 Poll::Ready(Ok(receipt)) => {
                     self.walk = None;
-                    if self.walk_retry.observe_failure(&receipt, now_tick) {
+                    if self.walk_retry.observe_approach_failure(&receipt, now_tick) {
                         return Poll::Pending;
                     }
                     if let Err(error) = walk_step_evidence(receipt) {
@@ -1634,23 +1666,18 @@ impl StepRun for TalkRun {
                     .map(|player| player.value.player.network);
                 let near =
                     here.is_some_and(|here| reach::within(here, tile, i32::from(self.leash)));
-                if !near {
+                if !near && !self.open_page {
                     if self.walk_retry.waiting_for_next_tick(now_tick) {
                         return Poll::Pending;
                     }
-                    let walk = match crate::native::defer_budget(cx.tick.actions.begin::<Walk>(
-                        reach::walk_request(tile, self.leash, None, cx.required_after),
-                        &mut cx.tick.cx,
-                    )) {
-                        Poll::Pending => {
-                            self.walk_retry.defer_until_next_tick(now_tick);
-                            return Poll::Pending;
-                        }
-                        Poll::Ready(Err(error)) => return Poll::Ready(Err(error)),
-                        Poll::Ready(Ok(walk)) => walk,
-                    };
-                    self.walk_retry.action_submitted();
-                    self.walk = Some(walk);
+                    let mut request =
+                        reach::walk_request(tile, self.leash, None, cx.required_after);
+                    request.arrival = nav_planner::contract::ArrivalKind::Area;
+                    self.walk = Some(std::task::ready!(begin_approach_walk(
+                        &mut self.walk_retry,
+                        request,
+                        cx,
+                    ))?);
                     return Poll::Pending;
                 }
             }
@@ -1790,6 +1817,11 @@ pub(crate) struct InteractArgs {
     #[serde(default)]
     #[cfg_attr(feature = "path-schema", schemars(range(min = 1)))]
     pub(crate) settle_ms: Option<u64>,
+    /// Total observed game-tick budget for a ground-item Take, including spawn wait.
+    /// With this field, the step completes only after the inventory gains the item.
+    #[serde(default)]
+    #[cfg_attr(feature = "path-schema", schemars(range(min = 1)))]
+    pub(crate) max_ticks: Option<u32>,
     /// Omission drains optional chat and selected Scroll/Book pages without answering menus.
     /// No-page completion requires a fresh idle-player tick after acceptance.
     /// Scene targets outside interaction range also need post-acceptance
@@ -1835,6 +1867,19 @@ pub(crate) fn compile_interact(
         || arg.settle_ms == Some(0)
     {
         return Err(CompileError::code("invalid-args"));
+    }
+    if arg.max_ticks.is_some()
+        && (arg.max_ticks == Some(0)
+            || arg.target.ground.is_none()
+            || !arg.op.eq_ignore_ascii_case("Take")
+            || arg.settle_ms.is_some()
+            || arg.dialogue.is_some()
+            || arg.until.is_some()
+            || arg.wait_until.is_some()
+            || arg.reachable_only
+            || arg.target.tile.is_some())
+    {
+        return Err(CompileError::code("invalid-timed-ground"));
     }
     let tile = anchor_tile(arg.anchor.as_ref())?;
     let ambiguous = arg
@@ -1890,6 +1935,9 @@ pub(crate) fn compile_interact(
     } else {
         return Err(CompileError::code("invalid-args"));
     };
+    if let Some(max_ticks) = arg.max_ticks {
+        return Ok(timed_ground::plan(kind, tile, arg.radius.max(1), max_ticks));
+    }
     let target_tile = if let Some(tile) = arg.target.tile {
         if !matches!(
             kind,
@@ -1948,11 +1996,14 @@ struct InteractPlan {
     target_tile: Option<WorldTile>,
     reachable_only: bool,
 }
-impl StepPlan for InteractPlan {
-    fn anchor(&self) -> Option<WorldTile> {
-        self.tile
-    }
-    fn begin(&self, cx: &mut StepContext<'_, '_>) -> Result<Box<dyn StepRun>, ActionError> {
+impl InteractPlan {
+    /// `open_page`: the step's retry found its dialogue page still open; the
+    /// run continues that page from the current tile (`InteractRun::poll_round`).
+    fn run(
+        &self,
+        cx: &mut StepContext<'_, '_>,
+        open_page: bool,
+    ) -> Result<Box<dyn StepRun>, ActionError> {
         Ok(Box::new(InteractRun {
             kind: self.kind.clone(),
             op: Arc::clone(&self.op),
@@ -1988,7 +2039,23 @@ impl StepPlan for InteractPlan {
             round_deadline: None,
             round_accepted: false,
             started: false,
+            open_page,
         }))
+    }
+}
+impl StepPlan for InteractPlan {
+    fn anchor(&self) -> Option<WorldTile> {
+        self.tile
+    }
+    fn begin(&self, cx: &mut StepContext<'_, '_>) -> Result<Box<dyn StepRun>, ActionError> {
+        self.run(cx, false)
+    }
+    fn begin_open_page(
+        &self,
+        cx: &mut StepContext<'_, '_>,
+    ) -> Result<Box<dyn StepRun>, ActionError> {
+        let drives_dialogue = self.default_dialogue || self.dialogue_options.is_some();
+        self.run(cx, drives_dialogue && dialogue::page_open(&cx.tick.cx))
     }
     fn settle_timeout(&self) -> Duration {
         Duration::from_millis(self.settle_ms.unwrap_or(8_000))
@@ -2039,6 +2106,9 @@ struct InteractRun {
     round_deadline: Option<Duration>,
     round_accepted: bool,
     started: bool,
+    /// The retry of a step that failed with its dialogue page open: the first
+    /// poll continues that page instead of approaching the target.
+    open_page: bool,
 }
 
 impl InteractRun {
@@ -2234,6 +2304,23 @@ impl InteractRun {
                 }
             }
         }
+        if std::mem::take(&mut self.open_page) {
+            // The retry of a step whose dialogue page is still open. The
+            // content moved the player (a teleport inside the page's script),
+            // so the authored anchor is not near and the target is not
+            // reachable from here. Take the step as accepted: drive the open
+            // page below, and walk or click only if the round continues.
+            let now = cx.tick.cx.active_now();
+            self.deadline = Some(now + self.settle_duration);
+            self.dialogue_cap =
+                Some(now.saturating_add(self.settle_duration.max(Duration::from_secs(120))));
+            self.round_accepted = true;
+            self.accepted_tick = Some(cx.tick.cx.evidence().tick);
+            if let Some((id, _)) = self.until {
+                self.round_before = inventory_count(&cx.tick.cx, id);
+                self.round_deadline = Some(now + Duration::from_millis(ACTION_ROUND_MS));
+            }
+        }
         if self.round_accepted && !self.dialogue_completed {
             let options = self.dialogue_options.clone().or_else(|| {
                 (self.default_dialogue && dialogue::page_open(&cx.tick.cx))
@@ -2353,7 +2440,7 @@ impl InteractRun {
                 Poll::Ready(Ok(receipt)) => {
                     if self
                         .walk_retry
-                        .observe_failure(&receipt, cx.tick.cx.evidence().tick)
+                        .observe_approach_failure(&receipt, cx.tick.cx.evidence().tick)
                     {
                         if reach::loc_wall_route_failed(&receipt) {
                             self.wall_fallback_pending = self.wall_fallback_tile;
@@ -2444,14 +2531,20 @@ impl InteractRun {
                     .local_player()
                     .map(|player| player.value.player.network);
                 if !here.is_some_and(|here| reach::within(here, tile, self.radius)) {
+                    let mut request = reach::walk_request(
+                        tile,
+                        self.radius.max(1) as u16,
+                        None,
+                        cx.required_after,
+                    );
+                    if self.loc_selector().is_some() {
+                        // The unseen loc has no interaction geometry yet, so accept any
+                        // standable tile in its anchor area before the live approach.
+                        request.arrival = nav_planner::contract::ArrivalKind::Area;
+                    }
                     self.walk = Some(std::task::ready!(begin_approach_walk(
                         &mut self.walk_retry,
-                        reach::walk_request(
-                            tile,
-                            self.radius.max(1) as u16,
-                            None,
-                            cx.required_after,
-                        ),
+                        request,
                         cx,
                     ))?);
                     return Poll::Pending;
@@ -3247,7 +3340,7 @@ impl StepRun for UseOnRun {
                     Poll::Ready(Ok(receipt)) => {
                         if self
                             .walk_retry
-                            .observe_failure(&receipt, cx.tick.cx.evidence().tick)
+                            .observe_approach_failure(&receipt, cx.tick.cx.evidence().tick)
                         {
                             if reach::loc_wall_route_failed(&receipt) {
                                 self.wall_fallback_pending = self.wall_fallback_tile;

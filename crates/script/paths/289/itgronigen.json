@@ -1,0 +1,1007 @@
+{
+  "$schema": "../path.schema.json",
+  "schema": 3,
+  "id": "itgronigen",
+  "display_name": "Observatory Quest",
+  "required": [],
+  "tested_stats": null,
+  "partner": null,
+  "quest": {
+    "members": true,
+    "quest_points": 2,
+    "requirements": [],
+    "items": [
+      {
+        "obj": "woodplank",
+        "qty": 3,
+        "kind": "acquirable",
+        "acquire": null
+      },
+      {
+        "obj": "bronze_bar",
+        "qty": 1,
+        "kind": "acquirable",
+        "acquire": null
+      },
+      {
+        "obj": "molten_glass",
+        "qty": 1,
+        "kind": "acquirable",
+        "acquire": null
+      },
+      {
+        "obj": "keep_key",
+        "qty": 1,
+        "kind": "acquirable",
+        "acquire": null
+      },
+      {
+        "obj": "lens_mould",
+        "qty": 1,
+        "kind": "acquirable",
+        "acquire": null
+      },
+      {
+        "obj": "lens",
+        "qty": 1,
+        "kind": "acquirable",
+        "acquire": null
+      }
+    ],
+    "acquire": {},
+    "bank": "nearest",
+    "coin_float": 0,
+    "loadouts": {},
+    "areas": {
+      "dungeon": {
+        "boxes": [
+          [
+            2368,
+            9408,
+            2431,
+            9471,
+            0
+          ]
+        ],
+        "source": "C:maps/m37_147.jm2:5452,6883,6997,7220"
+      },
+      "jail": {
+        "boxes": [
+          [
+            2385,
+            9451,
+            2391,
+            9457,
+            0
+          ]
+        ],
+        "source": "C:maps/m37_147.jm2:5452,5506,5557; C:scripts/quests/quest_itgronigen/scripts/quest_itgronigen.rs2:117-121"
+      },
+      "dome": {
+        "boxes": [
+          [
+            2436,
+            3153,
+            2445,
+            3170,
+            0
+          ]
+        ],
+        "source": "C:maps/m38_49.jm2:4387,4391,6470; C:scripts/quests/quest_itgronigen/scripts/quest_itgronigen.rs2:20-22"
+      }
+    },
+    "tools": [
+      "obj:woodplank",
+      "obj:bronze_bar",
+      "obj:molten_glass",
+      "obj:keep_key",
+      "obj:lens_mould",
+      "obj:lens"
+    ],
+    "owns_inventory": true
+  },
+  "roles": [
+    {
+      "role": null,
+      "progress_binding": "journal:itgronigen",
+      "progress": {
+        "colour": {
+          "not_started": "itgronigen:0",
+          "in_progress": "itgronigen:1",
+          "complete": "itgronigen:7"
+        },
+        "rules": [
+          {
+            "stage": "itgronigen:6",
+            "all": [
+              "the professor has gone ahead to the observatory"
+            ],
+            "any": [],
+            "not": [],
+            "varp": 6
+          },
+          {
+            "stage": "itgronigen:5",
+            "all": [
+              "the professor was pleased to have all the pieces needed"
+            ],
+            "any": [],
+            "not": [],
+            "varp": 5
+          },
+          {
+            "stage": "itgronigen:4",
+            "all": [
+              "repairing due to the nearby goblins"
+            ],
+            "any": [],
+            "not": [],
+            "varp": 4
+          },
+          {
+            "stage": "itgronigen:3",
+            "all": [
+              "1 molten glass"
+            ],
+            "any": [],
+            "not": [],
+            "varp": 3
+          },
+          {
+            "stage": "itgronigen:2",
+            "all": [
+              "1 bronze bar"
+            ],
+            "any": [],
+            "not": [],
+            "varp": 2
+          },
+          {
+            "stage": "itgronigen:1",
+            "all": [
+              "3 wooden planks"
+            ],
+            "any": [],
+            "not": [],
+            "varp": 1
+          }
+        ],
+        "flags": [],
+        "monotonic": true
+      },
+      "prelude": [],
+      "sequences": [
+        {
+          "stage": "itgronigen:0",
+          "required": [],
+          "terminal": false,
+          "recovery_entry": null,
+          "steps": [
+            {
+              "id": "start",
+              "kind": "talk",
+              "version": 1,
+              "args": {
+                "npc": "observatory_professor",
+                "anchor": {
+                  "tile": [
+                    2438,
+                    3186,
+                    0
+                  ],
+                  "source": "C:maps/m38_49.jm2:6469 (NPC 488)"
+                },
+                "leash": 8,
+                "prefer": [
+                  "look through that telescope",
+                  "Sounds interesting"
+                ]
+              },
+              "skip_if": {
+                "Any": []
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "stage_in",
+                  "version": 1,
+                  "args": {
+                    "quest": "itgronigen",
+                    "any": [
+                      "itgronigen:1"
+                    ]
+                  }
+                }
+              },
+              "comment": "C:scripts/quests/quest_itgronigen/scripts/observatory_professor.rs2:132-174",
+              "advances": true
+            }
+          ]
+        },
+        {
+          "stage": "itgronigen:1",
+          "required": [],
+          "terminal": false,
+          "recovery_entry": null,
+          "steps": [
+            {"id":"collect-plank-one","kind":"interact","version":1,"advances":false,"args":{"target":{"ground":"woodplank"},"op":"Take","anchor":{"tile":[2552,3574,0],"source":"C:maps/m39_55.jm2:6165; C:pack/obj.pack:961"},"radius":1,"wait_if_missing":true},"comment":"The professor consumes three planks: C:scripts/quests/quest_itgronigen/scripts/observatory_professor.rs2:34-44.","skip_if":{"Fact":{"kind":"item_count_at_least","version":1,"args":{"obj":"woodplank","qty":1}}},"settle":{"Fact":{"kind":"item_count_at_least","version":1,"args":{"obj":"woodplank","qty":1}}}},
+            {"id":"collect-plank-two","kind":"interact","version":1,"advances":false,"args":{"target":{"ground":"woodplank"},"op":"Take","anchor":{"tile":[2553,3575,0],"source":"C:maps/m39_55.jm2:6166; C:pack/obj.pack:961"},"radius":1,"wait_if_missing":true},"skip_if":{"Fact":{"kind":"item_count_at_least","version":1,"args":{"obj":"woodplank","qty":2}}},"settle":{"Fact":{"kind":"item_count_at_least","version":1,"args":{"obj":"woodplank","qty":2}}}},
+            {"id":"collect-plank-three","kind":"interact","version":1,"advances":false,"args":{"target":{"ground":"woodplank"},"op":"Take","anchor":{"tile":[2554,3574,0],"source":"C:maps/m39_55.jm2:6167; C:pack/obj.pack:961"},"radius":1,"wait_if_missing":true},"skip_if":{"Fact":{"kind":"item_count_at_least","version":1,"args":{"obj":"woodplank","qty":3}}},"settle":{"Fact":{"kind":"item_count_at_least","version":1,"args":{"obj":"woodplank","qty":3}}}},
+            {
+              "id": "give-planks",
+              "kind": "talk",
+              "version": 1,
+              "args": {
+                "npc": "observatory_professor",
+                "anchor": {
+                  "tile": [
+                    2438,
+                    3186,
+                    0
+                  ],
+                  "source": "C:maps/m38_49.jm2:6469 (NPC 488)"
+                },
+                "leash": 8,
+                "prefer": []
+              },
+              "skip_if": {
+                "Any": []
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "stage_in",
+                  "version": 1,
+                  "args": {
+                    "quest": "itgronigen",
+                    "any": [
+                      "itgronigen:2"
+                    ]
+                  }
+                }
+              },
+              "comment": "C:scripts/quests/quest_itgronigen/scripts/observatory_professor.rs2:34-46",
+              "advances": true
+            }
+          ]
+        },
+        {
+          "stage": "itgronigen:2",
+          "required": [],
+          "terminal": false,
+          "recovery_entry": null,
+          "steps": [
+            {"id":"mine-copper","kind":"gather","version":1,"advances":false,"args":{"skill":"mining","resource":"copper","until":{"obj":"copper_ore","qty":1},"anchor":{"tile":[2976,3247,0],"source":"C:maps/m46_50.jm2:6013; C:scripts/skill_mining/configs/mine.dbrow:23-34"},"radius":3},"comment":"The assistant describes copper and tin smelting: C:scripts/quests/quest_itgronigen/scripts/observatory_assistant.rs2:44-50.","skip_if":{"Any":[{"Fact":{"kind":"has_item","version":1,"args":{"obj":"copper_ore"}}},{"Fact":{"kind":"has_item","version":1,"args":{"obj":"bronze_bar"}}}]},"settle":{"Any":[{"Fact":{"kind":"has_item","version":1,"args":{"obj":"copper_ore"}}},{"Fact":{"kind":"has_item","version":1,"args":{"obj":"bronze_bar"}}}]}},
+            {"id":"mine-tin","kind":"gather","version":1,"advances":false,"args":{"skill":"mining","resource":"tin","until":{"obj":"tin_ore","qty":1},"anchor":{"tile":[2984,3237,0],"source":"C:maps/m46_50.jm2:6266; C:pack/loc.pack:2095; C:scripts/skill_mining/configs/mine.dbrow:36-47"},"radius":3},"skip_if":{"Any":[{"Fact":{"kind":"has_item","version":1,"args":{"obj":"tin_ore"}}},{"Fact":{"kind":"has_item","version":1,"args":{"obj":"bronze_bar"}}}]},"settle":{"Any":[{"Fact":{"kind":"has_item","version":1,"args":{"obj":"tin_ore"}}},{"Fact":{"kind":"has_item","version":1,"args":{"obj":"bronze_bar"}}}]}},
+            {"id":"smelt-bronze","kind":"use_on","version":1,"advances":false,"args":{"item":"copper_ore","target":{"loc":"furnace1"},"anchor":{"tile":[2974,3369,0],"source":"C:maps/m46_52.jm2:7888; C:scripts/skill_smithing/scripts/smelting/smelting.rs2:10-29"},"radius":3,"product":"bronze_bar"},"comment":"C:scripts/skill_smithing/configs/smelting/smelting.struct:1-15 defines the bronze recipe.","skip_if":{"Fact":{"kind":"has_item","version":1,"args":{"obj":"bronze_bar"}}},"settle":{"Fact":{"kind":"has_item","version":1,"args":{"obj":"bronze_bar"}}}},
+            {
+              "id": "give-bronze",
+              "kind": "talk",
+              "version": 1,
+              "args": {
+                "npc": "observatory_professor",
+                "anchor": {
+                  "tile": [
+                    2438,
+                    3186,
+                    0
+                  ],
+                  "source": "C:maps/m38_49.jm2:6469 (NPC 488)"
+                },
+                "leash": 8,
+                "prefer": []
+              },
+              "skip_if": {
+                "Any": []
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "stage_in",
+                  "version": 1,
+                  "args": {
+                    "quest": "itgronigen",
+                    "any": [
+                      "itgronigen:3"
+                    ]
+                  }
+                }
+              },
+              "comment": "C:scripts/quests/quest_itgronigen/scripts/observatory_professor.rs2:48-59",
+              "advances": true
+            }
+          ]
+        },
+        {
+          "stage": "itgronigen:3",
+          "required": [],
+          "terminal": false,
+          "recovery_entry": null,
+          "steps": [
+            {"id":"collect-seaweed","kind":"interact","version":1,"advances":false,"args":{"target":{"ground":"seaweed"},"op":"Take","anchor":{"tile":[2803,3382,0],"source":"C:maps/m43_52.jm2:4733; C:pack/obj.pack:402"},"radius":2,"wait_if_missing":true},"comment":"C:scripts/skill_cooking/configs/cooking_source/cooking_generic.dbrow:387-398 makes soda ash from seaweed.","skip_if":{"Any":[{"Fact":{"kind":"has_item","version":1,"args":{"obj":"seaweed"}}},{"Fact":{"kind":"has_item","version":1,"args":{"obj":"soda_ash"}}},{"Fact":{"kind":"has_item","version":1,"args":{"obj":"molten_glass"}}}]},"settle":{"Fact":{"kind":"has_item","version":1,"args":{"obj":"seaweed"}}}},
+            {"id":"cook-seaweed","kind":"use_on","version":1,"advances":false,"args":{"item":"seaweed","target":{"loc":"range"},"anchor":{"tile":[2817,3444,0],"source":"C:maps/m44_53.jm2:4218; C:pack/loc.pack:2729"},"radius":3,"product":"soda_ash"},"comment":"C:scripts/skill_cooking/scripts/cooking.rs2:1-14,32-82 and C:scripts/skill_cooking/configs/cooking_source/cooking_generic.dbrow:387-398.","skip_if":{"Any":[{"Fact":{"kind":"has_item","version":1,"args":{"obj":"soda_ash"}}},{"Fact":{"kind":"has_item","version":1,"args":{"obj":"molten_glass"}}}]},"settle":{"Fact":{"kind":"has_item","version":1,"args":{"obj":"soda_ash"}}}},
+            {"id":"fill-sand","kind":"use_on","version":1,"advances":false,"args":{"item":"bucket_empty","target":{"loc":"sandpit"},"anchor":{"tile":[2816,3341,0],"source":"C:maps/m44_52.jm2:5380; C:pack/loc.pack:2646"},"radius":3,"product":"bucket_sand"},"comment":"C:scripts/skill_crafting/scripts/glass/glass.rs2:1-20 fills the bucket.","skip_if":{"Any":[{"Fact":{"kind":"has_item","version":1,"args":{"obj":"bucket_sand"}}},{"Fact":{"kind":"has_item","version":1,"args":{"obj":"molten_glass"}}}]},"settle":{"Fact":{"kind":"has_item","version":1,"args":{"obj":"bucket_sand"}}}},
+            {"id":"smelt-glass","kind":"use_on","version":1,"advances":false,"args":{"item":"bucket_sand","target":{"loc":"furnace1"},"anchor":{"tile":[2974,3369,0],"source":"C:maps/m46_52.jm2:7888; C:scripts/skill_smithing/scripts/smelting/smelting.rs2:10-16"},"radius":3,"product":"molten_glass"},"comment":"C:scripts/skill_crafting/scripts/glass/glass.rs2:22-53 consumes sand and soda ash and returns the bucket.","skip_if":{"Fact":{"kind":"has_item","version":1,"args":{"obj":"molten_glass"}}},"settle":{"Fact":{"kind":"has_item","version":1,"args":{"obj":"molten_glass"}}}},
+            {
+              "id": "give-glass",
+              "kind": "talk",
+              "version": 1,
+              "args": {
+                "npc": "observatory_professor",
+                "anchor": {
+                  "tile": [
+                    2438,
+                    3186,
+                    0
+                  ],
+                  "source": "C:maps/m38_49.jm2:6469 (NPC 488)"
+                },
+                "leash": 8,
+                "prefer": []
+              },
+              "skip_if": {
+                "Any": []
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "stage_in",
+                  "version": 1,
+                  "args": {
+                    "quest": "itgronigen",
+                    "any": [
+                      "itgronigen:4"
+                    ]
+                  }
+                }
+              },
+              "comment": "C:scripts/quests/quest_itgronigen/scripts/observatory_professor.rs2:16-32",
+              "advances": true
+            }
+          ]
+        },
+        {
+          "stage": "itgronigen:4",
+          "required": [],
+          "terminal": false,
+          "recovery_entry": null,
+          "steps": [
+            {
+              "id": "enter-for-mould",
+              "kind": "interact",
+              "version": 1,
+              "args": {
+                "target": {
+                  "loc": "obs_dungeonladderdown"
+                },
+                "op": "Climb-down",
+                "anchor": {
+                  "tile": [
+                    2444,
+                    3191,
+                    0
+                  ],
+                  "source": "C:maps/m38_49.jm2:4555; C:scripts/quests/quest_itgronigen/scripts/quest_itgronigen.rs2:1-11"
+                },
+                "radius": 6,
+                "dialogue": {
+                  "gap_ticks": 2
+                }
+              },
+              "skip_if": {
+                "Any": [
+                  {
+                    "Fact": {
+                      "kind": "in_area",
+                      "version": 1,
+                      "args": {
+                        "area": "dungeon"
+                      }
+                    }
+                  },
+                  {
+                    "Fact": {
+                      "kind": "has_item",
+                      "version": 1,
+                      "args": {
+                        "obj": "lens_mould"
+                      }
+                    }
+                  }
+                ]
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "in_area",
+                  "version": 1,
+                  "args": {
+                    "area": "dungeon"
+                  }
+                }
+              },
+              "comment": "C:maps/m38_49.jm2:4555; C:scripts/quests/quest_itgronigen/scripts/quest_itgronigen.rs2:1-11; p_delay(1) after if_close costs two ticks.",
+              "advances": false
+            },
+            {
+              "id": "open-key-chest",
+              "kind": "interact",
+              "version": 1,
+              "args": {
+                "target": {
+                  "loc": "loc_2197"
+                },
+                "op": "Open",
+                "anchor": {
+                  "tile": [
+                    2428,
+                    9419,
+                    0
+                  ],
+                  "source": "C:maps/m37_147.jm2:7220; C:scripts/quests/quest_itgronigen/scripts/quest_itgronigen.rs2:40-42"
+                },
+                "radius": 4
+              },
+              "skip_if": {
+                "Any": [
+                  {
+                    "Fact": {
+                      "kind": "has_item",
+                      "version": 1,
+                      "args": {
+                        "obj": "keep_key"
+                      }
+                    }
+                  },
+                  {
+                    "Fact": {
+                      "kind": "in_area",
+                      "version": 1,
+                      "args": {
+                        "area": "jail"
+                      }
+                    }
+                  },
+                  {
+                    "Fact": {
+                      "kind": "has_item",
+                      "version": 1,
+                      "args": {
+                        "obj": "lens_mould"
+                      }
+                    }
+                  },
+                  {
+                    "Fact": {
+                      "kind": "loc_present",
+                      "version": 1,
+                      "args": {
+                        "loc": "loc_2198"
+                      }
+                    }
+                  }
+                ]
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "loc_present",
+                  "version": 1,
+                  "args": {
+                    "loc": "loc_2198"
+                  }
+                }
+              },
+              "comment": "C:scripts/quests/quest_itgronigen/scripts/quest_itgronigen.rs2:40-42,85-98",
+              "advances": false
+            },
+            {
+              "id": "search-key-chest",
+              "kind": "interact",
+              "version": 1,
+              "args": {
+                "target": {
+                  "loc": "loc_2198"
+                },
+                "op": "Search",
+                "anchor": {
+                  "tile": [
+                    2428,
+                    9419,
+                    0
+                  ],
+                  "source": "C:maps/m37_147.jm2:7220; C:scripts/quests/quest_itgronigen/scripts/quest_itgronigen.rs2:85-98"
+                },
+                "radius": 4
+              },
+              "skip_if": {
+                "Any": [
+                  {
+                    "Fact": {
+                      "kind": "has_item",
+                      "version": 1,
+                      "args": {
+                        "obj": "keep_key"
+                      }
+                    }
+                  },
+                  {
+                    "Fact": {
+                      "kind": "in_area",
+                      "version": 1,
+                      "args": {
+                        "area": "jail"
+                      }
+                    }
+                  },
+                  {
+                    "Fact": {
+                      "kind": "has_item",
+                      "version": 1,
+                      "args": {
+                        "obj": "lens_mould"
+                      }
+                    }
+                  }
+                ]
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "has_item",
+                  "version": 1,
+                  "args": {
+                    "obj": "keep_key"
+                  }
+                }
+              },
+              "comment": "C:scripts/quests/quest_itgronigen/scripts/quest_itgronigen.rs2:85-98",
+              "advances": false
+            },
+            {
+              "id": "unlock-keep",
+              "kind": "use_on",
+              "version": 1,
+              "args": {
+                "item": "keep_key",
+                "target": {
+                  "loc": "keepgate_closed"
+                },
+                "anchor": {
+                  "tile": [
+                    2391,
+                    9457,
+                    0
+                  ],
+                  "source": "C:maps/m37_147.jm2:5557; C:scripts/quests/quest_itgronigen/scripts/quest_itgronigen.rs2:100-146"
+                },
+                "radius": 4
+              },
+              "skip_if": {
+                "Any": [
+                  {
+                    "Fact": {
+                      "kind": "in_area",
+                      "version": 1,
+                      "args": {
+                        "area": "jail"
+                      }
+                    }
+                  },
+                  {
+                    "Fact": {
+                      "kind": "has_item",
+                      "version": 1,
+                      "args": {
+                        "obj": "lens_mould"
+                      }
+                    }
+                  }
+                ]
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "in_area",
+                  "version": 1,
+                  "args": {
+                    "area": "jail"
+                  }
+                }
+              },
+              "comment": "C:scripts/quests/quest_itgronigen/scripts/quest_itgronigen.rs2:100-146",
+              "advances": false
+            },
+            {
+              "id": "search-mould-sack",
+              "kind": "interact",
+              "version": 1,
+              "args": {
+                "target": {
+                  "loc": "loc_2212"
+                },
+                "op": "Search",
+                "anchor": {
+                  "tile": [
+                    2389,
+                    9454,
+                    0
+                  ],
+                  "source": "C:maps/m37_147.jm2:5452; C:scripts/quests/quest_itgronigen/scripts/quest_itgronigen.rs2:164-172"
+                },
+                "radius": 4
+              },
+              "skip_if": {
+                "Fact": {
+                  "kind": "has_item",
+                  "version": 1,
+                  "args": {
+                    "obj": "lens_mould"
+                  }
+                }
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "has_item",
+                  "version": 1,
+                  "args": {
+                    "obj": "lens_mould"
+                  }
+                }
+              },
+              "comment": "C:scripts/quests/quest_itgronigen/scripts/quest_itgronigen.rs2:164-172; C:scripts/_unpack/225/all.loc:11613-11617",
+              "advances": false
+            },
+            {
+              "id": "leave-keep",
+              "kind": "interact",
+              "version": 1,
+              "args": {
+                "target": {
+                  "loc": "keepgate_closed"
+                },
+                "op": "Open",
+                "anchor": {
+                  "tile": [
+                    2391,
+                    9457,
+                    0
+                  ],
+                  "source": "C:maps/m37_147.jm2:5557; C:scripts/quests/quest_itgronigen/scripts/quest_itgronigen.rs2:104-149"
+                },
+                "radius": 4
+              },
+              "skip_if": {
+                "Not": {
+                  "Fact": {
+                    "kind": "in_area",
+                    "version": 1,
+                    "args": {
+                      "area": "jail"
+                    }
+                  }
+                }
+              },
+              "settle": {
+                "Not": {
+                  "Fact": {
+                    "kind": "in_area",
+                    "version": 1,
+                    "args": {
+                      "area": "jail"
+                    }
+                  }
+                }
+              },
+              "comment": "C:scripts/quests/quest_itgronigen/scripts/quest_itgronigen.rs2:104-149",
+              "advances": false
+            },
+            {
+              "id": "return-reception",
+              "kind": "interact",
+              "version": 1,
+              "args": {
+                "target": {
+                  "loc": "loc_2188"
+                },
+                "op": "Climb-up",
+                "anchor": {
+                  "tile": [
+                    2420,
+                    9460,
+                    0
+                  ],
+                  "source": "C:maps/m37_147.jm2:6883; C:scripts/quests/quest_itgronigen/scripts/quest_itgronigen.rs2:16-18"
+                },
+                "radius": 5
+              },
+              "skip_if": {
+                "Not": {
+                  "Fact": {
+                    "kind": "in_area",
+                    "version": 1,
+                    "args": {
+                      "area": "dungeon"
+                    }
+                  }
+                }
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "near",
+                  "version": 1,
+                  "args": {
+                    "tile": [
+                      2444,
+                      3192,
+                      0
+                    ],
+                    "radius": 5
+                  }
+                }
+              },
+              "comment": "C:scripts/quests/quest_itgronigen/scripts/quest_itgronigen.rs2:16-18",
+              "advances": false
+            },
+            {
+              "id": "show-mould",
+              "kind": "talk",
+              "version": 1,
+              "args": {
+                "npc": "observatory_professor",
+                "anchor": {
+                  "tile": [
+                    2438,
+                    3186,
+                    0
+                  ],
+                  "source": "C:maps/m38_49.jm2:6469 (NPC 488)"
+                },
+                "leash": 8,
+                "prefer": []
+              },
+              "skip_if": {
+                "Any": []
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "stage_in",
+                  "version": 1,
+                  "args": {
+                    "quest": "itgronigen",
+                    "any": [
+                      "itgronigen:5"
+                    ]
+                  }
+                }
+              },
+              "comment": "C:scripts/quests/quest_itgronigen/scripts/observatory_professor.rs2:61-83",
+              "advances": true
+            }
+          ]
+        },
+        {
+          "stage": "itgronigen:5",
+          "required": [],
+          "terminal": false,
+          "recovery_entry": null,
+          "steps": [
+            {
+              "id": "make-lens",
+              "kind": "use_on",
+              "version": 1,
+              "args": {
+                "item": "molten_glass",
+                "target": {
+                  "item": "lens_mould"
+                },
+                "product": "lens"
+              },
+              "skip_if": {
+                "Fact": {
+                  "kind": "has_item",
+                  "version": 1,
+                  "args": {
+                    "obj": "lens"
+                  }
+                }
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "has_item",
+                  "version": 1,
+                  "args": {
+                    "obj": "lens"
+                  }
+                }
+              },
+              "comment": "C:scripts/quests/quest_itgronigen/scripts/quest_itgronigen.rs2:174-185; C:scripts/skill_crafting/scripts/glass/glass.rs2:9-10",
+              "advances": false
+            },
+            {
+              "id": "give-lens",
+              "kind": "talk",
+              "version": 1,
+              "args": {
+                "npc": "observatory_professor",
+                "anchor": {
+                  "tile": [
+                    2438,
+                    3186,
+                    0
+                  ],
+                  "source": "C:maps/m38_49.jm2:6469 (NPC 488)"
+                },
+                "leash": 8,
+                "prefer": []
+              },
+              "skip_if": {
+                "Any": []
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "stage_in",
+                  "version": 1,
+                  "args": {
+                    "quest": "itgronigen",
+                    "any": [
+                      "itgronigen:6"
+                    ]
+                  }
+                }
+              },
+              "comment": "C:scripts/quests/quest_itgronigen/scripts/observatory_professor.rs2:85-100",
+              "advances": true
+            }
+          ]
+        },
+        {
+          "stage": "itgronigen:6",
+          "required": [],
+          "terminal": false,
+          "recovery_entry": null,
+          "steps": [
+            {
+              "id": "enter-for-dome",
+              "kind": "interact",
+              "version": 1,
+              "args": {
+                "target": {
+                  "loc": "obs_dungeonladderdown"
+                },
+                "op": "Climb-down",
+                "anchor": {
+                  "tile": [
+                    2444,
+                    3191,
+                    0
+                  ],
+                  "source": "C:maps/m38_49.jm2:4555; C:scripts/quests/quest_itgronigen/scripts/quest_itgronigen.rs2:1-11"
+                },
+                "radius": 6,
+                "dialogue": {
+                  "gap_ticks": 2
+                }
+              },
+              "skip_if": {
+                "Any": [
+                  {
+                    "Fact": {
+                      "kind": "in_area",
+                      "version": 1,
+                      "args": {
+                        "area": "dungeon"
+                      }
+                    }
+                  },
+                  {
+                    "Fact": {
+                      "kind": "in_area",
+                      "version": 1,
+                      "args": {
+                        "area": "dome"
+                      }
+                    }
+                  }
+                ]
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "in_area",
+                  "version": 1,
+                  "args": {
+                    "area": "dungeon"
+                  }
+                }
+              },
+              "comment": "C:maps/m38_49.jm2:4555; C:scripts/quests/quest_itgronigen/scripts/quest_itgronigen.rs2:1-11; p_delay(1) after if_close costs two ticks.",
+              "advances": false
+            },
+            {
+              "id": "climb-dome",
+              "kind": "interact",
+              "version": 1,
+              "args": {
+                "target": {
+                  "loc": "loc_2189"
+                },
+                "op": "Climb-up",
+                "anchor": {
+                  "tile": [
+                    2423,
+                    9439,
+                    0
+                  ],
+                  "source": "C:maps/m37_147.jm2:6997; C:scripts/quests/quest_itgronigen/scripts/quest_itgronigen.rs2:20-22"
+                },
+                "radius": 5
+              },
+              "skip_if": {
+                "Fact": {
+                  "kind": "in_area",
+                  "version": 1,
+                  "args": {
+                    "area": "dome"
+                  }
+                }
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "in_area",
+                  "version": 1,
+                  "args": {
+                    "area": "dome"
+                  }
+                }
+              },
+              "comment": "C:scripts/quests/quest_itgronigen/scripts/quest_itgronigen.rs2:20-22",
+              "advances": false
+            },
+            {
+              "id": "approach-telescope",
+              "kind": "walk",
+              "version": 1,
+              "args": {
+                "tile": [
+                  2440,
+                  3159,
+                  0
+                ],
+                "source": "C:maps/m38_49.jm2:4387 (telescope 2210 at 2440,3157); authored adjacent approach",
+                "radius": 2
+              },
+              "skip_if": {
+                "Fact": {
+                  "kind": "near",
+                  "version": 1,
+                  "args": {
+                    "tile": [
+                      2440,
+                      3159,
+                      0
+                    ],
+                    "radius": 3
+                  }
+                }
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "near",
+                  "version": 1,
+                  "args": {
+                    "tile": [
+                      2440,
+                      3159,
+                      0
+                    ],
+                    "radius": 2
+                  }
+                }
+              },
+              "comment": "C:maps/m38_49.jm2:4387; C:scripts/quests/quest_itgronigen/scripts/quest_itgronigen.rs2:152-160; telescope action omitted because the queued choice overlaps an unsupported main interface."
+            }
+          ]
+        },
+        {
+          "stage": "itgronigen:7",
+          "required": [],
+          "terminal": true,
+          "recovery_entry": null,
+          "steps": []
+        }
+      ]
+    }
+  ]
+}

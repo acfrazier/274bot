@@ -40,12 +40,12 @@
 //! folder served through the existing `FolderSource` registry, shadowing the
 //! embedded release index). It runs with the Base40 qualification profile
 //! under a fixed deadline.
-//! `QUESTER_TICK_MS` is supported only by the single-account generic Path
-//! smoke. `::speed` changes world-wide tick speed; use it only on isolated
-//! Engine Q, never on shared Engine A or the builder. The shared runner waits
-//! for a fresh exact system-chat confirmation and restores `::speed 600` on
-//! teardown. `QUESTER_SUSTAIN_RUN=1` enables the existing `~energy` sustain,
-//! defaulting on when `QUESTER_TICK_MS` is set.
+//! `QUESTER_TICK_MS` is supported by single-account Path and family cells.
+//! `::speed` changes world-wide tick speed, so use it only on isolated Engine
+//! Q, never on shared Engine A or the builder. The shared runner waits for a
+//! fresh exact system-chat confirmation and restores `::speed 600` on teardown.
+//! `QUESTER_SUSTAIN_RUN=1` enables the existing `~energy` sustain. It defaults
+//! on when `QUESTER_TICK_MS` is set.
 //!
 //! Persistence cells (`tests/quester_hint_live.rs`) add `QUESTER_LIVE_ACCOUNT`
 //! with `QUESTER_LIVE_PASSWORD` (one fixed account instead of a minted one)
@@ -74,6 +74,14 @@ use serde_json::{json, Map, Value};
 use vault::{Profile, ProfileSettings};
 
 const POLL_INTERVAL: Duration = Duration::from_millis(20);
+/// Bound on the wait for the terminal capture file. The serial capture writer
+/// synced the first capture of one run in 25.8 s and the end capture of
+/// another in 14 s (QUESTER-DIALOGUE-OPEN r1 `qvca`), and wrote the path-smoke
+/// and Jailer end captures 32 s and 11 s after their receipts under aubaine
+/// I/O load (r2). The wait ends as soon as the file is durable. The run's
+/// product result never depends on it: `run_result` in the receipt is fixed
+/// before the wait starts.
+const END_CAPTURE_BOUND: Duration = Duration::from_secs(300);
 /// Time a Restart cell lets the step at the Stop stage run before stopping it,
 /// so the Stop lands mid-step rather than on a selection boundary.
 const MID_STEP: Duration = Duration::from_secs(4);
@@ -87,6 +95,8 @@ pub enum Mode {
     /// Pass when the published stage key is one of `expect` (a key equal to
     /// the Path's `colour.complete` also passes on the green quest tab).
     Stage { expect: Vec<String> },
+    /// The family observer must prove completion or this exact named stop.
+    ExpectedNamedStop { reason: String },
     /// Pass on quest complete with one Start, zero deaths and no park.
     Clean,
     /// Stop mid-step once at each stage key (in order), Start again, complete.
@@ -100,6 +110,7 @@ impl Mode {
     fn name(&self) -> &'static str {
         match self {
             Mode::Stage { .. } => "stage",
+            Mode::ExpectedNamedStop { .. } => "expected-named-stop",
             Mode::Clean => "clean",
             Mode::Restart { .. } => "restart",
             Mode::Death { .. } => "death",
@@ -462,6 +473,17 @@ fn parked(status: &ScriptStatus) -> Option<String> {
     text(status, "block_reason").map(str::to_owned)
 }
 
+/// Match only the explicitly expected native park, not another blocked state.
+pub fn has_named_stop(status: Option<&ScriptStatus>, reason: &str) -> bool {
+    status.is_some_and(|status| {
+        status.phase == NativePhase::Blocked
+            && status.failure.as_ref().is_some_and(|failure| {
+                failure.code.as_ref() == "parked" && failure.message.as_ref() == reason
+            })
+            && text(status, "block_reason") == Some(reason)
+    })
+}
+
 fn observed_tile(snapshot: &GameSnapshot) -> Option<WorldTile> {
     snapshot
         .tile()
@@ -626,6 +648,8 @@ struct ActorShared {
     observe_tick: Option<ObserveTick>,
     tick_observations: Vec<Value>,
     tick_mean: TickMean,
+    /// `{stage, tick}` at each observed stage change, in observed game ticks.
+    stage_ticks: Vec<Value>,
     starts: u32,
     stops: u32,
     restart_due: bool,
@@ -694,6 +718,13 @@ impl RunPlan {
 
     fn is_pair(&self) -> bool {
         matches!(self, Self::Pair(_))
+    }
+
+    fn expected_named_stop(&self) -> Option<&str> {
+        match self {
+            Self::Single(Mode::ExpectedNamedStop { reason }) => Some(reason),
+            _ => None,
+        }
     }
 
     fn restart_targets(&self) -> Option<Vec<PairStage>> {
@@ -973,6 +1004,7 @@ fn capture_receipt(
     mut extra: Value,
 ) -> Value {
     extra["label"] = json!(label);
+    extra["tick"] = json!(actor.snapshot.tick());
     extra["role"] = json!(actor.role);
     extra["account"] = json!(actor.account);
     extra["status"] = status.map(status_json).unwrap_or(Value::Null);
@@ -1029,6 +1061,13 @@ fn run_inner(
     observe_tick: Option<ObserveTick>,
     quester_path: bool,
 ) -> Result<Value, String> {
+    if let Mode::ExpectedNamedStop { reason } = &cell.mode {
+        if reason.trim().is_empty() || observe_family.is_none() {
+            return Err(
+                "expected named stop requires a non-empty reason and family observer".into(),
+            );
+        }
+    }
     let Cell {
         quest,
         display,
@@ -1120,7 +1159,12 @@ fn run_cells(
             ));
         }
     }
-    let fast_settings = if quester_path {
+    let tick_speed_requested = std::env::var_os("QUESTER_TICK_MS").is_some();
+    let apply_fast_settings = quester_path || tick_speed_requested;
+    if apply_fast_settings && (mode.is_pair() || cells.len() != 1) {
+        return Err("QUESTER_TICK_MS requires a single-account Quester live cell".into());
+    }
+    let fast_settings = if apply_fast_settings {
         scenario::quester::QuesterFastSettings::from_env()?
     } else {
         scenario::quester::QuesterFastSettings {
@@ -1128,9 +1172,6 @@ fn run_cells(
             sustain_run: false,
         }
     };
-    if quester_path && (mode.is_pair() || cells.len() != 1) {
-        return Err("QUESTER_TICK_MS requires a single-account quester_path cell".into());
-    }
     if std::env::var("LIVE").as_deref() != Ok("1") {
         return Err("Quester live cells require LIVE=1".into());
     }
@@ -1166,7 +1207,7 @@ fn run_cells(
     for cell in &mut cells {
         cell.scenario.settings.nav.engine_speed_ms = None;
     }
-    if quester_path {
+    if apply_fast_settings {
         scenario::quester::apply_quester_fast_settings(&mut cells[0].scenario, fast_settings);
     }
     let scenario_deadline = cells
@@ -1260,6 +1301,7 @@ fn run_cells(
             observe_tick: observe_tick.take(),
             tick_observations: Vec::new(),
             tick_mean: TickMean::default(),
+            stage_ticks: Vec::new(),
             starts: 0,
             stops: 0,
             restart_due: false,
@@ -1716,6 +1758,7 @@ fn run_cells(
                             actor.last_step_observation = Some(step_key);
                             actor.step_observations.push(json!({
                                 "run": format!("{:?}", status.run),
+                                "tick": actor.snapshot.tick(),
                                 "stage": stage,
                                 "step_id": text(status, "step_id"),
                                 "child_step_id": text(status, "child_step_id"),
@@ -1829,6 +1872,9 @@ fn run_cells(
                     if let Some(stage) = status_stage(status, actor.quest) {
                         if actor.stages_seen.last() != Some(&stage) {
                             actor.stages_seen.push(stage.clone());
+                            actor
+                                .stage_ticks
+                                .push(json!({"stage": stage, "tick": actor.snapshot.tick()}));
                             let label = format!("stage-{}", stage.replace(':', "-"));
                             let receipt = capture_receipt(actor, &label, Some(status), json!({}));
                             actor.pending_captures.push((label, receipt));
@@ -1881,15 +1927,26 @@ fn run_cells(
                     }
                 }
             } else if !restart_settling {
+                let expected_stop = mode.expected_named_stop().filter(|reason| {
+                    observe_family.is_some()
+                        && has_named_stop(observation.status.as_deref(), reason)
+                });
                 if let Some(error) = &observation.last_error {
-                    break 'run Err(format!("{} Quester lifecycle error: {error}", names[index]));
+                    if expected_stop != Some(error.as_str()) {
+                        break 'run Err(format!(
+                            "{} Quester lifecycle error: {error}",
+                            names[index]
+                        ));
+                    }
                 }
                 if let Some(status) = observation.status.as_deref() {
                     if let Some(reason) = parked(status) {
-                        break 'run Err(format!(
-                            "{} Quester parked/blocked: {reason}",
-                            names[index]
-                        ));
+                        if expected_stop.is_none() {
+                            break 'run Err(format!(
+                                "{} Quester parked/blocked: {reason}",
+                                names[index]
+                            ));
+                        }
                     }
                 }
             }
@@ -2650,6 +2707,14 @@ fn run_cells(
     }
 
     let result_text = format!("{result:?}");
+    let run_result = result.clone();
+    let end_ticks = shared
+        .lock()
+        .map_err(|_| "live state poisoned")?
+        .actors
+        .iter()
+        .map(|actor| actor.snapshot.tick())
+        .collect::<Vec<_>>();
     let mut final_statuses = Vec::with_capacity(names.len());
     let mut final_lifecycles = Vec::with_capacity(names.len());
     for account in &names {
@@ -2673,7 +2738,8 @@ fn run_cells(
             actor.pending_captures.push((label.to_owned(), receipt));
         }
     }
-    let capture_deadline = Instant::now() + Duration::from_secs(10);
+    let capture_wait_started = Instant::now();
+    let capture_deadline = capture_wait_started + END_CAPTURE_BOUND;
     loop {
         let all_captured = shared
             .lock()
@@ -2686,6 +2752,7 @@ fn run_cells(
         }
         std::thread::sleep(POLL_INTERVAL);
     }
+    let end_capture_wait_ms = capture_wait_started.elapsed().as_millis() as u64;
 
     let capture_errors = shared
         .lock()
@@ -2704,12 +2771,23 @@ fn run_cells(
         .iter()
         .enumerate()
         .filter(|(_, actor)| !actor.end_captured)
-        .map(|(index, actor)| format!("{} ({})", index, actor.account))
+        .map(|(index, actor)| {
+            let file = actor
+                .pending_jobs
+                .iter()
+                .find(|pending| pending.label == "end-pass" || pending.label == "end-fail")
+                .map_or_else(
+                    || "never submitted (client not in game)".to_owned(),
+                    |pending| format!("{} not written", pending.png_path.display()),
+                );
+            format!("{index} ({}): end capture {file}", actor.account)
+        })
         .collect::<Vec<_>>();
     if result.is_ok() && !missing_end.is_empty() {
         result = Err(format!(
-            "terminal capture timed out for {}",
-            missing_end.join(", ")
+            "terminal capture file missing after {} s: {}",
+            END_CAPTURE_BOUND.as_secs(),
+            missing_end.join("; ")
         ));
     }
 
@@ -2725,6 +2803,7 @@ fn run_cells(
                 json!({
                     "role": actor.role,
                     "account": actor.account,
+                    "end_tick": end_ticks[index],
                     "cell": actor.label,
                     "quest": actor.quest,
                     "display": actor.display,
@@ -2761,6 +2840,7 @@ fn run_cells(
                     } else {
                         0
                     },
+                    "stage_ticks": actor.stage_ticks,
                     "captures": actor.captures,
                     "final_status": final_statuses[index].as_deref().map(status_json),
                     "lifecycle": format!("{:?}", final_lifecycles[index]),
@@ -2793,6 +2873,8 @@ fn run_cells(
             "quest": actor_receipts[0]["quest"],
             "mode": mode.name(),
             "result": format!("{result:?}"),
+            "run_result": format!("{run_result:?}"),
+            "end_capture_wait_ms": end_capture_wait_ms,
             "game_port": profile.client().game_port(),
             "nav_pack": profile.nav_pack(),
             "roles": actor_receipts,
@@ -2805,6 +2887,9 @@ fn run_cells(
             "quest": actor["quest"],
             "mode": mode.name(),
             "result": format!("{result:?}"),
+            "run_result": format!("{run_result:?}"),
+            "end_tick": actor["end_tick"],
+            "end_capture_wait_ms": end_capture_wait_ms,
             "account": actor["account"],
             "game_port": profile.client().game_port(),
             "nav_pack": profile.nav_pack(),
@@ -2818,6 +2903,7 @@ fn run_cells(
             "tick_observations": actor["tick_observations"],
             "observed_tick_mean_ms": actor["observed_tick_mean_ms"],
             "observed_tick_intervals": actor["observed_tick_intervals"],
+            "stage_ticks": actor["stage_ticks"],
             "deaths": actor["deaths"],
             "death_sent": actor["death_sent"],
             "death_observed": actor["death_observed"],
@@ -2973,6 +3059,49 @@ mod tests {
         assert!(!has_native_start(Some("Sherlock"), false));
         assert!(!has_native_start(None, true));
         assert!(!has_native_start(Some(""), true));
+    }
+
+    #[test]
+    fn named_stop_mode_accepts_only_the_explicit_native_park() {
+        use script::native::{ScriptFailure, StatusField};
+
+        let reason = "GAP-test-drop-budget";
+        let mut status = ScriptStatus {
+            run: RunKey {
+                slot: 1,
+                run: 1,
+                session: 1,
+            },
+            card: script::CompiledId("Quester"),
+            phase: NativePhase::Blocked,
+            active_settings: 0,
+            pending_settings: None,
+            fields: Arc::from([StatusField {
+                key: "block_reason",
+                label: "Block reason",
+                value: StatusValue::Text(Arc::from(reason)),
+            }]),
+            failure: Some(ScriptFailure {
+                code: Arc::from("parked"),
+                message: Arc::from(reason),
+            }),
+        };
+        assert!(has_named_stop(Some(&status), reason));
+        assert!(!has_named_stop(None, reason));
+        assert!(!has_named_stop(Some(&status), "another stop"));
+        status.phase = NativePhase::Working;
+        assert!(!has_named_stop(Some(&status), reason));
+        status.phase = NativePhase::Blocked;
+        status.failure.as_mut().unwrap().code = Arc::from("failed");
+        assert!(!has_named_stop(Some(&status), reason));
+        status.failure.as_mut().unwrap().code = Arc::from("parked");
+        status.fields = Arc::from([]);
+        assert!(!has_named_stop(Some(&status), reason));
+        let mode = RunPlan::Single(Mode::ExpectedNamedStop {
+            reason: reason.into(),
+        });
+        assert_eq!(mode.expected_named_stop(), Some(reason));
+        assert!(RunPlan::Single(Mode::Clean).expected_named_stop().is_none());
     }
 
     fn settings(gang: &str) -> Map<String, Value> {

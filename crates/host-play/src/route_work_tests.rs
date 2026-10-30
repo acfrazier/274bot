@@ -273,8 +273,8 @@ fn running_owner_release(drop_bot: bool) {
         drop(bot);
         bot = NavBot::default();
     } else {
-        bot.supersede_route_work();
-        bot.supersede_route_work();
+        bot.supersede_walk_route_work();
+        bot.supersede_walk_route_work();
     }
     assert_eq!(
         shared.lock().capacity(),

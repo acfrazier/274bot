@@ -59,7 +59,7 @@ fn typed_batch_admits_before_dispatch_and_carries_physical_walk_stamp() {
             level: 0,
         },
     });
-    slot.consume_seat_batch(input, 23, &[]);
+    slot.consume_seat_batch(input, 23, &[], None);
     assert_eq!(slot.seat.as_ref().unwrap().live()[0].id, id(1));
     let row = slot.seat_interact_delivery.pop().expect("admitted walk");
     assert_eq!(row.observed_walk_outcome_seq, 23);
@@ -74,7 +74,7 @@ fn typed_batch_rejects_run_or_mirror_gap_before_watermark_and_start() {
         run: 8,
         ..start(1, NativeKind::Hunt)
     });
-    slot.consume_seat_batch(wrong_run, 0, &[]);
+    slot.consume_seat_batch(wrong_run, 0, &[], None);
     assert!(slot.seat.as_ref().unwrap().live().is_empty());
     let mut gap = batch();
     gap.starts.push(start(2, NativeKind::Hunt));
@@ -82,7 +82,7 @@ fn typed_batch_rejects_run_or_mirror_gap_before_watermark_and_start() {
         owner: id(90),
         seq: 2,
     });
-    slot.consume_seat_batch(gap, 0, &[]);
+    slot.consume_seat_batch(gap, 0, &[], None);
     assert!(slot.seat.as_ref().unwrap().live().is_empty());
     assert_eq!(slot.seat.as_ref().unwrap().mirror_revokes_consumed(), 0);
     assert!(slot
@@ -109,7 +109,7 @@ fn typed_batch_pairs_parent_cancel_with_pending_start_and_excludes_gameplay() {
             level: 0,
         },
     });
-    slot.consume_seat_batch(input, 0, &[]);
+    slot.consume_seat_batch(input, 0, &[], None);
     assert!(slot.seat.as_ref().unwrap().live().is_empty());
     assert_eq!(
         slot.seat.as_ref().unwrap().results()[0].outcome,
@@ -136,7 +136,7 @@ fn typed_mirror_revoke_is_applied_before_that_batch_gameplay() {
             level: 0,
         },
     });
-    slot.consume_seat_batch(input, 0, &[]);
+    slot.consume_seat_batch(input, 0, &[], None);
     assert_eq!(slot.seat.as_ref().unwrap().mirror_revokes_consumed(), 1);
     assert!(slot.seat_interact_delivery.is_empty());
     assert_eq!(slot.seat.as_ref().unwrap().dropped(), 1);
@@ -160,7 +160,7 @@ fn typed_pending_hook_throw_completes_without_revoking_final_emission() {
             level: 0,
         },
     });
-    slot.consume_seat_batch(input, 11, &[]);
+    slot.consume_seat_batch(input, 11, &[], None);
     let seat = slot.seat.as_ref().unwrap();
     assert!(seat.live().is_empty());
     assert_eq!(seat.results()[0].outcome, SeatTerminal::Failed);
@@ -183,13 +183,13 @@ fn typed_batch_watermark_decide_start_and_own_push_share_turn() {
     let mut slot = slot();
     let mut first = batch();
     first.starts.push(start(1, NativeKind::BankNearest));
-    slot.consume_seat_batch(first, 0, &[]);
+    slot.consume_seat_batch(first, 0, &[], None);
     slot.seat.as_mut().unwrap().complete(id(1), false).unwrap();
     assert_eq!(slot.seat.as_ref().unwrap().results()[0].seq, 1);
 
     let mut session = batch();
     session.starts.push(start(2, NativeKind::Hunt));
-    slot.consume_seat_batch(session, 0, &[]);
+    slot.consume_seat_batch(session, 0, &[], None);
     assert_eq!(slot.seat.as_mut().unwrap().prompt(id(2)).unwrap(), Some(1));
 
     let mut input = batch();
@@ -212,7 +212,7 @@ fn typed_batch_watermark_decide_start_and_own_push_share_turn() {
             level: 0,
         },
     });
-    slot.consume_seat_batch(input, 37, &[]);
+    slot.consume_seat_batch(input, 37, &[], None);
     let seat = slot.seat.as_mut().unwrap();
     assert!(
         seat.results().is_empty(),
@@ -248,7 +248,7 @@ fn native_prompt_page_decision_and_late_copy_are_bounded_and_ordered() {
     let mut slot = slot();
     let mut starts = batch();
     starts.starts.push(start(1, NativeKind::Hunt));
-    slot.consume_seat_batch(starts, 0, &[]);
+    slot.consume_seat_batch(starts, 0, &[], None);
     let seat = slot.seat.as_mut().unwrap();
     assert_eq!(
         seat.prompt_with_details(id(1), point, &[1, 2, 3]),
@@ -284,7 +284,7 @@ fn native_prompt_page_decision_and_late_copy_are_bounded_and_ordered() {
         sequence: DecisionSequence::FIRST,
         answer: vec![9, 8, 7],
     });
-    slot.consume_seat_batch(decided, 0, &[]);
+    slot.consume_seat_batch(decided, 0, &[], None);
     let seat = slot.seat.as_mut().unwrap();
     assert_eq!(seat.live()[0].prompt, None);
     assert_eq!(seat.live()[0].decisions_consumed, 1);
@@ -308,7 +308,7 @@ fn native_prompt_page_decision_and_late_copy_are_bounded_and_ordered() {
         sequence: DecisionSequence::FIRST,
         answer: vec![0],
     });
-    slot.consume_seat_batch(late, 0, &[]);
+    slot.consume_seat_batch(late, 0, &[], None);
     let seat = slot.seat.as_ref().unwrap();
     assert_eq!(seat.late_controls(), late_before + 1);
     assert_eq!(seat.live()[0].prompt, Some(2));
@@ -323,7 +323,7 @@ fn native_prompt_page_decision_and_late_copy_are_bounded_and_ordered() {
         sequence: DecisionSequence::from_raw(3).unwrap(),
         answer: vec![0],
     });
-    slot.consume_seat_batch(invalid, 0, &[]);
+    slot.consume_seat_batch(invalid, 0, &[], None);
     assert_eq!(slot.seat.as_ref().unwrap().live()[0].prompt, Some(2));
     assert_eq!(slot.seat.as_ref().unwrap().late_controls(), late_before + 1);
     assert!(slot
@@ -353,6 +353,7 @@ fn carried_machine_phase_and_terminal_events_preserve_final_row_authority() {
             kind: MachineEventKind::Phase(NativePhase::Waiting),
             admitted: true,
         }],
+        None,
     );
     let seat = slot.seat.as_ref().unwrap();
     assert_eq!(seat.machine_phase(id(1)), Some(NativePhase::Waiting));
@@ -377,6 +378,7 @@ fn carried_machine_phase_and_terminal_events_preserve_final_row_authority() {
             kind: MachineEventKind::Done,
             admitted: true,
         }],
+        None,
     );
     let seat = slot.seat.as_ref().unwrap();
     assert_eq!(seat.machine_phase(id(1)), None);
@@ -409,7 +411,7 @@ fn carried_machine_failure_abort_and_takeover_settle_without_ghost_entries() {
         let mut slot = slot();
         let mut admitted = batch();
         admitted.starts.push(start(1, NativeKind::Walk));
-        slot.consume_seat_batch(admitted, 0, &[]);
+        slot.consume_seat_batch(admitted, 0, &[], None);
         slot.consume_seat_batch(
             batch(),
             0,
@@ -418,6 +420,7 @@ fn carried_machine_failure_abort_and_takeover_settle_without_ghost_entries() {
                 kind,
                 admitted: true,
             }],
+            None,
         );
         let seat = slot.seat.as_ref().unwrap();
         assert!(seat.live().is_empty());
@@ -437,7 +440,7 @@ fn late_control_plain_batches_do_not_revive_terminal_or_log() {
         let mut slot = slot();
         let mut admitted = batch();
         admitted.starts.push(start(1, NativeKind::BankNearest));
-        slot.consume_seat_batch(admitted, 0, &[]);
+        slot.consume_seat_batch(admitted, 0, &[], None);
         slot.consume_seat_batch(
             batch(),
             0,
@@ -446,11 +449,12 @@ fn late_control_plain_batches_do_not_revive_terminal_or_log() {
                 kind: SeatMachineEventKind::Done,
                 admitted: true,
             }],
+            None,
         );
         let seq = slot.seat.as_ref().unwrap().results()[0].seq;
         let mut acknowledged = batch();
         acknowledged.consumed_terminal_seq = seq;
-        slot.consume_seat_batch(acknowledged, 0, &[]);
+        slot.consume_seat_batch(acknowledged, 0, &[], None);
         assert!(slot.seat.as_ref().unwrap().results().is_empty());
         let logs_before = slot.pending_logs.len();
 
@@ -469,7 +473,7 @@ fn late_control_plain_batches_do_not_revive_terminal_or_log() {
                     answer: Vec::new(),
                 });
             }
-            slot.consume_seat_batch(duplicate, 0, &[]);
+            slot.consume_seat_batch(duplicate, 0, &[], None);
         }
         let seat = slot.seat.as_ref().unwrap();
         assert_eq!(seat.late_controls(), 50);
@@ -527,6 +531,7 @@ fn plain_batch_starts_preserve_four_roots_nested_parents_and_busy_refusal() {
         },
         0,
         &[],
+        None,
     );
     let seat = slot.seat.as_ref().unwrap();
     assert_eq!(seat.live().len(), 6);

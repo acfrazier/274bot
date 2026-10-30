@@ -5,6 +5,7 @@ import { parseBody, walkStatements } from './gathering-rs2.ts';
 export type DialogueUiIds = {
     scroll_root: number;
     quest_scroll_root: number;
+    chapter_root: number;
     book_root: number;
     book_forward: number;
     book_close: number;
@@ -85,7 +86,7 @@ export function resolveInterfaceAliases(content: string, aliases: readonly strin
 }
 
 
-/** Resolve only source-proven generic/quest-completion scrolls and book controls. */
+/** Resolve only source-proven generic, quest-completion, and chapter scrolls and book controls. */
 export function extractDialogueUiFacts(content: string): DialogueUiIds {
     const book = parseRs2Blocks(dialogueUiContentFiles[1], requireGatherText(content, dialogueUiContentFiles[1]));
     const scroll = parseRs2Blocks(dialogueUiContentFiles[2], requireGatherText(content, dialogueUiContentFiles[2]));
@@ -128,6 +129,7 @@ export function extractDialogueUiFacts(content: string): DialogueUiIds {
     const resolved = resolveInterfaceAliases(content, [
         'scroll',
         'questscroll',
+        'inter_199',
         'book',
         forward[0].name,
         'book:close',
@@ -136,6 +138,7 @@ export function extractDialogueUiFacts(content: string): DialogueUiIds {
     return {
         scroll_root: resolved.scroll.id,
         quest_scroll_root: resolved.questscroll.id,
+        chapter_root: resolved.inter_199.id,
         book_root: resolved.book.id,
         book_forward: resolved[forward[0].name].id,
         book_close: resolved['book:close'].id,

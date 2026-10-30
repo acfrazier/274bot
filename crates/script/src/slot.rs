@@ -441,11 +441,12 @@ pub struct SlotScript {
     pub want_run: bool,
     state: RunState,
     compiled: Option<Box<CompiledRun>>,
-    /// Diagnostic only: a blocked run has no instance or restart authority.
+    /// The last status of a blocked, failed, or completed run, for diagnostics only.
+    /// It grants no instance or restart authority.
     terminal_native_status: Option<Arc<crate::native::ScriptStatus>>,
     preparing: Option<Box<Preparation>>,
-    /// One bounded native Start retained across temporary Full admission.
-    pending_compiled_start: Option<compiled::PendingCompiledStart>,
+    /// A full admission queue retains one native Start without enlarging every slot.
+    pending_compiled_start: Option<Box<compiled::PendingCompiledStart>>,
     /// A watchdog restart awaiting capacity keeps its current instance until
     /// the replacement job is accepted on a later slot turn.
     pending_compiled_restart: bool,
@@ -2384,7 +2385,9 @@ impl SlotScript {
     }
 
     /// The host calls this only while holding the slot's final dispatch fence.
-    /// Keep the bounded outbox's allocation for the next observed tick.
+    /// Keep the bounded outbox's allocation for the next observed tick. A
+    /// returned action leaves the slot's custody: the host dispatches it in
+    /// this pass, so it is not dropped unsent.
     pub fn take_native_action(&mut self) -> Option<crate::native::HostAction> {
         if !self.dispatch_open() && !self.completed_seat_dispatch_open() {
             return None;
@@ -2392,8 +2395,9 @@ impl SlotScript {
         if self.seat.is_some() {
             let completed = self.completed_seat_dispatch_open();
             self.dispatch_seat_rows();
-            while let Some(action) = self.seat_native_delivery.pop_front() {
+            while let Some(mut action) = self.seat_native_delivery.pop_front() {
                 if action.live() {
+                    action.release_custody();
                     return Some(action);
                 }
                 if let Some(seat) = &mut self.seat {
@@ -2407,8 +2411,9 @@ impl SlotScript {
         }
         let ledger = self.native_runtime.ledger.as_mut()?;
         while !ledger.outbox.is_empty() {
-            let action = ledger.outbox.remove(0);
+            let mut action = ledger.outbox.remove(0);
             if action.live() {
+                action.release_custody();
                 return Some(action);
             }
         }
@@ -2564,9 +2569,10 @@ impl SlotScript {
         batch: DecodedSeatBatch,
         observed_walk_outcome_seq: u64,
         machine_events: &[crate::native::seat_rows::SeatMachineEvent],
+        nav: Option<&nav_planner::contract::NavLease>,
     ) {
         if self.admit_seat_batch(&batch) {
-            self.apply_seat_batch(batch, observed_walk_outcome_seq, machine_events);
+            self.apply_seat_batch(batch, observed_walk_outcome_seq, machine_events, nav);
         }
     }
 
@@ -2578,7 +2584,7 @@ impl SlotScript {
         observed_walk_outcome_seq: u64,
         machine_events: &[crate::native::seat_rows::SeatMachineEvent],
     ) {
-        self.consume_seat_batch(batch, observed_walk_outcome_seq, machine_events);
+        self.consume_seat_batch(batch, observed_walk_outcome_seq, machine_events, None);
     }
 
     /// Preflight a batch before any of its rows reaches the seat. A
@@ -2632,6 +2638,7 @@ impl SlotScript {
         mut batch: DecodedSeatBatch,
         observed_walk_outcome_seq: u64,
         machine_events: &[crate::native::seat_rows::SeatMachineEvent],
+        nav: Option<&nav_planner::contract::NavLease>,
     ) {
         let execution = self
             .seat_fence
@@ -2726,7 +2733,7 @@ impl SlotScript {
                             self.start_api_combat(start.id.get(), &Arc::new(request));
                         }
                         SeatStartArgs::QuestProgress(name) => {
-                            self.start_api_progress(start.id.get(), &name);
+                            self.start_api_progress(start.id.get(), &name, nav.cloned());
                         }
                         SeatStartArgs::Bank(request) => {
                             self.start_bank(start.id, request);
@@ -2993,6 +3000,7 @@ impl SlotScript {
     fn consume_held_fold(
         &mut self,
         mut queued: crate::native::seat_rows::QueuedSeatBatch,
+        nav: Option<&nav_planner::contract::NavLease>,
     ) -> Option<crate::native::seat_rows::QueuedSeatBatch> {
         if !self.admit_seat_batch(&queued.batch) {
             return None;
@@ -3009,6 +3017,7 @@ impl SlotScript {
                     queued.batch,
                     queued.observed_walk_outcome_seq,
                     &queued.machine_events,
+                    nav,
                 );
                 return None;
             }
@@ -3144,6 +3153,7 @@ impl SlotScript {
     /// is "an update was sent"; the inner option is replace versus clear.
     pub fn drain_host_interacts(
         &mut self,
+        nav: Option<&nav_planner::contract::NavLease>,
     ) -> (
         Option<Option<api::run_policy::RunPolicyOverride>>,
         Vec<crate::interact::QueuedInteract>,
@@ -3254,7 +3264,7 @@ impl SlotScript {
             }
             self.release_held_fold(&mut queued);
             if queued.held_fold {
-                if let Some(rest) = self.consume_held_fold(queued) {
+                if let Some(rest) = self.consume_held_fold(queued, nav) {
                     paging = true;
                     carried.push(rest);
                 }
@@ -3264,6 +3274,7 @@ impl SlotScript {
                 queued.batch,
                 queued.observed_walk_outcome_seq,
                 &queued.machine_events,
+                nav,
             );
         }
         if !carried.is_empty() {
@@ -4018,6 +4029,10 @@ impl SlotScript {
                     self.compiled_interacts.clear();
                     self.compiled_interact_outcome_seqs.clear();
                 }
+                self.terminal_native_status = self
+                    .compiled
+                    .as_ref()
+                    .and_then(|run| run.output.status.as_ref().map(Arc::clone));
                 self.teardown_compiled(StopReason::Completed);
                 self.watchdog.cancel_clear();
                 self.state = RunState::Idle;

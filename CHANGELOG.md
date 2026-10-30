@@ -7,14 +7,26 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.7` 
 
 ### Panel and terminal app
 
+- In the panel, **Copy settings** now follows a bot if you rename it in
+  **Profiles** before **Confirm**. The copy is still cancelled if the
+  target is deleted or the vault becomes unavailable.
+
 - Source builds can now omit the JavaScript runtime with
   `--no-default-features`. These builds keep Gatherer, Grinch and Quester,
   their settings, and native Start, Pause, Stop and paint controls. They do
   not offer Load, Reload, catalog or rs2b0t profile import. Default builds
   still include JavaScript. Sherlock needs the JS-runtime build until its
   native clue rewrite, although Sherlock itself creates no V8 isolate.
+- When a `--live` or `--smoke` run of the panel fails during startup, the panel
+  now stops its bot workers before it closes its window. Before, the panel
+  could crash while it exited.
 - The terminal app's script pane now marks the selected compiled (native)
   script card with `>` the same way as a selected JavaScript card.
+- On Linux, the known issue where the panel could close right after start
+  on a desktop with two graphics chips no longer happens with current
+  graphics drivers and desktop versions, so it is no longer listed. 274bot
+  did not change for this. If you still see "importing the supplied dmabufs
+  failed", start the panel with `WGPU_POWER_PREF=high ./panel-play`.
 
 ### Combat
 
@@ -25,27 +37,39 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.7` 
   real max hit. A cow's max hit is 1, so a bot eats at 3 hitpoints and
   stops for lack of food at 2. Imps cannot damage the bot at all (max hit
   0), so the bot does not raise Protect from Melee against them.
-- When a quest fight cannot attack its attacker, the bot now asks the route
-  planner for a safe place to walk to. It offers the quest's own stand first,
-  then places beyond the attacker's chase range, then places that are only
-  farther away. The planner picks the nearest place it can reach. Before, the
-  bot could pick a spot it could not reach, stand still, eat all its food and
-  die. The static hostile tree near Draynor Manor is one such attacker. If a
-  route fails, the bot plans again from where it stands and prefers the next
-  kind of place. A route that neither arrives nor fails also ends: the bot
-  counts game ticks, and when the walk takes longer than the measured walk
-  distance plus a margin of 12 ticks, it gives up on that route and starts
-  the next. When the walk distance cannot be measured, the limit is the
-  planner's own limit on route length, and the walk machine's ten-minute
-  deadline ends the walk first. A pass makes one request for each kind of
-  place that has candidates, so up to three requests (two when the quest
-  names no stand). The places of different kinds can overlap. A second pass
-  can follow the first when the food runs out, so the bot makes at most six
-  requests. While food remains, the first pass keeps eating as it walks; the
-  second pass, after the food is gone, does not eat. The quest's own walk
-  starts only after the bot sees that the attacker is gone. If every route
-  fails, the quest stops with the last route failure. This does not promise
-  that an escape exists.
+- When a quest fight cannot attack its target, the bot asks the route planner
+  to choose among exact escape goals. It offers the quest's stand first, then
+  tiles beyond the attacker's chase range, then tiles farther from the attacker
+  than the player is. The baked collision check removes blocked tiles,
+  including the dead-tree thicket near Draynor Manor. The route planner decides
+  which remaining goals it can reach.
+
+  After a walk fails, the bot plans again from its current tile and tries the
+  next tier with unrequested goals. Each request names one tier. Across both
+  passes, later requests never resend a tile named by an earlier failed request.
+  The second pass keeps this exclusion after food runs out. Six fixed 32-byte
+  request records and a one-byte count add 200 bytes to each bot's combat-run
+  state after alignment. The fixed history does not grow on game ticks. The
+  live Reach flood measures walking depth to a goal in that tier. It does not
+  remove goals. A walk that neither arrives nor fails ends after the measured
+  depth plus 12 game ticks. The bot counts game ticks. When it cannot measure
+  the depth, this tick limit does not apply. The route planner's own length
+  limit applies. The walk machine's ten-minute deadline ends the walk first.
+
+  Each pass makes at most one request per tier with unrequested goals. It makes
+  up to three requests, or two when the quest gives no stand. A second pass can
+  follow when food runs out, so the bot makes at most six requests. The first
+  pass keeps eating during each walk while food remains. The second pass does
+  not eat after food runs out. The quest's own walk starts only after the bot
+  sees that the attacker is gone. If every route fails, the quest stops with
+  the last route failure. The bot does not promise that an escape exists.
+
+### Survival
+
+- After a bot eats a Strange fruit, it now counts its poison as cured even
+  when it sees the eat message and the loss of the fruit in different game
+  ticks. Before, the bot and scripts that read its poison state could still
+  see it as poisoned.
 
 ### Navigation
 
@@ -60,6 +84,11 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.7` 
   Transport time limits now count game ticks instead of polls, so a burst
   of polls inside one tick no longer ends a crossing early, and a slow
   poll that misses several ticks no longer extends it.
+
+### Grinch
+
+- Grinch now retries failed ground-item approaches before running its own
+  fallback, using the same bounded walk-retry behavior as Quester.
 
 ### Quester
 
@@ -77,13 +106,103 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.7` 
   observed tile on a later game tick. The shared three-attempt limit matches
   `walk`. Danger refusals, blocked zones, user input, cancellation and missing
   evidence still stop at once. Exhaustion keeps the last failure detail.
+- A Talk step no longer fails when the NPC is out of view for a moment while
+  the bot walks to it, for example while it wanders. The bot keeps walking
+  to where it last saw the NPC and talks to it when it sees it again. If the
+  NPC is still not in view when the walk and its one retry end, the step
+  stops with an error that names the NPC and the tile where it was last
+  seen.
+- After a Talk-to refusal, a guide walks to the NPC's latest observed tile and
+  sends one more Talk-to request. This recovery also applies when the NPC's
+  wander range is zero. If the recovery walk fails or the server refuses the
+  next Talk-to request, the error keeps the refusal text.
+- Quest guides can now kill until a required item drops, with a total kill
+  budget and a named stop. The final allowed kill still gets its loot wait.
+  The receipt records confirmed kills across re-engagements.
+- After an advancing step's settle timeout, the Quester rereads quest progress
+  before it retries. Steps can also set their own attempt limit and a named
+  stop.
+- Quest guides can select a product and quantity from a production menu
+  opened by using an item on another item or on a location.
+- Ground-item Take steps can now use an observed game-tick budget. This
+  lets a guide collect a temporary scripted drop such as the Jailer's key,
+  without a wall-clock spawn wait.
+- The panel and TUI now keep a quest run's final status after it completes.
+- Quest guides can now opt in to answering a repeated menu question once and
+  then moving on. `answer_once: true` skips a `prefer` entry that already
+  answered an accepted page in the same conversation and falls through to the
+  next entry in order, so a guide can answer a repeated menu such as Nature
+  Spirit's Filliman Tarlock conversation once and leave. It defaults to false
+  and no bundled guide sets it, so every shipped guide keeps its answers.
+  With the option on, `prefer` holds at most 32 entries.
+- Quester's anchored prewalk for an unseen loc now accepts any standable tile
+  within the anchor radius, leaving the final, live-loc approach to select an
+  accessible interaction side.
+- Talk steps now approach NPCs within the configured interaction distance
+  before opening their dialogue. The approach budgets one observed tick per
+  planned walking tile, plus two slack ticks. When the live reach map cannot
+  reach the NPC, the budget is the route length that the route planner reports
+  for the same walk, plus the two slack ticks. A request with no route fails
+  with a named reason after one fresh plan. A route planner that gives no
+  answer within eight observed ticks counts the same way. A route that ends
+  short while the NPC stands still also gets one fresh plan. A replan, one for
+  each tile other than the NPC's home tile in its legal wander square, is spent
+  only when the NPC has moved. The first-page clock counts four observed ticks
+  from the engine's read of the accepted Talk-to click, or from the bot's
+  arrival beside the NPC if that comes later. The NPC's first game message
+  restarts it. A page on the deadline tick is accepted.
+- Damage from quest dialogue no longer looks like an attack when no visible
+  NPC or player targets the bot.
+- A failed walk also reports where its route ended.
+- Quest dialogue no longer stops at two identical pages in a row. Merlin's
+  Crystal shows `And wait...` twice, and the guide used to wait for the page
+  to change, so it reported `dialogue failed` while the server had already
+  accepted the Continue. The guide now counts a Continue as done when the
+  host accepted it and a later game tick was observed, or when the page
+  changes. The guide presses Continue again on an identical page, but only
+  within the 10 observed game ticks that its first Continue on that page got.
+  A page that never changes ends the wait at that bound, not after 3 seconds
+  of clock time, even when the guide did not observe every tick (for example
+  during a hold) or had to delay the repeated press to a later tick.
+- When a step with a dialogue fails while a dialogue page is still open, its
+  retry continues that page from the player's current tile. It no longer
+  walks back to the step's start position first. This matters where the
+  quest's script moves the player during the dialogue, as the Merlin's
+  Crystal crate does. The retry still counts against the step's attempt limit.
+  When the attempts run out, the step stops with the reason of the last
+  failure.
+- Quest dialogue no longer reports `expected dialogue did not open` while the
+  host has not yet sent the Talk-to click. The wait for the first page starts
+  when the host accepts the click. While the host cannot send it (not
+  connected, or holding the bot), the guide waits. When a hold drops the
+  click unsent, the guide sends it again. When the host refuses the click,
+  the guide stops at once with `expected dialogue did not open`, the NPC, the
+  tick of the refusal and the last game message.
 
 ### Scripting
+
+- Bank opening now waits for its own walk to finish. A completed walk from
+  a script could reuse the bank walk's request number and end the bank walk
+  before the bot reached the bank. The host now checks the route generation
+  before it sends a walk result to a native action.
+
+- A native script that asked the host for a route assessment could wait for
+  an answer that never came. This happened when the script's earlier walk had
+  just ended: the host cleared the old walk and, with it, the new assessment.
+  The host now clears only the old walk's own work, so the assessment still
+  answers once. If the host itself cancels a live assessment (a pause or a
+  relog), the script now gets one refusal that says so.
 
 - The script API documentation now states that moving the bot by hand during a
   fight ends `api.combat.fight` as `aborted` with reason `user-input`. The host
   has settled it that way since 0.2.4; the declarations and pages still
   described an `interrupted` result.
+- Fare recovery chooses a free tile next to Luthas that the bot can reach,
+  using the shortest route and the closest tile as a tie-breaker.
+  If Luthas is not in view, the bot first walks to where he works, then chooses
+  a free tile next to him.
+  The bot makes up to three attempts each time the bot goes to talk to Luthas.
+  The bot logs each failed attempt and the final failure.
 
 - A saved setting now takes effect only after its save has reached the disk.
   Before, the panel and the terminal app applied a checkbox at once and kept it
@@ -136,6 +255,17 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.7` 
   without a new action. "Don't show again" in the panel's render-all warning
   now renders every wall member only when the acknowledgement is saved; if
   the save fails, **only render focused** stays on.
+
+### Fixed during development
+
+#### Scenario checks
+
+- The chicken bank check now uses a guaranteed Bones drop for its pickup and
+  deposit checks. It requires fresh combat XP after the bank return instead
+  of waiting for a random Feather drop. Up to three further bank returns may
+  restart the same 150-tick combat window. Each return follows a fresh bank
+  visit. A stalled return or a spent restart limit still fails. The 12-minute
+  deadline is the outer wall-clock limit.
 
 ## [0.2.7] — 2026-10-26 — Beta 2
 

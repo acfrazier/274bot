@@ -1068,6 +1068,8 @@ pub struct Session {
     /// the selected bot (mirrored into `focus.focused` for slot threads),
     /// per-slot [`SlotIo`], removals and operation results.
     pub core: OperatorSession<SlotIo>,
+    /// Terminal Quit was submitted; Drop must not submit it a second time.
+    play_retired: bool,
     /// Last vault/connection error shown in the banner.
     pub error: Option<String>,
     /// The banner message's expiry clock ([`Self::expire_error`]).
@@ -1274,6 +1276,8 @@ pub struct Session {
     /// section button. This is the focused heading; per-profile pending
     /// Browse lives in the shared [`frontend_core::Scripts`].
     pub script_sel: Option<ScriptChoice>,
+    /// Cached effective zone declarations shown before a Quester start.
+    pub(crate) quester_start_zone_cache: frontend_core::scripts::QuesterStartZoneCache,
     /// Shared script coordination (card library and catalog, assignment,
     /// per-profile parameters, Start/Stop all, reload, Apply to all).
     pub scripts: frontend_core::Scripts,
@@ -1786,6 +1790,7 @@ impl Session {
                 renderer_by: HashMap::new(),
             })),
             core,
+            play_retired: false,
             error: None,
             error_expiry: frontend_core::ErrorExpiry::default(),
             mainland: Arc::new(AtomicBool::new(
@@ -1876,6 +1881,7 @@ impl Session {
             multibox: false,
             ui,
             script_sel: None,
+            quester_start_zone_cache: frontend_core::scripts::QuesterStartZoneCache::default(),
             scripts,
             script_browse_open: false,
             #[cfg(feature = "js")]
@@ -3102,7 +3108,8 @@ impl Session {
         self.mainland.store(true, Ordering::Relaxed);
         let policy = run.render_policy();
         let stress_wall = matches!(policy, RenderPolicy::Stress50 | RenderPolicy::Stress50Full);
-        self.scatter.store(stress_wall, Ordering::Relaxed);
+        let scatter_seed = run.workload() == frontend_core::bench::Workload::Idle && stress_wall;
+        self.scatter.store(scatter_seed, Ordering::Relaxed);
         if !self.start_vault(run.vault(), run.passphrase()) {
             return Err(self
                 .error
@@ -5736,6 +5743,41 @@ impl Session {
             .advance_quester_paths(&mut self.quester_paths, selected);
     }
 
+    /// Refresh the selected Quester card's disclosure from the same effective
+    /// profile bag Start consumes.
+    pub(crate) fn refresh_quester_start_zone_cache(&mut self) {
+        if self.script_sel.as_ref().and_then(ScriptChoice::compiled_id)
+            != Some(frontend_core::scripts::CompiledCardId::QUESTER)
+        {
+            self.quester_start_zone_cache.clear();
+            return;
+        }
+        let Some(profile) = self.focused_name() else {
+            self.quester_start_zone_cache
+                .set_unavailable("Quester settings are unavailable without a focused profile");
+            return;
+        };
+        match self.scripts.compiled_bag(
+            &self.core,
+            &profile,
+            frontend_core::scripts::CompiledCardId::QUESTER,
+        ) {
+            Ok(bag) => {
+                self.quester_start_zone_cache.update(&bag);
+            }
+            Err(error) => {
+                self.quester_start_zone_cache
+                    .set_unavailable(format!("Quester settings are unavailable: {error}"));
+            }
+        }
+    }
+
+    pub(crate) fn quester_start_zone_view(
+        &self,
+    ) -> Option<Result<&frontend_core::scripts::QuesterStartZones, &str>> {
+        self.quester_start_zone_cache.view()
+    }
+
     /// The focused slot's script lifecycle state; `Idle` when nothing is
     /// focused or the slot has no script. The script section's disable
     /// rules key off this.
@@ -5955,16 +5997,26 @@ fn warn_stress50_debug() {
     }
 }
 
+impl Session {
+    /// Retire every slot through Quit before the window releases its GPU driver.
+    pub(crate) fn retire_play(&mut self) {
+        if self.play_retired {
+            return;
+        }
+        self.play_retired = true;
+        let (core, mut surface) = self.core_and_surface();
+        let _ = core.submit(OperatorCommand::Quit, Targets::Everyone, &mut surface);
+    }
+}
+
 /// Detach the picker's nav world only after the play's slot threads are
 /// joined, so no live observe can read a cleared `pack()`.
 impl Drop for Session {
     fn drop(&mut self) {
         self.release_walk_map();
-        // Window close is Quit: every slot shuts down and the play closes
-        // (joining its workers) before the panel's other fields drop. With
-        // no slot left there is nothing to retire (`NoTarget`).
-        let (core, mut surface) = self.core_and_surface();
-        let _ = core.submit(OperatorCommand::Quit, Targets::Everyone, &mut surface);
+        // Window close is Quit. Terminal frames also call retire_play before
+        // returning, while the GPU window is still open.
+        self.retire_play();
         crate::picker::set_pack(None);
     }
 }

@@ -276,6 +276,41 @@ fn native_near_walk_after_compat_tile_walk_uses_arrival_endpoint() {
 }
 
 #[test]
+fn stale_route_terminal_cannot_complete_a_native_walk_with_the_same_request_id() {
+    let mut rig = open_rig(false);
+    rig.observe(1);
+    rig.wait_routed();
+    {
+        let mut navs = rig.navs.lock().unwrap();
+        let bot = navs.get_mut("alice").unwrap();
+        let request_id = bot.native_walk.as_ref().unwrap().request_id().get();
+        let previous_generation = bot.route_generation.wrapping_sub(1);
+        // Compatibility walks and native actions have separate request-id
+        // sequences. A retained compatibility terminal can reuse this id.
+        bot.walk_outcome_seq = bot.walk_outcome_seq.wrapping_add(1);
+        bot.walk_outcome_generation = previous_generation;
+        bot.walk_outcome_request_id = request_id;
+        bot.walk_outcome_failed = false;
+        bot.walk_outcome_blocked = false;
+    }
+
+    rig.observe(2);
+    assert!(
+        rig.shared.lock().result.is_none(),
+        "a previous route generation must not finish the current native walk"
+    );
+
+    let target = WorldTile {
+        x: 4,
+        z: 0,
+        level: 0,
+    };
+    rig.step_at(target);
+    rig.observe_at(3, target);
+    assert_eq!(rig.end(), Some(Ok(WalkEnd::Arrived)));
+}
+
+#[test]
 fn candidate_walk_returns_and_settles_the_chosen_goal() {
     let mut rig = rig(Some(Arc::new(open_world(40, 40))), false);
     // Client scene borders are blocked. Use an actual interior Area stand.
@@ -932,6 +967,13 @@ impl Rig {
     }
 
     fn observe_with_here(&mut self, tick: u64, here: WorldTile) {
+        self.observe_unpumped(tick, here);
+        crate::script_runtime::pump_route_work(&self.navs, "alice");
+    }
+
+    /// The observer pass alone: script effects dispatch, receipts deliver, and
+    /// route work stays where the dispatch left it until the next pump.
+    fn observe_unpumped(&mut self, tick: u64, here: WorldTile) {
         script_observe(
             &mut self.driver,
             "alice",
@@ -950,13 +992,18 @@ impl Rig {
             false,
             false,
         );
-        crate::script_runtime::pump_route_work(&self.navs, "alice");
     }
 
     /// Steps from the snapshot's own (network route-head) tile, the same
     /// position authority the host passes in production.
     fn step(&mut self) {
         crate::script_runtime::pump_route_work(&self.navs, "alice");
+        self.step_unpumped();
+    }
+
+    /// The navigation step alone, as it runs when the route worker has not yet
+    /// finished and the pump has nothing to harvest.
+    fn step_unpumped(&mut self) {
         step_nav_bot(
             &mut self.driver,
             "alice",
@@ -3512,6 +3559,7 @@ fn sherlock_bool_walk_inherits_committed_bits_while_isolate_wiring_stays_frozen(
         ),
         api::game_data::for_revision(api::selected::ClientRevision::R289).unwrap(),
         Arc::default(),
+        None,
     )
     .unwrap();
     assert!(wait_until(5_000, || {
@@ -5527,6 +5575,7 @@ fn lifecycle_followups_stop_clears_combat_raise_but_preserves_user_prayer() {
                 &quests,
                 cap,
                 &script::local_state::OperatorLoadouts::absent(),
+                None,
             )
         }
     })
@@ -5860,6 +5909,7 @@ fn s2b_admission_per_bot_layouts() {
     // S0c moves the platform-specific isolate mutexes into the surface run.
     // The shared 64-bit slot layout no longer contains those mutexes.
     // S0d adds a 16 B per-slot generation cache for lock-free compiled-card reads.
+    // QUEST-DANGER-CONSENT boxes pending Start: SlotScript shrinks 1624 B to 1544 B.
     // NAV-BUSY-TRANSPORT adds 32 B to Traveller (busy-refusal retry state and
     // the distinct-tick transport clock): NavBot is 3816 B. Lab memory A/B on
     // the branch head passed (NAV-BUSY-TRANSPORT/mem-ab-r3).
@@ -5875,7 +5925,7 @@ fn s2b_admission_per_bot_layouts() {
             std::mem::size_of::<script::combat::Combat>(),
             std::mem::size_of::<script::combat::WalkGuard>()
         ),
-        (3816, 1624, 512, 264)
+        (3816, 1544, 512, 264)
     );
     #[cfg(all(
         target_os = "linux",
@@ -5890,7 +5940,7 @@ fn s2b_admission_per_bot_layouts() {
             std::mem::size_of::<script::combat::Combat>(),
             std::mem::size_of::<script::combat::WalkGuard>()
         ),
-        (3816, 1624, 512, 264)
+        (3816, 1544, 512, 264)
     );
     assert!(std::mem::size_of::<script::combat::Combat>() <= 512);
     assert!(std::mem::size_of::<script::combat::WalkGuard>() <= 264);
@@ -6313,7 +6363,7 @@ mod s2b_admission_contract {
             let authority = bot.native_walk.as_ref().unwrap().clone();
             // Isolate the owner-result publication boundary from a concurrent
             // search completion. The actual request and action owner stay live.
-            bot.supersede_route_work();
+            bot.supersede_walk_route_work();
             (bot.route_generation, bot.walk_request_id, authority)
         };
         crate::script_runtime::publish_route_owner_refusal(
@@ -6427,6 +6477,222 @@ mod s2b_admission_contract {
         let bots = rig.navs.lock().unwrap();
         assert!(bots["alice"].assess_result.is_none());
         assert!(!bots["alice"].ordinary_movement_owned(0));
+    }
+
+    #[derive(Default)]
+    struct Chain {
+        walked: Option<WalkEnd>,
+        requests: Vec<u64>,
+        receipts: Vec<AssessReceipt>,
+    }
+
+    /// A pre-walk to (4, 0, 0) whose terminal receipt is consumed on one tick.
+    /// On that same tick the script asks for an advisory assessment of
+    /// (12, 0, 0), as a Dialogue does when its live flood has no route.
+    struct WalkThenAssess {
+        shared: Arc<parking_lot::Mutex<Chain>>,
+        walk: Option<ActionHandle<Walk>>,
+        begun: bool,
+    }
+
+    impl Script for WalkThenAssess {
+        fn tick(&mut self, tick: &mut NativeTick<'_>) -> Result<ScriptFlow, ScriptFailure> {
+            let mut shared = self.shared.lock();
+            if let Some(&id) = shared.requests.last() {
+                if let Some(receipt) = tick.actions.take_assess_receipt(&mut tick.cx, id) {
+                    shared.receipts.push(receipt);
+                }
+            }
+            let required_after = tick.cx.evidence();
+            let request = |target| WalkRequest {
+                target,
+                candidate_goals: None,
+                radius: 0,
+                arrival: Default::default(),
+                loc_id: None,
+                options: script::native::WalkOptions {
+                    allow_danger_zones: WalkBit::Allow,
+                    ..Default::default()
+                },
+                required_after,
+                evidence: None,
+                cross: Box::new([]),
+                protect: false,
+                food_guard: false,
+                allow: Default::default(),
+            };
+            let failure = |code: &str, error: ActionError| ScriptFailure {
+                code: code.into(),
+                message: format!("{error:?}").into(),
+            };
+            if let Some(handle) = &self.walk {
+                if let Poll::Ready(result) = tick.actions.poll(handle, &mut tick.cx) {
+                    self.walk = None;
+                    shared.walked = Some(result.map_err(|error| failure("walk", error))?.end);
+                    let id = tick
+                        .actions
+                        .assess_walk(request(tile(12)), &mut tick.cx)
+                        .map_err(|error| failure("assess", error))?;
+                    shared.requests.push(id);
+                }
+            } else if !self.begun {
+                self.begun = true;
+                self.walk = Some(
+                    tick.actions
+                        .begin::<Walk>(request(tile(4)), &mut tick.cx)
+                        .map_err(|error| failure("begin", error))?,
+                );
+            }
+            Ok(ScriptFlow::Continue)
+        }
+    }
+
+    fn chained_rig() -> (Rig, Arc<parking_lot::Mutex<Chain>>) {
+        let rig = open_rig(false);
+        let shared = Arc::new(parking_lot::Mutex::new(Chain::default()));
+        {
+            let slot = rig.slot();
+            let mut slot = slot.lock().unwrap();
+            slot.stop();
+            slot.start_test_script(
+                Box::new(WalkThenAssess {
+                    shared: Arc::clone(&shared),
+                    walk: None,
+                    begun: false,
+                }),
+                None,
+            )
+            .unwrap();
+        }
+        (rig, shared)
+    }
+
+    fn advisory_work(rig: &Rig) -> (bool, bool) {
+        let bots = rig.navs.lock().unwrap();
+        let bot = &bots["alice"];
+        (bot.pending_route.is_some(), bot.route_ticket.is_some())
+    }
+
+    /// Complete the pre-walk and leave assessment B queued, with the old walk's
+    /// host owner revoked and still attached to the slot. With `accepted`, the
+    /// pump has also admitted B's worker ticket (not yet harvested).
+    fn pre_walk_then_queued_assessment(accepted: bool) -> (Rig, Arc<parking_lot::Mutex<Chain>>) {
+        let (mut rig, shared) = chained_rig();
+        rig.observe(1);
+        rig.wait_routed();
+        rig.step_at(tile(4));
+        // The script consumes the walk's terminal receipt and asks for B.
+        rig.observe_unpumped(2, tile(4));
+        assert_eq!(shared.lock().walked, Some(WalkEnd::Arrived));
+        assert_eq!(shared.lock().requests.len(), 1);
+        {
+            let bots = rig.navs.lock().unwrap();
+            let bot = &bots["alice"];
+            let old = bot.native_walk.as_ref().expect("the old walk is attached");
+            assert!(!old.live(), "the old walk's owner is revoked");
+            assert_eq!(bot.advisory_request_id, shared.lock().requests[0]);
+        }
+        assert_eq!(advisory_work(&rig), (true, false), "B waits for the pump");
+        if accepted {
+            crate::script_runtime::pump_route_work(&rig.navs, "alice");
+            assert_eq!(advisory_work(&rig), (false, true), "B holds a ticket");
+        }
+        (rig, shared)
+    }
+
+    fn assert_one_receipt_for_b(rig: &mut Rig, shared: &Arc<parking_lot::Mutex<Chain>>) {
+        assert!(
+            rig.wait_for_route(5_000, || rig.navs.lock().unwrap()["alice"]
+                .assess_result
+                .is_some()),
+            "B's answer was published"
+        );
+        for tick in 3..=6 {
+            rig.observe_at(tick, tile(4));
+        }
+        let shared = shared.lock();
+        assert_eq!(shared.requests.len(), 1, "the script never asked again");
+        assert_eq!(shared.receipts.len(), 1, "exactly one receipt arrived");
+        let receipt = &shared.receipts[0];
+        assert_eq!(receipt.request_id, shared.requests[0]);
+        assert!(
+            receipt.assessment.is_some(),
+            "a real assessment: {receipt:?}"
+        );
+        assert!(receipt.route_ticks > 0);
+        assert!(receipt.refusal.is_none());
+        assert_eq!(advisory_work(rig), (false, false));
+        assert!(rig.navs.lock().unwrap()["alice"].assess_result.is_none());
+    }
+
+    #[test]
+    fn old_walk_cleanup_leaves_a_queued_assessment_and_it_answers_once() {
+        let (mut rig, shared) = pre_walk_then_queued_assessment(false);
+        rig.step_unpumped();
+        {
+            let bots = rig.navs.lock().unwrap();
+            assert!(bots["alice"].native_walk.is_none(), "the cleanup ran");
+        }
+        assert_eq!(advisory_work(&rig), (true, false), "B survives the cleanup");
+        assert_one_receipt_for_b(&mut rig, &shared);
+    }
+
+    #[test]
+    fn old_walk_cleanup_leaves_an_accepted_assessment_and_it_answers_once() {
+        let (mut rig, shared) = pre_walk_then_queued_assessment(true);
+        rig.step_unpumped();
+        {
+            let bots = rig.navs.lock().unwrap();
+            assert!(bots["alice"].native_walk.is_none(), "the cleanup ran");
+        }
+        assert_eq!(advisory_work(&rig), (false, true), "B survives the cleanup");
+        assert_one_receipt_for_b(&mut rig, &shared);
+    }
+
+    #[test]
+    fn host_cancel_of_a_live_assessment_delivers_one_typed_refusal() {
+        for accepted in [false, true] {
+            let (mut rig, shared) = pre_walk_then_queued_assessment(accepted);
+            let generation = rig.slot().lock().unwrap().runtime_generation();
+            // A pause or relog hold ends the slot's route work while B's owner
+            // is still live.
+            crate::script_runtime::hold_script_nav(&rig.navs, "alice", Some(generation));
+            assert_eq!(advisory_work(&rig), (false, false), "accepted={accepted}");
+            for tick in 3..=6 {
+                rig.observe_at(tick, tile(4));
+            }
+            let shared = shared.lock();
+            assert_eq!(shared.requests.len(), 1);
+            assert_eq!(shared.receipts.len(), 1, "accepted={accepted}");
+            let receipt = &shared.receipts[0];
+            assert_eq!(receipt.request_id, shared.requests[0]);
+            assert!(receipt.assessment.is_none());
+            assert_eq!(
+                receipt.refusal,
+                Some(script::native::WalkRefusal::NoRouteWithinBounds {
+                    tried: 0,
+                    last: None
+                })
+            );
+            assert!(receipt.detail.as_deref().is_some_and(|detail| {
+                detail.contains("cancelled") && detail.contains("may ask again")
+            }));
+        }
+    }
+
+    #[test]
+    fn walk_cleanup_drops_an_assessment_whose_owner_is_revoked_without_a_receipt() {
+        for accepted in [false, true] {
+            let (mut rig, shared) = pre_walk_then_queued_assessment(accepted);
+            rig.slot().lock().unwrap().stop();
+            rig.step_unpumped();
+            assert_eq!(advisory_work(&rig), (false, false), "accepted={accepted}");
+            for tick in 3..=5 {
+                rig.observe_at(tick, tile(4));
+            }
+            assert!(shared.lock().receipts.is_empty());
+            assert!(rig.navs.lock().unwrap()["alice"].assess_result.is_none());
+        }
     }
 
     fn unresolved_escape() -> Escape {

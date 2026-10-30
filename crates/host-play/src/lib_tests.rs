@@ -12589,7 +12589,7 @@ export default class T extends LoopingBot {
         .unwrap()
         .lock()
         .unwrap()
-        .drain_host_interacts()
+        .drain_host_interacts(None)
         .1
         .into_iter()
         .map(|queued| queued.req)
@@ -18020,7 +18020,7 @@ export default class T extends LoopingBot {
         slot.observe_lifecycle();
         assert_eq!(slot.state(), script::RunState::Running);
         let old_generation = slot.runtime_generation();
-        let (update, _interacts, _) = drain_observed_host_interacts(&mut slot);
+        let (update, _interacts, _) = drain_observed_host_interacts(&mut slot, None);
         slot.restart_from_identity(Instant::now())
             .expect("watchdog-style runtime replacement starts");
         (
@@ -28622,6 +28622,7 @@ fn gatherer_starts_chopping_from_a_valid_far_footprint_perimeter() {
         Arc::new(settings),
         selected,
         Arc::default(),
+        None,
     )
     .unwrap();
     let deadline = Instant::now() + Duration::from_secs(20);
@@ -30620,6 +30621,9 @@ mod native_walk;
 #[path = "script_server_ordered_tests.rs"]
 mod server_ordered;
 
+#[path = "script_talk_dispatch_tests.rs"]
+mod talk_dispatch;
+
 #[cfg(feature = "js")]
 #[path = "script_progress_tests.rs"]
 mod script_progress;
@@ -32187,6 +32191,7 @@ export default class T extends LoopingBot {
                 Arc::new(settings),
                 Arc::clone(&selected),
                 Arc::default(),
+                None,
             )
             .expect("start selected Gatherer");
             let deadline = Instant::now() + Duration::from_secs(20);
@@ -32306,6 +32311,7 @@ export default class T extends LoopingBot {
                     worker,
                     None,
                     &script::local_state::OperatorLoadouts::absent(),
+                    None,
                 )
             },
         )

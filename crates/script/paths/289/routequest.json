@@ -1,0 +1,166 @@
+{
+  "$schema":"../path.schema.json",
+  "schema":3,
+  "id":"routequest",
+  "display_name":"In Search of the Myreque",
+  "required":["quest:druidspirit","agility:25"],
+  "tested_stats":null,
+  "partner":null,
+  "quest":{
+    "members":true,
+    "quest_points":2,
+    "requirements":[{"id":"quest:druidspirit","kind":{"Quest":"druidspirit"},"at":"start","source":"content/scripts/quests/quest_routequest/scripts/routequest_vanstorm.rs2:43-50; content/scripts/quests/quest_routequest/scripts/routequest_journal.rs2:16-24"},{"id":"agility:25","kind":{"Skill":{"skill":"agility","level":25}},"at":"start","source":"content/scripts/quests/quest_routequest/scripts/routequest_myreque.rs2:118-127"}],
+    "items":[],"acquire":{},"bank":"nearest","coin_float":0,"loadouts":{},
+    "areas":{"hollows":{"boxes":[[3456,3328,3519,3391,0]],"source":"content/scripts/quests/quest_routequest/scripts/routequest_morton.rs2:34-55"}},
+    "tools":["obj:steel_longsword","obj:steel_sword","obj:steel_dagger","obj:steel_mace","obj:steel_warhammer","obj:druid_pouch","obj:woodplank","obj:nails","obj:hammer","obj:coins"],"owns_inventory":true
+  },
+  "roles":[{
+    "role":null,"progress_binding":"journal:routequest",
+    "progress":{
+      "colour":{"not_started":"routequest:0","in_progress":"routequest:5","complete":"routequest:complete"},
+      "rules":[
+        {"stage":"routequest:100","all":["i climbed out of the", "double crossing"],"any":[],"not":[],"varp":100},
+        {"stage":"routequest:95","all":["i should try to find a way up to the"],"any":[],"not":[],"varp":95},
+        {"stage":"routequest:90","all":["i talked to", "through a", "secret wall"],"any":[],"not":[],"varp":90},
+        {"stage":"routequest:80","all":["hell hound"],"any":["i have to try and kill the","i killed the hell hound"],"not":[],"varp":80},
+        {"stage":"routequest:70","all":["i tried talking to veliaf"],"any":[],"not":["a mist cloud appeared"],"varp":70},
+        {"stage":"routequest:65","all":["i met veliaf"],"any":[],"not":["i tried talking to veliaf"],"varp":65},
+        {"stage":"routequest:60","all":["i entered an underground area"],"any":[],"not":["i met veliaf"],"varp":60},
+        {"stage":"routequest:55","all":["i need to find the", "entrance"],"any":[],"not":["i entered an underground"],"varp":55},
+        {"stage":"routequest:52","all":["a guard named", "asked me to answer"],"any":[],"not":["which i answered"],"varp":52},
+        {"stage":"routequest:25","all":["i borrowed the", "hollows"],"any":[],"not":["came across a guard"],"varp":25},
+        {"stage":"routequest:20","all":["the boatman", "but i can use his"],"any":[],"not":["came across a guard"],"varp":20},
+        {"stage":"routequest:15","all":["i've persuaded", "the boatman"],"any":[],"not":["came across a guard"],"varp":15},
+        {"stage":"routequest:10","all":["the boatman", "won't take me"],"any":[],"not":["came across a guard"],"varp":10},
+        {"stage":"routequest:5","all":["the weapons i need to collect are"],"any":[],"not":["came across a guard"],"varp":5}
+      ],"flags":[{"flag":"routequest:all-introduced","all":["i've introduced myself to all the members now"],"any":[]},{"flag":"routequest:hellhound-defeated","all":["i killed the hell hound"],"any":[]}],"monotonic":false
+    },
+    "prelude":[],"sequences":[
+      {"stage":"routequest:0","required":[],"terminal":false,"recovery_entry":null,"steps":[
+        {"id":"start-myreque","kind":"talk","version":1,"advances":true,
+         "comment":"content/scripts/quests/quest_routequest/scripts/routequest_vanstorm.rs2:42-65,74-82,91-94,116-120; content/maps/m54_54.jm2:7623.",
+         "args":{"npc":"route_vanstrom_klause_sitting","anchor":{"tile":[3503,3477,0],"source":"content/maps/m54_54.jm2:7623"},"leash":8,"prefer":["Yes, I'll do it!","Perhaps I could help you out here.","Why do they need help? Are they in trouble?"],"strict":true},
+         "skip_if":{"Any":[]},"settle":{"Fact":{"kind":"quest_colour","version":1,"args":{"quest":"routequest","is":"in_progress"}}}}
+      ]},
+      {"stage":"routequest:5","required":[],"terminal":false,"recovery_entry":null,"steps":[
+        {"id":"persuade-cyreg","kind":"talk","version":1,"advances":true,
+         "comment":"content/scripts/quests/quest_routequest/scripts/routequest_morton.rs2:57-77,89-96,106-111,125-132,134-153,155-157,174-180,188-216; content/maps/m55_51.jm2:4547. Carry all six steel weapons, five pouch charges and six planks.",
+         "args":{"npc":"route_cyreg_paddlehorn","anchor":{"tile":[3522,3284,0],"source":"content/maps/m55_51.jm2:4547"},"leash":8,"prefer":["Give wooden planks to Cyreg.","What kind of a man are you to say that you don't care?","If you don't tell me, their deaths are on your head!","Resourceful enough to get their own steel weapons?","Well, I guess they'll just die without weapons."],"strict":true},
+         "skip_if":{"Any":[]},"settle":{"Fact":{"kind":"stage_in","version":1,"args":{"quest":"routequest","any":["routequest:20","routequest:25"]}}}}
+      ]},
+      {"stage":"routequest:10","required":[],"terminal":false,"recovery_entry":null,"steps":[
+        {"id":"resume-cyreg-persuasion","kind":"talk","version":1,"advances":true,
+         "comment":"content/scripts/quests/quest_routequest/scripts/routequest_morton.rs2:73-77,89-96,106-111,125-132,134-153,155-157,174-180,188-216. This resumes after an interrupted persuasion conversation.",
+         "args":{"npc":"route_cyreg_paddlehorn","anchor":{"tile":[3522,3284,0],"source":"content/maps/m55_51.jm2:4547"},"leash":8,"prefer":["Give wooden planks to Cyreg.","What kind of a man are you to say that you don't care?","If you don't tell me, their deaths are on your head!","Resourceful enough to get their own steel weapons?","Well, I guess they'll just die without weapons."],"strict":true},
+         "skip_if":{"Any":[]},"settle":{"Fact":{"kind":"stage_in","version":1,"args":{"quest":"routequest","any":["routequest:20","routequest:25"]}}}}
+      ]},
+      {"stage":"routequest:15","required":[],"terminal":false,"recovery_entry":null,"steps":[
+        {"id":"give-cyreg-planks","kind":"talk","version":1,"advances":true,
+         "comment":"content/scripts/quests/quest_routequest/scripts/routequest_morton.rs2:75-77,188-216. Five druid pouch charges and three planks are required; keep three more planks for the bridge.",
+         "args":{"npc":"route_cyreg_paddlehorn","anchor":{"tile":[3522,3284,0],"source":"content/maps/m55_51.jm2:4547"},"leash":8,"prefer":["Give wooden planks to Cyreg."],"strict":true},
+         "skip_if":{"Any":[]},"settle":{"Fact":{"kind":"stage_in","version":1,"args":{"quest":"routequest","any":["routequest:20","routequest:25"]}}}}
+      ]},
+      {"stage":"routequest:20","required":[],"terminal":false,"recovery_entry":null,"steps":[
+        {"id":"board-mortton-boat","kind":"interact","version":1,"advances":true,
+         "comment":"content/scripts/quests/quest_routequest/scripts/routequest_morton.rs2:1-21,34-55; content/maps/m55_51.jm2:4165; content/scripts/_unpack/289/all.loc:1909-1915. The journey contains p_delay(13).",
+         "args":{"target":{"loc":"route_rowboat","tile":[3523,3284,0],"source":"content/maps/m55_51.jm2:4165"},"op":"Board","anchor":{"tile":[3523,3284,0],"source":"content/maps/m55_51.jm2:4165"},"radius":4,"dialogue":{"prefer":["Yes, I'll pay ten gold."],"strict":true,"gap_ticks":14}},
+         "skip_if":{"Fact":{"kind":"in_area","version":1,"args":{"area":"hollows"}}},"settle":{"Fact":{"kind":"stage_in","version":1,"args":{"quest":"routequest","any":["routequest:25"]}}}}
+      ]},
+      {"stage":"routequest:25","required":[],"terminal":false,"recovery_entry":null,"steps":[
+        {"id":"climb-south-tree","kind":"interact","version":1,"advances":false,
+         "comment":"content/scripts/quests/quest_routequest/scripts/routequest_hollow.rs2:48-70; content/maps/m54_53.jm2:5555,4113-4116,5952-5955; engine/src/engine/GameMap.ts:263-266.",
+         "args":{"target":{"loc":"harmless_dead_palm_mid","tile":[3502,3426,0],"source":"content/maps/m54_53.jm2:5555"},"op":"Climb up","anchor":{"tile":[3502,3426,0],"source":"content/maps/m54_53.jm2:5555"},"radius":4},
+         "skip_if":{"Fact":{"kind":"near","version":1,"args":{"tile":[3502,3427,0],"radius":0}}},"settle":{"Fact":{"kind":"near","version":1,"args":{"tile":[3502,3427,0],"radius":0}}}},
+        {"id":"repair-first-rung","kind":"interact","version":1,"advances":false,"comment":"content/scripts/quests/quest_routequest/scripts/routequest_hollow.rs2:126-140,166-184; content/maps/m54_53.jm2:4114,5953. Start with exactly three bridge planks.",
+         "args":{"target":{"loc":"swamp_bridge1","tile":[3502,3428,0],"source":"content/maps/m54_53.jm2:4114,5953; engine/src/engine/GameMap.ts:263-266"},"op":"Repair","radius":1},
+         "skip_if":{"Not":{"Fact":{"kind":"item_count_at_least","version":1,"args":{"obj":"woodplank","qty":3}}}},"settle":{"Not":{"Fact":{"kind":"item_count_at_least","version":1,"args":{"obj":"woodplank","qty":3}}}}},
+        {"id":"step-first-rung","kind":"interact","version":1,"advances":false,"comment":"content/scripts/quests/quest_routequest/scripts/routequest_hollow.rs2:99-108; content/maps/m54_53.jm2:4114,5953.",
+         "args":{"target":{"loc":"swamp_bridge1","tile":[3502,3428,0],"source":"content/maps/m54_53.jm2:4114,5953; engine/src/engine/GameMap.ts:263-266"},"op":"Walk-here","radius":1},
+         "skip_if":{"Fact":{"kind":"near","version":1,"args":{"tile":[3502,3428,0],"radius":0}}},"settle":{"Fact":{"kind":"near","version":1,"args":{"tile":[3502,3428,0],"radius":0}}}},
+        {"id":"repair-second-rung","kind":"interact","version":1,"advances":false,"comment":"content/scripts/quests/quest_routequest/scripts/routequest_hollow.rs2:141-150,166-184; content/maps/m54_53.jm2:4115,5954.",
+         "args":{"target":{"loc":"swamp_bridge1","tile":[3502,3429,0],"source":"content/maps/m54_53.jm2:4115,5954; engine/src/engine/GameMap.ts:263-266"},"op":"Repair","radius":1},
+         "skip_if":{"Not":{"Fact":{"kind":"item_count_at_least","version":1,"args":{"obj":"woodplank","qty":2}}}},"settle":{"Not":{"Fact":{"kind":"item_count_at_least","version":1,"args":{"obj":"woodplank","qty":2}}}}},
+        {"id":"step-second-rung","kind":"interact","version":1,"advances":false,"comment":"content/scripts/quests/quest_routequest/scripts/routequest_hollow.rs2:109-115; content/maps/m54_53.jm2:4115,5954.",
+         "args":{"target":{"loc":"swamp_bridge1","tile":[3502,3429,0],"source":"content/maps/m54_53.jm2:4115,5954; engine/src/engine/GameMap.ts:263-266"},"op":"Walk-here","radius":1},
+         "skip_if":{"Fact":{"kind":"near","version":1,"args":{"tile":[3502,3429,0],"radius":0}}},"settle":{"Fact":{"kind":"near","version":1,"args":{"tile":[3502,3429,0],"radius":0}}}},
+        {"id":"repair-third-rung","kind":"interact","version":1,"advances":false,"comment":"content/scripts/quests/quest_routequest/scripts/routequest_hollow.rs2:152-161,166-184; content/maps/m54_53.jm2:4116,5955.",
+         "args":{"target":{"loc":"swamp_bridge1","tile":[3502,3430,0],"source":"content/maps/m54_53.jm2:4116,5955; engine/src/engine/GameMap.ts:263-266"},"op":"Repair","radius":1},
+         "skip_if":{"Not":{"Fact":{"kind":"has_item","version":1,"args":{"obj":"woodplank"}}}},"settle":{"Not":{"Fact":{"kind":"has_item","version":1,"args":{"obj":"woodplank"}}}}},
+        {"id":"step-third-rung","kind":"interact","version":1,"advances":false,"comment":"content/scripts/quests/quest_routequest/scripts/routequest_hollow.rs2:116-122; content/maps/m54_53.jm2:4116,5955.",
+         "args":{"target":{"loc":"swamp_bridge1","tile":[3502,3430,0],"source":"content/maps/m54_53.jm2:4116,5955; engine/src/engine/GameMap.ts:263-266"},"op":"Walk-here","radius":1},
+         "skip_if":{"Fact":{"kind":"near","version":1,"args":{"tile":[3502,3430,0],"radius":0}}},"settle":{"Fact":{"kind":"near","version":1,"args":{"tile":[3502,3430,0],"radius":0}}}},
+        {"id":"climb-north-tree","kind":"interact","version":1,"advances":true,"comment":"content/scripts/quests/quest_routequest/scripts/routequest_hollow.rs2:72-86; content/maps/m54_53.jm2:5556.",
+         "args":{"target":{"loc":"harmless_dead_palm_mid","tile":[3502,3431,0],"source":"content/maps/m54_53.jm2:5556"},"op":"Climb down","radius":1},
+         "skip_if":{"Any":[]},"settle":{"Fact":{"kind":"stage_in","version":1,"args":{"quest":"routequest","any":["routequest:52"]}}}}
+      ]},
+      {"stage":"routequest:52","required":[],"terminal":false,"recovery_entry":null,"steps":[
+        {"id":"answer-curpile","kind":"talk","version":1,"advances":true,"comment":"content/scripts/quests/quest_routequest/scripts/routequest_hollow.rs2:236-250,273-285,287-335,357-383; content/maps/m54_53.jm2:6047.",
+         "args":{"npc":"route_curpile_fyod","anchor":{"tile":[3508,3440,0],"source":"content/maps/m54_53.jm2:6047"},"leash":8,"prefer":["I've come to help the Myreque, I've brought weapons."],"strict":true,
+           "line_rules":[{"when_line":"youngest member","choose":"Ivan Strom"},{"when_line":"only female member","choose":"Sani Piliu"},{"when_line":"leader of the Myreque","choose":"Veliaf Hurtz"},{"when_line":"previously a scholar","choose":"Polmafi Ferdygris"},{"when_line":"boatman's name","choose":"Cyreg Paddlehorn"},{"when_line":"family is rumoured","choose":"Drakan"}]},
+         "skip_if":{"Any":[]},"settle":{"Fact":{"kind":"stage_in","version":1,"args":{"quest":"routequest","any":["routequest:55"]}}}}
+      ]},
+      {"stage":"routequest:55","required":[],"terminal":false,"recovery_entry":null,"steps":[
+        {"id":"enter-hideout","kind":"interact","version":1,"advances":false,"comment":"content/scripts/quests/quest_routequest/scripts/routequest_hollow.rs2:1-29; content/maps/m54_53.jm2:5736.",
+         "args":{"target":{"loc":"freedomfighterentrancer","tile":[3509,3447,0],"source":"content/maps/m54_53.jm2:5736"},"op":"Open","radius":4},
+         "skip_if":{"Any":[]},"settle":{"Fact":{"kind":"near","version":1,"args":{"tile":[3500,9811,0],"radius":0}}}}
+      ]},
+      {"stage":"routequest:60","required":[],"terminal":false,"recovery_entry":null,"steps":[
+        {"id":"squeeze-into-hideout","kind":"interact","version":1,"advances":false,
+         "comment":"content/scripts/quests/quest_routequest/scripts/routequest_myreque.rs2:114-135; content/maps/m54_153.jm2:6022.",
+         "args":{"target":{"loc":"route_stalagmite_cave_entrace","tile":[3492,9824,0],"source":"content/maps/m54_153.jm2:6022"},"op":"Squeeze-past","radius":4},
+         "skip_if":{"Fact":{"kind":"on_level","version":1,"args":{"level":3}}},"settle":{"Fact":{"kind":"near","version":1,"args":{"tile":[3505,9832,3],"radius":0}}}},
+        {"id":"introduce-to-veliaf","kind":"talk","version":1,"advances":true,
+         "comment":"content/scripts/quests/quest_routequest/scripts/routequest_myreque.rs2:409-416,475-499; content/maps/m54_153.jm2:9246.",
+         "args":{"npc":"route_veliaf_hurtz","anchor":{"tile":[3506,9838,3],"source":"content/maps/m54_153.jm2:9246"},"leash":8,"prefer":["Ok, thanks."],"strict":true},
+         "skip_if":{"Any":[]},"settle":{"Fact":{"kind":"stage_in","version":1,"args":{"quest":"routequest","any":["routequest:65"]}}}}
+      ]},
+      {"stage":"routequest:65","required":[],"terminal":false,"recovery_entry":null,"order":"ordered","steps":[
+        {"id":"meet-sani","kind":"talk","version":1,"advances":false,"comment":"content/scripts/quests/quest_routequest/scripts/routequest_myreque.rs2:160-183,205-207; content/maps/m54_153.jm2:9247.",
+         "args":{"npc":"route_sani_piliu","anchor":{"tile":[3508,9837,3],"source":"content/maps/m54_153.jm2:9247"},"leash":8,"prefer":["Ok, thanks."],"strict":true},"skip_if":{"Any":[]},"settle":{"All":[]}},
+        {"id":"meet-harold","kind":"talk","version":1,"advances":false,"comment":"content/scripts/quests/quest_routequest/scripts/routequest_myreque.rs2:212-233,253-255; content/maps/m54_153.jm2:9245.",
+         "args":{"npc":"route_harold_evans","anchor":{"tile":[3504,9837,3],"source":"content/maps/m54_153.jm2:9245"},"leash":8,"prefer":["Ok, thanks."],"strict":true},"skip_if":{"Any":[]},"settle":{"All":[]}},
+        {"id":"meet-radigad","kind":"talk","version":1,"advances":false,"comment":"content/scripts/quests/quest_routequest/scripts/routequest_myreque.rs2:259-269,284-286,301-303; content/maps/m54_153.jm2:9248.",
+         "args":{"npc":"route_radigad_ponfit","anchor":{"tile":[3509,9831,3],"source":"content/maps/m54_153.jm2:9248"},"leash":8,"prefer":["Ok, thanks."],"strict":true},"skip_if":{"Any":[]},"settle":{"All":[]}},
+        {"id":"meet-polmafi","kind":"talk","version":1,"advances":false,"comment":"content/scripts/quests/quest_routequest/scripts/routequest_myreque.rs2:307-317,333-335,353-355; content/maps/m54_153.jm2:9250.",
+         "args":{"npc":"route_polmafi_ferdygris","anchor":{"tile":[3514,9838,3],"source":"content/maps/m54_153.jm2:9250"},"leash":8,"prefer":["Ok, thanks."],"strict":true},"skip_if":{"Any":[]},"settle":{"All":[]}},
+        {"id":"meet-ivan","kind":"talk","version":1,"advances":true,"comment":"content/scripts/quests/quest_routequest/scripts/routequest_myreque.rs2:359-370,386-388,403-405; content/scripts/quests/quest_routequest/scripts/routequest_journal.rs2:193-195; content/maps/m54_153.jm2:9249.",
+         "args":{"npc":"route_ivan_strom","anchor":{"tile":[3513,9843,3],"source":"content/maps/m54_153.jm2:9249"},"leash":8,"prefer":["Ok, thanks."],"strict":true},"skip_if":{"Fact":{"kind":"flag","version":1,"args":{"quest":"routequest","flag":"routequest:all-introduced"}}},"settle":{"Fact":{"kind":"flag","version":1,"args":{"quest":"routequest","flag":"routequest:all-introduced"}}}},
+        {"id":"deliver-weapons","kind":"talk","version":1,"advances":true,"comment":"content/scripts/quests/quest_routequest/scripts/routequest_myreque.rs2:417-429; content/scripts/quests/quest_routequest/scripts/route_cutscene.rs2:1-23,73-188.",
+         "args":{"npc":"route_veliaf_hurtz","anchor":{"tile":[3506,9838,3],"source":"content/maps/m54_153.jm2:9246"},"leash":8,"prefer":["Ok, I'll go get them."],"strict":true,"expect_combat":{"npc":"skeleton_hellhound"}},
+         "skip_if":{"Any":[]},"settle":{"Fact":{"kind":"stage_in","version":1,"args":{"quest":"routequest","any":["routequest:70","routequest:80"]}}}}
+      ]},
+      {"stage":"routequest:70","required":[],"terminal":false,"recovery_entry":null,"steps":[
+        {"id":"retry-cutscene","kind":"talk","version":1,"advances":true,"comment":"content/scripts/quests/quest_routequest/scripts/routequest_myreque.rs2:463-464; content/scripts/quests/quest_routequest/scripts/route_cutscene.rs2:1-23,179-188.",
+         "args":{"npc":"route_veliaf_hurtz","anchor":{"tile":[3506,9838,3],"source":"content/maps/m54_153.jm2:9246"},"leash":8,"expect_combat":{"npc":"skeleton_hellhound"}},
+         "skip_if":{"Any":[]},"settle":{"Fact":{"kind":"stage_in","version":1,"args":{"quest":"routequest","any":["routequest:80"]}}}}
+      ]},
+      {"stage":"routequest:80","required":[],"terminal":false,"recovery_entry":null,"steps":[
+        {"id":"fight-hellhound","kind":"combat","version":1,"advances":true,"comment":"content/scripts/quests/quest_routequest/scripts/route_cutscene.rs2:179-188; content/scripts/quests/quest_routequest/scripts/routequest_myreque.rs2:584-615.",
+         "args":{"target":{"npc":"skeleton_hellhound","not_targeting_others":true,"pick":"nearest"},"stand":{"tile":[3506,9834,0],"source":"content/scripts/quests/quest_routequest/scripts/route_cutscene.rs2:183-184"},"lost_radius":15,"kill_budget_ticks":500,"tactic":{"kind":"open","style":"melee","engage_radius":8,"auto_retaliate":true}},
+         "skip_if":{"Fact":{"kind":"flag","version":1,"args":{"quest":"routequest","flag":"routequest:hellhound-defeated"}}},"settle":{"Fact":{"kind":"flag","version":1,"args":{"quest":"routequest","flag":"routequest:hellhound-defeated"}}}},
+        {"id":"ask-veliaf-for-exit","kind":"talk","version":1,"advances":true,"comment":"content/scripts/quests/quest_routequest/scripts/routequest_myreque.rs2:467-473,502-525. The same menu returns after the exit question.",
+         "args":{"npc":"route_veliaf_hurtz","anchor":{"tile":[3506,9838,0],"source":"content/scripts/quests/quest_routequest/scripts/route_cutscene.rs2:179-184"},"leash":8,"prefer":["How do I get out of here?","Ok, thanks."],"answer_once":true,"strict":true},
+         "skip_if":{"Any":[]},"settle":{"Fact":{"kind":"stage_in","version":1,"args":{"quest":"routequest","any":["routequest:90"]}}}}
+      ]},
+      {"stage":"routequest:90","required":[],"terminal":false,"recovery_entry":null,"steps":[
+        {"id":"leave-hideout","kind":"interact","version":1,"advances":false,"comment":"content/scripts/quests/quest_routequest/scripts/routequest_myreque.rs2:1-3,29-34; content/maps/m54_153.jm2:6344.",
+         "args":{"target":{"loc":"route_cavewalltunnel","tile":[3505,9831,0],"source":"content/maps/m54_153.jm2:6344"},"op":"Enter","radius":4},
+         "skip_if":{"Fact":{"kind":"near","version":1,"args":{"tile":[3491,9824,0],"radius":3}}},"settle":{"Fact":{"kind":"near","version":1,"args":{"tile":[3491,9824,0],"radius":3}}}},
+        {"id":"find-inn-wall","kind":"interact","version":1,"advances":true,"comment":"content/scripts/quests/quest_routequest/scripts/routequest_myreque.rs2:43-53; content/maps/m54_153.jm2:5636.",
+         "args":{"target":{"loc":"thrttavernbasementfalsewall"},"op":"Search","anchor":{"tile":[3480,9837,0],"source":"content/maps/m54_153.jm2:5636"},"radius":4},
+         "skip_if":{"Any":[]},"settle":{"Fact":{"kind":"stage_in","version":1,"args":{"quest":"routequest","any":["routequest:95"]}}}}
+      ]},
+      {"stage":"routequest:95","required":[],"terminal":false,"recovery_entry":null,"steps":[
+        {"id":"climb-inn-ladder","kind":"interact","version":1,"advances":true,"comment":"content/scripts/quests/quest_routequest/scripts/routequest_myreque.rs2:100-112; content/maps/m54_153.jm2:5517.",
+         "args":{"target":{"loc":"thrttavernbasementladder"},"op":"Climb-up","anchor":{"tile":[3477,9846,0],"source":"content/maps/m54_153.jm2:5517"},"radius":4},
+         "skip_if":{"Any":[]},"settle":{"Fact":{"kind":"stage_in","version":1,"args":{"quest":"routequest","any":["routequest:100"]}}}}
+      ]},
+      {"stage":"routequest:100","required":[],"terminal":false,"recovery_entry":null,"steps":[
+        {"id":"confront-stranger","kind":"talk","version":1,"advances":true,"comment":"content/scripts/quests/quest_routequest/scripts/routequest_vanstorm.rs2:1-36; content/maps/m54_54.jm2:7623. Vanstrom changes into the stranger on interaction.",
+         "args":{"npc":"route_vanstrom_klause_sitting","anchor":{"tile":[3503,3477,0],"source":"content/maps/m54_54.jm2:7623"},"leash":8},
+         "skip_if":{"Any":[]},"settle":{"Fact":{"kind":"quest_colour","version":1,"args":{"quest":"routequest","is":"complete"}}}}
+      ]},
+      {"stage":"routequest:complete","required":[],"terminal":true,"recovery_entry":null,"steps":[]}
+    ]
+  }]
+}

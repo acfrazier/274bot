@@ -1855,6 +1855,203 @@ fn script_commands_are_reachable_at_80x24() {
 }
 
 #[test]
+fn arthur_zone_scope_renders_all_eight_names_and_reasons_at_common_sizes() {
+    const KEEP_GROUND: &str =
+        "Cross the keep's ground floor to reach Sir Mordred. Content maps/m43_53.jm2 and stairs.rs2:19-20.";
+    const KEEP_UPPER: &str =
+        "Use the keep's first-floor stairs to reach Sir Mordred. Content maps/m43_53.jm2:5255,6339 and stairs.rs2:19-20.";
+    const EXIT_GROUND: &str =
+        "Leave the keep through its stairs and ground-floor exit after Morgan's instructions. Content quest_arthur.rs2:94-115.";
+    const EXIT_UPPER: &str =
+        "Descend the keep's first-floor stairs after Morgan's instructions. Content stairs.rs2:19-20.";
+    const ZONES: [(&str, &str, &str); 16] = [
+        (
+            "Keep Le Faye Renegade Knight (2773,3399,0)",
+            "renegade_knight@2773,3399,0",
+            KEEP_GROUND,
+        ),
+        (
+            "Keep Le Faye Renegade Knight (2767,3399,0)",
+            "renegade_knight@2767,3399,0",
+            KEEP_GROUND,
+        ),
+        (
+            "Keep Le Faye Renegade Knight (2766,3397,0)",
+            "renegade_knight@2766,3397,0",
+            KEEP_GROUND,
+        ),
+        (
+            "Keep Le Faye Renegade Knight (2771,3402,1)",
+            "renegade_knight@2771,3402,1",
+            KEEP_UPPER,
+        ),
+        (
+            "Keep Le Faye Renegade Knight (2774,3405,1)",
+            "renegade_knight@2774,3405,1",
+            KEEP_UPPER,
+        ),
+        (
+            "Keep Le Faye Renegade Knight (2766,3406,1)",
+            "renegade_knight@2766,3406,1",
+            KEEP_UPPER,
+        ),
+        (
+            "Keep Le Faye Renegade Knight (2767,3400,1)",
+            "renegade_knight@2767,3400,1",
+            KEEP_UPPER,
+        ),
+        (
+            "Keep Le Faye Renegade Knight (2770,3396,1)",
+            "renegade_knight@2770,3396,1",
+            KEEP_UPPER,
+        ),
+        (
+            "Keep Le Faye Renegade Knight (2773,3399,0)",
+            "renegade_knight@2773,3399,0",
+            EXIT_GROUND,
+        ),
+        (
+            "Keep Le Faye Renegade Knight (2767,3399,0)",
+            "renegade_knight@2767,3399,0",
+            EXIT_GROUND,
+        ),
+        (
+            "Keep Le Faye Renegade Knight (2766,3397,0)",
+            "renegade_knight@2766,3397,0",
+            EXIT_GROUND,
+        ),
+        (
+            "Keep Le Faye Renegade Knight (2771,3402,1)",
+            "renegade_knight@2771,3402,1",
+            EXIT_UPPER,
+        ),
+        (
+            "Keep Le Faye Renegade Knight (2774,3405,1)",
+            "renegade_knight@2774,3405,1",
+            EXIT_UPPER,
+        ),
+        (
+            "Keep Le Faye Renegade Knight (2766,3406,1)",
+            "renegade_knight@2766,3406,1",
+            EXIT_UPPER,
+        ),
+        (
+            "Keep Le Faye Renegade Knight (2767,3400,1)",
+            "renegade_knight@2767,3400,1",
+            EXIT_UPPER,
+        ),
+        (
+            "Keep Le Faye Renegade Knight (2770,3396,1)",
+            "renegade_knight@2770,3396,1",
+            EXIT_UPPER,
+        ),
+    ];
+    fn script_text(rows: &[String], area: ratatui::layout::Rect) -> String {
+        let inner = ratatui::widgets::Block::default()
+            .borders(ratatui::widgets::Borders::ALL)
+            .inner(area);
+        rows.iter()
+            .skip(usize::from(inner.y))
+            .take(usize::from(inner.height))
+            .map(|row| {
+                row.chars()
+                    .skip(usize::from(inner.x))
+                    .take(usize::from(inner.width))
+                    .collect::<String>()
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+
+    let evidence_root =
+        std::env::var_os("QUESTER_DANGER_CONSENT_TUI_EVIDENCE").map(std::path::PathBuf::from);
+    for (width, height) in [(120, 40), (80, 24)] {
+        let mut app = script_app();
+        app.script_sel = Some(ScriptChoice::compiled(CompiledCardId::QUESTER));
+        let settings = serde_json::Map::from_iter([
+            ("quests".to_owned(), serde_json::json!(["arthur"])),
+            ("include_draft_guides".to_owned(), serde_json::json!(true)),
+        ]);
+        assert!(app.quester_start_zone_cache.update(&settings));
+
+        let mut combined = String::new();
+        let mut page_index = 0;
+        let mut rows = draw(&mut app, width, height);
+        let mut shown = text(&rows);
+        assert!(
+            shown.contains("Start zone scope"),
+            "{width}x{height}: {shown}"
+        );
+        assert!(
+            shown.contains("Start accepts only these zones."),
+            "{width}x{height}: {shown}"
+        );
+        assert!(shown.contains("[Start t]"), "{width}x{height}: {shown}");
+        assert!(
+            !shown.contains("Prince Ali Rescue"),
+            "only the selected Arthur queue is disclosed: {shown}"
+        );
+        combined.push_str(&script_text(&rows, app.script_area));
+        combined.push('\n');
+
+        if let Some(root) = &evidence_root {
+            let directory = root.join("QUEST-DANGER-CONSENT");
+            std::fs::create_dir_all(&directory).expect("create TUI evidence directory");
+            std::fs::write(
+                directory.join(format!("tui-{width}x{height}-page-{page_index:02}.txt")),
+                &shown,
+            )
+            .expect("write top-of-scope TUI capture");
+        }
+
+        let max = app.script_pane().max_vertical_scroll(app.script_area);
+        assert!(
+            max > 0,
+            "{width}x{height}: all selected stages must remain scrollable"
+        );
+        while app.quester_start_zone_scroll < max {
+            let before = app.quester_start_zone_scroll;
+            assert_eq!(app.on_key(key(KeyCode::PageDown)), AppAction::None);
+            assert!(
+                app.quester_start_zone_scroll > before,
+                "{width}x{height}: PageDown must advance the scope"
+            );
+            page_index += 1;
+            rows = draw(&mut app, width, height);
+            shown = text(&rows);
+            assert!(
+                shown.contains("Start zone scope") && shown.contains("[Start t]"),
+                "{width}x{height}: controls stay visible while scrolling: {shown}"
+            );
+            combined.push_str(&script_text(&rows, app.script_area));
+            combined.push('\n');
+            if let Some(root) = &evidence_root {
+                std::fs::write(
+                    root.join("QUEST-DANGER-CONSENT")
+                        .join(format!("tui-{width}x{height}-page-{page_index:02}.txt")),
+                    &shown,
+                )
+                .expect("write scrolled TUI capture");
+            }
+        }
+
+        let normalized = combined.split_whitespace().collect::<Vec<_>>().join(" ");
+        for (name, id, reason) in ZONES {
+            let expected = format!("{name} [{id}] Guide reason: {reason}");
+            assert!(
+                normalized.contains(&expected),
+                "{width}x{height}: missing selected zone and reason {expected}: {normalized}"
+            );
+        }
+        assert_eq!(app.on_key(key(KeyCode::PageUp)), AppAction::None);
+        assert!(
+            app.quester_start_zone_scroll < max,
+            "{width}x{height}: PageUp moves back through the scope"
+        );
+    }
+}
+
+#[test]
 fn map_search_list_uses_display_name_not_slash_breaks() {
     let (catalogue, _, label_anchor) = map_poi_catalogue();
     let mut app = TuiApp::new("274bot headless");

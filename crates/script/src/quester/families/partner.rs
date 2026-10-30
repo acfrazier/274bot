@@ -502,7 +502,7 @@ impl StepRun for TradeRun {
                 Poll::Ready(Ok(receipt)) => {
                     if self
                         .walk_retry
-                        .observe_failure(&receipt, cx.tick.cx.evidence().tick)
+                        .observe_approach_failure(&receipt, cx.tick.cx.evidence().tick)
                     {
                         self.walk = None;
                         return Poll::Pending;

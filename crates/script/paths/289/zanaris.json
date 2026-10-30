@@ -1,0 +1,1044 @@
+{
+  "$schema": "../path.schema.json",
+  "schema": 3,
+  "id": "zanaris",
+  "display_name": "Lost City",
+  "required": [
+    "crafting:31",
+    "woodcutting:36"
+  ],
+  "tested_stats": null,
+  "partner": null,
+  "quest": {
+    "members": true,
+    "quest_points": 3,
+    "requirements": [
+      {
+        "id": "crafting:31",
+        "kind": {
+          "Skill": {
+            "skill": "crafting",
+            "level": 31
+          }
+        },
+        "at": "start",
+        "source": "scripts/quests/quest_zanaris/scripts/quest_zanaris.rs2:77-87"
+      },
+      {
+        "id": "woodcutting:36",
+        "kind": {
+          "Skill": {
+            "skill": "woodcutting",
+            "level": 36
+          }
+        },
+        "at": "start",
+        "source": "scripts/quests/quest_zanaris/scripts/quest_zanaris.rs2:28-40"
+      }
+    ],
+    "items": [],
+    "acquire": {},
+    "bank": "nearest",
+    "coin_float": 142,
+    "loadouts": {
+      "entrana": {
+        "worn": {},
+        "carry": []
+      }
+    },
+    "areas": {
+      "entrana": {
+        "boxes": [
+          [
+            2816,
+            3328,
+            2879,
+            3391,
+            0
+          ]
+          ,
+          [2816, 3328, 2879, 3391, 1]
+        ],
+        "source": "maps/m44_52.jm2:5556,7204,8053-8055; island and arrival ship"
+      },
+      "dungeon": {
+        "boxes": [
+          [
+            2816,
+            9728,
+            2879,
+            9791,
+            0
+          ]
+        ],
+        "source": "maps/m44_152.jm2:6993,7624,8477-8487; dungeon map square"
+      }
+    },
+    "tools": [],
+    "owns_inventory": true
+  },
+  "roles": [
+    {
+      "role": null,
+      "progress_binding": "journal:zanaris",
+      "progress": {
+        "colour": {
+          "not_started": "zanaris:0",
+          "in_progress": "zanaris:1",
+          "complete": "zanaris:6"
+        },
+        "rules": [
+          {
+            "stage": "zanaris:5",
+            "all": [
+              "i should enter",
+              "while keeping the"
+            ]
+          },
+          {
+            "stage": "zanaris:4",
+            "all": [
+              "i should",
+              "branch",
+              "staff"
+            ]
+          },
+          {
+            "stage": "zanaris:3",
+            "all": [
+              "with the",
+              "defeated i can cut"
+            ]
+          },
+          {
+            "stage": "zanaris:2",
+            "all": [
+              "he told me",
+              "i can find a"
+            ]
+          },
+          {
+            "stage": "zanaris:1",
+            "all": [
+              "apparently there is a",
+              "leprechaun"
+            ]
+          },
+          {
+            "stage": "zanaris:0",
+            "all": [
+              "i can start this quest by speaking to the adventurers"
+            ]
+          }
+        ],
+        "flags": [],
+        "monotonic": false
+      },
+      "prelude": [],
+      "sequences": [
+        {
+          "stage": "zanaris:0",
+          "required": [],
+          "terminal": false,
+          "recovery_entry": null,
+          "steps": [
+            {
+              "id": "start",
+              "kind": "talk",
+              "version": 1,
+              "args": {
+                "npc": "warrioradventurerpg",
+                "anchor": {
+                  "tile": [
+                    3145,
+                    3202,
+                    0
+                  ],
+                  "source": "maps/m49_50.jm2:5443; pack/npc.pack:651"
+                },
+                "leash": 8,
+                "prefer": [
+                  "What are you camped here for?",
+                  "Who's Zanaris?",
+                  "If it's hidden how are you planning to find it?",
+                  "Looks like you don't know either."
+                ],
+                "strict": true
+              },
+              "skip_if": {
+                "Any": []
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "stage_in",
+                  "version": 1,
+                  "args": {
+                    "quest": "zanaris",
+                    "any": [
+                      "zanaris:1"
+                    ]
+                  }
+                }
+              },
+              "comment": "scripts/areas/area_lumbridge/scripts/warrior_zanaris.rs2:8-10,30-38,55-71",
+              "advances": true
+            }
+          ]
+        },
+        {
+          "stage": "zanaris:1",
+          "required": [],
+          "terminal": false,
+          "recovery_entry": null,
+          "order": "ordered",
+          "steps": [
+            {
+              "id": "buy-axe-for-shamus", "kind": "buy", "version": 1,
+              "args": {"shop": {"npc": "bob", "anchor": {"tile": [3232, 3203, 0], "source": "content/maps/m50_50.jm2:9693"}}, "obj": "bronze_axe", "qty": 1, "est_gp": 16},
+              "comment": "content/scripts/areas/area_lumbridge/configs/lumbridge.inv:1-10; content/scripts/areas/area_lumbridge/configs/lumbridge.npc:129-132; content/scripts/skill_woodcutting/configs/axes/axes.obj:35-38; content/scripts/shop/scripts/shop.rs2:131-147,182-187. Price assumes base stock.",
+              "skip_if": {"Any": [{"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "bronze_axe"}}}, {"Fact": {"kind": "worn", "version": 1, "args": {"obj": "bronze_axe"}}}]},
+              "settle": {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "bronze_axe"}}}
+            },
+            {
+              "id": "find-shamus",
+              "kind": "interact",
+              "version": 1,
+              "args": {
+                "target": {
+                  "loc": "leprechauntree"
+                },
+                "op": "Chop",
+                "anchor": {
+                  "tile": [
+                    3138,
+                    3212,
+                    0
+                  ],
+                  "source": "maps/m49_50.jm2:4235; pack/loc.pack:2410"
+                },
+                "radius": 3
+              },
+              "skip_if": {
+                "Fact": {
+                  "kind": "npc_present",
+                  "version": 1,
+                  "args": {
+                    "npc": "zanarisleprechaun"
+                  }
+                }
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "npc_present",
+                  "version": 1,
+                  "args": {
+                    "npc": "zanarisleprechaun"
+                  }
+                }
+              },
+              "comment": "scripts/quests/quest_zanaris/scripts/quest_zanaris.rs2:11-26",
+              "advances": false
+            },
+            {
+              "id": "speak-shamus",
+              "kind": "talk",
+              "version": 1,
+              "args": {
+                "npc": "zanarisleprechaun",
+                "anchor": {
+                  "tile": [
+                    3139,
+                    3211,
+                    0
+                  ],
+                  "source": "scripts/quests/quest_zanaris/scripts/quest_zanaris.rs2:20-26"
+                },
+                "leash": 15,
+                "prefer": [
+                  "How does it fit in a shed then?"
+                ],
+                "strict": true
+              },
+              "skip_if": {
+                "Any": []
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "stage_in",
+                  "version": 1,
+                  "args": {
+                    "quest": "zanaris",
+                    "any": [
+                      "zanaris:2"
+                    ]
+                  }
+                }
+              },
+              "comment": "scripts/quests/quest_zanaris/scripts/shamus.rs2:9-23,40-47",
+              "advances": true
+            }
+          ]
+        },
+        {
+          "stage": "zanaris:2",
+          "required": [],
+          "terminal": false,
+          "recovery_entry": null,
+          "steps": [
+            {
+              "id": "buy-entrana-food", "kind": "buy", "version": 1, "advances": false,
+              "args": {"shop": {"npc": "baker_merchant", "anchor": {"tile": [2654, 3311, 0], "source": "content/maps/m41_51.jm2:10991"}}, "obj": "bread", "qty": 10, "est_gp": 126},
+              "comment": "content/scripts/areas/area_ardougne_east/configs/ardougne_east.inv:15-24; content/scripts/areas/area_ardougne_east/configs/ardougne_east.npc:383-413; content/scripts/skill_cooking/configs/cooking_inv/configs/dough/dough.obj:39-50; content/scripts/shop/scripts/shop.rs2:59-68,131-147,182-187.",
+              "skip_if": {"Any": [{"Fact": {"kind": "in_area", "version": 1, "args": {"area": "entrana"}}}, {"Fact": {"kind": "in_area", "version": 1, "args": {"area": "dungeon"}}}, {"Fact": {"kind": "item_count_at_least", "version": 1, "args": {"obj": "bread", "qty": 10}}}]},
+              "settle": {"Fact": {"kind": "item_count_at_least", "version": 1, "args": {"obj": "bread", "qty": 10}}}
+            },
+            {
+              "id": "remove-equipment",
+              "kind": "loadout",
+              "version": 1,
+              "args": {
+                "loadout": "entrana",
+                "at": "nearest",
+                "exclusive": true
+              },
+              "skip_if": {
+                "Any": [
+                  {
+                    "Fact": {
+                      "kind": "in_area",
+                      "version": 1,
+                      "args": {
+                        "area": "entrana"
+                      }
+                    }
+                  },
+                  {
+                    "Fact": {
+                      "kind": "in_area",
+                      "version": 1,
+                      "args": {
+                        "area": "dungeon"
+                      }
+                    }
+                  },
+                  {
+                    "Fact": {
+                      "kind": "equipment_only",
+                      "version": 1,
+                      "args": {
+                        "objs": []
+                      }
+                    }
+                  }
+                ]
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "equipment_only",
+                  "version": 1,
+                  "args": {
+                    "objs": []
+                  }
+                }
+              },
+              "comment": "scripts/areas/area_port_sarim/scripts/monk_of_entrana.rs2:26-50"
+            },
+            {
+              "id": "bank-protected-gather-tools",
+              "kind": "bank",
+              "version": 1,
+              "args": {
+                "op": "deposit",
+                "at": "nearest",
+                "items": [
+                  { "obj": "rune_axe" },
+                  { "obj": "adamant_axe" },
+                  { "obj": "mithril_axe" },
+                  { "obj": "black_axe" },
+                  { "obj": "steel_axe" },
+                  { "obj": "iron_axe" },
+                  { "obj": "bronze_axe" },
+                  { "obj": "rune_pickaxe" },
+                  { "obj": "adamant_pickaxe" },
+                  { "obj": "mithril_pickaxe" },
+                  { "obj": "steel_pickaxe" },
+                  { "obj": "iron_pickaxe" },
+                  { "obj": "bronze_pickaxe" }
+                ]
+              },
+              "skip_if": {
+                "Any": [
+                  {
+                    "Fact": {
+                      "kind": "in_area",
+                      "version": 1,
+                      "args": { "area": "entrana" }
+                    }
+                  },
+                  {
+                    "Fact": {
+                      "kind": "in_area",
+                      "version": 1,
+                      "args": { "area": "dungeon" }
+                    }
+                  },
+                  {
+                    "Not": {
+                      "Any": [
+                        { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "rune_axe" } } },
+                        { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "adamant_axe" } } },
+                        { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "mithril_axe" } } },
+                        { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "black_axe" } } },
+                        { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "steel_axe" } } },
+                        { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "iron_axe" } } },
+                        { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "bronze_axe" } } },
+                        { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "rune_pickaxe" } } },
+                        { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "adamant_pickaxe" } } },
+                        { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "mithril_pickaxe" } } },
+                        { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "steel_pickaxe" } } },
+                        { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "iron_pickaxe" } } },
+                        { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "bronze_pickaxe" } } }
+                      ]
+                    }
+                  }
+                ]
+              },
+              "settle": {
+                "Not": {
+                  "Any": [
+                    { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "rune_axe" } } },
+                    { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "adamant_axe" } } },
+                    { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "mithril_axe" } } },
+                    { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "black_axe" } } },
+                    { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "steel_axe" } } },
+                    { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "iron_axe" } } },
+                    { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "bronze_axe" } } },
+                    { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "rune_pickaxe" } } },
+                    { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "adamant_pickaxe" } } },
+                    { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "mithril_pickaxe" } } },
+                    { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "steel_pickaxe" } } },
+                    { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "iron_pickaxe" } } },
+                    { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "bronze_pickaxe" } } }
+                  ]
+                }
+              },
+              "comment": "Bank protected gather tools explicitly; deposit_all keeps them, while the Entrana monk rejects weapon_axe and weapon_pickaxe. crates/api/src/gather_tools.rs:47-66; crates/script/src/quester/compile.rs:1139-1175; scripts/areas/area_port_sarim/scripts/monk_of_entrana.rs2:39-50"
+            },
+            {
+              "id": "clear-restricted-pack",
+              "kind": "bank",
+              "version": 1,
+              "args": {
+                "op": "deposit_all",
+                "at": "nearest",
+                "keep": [
+                  "knife", "bread"
+                ]
+              },
+              "skip_if": {
+                "Any": [
+                  {
+                    "Fact": {
+                      "kind": "in_area",
+                      "version": 1,
+                      "args": {
+                        "area": "entrana"
+                      }
+                    }
+                  },
+                  {
+                    "Fact": {
+                      "kind": "in_area",
+                      "version": 1,
+                      "args": {
+                        "area": "dungeon"
+                      }
+                    }
+                  },
+                  {
+                    "All": [
+                      {
+                        "Fact": {
+                          "kind": "pack_only",
+                          "version": 1,
+                          "args": {
+                            "objs": [
+                              "knife", "bread"
+                            ]
+                          }
+                        }
+                      },
+                      {
+                        "Not": {
+                          "Any": [
+                            { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "rune_axe" } } },
+                            { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "adamant_axe" } } },
+                            { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "mithril_axe" } } },
+                            { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "black_axe" } } },
+                            { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "steel_axe" } } },
+                            { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "iron_axe" } } },
+                            { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "bronze_axe" } } },
+                            { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "rune_pickaxe" } } },
+                            { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "adamant_pickaxe" } } },
+                            { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "mithril_pickaxe" } } },
+                            { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "steel_pickaxe" } } },
+                            { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "iron_pickaxe" } } },
+                            { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "bronze_pickaxe" } } }
+                          ]
+                        }
+                      }
+                    ]
+                  }
+                ]
+              },
+              "settle": {
+                "All": [
+                  {
+                    "Fact": {
+                      "kind": "pack_only",
+                      "version": 1,
+                      "args": {
+                        "objs": [
+                          "knife", "bread"
+                        ]
+                      }
+                    }
+                  },
+                  {
+                    "Not": {
+                      "Any": [
+                        { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "rune_axe" } } },
+                        { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "adamant_axe" } } },
+                        { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "mithril_axe" } } },
+                        { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "black_axe" } } },
+                        { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "steel_axe" } } },
+                        { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "iron_axe" } } },
+                        { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "bronze_axe" } } },
+                        { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "rune_pickaxe" } } },
+                        { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "adamant_pickaxe" } } },
+                        { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "mithril_pickaxe" } } },
+                        { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "steel_pickaxe" } } },
+                        { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "iron_pickaxe" } } },
+                        { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "bronze_pickaxe" } } }
+                      ]
+                    }
+                  }
+                ]
+              },
+              "comment": "Deposit_all clears every other unlisted weapon/armour category; pack_only admits protected gather tools, so the explicit item exclusions are required. scripts/areas/area_port_sarim/scripts/monk_of_entrana.rs2:26-50; crates/script/src/quester/families/s2.rs:1613-1657"
+            },
+            {
+              "id": "sail-entrana",
+              "kind": "talk",
+              "version": 1,
+              "args": {
+                "npc": "shipmonk",
+                "anchor": {
+                  "tile": [
+                    3045,
+                    3236,
+                    0
+                  ],
+                  "source": "maps/m47_50.jm2:10013; pack/npc.pack:658"
+                },
+                "leash": 8,
+                "prefer": [
+                  "Yes, okay, I'm ready to go."
+                ],
+                "strict": true,
+                "gap_ticks": 14
+              },
+              "skip_if": {
+                "Any": [
+                  {
+                    "Fact": {
+                      "kind": "in_area",
+                      "version": 1,
+                      "args": {
+                        "area": "entrana"
+                      }
+                    }
+                  },
+                  {
+                    "Fact": {
+                      "kind": "in_area",
+                      "version": 1,
+                      "args": {
+                        "area": "dungeon"
+                      }
+                    }
+                  }
+                ]
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "in_area",
+                  "version": 1,
+                  "args": {
+                    "area": "entrana"
+                  }
+                }
+              },
+              "comment": "scripts/areas/area_port_sarim/scripts/monk_of_entrana.rs2:1-23; scripts/interface_boat/scripts/sail.rs2:21-29",
+              "advances": false
+            },
+            {
+              "id": "disembark-entrana",
+              "kind": "interact",
+              "version": 1,
+              "advances": false,
+              "args": {
+                "target": {"loc": "ship_from_entrana_off"},
+                "op": "Cross",
+                "anchor": {"tile": [2834, 3333, 1], "source": "maps/m44_52.jm2:7204; pack/loc.pack:2416"},
+                "radius": 3
+              },
+              "skip_if": {"Any": [
+                {"Fact": {"kind": "on_level", "version": 1, "args": {"level": 0}}},
+                {"Fact": {"kind": "in_area", "version": 1, "args": {"area": "dungeon"}}}
+              ]},
+              "settle": {"Fact": {"kind": "on_level", "version": 1, "args": {"level": 0}}},
+              "comment": "scripts/general_use/configs/gangplank.loc:93-99; scripts/general_use/scripts/gangplank.rs2:28-39; maps/m44_52.jm2:7204"
+            },
+            {
+              "id": "descend-cave",
+              "kind": "interact",
+              "version": 1,
+              "args": {
+                "target": {
+                  "loc": "entranaladdertop"
+                },
+                "op": "Climb-down",
+                "anchor": {
+                  "tile": [
+                    2820,
+                    3374,
+                    0
+                  ],
+                  "source": "maps/m44_52.jm2:5556"
+                },
+                "radius": 3,
+                "dialogue": {
+                  "prefer": [
+                    "Well that is a risk I will have to take."
+                  ],
+                  "strict": true
+                }
+              },
+              "skip_if": {
+                "Fact": {
+                  "kind": "in_area",
+                  "version": 1,
+                  "args": {
+                    "area": "dungeon"
+                  }
+                }
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "in_area",
+                  "version": 1,
+                  "args": {
+                    "area": "dungeon"
+                  }
+                }
+              },
+              "comment": "scripts/areas/area_entrana/scripts/entrana_dungeon.rs2:1-3; scripts/areas/area_entrana/scripts/cave_monk.rs2:3-14",
+              "advances": false
+            },
+            {
+              "id": "zombie-bronze-axe",
+              "kind": "combat",
+              "version": 1,
+              "args": {
+                "target": {
+                  "npc": "zombie_entranan",
+                  "not_targeting_others": true,
+                  "pick": "nearest"
+                },
+                "tactic": {
+                  "kind": "open",
+                  "style": "melee",
+                  "engage_radius": 12,
+                  "auto_retaliate": false
+                },
+                "stand": {
+                  "tile": [
+                    2842,
+                    9766,
+                    0
+                  ],
+                  "source": "maps/m44_152.jm2:8477; pack/npc.pack:77"
+                },
+                "lost_radius": 20,
+                "kill_budget_ticks": 500,
+                "until_drop": {"obj": "bronze_axe", "max_kills": 19, "stop": "GAP-entrana-zombie-axe-budget"}
+              },
+              "skip_if": {"Any": [
+                {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "bronze_axe"}}},
+                {"Fact": {"kind": "worn", "version": 1, "args": {"obj": "bronze_axe"}}}
+              ]},
+              "settle": {
+                "Fact": {
+                  "kind": "has_item",
+                  "version": 1,
+                  "args": {
+                    "obj": "bronze_axe"
+                  }
+                }
+              },
+              "comment": "scripts/drop tables/scripts/zombie.rs2:102-116; maps/m44_152.jm2:8477-8481.",
+              "advances": false
+            },
+            {
+              "id": "equip-entrana-axe", "kind": "equip", "version": 1,
+              "args": {"obj": "bronze_axe"},
+              "comment": "The axe is a level-1 weapon for the spirit fight. Woodcutting accepts it while worn. content/scripts/levelrequire/scripts/tier1.rs2:1-5; content/scripts/tutorial/scripts/tutorial.rs2:267-280; content/scripts/skill_woodcutting/scripts/woodcut.rs2:159-161,201-205; content/scripts/quests/quest_zanaris/scripts/quest_zanaris.rs2:28-55.",
+              "skip_if": {"Fact": {"kind": "worn", "version": 1, "args": {"obj": "bronze_axe"}}},
+              "settle": {"Fact": {"kind": "worn", "version": 1, "args": {"obj": "bronze_axe"}}}
+            },
+            {
+              "id": "summon-spirit",
+              "kind": "interact",
+              "version": 1,
+              "args": {
+                "target": {
+                  "loc": "dramentree"
+                },
+                "op": "Chop down",
+                "anchor": {
+                  "tile": [
+                    2860,
+                    9734,
+                    0
+                  ],
+                  "source": "maps/m44_152.jm2:6993; pack/loc.pack:1293"
+                },
+                "radius": 4
+              },
+              "skip_if": {
+                "Fact": {
+                  "kind": "npc_present",
+                  "version": 1,
+                  "args": {
+                    "npc": "tree_spirit"
+                  }
+                }
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "npc_present",
+                  "version": 1,
+                  "args": {
+                    "npc": "tree_spirit"
+                  }
+                }
+              },
+              "comment": "scripts/quests/quest_zanaris/scripts/quest_zanaris.rs2:28-55",
+              "advances": false
+            },
+            {
+              "id": "defeat-spirit",
+              "kind": "combat",
+              "version": 1,
+              "args": {
+                "target": {
+                  "npc": "tree_spirit",
+                  "not_targeting_others": true,
+                  "pick": "nearest"
+                },
+                "tactic": {
+                  "kind": "open",
+                  "style": "melee",
+                  "engage_radius": 10,
+                  "auto_retaliate": false
+                },
+                "stand": {
+                  "tile": [
+                    2860,
+                    9737,
+                    0
+                  ],
+                  "source": "scripts/quests/quest_zanaris/scripts/quest_zanaris.rs2:42-46"
+                },
+                "lost_radius": 15,
+                "kill_budget_ticks": 500
+              },
+              "skip_if": {
+                "Any": []
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "stage_in",
+                  "version": 1,
+                  "args": {
+                    "quest": "zanaris",
+                    "any": [
+                      "zanaris:3"
+                    ]
+                  }
+                }
+              },
+              "comment": "scripts/quests/quest_zanaris/scripts/tree_spirit.rs2:1-18; scripts/quests/quest_zanaris/configs/tree_spirit.npc:1-18",
+              "advances": true
+            }
+          ]
+        },
+        {
+          "stage": "zanaris:3",
+          "required": [],
+          "terminal": false,
+          "recovery_entry": null,
+          "steps": [
+            {
+              "id": "cut-branch",
+              "kind": "interact",
+              "version": 1,
+              "args": {
+                "target": {
+                  "loc": "dramentree"
+                },
+                "op": "Chop down",
+                "anchor": {
+                  "tile": [
+                    2860,
+                    9734,
+                    0
+                  ],
+                  "source": "maps/m44_152.jm2:6993"
+                },
+                "radius": 4
+              },
+              "skip_if": {
+                "Fact": {
+                  "kind": "has_item",
+                  "version": 1,
+                  "args": {
+                    "obj": "dramen_branch"
+                  }
+                }
+              },
+              "settle": {
+                "All": [
+                  {
+                    "Fact": {
+                      "kind": "has_item",
+                      "version": 1,
+                      "args": {
+                        "obj": "dramen_branch"
+                      }
+                    }
+                  },
+                  {
+                    "Fact": {
+                      "kind": "stage_in",
+                      "version": 1,
+                      "args": {
+                        "quest": "zanaris",
+                        "any": [
+                          "zanaris:4"
+                        ]
+                      }
+                    }
+                  }
+                ]
+              },
+              "comment": "scripts/quests/quest_zanaris/scripts/quest_zanaris.rs2:28-40,56-68",
+              "advances": true
+            }
+          ]
+        },
+        {
+          "stage": "zanaris:4",
+          "required": [],
+          "terminal": false,
+          "recovery_entry": null,
+          "steps": [
+            {
+              "id": "carve-staff",
+              "kind": "use_on",
+              "version": 1,
+              "args": {
+                "item": "knife",
+                "target": {
+                  "item": "dramen_branch"
+                },
+                "product": "dramen_staff"
+              },
+              "skip_if": {
+                "Fact": {
+                  "kind": "has_item",
+                  "version": 1,
+                  "args": {
+                    "obj": "dramen_staff"
+                  }
+                }
+              },
+              "settle": {
+                "All": [
+                  {
+                    "Fact": {
+                      "kind": "has_item",
+                      "version": 1,
+                      "args": {
+                        "obj": "dramen_staff"
+                      }
+                    }
+                  },
+                  {
+                    "Fact": {
+                      "kind": "stage_in",
+                      "version": 1,
+                      "args": {
+                        "quest": "zanaris",
+                        "any": [
+                          "zanaris:5"
+                        ]
+                      }
+                    }
+                  }
+                ]
+              },
+              "comment": "scripts/quests/quest_zanaris/scripts/quest_zanaris.rs2:71-87",
+              "advances": true
+            }
+          ]
+        },
+        {
+          "stage": "zanaris:5",
+          "required": [],
+          "terminal": false,
+          "recovery_entry": null,
+          "steps": [
+            {
+              "id": "exit-cave",
+              "kind": "interact",
+              "version": 1,
+              "args": {
+                "target": {
+                  "loc": "zanarismagicdoor"
+                },
+                "op": "Open",
+                "anchor": {
+                  "tile": [
+                    2874,
+                    9750,
+                    0
+                  ],
+                  "source": "maps/m44_152.jm2:7624"
+                },
+                "radius": 3
+              },
+              "skip_if": {
+                "Not": {
+                  "Fact": {
+                    "kind": "in_area",
+                    "version": 1,
+                    "args": {
+                      "area": "dungeon"
+                    }
+                  }
+                }
+              },
+              "settle": {
+                "Not": {
+                  "Fact": {
+                    "kind": "in_area",
+                    "version": 1,
+                    "args": {
+                      "area": "dungeon"
+                    }
+                  }
+                }
+              },
+              "comment": "scripts/areas/area_entrana/scripts/entrana_dungeon.rs2:6-9; maps/m44_152.jm2:7624",
+              "advances": false
+            },
+            {
+              "id": "wield-staff",
+              "kind": "equip",
+              "version": 1,
+              "args": {
+                "obj": "dramen_staff"
+              },
+              "skip_if": {
+                "Fact": {
+                  "kind": "worn",
+                  "version": 1,
+                  "args": {
+                    "obj": "dramen_staff"
+                  }
+                }
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "worn",
+                  "version": 1,
+                  "args": {
+                    "obj": "dramen_staff"
+                  }
+                }
+              },
+              "comment": "scripts/quests/quest_zanaris/scripts/quest_zanaris.rs2:89-100; scripts/quests/quest_zanaris/configs/quest_zanaris.obj:15-29"
+            },
+            {
+              "id": "approach-shed-from-west",
+              "kind": "walk",
+              "version": 1,
+              "args": {
+                "tile": [3201, 3169, 0],
+                "source": "maps/m50_49.jm2:99,5006; scripts/doors/scripts/door_procs.rs2:77-88; scripts/engine.constant:20",
+                "radius": 0
+              },
+              "skip_if": {"Fact": {"kind": "near", "version": 1, "args": {"tile": [3201, 3169, 0], "radius": 0}}},
+              "settle": {"Fact": {"kind": "near", "version": 1, "args": {"tile": [3201, 3169, 0], "radius": 0}}},
+              "comment": "maps/m50_49.jm2:99,5006; scripts/doors/scripts/door_procs.rs2:77-88; scripts/quests/quest_zanaris/scripts/quest_zanaris.rs2:89-100"
+            },
+            {
+              "id": "enter-zanaris",
+              "kind": "interact",
+              "version": 1,
+              "args": {
+                "target": {
+                  "loc": "zanarisdoor"
+                },
+                "op": "Open",
+                "anchor": {
+                  "tile": [
+                    3202,
+                    3169,
+                    0
+                  ],
+                  "source": "maps/m50_49.jm2:5006"
+                },
+                "radius": 2
+              },
+              "skip_if": {
+                "Any": []
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "quest_colour",
+                  "version": 1,
+                  "args": {
+                    "quest": "zanaris",
+                    "is": "complete"
+                  }
+                }
+              },
+              "comment": "scripts/quests/quest_zanaris/scripts/quest_zanaris.rs2:89-106",
+              "advances": true
+            }
+          ]
+        },
+        {
+          "stage": "zanaris:6",
+          "required": [],
+          "terminal": true,
+          "recovery_entry": null,
+          "steps": []
+        }
+      ]
+    }
+  ]
+}

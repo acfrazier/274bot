@@ -189,9 +189,10 @@ pub struct Combat {
     food_total: u16,
 
     // Fourteen wear slots: two failure bits and one Prep-origin bit each.
-    // Bits 42–55 hold Prep-origin and skipped boost-family masks. Bits 56–59
-    // hold the bounded Quester approach recovery and in-flight marker.
+    // Bits 42–55 hold Prep-origin and skipped boost-family masks.
     prep_failures: u64,
+    approach_recovery: ReturnStallRecovery,
+    approach_walk_pending: bool,
     sequence: u64,
     rhand_pick: i32,
     suspended_type: i32,
@@ -225,10 +226,8 @@ const SKIP_RETALIATE: u16 = 16384;
 const LEASH_WALKED: u16 = 32768;
 const POTION_PREP_SHIFT: u32 = 42;
 const POTION_SKIP_SHIFT: u32 = 49;
-const APPROACH_RETRY_SHIFT: u32 = 56;
-const APPROACH_RETRY_MASK: u64 = 0b111 << APPROACH_RETRY_SHIFT;
-const APPROACH_WALK_PENDING_BIT: u64 = 1 << 59;
-const _: () = assert!(std::mem::size_of::<Combat>() <= 512);
+// Combat measures 520 B; the 528 B ceiling leaves 8 B for bounded approach state.
+const _: [(); 1] = [(); (std::mem::size_of::<Combat>() <= 528) as usize];
 const BASELINE_READY: u16 = 1 << api::prayer::PRAYER_COUNT;
 
 impl NativeMachine for Combat {
@@ -354,9 +353,17 @@ impl NativeMachine for Combat {
             food_total: 0,
 
             prep_failures: 0,
+            approach_recovery: ReturnStallRecovery::with_max_attempts(QUEST_WALK_MAX_ATTEMPTS),
+            approach_walk_pending: false,
             phase: Phase::Prep,
             flags: 0,
         };
+
+        // Request facts can warrant a boost before the first complete actor
+        // frame is available to resolve engagement worth.
+        if machine.request_worth() {
+            machine.flags |= BOOST_WORTH;
+        }
         if let Some(lines) = cx.snapshot().chat_lines(-1) {
             machine.chat_since = lines
                 .value
@@ -410,6 +417,11 @@ impl NativeMachine for Combat {
         if !self.receipts(cx) {
             return Poll::Pending;
         }
+        // begin may have no frame; choose the weapon on the first complete
+        // observation so Prep knows the wear request before it can drink.
+        if self.flags & OBSERVED == 0 && self.rhand_pick < 0 {
+            self.pick_weapon(&frame);
+        }
         self.capture_prayer_baseline(&prayer_observation(&frame));
         let tick = evidence.tick as u16;
         self.advance_prayer_ready(tick);
@@ -427,7 +439,7 @@ impl NativeMachine for Combat {
                 match receipt.clone().into_arrival() {
                     Ok(_) => self.reset_approach_recovery(),
                     Err(error) => {
-                        if self.observe_approach_failure(receipt) {
+                        if self.observe_approach_failure(receipt, evidence.tick) {
                             self.pending_walk = None;
                             self.set_approach_walk_pending(false);
                             return Poll::Pending;
@@ -1048,8 +1060,8 @@ impl Combat {
         self.schedule.interaction = Interaction::Unknown;
         self.resolve_worth(frame);
     }
-    fn resolve_worth(&mut self, frame: &Frame<'_>) {
-        let carries_boost = self.request.kit.as_ref().is_some_and(|kit| {
+    fn carries_boost(&self) -> bool {
+        self.request.kit.as_ref().is_some_and(|kit| {
             kit.carry.iter().any(|(id, _)| {
                 self.boost_kinds().iter().any(|kind| {
                     self.tables.potion(*kind).is_some_and(|family| {
@@ -1057,7 +1069,14 @@ impl Combat {
                     })
                 })
             })
-        });
+        })
+    }
+    fn request_worth(&self) -> bool {
+        self.carries_boost() || select::requested_worth(&self.request, &self.tables)
+    }
+    fn resolve_worth(&mut self, frame: &Frame<'_>) {
+        let carries_boost = self.carries_boost();
+
         let worth = select::offensives_worth(
             self.engaged,
             self.engaged_type(),
@@ -3054,48 +3073,44 @@ impl Combat {
         })
         .or(Some(stand))
     }
-    fn approach_recovery(&self) -> ReturnStallRecovery {
-        let state = ((self.prep_failures >> APPROACH_RETRY_SHIFT) & 0b111) as u8;
-        ReturnStallRecovery::from_compact_state(QUEST_WALK_MAX_ATTEMPTS, state)
-    }
-
-    fn store_approach_recovery(&mut self, recovery: &ReturnStallRecovery) {
-        self.prep_failures = (self.prep_failures & !APPROACH_RETRY_MASK)
-            | (u64::from(recovery.compact_state()) << APPROACH_RETRY_SHIFT);
-    }
-
     fn approach_walk_pending(&self) -> bool {
-        self.prep_failures & APPROACH_WALK_PENDING_BIT != 0
+        self.approach_walk_pending
     }
 
     fn set_approach_walk_pending(&mut self, pending: bool) {
-        if pending {
-            self.prep_failures |= APPROACH_WALK_PENDING_BIT;
-        } else {
-            self.prep_failures &= !APPROACH_WALK_PENDING_BIT;
-        }
+        self.approach_walk_pending = pending;
     }
 
-    fn observe_approach_failure(&mut self, receipt: &crate::native::WalkReceipt) -> bool {
-        let mut recovery = self.approach_recovery();
-        let retry = recovery.observe_receipt(receipt);
-        self.store_approach_recovery(&recovery);
+    fn observe_approach_failure(
+        &mut self,
+        receipt: &crate::native::WalkReceipt,
+        tick: u64,
+    ) -> bool {
+        let retry = self.approach_recovery.observe_receipt(receipt);
+        if retry {
+            let attempt = self.approach_recovery.retry_attempt_number();
+            let detail = receipt.failure_detail();
+            api::host_log!(
+                api::hostlog::Category::NavTrace,
+                api::hostlog::Level::Debug,
+                "quester-approach-retry tick={tick} attempt={attempt}/{} end={:?} detail={detail:?}",
+                QUEST_WALK_MAX_ATTEMPTS,
+                receipt.end,
+            );
+        }
         retry
     }
 
     fn approach_action_submitted(&mut self) {
-        let mut recovery = self.approach_recovery();
-        recovery.action_submitted();
-        self.store_approach_recovery(&recovery);
+        self.approach_recovery.action_submitted();
         self.set_approach_walk_pending(true);
     }
 
     fn reset_approach_recovery(&mut self) {
-        let mut recovery = self.approach_recovery();
-        recovery.reset();
-        self.store_approach_recovery(&recovery);
+        self.approach_recovery.reset();
         self.set_approach_walk_pending(false);
     }
+
 
     fn walk(
         &mut self,
@@ -3113,7 +3128,7 @@ impl Combat {
             options: Default::default(),
             required_after: cx.evidence(),
             evidence: None,
-            cross: Vec::new().into_boxed_slice(),
+            cross: self.request.cross.as_deref().unwrap_or_default().into(),
             protect: false,
             food_guard: false,
             allow: Default::default(),

@@ -64,6 +64,7 @@ impl Runtime {
             .map_or(0, |owner| owner.id.get());
         let mut actions = NativeActions { _private: () };
         let mut cx = ActionContext {
+            stage_cross: None,
             condition: self.condition,
             poison_unknown_pulse: self.poison_unknown_pulse,
             cure_poison: self.cure_poison,
@@ -1532,7 +1533,7 @@ fn case20_steady_nonemitting_combat_ticks_allocate_nothing() {
     assert_eq!(allocations.count_total, 0);
     assert!(harness.machine.counters.swings >= 50);
     assert_eq!(harness.machine.counters.food, 0);
-    assert!(std::mem::size_of::<Combat>() <= 512);
+    assert!(std::mem::size_of::<Combat>() <= 528);
     assert!(std::mem::size_of::<CombatReport>() <= 80);
     println!("Combat={} CombatReport={} CombatRequest={} ArcRequest={} ActionHandle={} HostAction={} Ledger={} InteractionReceipt={} WalkReceipt={}",
         std::mem::size_of::<Combat>(), std::mem::size_of::<CombatReport>(), std::mem::size_of::<CombatRequest>(), std::mem::size_of::<Arc<CombatRequest>>(),
@@ -2584,11 +2585,13 @@ fn prep_wears_and_drinks_before_the_first_attack_when_the_target_starts_out_of_r
         worn.slot = 3;
         worn.container = ItemContainer::Equipment;
         scene.inventory.extend([weapon, potion]);
-        scene.refresh();
+        scene.snapshot = GameSnapshot::new();
+        scene.refresh_without_local();
         let mut request = scene.request();
         request.stand = Some(stand);
         request.engage_radius = 6;
         let mut harness = Harness::new(&scene, request);
+        scene.refresh();
         // The requested durable type earns the boost whether or not it is in
         // range, so the opening batch wears the weapon and then drinks.
         let prep = harness.pending_batch(&scene, 1);
@@ -3758,6 +3761,59 @@ fn quester_combat_approach_replans_after_no_path() {
     scene.refresh();
     assert!(harness.poll_stamp(&scene.snapshot, 4, 4).is_pending());
     assert!(harness.machine.pending_walk.is_none());
+    assert_eq!(harness.drain(None).len(), 0);
+}
+
+#[test]
+fn quester_combat_approach_exhaustion_keeps_the_last_walk_detail() {
+    let mut scene = Scene::new("imp");
+    let here = scene.local.player.actor.tile;
+    let stand = tile(here.x + 20, here.z);
+    scene.npcs[0].tile = tile(stand.x + 10, stand.z);
+    scene.npcs[0].network = scene.npcs[0].tile;
+    scene.npcs[0].distance = 30;
+    scene.refresh();
+    let mut request = scene.request();
+    request.stand = Some(stand);
+    request.engage_radius = 1;
+    request.retry_approach_walks = true;
+    let mut harness = Harness::new(&scene, request);
+
+    assert!(matches!(
+        harness.pending(&scene, 1),
+        Some(HostEffect::Walk(walk)) if walk.target == stand
+    ));
+    let mut previous_request = harness.machine.pending_walk.unwrap().get();
+    for (attempt, failure_tick, detail) in [
+        (1, 2, "first route failed"),
+        (2, 4, "second route failed"),
+        (3, 6, "last route failed"),
+    ] {
+        approach_walk_receipt(
+            &mut harness,
+            failure_tick,
+            crate::native::WalkEnd::NoPath,
+            Some(detail),
+        );
+        if attempt == 3 {
+            assert!(matches!(
+                harness.poll(&scene.snapshot, failure_tick),
+                Poll::Ready(Err(ActionError::Blocked(reason)))
+                    if reason.as_ref() == "last route failed"
+            ));
+            break;
+        }
+        assert!(harness.pending(&scene, failure_tick).is_none());
+        let retry_tick = failure_tick + 1;
+        let Some(HostEffect::Walk(walk)) = harness.pending(&scene, retry_tick) else {
+            panic!("attempt {attempt} must submit a fresh approach walk");
+        };
+        assert_eq!(walk.target, stand);
+        assert_eq!(walk.required_after.tick, retry_tick);
+        let retry_request = harness.machine.pending_walk.unwrap().get();
+        assert_ne!(retry_request, previous_request);
+        previous_request = retry_request;
+    }
     assert_eq!(harness.drain(None).len(), 0);
 }
 

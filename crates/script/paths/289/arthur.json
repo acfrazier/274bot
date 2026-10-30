@@ -1,0 +1,226 @@
+{
+  "$schema": "../path.schema.json",
+  "schema": 3,
+  "id": "arthur",
+  "display_name": "Merlin's Crystal",
+  "required": [],
+  "tested_stats": null,
+  "partner": null,
+  "quest": {
+    "members": true,
+    "quest_points": 6,
+    "requirements": [],
+    "items": [],
+    "acquire": {},
+    "bank": "nearest",
+    "coin_float": 12,
+    "loadouts": {},
+    "areas": {
+      "keep": { "boxes": [[2764, 3392, 2785, 3418, 0], [2764, 3392, 2785, 3418, 1], [2764, 3392, 2785, 3418, 2]], "source": "289 maps/m43_53.jm2:5050-5051,7281; scripts/quests/quest_arthur/configs/quest_arthur.constant:15-17" }
+    },
+    "tools": ["obj:bread", "obj:bucket_empty", "obj:insect_repellent", "obj:bucket_wax", "obj:bat_bones", "obj:tinderbox", "obj:unlit_black_candle", "obj:lit_black_candle", "obj:excalibur"],
+    "owns_inventory": true
+  },
+  "roles": [{
+    "role": null,
+    "progress_binding": "journal:arthur",
+    "progress": {
+      "colour": { "not_started": "arthur:0", "in_progress": "arthur:1", "complete": "arthur:7" },
+      "rules": [
+        { "stage": "arthur:6", "all": ["now that merlin is freed"], "any": [], "not": [], "varp": 6 },
+        { "stage": "arthur:5", "all": ["i should free", "excalibur"], "any": [], "not": [], "varp": 5 },
+        { "stage": "arthur:4", "all": ["to bind", "to my will"], "any": [], "not": [], "varp": 4 },
+        { "stage": "arthur:3", "all": ["delivery by sea"], "any": [], "not": [], "varp": 3 },
+        { "stage": "arthur:2", "all": ["impenetrable fortress"], "any": [], "not": [], "varp": 2 },
+        { "stage": "arthur:1", "all": ["other knights", "advice"], "any": [], "not": [], "varp": 1 }
+      ],
+      "flags": [{ "flag": "altar-words", "all": ["i have the magic words from the chaos altar memorised"], "any": [], "count": null }],
+      "monotonic": true
+    },
+    "prelude": [],
+    "sequences": [
+      { "stage": "arthur:0", "required": [], "terminal": false, "recovery_entry": null, "steps": [{
+        "id": "start", "kind": "talk", "version": 1, "advances": true,
+        "comment": "King Arthur starts Merlin's rescue after the Knight of the Round Table choice. 289 scripts/areas/area_camelot/scripts/king_arthur.rs2:79-95; maps/m43_54.jm2:8273.",
+        "args": { "npc": "king_arthur", "anchor": { "tile": [2764, 3515, 0], "source": "289 maps/m43_54.jm2:8273; pack/npc.pack:252" }, "leash": 8, "prefer": ["I want to become a Knight of the Round Table"], "strict": true },
+        "skip_if": { "Any": [] }, "settle": { "Fact": { "kind": "stage_in", "version": 1, "args": { "quest": "arthur", "any": ["arthur:1"] } } }
+      }] },
+      { "stage": "arthur:1", "required": [], "terminal": false, "recovery_entry": null, "steps": [{
+        "id": "gawain", "kind": "talk", "version": 1, "advances": true,
+        "comment": "Ask how Merlin was trapped, not how to break the crystal. 289 scripts/areas/area_camelot/scripts/sir_gawain.rs2:14-17,35-45; maps/m43_54.jm2:8272.",
+        "args": { "npc": "sir_gawain", "anchor": { "tile": [2763, 3506, 0], "source": "289 maps/m43_54.jm2:8272; pack/npc.pack:241" }, "leash": 8, "prefer": ["Do you know how Merlin got trapped?", "Thank you for the information."], "strict": true },
+        "skip_if": { "Any": [] }, "settle": { "Fact": { "kind": "stage_in", "version": 1, "args": { "quest": "arthur", "any": ["arthur:2"] } } }
+      }] },
+      { "stage": "arthur:2", "required": [], "terminal": false, "recovery_entry": null, "steps": [{
+        "id": "lancelot", "kind": "talk", "version": 1, "advances": true,
+        "comment": "Lancelot reveals the sea delivery only after Gawain's clue. 289 scripts/areas/area_camelot/scripts/sir_lancelot.rs2:12-15,30-36; maps/m43_54.jm2:8279.",
+        "args": { "npc": "sir_lancelot", "anchor": { "tile": [2759, 3515, 1], "source": "289 maps/m43_54.jm2:8279; pack/npc.pack:240" }, "leash": 8, "prefer": ["Any ideas on how to get into Morgan Le Faye's stronghold?"], "strict": true },
+        "skip_if": { "Any": [] }, "settle": { "Fact": { "kind": "stage_in", "version": 1, "args": { "quest": "arthur", "any": ["arthur:3"] } } }
+      }] },
+      { "stage": "arthur:3", "required": [], "terminal": false, "recovery_entry": null, "order": "ordered",
+        "cross": [
+          { "id": "renegade_knight@2773,3399,0", "name": "Keep Le Faye Renegade Knight (2773,3399,0)", "reason": "Cross the keep's ground floor to reach Sir Mordred. Content maps/m43_53.jm2 and stairs.rs2:19-20." },
+          { "id": "renegade_knight@2767,3399,0", "name": "Keep Le Faye Renegade Knight (2767,3399,0)", "reason": "Cross the keep's ground floor to reach Sir Mordred. Content maps/m43_53.jm2 and stairs.rs2:19-20." },
+          { "id": "renegade_knight@2766,3397,0", "name": "Keep Le Faye Renegade Knight (2766,3397,0)", "reason": "Cross the keep's ground floor to reach Sir Mordred. Content maps/m43_53.jm2 and stairs.rs2:19-20." },
+          { "id": "renegade_knight@2771,3402,1", "name": "Keep Le Faye Renegade Knight (2771,3402,1)", "reason": "Use the keep's first-floor stairs to reach Sir Mordred. Content maps/m43_53.jm2:5255,6339 and stairs.rs2:19-20." },
+          { "id": "renegade_knight@2774,3405,1", "name": "Keep Le Faye Renegade Knight (2774,3405,1)", "reason": "Use the keep's first-floor stairs to reach Sir Mordred. Content maps/m43_53.jm2:5255,6339 and stairs.rs2:19-20." },
+          { "id": "renegade_knight@2766,3406,1", "name": "Keep Le Faye Renegade Knight (2766,3406,1)", "reason": "Use the keep's first-floor stairs to reach Sir Mordred. Content maps/m43_53.jm2:5255,6339 and stairs.rs2:19-20." },
+          { "id": "renegade_knight@2767,3400,1", "name": "Keep Le Faye Renegade Knight (2767,3400,1)", "reason": "Use the keep's first-floor stairs to reach Sir Mordred. Content maps/m43_53.jm2:5255,6339 and stairs.rs2:19-20." },
+          { "id": "renegade_knight@2770,3396,1", "name": "Keep Le Faye Renegade Knight (2770,3396,1)", "reason": "Use the keep's first-floor stairs to reach Sir Mordred. Content maps/m43_53.jm2:5255,6339 and stairs.rs2:19-20." }
+        ],
+        "steps": [
+        {
+          "id": "hide-in-delivery", "kind": "interact", "version": 1, "advances": false,
+          "comment": "The Catherby crate requires stage 3. Both hide and exit questions take Yes. The final teleport reaches the keep. 289 scripts/quests/quest_arthur/scripts/quest_arthur.rs2:2-35,68-77; maps/m43_53.jm2:5924.",
+          "args": { "target": { "loc": "merlincrate_empty" }, "op": "Hide-in", "anchor": { "tile": [2801, 3442, 0], "source": "289 maps/m43_53.jm2:5924; pack/loc.pack:64" }, "radius": 8, "dialogue": { "prefer": ["Yes."], "strict": true } },
+          "skip_if": { "Fact": { "kind": "in_area", "version": 1, "args": { "area": "keep" } } },
+          "settle": { "Fact": { "kind": "in_area", "version": 1, "args": { "area": "keep" } } }
+        },
+        {
+          "id": "fight-mordred", "kind": "combat", "version": 1, "advances": false,
+          "comment": "Morgan is spawned separately when Mordred's death queue runs. Stop on her observed presence and hand the open dialogue to the next step. 289 scripts/quests/quest_arthur/scripts/sir_mordred.rs2:7-28; maps/m43_53.jm2:7281.",
+          "args": { "target": { "npc": "sir_mordred", "not_targeting_others": true, "pick": "nearest" }, "stand": { "tile": [2769, 3403, 2], "source": "289 maps/m43_53.jm2:7281; pack/npc.pack:248" }, "lost_radius": 12, "kill_budget_ticks": 240, "tactic": { "kind": "open", "style": "melee", "engage_radius": 8, "auto_retaliate": true }, "win": { "Fact": { "kind": "npc_present", "version": 1, "args": { "npc": "morgan_le_faye" } } } },
+          "skip_if": { "Fact": { "kind": "npc_present", "version": 1, "args": { "npc": "morgan_le_faye" } } },
+          "settle": { "Fact": { "kind": "npc_present", "version": 1, "args": { "npc": "morgan_le_faye" } } }
+        },
+        {
+          "id": "spare-mordred", "kind": "talk", "version": 1, "advances": true,
+          "comment": "Continue Morgan's already-open dialogue. Demand the instructions, then leave. 289 scripts/quests/quest_arthur/scripts/sir_mordred.rs2:18-42,73-77.",
+          "args": { "continue_only": true, "prefer": ["Tell me how to untrap Merlin and I might.", "OK I will go do all that."], "strict": true },
+          "skip_if": { "Any": [] }, "settle": { "Fact": { "kind": "stage_in", "version": 1, "args": { "quest": "arthur", "any": ["arthur:4"] } } }
+        }
+      ] },
+      { "stage": "arthur:4", "required": [], "terminal": false, "recovery_entry": null, "order": "ordered",
+        "cross": [
+          { "id": "renegade_knight@2773,3399,0", "name": "Keep Le Faye Renegade Knight (2773,3399,0)", "reason": "Leave the keep through its stairs and ground-floor exit after Morgan's instructions. Content quest_arthur.rs2:94-115." },
+          { "id": "renegade_knight@2767,3399,0", "name": "Keep Le Faye Renegade Knight (2767,3399,0)", "reason": "Leave the keep through its stairs and ground-floor exit after Morgan's instructions. Content quest_arthur.rs2:94-115." },
+          { "id": "renegade_knight@2766,3397,0", "name": "Keep Le Faye Renegade Knight (2766,3397,0)", "reason": "Leave the keep through its stairs and ground-floor exit after Morgan's instructions. Content quest_arthur.rs2:94-115." },
+          { "id": "renegade_knight@2771,3402,1", "name": "Keep Le Faye Renegade Knight (2771,3402,1)", "reason": "Descend the keep's first-floor stairs after Morgan's instructions. Content stairs.rs2:19-20." },
+          { "id": "renegade_knight@2774,3405,1", "name": "Keep Le Faye Renegade Knight (2774,3405,1)", "reason": "Descend the keep's first-floor stairs after Morgan's instructions. Content stairs.rs2:19-20." },
+          { "id": "renegade_knight@2766,3406,1", "name": "Keep Le Faye Renegade Knight (2766,3406,1)", "reason": "Descend the keep's first-floor stairs after Morgan's instructions. Content stairs.rs2:19-20." },
+          { "id": "renegade_knight@2767,3400,1", "name": "Keep Le Faye Renegade Knight (2767,3400,1)", "reason": "Descend the keep's first-floor stairs after Morgan's instructions. Content stairs.rs2:19-20." },
+          { "id": "renegade_knight@2770,3396,1", "name": "Keep Le Faye Renegade Knight (2770,3396,1)", "reason": "Descend the keep's first-floor stairs after Morgan's instructions. Content stairs.rs2:19-20." }
+        ],
+        "steps": [
+        {
+          "id": "leave-keep", "kind": "interact", "version": 1, "advances": false,
+          "comment": "The fortress door opens only from inside and teleports one tile west. 289 scripts/quests/quest_arthur/scripts/quest_arthur.rs2:94-115; maps/m43_53.jm2:5051.",
+          "args": { "target": { "loc": "lefayeunopenabledoorl" }, "op": "Open", "anchor": { "tile": [2763, 3402, 0], "source": "289 maps/m43_53.jm2:5051; pack/loc.pack:72" }, "radius": 8 },
+          "skip_if": { "Not": { "Fact": { "kind": "in_area", "version": 1, "args": { "area": "keep" } } } },
+          "settle": { "Not": { "Fact": { "kind": "in_area", "version": 1, "args": { "area": "keep" } } } }
+        },
+        {
+          "id": "buy-bread", "kind": "buy", "version": 1,
+          "args": {"shop": {"npc": "baker_merchant", "anchor": {"tile": [2654, 3311, 0], "source": "content/maps/m41_51.jm2:10991"}}, "obj": "bread", "qty": 1, "est_gp": 12},
+          "comment": "content/scripts/areas/area_ardougne_east/configs/ardougne_east.inv:24; content/scripts/areas/area_ardougne_east/configs/ardougne_east.npc:410-414; content/scripts/skill_cooking/configs/cooking_inv/configs/dough/dough.obj:38-44; content/scripts/shop/scripts/shop.rs2:131-147,182-187. Price assumes base stock.",
+          "skip_if": {"Any": [{"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "bread"}}}, {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "excalibur"}}}]},
+          "settle": {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "bread"}}}
+        },
+        {
+          "id": "collect-bat-bones", "kind": "combat", "version": 1, "advances": false,
+          "args": {"target": {"npc": "bat", "not_targeting_others": true, "pick": "nearest"}, "stand": {"tile": [2752, 3409, 0], "source": "content/maps/m43_53.jm2:7262; content/pack/npc.pack:79"}, "lost_radius": 20, "kill_budget_ticks": 500, "tactic": {"kind": "open", "style": "melee", "engage_radius": 12, "auto_retaliate": true}, "loot": ["bat_bones"], "until": {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "bat_bones"}}}},
+          "comment": "content/scripts/_unpack/225/all.npc:1934-1964 gives giant bats the bat_bones death drop.",
+          "skip_if": {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "bat_bones"}}},
+          "settle": {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "bat_bones"}}}
+        },
+        {
+          "id": "walk-to-repellent", "kind": "walk", "version": 1,
+          "comment": "The members-world insect repellent spawn is at Catherby [2807,3450,0]. 289 maps/m43_53.jm2:7283-7285; pack/obj.pack:29; scripts/areas/area_seers/configs/bees.obj:1-6.",
+          "args": { "tile": [2807, 3450, 0], "radius": 2, "source": "289 maps/m43_53.jm2:7283-7285; pack/obj.pack:29" },
+          "skip_if": { "Any": [{ "Fact": { "kind": "near", "version": 1, "args": { "tile": [2807, 3450, 0], "radius": 2 } } }, { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "insect_repellent" } } }, { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "bucket_wax" } } }, { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "unlit_black_candle" } } }, { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "lit_black_candle" } } }] },
+          "settle": { "Fact": { "kind": "near", "version": 1, "args": { "tile": [2807, 3450, 0], "radius": 2 } } }
+        },
+        {
+          "id": "wait-for-repellent", "kind": "wait", "version": 1,
+          "comment": "The object has no respawnrate override. The engine default is 100 game ticks, so the wait is bounded at 200 ticks. 289 scripts/areas/area_seers/configs/bees.obj:1-11; engine/src/cache/config/ObjType.ts:182; engine/src/engine/script/handlers/ObjOps.ts:137-157.",
+          "args": { "until": { "Fact": { "kind": "ground_item_near", "version": 1, "args": { "obj": "insect_repellent", "radius": 12, "at": [2807, 3450, 0] } } }, "max_ticks": 200, "park_on_timeout": true },
+          "skip_if": { "Any": [{ "Fact": { "kind": "ground_item_near", "version": 1, "args": { "obj": "insect_repellent", "radius": 12, "at": [2807, 3450, 0] } } }, { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "insect_repellent" } } }, { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "bucket_wax" } } }, { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "unlit_black_candle" } } }, { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "lit_black_candle" } } }] },
+          "settle": { "Fact": { "kind": "ground_item_near", "version": 1, "args": { "obj": "insect_repellent", "radius": 12, "at": [2807, 3450, 0] } } }
+        },
+        {
+          "id": "take-repellent", "kind": "interact", "version": 1, "advances": false,
+          "comment": "Take the static Catherby spawn. 289 maps/m43_53.jm2:7283-7285; scripts/player/scripts/pickup.rs2:1-25.",
+          "args": { "target": { "ground": "insect_repellent" }, "op": "Take", "anchor": { "tile": [2807, 3450, 0], "source": "289 maps/m43_53.jm2:7283-7285; pack/obj.pack:29" }, "radius": 2 },
+          "skip_if": { "Any": [{ "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "insect_repellent" } } }, { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "bucket_wax" } } }, { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "unlit_black_candle" } } }, { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "lit_black_candle" } } }] },
+          "settle": { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "insect_repellent" } } }
+        },
+        {
+          "id": "repel-bees", "kind": "use_on", "version": 1, "advances": false,
+          "comment": "Use repellent on a Merlin beehive. The player-scoped hive flag remains set until wax is taken; repeating the operation is harmless. 289 scripts/areas/area_seers/scripts/bees.rs2:8-22,24-36; maps/m43_53.jm2:4819-4822,4930-4933,4967,5035-5037.",
+          "args": { "item": "insect_repellent", "target": { "loc": "merlin_beehive" }, "anchor": { "tile": [2758, 3440, 0], "source": "289 maps/m43_53.jm2:4930; pack/loc.pack:69" }, "radius": 8 },
+          "skip_if": { "Any": [{ "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "bucket_wax" } } }, { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "unlit_black_candle" } } }, { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "lit_black_candle" } } }] },
+          "settle": { "All": [] }
+        },
+        {
+          "id": "collect-beeswax", "kind": "use_on", "version": 1, "advances": false,
+          "comment": "Use the empty bucket on a repelled Merlin beehive. The engine replaces it with a bucket of wax. 289 scripts/areas/area_seers/scripts/bees.rs2:8-11,24-36; maps/m43_53.jm2:4930.",
+          "args": { "item": "bucket_empty", "target": { "loc": "merlin_beehive" }, "anchor": { "tile": [2758, 3440, 0], "source": "289 maps/m43_53.jm2:4930; pack/loc.pack:69" }, "radius": 8, "product": "bucket_wax" },
+          "skip_if": { "Any": [{ "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "bucket_wax" } } }, { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "unlit_black_candle" } } }, { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "lit_black_candle" } } }] },
+          "settle": { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "bucket_wax" } } }
+        },
+        {
+          "id": "ask-for-black-candle", "kind": "talk", "version": 1, "advances": false,
+          "comment": "First conversation sets the black-candle request. A restart with the request set and wax held instead produces the candle immediately. 289 scripts/areas/area_catherby/scripts/candle_maker.rs2:1-18,27-36; maps/m43_53.jm2:7268.",
+          "args": { "npc": "candle_maker", "anchor": { "tile": [2800, 3439, 0], "source": "289 maps/m43_53.jm2:7268; pack/npc.pack:563" }, "leash": 8, "prefer": ["Have you got any black candles?"], "strict": true },
+          "skip_if": { "Any": [{ "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "unlit_black_candle" } } }, { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "lit_black_candle" } } }] }, "settle": { "All": [] }
+        },
+        {
+          "id": "exchange-wax", "kind": "talk", "version": 1, "advances": false,
+          "comment": "The second conversation exchanges one bucket of wax for the black candle. 289 scripts/areas/area_catherby/scripts/candle_maker.rs2:1-13.",
+          "args": { "npc": "candle_maker", "anchor": { "tile": [2800, 3439, 0], "source": "289 maps/m43_53.jm2:7268" }, "leash": 8, "prefer": [] },
+          "skip_if": { "Any": [{ "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "unlit_black_candle" } } }, { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "lit_black_candle" } } }] },
+          "settle": { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "unlit_black_candle" } } }
+        },
+        {
+          "id": "light-black-candle", "kind": "use_on", "version": 1, "advances": false,
+          "comment": "Tinderbox converts the black candle to its lit product. 289 scripts/skill_firemaking/scripts/firemaking.rs2:20-26; scripts/skill_firemaking/scripts/light_source.rs2:1-8; scripts/quests/quest_arthur/configs/quest_arthur.obj:77-91.",
+          "args": { "item": "tinderbox", "target": { "item": "unlit_black_candle" }, "product": "lit_black_candle" },
+          "skip_if": { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "lit_black_candle" } } }, "settle": { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "lit_black_candle" } } }
+        },
+        {
+          "id": "request-excalibur", "kind": "talk", "version": 1, "advances": false,
+          "comment": "The Lady sends the player to the Port Sarim jeweller. Repeating this request resets the test, which is safe before receiving Excalibur. 289 scripts/areas/area_taverly/scripts/lady_of_the_lake.rs2:4-5,15-19,37-43; maps/m45_53.jm2:7656.",
+          "args": { "npc": "ladyofthelake", "anchor": { "tile": [2924, 3405, 0], "source": "289 maps/m45_53.jm2:7656; pack/npc.pack:251" }, "leash": 8, "prefer": ["I seek the sword Excalibur."], "strict": true },
+          "skip_if": { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "excalibur" } } }, "settle": { "All": [] }
+        },
+        {
+          "id": "give-beggar-bread", "kind": "interact", "version": 1, "advances": false,
+          "comment": "Opening the jeweller's door starts the beggar test. Give the held bread to receive Excalibur. 289 scripts/quests/quest_arthur/scripts/quest_arthur.rs2:210-223; scripts/quests/quest_arthur/scripts/beggar.rs2:18-45; maps/m47_50.jm2:6921.",
+          "args": { "target": { "loc": "jewellersdoor" }, "op": "Open", "anchor": { "tile": [3016, 3246, 0], "source": "289 maps/m47_50.jm2:6921; pack/loc.pack:60" }, "radius": 8, "dialogue": { "prefer": ["Yes certainly."], "strict": true } },
+          "skip_if": { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "excalibur" } } }, "settle": { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "excalibur" } } }
+        },
+        {
+          "id": "read-chaos-altar", "kind": "interact", "version": 1, "advances": true,
+          "comment": "Check the Chaos altar to set the words bit. The journal shows the memorised-words line. 289 scripts/quests/quest_arthur/scripts/quest_arthur.rs2:142-148; scripts/quests/quest_arthur/scripts/arthur_journal.rs2:45-49; maps/m50_56.jm2:5343.",
+          "args": { "target": { "loc": "thrantaxaltar" }, "op": "Check", "anchor": { "tile": [3239, 3608, 0], "source": "289 maps/m50_56.jm2:5343; pack/loc.pack:62" }, "radius": 8 },
+          "skip_if": { "Fact": { "kind": "flag", "version": 1, "args": { "quest": "arthur", "flag": "altar-words" } } }, "settle": { "Fact": { "kind": "flag", "version": 1, "args": { "quest": "arthur", "flag": "altar-words" } } }
+        },
+        {
+          "id": "stand-on-symbol", "kind": "walk", "version": 1,
+          "comment": "The bone operation must be within one tile of Camelot's magic symbol. 289 scripts/quests/quest_arthur/configs/quest_arthur.constant:18; scripts/quests/quest_arthur/scripts/quest_arthur.rs2:150-152.",
+          "args": { "tile": [2780, 3515, 0], "radius": 1, "source": "289 scripts/quests/quest_arthur/configs/quest_arthur.constant:18; scripts/quests/quest_arthur/scripts/quest_arthur.rs2:150-152" },
+          "skip_if": { "Fact": { "kind": "near", "version": 1, "args": { "tile": [2780, 3515, 0], "radius": 1 } } }, "settle": { "Fact": { "kind": "near", "version": 1, "args": { "tile": [2780, 3515, 0], "radius": 1 } } }
+        },
+        {
+          "id": "bind-thrantax", "kind": "interact", "version": 1, "advances": true,
+          "comment": "Drop bat bones while holding a lit black candle and select the exact words. The engine randomizes their menu position. 289 scripts/quests/quest_arthur/scripts/quest_arthur.rs2:150-152,163-191.",
+          "args": { "target": { "held": "bat_bones" }, "op": "Drop", "dialogue": { "prefer": ["Snarthon Candtrick Termanto"], "strict": true } },
+          "skip_if": { "Any": [] }, "settle": { "Fact": { "kind": "stage_in", "version": 1, "args": { "quest": "arthur", "any": ["arthur:5"] } } }
+        }
+      ] },
+      { "stage": "arthur:5", "required": [], "terminal": false, "recovery_entry": null, "steps": [{
+        "id": "shatter-crystal", "kind": "use_on", "version": 1, "advances": true,
+        "comment": "Use Excalibur on the crystal after Thrantax weakens it. 289 scripts/quests/quest_arthur/scripts/quest_arthur.rs2:239-266; maps/m43_54.jm2:7995.",
+        "args": { "item": "excalibur", "target": { "loc": "merlins_crystal" }, "anchor": { "tile": [2767, 3493, 2], "source": "289 maps/m43_54.jm2:7995; pack/loc.pack:63" }, "radius": 8 },
+        "skip_if": { "Any": [] }, "settle": { "Fact": { "kind": "stage_in", "version": 1, "args": { "quest": "arthur", "any": ["arthur:6"] } } }
+      }] },
+      { "stage": "arthur:6", "required": [], "terminal": false, "recovery_entry": null, "steps": [{
+        "id": "report-to-arthur", "kind": "talk", "version": 1, "advances": true,
+        "comment": "Arthur queues completion after Merlin is freed. 289 scripts/areas/area_camelot/scripts/king_arthur.rs2:40-51; scripts/quests/quest_arthur/scripts/quest_arthur.rs2:273-276.",
+        "args": { "npc": "king_arthur", "anchor": { "tile": [2764, 3515, 0], "source": "289 maps/m43_54.jm2:8273" }, "leash": 8, "prefer": [] },
+        "skip_if": { "Any": [] }, "settle": { "Fact": { "kind": "quest_colour", "version": 1, "args": { "quest": "arthur", "is": "complete" } } }
+      }] },
+      { "stage": "arthur:7", "required": [], "terminal": true, "recovery_entry": null, "steps": [] }
+    ]
+  }]
+}
