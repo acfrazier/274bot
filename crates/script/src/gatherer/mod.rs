@@ -113,6 +113,9 @@ pub(crate) fn test_full_pack_fixture(
     };
     let mut chosen = None;
     for method in prepared.catalog.methods_for_resource(resource) {
+        let Some(product) = known_rows(&method.products).first() else {
+            continue;
+        };
         let Some(target_id) = known_rows(&method.targets).iter().find_map(|target| {
             (target.class == api::gather_methods::TargetClass::Resource)
                 .then_some(target.entity)
@@ -128,11 +131,11 @@ pub(crate) fn test_full_pack_fixture(
             .spots(method, &region)
             .map_err(crate::native::StartError::Facts)?;
         if let Some(spot) = spots.find(|spot| spot.entity == EntityId::Loc(target_id)) {
-            chosen = Some((target_id, spot.origin));
+            chosen = Some((target_id, spot.origin, product.item));
             break;
         }
     }
-    let Some((tree_id, tree_tile)) = chosen else {
+    let Some((tree_id, tree_tile, product_id)) = chosen else {
         return Err(crate::native::StartError::Unavailable(
             format!("Gatherer fixture has no complete {resource}-tree placement").into(),
         ));
@@ -150,7 +153,7 @@ pub(crate) fn test_full_pack_fixture(
     };
     let logs = (0..28)
         .map(|slot| ItemView {
-            def: item_def(1511, "Logs"),
+            def: item_def(product_id, "Logs"),
             container: ItemContainer::Inventory,
             action_family: api::snapshot::ItemActionFamily::Held,
             slot,

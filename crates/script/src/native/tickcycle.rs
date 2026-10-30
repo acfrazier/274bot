@@ -887,7 +887,9 @@ impl TickCycle {
                     }
                 }
                 match &mut self.phase {
-                    Phase::Native { fallback, .. } | Phase::Idle { fallback, .. } => *fallback = None,
+                    Phase::Native { fallback, .. } | Phase::Idle { fallback, .. } => {
+                        *fallback = None
+                    }
                     _ => unreachable!(),
                 }
                 None
@@ -1033,7 +1035,11 @@ impl TickCycle {
                     && self.evidence.success(tick, tick)
                 {
                     self.record_cycle(policy, Verdict::Delayed, CycleReason::Delayed, tick);
-                    self.phase = Phase::Idle { since: tick, fallback: None, pending: None };
+                    self.phase = Phase::Idle {
+                        since: tick,
+                        fallback: None,
+                        pending: None,
+                    };
                     return self.drive_idle(signals, policy);
                 }
                 if edge && tick == sent.saturating_add(1) {
@@ -1069,7 +1075,11 @@ impl TickCycle {
                     if self.spec.delay_drop && fresh == Some(AnimClass::Null) {
                         if self.evidence.success(tick, tick) {
                             self.record_cycle(policy, Verdict::Delayed, CycleReason::Delayed, tick);
-                            self.phase = Phase::Idle { since: tick, fallback: None, pending: None };
+                            self.phase = Phase::Idle {
+                                since: tick,
+                                fallback: None,
+                                pending: None,
+                            };
                             return self.drive_idle(signals, policy);
                         }
                         null_edge = true;
@@ -1556,7 +1566,7 @@ impl TickCycle {
         blind: bool,
         policy: &mut TickPolicy,
     ) -> CycleStep {
-        if !signals.batch_permitted || self.has_unresolved_requests() {
+        if !signals.batch_permitted || self.checked_request_id().is_some() {
             return CycleStep::Wait;
         }
         let tick = signals.tick;
@@ -3701,7 +3711,11 @@ mod tests {
         assert_ring(&armed, 0);
 
         let mut idle = replay(continuing());
-        idle.cycle.phase = Phase::Idle { since: 100, fallback: None, pending: None };
+        idle.cycle.phase = Phase::Idle {
+            since: 100,
+            fallback: None,
+            pending: None,
+        };
         idle.cycle.pause(&mut idle.policy);
         assert_eq!(idle.policy.stats().paused, 0);
         assert_ring(&idle, 0);
