@@ -79,41 +79,49 @@ export default class T extends LoopingBot {
 }
 
 #[test]
+#[expect(non_snake_case, reason = "the census names this removal test")]
 fn compat_v1_input__input_useitemonloc__removed() {
     assert_removed("useItemOnLoc");
 }
 
 #[test]
+#[expect(non_snake_case, reason = "the census names this removal test")]
 fn compat_v1_input__input_useitemonnpc__removed() {
     assert_removed("useItemOnNpc");
 }
 
 #[test]
+#[expect(non_snake_case, reason = "the census names this removal test")]
 fn compat_v1_input__input_useitemonobj__removed() {
     assert_removed("useItemOnObj");
 }
 
 #[test]
+#[expect(non_snake_case, reason = "the census names this removal test")]
 fn compat_v1_input__input_useitemonitem__removed() {
     assert_removed("useItemOnItem");
 }
 
 #[test]
+#[expect(non_snake_case, reason = "the census names this removal test")]
 fn compat_v1_input__input_castonnpc__removed() {
     assert_removed("castOnNpc");
 }
 
 #[test]
+#[expect(non_snake_case, reason = "the census names this removal test")]
 fn compat_v1_input__input_castonloc__removed() {
     assert_removed("castOnLoc");
 }
 
 #[test]
+#[expect(non_snake_case, reason = "the census names this removal test")]
 fn compat_v1_input__input_castonitem__removed() {
     assert_removed("castOnItem");
 }
 
 #[test]
+#[expect(non_snake_case, reason = "the census names this removal test")]
 fn compat_v1_input__input_continuedialog__removed() {
     assert_removed("continueDialog");
 }

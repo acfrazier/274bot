@@ -340,7 +340,7 @@ pub struct LocalStateService {
 
 struct Shared {
     root: StateRoot,
-    open: [bool; 4],
+    open: [bool; 5],
     minter: Arc<RequestIdMinter>,
     preference_path: Arc<str>,
     preference_not_ready: PreferenceError,

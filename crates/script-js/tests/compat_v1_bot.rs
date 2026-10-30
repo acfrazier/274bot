@@ -33,6 +33,7 @@ fn setup_result(isolate: &LoadIsolate) -> Result<(), String> {
 }
 
 #[test]
+#[expect(non_snake_case, reason = "the census names this removal test")]
 fn compat_v1_bot__resolveloopcadence__removed() {
     assert!(!INDEX_DTS.contains("resolveLoopCadence"));
     assert!(!ABI_CONTRACT.contains("resolveLoopCadence"));
@@ -163,21 +164,25 @@ fn assert_hook_contract(class_name: &str, hook: &str) {
     );
 }
 #[test]
+#[expect(non_snake_case, reason = "the census names this contract test")]
 fn compat_v1_bot__branchtask_validate__contract() {
     assert_hook_contract("BranchTask", "validate");
 }
 
 #[test]
+#[expect(non_snake_case, reason = "the census names this contract test")]
 fn compat_v1_bot__branchtask_success__contract() {
     assert_hook_contract("BranchTask", "success");
 }
 
 #[test]
+#[expect(non_snake_case, reason = "the census names this contract test")]
 fn compat_v1_bot__branchtask_failure__contract() {
     assert_hook_contract("BranchTask", "failure");
 }
 
 #[test]
+#[expect(non_snake_case, reason = "the census names this contract test")]
 fn compat_v1_bot__leaftask_execute__contract() {
     assert_hook_contract("LeafTask", "execute");
 }
@@ -228,15 +233,18 @@ fn assert_constructor_contract(class_name: &str) {
 }
 
 #[test]
+#[expect(non_snake_case, reason = "the census names this contract test")]
 fn compat_v1_bot__branchtask_constructor__contract() {
     assert_constructor_contract("BranchTask");
 }
 
 #[test]
+#[expect(non_snake_case, reason = "the census names this contract test")]
 fn compat_v1_bot__leaftask_constructor__contract() {
     assert_constructor_contract("LeafTask");
 }
 #[test]
+#[expect(non_snake_case, reason = "the census names this contract test")]
 fn compat_v1_bot__registerscript__contract() {
     assert!(
         INDEX_DTS.contains("registerScript(manifest: BotManifestInput, origin?: string): void;"),
@@ -369,6 +377,7 @@ export default class T extends LoopingBot {
 }
 
 #[test]
+#[expect(non_snake_case, reason = "the census names this contract test")]
 fn compat_v1_bot__isbotmanifest__contract() {
     let source = r#"
 import * as Api from '@rs2b0t/api';

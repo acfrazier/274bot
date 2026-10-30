@@ -38,6 +38,7 @@ fn probe(isolate: &LoadIsolate, expression: &str) -> Value {
 }
 
 #[test]
+#[expect(non_snake_case, reason = "the census names this contract test")]
 fn compat_v1_events__events_on__contract() {
     let source = r#"
 import { events } from '@rs2b0t/api';
@@ -121,6 +122,7 @@ export default class T extends LoopingBot {
 }
 
 #[test]
+#[expect(non_snake_case, reason = "the census names this contract test")]
 fn compat_v1_events__events_off__contract() {
     let source = r#"
 import { events } from '@rs2b0t/api';
@@ -163,6 +165,7 @@ export default class T extends LoopingBot {
 }
 
 #[test]
+#[expect(non_snake_case, reason = "the census names this removal test")]
 fn compat_v1_events__eventsignal_ignoredrandoms__removed() {
     let declaration = INDEX_DTS
         .split("export const EventSignal: {")

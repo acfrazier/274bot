@@ -315,8 +315,10 @@ pub struct LoadIsolate {
     /// producer reads this before sending a synchronous client-frame command.
     frame_interest: std::sync::Arc<AtomicUsize>,
     /// Reused zero-capacity receipt channel: at most one client frame can
-    /// be pending while the host client thread waits for V8 dispatch.
-    frame_ack_rx: Receiver<()>,
+    /// be pending while the host client thread waits for V8 dispatch. The
+    /// mutex keeps the isolate handle `Sync`; the frame path takes it with
+    /// `get_mut`, so it never locks.
+    frame_ack_rx: Mutex<Receiver<()>>,
     stopped: std::sync::atomic::AtomicBool,
     /// One bounded, non-consuming terminal receipt for ScriptRunner.stop.
     script_stop: Mutex<Option<ScriptStopReceipt>>,
@@ -649,7 +651,7 @@ impl LoadIsolate {
             compat_journal,
             paint_generation,
             frame_interest,
-            frame_ack_rx,
+            frame_ack_rx: Mutex::new(frame_ack_rx),
             stopped: std::sync::atomic::AtomicBool::new(false),
             script_stop: Mutex::new(None),
             tx,
@@ -748,7 +750,11 @@ impl LoadIsolate {
             return false;
         }
         loop {
-            match self.frame_ack_rx.recv_timeout(Duration::from_millis(100)) {
+            let receipts = self
+                .frame_ack_rx
+                .get_mut()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            match receipts.recv_timeout(Duration::from_millis(100)) {
                 Ok(()) => return true,
                 Err(mpsc::RecvTimeoutError::Disconnected) => return false,
                 Err(mpsc::RecvTimeoutError::Timeout) => {
