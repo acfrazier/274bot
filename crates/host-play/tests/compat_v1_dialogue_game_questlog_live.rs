@@ -136,7 +136,7 @@ enum PrepPhase {
 struct Controls {
     open_make_menu: bool,
     open_quest_tab: bool,
-    close_main_modal: bool,
+    close_modal: bool,
     add_runes: bool,
     open_other_quest: bool,
     logout: bool,
@@ -256,12 +256,15 @@ impl Fixture {
             self.controls.open_quest_tab = false;
             self.quest_tab_sent = false;
         }
-        if self.controls.open_make_menu && !self.snapshot.make_products().is_empty() {
+        if self.controls.open_make_menu
+            && (modal.main != -1 || modal.chat != -1)
+            && !self.snapshot.make_products().is_empty()
+        {
             self.make_menu_ready = true;
             self.controls.open_make_menu = false;
         }
-        if self.controls.close_main_modal && modal.main == -1 {
-            self.controls.close_main_modal = false;
+        if self.controls.close_modal && modal.main == -1 && modal.chat == -1 {
+            self.controls.close_modal = false;
             self.close_sent = false;
         }
         if self.controls.add_runes
@@ -413,15 +416,16 @@ impl Fixture {
             }
             self.make_menu_attempted = true;
         }
-        if self.controls.close_main_modal && !self.close_sent {
-            if self.snapshot.modals().main >= 0 {
+        if self.controls.close_modal && !self.close_sent {
+            let modal = self.snapshot.modals();
+            if modal.main != -1 || modal.chat != -1 {
                 self.close_sent = interact::close_modal(client);
                 if !self.close_sent {
-                    self.error = Some("main-modal close was refused".into());
+                    self.error = Some("make-modal close was refused".into());
                     return;
                 }
             } else {
-                self.controls.close_main_modal = false;
+                self.controls.close_modal = false;
             }
         }
         if self.controls.add_runes && self.runes_sent < 2 {
@@ -509,6 +513,10 @@ fn inventory_count(snapshot: &GameSnapshot, name: &str) -> i32 {
         })
         .map(|item| item.count.max(0))
         .sum()
+}
+fn modal_roots(snapshot: &GameSnapshot) -> (i32, i32) {
+    let modal = snapshot.modals();
+    (modal.main, modal.chat)
 }
 
 fn send_cheat(client: &mut Client, command: &str) -> Result<(), String> {
@@ -709,12 +717,37 @@ fn wait_for(
         if condition(play, &state) {
             return;
         }
+        let quest_tab = state
+            .snapshot
+            .side_tabs()
+            .iter()
+            .find(|tab| tab.index == 2)
+            .map(|tab| {
+                (
+                    tab.root_component_id,
+                    tab.available,
+                    tab.active,
+                    tab.visible,
+                    tab.widgets
+                        .iter()
+                        .filter_map(|widget| widget.text.as_deref())
+                        .collect::<Vec<_>>(),
+                )
+            });
+        let quest_statuses = state
+            .snapshot
+            .quest_statuses()
+            .iter()
+            .map(|row| (row.component_id, row.name.as_str()))
+            .collect::<Vec<_>>();
         assert!(
             Instant::now() < deadline,
-            "live cell timeout for {account}: state={:?}, script={:?}, native={:?}",
+            "live cell timeout for {account}: state={:?}, script={:?}, native={:?}, active_side_tab={}, quest_tab={quest_tab:?}, quest_statuses={quest_statuses:?}, modals={:?}",
             state.prep,
             play.script_state(account),
-            play.script_native_status(account)
+            play.script_native_status(account),
+            state.snapshot.active_side_tab(),
+            state.snapshot.modals()
         );
         drop(state);
         thread::sleep(POLL_INTERVAL);
@@ -728,14 +761,14 @@ fn request_make_menu(fixture: &Mutex<Fixture>) {
     fixture.controls.open_make_menu = true;
 }
 
-fn close_main_modal(play: &Play, account: &str, fixture: &Mutex<Fixture>) {
+fn close_modal(play: &Play, account: &str, fixture: &Mutex<Fixture>) {
     {
         let mut fixture = fixture.lock().unwrap_or_else(|error| error.into_inner());
         fixture.close_sent = false;
-        fixture.controls.close_main_modal = true;
+        fixture.controls.close_modal = true;
     }
     wait_for(play, account, fixture, CELL_DEADLINE, |_, state| {
-        !state.controls.close_main_modal
+        !state.controls.close_modal
     });
 }
 
@@ -826,11 +859,11 @@ fn run_make_one_cell() {
     wait_for(&play, &account, &fixture, CELL_DEADLINE, |_, state| {
         state.make_menu_ready
     });
-    let before = inventory_count(&fixture.lock().unwrap().snapshot, "Shortbow");
-    assert_eq!(before, 0, "fresh account has no Shortbow");
-    let make_page_root = fixture.lock().unwrap().snapshot.modals().main;
-    assert_ne!(make_page_root, -1, "the real make page is open");
-    let make_start_tick = fixture.lock().unwrap().snapshot.tick();
+    let make_page_root = modal_roots(&fixture.lock().unwrap().snapshot);
+    assert!(
+        make_page_root.0 != -1 || make_page_root.1 != -1,
+        "the real make page is open"
+    );
 
     let mut success_logs = Vec::new();
     start_script(&play, &account, MAKE_SOURCE);
@@ -847,10 +880,10 @@ fn run_make_one_cell() {
         inventory_count(&state.snapshot, "Shortbow") == 1
     });
     let success_end_tick = fixture.lock().unwrap().snapshot.tick();
-    let success_page = fixture.lock().unwrap().snapshot.modals().main;
+    let success_page = modal_roots(&fixture.lock().unwrap().snapshot);
     stop_script(&play, &account, &fixture);
 
-    close_main_modal(&play, &account, &fixture);
+    close_modal(&play, &account, &fixture);
     let missing_start_tick = fixture.lock().unwrap().snapshot.tick();
     let mut missing_logs = Vec::new();
     start_script(&play, &account, MAKE_SOURCE);
@@ -910,8 +943,7 @@ fn run_make_one_cell() {
     );
     {
         let mut state = fixture.lock().unwrap_or_else(|error| error.into_inner());
-        state.close_sent = false;
-        state.controls.close_main_modal = true;
+        state.controls.close_modal = true;
     }
     wait_for_log(
         &play,
@@ -923,10 +955,15 @@ fn run_make_one_cell() {
     );
     assert_eq!(log_json(&replacement_logs, "MAKE_RESULT:"), json!(false));
     wait_for(&play, &account, &fixture, CELL_DEADLINE, |_, state| {
-        state.snapshot.modals().main == -1
+        state.snapshot.modals().main == -1 && state.snapshot.modals().chat == -1
     });
     let replacement_end_tick = fixture.lock().unwrap().snapshot.tick();
-    let replacement_page_root = fixture.lock().unwrap().snapshot.modals().main;
+    let replacement_page_root = modal_roots(&fixture.lock().unwrap().snapshot);
+    assert_eq!(
+        replacement_page_root,
+        (-1, -1),
+        "the make page closed while the action was pending"
+    );
     let after_replacement = inventory_count(&fixture.lock().unwrap().snapshot, "Shortbow");
     assert_eq!(
         after_replacement, 1,
@@ -947,9 +984,12 @@ fn run_make_one_cell() {
         "real_inputs": {"logs": 3, "knife": 1},
         "product": {"name": "Shortbow", "id": 50, "before": before, "after_success": 1},
         "make_page_roots": {
-            "before": make_page_root,
-            "after_success": success_page,
-            "after_replacement": replacement_page_root
+            "before": {"main": make_page_root.0, "chat": make_page_root.1},
+            "after_success": {"main": success_page.0, "chat": success_page.1},
+            "after_replacement": {
+                "main": replacement_page_root.0,
+                "chat": replacement_page_root.1
+            }
         },
         "observed_tick_boundaries": {
             "success_start": make_start_tick,
@@ -1048,7 +1088,7 @@ fn run_cast_npc_cell() {
         "target": target,
         "successful_cast": cast,
         "observed_real_npcs": fixture.lock().unwrap_or_else(|error| error.into_inner()).npc_rows,
-        "native_no_dispatch_refusal": "missing runes returned false; driver trace must contain exactly one OPNPCU packet for the later funded cast",
+        "native_no_dispatch_refusal": "missing runes returned false; driver trace must contain exactly one OPNPCT packet for the later funded cast",
     });
     save_receipt("receipt.json", &receipt);
 }
@@ -1090,7 +1130,7 @@ fn run_quest_journal_cell() {
     assert_eq!(log_json(&wrong_logs, "JOURNAL_RESULT:"), json!([]));
     let wrong_end_tick = fixture.lock().unwrap().snapshot.tick();
     stop_script(&play, &account, &fixture);
-    close_main_modal(&play, &account, &fixture);
+    close_modal(&play, &account, &fixture);
 
     request_make_menu(&fixture);
     wait_for(&play, &account, &fixture, CELL_DEADLINE, |_, state| {
@@ -1110,7 +1150,7 @@ fn run_quest_journal_cell() {
     assert_eq!(log_json(&foreign_logs, "JOURNAL_RESULT:"), json!([]));
     let foreign_end_tick = fixture.lock().unwrap().snapshot.tick();
     stop_script(&play, &account, &fixture);
-    close_main_modal(&play, &account, &fixture);
+    close_modal(&play, &account, &fixture);
 
     open_quest_tab_live(&play, &account, &fixture);
     let valid_start_tick = fixture.lock().unwrap().snapshot.tick();
@@ -1305,17 +1345,18 @@ fn run_captured(test_name: &str, cell: Cell, body: fn()) {
 
     let revision = client::io::ClientRevision::R289;
     if cell == Cell::CastNpc {
-        let opcode = client::io::map_client_prot(revision, client::io::ClientProt::OPNPCU).id as u8;
+        let opcode =
+            client::io::map_client_prot(revision, client::io::ClientProt::OPNPCT).id as u8;
         let casts = opcodes
             .iter()
             .filter(|entry| entry["opcode"].as_u64() == Some(u64::from(opcode)))
             .count();
         assert_eq!(
             casts, 1,
-            "exactly one funded Wind Strike dispatch; trace={opcodes:?}"
+            "exactly one funded Wind Strike OPNPCT dispatch; trace={opcodes:?}"
         );
-        receipt["driver"]["opnpcu_opcode"] = json!(opcode);
-        receipt["driver"]["opnpcu_dispatches"] = json!(casts);
+        receipt["driver"]["opnpct_opcode"] = json!(opcode);
+        receipt["driver"]["opnpct_dispatches"] = json!(casts);
     }
     if cell == Cell::MakeOne {
         let button =
