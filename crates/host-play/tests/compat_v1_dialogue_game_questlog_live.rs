@@ -204,6 +204,12 @@ impl Fixture {
             }
             return;
         }
+        // A logged-out client is always held (no ready session), so the
+        // preparation logout is observed before the held return.
+        if self.prep == PrepPhase::WaitLogout && !client.ingame {
+            self.prep = PrepPhase::WaitRelog;
+            return;
+        }
         if held {
             return;
         }
@@ -287,10 +293,6 @@ impl Fixture {
     }
 
     fn prepare(&mut self, client: &mut Client) -> Result<(), String> {
-        if self.prep == PrepPhase::WaitLogout && !client.ingame {
-            self.prep = PrepPhase::WaitRelog;
-            return Ok(());
-        }
         match self.prep {
             PrepPhase::Initial if client.ingame && client.scene_state == 2 => {
                 interact::mainland_hop(client);
