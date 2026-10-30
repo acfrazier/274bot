@@ -185,14 +185,11 @@ fn new_witness(
             .id
     };
     let key_id = item_id(SINISTER_KEY_ALIAS);
-    let (expected_key_at_start, expected_inventory_extra) =
-        match (poison_source, activity) {
-            (PoisonSource::TwistedChest, Activity::Dialogue) => {
-                (0, TWISTED_CHEST_REWARD_COUNT)
-            }
-            (PoisonSource::TwistedChest, _) => (1, 0),
-            (PoisonSource::AccountStateDebugProc, _) => (0, 0),
-        };
+    let (expected_key_at_start, expected_inventory_extra) = match (poison_source, activity) {
+        (PoisonSource::TwistedChest, Activity::Dialogue) => (0, TWISTED_CHEST_REWARD_COUNT),
+        (PoisonSource::TwistedChest, _) => (1, 0),
+        (PoisonSource::AccountStateDebugProc, _) => (0, 0),
+    };
     let resource_id = resource_id.inspect(|&id| {
         selected
             .item_by_id(id)
@@ -584,12 +581,12 @@ fn teleport_step(name: &'static str, tile: WorldTile) -> scenario::Step {
     }
 }
 
-fn twisted_chest_steps(
-    witness: Arc<Mutex<Witness>>,
-    before_start: bool,
-) -> Vec<scenario::Step> {
+fn twisted_chest_steps(witness: Arc<Mutex<Witness>>, before_start: bool) -> Vec<scenario::Step> {
     let mut steps = vec![
-        teleport_step("teleport to the real Yanille twisted chest", TWISTED_CHEST_TILE),
+        teleport_step(
+            "teleport to the real Yanille twisted chest",
+            TWISTED_CHEST_TILE,
+        ),
         scenario::Step {
             name: "observe the real Yanille twisted chest",
             kind: scenario::StepKind::Perform {
@@ -705,8 +702,7 @@ fn account_state_poison_steps(witness: Arc<Mutex<Witness>>) -> Vec<scenario::Ste
                 }
                 witness.poison_seed_bank_open =
                     Some(snapshot.bank_component_id() >= 0 && snapshot.bank_loaded());
-                witness.poison_seed_tool_count =
-                    witness.tool_id.map(|id| item_count(snapshot, id));
+                witness.poison_seed_tool_count = witness.tool_id.map(|id| item_count(snapshot, id));
                 witness.poison_source_tick = Some(snapshot.tick());
                 witness.poison_source_modal = Some(snapshot.modals().chat);
                 true
@@ -722,7 +718,6 @@ fn account_state_poison_steps(witness: Arc<Mutex<Witness>>) -> Vec<scenario::Ste
         },
     }]
 }
-
 
 fn capture_active_work(
     snapshot: &GameSnapshot,
@@ -1097,22 +1092,20 @@ fn common_receipt(
     let key_after = item_count(snapshot, witness.key_id);
     let antipoison_after = item_count(snapshot, witness.antipoison_id);
     let tool_after = witness.tool_id.map_or(0, |id| item_count(snapshot, id));
-    let resource_after = witness
-        .resource_id
-        .map_or(0, |id| item_count(snapshot, id));
+    let resource_after = witness.resource_id.map_or(0, |id| item_count(snapshot, id));
     let inventory_after = inventory_total(snapshot);
     let inventory_at_start = witness.baseline_antipoison
         + witness.baseline_tool
         + witness.baseline_key
         + witness.expected_inventory_extra;
-    let chest_rewards_after_start =
-        i32::from(witness.poison_source == PoisonSource::TwistedChest
-            && witness.activity != Activity::Dialogue)
-            * TWISTED_CHEST_REWARD_COUNT;
-    let chest_key_consumed_after_start =
-        i32::from(witness.poison_source == PoisonSource::TwistedChest
-            && witness.activity != Activity::Dialogue)
-            * witness.baseline_key;
+    let chest_rewards_after_start = i32::from(
+        witness.poison_source == PoisonSource::TwistedChest
+            && witness.activity != Activity::Dialogue,
+    ) * TWISTED_CHEST_REWARD_COUNT;
+    let chest_key_consumed_after_start = i32::from(
+        witness.poison_source == PoisonSource::TwistedChest
+            && witness.activity != Activity::Dialogue,
+    ) * witness.baseline_key;
     let expected_inventory_after = inventory_at_start + chest_rewards_after_start
         - chest_key_consumed_after_start
         - witness.baseline_antipoison.saturating_sub(antipoison_after)
@@ -1603,7 +1596,10 @@ fn live_l_cure_when_needed_drains_willow_and_resumes_gatherer() {
     assert_eq!(proof["poison_source"], "yanille-twisted-chest");
     assert_eq!(proof["sinister_key_at_start"], 1);
     assert_eq!(proof["sinister_key_after"], 0);
-    assert_eq!(proof["chest_rewards_after_start"], TWISTED_CHEST_REWARD_COUNT);
+    assert_eq!(
+        proof["chest_rewards_after_start"],
+        TWISTED_CHEST_REWARD_COUNT
+    );
     assert_eq!(proof["stand"]["x"], GATHERER_STAND.x);
     assert_eq!(proof["stand"]["z"], GATHERER_STAND.z);
     assert!(
@@ -1677,7 +1673,10 @@ fn live_l_cure_when_needed_quester_mines_copper_and_resumes_gather() {
     assert_eq!(proof["poison_source"], "yanille-twisted-chest");
     assert_eq!(proof["sinister_key_at_start"], 1);
     assert_eq!(proof["sinister_key_after"], 0);
-    assert_eq!(proof["chest_rewards_after_start"], TWISTED_CHEST_REWARD_COUNT);
+    assert_eq!(
+        proof["chest_rewards_after_start"],
+        TWISTED_CHEST_REWARD_COUNT
+    );
     assert_eq!(proof["resumed_step_id"], "survival-work");
     assert_eq!(proof["stand"]["x"], MINING_STAND.x);
     assert_eq!(proof["stand"]["z"], MINING_STAND.z);
@@ -1767,8 +1766,7 @@ fn live_l_cure_quester_interrupts_bank_provisioning_and_resumes_mining() {
             <= proof["poison_source_tick"].as_u64().unwrap()
     );
     assert!(
-        proof["work_active_tick"].as_u64().unwrap()
-            > proof["poison_source_tick"].as_u64().unwrap()
+        proof["work_active_tick"].as_u64().unwrap() > proof["poison_source_tick"].as_u64().unwrap()
     );
     assert_common_cure(proof, 120);
 }
@@ -1802,6 +1800,9 @@ fn live_l_cure_quester_dialogue_updates_policy_on_desert_captain_page() {
         }]),
     );
     let mut cell = fixture(
+        Activity::Dialogue,
+        "L-CURE-QUESTER-DIALOGUE",
+        DESERT_CAPTAIN_STAND,
         &[(ANTIPOISON_ALIAS, 1), (SINISTER_KEY_ALIAS, 1)],
         &[("cookquest", 0), ("desertrescue", 3)],
         vec![],
@@ -1834,8 +1835,14 @@ fn live_l_cure_quester_dialogue_updates_policy_on_desert_captain_page() {
     assert_eq!(proof["poison_source"], "yanille-twisted-chest");
     assert_eq!(proof["sinister_key_at_start"], 0);
     assert_eq!(proof["sinister_key_after"], 0);
-    assert_eq!(proof["chest_reward_count_at_start"], TWISTED_CHEST_REWARD_COUNT);
-    assert_eq!(proof["inventory_total_at_start"], 1 + TWISTED_CHEST_REWARD_COUNT);
+    assert_eq!(
+        proof["chest_reward_count_at_start"],
+        TWISTED_CHEST_REWARD_COUNT
+    );
+    assert_eq!(
+        proof["inventory_total_at_start"],
+        1 + TWISTED_CHEST_REWARD_COUNT
+    );
     assert_eq!(proof["inventory_total_after"], TWISTED_CHEST_REWARD_COUNT);
     assert_eq!(proof["npc_config"], "desertminingcaptain");
     assert_eq!(proof["npc_stage"], DESERT_STAGE_REPLY);
