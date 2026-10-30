@@ -71,8 +71,6 @@ const SLOTS: usize = 8;
 #[derive(Default)]
 struct Catalog {
     shapes: HashMap<Box<[&'static str]>, v8::Global<v8::ObjectTemplate>>,
-    /// Templates for caller-named key lists (a copied gear piece), keyed by the length-prefixed names.
-    copies: HashMap<String, v8::Global<v8::ObjectTemplate>>,
     tile: Option<v8::Global<v8::Value>>,
     values: [Option<v8::Global<v8::Value>>; SLOTS],
 }
@@ -210,37 +208,6 @@ fn populate<'s>(
         }
     }
     Ok(row.into())
-}
-
-/// Like [`object`] for a key list read from a caller's object, so the template is cached under the list itself.
-fn copied_object<'s>(
-    scope: &mut v8::HandleScope<'s>,
-    keys: &[&str],
-    values: &[Value<'s>],
-) -> JsResult<'s, Value<'s>> {
-    debug_assert_eq!(keys.len(), values.len());
-    let mut id = String::new();
-    for name in keys {
-        id.push_str(&name.len().to_string());
-        id.push(':');
-        id.push_str(name);
-    }
-    let shared = shared(scope)?;
-    let cached = shared
-        .borrow()
-        .copies
-        .get(&id)
-        .map(|template| v8::Local::new(scope, template));
-    let template = match cached {
-        Some(template) => template,
-        None => {
-            let template = shape(scope, keys);
-            let global = v8::Global::new(scope, template);
-            shared.borrow_mut().copies.insert(id, global);
-            template
-        }
-    };
-    populate(scope, template, keys, values)
 }
 
 fn remember_tile<'s>(scope: &mut v8::HandleScope<'s>, ctor: Value<'s>) -> JsResult<'s, ()> {
@@ -1053,9 +1020,13 @@ fn with_bait<'s>(
     object(host.scope, &["gear"], &[gear_array])
 }
 
-/// `{ ...piece, restock: target }`: the piece's own enumerable keys in order (a present `restock` keeps its place,
-/// an absent one is appended), built from the cached template for that key list. Symbol and index keys, and a
-/// `__proto__` key, have no template spelling and are refused by name.
+/// The own keys of a method's gear piece (`api::fishing_gear`), the one piece shape the catalog knows.
+const PIECE_KEYS: [&str; 3] = ["name", "min", "restock"];
+
+/// `{ ...piece, restock: target }`. A piece with exactly the catalog's own keys, in order, becomes an instance of
+/// the cached piece shape. Any other piece, with whatever string, index or symbol keys the caller gave it
+/// (including an own `__proto__`, which stays an own data property), is copied by spread semantics onto a plain
+/// object: nothing about a caller's key list is cached, so callers cannot grow the catalog's per-isolate state.
 fn copy_with_restock<'s>(
     scope: &mut v8::HandleScope<'s>,
     piece: Value<'s>,
@@ -1069,34 +1040,50 @@ fn copy_with_restock<'s>(
         .mode(v8::KeyCollectionMode::OwnOnly)
         .property_filter(v8::PropertyFilter::ONLY_ENUMERABLE)
         .index_filter(v8::IndexFilter::IncludeIndices)
-        .key_conversion(v8::KeyConversionMode::KeepNumbers);
+        .key_conversion(v8::KeyConversionMode::ConvertToString);
     let listed = cb::catching(scope, |s| source.get_own_property_names(s, options.build()))?;
-    let mut names: Vec<String> = Vec::with_capacity(listed.length() as usize + 1);
-    for index in 0..listed.length() {
+    let length = listed.length();
+    let mut names: Vec<v8::Local<'s, v8::Name>> = Vec::with_capacity(length as usize);
+    let mut known = length as usize == PIECE_KEYS.len();
+    for index in 0..length {
         let name = cb::get_index(scope, listed.into(), index)?;
-        if !name.is_string() {
-            return Err(cb::not_impl(scope, "bait piece with a symbol or index key"));
+        if known {
+            let expected = key(scope, PIECE_KEYS[index as usize]);
+            known = name.strict_equals(expected.into());
         }
-        let name = cb::to_string(scope, name)?;
-        if name == "__proto__" {
-            return Err(cb::not_impl(scope, "bait piece with a __proto__ key"));
-        }
+        let Ok(name) = v8::Local::<v8::Name>::try_from(name) else {
+            return Err(cb::type_error(
+                scope,
+                "gather catalog: a property key is neither a string nor a symbol",
+            ));
+        };
         names.push(name);
     }
-    let mut values = Vec::with_capacity(names.len() + 1);
+    let mut values: Vec<Value<'s>> = Vec::with_capacity(names.len());
     for name in &names {
-        values.push(cb::get(scope, piece, name)?);
+        values.push(cb::catching(scope, |s| source.get(s, (*name).into()))?);
     }
     let target = cb::num(scope, target);
-    match names.iter().position(|name| name == "restock") {
-        Some(at) => values[at] = target,
-        None => {
-            names.push("restock".to_string());
-            values.push(target);
+    if known {
+        values[2] = target;
+        return object(scope, &PIECE_KEYS, &values);
+    }
+    let copy = v8::Object::new(scope);
+    let restock = key(scope, "restock");
+    let named = names
+        .iter()
+        .zip(&values)
+        .map(|(name, value)| (*name, *value))
+        .chain(std::iter::once((restock.into(), target)));
+    for (name, value) in named {
+        if !cb::catching(scope, |s| copy.create_data_property(s, name, value))? {
+            return Err(cb::type_error(
+                scope,
+                "gather catalog: could not set a property",
+            ));
         }
     }
-    let keys: Vec<&str> = names.iter().map(String::as_str).collect();
-    copied_object(scope, &keys, &values)
+    Ok(copy.into())
 }
 
 /// Which plans a `planFishingGearBuys` family member returns.

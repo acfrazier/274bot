@@ -200,6 +200,8 @@ fn setup() -> Runtime {
 
 fn collected_used_heap(runtime: &mut Runtime) -> usize {
     let isolate = runtime.deno_runtime().v8_isolate();
+    // Twice: the second pass reclaims what the first left to concurrent marking.
+    isolate.low_memory_notification();
     isolate.low_memory_notification();
     isolate.get_heap_statistics().used_heap_size()
 }
@@ -256,14 +258,6 @@ fn every_table_object_has_fast_properties_from_its_cached_shape() {
         };
         assert!(shapes >= 10, "shapes are cached per own-key list: {shapes}");
         assert!(shapes < 64, "the shape cache stays bounded by the table schema: {shapes}");
-        let copies = |runtime: &mut Runtime| {
-            let scope = runtime.deno_runtime().handle_scope();
-            let cache = scope.get_slot::<Shared>().cloned().expect("catalog installed");
-            let count = cache.borrow().copies.len();
-            count
-        };
-        let copied = copies(&mut runtime);
-        assert_eq!(copied, 3, "one template per copied gear-piece key list: the method pieces and two custom lists");
         assert!(runtime.eval::<bool>("__check(__expected)").unwrap());
         let again = {
             let scope = runtime.deno_runtime().handle_scope();
@@ -272,7 +266,6 @@ fn every_table_object_has_fast_properties_from_its_cached_shape() {
             count
         };
         assert_eq!(again, shapes, "a second read adds no shape");
-        assert_eq!(copies(&mut runtime), copied, "a second read adds no copy template");
     });
 }
 
@@ -313,12 +306,13 @@ fn materialized_tables_bound_the_collected_v8_heap_and_repeat_reads_add_nothing(
         after_repeat.saturating_sub(populated) <= 64 * 1024,
         "1,000 repeat reads grew collected V8 used heap from {populated} to {after_repeat}: a table is not returned by identity"
     );
-    // Each operation alone: after one warming call, 1,000 more calls leave the collected heap where it was.
+    // Each operation alone: after 1,000 warming calls (the engine's tier-up allocates code and feedback on the
+    // way, which is not retained rows), 1,000 more calls leave the collected heap where it was.
     let labels: Vec<String> = runtime.eval("__labels()").unwrap();
     // The 14 tables, the 17 members from `MINING_LABEL` to `SHOPABLE_MISSING`, the 2 cook members, and 5 variants.
     assert_eq!(labels.len(), 38, "every dispatch operation has an exercise: {labels:?}");
     for label in labels {
-        runtime.eval::<()>(&format!("globalThis.__repeatOp('{label}', 1); globalThis.__last = null;")).unwrap();
+        runtime.eval::<()>(&format!("globalThis.__repeatOp('{label}', 1000); globalThis.__last = null;")).unwrap();
         let before = collected_used_heap(&mut runtime);
         runtime.eval::<()>(&format!("globalThis.__repeatOp('{label}', 1000); globalThis.__last = null;")).unwrap();
         let after = collected_used_heap(&mut runtime);
@@ -342,4 +336,79 @@ fn shapes_exist_only_after_the_first_object_of_a_key_list_is_built() {
     assert_eq!(count(&mut runtime), 2, "method rows and gear pieces: one template each");
     runtime.eval::<()>("__g(4, __Tile)").unwrap();
     assert_eq!(count(&mut runtime), 2);
+}
+
+fn cached_shapes(runtime: &mut Runtime) -> usize {
+    let scope = runtime.deno_runtime().handle_scope();
+    let cache = scope.get_slot::<Shared>().cloned().expect("catalog installed");
+    let count = cache.borrow().shapes.len();
+    count
+}
+
+/// `{ ...piece, restock: target }` for a piece carrying an index key, a symbol key or an own `__proto__`.
+#[test]
+fn bait_copies_follow_spread_semantics_for_index_symbol_and_proto_keys() {
+    let mut runtime = setup();
+    runtime
+        .eval::<()>(
+            r#"
+(() => {
+    const need = (condition, message) => { if (!condition) throw new Error(message); };
+    const keys = value => JSON.stringify(Reflect.ownKeys(value).filter(key => typeof key === 'string'));
+    const tag = Symbol('tag');
+    const withIndex = { name: 'Feather', min: 1, restock: 100, 0: 'tag' };
+    const withSymbol = { name: 'Feather', min: 1, restock: 100, [tag]: 'sym' };
+    const withProto = JSON.parse('{"name":"Feather","min":1,"restock":100,"__proto__":{"x":1}}');
+    const catalogShaped = { name: 'Feather', min: 1, restock: 100 };
+    const absent = { name: 'Feather', min: 1 };
+    const out = __g(31, __Tile, { gear: [withIndex, withSymbol, withProto, catalogShaped, absent] }, 500).gear;
+
+    need(out[0] !== withIndex && keys(out[0]) === '["0","name","min","restock"]', `index key order ${keys(out[0])}`);
+    need(out[0][0] === 'tag' && out[0].restock === 500 && withIndex.restock === 100, 'index key copied');
+    need(out[1] !== withSymbol && keys(out[1]) === '["name","min","restock"]', `symbol string keys ${keys(out[1])}`);
+    need(Reflect.ownKeys(out[1]).includes(tag) && out[1][tag] === 'sym' && out[1].restock === 500, 'symbol key copied');
+    need(out[2] !== withProto && Object.getPrototypeOf(out[2]) === Object.prototype, 'own __proto__ did not set the prototype');
+    const own = Object.getOwnPropertyDescriptor(out[2], '__proto__');
+    need(own && own.value && own.value.x === 1 && own.enumerable && own.writable && own.configurable, 'own __proto__ is a data property');
+    need(keys(out[2]) === '["name","min","restock","__proto__"]' && out[2].restock === 500, `proto key order ${keys(out[2])}`);
+    need(out[3] !== catalogShaped && keys(out[3]) === '["name","min","restock"]' && out[3].restock === 500 && catalogShaped.restock === 100,
+        'a catalog-shaped piece is copied');
+    need(absent.restock === undefined, 'the caller piece is untouched');
+})();
+"#,
+        )
+        .unwrap_or_else(|error| panic!("{error}"));
+}
+
+/// Caller-specific key lists add nothing to the catalog: not a cached shape and not collected heap.
+#[test]
+fn caller_piece_shapes_leave_the_shape_cache_and_the_collected_heap_unchanged() {
+    let mut runtime = setup();
+    runtime
+        .eval::<()>(
+            r#"
+globalThis.__serial = 0;
+globalThis.__shaped = count => {
+    for (let index = 0; index < count; index++) {
+        const piece = { name: 'Feather', min: 1, restock: 100 };
+        piece['extra' + globalThis.__serial++] = index;
+        globalThis.__last = __g(31, __Tile, { gear: [piece] }, 500);
+    }
+};
+__g(4, __Tile);
+__shaped(1);
+globalThis.__last = null;
+"#,
+        )
+        .unwrap_or_else(|error| panic!("{error}"));
+    let shapes = cached_shapes(&mut runtime);
+    runtime.eval::<()>("__shaped(500); globalThis.__last = null;").unwrap();
+    assert_eq!(cached_shapes(&mut runtime), shapes, "500 distinct caller key lists added a cached shape");
+    let before = collected_used_heap(&mut runtime);
+    runtime.eval::<()>("__shaped(2000); globalThis.__last = null;").unwrap();
+    let after = collected_used_heap(&mut runtime);
+    let grown = after.saturating_sub(before);
+    println!("Gather catalog 2000 distinct caller shapes: before={before} after={after} growth={grown}");
+    assert_eq!(cached_shapes(&mut runtime), shapes, "2,000 more distinct caller key lists added a cached shape");
+    assert!(grown <= 64 * 1024, "2,000 distinct caller key lists grew collected V8 used heap by {grown} bytes");
 }
