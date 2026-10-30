@@ -25,6 +25,7 @@ pub struct Walk {
     request: Box<WalkRequest>,
     request_id: u64,
     quest_list_wait_since: Option<u64>,
+    quest_list_biohazard_closed: bool,
     quest_list_retry_used: bool,
     deadline: Duration,
     wait: WalkSlot,
@@ -95,14 +96,34 @@ fn quest_list_status_observed(
     })
 }
 
-fn unproven_complete_gates(
+fn biohazard_complete_gates(gates: &[QuestGate]) -> Option<Arc<[QuestGate]>> {
+    let biohazard: Vec<_> = gates
+        .iter()
+        .filter_map(|gate| match gate {
+            QuestGate::Complete(quest) if quest_key_matches_row(&quest.0, "Biohazard") => {
+                Some(gate.clone())
+            }
+            _ => None,
+        })
+        .collect();
+    if biohazard.is_empty() {
+        None
+    } else {
+        Some(Arc::from(biohazard))
+    }
+}
+
+fn unproven_biohazard_gates(
     gates: &[QuestGate],
     rows: Option<&[api::snapshot::QuestStatusView]>,
 ) -> Option<Arc<[QuestGate]>> {
     let unproven: Vec<_> = gates
         .iter()
         .filter_map(|gate| match gate {
-            QuestGate::Complete(_) if !quest_list_gate_observed(gate, rows) => {
+            QuestGate::Complete(quest)
+                if quest_key_matches_row(&quest.0, "Biohazard")
+                    && !quest_list_gate_observed(gate, rows) =>
+            {
                 Some(gate.clone())
             }
             _ => None,
@@ -197,6 +218,7 @@ impl Walk {
         let mut request = self.request.as_ref().clone();
         request.required_after = required_after;
         if let Some(gates) = close_unproven_gates {
+            self.quest_list_biohazard_closed = true;
             request.evidence = Some(Arc::new(ClosedUnprovenQuestGates {
                 gates,
                 prior: request.evidence.take(),
@@ -235,6 +257,7 @@ impl NativeMachine for Walk {
             request: Box::new(request),
             request_id,
             quest_list_wait_since: None,
+            quest_list_biohazard_closed: false,
             quest_list_retry_used: false,
             deadline: cx.active_now().saturating_add(WALK_DEADLINE),
             wait,
@@ -276,10 +299,31 @@ impl NativeMachine for Walk {
                 .expect("quest-evidence receipt remains correlated")
                 .clone();
             if self.quest_list_retry_used {
+                let WalkEnd::NeedsEvidence(gates) = &receipt.end else {
+                    unreachable!("quest-evidence receipt was checked above");
+                };
+                if !self.quest_list_biohazard_closed {
+                    if let Some(biohazard_gates) = biohazard_complete_gates(gates) {
+                        api::host_log!(
+                            api::hostlog::Category::NavTrace,
+                            api::hostlog::Level::Debug,
+                            "walk-quest-list-biohazard-gate-still-unproven request={} gates={biohazard_gates:?}",
+                            self.request_id,
+                        );
+                        if let Err(error) =
+                            self.replan_after_quest_list_wait(cx, Some(biohazard_gates))
+                        {
+                            return Poll::Ready(Err(error));
+                        }
+                        return Poll::Pending;
+                    }
+                }
                 let mut refused = receipt;
-                refused.detail = Some(Arc::from(
-                    "fresh route still needs quest evidence after one bounded retry",
-                ));
+                refused.detail = Some(Arc::from(if self.quest_list_biohazard_closed {
+                    "fresh route still needs quest evidence after the Biohazard gate was treated as closed"
+                } else {
+                    "fresh route still needs quest evidence after one quest-list-triggered retry"
+                }));
                 return Poll::Ready(Ok(refused));
             }
             let WalkEnd::NeedsEvidence(gates) = &receipt.end else {
@@ -312,11 +356,11 @@ impl NativeMachine for Walk {
             if tick.saturating_sub(*started) < QUEST_LIST_STATUS_WAIT_TICKS {
                 return Poll::Pending;
             }
-            if let Some(unproven_gates) = unproven_complete_gates(gates, quest_rows) {
+            if let Some(unproven_gates) = unproven_biohazard_gates(gates, quest_rows) {
                 api::host_log!(
                     api::hostlog::Category::NavTrace,
                     api::hostlog::Level::Debug,
-                    "walk-quest-list-unproven-gates-closed request={} tick={} gates={unproven_gates:?}",
+                    "walk-quest-list-biohazard-gate-unproven request={} tick={} gates={unproven_gates:?}",
                     self.request_id,
                     tick,
                 );
@@ -859,4 +903,107 @@ mod tests {
             "only one fresh route is queued for the observed status"
         );
     }
+    #[test]
+    fn biohazard_row_retry_that_still_needs_evidence_closes_only_biohazard() {
+        let run = RunKey {
+            slot: 1,
+            run: 1,
+            session: 1,
+        };
+        let target = WorldTile {
+            x: 3200,
+            z: 3200,
+            level: 0,
+        };
+        let mut snapshot = GameSnapshot::new();
+        snapshot.seed_ingame(2);
+        snapshot.seed_quest_statuses(
+            vec![api::snapshot::QuestStatusView {
+                component_id: 42,
+                name: "Biohazard".to_owned(),
+                colour: 0xF80000,
+            }],
+            true,
+        );
+        let mut ledger = None;
+        let handle = with_tick(&snapshot, &mut ledger, 1, |tick| {
+            tick.actions
+                .begin::<Walk>(
+                    crate::quester::families::reach::walk_request(
+                        target,
+                        1,
+                        None,
+                        EvidenceStamp {
+                            run,
+                            tick: 1,
+                            sequence: 1,
+                        },
+                    ),
+                    &mut tick.cx,
+                )
+                .unwrap()
+        });
+        let original = post_needs_evidence_receipt(&mut ledger, 1);
+
+        assert!(matches!(
+            with_tick(&snapshot, &mut ledger, 1, |tick| tick
+                .actions
+                .poll(&handle, &mut tick.cx)),
+            Poll::Pending
+        ));
+        let status_retry = ledger
+            .as_ref()
+            .unwrap()
+            .outbox
+            .last()
+            .expect("observed row triggers a fresh route");
+        assert_ne!(status_retry.request_id.get(), original);
+        let status_retry_id = status_retry.request_id.get();
+
+        let still_unproven = post_needs_evidence_receipt(&mut ledger, 1);
+        assert_eq!(still_unproven, status_retry_id);
+        assert!(matches!(
+            with_tick(&snapshot, &mut ledger, 1, |tick| tick
+                .actions
+                .poll(&handle, &mut tick.cx)),
+            Poll::Pending
+        ));
+        let closed_retry = ledger
+            .as_ref()
+            .unwrap()
+            .outbox
+            .last()
+            .expect("still-unproven Biohazard gate triggers one closed-gate route");
+        assert_ne!(closed_retry.request_id.get(), status_retry_id);
+        let crate::native::HostEffect::Walk(request) = &closed_retry.effect else {
+            panic!("closed-gate retry must retain the walk request");
+        };
+        let provider = request
+            .evidence
+            .as_ref()
+            .expect("Biohazard is explicitly closed for route choice");
+        assert_eq!(
+            provider.test_gate(&biohazard_complete_gate(), request.required_after),
+            Truth::False
+        );
+        assert_eq!(
+            provider.test_gate(
+                &api::selected::QuestGate::Complete(api::selected::FactKey::new("cook")),
+                request.required_after,
+            ),
+            Truth::Unknown
+        );
+        assert_eq!(
+            ledger
+                .as_ref()
+                .unwrap()
+                .outbox
+                .iter()
+                .filter(|entry| matches!(&entry.effect, crate::native::HostEffect::Walk(_)))
+                .count(),
+            3,
+            "the row retry and single closed-gate retry are both bounded"
+        );
+    }
+
 }

@@ -78,11 +78,12 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.7` 
   a window only when the full in-progress value range lies inside it. A walk
   reports the quest, window bounds and unknown evidence state.
 
-- When a quest-gated walk needs `Complete(q)`, it waits at most one observed
-  game tick for that gate's own usable quest-list row, not any coloured row.
-  If the row arrives, the walk sends one fresh route request. If the row stays
-  unavailable, the retry treats only that unproven gate as closed. The planner
-  can then avoid the unprovable edge instead of parking on missing evidence.
+- A walk that needs `Complete(biohazard)` waits at most one observed game tick
+  for a usable Biohazard quest-list row, not just any coloured row. If the row
+  arrives, the walk sends a fresh route. If it stays unavailable, or the fresh
+  route still cannot prove the gate, the walk marks only that Biohazard gate
+  closed for route choice. The planner can avoid the unprovable edge instead
+  of waiting on missing evidence.
 
 - Bots now wait and try again when another player is using a shortcut,
   instead of giving up. The Yanille dungeon ledge ("The ledge is being
