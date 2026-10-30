@@ -27,8 +27,9 @@
 //! read from each.
 
 use crate::wire::{
-    ApiCombatOutcome, ApiGather, ApiGatherOutcome, ApiProgress, CombatStyle, QuestProgressRow,
-    QuestStatus, Row, SceneEntity, Snapshot, Stat,
+    ApiCombatOutcome, ApiGather, ApiGatherOutcome, ApiProgress, CombatStyle,
+    JournalEvidence as JournalEvidenceWire, QuestProgressRow, QuestStatus, Row, SceneEntity,
+    Snapshot, Stat,
 };
 use api::line_of_sight::CollisionQuery;
 use api::quest_progress::{EvidenceStamp, ProgressFlag};
@@ -36,7 +37,9 @@ use api::selected::{FactKey, Gap, Knowledge, RunKey, Truth};
 use api::snapshot::QuestListStatus;
 use flatbuffers::{ForwardsUOffset, Vector};
 use script::api_gather::{GatherCounts, GatherEnd, GatherFailure};
-use script::api_progress::{ProgressPage, QuestProgressRow as ApiQuestProgressRow};
+use script::api_progress::{
+    JournalEvidence as ApiJournalEvidence, ProgressPage, QuestProgressRow as ApiQuestProgressRow,
+};
 use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
 use std::hash::{BuildHasher, Hash, Hasher, RandomState};
@@ -958,8 +961,58 @@ fn read_api_progress(page: ApiProgress<'_>) -> Option<ProgressPage> {
             token,
             reason: Arc::from(reason),
         }),
+        4 => {
+            let result = match page.journal() {
+                Some(row) => Some(Arc::new(read_journal_evidence(row)?)),
+                None => None,
+            };
+            Some(ProgressPage::JournalDone { token, result })
+        }
         _ => None,
     }
+}
+
+fn read_journal_evidence(row: JournalEvidenceWire<'_>) -> Option<ApiJournalEvidence> {
+    let quest = row.quest()?;
+    if quest.is_empty() || row.root() < 0 {
+        return None;
+    }
+    let lines = row
+        .lines()?
+        .iter()
+        .map(Arc::<str>::from)
+        .collect::<Vec<_>>()
+        .into();
+    let acquired = EvidenceStamp {
+        run: RunKey {
+            slot: row.acquired_slot(),
+            run: row.acquired_run(),
+            session: row.acquired_session(),
+        },
+        tick: row.acquired_tick(),
+        sequence: row.acquired_sequence(),
+    };
+    let closed = EvidenceStamp {
+        run: RunKey {
+            slot: row.closed_slot(),
+            run: row.closed_run(),
+            session: row.closed_session(),
+        },
+        tick: row.closed_tick(),
+        sequence: row.closed_sequence(),
+    };
+    if !closed.meets(acquired) || closed == acquired {
+        return None;
+    }
+    Some(ApiJournalEvidence {
+        quest: Arc::from(quest),
+        root: row.root(),
+        lines,
+        colour: row.has_colour().then_some(row.colour()),
+        acquired,
+        closed,
+        pin: None,
+    })
 }
 
 fn read_progress_row(row: QuestProgressRow<'_>) -> Option<ApiQuestProgressRow> {

@@ -274,6 +274,9 @@ pub enum InteractReq {
         z: i32,
         level: i32,
         index: Option<i32>,
+        /// Expected scene-entity type for fail-closed native targets.
+        #[serde(default)]
+        target_id: Option<i32>,
     },
     /// Continue the open chat dialog or an explicitly selected visible pause button.
     #[serde(rename = "continue")]
@@ -366,7 +369,17 @@ pub enum InteractReq {
     CombatStop { request_id: u64 },
     /// Reserved native progress-family control; public JS interact rows cannot forge it.
     #[serde(rename = "progress-read", skip_deserializing)]
-    ProgressRead { request_id: u64, name: String },
+    ProgressRead {
+        request_id: u64,
+        name: String,
+        journal_only: bool,
+    },
+    /// Native cast-family control; public JS interact rows cannot forge it.
+    #[serde(rename = "cast-npc", skip_deserializing)]
+    CastNpc {
+        request_id: u64,
+        request: crate::combat::CastNpcRequest,
+    },
     /// Native `RunManager.override` replacement. The V8 binding is the only
     /// producer; public JS interact rows cannot forge this host policy update.
     #[serde(rename = "run-policy", skip_deserializing)]
@@ -470,6 +483,7 @@ impl InteractReq {
                 | Self::CombatFight { .. }
                 | Self::CombatStop { .. }
                 | Self::ProgressRead { .. }
+                | Self::CastNpc { .. }
                 | Self::NoteProgress
                 | Self::LoopSettled
                 | Self::WaitEnqueued

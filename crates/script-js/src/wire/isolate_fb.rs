@@ -46,12 +46,12 @@ use generated::rs_2b_0t::isolate::*;
 pub use generated::rs_2b_0t::isolate::{
     ApiCombatOutcome, ApiGather, ApiGatherOutcome, ApiProgress, AvoidRect, BankApproach, BankStand,
     Booth, Carry, ChatLine, ChatOption, Collision, CombatFight, CombatProjectile, CombatStyle,
-    InspectHop, Interact, InteractBatch, MainModalTexts, MakeButton, MakeProduct, MirrorRevoke,
-    NativeRequest, NearestBooth, NpcBox, ProgressFlagRow, PuzzleBoard, QuestProgressRow,
-    QuestStatus, Reach, Row, SceneEntity, SeatAbortReason, SeatCancel, SeatCancelReason,
-    SeatDecide, SeatKind, SeatLive, SeatOutcome, SeatOutcomeKind, SeatPhase, SeatPrompt,
-    SeatRefusal, SeatResult, SettingRow, SideTabIface, Snapshot, Stat, StatusField, Tile, Varp,
-    WalkCancelReason, WidgetText,
+    InspectHop, Interact, InteractBatch, JournalEvidence, MainModalTexts, MakeButton, MakeProduct,
+    MirrorRevoke, NativeRequest, NearestBooth, NpcBox, ProgressFlagRow, PuzzleBoard,
+    QuestProgressRow, QuestStatus, Reach, Row, SceneEntity, SeatAbortReason, SeatCancel,
+    SeatCancelReason, SeatDecide, SeatKind, SeatLive, SeatOutcome, SeatOutcomeKind, SeatPhase,
+    SeatPrompt, SeatRefusal, SeatResult, SettingRow, SideTabIface, Snapshot, Stat, StatusField,
+    Tile, Varp, WalkCancelReason, WidgetText,
 };
 
 impl From<script::native::WalkCancelReason> for WalkCancelReason {
@@ -195,10 +195,12 @@ pub enum SeatStartArgsRef<'a> {
     Gather(&'a script::native::SettingsBag),
     /// Typed combat-session request.
     Combat(&'a script::api_combat::CombatSessionRequest),
-    /// Typed quest-progress name.
-    QuestProgress(&'a str),
+    /// Typed quest-progress name and journal-only mode.
+    QuestProgress { name: &'a str, journal_only: bool },
     /// Typed banking operation.
     Bank(&'a script::bank::request::BankSeatArgs),
+    /// Typed cast on one selected NPC index.
+    CastNpc(&'a script::combat::CastNpcRequest),
 }
 
 /// One start with its push-time request stamp and typed family payload.
@@ -3664,16 +3666,52 @@ fn progress_row_off<'b>(
     }
     table.finish()
 }
+fn journal_evidence_off<'b>(
+    b: &mut FlatBufferBuilder<'b>,
+    journal: &script::api_progress::JournalEvidence,
+) -> WIPOffset<JournalEvidence<'b>> {
+    let quest = b.create_string(&journal.quest);
+    let lines = journal
+        .lines
+        .iter()
+        .map(|line| b.create_string(line))
+        .collect::<Vec<_>>();
+    let lines = b.create_vector(&lines);
+    let mut table = JournalEvidenceBuilder::new(b);
+    table.add_quest(quest);
+    table.add_root(journal.root);
+    table.add_lines(lines);
+    table.add_has_colour(journal.colour.is_some());
+    table.add_colour(journal.colour.unwrap_or_default());
+    table.add_acquired_slot(journal.acquired.run.slot);
+    table.add_acquired_run(journal.acquired.run.run);
+    table.add_acquired_session(journal.acquired.run.session);
+    table.add_acquired_tick(journal.acquired.tick);
+    table.add_acquired_sequence(journal.acquired.sequence);
+    table.add_closed_slot(journal.closed.run.slot);
+    table.add_closed_run(journal.closed.run.run);
+    table.add_closed_session(journal.closed.run.session);
+    table.add_closed_tick(journal.closed.tick);
+    table.add_closed_sequence(journal.closed.sequence);
+    table.finish()
+}
 
 fn api_progress_off<'b>(
     b: &mut FlatBufferBuilder<'b>,
     page: &script::api_progress::ProgressPage,
 ) -> WIPOffset<ApiProgress<'b>> {
     use script::api_progress::ProgressPage;
-    let (reason, row) = match page {
-        ProgressPage::Reading { .. } => (None, None),
-        ProgressPage::Done { row, .. } => (None, Some(progress_row_off(b, row))),
-        ProgressPage::Refused { reason, .. } => (Some(b.create_string(reason)), None),
+    let (reason, row, journal) = match page {
+        ProgressPage::Reading { .. } => (None, None, None),
+        ProgressPage::Done { row, .. } => (None, Some(progress_row_off(b, row)), None),
+        ProgressPage::Refused { reason, .. } => (Some(b.create_string(reason)), None, None),
+        ProgressPage::JournalDone { result, .. } => (
+            None,
+            None,
+            result
+                .as_deref()
+                .map(|journal| journal_evidence_off(b, journal)),
+        ),
     };
     let mut table = ApiProgressBuilder::new(b);
     table.add_request_id(page.token());
@@ -3683,6 +3721,9 @@ fn api_progress_off<'b>(
     }
     if let Some(row) = row {
         table.add_row(row);
+    }
+    if let Some(journal) = journal {
+        table.add_journal(journal);
     }
     table.finish()
 }
@@ -4220,7 +4261,8 @@ fn seat_interact_class(request: &script::shim::InteractReq) -> Result<SeatIntera
         InteractReq::RunPolicyOverride { .. } => Ok(SeatInteractClass::RunPolicy),
         InteractReq::GatherRun { .. }
         | InteractReq::CombatFight { .. }
-        | InteractReq::ProgressRead { .. } => {
+        | InteractReq::ProgressRead { .. }
+        | InteractReq::CastNpc { .. } => {
             Err("native family starts must use typed seat starts".into())
         }
         _ => Ok(SeatInteractClass::Gameplay),
@@ -4235,7 +4277,7 @@ fn validate_seat_start(start: &SeatStartRef<'_>) -> Result<(), String> {
             }
         }
         (NativeKind::Combat, SeatStartArgsRef::Combat(_)) => {}
-        (NativeKind::QuestProgress, SeatStartArgsRef::QuestProgress(name)) => {
+        (NativeKind::QuestProgress, SeatStartArgsRef::QuestProgress { name, .. }) => {
             if name.len() > MAX_START_CHARGE {
                 return Err(format!(
                     "progress start name length {} exceeds cap {MAX_START_CHARGE}",
@@ -4249,6 +4291,10 @@ fn validate_seat_start(start: &SeatStartRef<'_>) -> Result<(), String> {
         }
         (NativeKind::BankPlan | NativeKind::BankNearest, _) => {
             return Err("bank native starts must use typed bank arguments".into())
+        }
+        (NativeKind::CastNpc, SeatStartArgsRef::CastNpc(_)) => {}
+        (NativeKind::CastNpc, _) => {
+            return Err("CastNpc start must use typed cast arguments".into())
         }
         (NativeKind::Gather | NativeKind::Combat | NativeKind::QuestProgress, _) => {
             return Err("native start arguments do not match the family kind".into())
@@ -4416,6 +4462,7 @@ fn seat_kind_wire(kind: NativeKind) -> SeatKind {
         NativeKind::Clue => SeatKind::Clue,
         NativeKind::Duel => SeatKind::Duel,
         NativeKind::CakeStall => SeatKind::CakeStall,
+        NativeKind::CastNpc => SeatKind::CastNpc,
     }
 }
 
@@ -4446,6 +4493,7 @@ fn native_kind_from_wire(kind: SeatKind) -> Result<NativeKind, String> {
         SeatKind::Clue => Ok(NativeKind::Clue),
         SeatKind::Duel => Ok(NativeKind::Duel),
         SeatKind::CakeStall => Ok(NativeKind::CakeStall),
+        SeatKind::CastNpc => Ok(NativeKind::CastNpc),
         SeatKind::None => Err("native start has no family kind".into()),
         _ => Err(format!("native start has unknown family kind {kind:?}")),
     }
@@ -4715,13 +4763,25 @@ fn native_request_off<'b>(
     } else {
         None
     };
-    let progress_name = if let SeatStartArgsRef::QuestProgress(name) = &start.args {
+    let progress = if let SeatStartArgsRef::QuestProgress { name, .. } = &start.args {
         Some(b.create_string(name))
     } else {
         None
     };
+    let progress_journal_only = match &start.args {
+        SeatStartArgsRef::QuestProgress { journal_only, .. } => *journal_only,
+        _ => false,
+    };
     let bank = if let SeatStartArgsRef::Bank(bank) = &start.args {
         Some(bank_args_off(b, bank))
+    } else {
+        None
+    };
+    let cast_npc = if let SeatStartArgsRef::CastNpc(request) = &start.args {
+        let mut table = CastNpcArgsBuilder::new(b);
+        table.add_component_id(request.component_id);
+        table.add_index(request.index);
+        Some(table.finish())
     } else {
         None
     };
@@ -4732,11 +4792,15 @@ fn native_request_off<'b>(
     if let Some(combat) = combat {
         args.add_combat(combat);
     }
-    if let Some(progress_name) = progress_name {
-        args.add_progress_name(progress_name);
+    if let Some(progress) = progress {
+        args.add_progress_name(progress);
     }
     if let Some(bank) = bank {
         args.add_bank(bank);
+    }
+    args.add_progress_journal_only(progress_journal_only);
+    if let Some(cast_npc) = cast_npc {
+        args.add_cast_npc(cast_npc);
     }
     let args = args.finish();
     let run = start.stamp.run();
@@ -5115,6 +5179,7 @@ fn decode_interact_rows<'a>(
                 out.push(script::shim::InteractReq::ProgressRead {
                     request_id,
                     name: name.to_string(),
+                    journal_only: row.progress_journal_only(),
                 });
             }
             "abort-walk" => out.push(script::shim::InteractReq::AbortWalk {
@@ -5351,6 +5416,7 @@ fn decode_interact_rows<'a>(
                 z: row.z(),
                 level: row.level(),
                 index: row.index(),
+                target_id: row.target_id(),
             }),
             "continue" => out.push(script::shim::InteractReq::ContinueDialog {
                 component_id: row.component_id(),
@@ -5565,7 +5631,7 @@ fn validate_seat_wire_reqs<'a>(
                 reserved += 1;
                 SeatInteractClass::RunPolicy
             }
-            "gather-run" | "combat-fight" | "progress-read" => {
+            "gather-run" | "combat-fight" | "progress-read" | "cast-npc" => {
                 return Err("native family starts must use typed seat starts".into())
             }
             _ => SeatInteractClass::Gameplay,
@@ -5856,19 +5922,31 @@ fn decode_native_request(row: NativeRequest<'_>) -> Result<SeatStartInput, Strin
     let gather_settings = args.gather_settings();
     let combat = args.combat();
     let progress_name = args.progress_name();
+    let progress_journal_only = args.progress_journal_only();
     let bank = args.bank();
+    let cast_npc = args.cast_npc();
     let decoded_args = match kind {
         NativeKind::Gather => {
             let settings = gather_settings
                 .ok_or_else(|| "Gather start has no typed settings vector".to_string())?;
-            if combat.is_some() || progress_name.is_some() || bank.is_some() {
+            if combat.is_some()
+                || progress_name.is_some()
+                || progress_journal_only
+                || bank.is_some()
+                || cast_npc.is_some()
+            {
                 return Err("Gather start carries mismatched typed arguments".into());
             }
             SeatStartArgs::Gather(decode_gather_settings(settings)?)
         }
         NativeKind::Combat => {
             let combat = combat.ok_or_else(|| "Combat start has no typed request".to_string())?;
-            if gather_settings.is_some() || progress_name.is_some() || bank.is_some() {
+            if gather_settings.is_some()
+                || progress_name.is_some()
+                || progress_journal_only
+                || bank.is_some()
+                || cast_npc.is_some()
+            {
                 return Err("Combat start carries mismatched typed arguments".into());
             }
             SeatStartArgs::Combat(decode_combat_fight(combat)?)
@@ -5876,7 +5954,8 @@ fn decode_native_request(row: NativeRequest<'_>) -> Result<SeatStartInput, Strin
         NativeKind::QuestProgress => {
             let name =
                 progress_name.ok_or_else(|| "QuestProgress start has no typed name".to_string())?;
-            if gather_settings.is_some() || combat.is_some() || bank.is_some() {
+            if gather_settings.is_some() || combat.is_some() || bank.is_some() || cast_npc.is_some()
+            {
                 return Err("QuestProgress start carries mismatched typed arguments".into());
             }
             if name.len() > MAX_START_CHARGE {
@@ -5885,21 +5964,47 @@ fn decode_native_request(row: NativeRequest<'_>) -> Result<SeatStartInput, Strin
                     name.len()
                 ));
             }
-            SeatStartArgs::QuestProgress(name.to_string())
+            SeatStartArgs::QuestProgress {
+                name: name.to_string(),
+                journal_only: progress_journal_only,
+            }
         }
         NativeKind::BankPlan | NativeKind::BankNearest => {
             let bank =
                 bank.ok_or_else(|| "bank start has no typed banking arguments".to_string())?;
-            if gather_settings.is_some() || combat.is_some() || progress_name.is_some() {
+            if gather_settings.is_some()
+                || combat.is_some()
+                || progress_name.is_some()
+                || progress_journal_only
+                || cast_npc.is_some()
+            {
                 return Err("bank start carries mismatched typed arguments".into());
             }
             SeatStartArgs::Bank(decode_bank_args(bank, kind)?)
+        }
+        NativeKind::CastNpc => {
+            let cast_npc =
+                cast_npc.ok_or_else(|| "CastNpc start has no typed cast arguments".to_string())?;
+            if gather_settings.is_some()
+                || combat.is_some()
+                || progress_name.is_some()
+                || progress_journal_only
+                || bank.is_some()
+            {
+                return Err("CastNpc start carries mismatched typed arguments".into());
+            }
+            SeatStartArgs::CastNpc(script::combat::CastNpcRequest {
+                component_id: cast_npc.component_id(),
+                index: cast_npc.index(),
+            })
         }
         _ => {
             if gather_settings.is_some()
                 || combat.is_some()
                 || progress_name.is_some()
+                || progress_journal_only
                 || bank.is_some()
+                || cast_npc.is_some()
             {
                 return Err("native start carries unsupported typed arguments".into());
             }
@@ -6055,6 +6160,7 @@ fn interact_off<'b>(
         InteractReq::GatherStop { .. } => "gather-stop",
         InteractReq::CombatFight { .. } => "combat-fight",
         InteractReq::CombatStop { .. } => "combat-stop",
+        InteractReq::CastNpc { .. } => "cast-npc",
         InteractReq::ProgressRead { .. } => "progress-read",
         InteractReq::AbortWalk { .. } => "abort-walk",
         InteractReq::InspectRoute { .. } => "inspect-route",
@@ -6247,9 +6353,17 @@ fn interact_off<'b>(
             table.add_request_id(*request_id);
             table.add_combat(combat_off.expect("combat-fight request encoded"));
         }
-        InteractReq::ProgressRead { request_id, .. } => {
+        InteractReq::ProgressRead {
+            request_id,
+            journal_only,
+            ..
+        } => {
             table.add_request_id(*request_id);
             table.add_name(name_off.expect("progress-read quest id encoded"));
+            table.add_progress_journal_only(*journal_only);
+        }
+        InteractReq::CastNpc { .. } => {
+            unreachable!("cast-npc starts must use typed seat starts")
         }
         InteractReq::ChannelOpen { channel_id, .. }
         | InteractReq::ChannelClose { channel_id, .. } => {
@@ -6590,6 +6704,7 @@ fn interact_off<'b>(
             z,
             level,
             index,
+            target_id,
             ..
         } => {
             table.add_component_id(*component_id);
@@ -6602,6 +6717,9 @@ fn interact_off<'b>(
             }
             if let Some(idx) = index {
                 table.add_index(*idx);
+            }
+            if let Some(target_id) = target_id {
+                table.add_target_id(*target_id);
             }
         }
         InteractReq::ContinueDialog { component_id } => {
@@ -7746,6 +7864,40 @@ pub(crate) mod tests {
         let bytes = encode_interact_batch(&reqs);
         let got = decode_interact_batch(&bytes).expect("interact batch decodes");
         assert_eq!(got, reqs);
+    }
+
+    #[test]
+    fn encode_decode_interact_use_widget_on_target_id_round_trips() {
+        let request = InteractReq::UseWidgetOn {
+            component_id: 1922,
+            kind: "npc".into(),
+            target_name: Some("Cow".into()),
+            x: 3220,
+            z: 3220,
+            level: 0,
+            index: Some(7),
+            target_id: Some(81),
+        };
+        let bytes = encode_interact_batch(std::slice::from_ref(&request));
+        assert_eq!(
+            decode_interact_batch(&bytes).expect("decode NPC target interaction"),
+            vec![request]
+        );
+    }
+
+    #[test]
+    fn progress_read_wire_carries_journal_mode() {
+        let bytes = encode_interact_batch(&[InteractReq::ProgressRead {
+            request_id: 42,
+            name: "Cook's Assistant".into(),
+            journal_only: true,
+        }]);
+        let batch = InteractBatch::from_bytes(&bytes).expect("decode progress-read wire");
+        let row = batch.reqs().expect("progress-read row").get(0);
+        assert_eq!(row.op(), Some("progress-read"));
+        assert_eq!(row.request_id(), 42);
+        assert_eq!(row.name(), Some("Cook's Assistant"));
+        assert!(row.progress_journal_only());
     }
 
     #[test]
@@ -9505,6 +9657,10 @@ pub(crate) mod tests {
         };
         let settings = script::native::SettingsBag::new();
         let combat = script::api_combat::CombatSessionRequest::default();
+        let cast_npc = script::combat::CastNpcRequest {
+            component_id: 1152,
+            index: 7,
+        };
         let starts = [
             SeatStartRef {
                 stamp: stamp(201),
@@ -9519,7 +9675,15 @@ pub(crate) mod tests {
             SeatStartRef {
                 stamp: stamp(203),
                 kind: NativeKind::QuestProgress,
-                args: SeatStartArgsRef::QuestProgress("cook"),
+                args: SeatStartArgsRef::QuestProgress {
+                    name: "cook",
+                    journal_only: false,
+                },
+            },
+            SeatStartRef {
+                stamp: stamp(204),
+                kind: NativeKind::CastNpc,
+                args: SeatStartArgsRef::CastNpc(&cast_npc),
             },
         ];
         let decision_answer = [1, 3, 5, 7];
@@ -9591,7 +9755,7 @@ pub(crate) mod tests {
             "a dropped batch is retried with the same sequence and owner"
         );
         assert_eq!(batch.consumed_terminal_seq, 19);
-        assert_eq!(batch.starts.len(), 3);
+        assert_eq!(batch.starts.len(), 4);
         assert_eq!(
             batch.starts[0].args,
             SeatStartArgs::Gather(settings.clone())
@@ -9599,8 +9763,12 @@ pub(crate) mod tests {
         assert_eq!(batch.starts[1].args, SeatStartArgs::Combat(combat.clone()));
         assert_eq!(
             batch.starts[2].args,
-            SeatStartArgs::QuestProgress("cook".into())
+            SeatStartArgs::QuestProgress {
+                name: "cook".into(),
+                journal_only: false,
+            }
         );
+        assert_eq!(batch.starts[3].args, SeatStartArgs::CastNpc(cast_npc));
         assert_eq!(batch.decisions.len(), 1);
         assert_eq!(batch.decisions[0].sequence.get(), 2);
         assert_eq!(batch.decisions[0].answer.as_slice(), decision_answer);
@@ -9654,6 +9822,10 @@ pub(crate) mod tests {
         };
         let settings = script::native::SettingsBag::new();
         let combat = script::api_combat::CombatSessionRequest::default();
+        let cast_npc = script::combat::CastNpcRequest {
+            component_id: 1152,
+            index: 7,
+        };
         let bank_plan = script::bank::request::BankSeatArgs::new(
             script::bank::request::BankSeatOperation::DepositAll,
         );
@@ -9667,9 +9839,13 @@ pub(crate) mod tests {
                 let args = match *kind {
                     NativeKind::Gather => SeatStartArgsRef::Gather(&settings),
                     NativeKind::Combat => SeatStartArgsRef::Combat(&combat),
-                    NativeKind::QuestProgress => SeatStartArgsRef::QuestProgress("cook"),
+                    NativeKind::QuestProgress => SeatStartArgsRef::QuestProgress {
+                        name: "cook",
+                        journal_only: false,
+                    },
                     NativeKind::BankPlan => SeatStartArgsRef::Bank(&bank_plan),
                     NativeKind::BankNearest => SeatStartArgsRef::Bank(&bank_nearest),
+                    NativeKind::CastNpc => SeatStartArgsRef::CastNpc(&cast_npc),
                     _ => SeatStartArgsRef::Empty,
                 };
                 SeatStartRef {

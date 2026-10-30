@@ -2734,14 +2734,13 @@ export const Game: {
     setAutoRetaliate(on: boolean): boolean;
     myName(): string | null;
     openSideTab(tab: number): Promise<boolean>;
-    castOnNpc(spell?: string, npc?: Npc): Promise<never>;
+    castOnNpc(spell: string, npc: Npc): Promise<boolean>;
     /** Cast a targeted spell at a piece of scenery. */
     castOnLoc(spell: string, loc: Loc): Promise<boolean>;
     /** Cast a targeted spell at a pack item, the `TGT_HELD` menu action Superheat Item needs. */
     castOnItem(spell: string, item: InvItem): Promise<boolean>;
     /** Cast a standard spellbook teleport by name. Returns when the click is sent; the caller checks arrival. */
     teleport(name: string): Promise<boolean>;
-    autoRetaliate(): boolean;
 };
 
 }
@@ -3765,7 +3764,7 @@ export const ChatDialog: {
     makeProducts(): string[];
     make(match?: string): Promise<boolean>;
     /** Pick Make-1 for the product whose name contains `match` (or the first); knife-delay tick manip uses it and it never touches Make-X or the count dialog. */
-    makeOne(match?: string): Promise<never>;
+    makeOne(match?: string): Promise<boolean>;
     /** Click Make-X, enter `count`, and wait for the amount dialog to close (#177). */
     makeX(match: string, count: number): Promise<boolean>;
     isMainMakePanel(): boolean;
@@ -3801,7 +3800,7 @@ export const Quests: {
      * Open the quest's journal scroll and return its text lines.
      * Why: it flashes the main modal, the only client view of mid-stage text, so prefer an item or message oracle when one proves progress.
      */
-    journal(name?: string): never;
+    journal(name: string): Promise<string[]>;
     /** Total quest points, transmitted varp `qp` (index 101). */
     points(): number;
 };

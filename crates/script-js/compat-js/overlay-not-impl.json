@@ -18,39 +18,12 @@
     "async": false
   },
   {
-    "id": "not-impl:api/game/Game.js:Game.castOnNpc",
-    "module": "api/game/Game.js",
-    "selector": "Game.castOnNpc",
-    "operation": "not-impl",
-    "reason": "Unconditional not-impl: no arguments are inspected and no successful result is produced.",
-    "runtime": "crates/script-js/src/shim/game.js:208",
-    "async": true
-  },
-  {
     "id": "not-impl:api/shop/Shop.js:Shop.buyById",
     "module": "api/shop/Shop.js",
     "selector": "Shop.buyById",
     "operation": "not-impl",
     "reason": "Unconditional not-impl: no arguments are inspected and no successful result is produced.",
     "runtime": "crates/script-js/src/shim/shop.js:64",
-    "async": false
-  },
-  {
-    "id": "not-impl:api/ui/dialogue/ChatDialog.js:ChatDialog.makeOne",
-    "module": "api/ui/dialogue/ChatDialog.js",
-    "selector": "ChatDialog.makeOne",
-    "operation": "not-impl",
-    "reason": "Unconditional not-impl: no arguments are inspected and no successful result is produced.",
-    "runtime": "crates/script-js/src/shim/chat_dialog.js:66",
-    "async": true
-  },
-  {
-    "id": "not-impl:api/ui/questlog/Quests.js:Quests.journal",
-    "module": "api/ui/questlog/Quests.js",
-    "selector": "Quests.journal",
-    "operation": "not-impl",
-    "reason": "Unconditional not-impl: no arguments are inspected and no successful result is produced.",
-    "runtime": "crates/script-js/src/shim/quests.js:25",
     "async": false
   },
   {

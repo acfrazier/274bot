@@ -13,6 +13,8 @@ pub trait MakeXProduct {
     fn object_id(&self) -> i32;
     /// Return the posted Make-X button, if the row offers one.
     fn make_x_component_id(&self) -> Option<i32>;
+    /// Return the first posted Make-1 button, if the row offers one.
+    fn make_one_component_id(&self) -> Option<i32>;
 }
 
 /// Current phase of the shared Make-X sequence.

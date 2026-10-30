@@ -3,7 +3,7 @@ use crate::combat::arbiter;
 use crate::combat::frame::Frame;
 use crate::combat::request::{ActorKind, ActorRef, CombatRequest};
 use crate::combat::tables::{CombatTab, CombatTables};
-use api::game_data::{AutocastControls, SpellFact};
+use api::game_data::{AutocastControls, SelectedGameData, SpellFact};
 use api::snapshot::SnapshotView;
 
 pub const CAST_TICKS: u16 = 5;
@@ -111,13 +111,17 @@ pub(crate) fn observed_autocast_spell_matches(
 }
 
 pub(crate) fn staff_provides(tables: &CombatTables, rhand: i32, rune: i32, members: bool) -> bool {
-    (members
-        || tables
-            .selected()
-            .item_by_id(rhand)
-            .is_some_and(|item| !item.members))
-        && tables
-            .selected()
+    staff_provides_selected(tables.selected(), rhand, rune, members)
+}
+
+fn staff_provides_selected(
+    selected: &SelectedGameData,
+    rhand: i32,
+    rune: i32,
+    members: bool,
+) -> bool {
+    (members || selected.item_by_id(rhand).is_some_and(|item| !item.members))
+        && selected
             .staves()
             .iter()
             .find(|row| row.id == rhand)
@@ -185,6 +189,57 @@ pub(crate) fn castable(
             staff_provides(tables, rhand, rune.id, frame.world.members)
                 || arbiter::count(frame, rune.id) >= rune.count
         })
+}
+
+/// Whether the selected spell can be cast on this exact NPC with observed
+/// stats, equipment, world type and inventory. Unknown NPC applicability
+/// fails closed for content-gated spells such as Crumble Undead.
+pub(crate) fn castable_npc(
+    spell: &SpellFact,
+    frame: &Frame<'_>,
+    selected: &SelectedGameData,
+    npc_type: i32,
+) -> bool {
+    let rhand = frame
+        .equipment
+        .iter()
+        .find(|row| row.slot == 3)
+        .map_or(-1, |row| row.def.id);
+    let applicable = spell.spellcom != "magic:crumble_undead"
+        || selected
+            .npc_name(npc_type)
+            .is_some_and(|npc| npc.undead == Some(1));
+    (!spell.members || frame.world.members)
+        && spell.level <= arbiter::stat(frame, 6).0
+        && spell.component_id >= 0
+        && spell.wornrequired.as_ref().is_none_or(|alias| {
+            selected
+                .item_by_alias(alias)
+                .is_some_and(|item| Some(item.id) == (rhand >= 0).then_some(rhand))
+        })
+        && applicable
+        && spell.runes.iter().all(|rune| {
+            staff_provides_selected(selected, rhand, rune.id, frame.world.members)
+                || arbiter::count(frame, rune.id) >= rune.count
+        })
+}
+
+/// Baseline for one non-staff-provided rune, used only as later cast evidence.
+pub(crate) fn rune_count_npc(
+    spell: &SpellFact,
+    frame: &Frame<'_>,
+    selected: &SelectedGameData,
+) -> Option<(i32, i32)> {
+    let rhand = frame
+        .equipment
+        .iter()
+        .find(|row| row.slot == 3)
+        .map_or(-1, |row| row.def.id);
+    spell
+        .runes
+        .iter()
+        .find(|rune| !staff_provides_selected(selected, rhand, rune.id, frame.world.members))
+        .map(|rune| (arbiter::count(frame, rune.id), rune.count.max(1)))
 }
 
 /// One consumed rune is enough to acknowledge a cast, including a splash.

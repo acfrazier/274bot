@@ -2473,7 +2473,8 @@ export function tick(api) {
     assert_eq!(start.kind, NativeKind::QuestProgress);
     assert!(matches!(
         &start.args,
-        SeatStartArgs::QuestProgress(name) if name == "Cook's Assistant"
+        SeatStartArgs::QuestProgress { name, journal_only }
+            if name == "Cook's Assistant" && !journal_only
     ));
     assert_eq!((start.run, start.session), (28, 0));
     assert_eq!(pending[0].batch.consumed_terminal_seq, 0);

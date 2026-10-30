@@ -285,3 +285,12 @@ fn serialize_evidence<S: serde::Serializer>(
     value.serialize_field("sequence", &stamp.sequence)?;
     value.end()
 }
+
+/// One selected magic-tab component cast on the exact NPC index from the API.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct CastNpcRequest {
+    /// Selected spell button component.
+    pub component_id: i32,
+    /// Snapshot NPC index to revalidate before dispatch.
+    pub index: i32,
+}

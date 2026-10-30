@@ -49,7 +49,7 @@ pub struct ProgressFlag {
     pub count: Option<u32>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct JournalRead {
     pub quest: FactKey,
     pub root: i32,

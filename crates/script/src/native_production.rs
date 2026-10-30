@@ -22,6 +22,15 @@ impl MakeXProduct for MakeProductView {
             .find(|button| button.quantity == -1 && button.component_id >= 0)
             .map(|button| button.component_id)
     }
+
+    fn make_one_component_id(&self) -> Option<i32> {
+        let component_id = self
+            .buttons
+            .iter()
+            .find(|button| button.quantity == 1)?
+            .component_id;
+        (component_id >= 0).then_some(component_id)
+    }
 }
 
 #[derive(Debug, Clone)]

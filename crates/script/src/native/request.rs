@@ -35,6 +35,7 @@ pub enum NativeKind {
     Clue,
     Duel,
     CakeStall,
+    CastNpc,
 }
 
 /// A family has every required contract-table column by construction.
@@ -82,7 +83,7 @@ impl FamilyPolicy {
     }
 }
 impl NativeKind {
-    pub const ALL: [Self; 25] = [
+    pub const ALL: [Self; 26] = [
         Self::Gather,
         Self::Combat,
         Self::Hunt,
@@ -108,9 +109,10 @@ impl NativeKind {
         Self::Clue,
         Self::Duel,
         Self::CakeStall,
+        Self::CastNpc,
     ];
-    /// Exhaustive classification keeps bankNearest and PeriodicBank as
-    /// Capabilities, and quest progress as a Session (§25 R5-4.6).
+    /// Keeps bankNearest and PeriodicBank as Capabilities and quest progress
+    /// as a Session (§25 R5-4.6); CastNpc shares Combat's foreground (§28.2:37).
     pub const fn policy(self) -> FamilyPolicy {
         let class = match self {
             Self::Gather => RequestClass::Session(SessionFamily::Gather),
@@ -119,6 +121,7 @@ impl NativeKind {
             Self::Quester => RequestClass::Session(SessionFamily::Quester),
             Self::DeathRecovery => RequestClass::Session(SessionFamily::DeathRecovery),
             Self::QuestProgress => RequestClass::Session(SessionFamily::Progress),
+            Self::CastNpc => RequestClass::Session(SessionFamily::Combat),
             Self::Walk
             | Self::BankPlan
             | Self::BankNearest
@@ -328,6 +331,15 @@ mod tests {
                     assert_eq!(policy.commands(), Some(ReconnectPolicy::Carry));
                     assert_eq!(policy.encoded_settings_max(), None);
                 }
+                NativeKind::CastNpc => {
+                    assert_eq!(policy.class(), RequestClass::Session(SessionFamily::Combat));
+                    assert_eq!(policy.pause(), PausePolicy::Freeze);
+                    assert_eq!(policy.takeover(), TakeoverPolicy::None);
+                    assert_eq!(policy.reconnect(), ReconnectPolicy::Resume);
+                    assert_eq!(policy.sub_operation(), None);
+                    assert_eq!(policy.commands(), None);
+                    assert_eq!(policy.encoded_settings_max(), None);
+                }
                 NativeKind::Walk => {
                     assert_eq!(policy.class(), RequestClass::Capability);
                     assert_eq!(policy.pause(), PausePolicy::Freeze);
@@ -352,6 +364,6 @@ mod tests {
                 }
             }
         }
-        assert_eq!(NativeKind::ALL.len(), 25);
+        assert_eq!(NativeKind::ALL.len(), 26);
     }
 }

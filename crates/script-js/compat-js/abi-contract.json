@@ -13170,22 +13170,11 @@
       "nav_consuming": false
     },
     {
-      "id": "game-native-retaliate-alias",
-      "module": "api/game/Game.js",
-      "selector": "Game.autoRetaliate",
-      "add": true,
-      "reason": "Host additionally exposes its posted auto-retaliate reader under this name.",
-      "runtime": "crates/script-js/src/shim/game.js:73",
-      "declaration": "autoRetaliate(): boolean;",
-      "family_id": "game-state",
-      "nav_consuming": false
-    },
-    {
       "id": "game-current-combat-mode",
       "module": "api/game/Game.js",
       "selector": "Game.combatStyleMode",
       "reason": "Native facade ignores the legacy style argument and returns the current posted varp mode.",
-      "runtime": "crates/script-js/src/shim/game.js:195",
+      "runtime": "crates/script-js/src/shim/game.js:191",
       "declaration": "combatStyleMode(style?: MeleeCombatStyle): number;",
       "family_id": "game-state",
       "nav_consuming": false
@@ -13661,17 +13650,6 @@
       "nav_consuming": false
     },
     {
-      "id": "not-impl:api/game/Game.js:Game.castOnNpc",
-      "module": "api/game/Game.js",
-      "selector": "Game.castOnNpc",
-      "operation": "not-impl",
-      "reason": "Unconditional not-impl: no arguments are inspected and no successful result is produced.",
-      "runtime": "crates/script-js/src/shim/game.js:208",
-      "async": true,
-      "family_id": "game-state",
-      "nav_consuming": false
-    },
-    {
       "id": "not-impl:api/shop/Shop.js:Shop.buyById",
       "module": "api/shop/Shop.js",
       "selector": "Shop.buyById",
@@ -13681,28 +13659,6 @@
       "async": false,
       "family_id": "shop",
       "nav_consuming": true
-    },
-    {
-      "id": "not-impl:api/ui/dialogue/ChatDialog.js:ChatDialog.makeOne",
-      "module": "api/ui/dialogue/ChatDialog.js",
-      "selector": "ChatDialog.makeOne",
-      "operation": "not-impl",
-      "reason": "Unconditional not-impl: no arguments are inspected and no successful result is produced.",
-      "runtime": "crates/script-js/src/shim/chat_dialog.js:66",
-      "async": true,
-      "family_id": "dialogue",
-      "nav_consuming": false
-    },
-    {
-      "id": "not-impl:api/ui/questlog/Quests.js:Quests.journal",
-      "module": "api/ui/questlog/Quests.js",
-      "selector": "Quests.journal",
-      "operation": "not-impl",
-      "reason": "Unconditional not-impl: no arguments are inspected and no successful result is produced.",
-      "runtime": "crates/script-js/src/shim/quests.js:25",
-      "async": false,
-      "family_id": "questlog",
-      "nav_consuming": false
     },
     {
       "id": "not-impl:api/walking/Traversal.js:Traversal.remaining",
@@ -23517,16 +23473,6 @@
       "overlay_id": "not-impl:adapter/ClientAdapter.js:reader.bankComId"
     },
     {
-      "family_id": "game-state",
-      "member": "castOnNpc",
-      "selector": "Game.castOnNpc",
-      "module": "api/game/Game.js",
-      "state": "not-impl",
-      "source": "crates/script-js/src/shim/game.js:208",
-      "reason": "Unconditional not-impl: no arguments are inspected and no successful result is produced.",
-      "overlay_id": "not-impl:api/game/Game.js:Game.castOnNpc"
-    },
-    {
       "family_id": "shop",
       "member": "buyById",
       "selector": "Shop.buyById",
@@ -23535,26 +23481,6 @@
       "source": "crates/script-js/src/shim/shop.js:64",
       "reason": "Unconditional not-impl: no arguments are inspected and no successful result is produced.",
       "overlay_id": "not-impl:api/shop/Shop.js:Shop.buyById"
-    },
-    {
-      "family_id": "dialogue",
-      "member": "makeOne",
-      "selector": "ChatDialog.makeOne",
-      "module": "api/ui/dialogue/ChatDialog.js",
-      "state": "not-impl",
-      "source": "crates/script-js/src/shim/chat_dialog.js:66",
-      "reason": "Unconditional not-impl: no arguments are inspected and no successful result is produced.",
-      "overlay_id": "not-impl:api/ui/dialogue/ChatDialog.js:ChatDialog.makeOne"
-    },
-    {
-      "family_id": "questlog",
-      "member": "journal",
-      "selector": "Quests.journal",
-      "module": "api/ui/questlog/Quests.js",
-      "state": "not-impl",
-      "source": "crates/script-js/src/shim/quests.js:25",
-      "reason": "Unconditional not-impl: no arguments are inspected and no successful result is produced.",
-      "overlay_id": "not-impl:api/ui/questlog/Quests.js:Quests.journal"
     },
     {
       "family_id": "walking",
@@ -25117,7 +25043,7 @@
       "type_aliases": 0,
       "name_aliases": 0,
       "callbacks": 0,
-      "not_impl_debt": 1
+      "not_impl_debt": 0
     },
     {
       "family_id": "duel",
@@ -25201,7 +25127,7 @@
       "type_aliases": 1,
       "name_aliases": 0,
       "callbacks": 0,
-      "not_impl_debt": 1
+      "not_impl_debt": 0
     },
     {
       "family_id": "gathering",
@@ -25333,7 +25259,7 @@
       "type_aliases": 1,
       "name_aliases": 0,
       "callbacks": 0,
-      "not_impl_debt": 1
+      "not_impl_debt": 0
     },
     {
       "family_id": "quests",

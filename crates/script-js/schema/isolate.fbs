@@ -324,12 +324,31 @@ table QuestProgressRow {
   binding: string;
   role: string;
 }
+// Retained identity, text and exact open/close observations for a journal-only read.
+table JournalEvidence {
+  quest: string;
+  root: int = -1;
+  lines: [string];
+  has_colour: bool = false;
+  colour: int = 0;
+  acquired_slot: ulong;
+  acquired_run: ulong;
+  acquired_session: ulong;
+  acquired_tick: ulong;
+  acquired_sequence: ulong;
+  closed_slot: ulong;
+  closed_run: ulong;
+  closed_session: ulong;
+  closed_tick: ulong;
+  closed_sequence: ulong;
+}
 
 table ApiProgress {
   request_id: ulong;
-  kind: ubyte; // 1 reading, 2 done, 3 refused.
+  kind: ubyte; // 1 reading, 2 done, 3 refused, 4 journal done.
   reason: string;
   row: QuestProgressRow;
+  journal: JournalEvidence;
 }
 
 // Bounded cancellation reason for the retained host walk outcome.
@@ -694,7 +713,8 @@ enum SeatKind: ubyte {
   Fire,
   Clue,
   Duel,
-  CakeStall
+  CakeStall,
+  CastNpc
 }
 
 enum SeatCancelReason: ubyte {
@@ -838,6 +858,8 @@ table SeatArgs {
   combat: CombatFight;
   progress_name: string;
   bank: BankSeatArgs;
+  progress_journal_only: bool = false;
+  cast_npc: CastNpcArgs;
 }
 
 table NativeRequest {
@@ -905,7 +927,7 @@ table SeatResult {
 // | "wear" | "unequip" | "set-run" | "set-retaliate" | "set-note-mode" | "set-camera-yaw"
 // | "note-progress" | "loop-settled" | "wait-enqueued" | "wait-settled"
 // | "recovery-anchor" | "recovery-anchor-none" | "key" | "mouse"
-// | "inspect-route" | "run-policy".
+// | "inspect-route" | "run-policy" | "progress-read".
 // Reserved legacy Interact.op tag: "select-bank" (do not reuse).
 // "key": action=DOM key, kind=code (optional), index=1 down / 0 up.
 // "mouse": xf/yf=client coordinates as doubles, level=DOM button, index=1 down / 0 up.
@@ -978,6 +1000,9 @@ table Interact {
   lineage: ulong = 0;
   // In-isolate machine row that owned this emission, or 0 for none.
   mirror_owner: ulong = 0;
+  progress_journal_only: bool = false;
+  // NPC type for a `use-widget-on` target.
+  target_id: int = null;
 }
 
 // The tick's shim interact queue, forwarded to the host.
@@ -991,6 +1016,11 @@ table InteractBatch {
   cancels: [SeatCancel];
   // Coalesced in-isolate mirror revocations, carried until page acknowledgement.
   mirror_revokes: [MirrorRevoke];
+}
+// One compatibility magic-tab spell cast on an exact NPC index.
+table CastNpcArgs {
+  component_id: int;
+  index: int;
 }
 
 root_type Snapshot;

@@ -1977,14 +1977,18 @@ impl SlotScript {
                 self.seat_compiled_owner,
             )
         });
-        let mut bank_values = [crate::native::seat_rows::SeatResultValue {
+        let mut result_values = [crate::native::seat_rows::SeatResultValue {
             id: RequestId::isolate(1).expect("isolate namespace"),
             value: &[],
         }; api::script_contract::MAX_RESULTS];
-        let bank_values_len = self
+        let mut result_values_len = self
             .bank
             .as_ref()
-            .map_or(0, |bank| bank.result_values(&mut bank_values));
+            .map_or(0, |bank| bank.result_values(&mut result_values));
+        if let (Some(api), Some(seat)) = (self.api.as_deref(), self.seat.as_ref()) {
+            result_values_len +=
+                api.result_values(seat.results(), &mut result_values[result_values_len..]);
+        }
         if let (Some(seat), Some(details)) = (self.seat.as_ref(), details.as_ref()) {
             native.seat_page = Some(
                 crate::native::seat_rows::SeatPageInput::new(
@@ -1994,8 +1998,8 @@ impl SlotScript {
                     seat.mirror_revokes_consumed(),
                 )
                 .expect("slot-owned seat page invariant")
-                .with_result_values(&bank_values[..bank_values_len])
-                .expect("slot-owned bank result invariant"),
+                .with_result_values(&result_values[..result_values_len])
+                .expect("slot-owned result value invariant"),
             );
         }
         surface.post_snapshot_delta(input, native, force_banks)
@@ -2035,14 +2039,18 @@ impl SlotScript {
                 self.seat_compiled_owner,
             )
         });
-        let mut bank_values = [crate::native::seat_rows::SeatResultValue {
+        let mut result_values = [crate::native::seat_rows::SeatResultValue {
             id: RequestId::isolate(1).expect("isolate namespace"),
             value: &[],
         }; api::script_contract::MAX_RESULTS];
-        let bank_values_len = self
+        let mut result_values_len = self
             .bank
             .as_ref()
-            .map_or(0, |bank| bank.result_values(&mut bank_values));
+            .map_or(0, |bank| bank.result_values(&mut result_values));
+        if let (Some(api), Some(seat)) = (self.api.as_deref(), self.seat.as_ref()) {
+            result_values_len +=
+                api.result_values(seat.results(), &mut result_values[result_values_len..]);
+        }
         if let (Some(seat), Some(details)) = (self.seat.as_ref(), details.as_ref()) {
             native.seat_page = Some(
                 crate::native::seat_rows::SeatPageInput::new(
@@ -2052,8 +2060,8 @@ impl SlotScript {
                     seat.mirror_revokes_consumed(),
                 )
                 .expect("slot-owned seat page invariant")
-                .with_result_values(&bank_values[..bank_values_len])
-                .expect("slot-owned bank result invariant"),
+                .with_result_values(&result_values[..result_values_len])
+                .expect("slot-owned result value invariant"),
             );
         }
         surface.post_snapshot_wake(input, native, force_banks, preserve_inv)
@@ -2689,11 +2697,12 @@ impl SlotScript {
                 cancel.of == start.id
                     && cancel.reason == api::script_contract::CallbackCancelReason::ParentAborted
             });
+            let api_foreground = self.api_owns_foreground();
             let admission = match self
                 .seat
                 .as_mut()
                 .expect("armed")
-                .start(stamp, start.kind, cancelled)
+                .start_with_api_foreground(stamp, start.kind, cancelled, api_foreground)
             {
                 Ok(admission) => admission,
                 Err(error) => {
@@ -2725,8 +2734,11 @@ impl SlotScript {
                         SeatStartArgs::Combat(request) => {
                             self.start_api_combat(start.id.get(), &Arc::new(request));
                         }
-                        SeatStartArgs::QuestProgress(name) => {
-                            self.start_api_progress(start.id.get(), &name);
+                        SeatStartArgs::CastNpc(request) => {
+                            self.start_api_cast_npc(start.id, request);
+                        }
+                        SeatStartArgs::QuestProgress { name, journal_only } => {
+                            self.start_api_progress(start.id.get(), &name, journal_only);
                         }
                         SeatStartArgs::Bank(request) => {
                             self.start_bank(start.id, request);
