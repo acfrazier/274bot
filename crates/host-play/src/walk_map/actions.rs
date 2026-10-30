@@ -1026,6 +1026,28 @@ impl MapCommand {
             Some(name),
         );
         if let Err(crate::NoPath {
+            incomplete_search: true,
+            refusal,
+            detail,
+            ..
+        }) = &result
+        {
+            let refusal = refusal
+                .as_ref()
+                .copied()
+                .unwrap_or(script::native::WalkRefusal::NoRouteWithinBounds {
+                    tried: 0,
+                    last: None,
+                });
+            return Err(ActionError::RiskRefused {
+                refusal,
+                detail: detail
+                    .as_deref()
+                    .map(str::to_owned)
+                    .unwrap_or_else(|| format!("{refusal:?}")),
+            });
+        }
+        if let Err(crate::NoPath {
             detail,
             refusal: Some(refusal),
             ..

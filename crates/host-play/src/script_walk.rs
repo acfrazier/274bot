@@ -1487,7 +1487,8 @@ fn step_walk(
         ..pending.opts
     };
     let search = |opts| {
-        find_with_avoid(
+        let fallback = || arm_access_fallback(w, from, dest, opts, &state, &pending.avoid);
+        match find_with_avoid(
             &w.collision,
             &w.graph,
             from,
@@ -1495,10 +1496,26 @@ fn step_walk(
             opts,
             &state,
             &pending.avoid,
-        )
-        .ok()
-        .or_else(|| arm_access_fallback(w, from, dest, opts, &state, &pending.avoid).ok())
-        .map_or(crate::RouteOutcome::NoPath, crate::RouteOutcome::Routed)
+        ) {
+            Ok(route) => crate::RouteOutcome::Routed(route),
+            Err(RouteError::BudgetExhausted) => match fallback() {
+                Ok(route) => crate::RouteOutcome::Routed(route),
+                Err(_) => crate::RouteOutcome::IncompleteSearch {
+                    search_result: crate::walk_plan::RouteSearchResultKind::BudgetExhausted {
+                        settled: None,
+                    },
+                },
+            },
+            Err(RouteError::NoPath) => match fallback() {
+                Ok(route) => crate::RouteOutcome::Routed(route),
+                Err(RouteError::BudgetExhausted) => crate::RouteOutcome::IncompleteSearch {
+                    search_result: crate::walk_plan::RouteSearchResultKind::BudgetExhausted {
+                        settled: None,
+                    },
+                },
+                Err(RouteError::NoPath) => crate::RouteOutcome::NoPath,
+            },
+        }
     };
     let outcome = search(opts);
     let (outcome, assessment, refusal) =
@@ -1515,7 +1532,7 @@ fn step_walk(
                 crate::RouteOutcome::BankSession { .. } => {
                     unreachable!("bank access search cannot start another session")
                 }
-                crate::RouteOutcome::NoPath => None,
+                crate::RouteOutcome::IncompleteSearch { .. } | crate::RouteOutcome::NoPath => None,
             };
             let assessment = route.map(|route| crate::admission::assess(route, w, &admission));
             let refusal = assessment
@@ -1530,6 +1547,17 @@ fn step_walk(
             (outcome, None, None)
         };
     bot.assessment = assessment;
+    if let crate::RouteOutcome::IncompleteSearch { search_result } = &outcome {
+        let refusal = script::native::WalkRefusal::NoRouteWithinBounds {
+            tried: 0,
+            last: None,
+        };
+        log_walk_arm_bot(|| {
+            format!("bank access route search_result={search_result} destination={dest:?}")
+        });
+        crate::admission::refuse(bot, w, dest, refusal);
+        return (false, StepEnd::Abort("bank access route search incomplete"));
+    }
     if let Some(refusal) = refusal {
         crate::admission::refuse(bot, w, dest, refusal);
         return (false, StepEnd::Abort("bank access route risk refused"));

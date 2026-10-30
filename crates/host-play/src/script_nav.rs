@@ -30,16 +30,17 @@ use nav_planner::producer::{lease as nav_lease, OwnerResultLedger, OwnerResultRe
 use nav_planner::router::find_missing_item_reqs_with_avoid;
 use nav_planner::router::{
     AvoidRect, BlockerDiagnosis, CompactFallbackRoute, CompactRoute, CursorStep, FindOptions,
-    MissingReqView, MissingRequirements, Route, SearchCursor, SearchOutcome, SearchPreflight,
-    SearchRequest, SearchRequestShape, NODE_BUDGET,
+    MissingReqView, MissingRequirements, Route, RouteError, ReverseProof, SearchCursor,
+    SearchOutcome, SearchPreflight, SearchRequest, SearchRequestShape, NODE_BUDGET,
 };
 use nav_planner::world::NavWorld;
 use nav_planner::zones::{ZoneExempt, ZoneFilterOwned, ZoneKey};
 use nav_planner::WorldState;
 use script::work_admission::{cancellation::WorkCancellation, WorkService};
 
-use crate::walk_plan::{PendingBankFetch, RouteOutcome, RoutePath};
-
+use crate::walk_plan::{
+    PendingBankFetch, RouteOutcome, RoutePath, RouteSearchResultKind,
+};
 #[derive(Default)]
 pub(crate) struct RouteCompletion {
     #[cfg(test)]
@@ -826,7 +827,13 @@ fn route_output_detail_bound(
     } else {
         supply_bytes.checked_add(2)?
     })?;
-    let detail_len = detail_len.max("candidate_goal_tier=preferred".len());
+    let search_result_bytes = "search_result=".len()
+        .checked_add("BudgetExhausted nodes_settled=".len())?
+        .checked_add(usize::MAX.ilog10() as usize + 1)?
+        .checked_add(" (incomplete search)".len())?;
+    let detail_len = detail_len
+        .max("candidate_goal_tier=preferred".len())
+        .checked_add(search_result_bytes.checked_add(2)?)?;
     detail_len.checked_add(arc_slice_heap_bytes::<u8>(detail_len)?)
 }
 
@@ -1074,6 +1081,7 @@ pub(crate) struct RouteJob {
     bank_avoid_copy: Vec<AvoidRect>,
     bank_avoid_index: usize,
     diagnostics_started: bool,
+    budget_settled: Option<usize>,
     outcome: Option<RouteJobOutcome>,
     assessment_future: Option<RouteAssessmentFuture>,
     assessment: Option<Arc<script::combat::risk::RouteAssessment>>,
@@ -1209,6 +1217,7 @@ impl RouteJob {
             bank_avoid_copy: Vec::new(),
             bank_avoid_index: 0,
             diagnostics_started: false,
+            budget_settled: None,
             outcome: None,
             assessment_future: None,
             assessment: None,
@@ -1768,7 +1777,11 @@ impl RouteJob {
     fn finish_strict_searches(&mut self) {
         self.target_index = self.target_index.saturating_add(1);
         if self.target_index >= self.targets.len() {
-            self.begin_diagnostics();
+            if self.budget_settled.is_some() {
+                self.begin_incomplete_search();
+            } else {
+                self.begin_diagnostics();
+            }
         } else {
             self.schedule_search(RouteSearchPurpose::Strict);
         }
@@ -1783,30 +1796,71 @@ impl RouteJob {
         self.stage = RouteJobStage::Search;
     }
 
+    fn record_budget_stop(&mut self, settled: usize) {
+        self.budget_settled = Some(
+            self.budget_settled
+                .unwrap_or_default()
+                .saturating_add(settled),
+        );
+    }
+
+    fn begin_incomplete_search(&mut self) {
+        self.outcome = Some(RouteJobOutcome::NoPath);
+        self.refusal = Some(script::native::WalkRefusal::NoRouteWithinBounds {
+            tried: 0,
+            last: None,
+        });
+        self.native_failure = Some(script::native::WalkEnd::Refused);
+        self.stage = RouteJobStage::Assess;
+    }
+
     fn begin_diagnostics(&mut self) {
         self.outcome = Some(RouteJobOutcome::NoPath);
         self.diagnostics_started = true;
         self.stage = RouteJobStage::BeginDiagnostics;
     }
 
-    fn handle_search(&mut self, search: SearchOutcome) -> Result<(), RouteJobError> {
+    fn handle_search(
+        &mut self,
+        search: SearchOutcome,
+        settled: usize,
+    ) -> Result<(), RouteJobError> {
         match (self.search_purpose, search) {
-            (RouteSearchPurpose::Strict, SearchOutcome::Single { route }) => {
-                if let Ok(route) = route {
+            (RouteSearchPurpose::Strict, SearchOutcome::Single { route }) => match route {
+                Ok(route) => {
                     self.outcome = Some(RouteJobOutcome::Route(route));
                     self.stage = RouteJobStage::Assess;
-                } else if self.request.opts.allow_bank_fetch {
-                    self.schedule_search(RouteSearchPurpose::MissingTarget);
-                } else {
+                }
+                Err(RouteError::BudgetExhausted) => {
+                    self.record_budget_stop(settled);
                     self.finish_strict_searches();
                 }
-            }
+                Err(RouteError::NoPath)
+                    if self.budget_settled.is_none() && self.request.opts.allow_bank_fetch =>
+                {
+                    self.schedule_search(RouteSearchPurpose::MissingTarget);
+                }
+                Err(RouteError::NoPath) => self.finish_strict_searches(),
+            },
             (RouteSearchPurpose::StrictFirst, SearchOutcome::First { search }) => {
+                let proof_abandoned = search.proof() == ReverseProof::Abandoned;
                 let (preferred, fallback) = search.into_routes();
+                let budget_stopped = proof_abandoned
+                    || matches!(&preferred, Err(RouteError::BudgetExhausted))
+                    || matches!(
+                        &fallback,
+                        Some(CompactFallbackRoute::Failed(RouteError::BudgetExhausted))
+                    );
                 if let Ok(route) = preferred {
                     self.outcome = Some(RouteJobOutcome::Route(route));
                     self.stage = RouteJobStage::Assess;
                 } else {
+                    if budget_stopped {
+                        self.record_budget_stop(settled);
+                    }
+                    if let Some(CompactFallbackRoute::Routed(route)) = fallback {
+                        self.strict_fallback = Some(route);
+                    }
                     if self
                         .request
                         .candidate_goals
@@ -1818,14 +1872,25 @@ impl RouteJob {
                             RouteSearchPurpose::CandidateFallback,
                         );
                     }
-                    if let Some(CompactFallbackRoute::Routed(route)) = fallback {
-                        self.strict_fallback = Some(route);
-                    }
                     self.begin_fetchable_first()?;
                 }
             }
             (RouteSearchPurpose::CandidateFallback, SearchOutcome::First { search }) => {
-                self.strict_fallback = search.into_routes().0.ok();
+                let proof_abandoned = search.proof() == ReverseProof::Abandoned;
+                let (preferred, fallback) = search.into_routes();
+                let budget_stopped = proof_abandoned
+                    || matches!(&preferred, Err(RouteError::BudgetExhausted))
+                    || matches!(
+                        &fallback,
+                        Some(CompactFallbackRoute::Failed(RouteError::BudgetExhausted))
+                    );
+                if preferred.is_err() && budget_stopped {
+                    self.record_budget_stop(settled);
+                }
+                self.strict_fallback = preferred.ok().or_else(|| match fallback {
+                    Some(CompactFallbackRoute::Routed(route)) => Some(route),
+                    _ => None,
+                });
                 self.begin_fetchable_first()?;
             }
             (RouteSearchPurpose::MissingTarget, SearchOutcome::MissingItemReqs(missing)) => {
@@ -1978,6 +2043,15 @@ impl RouteJob {
     }
 
     fn begin_fetchable_first(&mut self) -> Result<(), RouteJobError> {
+        if self.budget_settled.is_some() {
+            if let Some(route) = self.strict_fallback.take() {
+                self.outcome = Some(RouteJobOutcome::Route(route));
+                self.stage = RouteJobStage::Assess;
+            } else {
+                self.begin_incomplete_search();
+            }
+            return Ok(());
+        }
         if !self.request.opts.allow_bank_fetch {
             if let Some(route) = self.strict_fallback.take() {
                 self.outcome = Some(RouteJobOutcome::Route(route));
@@ -2179,9 +2253,47 @@ impl RouteJob {
         Ok(())
     }
 
+    fn search_result_kind(&self) -> RouteSearchResultKind {
+        if let Some(settled) = self.budget_settled {
+            RouteSearchResultKind::BudgetExhausted {
+                settled: Some(settled),
+            }
+        } else if !self.blocked.is_empty()
+            || matches!(
+                self.native_failure.as_ref(),
+                Some(script::native::WalkEnd::Blocked)
+            )
+        {
+            RouteSearchResultKind::Danger
+        } else if !self.missing.is_empty() {
+            RouteSearchResultKind::Supply
+        } else if self.refusal.is_some()
+            || matches!(
+                self.native_failure.as_ref(),
+                Some(
+                    script::native::WalkEnd::Refused
+                        | script::native::WalkEnd::NeedsEvidence(_)
+                )
+            )
+        {
+            RouteSearchResultKind::Refusal
+        } else {
+            RouteSearchResultKind::NoPath
+        }
+    }
+
     fn finish(&mut self) -> RouteJobOutput {
         let outcome = self.outcome.take().unwrap_or(RouteJobOutcome::NoPath);
+        let search_result = matches!(&outcome, RouteJobOutcome::NoPath)
+            .then(|| self.search_result_kind());
         let mut detail = self.detail.take();
+        if let Some(search_result) = search_result {
+            let search_detail = format!("search_result={search_result}");
+            detail = Some(match detail {
+                Some(detail) => format!("{search_detail}; {detail}"),
+                None => search_detail,
+            });
+        }
         let final_goal = match &outcome {
             RouteJobOutcome::Route(route)
             | RouteJobOutcome::Bank {
@@ -2272,6 +2384,7 @@ impl RouteJob {
             compat_v1: self.request.admission.compat_v1,
             quest_evidence: self.state.quest_evidence.clone(),
             outcome,
+            search_result,
             assessment: self.assessment.take(),
             refusal: self.refusal.take(),
             blocked: std::mem::take(&mut self.blocked),
@@ -2709,8 +2822,9 @@ impl CooperativeJob for RouteJob {
                                 false,
                             );
                             self.search_cursor = None;
+                            let settled = completion.forward_settled();
                             let (search, _state) = completion.into_parts();
-                            if let Err(error) = self.handle_search(search) {
+                            if let Err(error) = self.handle_search(search, settled) {
                                 return StepOutcome::Failed(error);
                             }
                             self.boundary_ready = true;
@@ -2802,6 +2916,7 @@ pub(crate) struct RouteJobOutput {
     compat_v1: bool,
     quest_evidence: Option<nav_planner::quest_gates::QuestEvidence>,
     outcome: RouteJobOutcome,
+    search_result: Option<RouteSearchResultKind>,
     assessment: Option<Arc<script::combat::risk::RouteAssessment>>,
     refusal: Option<script::native::WalkRefusal>,
     blocked: Box<[ZoneKey]>,
@@ -3437,6 +3552,14 @@ fn apply_route_output(
     reservation: Option<OwnerResultReservation>,
 ) {
     let _completion = output.completion;
+    if let Some(search_result) = output.search_result {
+        log_walk_arm_bot(|| {
+            format!(
+                "route_search search_result={search_result} generation={} request_id={}",
+                output.generation, output.request_id
+            )
+        });
+    }
     match output.kind {
         RouteDemandKind::Advisory {
             authority,
@@ -4204,6 +4327,7 @@ fn walk_arm_outcome_tag(outcome: &RouteOutcome) -> &'static str {
     match outcome {
         RouteOutcome::Routed(_) => "Routed",
         RouteOutcome::BankSession { .. } => "BankSession",
+        RouteOutcome::IncompleteSearch { .. } => "IncompleteSearch",
         RouteOutcome::NoPath => "NoPath",
     }
 }
@@ -6897,11 +7021,18 @@ impl NavBot {
                 });
                 (Arc::new(route), Some(pending))
             }
-            RouteOutcome::NoPath => {
+            outcome @ (RouteOutcome::NoPath | RouteOutcome::IncompleteSearch { .. }) => {
                 log_walk_arm_bot(|| {
+                    let search_result = match &outcome {
+                        RouteOutcome::NoPath => RouteSearchResultKind::NoPath,
+                        RouteOutcome::IncompleteSearch { search_result } => *search_result,
+                        RouteOutcome::Routed(_) | RouteOutcome::BankSession { .. } => {
+                            unreachable!()
+                        }
+                    };
                     format!(
-                        "publish_route NoPath request_id={request_id} walk_request_id={} \
-                         may_publish={}",
+                        "publish_route search_result={search_result} request_id={request_id} \
+                         walk_request_id={} may_publish={}",
                         self.walk_request_id,
                         self.armed_outcome_may_publish(request_id)
                     )
@@ -7296,18 +7427,35 @@ mod diagnostic_tests {
         .unwrap();
         job.targets.push(job.request.to);
 
-        job.handle_search(SearchOutcome::Single {
-            route: Err(nav_planner::router::RouteError::BudgetExhausted),
-        })
+        job.handle_search(
+            SearchOutcome::Single {
+                route: Err(nav_planner::router::RouteError::BudgetExhausted),
+            },
+            524_288,
+        )
         .unwrap();
 
-        assert!(
-            !matches!(job.stage, RouteJobStage::BeginDiagnostics),
-            "an incomplete strict search must not start missing-item diagnostics"
+        assert!(!job.diagnostics_started);
+        assert!(matches!(job.stage, RouteJobStage::Assess));
+        assert_eq!(job.budget_settled, Some(524_288));
+        assert!(matches!(
+            job.refusal.as_ref(),
+            Some(script::native::WalkRefusal::NoRouteWithinBounds { .. })
+        ));
+        job.identity = Some(stage_identity(1));
+        let output = job.finish();
+        assert_eq!(
+            output.search_result,
+            Some(RouteSearchResultKind::BudgetExhausted {
+                settled: Some(524_288)
+            })
         );
+        let detail = output.detail.expect("incomplete search has a detail");
+        assert!(detail.contains("search_result=BudgetExhausted nodes_settled=524288"));
+        assert!(!detail.contains("Insufficient route supplies"));
+
+
     }
-
-
     pub(super) fn tiny_stage_request() -> Box<ScriptRouteRequest> {
         let origin = WorldTile {
             x: 0,

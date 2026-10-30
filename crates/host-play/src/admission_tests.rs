@@ -200,8 +200,13 @@ fn real_search(
         avoid,
     ) {
         Ok(route) => crate::RouteOutcome::Routed(route),
-        Err(RouteError::NoPath | RouteError::BudgetExhausted) => crate::RouteOutcome::NoPath,
-    }
+        Err(RouteError::BudgetExhausted) => crate::RouteOutcome::IncompleteSearch {
+            search_result: crate::walk_plan::RouteSearchResultKind::BudgetExhausted {
+                settled: None,
+            },
+        },
+        Err(RouteError::NoPath) => crate::RouteOutcome::NoPath,
+}
 }
 
 fn real_witness(
@@ -228,10 +233,12 @@ fn routed(result: &RouteAdmission) -> &Route {
         crate::RouteOutcome::Routed(route) | crate::RouteOutcome::BankSession { route, .. } => {
             route
         }
-        crate::RouteOutcome::NoPath => panic!("expected a real router route"),
-    }
+        crate::RouteOutcome::IncompleteSearch { .. } | crate::RouteOutcome::NoPath => {
+            panic!("expected a real router route")
+        }
 }
 
+}
 #[test]
 fn unavailable_snapshots_preserve_missing_facts_without_inventing_events() {
     for map_members in [false, true] {
@@ -711,7 +718,7 @@ fn witness_verdicts_through_the_kind_view_match_the_round_two_rule() {
 
 #[cfg(feature = "test-support")]
 #[test]
-fn u6_real_budget_one_corridor_exhausts_the_named_retry_after_a_real_witness() {
+fn u6_budget_exhaustion_does_not_run_witness_or_retry() {
     const BUDGET: usize = 1;
     const WIDTH: usize = 160;
     const WITNESS_X: i32 = 80;
@@ -748,8 +755,16 @@ fn u6_real_budget_one_corridor_exhausts_the_named_retry_after_a_real_witness() {
                 BUDGET,
             ) {
                 Ok(found) => crate::RouteOutcome::Routed(found),
-                Err(error) => {
-                    observed_errors.push(error);
+                Err(RouteError::BudgetExhausted) => {
+                    observed_errors.push(RouteError::BudgetExhausted);
+                    crate::RouteOutcome::IncompleteSearch {
+                        search_result: crate::walk_plan::RouteSearchResultKind::BudgetExhausted {
+                            settled: None,
+                        },
+                    }
+                }
+                Err(RouteError::NoPath) => {
+                    observed_errors.push(RouteError::NoPath);
                     crate::RouteOutcome::NoPath
                 }
             },
@@ -767,20 +782,14 @@ fn u6_real_budget_one_corridor_exhausts_the_named_retry_after_a_real_witness() {
         (result, observed_errors)
     });
 
-    assert_eq!(
-        errors,
-        [RouteError::BudgetExhausted, RouteError::BudgetExhausted]
-    );
-    assert_eq!(
-        kernels, 5,
-        "both bounded seam searches and the full witness diagnosis use real kernels"
-    );
-    assert_eq!(result.tried, 1);
-    assert_eq!(result.blocked.as_ref(), &[ZoneKey::Zone(0)]);
+    assert_eq!(errors, [RouteError::BudgetExhausted]);
+    assert_eq!(kernels, 1, "the incomplete search must not run a witness or retry");
+    assert_eq!(result.tried, 0);
+    assert!(result.blocked.is_empty());
     assert_eq!(
         result.refusal,
         Some(WalkRefusal::NoRouteWithinBounds {
-            tried: 1,
+            tried: 0,
             last: None
         })
     );

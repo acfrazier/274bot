@@ -229,17 +229,46 @@ pub(crate) enum FlightTarget {
     Wear { id: i32, carried: i32, worn: bool },
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum RouteSearchResultKind {
+    NoPath,
+    BudgetExhausted { settled: Option<usize> },
+    Refusal,
+    Danger,
+    Supply,
+}
+
+impl std::fmt::Display for RouteSearchResultKind {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::NoPath => formatter.write_str("NoPath"),
+            Self::BudgetExhausted { settled: Some(settled) } => {
+                write!(formatter, "BudgetExhausted nodes_settled={settled} (incomplete search)")
+            }
+            Self::BudgetExhausted { settled: None } => {
+                formatter.write_str("BudgetExhausted nodes_settled=unavailable (incomplete search)")
+            }
+            Self::Refusal => formatter.write_str("Refusal"),
+            Self::Danger => formatter.write_str("Danger"),
+            Self::Supply => formatter.write_str("Supply"),
+        }
+    }
+}
+
 #[expect(
     clippy::large_enum_variant,
     reason = "The route result retains both bank routes inline without an extra result allocation."
 )]
 /// Outcome of a walk-arm route attempt: a direct route, a BankBudget
-/// session plus the post-session route, or no path.
+/// session plus the post-session route, an incomplete search, or no path.
 pub(super) enum RouteOutcome {
     Routed(Route),
     BankSession {
         pending: PendingBankFetch,
         route: Route,
+    },
+    IncompleteSearch {
+        search_result: RouteSearchResultKind,
     },
     NoPath,
 }
@@ -262,32 +291,39 @@ pub(super) fn route_or_bank_fetch(
 ) -> RouteOutcome {
     match find_with_avoid(&world.collision, &world.graph, from, to, opts, state, avoid) {
         Ok(route) => RouteOutcome::Routed(route),
-        Err(_) if opts.allow_bank_fetch => find_missing_item_reqs_with_avoid(
-            &world.collision,
-            &world.graph,
-            from,
-            to,
-            opts,
-            state,
-            avoid,
-        )
-        .and_then(|missing| {
-            plan_bank_fetch(
-                &missing,
-                state,
-                &planning_rows(origin, bank, &missing),
-                world.banks(),
-                from,
+        Err(nav_planner::router::RouteError::BudgetExhausted) => {
+            RouteOutcome::IncompleteSearch {
+                search_result: RouteSearchResultKind::BudgetExhausted { settled: None },
+            }
+        }
+        Err(nav_planner::router::RouteError::NoPath) if opts.allow_bank_fetch => {
+            find_missing_item_reqs_with_avoid(
                 &world.collision,
                 &world.graph,
+                from,
+                to,
                 opts,
+                state,
                 avoid,
             )
-            .ok()
-        })
-        .and_then(|fetch| session_route(world, from, to, fetch, opts, avoid))
-        .unwrap_or(RouteOutcome::NoPath),
-        Err(_) => RouteOutcome::NoPath,
+            .and_then(|missing| {
+                plan_bank_fetch(
+                    &missing,
+                    state,
+                    &planning_rows(origin, bank, &missing),
+                    world.banks(),
+                    from,
+                    &world.collision,
+                    &world.graph,
+                    opts,
+                    avoid,
+                )
+                .ok()
+            })
+            .and_then(|fetch| session_route(world, from, to, fetch, opts, avoid))
+            .unwrap_or(RouteOutcome::NoPath)
+        }
+        Err(nav_planner::router::RouteError::NoPath) => RouteOutcome::NoPath,
     }
 }
 
@@ -305,7 +341,7 @@ fn session_route(
         allow_bank_fetch: false,
         ..opts
     };
-    let route = find_with_avoid(
+    let route = match find_with_avoid(
         &world.collision,
         &world.graph,
         from,
@@ -313,8 +349,15 @@ fn session_route(
         opts,
         &fetch.state,
         avoid,
-    )
-    .ok()?;
+    ) {
+        Ok(route) => route,
+        Err(nav_planner::router::RouteError::BudgetExhausted) => {
+            return Some(RouteOutcome::IncompleteSearch {
+                search_result: RouteSearchResultKind::BudgetExhausted { settled: None },
+            });
+        }
+        Err(nav_planner::router::RouteError::NoPath) => return None,
+    };
     let final_route = RoutePath::legacy(Arc::new(route.clone()));
     Some(RouteOutcome::BankSession {
         pending: PendingBankFetch {

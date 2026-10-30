@@ -85,6 +85,12 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.7` 
   of polls inside one tick no longer ends a crossing early, and a slow
   poll that misses several ticks no longer extends it.
 
+- Walk failures now name the search result in the detail and debug log. When
+  a strict search stops at its node budget, the failure says that the search
+  is incomplete and reports the nodes settled. The bot no longer reports
+  missing supplies from an incomplete search. A complete no-path search still
+  reports missing supplies when the relaxed route needs an item.
+
 ### Scripting
 
 - Bank opening now waits for its own walk to finish. A completed walk from
