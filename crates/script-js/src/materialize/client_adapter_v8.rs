@@ -1609,8 +1609,8 @@ fn modal_close_observation<'s>(
     let token = if previous.is_object() && previous_session == session_number {
         property(scope, previous, "token")?
     } else {
-        let description = v8::String::new(scope, "client-adapter-session")
-            .ok_or_else(|| PENDING.to_string())?;
+        let description =
+            v8::String::new(scope, "client-adapter-session").ok_or_else(|| PENDING.to_string())?;
         v8::Symbol::new(scope, Some(description)).into()
     };
     let state = v8::Object::new(scope);
