@@ -2893,7 +2893,7 @@ mod tests {
         );
         assert!(size_of::<GatherRetained>() <= 80);
         println!(
-            "Gatherer={} Active={} GatherRun={} DropBatch={} OneOp={} GatherRetained={} GatherScratch={} TargetPlan={} Walk={} WalkGoals={} WalkRequest={} WalkReceipt={}",
+            "Gatherer={} Active={} GatherRun={} DropBatch={} OneOp={} GatherRetained={} GatherScratch={} RetryTargetOption={} AvoidedTile={} TargetPlan={} Walk={} WalkGoals={} WalkRequest={} WalkReceipt={}",
             size_of::<Gatherer>(),
             size_of::<Active>(),
             size_of::<GatherRun>(),
@@ -2901,6 +2901,8 @@ mod tests {
             size_of::<OneOp>(),
             size_of::<GatherRetained>(),
             size_of::<GatherScratch>(),
+            size_of::<Option<WalkRetryTarget>>(),
+            size_of::<AvoidedTile>(),
             size_of::<TargetPlan>(),
             size_of::<Walk>(),
             size_of::<crate::native::WalkGoals>(),
