@@ -396,8 +396,6 @@ struct EntityPlacement {
     kind: EntityKind,
     id: u32,
     plane: u8,
-    x: u8,
-    z: u8,
     world_x: u16,
     world_z: u16,
     shape: u8,
@@ -411,6 +409,7 @@ struct EntityPlacement {
 #[derive(Default)]
 struct ParsedMap {
     map_cells: usize,
+    explicit_map_cells: usize,
     entities: Vec<EntityPlacement>,
 }
 
@@ -478,8 +477,8 @@ fn parse_map_source(
                 if std::mem::replace(&mut seen_map_cells[cell_index], true) {
                     return Err(format!("{label}:{line_number}: duplicate MAP cell"));
                 }
-                parsed.map_cells = parsed
-                    .map_cells
+                parsed.explicit_map_cells = parsed
+                    .explicit_map_cells
                     .checked_add(1)
                     .ok_or_else(|| format!("{label}: map row count overflowed"))?;
             }
@@ -513,8 +512,6 @@ fn parse_map_source(
                     kind: EntityKind::Loc,
                     id,
                     plane: coordinates[0],
-                    x: coordinates[1],
-                    z: coordinates[2],
                     world_x: u16::from(square_x) * 64 + u16::from(coordinates[1]),
                     world_z: u16::from(square_z) * 64 + u16::from(coordinates[2]),
                     shape,
@@ -564,8 +561,6 @@ fn parse_map_source(
                     },
                     id,
                     plane: coordinates[0],
-                    x: coordinates[1],
-                    z: coordinates[2],
                     world_x: u16::from(square_x) * 64 + u16::from(coordinates[1]),
                     world_z: u16::from(square_z) * 64 + u16::from(coordinates[2]),
                     shape: 0,
@@ -578,17 +573,31 @@ fn parse_map_source(
             }
         }
     }
-    if parsed.map_cells != seen_map_cells.len() {
-        return Err(format!(
-            "{label}: MAP has {} unique cells, expected {}",
-            parsed.map_cells,
-            seen_map_cells.len()
-        ));
-    }
     if section.is_none() {
         return Err(format!("{label}: no map sections"));
     }
+    // Pack.js:309-340 initializes all 4*64*64 cells and emits opcode 0
+    // for absent sparse MAP rows. They are real default terrain, not missing input.
+    parsed.map_cells = seen_map_cells.len();
     Ok(parsed)
+}
+
+#[test]
+fn sparse_map_source_includes_packed_default_terrain() {
+    let parsed = parse_map_source(b"==== MAP ====\n0 1 2: u1\n", "m3_4", 3, 4).unwrap();
+    assert_eq!(parsed.map_cells, 4 * 64 * 64);
+    assert_eq!(parsed.explicit_map_cells, 1);
+    assert!(parsed.entities.is_empty());
+    let defaults = parse_map_source(b"==== MAP ====\n", "m3_4", 3, 4).unwrap();
+    assert_eq!(defaults.map_cells, 4 * 64 * 64);
+    assert_eq!(defaults.explicit_map_cells, 0);
+    assert!(parse_map_source(
+        b"==== MAP ====\n0 1 2: u1\n0 1 2: u2\n",
+        "duplicate",
+        3,
+        4,
+    )
+    .is_err());
 }
 
 #[derive(Default)]
@@ -3073,8 +3082,6 @@ fn load_map_census(
                 kind: EntityKind::Loc,
                 id: 0,
                 plane: cell.plane,
-                x: cell.x,
-                z: cell.z,
                 world_x: u16::from(entry.square_x) * 64 + u16::from(cell.x),
                 world_z: u16::from(entry.square_z) * 64 + u16::from(cell.z),
                 shape: 0,
@@ -3110,8 +3117,6 @@ fn load_map_census(
                 kind: EntityKind::Loc,
                 id: placement.id,
                 plane: placement.plane,
-                x: placement.x,
-                z: placement.z,
                 world_x: u16::from(entry.square_x) * 64 + u16::from(placement.x),
                 world_z: u16::from(entry.square_z) * 64 + u16::from(placement.z),
                 shape: placement.shape,
@@ -3174,6 +3179,7 @@ fn load_map_census(
     let mut source_entities = Vec::new();
     let mut source_loc_identities = Vec::new();
     let mut map_cells = 0usize;
+    let mut explicit_map_cells = 0usize;
     let mut entity_counts = BTreeMap::<&'static str, usize>::new();
     for path in &paths {
         let name = path
@@ -3205,6 +3211,9 @@ fn load_map_census(
                 map_cells = map_cells
                     .checked_add(parsed.map_cells)
                     .ok_or_else(|| "total terrain cell count overflowed".to_string())?;
+                explicit_map_cells = explicit_map_cells
+                    .checked_add(parsed.explicit_map_cells)
+                    .ok_or_else(|| "total explicit terrain cell count overflowed".to_string())?;
                 for entity in &parsed.entities {
                     let count = entity_counts.entry(entity.kind.label()).or_default();
                     *count = count.checked_add(1).ok_or_else(|| {
@@ -3277,6 +3286,11 @@ fn load_map_census(
                 json!(unrepresented_index_rows),
             ),
             ("terrain_cells".to_string(), json!(map_cells)),
+            ("explicit_terrain_cells".to_string(), json!(explicit_map_cells)),
+            (
+                "implicit_default_terrain_cells".to_string(),
+                json!(map_cells - explicit_map_cells),
+            ),
             ("cache_land_cells".to_string(), json!(cache_land_cells)),
             (
                 "map_archive_records".to_string(),
