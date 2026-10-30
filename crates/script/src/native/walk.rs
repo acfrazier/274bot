@@ -333,9 +333,7 @@ impl NativeMachine for Walk {
             let tick = cx.evidence().tick;
             let started = self.quest_list_wait_since.get_or_insert(tick);
             let snapshot = cx.snapshot();
-            let quest_rows = snapshot
-                .quest_statuses()
-                .map(|statuses| statuses.value);
+            let quest_rows = snapshot.quest_statuses().map(|statuses| statuses.value);
             let gate_status_observed = quest_list_status_observed(gates, quest_rows);
             if first_observation || tick != *started {
                 api::host_log!(
@@ -1005,5 +1003,4 @@ mod tests {
             "the row retry and single closed-gate retry are both bounded"
         );
     }
-
 }
