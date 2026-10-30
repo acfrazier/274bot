@@ -1576,11 +1576,12 @@ fn live_manual_prereq_holy_barrier_allowed() {
 #[test]
 #[ignore = "requires LIVE=1 and the explicitly configured local Engine L on 47594/3080"]
 fn live_manual_prereq_holy_barrier_wrong_memory_retries() {
-    let fixture = make_fixture(
+    let fixture = make_fixture_with_seed_commands(
         PREREQ_WEST,
         &[("priestperil", 60), ("druidspirit", 0)],
         true,
         true,
+        &["givebank dagger_wolfbane 1".to_owned()],
     );
     seed_wrong_memory(&fixture, "priestperil", 61, fixture.seed_run);
     let previous_generation = lifecycle_generation(&fixture);
