@@ -1461,59 +1461,67 @@ mod tests {
         rows
     }
 
+    fn sorted_stop_bits(stops: &BTreeMap<String, f64>) -> Vec<(String, u64)> {
+        stops
+            .iter()
+            .map(|(name, probability)| (name.clone(), probability.to_bits()))
+            .collect()
+    }
+
     #[test]
     fn the_same_model_twice_stores_bit_identical_probabilities() {
-        // Every roll ends a full regeneration timer, so a state above the starting Hitpoints
-        // receives three terms in one merge pass: a success from itself, a failure from itself,
-        // and a success from the state below it. The chances below are not exact binary
-        // fractions once they multiply, so the three-term sums round, and the order in which a
-        // distribution visits its states changes the stored last bits.
-        let regen_step = |index: u8, successes: u16| {
+        // The railing shape below combines a 9-tick pre-roll delay, a 3-tick success tail and a
+        // food policy. Eating folds several states into one key during a merge, so a stored
+        // probability is a sum of several terms. Floating-point addition is not associative, and
+        // a hash map visits those source states in a per-process order.
+        let railing = |index: u8| {
             Operation::Bounded(BoundedStep {
-                id: format!("regen-{index}"),
-                attempts: 8,
-                stop: format!("regen-{index}-exhausted"),
+                id: format!("railing-{index}"),
+                attempts: 16,
+                stop: format!("railing-{index}-exhausted"),
                 hazard: Hazard {
-                    id: "regen",
-                    skill: Skill::Agility,
+                    id: "mcannonrailing",
+                    skill: Skill::Crafting,
                     level: 1,
                     low: 0,
                     high: 0,
-                    damage: Damage::Fixed(1),
+                    damage: Damage::Fixed(3),
                     timing: Timing {
-                        first_attempt_before_roll: PreRoll::default(),
-                        retry_before_roll: PreRoll::default(),
+                        first_attempt_before_roll: PreRoll {
+                            delay_before_walk: 9,
+                            ..PreRoll::default()
+                        },
+                        retry_before_roll: PreRoll {
+                            delay_before_walk: 9,
+                            ..PreRoll::default()
+                        },
                         failure_before_damage: 0,
-                        after_failure: REGEN_TICKS,
-                        after_success: REGEN_TICKS,
+                        after_failure: 0,
+                        after_success: 3,
                     },
                     source: "test",
                     timing_note: "test",
                 }
-                .with_test_successes(successes),
+                .with_test_successes(61),
                 entries_per_parent_pass: 1,
             })
         };
-        let mut plan: Vec<Operation> = [(1u8, 1u16), (2, 255), (3, 161), (4, 96), (5, 63), (6, 200)]
-            .into_iter()
-            .map(|(index, successes)| regen_step(index, successes))
-            .collect();
-        plan.push(Operation::Bounded(BoundedStep {
-            id: "damage".into(),
-            attempts: 8,
-            stop: "damage-exhausted".into(),
-            hazard: test_hazard(161, Damage::Fixed(3)),
-            entries_per_parent_pass: 1,
-        }));
+        let plan: Vec<Operation> = (1..=4u8).map(railing).collect();
+        let policy = FoodPolicy {
+            line: 20,
+            heal: 12,
+            eat_delay: 2,
+            skill_delay: 3,
+        };
         let initial = State {
-            hp: 2,
+            hp: 40,
             regen_phase: 0,
-            food: 0,
+            food: 8,
             food_cooldown: 0,
         };
 
-        let first = execute(&plan, initial, 4, None);
-        let second = execute(&plan, initial, 4, None);
+        let first = execute(&plan, initial, 40, Some(policy));
+        let second = execute(&plan, initial, 40, Some(policy));
 
         assert_eq!(
             first.death_probability.to_bits(),
@@ -1524,6 +1532,11 @@ mod tests {
             sorted_probability_bits(&first.live),
             sorted_probability_bits(&second.live),
             "stored probabilities changed between two runs of the same model"
+        );
+        assert_eq!(
+            sorted_stop_bits(&first.budget_stops),
+            sorted_stop_bits(&second.budget_stops),
+            "budget stop probabilities changed between two runs of the same model"
         );
     }
 }
