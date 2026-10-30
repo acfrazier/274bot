@@ -115,8 +115,8 @@ struct Timing {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum TickAccess {
     Available,
-    Delayed,
-    Modal,
+    /// The player cannot run normal timers because of a delay or modal state.
+    Blocked,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -847,7 +847,7 @@ fn run_bounded(run: &mut Run, step: &BoundedStep, base_hp: u8, food_policy: Opti
                     ready,
                     u16::from(step.hazard.timing.after_success),
                     base_hp,
-                    TickAccess::Delayed,
+                    TickAccess::Blocked,
                 );
                 let successful = apply_due_regen(successful, base_hp);
                 let successful = food_policy
@@ -861,7 +861,7 @@ fn run_bounded(run: &mut Run, step: &BoundedStep, base_hp: u8, food_policy: Opti
                     ready,
                     u16::from(step.hazard.timing.failure_before_damage),
                     base_hp,
-                    TickAccess::Delayed,
+                    TickAccess::Blocked,
                 );
                 let damage = step.hazard.damage.amount(before_damage.hp, base_hp);
                 if before_damage.hp <= damage {
@@ -876,7 +876,7 @@ fn run_bounded(run: &mut Run, step: &BoundedStep, base_hp: u8, food_policy: Opti
                     failed,
                     u16::from(step.hazard.timing.after_failure),
                     base_hp,
-                    TickAccess::Delayed,
+                    TickAccess::Blocked,
                 );
                 let failed = apply_due_regen(failed, base_hp);
                 if attempt + 1 == step.attempts {
@@ -956,7 +956,7 @@ fn run_once(input: Distribution, hazard: Hazard, base_hp: u8) -> OnceBranches {
                 ready,
                 u16::from(hazard.timing.after_success),
                 base_hp,
-                TickAccess::Delayed,
+                TickAccess::Blocked,
             );
             add_state(
                 &mut branches.success,
@@ -970,7 +970,7 @@ fn run_once(input: Distribution, hazard: Hazard, base_hp: u8) -> OnceBranches {
                 ready,
                 u16::from(hazard.timing.failure_before_damage),
                 base_hp,
-                TickAccess::Delayed,
+                TickAccess::Blocked,
             );
             let damage = hazard.damage.amount(before_damage.hp, base_hp);
             if before_damage.hp <= damage {
@@ -983,7 +983,7 @@ fn run_once(input: Distribution, hazard: Hazard, base_hp: u8) -> OnceBranches {
                     },
                     u16::from(hazard.timing.after_failure),
                     base_hp,
-                    TickAccess::Delayed,
+                    TickAccess::Blocked,
                 );
                 add_state(
                     &mut branches.failure,
@@ -1001,7 +1001,7 @@ fn advance_pre_roll(state: State, before_roll: PreRoll, base_hp: u8) -> State {
         state,
         u16::from(before_roll.delay_before_walk),
         base_hp,
-        TickAccess::Delayed,
+        TickAccess::Blocked,
     );
     let state = advance(
         state,
@@ -1013,7 +1013,7 @@ fn advance_pre_roll(state: State, before_roll: PreRoll, base_hp: u8) -> State {
         state,
         u16::from(before_roll.delay_after_walk),
         base_hp,
-        TickAccess::Delayed,
+        TickAccess::Blocked,
     )
 }
 
@@ -1258,15 +1258,15 @@ mod tests {
             food: 0,
             food_cooldown: 0,
         };
-        let delayed = advance(initial, 300, 20, TickAccess::Delayed);
-        assert_eq!(delayed.hp, 10);
-        assert_eq!(delayed.regen_phase, REGEN_TICKS);
+        let blocked = advance(initial, 300, 20, TickAccess::Blocked);
+        assert_eq!(blocked.hp, 10);
+        assert_eq!(blocked.regen_phase, REGEN_TICKS);
 
-        let modal = advance(delayed, 1, 20, TickAccess::Modal);
-        assert_eq!(modal.hp, 10);
-        assert_eq!(modal.regen_phase, REGEN_TICKS);
+        let still_blocked = advance(blocked, 1, 20, TickAccess::Blocked);
+        assert_eq!(still_blocked.hp, 10);
+        assert_eq!(still_blocked.regen_phase, REGEN_TICKS);
 
-        let available = advance(modal, 1, 20, TickAccess::Available);
+        let available = advance(still_blocked, 1, 20, TickAccess::Available);
         assert_eq!(available.hp, 11);
         assert_eq!(available.regen_phase, 0);
     }
