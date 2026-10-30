@@ -10,6 +10,7 @@
 mod facts;
 mod geometry;
 mod input;
+pub mod odds;
 mod replay;
 use api::condition::PoisonState;
 use api::WorldTile;
@@ -128,6 +129,10 @@ pub mod consts {
     pub const PACE_AHEAD: u16 = 2;
     pub const TOPUP_WINDOW: i32 = 30;
     pub const POISON_PERIOD: i32 = 30;
+    /// Admitted chance of death over one route (operator Q1, 2026-10-29).
+    pub const DEATH_BOUND: f64 = 0.01;
+    /// Shared cap for scheduled attacks, fixed hazards and poison pulses.
+    pub const MAX_EVENTS: usize = 2048;
 }
 
 /// A validated engine coordinate, preserving all supported world tiles in 4 B.

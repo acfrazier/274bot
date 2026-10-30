@@ -647,6 +647,33 @@ route, its zone table, shared combat/risk tables, permissions and a compact
 walk, install an observer or execute an escape. Existing walking behavior and
 the pack format are unchanged.
 
+`risk::odds` also exposes a pure no-action probability core.
+It does not yet change `assess`, admission, or the escape net.
+`hit_chance` uses inclusive attack and defence rolls, where a tie misses.
+`HitChance` rounds that probability upward into four bytes.
+An `Attack` event draws uniform inclusive damage after its accuracy roll.
+`Certain` and `Poison` events deal their full amount.
+
+`death_bound` computes the probability that total damage reaches the initial HP.
+It credits no food, prayer, regeneration, or escape.
+Canonical distribution order makes shuffled input produce identical result bits.
+`DeathBound::admits` compares `bound + visits * f64::EPSILON` with the limit.
+The visit count records probability-cell multiply-adds.
+The limit constant is `DEATH_BOUND = 0.01`.
+
+Both probability functions use two 128-cell rows, or 2,048 stack bytes.
+They allocate nothing and add no retained per-bot state.
+An `Event` occupies eight bytes.
+`EventBuf` owns 16,384 heap bytes plus a 16-byte owner on 64-bit hosts.
+The caller creates one buffer per worker, not per bot.
+Push and clear reuse that allocation.
+More than 2,048 events or HP above 127 returns `UnknownWhy::Overflow`.
+Zero HP or an invalid attack probability returns `UnknownWhy::MissingFacts`.
+
+`escape_floor` computes all HP tails in one convolution.
+It returns the smallest admitted HP, zero when HP 1 passes, or `hp_max + 1` when none passes.
+It is a pure primitive for the later net integration, not a current net trigger.
+
 The assessment retains every engaged zone interval and crossing; the first
 eight crossings are display summaries only. Acquisition uses the router's
 activation predicate, carves and stationary shapes. Pursuit continues through

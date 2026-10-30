@@ -33,6 +33,12 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.7` 
 - The route-risk model uses normal melee facts for a bespoke NPC only when
   extracted combat content proves its shared melee routine, damage, and timing,
   with no poison or multi-hit effect. Other bespoke attacks remain unknown.
+- Selected combat facts now include all NPC combat levels, signed bonuses,
+  player defence inputs, weapon style slots, and declared NPC damage defaults.
+  Missing required defaults stop data generation.
+- The route-risk core now provides a no-food death-probability bound with
+  upward-rounded hit chances and a numeric error guard. Route admission still
+  uses the existing verdict until the separate admission cutover.
 
 
 - Bots now drink their boost potion before the first hit even when the target
