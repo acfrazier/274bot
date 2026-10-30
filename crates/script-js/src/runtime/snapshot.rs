@@ -990,17 +990,6 @@ pub(super) fn materialize_snapshot(
     } else if !had {
         set(&mut scope, obj, "combat", none)?;
     }
-    if let Some(label) = snap.active_event() {
-        let active_event: v8::Local<v8::Value> = if label.is_empty() {
-            v8::null(&mut scope).into()
-        } else {
-            js_string(&mut scope, label)?
-        };
-        set(&mut scope, obj, "active_event", active_event)?;
-    } else if !had {
-        let empty = v8::null(&mut scope);
-        set(&mut scope, obj, "active_event", empty.into())?;
-    }
     if let Some(side_modal_id) = snap.side_modal_id() {
         let side_modal_id = num(&mut scope, side_modal_id as f64);
         set(&mut scope, obj, "side_modal_id", side_modal_id)?;

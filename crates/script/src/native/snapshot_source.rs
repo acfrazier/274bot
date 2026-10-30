@@ -419,8 +419,6 @@ pub struct NativeFactsInput<'a> {
     /// fact for `bank_side`. `None` omits the slot; the isolate keeps its
     /// last root.
     pub side_modal_id: Option<i32>,
-    /// Current supervisor active-event label; `None` explicitly clears it.
-    pub active_event: Option<&'a str>,
     /// Coherent current-generation facts for the synchronous ClientAdapter
     /// readers. None means this post did not carry the adapter projection.
     pub client_adapter: Option<ClientAdapterFactsInput<'a>>,

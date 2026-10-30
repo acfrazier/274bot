@@ -693,8 +693,6 @@ table Snapshot {
   // The ClientAdapter fact family is one optional delta: every scalar and
   // bounded vector below comes from one current API snapshot.
   client_adapter: ClientAdapterFacts;
-  // Nullable supervisor event label; an empty string clears a prior event in a delta.
-  active_event: string;
   // Whether the local player has a current positive type-1 hitmark. An
   // omitted delta retains the last observation.
   taking_damage: bool = null;

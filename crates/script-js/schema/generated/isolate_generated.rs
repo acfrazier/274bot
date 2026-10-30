@@ -8393,8 +8393,7 @@ impl<'a> Snapshot<'a> {
   pub const VT_BANK_SIDE_READY: ::flatbuffers::VOffsetT = 300;
   pub const VT_STATS_READY: ::flatbuffers::VOffsetT = 302;
   pub const VT_CLIENT_ADAPTER: ::flatbuffers::VOffsetT = 304;
-  pub const VT_ACTIVE_EVENT: ::flatbuffers::VOffsetT = 306;
-  pub const VT_TAKING_DAMAGE: ::flatbuffers::VOffsetT = 308;
+  pub const VT_TAKING_DAMAGE: ::flatbuffers::VOffsetT = 306;
 
   #[inline]
   pub unsafe fn init_from_table(table: ::flatbuffers::Table<'a>) -> Self {
@@ -8437,7 +8436,6 @@ impl<'a> Snapshot<'a> {
     builder.add_withdraw_x_result_seq(args.withdraw_x_result_seq);
     builder.add_bank_generation(args.bank_generation);
     builder.add_tick(args.tick);
-    if let Some(x) = args.active_event { builder.add_active_event(x); }
     if let Some(x) = args.client_adapter { builder.add_client_adapter(x); }
     if let Some(x) = args.seat_results { builder.add_seat_results(x); }
     if let Some(x) = args.seat_live { builder.add_seat_live(x); }
@@ -9606,13 +9604,6 @@ impl<'a> Snapshot<'a> {
     unsafe { self._tab.get::<::flatbuffers::ForwardsUOffset<ClientAdapterFacts>>(Snapshot::VT_CLIENT_ADAPTER, None)}
   }
   #[inline]
-  pub fn active_event(&self) -> Option<&'a str> {
-    // Safety:
-    // Created from valid Table for this object
-    // which contains a valid value in this slot
-    unsafe { self._tab.get::<::flatbuffers::ForwardsUOffset<&str>>(Snapshot::VT_ACTIVE_EVENT, None)}
-  }
-  #[inline]
   pub fn taking_damage(&self) -> Option<bool> {
     // Safety:
     // Created from valid Table for this object
@@ -9776,7 +9767,6 @@ impl ::flatbuffers::Verifiable for Snapshot<'_> {
      .visit_field::<bool>("bank_side_ready", Self::VT_BANK_SIDE_READY, false)?
      .visit_field::<bool>("stats_ready", Self::VT_STATS_READY, false)?
      .visit_field::<::flatbuffers::ForwardsUOffset<ClientAdapterFacts>>("client_adapter", Self::VT_CLIENT_ADAPTER, false)?
-     .visit_field::<::flatbuffers::ForwardsUOffset<&str>>("active_event", Self::VT_ACTIVE_EVENT, false)?
      .visit_field::<bool>("taking_damage", Self::VT_TAKING_DAMAGE, false)?
      .finish();
     Ok(())
@@ -9932,7 +9922,6 @@ pub struct SnapshotArgs<'a> {
     pub bank_side_ready: bool,
     pub stats_ready: bool,
     pub client_adapter: Option<::flatbuffers::WIPOffset<ClientAdapterFacts<'a>>>,
-    pub active_event: Option<::flatbuffers::WIPOffset<&'a str>>,
     pub taking_damage: Option<bool>,
 }
 impl<'a> Default for SnapshotArgs<'a> {
@@ -10088,7 +10077,6 @@ impl<'a> Default for SnapshotArgs<'a> {
       bank_side_ready: false,
       stats_ready: false,
       client_adapter: None,
-      active_event: None,
       taking_damage: None,
     }
   }
@@ -10696,10 +10684,6 @@ impl<'a: 'b, 'b, A: ::flatbuffers::Allocator + 'a> SnapshotBuilder<'a, 'b, A> {
     self.fbb_.push_slot_always::<::flatbuffers::WIPOffset<ClientAdapterFacts>>(Snapshot::VT_CLIENT_ADAPTER, client_adapter);
   }
   #[inline]
-  pub fn add_active_event(&mut self, active_event: ::flatbuffers::WIPOffset<&'b  str>) {
-    self.fbb_.push_slot_always::<::flatbuffers::WIPOffset<_>>(Snapshot::VT_ACTIVE_EVENT, active_event);
-  }
-  #[inline]
   pub fn add_taking_damage(&mut self, taking_damage: bool) {
     self.fbb_.push_slot_always::<bool>(Snapshot::VT_TAKING_DAMAGE, taking_damage);
   }
@@ -10870,7 +10854,6 @@ impl ::core::fmt::Debug for Snapshot<'_> {
       ds.field("bank_side_ready", &self.bank_side_ready());
       ds.field("stats_ready", &self.stats_ready());
       ds.field("client_adapter", &self.client_adapter());
-      ds.field("active_event", &self.active_event());
       ds.field("taking_damage", &self.taking_damage());
       ds.finish()
   }

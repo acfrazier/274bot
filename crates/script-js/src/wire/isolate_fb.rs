@@ -1140,7 +1140,6 @@ pub struct SnapshotFingerprint {
     pub chat_page_fingerprint: u64,
     pub side_modal_id: Option<i32>,
     seat_page: Option<SeatPageFingerprint>,
-    pub active_event: Option<String>,
     pub taking_damage: bool,
 }
 
@@ -1499,7 +1498,6 @@ impl SnapshotFingerprint {
             chat_page_fingerprint: native.chat_page_fingerprint,
             side_modal_id: native.side_modal_id,
             seat_page: native.seat_page.map(SeatPageFingerprint::from),
-            active_event: native.active_event.map(str::to_string),
             taking_damage: native.taking_damage,
         }
     }
@@ -1672,7 +1670,6 @@ pub struct DeltaMask {
     pub side_modal_id: bool,
     /// One bit for the seat live and retained-result pages, posted together.
     pub seat_page: bool,
-    pub active_event: bool,
     pub taking_damage: bool,
 }
 
@@ -1778,7 +1775,6 @@ impl DeltaMask {
             chat_page_fingerprint: true,
             side_modal_id: true,
             seat_page: true,
-            active_event: true,
             taking_damage: true,
         }
     }
@@ -1910,7 +1906,6 @@ impl DeltaMask {
             chat_page_fingerprint: next.chat_page_fingerprint != last.chat_page_fingerprint,
             side_modal_id: next.side_modal_id != last.side_modal_id,
             seat_page: next.seat_page != last.seat_page,
-            active_event: next.active_event != last.active_event,
             taking_damage: next.taking_damage != last.taking_damage,
         }
     }
@@ -2011,7 +2006,6 @@ impl DeltaMask {
             || self.chat_page_fingerprint
             || self.side_modal_id
             || self.seat_page
-            || self.active_event
             || (self.banks && next.banks != last.banks)
             || (self.hold && next.hold != last.hold)
             || self.taking_damage
@@ -2518,11 +2512,6 @@ fn encode_snapshot_masked_into(
         native
             .client_adapter
             .map(|facts| client_adapter_off(b, &facts))
-    } else {
-        None
-    };
-    let active_event_off = if mask.active_event {
-        Some(b.create_string(native.active_event.unwrap_or_default()))
     } else {
         None
     };
@@ -3082,9 +3071,6 @@ fn encode_snapshot_masked_into(
     }
     if let (true, Some(side)) = (mask.side_modal_id, native.side_modal_id) {
         table.add_side_modal_id(side);
-    }
-    if let Some(off) = active_event_off {
-        table.add_active_event(off);
     }
     if mask.local_player_motion {
         table.add_local_player_motion(local_player_motion_code(native.local_player_moving));
