@@ -57,24 +57,6 @@
     "declaration": "partner: string;"
   },
   {
-    "id": "bank-native-deposit-except",
-    "module": "api/bank/Bank.js",
-    "selector": "Bank.depositAllExcept",
-    "add": true,
-    "reason": "Native deposit machine accepts iterable or array-like keep names and resolves without a boolean result.",
-    "runtime": "crates/script-js/src/shim/bank.js:68",
-    "declaration": "depositAllExcept(keep?: Iterable<string> | ArrayLike<string>): Promise<void>;"
-  },
-  {
-    "id": "bank-native-nearest-world",
-    "module": "api/bank/Bank.js",
-    "selector": "Bank.openNearestWorld",
-    "add": true,
-    "reason": "Host exposes a zero-argument world-bank opener absent from the frozen Bank object.",
-    "runtime": "crates/script-js/src/shim/bank.js:117",
-    "declaration": "openNearestWorld(): Promise<boolean>;"
-  },
-  {
     "id": "banking-native-optional-policy",
     "module": "api/bank/Banking.js",
     "selector": "Banking.bankNearest",
@@ -383,5 +365,13 @@
     "reason": "The selected-facts adapter resolves this revision's component id from the relative source lostcity-289/content/pack/interface.pack:350; the frozen numeric literal is not authoritative across selected content.",
     "runtime": "crates/script-js/src/shim/combat_style_logic.js:8",
     "declaration": "export const AUTO_TOGGLE_COM: number;"
+  },
+  {
+    "id": "native-fishing-gear-types",
+    "module": "shim/fishing_gear.js",
+    "selector": "$module",
+    "reason": "The fishing members of ToolAcquire.ts are served by this fishing-owned native adapter until the acquisition family serves that module; the declarations preserve the pinned ToolAcquire.ts signatures and caller-object identity.",
+    "runtime": "crates/script-js/src/shim/fishing_gear.js:1",
+    "declaration": "import Tile from '../geometry/Tile.js'; import type { FishingGearPiece, FishingMethod } from '../data/fishingMethods.js'; export interface ToolVendor { keeper: string; stand: Tile; bankStand: Tile; hopFrom?: Tile; hopLoc?: string; hopAction?: string; } export type ToolAcquirePlan = { kind: 'repair'; brokenName: string; label: 'pickaxe' | 'axe'; vendor: ToolVendor; prefer: string[]; } | { kind: 'buy'; name: string; cost: number; qty: number; vendor: ToolVendor; equip: boolean; reason: string; } | { kind: 'smith'; name: string; bar: string; smithLevel: number; vendorBank: Tile; anvilStand: Tile; equip: boolean; reason: string; }; export interface AcquireWorld { skillLevel: (skill: string) => number; heldCount: (name: string) => number; invCount: (name: string) => number; bankCount: (name: string) => number; worn: (name: string) => boolean; } export interface FishingVendorNear { x: number; z: number; } export interface PlanFishingGearOpts { near?: FishingVendorNear | null; baitQty?: number; } export type FishingGearBuyPlan = Extract<ToolAcquirePlan, { kind: 'buy'; }>; export const GERRANT_ONLY_FISHING: ReadonlySet<string>; export const FISHING_SHOP_COSTS: Readonly<Record<string, number>>; export const GERRANT_VENDOR: ToolVendor; export const HARRY_VENDOR: ToolVendor; export function fishingVendorFor(name: string, near?: FishingVendorNear | null): ToolVendor; export function fishingShopCost(name: string): number | null; export function isFishingBaitPiece(g: Pick<FishingGearPiece, 'name' | 'restock'>): boolean; export function withBaitTarget(method: Pick<FishingMethod, 'gear'>, baitQty: number): { gear: FishingGearPiece[]; }; export function planFishingGearBuys(method: Pick<FishingMethod, 'gear'>, w: AcquireWorld, opts?: PlanFishingGearOpts): FishingGearBuyPlan[]; export function planFishingGearAcquire(method: Pick<FishingMethod, 'gear'>, w: AcquireWorld, opts?: PlanFishingGearOpts): ToolAcquirePlan | null; export function buyPlansCost(plans: readonly Pick<FishingGearBuyPlan, 'cost'>[]): number; export function fishingGearShopCart(method: Pick<FishingMethod, 'gear'>, w: AcquireWorld, opts?: PlanFishingGearOpts): FishingGearBuyPlan[]; export function shopableMissingFishingGear(gear: readonly FishingGearPiece[], count: (name: string) => number): string[];"
   }
 ]

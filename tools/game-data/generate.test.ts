@@ -17,6 +17,8 @@ import { extractCombatStyleFacts, parseCombatScripts, extractSpecialWeaponFacts,
 import { extractDuelRuleButtons, extractDuelZones } from './extractors/duel.ts';
 import { extractNpcNamesFacts } from './extractors/npc-names.ts';
 import './dialogue-ui.test.ts';
+import './gather-catalog.test.ts';
+import './quest-junk.test.ts';
 import './server-ordered.test.ts';
 import './npc-transforms.test.ts';
 import './npc-stat-default.test.ts';

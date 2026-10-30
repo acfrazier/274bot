@@ -1209,6 +1209,29 @@
     },
     {
       "families": [
+        "bank_task"
+      ],
+      "family_semantics": [
+        {
+          "family": "bank_task",
+          "order": "synchronous-at-call-site",
+          "multiplicity": "per-reached-call-site; CALLS_PER_TICK=256 per row per tick",
+          "cadence": "One invocation per reached synchronous call site; sites may be reached repeatedly."
+        }
+      ],
+      "member": "log",
+      "call_site": "purgePackAtBank, withdrawCoins, Bank.backpackReady and sortBank synchronous log notifications",
+      "path": "call-sync",
+      "value": "ignored",
+      "promise": "opaque-empty-object",
+      "thrown": "family-fails-with-thrown-value",
+      "frozen_path": {
+        "status": "matches-frozen-call-form"
+      },
+      "evidence": "$TS/api/bank/Banking.ts:62-111,354-390; $TS/api/bank/Bank.ts:124-146; $TS/api/bank/bankSort.ts:55-126; $S/slot/bank.rs"
+    },
+    {
+      "families": [
         "partner-trade"
       ],
       "family_semantics": [

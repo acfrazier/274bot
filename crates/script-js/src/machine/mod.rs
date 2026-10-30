@@ -243,6 +243,14 @@ pub(crate) const BANK_FAMILY_DESCRIPTORS: &[BankFamilyDescriptor] = &[
         kind: native::request::NativeKind::BankPlan,
         exclusive_group: None,
     },
+    // Native bank transactions and reads behind purgePackAtBank,
+    // withdrawCoins, bankPace, Bank.backpackReady and sortBank.
+    BankFamilyDescriptor {
+        name: "bank_task",
+        callbacks: BANK_LOG_CALLBACK,
+        kind: native::request::NativeKind::BankPlan,
+        exclusive_group: None,
+    },
 ];
 
 fn bank_family_descriptor(name: &str) -> Option<&'static BankFamilyDescriptor> {
@@ -267,6 +275,7 @@ fn bank_family_for_operation(operation: script::bank::request::BankSeatOperation
         Op::WithdrawLoad => "bank_withdraw_load",
         Op::SetNoteMode => "bank_note_mode",
         Op::Close => "bank_close",
+        Op::PurgePack | Op::WithdrawCoins | Op::Pace | Op::BackpackReady | Op::Sort => "bank_task",
         Op::None => unreachable!("bank start operation is validated"),
     }
 }
@@ -282,9 +291,18 @@ fn bank_hook_bit(operation: script::bank::request::BankSeatOperation, member: &s
         (Op::BankNearest, "deposit") => BANK_NEAREST_HOOK_DEPOSIT,
         (Op::BankNearest, "afterDeposit") => BANK_NEAREST_HOOK_AFTER_DEPOSIT,
         (Op::BankNearest, "log") => BANK_NEAREST_HOOK_LOG,
-        (Op::OpenObject | Op::OpenNpc | Op::OpenAccess | Op::Open | Op::WaitReady, "log") => {
-            HOOK_LOG
-        }
+        (
+            Op::OpenObject
+            | Op::OpenNpc
+            | Op::OpenAccess
+            | Op::Open
+            | Op::WaitReady
+            | Op::PurgePack
+            | Op::WithdrawCoins
+            | Op::BackpackReady
+            | Op::Sort,
+            "log",
+        ) => HOOK_LOG,
         _ => 0,
     }
 }
@@ -300,6 +318,9 @@ fn bank_transfer_operation(operation: script::bank::request::BankSeatOperation) 
             | Op::DepositAll
             | Op::DepositKeep
             | Op::DepositMatch
+            | Op::PurgePack
+            | Op::WithdrawCoins
+            | Op::Sort
     )
 }
 
@@ -557,6 +578,18 @@ fn bank_withdraw_lands_as(value: &Value) -> Option<i32> {
 }
 
 fn bank_op_immediate_outcome(family: &str, value: &Value) -> Result<Option<Outcome>, String> {
+    if family == "bank_task" {
+        let object = bank_object(value, "bank arguments")?;
+        if bank_required_string(object, "kind", None)? == "coins" {
+            // A held target that is not a safe integer names no pack count;
+            // it settles false before any bank action.
+            let need = bank_js_number(object.get("need").unwrap_or(&Value::Null));
+            if !bank_safe_integer(need) {
+                return Ok(Some(Outcome::Done(Value::Bool(false))));
+            }
+        }
+        return Ok(None);
+    }
     if family != "bank_op" {
         return Ok(None);
     }
@@ -595,6 +628,84 @@ fn bank_op_immediate_outcome(family: &str, value: &Value) -> Result<Option<Outco
         _ => None,
     };
     Ok(outcome.map(|value| Outcome::Done(Value::Bool(value))))
+}
+
+/// `Bank.backpackReady(expected)`: `None` when omitted. Each row keeps its
+/// position; a row whose slot, id or count is not an i32 can never equal a
+/// posted row (upstream `sameBackpack` compares with `===`) and becomes the
+/// impossible row. A list longer than the backpack becomes one impossible row.
+fn bank_expected_pack(
+    value: Option<&Value>,
+) -> Result<Option<Vec<script::bank::request::BankPackRow>>, String> {
+    use script::bank::request::{BankPackRow, IMPOSSIBLE_PACK_ROW, MAX_EXPECTED_PACK_ROWS};
+    let Some(value) = value.filter(|value| !value.is_null()) else {
+        return Ok(None);
+    };
+    let rows = value
+        .as_array()
+        .ok_or_else(|| "expected must be an array".to_string())?;
+    if rows.len() > MAX_EXPECTED_PACK_ROWS {
+        return Ok(Some(vec![IMPOSSIBLE_PACK_ROW]));
+    }
+    let field = |row: &serde_json::Map<String, Value>, name: &str| {
+        row.get(name)
+            .and_then(Value::as_f64)
+            .and_then(bank_numeric_i32)
+    };
+    Ok(Some(
+        rows.iter()
+            .map(|row| {
+                row.as_object()
+                    .and_then(|row| {
+                        Some(BankPackRow {
+                            slot: field(row, "slot")?,
+                            id: field(row, "id")?,
+                            count: field(row, "count")?,
+                        })
+                    })
+                    .unwrap_or(IMPOSSIBLE_PACK_ROW)
+            })
+            .collect(),
+    ))
+}
+
+/// `sortBank({ categoryOverrides })` entries as `[id, category]` pairs. The
+/// category must be one of the native `BankCategory` names.
+fn bank_category_overrides(
+    value: Option<&Value>,
+) -> Result<Vec<script::bank::request::BankCategoryOverride>, String> {
+    use script::bank::request::{BankCategoryOverride, MAX_SORT_OVERRIDES};
+    let Some(value) = value.filter(|value| !value.is_null()) else {
+        return Ok(Vec::new());
+    };
+    let entries = value
+        .as_array()
+        .ok_or_else(|| "categoryOverrides must be a Map".to_string())?;
+    if entries.len() > MAX_SORT_OVERRIDES {
+        return Err(format!(
+            "categoryOverrides has more than {MAX_SORT_OVERRIDES} entries"
+        ));
+    }
+    entries
+        .iter()
+        .map(|entry| {
+            let pair = entry
+                .as_array()
+                .filter(|pair| pair.len() == 2)
+                .ok_or_else(|| "categoryOverrides entries must be [id, category]".to_string())?;
+            let id = bank_id_number(&pair[0])
+                .ok_or_else(|| "categoryOverrides ids must be i32 item ids".to_string())?;
+            let name = pair[1]
+                .as_str()
+                .ok_or_else(|| "categoryOverrides categories must be strings".to_string())?;
+            let category = script::bank::sort::CATEGORY_ORDER
+                .iter()
+                .position(|category| category.as_str() == name)
+                .and_then(|index| u8::try_from(index).ok())
+                .ok_or_else(|| format!("unknown bank category {name:?}"))?;
+            Ok(BankCategoryOverride { id, category })
+        })
+        .collect()
 }
 
 fn bank_positive_withdraw_count(value: &Value, name: &str) -> Result<i64, String> {
@@ -836,6 +947,56 @@ fn parse_bank_start(
                 args
             }
             other => return Err(format!("unknown bank wait kind {other:?}")),
+        },
+        "bank_task" => match bank_required_string(object, "kind", None)?.as_str() {
+            "purge" => {
+                let mut args = Args::new(Op::PurgePack);
+                args.set_keep_names(bank_string_list(object.get("keep"), "keep")?);
+                args.set_stand(bank_optional_tile(object, "stand", None)?);
+                args.set_destination(bank_destination(object.get("destination"))?);
+                let booth_name = bank_string(object, "boothName", None)?;
+                let booth_op = bank_string(object, "boothOp", None)?;
+                args.set_object_access(match (booth_name, booth_op) {
+                    (None, None) => None,
+                    (name, op) => Some(script::bank::request::BankSeatObjectAccess::new(
+                        name.unwrap_or_else(|| "Bank booth".into()),
+                        op.unwrap_or_else(|| "Use-quickly".into()),
+                        None,
+                        None,
+                    )),
+                });
+                args.set_prefer_nearby(match object.get("preferNearby") {
+                    None | Some(Value::Null) => None,
+                    Some(Value::Bool(value)) => Some(*value),
+                    Some(_) => return Err("preferNearby must be a boolean".into()),
+                });
+                args.set_obstacles(bank_string_list(object.get("obstacles"), "obstacles")?);
+                args
+            }
+            "coins" => {
+                let need = bank_js_number(object.get("need").unwrap_or(&Value::Null));
+                if !bank_safe_integer(need) {
+                    return Err("need must be a safe integer".into());
+                }
+                let mut args = Args::new(Op::WithdrawCoins);
+                args.set_quantity(Some(need as i64));
+                args.set_item_name(Some(
+                    bank_string(object, "coin_name", None)?.unwrap_or_else(|| "Coins".into()),
+                ));
+                args
+            }
+            "pace" => Args::new(Op::Pace),
+            "backpack" => {
+                let mut args = Args::new(Op::BackpackReady);
+                args.set_expected_pack(bank_expected_pack(object.get("expected"))?);
+                args
+            }
+            "sort" => {
+                let mut args = Args::new(Op::Sort);
+                args.set_category_overrides(bank_category_overrides(object.get("overrides"))?);
+                args
+            }
+            other => return Err(format!("unknown bank task kind {other:?}")),
         },
         _ => return Err(format!("unknown bank family {family:?}")),
     };

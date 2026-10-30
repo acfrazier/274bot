@@ -6,11 +6,14 @@
 pub(crate) mod npc;
 pub mod ops;
 pub mod request;
+/// Pure bank-sort categories, ranks, and bounded planning.
+pub mod sort;
 
 pub mod compat;
 #[cfg(test)]
 mod prompt_args_tests;
 pub(crate) mod seat_open;
+pub(crate) mod seat_sort;
 pub(crate) mod seat_transfer;
 
 pub use crate::native_bank::{

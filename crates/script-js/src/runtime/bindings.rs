@@ -758,6 +758,7 @@ pub(super) fn wire_runtime(
     super::entities_v8::install(runtime).map_err(|e| format!("entities v8: {e}"))?;
     super::chatbox_v8::install(runtime).map_err(|e| format!("chatbox v8: {e}"))?;
     super::gathering_v8::install(runtime).map_err(|e| format!("gathering locations v8: {e}"))?;
+    super::gather_catalog_v8::install(runtime).map_err(|e| format!("gather catalog v8: {e}"))?;
     super::skills_v8::install(runtime).map_err(|e| format!("skills v8: {e}"))?;
     super::inventory_v8::install(runtime).map_err(|e| format!("inventory v8: {e}"))?;
     super::shop_ops_v8::install(runtime).map_err(|e| format!("shop ops v8: {e}"))?;
@@ -772,6 +773,8 @@ pub(super) fn wire_runtime(
     crate::bank_select::install(std::sync::Arc::clone(&named_banks));
     super::bank_locations_v8::install(runtime)?;
     super::bank_tasks_v8::install(runtime).map_err(|e| format!("bank tasks v8: {e}"))?;
+    super::bank_backpack_v8::install(runtime).map_err(|e| format!("bank backpack v8: {e}"))?;
+    super::bank_quest_junk_v8::install(runtime).map_err(|e| format!("bank quest junk v8: {e}"))?;
     super::hunt_v8::install(runtime).map_err(|e| format!("hunt v8: {e}"))?;
     super::dialog_v8::install(runtime).map_err(|e| format!("dialog v8: {e}"))?;
     let content = format!(

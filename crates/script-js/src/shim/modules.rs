@@ -668,8 +668,36 @@ pub fn shim_modules() -> Vec<Module> {
             include_str!("data/pickpocket_targets.js"),
         ),
         Module::new(
+            "/rs2b0t/bot/shim/gathering_locations.js",
+            include_str!("gathering_locations.js"),
+        ),
+        Module::new(
             "/rs2b0t/bot/data/woodcuttingLocations.js",
             include_str!("data/woodcutting_locations.js"),
+        ),
+        Module::new(
+            "/rs2b0t/bot/data/miningLocations.js",
+            include_str!("data/mining_locations.js"),
+        ),
+        Module::new(
+            "/rs2b0t/bot/data/gatheringLocations.js",
+            include_str!("data/gathering_locations.js"),
+        ),
+        Module::new(
+            "/rs2b0t/bot/data/fishingMethods.js",
+            include_str!("data/fishing_methods.js"),
+        ),
+        Module::new(
+            "/rs2b0t/bot/data/fishingLocations.js",
+            include_str!("data/fishing_locations.js"),
+        ),
+        Module::new(
+            "/rs2b0t/bot/data/cookingRanges.js",
+            include_str!("data/cooking_ranges.js"),
+        ),
+        Module::new(
+            "/rs2b0t/bot/shim/fishing_gear.js",
+            include_str!("fishing_gear.js"),
         ),
         Module::new(
             "/rs2b0t/bot/api/combat/CombatStyleLogic.js",
@@ -901,10 +929,6 @@ pub fn shim_modules() -> Vec<Module> {
         Module::new(
             "/rs2b0t/bot/runtime/BotHost.js",
             include_str!("bot_host.js"),
-        ),
-        Module::new(
-            "/rs2b0t/bot/shim/gathering_locations.js",
-            include_str!("gathering_locations.js"),
         ),
         Module::new(
             "/rs2b0t/bot/scripts/bot/declared_surface.js",

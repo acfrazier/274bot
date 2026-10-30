@@ -5,7 +5,7 @@
     "selector": "reader.chatContinueComId",
     "operation": "not-impl",
     "reason": "Unconditional not-impl: no arguments are inspected and no successful result is produced.",
-    "runtime": "crates/script-js/src/shim/client_adapter.js:128",
+    "runtime": "crates/script-js/src/shim/client_adapter.js:133",
     "async": false
   },
   {
@@ -14,7 +14,7 @@
     "selector": "reader.bankComId",
     "operation": "not-impl",
     "reason": "Unconditional not-impl: no arguments are inspected and no successful result is produced.",
-    "runtime": "crates/script-js/src/shim/client_adapter.js:248",
+    "runtime": "crates/script-js/src/shim/client_adapter.js:253",
     "async": false
   },
   {
@@ -25,60 +25,6 @@
     "reason": "Unconditional not-impl: no arguments are inspected and no successful result is produced.",
     "runtime": "crates/script-js/src/shim/game.js:208",
     "async": true
-  },
-  {
-    "id": "not-impl:api/bank/Banking.js:purgePackAtBank",
-    "module": "api/bank/Banking.js",
-    "selector": "purgePackAtBank",
-    "operation": "not-impl",
-    "reason": "Unconditional not-impl: the multi-step bank transaction is not implemented.",
-    "runtime": "crates/script-js/src/shim/banking.js:141",
-    "async": true
-  },
-  {
-    "id": "not-impl:api/bank/Banking.js:withdrawCoins",
-    "module": "api/bank/Banking.js",
-    "selector": "withdrawCoins",
-    "operation": "not-impl",
-    "reason": "Unconditional not-impl: the multi-step bank transaction is not implemented.",
-    "runtime": "crates/script-js/src/shim/banking.js:145",
-    "async": true
-  },
-  {
-    "id": "not-impl:api/bank/Banking.js:bankPace",
-    "module": "api/bank/Banking.js",
-    "selector": "bankPace",
-    "operation": "not-impl",
-    "reason": "Unconditional not-impl: randomized pacing is not carried into native compatibility.",
-    "runtime": "crates/script-js/src/shim/banking.js:149",
-    "async": true
-  },
-  {
-    "id": "not-impl:api/bank/Banking.js:bankPaceTicks",
-    "module": "api/bank/Banking.js",
-    "selector": "bankPaceTicks",
-    "operation": "not-impl",
-    "reason": "Unconditional not-impl: randomized pacing is not carried into native compatibility.",
-    "runtime": "crates/script-js/src/shim/banking.js:153",
-    "async": false
-  },
-  {
-    "id": "not-impl:api/bank/bankSort.js:sortBank",
-    "module": "api/bank/bankSort.js",
-    "selector": "sortBank",
-    "operation": "not-impl",
-    "reason": "Unconditional not-impl: no arguments are inspected and no successful result is produced.",
-    "runtime": "crates/script-js/src/shim/bank_sort.js:8",
-    "async": true
-  },
-  {
-    "id": "not-impl:api/bank/bankQuestJunk.js:findQuestJunk",
-    "module": "api/bank/bankQuestJunk.js",
-    "selector": "findQuestJunk",
-    "operation": "not-impl",
-    "reason": "Unconditional not-impl: no arguments are inspected and no successful result is produced.",
-    "runtime": "crates/script-js/src/shim/bank_quest_junk.js:6",
-    "async": false
   },
   {
     "id": "not-impl:api/shop/Shop.js:Shop.buyById",
@@ -214,42 +160,6 @@
     "operation": "not-impl",
     "reason": "Unconditional not-impl: rs2b0t's time-based trade-closure pacing is not carried into native compatibility.",
     "runtime": "crates/script-js/src/shim/drive_partner_trade.js:59",
-    "async": false
-  },
-  {
-    "id": "not-impl:api/bank/BankLocations.js:nearestWalkableBank",
-    "module": "api/bank/BankLocations.js",
-    "selector": "nearestWalkableBank",
-    "operation": "not-impl",
-    "reason": "Unconditional not-impl: caller-owned walk-cost callbacks are not handled by the native bank selector.",
-    "runtime": "crates/script-js/src/shim/bank_locations.js:61",
-    "async": false
-  },
-  {
-    "id": "not-impl:api/bank/BankLocations.js:nearestWalkableBankAsync",
-    "module": "api/bank/BankLocations.js",
-    "selector": "nearestWalkableBankAsync",
-    "operation": "not-impl",
-    "reason": "Unconditional not-impl: caller-owned async walk-cost callbacks are not handled by the native bank selector.",
-    "runtime": "crates/script-js/src/shim/bank_locations.js:65",
-    "async": true
-  },
-  {
-    "id": "not-impl:api/bank/BankLocations.js:bankCostForFinder",
-    "module": "api/bank/BankLocations.js",
-    "selector": "bankCostForFinder",
-    "operation": "not-impl",
-    "reason": "Unconditional not-impl: the PathFinder callback wrapper is not exposed by the native bank selector.",
-    "runtime": "crates/script-js/src/shim/bank_locations.js:69",
-    "async": false
-  },
-  {
-    "id": "not-impl:api/bank/BankLocations.js:bankCostForNavigator",
-    "module": "api/bank/BankLocations.js",
-    "selector": "bankCostForNavigator",
-    "operation": "not-impl",
-    "reason": "Unconditional not-impl: the Navigator callback wrapper is not exposed by the native bank selector.",
-    "runtime": "crates/script-js/src/shim/bank_locations.js:73",
     "async": false
   },
   {
@@ -475,15 +385,6 @@
     "operation": "not-impl",
     "reason": "Unconditional not-impl: the combat-showing threshold has no native adapter.",
     "runtime": "crates/script-js/src/shim/client_adapter.js:17",
-    "async": false
-  },
-  {
-    "id": "not-impl:data/woodcuttingLocations.js:resolveWoodcuttingLocation",
-    "module": "data/woodcuttingLocations.js",
-    "selector": "resolveWoodcuttingLocation",
-    "operation": "not-impl",
-    "reason": "Unconditional not-impl: script-specific camps have no verified native location source.",
-    "runtime": "crates/script-js/src/shim/data/woodcutting_locations.js:9",
     "async": false
   },
   {

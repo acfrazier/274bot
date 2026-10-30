@@ -189,6 +189,18 @@ pub(super) fn materialize_snapshot(
     } else if !had {
         set(&mut scope, obj, "bank_loaded", falsy)?;
     }
+    if snap.has_inv_ready() {
+        let inv_ready = v8::Boolean::new(&mut scope, snap.inv_ready());
+        set(&mut scope, obj, "inv_ready", inv_ready.into())?;
+    } else if !had {
+        set(&mut scope, obj, "inv_ready", falsy)?;
+    }
+    if snap.has_bank_side_ready() {
+        let bank_side_ready = v8::Boolean::new(&mut scope, snap.bank_side_ready());
+        set(&mut scope, obj, "bank_side_ready", bank_side_ready.into())?;
+    } else if !had {
+        set(&mut scope, obj, "bank_side_ready", falsy)?;
+    }
     if snap.has_bank_generation() {
         let bank_generation = num(&mut scope, snap.bank_generation() as f64);
         set(&mut scope, obj, "bank_generation", bank_generation)?;

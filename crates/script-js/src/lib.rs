@@ -15,8 +15,12 @@ mod area;
 mod attack_clock;
 #[path = "compat/autocast.rs"]
 mod autocast;
+#[path = "materialize/bank_backpack_v8.rs"]
+mod bank_backpack_v8;
 #[path = "materialize/bank_locations_v8.rs"]
 mod bank_locations_v8;
+#[path = "materialize/bank_quest_junk_v8.rs"]
+mod bank_quest_junk_v8;
 #[path = "compat/bank_rows.rs"]
 mod bank_rows;
 #[path = "scene/bank_select.rs"]
@@ -87,6 +91,8 @@ mod fight_upkeep;
 mod fire;
 #[path = "materialize/fire_v8.rs"]
 mod fire_v8;
+#[path = "materialize/gather_catalog_v8.rs"]
+mod gather_catalog_v8;
 #[path = "materialize/gather_methods_v8.rs"]
 mod gather_methods_v8;
 #[path = "materialize/gathering_v8.rs"]

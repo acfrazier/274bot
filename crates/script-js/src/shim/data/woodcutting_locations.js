@@ -1,12 +1,13 @@
-// Thin native binding for the Ent quartet. IDs/lifetime live in Rust
-// (`api::ent`); this module does not copy a JS game-data table.
-import { notImpl, notImplValue } from '../shim/_kernel.js';
+// Thin native binding. The camp table is the immutable Rust table (`api::gather_camps`), materialized once per
+// isolate; the Ent ids and lifetime are `api::ent`. This module copies no JS game-data table.
+import Tile from '../geometry/Tile.js';
+import { locationOptions, resolveGatheringLocation } from '../shim/gathering_locations.js';
 
-export const WOODCUTTING_LOCATIONS = notImplValue('WOODCUTTING_LOCATIONS');
-export const WOODCUTTING_LOCATION_OPTIONS = notImplValue('WOODCUTTING_LOCATION_OPTIONS');
+export const WOODCUTTING_LOCATIONS = globalThis.__rs2b0t_gather_catalog(0, Tile);
+export const WOODCUTTING_LOCATION_OPTIONS = locationOptions(WOODCUTTING_LOCATIONS);
 
 export function resolveWoodcuttingLocation(setting, startTile) {
-    throw notImpl('resolveWoodcuttingLocation');
+    return resolveGatheringLocation(setting, startTile, WOODCUTTING_LOCATIONS);
 }
 
 export const ENT_NPC_IDS = new Set(

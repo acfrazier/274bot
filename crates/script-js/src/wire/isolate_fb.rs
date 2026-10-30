@@ -427,6 +427,8 @@ impl<'a> Snapshot<'a> {
         has_bank_side => VT_BANK_SIDE,
         has_bank_open => VT_BANK_OPEN,
         has_bank_loaded => VT_BANK_LOADED,
+        has_inv_ready => VT_INV_READY,
+        has_bank_side_ready => VT_BANK_SIDE_READY,
         has_hold => VT_HOLD,
         has_ours => VT_OURS,
         has_npcs => VT_NPCS,
@@ -967,6 +969,8 @@ pub struct SnapshotFingerprint {
     pub bank_side: Vec<ItemRowFp>,
     pub bank_open: bool,
     pub bank_loaded: bool,
+    pub inv_ready: bool,
+    pub bank_side_ready: bool,
     pub bank_generation: u64,
     pub count_dialog_open: bool,
     pub withdraw_x_result_seq: u64,
@@ -1208,6 +1212,8 @@ impl SnapshotFingerprint {
             bank_side: input.bank_side.iter().map(item_row_fp).collect(),
             bank_open: input.bank_open,
             bank_loaded: input.bank_loaded,
+            inv_ready: native.inv_ready,
+            bank_side_ready: native.bank_side_ready,
             bank_generation: input.bank_generation,
             count_dialog_open: input.count_dialog_open,
             withdraw_x_result_seq: input.withdraw_x_result_seq,
@@ -1446,6 +1452,8 @@ pub struct DeltaMask {
     pub bank_side: bool,
     pub bank_open: bool,
     pub bank_loaded: bool,
+    pub inv_ready: bool,
+    pub bank_side_ready: bool,
     pub bank_generation: bool,
     pub count_dialog_open: bool,
     pub withdraw_x_result_seq: bool,
@@ -1562,6 +1570,8 @@ impl DeltaMask {
             bank_side: true,
             bank_open: true,
             bank_loaded: true,
+            inv_ready: true,
+            bank_side_ready: true,
             bank_generation: true,
             count_dialog_open: true,
             withdraw_x_result_seq: true,
@@ -1669,6 +1679,8 @@ impl DeltaMask {
             bank_side: next.bank_side != last.bank_side,
             bank_open: next.bank_open != last.bank_open,
             bank_loaded: next.bank_loaded != last.bank_loaded,
+            inv_ready: next.inv_ready != last.inv_ready,
+            bank_side_ready: next.bank_side_ready != last.bank_side_ready,
             bank_generation: next.bank_generation != last.bank_generation,
             count_dialog_open: next.count_dialog_open != last.count_dialog_open,
             withdraw_x_result_seq: next.withdraw_x_result_seq != last.withdraw_x_result_seq,
@@ -1786,6 +1798,8 @@ impl DeltaMask {
             || self.bank_side
             || self.bank_open
             || self.bank_loaded
+            || self.inv_ready
+            || self.bank_side_ready
             || self.bank_generation
             || self.count_dialog_open
             || self.withdraw_x_result_seq
@@ -2024,6 +2038,8 @@ impl IsolateBuf {
             mask.inv_size = false;
             fp.inv = std::mem::take(&mut last.inv);
             fp.inv_size = last.inv_size;
+            mask.inv_ready = false;
+            fp.inv_ready = last.inv_ready;
         }
         let evidence_changed = mask.has_evidence_change(last, &fp);
         self.builder.reset();
@@ -2580,6 +2596,12 @@ fn encode_snapshot_masked_into(
     }
     if mask.bank_loaded {
         table.add_bank_loaded(input.bank_loaded);
+    }
+    if mask.inv_ready {
+        table.add_inv_ready(native.inv_ready);
+    }
+    if mask.bank_side_ready {
+        table.add_bank_side_ready(native.bank_side_ready);
     }
     if mask.bank_generation {
         table.add_bank_generation(input.bank_generation);
@@ -4453,6 +4475,11 @@ fn bank_operation_wire(operation: script::bank::request::BankSeatOperation) -> B
         Operation::WaitReady => BankSeatOperation::WaitReady,
         Operation::WaitSnapshotAfter => BankSeatOperation::WaitSnapshotAfter,
         Operation::BankNearest => BankSeatOperation::BankNearest,
+        Operation::PurgePack => BankSeatOperation::PurgePack,
+        Operation::WithdrawCoins => BankSeatOperation::WithdrawCoins,
+        Operation::Pace => BankSeatOperation::Pace,
+        Operation::BackpackReady => BankSeatOperation::BackpackReady,
+        Operation::Sort => BankSeatOperation::Sort,
     }
 }
 
@@ -4583,6 +4610,24 @@ fn bank_args_off<'b>(
     } else {
         Some(bank_string_vector_off(b, bank.obstacles()))
     };
+    let expected_pack = bank.expected_pack().map(|rows| {
+        let mut packed = [BankPackRow::new(0, 0, 0); script::bank::request::MAX_EXPECTED_PACK_ROWS];
+        for (out, row) in packed.iter_mut().zip(rows) {
+            *out = BankPackRow::new(row.slot, row.id, row.count);
+        }
+        b.create_vector(&packed[..rows.len().min(packed.len())])
+    });
+    let category_overrides = if bank.category_overrides().is_empty() {
+        None
+    } else {
+        let mut packed =
+            [BankCategoryOverride::new(0, 0); script::bank::request::MAX_SORT_OVERRIDES];
+        for (out, row) in packed.iter_mut().zip(bank.category_overrides()) {
+            *out = BankCategoryOverride::new(row.id, row.category);
+        }
+        let len = bank.category_overrides().len().min(packed.len());
+        Some(b.create_vector(&packed[..len]))
+    };
     let mut table = BankSeatArgsBuilder::new(b);
     table.add_operation(bank_operation_wire(operation));
     if let Some(item_id) = item_id {
@@ -4647,6 +4692,12 @@ fn bank_args_off<'b>(
     table.add_deposit_all(bank.deposit_all());
     table.add_common_junk(bank.common_junk());
     table.add_hooks_present(bank.hooks_present());
+    if let Some(rows) = expected_pack {
+        table.add_expected_pack(rows);
+    }
+    if let Some(rows) = category_overrides {
+        table.add_category_overrides(rows);
+    }
     table.finish()
 }
 
@@ -5173,6 +5224,28 @@ fn decode_interact_rows<'a>(
                     .bank_generation()
                     .ok_or_else(|| "puzzle-move has no generation".to_string())?,
             }),
+            "bank-drag" => out.push(script::shim::InteractReq::BankDrag {
+                id: row
+                    .bank_item_id()
+                    .ok_or_else(|| "bank-drag has no id".to_string())?,
+                slot: row
+                    .source_item_slot()
+                    .ok_or_else(|| "bank-drag has no slot".to_string())?,
+                component: row
+                    .component_id()
+                    .ok_or_else(|| "bank-drag has no component".to_string())?,
+                target_slot: row
+                    .target_item_slot()
+                    .ok_or_else(|| "bank-drag has no target slot".to_string())?,
+                insert: match row.stand_op() {
+                    Some(0) => false,
+                    Some(1) => true,
+                    _ => return Err("bank-drag has no insert mode".to_string()),
+                },
+                bank_generation: row
+                    .bank_generation()
+                    .ok_or_else(|| "bank-drag has no generation".to_string())?,
+            }),
             "shop-button" => out.push(script::shim::InteractReq::ShopButton {
                 kind: row
                     .kind()
@@ -5617,6 +5690,11 @@ fn bank_operation_from_wire(
         BankSeatOperation::WaitReady => Ok(Operation::WaitReady),
         BankSeatOperation::WaitSnapshotAfter => Ok(Operation::WaitSnapshotAfter),
         BankSeatOperation::BankNearest => Ok(Operation::BankNearest),
+        BankSeatOperation::PurgePack => Ok(Operation::PurgePack),
+        BankSeatOperation::WithdrawCoins => Ok(Operation::WithdrawCoins),
+        BankSeatOperation::Pace => Ok(Operation::Pace),
+        BankSeatOperation::BackpackReady => Ok(Operation::BackpackReady),
+        BankSeatOperation::Sort => Ok(Operation::Sort),
         _ => Err(format!("unknown bank seat operation {operation:?}")),
     }
 }
@@ -5732,6 +5810,34 @@ fn decode_bank_args(
     args.set_deposit_all(row.deposit_all());
     args.set_common_junk(row.common_junk());
     args.set_hooks_present(row.hooks_present());
+    // Bound raw vectors before allocating their owned copies.
+    if let Some(rows) = row.expected_pack() {
+        if rows.len() > script::bank::request::MAX_EXPECTED_PACK_ROWS {
+            return Err(script::bank::request::BankRequestError::TooManyExpectedRows.to_string());
+        }
+        args.set_expected_pack(Some(
+            rows.iter()
+                .map(|row| script::bank::request::BankPackRow {
+                    slot: row.slot(),
+                    id: row.id(),
+                    count: row.count(),
+                })
+                .collect(),
+        ));
+    }
+    if let Some(rows) = row.category_overrides() {
+        if rows.len() > script::bank::request::MAX_SORT_OVERRIDES {
+            return Err(script::bank::request::BankRequestError::TooManyOverrides.to_string());
+        }
+        args.set_category_overrides(
+            rows.iter()
+                .map(|row| script::bank::request::BankCategoryOverride {
+                    id: row.id(),
+                    category: row.category(),
+                })
+                .collect(),
+        );
+    }
     args.validate(kind).map_err(|error| error.to_string())?;
     Ok(args)
 }
@@ -5960,6 +6066,7 @@ fn interact_off<'b>(
         InteractReq::Held { .. } => "held",
         InteractReq::InvButton { .. } => "inv-button",
         InteractReq::PuzzleMove { .. } => "puzzle-move",
+        InteractReq::BankDrag { .. } => "bank-drag",
         InteractReq::ShopButton { .. } => "shop-button",
         InteractReq::MakePanel { .. } => "make-panel",
         InteractReq::Close => "close",
@@ -6389,6 +6496,21 @@ fn interact_off<'b>(
             table.add_source_item_slot(*slot);
             table.add_component_id(*component);
             table.add_bank_generation(*generation);
+        }
+        InteractReq::BankDrag {
+            id,
+            slot,
+            component,
+            target_slot,
+            insert,
+            bank_generation,
+        } => {
+            table.add_bank_item_id(*id);
+            table.add_source_item_slot(*slot);
+            table.add_component_id(*component);
+            table.add_target_item_slot(*target_slot);
+            table.add_stand_op(i32::from(*insert));
+            table.add_bank_generation(*bank_generation);
         }
         InteractReq::Close => {}
         InteractReq::Npc { index, .. } => {

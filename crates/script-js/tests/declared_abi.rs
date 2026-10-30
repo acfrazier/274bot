@@ -236,7 +236,6 @@ fn declared_stubs_throw_on_use() {
 
     let src = r#"
 import * as api from '@rs2b0t/api';
-import { bankPace } from '../../api/bank/Banking.js';
 export default class T extends LoopingBot {
     async loop() {
         const use = async (fn) => {
@@ -249,12 +248,10 @@ export default class T extends LoopingBot {
         };
         globalThis.__gatheringMapSquare = api.MAP_SQUARE;
         globalThis.__probe = await Promise.all([
-            use(() => api.ALL_FISHING_GEAR_NAMES.includes('net')),
             use(() => String(api.COINS)),
-            use(() => api.FISHING_LOCATIONS.length),
             use(() => Object.prototype.toString.call(api.WALK_OPTIONS)),
             use(() => api.AXE_SHOP_COSTS.map((c) => c)),
-            use(() => bankPace()),
+            use(() => api.coinsToWithdraw()),
         ]);
 }
 }
@@ -271,7 +268,7 @@ export default class T extends LoopingBot {
     let rows = probe.as_array().cloned().unwrap_or_default();
     assert_eq!(
         rows.len(),
-        6,
+        4,
         "every remaining stub use must be probed: {probe:?}"
     );
     for (i, row) in rows.iter().enumerate() {
@@ -281,10 +278,10 @@ export default class T extends LoopingBot {
             "stub use {i} must throw not impl, got {text:?}"
         );
     }
-    let bank_pace = rows[5].as_str().unwrap_or("");
+    let unimplemented = rows[3].as_str().unwrap_or("");
     assert!(
-        bank_pace.contains("not impl: bankPace"),
-        "unimplemented call must name bankPace, got {bank_pace:?}"
+        unimplemented.contains("not impl: coinsToWithdraw"),
+        "unimplemented call must name coinsToWithdraw, got {unimplemented:?}"
     );
 }
 

@@ -208,8 +208,36 @@
     "shim": "data/pickpocket_targets.js"
   },
   {
+    "module": "shim/gathering_locations.js",
+    "shim": "gathering_locations.js"
+  },
+  {
     "module": "data/woodcuttingLocations.js",
     "shim": "data/woodcutting_locations.js"
+  },
+  {
+    "module": "data/miningLocations.js",
+    "shim": "data/mining_locations.js"
+  },
+  {
+    "module": "data/gatheringLocations.js",
+    "shim": "data/gathering_locations.js"
+  },
+  {
+    "module": "data/fishingMethods.js",
+    "shim": "data/fishing_methods.js"
+  },
+  {
+    "module": "data/fishingLocations.js",
+    "shim": "data/fishing_locations.js"
+  },
+  {
+    "module": "data/cookingRanges.js",
+    "shim": "data/cooking_ranges.js"
+  },
+  {
+    "module": "shim/fishing_gear.js",
+    "shim": "fishing_gear.js"
   },
   {
     "module": "api/combat/CombatStyleLogic.js",
@@ -458,9 +486,5 @@
   {
     "module": "runtime/BotHost.js",
     "shim": "bot_host.js"
-  },
-  {
-    "module": "shim/gathering_locations.js",
-    "shim": "gathering_locations.js"
   }
 ]

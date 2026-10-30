@@ -10,6 +10,7 @@ import { parseCombatScripts } from './extractors/combat.ts';
 import { extractNpcNamesFacts } from './extractors/npc-names.ts';
 import { extractGatheringFamily, compareCodepoint, gatherResources, gatherSites, hiddenSitesRecord, HIDDEN_SITES_FILE, miningHazards, SITE_OVERRIDES, type GatherSiteWire } from './extractors/gathering.ts';
 import { extractQuestIdentityFacts, questIdentityContentFiles } from './extractors/quests.ts';
+import { gatherCatalogFiles } from './extractors/gather-catalog.ts';
 import { assertRs2b0tPinned, bankCatalogRust, cookCatalogRust, extractBankCatalog, extractBankPlacements, extractCookCatalog, extractCookSurfaces, familyBytes, familyInputs, requireEnvPath, BASE_ENGINE_INPUT_PATHS, DEBUG_ENGINE_INPUT_PATHS, DEBUG_SCHEMA_VERSION, QUESTS_SCHEMA, baseProvenanceInputs, serverOrderedProvenanceInputs, runtimeNpcOperations, npcEvidenceBytes } from './generate.ts';
 import { ENGINE_DEBUG_COMMANDS, extractDebugCatalog, engineHandlerRelative } from './extractors/debug.ts';
 import { extractQuestStartFacts, questStartContentFiles } from './extractors/quest-starts.ts';
@@ -786,6 +787,9 @@ async function verifyRevision(revision: number) {
         ...bankPlacements.inputs,
     }), `${revision} bank catalog and placement inputs`);
     assertEqual(fs.readFileSync(path.join(root, 'crates/api/data/game-data/bank-catalog.rs'), 'utf8'), bankCatalogRust(bankCatalog), `${revision} compiled bank roster matches frozen AST`);
+    for (const [file, bytes] of Object.entries(await gatherCatalogFiles(pin.engineRoot, rs2b0tRoot))) {
+        assertEqual(fs.readFileSync(path.join(root, 'crates/api/data/game-data', file), 'utf8'), bytes, `${revision} compiled gather catalog ${file} matches frozen AST`);
+    }
     // Named sites (§2.3 P-sites): the core table is the family's site slice and the manifest carries its report.
     const siteResult = gatherSites(gathering.payload, gatherRows, pin.contentRoot, bankCatalog);
     assertEqual(JSON.stringify(payload.gather_sites), JSON.stringify(siteResult.rows), `${revision} core gather_sites is the family's named site slice`);

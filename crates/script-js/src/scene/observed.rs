@@ -691,6 +691,10 @@ scene_pages! {
         inv_size: i32,
         bank_open: bool,
         bank_loaded: bool,
+        /// The m8aq `inventorySnapshotReady`.
+        inv_ready: bool,
+        /// The m8aq `bankSideSnapshotReady`.
+        bank_side_ready: bool,
         bank_generation: u64,
         bank_snapshot_generation: i64,
         bank_op_result_seq: u64,
@@ -1232,6 +1236,12 @@ impl Scene {
         }
         if snap.has_bank_loaded() {
             p.bank_loaded(snap.bank_loaded());
+        }
+        if snap.has_inv_ready() {
+            p.inv_ready(snap.inv_ready());
+        }
+        if snap.has_bank_side_ready() {
+            p.bank_side_ready(snap.bank_side_ready());
         }
         if snap.has_bank_generation() {
             p.bank_generation(snap.bank_generation());

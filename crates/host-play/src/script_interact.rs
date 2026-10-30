@@ -976,6 +976,30 @@ where
                     }
                 }
             }
+            InteractReq::BankDrag {
+                id,
+                slot,
+                component,
+                target_slot,
+                insert,
+                bank_generation,
+            } => {
+                // The exact posted bank row in the same bank session; the
+                // api re-checks the grid and the target slot before sending.
+                if snapshot.bank_component_id() >= 0
+                    && snapshot.bank_loaded()
+                    && snapshot.bank_session_generation() == bank_generation
+                {
+                    if let Some(item) = snapshot.bank().iter().find(|item| {
+                        item.def.id == id && item.slot == slot && item.component_id == component
+                    }) {
+                        wrote |= matches!(
+                            ix.drag_bank_item(item, target_slot, insert),
+                            SendResult::Sent { .. }
+                        );
+                    }
+                }
+            }
             InteractReq::PuzzleMove {
                 id,
                 slot,

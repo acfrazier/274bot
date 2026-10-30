@@ -556,7 +556,7 @@ test('types follow the family their ABI describes', () => {
 });
 
 test('refusal debt is unique and names each missing notImplValue export', () => {
-    assert.equal(contract.not_impl_debt.length, 196);
+    assert.equal(contract.not_impl_debt.length, 153);
     const selectors = contract.not_impl_debt.map(row => row.selector);
     assert.equal(new Set(selectors).size, selectors.length);
     for (const selector of [
@@ -564,7 +564,6 @@ test('refusal debt is unique and names each missing notImplValue export', () => 
         'BranchTask.success',
         'BranchTask.failure',
         'LeafTask.execute',
-        'resolveWoodcuttingLocation',
     ]) {
         assert.equal(selectors.filter(value => value === selector).length, 1, selector);
     }
@@ -584,7 +583,7 @@ test('refusal debt is unique and names each missing notImplValue export', () => 
         }
     }
     assert.equal(newRefusals.reduce((count, [, members]) => count + members.length, 0), 26);
-    assert.equal(collectModuleNotImplValueExports(registry, shimSources, navFamilies).length, 28);
+    assert.equal(collectModuleNotImplValueExports(registry, shimSources, navFamilies).length, 26);
 });
 
 test('an unclassified source module fails closed', () => {

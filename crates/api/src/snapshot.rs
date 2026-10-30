@@ -160,6 +160,29 @@ pub struct GameSnapshot {
     /// Latest received inventory packet revision for the bank-side component.
     #[serde(skip)]
     bank_side_packet_generation: Option<u64>,
+    /// Whether the inv-tab component is transmitting and has received a full
+    /// update (`login_logout/login.rs2:98` `inv_transmit(inv, inventory:inv)`;
+    /// the m8aq `inventorySnapshotReady`).
+    #[serde(skip)]
+    inventory_ready: bool,
+    /// Whether the open bank's side (deposit) component is transmitting a
+    /// full update received at or after this bank session opened
+    /// (`interface_bank/scripts/bank.rs2:20` `inv_transmit(inv, bank_side:inv)`;
+    /// the m8aq `bankSideSnapshotReady`).
+    #[serde(skip)]
+    bank_side_ready: bool,
+    #[serde(skip)]
+    bank_side_com: i32,
+    #[serde(skip)]
+    bank_side_last_generation: u64,
+    #[serde(skip)]
+    bank_side_last_full_observation: u64,
+    #[serde(skip)]
+    bank_side_full_generation: u64,
+    #[serde(skip)]
+    bank_prev_side_com: i32,
+    #[serde(skip)]
+    bank_prev_side_generation: u64,
     /// The inv tab component's slot count (the m8aq `inventorySize`);
     /// 0 until the inv tab loads.
     inventory_size: i32,
@@ -336,6 +359,14 @@ impl Default for GameSnapshot {
             bank_side: Vec::new(),
             inventory_packet_generation: None,
             bank_side_packet_generation: None,
+            inventory_ready: false,
+            bank_side_ready: false,
+            bank_side_com: -1,
+            bank_side_last_generation: 0,
+            bank_side_last_full_observation: 0,
+            bank_side_full_generation: 0,
+            bank_prev_side_com: -1,
+            bank_prev_side_generation: 0,
             inventory_size: 0,
             bank_component_id: -1,
             bank_size: 0,
@@ -457,6 +488,11 @@ impl GameSnapshot {
         self.inventory_packet_generation = main;
         self.bank_side_packet_generation = side;
     }
+    /// Offline fixture observation of inventory and bank-side transmission readiness.
+    pub fn seed_transmission_ready(&mut self, inventory: bool, bank_side: bool) {
+        self.inventory_ready = inventory;
+        self.bank_side_ready = bank_side;
+    }
     /// Offline fixture observation of the equipment packet revision.
     pub fn seed_equipment_packet_generation(&mut self, generation: Option<u64>) {
         self.equipment_packet_generation = generation;
@@ -495,6 +531,9 @@ impl GameSnapshot {
             _ => 0,
         };
         self.bank = rows.unwrap_or_default();
+        // A fixture bank posts its side pack with the opening, as the
+        // content does (`bank.rs2:20-22`).
+        self.bank_side_ready = component_id >= 0;
         self.bank_side = side;
         self.modals.side = if component_id < 0 {
             -1
@@ -1006,6 +1045,11 @@ impl GameSnapshot {
         self.inventory_packet_generation
     }
 
+    /// Whether the inv-tab component is transmitting and has a full update.
+    pub fn inventory_ready(&self) -> bool {
+        self.inventory_ready
+    }
+
     /// Worn-items views from the last equipment rebuild, in slot order.
     pub fn equipment(&self) -> &[ItemView] {
         &self.equipment
@@ -1094,6 +1138,13 @@ impl GameSnapshot {
     /// has been observed.
     pub fn bank_side_packet_generation(&self) -> Option<u64> {
         self.bank_side_packet_generation
+    }
+
+    /// Whether the bank-side component carries a full update current for the
+    /// open bank session. Callers still check that the bank and its side root
+    /// are open.
+    pub fn bank_side_ready(&self) -> bool {
+        self.bank_side_ready
     }
 
     /// The trade state (offer/confirm open, the four containers, partner).

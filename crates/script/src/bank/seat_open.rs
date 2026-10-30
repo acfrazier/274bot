@@ -255,10 +255,6 @@ fn unavailable(message: &'static str) -> ActionError {
     ActionError::Unavailable(Arc::from(message))
 }
 
-fn failed(message: &'static str) -> ActionError {
-    ActionError::Failed(Arc::from(message))
-}
-
 #[derive(Clone, Copy)]
 struct TimeBound {
     deadline: Duration,
@@ -1904,7 +1900,6 @@ struct BankingOpen {
     booth_op: String,
     prefer_nearby: bool,
     nearby_radius: f64,
-    unsupported_obstacles: bool,
     preferences: BankPreferences,
 }
 
@@ -1922,7 +1917,6 @@ impl BankingOpen {
             booth_op,
             prefer_nearby: request.prefer_nearby != Some(false),
             nearby_radius: request.nearby_radius.unwrap_or(14.0),
-            unsupported_obstacles: request.obstacles.iter().any(|name| !name.trim().is_empty()),
             preferences,
         }
     }
@@ -2090,9 +2084,9 @@ impl BankingOpen {
                 WorldTarget::Access(Some(AccessSpec::from_bank(bank))),
             );
         } else if let Some(stand) = self.stand {
-            if self.unsupported_obstacles {
-                return Poll::Ready(Err(failed("not impl: Banking.open.obstacles")));
-            }
+            // Caller obstacles (`door`, `gate`) need no separate opener: the
+            // native walk opens every door edge on its packed route
+            // (`nav-executor/src/traveller.rs:974-1216`).
             let known = nearest_eligible_bank(facts, self.preferences, cx, stand)
                 .filter(|bank| within_radius(stand, bank.tile, self.nearby_radius));
             let access = known.map(AccessSpec::from_bank);

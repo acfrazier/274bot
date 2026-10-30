@@ -55,11 +55,14 @@ export { default as EntityQuery } from '*api/query/Query.js';
 export { BANK_LOCATIONS, bankUnlocked, nearestBank } from '*api/bank/BankLocations.js';
 export { NAV_PURE_WALK, NAV_WITH_TELES } from '*api/walking/Traversal.js';
 export { PICKPOCKET_TARGETS, PICKPOCKET_TARGET_NAMES, ARDOUGNE_PICKPOCKET_TARGETS } from '*data/pickpocketTargets.js';
-export { ENT_NPC_IDS, ENT_LIFE_TICKS, isEntNpcId, entNpcOnTile } from '*data/woodcuttingLocations.js';
+export { ENT_NPC_IDS, ENT_LIFE_TICKS, isEntNpcId, entNpcOnTile, WOODCUTTING_LOCATIONS, WOODCUTTING_LOCATION_OPTIONS, resolveWoodcuttingLocation } from '*data/woodcuttingLocations.js';
+export { MINING_LOCATIONS, MINING_LOCATION_OPTIONS, MINING_LOCATION_OPTION_LABELS, miningLocationLabel, resolveMiningLocation } from '*data/miningLocations.js';
+export { FISHING_LOCATIONS, FISHING_LOCATION_OPTIONS, resolveFishingLocation } from '*data/fishingLocations.js';
+export { WHIRLPOOL_IDS, FISHING_METHODS, FISHING_METHOD_OPTIONS, ALL_FISHING_GEAR_NAMES, resolveFishMethod, gearKeepNames, hasFishingGear, missingFishingGear, gearLabel, fishingRestockPlan, spotMatchesMethod } from '*data/fishingMethods.js';
+export { FISHING_SHOP_COSTS, GERRANT_ONLY_FISHING, fishingVendorFor, fishingShopCost, isFishingBaitPiece, withBaitTarget, planFishingGearBuys, planFishingGearAcquire, buyPlansCost, fishingGearShopCart, shopableMissingFishingGear } from '*shim/fishing_gear.js';
 export { ROCK_OPTIONS, ROCK_TYPES, GAS_ROCK_IDS, GAS_ROCK_TICKS, BROKEN_PICKAXE, resolveRockIds } from '*data/miningRocks.js';
 export { COW_LOCATIONS, COW_LOCATION_OPTIONS, AL_KHARID_BANK, TOLL_COIN_TARGET, isCowFieldLootTile, resolveCowLocation, nearestCowLocation, needsTollCoins, shouldBootstrapTollCoins } from '*data/cowKillerLocations.js';
 export { RUNES, RUNE_OPTIONS, DEFAULT_RUNE } from '*data/runeCraftLocations.js';
-export const ALL_FISHING_GEAR_NAMES: never;
 export const AXE_BAR_FOR: never;
 export const AXE_SHOP_COSTS: never;
 export const AXE_SMITH_LEVEL: never;
@@ -68,20 +71,11 @@ export const BOB_VENDOR: never;
 export const BROKEN_AXE: never;
 export class BranchTask { failure(...args: unknown[]): never; success(...args: unknown[]): never; validate(...args: unknown[]): never; constructor(...args: unknown[]); }
 export const COINS: never;
-export const FISHING_LOCATIONS: never;
-export const FISHING_LOCATION_OPTIONS: never;
-export const FISHING_METHODS: never;
-export const FISHING_METHOD_OPTIONS: never;
-export const FISHING_SHOP_COSTS: never;
 export const FORGETFUL_BANK_ODDS: never;
 export const FORGETFUL_BANK_SETTING: never;
-export const GERRANT_ONLY_FISHING: never;
 export const GERRANT_VENDOR: never;
 export const HARRY_VENDOR: never;
 export class LeafTask { execute(...args: unknown[]): never; constructor(...args: unknown[]); }
-export const MINING_LOCATIONS: never;
-export const MINING_LOCATION_OPTIONS: never;
-export const MINING_LOCATION_OPTION_LABELS: never;
 export const NURMOF_VENDOR: never;
 export const PICKAXE_SHOP_COSTS: never;
 export const TOOL_ACQUIRE_OPTIONS: never;
@@ -90,48 +84,25 @@ export const VARROCK_ANVIL_BANK: never;
 export const VARROCK_ANVIL_STAND: never;
 export const WALK_DESTINATIONS: never;
 export const WALK_OPTIONS: never;
-export const WHIRLPOOL_IDS: never;
-export const WOODCUTTING_LOCATIONS: never;
-export const WOODCUTTING_LOCATION_OPTIONS: never;
 export function acquireKeepNames(...args: unknown[]): never;
 export const apiVersion: 1;
 export function axeShopOffers(...args: unknown[]): never;
 export function bestAffordableShopTier(...args: unknown[]): never;
 export function bestOwnedTier(...args: unknown[]): never;
 export function bestSmithableAxe(...args: unknown[]): never;
-export function buyPlansCost(...args: unknown[]): never;
 export function canFundPlan(...args: unknown[]): never;
 export function coinsToWithdraw(...args: unknown[]): never;
 export const events: { off(...args: unknown[]): never; on(...args: unknown[]): never; };
-export function fishingGearShopCart(...args: unknown[]): never;
-export function fishingRestockPlan(...args: unknown[]): never;
-export function fishingShopCost(...args: unknown[]): never;
-export function fishingVendorFor(...args: unknown[]): never;
-export function gearKeepNames(...args: unknown[]): never;
-export function gearLabel(...args: unknown[]): never;
 export function hasAll(...args: unknown[]): never;
-export function hasFishingGear(...args: unknown[]): never;
 export function held(...args: unknown[]): never;
-export function isFishingBaitPiece(...args: unknown[]): never;
-export function miningLocationLabel(...args: unknown[]): never;
-export function missingFishingGear(...args: unknown[]): never;
 export function parseToolAcquireMode(...args: unknown[]): never;
 export function pickaxeShopOffers(...args: unknown[]): never;
 export function planAxeAcquire(...args: unknown[]): never;
 export function planBrokenToolRepair(...args: unknown[]): never;
-export function planFishingGearAcquire(...args: unknown[]): never;
-export function planFishingGearBuys(...args: unknown[]): never;
 export function planGatherToolAcquire(...args: unknown[]): never;
 export function planPickaxeAcquire(...args: unknown[]): never;
 export function registerScript(...args: unknown[]): never;
 export function resolveDestination(...args: unknown[]): never;
-export function resolveFishMethod(...args: unknown[]): never;
-export function resolveFishingLocation(...args: unknown[]): never;
-export function resolveMiningLocation(...args: unknown[]): never;
-export function resolveWoodcuttingLocation(...args: unknown[]): never;
-export function shopableMissingFishingGear(...args: unknown[]): never;
-export function spotMatchesMethod(...args: unknown[]): never;
-export function withBaitTarget(...args: unknown[]): never;
 }
 
 declare module '*adapter/ClientAdapter.js' {
@@ -426,6 +397,7 @@ export const reader: {
     inventorySize(): number;
     equipment(): InvItemSnapshot[];
     bankComId(): never;
+    bankItems(): InvItemSnapshot[];
     bankSideItems(): InvItemSnapshot[];
     chatContinueComId(): never;
     chatOptions(): {
@@ -887,6 +859,10 @@ export const Bank: {
     snapshotReady(): boolean;
     snapshotGeneration(): number;
     waitSnapshotAfter(generation: number, timeoutMs?: number): Promise<boolean>;
+    /** @internal */
+    normalBackpackSnapshot(): BackpackItem[] | null;
+    /** @internal */
+    backpackReady(expected?: readonly BackpackItem[], log?: (msg: string) => void): Promise<boolean>;
     setNoteMode(on: boolean): Promise<void>;
     items(): InvItemSnapshot[];
     count(name: string): number;
@@ -910,8 +886,6 @@ export const Bank: {
     /** Close the bank modal so inventory ops (Wield, Use, Bury, ...) hit the backpack again. */
     close(timeoutMs?: number): Promise<boolean>;
     openNearest(boothName: string, op: string, log?: (msg: string) => void): Promise<boolean>;
-    depositAllExcept(keep?: Iterable<string> | ArrayLike<string>): Promise<void>;
-    openNearestWorld(): Promise<boolean>;
 };
 
 }
@@ -941,7 +915,7 @@ export function openBankAccess(dest: {
  * Start-of-script pack cleanup (#170): deposit anything off the keep list so the bot can start with a junk pack.
  * Why: true when nothing needed banking or the purge finished; false when junk remains and the bank couldn't be opened or deposited.
  */
-export function purgePackAtBank(opts?: {
+export function purgePackAtBank(opts: {
     /** Exact display names to keep (case-insensitive), e.g. pickaxe / rod. */
     keep: Iterable<string>;
     stand?: WorldTile | null;
@@ -952,7 +926,7 @@ export function purgePackAtBank(opts?: {
     boothOp?: string;
     obstacles?: string[];
     log?: (msg: string) => void;
-}): Promise<never>;
+}): Promise<boolean>;
 export interface OpenBankOpts {
     /**
      * Preset bank stand (location table). Used when no bank is already nearby.
@@ -1009,25 +983,20 @@ export const Banking: {
         log?: (msg: string) => void;
     }): Promise<boolean>;
 };
-/**
- * Human-ish pause between bank UI actions (open, scan, withdraw, deposit).
- * Why: 1 to 2 ticks so open, scan and close can't land on the same tick and race the bank load.
- */
-export function bankPaceTicks(rand?: () => number): never;
 /** Pause between bank UI actions so tool checks don't flash open/close. */
-export function bankPace(log?: (m: string) => void): Promise<never>;
+export function bankPace(log?: (m: string) => void): Promise<void>;
 /** Wait for the bank item list after open. Counts stay 0 until it arrives, and without a pause this looks like an instant open, scan, close. */
 export function waitBankReady(log?: (m: string) => void): Promise<boolean>;
 /**
  * Withdraw coins so inventory holds at least `need`. Bank must already be open.
  * Returns false when the bank has no coins or the withdraw fails.
  */
-export function withdrawCoins(need?: number, opts?: {
+export function withdrawCoins(need: number, opts: {
     invCoins: number;
     bankCoins: number;
     coinName?: string;
     log?: (m: string) => void;
-}): Promise<never>;
+}): Promise<boolean>;
 export const RANDOM_EVENT_CASKET_ID: number;
 
 }
@@ -1096,10 +1065,8 @@ export function lockedBankAt(tile: WorldTile$1): BankLocation | null;
 export function nearestBank(from: WorldTile$1): BankLocation | null;
 /** Walk cost in run-tiles from `from` to a bank, or null when the bank is unreachable. */
 export type BankPathCost = (from: WorldTile$1, to: Tile) => number | null;
-export function nearestWalkableBank(from?: WorldTile$1, pathCost?: BankPathCost): never;
 /** Async walk cost: the nav pack lives in the worker, so a live caller pays per {@link Navigator.findPath} instead of a local {@link PathFinder}. */
 export type BankPathCostAsync = (from: WorldTile$1, to: Tile) => Promise<number | null>;
-export function nearestWalkableBankAsync(from?: WorldTile$1, pathCost?: BankPathCostAsync): Promise<never>;
 export interface BankPathStamp {
     x: number;
     z: number;
@@ -1113,19 +1080,6 @@ export type NavigatorLike = {
         reason?: string;
     }>;
 };
-/** Wrap a {@link PathFinder} so {@link nearestWalkableBank} can reuse it. */
-export function bankCostForFinder(finder?: {
-    findPath(from: BankPathStamp, to: BankPathStamp, opts?: unknown): {
-        ok: boolean;
-        cost?: number;
-        reason?: string;
-    };
-}, findPathOpts?: object): never;
-/**
- * Wrap the {@link Navigator} worker so {@link nearestWalkableBankAsync} can reuse it live.
- * Why: the pack lives in the worker, so this never desyncs from what a web-walk can do.
- */
-export function bankCostForNavigator(navigator?: NavigatorLike, findPathOpts?: object): never;
 /**
  * Live pick of the cheapest reachable bank through the Navigator worker.
  * Why: nearestBank is air-ranked and a dungeon level offset floats every overworld bank near the same distance, so the winner collapses to "closest by x" (Edgeville from the Dwarven Mine); real per-candidate route cost fixes that, with the air-nearest bank as the no-route fallback. That batch ranks banks you are far from; standing at a booth the air-nearest bank is the one already in reach, so pay no walk-cost search there.
@@ -1158,9 +1112,9 @@ export interface QuestJunkFinding {
     status: QuestStatus;
     droppable: boolean;
 }
-export function findQuestJunk(banked?: readonly {
+export function findQuestJunk(banked: readonly {
     id: number;
-}[], statusOf?: (quest: string) => QuestStatus): never;
+}[], statusOf: (quest: string) => QuestStatus): QuestJunkFinding[];
 
 }
 
@@ -1211,7 +1165,7 @@ export interface SortBankOptions {
     log?: (msg: string) => void;
     categoryOverrides?: ReadonlyMap<number, BankCategory>;
 }
-export function sortBank(opts?: SortBankOptions): Promise<never>;
+export function sortBank(opts?: SortBankOptions): Promise<BankSortResult>;
 
 }
 
@@ -4048,6 +4002,41 @@ export const Traversal: {
 
 }
 
+declare module '*data/cookingRanges.js' {
+import Tile from "*geometry/Tile.js";
+/**
+ * Cooking surfaces from `cooking_sources.loc`; `bun run gen:cooksurfaces` generates their world placements.
+ * Why: Fishing camps pin nearby surfaces and otherwise query the live scene for a Range or Fire.
+ */
+type CookSurfaceKind = 'range' | 'fire' | 'fireplace';
+interface CookingSurface {
+    /** Final stand next to the cook surface; FishCook walks here via walkOpening and then uses the Range/Fire in leash. */
+    stand: Tile;
+    /** Optional waypoint (e.g. outside a Large door), walked first so pathing enters the building before aiming at the interior range tile. */
+    approach?: Tile;
+    /** Loc query name (Range / Fire / Fireplace). */
+    locName: string;
+    kind: CookSurfaceKind;
+    /** Optional map loc SW tile (for docs / nearest search). */
+    loc?: Tile;
+    label?: string;
+    notes?: string;
+}
+/**
+ * Which surface to prefer for a cook mode.
+ * `pier` is cook-then-bank near the fishing spot (the full raw pack walks short); `bank` is bank-raw-then-cook near the bank (withdraw, cook, re-bank).
+ */
+export type CookSurfaceRole = 'pier' | 'bank';
+export function cookSurfaceForFishCamp(campName: string, role?: CookSurfaceRole): CookingSurface | null;
+/** Curated camp surface for the cook role, else the nearest Range to `spot`; pass the bank stand as `spot` for the `bank` role. */
+export function resolveFishCampCookSurface(campName: string | null | undefined, spot: {
+    x: number;
+    z: number;
+    level?: number;
+}, maxCheb?: number, role?: CookSurfaceRole): CookingSurface | null;
+
+}
+
 declare module '*data/cookLocations.js' {
 import { WorldTile } from "*adapter/ClientAdapter.js";
 import { BankLocation } from "*api/bank/BankLocations.js";
@@ -4138,6 +4127,129 @@ export const DROP_DB: Record<string, string[]>;
 
 }
 
+declare module '*data/fishingLocations.js' {
+import { WorldTile } from "*adapter/ClientAdapter.js";
+import Tile from "*geometry/Tile.js";
+import { GatheringLocation } from "*data/gatheringLocations.js";
+export const SHILO_WATER_VENDOR: {
+    readonly keeper: "Obli";
+    readonly stand: Tile;
+    readonly item: "Vial of water";
+};
+/** Fishing camps from rs2b2tgathering.csv and live checks. `rangeStand` is set when a useful cook surface is near the pier. */
+export interface FishingLocation extends GatheringLocation {
+    rangeStand?: Tile;
+    rangeName?: string;
+}
+export const FISHING_LOCATIONS: FishingLocation[];
+export const FISHING_LOCATION_OPTIONS: string[];
+export function resolveFishingLocation(setting: string, startTile: WorldTile): FishingLocation | null;
+
+}
+
+declare module '*data/fishingMethods.js' {
+export interface FishingGearPiece {
+    name: string;
+    min: number;
+    restock: number;
+}
+export interface FishingMethod {
+    name: string;
+    op: string;
+    pair: string;
+    gear: FishingGearPiece[];
+}
+export const WHIRLPOOL_IDS: Set<number>;
+export const FISHING_METHODS: FishingMethod[];
+export const FISHING_METHOD_OPTIONS: string[];
+export const ALL_FISHING_GEAR_NAMES: string[];
+export function resolveFishMethod(name: string): FishingMethod;
+export function gearKeepNames(method: Pick<FishingMethod, 'gear'>): string[];
+export function hasFishingGear(method: Pick<FishingMethod, 'gear'>, count: (name: string) => number): boolean;
+export function missingFishingGear(method: Pick<FishingMethod, 'gear'>, count: (name: string) => number): FishingGearPiece[];
+export function gearLabel(method: Pick<FishingMethod, 'gear'>): string;
+export function fishingRestockPlan(method: Pick<FishingMethod, 'gear'>, invCount: (name: string) => number, bankCount: (name: string) => number): {
+    name: string;
+    qty: number;
+}[];
+export function spotMatchesMethod(actions: readonly string[], method: Pick<FishingMethod, 'op' | 'pair'>): boolean;
+
+}
+
+declare module '*data/gatheringLocations.js' {
+import { WorldTile } from "*adapter/ClientAdapter.js";
+import Tile from "*geometry/Tile.js";
+/**
+ * Shared gather camp: home pin + bank stand for Fisher / Miner / Woodcutter. Membership (ReturnToAnchor / soft wander bound) uses {@link campRadius}, while fishing hop chase inside camp uses {@link chaseRadius} measured from the player.
+ * `verified` marks camps confirmed via live pathability and resource checks (`bun e2e/verify-gathering-locations.ts` plus visual stand polish).
+ */
+export interface GatheringLocation {
+    name: string;
+    /** Home pin, bank return / soft arrive disk centre. */
+    spot: Tile;
+    bankStand: Tile;
+    verified: boolean;
+    boothName?: string;
+    boothOp?: string;
+    obstacles?: string[];
+    /**
+     * Camp membership radius from {@link spot} (Chebyshev).
+     * Player outside this disk → ReturnToAnchor. Defaults to 64 when omitted.
+     */
+    campRadius?: number;
+    /**
+     * Player-relative fishing-spot / hop disk while in camp.
+     * Defaults to 24 when omitted. Loc gather (rocks/trees) still uses campRadius from home.
+     */
+    chaseRadius?: number;
+    /** CSV-ish resource tags for docs / verify helper (not used by Gather target pick). */
+    resources?: readonly string[];
+    readonly avoidSpots?: readonly Tile[];
+    readonly sweep?: readonly Tile[];
+    readonly baitVendor?: BaitVendor;
+    notes?: string;
+}
+export interface BaitVendor {
+    readonly keeper: string;
+    readonly stand: Tile;
+    readonly price: number;
+    readonly item: string;
+}
+export const DEFAULT_BOOTH_NAME = "Bank booth";
+export const DEFAULT_BOOTH_OP = "Use-quickly";
+/** Default camp membership when a named location omits {@link GatheringLocation.campRadius}. */
+export const DEFAULT_CAMP_RADIUS = 64;
+/**
+ * Soft prefer-near-player radius for named camps, not a hard exclusion.
+ * Any matching spot inside camp membership stays valid; this only ranks nearby hops first when both exist.
+ */
+export const DEFAULT_CHASE_RADIUS = 40;
+export function resolveCampRadius(campRadius: number | null | undefined, fallback?: number): number;
+export function resolveChaseRadius(chaseRadius: number | null | undefined, fallback?: number): number;
+/**
+ * Engine map-square edge length.
+ * Auto snaps to a preset only when the start tile shares this 64×64 chunk with the camp spot; otherwise freeform (location null, nearest bank, start-tile leash).
+ */
+export const MAP_SQUARE = 64;
+/** True when both tiles sit in the same level + map square (chunk). */
+export function sameMapSquare(a: WorldTile, b: WorldTile): boolean;
+export const USE_CLOSEST = "Use Closest";
+export const USE_START_POSITION = "Use Start Position";
+export const USE_CUSTOM_POSITION = "Use Custom Position";
+/** Legacy alias, kept for saves that stored 'Auto'. */
+export const AUTO_LEGACY = "Auto";
+/** Legacy power-drop location, kept so saved 'None' does not silently re-parse to the default. */
+export const NONE_LEGACY = "None";
+export function locationOptions(table: readonly GatheringLocation[]): string[];
+export function boothFields(loc: GatheringLocation | null | undefined): {
+    boothName: string;
+    boothOp: string;
+};
+/** Resolve location setting: Use Closest = nearest by distance, Start/Custom = freeform null, named = case-insensitive. */
+export function resolveGatheringLocation<T extends GatheringLocation>(setting: string, startTile: WorldTile, table: readonly T[]): T | null;
+
+}
+
 declare module '*data/herbs.js' {
 export interface HerbDef {
     key: string;
@@ -4184,6 +4296,24 @@ interface ItemRecord {
     members: boolean;
 }
 export const ITEM_DB: ItemRecord[];
+
+}
+
+declare module '*data/miningLocations.js' {
+import { WorldTile } from "*adapter/ClientAdapter.js";
+import { GatheringLocation } from "*data/gatheringLocations.js";
+/** Mining camps from rs2b2tgathering.csv and live checks. `recommendedCombat` is twice the highest local aggressive NPC level plus one. */
+export type MiningLocation = GatheringLocation & {
+    /** Combat level at which resident aggressive npcs stop auto-attacking (2L+1). */
+    recommendedCombat?: number;
+};
+/** UI label: "Dwarven Mine (65 Combat recommended)" when a rec is set. */
+export function miningLocationLabel(loc: Pick<MiningLocation, 'name' | 'recommendedCombat'>): string;
+export const MINING_LOCATIONS: MiningLocation[];
+export const MINING_LOCATION_OPTIONS: string[];
+/** Persisted option value to UI label, with the combat rec where set. */
+export const MINING_LOCATION_OPTION_LABELS: Record<string, string>;
+export function resolveMiningLocation(setting: string, startTile: WorldTile): MiningLocation | null;
 
 }
 
@@ -4280,43 +4410,7 @@ export const STAFF_RUNES: Record<string, string[]>;
 
 declare module '*data/woodcuttingLocations.js' {
 import { WorldTile } from "*adapter/ClientAdapter.js";
-import Tile from "*geometry/Tile.js";
-/**
- * Shared gather camp: home pin + bank stand for Fisher / Miner / Woodcutter. Membership (ReturnToAnchor / soft wander bound) uses {@link campRadius}, while fishing hop chase inside camp uses {@link chaseRadius} measured from the player.
- * `verified` marks camps confirmed via live pathability and resource checks (`bun e2e/verify-gathering-locations.ts` plus visual stand polish).
- */
-interface GatheringLocation {
-    name: string;
-    /** Home pin, bank return / soft arrive disk centre. */
-    spot: Tile;
-    bankStand: Tile;
-    verified: boolean;
-    boothName?: string;
-    boothOp?: string;
-    obstacles?: string[];
-    /**
-     * Camp membership radius from {@link spot} (Chebyshev).
-     * Player outside this disk → ReturnToAnchor. Defaults to 64 when omitted.
-     */
-    campRadius?: number;
-    /**
-     * Player-relative fishing-spot / hop disk while in camp.
-     * Defaults to 24 when omitted. Loc gather (rocks/trees) still uses campRadius from home.
-     */
-    chaseRadius?: number;
-    /** CSV-ish resource tags for docs / verify helper (not used by Gather target pick). */
-    resources?: readonly string[];
-    readonly avoidSpots?: readonly Tile[];
-    readonly sweep?: readonly Tile[];
-    readonly baitVendor?: BaitVendor;
-    notes?: string;
-}
-interface BaitVendor {
-    readonly keeper: string;
-    readonly stand: Tile;
-    readonly price: number;
-    readonly item: string;
-}
+import { GatheringLocation } from "*data/gatheringLocations.js";
 /** Woodcutting camps from rs2b2tgathering.csv and live checks. Burn strips remain in FiremakingLogic. */
 export type WoodcuttingLocation = GatheringLocation;
 /**
@@ -4339,9 +4433,9 @@ export function entNpcOnTile(npcs: readonly {
     z: number;
     level: number;
 }): boolean;
-export const WOODCUTTING_LOCATIONS: never;
-export const WOODCUTTING_LOCATION_OPTIONS: never;
-export function resolveWoodcuttingLocation(setting?: string, startTile?: WorldTile): never;
+export const WOODCUTTING_LOCATIONS: WoodcuttingLocation[];
+export const WOODCUTTING_LOCATION_OPTIONS: string[];
+export function resolveWoodcuttingLocation(setting: string, startTile: WorldTile): WoodcuttingLocation | null;
 
 }
 
@@ -5015,6 +5109,77 @@ export const HOST_CONTROLS: readonly [
         readonly label: "Stop";
     }
 ];
+
+}
+
+declare module '*shim/fishing_gear.js' {
+import Tile from "*geometry/Tile.js";
+import { FishingGearPiece, FishingMethod } from "*data/fishingMethods.js";
+export interface ToolVendor {
+    keeper: string;
+    stand: Tile;
+    bankStand: Tile;
+    hopFrom?: Tile;
+    hopLoc?: string;
+    hopAction?: string;
+}
+export type ToolAcquirePlan = {
+    kind: "repair";
+    brokenName: string;
+    label: "pickaxe" | "axe";
+    vendor: ToolVendor;
+    prefer: string[];
+} | {
+    kind: "buy";
+    name: string;
+    cost: number;
+    qty: number;
+    vendor: ToolVendor;
+    equip: boolean;
+    reason: string;
+} | {
+    kind: "smith";
+    name: string;
+    bar: string;
+    smithLevel: number;
+    vendorBank: Tile;
+    anvilStand: Tile;
+    equip: boolean;
+    reason: string;
+};
+export interface AcquireWorld {
+    skillLevel: (skill: string) => number;
+    heldCount: (name: string) => number;
+    invCount: (name: string) => number;
+    bankCount: (name: string) => number;
+    worn: (name: string) => boolean;
+}
+export interface FishingVendorNear {
+    x: number;
+    z: number;
+}
+export interface PlanFishingGearOpts {
+    near?: FishingVendorNear | null;
+    baitQty?: number;
+}
+export type FishingGearBuyPlan = Extract<ToolAcquirePlan, {
+    kind: "buy";
+}>;
+export const GERRANT_ONLY_FISHING: ReadonlySet<string>;
+export const FISHING_SHOP_COSTS: Readonly<Record<string, number>>;
+export const GERRANT_VENDOR: ToolVendor;
+export const HARRY_VENDOR: ToolVendor;
+export function fishingVendorFor(name: string, near?: FishingVendorNear | null): ToolVendor;
+export function fishingShopCost(name: string): number | null;
+export function isFishingBaitPiece(g: Pick<FishingGearPiece, "name" | "restock">): boolean;
+export function withBaitTarget(method: Pick<FishingMethod, "gear">, baitQty: number): {
+    gear: FishingGearPiece[];
+};
+export function planFishingGearBuys(method: Pick<FishingMethod, "gear">, w: AcquireWorld, opts?: PlanFishingGearOpts): FishingGearBuyPlan[];
+export function planFishingGearAcquire(method: Pick<FishingMethod, "gear">, w: AcquireWorld, opts?: PlanFishingGearOpts): ToolAcquirePlan | null;
+export function buyPlansCost(plans: readonly Pick<FishingGearBuyPlan, "cost">[]): number;
+export function fishingGearShopCart(method: Pick<FishingMethod, "gear">, w: AcquireWorld, opts?: PlanFishingGearOpts): FishingGearBuyPlan[];
+export function shopableMissingFishingGear(gear: readonly FishingGearPiece[], count: (name: string) => number): string[];
 
 }
 

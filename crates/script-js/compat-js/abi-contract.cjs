@@ -111,6 +111,11 @@ const MODULE_RULES = [
     ['data/miningRocks.js', { id: 'mining', nav: false }],
     ['data/pickpocketTargets.js', { id: 'thieving', nav: true }],
     ['data/woodcuttingLocations.js', { id: 'woodcutting', nav: false }],
+    ['data/miningLocations.js', { id: 'mining', nav: false }],
+    ['data/gatheringLocations.js', { id: 'gathering', nav: false }],
+    ['data/fishingMethods.js', { id: 'fishing', nav: false }],
+    ['data/fishingLocations.js', { id: 'fishing', nav: false }],
+    ['data/cookingRanges.js', { id: 'cooking', nav: false }],
     ['data/runeCraftLocations.js', { id: 'runecrafting', nav: false }],
     ['data/cookLocations.js', { id: 'cooking', nav: false }],
     ['data/spelldb.js', { id: 'catalog-data', nav: false }],
@@ -124,6 +129,7 @@ const MODULE_RULES = [
     ['input/', { id: 'input', nav: false }],
     ['event/', { id: 'walking', nav: true }],
     ['shim/gathering_locations.js', { id: 'gathering', nav: false }],
+    ['shim/fishing_gear.js', { id: 'fishing', nav: false }],
     ['shim/', { id: 'compat-runtime', nav: false }],
 ];
 

@@ -65,9 +65,6 @@ export const Bank = new Proxy(
                 },
             );
         },
-        async depositAllExcept(keep) {
-            await deposit({ keep: Array.from(keep || []).map((k) => String(k)) });
-        },
         withdraw(name, amount) {
             return bankOp({ kind: 'withdraw', name: String(name), amount });
         },
@@ -114,13 +111,19 @@ export const Bank = new Proxy(
                 booth_action: String(op ?? 'Use-quickly'),
             });
         },
-        async openNearestWorld() {
-            return driveBankOpen({
-                mode: 'open-nearest-world',
-                stand: null,
-                booth_name: null,
-                booth_action: null,
-            });
+        // Rust decides from the posted backpack and its inv-tab transmission.
+        normalBackpackSnapshot() {
+            return globalThis.__rs2b0t_bank_normal_backpack();
+        },
+        // Rust waits in observed ticks for the side pack this bank session
+        // transmits, then for an optional expected backpack.
+        async backpackReady(expected, log) {
+            const out = await runMachine(
+                'bank_task',
+                { kind: 'backpack', expected: expected ? Array.from(expected) : null },
+                { log: typeof log === 'function' ? log : undefined },
+            );
+            return out.kind === 'done' && out.value === true;
         },
         async waitReady(timeoutMs, log) {
             const ms = typeof timeoutMs === 'number' && timeoutMs > 0 ? timeoutMs : 5000;

@@ -1466,6 +1466,10 @@ pub(crate) fn with_script_snapshot_input_shorts<R>(
         _ => CollisionViewInput::UNAVAILABLE,
     });
     let native = NativeFactsInput {
+        inv_ready: snapshot.is_some_and(GameSnapshot::inventory_ready),
+        bank_side_ready: snapshot.is_some_and(|s| {
+            s.bank_component_id() != -1 && s.modals().side >= 0 && s.bank_side_ready()
+        }),
         chat_page_fingerprint: snapshot.map_or(0, |s| {
             api::snapshot::chat_page_fingerprint(
                 s.chat_modal_texts(),

@@ -196,6 +196,19 @@ pub enum InteractReq {
         component: i32,
         generation: u64,
     },
+    /// Drag one bank row to `target_slot` (`INV_BUTTOND`). Host dispatch
+    /// re-resolves the exact posted bank row by id/slot/component under
+    /// `bank_generation`; `insert` is the client's mode byte, which the
+    /// server ignores in favour of `%bankinsert` (`bank.rs2:6-11`).
+    #[serde(rename = "bank-drag")]
+    BankDrag {
+        id: i32,
+        slot: i32,
+        component: i32,
+        target_slot: i32,
+        insert: bool,
+        bank_generation: u64,
+    },
     /// Close the open bank modal.
     #[serde(rename = "close")]
     Close,

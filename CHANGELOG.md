@@ -155,6 +155,32 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.7` 
   now renders every wall member only when the acknowledgement is saved; if
   the save fails, **only render focused** stays on.
 
+- rs2b0t scripts can use four more banking helpers. `purgePackAtBank` empties
+  the pack of everything except the item names you keep: the bot opens the
+  bank, deposits, closes the bank and then checks the pack. `withdrawCoins`
+  withdraws coins until the pack holds the amount you ask for; it reads the
+  coins in the pack and the bank itself. `sortBank` sorts the open bank by
+  category, drags one item per game tick and puts the swap/insert mode back as
+  it was. `findQuestJunk` lists banked quest items and the status of each quest;
+  it never drops anything. `Bank.backpackReady` and
+  `Bank.normalBackpackSnapshot` now work too. `reader.bankItems` lists the
+  rows of the open bank (an empty list when the bank is closed).
+- `bankPace` now pauses for exactly one game tick. It never picks a random
+  length.
+- `Banking.open` and `purgePackAtBank` accept the `obstacles` option when they
+  walk to a bank stand; before, a stand with obstacles stopped with `not impl`.
+  The bot opens the doors and gates on its route as on any other walk.
+- Removed the unused private exports `nearestWalkableBank`,
+  `nearestWalkableBankAsync`, `bankCostForFinder`, `bankCostForNavigator` and
+  `bankPaceTicks`, which only reported `not impl`, and the 274bot-only
+  `Bank.depositAllExcept` and `Bank.openNearestWorld`. `Banking.depositAllExcept`
+  stays.
+- rs2b0t scripts can use the mining, woodcutting, gathering, cooking and
+  fishing modules. The camp, method, vendor and cook tables, the fishing-gear
+  calculations, the radius helpers and the constants come from the game data
+  that 274bot selects. `GERRANT_VENDOR` and `HARRY_VENDOR` still report
+  `not impl`.
+
 ### Fixed during development
 
 #### Scenario checks

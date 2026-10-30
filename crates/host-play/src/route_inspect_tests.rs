@@ -3305,11 +3305,11 @@ fn real_content_inspection_capture_bytes() {
     let old_snapshot = script_js::wire::decode_snapshot(&old_bytes).unwrap();
     let snapshot = script_js::wire::decode_snapshot(&bytes).unwrap();
 
-    assert_eq!(bytes.len(), 1_360, "new capture size");
+    assert_eq!(bytes.len(), 1_376, "new capture size");
     let new_digest: [u8; 32] = sha2::Sha256::digest(&bytes).into();
     assert_eq!(
         nav_planner::pack::sha256_hex(&new_digest),
-        "342c6caaccae1009d420d0e32a632042a60dbe3d056f62b22aaee48764b7ea5d",
+        "d87446444efcf620d920be5b022e73faf67677299ca72312f29c9dc7e59f0876",
         "new real-content inspection capture authority"
     );
 
@@ -3328,11 +3328,25 @@ fn real_content_inspection_capture_bytes() {
             "new capture omits retired vtable offset {retired_field}"
         );
     }
+    // `inv_ready` and `bank_side_ready` (vtable offsets 298 and 300) are new
+    // trailing fields: the full snapshot writes them, the old capture predates them.
+    for added_field in [298_u16, 300] {
+        assert_eq!(
+            old_vtable.get(added_field),
+            0,
+            "old capture predates offset {added_field}"
+        );
+        assert_ne!(
+            new_vtable.get(added_field),
+            0,
+            "new capture writes offset {added_field}"
+        );
+    }
     let field_count = old_vtable.num_fields().max(new_vtable.num_fields());
     for field_index in 0..field_count {
         let field_offset =
             4 + 2 * u16::try_from(field_index).expect("snapshot vtable field index fits in u16");
-        if field_offset == 126 || field_offset == 128 {
+        if matches!(field_offset, 126 | 128 | 298 | 300) {
             continue;
         }
         assert_eq!(

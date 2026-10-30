@@ -61,10 +61,10 @@
         "members": 55,
         "overloads": 0,
         "aliases": 2,
-        "callbacks": 10,
+        "callbacks": 11,
         "type_aliases": 2,
         "name_aliases": 0,
-        "not_impl_debt": 10
+        "not_impl_debt": 0
       }
     },
     {
@@ -500,7 +500,7 @@
         "callbacks": 0,
         "type_aliases": 1,
         "name_aliases": 0,
-        "not_impl_debt": 25
+        "not_impl_debt": 0
       }
     },
     {
@@ -745,7 +745,7 @@
         "callbacks": 0,
         "type_aliases": 1,
         "name_aliases": 0,
-        "not_impl_debt": 5
+        "not_impl_debt": 0
       }
     },
     {
@@ -1108,7 +1108,7 @@
         "callbacks": 0,
         "type_aliases": 1,
         "name_aliases": 0,
-        "not_impl_debt": 3
+        "not_impl_debt": 0
       }
     },
     {

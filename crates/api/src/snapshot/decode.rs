@@ -385,13 +385,15 @@ impl GameSnapshot {
         }
         self.inventory.clear();
         self.inventory_packet_generation = None;
+        self.inventory_ready = false;
         let Some(inv_id) = tab_inv_component(client, 3) else {
             self.inventory_size = 0;
             return true;
         };
-        self.inventory_packet_generation = client
-            .inventory_packet_state(inv_id)
-            .map(|state| state.generation);
+        let state = client.inventory_packet_state(inv_id);
+        self.inventory_packet_generation = state.map(|state| state.generation);
+        self.inventory_ready =
+            state.is_some_and(|state| state.transmitting && state.full_generation > 0);
         let Some(inv) = client.if_(inv_id as usize) else {
             self.inventory_size = 0;
             return true;
@@ -603,6 +605,13 @@ impl GameSnapshot {
             self.bank_prev_inv_com = com_id;
             self.bank_prev_inv_generation = generation;
         }
+        // The side component closes with the session (`bank.rs2:25-27`); a
+        // later open counts only side updates newer than this generation.
+        if self.bank_side_com >= 0 {
+            self.bank_prev_side_com = self.bank_side_com;
+            self.bank_prev_side_generation = self.bank_side_last_generation;
+        }
+        self.bank_side_ready = false;
         self.bank_inventory_session = None;
     }
 
@@ -625,6 +634,7 @@ impl GameSnapshot {
             return false;
         }
         self.bank_side_packet_generation = None;
+        self.bank_side_ready = false;
         if client.side_modal_id == -1 {
             self.bank_side = Vec::new();
         } else {
@@ -634,16 +644,54 @@ impl GameSnapshot {
                     .as_deref()
                     .is_some_and(|s| s.to_ascii_lowercase().contains("deposit"))
             });
-            self.bank_side_packet_generation = component.and_then(|com_id| {
+            let state = component.and_then(|com_id| {
                 client
                     .inventory_packet_state(com_id)
-                    .map(|state| state.generation)
+                    .map(|state| (com_id, state))
             });
+            self.bank_side_packet_generation = state.map(|(_, state)| state.generation);
+            if let Some((com_id, state)) = state {
+                self.note_bank_side_state(com_id, state);
+            }
             self.bank_side = component
                 .and_then(|com_id| inv_items(client, com_id, ItemContainer::BankSide))
                 .unwrap_or_default();
         }
         true
+    }
+
+    /// Side readiness mirrors the main table's session rule: the side
+    /// component transmits, and its last full update is at least the side
+    /// generation recorded when the previous bank session closed. The content
+    /// sends that full update with every opening (`bank.rs2:20`).
+    fn note_bank_side_state(
+        &mut self,
+        com_id: i32,
+        state: client::client::client::InventoryPacketState,
+    ) {
+        if !state.transmitting {
+            self.bank_side_full_generation = 0;
+        } else if self.bank_side_com != com_id
+            || self.bank_side_last_full_observation != state.full_observation
+        {
+            self.bank_side_full_generation = if state.full_generation > 0 {
+                state.generation
+            } else {
+                0
+            };
+        }
+        self.bank_side_com = com_id;
+        self.bank_side_last_generation = state.generation;
+        self.bank_side_last_full_observation = state.full_observation;
+        let opened_at = if self.bank_prev_side_com == com_id {
+            self.bank_prev_side_generation
+        } else {
+            0
+        };
+        self.bank_side_ready = self.bank_inventory_session.is_some()
+            && state.transmitting
+            && self.bank_side_full_generation > 0
+            && self.bank_side_full_generation >= opened_at;
     }
 
     /// Trade rebuild: the 274 trade ifaces' state and containers. The

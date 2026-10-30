@@ -773,10 +773,10 @@ impl ::flatbuffers::SimpleToVerifyInSlice for SeatPhase {}
 #[deprecated(since = "2.0.0", note = "Use associated constants instead. This will no longer be generated in 2021.")]
 pub const ENUM_MIN_BANK_SEAT_OPERATION: u8 = 0;
 #[deprecated(since = "2.0.0", note = "Use associated constants instead. This will no longer be generated in 2021.")]
-pub const ENUM_MAX_BANK_SEAT_OPERATION: u8 = 20;
+pub const ENUM_MAX_BANK_SEAT_OPERATION: u8 = 25;
 #[deprecated(since = "2.0.0", note = "Use associated constants instead. This will no longer be generated in 2021.")]
 #[allow(non_camel_case_types)]
-pub const ENUM_VALUES_BANK_SEAT_OPERATION: [BankSeatOperation; 21] = [
+pub const ENUM_VALUES_BANK_SEAT_OPERATION: [BankSeatOperation; 26] = [
   BankSeatOperation::None,
   BankSeatOperation::OpenBooth,
   BankSeatOperation::OpenNearest,
@@ -798,6 +798,11 @@ pub const ENUM_VALUES_BANK_SEAT_OPERATION: [BankSeatOperation; 21] = [
   BankSeatOperation::WaitReady,
   BankSeatOperation::WaitSnapshotAfter,
   BankSeatOperation::BankNearest,
+  BankSeatOperation::PurgePack,
+  BankSeatOperation::WithdrawCoins,
+  BankSeatOperation::Pace,
+  BankSeatOperation::BackpackReady,
+  BankSeatOperation::Sort,
 ];
 
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Default)]
@@ -826,9 +831,14 @@ impl BankSeatOperation {
   pub const WaitReady: Self = Self(18);
   pub const WaitSnapshotAfter: Self = Self(19);
   pub const BankNearest: Self = Self(20);
+  pub const PurgePack: Self = Self(21);
+  pub const WithdrawCoins: Self = Self(22);
+  pub const Pace: Self = Self(23);
+  pub const BackpackReady: Self = Self(24);
+  pub const Sort: Self = Self(25);
 
   pub const ENUM_MIN: u8 = 0;
-  pub const ENUM_MAX: u8 = 20;
+  pub const ENUM_MAX: u8 = 25;
   pub const ENUM_VALUES: &'static [Self] = &[
     Self::None,
     Self::OpenBooth,
@@ -851,6 +861,11 @@ impl BankSeatOperation {
     Self::WaitReady,
     Self::WaitSnapshotAfter,
     Self::BankNearest,
+    Self::PurgePack,
+    Self::WithdrawCoins,
+    Self::Pace,
+    Self::BackpackReady,
+    Self::Sort,
   ];
   /// Returns the variant's name or "" if unknown.
   pub fn variant_name(self) -> Option<&'static str> {
@@ -876,6 +891,11 @@ impl BankSeatOperation {
       Self::WaitReady => Some("WaitReady"),
       Self::WaitSnapshotAfter => Some("WaitSnapshotAfter"),
       Self::BankNearest => Some("BankNearest"),
+      Self::PurgePack => Some("PurgePack"),
+      Self::WithdrawCoins => Some("WithdrawCoins"),
+      Self::Pace => Some("Pace"),
+      Self::BackpackReady => Some("BackpackReady"),
+      Self::Sort => Some("Sort"),
       _ => None,
     }
   }
@@ -930,6 +950,292 @@ impl<'a> ::flatbuffers::Verifiable for BankSeatOperation {
 }
 
 impl ::flatbuffers::SimpleToVerifyInSlice for BankSeatOperation {}
+// struct BankPackRow, aligned to 4
+#[repr(transparent)]
+#[derive(Clone, Copy, PartialEq)]
+pub struct BankPackRow(pub [u8; 12]);
+impl Default for BankPackRow { 
+  fn default() -> Self { 
+    Self([0; 12])
+  }
+}
+impl ::core::fmt::Debug for BankPackRow {
+  fn fmt(&self, f: &mut ::core::fmt::Formatter) -> ::core::fmt::Result {
+    f.debug_struct("BankPackRow")
+      .field("slot", &self.slot())
+      .field("id", &self.id())
+      .field("count", &self.count())
+      .finish()
+  }
+}
+
+impl ::flatbuffers::SimpleToVerifyInSlice for BankPackRow {}
+impl<'a> ::flatbuffers::Follow<'a> for BankPackRow {
+  type Inner = &'a BankPackRow;
+  #[inline]
+  unsafe fn follow(buf: &'a [u8], loc: usize) -> Self::Inner {
+    unsafe { <&'a BankPackRow>::follow(buf, loc) }
+  }
+}
+impl<'a> ::flatbuffers::Follow<'a> for &'a BankPackRow {
+  type Inner = &'a BankPackRow;
+  #[inline]
+  unsafe fn follow(buf: &'a [u8], loc: usize) -> Self::Inner {
+    unsafe { ::flatbuffers::follow_cast_ref::<BankPackRow>(buf, loc) }
+  }
+}
+impl<'b> ::flatbuffers::Push for BankPackRow {
+    type Output = BankPackRow;
+    #[inline]
+    unsafe fn push(&self, dst: &mut [u8], _written_len: usize) {
+        let src = unsafe { ::core::slice::from_raw_parts(self as *const BankPackRow as *const u8, <Self as ::flatbuffers::Push>::size()) };
+        dst.copy_from_slice(src);
+    }
+    #[inline]
+    fn alignment() -> ::flatbuffers::PushAlignment {
+        ::flatbuffers::PushAlignment::new(4)
+    }
+}
+
+impl<'a> ::flatbuffers::Verifiable for BankPackRow {
+  #[inline]
+  fn run_verifier(
+    v: &mut ::flatbuffers::Verifier, pos: usize
+  ) -> Result<(), ::flatbuffers::InvalidFlatbuffer> {
+    v.in_buffer::<Self>(pos)
+  }
+}
+
+impl<'a> BankPackRow {
+  #[allow(clippy::too_many_arguments)]
+  pub fn new(
+    slot: i32,
+    id: i32,
+    count: i32,
+  ) -> Self {
+    let mut s = Self([0; 12]);
+    s.set_slot(slot);
+    s.set_id(id);
+    s.set_count(count);
+    s
+  }
+
+  pub fn slot(&self) -> i32 {
+    let mut mem = ::core::mem::MaybeUninit::<<i32 as ::flatbuffers::EndianScalar>::Scalar>::uninit();
+    // Safety:
+    // Created from a valid Table for this object
+    // Which contains a valid value in this slot
+    ::flatbuffers::EndianScalar::from_little_endian(unsafe {
+      ::core::ptr::copy_nonoverlapping(
+        self.0[0..].as_ptr(),
+        mem.as_mut_ptr() as *mut u8,
+        ::core::mem::size_of::<<i32 as ::flatbuffers::EndianScalar>::Scalar>(),
+      );
+      mem.assume_init()
+    })
+  }
+
+  pub fn set_slot(&mut self, x: i32) {
+    let x_le = ::flatbuffers::EndianScalar::to_little_endian(x);
+    // Safety:
+    // Created from a valid Table for this object
+    // Which contains a valid value in this slot
+    unsafe {
+      ::core::ptr::copy_nonoverlapping(
+        &x_le as *const _ as *const u8,
+        self.0[0..].as_mut_ptr(),
+        ::core::mem::size_of::<<i32 as ::flatbuffers::EndianScalar>::Scalar>(),
+      );
+    }
+  }
+
+  pub fn id(&self) -> i32 {
+    let mut mem = ::core::mem::MaybeUninit::<<i32 as ::flatbuffers::EndianScalar>::Scalar>::uninit();
+    // Safety:
+    // Created from a valid Table for this object
+    // Which contains a valid value in this slot
+    ::flatbuffers::EndianScalar::from_little_endian(unsafe {
+      ::core::ptr::copy_nonoverlapping(
+        self.0[4..].as_ptr(),
+        mem.as_mut_ptr() as *mut u8,
+        ::core::mem::size_of::<<i32 as ::flatbuffers::EndianScalar>::Scalar>(),
+      );
+      mem.assume_init()
+    })
+  }
+
+  pub fn set_id(&mut self, x: i32) {
+    let x_le = ::flatbuffers::EndianScalar::to_little_endian(x);
+    // Safety:
+    // Created from a valid Table for this object
+    // Which contains a valid value in this slot
+    unsafe {
+      ::core::ptr::copy_nonoverlapping(
+        &x_le as *const _ as *const u8,
+        self.0[4..].as_mut_ptr(),
+        ::core::mem::size_of::<<i32 as ::flatbuffers::EndianScalar>::Scalar>(),
+      );
+    }
+  }
+
+  pub fn count(&self) -> i32 {
+    let mut mem = ::core::mem::MaybeUninit::<<i32 as ::flatbuffers::EndianScalar>::Scalar>::uninit();
+    // Safety:
+    // Created from a valid Table for this object
+    // Which contains a valid value in this slot
+    ::flatbuffers::EndianScalar::from_little_endian(unsafe {
+      ::core::ptr::copy_nonoverlapping(
+        self.0[8..].as_ptr(),
+        mem.as_mut_ptr() as *mut u8,
+        ::core::mem::size_of::<<i32 as ::flatbuffers::EndianScalar>::Scalar>(),
+      );
+      mem.assume_init()
+    })
+  }
+
+  pub fn set_count(&mut self, x: i32) {
+    let x_le = ::flatbuffers::EndianScalar::to_little_endian(x);
+    // Safety:
+    // Created from a valid Table for this object
+    // Which contains a valid value in this slot
+    unsafe {
+      ::core::ptr::copy_nonoverlapping(
+        &x_le as *const _ as *const u8,
+        self.0[8..].as_mut_ptr(),
+        ::core::mem::size_of::<<i32 as ::flatbuffers::EndianScalar>::Scalar>(),
+      );
+    }
+  }
+
+}
+
+// struct BankCategoryOverride, aligned to 4
+#[repr(transparent)]
+#[derive(Clone, Copy, PartialEq)]
+pub struct BankCategoryOverride(pub [u8; 8]);
+impl Default for BankCategoryOverride { 
+  fn default() -> Self { 
+    Self([0; 8])
+  }
+}
+impl ::core::fmt::Debug for BankCategoryOverride {
+  fn fmt(&self, f: &mut ::core::fmt::Formatter) -> ::core::fmt::Result {
+    f.debug_struct("BankCategoryOverride")
+      .field("id", &self.id())
+      .field("category", &self.category())
+      .finish()
+  }
+}
+
+impl ::flatbuffers::SimpleToVerifyInSlice for BankCategoryOverride {}
+impl<'a> ::flatbuffers::Follow<'a> for BankCategoryOverride {
+  type Inner = &'a BankCategoryOverride;
+  #[inline]
+  unsafe fn follow(buf: &'a [u8], loc: usize) -> Self::Inner {
+    unsafe { <&'a BankCategoryOverride>::follow(buf, loc) }
+  }
+}
+impl<'a> ::flatbuffers::Follow<'a> for &'a BankCategoryOverride {
+  type Inner = &'a BankCategoryOverride;
+  #[inline]
+  unsafe fn follow(buf: &'a [u8], loc: usize) -> Self::Inner {
+    unsafe { ::flatbuffers::follow_cast_ref::<BankCategoryOverride>(buf, loc) }
+  }
+}
+impl<'b> ::flatbuffers::Push for BankCategoryOverride {
+    type Output = BankCategoryOverride;
+    #[inline]
+    unsafe fn push(&self, dst: &mut [u8], _written_len: usize) {
+        let src = unsafe { ::core::slice::from_raw_parts(self as *const BankCategoryOverride as *const u8, <Self as ::flatbuffers::Push>::size()) };
+        dst.copy_from_slice(src);
+    }
+    #[inline]
+    fn alignment() -> ::flatbuffers::PushAlignment {
+        ::flatbuffers::PushAlignment::new(4)
+    }
+}
+
+impl<'a> ::flatbuffers::Verifiable for BankCategoryOverride {
+  #[inline]
+  fn run_verifier(
+    v: &mut ::flatbuffers::Verifier, pos: usize
+  ) -> Result<(), ::flatbuffers::InvalidFlatbuffer> {
+    v.in_buffer::<Self>(pos)
+  }
+}
+
+impl<'a> BankCategoryOverride {
+  #[allow(clippy::too_many_arguments)]
+  pub fn new(
+    id: i32,
+    category: u8,
+  ) -> Self {
+    let mut s = Self([0; 8]);
+    s.set_id(id);
+    s.set_category(category);
+    s
+  }
+
+  pub fn id(&self) -> i32 {
+    let mut mem = ::core::mem::MaybeUninit::<<i32 as ::flatbuffers::EndianScalar>::Scalar>::uninit();
+    // Safety:
+    // Created from a valid Table for this object
+    // Which contains a valid value in this slot
+    ::flatbuffers::EndianScalar::from_little_endian(unsafe {
+      ::core::ptr::copy_nonoverlapping(
+        self.0[0..].as_ptr(),
+        mem.as_mut_ptr() as *mut u8,
+        ::core::mem::size_of::<<i32 as ::flatbuffers::EndianScalar>::Scalar>(),
+      );
+      mem.assume_init()
+    })
+  }
+
+  pub fn set_id(&mut self, x: i32) {
+    let x_le = ::flatbuffers::EndianScalar::to_little_endian(x);
+    // Safety:
+    // Created from a valid Table for this object
+    // Which contains a valid value in this slot
+    unsafe {
+      ::core::ptr::copy_nonoverlapping(
+        &x_le as *const _ as *const u8,
+        self.0[0..].as_mut_ptr(),
+        ::core::mem::size_of::<<i32 as ::flatbuffers::EndianScalar>::Scalar>(),
+      );
+    }
+  }
+
+  pub fn category(&self) -> u8 {
+    let mut mem = ::core::mem::MaybeUninit::<<u8 as ::flatbuffers::EndianScalar>::Scalar>::uninit();
+    // Safety:
+    // Created from a valid Table for this object
+    // Which contains a valid value in this slot
+    ::flatbuffers::EndianScalar::from_little_endian(unsafe {
+      ::core::ptr::copy_nonoverlapping(
+        self.0[4..].as_ptr(),
+        mem.as_mut_ptr() as *mut u8,
+        ::core::mem::size_of::<<u8 as ::flatbuffers::EndianScalar>::Scalar>(),
+      );
+      mem.assume_init()
+    })
+  }
+
+  pub fn set_category(&mut self, x: u8) {
+    let x_le = ::flatbuffers::EndianScalar::to_little_endian(x);
+    // Safety:
+    // Created from a valid Table for this object
+    // Which contains a valid value in this slot
+    unsafe {
+      ::core::ptr::copy_nonoverlapping(
+        &x_le as *const _ as *const u8,
+        self.0[4..].as_mut_ptr(),
+        ::core::mem::size_of::<<u8 as ::flatbuffers::EndianScalar>::Scalar>(),
+      );
+    }
+  }
+
+}
+
 pub enum TileOffset {}
 #[derive(Copy, Clone, PartialEq)]
 
@@ -6515,6 +6821,8 @@ impl<'a> Snapshot<'a> {
   pub const VT_SEAT_LIVE: ::flatbuffers::VOffsetT = 292;
   pub const VT_SEAT_RESULTS: ::flatbuffers::VOffsetT = 294;
   pub const VT_MIRROR_REVOKES_CONSUMED: ::flatbuffers::VOffsetT = 296;
+  pub const VT_INV_READY: ::flatbuffers::VOffsetT = 298;
+  pub const VT_BANK_SIDE_READY: ::flatbuffers::VOffsetT = 300;
 
   #[inline]
   pub unsafe fn init_from_table(table: ::flatbuffers::Table<'a>) -> Self {
@@ -6638,6 +6946,8 @@ impl<'a> Snapshot<'a> {
     builder.add_inv_size(args.inv_size);
     if let Some(x) = args.inv { builder.add_inv(x); }
     if let Some(x) = args.here { builder.add_here(x); }
+    builder.add_bank_side_ready(args.bank_side_ready);
+    builder.add_inv_ready(args.inv_ready);
     builder.add_local_player_motion(args.local_player_motion);
     builder.add_walk_outcome_cancel_reason(args.walk_outcome_cancel_reason);
     builder.add_walk_outcome_blocked(args.walk_outcome_blocked);
@@ -7691,6 +8001,20 @@ impl<'a> Snapshot<'a> {
     // which contains a valid value in this slot
     unsafe { self._tab.get::<u64>(Snapshot::VT_MIRROR_REVOKES_CONSUMED, None)}
   }
+  #[inline]
+  pub fn inv_ready(&self) -> bool {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<bool>(Snapshot::VT_INV_READY, Some(false)).unwrap()}
+  }
+  #[inline]
+  pub fn bank_side_ready(&self) -> bool {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<bool>(Snapshot::VT_BANK_SIDE_READY, Some(false)).unwrap()}
+  }
 }
 
 impl ::flatbuffers::Verifiable for Snapshot<'_> {
@@ -7844,6 +8168,8 @@ impl ::flatbuffers::Verifiable for Snapshot<'_> {
      .visit_field::<::flatbuffers::ForwardsUOffset<::flatbuffers::Vector<'_, ::flatbuffers::ForwardsUOffset<SeatLive>>>>("seat_live", Self::VT_SEAT_LIVE, false)?
      .visit_field::<::flatbuffers::ForwardsUOffset<::flatbuffers::Vector<'_, ::flatbuffers::ForwardsUOffset<SeatResult>>>>("seat_results", Self::VT_SEAT_RESULTS, false)?
      .visit_field::<u64>("mirror_revokes_consumed", Self::VT_MIRROR_REVOKES_CONSUMED, false)?
+     .visit_field::<bool>("inv_ready", Self::VT_INV_READY, false)?
+     .visit_field::<bool>("bank_side_ready", Self::VT_BANK_SIDE_READY, false)?
      .finish();
     Ok(())
   }
@@ -7994,6 +8320,8 @@ pub struct SnapshotArgs<'a> {
     pub seat_live: Option<::flatbuffers::WIPOffset<::flatbuffers::Vector<'a, ::flatbuffers::ForwardsUOffset<SeatLive<'a>>>>>,
     pub seat_results: Option<::flatbuffers::WIPOffset<::flatbuffers::Vector<'a, ::flatbuffers::ForwardsUOffset<SeatResult<'a>>>>>,
     pub mirror_revokes_consumed: Option<u64>,
+    pub inv_ready: bool,
+    pub bank_side_ready: bool,
 }
 impl<'a> Default for SnapshotArgs<'a> {
   #[inline]
@@ -8144,6 +8472,8 @@ impl<'a> Default for SnapshotArgs<'a> {
       seat_live: None,
       seat_results: None,
       mirror_revokes_consumed: None,
+      inv_ready: false,
+      bank_side_ready: false,
     }
   }
 }
@@ -8734,6 +9064,14 @@ impl<'a: 'b, 'b, A: ::flatbuffers::Allocator + 'a> SnapshotBuilder<'a, 'b, A> {
     self.fbb_.push_slot_always::<u64>(Snapshot::VT_MIRROR_REVOKES_CONSUMED, mirror_revokes_consumed);
   }
   #[inline]
+  pub fn add_inv_ready(&mut self, inv_ready: bool) {
+    self.fbb_.push_slot::<bool>(Snapshot::VT_INV_READY, inv_ready, false);
+  }
+  #[inline]
+  pub fn add_bank_side_ready(&mut self, bank_side_ready: bool) {
+    self.fbb_.push_slot::<bool>(Snapshot::VT_BANK_SIDE_READY, bank_side_ready, false);
+  }
+  #[inline]
   pub fn new(_fbb: &'b mut ::flatbuffers::FlatBufferBuilder<'a, A>) -> SnapshotBuilder<'a, 'b, A> {
     let start = _fbb.start_table();
     SnapshotBuilder {
@@ -8896,6 +9234,8 @@ impl ::core::fmt::Debug for Snapshot<'_> {
       ds.field("seat_live", &self.seat_live());
       ds.field("seat_results", &self.seat_results());
       ds.field("mirror_revokes_consumed", &self.mirror_revokes_consumed());
+      ds.field("inv_ready", &self.inv_ready());
+      ds.field("bank_side_ready", &self.bank_side_ready());
       ds.finish()
   }
 }
@@ -10428,6 +10768,8 @@ impl<'a> BankSeatArgs<'a> {
   pub const VT_DEPOSIT_ALL: ::flatbuffers::VOffsetT = 48;
   pub const VT_COMMON_JUNK: ::flatbuffers::VOffsetT = 50;
   pub const VT_HOOKS_PRESENT: ::flatbuffers::VOffsetT = 52;
+  pub const VT_EXPECTED_PACK: ::flatbuffers::VOffsetT = 54;
+  pub const VT_CATEGORY_OVERRIDES: ::flatbuffers::VOffsetT = 56;
 
   #[inline]
   pub unsafe fn init_from_table(table: ::flatbuffers::Table<'a>) -> Self {
@@ -10443,6 +10785,8 @@ impl<'a> BankSeatArgs<'a> {
     if let Some(x) = args.baseline_generation { builder.add_baseline_generation(x); }
     if let Some(x) = args.timeout_ms { builder.add_timeout_ms(x); }
     if let Some(x) = args.quantity { builder.add_quantity(x); }
+    if let Some(x) = args.category_overrides { builder.add_category_overrides(x); }
+    if let Some(x) = args.expected_pack { builder.add_expected_pack(x); }
     builder.add_hooks_present(args.hooks_present);
     if let Some(x) = args.obstacles { builder.add_obstacles(x); }
     if let Some(x) = args.keep_names { builder.add_keep_names(x); }
@@ -10643,6 +10987,20 @@ impl<'a> BankSeatArgs<'a> {
     // which contains a valid value in this slot
     unsafe { self._tab.get::<u32>(BankSeatArgs::VT_HOOKS_PRESENT, Some(0)).unwrap()}
   }
+  #[inline]
+  pub fn expected_pack(&self) -> Option<::flatbuffers::Vector<'a, BankPackRow>> {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<::flatbuffers::ForwardsUOffset<::flatbuffers::Vector<'a, BankPackRow>>>(BankSeatArgs::VT_EXPECTED_PACK, None)}
+  }
+  #[inline]
+  pub fn category_overrides(&self) -> Option<::flatbuffers::Vector<'a, BankCategoryOverride>> {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<::flatbuffers::ForwardsUOffset<::flatbuffers::Vector<'a, BankCategoryOverride>>>(BankSeatArgs::VT_CATEGORY_OVERRIDES, None)}
+  }
 }
 
 impl ::flatbuffers::Verifiable for BankSeatArgs<'_> {
@@ -10676,6 +11034,8 @@ impl ::flatbuffers::Verifiable for BankSeatArgs<'_> {
      .visit_field::<bool>("deposit_all", Self::VT_DEPOSIT_ALL, false)?
      .visit_field::<bool>("common_junk", Self::VT_COMMON_JUNK, false)?
      .visit_field::<u32>("hooks_present", Self::VT_HOOKS_PRESENT, false)?
+     .visit_field::<::flatbuffers::ForwardsUOffset<::flatbuffers::Vector<'_, BankPackRow>>>("expected_pack", Self::VT_EXPECTED_PACK, false)?
+     .visit_field::<::flatbuffers::ForwardsUOffset<::flatbuffers::Vector<'_, BankCategoryOverride>>>("category_overrides", Self::VT_CATEGORY_OVERRIDES, false)?
      .finish();
     Ok(())
   }
@@ -10706,6 +11066,8 @@ pub struct BankSeatArgsArgs<'a> {
     pub deposit_all: bool,
     pub common_junk: bool,
     pub hooks_present: u32,
+    pub expected_pack: Option<::flatbuffers::WIPOffset<::flatbuffers::Vector<'a, BankPackRow>>>,
+    pub category_overrides: Option<::flatbuffers::WIPOffset<::flatbuffers::Vector<'a, BankCategoryOverride>>>,
 }
 impl<'a> Default for BankSeatArgsArgs<'a> {
   #[inline]
@@ -10736,6 +11098,8 @@ impl<'a> Default for BankSeatArgsArgs<'a> {
       deposit_all: false,
       common_junk: true,
       hooks_present: 0,
+      expected_pack: None,
+      category_overrides: None,
     }
   }
 }
@@ -10846,6 +11210,14 @@ impl<'a: 'b, 'b, A: ::flatbuffers::Allocator + 'a> BankSeatArgsBuilder<'a, 'b, A
     self.fbb_.push_slot::<u32>(BankSeatArgs::VT_HOOKS_PRESENT, hooks_present, 0);
   }
   #[inline]
+  pub fn add_expected_pack(&mut self, expected_pack: ::flatbuffers::WIPOffset<::flatbuffers::Vector<'b , BankPackRow>>) {
+    self.fbb_.push_slot_always::<::flatbuffers::WIPOffset<_>>(BankSeatArgs::VT_EXPECTED_PACK, expected_pack);
+  }
+  #[inline]
+  pub fn add_category_overrides(&mut self, category_overrides: ::flatbuffers::WIPOffset<::flatbuffers::Vector<'b , BankCategoryOverride>>) {
+    self.fbb_.push_slot_always::<::flatbuffers::WIPOffset<_>>(BankSeatArgs::VT_CATEGORY_OVERRIDES, category_overrides);
+  }
+  #[inline]
   pub fn new(_fbb: &'b mut ::flatbuffers::FlatBufferBuilder<'a, A>) -> BankSeatArgsBuilder<'a, 'b, A> {
     let start = _fbb.start_table();
     BankSeatArgsBuilder {
@@ -10888,6 +11260,8 @@ impl ::core::fmt::Debug for BankSeatArgs<'_> {
       ds.field("deposit_all", &self.deposit_all());
       ds.field("common_junk", &self.common_junk());
       ds.field("hooks_present", &self.hooks_present());
+      ds.field("expected_pack", &self.expected_pack());
+      ds.field("category_overrides", &self.category_overrides());
       ds.finish()
   }
 }

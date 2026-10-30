@@ -19,6 +19,9 @@ import { extractKaramjaFacts } from './extractors/karamja.ts';
 import { extractDebugCatalog, engineHandlerRelative } from './extractors/debug.ts';
 import { dialogueUiContentFiles, extractDialogueUiFacts } from './extractors/dialogue-ui.ts';
 import { loadServerOrderedFacts, serverOrderedContentFiles, serverOrderedEngineInputPaths } from './extractors/server-ordered.ts';
+import { gatherCatalogFiles } from './extractors/gather-catalog.ts';
+import { assertRs2b0tPinned, pinnedLiterals, requireEnvPath, RS2B0T_PIN } from './extractors/rs2b0t-literals.ts';
+export { assertRs2b0tPinned, requireEnvPath, RS2B0T_PIN };
 import { extractNpcTransformClosure, npcTransformInputPaths, type NpcTransformClosureEvidence } from './extractors/npc-transforms.ts';
 
 type ObjType = { id: number; debugname: string | null; name: string | null; cost: number; stackable: boolean; members: boolean; certlink: number; certtemplate: number; wearpos: number; wearpos2: number; wearpos3: number; manwear: number; tradeable?: boolean; countobj?: ArrayLike<number> | null; category?: number; params?: Map<number, number | string> };
@@ -27,12 +30,6 @@ type GeneratedInputs = { engine_commit: string; content_commit: string; engine: 
 type Revision = { revision: number; engine: string; content: string; expectedEngine: string; expectedContent: string; generatedInputs?: GeneratedInputs; cacheIdentity: { cache_id: string; content_id?: string; nav_sha256: string; flags_sha256: string }; output: string };
 
 const root = path.resolve(import.meta.dirname, '../..');
-/** Every external source root is explicit: an unset variable fails closed and names itself. */
-export function requireEnvPath(name: string, label: string): string {
-    const value = process.env[name];
-    if (!value) throw new Error(`set ${name} to ${label}`);
-    return path.resolve(value);
-}
 export const revisions: Revision[] = [
     { revision: 274, engine: requireEnvPath('GAME_DATA_274_ENGINE', 'the 274 engine root'), content: requireEnvPath('GAME_DATA_274_CONTENT', 'the 274 content root'), expectedEngine: '4c95f87efe00b068cadbd229d94736626907bd1a', expectedContent: '000c19997e07206131bcb3c884265840efce416d', cacheIdentity: { cache_id: '4aac9b63312dcb75d5de8f686772d083ba0808c57985438246edf21ef522be1c', content_id: '0d14c891b5727142379c6d8844bd5bb1ff9874d4d996db1dc5ceea0e9062469c', nav_sha256: '05db24743e9f549ced16c1f00b87c30a390d3aaec391815da3f3563130b3bcd4', flags_sha256: '92d5dea05c886ac8720be6b47e47cbc68355a8ff42676c0886f5b7ea8343a4cb' }, output: path.join(root, 'crates/api/data/game-data/274.json') },
     { revision: 289, engine: requireEnvPath('GAME_DATA_289_ENGINE', 'the 289 engine root'), content: requireEnvPath('GAME_DATA_289_CONTENT', 'the 289 content root'), expectedEngine: 'cc359656b4acd216ca452495874b6beba9a0ac75', expectedContent: '92649430fcbc83538d8c4367ecb96cee1a67a944', cacheIdentity: { cache_id: 'c4d8ab36bcfd2a7907535b4f619e28623b0a22e98d496fd2a9620d544c5b5b09', content_id: 'cdb2f161c35239f09bf5175648e15e7dbbc4bbf9be4419cea41f7053ccf8b044', nav_sha256: '4e8ab5af4694cf6722ed3836c3e1f42e9ac1be136d4d1127c7db698f4fc6500b', flags_sha256: '67e4094dff06def5cf8abc172ce751f4ca8679532ba04c1ba15ab6bf668c7a4a' }, output: path.join(root, 'crates/api/data/game-data/289.json') }
@@ -305,29 +302,6 @@ export async function generateSelected(spec: Revision, build: SelectedBuild) {
         return { ...artifact, path: path.join(directory, 'manifest.json') };
     } finally {
         fs.rmSync(staging, { recursive: true, force: true });
-    }
-}
-/**
- * The rs2b0t sources the generator reads, as git blob ids at the pinned
- * commit (`git rev-parse 00d39a17e056df6c5e461f3f2cfd3598ff9720b6:<path>`).
- * The pin is a `git archive` export without history, so identity is checked
- * per file: a different commit or a local edit changes the blob id.
- */
-export const RS2B0T_PIN = {
-    commit: '00d39a17e056df6c5e461f3f2cfd3598ff9720b6',
-    blobs: {
-        'src/bot/api/bank/BankLocations.ts': '82171ae05322fa3abfd7db1161eb3efd1a3543e6',
-        'src/bot/data/cookLocations.ts': '7c5b1a858662cd06b345228de63c7b5628ae591f',
-        'src/bot/data/cookingRanges.ts': '4606747ff64fc31c2b9af20b7853d2c7dd655a48',
-        'tools/cooking/gen-cooksurfaces.ts': '83db08d8327eb0356daea08e75fda29f8aaf0b4b',
-    } as Record<string, string>,
-};
-/** Refuse an rs2b0t root whose read sources are not the pinned commit's blobs. */
-export function assertRs2b0tPinned(rs2b0tRoot: string, pin = RS2B0T_PIN) {
-    for (const [relative, expected] of Object.entries(pin.blobs)) {
-        const bytes = fs.readFileSync(path.join(rs2b0tRoot, relative));
-        const blob = crypto.createHash('sha1').update(`blob ${bytes.length}\0`).update(bytes).digest('hex');
-        if (blob !== expected) throw new Error(`rs2b0t ${relative}: blob ${blob} is not ${pin.commit}'s ${expected} (dirty or not the pinned export)`);
     }
 }
 /**
@@ -2603,13 +2577,6 @@ type CatalogBank = {
     npcAccess?: { name: string; op: string; choose?: string };
 };
 
-// The runtime-selected engine owns TypeScript. Only fields guarded by its
-// is* predicates are read; no foreign module is executed.
-type BankAstNode = {
-    text: string; name: BankAstNode; initializer: BankAstNode;
-    elements: BankAstNode[]; properties: BankAstNode[]; arguments: BankAstNode[];
-    expression: BankAstNode; getText(source: unknown): string;
-};
 type BankLiteral = string | number | BankLiteral[] | { [key: string]: BankLiteral };
 
 function catalogBank(value: BankLiteral): CatalogBank {
@@ -2657,45 +2624,6 @@ function catalogBank(value: BankLiteral): CatalogBank {
         if (npc.choose !== undefined) bank.npcAccess.choose = string(npc.choose);
     }
     return bank;
-}
-
-/**
- * Named top-level literals of one pinned rs2b0t source, read from its AST:
- * strings, numbers, arrays, object literals, `new Tile(x, z, level)` and
- * references to other top-level constants. Nothing is evaluated.
- */
-async function pinnedLiterals(engine: string, fileName: string, source: string, label: string) {
-    // Engine path is selected per revision; a static import would bind the wrong installation.
-    const ts = await import(pathToFileURL(path.join(engine, 'node_modules/typescript/lib/typescript.js')).href);
-    const ast = ts.createSourceFile(fileName, source, ts.ScriptTarget.Latest, true);
-    const constants = new Map<string, BankAstNode>();
-    for (const statement of ast.statements) {
-        if (ts.isVariableStatement(statement)) {
-            for (const declaration of statement.declarationList.declarations) {
-                if (ts.isIdentifier(declaration.name)) constants.set(declaration.name.text, declaration.initializer);
-            }
-        }
-    }
-    function literal(node: BankAstNode | undefined): BankLiteral {
-        if (!node) throw new Error(`${label}: missing literal`);
-        if (ts.isStringLiteral(node)) return node.text;
-        if (ts.isNumericLiteral(node)) return Number(node.text);
-        if (ts.isIdentifier(node) && constants.has(node.text)) return literal(constants.get(node.text));
-        if (ts.isArrayLiteralExpression(node)) return node.elements.map(literal);
-        if (ts.isObjectLiteralExpression(node)) {
-            return Object.fromEntries(node.properties.map((property: BankAstNode) => {
-                if (!ts.isPropertyAssignment(property)) throw new Error(`${label}: nonliteral property`);
-                return [property.name.text, literal(property.initializer)];
-            }));
-        }
-        if (ts.isNewExpression(node) && node.expression.getText(ast) === 'Tile') {
-            const [x, z, level] = node.arguments.map(literal);
-            if (![x, z, level].every(value => typeof value === 'number' && Number.isInteger(value))) throw new Error(`${label}: invalid tile`);
-            return { x, z, level };
-        }
-        throw new Error(`${label}: unsupported AST ${node.getText(ast)}`);
-    }
-    return (name: string) => literal(constants.get(name));
 }
 
 /** Read the pinned literal AST, not a second curated copy or evaluated foreign module. */
@@ -3209,6 +3137,7 @@ async function generate(spec: Revision) {
     const cookSurfaces = extractCookSurfaces(spec.content, cookCatalog);
     const cookInputs = { catalog: Object.values(cookFiles).map((file) => ({ path: `rs2b0t-00d39a17e0/${file}`, ...sha256(path.join(rs2b0tRoot, file)) })), ...cookSurfaces.inputs };
     fs.writeFileSync(path.join(root, 'crates/api/data/game-data/cook-catalog.rs'), cookCatalogRust(cookCatalog));
+    for (const [file, bytes] of Object.entries(await gatherCatalogFiles(spec.engine, rs2b0tRoot))) fs.writeFileSync(path.join(root, 'crates/api/data/game-data', file), bytes);
     const gatherItemNames = new Map<number, string>();
     for (const item of items) if (item.name !== null && item.name !== '') gatherItemNames.set(item.id, item.name);
     const gatherResourceRows = gatherResources(gathering.payload, gatherItemNames);

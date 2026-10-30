@@ -596,6 +596,11 @@ table Snapshot {
   // Highest contiguous mirror revocation sequence applied by the host.
   // Optional so an omitted delta retains the previous acknowledgement.
   mirror_revokes_consumed: ulong = null;
+  // Inv tab transmitting with a full update (`inventorySnapshotReady`).
+  inv_ready: bool;
+  // Open bank side pack carries this session's full update
+  // (`bankSideSnapshotReady`).
+  bank_side_ready: bool;
 }
 
 table Collision {
@@ -757,7 +762,25 @@ enum BankSeatOperation: ubyte {
   Close,
   WaitReady,
   WaitSnapshotAfter,
-  BankNearest
+  BankNearest,
+  PurgePack,
+  WithdrawCoins,
+  Pace,
+  BackpackReady,
+  Sort
+}
+
+// One `Bank.backpackReady` expectation row (slot, item id, count).
+struct BankPackRow {
+  slot: int;
+  id: int;
+  count: int;
+}
+
+// One `sortBank` category override: item id and native category index.
+struct BankCategoryOverride {
+  id: int;
+  category: ubyte;
 }
 
 table BankSeatObjectAccess {
@@ -805,6 +828,9 @@ table BankSeatArgs {
   deposit_all: bool = false;
   common_junk: bool = true;
   hooks_present: uint = 0;
+  // Present (possibly empty) only when the caller passed an expectation.
+  expected_pack: [BankPackRow];
+  category_overrides: [BankCategoryOverride];
 }
 
 table SeatArgs {

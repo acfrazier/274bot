@@ -34,14 +34,14 @@ fn drift_for_shim_replacement(suffix: &str, before: &str, after: &str) -> Vec<St
 fn drift_gate_rejects_async_to_sync_bank_member_mutation() {
     let drifts = drift_for_shim_replacement(
         "/api/bank/Bank.js",
-        "async depositAllExcept(",
-        "depositAllExcept(",
+        "async depositInventory(",
+        "depositInventory(",
     );
     assert!(
         drifts
             .iter()
-            .any(|drift| drift.contains("Bank.depositAllExcept async-ness")),
-        "a synchronous Bank.depositAllExcept must not satisfy a Promise declaration: {drifts:?}"
+            .any(|drift| drift.contains("Bank.depositInventory async-ness")),
+        "a synchronous Bank.depositInventory must not satisfy a Promise declaration: {drifts:?}"
     );
 }
 

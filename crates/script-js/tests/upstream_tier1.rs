@@ -412,7 +412,7 @@ import { QUEST_ROCK_TYPES, GAS_ROCK_TICKS, BROKEN_PICKAXE } from '#/bot/data/min
 import { AUTO_CHOOSE_COM, AUTO_TOGGLE_COM } from '#/bot/api/combat/CombatStyleLogic.js';
 import { wrapText } from '#/bot/paint/paintLogic.js';
 import { parseBurnMode, logsForTree, firemakingLevelForLogs, resolveFireSpot, nearestFireSpot, expandLocalFirePlot, runWest, shouldBurnFullLoad, BURN_MODE_OPTIONS } from '#/bot/api/firemaking/Firemaking.js';
-import { nearestWalkableBank, nearestWalkableBankAsync, bankCostForFinder, bankCostForNavigator, bankDistance } from '#/bot/api/bank/BankLocations.js';
+import { bankDistance } from '#/bot/api/bank/BankLocations.js';
 import { NAV_PURE_WALK, NAV_WITH_TELES } from '#/bot/api/walking/Traversal.js';
 import { worthStocking, buildCatalog, searchCatalog, resolveByName, resetLiveCatalog } from '#/bot/api/market/catalog.js';
 import { COIN_FLOAT, PROVISION_BANK } from '#/bot/api/ai/quests/engine/QuestEngine.js';
@@ -609,9 +609,12 @@ await refuses('readModalButtons', () => clientAdapterExports.readModalButtons())
 await refuses('readSelectButtonLabelsByVarp', () => clientAdapterExports.readSelectButtonLabelsByVarp());
 await refuses('combatShowingThreshold', () => clientAdapterExports.combatShowingThreshold());
 await refuses('WELCOME_SCREEN', () => Number(clientAdapterExports.WELCOME_SCREEN));
-await refuses('resolveWoodcuttingLocation', () => woodcuttingExports.resolveWoodcuttingLocation());
-await refuses('WOODCUTTING_LOCATIONS', () => Number(woodcuttingExports.WOODCUTTING_LOCATIONS));
-await refuses('WOODCUTTING_LOCATION_OPTIONS', () => Number(woodcuttingExports.WOODCUTTING_LOCATION_OPTIONS));
+check(
+    woodcuttingExports.WOODCUTTING_LOCATIONS.length === 14 &&
+        woodcuttingExports.WOODCUTTING_LOCATION_OPTIONS[5] === woodcuttingExports.WOODCUTTING_LOCATIONS[0].name &&
+        woodcuttingExports.resolveWoodcuttingLocation('Use Start Position', { x: 0, z: 0, level: 0 }) === null,
+    'the woodcutting location exports are served natively'
+);
 await refuses('settingOptionLabel', () => settingsExports.settingOptionLabel());
 await refuses('GLOBAL_SETTINGS_CORE', () => Number(settingsExports.GLOBAL_SETTINGS_CORE));
 await refuses('NAV_SETTINGS', () => Number(settingsExports.NAV_SETTINGS));
@@ -710,7 +713,7 @@ check(
         !shouldBurnFullLoad('chop-then-burn', true, 28, false),
     'full-load burn gate mismatch'
 );
-check(typeof nearestWalkableBank === 'function' && typeof nearestWalkableBankAsync === 'function' && typeof bankCostForFinder === 'function' && typeof bankCostForNavigator === 'function' && typeof bankDistance === 'function', 'bank location helper exports missing');
+check(typeof bankDistance === 'function', 'bank location helper exports missing');
 check(typeof tilesTo === 'function' && typeof trailWalkOpts === 'function' && typeof trailKit === 'function' && typeof nextCoordTool === 'function' && typeof extraItemShop === 'function' && typeof gateItemShop === 'function', 'clue helper exports missing');
 check(typeof worthStocking === 'function' && typeof buildCatalog === 'function' && typeof searchCatalog === 'function' && typeof resolveByName === 'function' && typeof resetLiveCatalog === 'function', 'catalog helper exports missing');
 check(
@@ -840,10 +843,6 @@ await refuses('ClueDuelSearch.constructor', () => new ClueDuelSearch());
 await refuses('ClueDuelSearch.tick', () => ClueDuelSearch.prototype.tick.call({}));
 await refuses('resetClueDuelSearch', () => resetClueDuelSearch());
 await refuses('stableClosedPoll', () => stableClosedPoll());
-await refuses('nearestWalkableBank', () => nearestWalkableBank());
-await refuses('nearestWalkableBankAsync', () => nearestWalkableBankAsync());
-await refuses('bankCostForFinder', () => bankCostForFinder());
-await refuses('bankCostForNavigator', () => bankCostForNavigator());
 await refuses('buildCatalog', () => buildCatalog());
 await refuses('searchCatalog', () => searchCatalog());
 await refuses('resolveByName', () => resolveByName());

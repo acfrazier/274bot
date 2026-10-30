@@ -1349,7 +1349,7 @@ fn bank_call_sync_members_preserve_values_promises_and_thrown_identity() {
     }
     assert_eq!(
         cases.len(),
-        9,
+        10,
         "all frozen synchronous bank callback members need the three outcomes"
     );
 
@@ -1538,6 +1538,7 @@ fn bank_start_args(family: &str) -> serde_json::Value {
             serde_json::json!({ "access": { "name": "Bank chest", "op": "Open" } })
         }
         "bank_wait" => serde_json::json!({ "kind": "ready" }),
+        "bank_task" => serde_json::json!({ "kind": "purge", "keep": [] }),
         _ => panic!("no bank prompt test arguments for {family}"),
     }
 }

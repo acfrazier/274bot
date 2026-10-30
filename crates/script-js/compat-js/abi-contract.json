@@ -6979,7 +6979,7 @@
       "name": "ToolVendor",
       "kind": "interface",
       "section": "world catalogs (data tables and pure helpers)",
-      "source_module": null,
+      "source_module": "shim/fishing_gear.js",
       "runtime": false,
       "signatures": [],
       "members": [
@@ -7064,7 +7064,9 @@
       ],
       "bases": [],
       "family_id": "acquisition",
-      "source_modules": [],
+      "source_modules": [
+        "shim/fishing_gear.js"
+      ],
       "nav_consuming": true
     },
     {
@@ -7150,39 +7152,45 @@
       "name": "GERRANT_VENDOR",
       "kind": "value",
       "section": "world catalogs (data tables and pure helpers)",
-      "source_module": null,
+      "source_module": "shim/fishing_gear.js",
       "runtime": true,
       "signatures": [],
       "members": [],
       "family_id": "acquisition",
       "declaration_type": "ToolVendor",
-      "source_modules": [],
+      "source_modules": [
+        "shim/fishing_gear.js"
+      ],
       "nav_consuming": true
     },
     {
       "name": "HARRY_VENDOR",
       "kind": "value",
       "section": "world catalogs (data tables and pure helpers)",
-      "source_module": null,
+      "source_module": "shim/fishing_gear.js",
       "runtime": true,
       "signatures": [],
       "members": [],
       "family_id": "acquisition",
       "declaration_type": "ToolVendor",
-      "source_modules": [],
+      "source_modules": [
+        "shim/fishing_gear.js"
+      ],
       "nav_consuming": true
     },
     {
       "name": "GERRANT_ONLY_FISHING",
       "kind": "value",
       "section": "world catalogs (data tables and pure helpers)",
-      "source_module": null,
+      "source_module": "shim/fishing_gear.js",
       "runtime": true,
       "signatures": [],
       "members": [],
       "family_id": "fishing",
       "declaration_type": "ReadonlySet<string>",
-      "source_modules": [],
+      "source_modules": [
+        "shim/fishing_gear.js"
+      ],
       "nav_consuming": false
     },
     {
@@ -7241,13 +7249,15 @@
       "name": "FISHING_SHOP_COSTS",
       "kind": "value",
       "section": "world catalogs (data tables and pure helpers)",
-      "source_module": null,
+      "source_module": "shim/fishing_gear.js",
       "runtime": true,
       "signatures": [],
       "members": [],
       "family_id": "fishing",
       "declaration_type": "Readonly<Record<string, number>>",
-      "source_modules": [],
+      "source_modules": [
+        "shim/fishing_gear.js"
+      ],
       "nav_consuming": false
     },
     {
@@ -7280,7 +7290,7 @@
       "name": "ToolAcquirePlan",
       "kind": "type-alias",
       "section": "world catalogs (data tables and pure helpers)",
-      "source_module": null,
+      "source_module": "shim/fishing_gear.js",
       "runtime": false,
       "alias_target": "{\n    kind: 'repair';\n    brokenName: string;\n    label: 'pickaxe' | 'axe';\n    vendor: ToolVendor;\n    prefer: string[];\n} | {\n    kind: 'buy';\n    name: string;\n    cost: number;\n    qty: number;\n    vendor: ToolVendor;\n    equip: boolean;\n    reason: string;\n} | {\n    kind: 'smith';\n    name: string;\n    bar: string;\n    smithLevel: number;\n    vendorBank: Tile;\n    anvilStand: Tile;\n    equip: boolean;\n    reason: string;\n}",
       "signatures": [],
@@ -7547,14 +7557,16 @@
         }
       ],
       "family_id": "acquisition",
-      "source_modules": [],
+      "source_modules": [
+        "shim/fishing_gear.js"
+      ],
       "nav_consuming": true
     },
     {
       "name": "AcquireWorld",
       "kind": "interface",
       "section": "world catalogs (data tables and pure helpers)",
-      "source_module": null,
+      "source_module": "shim/fishing_gear.js",
       "runtime": false,
       "signatures": [],
       "members": [
@@ -7626,7 +7638,9 @@
       ],
       "bases": [],
       "family_id": "acquisition",
-      "source_modules": [],
+      "source_modules": [
+        "shim/fishing_gear.js"
+      ],
       "nav_consuming": true
     },
     {
@@ -7777,7 +7791,7 @@
       "name": "FishingVendorNear",
       "kind": "interface",
       "section": "world catalogs (data tables and pure helpers)",
-      "source_module": null,
+      "source_module": "shim/fishing_gear.js",
       "runtime": false,
       "signatures": [],
       "members": [
@@ -7810,14 +7824,16 @@
       ],
       "bases": [],
       "family_id": "fishing",
-      "source_modules": [],
+      "source_modules": [
+        "shim/fishing_gear.js"
+      ],
       "nav_consuming": false
     },
     {
       "name": "fishingVendorFor",
       "kind": "function",
       "section": "world catalogs (data tables and pure helpers)",
-      "source_module": null,
+      "source_module": "shim/fishing_gear.js",
       "runtime": true,
       "signatures": [
         {
@@ -7828,14 +7844,16 @@
       ],
       "members": [],
       "family_id": "fishing",
-      "source_modules": [],
+      "source_modules": [
+        "shim/fishing_gear.js"
+      ],
       "nav_consuming": false
     },
     {
       "name": "fishingShopCost",
       "kind": "function",
       "section": "world catalogs (data tables and pure helpers)",
-      "source_module": null,
+      "source_module": "shim/fishing_gear.js",
       "runtime": true,
       "signatures": [
         {
@@ -7846,14 +7864,16 @@
       ],
       "members": [],
       "family_id": "fishing",
-      "source_modules": [],
+      "source_modules": [
+        "shim/fishing_gear.js"
+      ],
       "nav_consuming": false
     },
     {
       "name": "isFishingBaitPiece",
       "kind": "function",
       "section": "world catalogs (data tables and pure helpers)",
-      "source_module": null,
+      "source_module": "shim/fishing_gear.js",
       "runtime": true,
       "signatures": [
         {
@@ -7864,14 +7884,16 @@
       ],
       "members": [],
       "family_id": "fishing",
-      "source_modules": [],
+      "source_modules": [
+        "shim/fishing_gear.js"
+      ],
       "nav_consuming": false
     },
     {
       "name": "withBaitTarget",
       "kind": "function",
       "section": "world catalogs (data tables and pure helpers)",
-      "source_module": null,
+      "source_module": "shim/fishing_gear.js",
       "runtime": true,
       "signatures": [
         {
@@ -7882,14 +7904,16 @@
       ],
       "members": [],
       "family_id": "fishing",
-      "source_modules": [],
+      "source_modules": [
+        "shim/fishing_gear.js"
+      ],
       "nav_consuming": false
     },
     {
       "name": "PlanFishingGearOpts",
       "kind": "interface",
       "section": "world catalogs (data tables and pure helpers)",
-      "source_module": null,
+      "source_module": "shim/fishing_gear.js",
       "runtime": false,
       "signatures": [],
       "members": [
@@ -7922,27 +7946,31 @@
       ],
       "bases": [],
       "family_id": "fishing",
-      "source_modules": [],
+      "source_modules": [
+        "shim/fishing_gear.js"
+      ],
       "nav_consuming": false
     },
     {
       "name": "FishingGearBuyPlan",
       "kind": "type-alias",
       "section": "world catalogs (data tables and pure helpers)",
-      "source_module": null,
+      "source_module": "shim/fishing_gear.js",
       "runtime": false,
       "alias_target": "Extract<ToolAcquirePlan, {\n    kind: 'buy';\n}>",
       "signatures": [],
       "members": [],
       "family_id": "fishing",
-      "source_modules": [],
+      "source_modules": [
+        "shim/fishing_gear.js"
+      ],
       "nav_consuming": false
     },
     {
       "name": "planFishingGearBuys",
       "kind": "function",
       "section": "world catalogs (data tables and pure helpers)",
-      "source_module": null,
+      "source_module": "shim/fishing_gear.js",
       "runtime": true,
       "signatures": [
         {
@@ -7953,14 +7981,16 @@
       ],
       "members": [],
       "family_id": "fishing",
-      "source_modules": [],
+      "source_modules": [
+        "shim/fishing_gear.js"
+      ],
       "nav_consuming": false
     },
     {
       "name": "planFishingGearAcquire",
       "kind": "function",
       "section": "world catalogs (data tables and pure helpers)",
-      "source_module": null,
+      "source_module": "shim/fishing_gear.js",
       "runtime": true,
       "signatures": [
         {
@@ -7971,14 +8001,16 @@
       ],
       "members": [],
       "family_id": "fishing",
-      "source_modules": [],
+      "source_modules": [
+        "shim/fishing_gear.js"
+      ],
       "nav_consuming": false
     },
     {
       "name": "buyPlansCost",
       "kind": "function",
       "section": "world catalogs (data tables and pure helpers)",
-      "source_module": null,
+      "source_module": "shim/fishing_gear.js",
       "runtime": true,
       "signatures": [
         {
@@ -7989,14 +8021,16 @@
       ],
       "members": [],
       "family_id": "fishing",
-      "source_modules": [],
+      "source_modules": [
+        "shim/fishing_gear.js"
+      ],
       "nav_consuming": false
     },
     {
       "name": "fishingGearShopCart",
       "kind": "function",
       "section": "world catalogs (data tables and pure helpers)",
-      "source_module": null,
+      "source_module": "shim/fishing_gear.js",
       "runtime": true,
       "signatures": [
         {
@@ -8007,7 +8041,9 @@
       ],
       "members": [],
       "family_id": "fishing",
-      "source_modules": [],
+      "source_modules": [
+        "shim/fishing_gear.js"
+      ],
       "nav_consuming": false
     },
     {
@@ -8086,7 +8122,7 @@
       "name": "shopableMissingFishingGear",
       "kind": "function",
       "section": "world catalogs (data tables and pure helpers)",
-      "source_module": null,
+      "source_module": "shim/fishing_gear.js",
       "runtime": true,
       "signatures": [
         {
@@ -8097,7 +8133,9 @@
       ],
       "members": [],
       "family_id": "fishing",
-      "source_modules": [],
+      "source_modules": [
+        "shim/fishing_gear.js"
+      ],
       "nav_consuming": false
     },
     {
@@ -8191,7 +8229,7 @@
       "name": "GatheringLocation",
       "kind": "interface",
       "section": "world catalogs (data tables and pure helpers)",
-      "source_module": "shim/gathering_locations.js",
+      "source_module": null,
       "runtime": false,
       "signatures": [],
       "members": [
@@ -8316,6 +8354,7 @@
       "bases": [],
       "family_id": "gathering",
       "source_modules": [
+        "data/gatheringLocations.js",
         "shim/gathering_locations.js"
       ],
       "nav_consuming": false
@@ -8449,7 +8488,7 @@
       "name": "FishingLocation",
       "kind": "interface",
       "section": "world catalogs (data tables and pure helpers)",
-      "source_module": null,
+      "source_module": "data/fishingLocations.js",
       "runtime": false,
       "signatures": [],
       "members": [
@@ -8484,40 +8523,46 @@
         "GatheringLocation"
       ],
       "family_id": "fishing",
-      "source_modules": [],
+      "source_modules": [
+        "data/fishingLocations.js"
+      ],
       "nav_consuming": false
     },
     {
       "name": "FISHING_LOCATIONS",
       "kind": "value",
       "section": "world catalogs (data tables and pure helpers)",
-      "source_module": null,
+      "source_module": "data/fishingLocations.js",
       "runtime": true,
       "signatures": [],
       "members": [],
       "family_id": "fishing",
       "declaration_type": "FishingLocation[]",
-      "source_modules": [],
+      "source_modules": [
+        "data/fishingLocations.js"
+      ],
       "nav_consuming": false
     },
     {
       "name": "FISHING_LOCATION_OPTIONS",
       "kind": "value",
       "section": "world catalogs (data tables and pure helpers)",
-      "source_module": null,
+      "source_module": "data/fishingLocations.js",
       "runtime": true,
       "signatures": [],
       "members": [],
       "family_id": "fishing",
       "declaration_type": "string[]",
-      "source_modules": [],
+      "source_modules": [
+        "data/fishingLocations.js"
+      ],
       "nav_consuming": false
     },
     {
       "name": "resolveFishingLocation",
       "kind": "function",
       "section": "world catalogs (data tables and pure helpers)",
-      "source_module": null,
+      "source_module": "data/fishingLocations.js",
       "runtime": true,
       "signatures": [
         {
@@ -8528,14 +8573,16 @@
       ],
       "members": [],
       "family_id": "fishing",
-      "source_modules": [],
+      "source_modules": [
+        "data/fishingLocations.js"
+      ],
       "nav_consuming": false
     },
     {
       "name": "MiningLocation",
       "kind": "type-alias",
       "section": "world catalogs (data tables and pure helpers)",
-      "source_module": null,
+      "source_module": "data/miningLocations.js",
       "runtime": false,
       "alias_target": "GatheringLocation & {\n    recommendedCombat?: number;\n}",
       "signatures": [],
@@ -8555,53 +8602,61 @@
         }
       ],
       "family_id": "mining",
-      "source_modules": [],
+      "source_modules": [
+        "data/miningLocations.js"
+      ],
       "nav_consuming": false
     },
     {
       "name": "MINING_LOCATIONS",
       "kind": "value",
       "section": "world catalogs (data tables and pure helpers)",
-      "source_module": null,
+      "source_module": "data/miningLocations.js",
       "runtime": true,
       "signatures": [],
       "members": [],
       "family_id": "mining",
       "declaration_type": "MiningLocation[]",
-      "source_modules": [],
+      "source_modules": [
+        "data/miningLocations.js"
+      ],
       "nav_consuming": false
     },
     {
       "name": "MINING_LOCATION_OPTIONS",
       "kind": "value",
       "section": "world catalogs (data tables and pure helpers)",
-      "source_module": null,
+      "source_module": "data/miningLocations.js",
       "runtime": true,
       "signatures": [],
       "members": [],
       "family_id": "mining",
       "declaration_type": "string[]",
-      "source_modules": [],
+      "source_modules": [
+        "data/miningLocations.js"
+      ],
       "nav_consuming": false
     },
     {
       "name": "MINING_LOCATION_OPTION_LABELS",
       "kind": "value",
       "section": "world catalogs (data tables and pure helpers)",
-      "source_module": null,
+      "source_module": "data/miningLocations.js",
       "runtime": true,
       "signatures": [],
       "members": [],
       "family_id": "mining",
       "declaration_type": "Record<string, string>",
-      "source_modules": [],
+      "source_modules": [
+        "data/miningLocations.js"
+      ],
       "nav_consuming": false
     },
     {
       "name": "miningLocationLabel",
       "kind": "function",
       "section": "world catalogs (data tables and pure helpers)",
-      "source_module": null,
+      "source_module": "data/miningLocations.js",
       "runtime": true,
       "signatures": [
         {
@@ -8612,14 +8667,16 @@
       ],
       "members": [],
       "family_id": "mining",
-      "source_modules": [],
+      "source_modules": [
+        "data/miningLocations.js"
+      ],
       "nav_consuming": false
     },
     {
       "name": "resolveMiningLocation",
       "kind": "function",
       "section": "world catalogs (data tables and pure helpers)",
-      "source_module": null,
+      "source_module": "data/miningLocations.js",
       "runtime": true,
       "signatures": [
         {
@@ -8630,7 +8687,9 @@
       ],
       "members": [],
       "family_id": "mining",
-      "source_modules": [],
+      "source_modules": [
+        "data/miningLocations.js"
+      ],
       "nav_consuming": false
     },
     {
@@ -8772,7 +8831,7 @@
       "name": "FishingGearPiece",
       "kind": "interface",
       "section": "world catalogs (data tables and pure helpers)",
-      "source_module": null,
+      "source_module": "data/fishingMethods.js",
       "runtime": false,
       "signatures": [],
       "members": [
@@ -8818,14 +8877,16 @@
       ],
       "bases": [],
       "family_id": "fishing",
-      "source_modules": [],
+      "source_modules": [
+        "data/fishingMethods.js"
+      ],
       "nav_consuming": false
     },
     {
       "name": "FishingMethod",
       "kind": "interface",
       "section": "world catalogs (data tables and pure helpers)",
-      "source_module": null,
+      "source_module": "data/fishingMethods.js",
       "runtime": false,
       "signatures": [],
       "members": [
@@ -8884,66 +8945,76 @@
       ],
       "bases": [],
       "family_id": "fishing",
-      "source_modules": [],
+      "source_modules": [
+        "data/fishingMethods.js"
+      ],
       "nav_consuming": false
     },
     {
       "name": "WHIRLPOOL_IDS",
       "kind": "value",
       "section": "world catalogs (data tables and pure helpers)",
-      "source_module": null,
+      "source_module": "data/fishingMethods.js",
       "runtime": true,
       "signatures": [],
       "members": [],
       "family_id": "fishing",
       "declaration_type": "Set<number>",
-      "source_modules": [],
+      "source_modules": [
+        "data/fishingMethods.js"
+      ],
       "nav_consuming": false
     },
     {
       "name": "FISHING_METHODS",
       "kind": "value",
       "section": "world catalogs (data tables and pure helpers)",
-      "source_module": null,
+      "source_module": "data/fishingMethods.js",
       "runtime": true,
       "signatures": [],
       "members": [],
       "family_id": "fishing",
       "declaration_type": "FishingMethod[]",
-      "source_modules": [],
+      "source_modules": [
+        "data/fishingMethods.js"
+      ],
       "nav_consuming": false
     },
     {
       "name": "FISHING_METHOD_OPTIONS",
       "kind": "value",
       "section": "world catalogs (data tables and pure helpers)",
-      "source_module": null,
+      "source_module": "data/fishingMethods.js",
       "runtime": true,
       "signatures": [],
       "members": [],
       "family_id": "fishing",
       "declaration_type": "string[]",
-      "source_modules": [],
+      "source_modules": [
+        "data/fishingMethods.js"
+      ],
       "nav_consuming": false
     },
     {
       "name": "ALL_FISHING_GEAR_NAMES",
       "kind": "value",
       "section": "world catalogs (data tables and pure helpers)",
-      "source_module": null,
+      "source_module": "data/fishingMethods.js",
       "runtime": true,
       "signatures": [],
       "members": [],
       "family_id": "fishing",
       "declaration_type": "string[]",
-      "source_modules": [],
+      "source_modules": [
+        "data/fishingMethods.js"
+      ],
       "nav_consuming": false
     },
     {
       "name": "resolveFishMethod",
       "kind": "function",
       "section": "world catalogs (data tables and pure helpers)",
-      "source_module": null,
+      "source_module": "data/fishingMethods.js",
       "runtime": true,
       "signatures": [
         {
@@ -8954,14 +9025,16 @@
       ],
       "members": [],
       "family_id": "fishing",
-      "source_modules": [],
+      "source_modules": [
+        "data/fishingMethods.js"
+      ],
       "nav_consuming": false
     },
     {
       "name": "gearKeepNames",
       "kind": "function",
       "section": "world catalogs (data tables and pure helpers)",
-      "source_module": null,
+      "source_module": "data/fishingMethods.js",
       "runtime": true,
       "signatures": [
         {
@@ -8972,14 +9045,16 @@
       ],
       "members": [],
       "family_id": "fishing",
-      "source_modules": [],
+      "source_modules": [
+        "data/fishingMethods.js"
+      ],
       "nav_consuming": false
     },
     {
       "name": "hasFishingGear",
       "kind": "function",
       "section": "world catalogs (data tables and pure helpers)",
-      "source_module": null,
+      "source_module": "data/fishingMethods.js",
       "runtime": true,
       "signatures": [
         {
@@ -8990,14 +9065,16 @@
       ],
       "members": [],
       "family_id": "fishing",
-      "source_modules": [],
+      "source_modules": [
+        "data/fishingMethods.js"
+      ],
       "nav_consuming": false
     },
     {
       "name": "missingFishingGear",
       "kind": "function",
       "section": "world catalogs (data tables and pure helpers)",
-      "source_module": null,
+      "source_module": "data/fishingMethods.js",
       "runtime": true,
       "signatures": [
         {
@@ -9008,14 +9085,16 @@
       ],
       "members": [],
       "family_id": "fishing",
-      "source_modules": [],
+      "source_modules": [
+        "data/fishingMethods.js"
+      ],
       "nav_consuming": false
     },
     {
       "name": "gearLabel",
       "kind": "function",
       "section": "world catalogs (data tables and pure helpers)",
-      "source_module": null,
+      "source_module": "data/fishingMethods.js",
       "runtime": true,
       "signatures": [
         {
@@ -9026,14 +9105,16 @@
       ],
       "members": [],
       "family_id": "fishing",
-      "source_modules": [],
+      "source_modules": [
+        "data/fishingMethods.js"
+      ],
       "nav_consuming": false
     },
     {
       "name": "fishingRestockPlan",
       "kind": "function",
       "section": "world catalogs (data tables and pure helpers)",
-      "source_module": null,
+      "source_module": "data/fishingMethods.js",
       "runtime": true,
       "signatures": [
         {
@@ -9044,14 +9125,16 @@
       ],
       "members": [],
       "family_id": "fishing",
-      "source_modules": [],
+      "source_modules": [
+        "data/fishingMethods.js"
+      ],
       "nav_consuming": false
     },
     {
       "name": "spotMatchesMethod",
       "kind": "function",
       "section": "world catalogs (data tables and pure helpers)",
-      "source_module": null,
+      "source_module": "data/fishingMethods.js",
       "runtime": true,
       "signatures": [
         {
@@ -9062,7 +9145,9 @@
       ],
       "members": [],
       "family_id": "fishing",
-      "source_modules": [],
+      "source_modules": [
+        "data/fishingMethods.js"
+      ],
       "nav_consuming": false
     },
     {
@@ -10771,6 +10856,435 @@
       "mapping_kind": "re-export"
     },
     {
+      "public_name": "WOODCUTTING_LOCATIONS",
+      "source_name": "WOODCUTTING_LOCATIONS",
+      "module": "data/woodcuttingLocations.js",
+      "family_id": "woodcutting",
+      "shim": "data/woodcutting_locations.js",
+      "nav_consuming": false,
+      "source_modules": [
+        "data/woodcuttingLocations.js"
+      ],
+      "is_alias": false,
+      "mapping_kind": "re-export"
+    },
+    {
+      "public_name": "WOODCUTTING_LOCATION_OPTIONS",
+      "source_name": "WOODCUTTING_LOCATION_OPTIONS",
+      "module": "data/woodcuttingLocations.js",
+      "family_id": "woodcutting",
+      "shim": "data/woodcutting_locations.js",
+      "nav_consuming": false,
+      "source_modules": [
+        "data/woodcuttingLocations.js"
+      ],
+      "is_alias": false,
+      "mapping_kind": "re-export"
+    },
+    {
+      "public_name": "resolveWoodcuttingLocation",
+      "source_name": "resolveWoodcuttingLocation",
+      "module": "data/woodcuttingLocations.js",
+      "family_id": "woodcutting",
+      "shim": "data/woodcutting_locations.js",
+      "nav_consuming": false,
+      "source_modules": [
+        "data/woodcuttingLocations.js"
+      ],
+      "is_alias": false,
+      "mapping_kind": "re-export"
+    },
+    {
+      "public_name": "MINING_LOCATIONS",
+      "source_name": "MINING_LOCATIONS",
+      "module": "data/miningLocations.js",
+      "family_id": "mining",
+      "shim": "data/mining_locations.js",
+      "nav_consuming": false,
+      "source_modules": [
+        "data/miningLocations.js"
+      ],
+      "is_alias": false,
+      "mapping_kind": "re-export"
+    },
+    {
+      "public_name": "MINING_LOCATION_OPTIONS",
+      "source_name": "MINING_LOCATION_OPTIONS",
+      "module": "data/miningLocations.js",
+      "family_id": "mining",
+      "shim": "data/mining_locations.js",
+      "nav_consuming": false,
+      "source_modules": [
+        "data/miningLocations.js"
+      ],
+      "is_alias": false,
+      "mapping_kind": "re-export"
+    },
+    {
+      "public_name": "MINING_LOCATION_OPTION_LABELS",
+      "source_name": "MINING_LOCATION_OPTION_LABELS",
+      "module": "data/miningLocations.js",
+      "family_id": "mining",
+      "shim": "data/mining_locations.js",
+      "nav_consuming": false,
+      "source_modules": [
+        "data/miningLocations.js"
+      ],
+      "is_alias": false,
+      "mapping_kind": "re-export"
+    },
+    {
+      "public_name": "miningLocationLabel",
+      "source_name": "miningLocationLabel",
+      "module": "data/miningLocations.js",
+      "family_id": "mining",
+      "shim": "data/mining_locations.js",
+      "nav_consuming": false,
+      "source_modules": [
+        "data/miningLocations.js"
+      ],
+      "is_alias": false,
+      "mapping_kind": "re-export"
+    },
+    {
+      "public_name": "resolveMiningLocation",
+      "source_name": "resolveMiningLocation",
+      "module": "data/miningLocations.js",
+      "family_id": "mining",
+      "shim": "data/mining_locations.js",
+      "nav_consuming": false,
+      "source_modules": [
+        "data/miningLocations.js"
+      ],
+      "is_alias": false,
+      "mapping_kind": "re-export"
+    },
+    {
+      "public_name": "FISHING_LOCATIONS",
+      "source_name": "FISHING_LOCATIONS",
+      "module": "data/fishingLocations.js",
+      "family_id": "fishing",
+      "shim": "data/fishing_locations.js",
+      "nav_consuming": false,
+      "source_modules": [
+        "data/fishingLocations.js"
+      ],
+      "is_alias": false,
+      "mapping_kind": "re-export"
+    },
+    {
+      "public_name": "FISHING_LOCATION_OPTIONS",
+      "source_name": "FISHING_LOCATION_OPTIONS",
+      "module": "data/fishingLocations.js",
+      "family_id": "fishing",
+      "shim": "data/fishing_locations.js",
+      "nav_consuming": false,
+      "source_modules": [
+        "data/fishingLocations.js"
+      ],
+      "is_alias": false,
+      "mapping_kind": "re-export"
+    },
+    {
+      "public_name": "resolveFishingLocation",
+      "source_name": "resolveFishingLocation",
+      "module": "data/fishingLocations.js",
+      "family_id": "fishing",
+      "shim": "data/fishing_locations.js",
+      "nav_consuming": false,
+      "source_modules": [
+        "data/fishingLocations.js"
+      ],
+      "is_alias": false,
+      "mapping_kind": "re-export"
+    },
+    {
+      "public_name": "WHIRLPOOL_IDS",
+      "source_name": "WHIRLPOOL_IDS",
+      "module": "data/fishingMethods.js",
+      "family_id": "fishing",
+      "shim": "data/fishing_methods.js",
+      "nav_consuming": false,
+      "source_modules": [
+        "data/fishingMethods.js"
+      ],
+      "is_alias": false,
+      "mapping_kind": "re-export"
+    },
+    {
+      "public_name": "FISHING_METHODS",
+      "source_name": "FISHING_METHODS",
+      "module": "data/fishingMethods.js",
+      "family_id": "fishing",
+      "shim": "data/fishing_methods.js",
+      "nav_consuming": false,
+      "source_modules": [
+        "data/fishingMethods.js"
+      ],
+      "is_alias": false,
+      "mapping_kind": "re-export"
+    },
+    {
+      "public_name": "FISHING_METHOD_OPTIONS",
+      "source_name": "FISHING_METHOD_OPTIONS",
+      "module": "data/fishingMethods.js",
+      "family_id": "fishing",
+      "shim": "data/fishing_methods.js",
+      "nav_consuming": false,
+      "source_modules": [
+        "data/fishingMethods.js"
+      ],
+      "is_alias": false,
+      "mapping_kind": "re-export"
+    },
+    {
+      "public_name": "ALL_FISHING_GEAR_NAMES",
+      "source_name": "ALL_FISHING_GEAR_NAMES",
+      "module": "data/fishingMethods.js",
+      "family_id": "fishing",
+      "shim": "data/fishing_methods.js",
+      "nav_consuming": false,
+      "source_modules": [
+        "data/fishingMethods.js"
+      ],
+      "is_alias": false,
+      "mapping_kind": "re-export"
+    },
+    {
+      "public_name": "resolveFishMethod",
+      "source_name": "resolveFishMethod",
+      "module": "data/fishingMethods.js",
+      "family_id": "fishing",
+      "shim": "data/fishing_methods.js",
+      "nav_consuming": false,
+      "source_modules": [
+        "data/fishingMethods.js"
+      ],
+      "is_alias": false,
+      "mapping_kind": "re-export"
+    },
+    {
+      "public_name": "gearKeepNames",
+      "source_name": "gearKeepNames",
+      "module": "data/fishingMethods.js",
+      "family_id": "fishing",
+      "shim": "data/fishing_methods.js",
+      "nav_consuming": false,
+      "source_modules": [
+        "data/fishingMethods.js"
+      ],
+      "is_alias": false,
+      "mapping_kind": "re-export"
+    },
+    {
+      "public_name": "hasFishingGear",
+      "source_name": "hasFishingGear",
+      "module": "data/fishingMethods.js",
+      "family_id": "fishing",
+      "shim": "data/fishing_methods.js",
+      "nav_consuming": false,
+      "source_modules": [
+        "data/fishingMethods.js"
+      ],
+      "is_alias": false,
+      "mapping_kind": "re-export"
+    },
+    {
+      "public_name": "missingFishingGear",
+      "source_name": "missingFishingGear",
+      "module": "data/fishingMethods.js",
+      "family_id": "fishing",
+      "shim": "data/fishing_methods.js",
+      "nav_consuming": false,
+      "source_modules": [
+        "data/fishingMethods.js"
+      ],
+      "is_alias": false,
+      "mapping_kind": "re-export"
+    },
+    {
+      "public_name": "gearLabel",
+      "source_name": "gearLabel",
+      "module": "data/fishingMethods.js",
+      "family_id": "fishing",
+      "shim": "data/fishing_methods.js",
+      "nav_consuming": false,
+      "source_modules": [
+        "data/fishingMethods.js"
+      ],
+      "is_alias": false,
+      "mapping_kind": "re-export"
+    },
+    {
+      "public_name": "fishingRestockPlan",
+      "source_name": "fishingRestockPlan",
+      "module": "data/fishingMethods.js",
+      "family_id": "fishing",
+      "shim": "data/fishing_methods.js",
+      "nav_consuming": false,
+      "source_modules": [
+        "data/fishingMethods.js"
+      ],
+      "is_alias": false,
+      "mapping_kind": "re-export"
+    },
+    {
+      "public_name": "spotMatchesMethod",
+      "source_name": "spotMatchesMethod",
+      "module": "data/fishingMethods.js",
+      "family_id": "fishing",
+      "shim": "data/fishing_methods.js",
+      "nav_consuming": false,
+      "source_modules": [
+        "data/fishingMethods.js"
+      ],
+      "is_alias": false,
+      "mapping_kind": "re-export"
+    },
+    {
+      "public_name": "FISHING_SHOP_COSTS",
+      "source_name": "FISHING_SHOP_COSTS",
+      "module": "shim/fishing_gear.js",
+      "family_id": "fishing",
+      "shim": "fishing_gear.js",
+      "nav_consuming": false,
+      "source_modules": [
+        "shim/fishing_gear.js"
+      ],
+      "is_alias": false,
+      "mapping_kind": "re-export"
+    },
+    {
+      "public_name": "GERRANT_ONLY_FISHING",
+      "source_name": "GERRANT_ONLY_FISHING",
+      "module": "shim/fishing_gear.js",
+      "family_id": "fishing",
+      "shim": "fishing_gear.js",
+      "nav_consuming": false,
+      "source_modules": [
+        "shim/fishing_gear.js"
+      ],
+      "is_alias": false,
+      "mapping_kind": "re-export"
+    },
+    {
+      "public_name": "fishingVendorFor",
+      "source_name": "fishingVendorFor",
+      "module": "shim/fishing_gear.js",
+      "family_id": "fishing",
+      "shim": "fishing_gear.js",
+      "nav_consuming": false,
+      "source_modules": [
+        "shim/fishing_gear.js"
+      ],
+      "is_alias": false,
+      "mapping_kind": "re-export"
+    },
+    {
+      "public_name": "fishingShopCost",
+      "source_name": "fishingShopCost",
+      "module": "shim/fishing_gear.js",
+      "family_id": "fishing",
+      "shim": "fishing_gear.js",
+      "nav_consuming": false,
+      "source_modules": [
+        "shim/fishing_gear.js"
+      ],
+      "is_alias": false,
+      "mapping_kind": "re-export"
+    },
+    {
+      "public_name": "isFishingBaitPiece",
+      "source_name": "isFishingBaitPiece",
+      "module": "shim/fishing_gear.js",
+      "family_id": "fishing",
+      "shim": "fishing_gear.js",
+      "nav_consuming": false,
+      "source_modules": [
+        "shim/fishing_gear.js"
+      ],
+      "is_alias": false,
+      "mapping_kind": "re-export"
+    },
+    {
+      "public_name": "withBaitTarget",
+      "source_name": "withBaitTarget",
+      "module": "shim/fishing_gear.js",
+      "family_id": "fishing",
+      "shim": "fishing_gear.js",
+      "nav_consuming": false,
+      "source_modules": [
+        "shim/fishing_gear.js"
+      ],
+      "is_alias": false,
+      "mapping_kind": "re-export"
+    },
+    {
+      "public_name": "planFishingGearBuys",
+      "source_name": "planFishingGearBuys",
+      "module": "shim/fishing_gear.js",
+      "family_id": "fishing",
+      "shim": "fishing_gear.js",
+      "nav_consuming": false,
+      "source_modules": [
+        "shim/fishing_gear.js"
+      ],
+      "is_alias": false,
+      "mapping_kind": "re-export"
+    },
+    {
+      "public_name": "planFishingGearAcquire",
+      "source_name": "planFishingGearAcquire",
+      "module": "shim/fishing_gear.js",
+      "family_id": "fishing",
+      "shim": "fishing_gear.js",
+      "nav_consuming": false,
+      "source_modules": [
+        "shim/fishing_gear.js"
+      ],
+      "is_alias": false,
+      "mapping_kind": "re-export"
+    },
+    {
+      "public_name": "buyPlansCost",
+      "source_name": "buyPlansCost",
+      "module": "shim/fishing_gear.js",
+      "family_id": "fishing",
+      "shim": "fishing_gear.js",
+      "nav_consuming": false,
+      "source_modules": [
+        "shim/fishing_gear.js"
+      ],
+      "is_alias": false,
+      "mapping_kind": "re-export"
+    },
+    {
+      "public_name": "fishingGearShopCart",
+      "source_name": "fishingGearShopCart",
+      "module": "shim/fishing_gear.js",
+      "family_id": "fishing",
+      "shim": "fishing_gear.js",
+      "nav_consuming": false,
+      "source_modules": [
+        "shim/fishing_gear.js"
+      ],
+      "is_alias": false,
+      "mapping_kind": "re-export"
+    },
+    {
+      "public_name": "shopableMissingFishingGear",
+      "source_name": "shopableMissingFishingGear",
+      "module": "shim/fishing_gear.js",
+      "family_id": "fishing",
+      "shim": "fishing_gear.js",
+      "nav_consuming": false,
+      "source_modules": [
+        "shim/fishing_gear.js"
+      ],
+      "is_alias": false,
+      "mapping_kind": "re-export"
+    },
+    {
       "public_name": "ROCK_OPTIONS",
       "source_name": "ROCK_OPTIONS",
       "module": "data/miningRocks.js",
@@ -11005,17 +11519,6 @@
       "mapping_kind": "re-export"
     },
     {
-      "public_name": "ALL_FISHING_GEAR_NAMES",
-      "source_name": "ALL_FISHING_GEAR_NAMES",
-      "module": null,
-      "shim": null,
-      "source_modules": [],
-      "family_id": "fishing",
-      "nav_consuming": false,
-      "is_alias": false,
-      "mapping_kind": "direct-value"
-    },
-    {
       "public_name": "AXE_BAR_FOR",
       "source_name": "AXE_BAR_FOR",
       "module": null,
@@ -11108,61 +11611,6 @@
       "mapping_kind": "direct-value"
     },
     {
-      "public_name": "FISHING_LOCATIONS",
-      "source_name": "FISHING_LOCATIONS",
-      "module": null,
-      "shim": null,
-      "source_modules": [],
-      "family_id": "fishing",
-      "nav_consuming": false,
-      "is_alias": false,
-      "mapping_kind": "direct-value"
-    },
-    {
-      "public_name": "FISHING_LOCATION_OPTIONS",
-      "source_name": "FISHING_LOCATION_OPTIONS",
-      "module": null,
-      "shim": null,
-      "source_modules": [],
-      "family_id": "fishing",
-      "nav_consuming": false,
-      "is_alias": false,
-      "mapping_kind": "direct-value"
-    },
-    {
-      "public_name": "FISHING_METHODS",
-      "source_name": "FISHING_METHODS",
-      "module": null,
-      "shim": null,
-      "source_modules": [],
-      "family_id": "fishing",
-      "nav_consuming": false,
-      "is_alias": false,
-      "mapping_kind": "direct-value"
-    },
-    {
-      "public_name": "FISHING_METHOD_OPTIONS",
-      "source_name": "FISHING_METHOD_OPTIONS",
-      "module": null,
-      "shim": null,
-      "source_modules": [],
-      "family_id": "fishing",
-      "nav_consuming": false,
-      "is_alias": false,
-      "mapping_kind": "direct-value"
-    },
-    {
-      "public_name": "FISHING_SHOP_COSTS",
-      "source_name": "FISHING_SHOP_COSTS",
-      "module": null,
-      "shim": null,
-      "source_modules": [],
-      "family_id": "fishing",
-      "nav_consuming": false,
-      "is_alias": false,
-      "mapping_kind": "direct-value"
-    },
-    {
       "public_name": "FORGETFUL_BANK_ODDS",
       "source_name": "FORGETFUL_BANK_ODDS",
       "module": null,
@@ -11185,22 +11633,13 @@
       "mapping_kind": "direct-value"
     },
     {
-      "public_name": "GERRANT_ONLY_FISHING",
-      "source_name": "GERRANT_ONLY_FISHING",
-      "module": null,
-      "shim": null,
-      "source_modules": [],
-      "family_id": "fishing",
-      "nav_consuming": false,
-      "is_alias": false,
-      "mapping_kind": "direct-value"
-    },
-    {
       "public_name": "GERRANT_VENDOR",
       "source_name": "GERRANT_VENDOR",
       "module": null,
       "shim": null,
-      "source_modules": [],
+      "source_modules": [
+        "shim/fishing_gear.js"
+      ],
       "family_id": "acquisition",
       "nav_consuming": true,
       "is_alias": false,
@@ -11211,7 +11650,9 @@
       "source_name": "HARRY_VENDOR",
       "module": null,
       "shim": null,
-      "source_modules": [],
+      "source_modules": [
+        "shim/fishing_gear.js"
+      ],
       "family_id": "acquisition",
       "nav_consuming": true,
       "is_alias": false,
@@ -11229,39 +11670,6 @@
       "nav_consuming": false,
       "is_alias": false,
       "mapping_kind": "direct-class"
-    },
-    {
-      "public_name": "MINING_LOCATIONS",
-      "source_name": "MINING_LOCATIONS",
-      "module": null,
-      "shim": null,
-      "source_modules": [],
-      "family_id": "mining",
-      "nav_consuming": false,
-      "is_alias": false,
-      "mapping_kind": "direct-value"
-    },
-    {
-      "public_name": "MINING_LOCATION_OPTIONS",
-      "source_name": "MINING_LOCATION_OPTIONS",
-      "module": null,
-      "shim": null,
-      "source_modules": [],
-      "family_id": "mining",
-      "nav_consuming": false,
-      "is_alias": false,
-      "mapping_kind": "direct-value"
-    },
-    {
-      "public_name": "MINING_LOCATION_OPTION_LABELS",
-      "source_name": "MINING_LOCATION_OPTION_LABELS",
-      "module": null,
-      "shim": null,
-      "source_modules": [],
-      "family_id": "mining",
-      "nav_consuming": false,
-      "is_alias": false,
-      "mapping_kind": "direct-value"
     },
     {
       "public_name": "NURMOF_VENDOR",
@@ -11352,43 +11760,6 @@
       "mapping_kind": "direct-value"
     },
     {
-      "public_name": "WHIRLPOOL_IDS",
-      "source_name": "WHIRLPOOL_IDS",
-      "module": null,
-      "shim": null,
-      "source_modules": [],
-      "family_id": "fishing",
-      "nav_consuming": false,
-      "is_alias": false,
-      "mapping_kind": "direct-value"
-    },
-    {
-      "public_name": "WOODCUTTING_LOCATIONS",
-      "source_name": "WOODCUTTING_LOCATIONS",
-      "module": null,
-      "shim": null,
-      "source_modules": [
-        "data/woodcuttingLocations.js"
-      ],
-      "family_id": "woodcutting",
-      "nav_consuming": false,
-      "is_alias": false,
-      "mapping_kind": "direct-value"
-    },
-    {
-      "public_name": "WOODCUTTING_LOCATION_OPTIONS",
-      "source_name": "WOODCUTTING_LOCATION_OPTIONS",
-      "module": null,
-      "shim": null,
-      "source_modules": [
-        "data/woodcuttingLocations.js"
-      ],
-      "family_id": "woodcutting",
-      "nav_consuming": false,
-      "is_alias": false,
-      "mapping_kind": "direct-value"
-    },
-    {
       "public_name": "acquireKeepNames",
       "source_name": "acquireKeepNames",
       "module": null,
@@ -11455,17 +11826,6 @@
       "mapping_kind": "direct-function"
     },
     {
-      "public_name": "buyPlansCost",
-      "source_name": "buyPlansCost",
-      "module": null,
-      "shim": null,
-      "source_modules": [],
-      "family_id": "fishing",
-      "nav_consuming": false,
-      "is_alias": false,
-      "mapping_kind": "direct-function"
-    },
-    {
       "public_name": "canFundPlan",
       "source_name": "canFundPlan",
       "module": null,
@@ -11499,72 +11859,6 @@
       "mapping_kind": "direct-value"
     },
     {
-      "public_name": "fishingGearShopCart",
-      "source_name": "fishingGearShopCart",
-      "module": null,
-      "shim": null,
-      "source_modules": [],
-      "family_id": "fishing",
-      "nav_consuming": false,
-      "is_alias": false,
-      "mapping_kind": "direct-function"
-    },
-    {
-      "public_name": "fishingRestockPlan",
-      "source_name": "fishingRestockPlan",
-      "module": null,
-      "shim": null,
-      "source_modules": [],
-      "family_id": "fishing",
-      "nav_consuming": false,
-      "is_alias": false,
-      "mapping_kind": "direct-function"
-    },
-    {
-      "public_name": "fishingShopCost",
-      "source_name": "fishingShopCost",
-      "module": null,
-      "shim": null,
-      "source_modules": [],
-      "family_id": "fishing",
-      "nav_consuming": false,
-      "is_alias": false,
-      "mapping_kind": "direct-function"
-    },
-    {
-      "public_name": "fishingVendorFor",
-      "source_name": "fishingVendorFor",
-      "module": null,
-      "shim": null,
-      "source_modules": [],
-      "family_id": "fishing",
-      "nav_consuming": false,
-      "is_alias": false,
-      "mapping_kind": "direct-function"
-    },
-    {
-      "public_name": "gearKeepNames",
-      "source_name": "gearKeepNames",
-      "module": null,
-      "shim": null,
-      "source_modules": [],
-      "family_id": "fishing",
-      "nav_consuming": false,
-      "is_alias": false,
-      "mapping_kind": "direct-function"
-    },
-    {
-      "public_name": "gearLabel",
-      "source_name": "gearLabel",
-      "module": null,
-      "shim": null,
-      "source_modules": [],
-      "family_id": "fishing",
-      "nav_consuming": false,
-      "is_alias": false,
-      "mapping_kind": "direct-function"
-    },
-    {
       "public_name": "hasAll",
       "source_name": "hasAll",
       "module": null,
@@ -11576,17 +11870,6 @@
       "mapping_kind": "direct-function"
     },
     {
-      "public_name": "hasFishingGear",
-      "source_name": "hasFishingGear",
-      "module": null,
-      "shim": null,
-      "source_modules": [],
-      "family_id": "fishing",
-      "nav_consuming": false,
-      "is_alias": false,
-      "mapping_kind": "direct-function"
-    },
-    {
       "public_name": "held",
       "source_name": "held",
       "module": null,
@@ -11594,39 +11877,6 @@
       "source_modules": [],
       "family_id": "acquisition",
       "nav_consuming": true,
-      "is_alias": false,
-      "mapping_kind": "direct-function"
-    },
-    {
-      "public_name": "isFishingBaitPiece",
-      "source_name": "isFishingBaitPiece",
-      "module": null,
-      "shim": null,
-      "source_modules": [],
-      "family_id": "fishing",
-      "nav_consuming": false,
-      "is_alias": false,
-      "mapping_kind": "direct-function"
-    },
-    {
-      "public_name": "miningLocationLabel",
-      "source_name": "miningLocationLabel",
-      "module": null,
-      "shim": null,
-      "source_modules": [],
-      "family_id": "mining",
-      "nav_consuming": false,
-      "is_alias": false,
-      "mapping_kind": "direct-function"
-    },
-    {
-      "public_name": "missingFishingGear",
-      "source_name": "missingFishingGear",
-      "module": null,
-      "shim": null,
-      "source_modules": [],
-      "family_id": "fishing",
-      "nav_consuming": false,
       "is_alias": false,
       "mapping_kind": "direct-function"
     },
@@ -11675,28 +11925,6 @@
       "mapping_kind": "direct-function"
     },
     {
-      "public_name": "planFishingGearAcquire",
-      "source_name": "planFishingGearAcquire",
-      "module": null,
-      "shim": null,
-      "source_modules": [],
-      "family_id": "fishing",
-      "nav_consuming": false,
-      "is_alias": false,
-      "mapping_kind": "direct-function"
-    },
-    {
-      "public_name": "planFishingGearBuys",
-      "source_name": "planFishingGearBuys",
-      "module": null,
-      "shim": null,
-      "source_modules": [],
-      "family_id": "fishing",
-      "nav_consuming": false,
-      "is_alias": false,
-      "mapping_kind": "direct-function"
-    },
-    {
       "public_name": "planGatherToolAcquire",
       "source_name": "planGatherToolAcquire",
       "module": null,
@@ -11737,85 +11965,6 @@
       "source_modules": [],
       "family_id": "walking",
       "nav_consuming": true,
-      "is_alias": false,
-      "mapping_kind": "direct-function"
-    },
-    {
-      "public_name": "resolveFishMethod",
-      "source_name": "resolveFishMethod",
-      "module": null,
-      "shim": null,
-      "source_modules": [],
-      "family_id": "fishing",
-      "nav_consuming": false,
-      "is_alias": false,
-      "mapping_kind": "direct-function"
-    },
-    {
-      "public_name": "resolveFishingLocation",
-      "source_name": "resolveFishingLocation",
-      "module": null,
-      "shim": null,
-      "source_modules": [],
-      "family_id": "fishing",
-      "nav_consuming": false,
-      "is_alias": false,
-      "mapping_kind": "direct-function"
-    },
-    {
-      "public_name": "resolveMiningLocation",
-      "source_name": "resolveMiningLocation",
-      "module": null,
-      "shim": null,
-      "source_modules": [],
-      "family_id": "mining",
-      "nav_consuming": false,
-      "is_alias": false,
-      "mapping_kind": "direct-function"
-    },
-    {
-      "public_name": "resolveWoodcuttingLocation",
-      "source_name": "resolveWoodcuttingLocation",
-      "module": null,
-      "shim": null,
-      "source_modules": [
-        "data/woodcuttingLocations.js"
-      ],
-      "family_id": "woodcutting",
-      "nav_consuming": false,
-      "is_alias": false,
-      "mapping_kind": "direct-function"
-    },
-    {
-      "public_name": "shopableMissingFishingGear",
-      "source_name": "shopableMissingFishingGear",
-      "module": null,
-      "shim": null,
-      "source_modules": [],
-      "family_id": "fishing",
-      "nav_consuming": false,
-      "is_alias": false,
-      "mapping_kind": "direct-function"
-    },
-    {
-      "public_name": "spotMatchesMethod",
-      "source_name": "spotMatchesMethod",
-      "module": null,
-      "shim": null,
-      "source_modules": [],
-      "family_id": "fishing",
-      "nav_consuming": false,
-      "is_alias": false,
-      "mapping_kind": "direct-function"
-    },
-    {
-      "public_name": "withBaitTarget",
-      "source_name": "withBaitTarget",
-      "module": null,
-      "shim": null,
-      "source_modules": [],
-      "family_id": "fishing",
-      "nav_consuming": false,
       "is_alias": false,
       "mapping_kind": "direct-function"
     }
@@ -12257,6 +12406,11 @@
       "nav_consuming": true
     },
     {
+      "module": "data/cookingRanges.js",
+      "family_id": "cooking",
+      "nav_consuming": false
+    },
+    {
       "module": "data/cookLocations.js",
       "family_id": "cooking",
       "nav_consuming": false
@@ -12272,6 +12426,21 @@
       "nav_consuming": false
     },
     {
+      "module": "data/fishingLocations.js",
+      "family_id": "fishing",
+      "nav_consuming": false
+    },
+    {
+      "module": "data/fishingMethods.js",
+      "family_id": "fishing",
+      "nav_consuming": false
+    },
+    {
+      "module": "data/gatheringLocations.js",
+      "family_id": "gathering",
+      "nav_consuming": false
+    },
+    {
       "module": "data/herbs.js",
       "family_id": "catalog-data",
       "nav_consuming": false
@@ -12279,6 +12448,11 @@
     {
       "module": "data/itemdb.js",
       "family_id": "catalog-data",
+      "nav_consuming": false
+    },
+    {
+      "module": "data/miningLocations.js",
+      "family_id": "mining",
       "nav_consuming": false
     },
     {
@@ -12399,6 +12573,11 @@
     {
       "module": "shim/_kernel.js",
       "family_id": "compat-runtime",
+      "nav_consuming": false
+    },
+    {
+      "module": "shim/fishing_gear.js",
+      "family_id": "fishing",
       "nav_consuming": false
     },
     {
@@ -12811,31 +12990,11 @@
       "nav_consuming": true
     },
     {
-      "id": "not-impl-value:data/woodcuttingLocations.js:WOODCUTTING_LOCATIONS",
-      "module": "data/woodcuttingLocations.js",
-      "selector": "WOODCUTTING_LOCATIONS",
-      "reason": "The script-specific camp catalog has no verified native location source.",
-      "runtime": "crates/script-js/src/shim/data/woodcutting_locations.js:5",
-      "declaration": "export const WOODCUTTING_LOCATIONS: never;",
-      "family_id": "woodcutting",
-      "nav_consuming": false
-    },
-    {
-      "id": "not-impl-value:data/woodcuttingLocations.js:WOODCUTTING_LOCATION_OPTIONS",
-      "module": "data/woodcuttingLocations.js",
-      "selector": "WOODCUTTING_LOCATION_OPTIONS",
-      "reason": "The script-specific camp names have no verified native location source.",
-      "runtime": "crates/script-js/src/shim/data/woodcutting_locations.js:6",
-      "declaration": "export const WOODCUTTING_LOCATION_OPTIONS: never;",
-      "family_id": "woodcutting",
-      "nav_consuming": false
-    },
-    {
       "id": "bank-withdraw-load-numeric-id",
       "module": "api/bank/Bank.js",
       "selector": "Bank.withdrawLoad",
       "reason": "rs2b0t 90a69240 accepts a numeric item ID; the host adapter forwards the ID to the bank seat.",
-      "runtime": "crates/script-js/src/shim/bank.js:162",
+      "runtime": "crates/script-js/src/shim/bank.js:165",
       "declaration": "/** Fill the pack: Withdraw-All when present, otherwise Withdraw-X for free slots. */\nwithdrawLoad(name: string | number): Promise<boolean>;",
       "family_id": "bank",
       "nav_consuming": true
@@ -12909,28 +13068,6 @@
       "runtime": "crates/script-js/src/shim/clue_duel.js:47",
       "declaration": "partner: string;",
       "family_id": "duel",
-      "nav_consuming": true
-    },
-    {
-      "id": "bank-native-deposit-except",
-      "module": "api/bank/Bank.js",
-      "selector": "Bank.depositAllExcept",
-      "add": true,
-      "reason": "Native deposit machine accepts iterable or array-like keep names and resolves without a boolean result.",
-      "runtime": "crates/script-js/src/shim/bank.js:68",
-      "declaration": "depositAllExcept(keep?: Iterable<string> | ArrayLike<string>): Promise<void>;",
-      "family_id": "bank",
-      "nav_consuming": true
-    },
-    {
-      "id": "bank-native-nearest-world",
-      "module": "api/bank/Bank.js",
-      "selector": "Bank.openNearestWorld",
-      "add": true,
-      "reason": "Host exposes a zero-argument world-bank opener absent from the frozen Bank object.",
-      "runtime": "crates/script-js/src/shim/bank.js:117",
-      "declaration": "openNearestWorld(): Promise<boolean>;",
-      "family_id": "bank",
       "nav_consuming": true
     },
     {
@@ -13330,11 +13467,21 @@
       "nav_consuming": false
     },
     {
+      "id": "native-fishing-gear-types",
+      "module": "shim/fishing_gear.js",
+      "selector": "$module",
+      "reason": "The fishing members of ToolAcquire.ts are served by this fishing-owned native adapter until the acquisition family serves that module; the declarations preserve the pinned ToolAcquire.ts signatures and caller-object identity.",
+      "runtime": "crates/script-js/src/shim/fishing_gear.js:1",
+      "declaration": "import Tile from '../geometry/Tile.js'; import type { FishingGearPiece, FishingMethod } from '../data/fishingMethods.js'; export interface ToolVendor { keeper: string; stand: Tile; bankStand: Tile; hopFrom?: Tile; hopLoc?: string; hopAction?: string; } export type ToolAcquirePlan = { kind: 'repair'; brokenName: string; label: 'pickaxe' | 'axe'; vendor: ToolVendor; prefer: string[]; } | { kind: 'buy'; name: string; cost: number; qty: number; vendor: ToolVendor; equip: boolean; reason: string; } | { kind: 'smith'; name: string; bar: string; smithLevel: number; vendorBank: Tile; anvilStand: Tile; equip: boolean; reason: string; }; export interface AcquireWorld { skillLevel: (skill: string) => number; heldCount: (name: string) => number; invCount: (name: string) => number; bankCount: (name: string) => number; worn: (name: string) => boolean; } export interface FishingVendorNear { x: number; z: number; } export interface PlanFishingGearOpts { near?: FishingVendorNear | null; baitQty?: number; } export type FishingGearBuyPlan = Extract<ToolAcquirePlan, { kind: 'buy'; }>; export const GERRANT_ONLY_FISHING: ReadonlySet<string>; export const FISHING_SHOP_COSTS: Readonly<Record<string, number>>; export const GERRANT_VENDOR: ToolVendor; export const HARRY_VENDOR: ToolVendor; export function fishingVendorFor(name: string, near?: FishingVendorNear | null): ToolVendor; export function fishingShopCost(name: string): number | null; export function isFishingBaitPiece(g: Pick<FishingGearPiece, 'name' | 'restock'>): boolean; export function withBaitTarget(method: Pick<FishingMethod, 'gear'>, baitQty: number): { gear: FishingGearPiece[]; }; export function planFishingGearBuys(method: Pick<FishingMethod, 'gear'>, w: AcquireWorld, opts?: PlanFishingGearOpts): FishingGearBuyPlan[]; export function planFishingGearAcquire(method: Pick<FishingMethod, 'gear'>, w: AcquireWorld, opts?: PlanFishingGearOpts): ToolAcquirePlan | null; export function buyPlansCost(plans: readonly Pick<FishingGearBuyPlan, 'cost'>[]): number; export function fishingGearShopCart(method: Pick<FishingMethod, 'gear'>, w: AcquireWorld, opts?: PlanFishingGearOpts): FishingGearBuyPlan[]; export function shopableMissingFishingGear(gear: readonly FishingGearPiece[], count: (name: string) => number): string[];",
+      "family_id": "fishing",
+      "nav_consuming": false
+    },
+    {
       "id": "scene-row-common-posted-shape",
       "module": "adapter/ClientAdapter.js",
       "selector": "$add",
       "reason": "The V8 SceneEntity writer posts flat x/z/level/actions, the nested tile and common combat fields; it does not expose the FlatBuffer-only shape or angle fields. ClientAdapter returns these posted rows unchanged.",
-      "runtime": "crates/script-js/src/shim/client_adapter.js:104",
+      "runtime": "crates/script-js/src/shim/client_adapter.js:109",
       "declaration": "interface PostedSceneEntity { index: number; id: number; name: string | null; x: number; z: number; level: number; tile: WorldTile; distance: number; max_health: number; totalHealth: number; in_combat: boolean; animating: boolean; actions: string[]; reachable: boolean; reachable_adj: boolean; combat_level: number; target_kind: number; target_index: number; faceEntity: number; size: number; nx: number; nz: number; }",
       "family_id": "client-adapter",
       "nav_consuming": false
@@ -13385,7 +13532,7 @@
       "selector": "reader.selfTarget",
       "add": true,
       "reason": "The shim normalizes the posted self target to a required numeric kind/index pair, with an explicit none value (crates/script-js/src/shim/client_adapter.js:185-191).",
-      "runtime": "crates/script-js/src/shim/client_adapter.js:185",
+      "runtime": "crates/script-js/src/shim/client_adapter.js:190",
       "declaration": "selfTarget(): { kind: number; index: number };",
       "family_id": "client-adapter",
       "nav_consuming": false
@@ -13508,7 +13655,7 @@
       "selector": "reader.chatContinueComId",
       "operation": "not-impl",
       "reason": "Unconditional not-impl: no arguments are inspected and no successful result is produced.",
-      "runtime": "crates/script-js/src/shim/client_adapter.js:128",
+      "runtime": "crates/script-js/src/shim/client_adapter.js:133",
       "async": false,
       "family_id": "client-adapter",
       "nav_consuming": false
@@ -13519,7 +13666,7 @@
       "selector": "reader.bankComId",
       "operation": "not-impl",
       "reason": "Unconditional not-impl: no arguments are inspected and no successful result is produced.",
-      "runtime": "crates/script-js/src/shim/client_adapter.js:248",
+      "runtime": "crates/script-js/src/shim/client_adapter.js:253",
       "async": false,
       "family_id": "client-adapter",
       "nav_consuming": false
@@ -13534,72 +13681,6 @@
       "async": true,
       "family_id": "game-state",
       "nav_consuming": false
-    },
-    {
-      "id": "not-impl:api/bank/Banking.js:purgePackAtBank",
-      "module": "api/bank/Banking.js",
-      "selector": "purgePackAtBank",
-      "operation": "not-impl",
-      "reason": "Unconditional not-impl: the multi-step bank transaction is not implemented.",
-      "runtime": "crates/script-js/src/shim/banking.js:141",
-      "async": true,
-      "family_id": "bank",
-      "nav_consuming": true
-    },
-    {
-      "id": "not-impl:api/bank/Banking.js:withdrawCoins",
-      "module": "api/bank/Banking.js",
-      "selector": "withdrawCoins",
-      "operation": "not-impl",
-      "reason": "Unconditional not-impl: the multi-step bank transaction is not implemented.",
-      "runtime": "crates/script-js/src/shim/banking.js:145",
-      "async": true,
-      "family_id": "bank",
-      "nav_consuming": true
-    },
-    {
-      "id": "not-impl:api/bank/Banking.js:bankPace",
-      "module": "api/bank/Banking.js",
-      "selector": "bankPace",
-      "operation": "not-impl",
-      "reason": "Unconditional not-impl: randomized pacing is not carried into native compatibility.",
-      "runtime": "crates/script-js/src/shim/banking.js:149",
-      "async": true,
-      "family_id": "bank",
-      "nav_consuming": true
-    },
-    {
-      "id": "not-impl:api/bank/Banking.js:bankPaceTicks",
-      "module": "api/bank/Banking.js",
-      "selector": "bankPaceTicks",
-      "operation": "not-impl",
-      "reason": "Unconditional not-impl: randomized pacing is not carried into native compatibility.",
-      "runtime": "crates/script-js/src/shim/banking.js:153",
-      "async": false,
-      "family_id": "bank",
-      "nav_consuming": true
-    },
-    {
-      "id": "not-impl:api/bank/bankSort.js:sortBank",
-      "module": "api/bank/bankSort.js",
-      "selector": "sortBank",
-      "operation": "not-impl",
-      "reason": "Unconditional not-impl: no arguments are inspected and no successful result is produced.",
-      "runtime": "crates/script-js/src/shim/bank_sort.js:8",
-      "async": true,
-      "family_id": "bank",
-      "nav_consuming": true
-    },
-    {
-      "id": "not-impl:api/bank/bankQuestJunk.js:findQuestJunk",
-      "module": "api/bank/bankQuestJunk.js",
-      "selector": "findQuestJunk",
-      "operation": "not-impl",
-      "reason": "Unconditional not-impl: no arguments are inspected and no successful result is produced.",
-      "runtime": "crates/script-js/src/shim/bank_quest_junk.js:6",
-      "async": false,
-      "family_id": "bank",
-      "nav_consuming": true
     },
     {
       "id": "not-impl:api/shop/Shop.js:Shop.buyById",
@@ -13765,50 +13846,6 @@
       "async": false,
       "family_id": "trade",
       "nav_consuming": false
-    },
-    {
-      "id": "not-impl:api/bank/BankLocations.js:nearestWalkableBank",
-      "module": "api/bank/BankLocations.js",
-      "selector": "nearestWalkableBank",
-      "operation": "not-impl",
-      "reason": "Unconditional not-impl: caller-owned walk-cost callbacks are not handled by the native bank selector.",
-      "runtime": "crates/script-js/src/shim/bank_locations.js:61",
-      "async": false,
-      "family_id": "bank",
-      "nav_consuming": true
-    },
-    {
-      "id": "not-impl:api/bank/BankLocations.js:nearestWalkableBankAsync",
-      "module": "api/bank/BankLocations.js",
-      "selector": "nearestWalkableBankAsync",
-      "operation": "not-impl",
-      "reason": "Unconditional not-impl: caller-owned async walk-cost callbacks are not handled by the native bank selector.",
-      "runtime": "crates/script-js/src/shim/bank_locations.js:65",
-      "async": true,
-      "family_id": "bank",
-      "nav_consuming": true
-    },
-    {
-      "id": "not-impl:api/bank/BankLocations.js:bankCostForFinder",
-      "module": "api/bank/BankLocations.js",
-      "selector": "bankCostForFinder",
-      "operation": "not-impl",
-      "reason": "Unconditional not-impl: the PathFinder callback wrapper is not exposed by the native bank selector.",
-      "runtime": "crates/script-js/src/shim/bank_locations.js:69",
-      "async": false,
-      "family_id": "bank",
-      "nav_consuming": true
-    },
-    {
-      "id": "not-impl:api/bank/BankLocations.js:bankCostForNavigator",
-      "module": "api/bank/BankLocations.js",
-      "selector": "bankCostForNavigator",
-      "operation": "not-impl",
-      "reason": "Unconditional not-impl: the Navigator callback wrapper is not exposed by the native bank selector.",
-      "runtime": "crates/script-js/src/shim/bank_locations.js:73",
-      "async": false,
-      "family_id": "bank",
-      "nav_consuming": true
     },
     {
       "id": "not-impl:api/market/catalog.js:buildCatalog",
@@ -14083,17 +14120,6 @@
       "runtime": "crates/script-js/src/shim/client_adapter.js:17",
       "async": false,
       "family_id": "client-adapter",
-      "nav_consuming": false
-    },
-    {
-      "id": "not-impl:data/woodcuttingLocations.js:resolveWoodcuttingLocation",
-      "module": "data/woodcuttingLocations.js",
-      "selector": "resolveWoodcuttingLocation",
-      "operation": "not-impl",
-      "reason": "Unconditional not-impl: script-specific camps have no verified native location source.",
-      "runtime": "crates/script-js/src/shim/data/woodcutting_locations.js:9",
-      "async": false,
-      "family_id": "woodcutting",
       "nav_consuming": false
     },
     {
@@ -16289,6 +16315,23 @@
         "status": "matches-frozen-call-form"
       },
       "evidence": "$TS/api/bank/Bank.ts:86-94; $JS/shim/bank.js; $S/bank/seat_transfer.rs"
+    },
+    {
+      "family_id": "bank",
+      "native_family": "bank_task",
+      "member": "log",
+      "call_site": "purgePackAtBank, withdrawCoins, Bank.backpackReady and sortBank synchronous log notifications",
+      "path": "call-sync",
+      "value": "ignored",
+      "promise": "opaque-empty-object",
+      "thrown": "family-fails-with-thrown-value",
+      "order": "synchronous-at-call-site",
+      "multiplicity": "per-reached-call-site; CALLS_PER_TICK=256 per row per tick",
+      "cadence": "One invocation per reached synchronous call site; sites may be reached repeatedly.",
+      "frozen_path": {
+        "status": "matches-frozen-call-form"
+      },
+      "evidence": "$TS/api/bank/Banking.ts:62-111,354-390; $TS/api/bank/Bank.ts:124-146; $TS/api/bank/bankSort.ts:55-126; $S/slot/bank.rs"
     },
     {
       "family_id": "trade",
@@ -23470,7 +23513,7 @@
       "selector": "reader.chatContinueComId",
       "module": "adapter/ClientAdapter.js",
       "state": "not-impl",
-      "source": "crates/script-js/src/shim/client_adapter.js:128",
+      "source": "crates/script-js/src/shim/client_adapter.js:133",
       "reason": "Unconditional not-impl: no arguments are inspected and no successful result is produced.",
       "overlay_id": "not-impl:adapter/ClientAdapter.js:reader.chatContinueComId"
     },
@@ -23480,7 +23523,7 @@
       "selector": "reader.bankComId",
       "module": "adapter/ClientAdapter.js",
       "state": "not-impl",
-      "source": "crates/script-js/src/shim/client_adapter.js:248",
+      "source": "crates/script-js/src/shim/client_adapter.js:253",
       "reason": "Unconditional not-impl: no arguments are inspected and no successful result is produced.",
       "overlay_id": "not-impl:adapter/ClientAdapter.js:reader.bankComId"
     },
@@ -23493,66 +23536,6 @@
       "source": "crates/script-js/src/shim/game.js:208",
       "reason": "Unconditional not-impl: no arguments are inspected and no successful result is produced.",
       "overlay_id": "not-impl:api/game/Game.js:Game.castOnNpc"
-    },
-    {
-      "family_id": "bank",
-      "member": "purgePackAtBank",
-      "selector": "purgePackAtBank",
-      "module": "api/bank/Banking.js",
-      "state": "not-impl",
-      "source": "crates/script-js/src/shim/banking.js:141",
-      "reason": "Unconditional not-impl: the multi-step bank transaction is not implemented.",
-      "overlay_id": "not-impl:api/bank/Banking.js:purgePackAtBank"
-    },
-    {
-      "family_id": "bank",
-      "member": "withdrawCoins",
-      "selector": "withdrawCoins",
-      "module": "api/bank/Banking.js",
-      "state": "not-impl",
-      "source": "crates/script-js/src/shim/banking.js:145",
-      "reason": "Unconditional not-impl: the multi-step bank transaction is not implemented.",
-      "overlay_id": "not-impl:api/bank/Banking.js:withdrawCoins"
-    },
-    {
-      "family_id": "bank",
-      "member": "bankPace",
-      "selector": "bankPace",
-      "module": "api/bank/Banking.js",
-      "state": "not-impl",
-      "source": "crates/script-js/src/shim/banking.js:149",
-      "reason": "Unconditional not-impl: randomized pacing is not carried into native compatibility.",
-      "overlay_id": "not-impl:api/bank/Banking.js:bankPace"
-    },
-    {
-      "family_id": "bank",
-      "member": "bankPaceTicks",
-      "selector": "bankPaceTicks",
-      "module": "api/bank/Banking.js",
-      "state": "not-impl",
-      "source": "crates/script-js/src/shim/banking.js:153",
-      "reason": "Unconditional not-impl: randomized pacing is not carried into native compatibility.",
-      "overlay_id": "not-impl:api/bank/Banking.js:bankPaceTicks"
-    },
-    {
-      "family_id": "bank",
-      "member": "sortBank",
-      "selector": "sortBank",
-      "module": "api/bank/bankSort.js",
-      "state": "not-impl",
-      "source": "crates/script-js/src/shim/bank_sort.js:8",
-      "reason": "Unconditional not-impl: no arguments are inspected and no successful result is produced.",
-      "overlay_id": "not-impl:api/bank/bankSort.js:sortBank"
-    },
-    {
-      "family_id": "bank",
-      "member": "findQuestJunk",
-      "selector": "findQuestJunk",
-      "module": "api/bank/bankQuestJunk.js",
-      "state": "not-impl",
-      "source": "crates/script-js/src/shim/bank_quest_junk.js:6",
-      "reason": "Unconditional not-impl: no arguments are inspected and no successful result is produced.",
-      "overlay_id": "not-impl:api/bank/bankQuestJunk.js:findQuestJunk"
     },
     {
       "family_id": "shop",
@@ -23703,46 +23686,6 @@
       "source": "crates/script-js/src/shim/drive_partner_trade.js:59",
       "reason": "Unconditional not-impl: rs2b0t's time-based trade-closure pacing is not carried into native compatibility.",
       "overlay_id": "not-impl:api/trade/drivePartnerTrade.js:stableClosedPoll"
-    },
-    {
-      "family_id": "bank",
-      "member": "nearestWalkableBank",
-      "selector": "nearestWalkableBank",
-      "module": "api/bank/BankLocations.js",
-      "state": "not-impl",
-      "source": "crates/script-js/src/shim/bank_locations.js:61",
-      "reason": "Unconditional not-impl: caller-owned walk-cost callbacks are not handled by the native bank selector.",
-      "overlay_id": "not-impl:api/bank/BankLocations.js:nearestWalkableBank"
-    },
-    {
-      "family_id": "bank",
-      "member": "nearestWalkableBankAsync",
-      "selector": "nearestWalkableBankAsync",
-      "module": "api/bank/BankLocations.js",
-      "state": "not-impl",
-      "source": "crates/script-js/src/shim/bank_locations.js:65",
-      "reason": "Unconditional not-impl: caller-owned async walk-cost callbacks are not handled by the native bank selector.",
-      "overlay_id": "not-impl:api/bank/BankLocations.js:nearestWalkableBankAsync"
-    },
-    {
-      "family_id": "bank",
-      "member": "bankCostForFinder",
-      "selector": "bankCostForFinder",
-      "module": "api/bank/BankLocations.js",
-      "state": "not-impl",
-      "source": "crates/script-js/src/shim/bank_locations.js:69",
-      "reason": "Unconditional not-impl: the PathFinder callback wrapper is not exposed by the native bank selector.",
-      "overlay_id": "not-impl:api/bank/BankLocations.js:bankCostForFinder"
-    },
-    {
-      "family_id": "bank",
-      "member": "bankCostForNavigator",
-      "selector": "bankCostForNavigator",
-      "module": "api/bank/BankLocations.js",
-      "state": "not-impl",
-      "source": "crates/script-js/src/shim/bank_locations.js:73",
-      "reason": "Unconditional not-impl: the Navigator callback wrapper is not exposed by the native bank selector.",
-      "overlay_id": "not-impl:api/bank/BankLocations.js:bankCostForNavigator"
     },
     {
       "family_id": "market",
@@ -23993,16 +23936,6 @@
       "source": "crates/script-js/src/shim/client_adapter.js:17",
       "reason": "Unconditional not-impl: the combat-showing threshold has no native adapter.",
       "overlay_id": "not-impl:adapter/ClientAdapter.js:combatShowingThreshold"
-    },
-    {
-      "family_id": "woodcutting",
-      "member": "resolveWoodcuttingLocation",
-      "selector": "resolveWoodcuttingLocation",
-      "module": "data/woodcuttingLocations.js",
-      "state": "not-impl",
-      "source": "crates/script-js/src/shim/data/woodcutting_locations.js:9",
-      "reason": "Unconditional not-impl: script-specific camps have no verified native location source.",
-      "overlay_id": "not-impl:data/woodcuttingLocations.js:resolveWoodcuttingLocation"
     },
     {
       "family_id": "runtime",
@@ -24464,24 +24397,6 @@
       "reason": "The exported value throws when accessed through notImplValue."
     },
     {
-      "family_id": "woodcutting",
-      "member": "WOODCUTTING_LOCATIONS",
-      "selector": "WOODCUTTING_LOCATIONS",
-      "module": "data/woodcuttingLocations.js",
-      "state": "not-impl",
-      "source": "crates/script-js/src/shim/data/woodcutting_locations.js:5",
-      "reason": "The exported value throws when accessed through notImplValue."
-    },
-    {
-      "family_id": "woodcutting",
-      "member": "WOODCUTTING_LOCATION_OPTIONS",
-      "selector": "WOODCUTTING_LOCATION_OPTIONS",
-      "module": "data/woodcuttingLocations.js",
-      "state": "not-impl",
-      "source": "crates/script-js/src/shim/data/woodcutting_locations.js:6",
-      "reason": "The exported value throws when accessed through notImplValue."
-    },
-    {
       "family_id": "runtime",
       "member": "GLOBAL_SETTINGS_CORE",
       "selector": "GLOBAL_SETTINGS_CORE",
@@ -24707,15 +24622,6 @@
       "reason": "The exported value throws when accessed through notImplValue."
     },
     {
-      "family_id": "fishing",
-      "member": "ALL_FISHING_GEAR_NAMES",
-      "selector": "ALL_FISHING_GEAR_NAMES",
-      "module": null,
-      "state": "not-impl",
-      "source": "declared_surface.js",
-      "reason": "The current compatibility name map unconditionally refuses this declared member."
-    },
-    {
       "family_id": "acquisition",
       "member": "AXE_BAR_FOR",
       "selector": "AXE_BAR_FOR",
@@ -24788,51 +24694,6 @@
       "reason": "The current compatibility name map unconditionally refuses this declared member."
     },
     {
-      "family_id": "fishing",
-      "member": "FISHING_LOCATIONS",
-      "selector": "FISHING_LOCATIONS",
-      "module": null,
-      "state": "not-impl",
-      "source": "declared_surface.js",
-      "reason": "The current compatibility name map unconditionally refuses this declared member."
-    },
-    {
-      "family_id": "fishing",
-      "member": "FISHING_LOCATION_OPTIONS",
-      "selector": "FISHING_LOCATION_OPTIONS",
-      "module": null,
-      "state": "not-impl",
-      "source": "declared_surface.js",
-      "reason": "The current compatibility name map unconditionally refuses this declared member."
-    },
-    {
-      "family_id": "fishing",
-      "member": "FISHING_METHODS",
-      "selector": "FISHING_METHODS",
-      "module": null,
-      "state": "not-impl",
-      "source": "declared_surface.js",
-      "reason": "The current compatibility name map unconditionally refuses this declared member."
-    },
-    {
-      "family_id": "fishing",
-      "member": "FISHING_METHOD_OPTIONS",
-      "selector": "FISHING_METHOD_OPTIONS",
-      "module": null,
-      "state": "not-impl",
-      "source": "declared_surface.js",
-      "reason": "The current compatibility name map unconditionally refuses this declared member."
-    },
-    {
-      "family_id": "fishing",
-      "member": "FISHING_SHOP_COSTS",
-      "selector": "FISHING_SHOP_COSTS",
-      "module": null,
-      "state": "not-impl",
-      "source": "declared_surface.js",
-      "reason": "The current compatibility name map unconditionally refuses this declared member."
-    },
-    {
       "family_id": "acquisition",
       "member": "FORGETFUL_BANK_ODDS",
       "selector": "FORGETFUL_BANK_ODDS",
@@ -24851,15 +24712,6 @@
       "reason": "The current compatibility name map unconditionally refuses this declared member."
     },
     {
-      "family_id": "fishing",
-      "member": "GERRANT_ONLY_FISHING",
-      "selector": "GERRANT_ONLY_FISHING",
-      "module": null,
-      "state": "not-impl",
-      "source": "declared_surface.js",
-      "reason": "The current compatibility name map unconditionally refuses this declared member."
-    },
-    {
       "family_id": "acquisition",
       "member": "GERRANT_VENDOR",
       "selector": "GERRANT_VENDOR",
@@ -24872,33 +24724,6 @@
       "family_id": "acquisition",
       "member": "HARRY_VENDOR",
       "selector": "HARRY_VENDOR",
-      "module": null,
-      "state": "not-impl",
-      "source": "declared_surface.js",
-      "reason": "The current compatibility name map unconditionally refuses this declared member."
-    },
-    {
-      "family_id": "mining",
-      "member": "MINING_LOCATIONS",
-      "selector": "MINING_LOCATIONS",
-      "module": null,
-      "state": "not-impl",
-      "source": "declared_surface.js",
-      "reason": "The current compatibility name map unconditionally refuses this declared member."
-    },
-    {
-      "family_id": "mining",
-      "member": "MINING_LOCATION_OPTIONS",
-      "selector": "MINING_LOCATION_OPTIONS",
-      "module": null,
-      "state": "not-impl",
-      "source": "declared_surface.js",
-      "reason": "The current compatibility name map unconditionally refuses this declared member."
-    },
-    {
-      "family_id": "mining",
-      "member": "MINING_LOCATION_OPTION_LABELS",
-      "selector": "MINING_LOCATION_OPTION_LABELS",
       "module": null,
       "state": "not-impl",
       "source": "declared_surface.js",
@@ -24977,15 +24802,6 @@
       "reason": "The current compatibility name map unconditionally refuses this declared member."
     },
     {
-      "family_id": "fishing",
-      "member": "WHIRLPOOL_IDS",
-      "selector": "WHIRLPOOL_IDS",
-      "module": null,
-      "state": "not-impl",
-      "source": "declared_surface.js",
-      "reason": "The current compatibility name map unconditionally refuses this declared member."
-    },
-    {
       "family_id": "acquisition",
       "member": "acquireKeepNames",
       "selector": "acquireKeepNames",
@@ -25031,15 +24847,6 @@
       "reason": "The current compatibility name map unconditionally refuses this declared member."
     },
     {
-      "family_id": "fishing",
-      "member": "buyPlansCost",
-      "selector": "buyPlansCost",
-      "module": null,
-      "state": "not-impl",
-      "source": "declared_surface.js",
-      "reason": "The current compatibility name map unconditionally refuses this declared member."
-    },
-    {
       "family_id": "acquisition",
       "member": "canFundPlan",
       "selector": "canFundPlan",
@@ -25076,60 +24883,6 @@
       "reason": "The current compatibility name map unconditionally refuses this declared member."
     },
     {
-      "family_id": "fishing",
-      "member": "fishingGearShopCart",
-      "selector": "fishingGearShopCart",
-      "module": null,
-      "state": "not-impl",
-      "source": "declared_surface.js",
-      "reason": "The current compatibility name map unconditionally refuses this declared member."
-    },
-    {
-      "family_id": "fishing",
-      "member": "fishingRestockPlan",
-      "selector": "fishingRestockPlan",
-      "module": null,
-      "state": "not-impl",
-      "source": "declared_surface.js",
-      "reason": "The current compatibility name map unconditionally refuses this declared member."
-    },
-    {
-      "family_id": "fishing",
-      "member": "fishingShopCost",
-      "selector": "fishingShopCost",
-      "module": null,
-      "state": "not-impl",
-      "source": "declared_surface.js",
-      "reason": "The current compatibility name map unconditionally refuses this declared member."
-    },
-    {
-      "family_id": "fishing",
-      "member": "fishingVendorFor",
-      "selector": "fishingVendorFor",
-      "module": null,
-      "state": "not-impl",
-      "source": "declared_surface.js",
-      "reason": "The current compatibility name map unconditionally refuses this declared member."
-    },
-    {
-      "family_id": "fishing",
-      "member": "gearKeepNames",
-      "selector": "gearKeepNames",
-      "module": null,
-      "state": "not-impl",
-      "source": "declared_surface.js",
-      "reason": "The current compatibility name map unconditionally refuses this declared member."
-    },
-    {
-      "family_id": "fishing",
-      "member": "gearLabel",
-      "selector": "gearLabel",
-      "module": null,
-      "state": "not-impl",
-      "source": "declared_surface.js",
-      "reason": "The current compatibility name map unconditionally refuses this declared member."
-    },
-    {
       "family_id": "acquisition",
       "member": "hasAll",
       "selector": "hasAll",
@@ -25139,45 +24892,9 @@
       "reason": "The current compatibility name map unconditionally refuses this declared member."
     },
     {
-      "family_id": "fishing",
-      "member": "hasFishingGear",
-      "selector": "hasFishingGear",
-      "module": null,
-      "state": "not-impl",
-      "source": "declared_surface.js",
-      "reason": "The current compatibility name map unconditionally refuses this declared member."
-    },
-    {
       "family_id": "acquisition",
       "member": "held",
       "selector": "held",
-      "module": null,
-      "state": "not-impl",
-      "source": "declared_surface.js",
-      "reason": "The current compatibility name map unconditionally refuses this declared member."
-    },
-    {
-      "family_id": "fishing",
-      "member": "isFishingBaitPiece",
-      "selector": "isFishingBaitPiece",
-      "module": null,
-      "state": "not-impl",
-      "source": "declared_surface.js",
-      "reason": "The current compatibility name map unconditionally refuses this declared member."
-    },
-    {
-      "family_id": "mining",
-      "member": "miningLocationLabel",
-      "selector": "miningLocationLabel",
-      "module": null,
-      "state": "not-impl",
-      "source": "declared_surface.js",
-      "reason": "The current compatibility name map unconditionally refuses this declared member."
-    },
-    {
-      "family_id": "fishing",
-      "member": "missingFishingGear",
-      "selector": "missingFishingGear",
       "module": null,
       "state": "not-impl",
       "source": "declared_surface.js",
@@ -25220,24 +24937,6 @@
       "reason": "The current compatibility name map unconditionally refuses this declared member."
     },
     {
-      "family_id": "fishing",
-      "member": "planFishingGearAcquire",
-      "selector": "planFishingGearAcquire",
-      "module": null,
-      "state": "not-impl",
-      "source": "declared_surface.js",
-      "reason": "The current compatibility name map unconditionally refuses this declared member."
-    },
-    {
-      "family_id": "fishing",
-      "member": "planFishingGearBuys",
-      "selector": "planFishingGearBuys",
-      "module": null,
-      "state": "not-impl",
-      "source": "declared_surface.js",
-      "reason": "The current compatibility name map unconditionally refuses this declared member."
-    },
-    {
       "family_id": "acquisition",
       "member": "planGatherToolAcquire",
       "selector": "planGatherToolAcquire",
@@ -25268,60 +24967,6 @@
       "family_id": "walking",
       "member": "resolveDestination",
       "selector": "resolveDestination",
-      "module": null,
-      "state": "not-impl",
-      "source": "declared_surface.js",
-      "reason": "The current compatibility name map unconditionally refuses this declared member."
-    },
-    {
-      "family_id": "fishing",
-      "member": "resolveFishMethod",
-      "selector": "resolveFishMethod",
-      "module": null,
-      "state": "not-impl",
-      "source": "declared_surface.js",
-      "reason": "The current compatibility name map unconditionally refuses this declared member."
-    },
-    {
-      "family_id": "fishing",
-      "member": "resolveFishingLocation",
-      "selector": "resolveFishingLocation",
-      "module": null,
-      "state": "not-impl",
-      "source": "declared_surface.js",
-      "reason": "The current compatibility name map unconditionally refuses this declared member."
-    },
-    {
-      "family_id": "mining",
-      "member": "resolveMiningLocation",
-      "selector": "resolveMiningLocation",
-      "module": null,
-      "state": "not-impl",
-      "source": "declared_surface.js",
-      "reason": "The current compatibility name map unconditionally refuses this declared member."
-    },
-    {
-      "family_id": "fishing",
-      "member": "shopableMissingFishingGear",
-      "selector": "shopableMissingFishingGear",
-      "module": null,
-      "state": "not-impl",
-      "source": "declared_surface.js",
-      "reason": "The current compatibility name map unconditionally refuses this declared member."
-    },
-    {
-      "family_id": "fishing",
-      "member": "spotMatchesMethod",
-      "selector": "spotMatchesMethod",
-      "module": null,
-      "state": "not-impl",
-      "source": "declared_surface.js",
-      "reason": "The current compatibility name map unconditionally refuses this declared member."
-    },
-    {
-      "family_id": "fishing",
-      "member": "withBaitTarget",
-      "selector": "withBaitTarget",
       "module": null,
       "state": "not-impl",
       "source": "declared_surface.js",
@@ -25362,8 +25007,8 @@
       "aliases": 2,
       "type_aliases": 2,
       "name_aliases": 0,
-      "callbacks": 10,
-      "not_impl_debt": 10
+      "callbacks": 11,
+      "not_impl_debt": 0
     },
     {
       "family_id": "bot",
@@ -25555,7 +25200,7 @@
       "type_aliases": 1,
       "name_aliases": 0,
       "callbacks": 0,
-      "not_impl_debt": 25
+      "not_impl_debt": 0
     },
     {
       "family_id": "game-state",
@@ -25663,7 +25308,7 @@
       "type_aliases": 1,
       "name_aliases": 0,
       "callbacks": 0,
-      "not_impl_debt": 5
+      "not_impl_debt": 0
     },
     {
       "family_id": "paint",
@@ -25819,7 +25464,7 @@
       "type_aliases": 1,
       "name_aliases": 0,
       "callbacks": 0,
-      "not_impl_debt": 3
+      "not_impl_debt": 0
     },
     {
       "family_id": "world-primitives",

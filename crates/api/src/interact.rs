@@ -84,6 +84,13 @@ pub enum WireCommand<'a> {
     ClearLocalModal {
         component_id: i32,
     },
+    /// Drag an inventory-component row to another slot (`INV_BUTTOND`).
+    Drag {
+        component_id: i32,
+        slot: i32,
+        target_slot: i32,
+        insert: bool,
+    },
 }
 
 /// Why a wire interaction was refused before dispatch. Every variant is one
@@ -630,6 +637,44 @@ impl<'a> Interactions<'a> {
             WireCommand::Button {
                 component_id: live.component_id,
                 button_type: 1,
+            },
+            snapshot.tick() as u64,
+        )
+    }
+
+    /// Drag one row of the open bank's withdraw grid to `target_slot`
+    /// (`INV_BUTTOND`, `interface_bank/scripts/bank.rs2:6-11`). The row must
+    /// be the exact posted bank row and the target a slot of that grid.
+    pub fn drag_bank_item<'t>(
+        &mut self,
+        item: &ItemView,
+        target_slot: i32,
+        insert: bool,
+    ) -> SendResult<'t> {
+        let snapshot = self.snapshot;
+        if let Some(reason) = self.precondition(snapshot, false) {
+            return refuse(snapshot, reason);
+        }
+        let component_id = snapshot.bank_component_id();
+        if component_id < 0 || item.component_id != component_id {
+            return refuse(snapshot, SendReason::StaleTarget);
+        }
+        let live = snapshot
+            .bank()
+            .iter()
+            .any(|row| row.def.id == item.def.id && row.slot == item.slot);
+        if !live {
+            return refuse(snapshot, SendReason::StaleTarget);
+        }
+        if !(0..snapshot.bank_size()).contains(&target_slot) || item.slot == target_slot {
+            return refuse(snapshot, SendReason::InvalidAction);
+        }
+        self.dispatch(
+            WireCommand::Drag {
+                component_id,
+                slot: item.slot,
+                target_slot,
+                insert,
             },
             snapshot.tick() as u64,
         )
@@ -1219,6 +1264,14 @@ impl<'a> Interactions<'a> {
             WireCommand::DoorStep { tile } => Send::move_gameclick(false, tile.x, tile.z, &[])
                 .and_then(|send| self.driver.send_packet(&send))
                 .is_ok(),
+            WireCommand::Drag {
+                component_id,
+                slot,
+                target_slot,
+                insert,
+            } => Send::inv_buttond(*component_id, *slot, *target_slot, *insert)
+                .and_then(|send| self.driver.send_packet(&send))
+                .is_ok(),
             WireCommand::SideTab { tab } => self.driver.click_side_tab(*tab),
             WireCommand::Login { username, password } => {
                 login(&mut *self.driver, username, password, false)
@@ -1309,7 +1362,8 @@ fn counts_as_input_activity(command: &WireCommand<'_>) -> bool {
         | WireCommand::Count { .. }
         | WireCommand::Walk { .. }
         | WireCommand::WalkNearest { .. }
-        | WireCommand::DoorStep { .. } => true,
+        | WireCommand::DoorStep { .. }
+        | WireCommand::Drag { .. } => true,
         WireCommand::SideTab { .. } | WireCommand::Login { .. } => false,
     }
 }

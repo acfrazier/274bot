@@ -322,27 +322,11 @@
     "declaration": "export const PRICE_BOOK_SETTINGS: never;"
   },
   {
-    "id": "not-impl-value:data/woodcuttingLocations.js:WOODCUTTING_LOCATIONS",
-    "module": "data/woodcuttingLocations.js",
-    "selector": "WOODCUTTING_LOCATIONS",
-    "reason": "The script-specific camp catalog has no verified native location source.",
-    "runtime": "crates/script-js/src/shim/data/woodcutting_locations.js:5",
-    "declaration": "export const WOODCUTTING_LOCATIONS: never;"
-  },
-  {
-    "id": "not-impl-value:data/woodcuttingLocations.js:WOODCUTTING_LOCATION_OPTIONS",
-    "module": "data/woodcuttingLocations.js",
-    "selector": "WOODCUTTING_LOCATION_OPTIONS",
-    "reason": "The script-specific camp names have no verified native location source.",
-    "runtime": "crates/script-js/src/shim/data/woodcutting_locations.js:6",
-    "declaration": "export const WOODCUTTING_LOCATION_OPTIONS: never;"
-  },
-  {
     "id": "bank-withdraw-load-numeric-id",
     "module": "api/bank/Bank.js",
     "selector": "Bank.withdrawLoad",
     "reason": "rs2b0t 90a69240 accepts a numeric item ID; the host adapter forwards the ID to the bank seat.",
-    "runtime": "crates/script-js/src/shim/bank.js:162",
+    "runtime": "crates/script-js/src/shim/bank.js:165",
     "declaration": "/** Fill the pack: Withdraw-All when present, otherwise Withdraw-X for free slots. */\nwithdrawLoad(name: string | number): Promise<boolean>;"
   }
 ]

@@ -1244,53 +1244,43 @@
       "cases": [
         {
           "name": " > resolveWoodcuttingLocation > Use Start Position and Use Custom Position are freeform (null)",
-          "status": "fail",
-          "reason": "Error: not impl: resolveWoodcuttingLocation"
+          "status": "pass"
         },
         {
           "name": " > resolveWoodcuttingLocation > Use Closest near Draynor willows",
-          "status": "fail",
-          "reason": "Error: not impl: resolveWoodcuttingLocation"
+          "status": "pass"
         },
         {
           "name": " > resolveWoodcuttingLocation > Use Closest near Seers maples",
-          "status": "fail",
-          "reason": "Error: not impl: resolveWoodcuttingLocation"
+          "status": "pass"
         },
         {
           "name": " > resolveWoodcuttingLocation > Use Closest still snaps even NW of Crafting Guild (no chunk gate)",
-          "status": "fail",
-          "reason": "Error: not impl: resolveWoodcuttingLocation"
+          "status": "pass"
         },
         {
           "name": " > resolveWoodcuttingLocation > named match is case-insensitive",
-          "status": "fail",
-          "reason": "Error: not impl: resolveWoodcuttingLocation"
+          "status": "pass"
         },
         {
           "name": " > WOODCUTTING_LOCATIONS table > dropdown is Auto + Use Closest + Use Start Position + Use Custom Position + legacy None + camps",
-          "status": "fail",
-          "reason": "Error: not impl: WOODCUTTING_LOCATIONS.map"
+          "status": "pass"
         },
         {
           "name": " > WOODCUTTING_LOCATIONS table > every bankStand is a known BANK_LOCATIONS tile",
-          "status": "fail",
-          "reason": "Error: not impl: WOODCUTTING_LOCATIONS"
+          "status": "pass"
         },
         {
           "name": " > WOODCUTTING_LOCATIONS table > core catalog entries are verified; tick-manip camps may be provisional",
-          "status": "fail",
-          "reason": "Error: not impl: WOODCUTTING_LOCATIONS"
+          "status": "pass"
         },
         {
           "name": " > WOODCUTTING_LOCATIONS table > includes tick-manip WC camps (#160)",
-          "status": "fail",
-          "reason": "Error: not impl: WOODCUTTING_LOCATIONS.map"
+          "status": "pass"
         },
         {
           "name": " > WOODCUTTING_LOCATIONS table > fire spots are not mixed into chop camps",
-          "status": "fail",
-          "reason": "Error: not impl: WOODCUTTING_LOCATIONS"
+          "status": "pass"
         },
         {
           "name": " > ENT_NPC_IDS > covers pack 444-452 and stops before suit of armour",

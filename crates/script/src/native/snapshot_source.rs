@@ -326,6 +326,12 @@ pub struct SnapshotInput<'a> {
 /// from [`SnapshotInput`] so callers can omit these facts when unused.
 #[derive(Clone, Copy, Default)]
 pub struct NativeFactsInput<'a> {
+    /// The m8aq `inventorySnapshotReady`: the inv tab is transmitting and has
+    /// a full update (`login_logout/login.rs2:98`).
+    pub inv_ready: bool,
+    /// The m8aq `bankSideSnapshotReady`: the open bank's side pack carries
+    /// this session's full update (`interface_bank/scripts/bank.rs2:20`).
+    pub bank_side_ready: bool,
     pub self_chat: Option<&'a str>,
     pub hint_tile: Option<(i32, i32)>,
     pub retaliate_controls: Option<(i32, i32)>,

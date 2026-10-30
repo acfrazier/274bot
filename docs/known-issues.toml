@@ -21,7 +21,7 @@ text = """Native bank sorting (`sortBank`), quest-junk discovery (`findQuestJunk
   report `not impl`; moving existing banking into the native seat does not
   implement them."""
 first = "0.2.4"
-target = "0.3.0"
+target = "0.2.9"
 severity = "low"
 owner = "scripts-misc"
 
@@ -31,12 +31,22 @@ kind = "not-in-release"
 area = "Scripts"
 text = """Caller-supplied bank-cost routers (`nearestWalkableBank`,
   `nearestWalkableBankAsync`, `bankCostForFinder`, `bankCostForNavigator`) and
-  random bank pacing (`bankPace`, `bankPaceTicks`) remain deliberately
-  unavailable. The host does not recreate the foreign router or random pacing."""
+  the random pause length (`bankPaceTicks`) remain deliberately unavailable:
+  the host does not recreate the foreign router or random pacing. These
+  private exports reported `not impl` in earlier releases and are removed in
+  0.2.9. `bankPace` itself is supported from 0.2.9 as a fixed one-game-tick
+  pause."""
 first = "0.2.4"
-target = "none"
+target = "0.2.9"
 severity = "low"
 owner = "scripts-misc"
+
+[[item.earlier]]
+until = "0.2.8"
+text = """Caller-supplied bank-cost routers (`nearestWalkableBank`,
+  `nearestWalkableBankAsync`, `bankCostForFinder`, `bankCostForNavigator`) and
+  random bank pacing (`bankPace`, `bankPaceTicks`) remain deliberately
+  unavailable. The host does not recreate the foreign router or random pacing."""
 
 [[item]]
 id = "jivekbd-dragon-bones"

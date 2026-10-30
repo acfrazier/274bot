@@ -5371,8 +5371,10 @@ export default class T extends LoopingBot {
     slot.stop();
 }
 
+/// `Banking.open` accepts `obstacles`: the native walk opens route doors
+/// itself, so the call starts the open instead of refusing it.
 #[test]
-fn isolate_banking_open_refuses_unsupported_obstacle_work_without_acting() {
+fn isolate_banking_open_accepts_obstacles_and_starts_the_open() {
     let src = r#"
 import { Banking } from '../../api/bank/Banking.js';
 export default class T extends LoopingBot {
@@ -5380,10 +5382,9 @@ export default class T extends LoopingBot {
         if (globalThis.__did) return;
         globalThis.__did = true;
         try {
-            await Banking.open({ stand: {x:150,z:150,level:0}, obstacles: ['Door'] });
-            globalThis.__refused = false;
-        } catch (_) {
-            globalThis.__refused = true;
+            globalThis.__opened = await Banking.open({ stand: {x:150,z:150,level:0}, obstacles: ['Door'] });
+        } catch (error) {
+            globalThis.__refused = String(error);
         }
     }
 }
@@ -5393,10 +5394,10 @@ export default class T extends LoopingBot {
     let mut snapshot = api::snapshot::GameSnapshot::new();
     tick_bank_slot(&mut slot, &mut input, 1, -1, -1, &mut snapshot);
     assert_eq!(
-        slot.probe("globalThis.__refused").unwrap(),
-        serde_json::json!(true)
+        slot.probe("typeof globalThis.__refused").unwrap(),
+        serde_json::json!("undefined"),
+        "obstacles no longer refuse"
     );
-    assert!(slot.take_actions().is_empty());
     slot.stop();
 }
 
@@ -5568,17 +5569,20 @@ export default class T extends LoopingBot {
     slot.stop();
 }
 
-/// `Bank.depositAllExcept(keep)` resolves the kept names (case-insensitive)
-/// to ids and presses the first other row by id, with no script predicate.
+/// `purgePackAtBank({ keep })` on an open, loaded bank resolves the kept
+/// names (case-insensitive) to ids through the native keep deposit, presses
+/// the other row by id with no script predicate, then closes the bank and
+/// answers from the fresh pack. (The compat-only `Bank.depositAllExcept`
+/// that used to reach this deposit is removed.)
 #[test]
-fn isolate_bank_deposit_all_except_skips_kept_names() {
+fn isolate_purge_pack_deposits_unkept_rows_then_closes() {
     let src = r#"
-import { Bank } from '../../api/bank/Bank.js';
+import { purgePackAtBank } from '../../api/bank/Banking.js';
 export default class T extends LoopingBot {
-    loop() {
+    async loop() {
         if (globalThis.__did) return;
         globalThis.__did = true;
-        Bank.depositAllExcept(['knife']);
+        globalThis.__purged = await purgePackAtBank({ keep: ['knife'] });
     }
 }
 "#;
@@ -5599,9 +5603,14 @@ export default class T extends LoopingBot {
     input.bank_open = true;
     input.bank_loaded = true;
     let mut snapshot = api::snapshot::GameSnapshot::new();
-    tick_bank_slot(&mut slot, &mut input, 1, 1, SIDE_ROOT, &mut snapshot);
-    let actions = slot.take_actions();
-    assert_eq!(actions.len(), 1);
+    let mut tick = 1;
+    let mut actions = Vec::new();
+    while actions.is_empty() && tick <= 6 {
+        tick_bank_slot(&mut slot, &mut input, tick, 1, SIDE_ROOT, &mut snapshot);
+        actions = slot.take_actions();
+        tick += 1;
+    }
+    assert_eq!(actions.len(), 1, "one keep deposit");
     assert!(matches!(
         bank_interaction(&actions[0]),
         script::shim::InteractReq::InvButton {
@@ -5612,11 +5621,31 @@ export default class T extends LoopingBot {
             bank_generation,
         } if *bank_generation == snapshot.bank_session_generation()
     ));
-    accept_bank_interaction(&mut slot, &actions[0], 1, true);
+    accept_bank_interaction(&mut slot, &actions[0], tick - 1, true);
     let pack_after = [pack[0]];
+    let side_after = [bank_side[0]];
     input.inv = &pack_after;
-    tick_bank_slot(&mut slot, &mut input, 2, 1, SIDE_ROOT, &mut snapshot);
-    assert!(slot.take_actions().is_empty());
+    input.bank_side = &side_after;
+    let mut close = Vec::new();
+    while close.is_empty() && tick <= 12 {
+        tick_bank_slot(&mut slot, &mut input, tick, 1, SIDE_ROOT, &mut snapshot);
+        close = slot.take_actions();
+        tick += 1;
+    }
+    assert_eq!(close.len(), 1, "the purge closes the bank");
+    assert!(matches!(
+        bank_interaction(&close[0]),
+        script::shim::InteractReq::Close
+    ));
+    accept_bank_interaction(&mut slot, &close[0], tick - 1, true);
+    input.bank_open = false;
+    input.bank_loaded = false;
+    input.bank_side = &[];
+    for _ in 0..4 {
+        tick_bank_slot(&mut slot, &mut input, tick, -1, -1, &mut snapshot);
+        tick += 1;
+    }
+    assert_eq!(slot.probe("__purged").unwrap(), serde_json::json!(true));
     slot.stop();
 }
 
@@ -5997,52 +6026,50 @@ export default class T extends LoopingBot {
     slot.stop();
 }
 
+/// `bankPace(log)` logs once, starts one native wait and settles on a later
+/// observed tick of the same session (the exact one-tick rule is the native
+/// `compat_v1_bank__bankpace__contract`). `bankPaceTicks` is no longer
+/// exported (`compat_v1_bank__bankpaceticks__removed`).
 #[test]
-fn isolate_banking_not_implemented_exports_load_and_name_each_call() {
+fn isolate_bank_pace_logs_and_settles_on_a_later_observed_tick() {
     let src = r#"
-import { purgePackAtBank, withdrawCoins, bankPace, bankPaceTicks } from '../../api/bank/Banking.js';
+import { bankPace } from '../../api/bank/Banking.js';
 export default class T extends LoopingBot {
     async loop() {
-        const failures = [];
-        for (const [name, invoke] of [
-            ['purgePackAtBank', () => purgePackAtBank()],
-            ['withdrawCoins', () => withdrawCoins()],
-            ['bankPace', () => bankPace()],
-            ['bankPaceTicks', () => bankPaceTicks()],
-        ]) {
-            try {
-                await invoke();
-                failures.push(`${name}: resolved`);
-            } catch (error) {
-                failures.push(error.message);
-            }
+        if (globalThis.__started) return;
+        globalThis.__started = true;
+        globalThis.__logs = [];
+        try {
+            const value = await bankPace((message) => globalThis.__logs.push(message));
+            globalThis.__paced = value === undefined;
+        } catch (error) {
+            globalThis.__paced = String(error);
         }
-        globalThis.__notImplemented = failures;
     }
 }
 "#;
-    let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![]).unwrap();
-    iso.on_game_tick(1);
-    let failures: serde_json::Value = iso.probe("__notImplemented").unwrap();
-    let failures = failures.as_array().expect("all deferred calls were caught");
-    assert_eq!(failures.len(), 4);
-    for (member, failure) in [
-        "purgePackAtBank",
-        "withdrawCoins",
-        "bankPace",
-        "bankPaceTicks",
-    ]
-    .into_iter()
-    .zip(failures)
-    {
-        assert!(
-            failure
-                .as_str()
-                .is_some_and(|message| message.starts_with(&format!("not impl: {member}"))),
-            "{member} failure: {failure}"
-        );
+    let mut slot = new_bank_slot(src, LoadShape::CompatClass, empty_named_banks());
+    let mut input = base_snapshot();
+    let mut snapshot = api::snapshot::GameSnapshot::new();
+    tick_bank_slot(&mut slot, &mut input, 1, -1, -1, &mut snapshot);
+    assert_eq!(
+        slot.probe("__logs").unwrap(),
+        serde_json::json!(["bank: pause 1t"])
+    );
+    assert_eq!(
+        slot.probe("globalThis.__paced ?? 'pending'").unwrap(),
+        serde_json::json!("pending"),
+        "the pause never settles on the tick that started it"
+    );
+    for tick in 2..=5 {
+        tick_bank_slot(&mut slot, &mut input, tick, -1, -1, &mut snapshot);
     }
-    iso.join();
+    assert_eq!(
+        slot.probe("globalThis.__paced ?? 'pending'").unwrap(),
+        serde_json::json!(true)
+    );
+    assert!(slot.take_actions().is_empty(), "a pause sends nothing");
+    slot.stop();
 }
 
 #[test]

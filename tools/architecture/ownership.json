@@ -19,6 +19,30 @@
       "owner": "T2"
     },
     {
+      "path": "crates/api/data/game-data/woodcutting-camps.rs",
+      "owner": "T2"
+    },
+    {
+      "path": "crates/api/data/game-data/quest-junk-catalog.rs",
+      "owner": "T2"
+    },
+    {
+      "path": "crates/api/data/game-data/mining-camps.rs",
+      "owner": "T2"
+    },
+    {
+      "path": "crates/api/data/game-data/fishing-methods.rs",
+      "owner": "T2"
+    },
+    {
+      "path": "crates/api/data/game-data/fishing-camps.rs",
+      "owner": "T2"
+    },
+    {
+      "path": "crates/api/data/game-data/fish-camp-cook-plans.rs",
+      "owner": "T2"
+    },
+    {
       "path": "crates/api/src/bank_memory.rs",
       "owner": "T5"
     },
@@ -63,6 +87,10 @@
       "owner": "T2"
     },
     {
+      "path": "crates/api/src/fishing_gear.rs",
+      "owner": "T2"
+    },
+    {
       "path": "crates/api/src/family_asset.rs",
       "owner": "T1"
     },
@@ -76,6 +104,10 @@
     },
     {
       "path": "crates/api/src/gather_methods.rs",
+      "owner": "T2"
+    },
+    {
+      "path": "crates/api/src/gather_camps.rs",
       "owner": "T2"
     },
     {
@@ -180,6 +212,10 @@
     },
     {
       "path": "crates/api/src/quest_facts.rs",
+      "owner": "T2"
+    },
+    {
+      "path": "crates/api/src/quest_junk.rs",
       "owner": "T2"
     },
     {
@@ -3555,6 +3591,10 @@
       "owner": "T2"
     },
     {
+      "path": "crates/script/src/fishing_gear.rs",
+      "owner": "T2"
+    },
+    {
       "path": "crates/script/src/gather_tools.rs",
       "owner": "T2"
     },
@@ -3820,6 +3860,14 @@
     },
     {
       "path": "crates/script-js/src/materialize/gathering_v8.rs",
+      "owner": "T2"
+    },
+    {
+      "path": "crates/script-js/src/materialize/gather_catalog_v8_tests.rs",
+      "owner": "T2"
+    },
+    {
+      "path": "crates/script-js/src/materialize/gather_catalog_v8.rs",
       "owner": "T2"
     },
     {
@@ -4543,6 +4591,26 @@
       "owner": "T2"
     },
     {
+      "path": "crates/script-js/src/shim/data/mining_locations.js",
+      "owner": "T2"
+    },
+    {
+      "path": "crates/script-js/src/shim/data/gathering_locations.js",
+      "owner": "T2"
+    },
+    {
+      "path": "crates/script-js/src/shim/data/fishing_methods.js",
+      "owner": "T2"
+    },
+    {
+      "path": "crates/script-js/src/shim/data/fishing_locations.js",
+      "owner": "T2"
+    },
+    {
+      "path": "crates/script-js/src/shim/data/cooking_ranges.js",
+      "owner": "T2"
+    },
+    {
       "path": "crates/script-js/src/shim/death_recovery.js",
       "owner": "T2"
     },
@@ -4604,6 +4672,10 @@
     },
     {
       "path": "crates/script-js/src/shim/gathering_locations.js",
+      "owner": "T2"
+    },
+    {
+      "path": "crates/script-js/src/shim/fishing_gear.js",
       "owner": "T2"
     },
     {
@@ -5228,6 +5300,10 @@
     },
     {
       "path": "crates/script-js/tests/gather_gas_set.rs",
+      "owner": "T2"
+    },
+    {
+      "path": "crates/script-js/tests/compat_v1_gather.rs",
       "owner": "T2"
     },
     {
@@ -6111,6 +6187,18 @@
       "owner": "T2"
     },
     {
+      "path": "tools/game-data/extractors/rs2b0t-literals.ts",
+      "owner": "T2"
+    },
+    {
+      "path": "tools/game-data/extractors/quest-junk.ts",
+      "owner": "T2"
+    },
+    {
+      "path": "tools/game-data/extractors/gather-catalog.ts",
+      "owner": "T2"
+    },
+    {
       "path": "tools/game-data/extractors/karamja.ts",
       "owner": "T2"
     },
@@ -6144,6 +6232,22 @@
     },
     {
       "path": "tools/game-data/generate.test.ts",
+      "owner": "T2"
+    },
+    {
+      "path": "tools/game-data/quest-junk.test.ts",
+      "owner": "T2"
+    },
+    {
+      "path": "tools/game-data/generate-gather-catalogs.ts",
+      "owner": "T2"
+    },
+    {
+      "path": "tools/game-data/gather-oracle.ts",
+      "owner": "T2"
+    },
+    {
+      "path": "tools/game-data/gather-catalog.test.ts",
       "owner": "T2"
     },
     {
