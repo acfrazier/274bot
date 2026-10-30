@@ -165,17 +165,33 @@ fn object<'s>(
     let template = match cached {
         Some(template) => template,
         None => {
-            let template = v8::ObjectTemplate::new(scope);
-            let placeholder: v8::Local<v8::Data> = v8::undefined(scope).into();
-            for name in keys {
-                let name = key(scope, name);
-                template.set(name.into(), placeholder);
-            }
+            let template = shape(scope, keys);
             let global = v8::Global::new(scope, template);
             shared.borrow_mut().shapes.insert(keys.into(), global);
             template
         }
     };
+    populate(scope, template, keys, values)
+}
+
+/// An object template whose own keys are these names, in this order.
+fn shape<'s>(scope: &mut v8::HandleScope<'s>, keys: &[&str]) -> v8::Local<'s, v8::ObjectTemplate> {
+    let template = v8::ObjectTemplate::new(scope);
+    let placeholder: v8::Local<v8::Data> = v8::undefined(scope).into();
+    for name in keys {
+        let name = key(scope, name);
+        template.set(name.into(), placeholder);
+    }
+    template
+}
+
+/// One instance of `template`, each own key defined as a data property (the way a spread defines them).
+fn populate<'s>(
+    scope: &mut v8::HandleScope<'s>,
+    template: v8::Local<'s, v8::ObjectTemplate>,
+    keys: &[&str],
+    values: &[Value<'s>],
+) -> JsResult<'s, Value<'s>> {
     let Some(row) = template.new_instance(scope) else {
         return Err(cb::type_error(
             scope,
@@ -184,7 +200,7 @@ fn object<'s>(
     };
     for (name, value) in keys.iter().zip(values) {
         let name = key(scope, name);
-        if !cb::catching(scope, |s| row.set(s, name.into(), *value))? {
+        if !cb::catching(scope, |s| row.create_data_property(s, name.into(), *value))? {
             return Err(cb::type_error(
                 scope,
                 "gather catalog: could not set a property",
@@ -1004,34 +1020,70 @@ fn with_bait<'s>(
     object(host.scope, &["gear"], &[gear_array])
 }
 
-/// `{ ...piece, restock: target }`.
+/// The own keys of a method's gear piece (`api::fishing_gear`), the one piece shape the catalog knows.
+const PIECE_KEYS: [&str; 3] = ["name", "min", "restock"];
+
+/// `{ ...piece, restock: target }`. A piece with exactly the catalog's own keys, in order, becomes an instance of
+/// the cached piece shape. Any other piece, with whatever string, index or symbol keys the caller gave it
+/// (including an own `__proto__`, which stays an own data property), is copied by spread semantics onto a plain
+/// object: nothing about a caller's key list is cached, so callers cannot grow the catalog's per-isolate state.
 fn copy_with_restock<'s>(
     scope: &mut v8::HandleScope<'s>,
     piece: Value<'s>,
     target: f64,
 ) -> JsResult<'s, Value<'s>> {
-    let global = scope.get_current_context().global(scope);
-    let object_class = cb::get(scope, global.into(), "Object")?;
-    let empty = v8::Object::new(scope);
-    let copy = cb::call_method(
-        scope,
-        object_class,
-        "assign",
-        &[empty.into(), piece],
-        "Object.assign",
-    )?;
-    let name = key(scope, "restock");
-    let target = cb::num(scope, target);
-    let Ok(copy_object) = v8::Local::<v8::Object>::try_from(copy) else {
-        return Err(cb::type_error(
-            scope,
-            "gather catalog: spread did not produce an object",
-        ));
+    let Ok(source) = v8::Local::<v8::Object>::try_from(piece) else {
+        return Err(cb::not_impl(scope, "bait piece that is not an object"));
     };
-    cb::catching(scope, |s| {
-        copy_object.create_data_property(s, name.into(), target)
-    })?;
-    Ok(copy)
+    let mut options = v8::GetPropertyNamesArgsBuilder::new();
+    options
+        .mode(v8::KeyCollectionMode::OwnOnly)
+        .property_filter(v8::PropertyFilter::ONLY_ENUMERABLE)
+        .index_filter(v8::IndexFilter::IncludeIndices)
+        .key_conversion(v8::KeyConversionMode::ConvertToString);
+    let listed = cb::catching(scope, |s| source.get_own_property_names(s, options.build()))?;
+    let length = listed.length();
+    let mut names: Vec<v8::Local<'s, v8::Name>> = Vec::with_capacity(length as usize);
+    let mut known = length as usize == PIECE_KEYS.len();
+    for index in 0..length {
+        let name = cb::get_index(scope, listed.into(), index)?;
+        if known {
+            let expected = key(scope, PIECE_KEYS[index as usize]);
+            known = name.strict_equals(expected.into());
+        }
+        let Ok(name) = v8::Local::<v8::Name>::try_from(name) else {
+            return Err(cb::type_error(
+                scope,
+                "gather catalog: a property key is neither a string nor a symbol",
+            ));
+        };
+        names.push(name);
+    }
+    let mut values: Vec<Value<'s>> = Vec::with_capacity(names.len());
+    for name in &names {
+        values.push(cb::catching(scope, |s| source.get(s, (*name).into()))?);
+    }
+    let target = cb::num(scope, target);
+    if known {
+        values[2] = target;
+        return object(scope, &PIECE_KEYS, &values);
+    }
+    let copy = v8::Object::new(scope);
+    let restock = key(scope, "restock");
+    let named = names
+        .iter()
+        .zip(&values)
+        .map(|(name, value)| (*name, *value))
+        .chain(std::iter::once((restock.into(), target)));
+    for (name, value) in named {
+        if !cb::catching(scope, |s| copy.create_data_property(s, name, value))? {
+            return Err(cb::type_error(
+                scope,
+                "gather catalog: could not set a property",
+            ));
+        }
+    }
+    Ok(copy.into())
 }
 
 /// Which plans a `planFishingGearBuys` family member returns.
