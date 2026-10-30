@@ -346,6 +346,7 @@ fn nonzero_stage_door_keeps_started_window_in_both_directions() {
 fn post_completion_pass_through_keeps_exact_stage_and_current_player() {
     // Holy barrier's exact-stage + protected-current-player shape, with a
     // different quest, loc id and coordinates so extraction is generic.
+    // No script .loc row is needed for a placement-only telejump opener.
     let fx = plain_opener_fixture(
         "[oploc1,plain_door]\n\
          if (%heroquest = 16) {\n\

@@ -760,6 +760,7 @@ fn trajectory(input: TrajectoryInputs<'_>) -> Option<Trajectory> {
         z: placement.z,
         level: placement.level,
     };
+    let empty_loc_facts = LocFacts::default();
     let mut result: Option<Trajectory> = None;
     let above = if complete { above } else { &[] };
     // NPC presence is always universally quantified. A typed stage window
@@ -784,7 +785,13 @@ fn trajectory(input: TrajectoryInputs<'_>) -> Option<Trajectory> {
                 relative_landing_safe: false,
                 jumps: 0,
             },
-            facts: facts.locs.get(&id)?.as_ref()?,
+            facts: match facts.locs.get(&id) {
+                Some(Some(loc_facts)) => loc_facts,
+                Some(None) => return None,
+                // Missing configuration supplies no params. A loc_param read
+                // still fails closed because the default map is empty.
+                None => &empty_loc_facts,
+            },
             proofs,
             selectors,
             tool: None,
