@@ -3790,7 +3790,7 @@ mod tests {
 
         let mut gatherer = draynor_net_gatherer();
         gatherer.trip = TripStep::Return;
-        gatherer.avoid[0] = AvoidedTile {
+        gatherer.scratch.avoid[0] = AvoidedTile {
             tile: WorldTile {
                 x: 3085,
                 z: 3231,
@@ -3871,7 +3871,7 @@ mod tests {
 
         let mut gatherer = draynor_net_gatherer();
         gatherer.retained.recovery = RecoveryState::Pending { step: 5 };
-        gatherer.avoid[0] = AvoidedTile {
+        gatherer.scratch.avoid[0] = AvoidedTile {
             tile: WorldTile {
                 x: 3085,
                 z: 3231,
@@ -4101,7 +4101,7 @@ mod tests {
 
         let mut gatherer = draynor_net_gatherer();
         gatherer.hazard_escape = Some(hazard);
-        gatherer.avoid[0] = AvoidedTile {
+        gatherer.scratch.avoid[0] = AvoidedTile {
             tile: hazard,
             until: 180,
         };
@@ -4174,7 +4174,7 @@ mod tests {
 
         let mut gatherer = draynor_net_gatherer();
         gatherer.hazard_escape = Some(hazard);
-        gatherer.avoid[0] = AvoidedTile {
+        gatherer.scratch.avoid[0] = AvoidedTile {
             tile: hazard,
             until: 180,
         };

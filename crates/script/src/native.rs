@@ -1069,11 +1069,7 @@ pub(crate) struct ReturnStallRecovery {
 
 impl Default for ReturnStallRecovery {
     fn default() -> Self {
-        Self {
-            actions: 0,
-            max_attempts: MAX_RETURN_RECOVERY_ATTEMPTS,
-            pending: false,
-        }
+        Self::with_max_attempts(MAX_RETURN_RECOVERY_ATTEMPTS)
     }
 }
 
@@ -1081,8 +1077,9 @@ impl ReturnStallRecovery {
     /// Set a total request limit, including the initial request.
     pub(crate) fn with_max_attempts(max_attempts: u8) -> Self {
         Self {
+            actions: 0,
             max_attempts: max_attempts.max(1),
-            ..Self::default()
+            pending: false,
         }
     }
 
@@ -1113,7 +1110,7 @@ impl ReturnStallRecovery {
     }
 
     fn observe_retryable(&mut self, retryable: bool) -> bool {
-        if retryable && self.actions.saturating_add(1) < self.max_attempts && !self.pending {
+        if retryable && self.retry_attempt_number() <= self.max_attempts && !self.pending {
             self.pending = true;
             true
         } else {

@@ -1099,7 +1099,6 @@ fn assert_route_ended_tree_reselection(observation: TargetObservation, loaded: b
             );
             assert_eq!(gatherer.scratch.retry_after_tick, Some(2));
             assert!(gatherer.scratch.return_stall_recovery.pending());
-            assert!(ledger.as_ref().unwrap().outbox.is_empty());
         } else {
             assert!(
                 gatherer.failure.is_none(),
@@ -1108,6 +1107,9 @@ fn assert_route_ended_tree_reselection(observation: TargetObservation, loaded: b
             gatherer.begin_idle(tick, true);
         }
     });
+    if observation == TargetObservation::Active || !loaded {
+        assert!(ledger.as_ref().unwrap().outbox.is_empty());
+    }
     if observation != TargetObservation::Active && loaded {
         assert_eq!(gatherer.target.as_ref().unwrap().tile, other);
         assert!(matches!(gatherer.active, Active::Walk(_)));
