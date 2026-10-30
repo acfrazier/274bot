@@ -280,7 +280,7 @@ impl Fixture {
                         .snapshot
                         .main_modal_texts()
                         .iter()
-                        .any(|text| text.trim() == name)
+                        .any(|text| text.strip_prefix("@dre@").unwrap_or(text).trim() == name)
             })
         {
             self.wrong_page_ready = true;
@@ -479,21 +479,21 @@ impl Fixture {
             .snapshot
             .quest_statuses()
             .iter()
-            .find(|row| row.name.eq_ignore_ascii_case("Doric's Quest"))
+            .find(|row| row.name.eq_ignore_ascii_case("Black Knight's Fortress"))
         else {
-            self.error = Some("Doric's Quest is absent from the live quest tab".into());
+            self.error = Some("Black Knight's Fortress is absent from the live quest tab".into());
             return;
         };
         let component_id = row.component_id;
         let name = row.name.clone();
         let ctx = ReadContext::new(&self.snapshot);
         let Some(widget) = ctx.component(component_id) else {
-            self.error = Some("Doric's Quest row has no live widget".into());
+            self.error = Some("Black Knight's Fortress row has no live widget".into());
             return;
         };
         let result = Interactions::new(&self.snapshot, client).if_button(widget);
         if !matches!(&result, SendResult::Sent { .. }) {
-            self.error = Some(format!("Doric's Quest row click refused: {result:?}"));
+            self.error = Some(format!("Black Knight's Fortress row click refused: {result:?}"));
             return;
         }
         self.wrong_quest_name = Some(name);
@@ -717,15 +717,9 @@ fn wait_for(
         if condition(play, &state) {
             return;
         }
-        let main_texts = state
-            .snapshot
-            .main_modal_texts()
-            .iter()
-            .take(12)
-            .collect::<Vec<_>>();
         assert!(
             Instant::now() < deadline,
-            "live cell timeout for {account}: state={:?}, script={:?}, native={:?}, tick={}, active_side_tab={}, open_other_quest={}, clicked_wrong_quest={}, wrong_quest={:?}, wrong_page_ready={}, modals={:?}, main_texts={main_texts:?}",
+            "live cell timeout for {account}: state={:?}, script={:?}, native={:?}, tick={}, active_side_tab={}, open_other_quest={}, clicked_wrong_quest={}, wrong_quest={:?}, wrong_page_ready={}, modals={:?}, main_texts={:?}",
             state.prep,
             play.script_state(account),
             play.script_native_status(account),
@@ -735,7 +729,8 @@ fn wait_for(
             state.wrong_quest_clicked,
             state.wrong_quest_name,
             state.wrong_page_ready,
-            state.snapshot.modals()
+            state.snapshot.modals(),
+            state.snapshot.main_modal_texts()
         );
         drop(state);
         thread::sleep(POLL_INTERVAL);
