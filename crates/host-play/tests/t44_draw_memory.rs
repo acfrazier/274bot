@@ -1896,8 +1896,8 @@ const REGION_ORIGIN: Tile = Tile {
     level: 0,
 };
 const REGION_DESTINATION: Tile = Tile {
-    x: 2661,
-    z: 3301,
+    x: 2724,
+    z: 3484,
     level: 0,
 };
 const SEED_SCENE_TICK_BUDGET: u32 = 150;
@@ -2256,6 +2256,17 @@ fn drive_region_client(
         run.route_start_tile = run.snapshot.tile();
         run.last_walk_tick = Some(tick);
         run.phase = RegionPhase::Walking;
+        if !run.starting_base.is_some_and(|base| {
+            outside_rebuild_window(
+                base,
+                (REGION_DESTINATION.x, REGION_DESTINATION.z, REGION_DESTINATION.level),
+            )
+        }) {
+            record_route_failure(
+                &mut run,
+                "source route endpoint does not leave the engine's REBUILD_NORMAL window",
+            );
+        }
         if !run.source_route_confirmed {
             record_route_failure(
                 &mut run,
@@ -2388,6 +2399,31 @@ fn rebuild_base_matches_centre_zone(event: &RegionClientEvent) -> bool {
         )
 }
 
+fn outside_rebuild_window(base: (i32, i32), tile: (i32, i32, i32)) -> bool {
+    // Engine entity/BuildArea.ts:61-67: [originZone-4, originZone+5).
+    // The client's base is (originZone-6)*8, so the relative bounds are 16..88.
+    tile.0 < base.0 + 16
+        || tile.0 >= base.0 + 88
+        || tile.1 < base.1 + 16
+        || tile.1 >= base.1 + 88
+}
+
+#[test]
+fn region_crossing_uses_engine_reload_window_not_each_eight_tile_zone() {
+    let base = (2608, 3240);
+    assert!(!outside_rebuild_window(base, (2624, 3256, 0)));
+    assert!(!outside_rebuild_window(base, (2695, 3327, 0)));
+    assert!(!outside_rebuild_window(base, (2661, 3301, 0)));
+    assert!(outside_rebuild_window(base, (2623, 3256, 0)));
+    assert!(outside_rebuild_window(base, (2696, 3327, 0)));
+    assert!(outside_rebuild_window(base, (2659, 3255, 0)));
+    assert!(outside_rebuild_window(base, (2660, 3328, 0)));
+    assert!(outside_rebuild_window(
+        base,
+        (REGION_DESTINATION.x, REGION_DESTINATION.z, REGION_DESTINATION.level)
+    ));
+}
+
 fn genuine_region_rebuild_seen(
     trace: &RegionTrace,
     starting_base: (i32, i32),
@@ -2406,10 +2442,9 @@ fn genuine_region_rebuild_seen(
     });
     let actual_zone_crossing = trace.client_events.iter().any(|event| {
         event.phase == RegionPhase::Walking.label()
-            && event.tile.is_some_and(|tile| {
-                tile.0.div_euclid(8) != route_start.0.div_euclid(8)
-                    || tile.1.div_euclid(8) != route_start.1.div_euclid(8)
-            })
+            && event
+                .tile
+                .is_some_and(|tile| outside_rebuild_window(starting_base, tile))
     });
     let Some(loading) = trace.client_events.iter().find(|event| {
         event.phase == RegionPhase::Walking.label()
@@ -2500,6 +2535,22 @@ fn region_transition_oracle_rejects_a_paint_only_loading_state() {
     trace.client_events[1].centre_zone = (332, 412);
     trace.client_events[2].base = rebuilt_base;
     trace.client_events[2].centre_zone = (332, 412);
+    assert!(!genuine_region_rebuild_seen(
+        &trace,
+        initial_base,
+        true,
+        route_start,
+        destination,
+    ));
+
+    // A source-valid rebuild first occurs at z=3328, not at the zone edge 3296.
+    trace.client_events[1].tile = Some((2660, 3328, 0));
+    trace.client_events[1].base = (2608, 3280);
+    trace.client_events[1].centre_zone = (332, 416);
+    let destination = (2724, 3484, 0);
+    trace.client_events[2].tile = Some(destination);
+    trace.client_events[2].base = (2672, 3432);
+    trace.client_events[2].centre_zone = (340, 435);
     assert!(genuine_region_rebuild_seen(
         &trace,
         initial_base,
@@ -2785,6 +2836,7 @@ fn real_region_crossing_draws_loading_splash_and_current_overlays() {
             "route_movement_ticks": run.movement_ticks,
             "scene_loading_ticks": run.scene_loading_ticks,
             "planned_route_crosses_scene_zone_edge": run.route_crosses_zone_edge,
+            "rebuild_boundary_source": "engine/src/engine/entity/BuildArea.ts:57-67",
             "source_route_has_ardougne_west_door_1530": run.source_route_confirmed,
             "route_has_displacing_transport": run.route_has_displacing_transport,
             "walk_legs": run.route_description,
