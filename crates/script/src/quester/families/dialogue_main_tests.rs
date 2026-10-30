@@ -1722,13 +1722,17 @@ fn dialogue_refusal_approach_failure_keeps_refusal_detail() {
 
     let mut missing = snapshot();
     missing.seed_local_player(super::tests::local_player(player_tile));
-    assert!(matches!(
-        with_tick(&missing, &mut ledger, 3, |tick| {
-            tick.actions.poll(&handle, &mut tick.cx)
-        }),
-        Poll::Ready(Err(ActionError::Failed(reason)))
-            if reason.as_ref() == "server refused Talk-to: I can't reach that!"
-    ));
+    let terminal = with_tick(&missing, &mut ledger, 3, |tick| {
+        tick.actions.poll(&handle, &mut tick.cx)
+    });
+    assert!(
+        matches!(
+            &terminal,
+            Poll::Ready(Err(ActionError::Failed(reason)))
+                if reason.as_ref() == "server refused Talk-to: I can't reach that!"
+        ),
+        "unexpected terminal poll: {terminal:?}"
+    );
 }
 
 #[test]
