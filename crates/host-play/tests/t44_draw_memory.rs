@@ -1182,6 +1182,10 @@ fn wake_slots(play: &Play, heads: &[HeadProbe]) {
     }
 }
 
+#[expect(
+    clippy::too_many_arguments,
+    reason = "Each measurement phase supplies its policy, timing, live heads and prior owner census"
+)]
 fn run_live_policy(
     label: &str,
     policy: &str,
@@ -1371,7 +1375,7 @@ fn drawing_memory_oracle_rejects_missing_heads_and_copy_leaks() {
             media_process_storage_bytes: 4096,
             retained_present_resource_count: 1,
         },
-        &[live_without_backend_gate.clone()],
+        std::slice::from_ref(&live_without_backend_gate),
     );
     assert_eq!(
         draining_gpu_process.retained_present_logical_gpu_bytes(),
@@ -1491,7 +1495,7 @@ fn drawing_memory_oracle_rejects_missing_heads_and_copy_leaks() {
         DrawingPhase::Detached,
         expected,
         &[detached.clone()],
-        Some(&[old.clone()])
+        Some(std::slice::from_ref(&old))
     )
     .unwrap_err()
     .contains("retained owner bytes"));
@@ -1503,7 +1507,7 @@ fn drawing_memory_oracle_rejects_missing_heads_and_copy_leaks() {
         DrawingPhase::Detached,
         expected,
         &[detached_zero.clone()],
-        Some(&[old.clone()])
+        Some(std::slice::from_ref(&old))
     )
     .is_ok());
 
@@ -1538,7 +1542,7 @@ fn drawing_memory_oracle_rejects_missing_heads_and_copy_leaks() {
         DrawingPhase::Reattach,
         expected,
         &[reattached.clone()],
-        Some(&[old.clone()])
+        Some(std::slice::from_ref(&old))
     )
     .is_ok());
     reattached.head_identity = old.head_identity;
@@ -2132,6 +2136,10 @@ fn record_route_failure(run: &mut RegionRun, message: impl Into<String>) {
     }
 }
 
+#[expect(
+    clippy::too_many_arguments,
+    reason = "The real region driver needs the client, mailbox, trace, route signal and nav identity"
+)]
 fn drive_region_client(
     client: &mut Client,
     username: &str,
