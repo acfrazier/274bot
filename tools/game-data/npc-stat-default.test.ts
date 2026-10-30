@@ -125,7 +125,7 @@ function fixture(): string {
     ].join('\n'));
     fs.writeFileSync(path.join(root, 'scripts/skill_combat/configs/combat.param'), combatParams);
     fs.writeFileSync(path.join(root, 'scripts/npc/configs/stat-default.npc'), npcConfig);
-    fs.writeFileSync(path.join(root, 'scripts/skill_combat/scripts/npc/melee.rs2'), `[proc,npc_melee_maxhit]
+    fs.writeFileSync(path.join(root, 'scripts/skill_combat/scripts/npc/melee.rs2'), `[proc,npc_melee_maxhit]()(int)
 def_int $strengthbonus = npc_param(strengthbonus);
 def_int $effective_strength = ~combat_effective_stat(npc_stat(strength), 100);
 $effective_strength = add($effective_strength, 9);

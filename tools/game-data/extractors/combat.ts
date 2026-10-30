@@ -320,8 +320,13 @@ const STANDARD_MELEE_ATTACK_BODY = [
 
 function standardMeleeMaxHitRoutineExists(scripts: CombatScripts) {
     const routines = scripts.procedures.get('npc_melee_maxhit') ?? [];
-    return routines.length === 1
-        && routines[0]!.body.replace(/\s+/g, ' ').trim() === STANDARD_MELEE_MAX_HIT_BODY;
+    if (routines.length !== 1) return false;
+    // The parser retains the content procedure's zero-argument int signature in its body.
+    const body = routines[0]!.body
+        .replace(/^\s*\(\)\s*\(\s*int\s*\)\s*/, '')
+        .replace(/\s+/g, ' ')
+        .trim();
+    return body === STANDARD_MELEE_MAX_HIT_BODY;
 }
 
 function standardMeleeRoutineExists(scripts: CombatScripts) {
