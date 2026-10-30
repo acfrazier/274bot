@@ -878,10 +878,15 @@ fn run_brimhaven_kitchen(phoenix: bool) {
         .graph
         .edges
         .iter()
-        .find(|edge| edge.loc_id == 2628 && edge.crossing_id().takeoff.z == 3190)
+        .find(|edge| {
+            edge.loc_id == 2628
+                && edge
+                    .crossing_id()
+                    .is_some_and(|crossing| crossing.takeoff.z == 3190)
+        })
         .expect("qualified kitchen door")
         .clone();
-    let crossing = edge.crossing_id();
+    let crossing = edge.crossing_id().expect("kitchen door crossing identity");
     let mut client = template
         .prepare_client((serial % i32::MAX as u128) as i32, true)
         .unwrap();
@@ -979,12 +984,13 @@ fn run_brimhaven_kitchen(phoenix: bool) {
             .iter()
             .find(|loc| loc.id == 2628 && loc.tile == crossing.at)
             .unwrap();
-        let sent = Interactions::new(&snapshot, &mut client)
-            .interact(
+        let sent = matches!(
+            Interactions::new(&snapshot, &mut client).interact(
                 api::interact::OpTarget::Loc(loc),
                 api::interact::ActionSpec::Label("Open".into()),
-            )
-            .is_sent();
+            ),
+            SendResult::Sent { .. }
+        );
         if !sent {
             return Err("real Open interaction refused by client".into());
         }

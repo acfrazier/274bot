@@ -25,6 +25,24 @@ fn shared_gates_keeps_the_canonical_gate_allocation() {
 
 #[test]
 fn quest_gate_layout_stays_compact() {
+    let canonical: Arc<[QuestGate]> = vec![QuestGate::Complete(FactKey::new("arrav"))].into();
+    let mut shared = None;
+    let allocation = allocation_counter::measure(|| {
+        shared = Some(Arc::new(super::GateSet {
+            family: family(1),
+            gates: Arc::clone(&canonical),
+        }));
+    });
+    assert_eq!(allocation.count_total, 1, "one allocation per shared set");
+    eprintln!(
+        "quest gate layout QuestGates={} OptionQuestGates={} TransportEdge={} GateSet={} GateSetAllocation={}",
+        size_of::<QuestGates>(),
+        size_of::<Option<QuestGates>>(),
+        size_of::<TransportEdge>(),
+        size_of::<super::GateSet>(),
+        allocation.bytes_current,
+    );
+    assert!(shared.is_some(), "the measurement retains the shared set");
     assert_eq!(
         size_of::<QuestGates>(),
         size_of::<usize>(),

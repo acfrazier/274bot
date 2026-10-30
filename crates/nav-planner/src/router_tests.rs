@@ -7189,6 +7189,19 @@ fn real_289_cooperative_request_shapes_match_legacy_serialization() {
         ),
     };
     let world = Arc::new(world);
+    eprintln!(
+        "transport graph layout ordinary={} teleports={} gated={} edge_bytes={}",
+        world.graph.edges.len(),
+        world.graph.teleports.len(),
+        world
+            .graph
+            .edges
+            .iter()
+            .chain(&world.graph.teleports)
+            .filter(|edge| edge.quest_gates.is_some())
+            .count(),
+        std::mem::size_of::<crate::transport::TransportEdge>(),
+    );
     let lease = crate::producer::lease(&world).expect("real pack lease");
     assert_eq!(
         lease.identity().content(),
@@ -7838,7 +7851,8 @@ fn real_289_cooperative_request_shapes_match_legacy_serialization() {
         panic!("quest-gate cursor returned the wrong result shape")
     };
     assert_eq!(
-        new_gates, old_gates,
+        new_gates.as_ref().map(|gates| gates.as_deref()),
+        old_gates.as_ref().map(|gates| gates.as_deref()),
         "the cooperative path must preserve this pack's unresolved quest-gate result"
     );
     let old_bytes = format!("{old_gates:#?}");

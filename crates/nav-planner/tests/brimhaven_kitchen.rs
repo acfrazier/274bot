@@ -161,7 +161,7 @@ fn matrix(world: &NavWorld, qualified: bool) -> Vec<serde_json::Value> {
                 stamp(),
             ));
         for edge in &graph.edges {
-            let id = edge.crossing_id();
+            let id = edge.crossing_id().expect("kitchen door crossing identity");
             let route = find_with(
                 &collision,
                 &graph,
