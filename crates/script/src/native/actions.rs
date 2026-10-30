@@ -2695,6 +2695,26 @@ mod tests {
     }
 
     #[test]
+    fn plain_walk_under_stage_grant_arms_food_guard() {
+        let mut ledger = None;
+        with_frame(&mut ledger, Duration::ZERO, |cx| {
+            cx.stage_cross = Some(Arc::from([Arc::from("declared-zone")]));
+            let mut actions = NativeActions { _private: () };
+            let handle = actions
+                .begin::<walk::Walk>(assessment_walk_request(cx.evidence()), cx)
+                .unwrap();
+            let HostEffect::Walk(request) = &cx.ledger.as_ref().unwrap().outbox[0].effect else {
+                panic!("the stage-granted walk must use the native walk path");
+            };
+            assert_eq!(request.cross.as_ref(), &[Arc::<str>::from("declared-zone")]);
+            assert!(request.food_guard, "a declared crossing must arm the food guard");
+            assert!(request.allow.food);
+            assert!(!request.protect);
+            drop(handle);
+        });
+    }
+
+    #[test]
     fn stage_cross_unions_step_grants_without_disabling_survival() {
         let mut ledger = None;
         with_frame(&mut ledger, Duration::ZERO, |cx| {
@@ -2703,7 +2723,6 @@ mod tests {
             request.cross = vec![Arc::from("step-zone")].into_boxed_slice();
             request.options.allow_danger_zones = WalkBit::Allow;
             request.protect = true;
-            request.food_guard = true;
             let mut actions = NativeActions { _private: () };
             let handle = actions.begin::<walk::Walk>(request, cx).unwrap();
             let HostEffect::Walk(request) = &cx.ledger.as_ref().unwrap().outbox[0].effect else {
