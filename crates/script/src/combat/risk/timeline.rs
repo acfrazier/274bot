@@ -78,7 +78,7 @@ fn npc_hit(
     input: &RiskInput,
     tables: &CombatTables,
 ) -> Result<HitChance, UnknownWhy> {
-    let row = tables.npc(ident).ok_or(UnknownWhy::MissingFacts)?;
+    let row = super::facts::effective_npc_row(ident, tables).ok_or(UnknownWhy::MissingFacts)?;
     let rolls = super::facts::defence_rolls(input.defence, input.style_def, input.worn_defence)?;
     let defence_roll = match row.damagetype.as_deref().and_then(damage_type_index) {
         Some(index) => rolls[index],
@@ -92,10 +92,14 @@ fn npc_hit(
     Ok(HitChance::ceil_from(hit_chance(attack_roll, defence_roll)))
 }
 
-fn attack_duration(live: &super::LiveRow, tables: &CombatTables) -> Result<i32, UnknownWhy> {
-    let npc = tables.npc(live.ident).ok_or(UnknownWhy::AlreadyEngaged)?;
-    let radius = super::facts::npc_envelope_radius(npc).ok_or(UnknownWhy::Overflow)?;
-    i32::from(radius)
+fn attack_duration(live: &super::LiveRow, risks: &RiskTables) -> Result<i32, UnknownWhy> {
+    let kind = risks
+        .npc(live.ident)
+        .ok_or(UnknownWhy::AlreadyEngaged)?;
+    if kind.r == 0 {
+        return Err(UnknownWhy::Overflow);
+    }
+    i32::from(kind.r)
         .checked_mul(2)
         .and_then(|ticks| ticks.checked_add(LAG))
         .ok_or(UnknownWhy::Overflow)
@@ -200,7 +204,7 @@ pub(crate) fn build_timeline(
         if kind.unknown_for().is_some() || live.rate == 0 {
             return Err(UnknownWhy::AlreadyEngaged);
         }
-        let duration = attack_duration(live, tables)?;
+        let duration = attack_duration(live, risks)?;
         last_tick = last_tick.max(duration);
         let (event_kind, hit) = if kind.shared_attack() {
             (

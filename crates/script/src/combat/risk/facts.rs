@@ -8,7 +8,7 @@ use std::future::Future;
 #[cfg(any(test, feature = "test-hooks"))]
 use std::sync::atomic::{AtomicUsize, Ordering};
 
-use api::game_data::{NpcAttackKind, NpcNameRow};
+use api::game_data::{NpcAttackKind, NpcCombatTransform, NpcNameRow};
 use nav_planner::contract::ZoneKindView;
 
 use super::super::select::facts::npc_max_hit;
@@ -321,15 +321,14 @@ pub fn poison_pulse(severity: Option<i32>) -> Option<u8> {
     }
 }
 
-/// Immutable risk facts for every selected NPC, keyed by NPC id (a
-/// game-data identity, unique per pack kind), and the selected poison
-/// bound. Independent of any nav pack: a zone's facts are read through its
-/// facade kind view, so no kind-row order or pack index reaches script.
+/// Immutable risk facts keyed by the selected NPC identity. Source-proven
+/// awakening chains provide their final target's combat facts while preserving
+/// the original identity used by navigation zones.
 #[derive(Debug)]
 pub struct RiskTables {
-    /// `(npc id, facts)` in the selected NPC rows' ascending id order.
+    /// `(NPC id, effective combat facts)` in selected rows' ascending id order.
     npcs: Box<[(i32, KindRisk)]>,
-    /// Maximum unknown-poison pulse from every selected NPC row, not only zoned kinds.
+    /// Maximum poison pulse from every raw selected NPC row.
     pub poison_unknown_v: u8,
 }
 
@@ -339,6 +338,57 @@ static RISK_TABLE_BUILD_COUNT: AtomicUsize = AtomicUsize::new(0);
 #[cfg(any(test, feature = "test-hooks"))]
 pub(super) fn build_count_for_test() -> usize {
     RISK_TABLE_BUILD_COUNT.load(Ordering::Relaxed)
+}
+
+fn resolve_awake_npc<'a>(rows: &'a [NpcNameRow], id: i32) -> Option<&'a NpcNameRow> {
+    let mut current = rows
+        .binary_search_by_key(&id, |row| row.id)
+        .ok()
+        .and_then(|index| rows.get(index))?;
+    let mut transforms = 0;
+    loop {
+        match current.combat_transform {
+            None => return Some(current),
+            Some(NpcCombatTransform::Unknown) => return None,
+            Some(NpcCombatTransform::Known { npc_id }) => {
+                if transforms >= rows.len() {
+                    return None;
+                }
+                transforms += 1;
+                let index = rows.binary_search_by_key(&npc_id, |row| row.id).ok()?;
+                current = rows.get(index)?;
+            }
+        }
+    }
+}
+
+fn npc_risk_for_row(row: &NpcNameRow, rows: &[NpcNameRow], combat: &CombatTables) -> KindRisk {
+    if row.combat_transform.is_none() {
+        return KindRisk::from_npc(row, combat);
+    }
+    resolve_awake_npc(rows, row.id)
+        .map(|target| KindRisk::from_npc(target, combat))
+        .unwrap_or_else(KindRisk::missing_facts)
+}
+
+fn npc_risk_from_rows(rows: &[NpcNameRow], id: i32, combat: &CombatTables) -> KindRisk {
+    rows.binary_search_by_key(&id, |row| row.id)
+        .ok()
+        .and_then(|index| rows.get(index))
+        .map(|row| npc_risk_for_row(row, rows, combat))
+        .unwrap_or_else(KindRisk::missing_facts)
+}
+
+/// The effective selected NPC row, resolving content-proven awakenings.
+pub(super) fn effective_npc_row<'a>(
+    id: i32,
+    combat: &'a CombatTables,
+) -> Option<&'a NpcNameRow> {
+    let rows = combat
+        .selected()
+        .npc_names()
+        .map_or(&[][..], |names| &names.rows);
+    resolve_awake_npc(rows, id)
 }
 
 impl RiskTables {
@@ -351,9 +401,10 @@ impl RiskTables {
 
     /// Build selected NPC facts with one borrowed checkpoint per NPC row.
     ///
-    /// The async state contains only the input borrow, scalar indexes, and
-    /// the one output vector. Callers account for its future layout, the
-    /// vector/boxed-slice conversion overlap, and the returned table.
+    /// Awakening targets are resolved without per-row storage. The async state
+    /// contains only the input borrow, scalar indexes, and the one output
+    /// vector. Callers account for its future layout, the vector/boxed-slice
+    /// conversion overlap, and the returned table.
     pub async fn build_cooperative<F, U>(
         combat: &CombatTables,
         yield_unit: &mut F,
@@ -372,7 +423,7 @@ impl RiskTables {
         let mut npcs = Vec::new();
         npcs.try_reserve_exact(rows.len())?;
         for row in rows {
-            npcs.push((row.id, KindRisk::from_npc(row, combat)));
+            npcs.push((row.id, npc_risk_for_row(row, rows, combat)));
             yield_unit().await;
         }
         let poison_unknown_v = combat.unknown_poison_pulse();
@@ -420,6 +471,8 @@ impl RiskTables {
     }
 }
 
+/// Maximum poison pulse across all selected NPC rows, independent of whether
+/// a row's combat facts resolve through an awakening.
 pub(crate) fn poison_unknown_v_rows(rows: &[NpcNameRow]) -> u8 {
     if rows.is_empty() {
         return u8::MAX;
@@ -490,7 +543,64 @@ mod tests {
             counter_protect: false,
             poison_severity: Some(0),
             forcemulti: false,
+            combat_transform: None,
         }
+    }
+
+    #[test]
+    fn npc_transform_resolution_follows_chains_and_fails_closed() {
+        let combat = combat();
+        let mut dormant = npc();
+        dormant.id = 1;
+        dormant.combat_transform = Some(NpcCombatTransform::Known { npc_id: 2 });
+        dormant.poison_severity = Some(0);
+        let mut middle = npc();
+        middle.id = 2;
+        middle.combat_transform = Some(NpcCombatTransform::Known { npc_id: 3 });
+        let mut awake = npc();
+        awake.id = 3;
+        awake.attack = 77;
+        awake.poison_severity = Some(11);
+        let chain = [dormant, middle, awake];
+        assert_eq!(resolve_awake_npc(&chain, 1).map(|row| row.id), Some(3));
+        assert_eq!(
+            npc_risk_from_rows(&chain, 1, &combat),
+            KindRisk::from_npc(&chain[2], &combat)
+        );
+        assert_eq!(npc_risk_from_rows(&chain, 1, &combat).poison, 3);
+
+        let mut unknown = npc();
+        unknown.combat_transform = Some(NpcCombatTransform::Unknown);
+        unknown.poison_severity = Some(11);
+        let unknown_id = unknown.id;
+        let unknown_rows = [unknown];
+        assert_eq!(
+            npc_risk_from_rows(&unknown_rows, unknown_id, &combat).unknown,
+            UnknownKind::MissingFacts
+        );
+        assert_eq!(poison_unknown_v_rows(&unknown_rows), 3);
+
+        let mut missing = npc();
+        missing.combat_transform = Some(NpcCombatTransform::Known { npc_id: 2 });
+        let missing_id = missing.id;
+        let missing_rows = [missing];
+        assert_eq!(
+            npc_risk_from_rows(&missing_rows, missing_id, &combat).unknown,
+            UnknownKind::MissingFacts
+        );
+        assert_eq!(poison_unknown_v_rows(&missing_rows), 0);
+
+        let mut first = npc();
+        first.combat_transform = Some(NpcCombatTransform::Known { npc_id: 2 });
+        let mut second = npc();
+        second.id = 2;
+        second.combat_transform = Some(NpcCombatTransform::Known { npc_id: 1 });
+        let cycle = [first, second];
+        assert_eq!(
+            npc_risk_from_rows(&cycle, 1, &combat).unknown,
+            UnknownKind::MissingFacts
+        );
+        assert_eq!(poison_unknown_v_rows(&cycle), 0);
     }
 
     #[test]
@@ -648,17 +758,23 @@ mod tests {
         let risk = RiskTables::build(&combat);
         let rows = &combat.selected().npc_names().unwrap().rows;
         for row in rows {
-            assert_eq!(
-                risk.npc(row.id),
-                Some(&KindRisk::from_npc(row, &combat)),
-                "{}",
-                row.config
-            );
-            assert_eq!(
-                risk.npc_or_missing(row.id),
-                KindRisk::from_npc(combat.npc(row.id).unwrap(), &combat)
-            );
+            let expected = npc_risk_from_rows(rows, row.id, &combat);
+            assert_eq!(risk.npc(row.id), Some(&expected), "{}", row.config);
+            assert_eq!(risk.npc_or_missing(row.id), expected);
+            if row.combat_transform.is_none() {
+                assert_eq!(
+                    expected,
+                    KindRisk::from_npc(row, &combat),
+                    "{}",
+                    row.config
+                );
+                assert_eq!(
+                    effective_npc_row(row.id, &combat).map(|effective| effective.id),
+                    Some(row.id)
+                );
+            }
         }
+
         assert_eq!(
             risk.npc_or_missing(-7).unknown,
             UnknownKind::MissingFacts,
@@ -666,6 +782,7 @@ mod tests {
         );
         assert!(risk.npc(-1).is_none());
         assert!(risk.npc(i32::MAX).is_none());
+        assert_eq!(risk.poison_unknown_v, poison_unknown_v_rows(rows));
         assert_eq!(risk.poison_unknown_v, 11);
         assert_eq!(risk.npc_or_missing(ice.id).max_hit, 6);
 
@@ -689,6 +806,37 @@ mod tests {
         let fact = KindRisk::from_npc(poison_spider, &combat);
         assert_eq!(fact.max_hit, 7);
         assert_eq!(fact.unknown_for(), None);
+    }
+
+    #[test]
+    fn facts_rock_crab_dormant_kinds_use_awake_combat_facts() {
+        let combat = combat();
+        let risk = RiskTables::build(&combat);
+        for (dormant_config, awake_config) in [
+            ("horror_rockcrab_inactive", "horror_rockcrab"),
+            ("horror_rockcrab_small_inactive", "horror_rockcrab_small"),
+        ] {
+            let dormant = combat.selected().npc_by_config(dormant_config).unwrap();
+            let awake = combat.selected().npc_by_config(awake_config).unwrap();
+            assert_eq!(
+                dormant.combat_transform,
+                Some(NpcCombatTransform::Known { npc_id: awake.id }),
+                "{dormant_config}"
+            );
+            assert_eq!(
+                effective_npc_row(dormant.id, &combat).map(|effective| effective.id),
+                Some(awake.id),
+                "{dormant_config}"
+            );
+            let expected = KindRisk::from_npc(awake, &combat);
+            assert_eq!(risk.npc(dormant.id), Some(&expected), "{dormant_config}");
+            assert_eq!(risk.npc_or_missing(dormant.id), expected, "{dormant_config}");
+            assert_eq!(
+                risk.npc(dormant.id),
+                risk.npc(awake.id),
+                "{dormant_config} must retain awake facts under its original id"
+            );
+        }
     }
 
     #[test]
