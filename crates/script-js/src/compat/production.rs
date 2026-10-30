@@ -26,6 +26,9 @@ mod compat {
     pub const PANEL_WAIT_MS: u64 = 5_000;
     /// Frozen `ChatDialog.make` / `chooseOption` modal-change wait.
     pub const MODAL_WAIT_MS: u64 = 3_000;
+    /// Five observed game ticks cover the production result's page and inventory
+    /// receipts without using a wall-clock timeout.
+    const MAKE_ONE_WAIT_TICKS: u64 = 5;
 
     impl MakeXProduct for MakeProduct {
         fn object_id(&self) -> i32 {
@@ -38,6 +41,15 @@ mod compat {
                 .find(|button| button.qty == -1 && button.com_id >= 0)
                 .map(|button| button.com_id)
         }
+
+        fn make_one_component_id(&self) -> Option<i32> {
+            let component_id = self
+                .buttons
+                .iter()
+                .find(|button| button.qty == 1)?
+                .com_id;
+            (component_id >= 0).then_some(component_id)
+        }
     }
 
     /// The posted facts this module decides from, borrowed from the isolate
@@ -46,12 +58,15 @@ mod compat {
         let session = scene.since_login();
         Probe {
             ingame: session.ingame().unwrap_or(false),
+            login_mark: scene.login_mark(),
+            tick: scene.tick(),
             count_dialog_open: session.count_dialog_open().unwrap_or(false),
             main_modal_id: session.main_modal_id().unwrap_or(-1),
             chat_modal_id: session.chat_modal_id(),
             chat_continue: session.chat_continue().unwrap_or(false),
             chat_options: session.chat_options().map_or(&[], Vec::as_slice),
             make_products: session.make_products().map_or(&[], Vec::as_slice),
+            inventory: session.inv().map(Vec::as_slice),
             main_make: session
                 .main_make()
                 .and_then(Option::as_ref)
@@ -64,6 +79,7 @@ mod compat {
     #[serde(rename_all = "camelCase")]
     pub(crate) enum Kind {
         Make,
+        MakeOne,
         MakeX,
         MakeFromPanel,
         MakeFromPanelMax,
@@ -83,6 +99,15 @@ mod compat {
         WaitModal {
             chat: bool,
             before: i32,
+        },
+        /// Make-1 sent; waiting for a changed page and exactly one product receipt.
+        WaitMakeOne {
+            chat: bool,
+            before: i32,
+            product_id: i32,
+            before_count: i64,
+            login_mark: u64,
+            deadline_tick: u64,
         },
         /// Option answered or Continue pressed; waiting the chat modal to change
         /// or offer Continue.
@@ -123,6 +148,7 @@ mod compat {
                 let probe = probe(scene);
                 match args.kind {
                     Kind::Make => begin_make(&probe, &match_name, cx),
+                    Kind::MakeOne => begin_make_one(&probe, &match_name, cx),
                     Kind::ChooseOption => begin_choose(&probe, &match_name, cx),
                     Kind::Continue => begin_continue(&probe, cx),
                     // Make-X and the anvil panel stop at once when not in game.
@@ -141,6 +167,8 @@ mod compat {
 
     struct Probe<'a> {
         ingame: bool,
+        login_mark: u64,
+        tick: Option<u64>,
         count_dialog_open: bool,
         main_modal_id: i32,
         /// `None` until a chat modal id was posted (the frozen `undefined`).
@@ -148,6 +176,7 @@ mod compat {
         chat_continue: bool,
         chat_options: &'a [String],
         make_products: &'a [MakeProduct],
+        inventory: Option<&'a [ItemRow]>,
         /// `None` = the main skill-multi panel was not decoded this rebuild.
         main_make: Option<&'a [ItemRow]>,
     }
@@ -156,6 +185,15 @@ mod compat {
         /// `reader.modals()`: the chat and main modal ids, `-1` when unposted.
         fn chat_modal(&self) -> i32 {
             self.chat_modal_id.unwrap_or(-1)
+        }
+
+        fn inventory_count(&self, object_id: i32) -> Option<i64> {
+            self.inventory.map(|rows| {
+                rows.iter()
+                    .filter(|row| row.id == object_id)
+                    .map(|row| i64::from(row.count.max(0)))
+                    .sum()
+            })
         }
     }
 
@@ -217,6 +255,60 @@ mod compat {
             component_id: button.com_id,
         });
         run(Phase::WaitModal { chat, before }, MODAL_WAIT_MS, cx)
+    }
+
+    /// Frozen `ChatDialog.makeOne`: choose the first matching product's Make-1
+    /// control and wait for both a page change and its product inventory receipt.
+    fn begin_make_one(
+        probe: &Probe<'_>,
+        match_name: &str,
+        cx: &mut Cx<'_>,
+    ) -> Begin<ChatDialog> {
+        if !probe.ingame {
+            return Begin::Done(false);
+        }
+        let Some(start_tick) = probe.tick else {
+            return Begin::Done(false);
+        };
+        let Some(deadline_tick) = start_tick.checked_add(MAKE_ONE_WAIT_TICKS) else {
+            return Begin::Done(false);
+        };
+        let want = match_name.to_lowercase();
+        let product = if want.is_empty() {
+            probe.make_products.first()
+        } else {
+            probe
+                .make_products
+                .iter()
+                .find(|product| contains_ci(&product.name, &want))
+        };
+        let Some(product) = product else {
+            return Begin::Done(false);
+        };
+        let Some(component_id) = product.make_one_component_id() else {
+            return Begin::Done(false);
+        };
+        let Some(before_count) = probe.inventory_count(product.object_id()) else {
+            return Begin::Done(false);
+        };
+        let chat = probe.chat_modal() != -1;
+        let before = if chat {
+            probe.chat_modal()
+        } else {
+            probe.main_modal_id
+        };
+        cx.emit(InteractReq::IfButton { component_id });
+        Begin::Run(ChatDialog {
+            phase: Phase::WaitMakeOne {
+                chat,
+                before,
+                product_id: product.object_id(),
+                before_count,
+                login_mark: probe.login_mark,
+                deadline_tick,
+            },
+            make_x: MakeXCore::new(),
+        })
     }
 
     /// Frozen `ChatDialog.chooseOption`: the option containing `match` (else
@@ -361,7 +453,8 @@ mod compat {
 
     impl ChatDialog {
         fn step_on(&mut self, probe: &Probe<'_>, cx: &mut Cx<'_>) -> Step<bool> {
-            let timed_out = cx.clock().bound_reached();
+            let timed_out =
+                !matches!(self.phase, Phase::WaitMakeOne { .. }) && cx.clock().bound_reached();
             match self.phase {
                 // The frozen modal waits read the modal ids only: a logout that
                 // clears them ends the wait as a change.
@@ -372,6 +465,28 @@ mod compat {
                         probe.main_modal_id
                     };
                     done_or_wait(now != before, timed_out)
+                }
+                Phase::WaitMakeOne {
+                    chat,
+                    before,
+                    product_id,
+                    before_count,
+                    login_mark,
+                    deadline_tick,
+                } => {
+                    if !probe.ingame || probe.login_mark != login_mark {
+                        return Step::Done(false);
+                    }
+                    let now = if chat {
+                        probe.chat_modal()
+                    } else {
+                        probe.main_modal_id
+                    };
+                    let receipt = probe
+                        .inventory_count(product_id)
+                        .is_some_and(|count| count.checked_sub(before_count) == Some(1));
+                    let timed_out = probe.tick.is_some_and(|tick| tick >= deadline_tick);
+                    done_or_wait(now != before && receipt, timed_out)
                 }
                 Phase::WaitChoice { before } => done_or_wait(
                     probe.chat_modal_id != before || probe.chat_continue,
@@ -487,16 +602,19 @@ mod compat {
         ) -> Probe<'a> {
             Probe {
                 ingame: true,
+                login_mark: 0,
+                tick: Some(1),
                 count_dialog_open: count_open,
                 main_modal_id: main_modal,
                 chat_modal_id: Some(-1),
                 chat_continue: false,
                 chat_options: &[],
                 make_products: products,
+                inventory: Some(&[]),
                 main_make,
             }
-        }
 
+        }
         fn machine(phase: Phase) -> ChatDialog {
             ChatDialog {
                 phase,
@@ -578,6 +696,110 @@ mod compat {
             assert_eq!(ops, vec![InteractReq::IfButton { component_id: 11 }]);
             let (out, ops, _) = begin(|cx| begin_make(&at, "steel", cx));
             assert_eq!((out, ops), (Some(false), vec![]));
+        }
+
+        #[test]
+        fn make_one_presses_the_first_matching_make1_and_requires_page_and_product_receipt() {
+            let products = [
+                product_with_id(1737, "Ball of wool", &[(5, 880), (1, 881), (-1, 882)]),
+                product_with_id(1759, "Wool", &[(1, 990)]),
+            ];
+            let before_inventory = [ItemRow {
+                id: 1737,
+                count: 2,
+                ..ItemRow::default()
+            }];
+            let at = Probe {
+                inventory: Some(&before_inventory),
+                chat_modal_id: Some(4882),
+                ..probe(&products, None, false, 3000)
+            };
+            let (out, ops, machine) = begin(|cx| begin_make_one(&at, "WOOL", cx));
+            assert_eq!(out, None);
+            assert_eq!(ops, vec![InteractReq::IfButton { component_id: 881 }]);
+            let mut machine = machine.expect("running");
+            let mut clock = armed(MODAL_WAIT_MS);
+            assert_eq!(step(&mut machine, &mut clock, &at), (None, vec![]));
+
+            let after_inventory = [ItemRow {
+                id: 1737,
+                count: 3,
+                ..ItemRow::default()
+            }];
+            let output_only = Probe {
+                inventory: Some(&after_inventory),
+                ..at
+            };
+            assert_eq!(step(&mut machine, &mut clock, &output_only), (None, vec![]));
+            let multiple_inventory = [ItemRow {
+                id: 1737,
+                count: 4,
+                ..ItemRow::default()
+            }];
+            let multiple_receipt = Probe {
+                chat_modal_id: Some(-1),
+                inventory: Some(&multiple_inventory),
+                ..at
+            };
+            assert_eq!(
+                step(&mut machine, &mut clock, &multiple_receipt),
+                (None, vec![]),
+                "Make-1 does not claim success for more than one product"
+            );
+            let page_only = Probe {
+                chat_modal_id: Some(-1),
+                ..at
+            };
+            assert_eq!(step(&mut machine, &mut clock, &page_only), (None, vec![]));
+            let receipt = Probe {
+                chat_modal_id: Some(-1),
+                inventory: Some(&after_inventory),
+                ..at
+            };
+            assert_eq!(step(&mut machine, &mut clock, &receipt), (Some(true), vec![]));
+            let (_, _, replacement_machine) = begin(|cx| begin_make_one(&at, "wool", cx));
+            let mut replacement_machine = replacement_machine.expect("running");
+            let replaced_without_product = Probe {
+                chat_modal_id: Some(4999),
+                tick: Some(6),
+                ..at
+            };
+            assert_eq!(
+                step(&mut replacement_machine, &mut clock, &replaced_without_product),
+                (Some(false), vec![]),
+                "a replacement page without a product receipt is not success"
+            );
+
+            let (_, _, machine) = begin(|cx| begin_make_one(&at, "wool", cx));
+            let mut machine = machine.expect("running");
+            let logged_out = Probe {
+                ingame: false,
+                login_mark: 1,
+                tick: Some(2),
+                ..at
+            };
+            assert_eq!(
+                step(&mut machine, &mut clock, &logged_out),
+                (Some(false), vec![]),
+                "logout ends the captured session without claiming success"
+            );
+
+            let no_make_one = [product("Wool", &[(5, 990), (-1, 991)])];
+            let at = Probe {
+                make_products: &no_make_one,
+                ..probe(&no_make_one, None, false, 3000)
+            };
+            assert_eq!(
+                begin(|cx| begin_make_one(&at, "wool", cx)).0,
+                Some(false)
+            );
+            let missing_inventory = Probe {
+                inventory: None,
+                ..probe(&products, None, false, 3000)
+            };
+            let (out, ops, machine) =
+                begin(|cx| begin_make_one(&missing_inventory, "wool", cx));
+            assert_eq!((out, ops, machine.is_none()), (Some(false), vec![], true));
         }
 
         #[test]

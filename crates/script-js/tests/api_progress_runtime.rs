@@ -4,7 +4,7 @@ use std::sync::Arc;
 use api::quest_progress::EvidenceStamp;
 use api::selected::{Knowledge, RunKey, Truth};
 use api::snapshot::QuestListStatus;
-use script::api_progress::{ProgressPage, QuestProgressRow};
+use script::api_progress::{JournalEvidence, ProgressPage, QuestProgressRow};
 use script::shim::InteractReq;
 use script_js::wire::{encode_snapshot_delta_with_native, NativeFactsInput, SnapshotInput};
 use script_js::{LoadIsolate, LoadShape};
@@ -12,6 +12,14 @@ use script_js::{LoadIsolate, LoadShape};
 const BASE_SCRIPT: &str = r#"
 export const apiVersion = 2;
 export function tick(api) { globalThis.__api = api; }
+"#;
+const JOURNAL_SCRIPT: &str = r#"
+import { Quests } from '../../api/ui/questlog/Quests.js';
+export const apiVersion = 2;
+export function tick(api) {
+    globalThis.__api = api;
+    globalThis.__Quests = Quests;
+}
 "#;
 
 fn post_snapshot(iso: &LoadIsolate, tick: u64, api_progress: Option<&ProgressPage>) {
@@ -107,6 +115,16 @@ fn isolate() -> LoadIsolate {
     tick(&iso, 1, None);
     iso
 }
+fn journal_isolate() -> LoadIsolate {
+    let iso = LoadIsolate::spawn(
+        JOURNAL_SCRIPT.into(),
+        LoadShape::NativeTick,
+        vec![],
+    )
+    .unwrap();
+    tick(&iso, 1, None);
+    iso
+}
 
 fn begin(iso: &LoadIsolate, label: &str, args: &str) {
     let expression = format!(
@@ -114,6 +132,22 @@ fn begin(iso: &LoadIsolate, label: &str, args: &str) {
           globalThis.__{label}Result = null;
           globalThis.__{label}Settles = 0;
           const promise = __api.questProgress({args});
+          globalThis.__{label}Promise = promise;
+          promise.then((result) => {{
+            globalThis.__{label}Result = result;
+            globalThis.__{label}Settles += 1;
+          }});
+          return true;
+        }})()"#
+    );
+    assert_eq!(iso.probe(&expression).unwrap(), true);
+}
+fn begin_journal(iso: &LoadIsolate, label: &str, args: &str) {
+    let expression = format!(
+        r#"(() => {{
+          globalThis.__{label}Result = null;
+          globalThis.__{label}Settles = 0;
+          const promise = __Quests.journal({args});
           globalThis.__{label}Promise = promise;
           promise.then((result) => {{
             globalThis.__{label}Result = result;
@@ -145,7 +179,7 @@ fn take_single_read(requests: &[InteractReq]) -> (u64, String) {
     let reads: Vec<_> = requests
         .iter()
         .filter_map(|request| match request {
-            InteractReq::ProgressRead { request_id, name } => Some((*request_id, name.clone())),
+            InteractReq::ProgressRead { request_id, name, .. } => Some((*request_id, name.clone())),
             _ => None,
         })
         .collect();
@@ -281,6 +315,89 @@ fn invalid_progress_arguments_refuse_without_emitting_a_host_row() {
         );
         assert_eq!(iso.drain_interacts(), Vec::<InteractReq>::new());
     }
+    iso.join();
+}
+
+#[test]
+fn compat_v1_questlog__quests_journal__contract() {
+    let iso = journal_isolate();
+
+    begin_journal(&iso, "skipped", "'Cook', false");
+    let _ = iso.probe("true").unwrap();
+    assert_eq!(result(&iso, "skipped"), serde_json::json!([]));
+    assert_eq!(settles(&iso, "skipped"), 1);
+    assert!(iso.drain_interacts().is_empty());
+
+    begin_journal(&iso, "journal", "'cOoK'");
+    forward_queued_controls(&iso);
+    let requests = iso.drain_interacts();
+    assert_eq!(requests.len(), 1);
+    let InteractReq::ProgressRead {
+        request_id: token,
+        name,
+        journal_only,
+    } = &requests[0]
+    else {
+        panic!("quest journal did not request a native read: {requests:?}");
+    };
+    assert_eq!(name, "cOoK");
+    assert!(*journal_only);
+    let token = *token;
+
+    tick(&iso, 2, Some(&ProgressPage::Reading { token }));
+    assert_eq!(result(&iso, "journal"), serde_json::Value::Null);
+    assert!(iso.drain_interacts().is_empty());
+
+    let run = RunKey {
+        slot: 17,
+        run: 9,
+        session: 3,
+    };
+    let evidence = |tick| EvidenceStamp {
+        run,
+        tick,
+        sequence: tick,
+    };
+    let done = ProgressPage::JournalDone {
+        token,
+        result: Some(Arc::new(JournalEvidence {
+            quest: Arc::from("cook"),
+            root: 8134,
+            lines: vec![Arc::<str>::from("First journal line"), Arc::from("Second line")].into(),
+            colour: Some(0xf8f800),
+            acquired: evidence(10),
+            closed: evidence(12),
+            pin: None,
+        })),
+    };
+    tick(&iso, 3, Some(&done));
+    assert_eq!(
+        result(&iso, "journal"),
+        serde_json::json!(["First journal line", "Second line"])
+    );
+    assert_eq!(settles(&iso, "journal"), 1);
+
+    begin_journal(&iso, "missing", "'not a quest'");
+    forward_queued_controls(&iso);
+    let requests = iso.drain_interacts();
+    let InteractReq::ProgressRead {
+        request_id: missing_token,
+        journal_only: true,
+        ..
+    } = &requests[0]
+    else {
+        panic!("missing quest did not request a journal read: {requests:?}");
+    };
+    tick(
+        &iso,
+        4,
+        Some(&ProgressPage::JournalDone {
+            token: *missing_token,
+            result: None,
+        }),
+    );
+    assert_eq!(result(&iso, "missing"), serde_json::json!([]));
+    assert_eq!(settles(&iso, "missing"), 1);
     iso.join();
 }
 

@@ -1495,6 +1495,7 @@ mod tests {
                 z: 3200,
                 level: 0,
                 index: Some(4),
+                target_id: None,
             },
             InteractReq::Obj {
                 x: 2601,

@@ -7,6 +7,7 @@
 //! ends preparation with `PrepFailed(Ammo)` and an active fight with
 //! `Unprotected(NoAmmo)`. After an open-tactic kill at zero danger, wind-down
 //! attempts at most four reachable nearby pickups of the selected ammunition.
+pub mod cast_npc;
 mod arbiter;
 pub mod arm;
 pub mod frame;
@@ -27,6 +28,7 @@ pub mod style {
 }
 pub use guard::{GuardFailure, GuardOp, GuardProtect, GuardRefusal, WalkGuard};
 pub use machine::Combat;
+pub use cast_npc::CastNpc;
 pub use policy::{prayer_restore, prayer_sip_due, prayer_sip_floor, wanted_protect};
 pub use prayer::{
     begin_clear_owned_prayers, ClearPrayers, ClearPrayersArgs, Hygiene, PrayerSweepReport,

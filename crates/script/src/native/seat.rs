@@ -1770,7 +1770,8 @@ fn group(kind: NativeKind) -> Option<NativeKind> {
         | NativeKind::Fire
         | NativeKind::Clue
         | NativeKind::Duel
-        | NativeKind::CakeStall => Some(kind),
+        | NativeKind::CakeStall
+        | NativeKind::CastNpc => Some(kind),
         NativeKind::Walk
         | NativeKind::Gather
         | NativeKind::Combat

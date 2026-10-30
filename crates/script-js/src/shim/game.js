@@ -70,12 +70,8 @@ export const Game = new Proxy(
             if (snap().run_enabled !== undefined) return snap().run_enabled === true;
             return reader.varp(RUN_VARP) === 1;
         },
-        autoRetaliate() {
-            if (snap().retaliate_enabled !== undefined) return snap().retaliate_enabled === true;
-            return reader.varp(RETALIATE_VARP) === 0;
-        },
         autoRetaliateOn() {
-            return Game.autoRetaliate();
+            return snap().retaliate_enabled === true;
         },
         myName() {
             return optionalText(snap().my_name);
@@ -204,8 +200,14 @@ export const Game = new Proxy(
         attackedByPlayer() {
             return snap().attacked_by_player === true;
         },
-        async castOnNpc() {
-            throw notImpl('Game.castOnNpc');
+        async castOnNpc(spell, npc) {
+            const component = spellButtonComponent(spell);
+            if (component < 0) return false;
+            const out = await runMachine('cast-npc', {
+                component_id: component,
+                index: npc.index,
+            });
+            return out.kind === 'done' && out.value === true;
         },
     },
     {

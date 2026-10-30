@@ -8,7 +8,7 @@ use crate::native::request::NativeKind;
 use crate::native::seat::SeatTerminal;
 use crate::native::seat_rows::{
     DecodedSeatBatch, HeldWaitFacts, QueuedSeatBatch, SeatCancelDecoded, SeatInteractDecoded,
-    SeatMachineEvent, SeatMachineEventKind, SeatStartArgs, SeatStartInput,
+    SeatMachineEvent, SeatMachineEventKind, SeatResultValue, SeatStartArgs, SeatStartInput,
 };
 use crate::native::{HostEffect, InteractionReceipt, SettingsBag};
 use api::identity::RequestId;
@@ -83,7 +83,22 @@ fn family_args(kind: NativeKind) -> SeatStartArgs {
     match kind {
         NativeKind::Gather => SeatStartArgs::Gather(gather_settings()),
         NativeKind::Combat => SeatStartArgs::Combat(CombatSessionRequest::default()),
-        NativeKind::QuestProgress => SeatStartArgs::QuestProgress("cook".into()),
+        NativeKind::QuestProgress => SeatStartArgs::QuestProgress {
+            name: "cook".into(),
+            journal_only: false,
+        },
+        NativeKind::CastNpc => {
+            let component_id = selected()
+                .spells()
+                .iter()
+                .find(|spell| spell.name.eq_ignore_ascii_case("wind strike"))
+                .expect("selected Wind Strike")
+                .component_id;
+            SeatStartArgs::CastNpc(crate::combat::CastNpcRequest {
+                component_id,
+                index: 7,
+            })
+        }
         NativeKind::Hunt => SeatStartArgs::Empty,
         _ => SeatStartArgs::Empty,
     }
@@ -132,7 +147,7 @@ fn frame(slot: &mut SlotScript, snapshot: &GameSnapshot, tick: u64, hold: bool) 
 /// §28.7 case 8: both Capability/Session start orders go through the real
 /// SlotScript batch consumer. A Capability root admitted first can coexist
 /// with the later Session; a Session-first Capability root is Busy, including
-/// under Hunt. Gather, Combat, and Progress own foreground; Hunt does not.
+/// under Hunt. Gather, Combat, CastNpc, and Progress own foreground; Hunt does not.
 /// A second Session root is Busy in either order.
 #[test]
 fn fixture_08_slot_family_foreground_and_reverse_order_busy() {
@@ -140,6 +155,7 @@ fn fixture_08_slot_family_foreground_and_reverse_order_busy() {
         NativeKind::Gather,
         NativeKind::Combat,
         NativeKind::QuestProgress,
+        NativeKind::CastNpc,
         NativeKind::Hunt,
     ]
     .into_iter()
@@ -236,6 +252,10 @@ fn fixture_08_slot_family_foreground_and_reverse_order_busy() {
                     &slot.api.as_ref().unwrap().progress_page,
                     Some(ProgressPage::Reading { token }) if *token == family_id.get()
                 )),
+                NativeKind::CastNpc => assert_eq!(
+                    slot.api.as_ref().unwrap().cast_npc.token(),
+                    Some(family_id.get())
+                ),
                 NativeKind::Hunt => assert!(slot.api.is_none()),
                 _ => unreachable!(),
             }
@@ -254,9 +274,9 @@ fn fixture_08_slot_family_foreground_and_reverse_order_busy() {
 }
 
 /// §28.7 case 26: a Progress read started first keeps the shared API
-/// foreground and refuses the reverse-order Gather and Combat starts.
+/// foreground, refuses Gather and Combat, and settles CastNpc false.
 #[test]
-fn fixture_26_progress_first_refuses_gather_and_combat_as_busy() {
+fn fixture_26_progress_first_rejects_competing_api_work() {
     let mut slot = with_seat(720);
     let progress = start_input(&slot, 720, NativeKind::QuestProgress);
     slot.consume_seat_batch(decoded(vec![progress], Vec::new()), 1, &[]);
@@ -266,19 +286,47 @@ fn fixture_26_progress_first_refuses_gather_and_combat_as_busy() {
     ));
     assert!(slot.api_owns_foreground());
 
-    for (raw, kind) in [(721, NativeKind::Gather), (722, NativeKind::Combat)] {
+    for (raw, kind) in [
+        (721, NativeKind::Gather),
+        (722, NativeKind::Combat),
+        (723, NativeKind::CastNpc),
+    ] {
         let competing = start_input(&slot, raw, kind);
         slot.consume_seat_batch(decoded(vec![competing], Vec::new()), 1, &[]);
-        assert!(matches!(
-            slot.seat
-                .as_ref()
-                .unwrap()
-                .results()
-                .iter()
-                .find(|result| result.id == id(raw))
-                .map(|result| result.outcome),
-            Some(SeatTerminal::Refused(api::script_contract::Refusal::Busy))
-        ));
+        let result = slot
+            .seat
+            .as_ref()
+            .unwrap()
+            .results()
+            .iter()
+            .find(|result| result.id == id(raw))
+            .copied()
+            .expect("every competing start settles");
+        if kind == NativeKind::CastNpc {
+            assert_eq!(
+                result.outcome,
+                SeatTerminal::Done,
+                "busy CastNpc resolves as an observed false value"
+            );
+            let results = [result];
+            let mut values = [SeatResultValue {
+                id: result.id,
+                value: &[],
+            }];
+            assert_eq!(
+                slot.api.as_ref().unwrap().result_values(&results, &mut values),
+                1
+            );
+            assert_eq!(
+                crate::channel::decode(values[0].value).expect("cast result value"),
+                serde_json::Value::Bool(false)
+            );
+        } else {
+            assert_eq!(
+                result.outcome,
+                SeatTerminal::Refused(api::script_contract::Refusal::Busy)
+            );
+        }
     }
     assert!(
         slot.api_owns_foreground(),

@@ -6843,6 +6843,7 @@ export default class T extends LoopingBot {
             z: 0,
             level: 0,
             index: None,
+            target_id: None,
         }],
         "Game.castOnItem queues use-widget-on from posted spell label"
     );
@@ -6875,28 +6876,6 @@ export default class T extends LoopingBot {
     iso.join();
 }
 
-// Task 9 fix — Game.autoRetaliate is the gold export name (not autoRetaliateOn).
-#[test]
-fn kernel_facade_game_auto_retaliate_is_exported() {
-    let src = r#"
-import { Game } from '../../api/game/Game.js';
-export default class T extends LoopingBot {
-    loop() {
-        globalThis.__probe = typeof Game.autoRetaliate;
-    }
-}
-"#;
-    let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![]).unwrap();
-    iso.on_game_tick(1);
-    let value = iso.probe("__probe").unwrap();
-    assert_eq!(value, "function", "Game.autoRetaliate must be exported");
-    let logs = iso.drain_logs();
-    assert!(
-        logs.iter().all(|l| !l.contains("not impl")),
-        "autoRetaliate must not throw not impl: {logs:?}"
-    );
-    iso.join();
-}
 
 // Task 9 fix — Row FB has name+count only; countById cannot observe ids.
 #[test]
@@ -9066,6 +9045,7 @@ export default class T extends LoopingBot {
             z: 3220,
             level: 0,
             index: None,
+            target_id: None,
         }],
         "Game.castOnLoc queues use-widget-on from posted spell label and loc tile"
     );

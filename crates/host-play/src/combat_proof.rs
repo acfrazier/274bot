@@ -549,6 +549,7 @@ fn interaction_value(request: &InteractReq) -> Value {
             z,
             level,
             index,
+            target_id,
         } => json!({
             "op": "use-widget-on",
             "component_id": component_id,
@@ -558,6 +559,7 @@ fn interaction_value(request: &InteractReq) -> Value {
             "z": z,
             "level": level,
             "index": index,
+            "target_id": target_id,
         }),
         InteractReq::Wear { name } => json!({"op": "wear", "name": name}),
         InteractReq::SetRetaliate { on } => json!({"op": "set-retaliate", "on": on}),

@@ -3172,6 +3172,7 @@ impl Combat {
                         z: tile.z,
                         level: tile.level,
                         index: Some(i32::from(actor.index)),
+                        target_id: None,
                     }
                 }
                 RowKind::Attack => {

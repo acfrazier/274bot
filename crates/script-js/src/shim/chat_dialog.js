@@ -62,7 +62,7 @@ export const ChatDialog = proxy('ChatDialog', {
     async makeFromPanelMax(match) {
         return run('makeFromPanelMax', { match: String(match ?? '') });
     },
-    async makeOne() {
-        throw notImpl('ChatDialog.makeOne');
+    async makeOne(match) {
+        return run('makeOne', { match: text(match) });
     },
 });

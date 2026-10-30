@@ -35,6 +35,7 @@ pub enum NativeKind {
     Clue,
     Duel,
     CakeStall,
+    CastNpc,
 }
 
 /// A family has every required contract-table column by construction.
@@ -82,7 +83,7 @@ impl FamilyPolicy {
     }
 }
 impl NativeKind {
-    pub const ALL: [Self; 25] = [
+    pub const ALL: [Self; 26] = [
         Self::Gather,
         Self::Combat,
         Self::Hunt,
@@ -108,6 +109,7 @@ impl NativeKind {
         Self::Clue,
         Self::Duel,
         Self::CakeStall,
+        Self::CastNpc,
     ];
     /// Exhaustive classification keeps bankNearest and PeriodicBank as
     /// Capabilities, and quest progress as a Session (§25 R5-4.6).
@@ -137,7 +139,8 @@ impl NativeKind {
             | Self::Fire
             | Self::Clue
             | Self::Duel
-            | Self::CakeStall => RequestClass::Capability,
+            | Self::CakeStall
+            | Self::CastNpc => RequestClass::Capability,
         };
         FamilyPolicy {
             class,
@@ -352,6 +355,6 @@ mod tests {
                 }
             }
         }
-        assert_eq!(NativeKind::ALL.len(), 25);
+        assert_eq!(NativeKind::ALL.len(), 26);
     }
 }
