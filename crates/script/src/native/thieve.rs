@@ -1019,6 +1019,15 @@ mod tests {
         assert!(with_tick(&outside, &mut ledger, 3, |tick| {
             run.poll(&mut tick.cx).is_pending()
         }));
+        let walk_count = |ledger: &Option<Box<crate::native::ledger::Ledger>>| {
+            ledger
+                .as_ref()
+                .unwrap()
+                .outbox
+                .iter()
+                .filter(|action| matches!(&action.effect, crate::native::HostEffect::Walk(_)))
+                .count()
+        };
         assert_eq!(walk_count(&ledger), 2, "the first retry is submitted");
         post_walk_receipt(
             &mut ledger,
