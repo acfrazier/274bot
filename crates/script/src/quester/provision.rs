@@ -321,6 +321,9 @@ impl Provisioner {
         current_stage: Option<&FactKey>,
     ) -> Poll<Result<ProvisionEvent, ActionError>> {
         let result = self.poll_inner(cx, plan, active_loadout, current_stage);
+        // Read after the poll, so a bank that this poll's own kernel opened is
+        // recorded on the tick it appears, even when the poll ends the session.
+        self.observe_bank(cx.tick);
         // An error, or a return to the Path, ends the session. The lease stays
         // with this provisioner for the queue runner to close.
         if matches!(
@@ -351,7 +354,6 @@ impl Provisioner {
             self.path = Some(plan.path.clone());
             self.set_coin_drawn(plan.coin_float <= 0);
         }
-        self.observe_bank(cx.tick);
 
         if self.closer.active() {
             match self.closer.drive(cx.tick, &mut self.lease) {
@@ -1073,14 +1075,18 @@ impl Provisioner {
         }
     }
 
-    /// Records the lease when a frame first shows the bank open after a trip
-    /// of this provisioner began with it shut. Within the session, a bank that
-    /// the kernel reopened is the same lease under a new generation.
+    /// Records the lease when a frame shows an open bank that this account's
+    /// own bank kernel opened. Without that evidence, a bank is the player's:
+    /// the lease is neither created nor renewed. A trip that began with the
+    /// bank shut creates the lease. Inside the session, a bank that the kernel
+    /// reopened is the same lease under its new generation. Any other
+    /// generation stays unadopted, and the next frame check voids the lease
+    /// (`lease_view`), so a close in progress or due never reaches it.
     fn observe_bank(&mut self, tick: &NativeTick<'_>) {
         let Some(view) = tick.cx.snapshot().bank_session().map(|seen| seen.value) else {
             return;
         };
-        if !view.open {
+        if !view.open || !tick.cx.bank_opened_by_machine(view.generation) {
             return;
         }
         let session = tick.cx.evidence().run.session;
@@ -4202,8 +4208,16 @@ mod tests {
         assert_eq!(provisioner.bank_lease(), None);
     }
 
-    #[test]
-    fn a_bank_the_kernel_reopens_inside_the_session_is_still_closed() {
+    /// The state of a session that left its bank open between two trips: the
+    /// first trip's lease names the bank session `generation`.
+    fn session_with_a_leased_bank() -> (
+        Provisioner,
+        GameSnapshot,
+        Option<Box<ledger::Ledger>>,
+        BankMemory,
+        u64,
+        Arc<NamedBankFacts>,
+    ) {
         let (mut snapshot, bank, banks) = openable_bank_fixture();
         let plan = scan_plan(bank);
         let quests = quest_catalog();
@@ -4225,6 +4239,20 @@ mod tests {
             Some(Vec::new()),
         );
         assert!(provisioner.session_open());
+        assert_eq!(
+            provisioner.bank_lease(),
+            Some(BankLease::new(1, snapshot.bank_session_generation())),
+            "the bank the kernel opened is leased"
+        );
+        (provisioner, snapshot, ledger, memory, tick, banks)
+    }
+
+    #[test]
+    fn a_bank_the_player_reopens_between_trips_is_not_closed() {
+        let (mut provisioner, mut snapshot, mut ledger, memory, tick, banks) =
+            session_with_a_leased_bank();
+        let quests = quest_catalog();
+        // The player shuts the bank and opens it again: a new bank session.
         snapshot.seed_bank_observation(-1, tick + 1, None, Vec::new());
         snapshot.seed_bank_observation(1, tick + 2, Some(Vec::new()), Vec::new());
         ledger.as_mut().unwrap().outbox.clear();
@@ -4239,11 +4267,186 @@ mod tests {
             &banks,
             &quests,
         );
+        assert!(matches!(result, Poll::Ready(Ok(ProvisionEvent::Ready))));
+        assert_eq!(closes_sent(&ledger), 0, "the player's bank stays open");
+        assert_eq!(provisioner.bank_lease(), None);
+        assert!(!provisioner.session_open());
+    }
+
+    #[test]
+    fn a_bank_the_player_reopens_during_a_close_is_not_closed() {
+        let (mut provisioner, mut snapshot, mut ledger, memory, tick, banks) =
+            session_with_a_leased_bank();
+        let quests = quest_catalog();
+        let leased = snapshot.bank_session_generation();
+        let result = poll_once(
+            &mut provisioner,
+            &snapshot,
+            &mut ledger,
+            tick + 1,
+            &owned_plan(),
+            None,
+            &memory,
+            &banks,
+            &quests,
+        );
         assert!(result.is_pending());
+        assert_eq!(closes_sent(&ledger), 1, "the close of the leased bank");
+        assert!(provisioner.closer.active());
+
+        // Before the close lands, the player shuts the bank and opens it again.
+        snapshot.seed_bank_observation(-1, tick + 2, None, Vec::new());
+        snapshot.seed_bank_observation(1, tick + 3, Some(Vec::new()), Vec::new());
+        assert_eq!(snapshot.bank_session_generation(), leased + 2);
+        ledger.as_mut().unwrap().outbox.clear();
+        for step in 4..8 {
+            let result = poll_once(
+                &mut provisioner,
+                &snapshot,
+                &mut ledger,
+                tick + step,
+                &owned_plan(),
+                None,
+                &memory,
+                &banks,
+                &quests,
+            );
+            if matches!(result, Poll::Ready(_)) {
+                assert!(matches!(result, Poll::Ready(Ok(ProvisionEvent::Ready))));
+                break;
+            }
+        }
         assert_eq!(
             closes_sent(&ledger),
-            1,
-            "the reopened bank is the same session's"
+            0,
+            "no close is sent for the player's bank session"
         );
+        assert_eq!(provisioner.bank_lease(), None);
+        assert!(!provisioner.session_open());
+    }
+
+    /// A withdraw trip whose bank session closes after the click. In the first
+    /// case the trip's own kernel opens it again with its stand click. In the
+    /// second, the player opens a new session before the kernel can click.
+    #[test]
+    fn a_reopen_inside_a_trip_keeps_the_lease_only_when_the_kernel_made_it() {
+        for player in [false, true] {
+            let (mut snapshot, bank, banks) = openable_bank_fixture();
+            let plan = scan_plan(bank);
+            let quests = quest_catalog();
+            let mut bank_rows = vec![bank_row(42, "Quest token", 1)];
+            let mut pack: Vec<ItemView> = Vec::new();
+            let mut memory = BankMemory::seeded(&[], Origin::Hint);
+            let mut ledger = None;
+            let mut provisioner = Provisioner::new();
+            let mut reopened = false;
+            let mut closes = 0;
+            let mut closed_generation = None;
+            let mut ready = false;
+            let mut generations = Vec::new();
+
+            for tick in 1..=80 {
+                memory.track(&snapshot, tick);
+                let result = poll_once(
+                    &mut provisioner,
+                    &snapshot,
+                    &mut ledger,
+                    tick,
+                    &plan,
+                    None,
+                    &memory,
+                    &banks,
+                    &quests,
+                );
+                match ledger
+                    .as_ref()
+                    .and_then(|ledger| ledger.outbox.first())
+                    .map(|action| &action.effect)
+                {
+                    Some(HostEffect::BankPick(_)) => {
+                        complete_bank_pick(&mut ledger, bank, bank.tile, tick);
+                    }
+                    Some(HostEffect::Interaction(crate::shim::InteractReq::OpenStand {
+                        ..
+                    })) => {
+                        complete_open_stand(&mut ledger, tick);
+                        snapshot.seed_bank_observation(
+                            1,
+                            tick,
+                            Some(bank_rows.clone()),
+                            Vec::new(),
+                        );
+                        generations.push(snapshot.bank_session_generation());
+                    }
+                    Some(HostEffect::Interaction(crate::shim::InteractReq::SetNoteMode {
+                        ..
+                    })) => complete_open_stand(&mut ledger, tick),
+                    Some(HostEffect::Interaction(crate::shim::InteractReq::WithdrawX {
+                        ..
+                    })) if !reopened => {
+                        reopened = true;
+                        complete_open_stand(&mut ledger, tick);
+                        // The session ends before the click's effect shows.
+                        snapshot.seed_bank_observation(-1, tick, None, Vec::new());
+                        if player {
+                            snapshot.seed_bank_observation(
+                                1,
+                                tick,
+                                Some(bank_rows.clone()),
+                                Vec::new(),
+                            );
+                            generations.push(snapshot.bank_session_generation());
+                        }
+                    }
+                    Some(HostEffect::Interaction(crate::shim::InteractReq::WithdrawX {
+                        ..
+                    })) => {
+                        let mut row = item_view(42, "Quest token", 1, ItemContainer::Inventory);
+                        row.slot = 0;
+                        pack.push(row);
+                        bank_rows.retain(|row| row.def.id != 42);
+                        complete_open_stand(&mut ledger, tick);
+                        snapshot.seed_inventory(pack.clone(), 28);
+                        snapshot.seed_bank_observation(
+                            1,
+                            tick,
+                            Some(bank_rows.clone()),
+                            Vec::new(),
+                        );
+                    }
+                    Some(HostEffect::Interaction(crate::shim::InteractReq::Close)) => {
+                        closes += 1;
+                        closed_generation = Some(snapshot.bank_session_generation());
+                        complete_open_stand(&mut ledger, tick);
+                        snapshot.seed_bank_observation(-1, tick, None, Vec::new());
+                    }
+                    Some(other) => panic!("unexpected effect {other:?}"),
+                    None => {}
+                }
+                match result {
+                    Poll::Ready(Ok(ProvisionEvent::Ready)) => {
+                        ready = true;
+                        break;
+                    }
+                    Poll::Ready(Ok(ProvisionEvent::BankReceipt(_))) | Poll::Pending => {}
+                    Poll::Ready(other) => panic!("provisioning did not finish: {other:?}"),
+                }
+            }
+
+            assert!(ready, "player={player}: provisioning finished");
+            assert!(reopened, "player={player}: the session closed mid-trip");
+            assert_eq!(generations.len(), 2, "player={player}: {generations:?}");
+            assert_ne!(generations[0], generations[1]);
+            if player {
+                assert_eq!(closes, 0, "the player's session is never closed");
+            } else {
+                assert_eq!(closes, 1, "the kernel's own reopen is closed once");
+                assert_eq!(
+                    closed_generation,
+                    Some(generations[1]),
+                    "the close names the reopened session"
+                );
+            }
+        }
     }
 }
