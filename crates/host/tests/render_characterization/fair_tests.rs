@@ -1007,7 +1007,13 @@ fn pump_expires_unconsumed_grant_then_next_paint_can_consume() {
     assert_eq!(busy.stats.unwrap().scene_consumes(), 0);
     let consumed = peer.event(RenderTestPoint::AfterConsume);
     assert_eq!(consumed.at, expired_at);
-    let rebuilt = peer.painted(busy.generation);
+    // Expiry and release can each queue a Busy completion before this consume.
+    let rebuilt = receive(&peer.completed, |completed| {
+        completed.generation > busy.generation
+            && completed
+                .stats
+                .is_some_and(|stats| stats.scene_consumes() > 0)
+    });
     assert_eq!(rebuilt.stats.unwrap().scene_consumes(), 1);
     assert_eq!(rebuilt.stats.unwrap().due_skips(), 0);
 }
