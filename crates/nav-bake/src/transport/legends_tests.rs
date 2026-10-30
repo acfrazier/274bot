@@ -64,8 +64,7 @@ fn legends_gate_requires_started_progress_and_crosses_each_leaf_both_ways() {
     );
     let selected = api::game_data::for_revision(client::io::ClientRevision::R289).unwrap();
     let (facts, identity) = selected.quest_identity_for_bake().unwrap();
-    let family =
-        nav_planner::quest_gates::QuestFamilyId::new(identity.sha256, identity.schema);
+    let family = nav_planner::quest_gates::QuestFamilyId::new(identity.sha256, identity.schema);
     let quests = QuestSource {
         family,
         facts: &facts,
