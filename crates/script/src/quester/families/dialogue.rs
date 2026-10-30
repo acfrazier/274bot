@@ -577,6 +577,7 @@ impl NativeMachine for Dialogue {
                     )))?;
                     self.cancel_talk_request(cx);
                     self.refusal_recovery_active = true;
+                    self.phase = Phase::Approach;
                     self.walk_request_id = walk_request_id;
                     self.content_deadline_tick =
                         cx.evidence().tick.saturating_add(u64::from(route_budget));
