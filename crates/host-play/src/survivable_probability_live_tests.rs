@@ -182,15 +182,22 @@ impl Rig {
         self.send(|_, client| assert!(interact::cheat(client, command).is_sent(), "{command}"));
     }
 
-    fn relog(&mut self) {
-        self.client.logout();
+    fn logout_clean(&mut self) {
+        self.send(|_, client| {
+            let ifaces = Arc::clone(&client.ifaces);
+            assert!(
+                interact::logout(client, &ifaces),
+                "logout button unavailable"
+            );
+        });
         self.until(150, false, |rig| !rig.snapshot.ingame());
-        assert!(interact::login(
-            &mut self.client,
-            &self.name,
-            &self.name,
-            false
-        ));
+    }
+
+    fn relog(&mut self) {
+        self.logout_clean();
+        self.client
+            .login(&self.name, &self.name, false)
+            .expect("log in after acknowledged protocol logout");
         self.until(150, false, |rig| {
             rig.snapshot.ingame()
                 && rig.snapshot.attached()
@@ -677,7 +684,19 @@ fn probability_admission_engine_l() {
     INSTALL.call_once(|| assert!(api::hostlog::install_sink(&LOGS)));
     let directory = PathBuf::from(std::env::var_os("LIVE_EVIDENCE_DIR").unwrap());
     let (profile, template) = template();
-    let names = crate::mint_live_names(2);
+    let account_file = directory.join("accounts.json");
+    let names: Vec<String> = if account_file.exists() {
+        serde_json::from_slice(&std::fs::read(&account_file).unwrap()).unwrap()
+    } else {
+        let names = crate::mint_live_names(2);
+        std::fs::write(&account_file, serde_json::to_vec_pretty(&names).unwrap()).unwrap();
+        names
+    };
+    assert_eq!(names.len(), 2);
+    assert_ne!(names[0], names[1]);
+    assert!(names
+        .iter()
+        .all(|name| name.starts_with(&prefix) && name.len() <= 12));
     let cells = [
         Cell {
             name: "rock_crabs_to_seers_bank",
@@ -741,7 +760,7 @@ fn probability_admission_engine_l() {
         }));
         receipt["passed"] = json!(result.is_ok());
         save(&cell_dir, &rig, &mut receipt, log_start);
-        rig.client.logout();
+        rig.logout_clean();
         if let Err(error) = result {
             std::panic::resume_unwind(error);
         }

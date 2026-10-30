@@ -2441,39 +2441,69 @@ fn corpus_input_identity_uses_source_content_not_clone_location() {
     );
 }
 
+fn canonicalize_input(value: &mut Value) {
+    match value {
+        Value::Object(fields) => {
+            fields.sort_keys();
+            fields.values_mut().for_each(canonicalize_input);
+        }
+        Value::Array(items) => items.iter_mut().for_each(canonicalize_input),
+        _ => {}
+    }
+}
+
+#[test]
+fn corpus_input_identity_ignores_json_object_order() {
+    let first: Value = serde_json::from_str(
+        r#"{"record_id":"order-probe","source":{},"navigation":{},"navigation_state":{"stats":{"20":40,"0":40}}}"#,
+    )
+    .unwrap();
+    let reordered: Value = serde_json::from_str(
+        r#"{"navigation_state":{"stats":{"0":40,"20":40}},"navigation":{},"source":{},"record_id":"order-probe"}"#,
+    )
+    .unwrap();
+    assert_eq!(
+        input_signature(&[first]).unwrap(),
+        input_signature(&[reordered]).unwrap()
+    );
+}
+
 fn input_signature(records: &[Value]) -> Result<String, String> {
-    let signature = records
-        .iter()
-        .map(|record| {
-            let frozen = record["navigation"]["frozen_routes"]
-                .as_array()
-                .into_iter()
-                .flatten()
-                .map(|row| {
-                    json!({
-                        "candidate_id":row["candidate_id"],
-                        "target":row["target"],
-                        "route_sha256":row["route_sha256"],
-                        "route_source":row["route_source"],
+    let mut signature = Value::Array(
+        records
+            .iter()
+            .map(|record| {
+                let frozen = record["navigation"]["frozen_routes"]
+                    .as_array()
+                    .into_iter()
+                    .flatten()
+                    .map(|row| {
+                        json!({
+                            "candidate_id":row["candidate_id"],
+                            "target":row["target"],
+                            "route_sha256":row["route_sha256"],
+                            "route_source":row["route_source"],
+                        })
                     })
+                    .collect::<Vec<_>>();
+                json!({
+                    "record_id":record["record_id"],
+                    "source":source_content_identity(&record["source"]),
+                    "input_kind":record["input_kind"],
+                    "input":record["input"],
+                    "loadout":record["loadout"],
+                    "risk_input":record["risk_input"],
+                    "navigation_state":record["navigation_state"],
+                    "navigation_start":record["navigation"]["start"],
+                    "navigation_targets":record["navigation"]["targets"],
+                    "route_options":record["navigation"]["route_options"],
+                    "assessment_grants":record["navigation"]["assessment_grants"],
+                    "frozen":frozen,
                 })
-                .collect::<Vec<_>>();
-            json!({
-                "record_id":record["record_id"],
-                "source":source_content_identity(&record["source"]),
-                "input_kind":record["input_kind"],
-                "input":record["input"],
-                "loadout":record["loadout"],
-                "risk_input":record["risk_input"],
-                "navigation_state":record["navigation_state"],
-                "navigation_start":record["navigation"]["start"],
-                "navigation_targets":record["navigation"]["targets"],
-                "route_options":record["navigation"]["route_options"],
-                "assessment_grants":record["navigation"]["assessment_grants"],
-                "frozen":frozen,
             })
-        })
-        .collect::<Vec<_>>();
+            .collect::<Vec<_>>(),
+    );
+    canonicalize_input(&mut signature);
     let bytes = serde_json::to_vec(&signature)
         .map_err(|e| format!("serialize corpus input signature: {e}"))?;
     Ok(sha256(&bytes))
@@ -2497,10 +2527,10 @@ fn diff_artifacts(old: &Value, new: &Value) -> Result<Value, String> {
         .as_array()
         .ok_or("new corpus has no records")?;
     let old_signature = input_signature(old_rows)?;
-    if new["input_signature_sha256"].as_str() != Some(old_signature.as_str()) {
+    let new_signature = input_signature(new_rows)?;
+    if new_signature != old_signature {
         return Err(format!(
-            "old/new corpus inputs differ: old {old_signature}, new {}",
-            new["input_signature_sha256"]
+            "old/new corpus inputs differ: old {old_signature}, new {new_signature}",
         ));
     }
     let old_by_id = old_rows
