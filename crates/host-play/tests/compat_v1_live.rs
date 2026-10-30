@@ -741,18 +741,24 @@ fn run_tree_cell(receipt: &mut Receipt) -> Result<(), String> {
         .home
         .join("compat-v1-live")
         .join(&session.account);
-    let card = prepare_catalog_task(
+    let mut card = prepare_catalog_task(
         &catalog_root,
         &temp,
         "ClueSolver",
         "src/bot/scripts/ClueSolver/ClueSolver.ts",
     )?;
-    session.play.script_start_handle().start_load(
+    // ClueSolver declares a loadout setting, so the Load harness needs one named row.
+    const CLUE_LOADOUT: &str = "compat-v1-live";
+    card.settings
+        .insert("loadout".into(), Value::String(CLUE_LOADOUT.into()));
+    let loadouts = [api::loadout::Loadout::new(CLUE_LOADOUT)];
+    session.play.script_start_handle().start_load_with_loadouts(
         &session.account,
         card.js,
         card.shape,
         Some(card.settings),
         card.siblings,
+        &loadouts,
     )?;
     wait_for_logs(&mut session, ACTION_DEADLINE, |logs| {
         logs.iter().any(|line| {
