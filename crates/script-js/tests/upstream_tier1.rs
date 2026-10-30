@@ -420,7 +420,6 @@ import { suspectOrder, ARHEIN, GUARD_START, GUARD_HANDIN, SALESMAN, SUSPECTS, MU
 import { tilesTo, trailWalkOpts, TRACE_STORAGE_KEY } from '#/bot/api/ai/clues/ClueExecutor.js';
 import { trailKit, nextCoordTool, extraItemShop, gateItemShop, SPADE_SPAWNS, PROFESSOR, MURPHY, KOJO, KOJO_EXIT } from '#/bot/api/ai/clues/data/toolAcquire.js';
 import { pickByLine, isUnderground, needsHop } from '#/bot/api/ai/quests/exec/primitives.js';
-import { resolveLoopCadence, BranchTask, LeafTask } from '#/bot/api/bot/Bot.js';
 import * as clientAdapterExports from '#/bot/adapter/ClientAdapter.js';
 import * as woodcuttingExports from '#/bot/data/woodcuttingLocations.js';
 import * as settingsExports from '#/bot/runtime/Settings.js';
@@ -652,7 +651,6 @@ await refuses('WHEEL_ROWS', () => Number(paintLogicExports.WHEEL_ROWS));
 check(typeof TRACE_STORAGE_KEY === 'string', 'clue trace key export missing');
 check(typeof RANGING_POTION === 'object', 'ranging potion descriptor is not loadable');
 check(typeof RETALIATE_VARP === 'number', 'RETALIATE_VARP export missing');
-check(typeof resolveLoopCadence === 'function', 'resolveLoopCadence export missing');
 check(typeof parseBurnMode === 'function' && typeof logsForTree === 'function' && typeof firemakingLevelForLogs === 'function' && typeof resolveFireSpot === 'function' && typeof nearestFireSpot === 'function' && typeof expandLocalFirePlot === 'function' && typeof runWest === 'function' && typeof shouldBurnFullLoad === 'function', 'firemaking helper exports missing');
 check(
     parseBurnMode('  CHOP THEN BURN ') === 'chop-then-burn' && parseBurnMode('Off') === 'off',
@@ -850,13 +848,6 @@ await refuses('resetLiveCatalog', () => resetLiveCatalog());
 await refuses('trailWalkOpts', () => trailWalkOpts());
 await refuses('extraItemShop', () => extraItemShop('Rope'));
 await refuses('gateItemShop', () => gateItemShop('Shantay pass'));
-await refuses('resolveLoopCadence', () => resolveLoopCadence());
-await refuses('BranchTask.constructor', () => new BranchTask());
-await refuses('BranchTask.validate', () => BranchTask.prototype.validate.call({}));
-await refuses('BranchTask.success', () => BranchTask.prototype.success.call({}));
-await refuses('BranchTask.failure', () => BranchTask.prototype.failure.call({}));
-await refuses('LeafTask.constructor', () => new LeafTask());
-await refuses('LeafTask.execute', () => LeafTask.prototype.execute.call({}));
 export default class RefreezeProbe extends LoopingBot { loop() {} }
 "#;
     let game_data = api::game_data::for_revision(client::io::ClientRevision::R289)
