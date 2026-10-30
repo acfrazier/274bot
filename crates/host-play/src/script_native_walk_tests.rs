@@ -1527,6 +1527,7 @@ fn seed_prayer_widgets(snapshot: &mut GameSnapshot) {
                 width: 20,
                 height: 20,
                 scroll_height: 0,
+                inventory_ready: false,
                 scroll_position: 0,
                 hidden: false,
                 text: None,
