@@ -175,6 +175,10 @@
       "clippy::too_many_arguments": {
         "non_test": 17,
         "test": 2
+      },
+      "dead_code": {
+        "non_test": 2,
+        "test": 0
       }
     },
     "script-js": {
