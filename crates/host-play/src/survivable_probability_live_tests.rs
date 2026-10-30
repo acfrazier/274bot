@@ -433,6 +433,16 @@ fn poison_start(
         !anchor_zones.is_empty(),
         "the stated anchor must name real zones"
     );
+    let anchor_geometry: Vec<_> = zones
+        .containing(anchor)
+        .map(|zone| {
+            json!({
+                "zone": zones.name(zone.key()).unwrap(), "spawn": zone.spawn(),
+                "bounds": zone.bounds(), "npc_id": zone.kind().npc_id(),
+                "class": format!("{:?}", zone.class()), "cap": zone.cap(),
+            })
+        })
+        .collect();
     input.poison = PoisonState::Unknown { since: input.tick };
     let options = FindOptions {
         zones: ZoneExempt::all(),
@@ -440,6 +450,8 @@ fn poison_start(
     };
     let mut searched = 0;
     let mut best_prefix = 0;
+    let mut rejected = [0usize; 5];
+    let mut sample_crossing = None;
     // A client can run two tiles per game tick. Eighty safe walk edges leave
     // at least forty observed ticks before retreat, even with running enabled.
     let minimum_prefix = if long { 80 } else { 1 };
@@ -472,17 +484,34 @@ fn poison_start(
                 let view = producer::route_view(world, &candidate).unwrap();
                 let path = RoutePath::new(view).unwrap();
                 let Ok(plan) = risk::build_plan(path, zones, risks, wilderness, &input) else {
+                    rejected[0] += 1;
                     continue;
                 };
                 let Some(crossing) = plan.crossings.first() else {
+                    rejected[1] += 1;
                     continue;
                 };
                 let rows = &plan.intervals
                     [usize::from(crossing.intervals.0)..usize::from(crossing.intervals.1)];
-                if !plan.complete
-                    || crossing.retreat == CrossingGeom::NONE
-                    || !rows.iter().any(|row| anchor_zones.contains(&row.zone))
-                {
+                if !plan.complete {
+                    rejected[2] += 1;
+                    continue;
+                }
+                if sample_crossing.is_none() {
+                    sample_crossing = Some(json!({
+                        "start": [origin.x, origin.z, origin.level],
+                        "retreat_index": crossing.retreat, "env_first": crossing.env_first,
+                        "zones": rows.iter().map(|row| json!({
+                            "name": zones.name(row.zone), "a": row.a, "e": row.e, "f": row.f,
+                        })).collect::<Vec<_>>(),
+                    }));
+                }
+                if crossing.retreat == CrossingGeom::NONE {
+                    rejected[3] += 1;
+                    continue;
+                }
+                if !rows.iter().any(|row| anchor_zones.contains(&row.zone)) {
+                    rejected[4] += 1;
                     continue;
                 }
                 best_prefix = best_prefix.max(crossing.retreat);
@@ -577,7 +606,7 @@ fn poison_start(
         }
     }
     Err(format!(
-        "no qualifying real start within 128 tiles of {anchor:?}: searched {searched} standable candidates, best safe prefix {best_prefix}, required {minimum_prefix}"
+        "no qualifying real start within 128 tiles of {anchor:?}: searched {searched} standable candidates, best safe prefix {best_prefix}, required {minimum_prefix}; rejections (plan error, no crossing, incomplete, no retreat, other first zone)={rejected:?}; anchor geometry={anchor_geometry:?}; sample crossing={sample_crossing:?}"
     ))
 }
 
@@ -838,7 +867,8 @@ fn qualify_probability_poison_starts() {
     let selected = api::game_data::for_revision(api::selected::ClientRevision::R289).unwrap();
     let combat = script::combat::tables::CombatTables::build(Arc::clone(&selected)).unwrap();
     let risks = RiskTables::build(&combat);
-    let world = NavWorld::load_pack(Path::new(&std::env::var_os("WORLD_NAV_PACK").unwrap())).unwrap();
+    let world =
+        NavWorld::load_pack(Path::new(&std::env::var_os("WORLD_NAV_PACK").unwrap())).unwrap();
     world.bind_named_bank_facts(&selected).unwrap();
     let state = WorldState::default().with_map_members(true);
     let mut input = RiskInput::default();

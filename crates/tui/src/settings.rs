@@ -1546,15 +1546,18 @@ mod tests {
         assert!(text.contains(frontend_core::walk_permissions::WHEN_SURVIVABLE_HELD_LABEL));
         assert!(text.contains("Effective level: Never"));
         assert!(text.contains("not available yet"));
-        // The held tooltip must not promise actions the held routing cannot
-        // perform. The separate migration notice explicitly excludes these
-        // actions from the probability bound.
+        // The held level cannot change admission, but an explicit zone grant
+        // still checks the bound. Its text excludes food/prayer/escape rather
+        // than promising those actions.
         let held = frontend_core::walk_permissions::survivable_routing_tooltip();
         assert!(!held.contains("274V17"));
         assert!(!held.contains("rebake"));
         assert!(!held.contains("turn back"));
-        assert!(!held.contains("eating"));
-        assert!(!held.contains("praying"));
+        assert!(held.contains("This setting does not change route admission."));
+        assert!(held.contains("Explicit danger-zone grants still check"));
+        assert!(held.contains("without eating, prayer or escape"));
+        assert!(!held.contains("will eat"));
+        assert!(!held.contains("will pray"));
     }
 
     #[test]

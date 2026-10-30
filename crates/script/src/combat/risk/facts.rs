@@ -340,7 +340,7 @@ pub(super) fn build_count_for_test() -> usize {
     RISK_TABLE_BUILD_COUNT.load(Ordering::Relaxed)
 }
 
-fn resolve_awake_npc<'a>(rows: &'a [NpcNameRow], id: i32) -> Option<&'a NpcNameRow> {
+fn resolve_awake_npc(rows: &[NpcNameRow], id: i32) -> Option<&NpcNameRow> {
     let mut current = rows
         .binary_search_by_key(&id, |row| row.id)
         .ok()
@@ -381,7 +381,7 @@ fn npc_risk_from_rows(rows: &[NpcNameRow], id: i32, combat: &CombatTables) -> Ki
 }
 
 /// The effective selected NPC row, resolving content-proven awakenings.
-pub(super) fn effective_npc_row<'a>(id: i32, combat: &'a CombatTables) -> Option<&'a NpcNameRow> {
+pub(super) fn effective_npc_row(id: i32, combat: &CombatTables) -> Option<&NpcNameRow> {
     let rows = combat
         .selected()
         .npc_names()
