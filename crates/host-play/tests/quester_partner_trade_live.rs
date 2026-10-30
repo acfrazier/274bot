@@ -51,10 +51,27 @@ const STAND: WorldTile = WorldTile {
     z: 3391,
     level: 0,
 };
-/// Joined-gang values of the content variables (`gang.rs`: `PHOENIX_JOINED`,
-/// the Black Arm journal's "in return for stealing" line).
-const PHOENIX_STAGE_SEED: (&str, i32) = ("phoenixgang", 9);
-const BLACKARM_STAGE_SEED: (&str, i32) = ("blackarmgang", 2);
+/// One reciprocal role's fixture: the authored stage, the content variable that
+/// puts the account there (`gang.rs`: `PHOENIX_JOINED`; the Black Arm journal's
+/// "in return for stealing" line) and the items the account owns.
+struct RoleSeed {
+    label: &'static str,
+    stage: &'static str,
+    seed: (&'static str, i32),
+    items: &'static [(&'static str, i32)],
+}
+const PHOENIX_ROLE: RoleSeed = RoleSeed {
+    label: "phoenix-gives-key",
+    stage: "p:9",
+    seed: ("phoenixgang", 9),
+    items: &[(KEY_ALIAS, 1)],
+};
+const BLACK_ARM_ROLE: RoleSeed = RoleSeed {
+    label: "blackarm-takes-key",
+    stage: "b:2",
+    seed: ("blackarmgang", 2),
+    items: &[],
+};
 
 fn key_count(snapshot: &GameSnapshot, key: i32) -> i32 {
     snapshot
@@ -78,15 +95,11 @@ fn role_cell(
         .iter()
         .find(|row| row.id == QUEST)
         .ok_or("selected R289 has no Shield of Arrav identity")?;
-    let (label, stage, seed, items): (&str, &str, (&str, i32), &[(&str, i32)]) = match gang {
-        Gang::Phoenix => (
-            "phoenix-gives-key",
-            "p:9",
-            PHOENIX_STAGE_SEED,
-            &[(KEY_ALIAS, 1)],
-        ),
-        Gang::BlackArm => ("blackarm-takes-key", "b:2", BLACKARM_STAGE_SEED, &[]),
+    let role = match gang {
+        Gang::Phoenix => PHOENIX_ROLE,
+        Gang::BlackArm => BLACK_ARM_ROLE,
     };
+    let (label, stage, seed, items) = (role.label, role.stage, role.seed, role.items);
     let mut fixture = quester_role_stage(
         QuesterStage {
             name: QUEST,
