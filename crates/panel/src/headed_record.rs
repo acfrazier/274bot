@@ -3167,6 +3167,13 @@ mod tests {
                 record
                     .arm(&output_dir, "failed encoder")
                     .expect("arm failing encoder");
+                let step = StepInfo {
+                    step: 0,
+                    total: 1,
+                    name: "failed encoder".to_string(),
+                    tick: 0,
+                };
+                assert!(offer_fixture_frame(&mut record, &step, 2, 2, 1));
                 let deadline = Instant::now() + Duration::from_secs(5);
                 loop {
                     let active = record.active.as_ref().expect("recorder remains active");
