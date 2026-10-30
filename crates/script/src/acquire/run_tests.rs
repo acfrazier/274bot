@@ -1023,7 +1023,7 @@ fn bank_walk_prerequisite_handoff_reissues_once_and_cancel_keeps_run_state() {
         .iter()
         .find(|entry| entry.crossing.option > 0)
         .expect("selected row has a supported operation");
-    let crossing = entry.crossing.clone();
+    let crossing = entry.crossing;
     let gate = api::prereq_steps::ActionableGate {
         gate: api::selected::QuestGate::Window(api::selected::StageWindow {
             quest: row.establishes.quest.clone(),
@@ -1035,7 +1035,7 @@ fn bank_walk_prerequisite_handoff_reissues_once_and_cancel_keeps_run_state() {
         }),
         truth: api::selected::Truth::Unknown,
         leg: 0,
-        crossing: crossing.clone(),
+        crossing,
     };
     let mut player = snapshot
         .local_player()

@@ -2216,7 +2216,7 @@ fn return_prerequisite_handoff_reissues_once_and_cancel_keeps_anchor_state() {
         .iter()
         .find(|entry| entry.crossing.option > 0)
         .expect("selected row has a supported operation");
-    let crossing = entry.crossing.clone();
+    let crossing = entry.crossing;
     let gate = api::prereq_steps::ActionableGate {
         gate: api::selected::QuestGate::Window(api::selected::StageWindow {
             quest: row.establishes.quest.clone(),
@@ -2228,7 +2228,7 @@ fn return_prerequisite_handoff_reissues_once_and_cancel_keeps_anchor_state() {
         }),
         truth: Truth::Unknown,
         leg: 0,
-        crossing: crossing.clone(),
+        crossing,
     };
     set_position(&mut snapshot, crossing.takeoff);
     crate::quester::families::tests::seed_prereq_crossing(&mut snapshot, row, &crossing);

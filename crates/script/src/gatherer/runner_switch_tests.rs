@@ -61,7 +61,7 @@ fn prerequisite_gate() -> (
         .iter()
         .find(|entry| entry.crossing.option > 0)
         .expect("selected row has a supported operation");
-    let crossing = entry.crossing.clone();
+    let crossing = entry.crossing;
     let gate = api::selected::QuestGate::Window(api::selected::StageWindow {
         quest: row.establishes.quest.clone(),
         signal: row.establishes.signal.clone(),
@@ -75,7 +75,7 @@ fn prerequisite_gate() -> (
             gate,
             truth: api::selected::Truth::Unknown,
             leg: 0,
-            crossing: crossing.clone(),
+            crossing,
         },
         crossing,
         Arc::clone(&entry.pass.message),

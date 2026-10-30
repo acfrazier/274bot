@@ -1841,7 +1841,7 @@ fn exhausted_transition_budget_defers_repair_admission_without_allocating() {
                 for _ in 0..10 {
                     assert!(run
                         .poll_with_walk(
-                            &mut native.actions,
+                            native.actions,
                             &mut native.cx,
                             Some(&state),
                             &mut budget,
