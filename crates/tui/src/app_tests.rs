@@ -2077,125 +2077,133 @@ fn arthur_zone_scope_renders_all_eight_names_and_reasons_at_common_sizes() {
     }
 }
 
-#[test]
-fn mouse_browse_pick_discloses_quester_zones_before_start() {
+fn assert_mouse_browse_pick_discloses_quester_zones_before_start(width: u16, height: u16) {
     let evidence_root =
         std::env::var_os("QUESTER_DANGER_CONSENT_TUI_EVIDENCE").map(std::path::PathBuf::from);
-    for (width, height) in [(120, 40), (80, 24)] {
-        let id = CompiledCardId::QUESTER;
-        let mut app = script_app();
-        app.script_cards = vec![BrowseCard {
-            name: id.as_str().into(),
-            description: String::new(),
-            category: "Questing".into(),
-            tags: Vec::new(),
-            kind: CardRuntime::Compiled,
-            source: CardSource::Builtin,
-            #[cfg(feature = "js")]
-            unloadable: None,
-        }];
-        app.script_card_choices = vec![ScriptChoice::compiled(id)];
-        let settings = serde_json::Map::from_iter([
-            ("quests".to_owned(), serde_json::json!(["arthur"])),
-            ("include_draft_guides".to_owned(), serde_json::json!(true)),
-        ]);
-        let mut disclosure = frontend_core::scripts::QuesterStartZoneCache::default();
-        assert!(disclosure.update_settings(
-            frontend_core::selection::ProfileIdentity::synthetic("mouse-quester-zone-capture"),
-            0,
-            Ok(settings),
-        ));
-        app.set_quester_start_zone_view(disclosure.shared_view());
-        app.script_state = ScriptRunState::Idle;
+    let id = CompiledCardId::QUESTER;
+    let mut app = script_app();
+    app.script_cards = vec![BrowseCard {
+        name: id.as_str().into(),
+        description: String::new(),
+        category: "Questing".into(),
+        tags: Vec::new(),
+        kind: CardRuntime::Compiled,
+        source: CardSource::Builtin,
+        #[cfg(feature = "js")]
+        unloadable: None,
+    }];
+    app.script_card_choices = vec![ScriptChoice::compiled(id)];
+    let settings = serde_json::Map::from_iter([
+        ("quests".to_owned(), serde_json::json!(["arthur"])),
+        ("include_draft_guides".to_owned(), serde_json::json!(true)),
+    ]);
+    let mut disclosure = frontend_core::scripts::QuesterStartZoneCache::default();
+    assert!(disclosure.update_settings(
+        frontend_core::selection::ProfileIdentity::synthetic("mouse-quester-zone-capture"),
+        0,
+        Ok(settings),
+    ));
+    app.set_quester_start_zone_view(disclosure.shared_view());
+    app.script_state = ScriptRunState::Idle;
 
-        let rows = draw(&mut app, width, height);
-        let (col, row) = find(&rows, "[Browse b]").expect("Browse button");
-        assert_eq!(app.on_click(col + 1, row), AppAction::ScriptBrowse);
-        assert!(app.script_browse_open);
+    let rows = draw(&mut app, width, height);
+    let (col, row) = find(&rows, "[Browse b]").expect("Browse button");
+    assert_eq!(app.on_click(col + 1, row), AppAction::ScriptBrowse);
+    assert!(app.script_browse_open);
 
-        let rows = draw(&mut app, width, height);
-        let (col, row) = find(&rows, "Quester").expect("Quester row in Browse");
-        assert_eq!(app.on_click(col, row), AppAction::None);
-        assert_eq!(app.script_sel, Some(ScriptChoice::compiled(id)));
-        assert!(
-            !app.script_browse_open,
-            "{width}x{height}: a mouse pick closes Browse before Start"
-        );
+    let rows = draw(&mut app, width, height);
+    let (col, row) = find(&rows, "Quester").expect("Quester row in Browse");
+    assert_eq!(app.on_click(col, row), AppAction::None);
+    assert_eq!(app.script_sel, Some(ScriptChoice::compiled(id)));
+    assert!(
+        !app.script_browse_open,
+        "{width}x{height}: a mouse pick closes Browse before Start"
+    );
 
-        let mut shown = text(&draw(&mut app, width, height));
-        for _ in 0..8 {
-            if shown.contains("Guide reason:") {
-                break;
-            }
-            assert_eq!(
-                app.on_key(key(KeyCode::PageDown)),
-                AppAction::None,
-                "{width}x{height}: reading the zone list does not start Quester"
-            );
-            shown = text(&draw(&mut app, width, height));
+    let mut shown = text(&draw(&mut app, width, height));
+    for _ in 0..8 {
+        if shown.contains("Guide reason:") {
+            break;
         }
-        assert!(
-            shown.contains(frontend_core::scripts::START_ZONE_SCOPE_TITLE),
-            "{width}x{height}: the selected guide's zone scope is shown before Start: {shown}"
-        );
-        assert!(
-            shown.contains("Start accepts only these zones."),
-            "{width}x{height}: the shared Start notice is shown: {shown}"
-        );
-        assert!(
-            shown.contains("renegade_knight@2773,3399,0"),
-            "{width}x{height}: the selected guide's declared zone is shown: {shown}"
-        );
-        assert!(
-            shown.contains("Guide reason:"),
-            "{width}x{height}: a declared zone reason is shown: {shown}"
-        );
-        assert!(shown.contains("[Start t]"), "{width}x{height}: {shown}");
-
-        if let Some(root) = &evidence_root {
-            let directory = root.join("QUEST-DANGER-CONSENT");
-            std::fs::create_dir_all(&directory).expect("create TUI evidence directory");
-            std::fs::write(
-                directory.join(format!("tui-mouse-{width}x{height}-before-start.txt")),
-                &shown,
-            )
-            .expect("write mouse-pick disclosure capture");
-        }
-
-        let rows = draw(&mut app, width, height);
-        let (col, row) = find(&rows, "[Browse b]").expect("Browse button");
-        assert_eq!(app.on_click(col + 1, row), AppAction::ScriptBrowse);
-        assert!(app.script_browse_open);
-        let rows = draw(&mut app, width, height);
-        let hidden = text(&rows);
-        assert!(
-            !hidden.contains(frontend_core::scripts::START_ZONE_SCOPE_TITLE),
-            "{width}x{height}: Browse covers the zone list: {hidden}"
-        );
-        let (col, row) = find(&rows, "[Start t]").expect("Start button");
         assert_eq!(
-            app.on_click(col + 1, row),
+            app.on_key(key(KeyCode::PageDown)),
             AppAction::None,
-            "{width}x{height}: Start closes Browse instead of starting Quester"
+            "{width}x{height}: reading the zone list does not start Quester"
         );
-        assert!(
-            !app.script_browse_open,
-            "{width}x{height}: the zone list is exposed before another Start click"
-        );
-        assert!(
-            text(&draw(&mut app, width, height))
-                .contains(frontend_core::scripts::START_ZONE_SCOPE_TITLE),
-            "{width}x{height}: closing Browse shows the selected guide's zone list"
-        );
-        let rows = draw(&mut app, width, height);
-        let (col, row) = find(&rows, "[Start t]").expect("Start button");
-        assert_eq!(
-            app.on_click(col + 1, row),
-            AppAction::ScriptStart(ScriptChoice::compiled(id)),
-            "{width}x{height}: Start works after the zone list is visible"
-        );
+        shown = text(&draw(&mut app, width, height));
     }
+    assert!(
+        shown.contains(frontend_core::scripts::START_ZONE_SCOPE_TITLE),
+        "{width}x{height}: the selected guide's zone scope is shown before Start: {shown}"
+    );
+    assert!(
+        shown.contains("Start accepts only these zones."),
+        "{width}x{height}: the shared Start notice is shown: {shown}"
+    );
+    assert!(
+        shown.contains("renegade_knight@2773,3399,0"),
+        "{width}x{height}: the selected guide's declared zone is shown: {shown}"
+    );
+    assert!(
+        shown.contains("Guide reason:"),
+        "{width}x{height}: a declared zone reason is shown: {shown}"
+    );
+    assert!(shown.contains("[Start t]"), "{width}x{height}: {shown}");
+
+    if let Some(root) = &evidence_root {
+        let directory = root.join("QUEST-DANGER-CONSENT");
+        std::fs::create_dir_all(&directory).expect("create TUI evidence directory");
+        std::fs::write(
+            directory.join(format!("tui-mouse-{width}x{height}-before-start.txt")),
+            &shown,
+        )
+        .expect("write mouse-pick disclosure capture");
+    }
+
+    let rows = draw(&mut app, width, height);
+    let (col, row) = find(&rows, "[Browse b]").expect("Browse button");
+    assert_eq!(app.on_click(col + 1, row), AppAction::ScriptBrowse);
+    assert!(app.script_browse_open);
+    let rows = draw(&mut app, width, height);
+    let hidden = text(&rows);
+    assert!(
+        !hidden.contains(frontend_core::scripts::START_ZONE_SCOPE_TITLE),
+        "{width}x{height}: Browse covers the zone list: {hidden}"
+    );
+    let (col, row) = find(&rows, "[Start t]").expect("Start button");
+    assert_eq!(
+        app.on_click(col + 1, row),
+        AppAction::None,
+        "{width}x{height}: Start closes Browse instead of starting Quester"
+    );
+    assert!(
+        !app.script_browse_open,
+        "{width}x{height}: the zone list is exposed before another Start click"
+    );
+    assert!(
+        text(&draw(&mut app, width, height))
+            .contains(frontend_core::scripts::START_ZONE_SCOPE_TITLE),
+        "{width}x{height}: closing Browse shows the selected guide's zone list"
+    );
+    let rows = draw(&mut app, width, height);
+    let (col, row) = find(&rows, "[Start t]").expect("Start button");
+    assert_eq!(
+        app.on_click(col + 1, row),
+        AppAction::ScriptStart(ScriptChoice::compiled(id)),
+        "{width}x{height}: Start works after the zone list is visible"
+    );
 }
+
+#[test]
+fn mouse_browse_pick_discloses_quester_zones_before_start_120x40() {
+    assert_mouse_browse_pick_discloses_quester_zones_before_start(120, 40);
+}
+
+#[test]
+fn mouse_browse_pick_discloses_quester_zones_before_start_80x24() {
+    assert_mouse_browse_pick_discloses_quester_zones_before_start(80, 24);
+}
+
 
 #[test]
 fn palette_start_opens_quester_zone_scope_before_start() {
