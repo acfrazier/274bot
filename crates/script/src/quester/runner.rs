@@ -5943,12 +5943,24 @@ mod tests {
     #[test]
     fn quester_reports_walk_evidence_as_a_terminal_block() {
         let (mut script, _) = fixture();
-        let gates: Arc<[api::selected::QuestGate]> =
-            Arc::from([api::selected::QuestGate::Complete(FactKey::new(
-                "test-quest",
-            ))]);
+        let gates: Arc<[api::selected::QuestGate]> = Arc::from([
+            api::selected::QuestGate::Window(api::selected::StageWindow {
+                quest: FactKey::new("biohazard"),
+                signal: FactKey::new("biohazard"),
+                values: api::selected::InclusiveRange {
+                    min: None,
+                    max: Some(9),
+                },
+            }),
+        ]);
         script.record_failure(ActionError::NeedsEvidence(gates));
         assert_eq!(script.blocked_failure().code.as_ref(), "needs-evidence");
+        let detail = script.blocked_failure().message;
+        assert!(detail.contains("biohazard"), "{detail}");
+        assert!(detail.contains("window"), "{detail}");
+        assert!(detail.contains("minimum none"), "{detail}");
+        assert!(detail.contains("maximum 9"), "{detail}");
+        assert!(detail.contains("evidence state unknown"), "{detail}");
         script.clear_last_error();
         assert!(script.last_error.is_none());
     }

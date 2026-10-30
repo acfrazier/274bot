@@ -324,6 +324,14 @@ mod quest_list_tests {
     fn complete_gate(quest: FactKey) -> QuestGate {
         QuestGate::Complete(quest)
     }
+    fn biohazard_window(values: InclusiveRange) -> QuestGate {
+        QuestGate::Window(StageWindow {
+            quest: FactKey::new("biohazard"),
+            signal: FactKey::new("biohazard"),
+            values,
+        })
+    }
+
 
     #[test]
     fn observed_statuses_answer_completion_without_other_evidence_sources() {
@@ -432,23 +440,85 @@ mod quest_list_tests {
     }
 
     #[test]
-    fn window_gates_remain_unknown_even_when_the_quest_is_complete() {
+    fn not_started_biohazard_proves_zero_inside_a_window_with_maximum_nine() {
         let quests = catalog();
-        let (quest, display) = quest(&quests);
         let family = family(1, 1);
         let observed = stamp(run(), 10, 4);
-        let snapshot = snapshot(vec![row(display, 0x00F800)], true);
+        let snapshot = snapshot(vec![row(String::from("Biohazard"), 0xF80000)], true);
         let provider = evidence(&quests, &snapshot, observed, Some(family), Some(family));
-        let gate = QuestGate::Window(StageWindow {
-            quest,
-            signal: FactKey::new("signal"),
-            values: InclusiveRange {
-                min: Some(1),
-                max: Some(2),
-            },
-        });
 
-        assert_eq!(provider.test_gate(&gate, observed), Truth::Unknown);
+        for min in [None, Some(0)] {
+            assert_eq!(
+                provider.test_gate(
+                    &biohazard_window(InclusiveRange {
+                        min,
+                        max: Some(9),
+                    }),
+                    observed,
+                ),
+                Truth::True
+            );
+        }
+    }
+
+    #[test]
+    fn completed_biohazard_is_outside_a_window_below_ten() {
+        let quests = catalog();
+        let family = family(1, 1);
+        let observed = stamp(run(), 10, 4);
+        let snapshot = snapshot(vec![row(String::from("Biohazard"), 0x00F800)], true);
+        let provider = evidence(&quests, &snapshot, observed, Some(family), Some(family));
+
+        assert_eq!(
+            provider.test_gate(
+                &biohazard_window(InclusiveRange {
+                    min: None,
+                    max: Some(9),
+                }),
+                observed,
+            ),
+            Truth::False
+        );
+        assert_eq!(
+            provider.test_gate(
+                &biohazard_window(InclusiveRange {
+                    min: Some(14),
+                    max: Some(16),
+                }),
+                observed,
+            ),
+            Truth::True
+        );
+    }
+
+    #[test]
+    fn in_progress_biohazard_is_unknown_unless_the_window_covers_its_range() {
+        let quests = catalog();
+        let family = family(1, 1);
+        let observed = stamp(run(), 10, 4);
+        let snapshot = snapshot(vec![row(String::from("Biohazard"), 0xF8F800)], true);
+        let provider = evidence(&quests, &snapshot, observed, Some(family), Some(family));
+
+        assert_eq!(
+            provider.test_gate(
+                &biohazard_window(InclusiveRange {
+                    min: Some(1),
+                    max: Some(15),
+                }),
+                observed,
+            ),
+            Truth::True
+        );
+        assert_eq!(
+            provider.test_gate(
+                &biohazard_window(InclusiveRange {
+                    min: None,
+                    max: Some(9),
+                }),
+                observed,
+            ),
+            Truth::Unknown
+        );
     }
 
     #[test]
