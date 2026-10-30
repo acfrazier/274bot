@@ -972,18 +972,9 @@ mod tests {
             }
         }
         let item_rows = items;
-        let data = json!({
-            "schema_version":5,
-            "revision":289,
-            "provenance":{
-                "cache_identity":{"cache_id":"test"},
-                "inputs":[],"content_inputs":[],"decoder_sources":[]
-            },
-            "items":item_rows,
-            "consumption":consumption,
-            "pickpocket":[],
-            "prayers":prayers,
-            "npc_names":{"combat_facts_version":1,"rows":[
+        let npc_names = json!({
+            "combat_facts_version":1,
+            "rows":[
                 {
                     "id":7,"config":"test_npc","display":"Test NPC","ops":["Attack"],
                     "size":1,"wanderrange":0,"maxrange":1,"attackrange":1,"huntrange":1,
@@ -1002,7 +993,20 @@ mod tests {
                     "crushdefence":0,"magicdefence":0,"rangedefence":0,"max_dealt":1000,
                     "vislevel":0,"hitpoints":10,"damagetype":null
                 }
-            ]},
+            ]
+        });
+        let data = json!({
+            "schema_version":5,
+            "revision":289,
+            "provenance":{
+                "cache_identity":{"cache_id":"test"},
+                "inputs":[],"content_inputs":[],"decoder_sources":[]
+            },
+            "items":item_rows,
+            "consumption":consumption,
+            "pickpocket":[],
+            "prayers":prayers,
+            "npc_names":npc_names,
             "style_seqs":[{"seq_id":10,"style":1},{"seq_id":11,"style":6}],
             "style_spotanims":[{"spotanim_id":20,"style":8,"where":"projectile"}],
             "combat_tabs":[
