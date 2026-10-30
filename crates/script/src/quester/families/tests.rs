@@ -5888,7 +5888,7 @@ fn assert_sheep_partial_spin(finish_target: bool) {
             with_sheep_step(tick, 12, |cx| step.plan.begin(cx).unwrap())
         });
         for game_tick in 2..=4 {
-            if game_tick == 3 {
+            if game_tick == 4 {
                 accept_last(&mut ledger, game_tick, true);
             }
             let result = with_tick(&snapshot, &mut ledger, game_tick, |tick| {
