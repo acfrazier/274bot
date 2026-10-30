@@ -73,6 +73,9 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.7` 
   row.
 - The panel and terminal app show the same status row when poison means the bot
   needs a cure or food, and clear it when that need passes.
+- When the game ignores a survival drink (for example in the tick after a
+  mining success, when the game drops item clicks), Gatherer and Quester now
+  click the dose again after 3 game ticks with no dose used, instead of 8.
 
 ### Scripting
 

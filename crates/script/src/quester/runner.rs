@@ -5218,10 +5218,38 @@ mod tests {
         });
     }
 
-    fn quester_survival_cancels_step_and_restarts(kind: &str) {
+    struct SurvivalTestCounts {
+        began: std::sync::atomic::AtomicUsize,
+        cancelled: std::sync::atomic::AtomicUsize,
+    }
+
+    fn survival_condition(
+        poison: api::condition::PoisonState,
+        hp: u8,
+    ) -> api::condition::BotCondition {
+        use api::condition::{BotCondition, CureDoses, FoodSummary, SessionMark};
+        BotCondition {
+            tick: 20,
+            session: SessionMark::Live,
+            hp,
+            hp_max: 99,
+            hp_known: true,
+            poison,
+            food: FoodSummary::default(),
+            cures: CureDoses::default(),
+        }
+    }
+
+    /// A Quester on the Cook path whose first step is a never-settling `kind`
+    /// step, with HP 5 of 99, one held antipoison dose and a complete frame.
+    fn survival_step_fixture(
+        kind: &str,
+    ) -> (
+        Quester,
+        api::snapshot::GameSnapshot,
+        Arc<SurvivalTestCounts>,
+    ) {
         use crate::quester::compile::PredicatePlan;
-        use crate::survival::CurePoison;
-        use api::condition::{BotCondition, CureDoses, FoodSummary, PoisonState, SessionMark};
         use api::selected::Truth;
         use api::snapshot::{
             HitmarkView, HitmarksView, ItemActionFamily, ItemContainer, ItemView, StatView,
@@ -5236,12 +5264,7 @@ mod tests {
             }
         }
 
-        struct Counts {
-            began: AtomicUsize,
-            cancelled: AtomicUsize,
-        }
-
-        struct PendingPlan(Arc<Counts>);
+        struct PendingPlan(Arc<SurvivalTestCounts>);
         impl super::super::compile::StepPlan for PendingPlan {
             fn begin(&self, _: &mut StepContext<'_, '_>) -> Result<Box<dyn StepRun>, ActionError> {
                 self.0.began.fetch_add(1, Ordering::Relaxed);
@@ -5249,7 +5272,7 @@ mod tests {
             }
         }
 
-        struct PendingRun(Arc<Counts>);
+        struct PendingRun(Arc<SurvivalTestCounts>);
         impl StepRun for PendingRun {
             fn poll(
                 &mut self,
@@ -5260,19 +5283,6 @@ mod tests {
 
             fn cancel(&mut self, _: &mut crate::native::NativeActions) {
                 self.0.cancelled.fetch_add(1, Ordering::Relaxed);
-            }
-        }
-
-        fn condition(poison: PoisonState, hp: u8) -> BotCondition {
-            BotCondition {
-                tick: 20,
-                session: SessionMark::Live,
-                hp,
-                hp_max: 99,
-                hp_known: true,
-                poison,
-                food: FoodSummary::default(),
-                cures: CureDoses::default(),
             }
         }
 
@@ -5292,7 +5302,7 @@ mod tests {
             .first_mut()
             .expect("the Cook path has a step");
         step.kind = Arc::from(kind);
-        let counts = Arc::new(Counts {
+        let counts = Arc::new(SurvivalTestCounts {
             began: AtomicUsize::new(0),
             cancelled: AtomicUsize::new(0),
         });
@@ -5353,7 +5363,16 @@ mod tests {
             component_id: 0,
         };
         snapshot.seed_inventory(vec![dose], 28);
+        (script, snapshot, counts)
+    }
 
+    fn quester_survival_cancels_step_and_restarts(kind: &str) {
+        use crate::survival::CurePoison;
+        use api::condition::PoisonState;
+        use std::sync::atomic::Ordering;
+
+        let condition = survival_condition;
+        let (mut script, mut snapshot, counts) = survival_step_fixture(kind);
         let mut ledger = None;
         super::super::families::tests::with_tick(&snapshot, &mut ledger, 1, |tick| {
             tick.cx.condition = Some(condition(PoisonState::Clear, 60));
@@ -5513,6 +5532,91 @@ mod tests {
     fn quester_never_cancels_walk_or_combat_step() {
         quester_survival_cancels_step_and_restarts("walk");
         quester_survival_cancels_step_and_restarts("combat");
+    }
+
+    /// The engine drops a held op while the player is delayed
+    /// (`OpHeldHandler.ts:16-19`), as in the tick after a mining success's
+    /// `p_delay(0)` (`mining.rs2:138`). The drink then shows no dose drop, and
+    /// the Quester must click again after the drink lock, not after the
+    /// generic eight-tick one-op bound.
+    #[test]
+    fn quester_resends_a_dropped_drink_after_the_drink_lock() {
+        use crate::survival::CurePoison;
+        use api::condition::PoisonState;
+
+        let onset = PoisonState::Onset {
+            since: 20,
+            q: Some(11),
+            hit_since_line: false,
+        };
+        // The outbox keeps only the latest interaction, so record each drink
+        // request id once.
+        let mut drink_requests: Vec<u64> = Vec::new();
+        let mut note_drink = |ledger: &Option<Box<crate::native::ledger::Ledger>>| {
+            let Some(action) = ledger.as_ref().and_then(|ledger| ledger.outbox.last()) else {
+                return drink_requests.len();
+            };
+            let is_drink = matches!(
+                &action.effect,
+                crate::native::HostEffect::Interaction(
+                    crate::shim::InteractReq::Held { action, .. }
+                ) if action == "Drink"
+            );
+            let request = action.authority().request_id().get();
+            if is_drink && !drink_requests.contains(&request) {
+                drink_requests.push(request);
+            }
+            drink_requests.len()
+        };
+        let (mut script, snapshot, _) = survival_step_fixture("gather");
+        let mut ledger = None;
+        super::super::families::tests::with_tick(&snapshot, &mut ledger, 1, |tick| {
+            tick.cx.condition = Some(survival_condition(PoisonState::Clear, 60));
+            tick.cx.cure_poison = CurePoison::WhenNeeded;
+            script.tick(tick).unwrap();
+        });
+        super::super::families::tests::with_tick(&snapshot, &mut ledger, 2, |tick| {
+            tick.cx.condition = Some(survival_condition(onset, 5));
+            tick.cx.poison_unknown_pulse = 11;
+            tick.cx.cure_poison = CurePoison::WhenNeeded;
+            script.tick(tick).unwrap();
+        });
+        assert_eq!(
+            note_drink(&ledger),
+            1,
+            "the drink is the first survival click"
+        );
+
+        // The client sent it and the host accepted it; the delayed engine
+        // dropped it, so the dose stays held.
+        let mut drinks = 1;
+        for observed in 3..=6 {
+            super::super::families::tests::with_tick(&snapshot, &mut ledger, observed, |tick| {
+                tick.cx.condition = Some(survival_condition(onset, 5));
+                tick.cx.poison_unknown_pulse = 11;
+                tick.cx.cure_poison = CurePoison::WhenNeeded;
+                if observed == 3 {
+                    let evidence = tick.cx.evidence();
+                    let ledger = tick.cx.ledger.as_mut().unwrap();
+                    let authority = ledger.outbox.last().unwrap().authority();
+                    ledger.complete_interaction(
+                        &authority,
+                        crate::native::InteractionReceipt {
+                            request_id: authority.request_id().get(),
+                            evidence,
+                            accepted: true,
+                            chat_since: 0,
+                        },
+                    );
+                }
+                script.tick(tick).unwrap();
+            });
+            drinks = note_drink(&ledger);
+        }
+        assert_eq!(
+            drinks, 2,
+            "a drink with no dose drop is clicked again by the tick after the three-tick drink lock"
+        );
     }
 
     #[test]

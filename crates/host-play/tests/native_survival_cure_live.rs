@@ -84,9 +84,25 @@ const POISON_CHAT: &str = "You have been poisoned!";
 // through `poison.rs2:12-18`.
 const POISON_DEBUG_COMMAND: &str = "~poison 27";
 const CURE_CHAT: &str = "You drink some of your antipoison potion.";
-// Login schedules the poison timer at 30 ticks; the next observed game tick
-// proves its zero-value clear: poison.rs2:20-23,69-75.
+// Every login arms the poison timer for 30 ticks (`login.rs2:63`,
+// `poison.rs2:69-75`); its first fire with `%poison = 0` clears it
+// (`poison.rs2:20-23`), and the next observed game tick proves that fire.
+// The count starts at the login after the fixture's last relog: the harness
+// snapshot restarts its tick at every session (`host/src/lib.rs:1464-1480`,
+// `api/src/snapshot.rs:605-632`), and `SessionTicks` records that start.
 const TIMER_CLEAR_TICKS: u32 = 31;
+// The antipoison effect sets `%poison <= -5` (`anti_poison.rs2:5-6`) but does
+// not clear a `poison_damage` already queued by an earlier timer fire (only
+// `clear_poison` does, `poison.rs2:64-67`). That queued hit runs on the first
+// queue pass at which the player has access (`Player.ts:903-912`,
+// `Player.ts:825-831`). The drink delays the player with `p_delay(1)`
+// (`consume_effects.rs2:124-126`, `consume_messages.dbrow:651`), which
+// resumes two ticks later (`PlayerOps.ts:377-378`, `World.ts:692`). So at most
+// one poison hit can land after the drink line, and no later than this.
+const POST_CURE_QUEUED_HIT_TICKS: u32 = 2;
+// Runner bound from the poison line to the drink line (the drink bound of
+// three observed ticks plus the drink's own landing; design A6.5).
+const CURE_LINE_BOUND_TICKS: u32 = 10;
 const Q_UNKNOWN: u8 = 11;
 const LETHAL_OUTLOOK: u16 = 330;
 // The Base40 qualification profile seeds only the combat skills and Prayer
@@ -113,6 +129,133 @@ enum PoisonSource {
     AccountStateDebugProc,
 }
 
+/// Observed game ticks of the current session, in the harness snapshot's own
+/// base. That snapshot restarts its tick at every logout and login
+/// (`host::publish_snapshot`, `GameSnapshot::reset_session`), so every tick the
+/// witness keeps is read from it, never from the scenario runner's snapshot,
+/// whose tick runs on across relogs.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+struct SessionTicks {
+    was_ingame: bool,
+    /// The latest in-game tick; `None` while logged out.
+    now: Option<u32>,
+    /// The first in-game tick of the latest session.
+    login: Option<u32>,
+    logins: u32,
+}
+
+impl SessionTicks {
+    fn observe(&mut self, ingame: bool, tick: u32) {
+        if !ingame {
+            self.was_ingame = false;
+            self.now = None;
+            return;
+        }
+        // A drain can carry both sides of a reconnect: the snapshot then
+        // restarts its tick without an observed logged-out frame.
+        if !self.was_ingame || self.now.is_some_and(|last| tick < last) {
+            self.login = Some(tick);
+            self.logins = self.logins.saturating_add(1);
+        }
+        self.was_ingame = true;
+        self.now = Some(tick);
+    }
+
+    /// True once the latest login's poison timer has fired and cleared.
+    fn login_timer_cleared(&self) -> bool {
+        matches!((self.now, self.login), (Some(now), Some(login)) if now.saturating_sub(login) >= TIMER_CLEAR_TICKS)
+    }
+}
+
+/// One poison hitmark event. The client keeps a mark in its slot until the
+/// slot's cycle passes, so one event spans several frames; a new hit writes a
+/// new cycle.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct PoisonMark {
+    tick: u32,
+    slot: usize,
+    cycle: i32,
+    value: i32,
+}
+
+fn record_poison_marks(
+    hitmarks: &api::snapshot::HitmarksView,
+    tick: u32,
+    marks: &mut Vec<PoisonMark>,
+) {
+    for (slot, mark) in hitmarks.marks.iter().enumerate() {
+        if mark.kind != 2 || mark.value <= 0 || mark.cycle <= hitmarks.loop_cycle {
+            continue;
+        }
+        if marks
+            .iter()
+            .any(|seen| seen.slot == slot && seen.cycle == mark.cycle)
+        {
+            continue;
+        }
+        marks.push(PoisonMark {
+            tick,
+            slot,
+            cycle: mark.cycle,
+            value: mark.value,
+        });
+    }
+}
+
+/// The content's poison-damage rule for a cell whose poison came after the
+/// login timer cleared. A fresh timer fires 30 ticks after the line
+/// (`poison.rs2:72-75`), so no hit may precede the drink line. After the drink
+/// line, at most one hit may land: the one an earlier fire queued, within
+/// `POST_CURE_QUEUED_HIT_TICKS`. Valid on every frame.
+fn check_poison_marks(marks: &[PoisonMark], cure_tick: Option<u32>) -> Result<(), String> {
+    let mut after_cure = 0;
+    for mark in marks {
+        match cure_tick {
+            Some(cure) if mark.tick > cure => {
+                after_cure += 1;
+                if after_cure > 1 || mark.tick - cure > POST_CURE_QUEUED_HIT_TICKS {
+                    return Err(format!(
+                        "poison damage continued past the content bound after the antipoison drink: marks {marks:?}, cure tick {cure}, bound one hit within {POST_CURE_QUEUED_HIT_TICKS} ticks"
+                    ));
+                }
+            }
+            _ => {
+                return Err(format!(
+                    "poison damage before the antipoison drink line: marks {marks:?}, cure tick {cure_tick:?}"
+                ));
+            }
+        }
+    }
+    Ok(())
+}
+
+/// The whole cure outcome once the first scheduled fire is covered: the
+/// drink line came inside the runner bound, and the damage obeyed the
+/// content's rule through the first scheduled fire after the line.
+fn check_cure_outcome(
+    poison_tick: Option<u32>,
+    cure_tick: Option<u32>,
+    marks: &[PoisonMark],
+    observed_tick: u32,
+) -> Result<(), String> {
+    let poison = poison_tick.ok_or("real poison chat was not observed")?;
+    check_poison_marks(marks, cure_tick)?;
+    let cure = cure_tick.ok_or_else(|| {
+        format!("antipoison drink line was not observed: poison tick {poison}, observed {observed_tick}")
+    })?;
+    if cure < poison || cure - poison > CURE_LINE_BOUND_TICKS {
+        return Err(format!(
+            "antipoison drink line outside {CURE_LINE_BOUND_TICKS} ticks of the poison line: poison {poison}, cure {cure}"
+        ));
+    }
+    if observed_tick.saturating_sub(poison) < TIMER_CLEAR_TICKS {
+        return Err(format!(
+            "the first scheduled poison fire was not covered: poison {poison}, observed {observed_tick}"
+        ));
+    }
+    Ok(())
+}
+
 struct Witness {
     activity: Activity,
     poison_source: PoisonSource,
@@ -136,7 +279,7 @@ struct Witness {
     baseline_key: i32,
     baseline_antipoison: i32,
     baseline_animation_serial: Option<u32>,
-    login_tick: Option<u32>,
+    session: SessionTicks,
     timer_phase_ready_tick: Option<u32>,
     provisioning_tick: Option<u32>,
     work_active_tick: Option<u32>,
@@ -147,7 +290,7 @@ struct Witness {
     poison_seed_tool_count: Option<i32>,
     poison_source_modal: Option<i32>,
     poison_tick: Option<u32>,
-    first_kind2_mark_tick: Option<u32>,
+    poison_marks: Vec<PoisonMark>,
     need_tick: Option<u32>,
     need_xp: Option<i32>,
     need_resource: Option<i32>,
@@ -239,7 +382,7 @@ fn new_witness(
         baseline_antipoison: 0,
         baseline_key: 0,
         baseline_animation_serial: None,
-        login_tick: None,
+        session: SessionTicks::default(),
         timer_phase_ready_tick: None,
         provisioning_tick: None,
         work_active_tick: None,
@@ -250,7 +393,7 @@ fn new_witness(
         poison_seed_tool_count: None,
         poison_source_modal: None,
         poison_tick: None,
-        first_kind2_mark_tick: None,
+        poison_marks: Vec::new(),
         need_tick: None,
         need_xp: None,
         need_resource: None,
@@ -464,7 +607,8 @@ fn add_login_timer_wait_before_start(
     let wait = scenario::Step {
         name: "wait for the 31-tick login poison timer to clear before provisioning",
         kind: scenario::StepKind::Await {
-            evidence: "31 observed ticks after login; poison.rs2:20-23,69-75",
+            evidence:
+                "31 observed ticks after the final login; login.rs2:63, poison.rs2:20-23,69-75",
             ready: Box::new(move |snapshot| {
                 if !snapshot.ingame()
                     || snapshot.scene_state() != 2
@@ -472,9 +616,13 @@ fn add_login_timer_wait_before_start(
                 {
                     return false;
                 }
-                let mut witness = wait_witness.lock().expect("survival witness");
-                let login_tick = *witness.login_tick.get_or_insert(snapshot.tick());
-                snapshot.tick().saturating_sub(login_tick) >= TIMER_CLEAR_TICKS
+                // The runner's snapshot keeps counting across relogs; the
+                // session ticks come from the harness snapshot.
+                wait_witness
+                    .lock()
+                    .expect("survival witness")
+                    .session
+                    .login_timer_cleared()
             }),
             summary: None,
         },
@@ -484,7 +632,9 @@ fn add_login_timer_wait_before_start(
                 z: witness.lock().expect("survival witness").stand.z,
                 level: witness.lock().expect("survival witness").stand.level,
             },
-            budget_ticks: TIMER_CLEAR_TICKS,
+            // The witness reads the harness snapshot one loop pass after the
+            // runner, so it can see the 31st tick one observed tick later.
+            budget_ticks: TIMER_CLEAR_TICKS + 1,
         },
     };
     scenario.steps.splice(start..start, [wait]);
@@ -540,7 +690,7 @@ fn add_poison_steps(
     let phase = scenario::Step {
         name: "wait for cleared login poison timer and authored activity readiness",
         kind: scenario::StepKind::Await {
-            evidence: "31 observed ticks after login and authored activity readiness",
+            evidence: "31 observed ticks after the final login and authored activity readiness",
             ready: Box::new(move |snapshot| {
                 if !snapshot.ingame()
                     || snapshot.scene_state() != 2
@@ -552,7 +702,9 @@ fn add_poison_steps(
                 if witness.baseline_chat.is_none() {
                     witness.baseline_chat = Some(latest_chat(snapshot));
                 }
-                let login_tick = *witness.login_tick.get_or_insert(snapshot.tick());
+                let Some(now) = witness.session.now else {
+                    return false;
+                };
                 let active = if witness.poison_during_provisioning {
                     witness.provisioning_tick.is_some()
                 } else {
@@ -575,11 +727,10 @@ fn add_poison_steps(
                     && witness.activity != Activity::Dialogue
                     && !witness.poison_during_provisioning
                 {
-                    witness.work_active_tick.get_or_insert(snapshot.tick());
+                    witness.work_active_tick.get_or_insert(now);
                 }
-                let timer_cleared = snapshot.tick().saturating_sub(login_tick) >= TIMER_CLEAR_TICKS;
-                if active && timer_cleared {
-                    witness.timer_phase_ready_tick = Some(snapshot.tick());
+                if active && witness.session.login_timer_cleared() {
+                    witness.timer_phase_ready_tick = Some(now);
                     true
                 } else {
                     false
@@ -678,7 +829,7 @@ fn twisted_chest_steps(witness: Arc<Mutex<Witness>>, before_start: bool) -> Vec<
                     return false;
                 }
                 let mut witness = source_witness.lock().expect("survival witness");
-                witness.poison_source_tick = Some(snapshot.tick());
+                witness.poison_source_tick = witness.session.now;
                 witness.poison_source_modal = Some(snapshot.modals().chat);
                 true
             }),
@@ -732,7 +883,7 @@ fn account_state_poison_steps(witness: Arc<Mutex<Witness>>) -> Vec<scenario::Ste
         kind: scenario::StepKind::Perform {
             send: Box::new(move |client, snapshot| {
                 let mut witness = source_witness.lock().expect("survival witness");
-                let Some(login_tick) = witness.login_tick else {
+                let Some(now) = witness.session.now else {
                     return false;
                 };
                 let phase_ready = if witness.poison_during_provisioning {
@@ -748,7 +899,7 @@ fn account_state_poison_steps(witness: Arc<Mutex<Witness>>) -> Vec<scenario::Ste
                 };
                 if witness.timer_phase_ready_tick.is_none()
                     || !phase_ready
-                    || snapshot.tick().saturating_sub(login_tick) < TIMER_CLEAR_TICKS
+                    || !witness.session.login_timer_cleared()
                     || snapshot.modals().chat != -1
                     || active_hitmark(snapshot, None) != Some(false)
                 {
@@ -760,7 +911,7 @@ fn account_state_poison_steps(witness: Arc<Mutex<Witness>>) -> Vec<scenario::Ste
                 witness.poison_seed_bank_open =
                     Some(snapshot.bank_component_id() >= 0 && snapshot.bank_loaded());
                 witness.poison_seed_tool_count = witness.tool_id.map(|id| item_count(snapshot, id));
-                witness.poison_source_tick = Some(snapshot.tick());
+                witness.poison_source_tick = Some(now);
                 witness.poison_source_modal = Some(snapshot.modals().chat);
                 true
             }),
@@ -914,10 +1065,7 @@ fn observe_frame(
     if witness.baseline_chat.is_none() && snapshot.ingame() {
         witness.baseline_chat = Some(latest_chat(snapshot));
     }
-    if witness.login_tick.is_none() && slot.is_some_and(|slot| slot.ingame && slot.scene_state == 2)
-    {
-        witness.login_tick = Some(snapshot.tick());
-    }
+    witness.session.observe(snapshot.ingame(), snapshot.tick());
     if witness.poison_during_provisioning
         && witness.provisioning_tick.is_none()
         && status_text(status, "provision") == Some("Withdrawing")
@@ -940,15 +1088,8 @@ fn observe_frame(
         witness.poison_tick = Some(snapshot.tick());
     }
     if witness.poison_tick.is_some() {
-        if witness.first_kind2_mark_tick.is_none()
-            && snapshot.hitmarks().is_some_and(|hitmarks| {
-                hitmarks
-                    .marks
-                    .iter()
-                    .any(|mark| mark.kind == 2 && mark.cycle > hitmarks.loop_cycle)
-            })
-        {
-            witness.first_kind2_mark_tick = Some(snapshot.tick());
+        if let Some(hitmarks) = snapshot.hitmarks() {
+            record_poison_marks(&hitmarks, snapshot.tick(), &mut witness.poison_marks);
         }
         if witness.cure_tick.is_none()
             && snapshot
@@ -1038,19 +1179,12 @@ fn profile_control(initial: vault::CurePoison, witness: Arc<Mutex<Witness>>) -> 
 }
 
 fn check_mark(witness: &Witness) -> Result<(), String> {
-    if let Some(mark) = witness.first_kind2_mark_tick {
-        let poison = witness.poison_tick.unwrap_or_default();
-        let classification = if witness.cure_tick.is_some_and(|cure| mark > cure) {
-            "kind-2 mark after antipoison drink"
-        } else {
-            "timer-phase-uncontrolled: kind-2 mark before the cure line"
-        };
-        return Err(format!(
-            "{classification}: first mark tick {mark}, poison line tick {poison}, cure tick {:?}",
-            witness.cure_tick
-        ));
-    }
-    Ok(())
+    check_poison_marks(&witness.poison_marks, witness.cure_tick).map_err(|error| {
+        format!(
+            "{error}; poison line tick {:?}, final login tick {:?}",
+            witness.poison_tick, witness.session.login
+        )
+    })
 }
 
 fn check_deadline(witness: &Witness, tick: u32, deadline: u32) -> Result<u32, String> {
@@ -1114,7 +1248,16 @@ fn common_receipt(
 ) -> Result<Value, String> {
     check_mark(witness)?;
     let elapsed = check_deadline(witness, snapshot.tick(), deadline)?;
-    let login_tick = witness.login_tick.ok_or("login tick was not observed")?;
+    check_cure_outcome(
+        witness.poison_tick,
+        witness.cure_tick,
+        &witness.poison_marks,
+        snapshot.tick(),
+    )?;
+    let login_tick = witness
+        .session
+        .login
+        .ok_or("final login tick was not observed")?;
     let phase_tick = witness
         .timer_phase_ready_tick
         .ok_or("controlled timer phase was not observed")?;
@@ -1183,9 +1326,9 @@ fn common_receipt(
         || drink_tick < poison_tick
         || drink_tick.saturating_sub(poison_tick) > 3
         || cure_tick < poison_tick
-        || cure_tick.saturating_sub(poison_tick) > 10
+        || cure_tick.saturating_sub(poison_tick) > CURE_LINE_BOUND_TICKS
         || dose_drop_tick < poison_tick
-        || dose_drop_tick.saturating_sub(poison_tick) > 10
+        || dose_drop_tick.saturating_sub(poison_tick) > CURE_LINE_BOUND_TICKS
         || settled_tick < cure_tick
         || snapshot.tick().saturating_sub(poison_tick) < TIMER_CLEAR_TICKS
         || witness.poison_source_modal != Some(-1)
@@ -1205,6 +1348,8 @@ fn common_receipt(
     }
     Ok(json!({
         "login_tick": login_tick,
+        "session_logins": witness.session.logins,
+        "tick_base": "harness snapshot, restarted at each session (host/src/lib.rs:1464-1480)",
         "timer_phase_ready_tick": phase_tick,
         "poison_source": source_label,
         "poison_source_tick": source_tick,
@@ -1250,8 +1395,12 @@ fn common_receipt(
         "inventory_total_after": inventory_after,
         "inventory_total_minimum_after": expected_inventory_after,
         "ticks_from_poison_to_settled": settled_tick.saturating_sub(poison_tick),
-        "first_kind2_mark_tick": witness.first_kind2_mark_tick,
-        "first_kind2_mark": "none through the first scheduled fire",
+        "poison_marks": witness
+            .poison_marks
+            .iter()
+            .map(|mark| json!({"tick": mark.tick, "slot": mark.slot, "cycle": mark.cycle, "value": mark.value}))
+            .collect::<Vec<_>>(),
+        "poison_mark_rule": "none before the drink line; at most one queued hit within POST_CURE_QUEUED_HIT_TICKS after it",
         "observed_poison_ticks": elapsed,
         "first_scheduled_fire_covered": true,
         "first_scheduled_fire_covered_tick": snapshot.tick(),
@@ -1428,19 +1577,18 @@ fn dialogue_receipt(
         || immune < cure
         || settled < immune
         || reopened <= settled
-        || witness.first_kind2_mark_tick.is_some()
         || witness.dialogue_reopened_step.as_deref() != Some("survival-talk")
         || !matches_desert_captain_opening_options(&witness.dialogue_reopened_options)
     {
         return Err(format!(
-            "dialogue cure/resume order failed: change={change}, stage={:?}, page_tick={page_tick}, source={source_tick}, modal={:?}, options={:?}, need_page={:?}, need_options={:?}, closed={closed}, drink={drink}, drink_modal={drink_modal}, cure={cure}, drop={drop}, immune={immune}, settled={settled}, reopened={reopened}, reopened_options={:?}, mark={:?}, step={:?}",
+            "dialogue cure/resume order failed: change={change}, stage={:?}, page_tick={page_tick}, source={source_tick}, modal={:?}, options={:?}, need_page={:?}, need_options={:?}, closed={closed}, drink={drink}, drink_modal={drink_modal}, cure={cure}, drop={drop}, immune={immune}, settled={settled}, reopened={reopened}, reopened_options={:?}, marks={:?}, step={:?}",
             witness.desert_stage_reply,
             witness.profile_change_modal,
             witness.profile_change_options,
             witness.need_page_open_tick,
             witness.need_page_options,
             witness.dialogue_reopened_options,
-            witness.first_kind2_mark_tick,
+            witness.poison_marks,
             witness.dialogue_reopened_step,
         ));
     }
@@ -1534,7 +1682,8 @@ fn observe_start(snapshot: &GameSnapshot, witness: &mut Witness) -> Result<Value
         "no_food": inventory_observed == inventory_expected,
         "inventory_total": inventory_observed,
         "chat_sequence": witness.baseline_chat,
-        "login_tick": witness.login_tick,
+        "login_tick": witness.session.login,
+        "session_logins": witness.session.logins,
         "poison_preseeded": witness.poison_tick.is_some(),
     }))
 }
@@ -1595,7 +1744,8 @@ fn assert_common_cure(receipt: &Value, resumed_ticks: u64) {
     assert_eq!(receipt["condition_at_need"]["in_combat"], false);
     assert_eq!(receipt["condition_at_need"]["no_hitmark_at_edge"], true);
     assert_eq!(receipt["drink_decision_chat_modal"], -1);
-    assert_eq!(receipt["first_kind2_mark_tick"], Value::Null);
+    // `check_cure_outcome` already applied the content rule; restate its cap.
+    assert!(receipt["poison_marks"].as_array().unwrap().len() <= 1);
     assert!(receipt["first_scheduled_fire_covered"].as_bool().unwrap());
     assert!(receipt["observed_poison_ticks"].as_u64().unwrap() >= u64::from(TIMER_CLEAR_TICKS));
     assert!(receipt["ticks_from_poison_to_settled"].as_u64().unwrap() <= 10);
@@ -1961,5 +2111,140 @@ impl Drop for SourceRestore {
                 folder: PathBuf::new(),
             },
         ));
+    }
+}
+
+mod oracle_tests {
+    use super::*;
+    use api::snapshot::{HitmarkView, HitmarksView};
+
+    fn mark(tick: u32) -> PoisonMark {
+        PoisonMark {
+            tick,
+            slot: 0,
+            cycle: i32::try_from(tick).unwrap() * 30,
+            value: 6,
+        }
+    }
+
+    #[test]
+    fn session_ticks_anchor_the_login_timer_on_the_final_login() {
+        let mut session = SessionTicks::default();
+        for tick in 1..=20 {
+            session.observe(true, tick);
+        }
+        // The fixture relogs: the harness snapshot restarts its tick.
+        session.observe(false, 0);
+        for tick in 0..=30 {
+            session.observe(true, tick);
+            assert!(
+                !session.login_timer_cleared(),
+                "a timer armed by the final login is still running at {tick}"
+            );
+        }
+        session.observe(true, 31);
+        assert!(session.login_timer_cleared());
+        assert_eq!(session.login, Some(0));
+        assert_eq!(session.logins, 2);
+    }
+
+    #[test]
+    fn session_ticks_see_a_reconnect_inside_one_drain() {
+        let mut session = SessionTicks::default();
+        for tick in 0..=40 {
+            session.observe(true, tick);
+        }
+        assert!(session.login_timer_cleared());
+        // No logged-out frame: the tick restarts while in game.
+        session.observe(true, 2);
+        assert!(!session.login_timer_cleared());
+        assert_eq!(session.login, Some(2));
+        assert_eq!(session.logins, 2);
+    }
+
+    #[test]
+    fn one_poison_hitmark_spanning_frames_is_one_mark() {
+        let empty = HitmarkView {
+            value: 0,
+            kind: 0,
+            cycle: 0,
+        };
+        let mut view = HitmarksView {
+            marks: [empty; 4],
+            loop_cycle: 100,
+        };
+        view.marks[1] = HitmarkView {
+            value: 6,
+            kind: 2,
+            cycle: 170,
+        };
+        let mut marks = Vec::new();
+        record_poison_marks(&view, 34, &mut marks);
+        view.loop_cycle = 130;
+        record_poison_marks(&view, 35, &mut marks);
+        assert_eq!(marks.len(), 1);
+        assert_eq!(marks[0].tick, 34);
+        // A new hit writes a new cycle into the slot.
+        view.marks[1].cycle = 200;
+        record_poison_marks(&view, 64, &mut marks);
+        assert_eq!(marks.len(), 2);
+        // Expired marks and other kinds are not poison damage.
+        view.loop_cycle = 300;
+        view.marks[2] = HitmarkView {
+            value: 3,
+            kind: 1,
+            cycle: 400,
+        };
+        record_poison_marks(&view, 70, &mut marks);
+        assert_eq!(marks.len(), 2);
+    }
+
+    #[test]
+    fn a_cure_inside_the_bound_with_no_poison_damage_passes() {
+        assert_eq!(check_cure_outcome(Some(40), Some(42), &[], 71), Ok(()));
+    }
+
+    #[test]
+    fn one_queued_hit_at_the_end_of_the_drink_delay_passes() {
+        // Final-round Gatherer receipt shape: poison 31, drink line 32, the
+        // hit an earlier fire queued lands when p_delay(1) ends at 34.
+        assert_eq!(check_poison_marks(&[mark(34)], Some(32)), Ok(()));
+        assert_eq!(
+            check_cure_outcome(Some(31), Some(32), &[mark(34)], 62),
+            Ok(())
+        );
+    }
+
+    #[test]
+    fn a_cure_that_never_happens_fails() {
+        // Final-round Quester receipt shape: poison 26, hit 32, no drink line.
+        assert!(check_poison_marks(&[mark(32)], None).is_err());
+        assert!(check_cure_outcome(Some(26), None, &[mark(32)], 57).is_err());
+        assert!(check_cure_outcome(Some(26), None, &[], 57).is_err());
+        assert!(check_cure_outcome(None, None, &[], 57).is_err());
+    }
+
+    #[test]
+    fn a_cure_outside_the_runner_bound_fails() {
+        assert!(check_cure_outcome(Some(40), Some(51), &[], 71).is_err());
+    }
+
+    #[test]
+    fn poison_damage_past_the_content_bound_after_the_drink_fails() {
+        assert!(check_poison_marks(&[mark(35)], Some(32)).is_err());
+        assert!(check_poison_marks(&[mark(33), mark(34)], Some(32)).is_err());
+        assert!(check_poison_marks(&[mark(34), mark(64)], Some(32)).is_err());
+        assert!(check_cure_outcome(Some(31), Some(32), &[mark(62)], 63).is_err());
+    }
+
+    #[test]
+    fn poison_damage_before_the_drink_line_fails() {
+        assert!(check_poison_marks(&[mark(31)], Some(33)).is_err());
+        assert!(check_poison_marks(&[mark(32)], Some(32)).is_err());
+    }
+
+    #[test]
+    fn a_receipt_before_the_first_scheduled_fire_is_not_a_pass() {
+        assert!(check_cure_outcome(Some(40), Some(42), &[], 70).is_err());
     }
 }

@@ -3,6 +3,19 @@ use crate::shim::InteractReq;
 use std::sync::Arc;
 use std::task::Poll;
 
+/// Observed ticks a survival drink waits for its dose drop before the runner
+/// may click again. The engine runs a held op in the server tick that reads
+/// it (`OpHeldHandler.ts:68`), and the antipoison effect replaces the dose in
+/// that tick (`anti_poison.rs2:8`), so a processed drink is seen by the next
+/// observed tick. The engine drops a held op without any reply while the
+/// player is delayed (`OpHeldHandler.ts:16-19`), for example in the tick after
+/// a mining success's `p_delay(0)` (`mining.rs2:138`, `PlayerOps.ts:377-378`).
+/// This is the drink lock the walk guard and the combat schedule already use
+/// (`combat/schedule.rs` `OpKind::Drink`), and it outlasts the drink's own
+/// `p_delay(1)` (`consume_effects.rs2:124-126`), so a second click cannot land
+/// inside the first drink's delayed ticks.
+const DRINK_SETTLE_TICKS: u64 = 3;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum OneOpKind {
     Wear {
@@ -106,7 +119,7 @@ impl OneOpArgs {
                 item_id,
                 before_doses,
             },
-            bound_ticks: 8,
+            bound_ticks: DRINK_SETTLE_TICKS,
         }
     }
 
