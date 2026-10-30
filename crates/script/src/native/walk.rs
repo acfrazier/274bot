@@ -1,7 +1,6 @@
 //! Native adapter for the shared walk correlation and arrival core.
 use super::walk_wait::{HostOutcome, Observation, WalkKey, WalkSlot};
 use super::{ActionContext, ActionError, NativeMachine, WalkEnd, WalkReceipt, WalkRequest};
-use api::quest_progress::EvidenceStamp;
 use api::snapshot::SnapshotView;
 use nav_planner::contract::ArrivalKind;
 use std::num::NonZeroU64;
