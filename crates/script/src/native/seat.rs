@@ -360,7 +360,7 @@ impl<R> GameplaySeat<R> {
             api::hostlog::Level::Info,
             "[DEBUG-nav-seat] physical-terminal run={:?} id={id:?} slots={:?}",
             self.run,
-            self.walk_releases,
+            self.walk_releases.map(|slot| slot.map(|slot| (slot.id, slot.state))),
         );
         if let Some(slot) = self.walk_releases.iter_mut().find(|slot| {
             slot.is_some_and(|reserved| {
@@ -993,7 +993,7 @@ impl<R> GameplaySeat<R> {
             api::hostlog::Level::Info,
             "[DEBUG-nav-seat] machine-terminal run={:?} id={id:?} kind={kind:?} slots={:?}",
             self.run,
-            self.walk_releases,
+            self.walk_releases.map(|slot| slot.map(|slot| (slot.id, slot.state))),
         );
         if kind != NativeKind::Walk {
             return;
