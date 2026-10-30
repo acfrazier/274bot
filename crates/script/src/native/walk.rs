@@ -563,13 +563,14 @@ mod tests {
             Err(ActionError::Blocked(detail)) if detail.as_ref() == "no way out"
         ));
     }
-    fn biohazard_complete_gate() -> api::selected::QuestGate {
-        api::selected::QuestGate::Complete(api::selected::FactKey::new("biohazard"))
+    fn complete_gate(quest: &str) -> api::selected::QuestGate {
+        api::selected::QuestGate::Complete(api::selected::FactKey::new(quest))
     }
 
     fn post_needs_evidence_receipt(
         ledger: &mut Option<Box<crate::native::ledger::Ledger>>,
         tick: u64,
+        quest: &str,
     ) -> u64 {
         let request_id = post_user_input_walk_receipt(ledger, tick);
         let receipt = ledger
@@ -578,12 +579,21 @@ mod tests {
             .walk
             .as_mut()
             .expect("walk receipt exists");
-        receipt.end = WalkEnd::NeedsEvidence(std::sync::Arc::from([biohazard_complete_gate()]));
+        receipt.end = WalkEnd::NeedsEvidence(std::sync::Arc::from([complete_gate(quest)]));
         request_id
     }
 
     #[test]
     fn observed_not_started_quest_replans_to_an_arriving_route() {
+        assert_observed_quest_replans("biohazard", "Biohazard");
+    }
+
+    #[test]
+    fn observed_quest_display_name_replans_when_it_differs_from_the_id() {
+        assert_observed_quest_replans("priestperil", "Priest in Peril");
+    }
+
+    fn assert_observed_quest_replans(quest: &str, display: &str) {
         let run = RunKey {
             slot: 1,
             run: 1,
@@ -601,7 +611,7 @@ mod tests {
         observed.seed_quest_statuses(
             vec![api::snapshot::QuestStatusView {
                 component_id: 42,
-                name: "Biohazard".to_owned(),
+                name: display.to_owned(),
                 colour: 0xF80000,
             }],
             true,
@@ -625,7 +635,7 @@ mod tests {
                 )
                 .unwrap()
         });
-        let original = post_needs_evidence_receipt(&mut ledger, 1);
+        let original = post_needs_evidence_receipt(&mut ledger, 1, quest);
 
         assert!(matches!(
             with_tick(&initial, &mut ledger, 1, |tick| tick
