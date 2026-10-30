@@ -95,10 +95,10 @@ export const reader = proxy('reader', {
     bankSideItems() {
         return inventoryItems(snap().bank_side);
     },
-    // Upstream reads the open bank's withdraw component (`ClientAdapter.ts:1123-1130`):
-    // no open bank is an empty list.
+    // Upstream reads the open bank's withdraw component (`ClientAdapter.ts:1123-1130`).
+    // Rust projects the posted rows; no open bank is an empty list.
     bankItems() {
-        return snap().bank_open === true ? inventoryItems(snap().bank) : [];
+        return globalThis.__rs2b0t_bank_items();
     },
     sceneState() {
         return typeof snap().scene_state === 'number' ? snap().scene_state : 0;

@@ -163,15 +163,14 @@ fn compat_v1_bank__bankpace__contract() {
         Poll::Ready(Ok(Value::Null))
     ));
 
-    // A run whose session was replaced after acceptance never settles as a
-    // completed pause.
+    // Another run never inherits an accepted pause.
     let mut replaced = row(BankSeatArgs::new(BankSeatOperation::Pace));
     replaced.job = Job::Pace {
         accepted: Some(EvidenceStamp {
             run: RunKey {
                 slot: 1,
-                run: 1,
-                session: 0,
+                run: 0,
+                session: 1,
             },
             tick: 5,
             sequence: 5,
@@ -517,4 +516,98 @@ fn compat_v1_bank__purgepackatbank__contract() {
         assert_eq!(message, "start purge: pack cleared");
         assert_eq!(settled(then), Some(&json!(true)));
     });
+}
+
+/// Poll `row` on a frame of the same run whose session is `session` (a kept
+/// reconnect re-keys the run's session, not the run).
+fn poll_row_in_session(
+    row: &mut BankRow,
+    snapshot: &GameSnapshot,
+    ledger: &mut Option<Box<crate::native::ledger::Ledger>>,
+    tick: u64,
+    session: u64,
+) -> Poll<Result<Value, ActionError>> {
+    let facts = Arc::new(NamedBankFacts::empty());
+    let preferences = BankPreferences {
+        use_mage_bank: false,
+        use_zanaris_bank: false,
+    };
+    with_tick(snapshot, ledger, tick, |native| {
+        native.cx.evidence.run.session = session;
+        let mut note = None;
+        row.poll(
+            native.actions,
+            &mut native.cx,
+            &facts,
+            preferences,
+            &mut note,
+            None,
+        )
+    })
+}
+
+/// Contract v5 R5-7 / R5-8.5: a kept reconnect holds request state. A sort
+/// that already sent a drag resumes on the new session and reports that
+/// progress through the closed-bank round, not an invented empty result.
+#[test]
+fn a_kept_reconnect_holds_sort_progress() {
+    let mut snapshot = open(
+        Vec::new(),
+        vec![
+            banked(438, "Tin ore", 1, 0),
+            banked(436, "Copper ore", 1, 1),
+        ],
+        Vec::new(),
+        true,
+    );
+    snapshot.seed_varps(vec![api::snapshot::VarpView {
+        index: crate::bank::seat_sort::BANK_INSERT_VARP,
+        value: 0,
+    }]);
+    let mut ledger = None;
+    let mut sort = row(BankSeatArgs::new(BankSeatOperation::Sort));
+    assert!(poll_row(&mut sort, &snapshot, &mut ledger, 2).is_pending());
+    assert!(poll_row(&mut sort, &snapshot, &mut ledger, 3).is_pending());
+    assert!(matches!(sort.job, Job::Sort(_)), "one drag is in flight");
+
+    let job = std::mem::replace(&mut sort.job, Job::Finished);
+    sort.job = job.held_across_kept_reconnect(NativeKind::BankPlan);
+    assert!(matches!(sort.job, Job::ResumeSort { .. }));
+    ledger
+        .as_mut()
+        .expect("the sort's ledger")
+        .revoke_foreground();
+
+    let reconnected = closed(Vec::new());
+    match poll_row_in_session(&mut sort, &reconnected, &mut ledger, 4, 2) {
+        Poll::Ready(Ok(value)) => assert_eq!(
+            value,
+            json!({
+                "sorted": false,
+                "moves": 1,
+                "mode": "swap",
+                "unmatched": [],
+                "reason": "bank closed",
+            })
+        ),
+        other => panic!(
+            "the resumed sort settles, got pending={}",
+            other.is_pending()
+        ),
+    }
+}
+
+/// A kept reconnect holds a pause: it restarts on the new session's own
+/// observed ticks instead of ending.
+#[test]
+fn a_kept_reconnect_holds_a_pause() {
+    let snapshot = closed(Vec::new());
+    let mut ledger = None;
+    let mut pace = row(BankSeatArgs::new(BankSeatOperation::Pace));
+    assert!(poll_row(&mut pace, &snapshot, &mut ledger, 5).is_pending());
+    assert!(poll_row_in_session(&mut pace, &snapshot, &mut ledger, 1, 2).is_pending());
+    assert!(matches!(
+        poll_row_in_session(&mut pace, &snapshot, &mut ledger, 2, 2),
+        Poll::Ready(Ok(Value::Null))
+    ));
 }

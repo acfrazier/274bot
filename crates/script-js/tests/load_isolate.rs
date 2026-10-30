@@ -6072,6 +6072,69 @@ export default class T extends LoopingBot {
     slot.stop();
 }
 
+/// `sortBank` on an open bank whose 200 rows the planner cannot categorize:
+/// the result reaches the script with every unmatched id, past the seat
+/// channel's 128-entry array limit.
+#[test]
+fn isolate_sort_bank_returns_more_unmatched_ids_than_one_channel_array() {
+    let src = r#"
+import { sortBank } from '../../api/bank/bankSort.js';
+export default class T extends LoopingBot {
+    async loop() {
+        if (globalThis.__started) return;
+        globalThis.__started = true;
+        try {
+            globalThis.__sorted = await sortBank();
+        } catch (error) {
+            globalThis.__sorted = String(error);
+        }
+    }
+}
+"#;
+    let names: Vec<String> = (0..200)
+        .map(|index| format!("Mystery {index:03}"))
+        .collect();
+    let rows: Vec<_> = names
+        .iter()
+        .enumerate()
+        .map(|(slot, name)| script_js::wire::ItemRowInput {
+            slot: slot as i32,
+            ..item_row(
+                40_000 + slot as i32,
+                Some(name.as_str()),
+                1,
+                &[],
+                false,
+                -1,
+                BANK_GAME_COMPONENT,
+            )
+        })
+        .collect();
+    let mut slot = new_bank_slot(src, LoadShape::CompatClass, empty_named_banks());
+    let mut input = base_snapshot();
+    input.bank = &rows;
+    input.bank_open = true;
+    input.bank_loaded = true;
+    let mut snapshot = api::snapshot::GameSnapshot::new();
+    let mut actions = 0;
+    for tick in 1..=12 {
+        tick_bank_slot(&mut slot, &mut input, tick, 1, -1, &mut snapshot);
+        actions += slot.take_actions().len();
+    }
+    let sorted = slot.probe("globalThis.__sorted ?? 'pending'").unwrap();
+    assert_eq!(
+        sorted["reason"], "sorted",
+        "{sorted}; {actions} host actions"
+    );
+    let unmatched = sorted["unmatched"].as_array().expect("one flat array");
+    assert_eq!(unmatched.len(), 200);
+    assert!(unmatched
+        .iter()
+        .zip(40_000..)
+        .all(|(id, want)| id.as_f64() == Some(f64::from(want))));
+    slot.stop();
+}
+
 #[test]
 fn isolate_wait_bank_ready_adapts_existing_bank_wait() {
     let src = r#"
