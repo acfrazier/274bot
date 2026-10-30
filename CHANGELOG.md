@@ -67,6 +67,10 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.7` 
   fleet Start. The plan asks for confirmation and checks each saved queue
   again before Start. It skips a bot if its queue changed. A bulk Start
   without a plan does not start Quester.
+
+- Starting one Quester shows its declared danger zones in the Script section
+  before Start. The TUI palette opens that section first. The user must select
+  Start there after reviewing the list.
 - The Quester card no longer offers the blanket `Allow danger zones` setting.
   The old saved value still loads, but it no longer affects Quester routes.
   The harness no longer offers `QUESTER_ALLOW_DANGER_ZONES`. Guides use

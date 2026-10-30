@@ -5,64 +5,6 @@ use script::quester::queue::{Queue, QueueSettings};
 use script::quester::registry::{self, PathRegistry};
 use std::fmt::Write as _;
 use std::sync::Arc;
-#[cfg(test)]
-pub(crate) mod allocation_probe {
-    use std::alloc::{GlobalAlloc, Layout, System};
-    use std::cell::Cell;
-
-    struct Counting;
-
-    thread_local! {
-        static ENABLED: Cell<bool> = const { Cell::new(false) };
-        static EVENTS: Cell<usize> = const { Cell::new(0) };
-    }
-
-    fn record() {
-        if ENABLED.try_with(Cell::get).unwrap_or(false) {
-            let _ = EVENTS.try_with(|events| events.set(events.get().saturating_add(1)));
-        }
-    }
-
-    // SAFETY: every allocation operation is forwarded unchanged to System;
-    // the counting state is stored in non-allocating TLS cells.
-    unsafe impl GlobalAlloc for Counting {
-        unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
-            record();
-            // SAFETY: the caller's layout is forwarded unchanged.
-            unsafe { System.alloc(layout) }
-        }
-
-        unsafe fn alloc_zeroed(&self, layout: Layout) -> *mut u8 {
-            record();
-            // SAFETY: the caller's layout is forwarded unchanged.
-            unsafe { System.alloc_zeroed(layout) }
-        }
-
-        unsafe fn realloc(&self, ptr: *mut u8, layout: Layout, new_size: usize) -> *mut u8 {
-            record();
-            // SAFETY: ptr and layout came from a prior allocation.
-            unsafe { System.realloc(ptr, layout, new_size) }
-        }
-
-        unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
-            // SAFETY: ptr and layout came from a prior allocation.
-            unsafe { System.dealloc(ptr, layout) }
-        }
-    }
-
-    #[global_allocator]
-    static ALLOCATOR: Counting = Counting;
-
-    pub(crate) fn start() {
-        EVENTS.with(|events| events.set(0));
-        ENABLED.with(|enabled| enabled.set(true));
-    }
-
-    pub(crate) fn stop() -> usize {
-        ENABLED.with(|enabled| enabled.set(false));
-        EVENTS.with(Cell::get)
-    }
-}
 
 pub const START_ZONE_SCOPE_TITLE: &str = "Start zone scope";
 pub const START_ZONE_PANEL_SCROLL_HINT: &str = "Scroll this panel to read the full list.";

@@ -2084,6 +2084,92 @@ fn arthur_zone_scope_renders_all_eight_names_and_reasons_at_common_sizes() {
 }
 
 #[test]
+fn palette_start_opens_quester_zone_scope_before_start() {
+    let evidence_root =
+        std::env::var_os("QUESTER_DANGER_CONSENT_TUI_EVIDENCE").map(std::path::PathBuf::from);
+    for (width, height) in [(120, 40), (80, 24)] {
+        let mut app = script_app();
+        app.script_sel = Some(ScriptChoice::compiled(CompiledCardId::QUESTER));
+        let settings = serde_json::Map::from_iter([
+            ("quests".to_owned(), serde_json::json!(["arthur"])),
+            ("include_draft_guides".to_owned(), serde_json::json!(true)),
+        ]);
+        let mut disclosure = frontend_core::scripts::QuesterStartZoneCache::default();
+        assert!(disclosure.update_settings(
+            frontend_core::selection::ProfileIdentity::synthetic("tui-palette-zone-capture"),
+            0,
+            Ok(settings),
+        ));
+        app.set_quester_start_zone_view(disclosure.shared_view());
+        app.script_state = ScriptRunState::Idle;
+        assert_eq!(app.show_screen(Screen::Overview), AppAction::None);
+
+        assert_eq!(
+            app.on_key(KeyEvent::new(
+                KeyCode::Char('p'),
+                KeyModifiers::CONTROL
+            )),
+            AppAction::None
+        );
+        for character in "start script".chars() {
+            assert_eq!(app.on_key(ch(character)), AppAction::None);
+        }
+        assert!(
+            text(&draw(&mut app, width, height)).contains("Start script"),
+            "{width}x{height}: the palette lists Start script"
+        );
+        assert_eq!(
+            app.on_key(key(KeyCode::Enter)),
+            AppAction::None,
+            "the palette opens the Script section and does not start Quester"
+        );
+        assert_eq!(app.screen, Screen::Script);
+        assert!(app.modal.is_none());
+
+        let mut shown = text(&draw(&mut app, width, height));
+        assert!(
+            shown.contains(frontend_core::scripts::START_ZONE_SCOPE_TITLE),
+            "{width}x{height}: {shown}"
+        );
+        assert!(
+            shown.contains("Start accepts only these zones."),
+            "{width}x{height}: {shown}"
+        );
+        assert!(shown.contains("[Start t]"), "{width}x{height}: {shown}");
+        for _ in 0..8 {
+            if shown.contains("Guide reason:") {
+                break;
+            }
+            assert_eq!(
+                app.on_key(key(KeyCode::PageDown)),
+                AppAction::None,
+                "scrolling the declared-zone list does not start Quester"
+            );
+            shown = text(&draw(&mut app, width, height));
+        }
+        assert!(
+            shown.contains("Guide reason:"),
+            "{width}x{height}: a declared zone is visible before Start: {shown}"
+        );
+        assert!(shown.contains("[Start t]"), "{width}x{height}: {shown}");
+        if let Some(root) = &evidence_root {
+            let directory = root.join("QUEST-DANGER-CONSENT");
+            std::fs::create_dir_all(&directory).expect("create TUI evidence directory");
+            std::fs::write(
+                directory.join(format!("tui-palette-{width}x{height}-before-start.txt")),
+                &shown,
+            )
+            .expect("write pre-start palette capture");
+        }
+        assert_eq!(
+            app.on_key(ch('t')),
+            AppAction::ScriptStart(ScriptChoice::compiled(CompiledCardId::QUESTER)),
+            "the user must select Start after reviewing the zone list"
+        );
+    }
+}
+
+#[test]
 fn map_search_list_uses_display_name_not_slash_breaks() {
     let (catalogue, _, label_anchor) = map_poi_catalogue();
     let mut app = TuiApp::new("274bot headless");
