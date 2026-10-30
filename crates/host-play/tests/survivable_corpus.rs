@@ -518,18 +518,18 @@ fn w4_inputs(world: &NavWorld, source: &Value) -> Result<Vec<CorpusInput>, Strin
     let mut inputs = Vec::new();
     let reachable_from = tile(3222, 3218, 0);
     let reachable_to = tile(2965, 3379, 0);
-    inputs.push(w4_many_input(
+    inputs.push(w4_many_input(W4ManyInput {
         world,
-        "w4/reachable_lumbridge_falador",
-        source_json("reachable_lumbridge_falador"),
-        reachable_from,
-        vec![reachable_to],
-        empty.clone(),
-        empty_state_json(),
-        legacy,
-        FindOptions::default(),
-        "unmodified W4 all-zone benchmark route; assessment grants remain empty",
-    ));
+        id: "w4/reachable_lumbridge_falador",
+        source: source_json("reachable_lumbridge_falador"),
+        from: reachable_from,
+        targets: vec![reachable_to],
+        state: empty.clone(),
+        state_json: empty_state_json(),
+        frozen_options: legacy,
+        route_options: FindOptions::default(),
+        route_source: "unmodified W4 all-zone benchmark route; assessment grants remain empty",
+    }));
 
     let bank_targets: Vec<_> = world
         .named_bank_facts()
@@ -542,18 +542,18 @@ fn w4_inputs(world: &NavWorld, source: &Value) -> Result<Vec<CorpusInput>, Strin
     if bank_targets.is_empty() {
         return Err("selected pack has no routable named bank stands".into());
     }
-    inputs.push(w4_many_input(
+    inputs.push(w4_many_input(W4ManyInput {
         world,
-        "w4/bank_pick_all_stands",
-        source_json("bank_pick_all_stands"),
-        tile(3016, 9840, 0),
-        bank_targets,
-        rich.clone(),
-        rich_289_state_json(),
-        legacy,
-        FindOptions::default(),
-        "unmodified W4 all-zone FindMany baseline; grants remain empty for assessment",
-    ));
+        id: "w4/bank_pick_all_stands",
+        source: source_json("bank_pick_all_stands"),
+        from: tile(3016, 9840, 0),
+        targets: bank_targets,
+        state: rich.clone(),
+        state_json: rich_289_state_json(),
+        frozen_options: legacy,
+        route_options: FindOptions::default(),
+        route_source: "unmodified W4 all-zone FindMany baseline; grants remain empty for assessment",
+    }));
 
     let center = tile(2553, 3406, 0);
     let mut radius_targets = Vec::new();
@@ -615,39 +615,39 @@ fn w4_inputs(world: &NavWorld, source: &Value) -> Result<Vec<CorpusInput>, Strin
         allow_teleports: true,
         ..legacy
     };
-    inputs.push(w4_many_input(
+    inputs.push(w4_many_input(W4ManyInput {
         world,
-        "w4/teleports_on_real_state",
-        source_json("teleports_on_real_state"),
-        teleport_from,
-        vec![teleport_to],
-        rich.clone(),
-        rich_289_state_json(),
-        teleport_options,
-        FindOptions {
+        id: "w4/teleports_on_real_state",
+        source: source_json("teleports_on_real_state"),
+        from: teleport_from,
+        targets: vec![teleport_to],
+        state: rich.clone(),
+        state_json: rich_289_state_json(),
+        frozen_options: teleport_options,
+        route_options: FindOptions {
             allow_teleports: true,
             ..FindOptions::default()
         },
-        "unmodified W4 all-zone FindMany route; assessment grants remain empty",
-    ));
-    inputs.push(w4_many_input(
+        route_source: "unmodified W4 all-zone FindMany route; assessment grants remain empty",
+    }));
+    inputs.push(w4_many_input(W4ManyInput {
         world,
-        "w4/unreachable_fail_closed",
-        source_json("unreachable_fail_closed"),
-        teleport_from,
-        vec![teleport_to],
-        empty,
-        empty_state_json(),
-        legacy,
-        FindOptions::default(),
-        "unmodified W4 all-zone FindMany control; strict end-to-end search must preserve NoPath",
-    ));
+        id: "w4/unreachable_fail_closed",
+        source: source_json("unreachable_fail_closed"),
+        from: teleport_from,
+        targets: vec![teleport_to],
+        state: empty,
+        state_json: empty_state_json(),
+        frozen_options: legacy,
+        route_options: FindOptions::default(),
+        route_source: "unmodified W4 all-zone FindMany control; strict end-to-end search must preserve NoPath",
+    }));
     Ok(inputs)
 }
 
-fn w4_many_input(
-    world: &NavWorld,
-    id: &str,
+struct W4ManyInput<'a> {
+    world: &'a NavWorld,
+    id: &'a str,
     source: Value,
     from: WorldTile,
     targets: Vec<WorldTile>,
@@ -655,8 +655,22 @@ fn w4_many_input(
     state_json: Value,
     frozen_options: FindOptions,
     route_options: FindOptions,
-    route_source: &str,
-) -> CorpusInput {
+    route_source: &'a str,
+}
+
+fn w4_many_input(params: W4ManyInput<'_>) -> CorpusInput {
+    let W4ManyInput {
+        world,
+        id,
+        source,
+        from,
+        targets,
+        state,
+        state_json,
+        frozen_options,
+        route_options,
+        route_source,
+    } = params;
     let search = find_many_with(
         &world.collision,
         &world.graph,
@@ -1418,7 +1432,15 @@ fn guide_inputs(
             let mut fixtures = HashMap::<usize, GuideQualificationFixture>::new();
             let mut previous_sequence = None;
             let mut previous_target = None;
-            for (role_index, role, container, sequence_index, stage, step_index, step) in steps {
+            for GuideStepRef {
+                role_index,
+                role,
+                container,
+                sequence_index,
+                stage,
+                step_index,
+                step,
+            } in steps {
                 let kind = step["kind"].as_str().unwrap_or("unknown");
                 if kind != "walk" && kind != "combat" && kind != "fight" {
                     continue;
@@ -1592,9 +1614,17 @@ fn guide_placeholder(set: &str, id: &str, entry: Value) -> CorpusInput {
     }
 }
 
-fn collect_guide_steps(
-    document: &Value,
-) -> Vec<(usize, String, Value, Option<usize>, String, usize, Value)> {
+struct GuideStepRef {
+    role_index: usize,
+    role: String,
+    container: Value,
+    sequence_index: Option<usize>,
+    stage: String,
+    step_index: usize,
+    step: Value,
+}
+
+fn collect_guide_steps(document: &Value) -> Vec<GuideStepRef> {
     let mut out = Vec::new();
     let Some(roles) = document["roles"].as_array() else {
         return out;
@@ -1604,15 +1634,15 @@ fn collect_guide_steps(
         if let Some(prelude) = role["prelude"].as_array() {
             for (step_index, step) in prelude.iter().enumerate() {
                 if is_route_step(step) {
-                    out.push((
+                    out.push(GuideStepRef {
                         role_index,
-                        role_name.clone(),
-                        role.clone(),
-                        None,
-                        "prelude".into(),
+                        role: role_name.clone(),
+                        container: role.clone(),
+                        sequence_index: None,
+                        stage: "prelude".into(),
                         step_index,
-                        step.clone(),
-                    ));
+                        step: step.clone(),
+                    });
                 }
             }
         }
@@ -1625,15 +1655,15 @@ fn collect_guide_steps(
                 if let Some(steps) = sequence["steps"].as_array() {
                     for (step_index, step) in steps.iter().enumerate() {
                         if is_route_step(step) {
-                            out.push((
+                            out.push(GuideStepRef {
                                 role_index,
-                                role_name.clone(),
-                                sequence.clone(),
-                                Some(sequence_index),
-                                stage.clone(),
+                                role: role_name.clone(),
+                                container: sequence.clone(),
+                                sequence_index: Some(sequence_index),
+                                stage: stage.clone(),
                                 step_index,
-                                step.clone(),
-                            ));
+                                step: step.clone(),
+                            });
                         }
                     }
                 }
@@ -1650,8 +1680,8 @@ fn is_route_step(step: &Value) -> bool {
 fn find_guide_step(document: &Value, id: &str) -> Option<Value> {
     collect_guide_steps(document)
         .into_iter()
-        .find(|(_, _, _, _, _, _, step)| step["id"].as_str() == Some(id))
-        .map(|(_, _, _, _, _, _, step)| step)
+        .find(|row| row.step["id"].as_str() == Some(id))
+        .map(|row| row.step)
 }
 
 fn combine_grant_names(args_cross: &Value, stage_cross: &Value) -> Vec<String> {
@@ -1974,7 +2004,7 @@ fn end_to_end_search(
                             "retry_options_error": retry_options_error,
                             "retry_attempts": u8::from(retry.is_some()),
                             "retry_route_options": retry_options.map(|options| route_options_json(options, &input.grant_names)),
-                            "retry_result": retry.as_ref().map(|search| search.route().map(|route| canonical_route(route)).map_err(|error| format!("{error:?}"))),
+                            "retry_result": retry.as_ref().map(|search| search.route().map(canonical_route).map_err(|error| format!("{error:?}"))),
                             "reason": if retry_options.is_some() {
                                 "single named-zone witness admitted by Inherit policy and retried at most once"
                             } else {
@@ -2039,7 +2069,7 @@ fn end_to_end_search(
         .unwrap_or_default();
     json!({
         "status": if route.is_some() { "routed" } else { "unreachable" },
-        "strict_search": strict.route().map(|route| canonical_route(route)).map_err(|error| format!("{error:?}")),
+        "strict_search": strict.route().map(canonical_route).map_err(|error| format!("{error:?}")),
         "strict_targets": targets.iter().map(|target| tile_json(*target)).collect::<Vec<_>>(),
         "witness": witness_json,
         "route_sha256": route_hash,
@@ -2657,7 +2687,7 @@ fn retained_layout_deltas(old: &Value, new: &Value) -> Result<Value, String> {
     Ok(Value::Object(deltas))
 }
 
-fn variant_map<'a>(value: &'a Value) -> HashMap<String, &'a Value> {
+fn variant_map(value: &Value) -> HashMap<String, &Value> {
     value
         .as_array()
         .into_iter()
