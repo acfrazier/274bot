@@ -940,6 +940,7 @@ fn combat_test_run(
         finish_last_tick: None,
         trace_event: None,
         abort_escape: AbortEscape::new(),
+        return_retry: crate::native::WalkRetryState::default(),
     }
 }
 pub(crate) fn policy_s2_run_for_runner(cx: &mut StepContext<'_, '_>) -> Box<dyn StepRun> {

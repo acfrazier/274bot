@@ -387,9 +387,8 @@ fn quester_bank_access_retries_a_failed_walk_on_the_next_tick() {
         x: start.x - 1,
         ..start
     };
-    let mut moved_snapshot = snapshot.clone();
-    moved_snapshot.seed_local_player(crate::quester::families::tests::local_player(moved));
-    assert!(poll_at(&mut run, &moved_snapshot, None, &mut ledger, 4, OpenGate::Open).is_pending());
+    snapshot.seed_local_player(crate::quester::families::tests::local_player(moved));
+    assert!(poll_at(&mut run, &snapshot, None, &mut ledger, 4, OpenGate::Open).is_pending());
     assert_eq!(walk_count(&ledger), 2);
     let retry = ledger
         .as_ref()
