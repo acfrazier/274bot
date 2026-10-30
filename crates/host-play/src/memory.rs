@@ -497,6 +497,7 @@ fn frame_delivery_qualification(now: Instant, start: bool) -> serde_json::Value 
 }
 
 fn q4_accountleveler_scenario() -> scenario::Scenario {
+    let mut scenario = scenario::thiever_sustained_scenario();
     let seed_step = scenario
         .steps
         .iter()
