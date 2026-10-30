@@ -1626,18 +1626,32 @@ struct PhoenixPlayResult {
     error: Option<String>,
 }
 
-fn run_phoenix_native_and_crossing(
+struct PhoenixPlaySetup<'a> {
     template: Arc<SharedClientTemplate>,
     selected: Arc<api::game_data::SelectedGameData>,
     world: Arc<NavWorld>,
     edge: TransportEdge,
-    account: &str,
-    password: &str,
+    account: &'a str,
+    password: &'a str,
     uid: i32,
     map_members: bool,
+}
+
+fn run_phoenix_native_and_crossing(
+    setup: PhoenixPlaySetup<'_>,
     receipt_path: &Path,
     receipt: &mut Value,
 ) -> PhoenixPlayResult {
+    let PhoenixPlaySetup {
+        template,
+        selected,
+        world,
+        edge,
+        account,
+        password,
+        uid,
+        map_members,
+    } = setup;
     let crossing = edge.crossing_id().expect("qualified kitchen crossing");
     let snapshot = Arc::new(Mutex::new(GameSnapshot::new()));
     let control = Arc::new(Mutex::new(KitchenFrameControl::new(crossing)));
@@ -2073,14 +2087,16 @@ fn run_brimhaven_phoenix_kitchen_journal() {
         }
 
         let play_result = run_phoenix_native_and_crossing(
-            template,
-            selected,
-            world,
-            edge,
-            &account,
-            &password,
-            uid,
-            profile.map_members(),
+            PhoenixPlaySetup {
+                template,
+                selected,
+                world,
+                edge,
+                account: &account,
+                password: &password,
+                uid,
+                map_members: profile.map_members(),
+            },
             &receipt_path,
             &mut receipt,
         );
