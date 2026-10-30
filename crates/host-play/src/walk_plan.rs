@@ -242,8 +242,13 @@ impl std::fmt::Display for RouteSearchResultKind {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::NoPath => formatter.write_str("NoPath"),
-            Self::BudgetExhausted { settled: Some(settled) } => {
-                write!(formatter, "BudgetExhausted nodes_settled={settled} (incomplete search)")
+            Self::BudgetExhausted {
+                settled: Some(settled),
+            } => {
+                write!(
+                    formatter,
+                    "BudgetExhausted nodes_settled={settled} (incomplete search)"
+                )
             }
             Self::BudgetExhausted { settled: None } => {
                 formatter.write_str("BudgetExhausted nodes_settled=unavailable (incomplete search)")
@@ -291,11 +296,9 @@ pub(super) fn route_or_bank_fetch(
 ) -> RouteOutcome {
     match find_with_avoid(&world.collision, &world.graph, from, to, opts, state, avoid) {
         Ok(route) => RouteOutcome::Routed(route),
-        Err(nav_planner::router::RouteError::BudgetExhausted) => {
-            RouteOutcome::IncompleteSearch {
-                search_result: RouteSearchResultKind::BudgetExhausted { settled: None },
-            }
-        }
+        Err(nav_planner::router::RouteError::BudgetExhausted) => RouteOutcome::IncompleteSearch {
+            search_result: RouteSearchResultKind::BudgetExhausted { settled: None },
+        },
         Err(nav_planner::router::RouteError::NoPath) if opts.allow_bank_fetch => {
             find_missing_item_reqs_with_avoid(
                 &world.collision,

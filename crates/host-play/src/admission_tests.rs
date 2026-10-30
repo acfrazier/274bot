@@ -206,7 +206,7 @@ fn real_search(
             },
         },
         Err(RouteError::NoPath) => crate::RouteOutcome::NoPath,
-}
+    }
 }
 
 fn real_witness(
@@ -236,7 +236,7 @@ fn routed(result: &RouteAdmission) -> &Route {
         crate::RouteOutcome::IncompleteSearch { .. } | crate::RouteOutcome::NoPath => {
             panic!("expected a real router route")
         }
-}
+    }
 
 }
 #[test]
@@ -783,7 +783,10 @@ fn u6_budget_exhaustion_does_not_run_witness_or_retry() {
     });
 
     assert_eq!(errors, [RouteError::BudgetExhausted]);
-    assert_eq!(kernels, 1, "the incomplete search must not run a witness or retry");
+    assert_eq!(
+        kernels, 1,
+        "the incomplete search must not run a witness or retry"
+    );
     assert_eq!(result.tried, 0);
     assert!(result.blocked.is_empty());
     assert_eq!(

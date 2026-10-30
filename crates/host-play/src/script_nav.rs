@@ -30,7 +30,7 @@ use nav_planner::producer::{lease as nav_lease, OwnerResultLedger, OwnerResultRe
 use nav_planner::router::find_missing_item_reqs_with_avoid;
 use nav_planner::router::{
     AvoidRect, BlockerDiagnosis, CompactFallbackRoute, CompactRoute, CursorStep, FindOptions,
-    MissingReqView, MissingRequirements, Route, RouteError, ReverseProof, SearchCursor,
+    MissingReqView, MissingRequirements, ReverseProof, Route, RouteError, SearchCursor,
     SearchOutcome, SearchPreflight, SearchRequest, SearchRequestShape, NODE_BUDGET,
 };
 use nav_planner::world::NavWorld;
@@ -38,9 +38,7 @@ use nav_planner::zones::{ZoneExempt, ZoneFilterOwned, ZoneKey};
 use nav_planner::WorldState;
 use script::work_admission::{cancellation::WorkCancellation, WorkService};
 
-use crate::walk_plan::{
-    PendingBankFetch, RouteOutcome, RoutePath, RouteSearchResultKind,
-};
+use crate::walk_plan::{PendingBankFetch, RouteOutcome, RoutePath, RouteSearchResultKind};
 #[derive(Default)]
 pub(crate) struct RouteCompletion {
     #[cfg(test)]
@@ -827,7 +825,8 @@ fn route_output_detail_bound(
     } else {
         supply_bytes.checked_add(2)?
     })?;
-    let search_result_bytes = "search_result=".len()
+    let search_result_bytes = "search_result="
+        .len()
         .checked_add("BudgetExhausted nodes_settled=".len())?
         .checked_add(usize::MAX.ilog10() as usize + 1)?
         .checked_add(" (incomplete search)".len())?;
@@ -2270,10 +2269,7 @@ impl RouteJob {
         } else if self.refusal.is_some()
             || matches!(
                 self.native_failure.as_ref(),
-                Some(
-                    script::native::WalkEnd::Refused
-                        | script::native::WalkEnd::NeedsEvidence(_)
-                )
+                Some(script::native::WalkEnd::Refused | script::native::WalkEnd::NeedsEvidence(_))
             )
         {
             RouteSearchResultKind::Refusal
@@ -2284,8 +2280,8 @@ impl RouteJob {
 
     fn finish(&mut self) -> RouteJobOutput {
         let outcome = self.outcome.take().unwrap_or(RouteJobOutcome::NoPath);
-        let search_result = matches!(&outcome, RouteJobOutcome::NoPath)
-            .then(|| self.search_result_kind());
+        let search_result =
+            matches!(&outcome, RouteJobOutcome::NoPath).then(|| self.search_result_kind());
         let mut detail = self.detail.take();
         if let Some(search_result) = search_result {
             let search_detail = format!("search_result={search_result}");
@@ -7453,8 +7449,6 @@ mod diagnostic_tests {
         let detail = output.detail.expect("incomplete search has a detail");
         assert!(detail.contains("search_result=BudgetExhausted nodes_settled=524288"));
         assert!(!detail.contains("Insufficient route supplies"));
-
-
     }
     pub(super) fn tiny_stage_request() -> Box<ScriptRouteRequest> {
         let origin = WorldTile {

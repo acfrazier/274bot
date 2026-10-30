@@ -1032,13 +1032,12 @@ impl MapCommand {
             ..
         }) = &result
         {
-            let refusal = refusal
-                .as_ref()
-                .copied()
-                .unwrap_or(script::native::WalkRefusal::NoRouteWithinBounds {
+            let refusal = refusal.as_ref().copied().unwrap_or(
+                script::native::WalkRefusal::NoRouteWithinBounds {
                     tried: 0,
                     last: None,
-                });
+                },
+            );
             return Err(ActionError::RiskRefused {
                 refusal,
                 detail: detail

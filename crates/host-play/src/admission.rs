@@ -154,10 +154,7 @@ pub(crate) fn route(
             outcome = search(FindOptions { zones, ..options });
         }
     }
-    let incomplete_search = matches!(
-        &outcome,
-        crate::RouteOutcome::IncompleteSearch { .. }
-    );
+    let incomplete_search = matches!(&outcome, crate::RouteOutcome::IncompleteSearch { .. });
     let route = match &outcome {
         crate::RouteOutcome::Routed(route) | crate::RouteOutcome::BankSession { route, .. } => {
             Some(route)
