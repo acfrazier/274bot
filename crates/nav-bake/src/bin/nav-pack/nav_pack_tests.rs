@@ -336,7 +336,7 @@ fn crossing_export_has_exact_schema_and_serde_quest_gate_values() {
     assert_eq!(
         value,
         serde_json::json!({
-            "schema": 1,
+            "schema": 2,
             "navpack_sha256": nav_planner::manifest::hash_bytes(b"fixture pack"),
             "crossings": [{
                 "crossing": {
@@ -349,8 +349,9 @@ fn crossing_export_has_exact_schema_and_serde_quest_gate_values() {
                 },
                 "standable": true,
                 "admissible": true,
-                "quest_gates": [{"Complete": "quest"}]
-            }]
+                "quest_gate_alternatives": [[{"Complete": "quest"}]]
+            }],
+            "identical_edge_groups": []
         })
     );
 }
@@ -444,8 +445,7 @@ fn crossing_export_distinguishes_two_a1_takeoffs_at_one_anchor() {
     let rows = value["crossings"].as_array().unwrap();
     assert_eq!(rows.len(), 2);
     assert!(rows.iter().all(|row| {
-        row["crossing"]["at"]
-            == serde_json::json!({"x": 12, "z": 22, "level": 0})
+        row["crossing"]["at"] == serde_json::json!({"x": 12, "z": 22, "level": 0})
             && row["admissible"].as_bool() == Some(true)
     }));
     assert_eq!(
@@ -460,7 +460,74 @@ fn crossing_export_distinguishes_two_a1_takeoffs_at_one_anchor() {
 }
 
 #[test]
-fn crossing_export_rejects_duplicate_ids_across_edges_and_teleports() {
+fn crossing_export_keeps_each_stage_window_alternative_for_one_crossing() {
+    let collision = crossing_collision(&[]);
+    let at = crossing_tile(12, 22, 0);
+    let takeoff = crossing_tile(11, 22, 0);
+    let to = crossing_tile(13, 22, 0);
+    let family = nav_planner::quest_gates::QuestFamilyId::new(
+        [8; 32],
+        std::num::NonZeroU16::new(1).unwrap(),
+    );
+    let mut graph = nav_planner::transport::TransportGraph::default();
+    graph.quest_family = Some(family);
+    for (min, max) in [(1, 3), (5, 7)] {
+        let mut edge = crossing_edge(
+            nav_planner::transport::TransportKind::Ladder,
+            at,
+            to,
+            Some(takeoff),
+            510,
+            1,
+            None,
+        );
+        edge.quest_gates = Some(
+            nav_planner::quest_gates::QuestGates::new(
+                family,
+                [api::selected::QuestGate::Window(
+                    api::selected::StageWindow {
+                        quest: api::selected::FactKey::new("quest"),
+                        signal: api::selected::FactKey::new("stage"),
+                        values: api::selected::InclusiveRange {
+                            min: Some(min),
+                            max: Some(max),
+                        },
+                    },
+                )],
+            )
+            .unwrap(),
+        );
+        graph.edges.push(edge);
+    }
+
+    let json = crossing_export_json(b"stage alternatives", &collision, &graph).unwrap();
+    let value: serde_json::Value = serde_json::from_str(&json).unwrap();
+    let rows = value["crossings"].as_array().unwrap();
+    assert_eq!(rows.len(), 1);
+    assert_eq!(
+        rows[0]["quest_gate_alternatives"],
+        serde_json::json!([
+            [{
+                "Window": {
+                    "quest": "quest",
+                    "signal": "stage",
+                    "values": {"min": 1, "max": 3}
+                }
+            }],
+            [{
+                "Window": {
+                    "quest": "quest",
+                    "signal": "stage",
+                    "values": {"min": 5, "max": 7}
+                }
+            }]
+        ])
+    );
+    assert_eq!(value["identical_edge_groups"], serde_json::json!([]));
+}
+
+#[test]
+fn crossing_export_lists_full_duplicates_without_failing() {
     let collision = crossing_collision(&[]);
     let at = crossing_tile(12, 22, 0);
     let to = crossing_tile(13, 22, 0);
@@ -488,12 +555,16 @@ fn crossing_export_rejects_duplicate_ids_across_edges_and_teleports() {
     graph.teleports.push(duplicate_teleport.clone());
     graph.teleports.push(duplicate_teleport);
 
-    let error = crossing_export_json(b"duplicate", &collision, &graph).unwrap_err();
-    assert!(error.contains("duplicate CrossingId"), "{error}");
-    assert!(error.contains("graph.edges[0]"), "{error}");
-    assert!(error.contains("graph.edges[1]"), "{error}");
-    assert!(error.contains("graph.teleports[0]"), "{error}");
-    assert!(error.contains("graph.teleports[1]"), "{error}");
+    let json = crossing_export_json(b"duplicate", &collision, &graph).unwrap();
+    let value: serde_json::Value = serde_json::from_str(&json).unwrap();
+    assert_eq!(value["crossings"].as_array().unwrap().len(), 2);
+    assert_eq!(
+        value["identical_edge_groups"],
+        serde_json::json!([
+            ["graph.edges[0]", "graph.edges[1]"],
+            ["graph.teleports[0]", "graph.teleports[1]"]
+        ])
+    );
 }
 
 #[test]

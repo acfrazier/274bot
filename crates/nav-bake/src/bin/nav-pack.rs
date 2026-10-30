@@ -91,7 +91,8 @@ fn parse_export_args(
         }
     }
     Ok(ExportInputs {
-        pack: pack.ok_or_else(|| "crossing-export mode requires --export-crossings PACK".to_owned())?,
+        pack: pack
+            .ok_or_else(|| "crossing-export mode requires --export-crossings PACK".to_owned())?,
         out: out.ok_or_else(|| "crossing-export mode requires --out JSON".to_owned())?,
     })
 }
@@ -101,6 +102,7 @@ struct CrossingExport<'a> {
     schema: u8,
     navpack_sha256: String,
     crossings: Vec<CrossingExportRow<'a>>,
+    identical_edge_groups: Vec<Vec<String>>,
 }
 
 #[derive(serde::Serialize)]
@@ -108,7 +110,7 @@ struct CrossingExportRow<'a> {
     crossing: CrossingId,
     standable: bool,
     admissible: bool,
-    quest_gates: &'a [QuestGate],
+    quest_gate_alternatives: Vec<&'a [QuestGate]>,
 }
 
 fn crossing_export_json(
@@ -118,6 +120,7 @@ fn crossing_export_json(
 ) -> Result<String, String> {
     let edge_count = graph.edges.len();
     let mut crossings = Vec::with_capacity(edge_count + graph.teleports.len());
+    let mut crossing_index = HashMap::with_capacity(edge_count + graph.teleports.len());
     for (index, edge) in graph.edges.iter().chain(&graph.teleports).enumerate() {
         let source = crossing_row_source(index, edge_count);
         let crossing = edge.crossing_id().ok_or_else(|| {
@@ -136,52 +139,101 @@ fn crossing_export_json(
         } else {
             standable
         };
-        crossings.push(CrossingExportRow {
-            crossing,
-            standable,
-            admissible,
-            quest_gates: edge
-                .quest_gates
-                .as_ref()
-                .map_or(&[], |gates| gates.gates()),
-        });
-    }
-
-    let mut first_row_by_id = HashMap::with_capacity(crossings.len());
-    let mut conflicts = Vec::new();
-    for (index, row) in crossings.iter().enumerate() {
-        match first_row_by_id.entry(row.crossing) {
+        let gates = edge
+            .quest_gates
+            .as_ref()
+            .map_or(&[][..], |quest_gates| quest_gates.gates());
+        match crossing_index.entry(crossing) {
             std::collections::hash_map::Entry::Vacant(entry) => {
-                entry.insert(index);
+                entry.insert(crossings.len());
+                crossings.push(CrossingExportRow {
+                    crossing,
+                    standable,
+                    admissible,
+                    quest_gate_alternatives: vec![gates],
+                });
             }
             std::collections::hash_map::Entry::Occupied(entry) => {
-                let first_index = *entry.get();
-                let first_json = serde_json::to_string(&crossings[first_index])
-                    .map_err(|error| format!("serialize conflicting crossing row: {error}"))?;
-                let current_json = serde_json::to_string(row)
-                    .map_err(|error| format!("serialize conflicting crossing row: {error}"))?;
-                conflicts.push(format!(
-                    "{} = {first_json}; {} = {current_json}",
-                    crossing_row_source(first_index, edge_count),
-                    crossing_row_source(index, edge_count)
-                ));
+                let row = &mut crossings[*entry.get()];
+                // A physical crossing is admissible when any represented
+                // source edge admits its exact takeoff.
+                row.admissible |= admissible;
+                if !row
+                    .quest_gate_alternatives
+                    .iter()
+                    .any(|alternative| *alternative == gates)
+                {
+                    row.quest_gate_alternatives.push(gates);
+                }
             }
         }
     }
-    if !conflicts.is_empty() {
-        return Err(format!(
-            "duplicate CrossingId values across the complete pack:\n{}",
-            conflicts.join("\n")
-        ));
-    }
 
     let export = CrossingExport {
-        schema: 1,
+        schema: 2,
         navpack_sha256: nav_planner::manifest::hash_bytes(pack_bytes),
         crossings,
+        identical_edge_groups: identical_edge_groups(graph)?,
     };
     serde_json::to_string_pretty(&export)
         .map_err(|error| format!("serialize crossing export: {error}"))
+}
+
+fn identical_edge_groups(graph: &TransportGraph) -> Result<Vec<Vec<String>>, String> {
+    struct CandidateGroup {
+        first_index: usize,
+        members: Option<Vec<usize>>,
+    }
+
+    let edge_count = graph.edges.len();
+    let edges: Vec<_> = graph.edges.iter().chain(&graph.teleports).collect();
+    let mut groups_by_crossing: HashMap<CrossingId, Vec<usize>> = HashMap::new();
+    let mut groups = Vec::<CandidateGroup>::new();
+
+    for (index, edge) in edges.iter().enumerate() {
+        let crossing = edge.crossing_id().ok_or_else(|| {
+            let source = crossing_row_source(index, edge_count);
+            format!(
+                "{source} has no representable CrossingId (loc_id {}, option {})",
+                edge.loc_id, edge.option
+            )
+        })?;
+        let matching_group = groups_by_crossing.get(&crossing).and_then(|candidates| {
+            candidates
+                .iter()
+                .copied()
+                .find(|candidate| edges[groups[*candidate].first_index] == *edge)
+        });
+        if let Some(group_index) = matching_group {
+            let group = &mut groups[group_index];
+            match &mut group.members {
+                Some(members) => members.push(index),
+                None => group.members = Some(vec![group.first_index, index]),
+            }
+        } else {
+            let group_index = groups.len();
+            groups.push(CandidateGroup {
+                first_index: index,
+                members: None,
+            });
+            groups_by_crossing
+                .entry(crossing)
+                .or_default()
+                .push(group_index);
+        }
+    }
+
+    Ok(groups
+        .into_iter()
+        .filter_map(|group| {
+            group.members.map(|members| {
+                members
+                    .into_iter()
+                    .map(|index| crossing_row_source(index, edge_count))
+                    .collect()
+            })
+        })
+        .collect())
 }
 
 fn crossing_row_source(index: usize, edge_count: usize) -> String {
@@ -227,8 +279,12 @@ fn export_crossings(inputs: &ExportInputs) -> Result<(), String> {
             flags.flags.len()
         ));
     }
-    let raw_flags = std::sync::Arc::try_unwrap(flags.flags)
-        .map_err(|_| format!("flags sidecar {} is unexpectedly shared", flags_path.display()))?;
+    let raw_flags = std::sync::Arc::try_unwrap(flags.flags).map_err(|_| {
+        format!(
+            "flags sidecar {} is unexpectedly shared",
+            flags_path.display()
+        )
+    })?;
     collision.attach_flags(raw_flags);
 
     let json = crossing_export_json(&pack_bytes, &collision, &graph)?;
