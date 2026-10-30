@@ -10129,7 +10129,7 @@ mod route_quest_provider_tests {
         let (_, gates) = compat_gates();
         fail_compat(&mut bot, script::native::WalkEnd::NeedsStep(gates));
         let mut slot = script::SlotScript::new();
-        assert!(!crate::script_walk::observe_compat_walk(
+        assert!(!super::super::script_walk::observe_compat_walk(
             &mut slot,
             &mut bot,
             Some(WorldTile {
@@ -10143,7 +10143,7 @@ mod route_quest_provider_tests {
         assert_eq!(bot.walk_outcome_request_id, 17);
         assert!(bot.walk_outcome_failed);
         let sequence = bot.walk_outcome_seq;
-        assert!(!crate::script_walk::observe_compat_walk(
+        assert!(!super::super::script_walk::observe_compat_walk(
             &mut slot,
             &mut bot,
             None,
