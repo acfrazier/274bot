@@ -61,6 +61,32 @@ assert.equal(doors.crossings.length, 4);
 assert.deepEqual(doors.crossings.map((entry) => entry.crossing.loc_id), [3507, 3506, 3507, 3506]);
 assert.deepEqual(doors.crossings.map((entry) => entry.delay.ticks), [2, 2, 0, 0]);
 
+// The generator refuses a changed source line before it can publish stale
+// prerequisite facts. Only the first cited file is needed for this failure.
+{
+    const mutatedContent = fs.mkdtempSync(path.join(os.tmpdir(), 'prereq-content-line-'));
+    const relative = 'scripts/areas/area_mausoleum/scripts/holy_barrier.rs2';
+    const original = fs.readFileSync(path.join(content, relative), 'utf8');
+    const pass = barrier.crossings[0].pass.message;
+    assert.ok(original.includes(pass));
+    try {
+        const target = path.join(mutatedContent, relative);
+        fs.mkdirSync(path.dirname(target), { recursive: true });
+        fs.writeFileSync(target, original.replace(pass, 'The content pass message changed.'));
+        assert.throws(() => assertPrereqStepFacts(mutatedContent, facts, quests.rows), /pass message is not pinned/);
+    } finally {
+        fs.rmSync(mutatedContent, { recursive: true, force: true });
+    }
+}
+
+// Delay facts must still agree with the cited p_delay lines. The A2 inward
+// count includes its door proc, while the outward branch has no such delay.
+for (const row of [0, 1]) {
+    const changedDelay = structuredClone(facts);
+    changedDelay.rows[row].crossings[0].delay.ticks += 1;
+    assert.throws(() => assertPrereqStepFacts(content, changedDelay, quests.rows), /differs from pinned p_delay count/);
+}
+
 // A parallel edge one tile west shares no anchor with the cited placement.
 const misplaced = structuredClone(facts);
 const shifted = misplaced.rows[1].crossings[0];

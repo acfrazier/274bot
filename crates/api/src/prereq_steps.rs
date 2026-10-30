@@ -423,6 +423,18 @@ mod tests {
             &QuestGate::Window(window("druidspirit", "druidspirit", 6, i32::MAX))
         ));
         assert!(!proves(
+            &established,
+            &QuestGate::Window(window("druidspirit", "druidspirit", 10, i32::MAX))
+        ));
+        assert!(proves(
+            &window("priestperil", "priestperil", 61, 61),
+            &QuestGate::Window(window("priestperil", "priestperil", 60, i32::MAX))
+        ));
+        assert!(!proves(
+            &established,
+            &QuestGate::Window(window("other", "druidspirit", 1, i32::MAX))
+        ));
+        assert!(!proves(
             &window("druidspirit", "druidspirit", 1, 5),
             &QuestGate::Window(window("druidspirit", "druidspirit", 5, 5))
         ));

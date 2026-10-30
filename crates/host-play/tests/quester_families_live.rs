@@ -1577,6 +1577,9 @@ fn run_quester_prereq_case(case: PrereqLiveCase, expected_failure: Option<&'stat
         )],
         true,
     );
+    // This fixture owns one walk, not an authored rule that repeats until a
+    // changing skip predicate excludes it after the fresh pass has settled.
+    document.roles[0].sequences[0].order = script::quester::path::SequenceOrder::Ordered;
     if recipe {
         let mut released: PathDocument =
             serde_json::from_str(include_str!("../../script/paths/289/priestperil.json"))
