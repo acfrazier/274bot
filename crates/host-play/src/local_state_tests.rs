@@ -2610,7 +2610,7 @@ fn malformed_runtime_settings_are_kept_and_quarantined_by_a_save() {
         assert!(service.readback_lease(&identity, WAIT).is_err());
         assert_eq!(std::fs::read(&path).unwrap(), bytes);
         let name = path.file_name().unwrap().to_string_lossy().into_owned();
-        assert_eq!(siblings(&path), [name.clone()]);
+        assert_eq!(siblings(&path), std::slice::from_ref(&name));
 
         let edit = RuntimeSettingsEdit::try_set(
             identity.clone(),
