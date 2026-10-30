@@ -188,6 +188,48 @@ fn post_snapshot_input(iso: &LoadIsolate, input: &script_js::wire::SnapshotInput
     iso.post_snapshot(script_js::wire::encode_snapshot(input));
 }
 
+fn client_adapter_facts<'a>(
+    server_tile: Option<script_js::wire::TileInput>,
+    bank_com_id: i32,
+    chat_continue_component_id: i32,
+    widget_facts: &'a [script_js::wire::WidgetFactInput<'a>],
+) -> script_js::wire::ClientAdapterFactsInput<'a> {
+    script_js::wire::ClientAdapterFactsInput {
+        attached: true,
+        map_build_base: (0, 0),
+        server_tile,
+        hint_tile_level: None,
+        bank_com_id,
+        chat_continue_component_id,
+        chat_modal_texts: script_js::wire::MainModalTextsInput {
+            root: -1,
+            texts: &[],
+        },
+        widget_facts,
+        player_count: 0,
+        npc_count: 0,
+        run_controls: None,
+        login_message: "",
+        menu_entries: &[],
+        last_walk_path_local: &[],
+        session_generation: 0,
+        modal_close_generation: 0,
+        projection_scene: None,
+    }
+}
+
+fn post_snapshot_with_client_adapter(
+    iso: &LoadIsolate,
+    input: &script_js::wire::SnapshotInput<'_>,
+    facts: script_js::wire::ClientAdapterFactsInput<'_>,
+) {
+    let native = script_js::wire::NativeFactsInput {
+        client_adapter: Some(facts),
+        ..Default::default()
+    };
+    iso.post_snapshot(script_js::wire::encode_snapshot_with_native(input, native));
+}
+
 /// Throw-shaped isolate lines: tick errors, not-v1, Error. Ordinary
 /// `this.log` (BoneBurier status) is allowed.
 fn is_throw_shaped_log(line: &str) -> bool {
@@ -2952,6 +2994,7 @@ export default class T extends LoopingBot {
     loop() {
         globalThis.__probe = {
             tile: reader.serverTile(),
+            world: reader.worldTile(),
             slot: reader.selfSlot(),
         };
     }
@@ -2965,12 +3008,23 @@ export default class T extends LoopingBot {
         level: 0,
     });
     snap.self_slot = 17;
-    post_snapshot_input(&iso, &snap);
+    let facts = client_adapter_facts(
+        Some(script_js::wire::TileInput {
+            x: 3111,
+            z: 3222,
+            level: 1,
+        }),
+        -1,
+        -1,
+        &[],
+    );
+    post_snapshot_with_client_adapter(&iso, &snap, facts);
     iso.on_game_tick(1);
     assert_eq!(
         iso.probe("__probe").unwrap(),
         serde_json::json!({
-            "tile": { "x": 3508, "z": 9493, "level": 0 },
+            "tile": { "x": 3111, "z": 3222, "level": 1 },
+            "world": { "x": 3508, "z": 9493, "level": 0 },
             "slot": 17,
         })
     );
@@ -4607,8 +4661,8 @@ fn isolate_reader_preserves_chat_choice_id_without_inventing_other_component_ids
 import { reader } from '../../adapter/ClientAdapter.js';
 export default class T extends LoopingBot {
     loop() {
-        try { reader.chatContinueComId(); } catch (e) { this.log(String(e)); }
-        try { reader.bankComId(); } catch (e) { this.log(String(e)); }
+        this.log('chatContinue:' + reader.chatContinueComId());
+        this.log('bank:' + reader.bankComId());
         this.log('opt:' + JSON.stringify(reader.chatOptions()));
     }
 }
@@ -4622,19 +4676,21 @@ export default class T extends LoopingBot {
         com_id: 2468,
     }];
     snap.chat_options = &opts;
-    post_snapshot_input(&iso, &snap);
+    post_snapshot_with_client_adapter(
+        &iso,
+        &snap,
+        client_adapter_facts(None, -1, -1, &[]),
+    );
     iso.on_game_tick(1);
     let _ = iso.probe("__rs_bot");
     let logs = iso.drain_logs();
     assert!(
-        logs.iter()
-            .any(|l| l.contains("not impl") && l.contains("chatContinueComId")),
-        "chat continue has no posted comId: {logs:?}"
+        logs.iter().any(|l| l.contains("chatContinue:-1")),
+        "an open chat without a posted continue control returns -1: {logs:?}"
     );
     assert!(
-        logs.iter()
-            .any(|l| l.contains("not impl") && l.contains("bankComId")),
-        "bank open is not component id 1: {logs:?}"
+        logs.iter().any(|l| l.contains("bank:-1")),
+        "an open bank without a posted component returns -1: {logs:?}"
     );
     assert!(
         logs.iter()
@@ -8749,7 +8805,62 @@ export default class T extends LoopingBot {
         component_id: 77,
     }];
     snap.combat_styles = &styles;
-    post_snapshot_input(&iso, &snap);
+    let tabs = [script_js::wire::SideTabIfaceInput { index: 0, id: 900 }];
+    snap.side_tab_ifaces = &tabs;
+    let widgets = [
+        script_js::wire::WidgetFactInput {
+            component_id: 77,
+            root_component_id: 900,
+            parent_id: 901,
+            type_: 5,
+            button_type: 5,
+            client_code: 0,
+            x: 10,
+            y: 300,
+            width: 20,
+            height: 20,
+            hidden: false,
+            text: None,
+            alternate_text: None,
+            button_text: None,
+            target_base: None,
+            model_type: 0,
+            model_id: -1,
+            script_opcode: 5,
+            script_varp: 43,
+            script_value: 1,
+            colour: 0,
+            inventory_ready: false,
+            items: &[],
+        },
+        script_js::wire::WidgetFactInput {
+            component_id: 78,
+            root_component_id: 900,
+            parent_id: 901,
+            type_: 4,
+            button_type: 0,
+            client_code: 0,
+            x: 40,
+            y: 300,
+            width: 80,
+            height: 20,
+            hidden: false,
+            text: Some("Aggressive"),
+            alternate_text: None,
+            button_text: None,
+            target_base: None,
+            model_type: 0,
+            model_id: -1,
+            script_opcode: 0,
+            script_varp: 0,
+            script_value: 0,
+            colour: 0,
+            inventory_ready: false,
+            items: &[],
+        },
+    ];
+    let facts = client_adapter_facts(None, -1, -1, &widgets);
+    post_snapshot_with_client_adapter(&iso, &snap, facts);
     iso.on_game_tick(1);
     let _ = iso.probe("__probe");
     assert_eq!(

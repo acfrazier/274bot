@@ -119,7 +119,7 @@ pub(super) fn read<'s>(
         "attached" => bool_property_value(scope, facts, "attached"),
         "mapBuildBase" => map_build_base(scope, facts),
         "modalCloseObservation" => modal_close_observation(scope, snapshot, facts),
-        "ifText" => if_text(scope, facts, arg0),
+        "ifText" => if_text(scope, snapshot, arg0),
         "countDialogOpen" => bool_property_value(scope, snapshot, "count_dialog_open"),
         "makeProducts" => make_products(scope, snapshot),
         "overlayPosWorld" => overlay_pos_world(scope, facts, [arg0, arg1, arg2, arg3, arg4], false),
@@ -1070,13 +1070,13 @@ fn side_tab_interface<'s>(
 
 fn if_text<'s>(
     scope: &mut v8::HandleScope<'s>,
-    facts: v8::Local<'s, v8::Value>,
+    snapshot: v8::Local<'s, v8::Value>,
     component_id: v8::Local<'s, v8::Value>,
 ) -> Result<v8::Local<'s, v8::Value>, String> {
     let Some(component_id) = js_i32(scope, component_id)? else {
         return Ok(v8::null(scope).into());
     };
-    let Some(row) = widget_by_id(scope, facts, component_id)? else {
+    let Some(row) = widget_by_id(scope, snapshot, component_id)? else {
         return Ok(v8::null(scope).into());
     };
     let text = property(scope, row, "text")?;

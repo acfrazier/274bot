@@ -5,6 +5,7 @@ import { Execution } from '../execution/Execution.js';
 import { host, snap, notImpl, proxy, queue, optionalText, runMachine } from '../../shim/_kernel.js';
 
 const COM_MODE_VARP = 43;
+const COMBAT_TAB = 0;
 const RUN_VARP = 173;
 export const RETALIATE_VARP = 172;
 const MAGIC_TAB = 6;
@@ -19,9 +20,16 @@ export function facingPlayer(faceEntity) {
     return globalThis.rustyscript.functions.__rs2b0t_facing_player(Number(faceEntity));
 }
 
+/** The active combat-tab root, or -1 when that tab is not posted. */
+function combatRoot() {
+    return reader.sideTabInterface(COMBAT_TAB);
+}
+
 /** The posted combat-tab style buttons, or null until the tab has loaded. */
 function offeredCombatModes() {
-    const labels = reader.selectButtonLabelsByVarp(-1, COM_MODE_VARP);
+    const root = combatRoot();
+    if (root < 0) return null;
+    const labels = reader.selectButtonLabelsByVarp(root, COM_MODE_VARP);
     return labels.length > 0 ? labels : null;
 }
 
@@ -40,7 +48,9 @@ function matchCombatRow(style) {
 }
 
 function selectCombatMode(mode) {
-    const btn = reader.selectButtonByVarp(-1, COM_MODE_VARP, mode);
+    const root = combatRoot();
+    if (root < 0) return false;
+    const btn = reader.selectButtonByVarp(root, COM_MODE_VARP, mode);
     return btn !== -1 && actions.ifButton(btn);
 }
 

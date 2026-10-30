@@ -37,8 +37,9 @@ export default class ClientAdapterLiveProbe extends LoopingBot {
     async loop() {
         if (this.complete) return;
         this.complete = true;
-        if (reader.statsReady()) {
-            throw new Error('ClientAdapter reported readiness without per-skill session receipts');
+        const attack = reader.stat(0);
+        if (!reader.statsReady() || attack.base !== 20) {
+            throw new Error('ClientAdapter did not expose the seeded attack stat after login');
         }
         if (reader.skillCount() !== 25) {
             throw new Error(`ClientAdapter skill catalog count was ${reader.skillCount()}, expected 25`);
@@ -92,6 +93,7 @@ export default class ClientAdapterLiveProbe extends LoopingBot {
         if (staleCountAnswer !== false) throw new Error('stale count-dialog action was not refused');
         const modalAfter = reader.modalCloseObservation();
         const result = {
+            attack,
             statsReady: reader.statsReady(),
             skillCount: reader.skillCount(),
             bankGeneration,

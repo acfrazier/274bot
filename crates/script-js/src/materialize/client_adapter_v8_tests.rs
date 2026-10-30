@@ -20,7 +20,7 @@ globalThis.__rs2b0t_host = {
             map_build_base: { x: 3200, z: 3200 },
             run_on_com_id: 91,
             run_off_com_id: 92,
-            widget_facts: [
+            widgets: [
                 {
                     component_id: 50,
                     root_component_id: 200,
@@ -129,6 +129,7 @@ globalThis.__clientAdapterRepeat = (count) => {
 fn seed_item_icon() {
     api::snapshot::set_client_adapter_cache_for_tests(Arc::new(Cache::default()));
     let mut sprite = Pix32::new(2, 2);
+    sprite.ohi = -1;
     sprite.data.copy_from_slice(&[11, 22, 33, 44]);
     ModelStore::instance()
         .lock()
