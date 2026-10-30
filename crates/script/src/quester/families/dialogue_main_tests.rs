@@ -96,6 +96,33 @@ fn npc_args() -> DialogueArgs {
         name: Arc::from("Aubury"),
     })
 }
+fn content_npc_id(config: &str) -> i32 {
+    api::game_data::for_revision(ClientRevision::R289)
+        .unwrap()
+        .npc_by_config(config)
+        .unwrap_or_else(|| panic!("R289 content has NPC config {config:?}"))
+        .id
+}
+
+fn npc_args_for(id: i32, name: &str) -> DialogueArgs {
+    args(DialogueTarget::Npc {
+        id,
+        name: Arc::from(name),
+    })
+}
+
+fn content_dialogue_npc(
+    id: i32,
+    name: &str,
+    distance: i32,
+    tile: api::WorldTile,
+) -> api::snapshot::NpcView {
+    let mut npc = dialogue_npc_at(distance, tile);
+    npc.r#type = Some(usize::try_from(id).expect("R289 NPC ids are nonnegative"));
+    npc.name = Some(name.to_owned());
+    npc
+}
+
 
 fn game_message(sequence: i32, text: &str) -> ChatLineView {
     ChatLineView {
@@ -1234,6 +1261,440 @@ fn dialogue_open_timeout_counts_observed_ticks_not_elapsed_time() {
         exhausted,
         Poll::Ready(Err(ActionError::Failed(reason)))
             if reason.as_ref() == "expected dialogue did not open"
+    ));
+}
+
+#[test]
+fn dialogue_stationary_cook_approach_covers_route_at_fixed_ticks() {
+    let cook_id = content_npc_id("cook");
+    let cook_tile = api::WorldTile {
+        x: 0,
+        z: 5,
+        level: 0,
+    };
+    let mut before = snapshot();
+    before.seed_local_player(super::tests::local_player(api::WorldTile {
+        x: 10,
+        z: 5,
+        level: 0,
+    }));
+    before.seed_npcs(vec![content_dialogue_npc(cook_id, "Cook", 10, cook_tile)]);
+    let mut ledger = None;
+    let handle = with_tick(&before, &mut ledger, 1, |tick| {
+        let handle = tick
+            .actions
+            .begin::<Dialogue>(npc_args_for(cook_id, "Cook"), &mut tick.cx)
+            .unwrap();
+        assert!(tick.actions.poll(&handle, &mut tick.cx).is_pending());
+        handle
+    });
+
+    let mut six_tiles_away = snapshot();
+    six_tiles_away.seed_local_player(super::tests::local_player(api::WorldTile {
+        x: 6,
+        z: 5,
+        level: 0,
+    }));
+    six_tiles_away.seed_npcs(vec![content_dialogue_npc(
+        cook_id,
+        "Cook",
+        6,
+        cook_tile,
+    )]);
+    assert!(
+        with_tick(&six_tiles_away, &mut ledger, 5, |tick| {
+            tick.actions.poll(&handle, &mut tick.cx)
+        })
+        .is_pending(),
+        "the Cook remains six tiles away at tick 5"
+    );
+    assert!(
+        with_tick(&six_tiles_away, &mut ledger, 11, |tick| {
+            tick.actions.poll(&handle, &mut tick.cx)
+        })
+        .is_pending(),
+        "the 9-step walking route plus 2 slack ticks expires at tick 12"
+    );
+    assert!(matches!(
+        with_tick(&six_tiles_away, &mut ledger, 12, |tick| {
+            tick.actions.poll(&handle, &mut tick.cx)
+        }),
+        Poll::Ready(Ok(DialogueOutcome::Failed))
+    ));
+}
+
+#[test]
+fn dialogue_open_timeout_uses_four_ticks_after_accepted_receipt() {
+    let cook_id = content_npc_id("cook");
+    let mut before = snapshot();
+    before.seed_local_player(super::tests::local_player(api::WorldTile {
+        x: 6,
+        z: 5,
+        level: 0,
+    }));
+    before.seed_npcs(vec![content_dialogue_npc(
+        cook_id,
+        "Cook",
+        1,
+        api::WorldTile {
+            x: 7,
+            z: 5,
+            level: 0,
+        },
+    )]);
+    let mut ledger = None;
+    let handle = with_tick(&before, &mut ledger, 1, |tick| {
+        let handle = tick
+            .actions
+            .begin::<Dialogue>(npc_args_for(cook_id, "Cook"), &mut tick.cx)
+            .unwrap();
+        assert!(tick.actions.poll(&handle, &mut tick.cx).is_pending());
+        handle
+    });
+    complete_talk(&mut ledger, 2, true, false);
+    assert!(with_tick(&before, &mut ledger, 5, |tick| {
+        tick.actions.poll(&handle, &mut tick.cx)
+    })
+    .is_pending());
+    assert!(matches!(
+        with_tick(&before, &mut ledger, 6, |tick| {
+            tick.actions.poll(&handle, &mut tick.cx)
+        }),
+        Poll::Ready(Err(ActionError::Failed(reason)))
+            if reason.as_ref() == "expected dialogue did not open"
+    ));
+}
+
+#[test]
+fn dialogue_siad_and_upass_pages_open_on_the_receipt_deadline_tick() {
+    fn assert_page_at_deadline(config: &str, name: &str, first_message: &str) {
+        let npc_id = content_npc_id(config);
+        let mut before = snapshot();
+        before.seed_local_player(super::tests::local_player(api::WorldTile {
+            x: 5,
+            z: 5,
+            level: 0,
+        }));
+        before.seed_npcs(vec![content_dialogue_npc(
+            npc_id,
+            name,
+            5,
+            api::WorldTile {
+                x: 10,
+                z: 5,
+                level: 0,
+            },
+        )]);
+        let mut ledger = None;
+        let handle = with_tick(&before, &mut ledger, 1, |tick| {
+            let handle = tick
+                .actions
+                .begin::<Dialogue>(npc_args_for(npc_id, name), &mut tick.cx)
+                .unwrap();
+            assert!(tick.actions.poll(&handle, &mut tick.cx).is_pending());
+            handle
+        });
+
+        let mut arrived = snapshot();
+        arrived.seed_local_player(super::tests::local_player(api::WorldTile {
+            x: 6,
+            z: 5,
+            level: 0,
+        }));
+        arrived.seed_npcs(vec![content_dialogue_npc(
+            npc_id,
+            name,
+            1,
+            api::WorldTile {
+                x: 7,
+                z: 5,
+                level: 0,
+            },
+        )]);
+        assert!(with_tick(&arrived, &mut ledger, 32, |tick| {
+            tick.actions.poll(&handle, &mut tick.cx)
+        })
+        .is_pending());
+        assert!(matches!(
+            last_interaction(&ledger),
+            InteractReq::Npc { .. }
+        ));
+
+        complete_last_interaction(&mut ledger, 33, true);
+        let mut progress = snapshot();
+        progress.seed_local_player(super::tests::local_player(api::WorldTile {
+            x: 6,
+            z: 5,
+            level: 0,
+        }));
+        progress.seed_npcs(vec![content_dialogue_npc(
+            npc_id,
+            name,
+            1,
+            api::WorldTile {
+                x: 7,
+                z: 5,
+                level: 0,
+            },
+        )]);
+        progress.seed_chat_lines(vec![game_message(1, first_message)]);
+        assert!(with_tick(&progress, &mut ledger, 33, |tick| {
+            tick.actions.poll(&handle, &mut tick.cx)
+        })
+        .is_pending());
+        assert!(
+            with_tick(&progress, &mut ledger, 36, |tick| {
+                tick.actions.poll(&handle, &mut tick.cx)
+            })
+            .is_pending(),
+            "the four-tick opening deadline is tick 37"
+        );
+
+        let mut opened = snapshot();
+        opened.seed_chat_modal(100, vec![first_message.to_owned()]);
+        opened.seed_chat_options(vec![], 101);
+        assert!(
+            with_tick(&opened, &mut ledger, 37, |tick| {
+                tick.actions.poll(&handle, &mut tick.cx)
+            })
+            .is_pending(),
+            "a page on the deadline tick is observed before timeout"
+        );
+        assert!(matches!(
+            last_interaction(&ledger),
+            InteractReq::ContinueDialog { .. }
+        ));
+    }
+
+    assert_page_at_deadline(
+        "capt_siad",
+        "Captain Siad",
+        "The captain looks up from his work as you address him.",
+    );
+    assert_page_at_deadline(
+        "cave_slave1",
+        "cave_slave1",
+        "The man seems to be in a weak state of mind.",
+    );
+}
+
+#[test]
+fn dialogue_brundt_replans_twice_at_fixed_ticks() {
+    let brundt_id = content_npc_id("viking_brundt");
+    let player_tile = api::WorldTile {
+        x: 5,
+        z: 5,
+        level: 0,
+    };
+    let mut before = snapshot();
+    before.seed_local_player(super::tests::local_player(player_tile));
+    before.seed_npcs(vec![content_dialogue_npc(
+        brundt_id,
+        "Brundt the Chieftain",
+        5,
+        api::WorldTile {
+            x: 7,
+            z: 5,
+            level: 0,
+        },
+    )]);
+    let mut ledger = None;
+    let handle = with_tick(&before, &mut ledger, 1, |tick| {
+        let handle = tick
+            .actions
+            .begin::<Dialogue>(
+                npc_args_for(brundt_id, "Brundt the Chieftain"),
+                &mut tick.cx,
+            )
+            .unwrap();
+        assert!(tick.actions.poll(&handle, &mut tick.cx).is_pending());
+        handle
+    });
+
+    for (tick_number, npc_x) in [(2, 8), (3, 9)] {
+        super::tests::post_user_input_walk_receipt(&mut ledger, tick_number);
+        ledger.as_mut().unwrap().walk.as_mut().unwrap().end = crate::native::WalkEnd::Arrived;
+        let mut moved = snapshot();
+        moved.seed_local_player(super::tests::local_player(player_tile));
+        moved.seed_npcs(vec![content_dialogue_npc(
+            brundt_id,
+            "Brundt the Chieftain",
+            5,
+            api::WorldTile {
+                x: npc_x,
+                z: 5,
+                level: 0,
+            },
+        )]);
+        assert!(with_tick(&moved, &mut ledger, tick_number, |tick| {
+            tick.actions.poll(&handle, &mut tick.cx)
+        })
+        .is_pending());
+    }
+
+    super::tests::post_user_input_walk_receipt(&mut ledger, 4);
+    ledger.as_mut().unwrap().walk.as_mut().unwrap().end = crate::native::WalkEnd::Arrived;
+    let mut still_moving = snapshot();
+    still_moving.seed_local_player(super::tests::local_player(player_tile));
+    still_moving.seed_npcs(vec![content_dialogue_npc(
+        brundt_id,
+        "Brundt the Chieftain",
+        5,
+        api::WorldTile {
+            x: 10,
+            z: 5,
+            level: 0,
+        },
+    )]);
+    assert!(matches!(
+        with_tick(&still_moving, &mut ledger, 4, |tick| {
+            tick.actions.poll(&handle, &mut tick.cx)
+        }),
+        Poll::Ready(Ok(DialogueOutcome::Failed))
+    ));
+}
+
+#[test]
+fn dialogue_stationary_cook_refusal_retries_once_at_fixed_ticks() {
+    let cook_id = content_npc_id("cook");
+    let player_tile = api::WorldTile {
+        x: 6,
+        z: 5,
+        level: 0,
+    };
+    let cook = content_dialogue_npc(
+        cook_id,
+        "Cook",
+        1,
+        api::WorldTile {
+            x: 7,
+            z: 5,
+            level: 0,
+        },
+    );
+    let mut before = snapshot();
+    before.seed_local_player(super::tests::local_player(player_tile));
+    before.seed_npcs(vec![cook.clone()]);
+    let mut ledger = None;
+    let handle = with_tick(&before, &mut ledger, 1, |tick| {
+        let handle = tick
+            .actions
+            .begin::<Dialogue>(npc_args_for(cook_id, "Cook"), &mut tick.cx)
+            .unwrap();
+        assert!(tick.actions.poll(&handle, &mut tick.cx).is_pending());
+        handle
+    });
+    complete_talk(&mut ledger, 2, true, false);
+    let mut refused = snapshot();
+    refused.seed_local_player(super::tests::local_player(player_tile));
+    refused.seed_npcs(vec![cook.clone()]);
+    refused.seed_chat_lines(vec![game_message(1, "I can't reach that!")]);
+    assert!(with_tick(&refused, &mut ledger, 2, |tick| {
+        tick.actions.poll(&handle, &mut tick.cx)
+    })
+    .is_pending());
+    assert_eq!(
+        ledger
+            .as_ref()
+            .unwrap()
+            .outbox
+            .iter()
+            .filter(|entry| matches!(&entry.effect, HostEffect::Walk(_)) && entry.live())
+            .count(),
+        1,
+        "a stationary NPC still gets one approach retry"
+    );
+
+    super::tests::post_user_input_walk_receipt(&mut ledger, 3);
+    ledger.as_mut().unwrap().walk.as_mut().unwrap().end = crate::native::WalkEnd::Arrived;
+    assert!(with_tick(&refused, &mut ledger, 3, |tick| {
+        tick.actions.poll(&handle, &mut tick.cx)
+    })
+    .is_pending());
+    assert!(matches!(
+        last_interaction(&ledger),
+        InteractReq::Npc { .. }
+    ));
+    complete_last_interaction(&mut ledger, 3, true);
+
+    let mut refused_again = refused;
+    refused_again.seed_chat_lines(vec![game_message(2, "I can't reach that!")]);
+    assert!(matches!(
+        with_tick(&refused_again, &mut ledger, 4, |tick| {
+            tick.actions.poll(&handle, &mut tick.cx)
+        }),
+        Poll::Ready(Err(ActionError::Failed(reason)))
+            if reason.as_ref() == "server refused Talk-to: I can't reach that!"
+    ));
+    assert_eq!(
+        ledger
+            .as_ref()
+            .unwrap()
+            .outbox
+            .iter()
+            .filter(|entry| matches!(&entry.effect, HostEffect::Walk(_)) && entry.live())
+            .count(),
+        0,
+        "the refusal budget does not issue a second recovery walk"
+    );
+}
+
+#[test]
+fn dialogue_refusal_approach_failure_keeps_refusal_detail() {
+    let cook_id = content_npc_id("cook");
+    let player_tile = api::WorldTile {
+        x: 6,
+        z: 5,
+        level: 0,
+    };
+    let mut before = snapshot();
+    before.seed_local_player(super::tests::local_player(player_tile));
+    before.seed_npcs(vec![content_dialogue_npc(
+        cook_id,
+        "Cook",
+        1,
+        api::WorldTile {
+            x: 7,
+            z: 5,
+            level: 0,
+        },
+    )]);
+    let mut ledger = None;
+    let handle = with_tick(&before, &mut ledger, 1, |tick| {
+        let handle = tick
+            .actions
+            .begin::<Dialogue>(npc_args_for(cook_id, "Cook"), &mut tick.cx)
+            .unwrap();
+        assert!(tick.actions.poll(&handle, &mut tick.cx).is_pending());
+        handle
+    });
+    complete_talk(&mut ledger, 2, true, false);
+    let mut refused = snapshot();
+    refused.seed_local_player(super::tests::local_player(player_tile));
+    refused.seed_npcs(vec![content_dialogue_npc(
+        cook_id,
+        "Cook",
+        1,
+        api::WorldTile {
+            x: 7,
+            z: 5,
+            level: 0,
+        },
+    )]);
+    refused.seed_chat_lines(vec![game_message(1, "I can't reach that!")]);
+    assert!(with_tick(&refused, &mut ledger, 2, |tick| {
+        tick.actions.poll(&handle, &mut tick.cx)
+    })
+    .is_pending());
+
+    let mut missing = snapshot();
+    missing.seed_local_player(super::tests::local_player(player_tile));
+    assert!(matches!(
+        with_tick(&missing, &mut ledger, 3, |tick| {
+            tick.actions.poll(&handle, &mut tick.cx)
+        }),
+        Poll::Ready(Err(ActionError::Failed(reason)))
+            if reason.as_ref() == "server refused Talk-to: I can't reach that!"
     ));
 }
 
