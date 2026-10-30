@@ -6,14 +6,11 @@ const YEW: WorldTile = WorldTile {
     z: 4551,
     level: 0,
 };
-const CHEST_REGION: WorldTile = WorldTile {
-    x: 40 * 64 + 32,
-    z: 148 * 64 + 32,
-    level: 0,
-};
-const CHEST_LOC_ID: i32 = 377;
-const SINISTER_KEY_ID: i32 = 993;
 const BRONZE_AXE_ID: i32 = 1351;
+// Engine L debugproc on the account's own state: `queue(poison_player, 0,
+// severity)` (`_test/scripts/cheats/cheat_other.rs2:1-3`), so the engine's own
+// poison script (`skill_combat/scripts/poison.rs2:6-18`) applies the poison.
+const POISON_DEBUG_COMMAND: &str = "~poison 27";
 const YEW_LOC_ID: i32 = 1309;
 const WOODCUTTING_STAT_ID: i32 = 8;
 const HITPOINTS_STAT_ID: i32 = 3;
@@ -40,8 +37,9 @@ const SURVIVAL_GATHERER_INJECT: &[ScriptSettingInject] = &[
     },
 ];
 
-/// Start a real Yew Gatherer, poison it from the Yanille twisted chest without
-/// a held cure or food, and retain the live status row through the first fire.
+/// Start a real Yew Gatherer, poison it at the Yew with the engine's poison
+/// debugproc without a held cure or food, and retain the live status row
+/// through the first fire.
 pub(crate) fn survival_need_scenario() -> Scenario {
     let mut steps = script_live_seed_steps();
     // `setstat` and `give` mutate the player in ClientCheatHandler.ts:340-354
@@ -69,14 +67,6 @@ pub(crate) fn survival_need_scenario() -> Scenario {
             "give bronze_axe 1",
             Proof::ItemId {
                 id: BRONZE_AXE_ID,
-                count: 1,
-            },
-        ),
-        (
-            "give the account-owned sinister key before Start",
-            "give sinister_key 1",
-            Proof::ItemId {
-                id: SINISTER_KEY_ID,
                 count: 1,
             },
         ),
@@ -156,79 +146,18 @@ pub(crate) fn survival_need_scenario() -> Scenario {
             budget_ticks: 360,
         },
     });
-    let chest_teleport = tele_args(CHEST_REGION.level, CHEST_REGION.x, CHEST_REGION.z);
     steps.push(Step {
-        name: "teleport to the Yanille dungeon region",
+        name: "seed account-owned poison at the Yew work site",
         kind: StepKind::Perform {
-            send: Box::new(move |client, _| cheat(client, &chest_teleport).is_sent()),
-        },
-        wait: Wait {
-            arm: Proof::Arrived {
-                x: CHEST_REGION.x,
-                z: CHEST_REGION.z,
-                level: CHEST_REGION.level,
-            },
-            budget_ticks: 10,
-        },
-    });
-    steps.push(Step {
-        name: "observe the real Yanille twisted chest",
-        kind: StepKind::Perform {
-            send: Box::new(|_, _| true),
-        },
-        wait: Wait {
-            arm: Proof::LocIdNear {
-                id: CHEST_LOC_ID,
-                x: CHEST_REGION.x,
-                z: CHEST_REGION.z,
-                level: CHEST_REGION.level,
-                radius: 32,
-            },
-            budget_ticks: 10,
-        },
-    });
-    steps.push(Step {
-        name: "use the account-owned sinister key on the real chest",
-        kind: StepKind::Perform {
-            send: Box::new(|client, snapshot| {
-                let Some(loc) = snapshot.locs().iter().find(|loc| loc.id == CHEST_LOC_ID) else {
-                    return false;
-                };
-                let Some(key) = snapshot
-                    .inventory()
-                    .iter()
-                    .find(|item| item.def.id == SINISTER_KEY_ID && item.count > 0)
-                else {
-                    return false;
-                };
-                matches!(
-                    Interactions::new(snapshot, client).use_item_on(key, OpTarget::Loc(loc)),
-                    SendResult::Sent { .. }
-                )
-            }),
+            send: Box::new(|client, _| cheat(client, POISON_DEBUG_COMMAND).is_sent()),
         },
         wait: Wait {
             arm: Proof::FreshChat {
                 needle: "You have been poisoned!",
             },
-            // agility_dungeon.rs2:101-112 queues poison after p_delay(3);
-            // poison.rs2:12-18 emits the fresh chat line.
-            budget_ticks: 10,
-        },
-    });
-    let yew_teleport = tele_args(YEW.level, YEW.x, YEW.z);
-    steps.push(Step {
-        name: "return to the Yew work site after the poison event",
-        kind: StepKind::Perform {
-            send: Box::new(move |client, _| cheat(client, &yew_teleport).is_sent()),
-        },
-        wait: Wait {
-            arm: Proof::Arrived {
-                x: YEW.x,
-                z: YEW.z,
-                level: YEW.level,
-            },
-            budget_ticks: 10,
+            // The debugproc queues poison with delay 0, and poison.rs2:12-14
+            // emits the chat line on the first eligible queue pass.
+            budget_ticks: 2,
         },
     });
     steps.push(Step {

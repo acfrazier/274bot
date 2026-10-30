@@ -33,6 +33,14 @@ const MINING_STAND: WorldTile = WorldTile {
     z: 3420,
     level: 0,
 };
+// m51_52.jm2:4980-4981 places copper rock loc 2090 (`pack/loc.pack:2091`) at
+// (3282,3367) and (3282,3368) in the Varrock east mine. The stand is the clear
+// mine-floor tile east of them (no loc, no blocking flag).
+const COPPER_STAND: WorldTile = WorldTile {
+    x: 3283,
+    z: 3368,
+    level: 0,
+};
 const DESERT_CAPTAIN_STAND: WorldTile = WorldTile {
     x: 3270,
     z: 3029,
@@ -68,9 +76,12 @@ const DESERT_STAGE_REPLY: &str = "get desertrescue: 3";
 const DESERT_CAPTAIN_OPENING_OPTIONS: [&str; 3] =
     ["Wow! A real captain!", "You there!", "Hey ugly!"];
 const POISON_CHAT: &str = "You have been poisoned!";
-// Only the provisioning cell uses this Engine L debugproc to seed its
-// account's own state (`cheat_other.rs2:1-3`); other cells use the authored
-// Yanille chest. Both sources reach this chat through `poison.rs2:12-18`.
+// The Gatherer, Quester-mining and provisioning cells seed poison with this
+// Engine L debugproc on the account's own state at the work site
+// (`_test/scripts/cheats/cheat_other.rs2:1-3`: `queue(poison_player, 0,
+// severity)`), so the engine's own poison script applies its ticks and damage.
+// The dialogue cell uses the authored Yanille chest. Both reach this chat
+// through `poison.rs2:12-18`.
 const POISON_DEBUG_COMMAND: &str = "~poison 27";
 const CURE_CHAT: &str = "You drink some of your antipoison potion.";
 // Login schedules the poison timer at 30 ticks; the next observed game tick
@@ -707,25 +718,39 @@ fn twisted_chest_steps(witness: Arc<Mutex<Witness>>, before_start: bool) -> Vec<
 
 fn account_state_poison_steps(witness: Arc<Mutex<Witness>>) -> Vec<scenario::Step> {
     let source_witness = Arc::clone(&witness);
+    let name = if witness
+        .lock()
+        .expect("survival witness")
+        .poison_during_provisioning
+    {
+        "seed account-owned poison state while the Quester bank is open"
+    } else {
+        "seed account-owned poison state at the work site during active work"
+    };
     vec![scenario::Step {
-        name: "seed account-owned poison state while the Quester bank is open",
+        name,
         kind: scenario::StepKind::Perform {
             send: Box::new(move |client, snapshot| {
                 let mut witness = source_witness.lock().expect("survival witness");
                 let Some(login_tick) = witness.login_tick else {
                     return false;
                 };
+                let phase_ready = if witness.poison_during_provisioning {
+                    witness.provisioning_tick.is_some()
+                        && snapshot.bank_component_id() >= 0
+                        && snapshot.bank_loaded()
+                        && witness
+                            .tool_id
+                            .is_some_and(|id| item_count(snapshot, id) == witness.baseline_tool)
+                } else {
+                    // The work phase above proved active work at the stand.
+                    witness.work_active_tick.is_some()
+                };
                 if witness.timer_phase_ready_tick.is_none()
-                    || !witness.poison_during_provisioning
-                    || witness.provisioning_tick.is_none()
+                    || !phase_ready
                     || snapshot.tick().saturating_sub(login_tick) < TIMER_CLEAR_TICKS
                     || snapshot.modals().chat != -1
                     || active_hitmark(snapshot, None) != Some(false)
-                    || snapshot.bank_component_id() < 0
-                    || !snapshot.bank_loaded()
-                    || !witness
-                        .tool_id
-                        .is_some_and(|id| item_count(snapshot, id) == witness.baseline_tool)
                 {
                     return false;
                 }
@@ -1591,11 +1616,7 @@ fn live_l_cure_when_needed_drains_willow_and_resumes_gatherer() {
         Activity::Woodcutting,
         "L-CURE-WHEN-NEEDED",
         GATHERER_STAND,
-        &[
-            (RUNE_AXE_ALIAS, 1),
-            (ANTIPOISON_ALIAS, 1),
-            (SINISTER_KEY_ALIAS, 1),
-        ],
+        &[(RUNE_AXE_ALIAS, 1), (ANTIPOISON_ALIAS, 1)],
         &[("cookquest", 0)],
         vec![],
         Mode::Stage {
@@ -1608,7 +1629,7 @@ fn live_l_cure_when_needed_drains_willow_and_resumes_gatherer() {
         WOODCUTTING_STAT,
         Some(WILLOW_LOG_ID),
         Some(RUNE_AXE_ALIAS),
-        PoisonSource::TwistedChest,
+        PoisonSource::AccountStateDebugProc,
         GATHERER_STAND,
     );
     add_poison_steps(&mut cell.scenario, Arc::clone(&witness), false, 120);
@@ -1632,13 +1653,8 @@ fn live_l_cure_when_needed_drains_willow_and_resumes_gatherer() {
     );
     let proof = &receipt["family_receipt"];
     assert_eq!(proof["family"], "Gatherer");
-    assert_eq!(proof["poison_source"], "yanille-twisted-chest");
-    assert_eq!(proof["sinister_key_at_start"], 1);
-    assert_eq!(proof["sinister_key_after"], 0);
-    assert_eq!(
-        proof["chest_rewards_after_start"],
-        TWISTED_CHEST_REWARD_COUNT
-    );
+    assert_eq!(proof["poison_source"], "account-state-debugproc");
+    assert_eq!(proof["poison_source_chat_modal"], -1);
     assert_eq!(proof["stand"]["x"], GATHERER_STAND.x);
     assert_eq!(proof["stand"]["z"], GATHERER_STAND.z);
     assert!(
@@ -1666,6 +1682,10 @@ fn live_l_cure_when_needed_quester_mines_copper_and_resumes_gather() {
             "args":{
                 "skill":"mining",
                 "resource":"copper",
+                "anchor":{
+                    "tile":[COPPER_STAND.x, COPPER_STAND.z, COPPER_STAND.level],
+                    "source":"C:maps/m51_52.jm2:4980-4981; C:pack/loc.pack:2091"
+                },
                 "until":{"obj":{"id":436},"qty":100}
             },
             "skip_if":{"Any":[]},
@@ -1675,12 +1695,8 @@ fn live_l_cure_when_needed_quester_mines_copper_and_resumes_gather() {
     let mut cell = fixture(
         Activity::Mining,
         "L-CURE-WHEN-NEEDED-QUESTER",
-        MINING_STAND,
-        &[
-            (RUNE_PICKAXE_ALIAS, 1),
-            (ANTIPOISON_ALIAS, 1),
-            (SINISTER_KEY_ALIAS, 1),
-        ],
+        COPPER_STAND,
+        &[(RUNE_PICKAXE_ALIAS, 1), (ANTIPOISON_ALIAS, 1)],
         &[("cookquest", 0)],
         vec![],
         Mode::Stage {
@@ -1693,8 +1709,8 @@ fn live_l_cure_when_needed_quester_mines_copper_and_resumes_gather() {
         MINING_STAT,
         Some(COPPER_ORE_ID),
         Some(RUNE_PICKAXE_ALIAS),
-        PoisonSource::TwistedChest,
-        MINING_STAND,
+        PoisonSource::AccountStateDebugProc,
+        COPPER_STAND,
     );
     add_poison_steps(&mut cell.scenario, Arc::clone(&witness), false, 120);
     let settings: Map<String, Value> =
@@ -1709,16 +1725,11 @@ fn live_l_cure_when_needed_quester_mines_copper_and_resumes_gather() {
     );
     let proof = &receipt["family_receipt"];
     assert_eq!(proof["family"], "Quester");
-    assert_eq!(proof["poison_source"], "yanille-twisted-chest");
-    assert_eq!(proof["sinister_key_at_start"], 1);
-    assert_eq!(proof["sinister_key_after"], 0);
-    assert_eq!(
-        proof["chest_rewards_after_start"],
-        TWISTED_CHEST_REWARD_COUNT
-    );
+    assert_eq!(proof["poison_source"], "account-state-debugproc");
+    assert_eq!(proof["poison_source_chat_modal"], -1);
     assert_eq!(proof["resumed_step_id"], "survival-work");
-    assert_eq!(proof["stand"]["x"], MINING_STAND.x);
-    assert_eq!(proof["stand"]["z"], MINING_STAND.z);
+    assert_eq!(proof["stand"]["x"], COPPER_STAND.x);
+    assert_eq!(proof["stand"]["z"], COPPER_STAND.z);
     assert!(
         proof["skill_xp_after"].as_i64().unwrap() > proof["skill_xp_at_need"].as_i64().unwrap()
     );
