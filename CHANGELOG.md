@@ -239,10 +239,6 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.8` 
 - **Host:** Background work can stop for the rest of the session after one disk
   operation takes longer than 60 seconds. Restart 274bot to recover. A fix is
   planned for 0.2.9. 0.2.6 to 0.2.7 have the same problem.
-- **Panel:** The **Profiles** window, and its tab when docked, cannot be closed
-  while no profile is being edited: its ✕ and **Close** do nothing.
-  **Workaround:** press **Edit** on a profile, then press **Close** or the ✕. A
-  fix is planned for 0.2.9. 0.2.5 to 0.2.7 have the same problem.
 
 ## [0.2.7] — 2026-10-26 — Beta 2
 
