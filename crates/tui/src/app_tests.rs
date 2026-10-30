@@ -2059,9 +2059,7 @@ fn arthur_zone_scope_renders_all_eight_names_and_reasons_at_common_sizes() {
         for page in pages {
             let overlap = (1..=combined.len().min(page.len()))
                 .rev()
-                .find(|&overlap| {
-                    combined[combined.len() - overlap..] == page[..overlap]
-                })
+                .find(|&overlap| combined[combined.len() - overlap..] == page[..overlap])
                 .unwrap_or(0);
             combined.extend(page.into_iter().skip(overlap));
         }

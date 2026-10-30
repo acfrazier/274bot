@@ -2306,8 +2306,7 @@ fn quester_fleet_start_discloses_each_queue_and_skips_changed_consent() {
 
     let alice = d.session().profile_identity_or_synthetic("alice");
     let bob = d.session().profile_identity_or_synthetic("bob");
-    let queue_operation =
-        save_quester_queue_without_runtime(&mut d, "alice", &["sheep"]);
+    let queue_operation = save_quester_queue_without_runtime(&mut d, "alice", &["sheep"]);
     d.session_mut().flush_writes();
     assert_eq!(
         d.session()
@@ -2320,7 +2319,8 @@ fn quester_fleet_start_discloses_each_queue_and_skips_changed_consent() {
     let (registry, revision) = script::quester::registry::snapshot_with_revision();
     assert_eq!(
         revision,
-        plan.quester_registry_revision.expect("Quester plan revision"),
+        plan.quester_registry_revision
+            .expect("Quester plan revision"),
         "registry changed after disclosure"
     );
     for (name, identity) in [("alice", alice), ("bob", bob)] {
