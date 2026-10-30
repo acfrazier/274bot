@@ -89,11 +89,18 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.7` 
 - Quester's anchored prewalk for an unseen loc now accepts any standable tile
   within the anchor radius, leaving the final, live-loc approach to select an
   accessible interaction side.
-- Talk steps now budget one observed tick per planned walking tile, plus two
-  slack ticks. They allow one replan for each tile other than the NPC's home
-  tile in its legal wander square. The first-page clock starts after the
-  accepted Talk-to receipt and the adjacent-position check. It allows four
-  observed ticks and accepts a page on the deadline tick.
+- Talk steps now approach NPCs within the configured interaction distance
+  before opening their dialogue. The approach budgets one observed tick per
+  planned walking tile, plus two slack ticks. When the live reach map cannot
+  reach the NPC, the budget is the route length that the route planner reports
+  for the same walk, plus the two slack ticks. A request with no route fails
+  with a named reason after one fresh plan. A route that ends short while the
+  NPC stands still also gets one fresh plan. A replan, one for each tile other
+  than the NPC's home tile in its legal wander square, is spent only when the
+  NPC has moved. The first-page clock counts four observed ticks from the
+  engine's read of the accepted Talk-to click, or from the bot's arrival beside
+  the NPC if that comes later. The NPC's first game message restarts it. A page
+  on the deadline tick is accepted.
 - Damage from quest dialogue no longer looks like an attack when no visible
   NPC or player targets the bot.
 - A failed walk also reports where its route ended.

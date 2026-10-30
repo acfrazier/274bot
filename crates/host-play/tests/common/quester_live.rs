@@ -74,6 +74,14 @@ use serde_json::{json, Map, Value};
 use vault::{Profile, ProfileSettings};
 
 const POLL_INTERVAL: Duration = Duration::from_millis(20);
+/// Bound on the wait for the terminal capture file. The serial capture writer
+/// synced the first capture of one run in 25.8 s and the end capture of
+/// another in 14 s (QUESTER-DIALOGUE-OPEN r1 `qvca`), and wrote the path-smoke
+/// and Jailer end captures 32 s and 11 s after their receipts under aubaine
+/// I/O load (r2). The wait ends as soon as the file is durable. The run's
+/// product result never depends on it: `run_result` in the receipt is fixed
+/// before the wait starts.
+const END_CAPTURE_BOUND: Duration = Duration::from_secs(300);
 /// Time a Restart cell lets the step at the Stop stage run before stopping it,
 /// so the Stop lands mid-step rather than on a selection boundary.
 const MID_STEP: Duration = Duration::from_secs(4);
@@ -597,6 +605,8 @@ struct ActorShared {
     start_receipt: Option<Value>,
     observe_tick: Option<ObserveTick>,
     tick_observations: Vec<Value>,
+    /// `{stage, tick}` at each observed stage change, in observed game ticks.
+    stage_ticks: Vec<Value>,
     starts: u32,
     stops: u32,
     restart_due: bool,
@@ -951,6 +961,7 @@ fn capture_receipt(
     mut extra: Value,
 ) -> Value {
     extra["label"] = json!(label);
+    extra["tick"] = json!(actor.snapshot.tick());
     extra["role"] = json!(actor.role);
     extra["account"] = json!(actor.account);
     extra["status"] = status.map(status_json).unwrap_or(Value::Null);
@@ -1246,6 +1257,7 @@ fn run_cells(
             start_receipt: None,
             observe_tick: observe_tick.take(),
             tick_observations: Vec::new(),
+            stage_ticks: Vec::new(),
             starts: 0,
             stops: 0,
             restart_due: false,
@@ -1702,6 +1714,7 @@ fn run_cells(
                             actor.last_step_observation = Some(step_key);
                             actor.step_observations.push(json!({
                                 "run": format!("{:?}", status.run),
+                                "tick": actor.snapshot.tick(),
                                 "stage": stage,
                                 "step_id": text(status, "step_id"),
                                 "child_step_id": text(status, "child_step_id"),
@@ -1812,6 +1825,9 @@ fn run_cells(
                     if let Some(stage) = status_stage(status, actor.quest) {
                         if actor.stages_seen.last() != Some(&stage) {
                             actor.stages_seen.push(stage.clone());
+                            actor
+                                .stage_ticks
+                                .push(json!({"stage": stage, "tick": actor.snapshot.tick()}));
                             let label = format!("stage-{}", stage.replace(':', "-"));
                             let receipt = capture_receipt(actor, &label, Some(status), json!({}));
                             actor.pending_captures.push((label, receipt));
@@ -2635,6 +2651,14 @@ fn run_cells(
     };
 
     let result_text = format!("{result:?}");
+    let run_result = result.clone();
+    let end_ticks = shared
+        .lock()
+        .map_err(|_| "live state poisoned")?
+        .actors
+        .iter()
+        .map(|actor| actor.snapshot.tick())
+        .collect::<Vec<_>>();
     let mut final_statuses = Vec::with_capacity(names.len());
     let mut final_lifecycles = Vec::with_capacity(names.len());
     for account in &names {
@@ -2658,7 +2682,8 @@ fn run_cells(
             actor.pending_captures.push((label.to_owned(), receipt));
         }
     }
-    let capture_deadline = Instant::now() + Duration::from_secs(10);
+    let capture_wait_started = Instant::now();
+    let capture_deadline = capture_wait_started + END_CAPTURE_BOUND;
     loop {
         let all_captured = shared
             .lock()
@@ -2671,6 +2696,7 @@ fn run_cells(
         }
         std::thread::sleep(POLL_INTERVAL);
     }
+    let end_capture_wait_ms = capture_wait_started.elapsed().as_millis() as u64;
 
     let capture_errors = shared
         .lock()
@@ -2689,12 +2715,23 @@ fn run_cells(
         .iter()
         .enumerate()
         .filter(|(_, actor)| !actor.end_captured)
-        .map(|(index, actor)| format!("{} ({})", index, actor.account))
+        .map(|(index, actor)| {
+            let file = actor
+                .pending_jobs
+                .iter()
+                .find(|pending| pending.label == "end-pass" || pending.label == "end-fail")
+                .map_or_else(
+                    || "never submitted (client not in game)".to_owned(),
+                    |pending| format!("{} not written", pending.png_path.display()),
+                );
+            format!("{index} ({}): end capture {file}", actor.account)
+        })
         .collect::<Vec<_>>();
     if result.is_ok() && !missing_end.is_empty() {
         result = Err(format!(
-            "terminal capture timed out for {}",
-            missing_end.join(", ")
+            "terminal capture file missing after {} s: {}",
+            END_CAPTURE_BOUND.as_secs(),
+            missing_end.join("; ")
         ));
     }
 
@@ -2710,6 +2747,7 @@ fn run_cells(
                 json!({
                     "role": actor.role,
                     "account": actor.account,
+                    "end_tick": end_ticks[index],
                     "cell": actor.label,
                     "quest": actor.quest,
                     "display": actor.display,
@@ -2736,6 +2774,7 @@ fn run_cells(
                     "pair_cancelled": actor.pair_cancelled,
                     "step_observations": actor.step_observations,
                     "tick_observations": actor.tick_observations,
+                    "stage_ticks": actor.stage_ticks,
                     "captures": actor.captures,
                     "final_status": final_statuses[index].as_deref().map(status_json),
                     "lifecycle": format!("{:?}", final_lifecycles[index]),
@@ -2768,6 +2807,8 @@ fn run_cells(
             "quest": actor_receipts[0]["quest"],
             "mode": mode.name(),
             "result": format!("{result:?}"),
+            "run_result": format!("{run_result:?}"),
+            "end_capture_wait_ms": end_capture_wait_ms,
             "game_port": profile.client().game_port(),
             "nav_pack": profile.nav_pack(),
             "roles": actor_receipts,
@@ -2780,6 +2821,9 @@ fn run_cells(
             "quest": actor["quest"],
             "mode": mode.name(),
             "result": format!("{result:?}"),
+            "run_result": format!("{run_result:?}"),
+            "end_tick": actor["end_tick"],
+            "end_capture_wait_ms": end_capture_wait_ms,
             "account": actor["account"],
             "game_port": profile.client().game_port(),
             "nav_pack": profile.nav_pack(),
@@ -2791,6 +2835,7 @@ fn run_cells(
             "transitions": actor["transitions"],
             "stages_seen": actor["stages_seen"],
             "tick_observations": actor["tick_observations"],
+            "stage_ticks": actor["stage_ticks"],
             "deaths": actor["deaths"],
             "death_sent": actor["death_sent"],
             "death_observed": actor["death_observed"],
