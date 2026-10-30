@@ -101,6 +101,14 @@ fn matrix(world: &NavWorld, qualified: bool) -> Vec<serde_json::Value> {
     }
     let mut graph = TransportGraph {
         edges,
+        approaches: world
+            .graph
+            .edges
+            .iter()
+            .enumerate()
+            .filter(|(_, edge)| edge.loc_id == 2628)
+            .map(|(index, _)| world.graph.approaches.get(index).copied().flatten())
+            .collect(),
         quest_family: world.graph.quest_family,
         ..Default::default()
     };
@@ -187,7 +195,7 @@ fn matrix(world: &NavWorld, qualified: bool) -> Vec<serde_json::Value> {
                 expected,
                 "no bypass of the door in this crop"
             );
-            rows.push(serde_json::json!({ "profile": profile, "authority": "declared fixture", "heroquest_varp_188": account.hero, "phoenixgang_varp_146": account.phoenix, "blackarmgang_varp_145": if account.black_arm { Some(10) } else { None }, "crossing": id, "route": format!("{route:?}"), "admitted": used, "gate": edge.quest_gates.as_ref().map(|gates| gates.gates()), "source": "brimhaven_restaurant.rs2:1-6; quest_hero.constant:4; quests.rs2:328-332" }));
+            rows.push(serde_json::json!({ "profile": profile, "authority": "declared fixture", "heroquest_varp_188": account.hero, "phoenixgang_varp_146": account.phoenix, "blackarmgang_varp_145": if account.black_arm { Some(4) } else { None }, "crossing": id, "route": format!("{route:?}"), "admitted": used, "gate": edge.quest_gates.as_ref().map(|gates| gates.gates()), "source": "brimhaven_restaurant.rs2:1-6; quest_hero.constant:4; quest.constant:7-8; quests.rs2:328-332" }));
         }
     }
     rows

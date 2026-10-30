@@ -923,9 +923,10 @@ fn run_brimhaven_kitchen(phoenix: bool) {
             return Err("relogin scene timeout".into());
         }
         // Account-local seeds only. Never create, replace, or open the world loc.
+        // quest_hero.constant:4 and quest.constant:7-8 define these stages.
         let hero = if phoenix { 3 } else { 15 };
         let gang = if phoenix { 10 } else { 0 };
-        let black_arm = if phoenix { 0 } else { 10 };
+        let black_arm = if phoenix { 0 } else { 4 };
         for (varp, value) in [
             ("tutorial", scenario::tutorial::TUTORIAL_COMPLETE),
             ("heroquest", hero),
