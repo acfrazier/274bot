@@ -37,6 +37,7 @@ globs = [
   "docs/**",
   ".github/**",
   "tools/**",
+  "crates/script/paths/path.schema.json",
   "crates/e2e/**",
   "crates/script-js/src/tooling/compat_dts.rs",
   "crates/host-play/src/bank_core_live.rs",
