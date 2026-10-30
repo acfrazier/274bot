@@ -865,6 +865,14 @@ fn run_make_one_cell() {
         "the real make page is open"
     );
 
+    let (before, make_start_tick) = {
+        let state = fixture.lock().unwrap_or_else(|error| error.into_inner());
+        (
+            inventory_count(&state.snapshot, "Shortbow"),
+            state.snapshot.tick(),
+        )
+    };
+    assert_eq!(before, 0, "fixture starts without shortbows");
     let mut success_logs = Vec::new();
     start_script(&play, &account, MAKE_SOURCE);
     wait_for_log(
