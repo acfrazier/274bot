@@ -21,7 +21,7 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.7` 
   and recording sidecars have bounded memory, and recording shutdown does not
   join the encoder on the UI thread. A sleeping experimental panel wakes for
   recording frames and encoder shutdown. These paths remain opt-in pending qualification.
-- GPU scenes use one third less vertex memory without changing their image.
+- GPU scene vertices use one third less memory without changing their image.
   The renderer keeps the existing CPU clipping and drawing order. Vertex
   storage is capped at 128 MiB per view; a larger frame reports a resource
   fault and keeps the last completed image.
