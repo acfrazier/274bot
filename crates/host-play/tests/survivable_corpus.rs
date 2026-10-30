@@ -11,8 +11,8 @@ use api::snapshot::WorldTile;
 use host_play::admission::{self, Admission, RiskInput, RiskPolicy};
 use host_play::WalkGlobals;
 use nav_planner::router::{
-    find_blocking_zones, find_first_with, find_many_with, find_with_avoid, FindOptions, Leg,
-    Route, RouteError,
+    find_blocking_zones, find_first_with, find_many_with, find_with_avoid, FindOptions, Leg, Route,
+    RouteError,
 };
 use nav_planner::world::NavWorld;
 use nav_planner::world_state::WorldState;
@@ -30,7 +30,8 @@ use std::process::Command;
 mod qualification;
 use qualification::GuideQualificationFixture;
 
-const DEFAULT_PACK: &str = "/Volumes/dev-scratch/274bot-evidence/NAV-GATED-ENTRANCES/reference-v17/274bot-289-v17.navpack";
+const DEFAULT_PACK: &str =
+    "/Volumes/dev-scratch/274bot-evidence/NAV-GATED-ENTRANCES/reference-v17/274bot-289-v17.navpack";
 const DEFAULT_QUERY: &str = "/Volumes/dev-scratch/274bot-evidence/SEED-CALC/queries.jsonl";
 const DEFAULT_GUIDE_25: &str = "/Volumes/dev-scratch-2/274bot-worktrees/survivable-accuracy-src";
 const DEFAULT_GUIDE_67: &str = "/Volumes/dev-scratch-2/274bot-worktrees/quest-paths";
@@ -80,7 +81,6 @@ struct CorpusInput {
     provenance: Value,
 }
 
-
 #[test]
 #[ignore = "explicit evidence export; run on both approved P1-B and P1-C worktrees"]
 fn export_survivable_p1c_corpus_and_diff() {
@@ -105,8 +105,8 @@ fn export() -> Result<(), String> {
     let pin = selected
         .selected_pin()
         .map_err(|e| format!("selected R289 pin: {e:?}"))?;
-    let combat = CombatTables::build(&selected)
-        .map_err(|e| format!("build R289 combat tables: {e:?}"))?;
+    let combat =
+        CombatTables::build(&selected).map_err(|e| format!("build R289 combat tables: {e:?}"))?;
     let risks = RiskTables::build(&combat);
     let mut world = NavWorld::load_pack(&pack_path)
         .map_err(|e| format!("load selected navigation pack: {e:?}"))?;
@@ -142,9 +142,18 @@ fn export() -> Result<(), String> {
     let w4 = w4_inputs(&world, &w4_source);
     world.graph.zones = zones;
     inputs.extend(w4?);
-    inputs.extend(query_inputs(&world, &query_path, &query_bytes, &query_source)?);
+    inputs.extend(query_inputs(
+        &world,
+        &query_path,
+        &query_bytes,
+        &query_source,
+    )?);
     inputs.extend(live_inputs(&world, &path_schema_source)?);
-    inputs.extend(path_schema_probes(&world, &source_roots, &path_schema_source)?);
+    inputs.extend(path_schema_probes(
+        &world,
+        &source_roots,
+        &path_schema_source,
+    )?);
     inputs.extend(guide_inputs(&world, &source_roots, &selected)?);
     write_qualification_fixture(&output, &inputs)?;
 
@@ -155,13 +164,7 @@ fn export() -> Result<(), String> {
         for loadout in &loadouts {
             let variants = profile_variants(loadout, &input.id);
             let record = export_record(
-                input,
-                loadout,
-                &variants,
-                &world,
-                &combat,
-                &risks,
-                &selected,
+                input, loadout, &variants, &world, &combat, &risks, &selected,
             );
             *source_rows
                 .entry(input.source["set"].as_str().unwrap_or("unknown").to_owned())
@@ -357,12 +360,19 @@ fn load_guide_roots() -> Result<Value, String> {
             .as_array()
             .ok_or_else(|| format!("{} has no paths array", index_path.display()))?;
         let expected_files = if name == "guide_25" { 25 } else { 67 };
-        let file_entries = paths.iter().filter(|entry| entry["file"].is_string()).count();
+        let file_entries = paths
+            .iter()
+            .filter(|entry| entry["file"].is_string())
+            .count();
         let expected_entries = expected_files + 1;
-        let unavailable_entries = paths.iter().filter(|entry| entry["unavailable"].is_string()).count();
-        let malformed_entries = paths.iter().filter(|entry| {
-            entry["file"].is_string() == entry["unavailable"].is_string()
-        }).count();
+        let unavailable_entries = paths
+            .iter()
+            .filter(|entry| entry["unavailable"].is_string())
+            .count();
+        let malformed_entries = paths
+            .iter()
+            .filter(|entry| entry["file"].is_string() == entry["unavailable"].is_string())
+            .count();
         if file_entries != expected_files
             || paths.len() != expected_entries
             || unavailable_entries != 1
@@ -608,7 +618,10 @@ fn w4_inputs(world: &NavWorld, source: &Value) -> Result<Vec<CorpusInput>, Strin
 
     let teleport_from = tile(3222, 3218, 0);
     let teleport_to = tile(2817, 3443, 0);
-    let teleport_options = FindOptions { allow_teleports: true, ..legacy };
+    let teleport_options = FindOptions {
+        allow_teleports: true,
+        ..legacy
+    };
     inputs.push(w4_many_input(
         world,
         "w4/teleports_on_real_state",
@@ -618,7 +631,10 @@ fn w4_inputs(world: &NavWorld, source: &Value) -> Result<Vec<CorpusInput>, Strin
         rich.clone(),
         rich_289_state_json(),
         teleport_options,
-        FindOptions { allow_teleports: true, ..FindOptions::default() },
+        FindOptions {
+            allow_teleports: true,
+            ..FindOptions::default()
+        },
         "unmodified W4 all-zone FindMany route; assessment grants remain empty",
     ));
     inputs.push(w4_many_input(
@@ -761,11 +777,13 @@ fn loadouts(selected: &api::game_data::SelectedGameData) -> Result<Vec<Loadout>,
     let mut out = profiles.to_vec();
     for profile in &out {
         for alias in profile.aliases {
-            let item = selected
-                .item_by_alias(alias)
-                .ok_or_else(|| format!("selected R289 data has no required loadout item {alias}"))?;
+            let item = selected.item_by_alias(alias).ok_or_else(|| {
+                format!("selected R289 data has no required loadout item {alias}")
+            })?;
             if selected.item_combat_bonus(item.id).is_none() {
-                return Err(format!("selected R289 data has no combat bonus for {alias}"));
+                return Err(format!(
+                    "selected R289 data has no combat bonus for {alias}"
+                ));
             }
         }
     }
@@ -805,7 +823,8 @@ fn combat_level(profile: &Loadout) -> Option<u8> {
     // The worked-example source states no prayer and fixes Attack/Strength at
     // 40. Preserve the ordinary combat-level formula instead of guessing a
     // combat level from a label; all inputs are recorded beside the result.
-    let base = (u16::from(profile.defence) + u16::from(profile.hp) + u16::from(profile.prayer / 2)) / 4;
+    let base =
+        (u16::from(profile.defence) + u16::from(profile.hp) + u16::from(profile.prayer / 2)) / 4;
     let melee = u16::from(profile.attack) + u16::from(profile.strength);
     let melee_part = (u32::from(melee) * 13) / 40;
     u8::try_from(u32::from(base) + melee_part).ok()
@@ -841,9 +860,7 @@ fn profile_variants(profile: &Loadout, input_id: &str) -> Vec<(String, u8)> {
 }
 
 fn poison_for(input: &CorpusInput, profile: &Loadout) -> PoisonState {
-    if input.kind == "live_cell_static_route_replay"
-        && profile.id == "base40_rune_melee_no_food"
-    {
+    if input.kind == "live_cell_static_route_replay" && profile.id == "base40_rune_melee_no_food" {
         PoisonState::Clear
     } else {
         PoisonState::Unknown { since: 0 }
@@ -900,7 +917,10 @@ fn query_inputs(
 ) -> Result<Vec<CorpusInput>, String> {
     let mut inputs = Vec::new();
     let mut line_number = 0usize;
-    for line in query_bytes.split(|byte| *byte == b'\n').filter(|line| !line.is_empty()) {
+    for line in query_bytes
+        .split(|byte| *byte == b'\n')
+        .filter(|line| !line.is_empty())
+    {
         line_number += 1;
         let text = std::str::from_utf8(line)
             .map_err(|e| format!("query line {line_number} is not UTF-8: {e}"))?;
@@ -962,16 +982,33 @@ fn query_inputs(
         };
         let names = value["zones"]
             .as_array()
-            .map(|rows| rows.iter().filter_map(Value::as_str).map(str::to_owned).collect::<Vec<_>>())
+            .map(|rows| {
+                rows.iter()
+                    .filter_map(Value::as_str)
+                    .map(str::to_owned)
+                    .collect::<Vec<_>>()
+            })
             .unwrap_or_default();
         let (keys, unresolved) = resolve_grants(world, &names);
         let (options, grant_error) = if unresolved.is_empty() {
             match ZoneExempt::named(&keys) {
-                Ok(zones) => (FindOptions { zones, ..FindOptions::default() }, None),
-                Err(error) => (FindOptions::default(), Some(format!("too many named grants: {error:?}"))),
+                Ok(zones) => (
+                    FindOptions {
+                        zones,
+                        ..FindOptions::default()
+                    },
+                    None,
+                ),
+                Err(error) => (
+                    FindOptions::default(),
+                    Some(format!("too many named grants: {error:?}")),
+                ),
             }
         } else {
-            (FindOptions::default(), Some(format!("unresolved named grant identities: {unresolved:?}")))
+            (
+                FindOptions::default(),
+                Some(format!("unresolved named grant identities: {unresolved:?}")),
+            )
         };
         let state = query_world_state(&value["route_state"]);
         let state_json = if value.get("route_state").is_some() {
@@ -997,14 +1034,18 @@ fn query_inputs(
                     target: to,
                     route: Some(route),
                     search_error: None,
-                    route_source: "seed-calc crossing query exact from/to with authored named zone list".into(),
+                    route_source:
+                        "seed-calc crossing query exact from/to with authored named zone list"
+                            .into(),
                 }],
                 Err(error) => vec![FrozenRoute {
                     id: "query-route".into(),
                     target: to,
                     route: None,
                     search_error: Some(format!("{error:?}")),
-                    route_source: "seed-calc crossing query exact from/to with authored named zone list".into(),
+                    route_source:
+                        "seed-calc crossing query exact from/to with authored named zone list"
+                            .into(),
                 }],
             }
         };
@@ -1021,7 +1062,9 @@ fn query_inputs(
             grant_names: names,
             frozen,
             witness_target: Some(to),
-            status_without_route: grant_error.as_ref().map(|_| "invalid_named_grants".to_owned()),
+            status_without_route: grant_error
+                .as_ref()
+                .map(|_| "invalid_named_grants".to_owned()),
             provenance: json!({
                 "query_file": query_path.display().to_string(),
                 "line": line_number,
@@ -1032,7 +1075,9 @@ fn query_inputs(
         });
     }
     if line_number != 12 {
-        return Err(format!("queries.jsonl expected 12 input lines, found {line_number}"));
+        return Err(format!(
+            "queries.jsonl expected 12 input lines, found {line_number}"
+        ));
     }
     Ok(inputs)
 }
@@ -1050,7 +1095,9 @@ fn query_world_state(value: &Value) -> WorldState {
         }
     }
     if let Some(quests) = value["completed_quests"].as_array() {
-        state.quests.extend(quests.iter().filter_map(Value::as_str).map(str::to_owned));
+        state
+            .quests
+            .extend(quests.iter().filter_map(Value::as_str).map(str::to_owned));
     }
     if let Some(inventory) = value["inventory"].as_object() {
         for (key, count) in inventory {
@@ -1070,7 +1117,12 @@ fn resolve_grants(world: &NavWorld, names: &[String]) -> (Vec<ZoneKey>, Vec<Stri
         if !seen.insert(name.as_str()) {
             continue;
         }
-        match world.graph.zones.as_ref().and_then(|table| table.resolve(name)) {
+        match world
+            .graph
+            .zones
+            .as_ref()
+            .and_then(|table| table.resolve(name))
+        {
             Some(key) => keys.push(key),
             None => unresolved.push(name.clone()),
         }
@@ -1088,16 +1140,32 @@ fn live_inputs(world: &NavWorld, design_source: &Value) -> Result<Vec<CorpusInpu
         "quests": [], "inventory": [], "stats": [], "varps": [],
     });
     let cases = [
-        ("live/rock_crabs_to_seers_bank", "rock_crabs_to_seers_bank", tile(2704,3726,0), tile(2725,3492,0)),
-        ("live/observatory_moss_giants", "observatory_moss_giants", tile(2438,3185,0), tile(2552,3574,0)),
-        ("live/white_wolf_mountain", "white_wolf_mountain", tile(2893,3429,0), tile(2809,3436,0)),
+        (
+            "live/rock_crabs_to_seers_bank",
+            "rock_crabs_to_seers_bank",
+            tile(2704, 3726, 0),
+            tile(2725, 3492, 0),
+        ),
+        (
+            "live/observatory_moss_giants",
+            "observatory_moss_giants",
+            tile(2438, 3185, 0),
+            tile(2552, 3574, 0),
+        ),
+        (
+            "live/white_wolf_mountain",
+            "white_wolf_mountain",
+            tile(2893, 3429, 0),
+            tile(2809, 3436, 0),
+        ),
     ];
-    let all = FindOptions { zones: ZoneExempt::all(), ..FindOptions::default() };
+    let all = FindOptions {
+        zones: ZoneExempt::all(),
+        ..FindOptions::default()
+    };
     let mut inputs = Vec::new();
     for (id, label, from, to) in cases {
-        let route = find_with_avoid(
-            &world.collision, &world.graph, from, to, all, &state, &[],
-        );
+        let route = find_with_avoid(&world.collision, &world.graph, from, to, all, &state, &[]);
         let (route, search_error) = match route {
             Ok(route) => (Some(route), None),
             Err(error) => (None, Some(format!("{error:?}"))),
@@ -1149,36 +1217,112 @@ fn path_schema_probes(
     // path_schema test. These origins are test-authored inputs, not inferred
     // player positions. Source guide rows remain underspecified separately.
     let probes: [(&str, &str, &str, WorldTile, WorldTile, i32); 6] = [
-        ("druid", "walk-to-prison-door", "druid.json", tile(2884,9797,0), tile(2888,9831,0), 20),
-        ("junglepotion", "walk-to-snake-weed", "junglepotion.json", tile(2809,3086,0), tile(2761,3015,0), 3),
-        ("junglepotion", "walk-to-rogues-purse", "junglepotion.json", tile(2830,9521,0), tile(2850,9477,0), 3),
-        ("junglepotion", "walk-back-to-trufitus", "junglepotion.json", tile(2761,3015,0), tile(2809,3086,0), 3),
-        ("junglepotion", "walk-to-cave-exit", "junglepotion.json", tile(2850,9477,0), tile(2830,9521,0), 3),
-        ("druid", "exit-dungeon-walk-to-ladder-for-missing-meat", "druid.json", tile(2892,9831,0), tile(2884,9798,0), 20),
+        (
+            "druid",
+            "walk-to-prison-door",
+            "druid.json",
+            tile(2884, 9797, 0),
+            tile(2888, 9831, 0),
+            20,
+        ),
+        (
+            "junglepotion",
+            "walk-to-snake-weed",
+            "junglepotion.json",
+            tile(2809, 3086, 0),
+            tile(2761, 3015, 0),
+            3,
+        ),
+        (
+            "junglepotion",
+            "walk-to-rogues-purse",
+            "junglepotion.json",
+            tile(2830, 9521, 0),
+            tile(2850, 9477, 0),
+            3,
+        ),
+        (
+            "junglepotion",
+            "walk-back-to-trufitus",
+            "junglepotion.json",
+            tile(2761, 3015, 0),
+            tile(2809, 3086, 0),
+            3,
+        ),
+        (
+            "junglepotion",
+            "walk-to-cave-exit",
+            "junglepotion.json",
+            tile(2850, 9477, 0),
+            tile(2830, 9521, 0),
+            3,
+        ),
+        (
+            "druid",
+            "exit-dungeon-walk-to-ladder-for-missing-meat",
+            "druid.json",
+            tile(2892, 9831, 0),
+            tile(2884, 9798, 0),
+            20,
+        ),
     ];
     let mut inputs = Vec::new();
     for (guide_id, step_id, file, from, to, combat_level) in probes {
         let root_key = if guide_id == "druid" || guide_id == "junglepotion" {
-            if roots.get("guide_67").is_some_and(|root| root["files"].as_array().is_some_and(|rows| rows.iter().any(|row| row["path"].as_str().is_some_and(|path| path.ends_with(file))))) {
+            if roots.get("guide_67").is_some_and(|root| {
+                root["files"].as_array().is_some_and(|rows| {
+                    rows.iter().any(|row| {
+                        row["path"]
+                            .as_str()
+                            .is_some_and(|path| path.ends_with(file))
+                    })
+                })
+            }) {
                 "guide_67"
             } else {
                 "guide_25"
             }
-        } else { "guide_25" };
+        } else {
+            "guide_25"
+        };
         let guide_root = PathBuf::from(roots[root_key]["root"].as_str().unwrap_or_default());
         let guide_path = guide_root.join("crates/script/paths/289").join(file);
-        let guide: Value = serde_json::from_slice(&fs::read(&guide_path).map_err(|e| format!("read path-schema probe guide {}: {e}", guide_path.display()))?)
-            .map_err(|e| format!("parse path-schema probe guide {}: {e}", guide_path.display()))?;
-        let step = find_guide_step(&guide, step_id).ok_or_else(|| format!("path-schema probe step {guide_id}/{step_id} missing from {}", guide_path.display()))?;
-        let names = step.pointer("/args/cross").and_then(Value::as_array)
-            .map(|rows| rows.iter().filter_map(Value::as_str).map(str::to_owned).collect::<Vec<_>>())
+        let guide: Value =
+            serde_json::from_slice(&fs::read(&guide_path).map_err(|e| {
+                format!("read path-schema probe guide {}: {e}", guide_path.display())
+            })?)
+            .map_err(|e| {
+                format!(
+                    "parse path-schema probe guide {}: {e}",
+                    guide_path.display()
+                )
+            })?;
+        let step = find_guide_step(&guide, step_id).ok_or_else(|| {
+            format!(
+                "path-schema probe step {guide_id}/{step_id} missing from {}",
+                guide_path.display()
+            )
+        })?;
+        let names = step
+            .pointer("/args/cross")
+            .and_then(Value::as_array)
+            .map(|rows| {
+                rows.iter()
+                    .filter_map(Value::as_str)
+                    .map(str::to_owned)
+                    .collect::<Vec<_>>()
+            })
             .unwrap_or_default();
         let (keys, unresolved) = resolve_grants(world, &names);
         if !unresolved.is_empty() {
             return Err(format!("path-schema step {guide_id}/{step_id} has unresolved grant identities: {unresolved:?}"));
         }
-        let named = ZoneExempt::named(&keys).map_err(|e| format!("path-schema grant count {guide_id}/{step_id}: {e:?}"))?;
-        let options = FindOptions { zones: named, ..FindOptions::default() };
+        let named = ZoneExempt::named(&keys)
+            .map_err(|e| format!("path-schema grant count {guide_id}/{step_id}: {e:?}"))?;
+        let options = FindOptions {
+            zones: named,
+            ..FindOptions::default()
+        };
         let mut state = WorldState::empty().with_map_members(true);
         state.combat_level = Some(combat_level);
         let state_json = json!({
@@ -1187,7 +1331,15 @@ fn path_schema_probes(
             "combat_level": combat_level,
             "quests": [], "inventory": [], "stats": [], "varps": [],
         });
-        let route = find_with_avoid(&world.collision, &world.graph, from, to, options, &state, &[]);
+        let route = find_with_avoid(
+            &world.collision,
+            &world.graph,
+            from,
+            to,
+            options,
+            &state,
+            &[],
+        );
         let (route, search_error) = match route {
             Ok(route) => (Some(route), None),
             Err(error) => (None, Some(format!("{error:?}"))),
@@ -1239,17 +1391,24 @@ fn guide_inputs(
     for set in ["guide_25", "guide_67"] {
         let root = PathBuf::from(roots[set]["root"].as_str().unwrap_or_default());
         let index_path = root.join("crates/script/paths/289/index.json");
-        let index: Value = serde_json::from_slice(&fs::read(&index_path).map_err(|e| format!("read {}: {e}", index_path.display()))?)
-            .map_err(|e| format!("parse {}: {e}", index_path.display()))?;
-        for entry in index["paths"].as_array().ok_or_else(|| format!("{} has no paths", index_path.display()))? {
+        let index: Value = serde_json::from_slice(
+            &fs::read(&index_path).map_err(|e| format!("read {}: {e}", index_path.display()))?,
+        )
+        .map_err(|e| format!("parse {}: {e}", index_path.display()))?;
+        for entry in index["paths"]
+            .as_array()
+            .ok_or_else(|| format!("{} has no paths", index_path.display()))?
+        {
             let id = entry["id"].as_str().unwrap_or("unknown").to_owned();
             let Some(file) = entry["file"].as_str() else {
                 out.push(guide_placeholder(set, &id, entry.clone()));
                 continue;
             };
             let guide_path = root.join("crates/script/paths/289").join(file);
-            let bytes = fs::read(&guide_path).map_err(|e| format!("read guide {}: {e}", guide_path.display()))?;
-            let document: Value = serde_json::from_slice(&bytes).map_err(|e| format!("parse guide {}: {e}", guide_path.display()))?;
+            let bytes = fs::read(&guide_path)
+                .map_err(|e| format!("read guide {}: {e}", guide_path.display()))?;
+            let document: Value = serde_json::from_slice(&bytes)
+                .map_err(|e| format!("parse guide {}: {e}", guide_path.display()))?;
             let source = json!({
                 "set": set,
                 "guide_id": id,
@@ -1270,9 +1429,13 @@ fn guide_inputs(
                 }
                 let step_id = step["id"].as_str().unwrap_or("unnamed");
                 let args = &step["args"];
-                let target = args.get("tile").and_then(parse_tile)
+                let target = args
+                    .get("tile")
+                    .and_then(parse_tile)
                     .or_else(|| args.pointer("/stand/tile").and_then(parse_tile));
-                let authored_from = step.get("from").and_then(parse_tile)
+                let authored_from = step
+                    .get("from")
+                    .and_then(parse_tile)
                     .or_else(|| args.get("from").and_then(parse_tile));
                 let fixture = match fixtures.entry(role_index) {
                     std::collections::hash_map::Entry::Occupied(entry) => entry.into_mut(),
@@ -1296,17 +1459,35 @@ fn guide_inputs(
                 let (keys, unresolved) = resolve_grants(world, &names);
                 let (options, grant_error) = if unresolved.is_empty() {
                     match ZoneExempt::named(&keys) {
-                        Ok(zones) => (FindOptions { zones, ..FindOptions::default() }, None),
-                        Err(error) => (FindOptions::default(), Some(format!("too many named grants: {error:?}"))),
+                        Ok(zones) => (
+                            FindOptions {
+                                zones,
+                                ..FindOptions::default()
+                            },
+                            None,
+                        ),
+                        Err(error) => (
+                            FindOptions::default(),
+                            Some(format!("too many named grants: {error:?}")),
+                        ),
                     }
                 } else {
-                    (FindOptions::default(), Some(format!("unresolved named grant identities: {unresolved:?}")))
+                    (
+                        FindOptions::default(),
+                        Some(format!("unresolved named grant identities: {unresolved:?}")),
+                    )
                 };
                 let state = fixture.state.clone();
                 let route_result = if grant_error.is_none() {
                     match (from, target) {
                         (Some(from), Some(target)) => Some(find_with_avoid(
-                            &world.collision, &world.graph, from, target, options, &state, &[],
+                            &world.collision,
+                            &world.graph,
+                            from,
+                            target,
+                            options,
+                            &state,
+                            &[],
                         )),
                         _ => None,
                     }
@@ -1338,10 +1519,8 @@ fn guide_inputs(
                         })),
                     }
                 };
-                let container_id = sequence_index.map_or_else(
-                    || "prelude".to_owned(),
-                    |index| format!("sequence-{index}"),
-                );
+                let container_id = sequence_index
+                    .map_or_else(|| "prelude".to_owned(), |index| format!("sequence-{index}"));
                 let record_id = format!("{set}/{id}/role-{role_index}/{container_id}/{stage}/step-{step_index}/{step_id}");
                 let raw = json!({
                     "guide_id":id,
@@ -1398,7 +1577,6 @@ fn guide_inputs(
     Ok(out)
 }
 
-
 fn guide_placeholder(set: &str, id: &str, entry: Value) -> CorpusInput {
     CorpusInput {
         id: format!("{set}/{id}/unavailable"),
@@ -1418,7 +1596,9 @@ fn guide_placeholder(set: &str, id: &str, entry: Value) -> CorpusInput {
     }
 }
 
-fn collect_guide_steps(document: &Value) -> Vec<(usize, String, Value, Option<usize>, String, usize, Value)> {
+fn collect_guide_steps(
+    document: &Value,
+) -> Vec<(usize, String, Value, Option<usize>, String, usize, Value)> {
     let mut out = Vec::new();
     let Some(roles) = document["roles"].as_array() else {
         return out;
@@ -1428,17 +1608,36 @@ fn collect_guide_steps(document: &Value) -> Vec<(usize, String, Value, Option<us
         if let Some(prelude) = role["prelude"].as_array() {
             for (step_index, step) in prelude.iter().enumerate() {
                 if is_route_step(step) {
-                    out.push((role_index, role_name.clone(), role.clone(), None, "prelude".into(), step_index, step.clone()));
+                    out.push((
+                        role_index,
+                        role_name.clone(),
+                        role.clone(),
+                        None,
+                        "prelude".into(),
+                        step_index,
+                        step.clone(),
+                    ));
                 }
             }
         }
         if let Some(sequences) = role["sequences"].as_array() {
             for (sequence_index, sequence) in sequences.iter().enumerate() {
-                let stage = sequence["stage"].as_str().map(str::to_owned).unwrap_or_else(|| sequence_index.to_string());
+                let stage = sequence["stage"]
+                    .as_str()
+                    .map(str::to_owned)
+                    .unwrap_or_else(|| sequence_index.to_string());
                 if let Some(steps) = sequence["steps"].as_array() {
                     for (step_index, step) in steps.iter().enumerate() {
                         if is_route_step(step) {
-                            out.push((role_index, role_name.clone(), sequence.clone(), Some(sequence_index), stage.clone(), step_index, step.clone()));
+                            out.push((
+                                role_index,
+                                role_name.clone(),
+                                sequence.clone(),
+                                Some(sequence_index),
+                                stage.clone(),
+                                step_index,
+                                step.clone(),
+                            ));
                         }
                     }
                 }
@@ -1480,7 +1679,9 @@ fn write_qualification_fixture(output: &Path, inputs: &[CorpusInput]) -> Result<
     let mut steps = Vec::new();
     for input in inputs {
         let fixture = &input.provenance["qualification_fixture"];
-        let Some(rule) = fixture["start_rule"].as_str() else { continue; };
+        let Some(rule) = fixture["start_rule"].as_str() else {
+            continue;
+        };
         *counts.entry(rule.to_owned()).or_default() += 1;
         if input.from.is_some() && !input.targets.is_empty() {
             *coordinate_counts.entry(rule.to_owned()).or_default() += 1;
@@ -1497,24 +1698,31 @@ fn write_qualification_fixture(output: &Path, inputs: &[CorpusInput]) -> Result<
             "authored_start":input.raw["authored_from"],
             "authored_destination":input.targets.iter().copied().map(tile_json).collect::<Vec<_>>(),
         });
-        if input.from.is_none() { no_start.push(step.clone()); }
-        if input.targets.is_empty() { no_destination.push(step.clone()); }
+        if input.from.is_none() {
+            no_start.push(step.clone());
+        }
+        if input.targets.is_empty() {
+            no_destination.push(step.clone());
+        }
         steps.push(step);
     }
     let mut fallback_guides: Vec<_> = fallback_guides.into_iter().collect();
     fallback_guides.sort_unstable();
-    write_json(&output.join("guide-qualification-starts.json"), &json!({
-        "fixture":"guide_seed_qualification_v1",
-        "authority":"Main 2026-10-30: each sequence starts at its QUEST-TERRA seed, or Lumbridge only without a seed; later spatial steps start at the preceding authored destination",
-        "navigation_state":"seed state remains constant; authored guide facts are not changed",
-        "lumbridge_fallback_authority":"W4 reachable_lumbridge_falador from [3222,3218,0]",
-        "start_rule_step_counts":counts,
-        "usable_coordinate_pairs_by_start_rule":coordinate_counts,
-        "guides_without_seed":fallback_guides,
-        "steps_without_usable_start":no_start,
-        "steps_without_authored_destination":no_destination,
-        "steps":steps,
-    }))
+    write_json(
+        &output.join("guide-qualification-starts.json"),
+        &json!({
+            "fixture":"guide_seed_qualification_v1",
+            "authority":"Main 2026-10-30: each sequence starts at its QUEST-TERRA seed, or Lumbridge only without a seed; later spatial steps start at the preceding authored destination",
+            "navigation_state":"seed state remains constant; authored guide facts are not changed",
+            "lumbridge_fallback_authority":"W4 reachable_lumbridge_falador from [3222,3218,0]",
+            "start_rule_step_counts":counts,
+            "usable_coordinate_pairs_by_start_rule":coordinate_counts,
+            "guides_without_seed":fallback_guides,
+            "steps_without_usable_start":no_start,
+            "steps_without_authored_destination":no_destination,
+            "steps":steps,
+        }),
+    )
 }
 
 fn export_record(
@@ -1535,15 +1743,26 @@ fn export_record(
         let assessments = frozen
             .route
             .as_ref()
-            .map(|route| variants.iter().map(|(id, hp)| {
-                let risk_input = make_risk_input(profile, *hp, input.from, map_members, poison, worn);
-                let admission = make_admission(risk_input, grants_for(world, &input.grant_names));
-                assessment_json(route, world, combat, risks, selected, &admission)
-                    .map(|assessment| json!({ "variant":id,"hp":hp,"assessment":assessment }))
-            }).collect::<Vec<_>>())
+            .map(|route| {
+                variants
+                    .iter()
+                    .map(|(id, hp)| {
+                        let risk_input =
+                            make_risk_input(profile, *hp, input.from, map_members, poison, worn);
+                        let admission =
+                            make_admission(risk_input, grants_for(world, &input.grant_names));
+                        assessment_json(route, world, combat, risks, selected, &admission).map(
+                            |assessment| json!({ "variant":id,"hp":hp,"assessment":assessment }),
+                        )
+                    })
+                    .collect::<Vec<_>>()
+            })
             .unwrap_or_default();
         let route_json = frozen.route.as_ref().map(canonical_route);
-        let route_hash = route_json.as_ref().and_then(|route| serde_json::to_vec(route).ok()).map(|bytes| sha256(&bytes));
+        let route_hash = route_json
+            .as_ref()
+            .and_then(|route| serde_json::to_vec(route).ok())
+            .map(|bytes| sha256(&bytes));
         frozen_rows.push(json!({
             "candidate_id": frozen.id,
             "target": tile_json(frozen.target),
@@ -1594,9 +1813,7 @@ fn export_record(
         })
     };
     let route_status = input.status_without_route.clone().unwrap_or_else(|| {
-        if input.frozen.iter().any(|row| row.route.is_some())
-            || end_to_end["route"].is_object()
-        {
+        if input.frozen.iter().any(|row| row.route.is_some()) || end_to_end["route"].is_object() {
             "assessed".into()
         } else if input.from.is_none() {
             "underspecified_missing_authored_start".into()
@@ -1684,7 +1901,14 @@ fn end_to_end_search(
     if targets.is_empty() {
         return json!({"status":"underspecified_no_targets","route":null,"route_sha256":null,"assessments":[]});
     }
-    let strict = find_first_with(&world.collision, &world.graph, from, targets, input.route_options, state);
+    let strict = find_first_with(
+        &world.collision,
+        &world.graph,
+        from,
+        targets,
+        input.route_options,
+        state,
+    );
     let mut witness_json = Value::Null;
     let route = match strict.route() {
         Ok(route) => Some(route.clone()),
@@ -1700,28 +1924,54 @@ fn end_to_end_search(
                     &[],
                 );
                 match blocked {
-                    Some(keys) if admission::witness_admissible(
-                        world,
-                        &make_risk_input(profile, variants.first().map_or(profile.hp, |v| v.1), Some(from), map_members, poison_for(input, profile), worn),
-                        &keys,
-                    ) => {
-                        let names = world.graph.zones.as_ref().map(|table| {
-                            let mut values = keys.iter().map(|key| table.name(*key)).collect::<Vec<_>>();
-                            values.sort();
-                            values
-                        }).unwrap_or_default();
+                    Some(keys)
+                        if admission::witness_admissible(
+                            world,
+                            &make_risk_input(
+                                profile,
+                                variants.first().map_or(profile.hp, |v| v.1),
+                                Some(from),
+                                map_members,
+                                poison_for(input, profile),
+                                worn,
+                            ),
+                            &keys,
+                        ) =>
+                    {
+                        let names = world
+                            .graph
+                            .zones
+                            .as_ref()
+                            .map(|table| {
+                                let mut values =
+                                    keys.iter().map(|key| table.name(*key)).collect::<Vec<_>>();
+                                values.sort();
+                                values
+                            })
+                            .unwrap_or_default();
                         let retry_options_result = ZoneExempt::named(&keys)
                             .and_then(|zones| input.route_options.zones.union(zones));
                         let retry_options_error = retry_options_result
                             .as_ref()
                             .err()
                             .map(|error| format!("{error:?}"));
-                        let retry_options = retry_options_result.ok()
-                            .map(|zones| FindOptions { zones, ..input.route_options });
-                        let retry = retry_options.map(|options| find_first_with(
-                            &world.collision, &world.graph, from, targets, options, state,
-                        ));
-                        let retry_route = retry.as_ref().and_then(|search| search.route().ok().cloned());
+                        let retry_options = retry_options_result.ok().map(|zones| FindOptions {
+                            zones,
+                            ..input.route_options
+                        });
+                        let retry = retry_options.map(|options| {
+                            find_first_with(
+                                &world.collision,
+                                &world.graph,
+                                from,
+                                targets,
+                                options,
+                                state,
+                            )
+                        });
+                        let retry_route = retry
+                            .as_ref()
+                            .and_then(|search| search.route().ok().cloned());
                         witness_json = json!({
                             "blocked_zone_names": names,
                             "blocked_zone_keys": keys.iter().map(|key| format!("{key:?}")).collect::<Vec<_>>(),
@@ -1740,7 +1990,14 @@ fn end_to_end_search(
                         retry_route
                     }
                     Some(keys) => {
-                        let names = world.graph.zones.as_ref().map(|table| keys.iter().map(|key| table.name(*key)).collect::<Vec<_>>()).unwrap_or_default();
+                        let names = world
+                            .graph
+                            .zones
+                            .as_ref()
+                            .map(|table| {
+                                keys.iter().map(|key| table.name(*key)).collect::<Vec<_>>()
+                            })
+                            .unwrap_or_default();
                         witness_json = json!({"blocked_zone_names":names,"admissible":false,"retry_attempts":0,"reason":"witness_admissible rejected this exact witness"});
                         None
                     }
@@ -1760,13 +2017,32 @@ fn end_to_end_search(
         }
     };
     let route_json = route.as_ref().map(canonical_route);
-    let route_hash = route_json.as_ref().and_then(|value| serde_json::to_vec(value).ok()).map(|bytes| sha256(&bytes));
-    let assessments = route.as_ref().map(|route| variants.iter().map(|(id,hp)| {
-        let risk_input = make_risk_input(profile,*hp,Some(from),map_members,poison_for(input, profile),worn);
-        let admission = make_admission(risk_input,grants_for(world,&input.grant_names));
-        assessment_json(route,world,combat,risks,selected,&admission)
-            .map(|result| json!({"variant":id,"hp":hp,"assessment":result}))
-    }).collect::<Vec<_>>()).unwrap_or_default();
+    let route_hash = route_json
+        .as_ref()
+        .and_then(|value| serde_json::to_vec(value).ok())
+        .map(|bytes| sha256(&bytes));
+    let assessments = route
+        .as_ref()
+        .map(|route| {
+            variants
+                .iter()
+                .map(|(id, hp)| {
+                    let risk_input = make_risk_input(
+                        profile,
+                        *hp,
+                        Some(from),
+                        map_members,
+                        poison_for(input, profile),
+                        worn,
+                    );
+                    let admission =
+                        make_admission(risk_input, grants_for(world, &input.grant_names));
+                    assessment_json(route, world, combat, risks, selected, &admission)
+                        .map(|result| json!({"variant":id,"hp":hp,"assessment":result}))
+                })
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
     json!({
         "status": if route.is_some() { "routed" } else { "unreachable" },
         "strict_search": strict.route().map(|route| canonical_route(route)).map_err(|error| format!("{error:?}")),
@@ -1806,15 +2082,26 @@ fn assessment_json(
             ),
             None => (None, None),
         };
-        let duration = start_tick.zip(end_tick).and_then(|(start,end)| end.checked_sub(start));
+        let duration = start_tick
+            .zip(end_tick)
+            .and_then(|(start, end)| end.checked_sub(start));
         let attack_count = duration.and_then(|ticks| {
-            (row.rate > 0 && ticks >= 0).then(|| (ticks + i32::from(row.rate) - 1) / i32::from(row.rate))
+            (row.rate > 0 && ticks >= 0)
+                .then(|| (ticks + i32::from(row.rate) - 1) / i32::from(row.rate))
         });
-        let axis = npc.and_then(|npc| defence_axis(npc.damagetype.as_deref(), kind.map(|row| row.style)));
+        let axis =
+            npc.and_then(|npc| defence_axis(npc.damagetype.as_deref(), kind.map(|row| row.style)));
         let hit_chance = kind.and_then(|kind| {
             let axis = axis?;
-            if kind.unknown_for().is_some() { return None; }
-            let defence = risk::defence_rolls(admission.input.defence, admission.input.style_def, admission.input.worn_defence).ok()?[axis];
+            if kind.unknown_for().is_some() {
+                return None;
+            }
+            let defence = risk::defence_rolls(
+                admission.input.defence,
+                admission.input.style_def,
+                admission.input.worn_defence,
+            )
+            .ok()?[axis];
             Some(risk::odds::hit_chance(kind.attack_roll, defence))
         });
         let spawn = row.spawn.tile();
@@ -1843,33 +2130,45 @@ fn assessment_json(
             "escaping":row.escaping(),
         }));
     }
-    let crossings = assessment.crossings.iter().map(|crossing| {
-        let zone_name = world.graph.zones.as_ref().map(|table| table.name(crossing.key));
-        let zone_key = format!("{:?}", crossing.key);
-        let rows = engaged.iter()
-            .filter(|row| row["zone_key"].as_str() == Some(zone_key.as_str()))
-            .collect::<Vec<_>>();
-        let attack_count = rows.iter().filter_map(|row| row["schedule"]["attack_windows"].as_i64()).sum::<i64>();
-        json!({
-            "zone":zone_name,
-            "key":zone_key,
-            "first":crossing.first,
-            "last":crossing.last,
-            "ticks":crossing.ticks,
-            "worst":crossing.worst,
-            "volley":crossing.volley,
-            "max_hit":crossing.max_hit,
-            "rate":crossing.rate,
-            "style":format!("{:?}",crossing.style),
-            "floor_deep":crossing.floor_deep,
-            "bites":crossing.bites,
-            "single":crossing.single,
-            "protect_credited":crossing.protect_credited,
-            "unknown":crossing.unknown,
-            "engaged_intervals":rows,
-            "scheduled_attack_windows_sum":attack_count,
+    let crossings = assessment
+        .crossings
+        .iter()
+        .map(|crossing| {
+            let zone_name = world
+                .graph
+                .zones
+                .as_ref()
+                .map(|table| table.name(crossing.key));
+            let zone_key = format!("{:?}", crossing.key);
+            let rows = engaged
+                .iter()
+                .filter(|row| row["zone_key"].as_str() == Some(zone_key.as_str()))
+                .collect::<Vec<_>>();
+            let attack_count = rows
+                .iter()
+                .filter_map(|row| row["schedule"]["attack_windows"].as_i64())
+                .sum::<i64>();
+            json!({
+                "zone":zone_name,
+                "key":zone_key,
+                "first":crossing.first,
+                "last":crossing.last,
+                "ticks":crossing.ticks,
+                "worst":crossing.worst,
+                "volley":crossing.volley,
+                "max_hit":crossing.max_hit,
+                "rate":crossing.rate,
+                "style":format!("{:?}",crossing.style),
+                "floor_deep":crossing.floor_deep,
+                "bites":crossing.bites,
+                "single":crossing.single,
+                "protect_credited":crossing.protect_credited,
+                "unknown":crossing.unknown,
+                "engaged_intervals":rows,
+                "scheduled_attack_windows_sum":attack_count,
+            })
         })
-    }).collect::<Vec<_>>();
+        .collect::<Vec<_>>();
     Some(json!({
         "verdict":format!("{:?}",assessment.verdict),
         "permitted":permitted,
@@ -1950,12 +2249,7 @@ fn debug_field(debug: &str, field: &str) -> Value {
     Value::Null
 }
 
-fn debug_delimiters(
-    text: &str,
-    depth: &mut i32,
-    in_string: &mut bool,
-    escaped: &mut bool,
-) {
+fn debug_delimiters(text: &str, depth: &mut i32, in_string: &mut bool, escaped: &mut bool) {
     for character in text.chars() {
         if *in_string {
             if *escaped {
@@ -1978,9 +2272,17 @@ fn debug_delimiters(
 
 fn debug_number(debug: &str, field: &str) -> Value {
     let raw = debug_field(debug, field);
-    let Some(text) = raw.as_str() else { return Value::Null; };
-    let token = text.trim_matches(|c: char| !(c.is_ascii_digit() || c == '.' || c == '-' || c == '+' || c == 'e' || c == 'E'));
-    token.parse::<f64>().ok().filter(|number| number.is_finite()).map_or(Value::Null, |number| json!(number))
+    let Some(text) = raw.as_str() else {
+        return Value::Null;
+    };
+    let token = text.trim_matches(|c: char| {
+        !(c.is_ascii_digit() || c == '.' || c == '-' || c == '+' || c == 'e' || c == 'E')
+    });
+    token
+        .parse::<f64>()
+        .ok()
+        .filter(|number| number.is_finite())
+        .map_or(Value::Null, |number| json!(number))
 }
 
 fn canonical_route(route: &Route) -> Value {
@@ -2016,11 +2318,22 @@ fn canonical_route(route: &Route) -> Value {
 }
 
 fn detect_model(records: &[Value]) -> Result<String, String> {
-    let found = records.iter().flat_map(|record| record["navigation"]["frozen_routes"].as_array().into_iter().flatten())
+    let found = records
+        .iter()
+        .flat_map(|record| {
+            record["navigation"]["frozen_routes"]
+                .as_array()
+                .into_iter()
+                .flatten()
+        })
         .flat_map(|row| row["assessments"].as_array().into_iter().flatten())
         .find_map(|variant| variant["assessment"]["assessment_debug"].as_str());
-    let debug = found.ok_or("no frozen route was assessable; cannot determine model from assessment Debug")?;
-    if debug.lines().any(|line| line.trim_start().starts_with("bound:")) {
+    let debug = found
+        .ok_or("no frozen route was assessable; cannot determine model from assessment Debug")?;
+    if debug
+        .lines()
+        .any(|line| line.trim_start().starts_with("bound:"))
+    {
         Ok("p1c_probability".into())
     } else {
         Ok("p1b_worst".into())
@@ -2029,52 +2342,76 @@ fn detect_model(records: &[Value]) -> Result<String, String> {
 
 fn guide_coverage(inputs: &[CorpusInput]) -> Value {
     let mut sets: BTreeMap<String, BTreeMap<String, usize>> = BTreeMap::new();
-    for input in inputs.iter().filter(|input| input.source["set"].as_str().is_some_and(|set| set.starts_with("guide_"))) {
+    for input in inputs.iter().filter(|input| {
+        input.source["set"]
+            .as_str()
+            .is_some_and(|set| set.starts_with("guide_"))
+    }) {
         let set = input.source["set"].as_str().unwrap_or("unknown").to_owned();
         let counts = sets.entry(set).or_default();
         *counts.entry("indexed_records".into()).or_default() += 1;
         match input.kind.as_str() {
             "guide_walk_step" => *counts.entry("walk_steps".into()).or_default() += 1,
-            "guide_combat_step" | "guide_fight_step" => *counts.entry("fight_steps".into()).or_default() += 1,
-            "guide_unavailable_index_entry" => *counts.entry("unavailable_index_entries".into()).or_default() += 1,
+            "guide_combat_step" | "guide_fight_step" => {
+                *counts.entry("fight_steps".into()).or_default() += 1
+            }
+            "guide_unavailable_index_entry" => {
+                *counts
+                    .entry("unavailable_index_entries".into())
+                    .or_default() += 1
+            }
             _ => *counts.entry("other_route_steps".into()).or_default() += 1,
         }
         if input.from.is_none() && input.kind.contains("step") {
-            *counts.entry("underspecified_missing_start".into()).or_default() += 1;
+            *counts
+                .entry("underspecified_missing_start".into())
+                .or_default() += 1;
         }
     }
     json!(sets)
 }
 
 fn input_signature(records: &[Value]) -> Result<String, String> {
-    let signature = records.iter().map(|record| {
-        let frozen = record["navigation"]["frozen_routes"].as_array().into_iter().flatten().map(|row| json!({
-            "candidate_id":row["candidate_id"],
-            "target":row["target"],
-            "route_sha256":row["route_sha256"],
-            "route_source":row["route_source"],
-        })).collect::<Vec<_>>();
-        json!({
-            "record_id":record["record_id"],
-            "source":record["source"],
-            "input_kind":record["input_kind"],
-            "input":record["input"],
-            "loadout":record["loadout"],
-            "risk_input":record["risk_input"],
-            "navigation_state":record["navigation_state"],
-            "navigation_start":record["navigation"]["start"],
-            "navigation_targets":record["navigation"]["targets"],
-            "route_options":record["navigation"]["route_options"],
-            "assessment_grants":record["navigation"]["assessment_grants"],
-            "frozen":frozen,
+    let signature = records
+        .iter()
+        .map(|record| {
+            let frozen = record["navigation"]["frozen_routes"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .map(|row| {
+                    json!({
+                        "candidate_id":row["candidate_id"],
+                        "target":row["target"],
+                        "route_sha256":row["route_sha256"],
+                        "route_source":row["route_source"],
+                    })
+                })
+                .collect::<Vec<_>>();
+            json!({
+                "record_id":record["record_id"],
+                "source":record["source"],
+                "input_kind":record["input_kind"],
+                "input":record["input"],
+                "loadout":record["loadout"],
+                "risk_input":record["risk_input"],
+                "navigation_state":record["navigation_state"],
+                "navigation_start":record["navigation"]["start"],
+                "navigation_targets":record["navigation"]["targets"],
+                "route_options":record["navigation"]["route_options"],
+                "assessment_grants":record["navigation"]["assessment_grants"],
+                "frozen":frozen,
+            })
         })
-    }).collect::<Vec<_>>();
-    let bytes = serde_json::to_vec(&signature).map_err(|e| format!("serialize corpus input signature: {e}"))?;
+        .collect::<Vec<_>>();
+    let bytes = serde_json::to_vec(&signature)
+        .map_err(|e| format!("serialize corpus input signature: {e}"))?;
     Ok(sha256(&bytes))
 }
 
 fn write_json(path: &Path, value: &Value) -> Result<(), String> {
-    let bytes = serde_json::to_vec_pretty(value).map_err(|e| format!("serialize {}: {e}", path.display()))?;
+    let bytes = serde_json::to_vec_pretty(value)
+        .map_err(|e| format!("serialize {}: {e}", path.display()))?;
     fs::write(path, bytes).map_err(|e| format!("write {}: {e}", path.display()))
 }
 
@@ -2083,22 +2420,46 @@ fn diff_artifacts(old: &Value, new: &Value) -> Result<Value, String> {
         return Err("old/new retained-layout measurements use different targets".into());
     }
     let layout_deltas = retained_layout_deltas(old, new)?;
-    let old_rows = old["records"].as_array().ok_or("old corpus has no records")?;
-    let new_rows = new["records"].as_array().ok_or("new corpus has no records")?;
-    let old_by_id = old_rows.iter().filter_map(|row| row["record_id"].as_str().map(|id| (id.to_owned(), row))).collect::<HashMap<_, _>>();
-    let new_by_id = new_rows.iter().filter_map(|row| row["record_id"].as_str().map(|id| (id.to_owned(), row))).collect::<HashMap<_, _>>();
+    let old_rows = old["records"]
+        .as_array()
+        .ok_or("old corpus has no records")?;
+    let new_rows = new["records"]
+        .as_array()
+        .ok_or("new corpus has no records")?;
+    let old_by_id = old_rows
+        .iter()
+        .filter_map(|row| row["record_id"].as_str().map(|id| (id.to_owned(), row)))
+        .collect::<HashMap<_, _>>();
+    let new_by_id = new_rows
+        .iter()
+        .filter_map(|row| row["record_id"].as_str().map(|id| (id.to_owned(), row)))
+        .collect::<HashMap<_, _>>();
     let mut diff_rows = Vec::new();
     for (record_id, old_record) in &old_by_id {
         let Some(new_record) = new_by_id.get(record_id) else {
             return Err(format!("new corpus omitted input row {record_id}"));
         };
-        let old_candidates = old_record["navigation"]["frozen_routes"].as_array().cloned().unwrap_or_default();
-        let new_candidates = new_record["navigation"]["frozen_routes"].as_array().cloned().unwrap_or_default();
-        let old_candidate_map = old_candidates.iter().filter_map(|row| row["candidate_id"].as_str().map(|id| (id.to_owned(), row))).collect::<HashMap<_, _>>();
-        let new_candidate_map = new_candidates.iter().filter_map(|row| row["candidate_id"].as_str().map(|id| (id.to_owned(), row))).collect::<HashMap<_, _>>();
+        let old_candidates = old_record["navigation"]["frozen_routes"]
+            .as_array()
+            .cloned()
+            .unwrap_or_default();
+        let new_candidates = new_record["navigation"]["frozen_routes"]
+            .as_array()
+            .cloned()
+            .unwrap_or_default();
+        let old_candidate_map = old_candidates
+            .iter()
+            .filter_map(|row| row["candidate_id"].as_str().map(|id| (id.to_owned(), row)))
+            .collect::<HashMap<_, _>>();
+        let new_candidate_map = new_candidates
+            .iter()
+            .filter_map(|row| row["candidate_id"].as_str().map(|id| (id.to_owned(), row)))
+            .collect::<HashMap<_, _>>();
         for (candidate_id, old_candidate) in &old_candidate_map {
             let Some(new_candidate) = new_candidate_map.get(candidate_id) else {
-                return Err(format!("new corpus omitted frozen route {record_id}/{candidate_id}"));
+                return Err(format!(
+                    "new corpus omitted frozen route {record_id}/{candidate_id}"
+                ));
             };
             let old_variants = variant_map(&old_candidate["assessments"]);
             let new_variants = variant_map(&new_candidate["assessments"]);
@@ -2111,16 +2472,34 @@ fn diff_artifacts(old: &Value, new: &Value) -> Result<Value, String> {
                 let mut classes = Vec::new();
                 let old_permitted = old_assessment["permitted"].as_bool();
                 let new_permitted = new_assessment["permitted"].as_bool();
-                if old_permitted == Some(false) && new_permitted == Some(true) { classes.push("gained"); }
-                if old_permitted == Some(true) && new_permitted == Some(false) { classes.push("lost"); }
-                if old_assessment["supplies"] != new_assessment["supplies"] { classes.push("changed_food"); }
-                if old_candidate["route_sha256"] != new_candidate["route_sha256"] { classes.push("changed_route"); }
+                if old_permitted == Some(false) && new_permitted == Some(true) {
+                    classes.push("gained");
+                }
+                if old_permitted == Some(true) && new_permitted == Some(false) {
+                    classes.push("lost");
+                }
+                if old_assessment["supplies"] != new_assessment["supplies"] {
+                    classes.push("changed_food");
+                }
+                if old_candidate["route_sha256"] != new_candidate["route_sha256"] {
+                    classes.push("changed_route");
+                }
                 let mut other_changes = Vec::new();
-                if old_assessment["refusal"] != new_assessment["refusal"] { other_changes.push("refusal"); }
-                if old_assessment["mitigation"] != new_assessment["mitigation"] { other_changes.push("mitigation"); }
-                if old_assessment["bound"] != new_assessment["bound"] { other_changes.push("bound"); }
-                if old_assessment["poison_test"] != new_assessment["poison_test"] { other_changes.push("poison_test"); }
-                if old_assessment["verdict"] != new_assessment["verdict"] && classes.is_empty() { other_changes.push("verdict"); }
+                if old_assessment["refusal"] != new_assessment["refusal"] {
+                    other_changes.push("refusal");
+                }
+                if old_assessment["mitigation"] != new_assessment["mitigation"] {
+                    other_changes.push("mitigation");
+                }
+                if old_assessment["bound"] != new_assessment["bound"] {
+                    other_changes.push("bound");
+                }
+                if old_assessment["poison_test"] != new_assessment["poison_test"] {
+                    other_changes.push("poison_test");
+                }
+                if old_assessment["verdict"] != new_assessment["verdict"] && classes.is_empty() {
+                    other_changes.push("verdict");
+                }
                 if !classes.is_empty() || !other_changes.is_empty() {
                     diff_rows.push(json!({
                         "record_id":record_id,
@@ -2158,7 +2537,11 @@ fn diff_artifacts(old: &Value, new: &Value) -> Result<Value, String> {
         }
     }
     if old_by_id.len() != new_by_id.len() {
-        return Err(format!("old/new corpus row counts differ: {} vs {}", old_by_id.len(), new_by_id.len()));
+        return Err(format!(
+            "old/new corpus row counts differ: {} vs {}",
+            old_by_id.len(),
+            new_by_id.len()
+        ));
     }
     let mut classes: BTreeMap<String, usize> = BTreeMap::new();
     for row in &diff_rows {
@@ -2228,5 +2611,10 @@ fn retained_layout_deltas(old: &Value, new: &Value) -> Result<Value, String> {
 }
 
 fn variant_map<'a>(value: &'a Value) -> HashMap<String, &'a Value> {
-    value.as_array().into_iter().flatten().filter_map(|row| row["variant"].as_str().map(|id| (id.to_owned(), row))).collect()
+    value
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|row| row["variant"].as_str().map(|id| (id.to_owned(), row)))
+        .collect()
 }

@@ -58,7 +58,8 @@ impl GuideQualificationFixture {
             }
         }
         let coordinate = |name: &str| -> Result<i32, String> {
-            seed["start_tile"][name].as_i64()
+            seed["start_tile"][name]
+                .as_i64()
                 .and_then(|value| i32::try_from(value).ok())
                 .ok_or_else(|| format!("seed {} has no usable start_tile.{name}", path.display()))
         };
@@ -69,38 +70,75 @@ impl GuideQualificationFixture {
         // Engine PlayerLoading.ts:39-49: fresh-account levels are 1, HP is 10.
         // PlayerStat.ts:1-22 supplies these revision-289 skill indexes.
         const SKILLS: [&str; 21] = [
-            "attack", "defence", "strength", "hitpoints", "ranged", "prayer", "magic",
-            "cooking", "woodcutting", "fletching", "fishing", "firemaking", "crafting",
-            "smithing", "mining", "herblore", "agility", "thieving", "stat18", "stat19",
+            "attack",
+            "defence",
+            "strength",
+            "hitpoints",
+            "ranged",
+            "prayer",
+            "magic",
+            "cooking",
+            "woodcutting",
+            "fletching",
+            "fishing",
+            "firemaking",
+            "crafting",
+            "smithing",
+            "mining",
+            "herblore",
+            "agility",
+            "thieving",
+            "stat18",
+            "stat19",
             "runecraft",
         ];
-        state.stats = (0..21).map(|index| (index, if index == 3 { 10 } else { 1 })).collect();
-        for (name, level) in seed["stats"].as_object().ok_or("seed stats must be an object")? {
-            let index = SKILLS.iter().position(|skill| skill == name)
+        state.stats = (0..21)
+            .map(|index| (index, if index == 3 { 10 } else { 1 }))
+            .collect();
+        for (name, level) in seed["stats"]
+            .as_object()
+            .ok_or("seed stats must be an object")?
+        {
+            let index = SKILLS
+                .iter()
+                .position(|skill| skill == name)
                 .ok_or_else(|| format!("unknown seed skill {name} in {}", path.display()))?;
-            let level = level.as_i64().and_then(|value| i32::try_from(value).ok())
+            let level = level
+                .as_i64()
+                .and_then(|value| i32::try_from(value).ok())
                 .filter(|value| *value > 0)
                 .ok_or_else(|| format!("invalid seed level for {name} in {}", path.display()))?;
             state.stats.insert(index as i32, level);
         }
         let [attack, defence, strength, hp, ranged, prayer, magic] =
             std::array::from_fn(|index| i64::from(state.stats[&(index as i32)]));
-        let style = (attack + strength).max(ranged / 2 + ranged).max(magic / 2 + magic);
+        let style = (attack + strength)
+            .max(ranged / 2 + ranged)
+            .max(magic / 2 + magic);
         state.combat_level = Some(((10 * (defence + hp + prayer / 2) + 13 * style) / 40) as i32);
         let count = |value: &Value| -> Result<i32, String> {
-            value.as_i64().and_then(|value| i32::try_from(value).ok())
+            value
+                .as_i64()
+                .and_then(|value| i32::try_from(value).ok())
                 .filter(|value| *value >= 0)
                 .ok_or_else(|| format!("invalid seed item count in {}", path.display()))
         };
         let coins = count(&seed["coins"])?;
         if coins > 0 {
-            let item = selected.item_by_alias("coins").ok_or("selected data has no coins")?;
+            let item = selected
+                .item_by_alias("coins")
+                .ok_or("selected data has no coins")?;
             state.inv.insert(item.id, coins);
         }
-        for item in seed["items"].as_array().ok_or("seed items must be an array")? {
+        for item in seed["items"]
+            .as_array()
+            .ok_or("seed items must be an array")?
+        {
             let alias = item["alias"].as_str().ok_or("seed item has no alias")?;
-            let id = selected.item_by_alias(alias)
-                .ok_or_else(|| format!("unknown seed item {alias} in {}", path.display()))?.id;
+            let id = selected
+                .item_by_alias(alias)
+                .ok_or_else(|| format!("unknown seed item {alias} in {}", path.display()))?
+                .id;
             let quantity = count(&item["count"])?;
             if quantity == 0 {
                 continue;
@@ -108,19 +146,35 @@ impl GuideQualificationFixture {
             match item["where"].as_str().unwrap_or("inventory") {
                 "inventory" => {
                     let held = state.inv.entry(id).or_insert(0i32);
-                    *held = held.checked_add(quantity).ok_or("seed inventory count overflow")?;
+                    *held = held
+                        .checked_add(quantity)
+                        .ok_or("seed inventory count overflow")?;
                 }
-                "worn" => { state.worn.insert(id); }
+                "worn" => {
+                    state.worn.insert(id);
+                }
                 // Banked items are not held; strict qualification cannot fetch them.
                 "bank" => {}
                 location => return Err(format!("unknown seed item location {location}")),
             }
         }
-        let identities = selected.quest_identity().ok_or("selected data has no quest identities")?;
-        for quest in seed["completed_quests"].as_array().ok_or("seed completed_quests must be an array")? {
-            let id = quest.as_str().ok_or("seed completed quest is not a string")?;
-            let row = identities.rows.iter().find(|row| row.id == id || row.display == id)
-                .ok_or_else(|| format!("unknown completed seed quest {id} in {}", path.display()))?;
+        let identities = selected
+            .quest_identity()
+            .ok_or("selected data has no quest identities")?;
+        for quest in seed["completed_quests"]
+            .as_array()
+            .ok_or("seed completed_quests must be an array")?
+        {
+            let id = quest
+                .as_str()
+                .ok_or("seed completed quest is not a string")?;
+            let row = identities
+                .rows
+                .iter()
+                .find(|row| row.id == id || row.display == id)
+                .ok_or_else(|| {
+                    format!("unknown completed seed quest {id} in {}", path.display())
+                })?;
             state.quests.insert(row.display.clone());
             state.varps.insert(row.varp_id, row.complete);
         }
@@ -139,6 +193,12 @@ impl GuideQualificationFixture {
             "qualification_limits":"Seed state is held constant between steps; no quest-stage progress, acquired items or bank fetch is invented. The three admission loadouts are separate from this navigation seed state.",
             "seed_quest_points_needed":seed.get("quest_points_needed"),
         });
-        Ok(Self { start, first_start_rule, state, state_json, source })
+        Ok(Self {
+            start,
+            first_start_rule,
+            state,
+            state_json,
+            source,
+        })
     }
 }
