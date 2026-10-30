@@ -2515,12 +2515,12 @@ fn an_unproven_crossing_reaches_the_native_owner_typed() {
                 None,
                 "one observed game tick is allowed for the quest-list row"
             );
-            for tick in 3..=4 {
-                if rig.end().is_some() {
-                    break;
-                }
-                rig.observe(tick);
+        }
+        for tick in 3..=4 {
+            if rig.end().is_some() {
+                break;
             }
+            rig.observe(tick);
         }
         assert_eq!(rig.end(), Some(Ok(expected)));
     }
