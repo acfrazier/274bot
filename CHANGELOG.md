@@ -63,9 +63,10 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.7` 
 
 ### Quester
 
-- Quest guides now respond to an NPC's "I can't reach that!" message at once:
-  they recover from the NPC's current location when possible, or report the
-  refusal.
+- After a Talk-to refusal, a guide walks to the NPC's latest observed tile and
+  sends one more Talk-to request. This recovery also applies when the NPC's
+  wander range is zero. If the recovery walk fails or the server refuses the
+  next Talk-to request, the error keeps the refusal text.
 - Quest guides can now kill until a required item drops, with a total kill
   budget and a named stop. The final allowed kill still gets its loot wait.
   The receipt records confirmed kills across re-engagements.
@@ -88,14 +89,14 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.7` 
 - Quester's anchored prewalk for an unseen loc now accepts any standable tile
   within the anchor radius, leaving the final, live-loc approach to select an
   accessible interaction side.
-- Talk steps now budget one observed tick per planned walking tile plus two
-  slack ticks. A moving NPC gets a replan cap equal to the number of non-home
-  tiles in its content-defined wander square. A server refusal gives every NPC
-  one bounded approach retry, including NPCs that do not wander. The first-page
-  clock starts after the accepted Talk receipt and the adjacent-position check.
-  Its four-tick budget accepts a page on the deadline tick. Damage from a quest
-  dialogue no longer looks like an attack when no visible NPC or player targets
-  the bot. A failed walk also reports where its route ended.
+- Talk steps now budget one observed tick per planned walking tile, plus two
+  slack ticks. They allow one replan for each tile other than the NPC's home
+  tile in its legal wander square. The first-page clock starts after the
+  accepted Talk-to receipt and the adjacent-position check. It allows four
+  observed ticks and accepts a page on the deadline tick.
+- Damage from quest dialogue no longer looks like an attack when no visible
+  NPC or player targets the bot.
+- A failed walk also reports where its route ended.
 
 ### Scripting
 
