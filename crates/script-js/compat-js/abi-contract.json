@@ -13195,7 +13195,7 @@
       "selector": "Game.autoRetaliate",
       "add": true,
       "reason": "Host additionally exposes its posted auto-retaliate reader under this name.",
-      "runtime": "crates/script-js/src/shim/game.js:73",
+      "runtime": "crates/script-js/src/shim/game.js:83",
       "declaration": "autoRetaliate(): boolean;",
       "family_id": "game-state",
       "nav_consuming": false
@@ -13664,7 +13664,7 @@
       "selector": "Game.castOnNpc",
       "operation": "not-impl",
       "reason": "Unconditional not-impl: no arguments are inspected and no successful result is produced.",
-      "runtime": "crates/script-js/src/shim/game.js:208",
+      "runtime": "crates/script-js/src/shim/game.js:219",
       "async": true,
       "family_id": "game-state",
       "nav_consuming": false
@@ -23357,7 +23357,7 @@
       "selector": "Game.castOnNpc",
       "module": "api/game/Game.js",
       "state": "not-impl",
-      "source": "crates/script-js/src/shim/game.js:208",
+      "source": "crates/script-js/src/shim/game.js:219",
       "reason": "Unconditional not-impl: no arguments are inspected and no successful result is produced.",
       "overlay_id": "not-impl:api/game/Game.js:Game.castOnNpc"
     },

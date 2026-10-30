@@ -139,7 +139,7 @@
     "selector": "Game.autoRetaliate",
     "add": true,
     "reason": "Host additionally exposes its posted auto-retaliate reader under this name.",
-    "runtime": "crates/script-js/src/shim/game.js:73",
+    "runtime": "crates/script-js/src/shim/game.js:83",
     "declaration": "autoRetaliate(): boolean;"
   },
   {
