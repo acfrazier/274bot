@@ -388,6 +388,7 @@ fn make_fixture_with_seed_commands(
     let manual_arms = WalkArms::default();
     let frame_manual_arms = Arc::clone(&manual_arms);
     let frame_manual_latch = Mutex::new(None);
+    let frame_barrier_send = Mutex::new(false);
     let frame_world = template.world().expect("selected navigation world");
     let frame_map_members = profile.map_members();
     let mut play = host_play::run_with_template(
@@ -420,6 +421,40 @@ fn make_fixture_with_seed_commands(
                     let mut latch = frame_manual_latch.lock().expect("manual step latch mutex");
                     if *latch != Some(step) {
                         *latch = Some(step);
+                        let trace_barrier = here == (3440, 9887, 0)
+                            && !*frame_barrier_send.lock().expect("barrier send trace");
+                        let before = client.out.pos;
+                        if trace_barrier {
+                            for loc in snapshot.locs().iter().filter(|loc| loc.id == 3443) {
+                                let from = WorldTile {
+                                    x: here.0,
+                                    z: here.1,
+                                    level: here.2,
+                                };
+                                eprintln!(
+                                    "[DEBUG-nav-north] tick={} here={here:?} base=({}, {}) level={} loc={:?} layer={} typecode={} info={} operate={:?} actions={:?} before={before}",
+                                    snapshot.tick(),
+                                    client.map_build_base_x,
+                                    client.map_build_base_z,
+                                    client.minusedlevel,
+                                    loc.tile,
+                                    loc.layer,
+                                    loc.typecode,
+                                    client.world.type_code2(
+                                        client.minusedlevel,
+                                        loc.tile.x - client.map_build_base_x,
+                                        loc.tile.z - client.map_build_base_z,
+                                        loc.typecode,
+                                    ),
+                                    api::query::loc_approach::can_operate_from(
+                                        loc,
+                                        snapshot.scene(),
+                                        from,
+                                    ),
+                                    loc.actions,
+                                );
+                            }
+                        }
                         host_play::step_walk_arm_follow(
                             client,
                             &snapshot,
@@ -429,6 +464,17 @@ fn make_fixture_with_seed_commands(
                             frame_map_members,
                             Some(username),
                         );
+                        if trace_barrier {
+                            eprintln!(
+                                "[DEBUG-nav-north] tick={} after={} delta={} cross_mode={} chat={}",
+                                snapshot.tick(),
+                                client.out.pos,
+                                client.out.pos - before,
+                                client.cross_mode,
+                                client.chat_modal_id,
+                            );
+                            *frame_barrier_send.lock().expect("barrier send trace") = true;
+                        }
                     }
                 }
                 return;
