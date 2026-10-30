@@ -1221,7 +1221,7 @@ struct Node {
     edges: Vec<Edge>,
 }
 
-const MAX_SURVIVAL_STATES: usize = 2_000_000;
+const MAX_SURVIVAL_STATES: usize = 8_000_000;
 const MAX_VALUE_ITERATIONS: usize = 100_000;
 
 fn damage_distribution(chance: f64, maximum: u16) -> Vec<(u16, f64)> {

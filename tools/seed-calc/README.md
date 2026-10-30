@@ -106,7 +106,7 @@ The tool reports `not_modelled` when:
 - The player uses ranged attacks or magic.
 - Either participant can inflict poison.
 - `npc_count` is not one.
-- The exact solver reaches its state limit or fails to converge.
+- The exact solver reaches its 8,000,000-state limit or fails to converge.
 
 Ranged accuracy and maximum damage need projectile flight and pending-damage state.
 Magic also needs spell-dependent damage, freezing, and stat changes.
