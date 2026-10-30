@@ -564,6 +564,48 @@ struct OwnedCombat {
     npc_total_health: i32,
 }
 
+#[derive(Default)]
+pub(super) struct TickMean {
+    last: Option<(u32, Instant)>,
+    elapsed: Duration,
+    intervals: u64,
+}
+
+impl TickMean {
+    pub(super) fn observe(&mut self, snapshot: &GameSnapshot) {
+        self.observe_at(snapshot.tick(), snapshot.ingame(), Instant::now());
+    }
+
+    pub(super) fn observe_at(&mut self, tick: u32, ingame: bool, now: Instant) {
+        if !ingame {
+            self.last = None;
+            return;
+        }
+        match self.last {
+            Some((previous, at)) if tick > previous => {
+                self.elapsed += now.duration_since(at);
+                self.intervals += u64::from(tick - previous);
+                self.last = Some((tick, now));
+            }
+            Some((previous, _)) if tick < previous => {
+                self.last = Some((tick, now));
+            }
+            None => {
+                self.last = Some((tick, now));
+            }
+            _ => {}
+        }
+    }
+
+    pub(super) fn mean_ms(&self) -> Option<f64> {
+        if self.intervals == 0 {
+            None
+        } else {
+            Some(self.elapsed.as_secs_f64() * 1000.0 / self.intervals as f64)
+        }
+    }
+}
+
 struct ActorShared {
     role: Option<usize>,
     quest: &'static str,
@@ -583,6 +625,7 @@ struct ActorShared {
     start_receipt: Option<Value>,
     observe_tick: Option<ObserveTick>,
     tick_observations: Vec<Value>,
+    tick_mean: TickMean,
     starts: u32,
     stops: u32,
     restart_due: bool,
@@ -1216,6 +1259,7 @@ fn run_cells(
             start_receipt: None,
             observe_tick: observe_tick.take(),
             tick_observations: Vec::new(),
+            tick_mean: TickMean::default(),
             starts: 0,
             stops: 0,
             restart_due: false,
@@ -1690,6 +1734,9 @@ fn run_cells(
                     if let Some(receipt) = observe(&actor.snapshot, observation.status.as_deref()) {
                         actor.tick_observations.push(receipt);
                     }
+                }
+                if quester_path {
+                    actor.tick_mean.observe(&actor.snapshot);
                 }
                 observation.runner_status = actor.runner.status();
                 observation.done = quest_done(&actor.snapshot, actor.display);
@@ -2592,6 +2639,15 @@ fn run_cells(
         }
         std::thread::sleep(POLL_INTERVAL);
     };
+    if quester_path && result.is_ok() {
+        let observed_tick_mean = shared
+            .lock()
+            .map(|state| state.actors[0].tick_mean.mean_ms().is_some())
+            .unwrap_or(false);
+        if !observed_tick_mean {
+            result = Err("the live path did not observe an in-game tick interval".into());
+        }
+    }
 
     let result_text = format!("{result:?}");
     let mut final_statuses = Vec::with_capacity(names.len());
@@ -2695,6 +2751,16 @@ fn run_cells(
                     "pair_cancelled": actor.pair_cancelled,
                     "step_observations": actor.step_observations,
                     "tick_observations": actor.tick_observations,
+                    "observed_tick_mean_ms": if quester_path {
+                        actor.tick_mean.mean_ms()
+                    } else {
+                        None
+                    },
+                    "observed_tick_intervals": if quester_path {
+                        actor.tick_mean.intervals
+                    } else {
+                        0
+                    },
                     "captures": actor.captures,
                     "final_status": final_statuses[index].as_deref().map(status_json),
                     "lifecycle": format!("{:?}", final_lifecycles[index]),
@@ -2721,7 +2787,7 @@ fn run_cells(
             })
         })
     };
-    let receipt = if mode.is_pair() {
+    let mut receipt = if mode.is_pair() {
         json!({
             "cell": run_label,
             "quest": actor_receipts[0]["quest"],
@@ -2750,6 +2816,8 @@ fn run_cells(
             "transitions": actor["transitions"],
             "stages_seen": actor["stages_seen"],
             "tick_observations": actor["tick_observations"],
+            "observed_tick_mean_ms": actor["observed_tick_mean_ms"],
+            "observed_tick_intervals": actor["observed_tick_intervals"],
             "deaths": actor["deaths"],
             "death_sent": actor["death_sent"],
             "death_observed": actor["death_observed"],
@@ -2768,6 +2836,64 @@ fn run_cells(
             "end_captured": actor["end_captured"],
         })
     };
+    for account in &names {
+        play.script_stop(account);
+    }
+    let mut logout_requested = Vec::with_capacity(names.len());
+    for account in &names {
+        if let Some(arm) = play.arm(account) {
+            arm.request_logout();
+            play.wake(account);
+            logout_requested.push(true);
+        } else {
+            logout_requested.push(false);
+        }
+    }
+    let logout_deadline = Instant::now() + Duration::from_secs(30);
+    while names.iter().any(|account| play.slot_connected(account))
+        && Instant::now() < logout_deadline
+    {
+        std::thread::sleep(POLL_INTERVAL);
+    }
+    let disconnected = names
+        .iter()
+        .map(|account| !play.slot_connected(account))
+        .collect::<Vec<_>>();
+    let stuck_accounts = names
+        .iter()
+        .zip(&disconnected)
+        .filter(|(_, disconnected)| !**disconnected)
+        .map(|(account, _)| account.clone())
+        .collect::<Vec<_>>();
+    let logout_complete = stuck_accounts.is_empty();
+    for account in &names {
+        play.stop_slot(account);
+    }
+    receipt["clean_logout"] = json!({
+        "complete": logout_complete,
+        "timeout_ms": 30_000,
+        "accounts": names
+            .iter()
+            .zip(&logout_requested)
+            .zip(&disconnected)
+            .map(|((account, requested), disconnected)| json!({
+                "account": account,
+                "requested": requested,
+                "disconnected": disconnected,
+            }))
+            .collect::<Vec<_>>(),
+    });
+    if !logout_complete {
+        let reason = format!(
+            "clean logout timed out for {}",
+            stuck_accounts.join(", ")
+        );
+        result = match result {
+            Ok(()) => Err(reason),
+            Err(previous) => Err(format!("{previous}; {reason}")),
+        };
+    }
+    receipt["result"] = json!(format!("{result:?}"));
     for (index, directory) in directories.iter().enumerate() {
         let mut role_receipt = receipt.clone();
         if mode.is_pair() {
@@ -2781,12 +2907,6 @@ fn run_cells(
         .map_err(|error| error.to_string())?;
     }
     println!("{receipt}");
-    for account in &names {
-        play.script_stop(account);
-    }
-    for account in &names {
-        play.stop_slot(account);
-    }
     result.map(|()| receipt)
 }
 

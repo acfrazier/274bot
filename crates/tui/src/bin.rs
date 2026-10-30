@@ -4122,6 +4122,78 @@ impl TuiSession {
         (code, lines)
     }
 
+    /// Finish a live run only after each account has cleanly disconnected.
+    fn finish_live_exit(
+        &mut self,
+        app: &mut TuiApp,
+        result: Result<i32, String>,
+    ) -> Result<i32, String> {
+        if self.live_name.is_none() {
+            return result;
+        }
+        let logout = self.clean_logout_live(app);
+        self.quit(app);
+        match (result, logout) {
+            (result, Ok(())) => {
+                if let Some(name) = self.live_name.as_deref() {
+                    eprintln!(
+                        "PASS: live {name} clean logout accounts={}",
+                        self.names.join(", ")
+                    );
+                }
+                result
+            }
+            (Ok(_), Err(error)) => {
+                eprintln!("FAIL: live logout: {error}");
+                Ok(1)
+            }
+            (Err(run_error), Err(logout_error)) => {
+                eprintln!("FAIL: live logout: {logout_error}");
+                Err(format!("{run_error}; live logout failed: {logout_error}"))
+            }
+        }
+    }
+
+    fn clean_logout_live(&mut self, app: &mut TuiApp) -> Result<(), String> {
+        if self.live_name.is_none() {
+            return Ok(());
+        }
+        match self.submit_raw(OperatorCommand::Logout, Targets::Everyone) {
+            Ok(_) | Err(SubmitError::NoTarget(_)) => {}
+            Err(error) => return Err(format!("logout command failed: {error}")),
+        }
+        let deadline = Instant::now() + Duration::from_secs(30);
+        loop {
+            self.pump(app);
+            if self.names.iter().all(|account| {
+                self.core
+                    .fleet_view()
+                    .row(account)
+                    .is_none_or(|row| !row.connected())
+            }) {
+                return Ok(());
+            }
+            if Instant::now() >= deadline {
+                let connected = self
+                    .names
+                    .iter()
+                    .filter(|account| {
+                        self.core
+                            .fleet_view()
+                            .row(account)
+                            .is_some_and(|row| row.connected())
+                    })
+                    .cloned()
+                    .collect::<Vec<_>>();
+                return Err(format!(
+                    "logout timed out after 30 seconds for {}",
+                    connected.join(", ")
+                ));
+            }
+            std::thread::sleep(Duration::from_millis(50));
+        }
+    }
+
     /// Return a producer-marked terminal asset-init failure for a slot owned
     /// by this scenario. Retryable login errors intentionally remain pending.
     fn terminal_startup_failure(&self) -> Option<String> {
@@ -4922,28 +4994,37 @@ fn run_loop(mut session: TuiSession, mut app: TuiApp) -> Result<i32, String> {
     app.map_bake = session.map_desk.bake_gate().choice();
     if enable_raw_mode().is_err() {
         // No controlling terminal: pump the runner without drawing.
-        loop {
+        let result = loop {
             if let Some(code) = headless_step(&mut session, &mut app) {
-                return Ok(code);
+                break Ok(code);
             }
             std::thread::sleep(Duration::from_millis(50));
-        }
+        };
+        return session.finish_live_exit(&mut app, result);
     }
     RAW_MODE.store(true, Ordering::SeqCst);
-    let _guard = TerminalGuard;
+    let guard = TerminalGuard;
     let mut stdout = std::io::stdout();
-    crossterm::execute!(
+    ALT_SCREEN.store(true, Ordering::SeqCst);
+    let terminal = crossterm::execute!(
         stdout,
         EnterAlternateScreen,
         crossterm::event::EnableMouseCapture
     )
-    .map_err(|e| format!("terminal setup: {e}"))?;
-    ALT_SCREEN.store(true, Ordering::SeqCst);
-    install_tui_panic_hook();
-    crate::stderr_capture::capture();
-    let backend = CrosstermBackend::new(stdout);
-    let mut terminal = Terminal::new(backend).map_err(|e| e.to_string())?;
-
+    .map_err(|e| format!("terminal setup: {e}"))
+    .and_then(|()| {
+        install_tui_panic_hook();
+        crate::stderr_capture::capture();
+        let backend = CrosstermBackend::new(stdout);
+        Terminal::new(backend).map_err(|e| e.to_string())
+    });
+    let mut terminal = match terminal {
+        Ok(terminal) => terminal,
+        Err(error) => {
+            drop(guard);
+            return session.finish_live_exit(&mut app, Err(error));
+        }
+    };
     let mut deferred = Vec::new();
     let result = (|| loop {
         if let Some(code) = headed_frame(&mut session, &mut app, &mut terminal, &mut deferred)? {
@@ -4969,6 +5050,7 @@ fn run_loop(mut session: TuiSession, mut app: TuiApp) -> Result<i32, String> {
 
     drop(terminal);
     restore_terminal();
+    let result = session.finish_live_exit(&mut app, result);
     write_proof_lines(&deferred);
     result
 }

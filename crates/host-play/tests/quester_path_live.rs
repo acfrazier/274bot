@@ -20,14 +20,13 @@
 //!   WORLD_NAV_PACK=<274bot.navpack> WORLD_ENGINE_DIR=<engine-q-dir> \
 //!   RS2B0T=<catalog-root> BOT_CACHE_DIR=<owned-writable-APFS-cache-clone> \
 //!   LIVE_EVIDENCE_DIR=<evidence-root> QUESTER_PATH=cook \
-//!   QUESTER_TICK_MS=300 QUESTER_SUSTAIN_RUN=1 QUESTER_SEEDS=<evidence-root>/seeds/cook.json \
+//!   QUESTER_SUSTAIN_RUN=1 QUESTER_SEEDS=<evidence-root>/seeds/cook.json \
 //!   cargo test \
 //!     -p host-play --features "live-harness test-support" \
 //!     --test quester_path_live live_quester_path_smoke -- --ignored --nocapture --test-threads=1
 //! ```
-//! `QUESTER_TICK_MS` changes world-wide tick speed; use it only on isolated
-//! Engine Q, never on shared Engine A or the builder. Run without it to keep
-//! the world's current tick rate.
+//! `QUESTER_TICK_MS` changes world-wide tick speed. Leave it unset for this
+//! live check. The host receipt records the observed tick mean.
 //! For a custom local profile, omit `members` so Engine Q's `world.json`
 //! remains the source of world membership.
 //!
@@ -182,6 +181,19 @@ mod smoke_tests {
     use std::sync::Mutex;
 
     static PATH_REGISTRY_LOCK: Mutex<()> = Mutex::new(());
+
+    #[test]
+    fn tick_mean_uses_only_in_game_tick_advances() {
+        let start = std::time::Instant::now();
+        let mut mean = quester_live::TickMean::default();
+        mean.observe_at(10, true, start);
+        mean.observe_at(11, true, start + Duration::from_millis(600));
+        mean.observe_at(0, false, start + Duration::from_millis(900));
+        mean.observe_at(800, true, start + Duration::from_secs(5));
+        mean.observe_at(801, true, start + Duration::from_millis(5_600));
+
+        assert_eq!(mean.mean_ms(), Some(600.0));
+    }
 
     const COOK_SEEDS: &str = r#"{
         "stage": "cook:0",
