@@ -1923,9 +1923,7 @@ fn m4_exhausted_escape_walk(
             |cx| { run.poll(cx) }
         )
         .is_pending());
-        if matches!(&run.phase, Phase::EscapingAfterAbortHold)
-            && pending_walk(&ledger).is_some()
-        {
+        if matches!(&run.phase, Phase::EscapingAfterAbortHold) && pending_walk(&ledger).is_some() {
             return (run, ledger, snapshot);
         }
     }

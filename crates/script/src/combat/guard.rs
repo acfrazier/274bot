@@ -2408,12 +2408,9 @@ mod tests {
         };
         let mut request = scene.request();
         request.allow.food = false;
-        let mut guard = WalkGuard::begin_food_only_with(
-            &request,
-            &scene.view(),
-            Arc::clone(&scene.tables),
-        )
-        .unwrap();
+        let mut guard =
+            WalkGuard::begin_food_only_with(&request, &scene.view(), Arc::clone(&scene.tables))
+                .unwrap();
         assert_eq!(guard.has_food(&scene.view()), Some(false));
         assert!(matches!(
             guard.tick(&scene.view_at(0), Some(&condition), CurePoison::WhenNeeded),
