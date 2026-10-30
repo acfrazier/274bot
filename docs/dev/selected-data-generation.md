@@ -91,16 +91,20 @@ A stale local evidence file fails the digest check.
 This development-only output is not shipped or loaded by the product.
 Unknown label callers and unsupported NPC parameters remain conservative analysis limits, not proved dynamic content.
 
-`KnifeArm` uses the same complete transform-closure allowlist for an NPC click.
-A current-type OPNPC/APNPC handler, a menu label, or an exact NPC-info generation
-does not replace that proof. If generation cannot prove the same intended
-numeric action for every reachable type, the spot is not tick-armed; Gatherer
-uses ordinary fishing. The revision 289 river-lure, river-bait, and lava-eel
-targets have no positive closure rows. Whirlpool and Big fish event types are
-not armed and remain subject to the guardian's hazard handling. At dispatch,
-the request must also match the observed NPC index, current type, tile, and
-NPC-info packet generation. Ending fishing methods do not put an NPC click in
-the arm request.
+The built-in Gatherer's `KnifeArm` has one narrower fishing exception.
+Generation joins known fishing-resource targets to complete ordinary NPC type
+configurations and present static OPNPC/APNPC operations.
+It excludes Whirlpool, Big fish, and every catalog hazard NPC.
+These rows live in `builtin_gatherer_fishing_operations`, separate from the
+complete-closure allowlist.
+The host grants this authority only to the current built-in Gatherer run.
+Every other caller keeps the complete transform-closure rule.
+The consumer checks the observed type before each arm and checked ending click.
+A continuing request must also match the NPC index, current type, network
+identity, and NPC-info packet generation at dispatch.
+Ending arms contain no NPC click.
+The operator accepts the remaining same-tick transform race for this built-in
+consumer. The guardian still owns event handling.
 
 The API retains one immutable catalog with the selected game data.
 Its accessor requires the exact selected pin.
