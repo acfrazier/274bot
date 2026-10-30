@@ -836,11 +836,7 @@ impl StepRun for MakeRun {
                             .iter()
                             .filter(|loc| {
                                 loc.id == trigger.loc_id
-                                    && reach::within(
-                                        trigger.anchor,
-                                        loc.tile,
-                                        reach::PROBE_RADIUS,
-                                    )
+                                    && reach::within(trigger.anchor, loc.tile, reach::PROBE_RADIUS)
                             })
                             .min_by_key(|loc| {
                                 let dx =
@@ -871,8 +867,8 @@ impl StepRun for MakeRun {
                     return Poll::Pending;
                 }
                 if let Some(op) = trigger.op.as_ref() {
-                    self.trigger_reach = Some(std::task::ready!(
-                        crate::native::defer_budget(cx.tick.actions.begin::<reach::Reach>(
+                    self.trigger_reach = Some(std::task::ready!(crate::native::defer_budget(
+                        cx.tick.actions.begin::<reach::Reach>(
                             reach::ReachArgs {
                                 kind: reach::ReachKind::Loc {
                                     id: Some(trigger.loc_id),
@@ -886,8 +882,8 @@ impl StepRun for MakeRun {
                                 reachable_only: false,
                             },
                             &mut cx.tick.cx,
-                        ))
-                    )?);
+                        )
+                    ))?);
                 } else {
                     let request =
                         make_use_on_request(&trigger, &loc, self.request.menu_id, &cx.tick.cx)?;
