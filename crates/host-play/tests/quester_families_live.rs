@@ -624,6 +624,10 @@ fn inventory_receipt(snapshot: &GameSnapshot) -> Vec<Value> {
 }
 
 fn dialogue_texts(snapshot: &GameSnapshot) -> Vec<String> {
+    dialogue_texts_after(snapshot, i32::MIN)
+}
+
+fn dialogue_texts_after(snapshot: &GameSnapshot, _after: i32) -> Vec<String> {
     let mut texts: Vec<_> = snapshot
         .chat_options()
         .iter()
@@ -1722,13 +1726,20 @@ mod prereq_failure_oracle_tests {
     use script::native::{NativePhase, ScriptFailure, StatusField};
 
     fn fixture() -> (PrereqFailureOracle, GameSnapshot, ScriptStatus, Vec<String>) {
+        fixture_for("FreeSlots", 28)
+    }
+
+    fn fixture_for(
+        expected: &'static str,
+        pies: i32,
+    ) -> (PrereqFailureOracle, GameSnapshot, ScriptStatus, Vec<String>) {
         let (selected, _) = live_data();
         let case = PrereqLiveCase {
             selector: "negative-oracle-unit",
             priest: 60,
             druid: 0,
             bank_dagger: false,
-            pies: 28,
+            pies,
             stand: PREREQ_WEST,
             goal: PREREQ_EAST,
             holy: true,
@@ -1737,11 +1748,11 @@ mod prereq_failure_oracle_tests {
             reclaim: false,
             start: false,
         };
-        let oracle = PrereqFailureOracle::new(selected, "FreeSlots", &case);
+        let oracle = PrereqFailureOracle::new(selected, expected, &case);
         let mut snapshot = GameSnapshot::new();
         snapshot.seed_tile(PREREQ_WEST);
         snapshot.seed_inventory(
-            (0..28)
+            (0..pies)
                 .map(|slot| ItemView {
                     def: api::ItemDefView {
                         id: oracle.meat_pie,
@@ -1780,7 +1791,43 @@ mod prereq_failure_oracle_tests {
             }),
             fields: Arc::from([]),
         };
-        (oracle, snapshot, status, vec![DAGGER_RECLAIM_OPENER.into()])
+        let pages = if expected == "FreeSlots" {
+            vec![DAGGER_RECLAIM_OPENER.into()]
+        } else {
+            vec![]
+        };
+        (oracle, snapshot, status, pages)
+    }
+
+    #[test]
+    fn prereq_negative_oracle_ignores_pre_start_chat() {
+        let (oracle, mut snapshot, status, _) = fixture_for("quest_start is not allowed", 0);
+        snapshot.seed_chat_lines(vec![ChatLineView {
+            type_: 0,
+            username: None,
+            text: "get druidspirit: 0".into(),
+            sequence: 10,
+        }]);
+        let pages = dialogue_texts_after(&snapshot, 10);
+        assert!(oracle
+            .observe(&snapshot, Some(&status), None, &pages)
+            .unwrap()
+            .is_some());
+    }
+
+    #[test]
+    fn prereq_negative_oracle_still_rejects_fresh_chat() {
+        let (oracle, mut snapshot, status, _) = fixture_for("quest_start is not allowed", 0);
+        snapshot.seed_chat_lines(vec![ChatLineView {
+            type_: 0,
+            username: None,
+            text: HOLY_ADVICE.into(),
+            sequence: 11,
+        }]);
+        let pages = dialogue_texts_after(&snapshot, 10);
+        assert!(oracle
+            .observe(&snapshot, Some(&status), None, &pages)
+            .is_err());
     }
 
     #[test]
