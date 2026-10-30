@@ -267,7 +267,7 @@ fn template() -> (Arc<crate::ServerProfile>, Arc<SharedClientTemplate>) {
         nav_pack: Some(required("WORLD_NAV_PACK")),
         ..ProfileOptions::default()
     };
-    let profile = options.resolve(None).unwrap().bind().unwrap();
+    let profile = options.resolve(None).unwrap().bind_runtime().unwrap();
     let template = SharedClientTemplate::load(Arc::clone(&profile)).unwrap();
     (profile, template)
 }
