@@ -130,6 +130,11 @@ pub(super) fn read<'s>(
         "projectAreaGameWorld" => {
             overlay_pos_world(scope, facts, [arg0, arg1, arg2, arg3, arg4], true)
         }
+        // The host builds the scene's projection loc list only for a run that
+        // asked for it (a full-scene model walk per loc rebuild is too costly
+        // for every bot). The first call raises the demand; until the next
+        // host snapshot posts the list, locBox returns null, as it does for a
+        // loc that is not in the live scene.
         "locBox" => {
             scope
                 .get_slot::<Arc<AtomicBool>>()
