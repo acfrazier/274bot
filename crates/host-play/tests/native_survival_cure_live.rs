@@ -1653,16 +1653,13 @@ fn common_receipt(
             snapshot.tick()
         ));
     }
-    // In the dialogue cell a one-line chat page (`chat1`, interface 968) was
-    // open on the frame of the drink decision once (fix-r2/diag, 2026-10-31),
-    // and the drink line still came two ticks later: the engine ran the click.
-    // Only the options page that was open at the policy change blocks it there.
-    let blocked_modal = if witness.activity == Activity::Dialogue {
-        witness.drink_decision_modal.is_none()
-            || witness.drink_decision_modal == witness.profile_change_modal
-    } else {
-        witness.drink_decision_modal != Some(-1)
-    };
+    // The dialogue cell's report says `Drinking` from the frame of its policy
+    // change, while the runner first closes the open options page and only
+    // then sends the drink (`OneOpArgs::close_modal_if_open`), so the modal on
+    // that report frame is not the drink click's. `dialogue_receipt` proves
+    // instead that the drink line followed the close within 2 ticks.
+    let blocked_modal =
+        witness.activity != Activity::Dialogue && witness.drink_decision_modal != Some(-1);
     if blocked_modal {
         return Err(format!(
             "antipoison click was requested while a modal was open: {:?}",
@@ -2099,9 +2096,14 @@ fn dialogue_receipt(
         || source_tick >= page_tick
         || witness.need_step.as_deref() != Some("survival-talk")
         || closed > change.saturating_add(2)
-        || drink < closed
+        || drink < change
         || drink > change.saturating_add(2)
-        || witness.profile_change_modal == Some(drink_modal)
+        // The drink runs in the tick after the close settles. A drink the
+        // engine refused under the open page would cost the drink op's
+        // 3-tick bound before its resend (`gatherer/oneop.rs`
+        // `DRINK_SETTLE_TICKS`), so the line would come later than this.
+        || cure < closed
+        || cure > closed.saturating_add(2)
         || cure < change
         || cure.saturating_sub(change) > 10
         || drop < change
@@ -2317,14 +2319,13 @@ fn assert_common_cure(receipt: &Value, resumed_ticks: u64) {
     assert_eq!(receipt["condition_at_need"]["in_combat"], false);
     assert_eq!(receipt["condition_at_need"]["no_hitmark_at_edge"], true);
     // The dialogue cell's drink follows its policy change (design-final.md:946):
-    // its click must not meet the options page open at that change, and the
-    // settle counts from the change.
+    // its drink line follows the page close within 2 ticks, and the settle
+    // counts from the change.
     let dialogue = receipt["poison_source"] == "yanille-twisted-chest";
     if dialogue {
-        assert_ne!(
-            receipt["drink_decision_chat_modal"],
-            receipt["profile_change_chat_modal"]
-        );
+        let closed = receipt["dialogue_closed_tick"].as_u64().unwrap();
+        let cure = receipt["antipoison_drink_chat_tick"].as_u64().unwrap();
+        assert!(cure >= closed && cure - closed <= 2);
     } else {
         assert_eq!(receipt["drink_decision_chat_modal"], -1);
     }
