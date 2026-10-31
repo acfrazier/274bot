@@ -11601,6 +11601,22 @@ mod death_return_stop_oracle_tests {
     }
 
     #[test]
+    fn request_retirement_after_terminal_is_cleanup_not_a_walk() {
+        let mut witness = stopped_return("walk ended with NoPath");
+        witness
+            .death_return_stop
+            .observe_navigation(104, &quiet_nav(0), true);
+        witness
+            .death_return_stop
+            .observe_tile(104, Some((3092, 3243, 0)), true, Some(false));
+        assert!(interrupts_complete(LiveCase::DeathReturnRefused, &witness));
+        witness
+            .death_return_stop
+            .observe_navigation(105, &quiet_nav(42), true);
+        assert!(!interrupts_complete(LiveCase::DeathReturnRefused, &witness));
+    }
+
+    #[test]
     fn entering_wilderness_after_respawn_fails() {
         let mut witness = stopped_return("walk ended with NoPath");
         witness
