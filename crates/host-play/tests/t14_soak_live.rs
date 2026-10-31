@@ -36,15 +36,11 @@ const GATHERER_SITE_STEP: &str = "stand at the live Draynor normal tree before S
 const GATHERER_TREE_PROOF_STEP: &str = "confirm the selected-289 normal tree is live before Start";
 const GATHERER_RELOG_STEP: &str = "relog successfully so the inventory tab binds before Start";
 
-// Ten normal slots share five disjoint radius-five patches, two slots per patch.
+// Five normal slots each use a disjoint radius-five patch; fifteen slots use oak.
 // The offline audit covers workload routes and ordinary recovery only.
 // Random-event movement is outside this proof.
-const NORMAL_STARTS: [(i32, i32); 10] = [
-    (2943, 3402),
-    (2948, 3398),
-    (2954, 3419),
-    (2960, 3400),
-    (2960, 3411),
+const NORMAL_SLOTS: [usize; 5] = [0, 2, 4, 6, 8];
+const NORMAL_STARTS: [(i32, i32); 5] = [
     (2943, 3402),
     (2948, 3398),
     (2954, 3419),
@@ -1056,6 +1052,41 @@ fn select_sites(root: &Value) -> Result<[BankSite; 2], String> {
         select(0, NORMAL_SITE_ID, "normal")?,
         select(1, SECOND_TIER_SITE_ID, SECOND_TIER_KEY)?,
     ])
+}
+
+fn site_for_slot(index: usize, sites: &[BankSite; 2]) -> BankSite {
+    if let Some(normal_index) = NORMAL_SLOTS.iter().position(|slot| *slot == index) {
+        let mut site = sites[0].clone();
+        let (x, z) = NORMAL_STARTS[normal_index];
+        site.start = WorldTile { x, z, level: 0 };
+        site
+    } else {
+        sites[1].clone()
+    }
+}
+
+#[test]
+fn cohort_keeps_five_lowest_normal_slots_and_moves_the_rest_to_oak() {
+    let sites = select_sites(&json!({
+        "workload": {"site_names": [NORMAL_SITE_ID, SECOND_TIER_SITE_ID]}
+    }))
+    .expect("selected content sites");
+    let mut counts = [0, 0];
+    for slot in 0..20 {
+        let site = site_for_slot(slot, &sites);
+        if slot < 10 && slot % 2 == 0 {
+            counts[0] += 1;
+            assert_eq!(site.resource, "normal");
+            assert_eq!((site.start.x, site.start.z), NORMAL_STARTS[slot / 2]);
+        } else {
+            counts[1] += 1;
+            assert_eq!(site.resource, SECOND_TIER_KEY);
+            assert_eq!((site.start.x, site.start.z), SECOND_TIER_START);
+        }
+        assert_eq!(site.start.level, 0);
+        assert_eq!(site.bank, SOAK_BANK);
+    }
+    assert_eq!(counts, [5, 15]);
 }
 
 fn make_site(site: &GatherSiteOption, resource: &'static str) -> Result<BankSite, String> {
@@ -2178,11 +2209,7 @@ fn run_live(config_path: &Path, output: &Path) -> Result<(), String> {
     let run_started = Instant::now();
     let mut actors = BTreeMap::new();
     for (index, account) in names.iter().enumerate() {
-        let mut site = config.sites[index % config.sites.len()].clone();
-        if site.resource == "normal" {
-            let (x, z) = NORMAL_STARTS[index / config.sites.len()];
-            site.start = WorldTile { x, z, level: 0 };
-        }
+        let site = site_for_slot(index, &config.sites);
         let actor = make_actor(
             account.clone(),
             site,
