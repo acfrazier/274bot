@@ -1954,7 +1954,6 @@ mod tests {
         ] {
             assert_eq!(fixture_profile(quest).unwrap(), TestProfile::Base60);
         }
-        assert_eq!(fixture_profile("arthur").unwrap(), TestProfile::Base40);
     }
 
     #[test]

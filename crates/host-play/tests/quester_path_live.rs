@@ -1374,9 +1374,48 @@ mod smoke_tests {
     }
 
     #[test]
-    fn arthur_smoke_selection_uses_the_base40_floor() {
+    fn arthur_fixture_seeds_minimum_combat_stats() {
         let row = smoke_row("arthur").unwrap();
-        assert_eq!(row.profile, TestProfile::Base40);
+        let path =
+            serde_json::from_str(include_str!("../../script/paths/289/arthur.json")).unwrap();
+        let selected = api::game_data::for_revision(api::selected::ClientRevision::R289).unwrap();
+        let fixture =
+            scenario::quester::build_quester_path_fixture(scenario::quester::QuesterPathFixture {
+                name: "arthur-floor",
+                quest_display: row.display,
+                path: &path,
+                selected: &selected,
+                stage: Some("arthur:3"),
+                loadout: None,
+                extra_items: &[],
+                seed_vars: &[],
+                stand: WorldTile {
+                    x: 2769,
+                    z: 3403,
+                    level: 2,
+                },
+                before_relog: Vec::new(),
+            })
+            .unwrap();
+        let combat_stats: Vec<_> = fixture
+            .seed
+            .stats
+            .iter()
+            .filter(|stat| stat.skill <= 6)
+            .map(|stat| (stat.skill, stat.level))
+            .collect();
+        assert_eq!(
+            combat_stats,
+            [
+                (0, 40),
+                (1, 40),
+                (2, 40),
+                (3, 40),
+                (4, 40),
+                (5, 43),
+                (6, 40)
+            ]
+        );
     }
 
     fn cook_cell(seeds: &QuesterPathSeeds) -> Cell {
