@@ -508,6 +508,8 @@ fn bank_path(bank: WorldTile, bank_required: bool) -> PathDocument {
         obj: LAW_RUNE_ALIAS.to_owned(),
         qty: 1,
         kind: QuestItemKindDocument::MustHave,
+        acquire: None,
+        from_stage: None,
     }];
     quest.acquire.clear();
     quest.bank = QuestBankDocument::Tile {
