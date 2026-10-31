@@ -2292,6 +2292,7 @@ impl GatherSlot {
             ));
         }
         let scene = self.snapshot.scene();
+        let approach_options = auto_approach_options(scene.width, scene.height);
         let start_query = api::query::SceneQuery::new(scene, Some(self.target));
         if !start_query.walkable(self.target) {
             return Err(format!(
@@ -2301,15 +2302,7 @@ impl GatherSlot {
         }
         let next = auto_next_group(self.target, &latest.normal_trees)
             .into_iter()
-            .filter(|&tree| {
-                start_query.can_reach(
-                    tree,
-                    &api::query::SceneReachOptions {
-                        adjacent_ok: true,
-                        ..Default::default()
-                    },
-                )
-            })
+            .filter(|&tree| start_query.can_reach(tree, &approach_options))
             .collect::<Vec<_>>();
         if next.is_empty() {
             return Err(format!(
@@ -3791,6 +3784,7 @@ impl GatherSlot {
                                 .tile()
                                 .map(|(x, z, level)| WorldTile { x, z, level });
                         let scene_query = api::query::SceneQuery::new(scene, player_tile);
+                        let approach_options = auto_approach_options(scene.width, scene.height);
                         let reachable = scene_query
                             .flood_reach()
                             .ok_or("Auto fixture has no observed collision reachability")?;
@@ -3809,10 +3803,7 @@ impl GatherSlot {
                                             api::query::SceneQuery::new(scene, Some(from))
                                                 .can_reach(
                                                     tree,
-                                                    &api::query::SceneReachOptions {
-                                                        adjacent_ok: true,
-                                                        ..Default::default()
-                                                    },
+                                                    &approach_options,
                                                 )
                                         },
                                     )
@@ -5444,6 +5435,19 @@ fn observe_death_respawn_region(
                 && death.1.div_euclid(64) == respawn.1.div_euclid(64)
                 && death.2 == respawn.2
         });
+}
+
+fn auto_approach_options(width: i32, height: i32) -> api::query::SceneReachOptions {
+    api::query::SceneReachOptions {
+        // A tree outside the 32-tile ring can exceed the API's 400-expansion
+        // default. Search the observed scene, not an unbounded world region.
+        max_steps: Some(
+            u32::try_from(width)
+                .unwrap_or(0)
+                .saturating_mul(u32::try_from(height).unwrap_or(0)),
+        ),
+        adjacent_ok: true,
+    }
 }
 
 fn auto_start_candidate(
@@ -10405,6 +10409,24 @@ mod gatherer_real_content_fixture_tests {
     }
 
     #[test]
+    fn auto_approach_search_covers_the_scene_instead_of_the_default_400_expansions() {
+        let origin = world_tile(3058, 3169);
+        let tree = world_tile(3025, 3169);
+        let probe = CollisionArrivalProbe::new(|_| Some(0));
+        assert!(!probe.can_reach_from(
+            origin,
+            tree,
+            &SceneReachOptions {
+                adjacent_ok: true,
+                ..Default::default()
+            },
+        ));
+        assert!(probe.can_reach_from(origin, tree, &auto_approach_options(104, 104)));
+        assert!(!probe.can_reach_from(origin, tree, &auto_approach_options(0, 104)));
+        assert!(!probe.can_reach_from(origin, tree, &auto_approach_options(104, -1)));
+    }
+
+    #[test]
     fn auto_fixture_uses_observed_tree_placements_without_location_seeds() {
         let (target, plan, task) = fixture_plan(Cell::Woodcutting, LiveCase::LocationAuto).unwrap();
         assert_eq!(target, AUTO_START);
@@ -10490,26 +10512,34 @@ mod gatherer_real_content_fixture_tests {
         let collision = &world.collision;
         let probe = CollisionArrivalProbe::new(|tile| packed_collision_at(collision, tile));
         let trees = auto_real_scene_trees();
+        let options = auto_approach_options(auto_test_build().width, auto_test_build().height);
         let start = auto_start_candidate(
             AUTO_START,
             auto_test_build(),
             &trees,
-            |tile| probe.can_reach_from(AUTO_START, tile, &SceneReachOptions::default()),
-            |tile| collision.standable(tile),
-            |from, tree| {
+            |tile| {
                 probe.can_reach_from(
-                    from,
-                    tree,
+                    AUTO_START,
+                    tile,
                     &SceneReachOptions {
-                        adjacent_ok: true,
-                        ..Default::default()
+                        adjacent_ok: false,
+                        ..options
                     },
                 )
             },
+            |tile| collision.standable(tile),
+            |from, tree| probe.can_reach_from(from, tree, &options),
         )
         .expect("the real nav pack must admit a reachable stand beside an authored tree");
         assert!(collision.standable(start));
-        assert!(probe.can_reach_from(AUTO_START, start, &SceneReachOptions::default()));
+        assert!(probe.can_reach_from(
+            AUTO_START,
+            start,
+            &SceneReachOptions {
+                adjacent_ok: false,
+                ..options
+            },
+        ));
         assert!(trees
             .iter()
             .all(|&tree| { tile_distance(tree, start).is_none_or(|distance| distance > 32) }));
@@ -10522,10 +10552,7 @@ mod gatherer_real_content_fixture_tests {
                         z: tree.1,
                         level: tree.2,
                     },
-                    &SceneReachOptions {
-                        adjacent_ok: true,
-                        ..Default::default()
-                    },
+                    &options,
                 )
         }));
     }

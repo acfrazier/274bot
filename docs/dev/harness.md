@@ -733,6 +733,8 @@ origin with no real tree inside its 32-tile ring. A real tree 33–128 tiles awa
 must have a reachable adjacent approach. The fixture rechecks the origin and
 approaches against the observed scene after teleporting; a flood-reachable but
 blocked origin does not qualify.
+The adjacent-approach prerequisite uses a scene-sized expansion budget, not
+the query API's 400-expansion default for short reach checks.
 
 The refused death-return fixture uses the real oak at `(3204,3525,0)`, away
 from the old Skeleton danger zone. It starts in the wilderness but leaves
