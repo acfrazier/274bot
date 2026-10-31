@@ -66,6 +66,10 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.7` 
 - The Quester now eats during quest steps with declared damage, including
   the Tourist Trap cell climb and mine cart, not only in fights and on walks.
   Each guide cites the game's own script for its damage bound.
+- The Quester waits for Hitpoints data before it checks if a step hazard is
+  survivable.
+- The Quester clears the old hazard after a run change, a death, a session end,
+  or when no step is selected.
 
 ### Survival
 
