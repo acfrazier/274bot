@@ -2332,10 +2332,28 @@ fn assert_roll(run: &LiveRun, tick: u64) -> Result<(), String> {
     Ok(())
 }
 
-fn require_verdict_duration(run: &LiveRun, counter: &str, duration: i64) -> Result<(), String> {
-    if run.counter(counter).unwrap_or(0) < 1 || run.counter("tick_cycle") != Some(duration) {
+fn first_nonverified_verdict_present(
+    counter: Option<i64>,
+    last_cycle: Option<i64>,
+    verified: Option<i64>,
+    unobserved: Option<i64>,
+) -> bool {
+    // DESIGN r5:114: only a verified or unobserved cycle updates tick_cycle.
+    counter.is_some_and(|count| count > 0)
+        && last_cycle == Some(-1)
+        && verified == Some(0)
+        && unobserved == Some(0)
+}
+
+fn require_first_nonverified_verdict(run: &LiveRun, counter: &str) -> Result<(), String> {
+    if !first_nonverified_verdict_present(
+        run.counter(counter),
+        run.counter("tick_cycle"),
+        run.counter("tick_verified"),
+        run.counter("tick_unobserved"),
+    ) {
         return Err(run.failure(format!(
-            "expected {counter} with cycle duration {duration}; counter={:?} tick_cycle={:?}",
+            "expected first {counter} without a verified/unobserved cycle; counter={:?} tick_cycle={:?}",
             run.counter(counter),
             run.counter("tick_cycle")
         )));
@@ -2468,7 +2486,7 @@ fn normalized_prefix(evidence: &RunEvidence, end_offset: u32) -> PrefixTrace {
         return PrefixTrace::default();
     };
     let baseline_xp: BTreeMap<i32, i32> = baseline.skill_xp.iter().copied().collect();
-    let frames = evidence
+    let mut frames: Vec<_> = evidence
         .trace
         .frames
         .iter()
@@ -2509,6 +2527,9 @@ fn normalized_prefix(evidence: &RunEvidence, end_offset: u32) -> PrefixTrace {
             })
         })
         .collect();
+    // Wake frequency is not a content signal. Preserve edges and every state
+    // transition, but do not compare the number of unchanged host polls.
+    frames.dedup();
     let dispatches = evidence
         .trace
         .dispatches
@@ -2543,7 +2564,7 @@ fn normalized_prefix(evidence: &RunEvidence, end_offset: u32) -> PrefixTrace {
             })
         })
         .collect();
-    let statuses = evidence
+    let mut statuses: Vec<_> = evidence
         .statuses
         .iter()
         .filter_map(|status| {
@@ -2568,12 +2589,41 @@ fn normalized_prefix(evidence: &RunEvidence, end_offset: u32) -> PrefixTrace {
             })
         })
         .collect();
+    statuses.dedup();
     PrefixTrace {
         frames,
         dispatches,
         wire,
         statuses,
     }
+}
+
+fn prefix_difference(left: &PrefixTrace, right: &PrefixTrace) -> Option<String> {
+    fn first_difference<T: PartialEq + std::fmt::Debug>(
+        name: &str,
+        left: &[T],
+        right: &[T],
+    ) -> Option<String> {
+        if left == right {
+            return None;
+        }
+        let index = left
+            .iter()
+            .zip(right)
+            .position(|(left, right)| left != right)
+            .unwrap_or(left.len().min(right.len()));
+        Some(format!(
+            "{name}: lengths {} vs {}; first difference at {index}: {:?} vs {:?}",
+            left.len(),
+            right.len(),
+            left.get(index),
+            right.get(index)
+        ))
+    }
+    first_difference("frames", &left.frames, &right.frames)
+        .or_else(|| first_difference("dispatches", &left.dispatches, &right.dispatches))
+        .or_else(|| first_difference("wire", &left.wire, &right.wire))
+        .or_else(|| first_difference("statuses", &left.statuses, &right.statuses))
 }
 
 #[test]
@@ -2748,7 +2798,7 @@ fn tick_engine_stale_menu_guard_late_case_two() {
             ));
         }
         assert_click(run, &trace, origin + 2)?;
-        require_verdict_duration(run, "tick_slips", 4)?;
+        require_first_nonverified_verdict(run, "tick_slips")?;
         assert_log_unchanged(run)?;
         assert_running(run)
     })
@@ -2781,7 +2831,7 @@ fn tick_engine_split_opener_late_case_one() {
         let trace = run.hook.trace();
         assert_click(run, &trace, origin + 2)?;
         assert_roll(run, origin + 4)?;
-        require_verdict_duration(run, "tick_slips", 4)?;
+        require_first_nonverified_verdict(run, "tick_slips")?;
         if trace
             .wire
             .iter()
@@ -2833,7 +2883,7 @@ fn tick_engine_plain_late_river_and_mithril_iron() {
         let trace = run.hook.trace();
         assert_click(run, &trace, origin + 2)?;
         assert_roll(run, origin + 5)?;
-        require_verdict_duration(run, "tick_slips", 5)?;
+        require_first_nonverified_verdict(run, "tick_slips")?;
         if knife_dispatches(&trace)
             .iter()
             .filter(|dispatch| dispatch.game_tick < origin + 5)
@@ -2883,7 +2933,7 @@ fn tick_engine_plain_late_river_and_mithril_iron() {
         let trace = run.hook.trace();
         assert_click(run, &trace, origin + 2)?;
         assert_roll(run, origin + 5)?;
-        require_verdict_duration(run, "tick_slips", 5)?;
+        require_first_nonverified_verdict(run, "tick_slips")?;
         if knife_dispatches(&trace)
             .iter()
             .any(|dispatch| dispatch.game_tick < origin + 5 && dispatch.game_tick != origin)
@@ -3018,10 +3068,8 @@ fn tick_engine_copper_success_and_delayed_first_batch_history() {
         .unwrap_or_else(|error| panic!("{error}"));
     let normal_prefix = normalized_prefix(&normal, 2);
     let held_prefix = normalized_prefix(&held, 2);
-    if normal_prefix != held_prefix {
-        panic!(
-            "copper host trace diverged before the second edge\nnormal={normal_prefix:#?}\nheld={held_prefix:#?}"
-        );
+    if let Some(difference) = prefix_difference(&normal_prefix, &held_prefix) {
+        panic!("copper host trace diverged before the second edge: {difference}");
     }
 }
 
@@ -3067,7 +3115,7 @@ fn tick_engine_removed_target_refuses_prefix_zero_and_continues() {
             return Err(run.failure("host-refused target removal emitted a Client packet"));
         }
         assert_click(run, &trace, origin + 1)?;
-        require_verdict_duration(run, "tick_lost", 1)?;
+        require_first_nonverified_verdict(run, "tick_lost")?;
         assert_running(run)
     })
     .unwrap_or_else(|error| panic!("{error}"));
@@ -3269,10 +3317,8 @@ fn tick_engine_lone_opener_with_and_without_snapshot_suppression() {
         .unwrap_or_else(|error| panic!("{error}"));
     let visible_prefix = normalized_prefix(&visible, 3);
     let hidden_prefix = normalized_prefix(&hidden, 3);
-    if visible_prefix != hidden_prefix {
-        panic!(
-            "lone-opener host trace changed when IF_OPENCHAT was snapshot-suppressed\nvisible={visible_prefix:#?}\nhidden={hidden_prefix:#?}"
-        );
+    if let Some(difference) = prefix_difference(&visible_prefix, &hidden_prefix) {
+        panic!("lone-opener host trace changed when IF_OPENCHAT was snapshot-suppressed: {difference}");
     }
 }
 
@@ -3413,6 +3459,25 @@ mod packet_oracle_tests {
             tick_events: Some(0),
         });
         evidence
+    }
+
+    #[test]
+    fn first_nonverified_verdict_does_not_invent_a_last_verified_duration() {
+        assert!(first_nonverified_verdict_present(
+            Some(1), Some(-1), Some(0), Some(0)
+        ));
+        for (counter, cycle, verified, unobserved) in [
+            (Some(0), Some(-1), Some(0), Some(0)),
+            (None, Some(-1), Some(0), Some(0)),
+            (Some(1), Some(4), Some(0), Some(0)),
+            (Some(1), Some(5), Some(0), Some(0)),
+            (Some(1), Some(-1), Some(1), Some(0)),
+            (Some(1), Some(-1), Some(0), Some(1)),
+        ] {
+            assert!(!first_nonverified_verdict_present(
+                counter, cycle, verified, unobserved
+            ));
+        }
     }
 
     #[test]
