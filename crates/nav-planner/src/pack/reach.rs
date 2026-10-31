@@ -309,8 +309,8 @@ fn decode_labels(payload: &[u8]) -> Result<ReachabilityAtlas, PackError> {
     }
     let chunk_bytes = table_bytes(payload, ents[1])?;
     let expected_chunks = (KEY_LEVELS as u32)
-        .checked_mul(height.div_ceil(CHUNK_SIDE))
-        .and_then(|n| n.checked_mul(width.div_ceil(CHUNK_SIDE)))
+        .checked_mul(height.div_ceil(chunk_side()))
+        .and_then(|n| n.checked_mul(width.div_ceil(chunk_side())))
         .ok_or_else(|| PackError::BadLength("atlas chunk count overflows".into()))?;
     if ents[1].count != expected_chunks {
         return Err(PackError::BadLength(
