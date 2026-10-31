@@ -40,8 +40,8 @@
 //! the stage, stand, loadout, extra items, explicit stage seeds, pre-relog
 //! cheats and expected stages) and optional `QUESTER_PATH_DIR` (an absolute
 //! folder served through the existing `FolderSource` registry, shadowing the
-//! embedded release index). It runs with the Base40 qualification profile
-//! under a fixed deadline.
+//! embedded release index). It uses the qualification profile in the fixture
+//! table under a fixed deadline.
 //! `QUESTER_TICK_MS` is supported only by the single-account generic Path
 //! smoke. `::speed` changes world-wide tick speed; use it only on isolated
 //! Engine Q, never on shared Engine A or the builder. The shared runner waits

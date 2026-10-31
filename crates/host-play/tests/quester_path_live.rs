@@ -184,6 +184,12 @@ mod smoke_tests {
         scenario::quester::parse_quester_path_seeds(text, "QUESTER_SEEDS")
     }
 
+    #[test]
+    fn base60_arthur_profile_is_accepted_by_smoke_selection() {
+        let row = smoke_row("arthur").unwrap();
+        assert_eq!(row.profile, TestProfile::Base60);
+    }
+
     fn cook_cell(seeds: &QuesterPathSeeds) -> Cell {
         let row = smoke_row("cook").unwrap();
         assert_eq!(row.display, "Cook's Assistant");

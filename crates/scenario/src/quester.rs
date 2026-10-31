@@ -176,8 +176,13 @@ pub const FIXTURE_PROFILES: &[QuestFixtureProfile] = &[
         display: "Vampire Slayer",
         profile: TestProfile::Base40,
     },
-    // PATHS-OVERNIGHT folder Paths. Base40 until the operator names Base60
+    // PATHS-OVERNIGHT folder Paths. Base40 unless the operator names Base60
     // or a recorded live run establishes the need.
+    QuestFixtureProfile {
+        quest: "arthur",
+        display: "Merlin's Crystal",
+        profile: TestProfile::Base60,
+    },
     QuestFixtureProfile {
         quest: "cog",
         display: "Clock Tower",
@@ -1940,6 +1945,7 @@ mod tests {
             "legends",
             "elemental_workshop",
             "horror",
+            "arthur",
         ] {
             assert_eq!(fixture_profile(quest).unwrap(), TestProfile::Base60);
         }

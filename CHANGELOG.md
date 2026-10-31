@@ -255,6 +255,9 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.8` 
   fight ends `api.combat.fight` as `aborted` with reason `user-input`. The host
   has settled it that way since 0.2.4; the declarations and pages still
   described an `interrupted` result.
+- A continuation-only Quester dialogue now waits through content's close/open
+  handoff for its first page. A lingering local-player health-bar window no
+  longer interrupts the handoff.
 
 ### Not in this release
 
