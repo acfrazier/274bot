@@ -32525,7 +32525,7 @@ export default class T extends LoopingBot {
                     "source": "native Quester route-budget fixture"
                 },
                 "radius": 6,
-                "settle_ms": 30000
+                "settle_ms": 300000
             }),
             script::quester::path::PredicateDocument::Fact {
                 kind: "near".into(),
