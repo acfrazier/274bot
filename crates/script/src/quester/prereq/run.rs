@@ -35,6 +35,11 @@ pub(crate) const PAGE_TICKS: u16 = 1;
 pub(crate) const NPC_STEP_TICKS: u16 = 2;
 // Accepted send allowance, not a content guarantee. Live cells pin observed counts.
 pub(crate) const SEND_SLACK_TICKS: u16 = 2;
+// One retry covers the one-shot auto-run press: player_controls.rs2:34-46
+// closes the modal and enables run; host/src/lib.rs:1429-1439 latches it.
+// quest_journal.rs2:1-55 has no delay. After the reader's five observed-tick
+// window, retry on the next observed tick, never again within that same tick.
+const JOURNAL_TIMEOUT_RETRIES: u8 = 1;
 
 /// Repeated polls and scene changes cannot spend this wait: only observed ticks do.
 #[derive(Clone, Copy)]
@@ -185,7 +190,11 @@ pub struct Done {
 
 enum Phase {
     Resolve,
-    Journal(Option<ActionHandle<JournalMachine>>),
+    Journal {
+        handle: Option<ActionHandle<JournalMachine>>,
+        retries_left: u8,
+        retry_after: Option<u64>,
+    },
     ProbeApproach(Option<ActionHandle<Walk>>),
     Probe {
         run: Box<InteractRun>,
@@ -311,7 +320,7 @@ impl PrereqRun {
             }
             Phase::Child { run, .. } => run.revoker(),
             Phase::Close { handle, .. } => Some(handle.revoker()),
-            Phase::Journal(handle) => handle.as_ref().map(ActionHandle::revoker),
+            Phase::Journal { handle, .. } => handle.as_ref().map(ActionHandle::revoker),
             _ => None,
         }
     }
@@ -354,11 +363,23 @@ impl PrereqRun {
                         gate: self.gate.gate.clone(),
                     }));
                 }
-                self.phase = Phase::Journal(None);
+                self.phase = Phase::Journal {
+                    handle: None,
+                    retries_left: JOURNAL_TIMEOUT_RETRIES,
+                    retry_after: None,
+                };
             }
-            let Phase::Journal(handle) = &mut self.phase else {
+            let Phase::Journal {
+                handle,
+                retries_left,
+                retry_after,
+            } = &mut self.phase
+            else {
                 return Poll::Ready(Err(PrereqRefusal::StepUnwitnessed { step }));
             };
+            if retry_after.is_some_and(|tick| cx.evidence().tick <= tick) {
+                return Poll::Pending;
+            }
             if handle.is_none() {
                 if !cx.may_begin_this_tick() {
                     return Poll::Pending;
@@ -385,6 +406,14 @@ impl PrereqRun {
             }
             let read = match actions.poll(handle.as_ref().expect("journal owner"), cx) {
                 Poll::Pending => return Poll::Pending,
+                Poll::Ready(Err(ActionError::Failed(reason)))
+                    if reason.as_ref() == "journal modal timeout" && *retries_left > 0 =>
+                {
+                    *retries_left -= 1;
+                    *handle = None;
+                    *retry_after = Some(cx.evidence().tick);
+                    return Poll::Pending;
+                }
                 Poll::Ready(Err(error)) => {
                     self.phase = Phase::Complete;
                     return Poll::Ready(Err(failed(step, action_failure(error))));
@@ -989,7 +1018,7 @@ impl PrereqRun {
                         return Poll::Ready(Err(failed(self.step(row), action_failure(error))))
                     }
                 },
-                Phase::Journal(_) => {
+                Phase::Journal { .. } => {
                     return Poll::Ready(Err(PrereqRefusal::StepUnwitnessed {
                         step: self.step(row),
                     }));

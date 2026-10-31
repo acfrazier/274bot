@@ -2206,6 +2206,9 @@ fn journal_observation(
             Poll::Ready(Err(PrereqRefusal::StepUnwitnessed { .. }))
         )),
     }
+    if expected.is_none() {
+        assert!(state.prereq_snapshot().facts().is_empty());
+    }
     with_tick(&snapshot, &mut ledger, 3, |native| {
         let acquired = EvidenceStamp {
             tick: 2,
@@ -2240,7 +2243,7 @@ fn journal_observation(
 
 #[test]
 fn kitchen_journal_phoenix_completion_establishes_membership() {
-    // blackarmgang_journal.rs2:96-108. The row colour is shared with Black Arm.
+    // blackarmgang_journal.rs2:16,96-108,203-204. The row colour is shared with Black Arm.
     kitchen_journal_observation(
         &[
             "@str@I searched the Phoenix Gang Headquarters and found",

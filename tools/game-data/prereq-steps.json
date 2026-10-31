@@ -287,7 +287,7 @@
             "quest complete!"
           ],
           "proves": { "min": 10, "max": 10 },
-          "source": "scripts/quests/quest_blackarmgang/scripts/blackarmgang_journal.rs2:96-108,203-205; scripts/general/configs/quest.constant:8"
+          "source": "scripts/quests/quest_blackarmgang/scripts/blackarmgang_journal.rs2:16,96-108,203-204; scripts/general/configs/quest.constant:8"
         },
         {
           "all": [

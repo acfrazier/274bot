@@ -607,15 +607,27 @@ The same catalog can declare a journal evidence source instead of a world
 interaction. The runner reads that page through the native journal owner:
 one quest-row click, a fresh title-checked page, one close, and an observed
 close. All source-pinned text rules must match within that page. No match
-or multiple matches leave the gate closed. The session remembers the
-proved signal range and its content-checked preservation range.
+or multiple matches leave the gate closed. A failed journal read also leaves
+the gate closed and blocks the walk. The session remembers only the proved
+signal range and its content-checked preservation range.
 
 The Shield of Arrav page distinguishes completed Phoenix and Black Arm
 accounts even though their quest-list row has the same green colour.
-Its Phoenix completion text proves `phoenixgang = 10`. Its Black Arm
-completion text proves `phoenixgang < 9`. The Brimhaven kitchen can therefore
+Its Phoenix completion text proves `phoenixgang = 10`: the Phoenix section
+requires Black Arm to remain unjoined (`blackarmgang_journal.rs2:16`).
+Together, its Phoenix text at line 104 and completion text at lines 203-204
+therefore prove Phoenix completion, not Black Arm completion.
+Its Black Arm completion text proves `phoenixgang < 9`.
+The Brimhaven kitchen can therefore
 use real membership evidence rather than guessing from that shared row.
 The runner reads once per prerequisite attempt, not per tick or search.
+A `journal modal timeout` permits one retry, on the next observed game tick
+after the timeout. Each read retains the journal owner's five-tick window.
+The run-on button closes modals once before enabling run
+(`player_controls.rs2:34-46`). The host latches that send
+(`crates/host/src/lib.rs:1429-1439`), so one retry covers this login race.
+The journal content opens the page without a delay (`quest_journal.rs2:1-55`).
+If the retry fails, the walk blocks with the last failure's detail.
 Later walks in the same run retain the completed Phoenix proof. The Black
 Arm range widens conservatively after acquisition, so it never grants
 Phoenix membership. Neither this read nor the search starts a quest or
