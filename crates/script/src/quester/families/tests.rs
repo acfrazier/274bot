@@ -7175,6 +7175,10 @@ fn anchored_interact_wall_retries_typed_incomplete_route() {
             with_step(tick, |step| run.poll(step))
         })
         .is_pending());
+        assert!(with_tick(&snapshot, &mut ledger, 5, |tick| {
+            with_step(tick, |step| run.poll(step))
+        })
+        .is_pending());
         assert!(matches!(
             ledger.as_ref().unwrap().outbox.last().map(|entry| &entry.effect),
             Some(HostEffect::Walk(request))
