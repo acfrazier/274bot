@@ -1,0 +1,11 @@
+{
+  "quest": "priest",
+  "quest_varp": "prieststart",
+  "quest_display": "The Restless Ghost",
+  "stats": {},
+  "coins": 0,
+  "items": [],
+  "completed": [],
+  "quest_points": 0,
+  "start_tile": [3243, 3206, 0]
+}
