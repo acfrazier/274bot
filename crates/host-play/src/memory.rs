@@ -74,9 +74,9 @@ impl Q4FrameArm {
             Ok(other) => Err(format!(
                 "BOT_MEMORY_Q4_LISTENER must be 0 or 1, got {other}"
             )),
-            Err(std::env::VarError::NotPresent) => {
-                Err("BOT_MEMORY_Q4_LISTENER must be 0 or 1 for accountleveler_listener_probe".into())
-            }
+            Err(std::env::VarError::NotPresent) => Err(
+                "BOT_MEMORY_Q4_LISTENER must be 0 or 1 for accountleveler_listener_probe".into(),
+            ),
             Err(error) => Err(format!("BOT_MEMORY_Q4_LISTENER: {error}")),
         }
     }
@@ -608,10 +608,7 @@ const Q4_ACCOUNTLEVELER_PROBE_SOURCE: &str = r##"export default class AccountLev
     }
 }"##;
 
-fn q4_accountleveler_probe_source(
-    arm: Q4FrameArm,
-    cell: Q4FrameCell,
-) -> Result<String, String> {
+fn q4_accountleveler_probe_source(arm: Q4FrameArm, cell: Q4FrameCell) -> Result<String, String> {
     let listener_start = "        this.stopObserving = BotHost.addFrameListener(() => {\n";
     if cell.has_listener() != (arm == Q4FrameArm::Listener) {
         return Err("Q4 cell and listener arm do not match".into());
@@ -640,16 +637,23 @@ fn q4_accountleveler_probe_source(
         .find(end_marker)
         .map(|offset| listener_start_at + offset + end_marker.len())
         .ok_or("AccountLeveler-listener probe block was incomplete")?;
-    let listener_source =
-        &Q4_ACCOUNTLEVELER_PROBE_SOURCE[listener_start_at..listener_end_at];
+    let listener_source = &Q4_ACCOUNTLEVELER_PROBE_SOURCE[listener_start_at..listener_end_at];
     if listener_source.matches("Bank.items()").count() != 1
         || listener_source.matches("Bank.ready()").count() != 1
-        || listener_source.find("this.stock.observe").unwrap_or(usize::MAX)
-            >= listener_source.find("this.session.sampleWork").unwrap_or(usize::MAX)
-        || listener_source.find("this.session.sampleWork").unwrap_or(usize::MAX)
+        || listener_source
+            .find("this.stock.observe")
+            .unwrap_or(usize::MAX)
+            >= listener_source
+                .find("this.session.sampleWork")
+                .unwrap_or(usize::MAX)
+        || listener_source
+            .find("this.session.sampleWork")
+            .unwrap_or(usize::MAX)
             >= listener_source.find("Game.tile()").unwrap_or(usize::MAX)
     {
-        return Err("AccountLeveler-listener probe body does not match the pinned call order".into());
+        return Err(
+            "AccountLeveler-listener probe body does not match the pinned call order".into(),
+        );
     }
     let mut transformed = Q4_ACCOUNTLEVELER_PROBE_SOURCE.to_owned();
     match cell {
@@ -658,7 +662,8 @@ fn q4_accountleveler_probe_source(
         }
         Q4FrameCell::Removal => {
             let removal_after_ms = Q4_REMOVAL_DELAY.as_millis();
-            let removal_at = format!("        const memabRemovalAt = Date.now() + {removal_after_ms};\n");
+            let removal_at =
+                format!("        const memabRemovalAt = Date.now() + {removal_after_ms};\n");
             transformed.insert_str(listener_start_at, &removal_at);
             let guard_anchor = "            this.stock.observe";
             let guard_at = transformed
@@ -682,7 +687,6 @@ fn q4_accountleveler_probe_source(
     }
     Ok(transformed)
 }
-
 
 const READY_SETTLE: Duration = Duration::from_secs(2);
 
@@ -2110,10 +2114,7 @@ fn scenario_loadouts(settings: &scenario::ScenarioSettings) -> Arc<[api::loadout
         .into()
 }
 
-fn q4_accountleveler_probe_card(
-    arm: Q4FrameArm,
-    cell: Q4FrameCell,
-) -> Result<ScriptCard, String> {
+fn q4_accountleveler_probe_card(arm: Q4FrameArm, cell: Q4FrameCell) -> Result<ScriptCard, String> {
     let source = q4_accountleveler_probe_source(arm, cell)?;
     let js = script_js::transpile_ts(&source)?;
     let bag = script::settings_store::merge_bag(&[], &serde_json::Map::new(), None);
@@ -2334,8 +2335,7 @@ impl Run {
                 Some(q4_accountleveler_probe_card(
                     q4_frame_arm
                         .ok_or("accountleveler_listener_probe requires a Q4 listener arm")?,
-                    q4_frame_cell
-                        .ok_or("accountleveler_listener_probe requires a Q4 cell")?,
+                    q4_frame_cell.ok_or("accountleveler_listener_probe requires a Q4 cell")?,
                 )?)
             } else {
                 let benchmark = scenario::get(scenario_name)
@@ -3652,14 +3652,15 @@ mod tests {
             Q4FrameArm::from_env("thiever", Workload::Active).unwrap(),
             None
         );
-        assert!(Q4FrameArm::from_env("accountleveler_listener_probe", Workload::SeededIdle).is_err());
+        assert!(
+            Q4FrameArm::from_env("accountleveler_listener_probe", Workload::SeededIdle).is_err()
+        );
         assert!(Q4FrameArm::from_env("accountleveler_listener_probe", Workload::Active).is_err());
 
         std::env::set_var("BOT_MEMORY_Q4_LISTENER", "1");
-        let listener =
-            Q4FrameArm::from_env("accountleveler_listener_probe", Workload::Active)
-                .unwrap()
-                .expect("listener arm");
+        let listener = Q4FrameArm::from_env("accountleveler_listener_probe", Workload::Active)
+            .unwrap()
+            .expect("listener arm");
         assert_eq!(
             Q4FrameCell::from_env(listener).unwrap(),
             Q4FrameCell::BusyFullBankSampling
@@ -3681,9 +3682,7 @@ mod tests {
         std::env::set_var("BOT_MEMORY_Q4_CELL", "unknown");
         assert!(Q4FrameCell::from_env(zero).is_err());
         std::env::set_var("BOT_MEMORY_Q4_LISTENER", "invalid");
-        assert!(
-            Q4FrameArm::from_env("accountleveler_listener_probe", Workload::Active).is_err()
-        );
+        assert!(Q4FrameArm::from_env("accountleveler_listener_probe", Workload::Active).is_err());
     }
 
     #[cfg(feature = "js")]
