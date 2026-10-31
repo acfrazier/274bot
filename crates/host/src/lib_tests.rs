@@ -856,6 +856,7 @@ fn auto_run_yields_to_script_action_and_recurs_after_energy_and_session_changes(
 
     client.main_modal_id = 5292;
     client.gens.player_info += 1;
+    client.gens.player += 1;
     slot.after_drain(&mut client);
     assert_eq!(slot.snapshot.tick(), action_tick + 1);
     slot.apply_auto_run(&mut client);
@@ -864,6 +865,7 @@ fn auto_run_yields_to_script_action_and_recurs_after_energy_and_session_changes(
 
     client.main_modal_id = -1;
     client.gens.player_info += 1;
+    client.gens.player += 1;
     slot.after_drain(&mut client);
     assert_eq!(slot.snapshot.tick(), action_tick + 2);
     slot.apply_auto_run(&mut client);
@@ -873,6 +875,7 @@ fn auto_run_yields_to_script_action_and_recurs_after_energy_and_session_changes(
     client.runenergy = 0;
     client.gens.stat += 1;
     client.gens.player_info += 1;
+    client.gens.player += 1;
     slot.after_drain(&mut client);
     slot.apply_auto_run(&mut client);
     assert!(!slot.run_on);
@@ -881,6 +884,7 @@ fn auto_run_yields_to_script_action_and_recurs_after_energy_and_session_changes(
     client.runenergy = 20;
     client.gens.stat += 1;
     client.gens.player_info += 1;
+    client.gens.player += 1;
     slot.after_drain(&mut client);
     slot.apply_auto_run(&mut client);
     assert_eq!(slot.run_sends, 2, "energy recovery permits the next press");
