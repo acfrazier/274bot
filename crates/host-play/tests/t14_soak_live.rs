@@ -157,6 +157,13 @@ fn work_route_escape(outer_bounds: &[SafeWalk], tile: (i32, i32, i32)) -> bool {
     }) || !safe_walk_contains(outer_bounds, tile)
 }
 
+fn normal_patch_is_safe((x, z, level): (i32, i32, i32)) -> bool {
+    (-NORMAL_RADIUS..=NORMAL_RADIUS).all(|dx| {
+        (-NORMAL_RADIUS..=NORMAL_RADIUS)
+            .all(|dz| !work_route_escape(OUTER_WALK_BOUNDS, (x + dx, z + dz, level)))
+    })
+}
+
 #[derive(Debug, Default, PartialEq, Eq)]
 struct RandomRouteAttribution {
     observed_event: Option<host::RandomKind>,
@@ -562,11 +569,8 @@ fn resumed_work_progress_clears_evade_attribution_at_safe_work_tile() {
 #[test]
 fn worksite_census_and_bank_guard_use_distinct_bounds() {
     for (x, z) in NORMAL_STARTS {
-        for dx in -NORMAL_RADIUS..=NORMAL_RADIUS {
-            for dz in -NORMAL_RADIUS..=NORMAL_RADIUS {
-                assert!(safe_walk_contains(NORMAL_SAFE_WALK, (x + dx, z + dz, 0)));
-            }
-        }
+        assert!(safe_walk_contains(NORMAL_SAFE_WALK, (x, z, 0)));
+        assert!(normal_patch_is_safe((x, z, 0)));
     }
     assert!(!safe_walk_contains(NORMAL_SAFE_WALK, (2944, 3366, 0)));
     assert!(!work_route_escape(OUTER_WALK_BOUNDS, (2944, 3366, 0)));
@@ -578,6 +582,29 @@ fn worksite_census_and_bank_guard_use_distinct_bounds() {
             ));
         }
     }
+}
+
+#[test]
+fn normal_patch_rejects_outer_boundary_and_danger_crossings() {
+    let bounds = OUTER_WALK_BOUNDS[0];
+    let (_, z) = NORMAL_STARTS[0];
+    assert!(!normal_patch_is_safe((bounds.max_x, z, 0)));
+    assert!(!normal_patch_is_safe((bounds.min_x, z, 0)));
+    let (x, _) = NORMAL_STARTS[0];
+    assert!(!normal_patch_is_safe((x, bounds.max_z, 0)));
+    assert!(!normal_patch_is_safe((x, bounds.min_z, 0)));
+    let mut crossings = 0;
+    for (spawn, radius) in danger_envelopes() {
+        let anchor = (spawn.x + radius + 1, spawn.z, spawn.level);
+        if !work_route_escape(OUTER_WALK_BOUNDS, anchor) {
+            assert!(!normal_patch_is_safe(anchor));
+            crossings += 1;
+        }
+    }
+    assert!(
+        crossings > 0,
+        "content must supply a safe anchor beside danger"
+    );
 }
 
 #[test]
@@ -1051,15 +1078,21 @@ fn make_site(site: &GatherSiteOption, resource: &'static str) -> Result<BankSite
         level: 0,
     };
     let region = &site.region;
-    // A real resource access stand may sit one tile outside its Site rectangle.
-    if start.x < region.min_x - 1
-        || start.x > region.max_x + 1
-        || start.z < region.min_z - 1
-        || start.z > region.max_z + 1
-        || start.level != region.level
-    {
+    // Normal anchors use the approved census union, not the authored Site box.
+    // Oak retains the one-tile resource-access allowance around its Site.
+    let allowed = if resource == "normal" {
+        safe_walk_contains(NORMAL_SAFE_WALK, (start.x, start.z, start.level))
+            && normal_patch_is_safe((start.x, start.z, start.level))
+    } else {
+        start.x >= region.min_x - 1
+            && start.x <= region.max_x + 1
+            && start.z >= region.min_z - 1
+            && start.z <= region.max_z + 1
+            && start.level == region.level
+    };
+    if !allowed {
         return Err(format!(
-            "live seed tile {start:?} is outside selected content site {}",
+            "live seed tile {start:?} is outside the approved fixture geometry for {}",
             site.id
         ));
     }
