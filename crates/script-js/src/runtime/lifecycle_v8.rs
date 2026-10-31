@@ -1246,7 +1246,7 @@ globalThis.__resolveSchema = {
         crate::callback_v8::install_ops(&mut runtime).unwrap();
         let state = std::sync::Arc::new(script::local_state::SlotState::new(
             std::sync::Arc::new(SettingsRawPort),
-            api::local_state::AccountKey::try_new("local-289", "runtime-resolve").unwrap(),
+            api::local_state::AccountKey::try_new("local-289", "runtime").unwrap(),
             api::local_state::ContentScope::try_new(
                 api::selected::ClientRevision::R289,
                 "settings-resolve",
