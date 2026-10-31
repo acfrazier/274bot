@@ -652,6 +652,10 @@ mod gather_return_live;
 mod quester_journal_live_tests;
 
 #[cfg(test)]
+#[path = "quest_watch_live_tests.rs"]
+mod quest_watch_live_tests;
+
+#[cfg(test)]
 mod nav_arrival_live_tests;
 
 #[cfg(test)]

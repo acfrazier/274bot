@@ -1644,9 +1644,15 @@ mod tests {
         }
 
         for &name in crate::catalog::registered_name_refs() {
-            // The runtime-selected factory needs an id, so use its default fixture.
+            // The runtime-selected factories need env inputs, so use
+            // their default fixtures.
             let scenario = if name == "quester_path" {
                 default_quester_path()
+            } else if name == "quest_watch_seed" {
+                crate::quest_watch::seed_scenario_for_test()
+            } else if name == "quest_watch_speed" {
+                crate::quest_watch::build_speed_scenario(600)
+                    .expect("default speed scenario builds")
             } else {
                 crate::get(name).unwrap_or_else(|| panic!("{name} is registered"))
             };

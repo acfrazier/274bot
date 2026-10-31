@@ -447,6 +447,8 @@ pub struct ScenarioRunner {
     relog_session: Option<u64>,
     relog_left_session: bool,
     engine_speed_ms: Option<u32>,
+    /// Whether terminal cleanup restores the scenario's requested world speed.
+    restore_world_speed: bool,
     /// Endpoint reported when the initial world-speed command is sent.
     tick_speed_endpoint: Option<(String, u16)>,
     engine_speed_sent: bool,
@@ -550,6 +552,14 @@ impl ScenarioRunner {
         self.map_members = map_members;
     }
 
+    /// Control terminal restoration to the teardown world speed.
+    ///
+    /// Defaults to `true`; setting `false` leaves the initial requested
+    /// world-speed command unchanged but skips restoration during cleanup.
+    pub fn set_restore_world_speed(&mut self, restore: bool) {
+        self.restore_world_speed = restore;
+    }
+
     /// Record the endpoint for diagnostics when the world-wide speed command fires.
     /// This is logging metadata only; it does not restrict command dispatch.
     pub fn set_tick_speed_endpoint(&mut self, host: &str, port: u16) {
@@ -594,6 +604,7 @@ impl ScenarioRunner {
             relog_session: None,
             relog_left_session: false,
             engine_speed_ms,
+            restore_world_speed: true,
             tick_speed_endpoint: None,
             speed_chat_baseline: None,
             engine_speed_sent: false,
@@ -652,8 +663,9 @@ impl ScenarioRunner {
 
     /// Recording sidecar position: `(step_index, total_steps, step_name)`.
     /// Pre-start reads `seeding`, the proof tail reads `proving`, terminal
-    /// speed restoration reads `cleaning`, and a finished run reads `done`.
-    /// Every video timestamp lines up with the step trace even outside run steps.
+    /// speed restoration reads `cleaning` when enabled, and a finished run
+    /// reads `done`. Every video timestamp lines up with the step trace even
+    /// outside run steps.
     pub fn record_step(&self) -> (usize, usize, &'static str) {
         let total = self.scenario.steps.len();
         match self.phase {
@@ -2343,6 +2355,12 @@ impl ScenarioRunner {
     }
 
     fn begin_terminal_cleanup(&mut self, speed_ms: u32, outcome: TerminalOutcome) {
+        // Terminal cleanup is shared by pass, failure and unavailable
+        // outcomes. The opt-out skips only the teardown command.
+        if !self.restore_world_speed {
+            self.complete_terminal(outcome);
+            return;
+        }
         self.phase = Phase::Cleaning;
         self.terminal_cleanup = Some(TerminalCleanup {
             speed_ms,

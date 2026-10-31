@@ -176,6 +176,18 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.8` 
   for both walks to the captain.
 - Guide `walk` steps that set `args.allow_danger_zones` now fail to compile.
   Use `cross` to declare the danger zones that a step may cross.
+- The quest campaign harness can now seed an exact authored account, run a
+  staged folder guide headlessly, and record game-tick stage changes,
+  completion, debug logs and CPU screenshots. It reuses the quest-watch
+  seed checks and the existing single-account and partner live drivers. Receipts
+  measure observed tick intervals. Engine Q uses fixed 300 ms ticks with no
+  world-speed commands.
+  Partial guides can declare an exact boundary and record a distinct
+  `gap-reached` result only when the boundary and prior settlements match.
+  Matching native park traces are retained in the boundary proof.
+  Boundary checks accept advancing journal stages and queue-only Blocked
+  statuses without weakening death checks. Solo receipts preserve cross-run
+  death totals. Campaign runs now avoid danger zones by default.
 
 - Quest guides now respond to an NPC's "I can't reach that!" message at once:
   they recover from the NPC's current location when possible, or report the

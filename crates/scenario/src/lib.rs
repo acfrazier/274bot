@@ -22,6 +22,7 @@ pub mod evidence;
 pub mod fixture;
 pub mod proof;
 mod quest_fast;
+pub mod quest_watch;
 pub mod quester;
 pub mod random_episode;
 mod render_betty_views;

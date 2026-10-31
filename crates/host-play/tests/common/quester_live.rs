@@ -569,10 +569,7 @@ pub fn status_stage(status: &ScriptStatus, quest: &str) -> Option<String> {
 }
 
 fn parked(status: &ScriptStatus) -> Option<String> {
-    if status.phase == NativePhase::Blocked {
-        return Some(format!("phase Blocked: {:?}", status.failure));
-    }
-    text(status, "block_reason").map(str::to_owned)
+    (status.phase == NativePhase::Blocked).then(|| format!("phase Blocked: {:?}", status.failure))
 }
 
 /// Match only the explicitly expected native park, not another blocked state.
@@ -688,6 +685,7 @@ struct OwnedCombat {
     npc_total_health: i32,
 }
 
+/// In-game tick intervals seen by the Path driver's snapshot polls.
 #[derive(Default)]
 pub(super) struct TickMean {
     last: Option<(u32, Instant)>,
@@ -730,6 +728,60 @@ impl TickMean {
     }
 }
 
+/// Receive-time measurement only. It never controls content waits or deadlines.
+#[derive(Default)]
+struct ObservedTickRate {
+    last: Option<(u32, Instant)>,
+    elapsed: Duration,
+    ticks: u64,
+    samples: u64,
+    minimum_ms: Option<f64>,
+    maximum_ms: Option<f64>,
+    counter_resets: u64,
+}
+
+impl ObservedTickRate {
+    fn observe(&mut self, tick: u32, at: Instant) {
+        if let Some((previous_tick, previous_at)) = self.last {
+            if tick == previous_tick {
+                return;
+            }
+            if let Some(delta) = tick.checked_sub(previous_tick) {
+                let elapsed = at.saturating_duration_since(previous_at);
+                let milliseconds = elapsed.as_secs_f64() * 1000.0 / f64::from(delta);
+                self.elapsed += elapsed;
+                self.ticks += u64::from(delta);
+                self.samples += 1;
+                self.minimum_ms = Some(
+                    self.minimum_ms
+                        .map_or(milliseconds, |value| value.min(milliseconds)),
+                );
+                self.maximum_ms = Some(
+                    self.maximum_ms
+                        .map_or(milliseconds, |value| value.max(milliseconds)),
+                );
+            } else {
+                self.counter_resets += 1;
+            }
+        }
+        self.last = Some((tick, at));
+    }
+
+    fn receipt(&self) -> Value {
+        json!({
+            "source": "monotonic PLAYER_INFO receive observations after Start",
+            "interval_samples": self.samples,
+            "sampled_game_ticks": self.ticks,
+            "elapsed_ms": self.elapsed.as_secs_f64() * 1000.0,
+            "mean_tick_ms": (self.ticks > 0)
+                .then(|| self.elapsed.as_secs_f64() * 1000.0 / self.ticks as f64),
+            "minimum_tick_ms": self.minimum_ms,
+            "maximum_tick_ms": self.maximum_ms,
+            "counter_resets": self.counter_resets,
+        })
+    }
+}
+
 struct ActorShared {
     role: Option<usize>,
     quest: &'static str,
@@ -755,6 +807,7 @@ struct ActorShared {
     tick_mean: TickMean,
     /// `{stage, tick}` at each observed stage change, in observed game ticks.
     stage_ticks: Vec<Value>,
+    observed_tick_rate: ObservedTickRate,
     starts: u32,
     stops: u32,
     restart_due: bool,
@@ -1131,10 +1184,10 @@ fn capture_receipt(
     extra
 }
 
-fn append_status(path: &Path, status: &ScriptStatus) -> Result<Value, String> {
+fn append_status(path: &Path, status: &ScriptStatus, tick: u32) -> Result<Value, String> {
     use std::io::Write;
     let logged = status_json(status);
-    let line = json!({"t_ms": epoch_nanos()? / 1_000_000, "status": logged});
+    let line = json!({"t_ms": epoch_nanos()? / 1_000_000, "tick": tick, "status": logged});
     let mut file = std::fs::OpenOptions::new()
         .create(true)
         .append(true)
@@ -1285,6 +1338,7 @@ fn run_cells(
             sustain_run: false,
         }
     };
+    let restore_world_speed = std::env::var("QUESTER_SPEED_RESTORE").as_deref() != Ok("0");
     if quester_path && (mode.is_pair() || cells.len() != 1) {
         return Err("QUESTER_TICK_MS requires a single-account quester_path cell".into());
     }
@@ -1322,6 +1376,17 @@ fn run_cells(
         isolated.set_rs2b0t(&catalog_root);
     }
     api::hostlog::set_debug(true);
+    let campaign_tick_limit = std::env::var("QUEST_CAMPAIGN_TICKS")
+        .ok()
+        .map(|raw| {
+            raw.parse::<u32>()
+                .ok()
+                .filter(|ticks| *ticks > 0)
+                .ok_or_else(|| {
+                    "QUEST_CAMPAIGN_TICKS must be a positive observed-tick count".to_owned()
+                })
+        })
+        .transpose()?;
 
     for cell in &mut cells {
         cell.scenario.settings.nav.engine_speed_ms = None;
@@ -1389,7 +1454,9 @@ fn run_cells(
         directories.push(directory);
     }
 
-    let track_steps = mode.death_target().is_some() || mode.restart_step_target().is_some();
+    let track_steps = campaign_tick_limit.is_some()
+        || mode.death_target().is_some()
+        || mode.restart_step_target().is_some();
     let evidence = Arc::new(EvidenceWriter::new(
         host_play::evidence_writer::DEFAULT_QUEUE_BOUND,
     ));
@@ -1397,6 +1464,7 @@ fn run_cells(
     for (index, cell) in cells.into_iter().enumerate() {
         let mut runner = ScenarioRunner::with_world(cell.scenario, template.world());
         runner.set_tick_speed_endpoint(profile.client().game_host(), profile.client().game_port());
+        runner.set_restore_world_speed(restore_world_speed);
         runner.set_map_members(profile.map_members());
         runner.set_live_names(&[names[index].clone()]);
         runner.set_shot_sink(Box::new(|_, _| {}));
@@ -1424,6 +1492,7 @@ fn run_cells(
             tick_observations: Vec::new(),
             tick_mean: TickMean::default(),
             stage_ticks: Vec::new(),
+            observed_tick_rate: ObservedTickRate::default(),
             starts: 0,
             stops: 0,
             restart_due: false,
@@ -1507,6 +1576,12 @@ fn run_cells(
             let actor = &mut actors[index];
             let drain = actor.pump.drain_client(client);
             host::publish_snapshot(&mut actor.snapshot, client, drain);
+            let game_tick = actor.snapshot.tick();
+            if actor.starts > 0
+                && actor.observed_tick_rate.last.map(|(tick, _)| tick) != Some(game_tick)
+            {
+                actor.observed_tick_rate.observe(game_tick, Instant::now());
+            }
             actor.last_tile = observed_tile(&actor.snapshot);
             if !actor_frame_enabled(frame_state.teardown_started) {
                 if let Some(logout) = &mut actor.logout {
@@ -1982,6 +2057,9 @@ fn run_cells(
                                 "run": format!("{:?}", status.run),
                                 "tick": actor.snapshot.tick(),
                                 "stage": stage,
+                                "sequence": integer(status, "sequence"),
+                                "step_index": integer(status, "step_index"),
+                                "remaining_steps": integer(status, "remaining_steps"),
                                 "step_id": text(status, "step_id"),
                                 "child_step_id": text(status, "child_step_id"),
                                 "action_state": text(status, "action_state"),
@@ -2023,7 +2101,10 @@ fn run_cells(
             };
             let logged = status_json(status);
             if last_logged[index].as_ref() != Some(&logged) {
-                match append_status(&status_logs[index], status) {
+                let tick = shared.lock().map_err(|_| "live state poisoned")?.actors[index]
+                    .snapshot
+                    .tick();
+                match append_status(&status_logs[index], status, tick) {
                     Ok(logged) => last_logged[index] = Some(logged),
                     Err(error) => break 'run Err(format!("status log {}: {error}", names[index])),
                 }
@@ -2097,6 +2178,11 @@ fn run_cells(
                             actor
                                 .stage_ticks
                                 .push(json!({"stage": stage, "tick": actor.snapshot.tick()}));
+                            actor.transitions.push(json!({
+                                "event": "stage",
+                                "stage": stage,
+                                "tick": actor.snapshot.tick(),
+                            }));
                             let label = format!("stage-{}", stage.replace(':', "-"));
                             let receipt = capture_receipt(actor, &label, Some(status), json!({}));
                             actor.pending_captures.push((label, receipt));
@@ -2894,6 +2980,21 @@ fn run_cells(
             _ => {}
         }
 
+        if let Some(limit) = campaign_tick_limit {
+            let state = shared.lock().map_err(|_| "live state poisoned")?;
+            if let Some(actor) = state
+                .actors
+                .iter()
+                .find(|actor| actor.snapshot.tick() >= limit)
+            {
+                break Err(format!(
+                    "observed-tick deadline: {} reached {} ticks (limit {limit})",
+                    actor.account,
+                    actor.snapshot.tick()
+                ));
+            }
+        }
+
         if Instant::now() >= deadline {
             let statuses = observations
                 .iter()
@@ -3040,6 +3141,11 @@ fn run_cells(
                     "cell": actor.label,
                     "quest": actor.quest,
                     "display": actor.display,
+                    "observed_ticks": actor.snapshot.tick(),
+                    "observed_tick_rate": actor.observed_tick_rate.receipt(),
+                    "quest_complete": quest_done(&actor.snapshot, actor.display)
+                        || actor.owned_card_complete,
+                    "last_tile": actor.last_tile.map(|tile| [tile.x, tile.z, tile.level]),
                     "settings": actor.start_settings,
                     "status_log": status_logs[index],
                     "fixture_receipt": actor.start_receipt,
@@ -3109,6 +3215,7 @@ fn run_cells(
             "run_result": format!("{run_result:?}"),
             "end_capture_wait_ms": end_capture_wait_ms,
             "game_port": profile.client().game_port(),
+            "speed_restore_enabled": restore_world_speed,
             "nav_pack": profile.nav_pack(),
             "roles": actor_receipts,
             "inventory_proof": inventory_proof_receipt,
@@ -3124,7 +3231,12 @@ fn run_cells(
             "end_tick": actor["end_tick"],
             "end_capture_wait_ms": end_capture_wait_ms,
             "account": actor["account"],
+            "observed_ticks": actor["observed_ticks"],
+            "observed_tick_rate": actor["observed_tick_rate"],
+            "quest_complete": actor["quest_complete"],
+            "step_observations": actor["step_observations"],
             "game_port": profile.client().game_port(),
+            "speed_restore_enabled": restore_world_speed,
             "nav_pack": profile.nav_pack(),
             "settings": actor["settings"],
             "fixture_receipt": actor["fixture_receipt"],
@@ -3138,6 +3250,7 @@ fn run_cells(
             "observed_tick_intervals": actor["observed_tick_intervals"],
             "stage_ticks": actor["stage_ticks"],
             "deaths": actor["deaths"],
+            "death_count_total_across_runs": actor["death_count_total_across_runs"],
             "death_sent": actor["death_sent"],
             "death_observed": actor["death_observed"],
             "death_injections": actor["death_injections"],
@@ -3429,6 +3542,53 @@ mod tests {
     use super::*;
 
     #[test]
+    fn observed_tick_rate_distinguishes_300_and_600_millisecond_sequences() {
+        for milliseconds in [300, 600] {
+            let start = Instant::now();
+            let mut rate = ObservedTickRate::default();
+            assert_eq!(rate.receipt()["mean_tick_ms"], Value::Null);
+            for tick in 1..=4 {
+                rate.observe(
+                    tick,
+                    start + Duration::from_millis(u64::from(tick - 1) * milliseconds),
+                );
+            }
+            let receipt = rate.receipt();
+            assert_eq!(receipt["sampled_game_ticks"], 3);
+            assert_eq!(receipt["mean_tick_ms"], milliseconds as f64);
+            assert_eq!(receipt["minimum_tick_ms"], milliseconds as f64);
+            assert_eq!(receipt["maximum_tick_ms"], milliseconds as f64);
+        }
+    }
+
+    #[test]
+    fn observed_tick_rate_ignores_duplicate_polls_and_counter_reset_gaps() {
+        let start = Instant::now();
+        let mut rate = ObservedTickRate::default();
+        rate.observe(10, start);
+        rate.observe(10, start + Duration::from_secs(5));
+        rate.observe(11, start + Duration::from_millis(300));
+        rate.observe(1, start + Duration::from_secs(20));
+        rate.observe(2, start + Duration::from_millis(20_600));
+        let receipt = rate.receipt();
+        assert_eq!(receipt["interval_samples"], 2);
+        assert_eq!(receipt["sampled_game_ticks"], 2);
+        assert_eq!(receipt["mean_tick_ms"], 450.0);
+        assert_eq!(receipt["counter_resets"], 1);
+    }
+
+    #[test]
+    fn observed_tick_rate_normalizes_batched_game_ticks() {
+        let start = Instant::now();
+        let mut rate = ObservedTickRate::default();
+        rate.observe(1, start);
+        rate.observe(3, start + Duration::from_millis(600));
+        assert_eq!(rate.receipt()["mean_tick_ms"], 300.0);
+        assert_eq!(rate.receipt()["sampled_game_ticks"], 2);
+        assert_eq!(rate.receipt()["interval_samples"], 1);
+    }
+
+    #[test]
     fn native_family_start_requires_an_explicit_override_and_named_script() {
         assert!(has_native_start(Some("Quester"), false));
         assert!(has_native_start(Some("Sherlock"), true));
@@ -3463,11 +3623,18 @@ mod tests {
             }),
         };
         assert!(has_named_stop(Some(&status), reason));
+        assert!(parked(&status).is_some());
         assert!(!has_named_stop(None, reason));
         assert!(!has_named_stop(Some(&status), "another stop"));
         status.phase = NativePhase::Working;
+        let failure = status.failure.take();
+        assert!(
+            parked(&status).is_none(),
+            "block_reason precedes native Blocked publication"
+        );
         assert!(!has_named_stop(Some(&status), reason));
         status.phase = NativePhase::Blocked;
+        status.failure = failure;
         status.failure.as_mut().unwrap().code = Arc::from("failed");
         assert!(!has_named_stop(Some(&status), reason));
         status.failure.as_mut().unwrap().code = Arc::from("parked");
