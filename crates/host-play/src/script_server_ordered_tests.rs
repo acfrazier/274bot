@@ -1423,7 +1423,7 @@ fn ordered_knife_ending_and_continuing_use_exact_unseen_make_and_move_op_order()
             Send::if_button(catalog.component("skill_multi3:make1_a").unwrap().id()).unwrap(),
         ];
         if continuing {
-            expected.push(Send::move_gameclick(false, 3207, 3205, &[]).unwrap());
+            expected.push(Send::move_opclick(false, 3207, 3205, &[]).unwrap());
             expected.push(Send::oploc1(3208, 3205, 1276).unwrap());
         }
         let expected: Vec<_> = expected
