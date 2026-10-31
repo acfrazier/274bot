@@ -807,12 +807,21 @@ mod compat {
 
         #[test]
         fn make_one_waits_for_the_product_receipt_after_page_close() {
-            let products = [product_with_id(1737, "Wool", &[(1, 881)])];
-            let before_inventory = [ItemRow {
-                id: 1737,
-                count: 2,
-                ..ItemRow::default()
-            }];
+            let products = [product_with_id(841, "Shortbow", &[(1, 881)])];
+            let before_inventory = [
+                ItemRow {
+                    id: 1511,
+                    count: 3,
+                    name: Some("Logs".into()),
+                    ..ItemRow::default()
+                },
+                ItemRow {
+                    id: 946,
+                    count: 1,
+                    name: Some("Knife".into()),
+                    ..ItemRow::default()
+                },
+            ];
             let at = Probe {
                 inventory: Some(&before_inventory),
                 chat_modal_id: Some(4882),
@@ -831,7 +840,7 @@ mod compat {
             };
             assert_eq!(step(&mut machine, &mut clock, &page_closed), (None, vec![]));
             let before_product_receipt = Probe {
-                tick: Some(13),
+                tick: Some(10),
                 ..page_closed
             };
             assert_eq!(
@@ -840,14 +849,29 @@ mod compat {
                 "the page can close before its inventory receipt arrives"
             );
 
-            let after_inventory = [ItemRow {
-                id: 1737,
-                count: 3,
-                ..ItemRow::default()
-            }];
+            let after_inventory = [
+                ItemRow {
+                    id: 1511,
+                    count: 2,
+                    name: Some("Logs".into()),
+                    ..ItemRow::default()
+                },
+                ItemRow {
+                    id: 946,
+                    count: 1,
+                    name: Some("Knife".into()),
+                    ..ItemRow::default()
+                },
+                ItemRow {
+                    id: 50,
+                    count: 1,
+                    name: Some("Shortbow".into()),
+                    ..ItemRow::default()
+                },
+            ];
             let receipt = Probe {
                 inventory: Some(&after_inventory),
-                tick: Some(14),
+                tick: Some(11),
                 ..page_closed
             };
             assert_eq!(
