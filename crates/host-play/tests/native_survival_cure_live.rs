@@ -2884,16 +2884,20 @@ fn stat_effective(snapshot: &GameSnapshot, id: i32) -> i32 {
         .map_or(0, |stat| stat.effective)
 }
 
+/// Track the runner's published status. The typed report comes from the same
+/// `ScriptStatus` as its text and phase label; the slot row's copy
+/// (`host-play/src/script_paint.rs` `script_survival_of`) is read before this
+/// frame's runner tick and can lag it by one client-loop frame.
 fn capture_track(
     snapshot: &GameSnapshot,
     status: Option<&ScriptStatus>,
-    slot: Option<&host_play::SlotStatus>,
+    _slot: Option<&host_play::SlotStatus>,
     witness: &mut Witness,
 ) {
     if witness.poison_source_tick.is_none() || !snapshot.ingame() {
         return;
     }
-    let report = slot.map(|slot| slot.survival);
+    let report = status.map(|status| status.survival);
     let frame = TrackFrame {
         tick: snapshot.tick(),
         hp: stat_effective(snapshot, HITPOINTS_STAT),
