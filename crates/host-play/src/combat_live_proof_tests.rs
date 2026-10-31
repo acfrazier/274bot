@@ -76,9 +76,15 @@ const RANGED_ABORT_SURVIVAL_TICKS: i64 = 12;
 const RANGED_ABORT_MIN_PROTECT_LEVEL: i64 = 43;
 
 // Outside every nearby static tree's one-tile hunt range. The fixture's first
-// native walk enters3108/3346's one-tile hunt range after the exact HP8 Start.
+// native walk reaches the stand east of 3108/3346 after the exact HP8 Start.
 const TREE_APPROACH: WorldTile = WorldTile {
     x: 3110,
+    z: 3346,
+    level: 0,
+};
+/// Stand inside the nasty tree's hunt range without routing through its tile.
+const TREE_HUNT_STAND: WorldTile = WorldTile {
+    x: 3109,
     z: 3346,
     level: 0,
 };
@@ -383,11 +389,15 @@ impl Case {
                     },
                 )
             }
-            Self::M4 => world
-                .collision
-                .standable(TREE_APPROACH)
+            Self::M4 => {
+                (world.collision.standable(TREE_APPROACH)
+                    && world.collision.standable(TREE_HUNT_STAND))
                 .then_some(TREE_APPROACH)
-                .ok_or_else(|| "safe Draynor Manor tree approach is not standable".to_owned()),
+                .ok_or_else(|| {
+                    "Draynor Manor M4 start and adjacent tree-hunt stand must be standable"
+                        .to_owned()
+                })
+            }
             Self::R1 | Self::R2 | Self::R3 => ranged_placement(self, world).map(|p| p.spawn),
         }
     }

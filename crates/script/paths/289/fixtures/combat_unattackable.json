@@ -41,7 +41,7 @@
               "id": "approach-natural-unattackable-attacker",
               "kind": "walk",
               "version": 1,
-              "args": { "tile": [3108, 3346, 0], "source": "selected maps-server n48_52 nasty_tree at 3108/3346; native radius1 approaches its one-tile hunt range after HP8 Start", "radius": 1 },
+              "args": { "tile": [3109, 3346, 0], "source": "selected maps-server n48_52 nasty_tree at 3108/3346; exact walk to standable hunt tile 3109/3346 after HP8 Start avoids crossing the Tree", "radius": 0 },
               "skip_if": { "Any": [
                 { "Fact": { "kind": "near", "version": 1, "args": { "tile": [3108, 3346, 0], "radius": 1 } } },
                 { "Fact": { "kind": "combat_end", "version": 1, "args": { "end": "aborted_unattackable" } } }
