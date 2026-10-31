@@ -1506,12 +1506,6 @@ export default class CompatAccountLevelerFrameProbe extends LoopingBot {
     };
 
     async onStart() {
-        if (!(await Bank.openNearest('Bank booth', 'Bank'))) {
-            throw new Error('AccountLeveler frame probe could not open a bank');
-        }
-        if (!(await Bank.waitReady(5000))) {
-            throw new Error('AccountLeveler frame probe has no ready bank snapshot');
-        }
         this.log(`RUNTIME:ACCOUNT_LEVELER_BANK:items=${Bank.items().length}:ready=${Bank.ready()}`);
         this.lastLoggedAt = Date.now() - 30000;
         this.stopObserving = BotHost.addFrameListener(() => {
@@ -1631,19 +1625,19 @@ fn run_runtime_account_leveler_frame_probe_cell(receipt: &mut Receipt) -> Result
         .iter()
         .find(|line| line.starts_with("Still RUNTIME:ACCOUNT_LEVELER_FRAME;"))
         .ok_or_else(|| "AccountLeveler frame probe did not log its frame sample".to_string())?;
-    if !frame_log.contains("bankReady=true")
+    if !frame_log.contains("bankItems=0, bankReady=false")
         || !frame_log.contains("sampleAtValid=true, workActive=false")
         || !frame_log.contains("position (")
     {
         return Err(format!(
-            "AccountLeveler frame sample did not include the ready bank, state and tile: {frame_log}"
+            "AccountLeveler frame sample did not include the empty bank state, work state and tile: {frame_log}"
         ));
     }
     if !session.receipt.logs.iter().any(|line| {
-        line.starts_with("RUNTIME:ACCOUNT_LEVELER_BANK:items=") && line.ends_with(":ready=true")
+        line == "RUNTIME:ACCOUNT_LEVELER_BANK:items=0:ready=false"
     }) {
         return Err(format!(
-            "AccountLeveler frame probe did not record a ready bank: {:?}",
+            "AccountLeveler frame probe did not record the closed-bank state: {:?}",
             session.receipt.logs
         ));
     }
