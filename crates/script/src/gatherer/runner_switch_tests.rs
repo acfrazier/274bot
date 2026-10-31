@@ -1930,7 +1930,7 @@ fn temporary_typed_return_refusals_have_a_finite_shun() {
         assert!(!gatherer.scratch.return_stall_recovery.pending());
         assert!(ledger
             .as_ref()
-            .map_or(true, |ledger| ledger.outbox.is_empty()));
+            .is_none_or(|ledger| ledger.outbox.is_empty()));
         assert!(gatherer.failure.is_none());
         assert!(gatherer
             .scratch
@@ -1989,7 +1989,7 @@ fn blocked_return_walk_selects_another_stand_without_retrying_the_failed_plan() 
     assert!(!gatherer.scratch.return_stall_recovery.pending());
     assert!(ledger
         .as_ref()
-        .map_or(true, |ledger| ledger.outbox.is_empty()));
+        .is_none_or(|ledger| ledger.outbox.is_empty()));
     assert!(gatherer.failure.is_none());
 
     move_actor_to(&mut snapshot, position_b);
