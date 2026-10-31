@@ -52,7 +52,7 @@ fn hydrate_panel_preferences(session: &mut crate::session::Session) {
 }
 
 #[cfg(all(feature = "render-test-hooks", unix))]
-pub(super) fn recording_exit_with_retired_play(record: crate::headed_record::HeadedRecord) {
+pub(crate) fn recording_exit_with_retired_play(record: crate::headed_record::HeadedRecord) {
     let mut state = PanelState::default();
     assert!(!state.session.core.has_play());
     assert!(record.is_finalizing());
