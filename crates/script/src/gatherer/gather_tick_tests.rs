@@ -572,9 +572,10 @@ fn fishing_knife_request_uses_the_current_published_npc_generation() {
         panic!("the fishing cycle must emit its Knife request")
     };
     let ServerOrderedPayload::Content(ServerOrderedRequest::KnifeArm {
-        shape: KnifeArmShape::Continuing {
-            click: ExactLocOrNpcRef::Npc(reference),
-        },
+        shape:
+            KnifeArmShape::Continuing {
+                click: ExactLocOrNpcRef::Npc(reference),
+            },
         ..
     }) = envelope.payload()
     else {
