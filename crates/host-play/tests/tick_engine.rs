@@ -419,6 +419,8 @@ struct SetupState {
     error: Option<String>,
     logout_session: Option<u64>,
     tutorial_reseed: Option<scenario::tutorial::PostRelogTutorial>,
+    npc_index: Option<usize>,
+    npc_observations: Vec<interact::server_ordered::ExactNpcReference>,
 }
 
 impl SetupState {
@@ -456,15 +458,21 @@ impl SetupState {
             error: None,
             logout_session: None,
             tutorial_reseed: None,
+            npc_index: None,
+            npc_observations: Vec::new(),
         }
     }
 
     fn frame(&mut self, client: &mut Client, account: &str, hold: bool) {
-        if account != self.account
-            || hold
-            || self.error.is_some()
-            || self.phase == SetupPhase::Ready
-        {
+        if account != self.account || hold || self.error.is_some() {
+            return;
+        }
+        if self.phase == SetupPhase::Ready {
+            if self.scenario.resource == ResourceKind::NpcRiver {
+                let mut snapshot = GameSnapshot::new();
+                snapshot.rebuild(client);
+                self.observe_npc(&snapshot);
+            }
             return;
         }
         let mut snapshot = GameSnapshot::new();
@@ -555,6 +563,7 @@ impl SetupState {
                             self.error = Some(error);
                         }
                     } else {
+                        self.observe_npc(&snapshot);
                         self.phase = SetupPhase::Ready;
                     }
                 }
@@ -565,6 +574,30 @@ impl SetupState {
                 }
             }
             SetupPhase::Ready => {}
+        }
+    }
+
+    fn observe_npc(&mut self, snapshot: &GameSnapshot) {
+        let Some((type_id, spawn)) = self.scenario.required_npc else {
+            return;
+        };
+        let Some(npc) = snapshot.npcs().iter().find(|npc| {
+            npc.r#type.and_then(|id| i32::try_from(id).ok()) == Some(type_id)
+                && self
+                    .npc_index
+                    .map_or(npc.tile == spawn, |index| npc.index == index)
+        }) else {
+            return;
+        };
+        // ExactNpcReference::from_snapshot uses NpcView.network: build base
+        // plus route[0], not the rendered tile (snapshot/decode.rs:1388).
+        if let Ok(reference) =
+            interact::server_ordered::ExactNpcReference::from_snapshot(snapshot, npc, 1)
+        {
+            self.npc_index = Some(npc.index);
+            if self.npc_observations.last() != Some(&reference) {
+                self.npc_observations.push(reference);
+            }
         }
     }
 
@@ -734,6 +767,7 @@ struct RunEvidence {
     pre_batch_guard_opener: GuardOpenerState,
     start_tick: Option<u32>,
     baseline: Option<FrameObservation>,
+    npc_observations: Vec<interact::server_ordered::ExactNpcReference>,
     trace: TickEngineTrace,
     statuses: Vec<StatusObservation>,
     drop_history: Option<drop_history::DropHistory>,
@@ -1322,6 +1356,12 @@ impl LiveRun {
                 .clone(),
             start_tick: self.start_tick,
             baseline: self.baseline.clone(),
+            npc_observations: self
+                .setup
+                .lock()
+                .expect("tick-engine setup poisoned")
+                .npc_observations
+                .clone(),
             trace: self.hook.trace(),
             statuses: self.statuses.clone(),
             drop_history: self.drop_history.as_ref().map(|history| {
@@ -2116,6 +2156,8 @@ fn evidence_json(evidence: &RunEvidence) -> Value {
         "start_tick": evidence.start_tick,
         "product_ids": evidence.product_ids,
         "baseline_snapshot": baseline,
+        "observed_npc_references": evidence.npc_observations.iter()
+            .map(|reference| format!("{reference:?}")).collect::<Vec<_>>(),
         "frames": frames,
         "dispatch_receipts": dispatches,
         "encrypted_client_wire": wire,
@@ -2303,14 +2345,16 @@ fn request_wire_opcodes(trace: &TickEngineTrace, dispatch: &DispatchObservation)
         .collect()
 }
 
-fn npc_freshfish_knife_dispatch_matches(dispatch: &DispatchObservation) -> bool {
+fn npc_freshfish_knife_dispatch_matches(
+    dispatch: &DispatchObservation,
+    observed: &[interact::server_ordered::ExactNpcReference],
+) -> bool {
     let exact_request = dispatch.request_debug.as_deref().is_some_and(|request| {
         request.contains("KnifeArm {")
             && request.contains("Continuing {")
-            && request.contains("Npc(ExactNpcReference")
-            && request.contains("type_id: 309")
-            && request.contains("WorldTile { x: 2382, z: 3414, level: 0 }")
-            && request.contains("operation: 1")
+            && observed
+                .iter()
+                .any(|reference| request.contains(&format!("Npc({reference:?})")))
             && !request.contains("Loc(")
     });
     let receipt = dispatch.receipt;
@@ -3744,7 +3788,13 @@ fn tick_engine_builtin_gatherer_npc_knife() {
     run_case(Scenario::npc_river("tick-npc-knife"), |run| {
         let trace = run.hook.trace();
         let dispatch = first_knife(&trace).map_err(|error| run.failure(error))?;
-        if !npc_freshfish_knife_dispatch_matches(&dispatch) {
+        let observed = run
+            .setup
+            .lock()
+            .map_err(|_| run.failure("tick-engine setup poisoned"))?
+            .npc_observations
+            .clone();
+        if !npc_freshfish_knife_dispatch_matches(&dispatch, &observed) {
             return Err(run.failure(format!(
                 "expected a full KnifeArm Continuing receipt for freshfish NPC 309 op1: {dispatch:?}"
             )));
@@ -5719,6 +5769,7 @@ mod packet_oracle_tests {
             pre_batch_guard_opener: GuardOpenerState::default(),
             start_tick: Some(7),
             baseline: None,
+            npc_observations: Vec::new(),
             trace: TickEngineTrace {
                 frames: Vec::new(),
                 dispatches: Vec::new(),
@@ -6011,7 +6062,7 @@ mod packet_oracle_tests {
             game_tick: 7,
             receipt,
             request_debug: Some(
-                "KnifeArm { shape: Continuing { click: Npc(ExactNpcReference { index: 0, type_id: 309, tile: WorldTile { x: 2382, z: 3414, level: 0 }, npc_info_generation: 1, operation: 1 }) } }"
+                "KnifeArm { shape: Continuing { click: Npc(ExactNpcReference { index: 3712, type_id: 309, tile: WorldTile { x: 2382, z: 3415, level: 0 }, npc_info_generation: 3, operation: 1 }) } }"
                     .into(),
             ),
             mutation_applied: false,
@@ -6063,29 +6114,43 @@ mod packet_oracle_tests {
     #[test]
     fn npc_knife_receipt_requires_exact_continuing_freshfish_operation() {
         let dispatch = freshfish_dispatch_fixture();
-        assert!(npc_freshfish_knife_dispatch_matches(&dispatch));
+        let observed = [interact::server_ordered::ExactNpcReference::new(
+            3712,
+            309,
+            tile(2382, 3415, 0),
+            3,
+            1,
+        )
+        .unwrap()];
+        assert!(npc_freshfish_knife_dispatch_matches(&dispatch, &observed));
 
-        let mut wrong_target = dispatch.clone();
-        wrong_target.request_debug = Some(
-            "KnifeArm { shape: Continuing { click: Npc(ExactNpcReference { type_id: 330, operation: 1 }) } }"
-                .into(),
-        );
-        assert!(!npc_freshfish_knife_dispatch_matches(&wrong_target));
-
-        let mut wrong_shape = dispatch.clone();
-        wrong_shape.request_debug = Some(
-            "KnifeArm { shape: Ending, click: Npc(ExactNpcReference { type_id: 309, operation: 1 }) }"
-                .into(),
-        );
-        assert!(!npc_freshfish_knife_dispatch_matches(&wrong_shape));
+        // The real spawn's rendered tile is (2382,3414), but its observed
+        // path-head network tile in the retained receipt is (2382,3415).
+        // Neither that rendered tile nor another NPC/operation is acceptable.
+        for (from, to) in [
+            ("index: 3712", "index: 3713"),
+            ("type_id: 309", "type_id: 330"),
+            ("z: 3415", "z: 3414"),
+            ("npc_info_generation: 3", "npc_info_generation: 2"),
+            ("operation: 1", "operation: 3"),
+            ("Continuing {", "Ending {"),
+        ] {
+            let mut wrong = dispatch.clone();
+            wrong.request_debug = wrong.request_debug.map(|request| request.replace(from, to));
+            assert!(
+                !npc_freshfish_knife_dispatch_matches(&wrong, &observed),
+                "{from} -> {to}"
+            );
+        }
+        assert!(!npc_freshfish_knife_dispatch_matches(&dispatch, &[]));
 
         let mut partial = dispatch.clone();
         partial.receipt.wire_events = 3;
-        assert!(!npc_freshfish_knife_dispatch_matches(&partial));
+        assert!(!npc_freshfish_knife_dispatch_matches(&partial, &observed));
 
         let mut mutated = dispatch;
         mutated.mutation_applied = true;
-        assert!(!npc_freshfish_knife_dispatch_matches(&mutated));
+        assert!(!npc_freshfish_knife_dispatch_matches(&mutated, &observed));
     }
 
     #[test]
