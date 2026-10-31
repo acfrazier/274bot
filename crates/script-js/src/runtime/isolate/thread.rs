@@ -24,6 +24,14 @@ fn reject_isolate_timer_op(op: rustyscript::deno_core::OpDecl) -> rustyscript::d
 
 rustyscript::deno_core::extension!(isolate_timer_guards, middleware = reject_isolate_timer_op,);
 
+struct LocProjectionInterestReset(std::sync::Arc<std::sync::atomic::AtomicBool>);
+
+impl Drop for LocProjectionInterestReset {
+    fn drop(&mut self) {
+        self.0.store(false, std::sync::atomic::Ordering::Release);
+    }
+}
+
 #[derive(Default)]
 pub(super) struct MouseGestureIdentities {
     pub(super) pairs: VecDeque<u64>,
@@ -192,12 +200,14 @@ pub(super) fn isolate_main(
     paint_generation: std::sync::Arc<std::sync::atomic::AtomicU64>,
     teardown: std::sync::Arc<Mutex<TeardownState>>,
     frame_interest: std::sync::Arc<std::sync::atomic::AtomicUsize>,
+    loc_projection_interest: std::sync::Arc<std::sync::atomic::AtomicBool>,
     frame_ack_tx: std::sync::mpsc::SyncSender<()>,
     proof: std::sync::Arc<TeardownProofInner>,
     execution: Option<api::identity::ExecutionId>,
     local_state: Option<std::sync::Arc<script::local_state::SlotState>>,
     #[cfg(feature = "memory-profile")] counters: std::sync::Arc<crate::memory_profile::Counters>,
 ) {
+    let _loc_projection_reset = LocProjectionInterestReset(loc_projection_interest.clone());
     #[cfg(feature = "memory-profile")]
     let _heap_lifetime = crate::memory_profile::HeapLifetime(counters.clone());
     // Declared before `runtime` so the counter decrements only after the
@@ -261,6 +271,7 @@ pub(super) fn isolate_main(
             named_banks,
             local_state,
             std::sync::Arc::clone(&frame_interest),
+            loc_projection_interest,
         )
     });
     if let Err(e) = wired {

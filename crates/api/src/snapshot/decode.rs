@@ -1139,9 +1139,11 @@ impl GameSnapshot {
         if !client.ingame || client.scene_state != 2 {
             self.scene = SceneView::default();
             self.projection_scene = ProjectionSceneView::default();
+            self.projection_locs_built = false;
             return;
         }
         self.projection_scene = Self::projection_scene_view(client).unwrap_or_default();
+        self.projection_locs_built = false;
         let level = client.minusedlevel;
         match client.collision.get(level as usize) {
             Some(cmap) => {
@@ -1276,7 +1278,12 @@ impl GameSnapshot {
         let moved = track(client.gens.scene, &mut self.loc_gen);
         let standalone = self.loc_bits_prelude.is_none();
         let (stamp, static_gen) = self.loc_bits(client);
-        if !moved && stamp == self.loc_model_stamp && static_gen == self.loc_static_gen {
+        let projection_state_dirty = self.projection_locs_wanted != self.projection_locs_built;
+        if !moved
+            && stamp == self.loc_model_stamp
+            && static_gen == self.loc_static_gen
+            && !projection_state_dirty
+        {
             return false;
         }
         let dirty = moved || stamp != self.loc_model_stamp || static_gen != self.loc_static_gen;
@@ -1353,7 +1360,9 @@ impl GameSnapshot {
     }
 
     fn rebuild_projection_locs(&mut self, client: &Client) {
-        if !self.projection_scene.available {
+        if !self.projection_scene.available || !self.projection_locs_wanted {
+            self.projection_scene.locs = std::sync::Arc::from([]);
+            self.projection_locs_built = false;
             return;
         }
         let mut locs = Vec::new();
@@ -1427,6 +1436,7 @@ impl GameSnapshot {
             }
         }
         self.projection_scene.locs = locs.into();
+        self.projection_locs_built = self.projection_locs_wanted && self.projection_scene.available;
     }
 
     /// Ground-item rebuild: iterate each `ground_obj` list at
@@ -2654,6 +2664,31 @@ mod tests {
             Vec::new(),
             ClientRevision::R289,
         )
+    }
+    #[test]
+    fn projection_locs_follow_demand_independently_of_loc_generation() {
+        let mut client = r289_client();
+        client.ingame = true;
+        client.scene_state = 2;
+        client.gens.scene = 1;
+        let mut snapshot = GameSnapshot::new();
+        snapshot.loc_bits_prelude = Some((0, 0));
+        snapshot.projection_scene.available = true;
+
+        assert!(snapshot.rebuild_loc(&client));
+        assert!(snapshot.projection_scene().locs.is_empty());
+        assert!(!snapshot.projection_locs_built);
+
+        snapshot.set_loc_projection_wanted(true);
+        assert!(!snapshot.rebuild_loc(&client));
+        assert!(snapshot.projection_scene().locs.is_empty());
+        assert!(snapshot.projection_locs_built);
+        snapshot.projection_scene.locs = vec![ProjectionLocView::default()].into();
+
+        snapshot.set_loc_projection_wanted(false);
+        assert!(!snapshot.rebuild_loc(&client));
+        assert!(snapshot.projection_scene().locs.is_empty());
+        assert!(!snapshot.projection_locs_built);
     }
 
     #[test]

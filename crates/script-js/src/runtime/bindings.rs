@@ -210,6 +210,7 @@ pub(super) fn wire_runtime(
     named_banks: std::sync::Arc<api::named_banks::NamedBankFacts>,
     local_state: Option<std::sync::Arc<script::local_state::SlotState>>,
     frame_interest: std::sync::Arc<std::sync::atomic::AtomicUsize>,
+    loc_projection_interest: std::sync::Arc<std::sync::atomic::AtomicBool>,
 ) -> Result<(), String> {
     if shape == LoadShape::Reject {
         return Err("not a bot shape".to_string());
@@ -771,7 +772,8 @@ pub(super) fn wire_runtime(
     super::recovery_hints_v8::install(runtime).map_err(|e| format!("recovery hints v8: {e}"))?;
     super::buyout_plan::install(runtime).map_err(|e| format!("buyout plan: {e}"))?;
     super::supply_v8::install(runtime).map_err(|e| format!("supply v8: {e}"))?;
-    super::selected_facts_v8::install(runtime).map_err(|e| format!("selected facts v8: {e}"))?;
+    super::selected_facts_v8::install(runtime, loc_projection_interest)
+        .map_err(|e| format!("selected facts v8: {e}"))?;
     super::rune_routes_v8::install(runtime).map_err(|e| format!("rune routes v8: {e}"))?;
     super::gather_methods_v8::install(runtime).map_err(|e| format!("gather methods v8: {e}"))?;
     super::progress_methods_v8::install(runtime)

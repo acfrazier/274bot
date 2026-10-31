@@ -6,6 +6,7 @@ use api::game_data::SelectedGameData;
 use api::snapshot::WorldTile;
 use rustyscript::Runtime;
 use std::cell::RefCell;
+use std::sync::atomic::AtomicBool;
 use std::sync::{Arc, Weak};
 #[path = "client_adapter_v8.rs"]
 mod client_adapter_v8;
@@ -26,7 +27,17 @@ pub(super) fn reset_obj_records_cache() {
     drop(stale);
 }
 
-pub(super) fn install(runtime: &mut Runtime) -> Result<(), String> {
+pub(super) fn install(
+    runtime: &mut Runtime,
+    loc_projection_interest: Arc<AtomicBool>,
+) -> Result<(), String> {
+    if !runtime
+        .deno_runtime()
+        .v8_isolate()
+        .set_slot(loc_projection_interest)
+    {
+        return Err("loc projection interest already installed".to_string());
+    }
     let context = runtime.deno_runtime().main_context();
     let mut scope = runtime.deno_runtime().handle_scope();
     let global = context.open(&mut scope).global(&mut scope);

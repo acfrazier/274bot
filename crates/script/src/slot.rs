@@ -1527,6 +1527,16 @@ impl SlotScript {
             false
         }
     }
+    /// Whether the current surface has requested projection locs.
+    pub fn loc_projection_wanted(&self) -> bool {
+        matches!(
+            self.state,
+            RunState::Starting | RunState::Running | RunState::Paused
+        ) && self
+            .surface
+            .as_deref()
+            .is_some_and(SurfaceRun::loc_projection_wanted)
+    }
 
     /// Operator Stop: start isolate teardown without blocking. The join
     /// (onStop hook plus the 2 s cap) runs on a reaper; observe completes

@@ -133,6 +133,7 @@ pub struct Host;
 pub struct ScriptRunPolicy {
     runtime_generation: Option<u64>,
     policy_override: Option<RunPolicyOverride>,
+    loc_projection_wanted: bool,
 }
 
 impl ScriptRunPolicy {
@@ -142,6 +143,7 @@ impl ScriptRunPolicy {
         if self.runtime_generation != runtime_generation {
             self.runtime_generation = runtime_generation;
             self.policy_override = None;
+            self.loc_projection_wanted = false;
         }
     }
 
@@ -151,9 +153,17 @@ impl ScriptRunPolicy {
             self.policy_override = policy;
         }
     }
+    /// Set whether the active script run requested projection locs.
+    pub fn set_loc_projection_wanted(&mut self, wanted: bool) {
+        self.loc_projection_wanted = wanted;
+    }
 
     fn resolved(&self) -> RunPolicy {
         resolve_run_policy(self.policy_override, RunPolicy::default())
+    }
+    /// Whether the active script run requested the loc projection.
+    pub fn loc_projection_wanted(&self) -> bool {
+        self.loc_projection_wanted
     }
 }
 
@@ -1410,6 +1420,8 @@ impl SlotLoop {
             self.guardian_status = RandomStatus::default();
             self.run_on = false;
         }
+        self.snapshot
+            .set_loc_projection_wanted(self.run_policy.loc_projection_wanted());
         publish_snapshot(&mut self.snapshot, client, result);
         result
     }

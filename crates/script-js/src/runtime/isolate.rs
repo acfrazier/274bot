@@ -314,6 +314,8 @@ pub struct LoadIsolate {
     /// Number of native frame listeners in this isolate. The host frame
     /// producer reads this before sending a synchronous client-frame command.
     frame_interest: std::sync::Arc<AtomicUsize>,
+    /// Set by the native `reader.locBox` callback, read by the slot publisher.
+    loc_projection_interest: std::sync::Arc<std::sync::atomic::AtomicBool>,
     /// Reused zero-capacity receipt channel: at most one client frame can
     /// be pending while the host client thread waits for V8 dispatch. The
     /// mutex keeps the isolate handle `Sync`; the frame path takes it with
@@ -601,6 +603,9 @@ impl LoadIsolate {
         let thread_paint_generation = paint_generation.clone();
         let frame_interest = std::sync::Arc::new(AtomicUsize::new(0));
         let thread_frame_interest = std::sync::Arc::clone(&frame_interest);
+        let loc_projection_interest =
+            std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let thread_loc_projection_interest = std::sync::Arc::clone(&loc_projection_interest);
         let (frame_ack_tx, frame_ack_rx) = mpsc::sync_channel(0);
         let queued = std::sync::Arc::new(AtomicUsize::new(0));
         let thread_queued = queued.clone();
@@ -630,6 +635,7 @@ impl LoadIsolate {
                     thread_paint_generation,
                     thread_teardown,
                     thread_frame_interest,
+                    thread_loc_projection_interest,
                     frame_ack_tx,
                     thread_proof,
                     execution,
@@ -651,6 +657,7 @@ impl LoadIsolate {
             compat_journal,
             paint_generation,
             frame_interest,
+            loc_projection_interest,
             frame_ack_rx: Mutex::new(frame_ack_rx),
             stopped: std::sync::atomic::AtomicBool::new(false),
             script_stop: Mutex::new(None),
@@ -1175,6 +1182,19 @@ impl LoadIsolate {
     /// Cached terminal state, refreshed by the regular log drain.
     pub fn stopped(&self) -> bool {
         self.stopped.load(std::sync::atomic::Ordering::Acquire)
+    }
+    /// Whether this live isolate has requested the projection loc list.
+    pub(crate) fn loc_projection_wanted(&self) -> bool {
+        !self.stopped.load(std::sync::atomic::Ordering::Acquire)
+            && self
+                .loc_projection_interest
+                .load(std::sync::atomic::Ordering::Acquire)
+    }
+    /// Test-only observation of the native ClientAdapter locBox demand flag.
+    #[cfg(feature = "test-hooks")]
+    pub fn loc_projection_wanted_for_test(&self) -> bool {
+        self.loc_projection_interest
+            .load(std::sync::atomic::Ordering::Acquire)
     }
 
     /// Cached ScriptRunner.stop receipt. Reading it never drains logs.
