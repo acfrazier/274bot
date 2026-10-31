@@ -3718,7 +3718,8 @@ impl CachedDecision {
         let needs_snapshot = matches!(
             domain,
             LocalStateDomain::LoadoutsReferences | LocalStateDomain::ScriptRuntimeSettings
-        ) || (domain == LocalStateDomain::Preferences && cached.preferences.is_none());
+        ) || (domain == LocalStateDomain::Preferences
+            && cached.preferences.is_none());
         Self {
             version: cached.version,
             snapshot: needs_snapshot.then(|| cached.snapshot.clone()),
