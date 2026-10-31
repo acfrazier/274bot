@@ -1,6 +1,6 @@
 use super::tests::BaitFixture;
 use super::*;
-use crate::acquire::{BlockReason, Looked, NeedKind, Presence};
+use crate::acquire::{BankSeen, BlockReason, Looked, NeedKind, Presence};
 use crate::quester::families::tests::{def, with_tick_bank};
 use api::bank_memory::{BankMemory, Origin};
 use api::snapshot::{ItemActionFamily, ItemContainer};
@@ -168,6 +168,102 @@ fn every_park_survives_relog_and_hint_generation_without_a_plan() {
         assert!(gatherer.active_matches_none());
         assert!(ledger.is_none());
     }
+}
+
+#[test]
+fn relog_rephrases_the_parked_bank_clause_as_a_saved_hint() {
+    let mut fixture = BaitFixture::new();
+    fixture
+        .snapshot
+        .seed_inventory(fixture.snapshot.inventory().to_vec(), 1);
+    let now = std::time::SystemTime::now();
+    let observed_at_unix = now
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |time| time.as_secs());
+    let looked = Looked {
+        bank: Some(BankSeen {
+            origin: Origin::Session,
+            observed_at_unix,
+            rows: 0,
+            count: 0,
+        }),
+        ..Looked::default()
+    };
+    let block = AcquireBlock {
+        item: Arc::from("Fishing bait"),
+        need: 0,
+        reason: BlockReason::SupplyMissing,
+        message: crate::acquire::plan::block_message(
+            "Fishing bait",
+            &BlockReason::SupplyMissing,
+            &looked,
+            "nobody sells it",
+            now,
+            1,
+        ),
+        looked,
+    };
+    let mut gatherer = fixture.gatherer(GatherRetained::default());
+    let mut ledger = None;
+    with_tick_bank(
+        &fixture.snapshot,
+        Some(&fixture.session),
+        &mut ledger,
+        1,
+        |tick| {
+            let request = gatherer.acquire_request(
+                Arc::from([need(BAIT, 5, Presence::Held)]),
+                None,
+                CloseBank::Close,
+                &tick.cx,
+            );
+            gatherer.park_supply(request, block, 1);
+        },
+    );
+    gatherer.needs_validate = false;
+    assert!(gatherer
+        .scratch
+        .parked
+        .as_ref()
+        .unwrap()
+        .block
+        .message
+        .contains("less than a minute ago this session"));
+    assert_eq!(fixture.session.origin(), Origin::Session);
+
+    fixture.session.relogged();
+    assert_eq!(fixture.session.origin(), Origin::Hint);
+    gatherer.run.session = 0;
+    let calls = crate::acquire::plan::calls_for_test();
+    let mut ledger = None;
+    with_tick_bank(
+        &fixture.snapshot,
+        Some(&fixture.session),
+        &mut ledger,
+        2,
+        |tick| {
+            assert!(matches!(gatherer.tick(tick).unwrap(), ScriptFlow::Continue));
+        },
+    );
+
+    let park = gatherer.scratch.parked.as_ref().unwrap();
+    assert_eq!(park.block.reason, BlockReason::SupplyMissing);
+    assert_eq!(park.block.looked.bank.unwrap().origin, Origin::Hint);
+    assert!(
+        park.block.message.contains("from a saved hint"),
+        "{}",
+        park.block.message
+    );
+    assert!(
+        !park.block.message.contains("this session"),
+        "{}",
+        park.block.message
+    );
+    assert_eq!(
+        crate::acquire::plan::calls_for_test(),
+        calls,
+        "a relog rephrases the retained reason without planning"
+    );
 }
 
 #[test]

@@ -46,6 +46,7 @@ impl Gatherer {
 
     /// Return true while the park or its close operation owns this frame.
     pub(super) fn poll_park(&mut self, tick: &mut NativeTick<'_>) -> bool {
+        self.refresh_park_bank_provenance(tick);
         if !self.active_matches_none() {
             self.poll_active(tick);
             if !self.active_matches_none() || self.failure.is_some() {
@@ -165,5 +166,32 @@ impl Gatherer {
                 true
             }
         }
+    }
+
+    /// A relog keeps the parked block but relabels the same bank observation a
+    /// saved hint. Re-render its bank clause so the reason and `bank_seen`
+    /// agree; this reads evidence only and never plans or walks.
+    pub(super) fn refresh_park_bank_provenance(&mut self, tick: &NativeTick<'_>) {
+        let Some(park) = self.scratch.parked.as_mut() else {
+            return;
+        };
+        let Some(bank) = park.block.looked.bank else {
+            return;
+        };
+        let Some(current) =
+            crate::acquire::plan::Counts::bank_seen(&tick.cx.snapshot().stock())
+        else {
+            return;
+        };
+        if current.origin == bank.origin {
+            return;
+        }
+        let refreshed = crate::acquire::BankSeen { origin: current.origin, ..bank };
+        park.block.message = crate::acquire::plan::rebank_message(
+            &park.block.message,
+            refreshed,
+            std::time::SystemTime::now(),
+        );
+        park.block.looked.bank = Some(refreshed);
     }
 }

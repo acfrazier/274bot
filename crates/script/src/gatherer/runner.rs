@@ -2627,6 +2627,7 @@ impl Gatherer {
             return;
         }
         self.dirty = false;
+        self.refresh_park_bank_provenance(tick);
         let (_, native_phase) = self.phase();
         let mut data = self.status_data(tick.cx.snapshot().inventory().map(|rows| rows.value));
         data.bank_seen = crate::acquire::plan::Counts::bank_seen(&tick.cx.snapshot().stock());

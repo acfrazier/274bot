@@ -991,6 +991,49 @@ fn vendor_line_for_purchase(
     }
 }
 
+/// The bank clause of a block message, without its row count.
+fn bank_seen_phrase(bank: BankSeen, now: std::time::SystemTime) -> String {
+    let age = std::time::UNIX_EPOCH
+        .checked_add(std::time::Duration::from_secs(bank.observed_at_unix))
+        .and_then(|seen| now.duration_since(seen).ok());
+    // A bank carried across a relog or loaded from the saved hint is not
+    // "this session"; the status line labels it "Hint (saved)".
+    let source = match bank.origin {
+        Origin::Session | Origin::Unknown => "this session",
+        Origin::Hint => "from a saved hint",
+    };
+    let seen = match age.map(|age| age.as_secs() / 60) {
+        Some(0) => format!("less than a minute ago {source}"),
+        Some(1) => format!("1 minute ago {source}"),
+        Some(minutes) => format!("{minutes} minutes ago {source}"),
+        None => source.to_string(),
+    };
+    format!("in the bank as seen {seen}")
+}
+
+/// Replace the bank clause of a retained block message after the bank memory's
+/// provenance changes. A relog keeps the same observation but relabels it a
+/// saved hint, so a parked reason must not keep claiming "this session".
+pub(crate) fn rebank_message(
+    message: &Arc<str>,
+    bank: BankSeen,
+    now: std::time::SystemTime,
+) -> Arc<str> {
+    const PREFIX: &str = "in the bank as seen ";
+    let Some(start) = message.find(PREFIX) else {
+        return Arc::clone(message);
+    };
+    let suffix = format!(" ({} rows)", bank.rows);
+    let Some(end) = message[start..].find(&suffix).map(|at| at + start) else {
+        return Arc::clone(message);
+    };
+    let phrase = bank_seen_phrase(bank, now);
+    if phrase.as_str() == &message[start..end] {
+        return Arc::clone(message);
+    }
+    Arc::from(format!("{}{phrase}{}", &message[..start], &message[end..]))
+}
+
 /// Format a generated block message from borrowed facts. Authored bank
 /// refusals keep their existing text and must not call this helper.
 pub(crate) fn block_message(
@@ -1005,24 +1048,7 @@ pub(crate) fn block_message(
         unreachable!("authored refusals preserve their existing message");
     }
     let bank = match looked.bank {
-        Some(bank) => {
-            let age = std::time::UNIX_EPOCH
-                .checked_add(std::time::Duration::from_secs(bank.observed_at_unix))
-                .and_then(|seen| now.duration_since(seen).ok());
-            // A bank carried across a relog or loaded from the saved hint is
-            // not "this session"; the status line labels it "Hint (saved)".
-            let source = match bank.origin {
-                Origin::Session | Origin::Unknown => "this session",
-                Origin::Hint => "from a saved hint",
-            };
-            let seen = match age.map(|age| age.as_secs() / 60) {
-                Some(0) => format!("less than a minute ago {source}"),
-                Some(1) => format!("1 minute ago {source}"),
-                Some(minutes) => format!("{minutes} minutes ago {source}"),
-                None => source.to_string(),
-            };
-            format!("in the bank as seen {seen} ({} rows)", bank.rows)
-        }
+        Some(bank) => format!("{} ({} rows)", bank_seen_phrase(bank, now), bank.rows),
         None => "in the observed bank".to_string(),
     };
     let waiting = match reason {
