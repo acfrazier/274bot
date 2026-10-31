@@ -226,10 +226,10 @@ mod tests {
     }
 
     #[test]
-    fn path_and_request_prerequisite_options_keep_every_forbid() {
+    fn path_grants_are_additive_and_only_request_forbid_narrows() {
         use crate::native::{PrereqOptions, WalkBit};
         assert!(std::mem::size_of::<PrereqOptions>() <= 2);
-        for header in [WalkBit::Inherit, WalkBit::Allow, WalkBit::Forbid] {
+        for header in [false, true] {
             for request in [WalkBit::Inherit, WalkBit::Allow, WalkBit::Forbid] {
                 let mut options = WalkOptions {
                     allow_prereq_dialogue: request,
@@ -241,12 +241,12 @@ mod tests {
                     quest_start: header,
                 }
                 .apply(&mut options);
-                let expected = if header == WalkBit::Forbid || request == WalkBit::Forbid {
+                let expected = if request == WalkBit::Forbid {
                     WalkBit::Forbid
-                } else if request == WalkBit::Inherit {
-                    header
+                } else if header || request == WalkBit::Allow {
+                    WalkBit::Allow
                 } else {
-                    request
+                    WalkBit::Inherit
                 };
                 assert_eq!(options.allow_prereq_dialogue, expected);
                 assert_eq!(options.allow_quest_start, expected);

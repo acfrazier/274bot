@@ -1798,6 +1798,14 @@ for (const facts of [pinQuest274, pinQuest289]) {
     }
     assert.equal(facts.rows.find((row) => row.id === 'barcrawl')?.journal_title, null, 'miniquest without a journal remains unknown');
 }
+for (const [revision, facts] of [[274, pinQuest274], [289, pinQuest289]] as const) {
+    const upass = facts.rows.find((entry) => entry.id === 'upass');
+    assert.deepEqual(
+        upass?.stage_domain,
+        { min: 0, max: 10 },
+        `${revision}: Underground Pass stage domain excludes ibanmulti bit values`,
+    );
+}
 assert.equal(pinQuest289.rows.find((row) => row.id === 'misc')?.journal_title, 'Throne of Miscellania');
 assert.equal(pinQuest289.rows.find((row) => row.id === 'hauntedmine')?.journal_title, null, 'stub without a journal remains unknown');
 assert.equal(pinQuest289.rows.length, 69);

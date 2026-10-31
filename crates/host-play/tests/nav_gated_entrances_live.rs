@@ -1034,8 +1034,8 @@ fn run_case(case: EntranceCase) {
     assert!(std::env::var_os("HOME").is_some(), "set a disposable HOME");
     let prefix = std::env::var("BOT_LIVE_NAME_PREFIX").expect("BOT_LIVE_NAME_PREFIX");
     assert!(
-        prefix.len() == 4 && prefix.bytes().all(|byte| byte.is_ascii_lowercase()),
-        "use an owned four-character lowercase account namespace"
+        prefix.len() == 3 && prefix.bytes().all(|byte| byte.is_ascii_lowercase()),
+        "use an owned three-character lowercase account namespace"
     );
 
     let evidence_root = required_path("NAV_GATED_ENTRANCES_EVIDENCE");
@@ -1866,25 +1866,25 @@ fn run_case(case: EntranceCase) {
 }
 
 #[test]
-#[ignore = "requires LIVE=1, BOT_CPU=1, disposable HOME, an owned four-character BOT_LIVE_NAME_PREFIX, BOT_CACHE_DIR, BOT_NAV_SNAPSHOT_ROOT, WORLD_ENGINE_DIR, WORLD_NAV_PACK, BOT_NAV_BUILD=skip, and NAV_GATED_ENTRANCES_EVIDENCE"]
+#[ignore = "requires LIVE=1, BOT_CPU=1, disposable HOME, an owned three-character BOT_LIVE_NAME_PREFIX, BOT_CACHE_DIR, BOT_NAV_SNAPSHOT_ROOT, WORLD_ENGINE_DIR, WORLD_NAV_PACK, BOT_NAV_BUILD=skip, and NAV_GATED_ENTRANCES_EVIDENCE"]
 fn live_grand_tree_mine_requires_quest_completion_and_reaches_resources() {
     run_case(EntranceCase::GrandTreeMine);
 }
 
 #[test]
-#[ignore = "requires LIVE=1, BOT_CPU=1, disposable HOME, an owned four-character BOT_LIVE_NAME_PREFIX, BOT_CACHE_DIR, BOT_NAV_SNAPSHOT_ROOT, WORLD_ENGINE_DIR, WORLD_NAV_PACK, BOT_NAV_BUILD=skip, and NAV_GATED_ENTRANCES_EVIDENCE"]
+#[ignore = "requires LIVE=1, BOT_CPU=1, disposable HOME, an owned three-character BOT_LIVE_NAME_PREFIX, BOT_CACHE_DIR, BOT_NAV_SNAPSHOT_ROOT, WORLD_ENGINE_DIR, WORLD_NAV_PACK, BOT_NAV_BUILD=skip, and NAV_GATED_ENTRANCES_EVIDENCE"]
 fn live_desert_mining_camp_requires_metal_key_and_refuses_excluded_items() {
     run_case(EntranceCase::DesertMiningCamp);
 }
 
 #[test]
-#[ignore = "requires LIVE=1, BOT_CPU=1, disposable HOME, an owned four-character BOT_LIVE_NAME_PREFIX, BOT_CACHE_DIR, BOT_NAV_SNAPSHOT_ROOT, WORLD_ENGINE_DIR, WORLD_NAV_PACK, BOT_NAV_BUILD=skip, and NAV_GATED_ENTRANCES_EVIDENCE"]
+#[ignore = "requires LIVE=1, BOT_CPU=1, disposable HOME, an owned three-character BOT_LIVE_NAME_PREFIX, BOT_CACHE_DIR, BOT_NAV_SNAPSHOT_ROOT, WORLD_ENGINE_DIR, WORLD_NAV_PACK, BOT_NAV_BUILD=skip, and NAV_GATED_ENTRANCES_EVIDENCE"]
 fn live_desert_mining_camp_lower_mine_requires_worn_slave_kit() {
     run_case(EntranceCase::DesertMiningCampUnderground);
 }
 
 #[test]
-#[ignore = "requires LIVE=1, BOT_CPU=1, disposable HOME, an owned four-character BOT_LIVE_NAME_PREFIX, BOT_CACHE_DIR, BOT_NAV_SNAPSHOT_ROOT, WORLD_ENGINE_DIR, WORLD_NAV_PACK, BOT_NAV_BUILD=skip, and NAV_GATED_ENTRANCES_EVIDENCE"]
+#[ignore = "requires LIVE=1, BOT_CPU=1, disposable HOME, an owned three-character BOT_LIVE_NAME_PREFIX, BOT_CACHE_DIR, BOT_NAV_SNAPSHOT_ROOT, WORLD_ENGINE_DIR, WORLD_NAV_PACK, BOT_NAV_BUILD=skip, and NAV_GATED_ENTRANCES_EVIDENCE"]
 fn live_taverley_lava_eels_requires_dusty_key() {
     run_case(EntranceCase::TaverleyLavaEels);
 }

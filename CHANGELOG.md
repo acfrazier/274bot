@@ -75,10 +75,11 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.7` 
   An on-demand Heroes' Quest page also proves eligibility after Alfonse,
   before quest completion, without starting dialogue or a quest.
   If the page times out, the walker retries once on a later observed game
-  tick. A failed retry keeps the gate closed and reports the last failure.
+  tick. A failed retry keeps the gate closed and reports the terminal failure.
 - Two default-on navigation settings allow prerequisite dialogue and quest
-  starts. A global or script grant allows the step. A per-walk `false`
-  forbids it. Combat escapes and other safety walks never stop to talk.
+  starts. Global, script and guide-level `true` grants are additive. A
+  guide-level `false` adds no grant; a per-walk `false` forbids it. Combat
+  escapes and other safety walks never stop to talk.
   Scripted `walkTo` and `walkResilient` preserve these per-walk choices,
   including after the existing boat-fare recovery.
   Scripted walks retain their original walk identity during a prerequisite
@@ -86,6 +87,8 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.7` 
   handover is refused.
   Food from Drezel remains ordinary inventory and follows existing bank
   behavior. No prerequisite step drops it.
+- After a script sends a game interaction, the host defers its auto-run press
+  until a later observed game tick. This keeps both actions off the same tick.
 - Bots now wait and try again when another player is using a shortcut,
   instead of giving up. The Yanille dungeon ledge ("The ledge is being
   used") stays held for at most 9 game ticks after a refusal, so the bot

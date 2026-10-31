@@ -133,24 +133,21 @@ pub struct WalkOptions {
     pub allow_quest_start: WalkBit,
 }
 
-/// Path-level request policy. An explicit Forbid at either level wins.
+/// Path-level grants; an explicit walk-request `Forbid` is the only restriction.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub(crate) struct PrereqOptions {
-    pub dialogue: WalkBit,
-    pub quest_start: WalkBit,
+    pub dialogue: bool,
+    pub quest_start: bool,
 }
 
 impl PrereqOptions {
     fn apply(self, options: &mut WalkOptions) {
-        fn merge(header: WalkBit, request: WalkBit) -> WalkBit {
-            match (header, request) {
-                (WalkBit::Forbid, _) | (_, WalkBit::Forbid) => WalkBit::Forbid,
-                (header, WalkBit::Inherit) => header,
-                (_, request) => request,
-            }
+        if self.dialogue && options.allow_prereq_dialogue == WalkBit::Inherit {
+            options.allow_prereq_dialogue = WalkBit::Allow;
         }
-        options.allow_prereq_dialogue = merge(self.dialogue, options.allow_prereq_dialogue);
-        options.allow_quest_start = merge(self.quest_start, options.allow_quest_start);
+        if self.quest_start && options.allow_quest_start == WalkBit::Inherit {
+            options.allow_quest_start = WalkBit::Allow;
+        }
     }
 }
 

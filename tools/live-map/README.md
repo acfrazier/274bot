@@ -37,11 +37,13 @@ ISOHOME=/Users/acfrazier/experiments/274bot/.superpowers/bin/isohome \
   python3 -B tools/live-map/live_map.py --verify-cells
 ```
 
-The verifier extracts each test selector and runs `cargo test ... -- --list`.
-It fails if the selector exits with an error or lists no tests. For a
-`cargo run` cell, the third field is only a proxy selector. The verifier does
-not validate the `cargo run` command, the `--live` name, the input values, or
-the assigned host. It does not run the live cell.
+The verifier extracts a cargo-test selector and runs `cargo test ... -- --list`.
+The cell format is `name|command|selector`. A `cargo test` command may omit the
+third field because the map derives it from the command. A `cargo run` command
+or custom shell wrapper needs an explicit third-field selector.
+It fails if the selector exits with an error or lists no tests. The selector is
+a proxy: verification does not validate the live command, wrapper arguments,
+`--live` name, inputs or assigned host. It does not run the live cell.
 
 ## Cell hosts
 
@@ -53,7 +55,7 @@ All cells not listed below normally run on merlot. Engine A uses game port
 |---|---|
 | `host.npc-hop-engine-b` | Run on chardonnay. The command sets `WORLD_CACHE_DIR` and `LIVE_EVIDENCE_DIR`. Engine B is reached through the loopback tunnel at game port `45594` and HTTP port `2080`. |
 | `host.sherlock-search-live` | Run on merlot or chardonnay when that host has Engine A at `127.0.0.1:44594` and `127.0.0.1:1080`. The cell uses loopback ports and has no host-specific code. Use chardonnay when merlot is measured or reserved. It needs `LIVE=1`, `BOT_CPU=1`, `BOT_LIVE_NAME_PREFIX`, `WORLD_NAV_PACK`, `WORLD_ENGINE_DIR`, `BOT_CACHE_DIR`, `RS2B0T`, `WORLD_GAME_PORT`, `WORLD_HTTP_PORT`, and `LIVE_EVIDENCE_DIR`. The command also uses `ISOHOME`. Leave `QUESTER_TICK_MS` unset. |
-| `host.quester-path-engine-q`, `scenario.quester-engine-q` | Run on the Engine Q host. This setup uses merlot at `127.0.0.1:44694` and `127.0.0.1:1180`. Set `QUESTER_TICK_MS=300` only for these cells. |
+| `host.quester-path-engine-q`, `scenario.quester-engine-q` | Run on the Engine Q host. This setup uses merlot at `127.0.0.1:44694` and `127.0.0.1:1180`. Leave `QUESTER_TICK_MS` unset; do not issue `::speed`. |
 | `nav.essence-follow` | The orchestrator must start a 274 engine on the cell host at `127.0.0.1:43594`. The orchestrator supplies `ENGINE_274_DIR` and `NAV_PACK_274`. Do not run this cell until the orchestrator provides both inputs and starts the engine. |
 | `nav.essence-289-engine-a` | Run on merlot or chardonnay when that host has Engine A at `127.0.0.1:44594` and `127.0.0.1:1080`. Use chardonnay when merlot is measured or reserved. |
 | `panel.headed-render` | Run on merlot with its interactive GPU and display. The command removes `BOT_CPU` so the client uses the GPU renderer. |

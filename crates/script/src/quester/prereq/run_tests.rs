@@ -2356,6 +2356,19 @@ fn kitchen_journal_timeout_retries_once_on_a_later_observed_tick_and_recovers() 
     ));
     assert_eq!(state.prereq_snapshot().facts().len(), 1);
     assert_eq!(ledger.as_ref().unwrap().outbox.len(), 2);
+    #[cfg(feature = "test-hooks")]
+    {
+        let attempts = run.journal_attempts().collect::<Vec<_>>();
+        assert_eq!(attempts.len(), 2);
+        assert_eq!(attempts[0].0, 1);
+        assert_eq!(
+            attempts[0].3,
+            Some("the native action failed: journal modal timeout")
+        );
+        assert_eq!(attempts[1].0, 2);
+        assert_eq!(attempts[1].3, None);
+        assert!(attempts.iter().all(|attempt| attempt.2.is_some()));
+    }
 }
 
 #[test]
@@ -2390,6 +2403,20 @@ fn kitchen_journal_timeout_stops_after_two_reads_with_the_last_timeout_detail() 
         "no third read or gate probe"
     );
     assert!(!ledger.as_ref().unwrap().test_owner_live());
+    #[cfg(feature = "test-hooks")]
+    {
+        let attempts = run.journal_attempts().collect::<Vec<_>>();
+        assert_eq!(attempts.len(), 2);
+        assert_eq!(
+            attempts[0].3,
+            Some("the native action failed: journal modal timeout")
+        );
+        assert_eq!(
+            attempts[1].3,
+            Some("the native action failed: journal modal timeout")
+        );
+        assert!(attempts.iter().all(|attempt| attempt.2.is_some()));
+    }
 }
 
 #[test]
@@ -2420,6 +2447,19 @@ fn kitchen_journal_timeout_retry_keeps_a_different_last_failure_detail() {
             why: PrereqFailure::Action(detail), ..
         })) if detail.as_ref() == "the native action failed: journal click refused"
     ));
+    #[cfg(feature = "test-hooks")]
+    {
+        let attempts = run.journal_attempts().collect::<Vec<_>>();
+        assert_eq!(attempts.len(), 2);
+        assert_eq!(
+            attempts[0].3,
+            Some("the native action failed: journal modal timeout")
+        );
+        assert_eq!(
+            attempts[1].3,
+            Some("the native action failed: journal click refused")
+        );
+    }
     assert!(state.prereq_snapshot().facts().is_empty());
     assert_eq!(ledger.as_ref().unwrap().outbox.len(), 1);
 }

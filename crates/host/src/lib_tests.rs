@@ -832,6 +832,67 @@ fn auto_run_20_0_20_sends_twice() {
     assert!(slot.run_on);
 }
 
+#[test]
+fn auto_run_yields_to_script_action_and_recurs_after_energy_and_session_changes() {
+    let mut client = prepare_client(
+        cfg(),
+        1,
+        Arc::new(Cache::default()),
+        Arc::new(vec![]),
+        Vec::new(),
+    );
+    let mut slot = SlotLoop::new();
+    ingame_scene2(&mut client);
+    client.runenergy = 20;
+    client.gens.stat = 1;
+    slot.after_drain(&mut client);
+
+    let action_tick = slot.snapshot.tick();
+    slot.run_policy.note_script_interaction(action_tick);
+    slot.apply_auto_run(&mut client);
+    assert_eq!(slot.run_sends, 0, "the host yields during the script tick");
+    assert_eq!(client.out.pos, 0, "the host sends no competing run press");
+
+    client.gens.player_info += 1;
+    slot.after_drain(&mut client);
+    assert_eq!(slot.snapshot.tick(), action_tick + 1);
+    slot.apply_auto_run(&mut client);
+    assert_eq!(slot.run_sends, 1);
+
+    client.out.pos = 0;
+    client.runenergy = 0;
+    client.gens.stat += 1;
+    client.gens.player_info += 1;
+    slot.after_drain(&mut client);
+    slot.apply_auto_run(&mut client);
+    assert!(!slot.run_on);
+    assert_eq!(slot.run_sends, 1);
+
+    client.runenergy = 20;
+    client.gens.stat += 1;
+    client.gens.player_info += 1;
+    slot.after_drain(&mut client);
+    slot.apply_auto_run(&mut client);
+    assert_eq!(slot.run_sends, 2, "energy recovery permits the next press");
+
+    client.out.pos = 0;
+    slot.run_policy
+        .note_script_interaction(slot.snapshot.tick());
+    client.ingame = false;
+    slot.after_drain(&mut client);
+    ingame_scene2(&mut client);
+    client.gens.session = client.gens.session.wrapping_add(1);
+    client.runenergy = 20;
+    slot.after_drain(&mut client);
+    slot.apply_auto_run(&mut client);
+    assert_eq!(slot.run_sends, 3, "a new session clears the old fence");
+}
+
+#[test]
+fn script_run_policy_stays_within_per_slot_size_budget() {
+    assert!(std::mem::size_of::<ScriptRunPolicy>() <= 48);
+}
+
 /// HOTFIX-0.2.1: energy crossing the threshold while the bank is open must
 /// not press the run orb — the engine's run-on script `if_close`s the bank
 /// under the deposit (`player_controls.rs2:34-35`, `bank.rs2:16`). The press

@@ -294,13 +294,16 @@ fn endpoint_observed_after(
 }
 
 #[test]
-#[ignore = "requires LIVE=1, BOT_CPU=1, disposable HOME, BOT_CACHE_DIR, BOT_NAV_SNAPSHOT_ROOT, WORLD_ENGINE_DIR, WORLD_NAV_PACK, NAV_QUEST_DOORS_EVIDENCE, and BOT_LIVE_NAME_PREFIX=nd"]
+#[ignore = "requires LIVE=1, BOT_CPU=1, disposable HOME, BOT_CACHE_DIR, BOT_NAV_SNAPSHOT_ROOT, WORLD_ENGINE_DIR, WORLD_NAV_PACK, NAV_QUEST_DOORS_EVIDENCE, and an owned three-character BOT_LIVE_NAME_PREFIX"]
 fn live_fortress_disguise_and_secret_wall_use_content_navigation() {
     assert_eq!(std::env::var("LIVE").as_deref(), Ok("1"));
     assert_eq!(std::env::var("BOT_CPU").as_deref(), Ok("1"));
     assert!(std::env::var_os("HOME").is_some(), "set a disposable HOME");
     let prefix = std::env::var("BOT_LIVE_NAME_PREFIX").expect("BOT_LIVE_NAME_PREFIX");
-    assert_eq!(prefix, "nd", "use this cell's account namespace");
+    assert!(
+        prefix.len() == 3 && prefix.bytes().all(|byte| byte.is_ascii_lowercase()),
+        "use an owned three-character lowercase account namespace"
+    );
     let evidence_root = required_path("NAV_QUEST_DOORS_EVIDENCE");
     let serial = SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -1117,6 +1120,7 @@ fn evidence_stamp_json(stamp: EvidenceStamp) -> Value {
 struct NativePrereqReport {
     finished: bool,
     attempts: Vec<Value>,
+    journal_attempts: Vec<Value>,
     unsupported: Vec<Value>,
     journal_pages: Vec<LiveJournalPage>,
     error: Option<String>,
@@ -1178,7 +1182,28 @@ impl Script for KitchenPrereqScript {
         };
 
         if let Some((gate, mut run)) = self.active.take() {
-            match run.poll(tick.actions, &mut tick.cx, Some(state), &mut self.budget) {
+            let result = run.poll(tick.actions, &mut tick.cx, Some(state), &mut self.budget);
+            {
+                let gate_value = json!(&gate);
+                let mut report = self.report.lock();
+                report
+                    .journal_attempts
+                    .retain(|record| record.get("gate") != Some(&gate_value));
+                report
+                    .journal_attempts
+                    .extend(run.journal_attempts().map(
+                        |(attempt, started_tick, terminal_tick, failure)| {
+                            json!({
+                                "gate": &gate,
+                                "attempt": attempt,
+                                "started_tick": started_tick,
+                                "terminal_tick": terminal_tick,
+                                "failure": failure,
+                            })
+                        },
+                    ));
+            }
+            match result {
                 Poll::Pending => {
                     self.active = Some((gate, run));
                     return Ok(ScriptFlow::Continue);
@@ -1774,6 +1799,7 @@ fn run_phoenix_native_and_crossing(
                     "unsupported_gates": &report_guard.unsupported,
                     "session_memory": memory.facts().iter().map(fact_receipt).collect::<Vec<_>>(),
                     "journal_pages": report_guard.journal_pages.iter().map(page_receipt).collect::<Vec<_>>(),
+                    "journal_attempts": &report_guard.journal_attempts,
                 },
                 "error": "production prerequisite journal run timed out",
             });
@@ -1783,10 +1809,19 @@ fn run_phoenix_native_and_crossing(
             return Err("production prerequisite journal run timed out".into());
         }
         let lifecycle = play.script_lifecycle_receipt(account);
-        let (attempts, unsupported, pages, report_error, report_finished, current_stamp) = {
+        let (
+            attempts,
+            journal_attempts,
+            unsupported,
+            pages,
+            report_error,
+            report_finished,
+            current_stamp,
+        ) = {
             let report = report.lock();
             (
                 report.attempts.clone(),
+                report.journal_attempts.clone(),
                 report.unsupported.clone(),
                 report.journal_pages.clone(),
                 report.error.clone(),
@@ -1805,6 +1840,7 @@ fn run_phoenix_native_and_crossing(
             "driver": "script::quester::prereq::run::PrereqRun",
             "journal_machine": std::any::type_name::<JournalMachine>(),
             "attempts": &attempts,
+            "journal_attempts": &journal_attempts,
             "unsupported_gates": &unsupported,
             "session_memory": memory.facts().iter().map(fact_receipt).collect::<Vec<_>>(),
             "journal_pages": pages.iter().map(page_receipt).collect::<Vec<_>>(),
@@ -1838,6 +1874,13 @@ fn run_phoenix_native_and_crossing(
                 attempts.len(),
                 pages.len()
             ));
+        }
+        if journal_attempts.len() < pages.len()
+            || journal_attempts
+                .iter()
+                .any(|attempt| attempt["terminal_tick"].is_null())
+        {
+            return Err("a journal attempt lacks its terminal outcome".into());
         }
         if pages.iter().any(|page| match page.closed {
             None => true,
@@ -2013,7 +2056,11 @@ fn run_phoenix_native_and_crossing(
 }
 fn run_brimhaven_phoenix_kitchen_journal() {
     assert_eq!(std::env::var("LIVE").as_deref(), Ok("1"));
-    assert_eq!(std::env::var("BOT_LIVE_NAME_PREFIX").as_deref(), Ok("npr3"));
+    let prefix = std::env::var("BOT_LIVE_NAME_PREFIX").expect("BOT_LIVE_NAME_PREFIX");
+    assert!(
+        prefix.len() == 3 && prefix.bytes().all(|byte| byte.is_ascii_lowercase()),
+        "use an owned three-character lowercase account namespace"
+    );
     let evidence = required_path("NAV_KITCHEN_EVIDENCE");
     fs::create_dir_all(&evidence).unwrap();
     let serial = SystemTime::now()
@@ -2131,7 +2178,7 @@ fn run_brimhaven_phoenix_kitchen_journal() {
     );
 }
 #[test]
-#[ignore = "requires Engine Q at 127.0.0.1:44694/http1180, LIVE=1, WORLD_NAV_PACK, BOT_LIVE_NAME_PREFIX=npr3, and NAV_KITCHEN_EVIDENCE"]
+#[ignore = "requires Engine Q at 127.0.0.1:44694/http1180, LIVE=1, WORLD_NAV_PACK, an owned three-character lowercase BOT_LIVE_NAME_PREFIX, and NAV_KITCHEN_EVIDENCE"]
 fn live_brimhaven_phoenix_kitchen_crossing() {
     run_brimhaven_phoenix_kitchen_journal();
 }

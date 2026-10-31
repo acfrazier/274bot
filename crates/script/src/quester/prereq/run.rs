@@ -35,11 +35,10 @@ pub(crate) const PAGE_TICKS: u16 = 1;
 pub(crate) const NPC_STEP_TICKS: u16 = 2;
 // Accepted send allowance, not a content guarantee. Live cells pin observed counts.
 pub(crate) const SEND_SLACK_TICKS: u16 = 2;
-// One retry covers the one-shot auto-run press: player_controls.rs2:34-46
-// closes the modal and enables run; host/src/lib.rs:1411-1439 latches it until
-// run energy reaches 0 or the session changes.
-// quest_journal.rs2:1-55 has no delay. After the reader's five observed-tick
-// window, retry on the next observed tick, never again within that same tick.
+// One retry covers the host run-press race after a journal modal timeout.
+// The host can press again after energy recovery or a new session.
+// quest_journal.rs2:1-55 has no delay. Retry only on the next observed tick
+// after the reader's five-tick window, never again within that same tick.
 const JOURNAL_TIMEOUT_RETRIES: u8 = 1;
 
 /// Repeated polls and scene changes cannot spend this wait: only observed ticks do.
@@ -222,6 +221,17 @@ enum CloseResult {
     Refusal(PrereqRefusal),
 }
 
+#[cfg(feature = "test-hooks")]
+const JOURNAL_TRACE_ATTEMPTS: usize = JOURNAL_TIMEOUT_RETRIES as usize + 1;
+
+#[cfg(feature = "test-hooks")]
+#[derive(Default)]
+struct JournalAttemptTrace {
+    started_tick: u64,
+    terminal_tick: Option<u64>,
+    failure: Option<Arc<str>>,
+}
+
 pub struct PrereqRun {
     gate: ActionableGate,
     entry: RunEntry,
@@ -232,6 +242,10 @@ pub struct PrereqRun {
     repeats_left: Option<u8>,
     required_after: Option<EvidenceStamp>,
     explicit: Option<Arc<dyn EvidenceProvider>>,
+    #[cfg(feature = "test-hooks")]
+    journal_attempts: [Option<JournalAttemptTrace>; JOURNAL_TRACE_ATTEMPTS],
+    #[cfg(feature = "test-hooks")]
+    journal_attempts_len: usize,
 }
 impl PrereqRun {
     pub fn begin(gate: ActionableGate, entry: RunEntry, allow: PrereqAllow) -> Self {
@@ -245,11 +259,36 @@ impl PrereqRun {
             repeats_left: None,
             required_after: None,
             explicit: None,
+            #[cfg(feature = "test-hooks")]
+            journal_attempts: std::array::from_fn(|_| None),
+            #[cfg(feature = "test-hooks")]
+            journal_attempts_len: 0,
         }
     }
     pub fn with_evidence(mut self, evidence: Option<Arc<dyn EvidenceProvider>>) -> Self {
         self.explicit = evidence;
         self
+    }
+
+    /// Return the bounded journal-attempt trace used by test receipts.
+    #[cfg(feature = "test-hooks")]
+    pub fn journal_attempts(
+        &self,
+    ) -> impl Iterator<Item = (u8, u64, Option<u64>, Option<&str>)> + '_ {
+        self.journal_attempts
+            .iter()
+            .take(self.journal_attempts_len)
+            .enumerate()
+            .filter_map(|(index, attempt)| {
+                attempt.as_ref().map(|attempt| {
+                    (
+                        index as u8 + 1,
+                        attempt.started_tick,
+                        attempt.terminal_tick,
+                        attempt.failure.as_deref(),
+                    )
+                })
+            })
     }
     pub fn first_supported(
         gates: &[ActionableGate],
@@ -400,9 +439,33 @@ impl PrereqRun {
                     },
                     cx,
                 ) {
-                    Ok(read) => *handle = Some(read),
+                    Ok(read) => {
+                        #[cfg(feature = "test-hooks")]
+                        journal_attempt_started(
+                            &mut self.journal_attempts,
+                            &mut self.journal_attempts_len,
+                            cx.evidence().tick,
+                        );
+                        *handle = Some(read);
+                    }
                     Err(ActionError::BudgetExhausted) => return Poll::Pending,
-                    Err(error) => return Poll::Ready(Err(failed(step, action_failure(error)))),
+                    Err(error) => {
+                        #[cfg(feature = "test-hooks")]
+                        {
+                            journal_attempt_started(
+                                &mut self.journal_attempts,
+                                &mut self.journal_attempts_len,
+                                cx.evidence().tick,
+                            );
+                            journal_attempt_finished(
+                                &mut self.journal_attempts,
+                                self.journal_attempts_len,
+                                cx.evidence().tick,
+                                Some(Arc::<str>::from(error.to_string())),
+                            );
+                        }
+                        return Poll::Ready(Err(failed(step, action_failure(error))));
+                    }
                 }
             }
             let read = match actions.poll(handle.as_ref().expect("journal owner"), cx) {
@@ -410,16 +473,41 @@ impl PrereqRun {
                 Poll::Ready(Err(ActionError::Failed(reason)))
                     if reason.as_ref() == "journal modal timeout" && *retries_left > 0 =>
                 {
+                    #[cfg(feature = "test-hooks")]
+                    journal_attempt_finished(
+                        &mut self.journal_attempts,
+                        self.journal_attempts_len,
+                        cx.evidence().tick,
+                        Some(Arc::<str>::from(
+                            ActionError::Failed(Arc::clone(&reason)).to_string(),
+                        )),
+                    );
                     *retries_left -= 1;
                     *handle = None;
                     *retry_after = Some(cx.evidence().tick);
                     return Poll::Pending;
                 }
                 Poll::Ready(Err(error)) => {
+                    #[cfg(feature = "test-hooks")]
+                    journal_attempt_finished(
+                        &mut self.journal_attempts,
+                        self.journal_attempts_len,
+                        cx.evidence().tick,
+                        Some(Arc::<str>::from(error.to_string())),
+                    );
                     self.phase = Phase::Complete;
                     return Poll::Ready(Err(failed(step, action_failure(error))));
                 }
-                Poll::Ready(Ok(read)) => read,
+                Poll::Ready(Ok(read)) => {
+                    #[cfg(feature = "test-hooks")]
+                    journal_attempt_finished(
+                        &mut self.journal_attempts,
+                        self.journal_attempts_len,
+                        cx.evidence().tick,
+                        None,
+                    );
+                    read
+                }
             };
             self.phase = Phase::Complete;
             if read.quest != journal.quest
@@ -1046,6 +1134,36 @@ impl PrereqRun {
             |state| state.with_prereq_memory(compose),
         )
     }
+}
+
+#[cfg(feature = "test-hooks")]
+fn journal_attempt_started(
+    attempts: &mut [Option<JournalAttemptTrace>; JOURNAL_TRACE_ATTEMPTS],
+    attempts_len: &mut usize,
+    tick: u64,
+) {
+    let index = *attempts_len;
+    assert!(index < attempts.len(), "journal retry bound exceeds trace capacity");
+    attempts[index] = Some(JournalAttemptTrace {
+        started_tick: tick,
+        ..JournalAttemptTrace::default()
+    });
+    *attempts_len += 1;
+}
+
+#[cfg(feature = "test-hooks")]
+fn journal_attempt_finished(
+    attempts: &mut [Option<JournalAttemptTrace>; JOURNAL_TRACE_ATTEMPTS],
+    attempts_len: usize,
+    tick: u64,
+    failure: Option<Arc<str>>,
+) {
+    let attempt = attempts
+        .get_mut(attempts_len.checked_sub(1).expect("journal attempt started"))
+        .and_then(Option::as_mut)
+        .expect("journal attempt trace exists");
+    attempt.terminal_tick = Some(tick);
+    attempt.failure = failure;
 }
 
 fn catalog(cx: &ActionContext<'_>) -> Option<Arc<PrereqCatalog>> {

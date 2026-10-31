@@ -129,10 +129,12 @@ pub struct Host;
 /// Host-owned script auto-run overlay. Host-play identifies the active script
 /// run and applies only generation-matched FlatBuffer updates through this
 /// sink; script Stop/replacement clears the value, while relogs preserve it.
+/// A script interaction also defers the next host press until a later observed tick.
 #[derive(Debug, Default)]
 pub struct ScriptRunPolicy {
     runtime_generation: Option<u64>,
     policy_override: Option<RunPolicyOverride>,
+    auto_run_defer_until: Option<u64>,
 }
 
 impl ScriptRunPolicy {
@@ -142,6 +144,7 @@ impl ScriptRunPolicy {
         if self.runtime_generation != runtime_generation {
             self.runtime_generation = runtime_generation;
             self.policy_override = None;
+            self.auto_run_defer_until = None;
         }
     }
 
@@ -150,6 +153,30 @@ impl ScriptRunPolicy {
         if self.runtime_generation == Some(runtime_generation) {
             self.policy_override = policy;
         }
+    }
+
+    /// Mark the observed tick that contains a script game interaction.
+    pub fn note_script_interaction(&mut self, observed_tick: u64) {
+        self.auto_run_defer_until = Some(
+            self.auto_run_defer_until
+                .map_or(observed_tick, |until| until.max(observed_tick)),
+        );
+    }
+
+    /// Return true until a later observed game tick arrives.
+    pub fn should_defer_auto_run(&mut self, observed_tick: u64) -> bool {
+        match self.auto_run_defer_until {
+            Some(until) if observed_tick <= until => true,
+            Some(_) => {
+                self.auto_run_defer_until = None;
+                false
+            }
+            None => false,
+        }
+    }
+
+    fn clear_auto_run_defer(&mut self) {
+        self.auto_run_defer_until = None;
     }
 
     fn resolved(&self) -> RunPolicy {
@@ -1409,6 +1436,7 @@ impl SlotLoop {
             self.guardian = Guardian::new();
             self.guardian_status = RandomStatus::default();
             self.run_on = false;
+            self.run_policy.clear_auto_run_defer();
         }
         publish_snapshot(&mut self.snapshot, client, result);
         result
@@ -1426,6 +1454,7 @@ impl SlotLoop {
             self.run_on = false;
         }
         let policy = self.run_policy.resolved();
+        let defer_auto_run = self.run_policy.should_defer_auto_run(self.snapshot.tick());
         if self.snapshot.local_player().is_some()
             && auto_run_ready(client.ingame, client.scene_state)
             && auto_run::modal_free(
@@ -1434,6 +1463,7 @@ impl SlotLoop {
                 client.side_modal_id,
             )
             && auto_run_tick(energy, self.run_on, policy)
+            && !defer_auto_run
             && set_run(client, true)
         {
             self.run_on = true;

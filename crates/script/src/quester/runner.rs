@@ -6219,7 +6219,7 @@ mod tests {
     }
 
     #[test]
-    fn path_header_forbid_blocks_quest_start_on_the_real_walk_request() {
+    fn path_header_false_preserves_global_consent_on_the_real_walk_request() {
         use super::super::families::tests::with_tick;
         use crate::native::{HostEffect, WalkBit};
         use api::snapshot::{GameSnapshot, QuestStatusView};
@@ -6233,8 +6233,7 @@ mod tests {
         let step = &mut document.roles[0].sequences[0].steps[0];
         step.kind = "walk".into();
         step.args = serde_json::json!({
-            "tile": [3103, 3163, 2], "source": "header consent fixture",
-            "allow_prereq_dialogue": true, "allow_quest_start": true
+            "tile": [3103, 3163, 2], "source": "header consent fixture"
         });
         step.skip_if = super::super::path::PredicateDocument::Any(vec![]);
         step.settle = super::super::path::PredicateDocument::All(vec![]);
@@ -6276,8 +6275,8 @@ mod tests {
                         _ => None,
                     })
             }) {
-                assert_eq!(request.options.allow_prereq_dialogue, WalkBit::Forbid);
-                assert_eq!(request.options.allow_quest_start, WalkBit::Forbid);
+                assert_eq!(request.options.allow_prereq_dialogue, WalkBit::Inherit);
+                assert_eq!(request.options.allow_quest_start, WalkBit::Inherit);
                 checked = true;
                 break;
             }
