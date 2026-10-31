@@ -2153,6 +2153,7 @@ fn m4_cure_steps(capture: Arc<Mutex<CombatCapture>>) -> [Step; 2] {
         Step {
             name: "observe the fresh cure message and consumed dose before Start",
             kind: StepKind::Await {
+                evidence: "fresh antipoison message and consumed single dose",
                 ready: Box::new(move |snapshot| {
                     let Some((sent_tick, chat_baseline)) =
                         *sent.lock().unwrap_or_else(|error| error.into_inner())
@@ -2198,9 +2199,9 @@ fn m4_cure_steps(capture: Arc<Mutex<CombatCapture>>) -> [Step; 2] {
             },
             wait: Wait {
                 arm: Proof::Stat { id: 3, min: 1 },
-                // Await counts dirty snapshots, not game ticks. The fixed
-                // observed-tick deadline above bounds this fixture gate.
-                budget_ticks: u32::MAX,
+                // The gate also counts from the accepted Drink, before this
+                // Await begins, so entering the wait cannot reset its deadline.
+                budget_ticks: M4_CURE_DEADLINE_TICKS,
             },
         },
     ]
