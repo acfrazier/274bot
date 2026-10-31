@@ -755,7 +755,7 @@ mod compat {
             let mut replacement_machine = replacement_machine.expect("running");
             let replaced_without_product = Probe {
                 chat_modal_id: Some(4999),
-                tick: Some(12),
+                tick: Some(13),
                 ..at
             };
             assert_eq!(
@@ -822,7 +822,7 @@ mod compat {
             };
             assert_eq!(step(&mut machine, &mut clock, &page_closed), (None, vec![]));
             let before_product_receipt = Probe {
-                tick: Some(11),
+                tick: Some(12),
                 ..page_closed
             };
             assert_eq!(
@@ -838,7 +838,7 @@ mod compat {
             }];
             let receipt = Probe {
                 inventory: Some(&after_inventory),
-                tick: Some(12),
+                tick: Some(13),
                 ..page_closed
             };
             assert_eq!(
