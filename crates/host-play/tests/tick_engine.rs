@@ -746,6 +746,15 @@ impl LiveRun {
         if template.world().is_none() {
             return Err("selected Engine T navigation template has no world".into());
         }
+        // Asset initialization is not a live host frame or a cadence observation.
+        // Complete it before the slot's five-second frame hang guard starts.
+        let mut bootstrap = template.prepare_client(0, true)?;
+        bootstrap.set_draw(false);
+        bootstrap.maininit();
+        if bootstrap.error_loading {
+            return Err("Engine T client asset initialization failed before live setup".into());
+        }
+        drop(bootstrap);
         let profile_identity = format!(
             "{} game={}:{} asset={}:{} nav={}",
             profile.label(),
