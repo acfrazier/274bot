@@ -59,8 +59,7 @@ pub(super) fn recording_exit_with_retired_play(record: crate::headed_record::Hea
     state.record = record;
     let mut ctx = crate::test_support::imgui_context();
     ctx.prepare_frame(
-        dear_imgui_rs::FramePrepareOptions::new([800.0, 600.0], 1.0 / 60.0)
-            .renderer_has_textures(),
+        dear_imgui_rs::FramePrepareOptions::new([800.0, 600.0], 1.0 / 60.0).renderer_has_textures(),
     );
     let _ui = ctx.frame();
     let failure = std::sync::Mutex::new(None);
