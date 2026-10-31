@@ -15,6 +15,10 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.7` 
   native clue rewrite, although Sherlock itself creates no V8 isolate.
 - The terminal app's script pane now marks the selected compiled (native)
   script card with `>` the same way as a selected JavaScript card.
+- Live catalog runs now report a JavaScript Start failure even if the
+  frontend already read its result. A script that remains idle no longer
+  counts as a settled Start. Start holds now log their reason once per
+  change at info level, with the bot name and current tick.
 
 ### Combat
 
