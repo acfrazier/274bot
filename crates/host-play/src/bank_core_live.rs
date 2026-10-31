@@ -1259,9 +1259,7 @@ fn run_compat_cell(spec: &CompatSpec) {
         };
         if let Some((trace, result, facts, error)) = written {
             if let Some(guard) = logout_guard.as_mut() {
-                guard
-                    .logout()
-                    .unwrap_or_else(|error| panic!("{error}"));
+                guard.logout().unwrap_or_else(|error| panic!("{error}"));
             }
             assert!(
                 error.is_none(),
