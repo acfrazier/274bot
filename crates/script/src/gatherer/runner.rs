@@ -851,7 +851,6 @@ impl Gatherer {
         true
     }
 
-
     fn block_context(&self, here: Option<WorldTile>, reason: &str) -> String {
         use std::fmt::Write;
         let mut out = String::from(reason);

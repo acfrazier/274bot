@@ -1720,9 +1720,8 @@ fn shop_uses_content_price_floor_before_walking_but_not_the_full_reserve() {
         },
         SourceSet::PACK | SourceSet::BANK,
     );
-    let minimum_quote =
-        minimum_shop_quote(Some(&data), &short_request.vendor, bait, false, 2)
-            .expect("pinned Gerrant minimum quote");
+    let minimum_quote = minimum_shop_quote(Some(&data), &short_request.vendor, bait, false, 2)
+        .expect("pinned Gerrant minimum quote");
     assert!(
         minimum_quote > 2,
         "the two-bait quote must exceed the 1 gp-per-bait floor"
@@ -1761,11 +1760,7 @@ fn shop_uses_content_price_floor_before_walking_but_not_the_full_reserve() {
     let reserve = two_chunk_fact_quote(&gerrant, 2);
     assert!(reserve > minimum_quote);
     let coins = [(COINS, minimum_quote as i32)];
-    let enough_for_minimum = fixture(
-        &coins,
-        &[(COINS, 0)],
-        Origin::Session,
-    );
+    let enough_for_minimum = fixture(&coins, &[(COINS, 0)], Origin::Session);
     let plan = shop_plan(&short_request, &enough_for_minimum, &data, false);
     assert_eq!(plan.purchase_count, 1);
     assert_eq!(withdrawal_target(&plan, COINS), None);

@@ -3,9 +3,7 @@
 use super::buy::{BuyMachine, BuyReceipt, BuyRequest, PurchaseRefusal};
 use super::vendor::{self, VendorDecision};
 use crate::native::walk::Walk;
-use crate::native::{
-    ActionHandle, NativeActions, NativeTick, ReturnStallRecovery, WalkRequest,
-};
+use crate::native::{ActionHandle, NativeActions, NativeTick, ReturnStallRecovery, WalkRequest};
 use crate::native_bank::{SelectService, ServiceFacts, ServicePickRequest};
 use api::service_pick::{ServiceKind, ShopKeeperFacts};
 use api::shop_facts::{self, KeeperFact};
@@ -107,9 +105,7 @@ impl ShopRun {
             target: None,
             nearest: false,
             retry_used: false,
-            walk_recovery: ReturnStallRecovery::with_max_attempts(
-                MAX_SHOP_ACCESS_ATTEMPTS,
-            ),
+            walk_recovery: ReturnStallRecovery::with_max_attempts(MAX_SHOP_ACCESS_ATTEMPTS),
             walk_retry_after_tick: None,
             total_walk_retries: 0,
             excluded_shops: Vec::new(),
@@ -287,13 +283,12 @@ impl ShopRun {
                     }
                     Poll::Ready(Ok(receipt)) => {
                         if !ReturnStallRecovery::receipt_retryable(&receipt) {
-                            return Poll::Ready(Err(
-                                receipt.into_arrival().expect_err("non-arrival is an error")
-                            ));
+                            return Poll::Ready(Err(receipt
+                                .into_arrival()
+                                .expect_err("non-arrival is an error")));
                         }
                         let now = tick.cx.evidence().tick;
-                        self.last_walk_failure =
-                            Some(receipt.failure_detail_or_fallback());
+                        self.last_walk_failure = Some(receipt.failure_detail_or_fallback());
                         if self.total_walk_retries < MAX_SHOP_ACCESS_RETRIES
                             && self.walk_recovery.observe_receipt(&receipt)
                         {
@@ -479,13 +474,8 @@ impl ShopRun {
                 }
                 continue;
             }
-            let eligible = vendor::eligible_indices(
-                &facts,
-                &data,
-                id,
-                members,
-                from,
-                |candidate| {
+            let eligible =
+                vendor::eligible_indices(&facts, &data, id, members, from, |candidate| {
                     plan::keeper_minimum_shop_quote(
                         &data,
                         candidate.keeper.keeper_config,
@@ -494,8 +484,7 @@ impl ShopRun {
                         units,
                     )
                     .is_some_and(|price| price <= budget)
-                },
-            );
+                });
             let eligible = if self.excluded_shops.is_empty() {
                 eligible
             } else {
@@ -1013,15 +1002,13 @@ mod tests {
     }
 
     fn walk_count(ledger: &Option<Box<Ledger>>) -> usize {
-        ledger
-            .as_ref()
-            .map_or(0, |ledger| {
-                ledger
-                    .outbox
-                    .iter()
-                    .filter(|action| matches!(&action.effect, HostEffect::Walk(_)))
-                    .count()
-            })
+        ledger.as_ref().map_or(0, |ledger| {
+            ledger
+                .outbox
+                .iter()
+                .filter(|action| matches!(&action.effect, HostEffect::Walk(_)))
+                .count()
+        })
     }
 
     fn last_walk_request(ledger: &Option<Box<Ledger>>) -> &crate::native::WalkRequest {
@@ -1127,7 +1114,14 @@ mod tests {
             );
             assert!(poll_shop(&mut run, &request, &snapshot, &facts, &mut ledger, 4).is_pending());
             assert!(poll_shop(&mut run, &request, &snapshot, &facts, &mut ledger, 5).is_pending());
-            finish_walk(&mut ledger, 6, end, "terminal walk receipt", blocked, refusal);
+            finish_walk(
+                &mut ledger,
+                6,
+                end,
+                "terminal walk receipt",
+                blocked,
+                refusal,
+            );
             assert!(matches!(
                 poll_shop(&mut run, &request, &snapshot, &facts, &mut ledger, 6),
                 Poll::Ready(Err(ActionError::Blocked(_)))
@@ -1173,7 +1167,10 @@ mod tests {
                 first_failure + 1
             )
             .is_pending());
-            assert_eq!(last_walk_request(&ledger).required_after.tick, first_failure + 1);
+            assert_eq!(
+                last_walk_request(&ledger).required_after.tick,
+                first_failure + 1
+            );
             finish_walk(
                 &mut ledger,
                 retry_failure,

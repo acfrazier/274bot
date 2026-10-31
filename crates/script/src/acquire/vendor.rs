@@ -254,7 +254,6 @@ mod tests {
         assert!(eligible_indices(&facts, &data, i32::MAX, true, tile(0, 0), |_| true).is_empty());
     }
 
-
     #[test]
     fn routed_identity_is_the_exact_eligible_row_even_with_repeated_display_names() {
         let (_, facts, _) = fixture();

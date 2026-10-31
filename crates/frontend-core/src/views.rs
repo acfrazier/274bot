@@ -1677,7 +1677,8 @@ pub fn script_status_rows(status: StatusView<'_>) -> impl Iterator<Item = (&str,
             if (matches!(
                 field.key,
                 "display" | "queue" | "path_source" | "draft_status" | "bank_seen"
-            ) || (field.key == "step_comment" && has_path_source)) && !value.is_empty() =>
+            ) || (field.key == "step_comment" && has_path_source))
+                && !value.is_empty() =>
         {
             Some((field.label, value.as_ref()))
         }

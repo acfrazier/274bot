@@ -1,9 +1,7 @@
 use super::*;
 use crate::bank::{AccessKind, BankPickReceipt, BankStandAccess, PickKind, SelectedBank};
 use crate::native::ledger::{HostEffect, Ledger};
-use crate::native::{
-    ActionError, InteractionReceipt, WalkEnd, WalkReceipt, WalkRequest,
-};
+use crate::native::{ActionError, InteractionReceipt, WalkEnd, WalkReceipt, WalkRequest};
 use crate::native_bank::{BankAction, BankItem};
 use api::bank_memory::{BankMemory, Origin};
 use api::named_banks::{BankPreferences, NamedBank};
@@ -401,7 +399,9 @@ fn nearest_bank_walk_retries_on_fresh_ticks_then_excludes_and_switches_banks() {
 
     complete_walk(&mut ledger, 3, WalkEnd::NoPath, "first bank route failed");
     assert!(poll_at(&mut run, &snapshot, None, &mut ledger, 3, OpenGate::Open).is_pending());
-    snapshot.seed_local_player(crate::quester::families::tests::local_player(retry_position));
+    snapshot.seed_local_player(crate::quester::families::tests::local_player(
+        retry_position,
+    ));
     assert!(poll_at(&mut run, &snapshot, None, &mut ledger, 4, OpenGate::Open).is_pending());
     walks_by_bank[0] += 1;
     assert_eq!(last_walk_request(&ledger).target, bank_zero_tile);
@@ -437,9 +437,7 @@ fn nearest_bank_walk_retries_on_fresh_ticks_then_excludes_and_switches_banks() {
         panic!("all failed bank identities must stop with the last walk detail");
     };
     assert_eq!(walks_by_bank, [2, 2]);
-    assert!(message.contains(
-        "no eligible bank after access walk failure: last bank retry detail"
-    ));
+    assert!(message.contains("no eligible bank after access walk failure: last bank retry detail"));
     assert!(ledger.as_ref().unwrap().outbox.is_empty());
 }
 

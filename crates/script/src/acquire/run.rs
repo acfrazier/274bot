@@ -62,7 +62,6 @@ struct BankWalkState {
     last_failure: Option<Arc<str>>,
 }
 
-
 #[derive(Clone, Copy)]
 enum WearStep {
     Ready(i32),
@@ -232,9 +231,11 @@ impl AcquireRun {
                         return Poll::Pending;
                     }
                     let Some(from) = tick.cx.snapshot().here() else {
-                        return Poll::Ready(Err(self.attach_last_bank_walk(ActionError::Unavailable(
-                            Arc::from("player position unavailable for bank selection"),
-                        ))));
+                        return Poll::Ready(Err(self.attach_last_bank_walk(
+                            ActionError::Unavailable(Arc::from(
+                                "player position unavailable for bank selection",
+                            )),
+                        )));
                     };
                     let excluded_banks = self
                         .bank_walk
@@ -294,23 +295,26 @@ impl AcquireRun {
                         .bank_walk
                         .as_ref()
                         .is_some_and(|state| state.recovery.pending());
-                    let handle = tick.actions.begin::<Walk>(
-                        WalkRequest {
-                            target,
-                            candidate_goals: None,
-                            loc_id: None,
-                            radius: 0,
-                            arrival: nav_planner::contract::ArrivalKind::Reach,
-                            options: self.request.walk,
-                            required_after: tick.cx.evidence(),
-                            evidence: None,
-                            cross: Box::default(),
-                            protect: false,
-                            food_guard: false,
-                            allow: Default::default(),
-                        },
-                        &mut tick.cx,
-                    ).map_err(|error| self.attach_last_bank_walk(error))?;
+                    let handle = tick
+                        .actions
+                        .begin::<Walk>(
+                            WalkRequest {
+                                target,
+                                candidate_goals: None,
+                                loc_id: None,
+                                radius: 0,
+                                arrival: nav_planner::contract::ArrivalKind::Reach,
+                                options: self.request.walk,
+                                required_after: tick.cx.evidence(),
+                                evidence: None,
+                                cross: Box::default(),
+                                protect: false,
+                                food_guard: false,
+                                allow: Default::default(),
+                            },
+                            &mut tick.cx,
+                        )
+                        .map_err(|error| self.attach_last_bank_walk(error))?;
                     if retrying {
                         if let Some(state) = self.bank_walk.as_mut() {
                             state.recovery.action_submitted();
@@ -783,15 +787,16 @@ impl AcquireRun {
         Poll::Ready(Err(error))
     }
 
-    fn bank_walk_failure(
-        &mut self,
-        receipt: &WalkReceipt,
-        now: u64,
-    ) -> Result<(), ActionError> {
+    fn bank_walk_failure(&mut self, receipt: &WalkReceipt, now: u64) -> Result<(), ActionError> {
         let detail = receipt.failure_detail_or_fallback();
         let failed_index = self
             .bank
-            .and_then(|bank| self.banks.banks().iter().position(|candidate| candidate.tile == bank.tile))
+            .and_then(|bank| {
+                self.banks
+                    .banks()
+                    .iter()
+                    .position(|candidate| candidate.tile == bank.tile)
+            })
             .and_then(|index| u16::try_from(index).ok());
         let Some(failed_index) = failed_index.filter(|_| self.explicit.is_none()) else {
             return Err(ActionError::Blocked(detail));
@@ -840,19 +845,18 @@ impl AcquireRun {
             return error;
         };
         match error {
-            ActionError::Blocked(message) => ActionError::Blocked(Arc::from(format!(
-                "{message}; last access walk: {detail}"
-            ))),
-            ActionError::Failed(message) => ActionError::Failed(Arc::from(format!(
-                "{message}; last access walk: {detail}"
-            ))),
+            ActionError::Blocked(message) => {
+                ActionError::Blocked(Arc::from(format!("{message}; last access walk: {detail}")))
+            }
+            ActionError::Failed(message) => {
+                ActionError::Failed(Arc::from(format!("{message}; last access walk: {detail}")))
+            }
             ActionError::Unavailable(message) => ActionError::Unavailable(Arc::from(format!(
                 "{message}; last access walk: {detail}"
             ))),
             other => other,
         }
     }
-
 
     fn poll_active(&mut self, tick: &mut NativeTick<'_>) -> Poll<Result<(), ActionError>> {
         match std::mem::take(&mut self.active) {
@@ -893,7 +897,9 @@ impl AcquireRun {
                 Poll::Ready(Err(error)) => {
                     return Poll::Ready(Err(self.attach_last_bank_walk(error)));
                 }
-                Poll::Ready(Ok(receipt)) if matches!(&receipt.end, crate::native::WalkEnd::Arrived) => {
+                Poll::Ready(Ok(receipt))
+                    if matches!(&receipt.end, crate::native::WalkEnd::Arrived) =>
+                {
                     if let Some(state) = self.bank_walk.as_mut() {
                         state.recovery.reset();
                         state.retry_after_tick = None;
@@ -903,9 +909,9 @@ impl AcquireRun {
                 }
                 Poll::Ready(Ok(receipt)) => {
                     if !ReturnStallRecovery::receipt_retryable(&receipt) {
-                        return Poll::Ready(Err(
-                            receipt.into_arrival().expect_err("non-arrival is an error")
-                        ));
+                        return Poll::Ready(Err(receipt
+                            .into_arrival()
+                            .expect_err("non-arrival is an error")));
                     }
                     let now = tick.cx.evidence().tick;
                     let state = self

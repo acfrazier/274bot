@@ -4416,6 +4416,7 @@ impl GatherSlot {
             }
             if self.status_claims_bank_close(status) {
                 self.witness.bank_closed_observed = true;
+            }
             if event == "bank selected" {
                 self.witness.bank_selected = true;
                 if self.case == LiveCase::PowerToBank {

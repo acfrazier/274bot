@@ -285,8 +285,7 @@ impl<'a> Planner<'a> {
             );
             if let Some((reserve, minimum_quote)) = purchase_quote {
                 let (held_coins, banked_coins, unknown_bank) = purchase_coins(self.counts, coins);
-                if i64::from(held_coins).saturating_add(i64::from(banked_coins)) < minimum_quote
-                {
+                if i64::from(held_coins).saturating_add(i64::from(banked_coins)) < minimum_quote {
                     if unknown_bank {
                         self.plan.scan = true;
                         if self.scan.is_none() {
