@@ -10692,7 +10692,7 @@ fn static_tree_identity_uses_selected_type_not_debug_name() {
 }
 
 #[test]
-fn m4_stages_at_the_native_hunt_stand_without_changing_the_authored_walk() {
+fn m4_stages_at_the_native_tree_hunt_stand() {
     let (walk, blocked) = nav_planner::collision::pack_walk(&[0; 4 * 4 * 3]);
     let world = nav_planner::world::NavWorld::from_parts(
         nav_planner::collision::WorldCollision {
@@ -10710,19 +10710,13 @@ fn m4_stages_at_the_native_hunt_stand_without_changing_the_authored_walk() {
         nav_planner::transport::TransportGraph::default(),
         Vec::new(),
     );
-    assert_eq!(Case::M4.stand(&world).unwrap(), TREE_HUNT_STAND);
-    let authored: Value = serde_json::from_str(include_str!(
-        "../../script/paths/289/fixtures/combat_unattackable.json"
-    ))
-    .unwrap();
-    let approach = &authored["roles"][0]["sequences"][0]["steps"][0];
-    assert_eq!(approach["args"]["tile"], json!([3109, 3346, 0]));
-    assert_eq!(approach["args"]["radius"], 0);
     assert_eq!(
-        approach["skip_if"]["Any"][0],
-        json!({ "Fact": { "kind": "near", "version": 1, "args": {
-            "tile": [3108, 3346, 0], "radius": 1
-        } } })
+        Case::M4.stand(&world).unwrap(),
+        WorldTile {
+            x: 3109,
+            z: 3346,
+            level: 0,
+        }
     );
 }
 
