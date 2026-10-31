@@ -1028,7 +1028,7 @@ mod tests {
 
     fn service_pick_eligible(ledger: &Option<Box<Ledger>>, selection: usize) -> Arc<[u16]> {
         Arc::clone(
-            &ledger
+            ledger
                 .as_ref()
                 .expect("service pick queued")
                 .outbox

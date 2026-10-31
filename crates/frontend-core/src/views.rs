@@ -1672,18 +1672,21 @@ fn field_text<'a>(field: &'a script::native::StatusField, key: &str) -> Option<&
 pub fn script_status_rows(status: StatusView<'_>) -> impl Iterator<Item = (&str, &str)> {
     let status = status.status();
     let has_path_source = status.fields.iter().any(|field| field.key == "path_source");
-    status.fields.iter().filter_map(|field| match &field.value {
-        script::native::StatusValue::Text(value)
-            if (matches!(
-                field.key,
-                "display" | "queue" | "path_source" | "draft_status" | "bank_seen"
-            ) || (field.key == "step_comment" && has_path_source))
-                && !value.is_empty() =>
-        {
-            Some((field.label, value.as_ref()))
-        }
-        _ => None,
-    })
+    status
+        .fields
+        .iter()
+        .filter_map(move |field| match &field.value {
+            script::native::StatusValue::Text(value)
+                if (matches!(
+                    field.key,
+                    "display" | "queue" | "path_source" | "draft_status" | "bank_seen"
+                ) || (field.key == "step_comment" && has_path_source))
+                    && !value.is_empty() =>
+            {
+                Some((field.label, value.as_ref()))
+            }
+            _ => None,
+        })
 }
 
 fn count(rows: &[FleetRow]) -> FleetCounts {
