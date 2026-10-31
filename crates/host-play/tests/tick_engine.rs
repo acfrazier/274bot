@@ -3231,9 +3231,30 @@ mod packet_oracle_tests {
             let candidate = tile(scenario.target.x + dx, scenario.target.z + dz, 0);
             (candidate, world.collision.standable(candidate))
         });
+        let data = api::game_data::for_revision(client::io::ClientRevision::R289).unwrap();
+        let catalog =
+            api::selected::FamilyPreparation::run(move |worker| data.prepare_gathering(worker))
+                .unwrap()
+                .join()
+                .unwrap()
+                .unwrap();
+        let api::selected::Knowledge::Known(spots) =
+            &catalog.method("fishing.loc_2027.op1").unwrap().spots
+        else {
+            panic!("river fixture needs complete fishing placement data");
+        };
+        let mut accessible = Vec::new();
+        for spot in spots {
+            for (dx, dz) in [(-1, 0), (1, 0), (0, -1), (0, 1)] {
+                let stand = tile(spot.origin.x + dx, spot.origin.z + dz, spot.origin.level);
+                if world.collision.standable(stand) {
+                    accessible.push((spot.origin, stand));
+                }
+            }
+        }
         assert!(
             world.collision.standable(scenario.target),
-            "river player start {:?} is not standable; neighbours={neighbours:?}",
+            "river player start {:?} is not standable; neighbours={neighbours:?}; accessible fixed spots={accessible:?}",
             scenario.target
         );
         assert_ne!(
