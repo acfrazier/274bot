@@ -230,6 +230,72 @@ globalThis.__settings = {
         "the accepted raw value is visible before synchronous listeners run and remains a string"
     );
 }
+#[test]
+fn compat_v1_runtime_settingsstore_resolve_uses_scoped_raw_values() {
+    let src = bot(
+        "import { SettingsBag, SettingsStore } from '../../runtime/Settings.js';",
+        r#"
+globalThis.__rs2b0t_host = {
+    settingsBag: {
+        destination: 'Lumbridge',
+        amount: 3,
+        enabled: false,
+        targets: ['Lumbridge'],
+        tile: { x: 9, z: 9, level: 0 },
+        fallback: 'host-value',
+    },
+};
+const schema = {
+    destination: {
+        type: 'string',
+        default: 'Draynor',
+        options: ['Lumbridge', 'Map pick'],
+    },
+    amount: { type: 'number', default: 2, min: 0, max: 10 },
+    enabled: { type: 'boolean', default: false },
+    targets: {
+        type: 'string[]',
+        default: ['Lumbridge'],
+        options: ['Lumbridge', 'Draynor'],
+    },
+    tile: { type: 'tile', default: { x: 1, z: 2, level: 0 } },
+    fallback: { type: 'string', default: 'schema-value' },
+};
+SettingsStore.save('WalkTo', 'destination', ' Map PICK ');
+SettingsStore.save('WalkTo', 'amount', '12');
+SettingsStore.save('WalkTo', 'enabled', ' yes ');
+SettingsStore.save('WalkTo', 'targets', 'Draynor, unknown, LUMBRIDGE,draynor');
+SettingsStore.save('WalkTo', 'tile', '3221,3218,2');
+const resolved = SettingsStore.resolve('WalkTo', schema);
+const tile = new SettingsBag(resolved).tile('tile');
+globalThis.__settings = {
+    destination: resolved.destination,
+    destinationRaw: SettingsStore.saved('WalkTo', 'destination'),
+    amount: resolved.amount,
+    enabled: resolved.enabled,
+    targets: resolved.targets,
+    tile: tile && { x: tile.x, z: tile.z, level: tile.level },
+    fallback: resolved.fallback,
+    fallbackRaw: SettingsStore.saved('WalkTo', 'fallback') ?? '<undefined>',
+};
+"#,
+    );
+    let facts = run_with_local_state(&src, "__settings", runtime_settings_state());
+    assert_eq!(
+        facts,
+        serde_json::json!({
+            "destination": "Map pick",
+            "destinationRaw": " Map PICK ",
+            "amount": 10,
+            "enabled": true,
+            "targets": ["Draynor", "Lumbridge", "Draynor"],
+            "tile": { "x": 3221, "z": 3218, "level": 2 },
+            "fallback": "schema-value",
+            "fallbackRaw": "<undefined>",
+        }),
+        "resolve uses exact box-scoped raw values, parses each SettingDef type, and falls back to schema defaults instead of the per-card bag"
+    );
+}
 
 #[test]
 #[expect(non_snake_case, reason = "the runtime census names this contract test")]

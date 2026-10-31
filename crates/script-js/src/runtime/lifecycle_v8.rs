@@ -584,7 +584,10 @@ fn dispatch_settings<'s>(
     let state = settings_state_for_scope(scope)
         .ok_or_else(|| cb::type_error(scope, "SettingsStore native state is not installed"))?;
     match operation.as_str() {
-        "resolve" => resolve_settings(scope, args.get(1)),
+        "resolve" => {
+            let name = settings_string_arg(scope, args.get(1), "SettingsStore name")?;
+            resolve_settings(scope, &state, &name, args.get(2))
+        }
         "saved" => {
             let name = settings_string_arg(scope, args.get(1), "SettingsStore name")?;
             let key = settings_string_arg(scope, args.get(2), "SettingsStore key")?;
@@ -699,6 +702,8 @@ fn dispatch_settings<'s>(
 
 fn resolve_settings<'s>(
     scope: &mut v8::HandleScope<'s>,
+    state: &SettingsState,
+    name: &str,
     schema: v8::Local<'s, v8::Value>,
 ) -> JsResult<'s, v8::Local<'s, v8::Value>> {
     let global = scope.get_current_context().global(scope);
@@ -711,38 +716,247 @@ fn resolve_settings<'s>(
     let keys = cb::call_method(scope, object_ctor, "keys", &[schema], "Object.keys")?;
     let keys = v8::Local::<v8::Array>::try_from(keys)
         .map_err(|_| cb::type_error(scope, "SettingsStore schema keys are not an array"))?;
-    let host = cb::get(scope, global.into(), "__rs2b0t_host")?;
-    let host = if cb::truthy(scope, host) {
-        host
-    } else {
-        v8::Object::new(scope).into()
-    };
-    let bag = cb::get(scope, host, "settingsBag")?;
-    let bag = if cb::truthy(scope, bag) {
-        bag
-    } else {
-        v8::Object::new(scope).into()
-    };
-    let bag = bag
-        .to_object(scope)
-        .ok_or_else(|| cb::type_error(scope, "SettingsStore settings bag is not an object"))?;
+    let identity = state
+        .local_state
+        .as_ref()
+        .map(|slot| slot.identity(LocalStateDomain::ScriptRuntimeSettings));
     let result = v8::Object::new(scope);
     for index in 0..keys.length() {
-        let key = keys
-            .get_index(scope, index)
-            .ok_or_else(|| cb::type_error(scope, "SettingsStore schema key is unavailable"))?;
+        let key = cb::get_index(scope, keys.into(), index)?;
         let key = v8::Local::<v8::String>::try_from(key)
             .map_err(|_| cb::type_error(scope, "SettingsStore schema key is not a string"))?;
         let key_value: v8::Local<v8::Value> = key.into();
-        let present = cb::catching(scope, |scope| bag.has_own_property(scope, key.into()))?;
-        let value = if present {
-            cb::catching(scope, |scope| bag.get(scope, key_value))?
+        let key_text = key.to_rust_string_lossy(scope);
+        let definition = cb::get(scope, schema, &key_text)?;
+        let raw = match (state.local_state.as_ref(), identity.as_ref()) {
+            (Some(slot), Some(identity)) => slot
+                .port()
+                .runtime_setting_raw(identity, name, &key_text)
+                .map_err(|error| {
+                    settings_error(scope, &format!("SettingsStore read refused: {error:?}"))
+                })?,
+            _ => None,
+        };
+        let value = if let Some(raw) = raw {
+            parse_setting_value(scope, definition, &raw)?
         } else {
-            v8::null(scope).into()
+            cb::get(scope, definition, "default")?
         };
         cb::assign(scope, result.into(), key_value, value)?;
     }
     Ok(result.into())
+}
+
+fn setting_options<'s>(
+    scope: &mut v8::HandleScope<'s>,
+    definition: v8::Local<'s, v8::Value>,
+) -> JsResult<'s, Option<v8::Local<'s, v8::Array>>> {
+    let options = cb::get(scope, definition, "options")?;
+    if !cb::truthy(scope, options) {
+        return Ok(None);
+    }
+    let options = v8::Local::<v8::Array>::try_from(options)
+        .map_err(|_| cb::type_error(scope, "SettingsStore options must be an array"))?;
+    Ok((options.length() > 0).then_some(options))
+}
+
+fn trimmed_setting_value<'s>(
+    scope: &mut v8::HandleScope<'s>,
+    raw: &str,
+) -> JsResult<'s, v8::Local<'s, v8::Value>> {
+    let raw = v8::String::new(scope, raw)
+        .ok_or_else(|| cb::type_error(scope, "SettingsStore raw value"))?;
+    cb::call_method(scope, raw.into(), "trim", &[], "SettingsStore value trim")
+}
+
+fn find_setting_option<'s>(
+    scope: &mut v8::HandleScope<'s>,
+    options: v8::Local<'s, v8::Array>,
+    wanted: v8::Local<'s, v8::Value>,
+) -> JsResult<'s, Option<v8::Local<'s, v8::Value>>> {
+    for index in 0..options.length() {
+        let option = cb::get_index(scope, options.into(), index)?;
+        let lowered = cb::call_method(
+            scope,
+            option,
+            "toLowerCase",
+            &[],
+            "SettingsStore option lowercase",
+        )?;
+        if lowered.strict_equals(wanted) {
+            return Ok(Some(option));
+        }
+    }
+    Ok(None)
+}
+
+fn parse_setting_value<'s>(
+    scope: &mut v8::HandleScope<'s>,
+    definition: v8::Local<'s, v8::Value>,
+    raw: &str,
+) -> JsResult<'s, v8::Local<'s, v8::Value>> {
+    let kind = cb::get(scope, definition, "type")?;
+    if !kind.is_string() {
+        return cb::get(scope, definition, "default");
+    }
+    let kind = kind.to_rust_string_lossy(scope);
+    match kind.as_str() {
+        "boolean" => {
+            let trimmed = trimmed_setting_value(scope, raw)?;
+            let lowered = cb::call_method(
+                scope,
+                trimmed,
+                "toLowerCase",
+                &[],
+                "SettingsStore boolean lowercase",
+            )?;
+            let normalized = lowered.to_rust_string_lossy(scope);
+            let value = matches!(normalized.as_str(), "true" | "1" | "yes");
+            Ok(v8::Boolean::new(scope, value).into())
+        }
+        "number" => {
+            let raw = v8::String::new(scope, raw)
+                .ok_or_else(|| cb::type_error(scope, "SettingsStore raw value"))?;
+            let number = cb::number(scope, raw.into())?;
+            if !number.is_finite() {
+                return cb::get(scope, definition, "default");
+            }
+            let min = cb::get(scope, definition, "min")?;
+            let mut value = if min.is_undefined() {
+                number
+            } else {
+                setting_math_max(cb::number(scope, min)?, number)
+            };
+            let max = cb::get(scope, definition, "max")?;
+            if !max.is_undefined() {
+                value = setting_math_min(cb::number(scope, max)?, value);
+            }
+            Ok(v8::Number::new(scope, value).into())
+        }
+        "string" => {
+            let trimmed = trimmed_setting_value(scope, raw)?;
+            if let Some(options) = setting_options(scope, definition)? {
+                let wanted = cb::call_method(
+                    scope,
+                    trimmed,
+                    "toLowerCase",
+                    &[],
+                    "SettingsStore string lowercase",
+                )?;
+                if let Some(option) = find_setting_option(scope, options, wanted)? {
+                    Ok(option)
+                } else {
+                    cb::get(scope, definition, "default")
+                }
+            } else {
+                Ok(trimmed)
+            }
+        }
+        "string[]" => parse_string_list(scope, definition, raw),
+        "tile" => parse_tile_setting(scope, definition, raw),
+        _ => cb::get(scope, definition, "default"),
+    }
+}
+
+fn parse_string_list<'s>(
+    scope: &mut v8::HandleScope<'s>,
+    definition: v8::Local<'s, v8::Value>,
+    raw: &str,
+) -> JsResult<'s, v8::Local<'s, v8::Value>> {
+    let options = setting_options(scope, definition)?;
+    let output = v8::Array::new(scope, 0);
+    let mut written = 0_u32;
+    for part in raw.split(',') {
+        let value = trimmed_setting_value(scope, part)?;
+        let value = v8::Local::<v8::String>::try_from(value)
+            .map_err(|_| cb::type_error(scope, "SettingsStore list value is not a string"))?;
+        if value.length() == 0 {
+            continue;
+        }
+        let value: v8::Local<v8::Value> = if let Some(options) = options {
+            let wanted = cb::call_method(
+                scope,
+                value.into(),
+                "toLowerCase",
+                &[],
+                "SettingsStore list lowercase",
+            )?;
+            let Some(option) = find_setting_option(scope, options, wanted)? else {
+                continue;
+            };
+            option
+        } else {
+            value.into()
+        };
+        if written == u32::MAX {
+            return Err(cb::type_error(scope, "SettingsStore list exceeds the V8 array limit"));
+        }
+        if !cb::catching(scope, |scope| output.set_index(scope, written, value))? {
+            return Err(cb::type_error(scope, "could not materialize SettingsStore list"));
+        }
+        written += 1;
+    }
+    Ok(output.into())
+}
+
+fn parse_tile_setting<'s>(
+    scope: &mut v8::HandleScope<'s>,
+    definition: v8::Local<'s, v8::Value>,
+    raw: &str,
+) -> JsResult<'s, v8::Local<'s, v8::Value>> {
+    if raw.split(',').count() < 2 {
+        return cb::get(scope, definition, "default");
+    }
+    let mut coordinates = [0.0; 3];
+    for (index, part) in raw.split(',').enumerate() {
+        let trimmed = trimmed_setting_value(scope, part)?;
+        let number = cb::number(scope, trimmed)?;
+        if !number.is_finite() {
+            return cb::get(scope, definition, "default");
+        }
+        if let Some(coordinate) = coordinates.get_mut(index) {
+            *coordinate = number;
+        }
+    }
+    let tile = v8::Object::new(scope);
+    let x_key = cb::string(scope, "x");
+    let x = v8::Number::new(scope, coordinates[0]);
+    cb::assign(scope, tile.into(), x_key.into(), x.into())?;
+    let z_key = cb::string(scope, "z");
+    let z = v8::Number::new(scope, coordinates[1]);
+    cb::assign(scope, tile.into(), z_key.into(), z.into())?;
+    let level_key = cb::string(scope, "level");
+    let level = v8::Number::new(scope, coordinates[2]);
+    cb::assign(scope, tile.into(), level_key.into(), level.into())?;
+    Ok(tile.into())
+}
+
+fn setting_math_max(left: f64, right: f64) -> f64 {
+    if left.is_nan() || right.is_nan() {
+        f64::NAN
+    } else if left == 0.0 && right == 0.0 {
+        if left.is_sign_negative() && right.is_sign_negative() {
+            -0.0
+        } else {
+            0.0
+        }
+    } else {
+        left.max(right)
+    }
+}
+
+fn setting_math_min(left: f64, right: f64) -> f64 {
+    if left.is_nan() || right.is_nan() {
+        f64::NAN
+    } else if left == 0.0 && right == 0.0 {
+        if left.is_sign_negative() || right.is_sign_negative() {
+            -0.0
+        } else {
+            0.0
+        }
+    } else {
+        left.min(right)
+    }
 }
 
 fn settings_string_arg<'s>(
@@ -884,7 +1098,7 @@ mod tests {
     }
 
     #[test]
-    fn native_settings_resolver_projects_only_present_own_values() {
+    fn native_settings_resolver_uses_schema_defaults_not_host_bag() {
         let mut runtime = runtime();
         let result: serde_json::Value = runtime
             .eval(
@@ -900,14 +1114,14 @@ mod tests {
                         missing: { default: 'none' },
                         inherited: { default: 'not copied' },
                     };
-                    const resolved = __rs2b0t_settings_store('resolve', schema);
+                    const resolved = __rs2b0t_settings_store('resolve', 'Test', schema);
                     return {
                         food: resolved.food,
                         enabled: resolved.enabled,
                         missing: resolved.missing,
                         inherited: resolved.inherited,
                         keys: Object.keys(resolved),
-                        empty: Object.keys(__rs2b0t_settings_store('resolve', null)).length === 0,
+                        empty: Object.keys(__rs2b0t_settings_store('resolve', 'Test', null)).length === 0,
                     };
                 })()"#,
             )
@@ -915,10 +1129,10 @@ mod tests {
         assert_eq!(
             result,
             serde_json::json!({
-                "food": "Shark",
-                "enabled": false,
-                "missing": null,
-                "inherited": null,
+                "food": "Lobster",
+                "enabled": true,
+                "missing": "none",
+                "inherited": "not copied",
                 "keys": ["food", "enabled", "missing", "inherited"],
                 "empty": true,
             })
@@ -962,17 +1176,81 @@ mod settings_resolve_v8_tests {
     const SETUP: &str = r#"
 globalThis.__rs2b0t_host = { settingsBag: { food: 'Shark', enabled: false } };
 globalThis.__resolveSchema = {
-    food: { default: 'Lobster' },
-    enabled: { default: true },
-    missing: { default: 'none' },
+    food: { type: 'string', default: 'Lobster' },
+    enabled: { type: 'boolean', default: true },
+    missing: { type: 'string', default: 'none' },
+    tile: { type: 'tile', default: { x: 1, z: 2, level: 0 } },
 };
 "#;
+    struct SettingsRawPort;
+
+    impl api::local_state::LocalStatePort for SettingsRawPort {
+        fn lease(
+            &self,
+            identity: &api::local_state::DomainIdentity,
+        ) -> Result<api::local_state::DomainLease, api::local_state::ErrorCode> {
+            Err(api::local_state::ErrorCode::NotReady {
+                domain: identity.domain(),
+            })
+        }
+
+        fn runtime_setting_raw(
+            &self,
+            identity: &api::local_state::DomainIdentity,
+            namespace: &str,
+            key: &str,
+        ) -> Result<Option<String>, api::local_state::ErrorCode> {
+            if identity.domain() != api::local_state::LocalStateDomain::ScriptRuntimeSettings {
+                return Err(api::local_state::ErrorCode::Validation {
+                    domain: identity.domain(),
+                    reason: api::local_state::ValidationReason::Identity,
+                });
+            }
+            Ok((namespace == "Test" && key == "tile").then(|| "3221,3218,2".to_owned()))
+        }
+
+        fn submit(
+            &self,
+            edit: api::local_state::DomainEdit,
+        ) -> api::local_state::SubmitReceipt {
+            api::local_state::SubmitReceipt::Refused(api::local_state::ErrorCode::Busy {
+                domain: edit.identity().domain(),
+            })
+        }
+
+        fn observe(
+            &self,
+            _request: api::identity::RequestId,
+        ) -> Option<api::local_state::WriteSettlement> {
+            None
+        }
+    }
+
+    impl script::local_state::StatePort for SettingsRawPort {
+        fn lease_version(
+            &self,
+            identity: &api::local_state::DomainIdentity,
+        ) -> Result<api::local_state::StoreVersion, api::local_state::ErrorCode> {
+            Err(api::local_state::ErrorCode::NotReady {
+                domain: identity.domain(),
+            })
+        }
+    }
 
     fn setup() -> Runtime {
         crate::platform::bootstrap_test_v8_platform();
         let mut runtime = Runtime::new(RuntimeOptions::default()).unwrap();
         crate::callback_v8::install_ops(&mut runtime).unwrap();
-        super::install(&mut runtime, None).unwrap();
+        let state = std::sync::Arc::new(script::local_state::SlotState::new(
+            std::sync::Arc::new(SettingsRawPort),
+            api::local_state::AccountKey::try_new("local-289", "runtime-resolve").unwrap(),
+            api::local_state::ContentScope::try_new(
+                api::selected::ClientRevision::R289,
+                "settings-resolve",
+            )
+            .unwrap(),
+        ));
+        super::install(&mut runtime, Some(state)).unwrap();
         runtime.eval::<()>(SETUP).unwrap();
         runtime
     }
@@ -1014,14 +1292,15 @@ globalThis.__resolveSchema = {
 (() => {
     const hasFast = new Function('value', 'return %HasFastProperties(value)');
     const haveSameMap = new Function('left', 'right', 'return %HaveSameMap(left, right)');
-    const first = __rs2b0t_settings_store('resolve', __resolveSchema);
-    const second = __rs2b0t_settings_store('resolve', __resolveSchema);
+    const first = __rs2b0t_settings_store('resolve', 'Test', __resolveSchema);
+    const second = __rs2b0t_settings_store('resolve', 'Test', __resolveSchema);
     return {
-        fast: hasFast(first) && hasFast(second),
-        sameMap: haveSameMap(first, second),
+        fast: hasFast(first) && hasFast(second) && hasFast(first.tile) && hasFast(second.tile),
+        sameMap: haveSameMap(first, second) && haveSameMap(first.tile, second.tile),
         keys: Object.keys(first),
-        values: [first.food, first.enabled, first.missing],
-        plain: Object.getPrototypeOf(first) === Object.prototype,
+        values: [first.food, first.enabled, first.missing, first.tile.x, first.tile.z, first.tile.level],
+        plain: Object.getPrototypeOf(first) === Object.prototype
+            && Object.getPrototypeOf(first.tile) === Object.prototype,
     };
 })()
 "#,
@@ -1032,8 +1311,8 @@ globalThis.__resolveSchema = {
             json!({
                 "fast": true,
                 "sameMap": true,
-                "keys": ["food", "enabled", "missing"],
-                "values": ["Shark", false, null],
+                "keys": ["food", "enabled", "missing", "tile"],
+                "values": ["Lobster", true, "none", 3221, 3218, 2],
                 "plain": true,
             })
         );
@@ -1047,13 +1326,13 @@ globalThis.__resolveSchema = {
         let mut runtime = setup();
         runtime
             .eval::<()>(
-                "for (let index = 0; index < 1000; index++) globalThis.__lastResolved = __rs2b0t_settings_store('resolve', __resolveSchema); globalThis.__lastResolved = null;",
+                "for (let index = 0; index < 1000; index++) globalThis.__lastResolved = __rs2b0t_settings_store('resolve', 'Test', __resolveSchema); globalThis.__lastResolved = null;",
             )
             .unwrap();
         let baseline = collected_used_heap(&mut runtime);
         runtime
             .eval::<()>(
-                "for (let index = 0; index < 25000; index++) globalThis.__lastResolved = __rs2b0t_settings_store('resolve', __resolveSchema); globalThis.__lastResolved = null;",
+                "for (let index = 0; index < 25000; index++) globalThis.__lastResolved = __rs2b0t_settings_store('resolve', 'Test', __resolveSchema); globalThis.__lastResolved = null;",
             )
             .unwrap();
         let after = collected_used_heap(&mut runtime);

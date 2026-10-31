@@ -32,12 +32,12 @@ export class SettingsBag {
 }
 
 class SettingsStoreImpl {
-    resolve(_name, schema) {
+    resolve(name, schema) {
         const dispatch = globalThis.__rs2b0t_settings_store;
         if (typeof dispatch !== 'function') {
             throw new Error('SettingsStore native service is unavailable');
         }
-        return dispatch('resolve', schema);
+        return dispatch('resolve', name, schema);
     }
 
     displayString(_name, key, def) {
