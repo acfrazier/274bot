@@ -889,10 +889,16 @@ fn parse_string_list<'s>(
             value.into()
         };
         if written == u32::MAX {
-            return Err(cb::type_error(scope, "SettingsStore list exceeds the V8 array limit"));
+            return Err(cb::type_error(
+                scope,
+                "SettingsStore list exceeds the V8 array limit",
+            ));
         }
         if !cb::catching(scope, |scope| output.set_index(scope, written, value))? {
-            return Err(cb::type_error(scope, "could not materialize SettingsStore list"));
+            return Err(cb::type_error(
+                scope,
+                "could not materialize SettingsStore list",
+            ));
         }
         written += 1;
     }
@@ -1209,10 +1215,7 @@ globalThis.__resolveSchema = {
             Ok((namespace == "Test" && key == "tile").then(|| "3221,3218,2".to_owned()))
         }
 
-        fn submit(
-            &self,
-            edit: api::local_state::DomainEdit,
-        ) -> api::local_state::SubmitReceipt {
+        fn submit(&self, edit: api::local_state::DomainEdit) -> api::local_state::SubmitReceipt {
             api::local_state::SubmitReceipt::Refused(api::local_state::ErrorCode::Busy {
                 domain: edit.identity().domain(),
             })
