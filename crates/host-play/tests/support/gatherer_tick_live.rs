@@ -1186,6 +1186,26 @@ mod tests {
     use super::*;
 
     #[test]
+    fn setup_uses_the_engine_teleport_coordinate_format() {
+        for case in [
+            Case::Probe,
+            Case::Fly,
+            Case::Net,
+            Case::Iron,
+            Case::Oak,
+            Case::Rune,
+        ] {
+            let setup = SetupState::new("tick-setup".into(), case);
+            let target = case.target();
+            assert_eq!(
+                setup.commands.last(),
+                Some(&interact::tele_args(target.level, target.x, target.z)),
+                "incorrect teleport for {case:?}"
+            );
+        }
+    }
+
+    #[test]
     fn completed_cycles_adds_all_six_verdict_families() {
         let status = StatusObservation {
             host_frame: 1,

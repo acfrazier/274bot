@@ -3223,6 +3223,26 @@ mod packet_oracle_tests {
     use super::*;
 
     #[test]
+    fn river_setup_starts_on_a_real_standable_tile() {
+        let pack = PathBuf::from(std::env::var_os("NAV_PACK").expect("NAV_PACK is required"));
+        let world = nav_planner::world::NavWorld::load_pack(&pack).unwrap();
+        let scenario = Scenario::river("tick-setup");
+        let neighbours = [(-1, 0), (1, 0), (0, -1), (0, 1)].map(|(dx, dz)| {
+            let candidate = tile(scenario.target.x + dx, scenario.target.z + dz, 0);
+            (candidate, world.collision.standable(candidate))
+        });
+        assert!(
+            world.collision.standable(scenario.target),
+            "river player start {:?} is not standable; neighbours={neighbours:?}",
+            scenario.target
+        );
+        assert_ne!(
+            scenario.target,
+            scenario.required_loc.expect("river has a fixed loc").1
+        );
+    }
+
+    #[test]
     fn setup_observes_relogin_without_requiring_an_offline_callback() {
         let account = "tick-setup";
         let mut setup = SetupState::new(account.into(), Scenario::river("tick-setup"));
