@@ -114,17 +114,21 @@ fn account_lines(account: &str) -> Vec<String> {
         .collect()
 }
 
+/// The `last_event` of one native Gatherer status line. The formatter at
+/// `script/src/slot/compiled.rs:333-343` writes
+/// `native Gatherer run=<n> phase=<label> failure=<code>[details] last_event=<event>`.
+/// Any other line, or a line with a malformed run, phase or empty event, gives `None`.
+fn gatherer_status_event(line: &str) -> Option<&str> {
+    line.starts_with("native Gatherer phase=")
+        .then(|| line.split_once(" last_event=").map(|(_, event)| event))
+        .flatten()
+}
+
 /// The Gatherer `last_event` values in the order the status lines changed
 /// them; a repeated value (another field moved) is one transition.
 fn event_transitions(lines: &[String]) -> Vec<String> {
     let mut events: Vec<String> = Vec::new();
-    for line in lines {
-        if !line.starts_with("native Gatherer phase=") {
-            continue;
-        }
-        let Some((_, event)) = line.split_once(" last_event=") else {
-            continue;
-        };
+    for event in lines.iter().filter_map(|line| gatherer_status_event(line)) {
         if events.last().map(String::as_str) != Some(event) {
             events.push(event.to_owned());
         }
@@ -249,6 +253,8 @@ struct BaitTrace {
     final_origin: Option<String>,
     final_rows: Option<Vec<(i32, i32)>>,
     start_to_block_ms: Option<u128>,
+    /// Blocked polls that kept observing because the parked bank was still open.
+    blocked_polls_with_open_bank: usize,
     verdict_failure: Option<String>,
 }
 
@@ -412,6 +418,16 @@ fn verdict(variant: Variant, trace: &BaitTrace) -> Result<(), String> {
         }
     }
     Ok(())
+}
+
+/// The cell's decision at one polled Blocked status, after the trace records
+/// its facts. A clean park (no failure, slot Running) whose bank is still open
+/// gives `None`: the park closes that bank on a later poll
+/// (`script/src/gatherer/park.rs:55-72`), so the cell keeps observing under its
+/// unchanged deadline. Every other Blocked sample gives the verdict at once.
+fn blocked_verdict(variant: Variant, trace: &BaitTrace) -> Option<Result<(), String>> {
+    // First-Blocked behavior retained until the regression tests are exercised.
+    Some(verdict(variant, trace))
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -678,19 +694,29 @@ fn run_cell(variant: Variant) {
                                 guard.trip_due_count =
                                     Some(logged.iter().filter(|event| *event == TRIP_DUE).count());
                                 guard.logged_events = logged;
-                                guard.start_to_block_ms = Some(since.elapsed().as_millis());
-                                verdict(variant, &guard)
+                                if guard.start_to_block_ms.is_none() {
+                                    guard.start_to_block_ms = Some(since.elapsed().as_millis());
+                                }
+                                let result = blocked_verdict(variant, &guard);
+                                if result.is_none() {
+                                    guard.blocked_polls_with_open_bank += 1;
+                                }
+                                result
                             };
                             match result {
-                                Ok(()) => {
+                                None => {}
+                                Some(Ok(())) => {
                                     let mut guard = cell.lock();
                                     guard.result = Some(serde_json::json!(*trace.lock()));
                                     guard.trace.passed = true;
                                     guard.terminal = true;
+                                    stage = Stage::Done;
                                 }
-                                Err(message) => fail(&cell, &trace, message),
+                                Some(Err(message)) => {
+                                    fail(&cell, &trace, message);
+                                    stage = Stage::Done;
+                                }
                             }
-                            stage = Stage::Done;
                         }
                     }
                 }
@@ -755,15 +781,54 @@ fn live_gather_bait_stale_hint_costs_one_trip_at_draynor() {
     run_cell(Variant::StaleHint);
 }
 
+/// Lines in the shape of the stale-hint receipt
+/// (`mapped-live-deadline-81c4d822d/host.gather-bait-stale-hint`, `hostlog-slot.txt:30-34`).
+#[test]
+fn status_transitions_accept_run_tagged_gatherer_lines() {
+    let lines = [
+        "start script",
+        "native Gatherer run=1 phase=working failure=none area=custom (3086,3229,0) r8 last_event=bank trip due",
+        "bank memory observed rows=0 size=288 generation=3",
+        "native Gatherer run=1 phase=blocked failure=none block_reason=no Fishing bait in the pack, worn, or in the bank as seen less than a minute ago this session (0 rows); nobody sells it; waiting: put a Fishing bait in the pack area=custom (3086,3229,0) r8 last_event=supply-missing",
+        "native Gatherer run=12 phase=complete failure=none last_event=done",
+    ]
+    .map(str::to_owned);
+    let events = event_transitions(&lines);
+    assert_eq!(events, [TRIP_DUE, "supply-missing", "done"]);
+    assert_eq!(events.iter().filter(|event| *event == TRIP_DUE).count(), 1);
+}
+
+#[test]
+fn status_transitions_reject_unrelated_and_malformed_lines() {
+    let lines = [
+        // The retired untagged shape: the formatter no longer writes it.
+        "native Gatherer phase=working failure=none last_event=bank trip due",
+        "native Quester run=1 phase=working failure=none last_event=bank trip due",
+        "script: native Gatherer run=1 phase=working failure=none last_event=bank trip due",
+        "native Gatherer run= phase=working failure=none last_event=bank trip due",
+        "native Gatherer run=1a phase=working failure=none last_event=bank trip due",
+        "native Gatherer run=1 phase=fishing failure=none last_event=bank trip due",
+        "native Gatherer run=1 phase=working last_event=bank trip due",
+        "native Gatherer run=1 phase=working failure=none",
+        "native Gatherer run=1 phase=working failure=none last_event=",
+        "bank trip due",
+        "",
+    ]
+    .map(str::to_owned);
+    assert_eq!(event_transitions(&lines), Vec::<String>::new());
+}
+
 #[test]
 fn status_transitions_fold_repeated_events() {
     let lines = [
-        "native Gatherer phase=working failure=none last_event=started",
-        "native Gatherer phase=working failure=none last_event=bank trip due",
-        "native Gatherer phase=working failure=none action_state=walk last_event=bank trip due",
+        "native Gatherer run=1 phase=working failure=none last_event=started",
+        "native Gatherer run=1 phase=working failure=none last_event=bank trip due",
+        "native Gatherer run=1 phase=working failure=none action_state=walk last_event=bank trip due",
         "bank open booth",
-        "native Gatherer phase=working failure=none last_event=deposit confirmed",
-        "native Gatherer phase=blocked failure=none block_reason=no Fishing bait in the pack, worn, or in the bank as seen less than a minute ago this session (0 rows); nobody sells it; waiting: put a Fishing bait in the pack last_event=deposit confirmed",
+        "native Gatherer phase=working failure=none last_event=started",
+        "native Gatherer run=1 phase=working failure=none action_state=bank last_event=bank trip due",
+        "native Gatherer run=1 phase=working failure=none last_event=deposit confirmed",
+        "native Gatherer run=1 phase=blocked failure=none block_reason=no Fishing bait in the pack, worn, or in the bank as seen less than a minute ago this session (0 rows); nobody sells it; waiting: put a Fishing bait in the pack last_event=deposit confirmed",
     ]
     .map(str::to_owned);
     assert_eq!(
@@ -853,6 +918,74 @@ fn bait_oracle_rejects_wrong_park_state_provenance_and_trip_evidence() {
     let mut trace = valid_trace(Variant::StaleHint);
     trace.trips = Some(1);
     assert!(verdict(Variant::StaleHint, &trace).is_err());
+}
+
+#[test]
+fn blocked_park_with_open_bank_keeps_observing() {
+    for variant in [Variant::Banked, Variant::StaleHint] {
+        let mut trace = valid_trace(variant);
+        trace.final_bank_open = Some(true);
+        // The first-Blocked verdict would reject this early sample.
+        assert!(verdict(variant, &trace).is_err());
+        assert_eq!(blocked_verdict(variant, &trace), None);
+    }
+}
+
+#[test]
+fn blocked_park_with_closed_bank_reaches_verdict() {
+    for variant in [Variant::Banked, Variant::StaleHint] {
+        let mut trace = valid_trace(variant);
+        trace.final_bank_open = Some(true);
+        assert_eq!(blocked_verdict(variant, &trace), None);
+        trace.final_bank_open = Some(false);
+        assert_eq!(blocked_verdict(variant, &trace), Some(Ok(())));
+    }
+}
+
+#[test]
+fn blocked_true_failures_end_at_once_with_open_bank() {
+    for variant in [Variant::Banked, Variant::StaleHint] {
+        let mut trace = valid_trace(variant);
+        trace.final_bank_open = Some(true);
+        trace.failure_code = Some("supply-missing".into());
+        assert!(matches!(blocked_verdict(variant, &trace), Some(Err(_))));
+
+        let mut trace = valid_trace(variant);
+        trace.final_bank_open = Some(true);
+        trace.failure_message = Some("bank walk failed".into());
+        assert!(matches!(blocked_verdict(variant, &trace), Some(Err(_))));
+
+        let mut trace = valid_trace(variant);
+        trace.final_bank_open = Some(true);
+        trace.slot_running = Some(false);
+        trace.slot_state = Some("Stopped".into());
+        assert!(matches!(blocked_verdict(variant, &trace), Some(Err(_))));
+    }
+}
+
+#[test]
+fn blocked_park_with_closed_bank_still_rejects_invalid_facts() {
+    for variant in [Variant::Banked, Variant::StaleHint] {
+        let mut trace = valid_trace(variant);
+        trace.final_bank_open = None;
+        assert!(matches!(blocked_verdict(variant, &trace), Some(Err(_))));
+
+        let mut trace = valid_trace(variant);
+        trace.trip_due_count = Some(0);
+        assert!(matches!(blocked_verdict(variant, &trace), Some(Err(_))));
+
+        let mut trace = valid_trace(variant);
+        trace.block_reason = Some("supply-missing:Fishing bait".into());
+        assert!(matches!(blocked_verdict(variant, &trace), Some(Err(_))));
+
+        let mut trace = valid_trace(variant);
+        trace.final_origin = Some("Hint".into());
+        assert!(matches!(blocked_verdict(variant, &trace), Some(Err(_))));
+
+        let mut trace = valid_trace(variant);
+        trace.final_rows = Some(vec![(FISHING_BAIT, 1)]);
+        assert!(matches!(blocked_verdict(variant, &trace), Some(Err(_))));
+    }
 }
 
 #[test]
