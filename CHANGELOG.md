@@ -514,6 +514,15 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.8` 
   operation takes longer than 60 seconds. Restart 274bot to recover. A fix is
   planned for 0.2.9. 0.2.6 to 0.2.7 have the same problem.
 
+### Quester
+
+- The Quester log now keeps a long stage's step lines. Each stage of a guide
+  has its own trace budget, sized from that stage's steps and the steps of the
+  collection recipes those steps run, so a stage logs its own start, skip and
+  finish lines instead of being dropped after the run's first 32 different
+  lines. A new run starts that budget again for the current stage. Repeated
+  lines still fold into one line with a count.
+
 ## [0.2.7] — 2026-10-26 — Beta 2
 
 ### Panel and terminal app

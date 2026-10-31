@@ -1054,13 +1054,20 @@ fn r1_provisioner_capacity_deposit_is_traced() {
 #[test]
 fn r1_finish_is_emitted_after_trace_event_cap() {
     let mut fixture = CookFixture::new(false, false);
-    for event in 0..=RUN_TRACE_EVENT_LIMIT {
+    // Fill the first stage's own trace budget. The finish line is terminal,
+    // so it is logged even while the stage trace stays capped.
+    let steps = fixture.script.path.sequences[fixture.script.seq_index]
+        .steps
+        .len();
+    fixture.script.trace.begin_stage(&mut fixture.output, steps);
+    for event in 0..=stage_event_limit(steps) {
         fixture.script.trace.record(
             &mut fixture.output,
             api::hostlog::Level::Info,
             format_args!("quester cook: distinct event {event}"),
         );
     }
+    assert!(fixture.script.trace.truncated);
     fixture.snapshot.seed_quest_statuses(
         vec![QuestStatusView {
             name: "Cook's Assistant".into(),
@@ -1075,6 +1082,15 @@ fn r1_finish_is_emitted_after_trace_event_cap() {
         1,
         &mut fixture.output,
         |native| assert_eq!(fixture.script.tick(native).unwrap(), ScriptFlow::Complete),
+    );
+    assert!(
+        fixture
+            .output
+            .logs
+            .iter()
+            .any(|line| line == "quester trace truncated after the event limit"),
+        "the capped stage trace reports its truncation: {:?}",
+        fixture.output.logs
     );
     assert_eq!(
         fixture

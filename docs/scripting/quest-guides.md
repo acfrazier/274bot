@@ -199,7 +199,7 @@ Available bank hints are withdrawn only when they fit alongside the active recip
 
 An unmeetable speculative peak does not itself park the guide. Preparation falls back to immediate withdrawals while still requiring room for the active acquisition's final item. Later inventory pressure is left to the running family.
 
-Provisioner's bank scan, capacity deposit and withdrawal boundaries are included in the bounded run trace; the terminal `finish` line is emitted even if that trace reaches its event cap.
+Provisioner's bank scan, capacity deposit and withdrawal boundaries are included in the stage's bounded run trace; the terminal `finish` line is emitted even if that trace reaches its event cap.
 
 ## Rules of thumb
 

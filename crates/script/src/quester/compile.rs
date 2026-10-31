@@ -253,6 +253,11 @@ pub struct CompiledSequence {
     pub order: super::path::SequenceOrder,
     pub cross: Arc<[Arc<str>]>,
     pub steps: Vec<CompiledStep>,
+    /// Distinct trace lines this stage can log: one per step, plus one per
+    /// step of every recipe an `acquire` step runs, counting nested recipes.
+    /// The run trace sizes the stage's budget from it; see
+    /// `super::runner::stage_event_limit`.
+    pub trace_units: usize,
 }
 
 #[derive(Clone)]
@@ -1537,6 +1542,7 @@ pub(super) fn compile_uncached(
                 .map(|zone| Arc::<str>::from(zone.id.as_str()))
                 .collect::<Vec<_>>()
                 .into(),
+            trace_units: sequence_trace_units(&sequence.steps, &header.acquire),
             steps,
         });
     }
@@ -2072,6 +2078,53 @@ fn collect_settled_items(
     Ok(())
 }
 const MAX_RECIPE_NESTING_DEPTH: usize = 32;
+
+/// Distinct trace lines one stage can log: one per step of the stage, plus one
+/// per step of every recipe an `acquire` step runs, counting a nested recipe's
+/// steps through its own `acquire` children. The compile step and the trace's
+/// per-stage budget must agree on this count, so both read it here.
+pub(crate) fn sequence_trace_units(
+    steps: &[StepDocument],
+    recipes: &std::collections::BTreeMap<String, Vec<StepDocument>>,
+) -> usize {
+    let mut memo = HashMap::new();
+    steps
+        .iter()
+        .map(|step| 1usize.saturating_add(step_recipe_units(step, recipes, &mut memo, 0)))
+        .fold(0, usize::saturating_add)
+}
+
+/// Steps one stage step adds through its recipe, if any. Each recipe's count
+/// is memoized, so a recipe shared by two branches is counted once per branch
+/// without walking it twice.
+fn step_recipe_units(
+    step: &StepDocument,
+    recipes: &std::collections::BTreeMap<String, Vec<StepDocument>>,
+    memo: &mut HashMap<String, usize>,
+    depth: usize,
+) -> usize {
+    if step.kind != "acquire" {
+        return 0;
+    }
+    let Some(recipe) = step.args.get("recipe").and_then(serde_json::Value::as_str) else {
+        return 0;
+    };
+    if let Some(units) = memo.get(recipe) {
+        return *units;
+    }
+    let Some(steps) = recipes.get(recipe) else {
+        return 0;
+    };
+    if depth >= MAX_RECIPE_NESTING_DEPTH {
+        return 0;
+    }
+    let units = steps
+        .iter()
+        .map(|step| 1usize.saturating_add(step_recipe_units(step, recipes, memo, depth + 1)))
+        .fold(0, usize::saturating_add);
+    memo.insert(recipe.to_owned(), units);
+    units
+}
 
 enum RecipeBinding {
     Active { index: usize },

@@ -104,8 +104,9 @@ The Log window shows the run in more detail. When a guide starts, the Log names
 the guide, where it loaded from, a fingerprint of the exact file, and the first
 step's comment. Stage changes, step starts, step skips and step finishes follow.
 A skip line names the check that passed. Warnings name failed steps and the
-reason a run parked. Repeated retries fold into one line with a count. The trace
-keeps the last 32 different events.
+reason a run parked. Repeated retries fold into one line with a count. Each
+stage keeps the lines of its own steps and of the collect steps those steps
+run, so the log of a long stage does not stop after its first few steps.
 
 If a quest needs items first, the Quester collects them before the quest steps
 begin. Those lines look the same as the lines of a collect step. A step start
