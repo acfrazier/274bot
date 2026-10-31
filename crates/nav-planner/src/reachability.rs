@@ -208,7 +208,7 @@ impl ReachabilityAtlas {
         }
         let chunk_cols = width.div_ceil(CHUNK_SIDE);
         let chunk_rows = height.div_ceil(CHUNK_SIDE);
-        let n_chunks = KEY_LEVELS as u32
+        let n_chunks = (KEY_LEVELS as u32)
             .checked_mul(chunk_rows)
             .and_then(|n| n.checked_mul(chunk_cols))
             .ok_or_else(|| PackError::BadLength("atlas chunk count overflows".into()))?;
@@ -337,7 +337,13 @@ impl ReachabilityAtlas {
             .map_or(0, |id| id.saturating_add(1))
     }
 
-    pub fn placement(&self, origin: WorldTile, loc_id: i32, shape: u8, angle: u8) -> Option<&PlacementRow> {
+    pub fn placement(
+        &self,
+        origin: WorldTile,
+        loc_id: i32,
+        shape: u8,
+        angle: u8,
+    ) -> Option<&PlacementRow> {
         let key = pack_tile_key(origin).ok()?;
         self.placements
             .binary_search_by(|row| {

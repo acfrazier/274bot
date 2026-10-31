@@ -127,8 +127,8 @@ fn parse_content_coord(line: usize, token: &str) -> Result<WorldTile, MultiwayEr
 #[cfg(test)]
 mod tests {
     use super::{produce_multiway_keys, MultiwayError};
-    use nav_planner::pack::{pack_tile_key, unpack_tile_key};
     use api::snapshot::WorldTile;
+    use nav_planner::pack::{pack_tile_key, unpack_tile_key};
 
     #[test]
     fn producer_skips_comments_sorts_and_deduplicates() {
@@ -141,7 +141,10 @@ mod tests {
 ";
         let keys = produce_multiway_keys(csv).unwrap();
         assert_eq!(keys.len(), 3);
-        let tiles: Vec<_> = keys.iter().map(|&key| unpack_tile_key(key).unwrap()).collect();
+        let tiles: Vec<_> = keys
+            .iter()
+            .map(|&key| unpack_tile_key(key).unwrap())
+            .collect();
         assert_eq!(
             tiles,
             [

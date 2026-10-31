@@ -1561,8 +1561,7 @@ pub fn bake_world(request: &BakeRequest<'_>) -> Result<BakedNav, crate::Generati
         encode_flags_sidecar(collision.origin, collision.width, collision.height, &flags);
     let multiway_path = request.maps_dir.join("multiway.csv");
     graph.multiway = produce_multiway_keys_from_path(&multiway_path)?;
-    let atlas =
-        crate::reachability::bake_atlas(&collision, &graph, request.maps_dir, &loc_defs)?;
+    let atlas = crate::reachability::bake_atlas(&collision, &graph, request.maps_dir, &loc_defs)?;
     let bytes = encode_with_atlas(&collision, &graph, &banks, &atlas)
         .map_err(|source| crate::GenerationError::PackEncodeFailed { source })?;
     let reach_bits = bake_reach(&collision, &graph);

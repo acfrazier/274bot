@@ -407,8 +407,15 @@ pub fn decode(bytes: &[u8]) -> Result<(WorldCollision, TransportGraph, Vec<BankS
 /// Decode a v18 pack including its reachability atlas.
 pub fn decode_full(
     bytes: &[u8],
-) -> Result<(WorldCollision, TransportGraph, Vec<BankStand>, crate::reachability::ReachabilityAtlas), PackError>
-{
+) -> Result<
+    (
+        WorldCollision,
+        TransportGraph,
+        Vec<BankStand>,
+        crate::reachability::ReachabilityAtlas,
+    ),
+    PackError,
+> {
     let mut r = Cursor::new(bytes);
     read_magic(&mut r, MAGIC)?;
     decode_pack_body(r)
@@ -416,8 +423,15 @@ pub fn decode_full(
 
 fn decode_pack_body<R: PackRead>(
     mut r: R,
-) -> Result<(WorldCollision, TransportGraph, Vec<BankStand>, crate::reachability::ReachabilityAtlas), PackError>
-{
+) -> Result<
+    (
+        WorldCollision,
+        TransportGraph,
+        Vec<BankStand>,
+        crate::reachability::ReachabilityAtlas,
+    ),
+    PackError,
+> {
     let version = read_u8(&mut r)?;
     if version != VERSION {
         return Err(PackError::BadVersion(version));

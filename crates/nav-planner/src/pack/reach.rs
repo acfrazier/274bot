@@ -609,7 +609,12 @@ fn decode_graph(payload: &[u8], atlas: &mut ReachabilityAtlas) -> Result<(), Pac
     Ok(())
 }
 
-fn check_csr(offsets: &[u32], target_count: u32, row_count: u32, what: &str) -> Result<(), PackError> {
+fn check_csr(
+    offsets: &[u32],
+    target_count: u32,
+    row_count: u32,
+    what: &str,
+) -> Result<(), PackError> {
     if offsets.len() != row_count as usize + 1 {
         return Err(PackError::BadLength(format!(
             "atlas {what} CSR offsets must be row_count + 1"

@@ -4,7 +4,9 @@ use std::collections::{BTreeSet, HashSet};
 use std::path::Path;
 
 use api::obj_names::LocDefs;
-use api::query::loc_approach::{loc_can_operate, loc_candidate_stands, loc_reach_strategy, LocReachStrategy};
+use api::query::loc_approach::{
+    loc_can_operate, loc_candidate_stands, loc_reach_strategy, LocReachStrategy,
+};
 use api::snapshot::WorldTile;
 use nav_planner::collision::{game_plane, WorldCollision};
 use nav_planner::essence::{essence_session_for_wizard, ESSENCE_MINE_PORTALS};
@@ -222,9 +224,7 @@ fn bake_atlas_inner(
 
     let mut sessions = Vec::new();
     for &portal in ESSENCE_MINE_PORTALS {
-        let source_base = idx(portal)
-            .and_then(|i| label_of(&labels, i))
-            .unwrap_or(0);
+        let source_base = idx(portal).and_then(|i| label_of(&labels, i)).unwrap_or(0);
         for npc in [553, 300, 462, 844, 171] {
             let Some(session) = essence_session_for_wizard(npc) else {
                 continue;
@@ -249,13 +249,7 @@ fn bake_atlas_inner(
         }
     }
 
-    let (placements, stands) = bake_placements(
-        collision,
-        maps_dir,
-        loc_defs,
-        &labels,
-        idx,
-    )?;
+    let (placements, stands) = bake_placements(collision, maps_dir, loc_defs, &labels, idx)?;
 
     let reach_bits = bake_reach(collision, graph);
     let legacy_paint = bit_runs(&reach_bits, n);
@@ -511,9 +505,7 @@ fn scc_ids(adj: &[BTreeSet<u32>]) -> Vec<u32> {
     scc
 }
 
-fn closures_from_adj(
-    adj: &[BTreeSet<u32>],
-) -> Result<(Box<[u32]>, Box<[ClosureRun]>), PackError> {
+fn closures_from_adj(adj: &[BTreeSet<u32>]) -> Result<(Box<[u32]>, Box<[ClosureRun]>), PackError> {
     let n = adj.len() as u32;
     let mut offsets = vec![0u32];
     let mut runs = Vec::new();
@@ -533,7 +525,10 @@ fn closures_from_adj(
             match first {
                 Some(start) if start + count == id => count += 1,
                 Some(start) => {
-                    runs.push(ClosureRun { first: start, count });
+                    runs.push(ClosureRun {
+                        first: start,
+                        count,
+                    });
                     first = Some(id);
                     count = 1;
                 }
@@ -544,7 +539,10 @@ fn closures_from_adj(
             }
         }
         if let Some(start) = first {
-            runs.push(ClosureRun { first: start, count });
+            runs.push(ClosureRun {
+                first: start,
+                count,
+            });
         }
         offsets.push(
             u32::try_from(runs.len())
@@ -577,12 +575,16 @@ fn encode_labels(
                         let x = cx * side + lx;
                         let z = cz * side + lz;
                         if x < collision.width && z < collision.height {
-                            cells[lz * side + lx] =
-                                labels[level * plane + z * collision.width + x];
+                            cells[lz * side + lx] = labels[level * plane + z * collision.width + x];
                         }
                     }
                 }
-                let unique: Vec<u32> = cells.iter().copied().collect::<BTreeSet<_>>().into_iter().collect();
+                let unique: Vec<u32> = cells
+                    .iter()
+                    .copied()
+                    .collect::<BTreeSet<_>>()
+                    .into_iter()
+                    .collect();
                 let bit_width = palette_bit_width(unique.len() as u32)?;
                 let pal_start = u32::try_from(palette.len())
                     .map_err(|_| PackError::BadLength("atlas palette start exceeds u32".into()))?;
@@ -711,11 +713,7 @@ fn bake_placements(
                         continue;
                     }
                     let flags = collision.walkable_word(from.x, from.z, from.level) as i32;
-                    let can_step = step_ok(
-                        collision,
-                        from,
-                        (origin.x - from.x, origin.z - from.z),
-                    );
+                    let can_step = step_ok(collision, from, (origin.x - from.x, origin.z - from.z));
                     match loc_can_operate(
                         origin,
                         from,
@@ -772,14 +770,8 @@ fn bake_placements(
             z: 0,
             level: 0,
         });
-        (ta.level, ta.x, ta.z, a.loc_id, a.shape, a.angle).cmp(&(
-            tb.level,
-            tb.x,
-            tb.z,
-            b.loc_id,
-            b.shape,
-            b.angle,
-        ))
+        (ta.level, ta.x, ta.z, a.loc_id, a.shape, a.angle)
+            .cmp(&(tb.level, tb.x, tb.z, b.loc_id, b.shape, b.angle))
     });
     Ok((placements.into_boxed_slice(), stands.into_boxed_slice()))
 }

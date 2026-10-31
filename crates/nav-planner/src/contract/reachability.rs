@@ -37,7 +37,12 @@ pub struct LocPlacementKey {
 
 impl LocPlacementKey {
     /// Construct a placement key. Angle must be 0..=3.
-    pub fn new(tile: WorldTile, loc_id: i32, shape: u8, angle: u8) -> Result<Self, ReachabilityError> {
+    pub fn new(
+        tile: WorldTile,
+        loc_id: i32,
+        shape: u8,
+        angle: u8,
+    ) -> Result<Self, ReachabilityError> {
         if angle > 3 {
             return Err(ReachabilityError::UnsupportedGeometry {
                 key: Self {
@@ -99,7 +104,9 @@ impl<'a> LocStandView<'a> {
     }
 
     /// Iterate packed stand tiles without allocating.
-    pub fn tiles(self) -> impl Iterator<Item = Result<(WorldTile, BoundComponentKey), ReachabilityError>> + 'a {
+    pub fn tiles(
+        self,
+    ) -> impl Iterator<Item = Result<(WorldTile, BoundComponentKey), ReachabilityError>> + 'a {
         let pack = self.pack;
         self.stands.iter().map(move |row| {
             let tile = unpack_tile_key(row.tile).map_err(|_| ReachabilityError::MissingPlacement {

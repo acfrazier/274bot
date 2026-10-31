@@ -366,19 +366,17 @@ pub fn loc_can_operate(
             Some(approach.can_operate(origin, from, flags))
         }
         LocReachStrategy::Wall => Some(wall_can_operate(origin, from, shape, angle, flags)),
-        LocReachStrategy::WallDecor => {
-            Some(wall_decor_can_operate(origin, from, shape, angle, can_step_into_origin))
-        }
+        LocReachStrategy::WallDecor => Some(wall_decor_can_operate(
+            origin,
+            from,
+            shape,
+            angle,
+            can_step_into_origin,
+        )),
     }
 }
 
-fn wall_can_operate(
-    origin: WorldTile,
-    from: WorldTile,
-    shape: u8,
-    angle: u8,
-    flags: i32,
-) -> bool {
+fn wall_can_operate(origin: WorldTile, from: WorldTile, shape: u8, angle: u8, flags: i32) -> bool {
     if from == origin {
         return true;
     }
