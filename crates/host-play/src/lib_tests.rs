@@ -32310,7 +32310,7 @@ export default class T extends LoopingBot {
         .expect("compile native Quester path")
     }
 
-    fn incomplete_budget_world() -> Arc<NavWorld> {
+    fn incomplete_budget_world(origin: api::snapshot::WorldTile) -> Arc<NavWorld> {
         const WIDTH: usize = 2200;
         const HEIGHT: usize = 2000;
         const SPLIT_X: usize = 2050;
@@ -32322,7 +32322,7 @@ export default class T extends LoopingBot {
         }
         Arc::new(NavWorld::from_parts(
             nav_planner::collision::WorldCollision {
-                origin: tile(0, 0),
+                origin,
                 width: WIDTH,
                 height: HEIGHT,
                 walk: vec![0; cells],
@@ -32511,8 +32511,8 @@ export default class T extends LoopingBot {
         let selected = selected_r289();
         let quest = cook_quest(&selected);
         let quests = selected.try_quests().expect("selected quest catalog");
-        let start = tile(0, 0);
-        let wall = tile(2195, 0);
+        let start = tile(1029, 3220);
+        let wall = tile(start.x + 2195, start.z);
         let anchor = tile(wall.x - 1, wall.z);
         let path = compiled_sheep_step(
             &selected,
@@ -32536,7 +32536,7 @@ export default class T extends LoopingBot {
                 }),
             },
         );
-        let rig = nav_rig_with(Some(incomplete_budget_world()));
+        let rig = nav_rig_with(Some(incomplete_budget_world(start)));
         let slot = script_slot(&rig.scripts, "alice").expect("Quester slot");
         let mut snapshot = quester_snapshot_at(&selected, &quest, start);
         snapshot.seed_locs(vec![api::snapshot::LocView {
