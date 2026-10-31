@@ -19391,12 +19391,14 @@ fn native_chat_producer_reaches_isolate_with_request_identity() {
     .unwrap();
     let mut snapshot = GameSnapshot::new();
     let mut fingerprint = None;
+    // The first observed chat line seeds this generation; later sequences are
+    // delivered in order, with duplicate sequences suppressed.
     for (tick, seq, kind, sender, events, requests) in [
-        (1, 11, 0, "Partner", 1, 0),
-        (2, 12, 4, "Stranger", 2, 0),
-        (3, 13, 4, "Partner", 3, 1),
-        (4, 13, 4, "Partner", 3, 1),
-        (5, 14, 4, "Partner", 4, 2),
+        (1, 11, 0, "Partner", 0, 0),
+        (2, 12, 4, "Stranger", 1, 0),
+        (3, 13, 4, "Partner", 2, 1),
+        (4, 13, 4, "Partner", 2, 1),
+        (5, 14, 4, "Partner", 3, 2),
     ] {
         c.chat_text[0] = "wishes to trade with you.".into();
         c.chat_type[0] = kind;
