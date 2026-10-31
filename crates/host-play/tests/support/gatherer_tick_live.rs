@@ -1230,7 +1230,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn iron_cell_seeds_the_selected_mithril_tool_minimum() {
+    fn iron_setup_has_a_usable_tool_and_local_replacement_rocks() {
         let selected = api::game_data::for_revision(api::selected::ClientRevision::R289).unwrap();
         let catalog =
             api::selected::FamilyPreparation::run(move |worker| selected.prepare_gathering(worker))
@@ -1260,6 +1260,55 @@ mod tests {
             seeded_level >= gate.level,
             "the generated account setup cannot use its selected mithril tool"
         );
+        let start = Case::Iron.target();
+        let adjacent_rocks = api::gather_methods::known_rows(&method.spots)
+            .iter()
+            .filter(|spot| {
+                spot.origin.level == start.level
+                    && spot.origin.x.abs_diff(start.x) <= 2
+                    && spot.origin.z.abs_diff(start.z) <= 2
+            })
+            .count();
+        assert!(
+            adjacent_rocks >= 2,
+            "the seeded player cannot start locally and hand off to a second authored iron rock"
+        );
+    }
+
+    #[test]
+    fn every_live_setup_starts_on_a_standable_player_tile() {
+        let pack = PathBuf::from(std::env::var_os("NAV_PACK").expect("NAV_PACK is required"));
+        let world = nav_planner::world::NavWorld::load_pack(&pack).unwrap();
+        for case in [
+            Case::Probe,
+            Case::Fly,
+            Case::Net,
+            Case::Iron,
+            Case::Oak,
+            Case::Rune,
+        ] {
+            let start = case.target();
+            assert!(
+                world.collision.standable(start),
+                "{case:?}: {start:?}; west={} east={} north={} south={}",
+                world.collision.standable(WorldTile {
+                    x: start.x - 1,
+                    ..start
+                }),
+                world.collision.standable(WorldTile {
+                    x: start.x + 1,
+                    ..start
+                }),
+                world.collision.standable(WorldTile {
+                    z: start.z + 1,
+                    ..start
+                }),
+                world.collision.standable(WorldTile {
+                    z: start.z - 1,
+                    ..start
+                }),
+            );
+        }
     }
 
     #[test]
