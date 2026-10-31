@@ -4908,9 +4908,9 @@ fn stand_walk_count_survives_a_failure_on_the_budget_tick() {
     }
 }
 
-/// The run is inlined into the compiled step and lives for a whole combat
-/// step. Its step-local counts must fit the layout the machine's own sizes
-/// were measured at; 1176 bytes is the size before the stand-walk count.
+/// 1448 B measured on x86_64 Linux, with no headroom. The retained inline state
+/// composes QUEST-S2, quester-approach-retry, quester-read-keeps-step,
+/// quest-window-evidence, and loot-retake-after-rebuild.
 #[test]
 fn combat_run_layout_stays_compact() {
     println!("CombatRun={}", std::mem::size_of::<CombatRun>());
@@ -4931,7 +4931,7 @@ fn combat_run_layout_stays_compact() {
         std::mem::size_of::<CombatReport>(),
         std::mem::size_of::<StepTraceEvent>(),
     );
-    assert!(std::mem::size_of::<CombatRun>() <= 1176);
+    assert!(std::mem::size_of::<CombatRun>() <= 1448);
 }
 
 #[test]
