@@ -237,20 +237,33 @@ fn compat_v1_walking_probeable() {
     )
     .expect("start compatibility v1 walking probe through normal Load");
     let result = parse_result(&play, account, CELL_DEADLINE);
-    assert_eq!(result["blockedProbeable"], true, "blocked tile: {result}");
-    assert_eq!(result["blockedWalkable"], false, "blocked tile: {result}");
     assert_eq!(
-        result["otherPlaneProbeable"], false,
+        result["blockedProbeable"].as_bool(),
+        Some(true),
+        "blocked tile: {result}"
+    );
+    assert_eq!(
+        result["blockedWalkable"].as_bool(),
+        Some(false),
+        "blocked tile: {result}"
+    );
+    assert_eq!(
+        result["otherPlaneProbeable"].as_bool(),
+        Some(false),
         "other plane: {result}"
     );
     assert_eq!(
-        result["insideEdgeProbeable"], true,
+        result["insideEdgeProbeable"].as_bool(),
+        Some(true),
         "loaded edge neighbor: {result}"
     );
-    assert_eq!(result["sceneEdgeProbeable"], false, "scene edge: {result}");
     assert_eq!(
-        result["insideLocal"].is_null(),
-        false,
+        result["sceneEdgeProbeable"].as_bool(),
+        Some(false),
+        "scene edge: {result}"
+    );
+    assert!(
+        !result["insideLocal"].is_null(),
         "loaded edge neighbor: {result}"
     );
     assert_eq!(result["edgeLocal"], Value::Null, "scene edge: {result}");

@@ -6849,6 +6849,7 @@ impl NavBot {
             self.walk_outcome_blocked = false;
             self.walk_outcome_no_path = false;
             self.walk_outcome_cancel_reason = script::native::WalkCancelReason::UserInput;
+            self.walk_outcome_x = to.x;
             self.walk_outcome_z = to.z;
             self.walk_outcome_level = to.level;
             self.walk_outcome_radius = radius;

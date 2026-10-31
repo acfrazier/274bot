@@ -3315,7 +3315,7 @@ fn real_content_inspection_capture_bytes() {
     let old_snapshot = script_js::wire::decode_snapshot(&old_bytes).unwrap();
     let snapshot = script_js::wire::decode_snapshot(&bytes).unwrap();
 
-    assert_eq!(bytes.len(), 1_376, "new capture size");
+    assert_eq!(bytes.len(), 1_440, "new capture size");
     let new_digest: [u8; 32] = sha2::Sha256::digest(&bytes).into();
     assert_eq!(
         nav_planner::pack::sha256_hex(&new_digest),

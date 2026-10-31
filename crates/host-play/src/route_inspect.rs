@@ -2017,6 +2017,18 @@ pub(crate) struct InspectTerminal {
     pub terminal: Option<WorldTile>,
 }
 
+#[cfg(test)]
+struct InspectOracle {
+    request_id: u64,
+    generation: u64,
+    ok: bool,
+    reason: String,
+    bank_planned: bool,
+    ticks: f64,
+    hops: Vec<InspectHop>,
+    terminal: Option<WorldTile>,
+}
+
 impl InspectTerminal {
     fn refusal(request_id: u64, generation: u64, reason: &'static str) -> Self {
         Self {
@@ -2052,47 +2064,39 @@ impl InspectTerminal {
     }
 
     #[cfg(test)]
-    fn oracle(
-        request_id: u64,
-        generation: u64,
-        ok: bool,
-        reason: String,
-        bank_planned: bool,
-        ticks: f64,
-        hops: Vec<InspectHop>,
-        terminal: Option<WorldTile>,
-    ) -> Self {
+    fn oracle(input: InspectOracle) -> Self {
         let result = Arc::new(InspectLegacy {
-            ok,
-            reason,
-            bank_planned,
-            ticks,
-            hops: hops.into(),
+            ok: input.ok,
+            reason: input.reason,
+            bank_planned: input.bank_planned,
+            ticks: input.ticks,
+            hops: input.hops.into(),
         });
         Self {
             seq: 0,
-            generation,
-            request_id,
+            generation: input.generation,
+            request_id: input.request_id,
             ok: result.ok,
             reason: InspectReason::Legacy(Arc::clone(&result)),
             bank_planned: result.bank_planned,
             ticks: result.ticks,
             hops: InspectHops::legacy(result),
-            terminal,
+            terminal: input.terminal,
         }
     }
+
     #[cfg(test)]
     fn oracle_refusal(request_id: u64, generation: u64, reason: &str) -> Self {
-        Self::oracle(
+        Self::oracle(InspectOracle {
             request_id,
             generation,
-            false,
-            reason.to_owned(),
-            false,
-            0.0,
-            Vec::new(),
-            None,
-        )
+            ok: false,
+            reason: reason.to_owned(),
+            bank_planned: false,
+            ticks: 0.0,
+            hops: Vec::new(),
+            terminal: None,
+        })
     }
 }
 
@@ -3357,16 +3361,16 @@ fn ok_terminal(capture: &InspectCapture, route: Route, bank_planned: bool) -> In
             Leg::Walk { .. } => None,
         })
         .collect();
-    InspectTerminal::oracle(
-        capture.request_id,
-        capture.generation,
-        true,
-        String::new(),
+    InspectTerminal::oracle(InspectOracle {
+        request_id: capture.request_id,
+        generation: capture.generation,
+        ok: true,
+        reason: String::new(),
         bank_planned,
-        route.ticks,
+        ticks: route.ticks,
         hops,
-        Some(capture.to),
-    )
+        terminal: Some(capture.to),
+    })
 }
 fn hop_texts<'a>(
     kind: TransportKind,
