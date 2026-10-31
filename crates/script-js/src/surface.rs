@@ -221,8 +221,8 @@ impl SurfaceRun for JsSurfaceRun {
     fn resume(&self) {
         self.isolate.resume();
     }
-    fn on_client_frame(&mut self) {
-        self.isolate.on_client_frame();
+    fn on_client_frame(&mut self) -> bool {
+        self.isolate.on_client_frame()
     }
 
     fn stop(self: Box<Self>, done: Sender<Vec<String>>) {

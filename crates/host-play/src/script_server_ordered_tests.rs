@@ -2146,7 +2146,7 @@ fn ordered_advanced_cheat_without_shared_catalog_refuses_the_whole_request() {
 fn ordered_current_numeric_npc_proofs_refuse_the_whole_knife_request() {
     let mut rig = Rig::new();
     {
-        let cache = Arc::get_mut(&mut rig.client.cache).unwrap();
+        let cache = test_cache_mut(&mut rig.client);
         cache.npcs.resize_with(10, client::config::NpcType::default);
         cache.npcs[9] = client::config::NpcType {
             id: 9,

@@ -573,7 +573,9 @@ pub trait SurfaceRun: Send {
     /// The host invokes this after each 20 ms client loop, independently of
     /// game-tick delivery. Implementations that do not expose frame events
     /// keep the default no-op.
-    fn on_client_frame(&mut self) {}
+    fn on_client_frame(&mut self) -> bool {
+        false
+    }
     /// Transfer this run to retirement and send its logs to `done`.
     fn stop(self: Box<Self>, done: Sender<Vec<String>>);
     /// Return whether the script has stopped.

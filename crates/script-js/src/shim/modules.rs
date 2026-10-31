@@ -518,10 +518,7 @@ globalThis.document = {
 pub fn shim_modules() -> Vec<Module> {
     vec![
         // Exact cross-root client projections required by AccountLeveler.
-        Module::new(
-            "/rs2b0t/client/config/worlds.js",
-            include_str!("worlds.js"),
-        ),
+        Module::new("/rs2b0t/client/config/worlds.js", include_str!("worlds.js")),
         Module::new(
             "/rs2b0t/client/shell/Skill.js",
             include_str!("client_skill.js"),

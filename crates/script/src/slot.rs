@@ -1514,15 +1514,17 @@ impl SlotScript {
     }
     /// Deliver one client-loop frame to a live surface. This is independent
     /// of game ticks and remains gated by the slot-owned lifecycle.
-    pub fn on_client_frame(&mut self) {
+    pub fn on_client_frame(&mut self) -> bool {
         if !matches!(
             self.state,
             RunState::Starting | RunState::Running | RunState::Paused
         ) {
-            return;
+            return false;
         }
         if let Some(surface) = self.surface.as_deref_mut() {
-            surface.on_client_frame();
+            surface.on_client_frame()
+        } else {
+            false
         }
     }
 

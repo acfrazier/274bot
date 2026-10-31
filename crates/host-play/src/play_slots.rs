@@ -1814,7 +1814,13 @@ fn spawn_slot_thread(
                                 )
                             ) {
                                 if let Some(slot) = script_slot(&slot_scripts, name) {
-                                    slot.lock().unwrap().on_client_frame();
+                                    #[cfg(feature = "memory-profile")]
+                                    memory::frame_dispatch_begin(name);
+                                    let delivered = slot.lock().unwrap().on_client_frame();
+                                    #[cfg(feature = "memory-profile")]
+                                    memory::frame_dispatch_end(name, delivered);
+                                    #[cfg(not(feature = "memory-profile"))]
+                                    let _ = delivered;
                                 }
                             }
                             if !mainland_sent && mainland && ready {

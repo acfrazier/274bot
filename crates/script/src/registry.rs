@@ -251,7 +251,10 @@ mod tests {
     fn invalid_and_repeated_world_values_are_rejected() {
         let invalid = Err("world must be 1, 2 or 3");
         assert_eq!(resolve_world_number("w2.rs2b2t.com", 1, Some("4")), invalid);
-        assert_eq!(resolve_world_number("w2.rs2b2t.com", 1, Some("01")), invalid);
+        assert_eq!(
+            resolve_world_number("w2.rs2b2t.com", 1, Some("01")),
+            invalid
+        );
         assert_eq!(resolve_world_number("w2.rs2b2t.com", 2, Some("1")), invalid);
     }
 
