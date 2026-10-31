@@ -2031,6 +2031,112 @@ mod tests {
     }
 
     #[test]
+    fn accepted_recovery_act_cannot_verify_the_on_time_roll() {
+        let mut run = replay(continuing());
+        let batch_request = run.batch(101, AnimClass::Skill);
+        let receipt = dispatch_receipt(batch_request, 101, Shape::Continuing, 3);
+        assert_eq!(
+            run.poll_receipts(
+                101,
+                None,
+                false,
+                false,
+                false,
+                false,
+                false,
+                false,
+                false,
+                Some(&receipt),
+                None,
+            ),
+            CycleStep::Wait
+        );
+
+        // The landing has no act line, so the core asks once for a checked
+        // recovery act rather than treating the batch's receipt as execution.
+        assert_eq!(
+            run.poll(
+                102,
+                Some(AnimClass::Fletching),
+                false,
+                false,
+                false,
+                false,
+                false,
+                false,
+                false,
+            ),
+            CycleStep::Click
+        );
+        let recovery_request = run
+            .cycle
+            .checked_request_id()
+            .expect("recovery act request is retained until its receipt");
+        assert_eq!(run.cycle.click_kind(), Some("Act"));
+        assert_eq!(
+            run.poll_receipts(
+                102,
+                None,
+                false,
+                false,
+                false,
+                false,
+                false,
+                false,
+                false,
+                None,
+                Some((recovery_request, true)),
+            ),
+            CycleStep::Wait
+        );
+        assert_eq!(run.cycle.checked_request_id(), None);
+        assert_eq!(run.policy.stats().wire_events, 6);
+
+        assert_eq!(
+            run.poll(103, None, false, false, false, false, false, false, false),
+            CycleStep::Wait
+        );
+        // Fresh roll animation at the original deadline. It proves cadence,
+        // but not that the original terminal row executed in time.
+        assert_eq!(
+            run.poll(
+                104,
+                Some(AnimClass::Skill),
+                false,
+                false,
+                false,
+                false,
+                false,
+                false,
+                false,
+            ),
+            CycleStep::Batch
+        );
+        assert_eq!(run.policy.stats().verified, 0);
+        assert_eq!(run.policy.stats().unobserved, 0);
+        assert_eq!(run.policy.stats().slipped, 1);
+        assert_eq!(run.policy.stats().lost, 0);
+        assert_eq!(run.policy.diagnostic().sequence, 1);
+        assert_eq!(
+            run.policy.diagnostic().reason,
+            Some(CycleReason::LateAct)
+        );
+        assert_ring(&run, 1);
+
+        // The act line can first arrive in the roll's wake (bounded through
+        // the next tick). It cannot reopen that cycle or ask another click.
+        assert_eq!(
+            run.poll(104, None, true, false, false, false, false, false, false),
+            CycleStep::Wait
+        );
+        assert_eq!(run.policy.stats().verified, 0);
+        assert_eq!(run.policy.stats().unobserved, 0);
+        assert_eq!(run.policy.stats().slipped, 1);
+        assert_eq!(run.policy.diagnostic().sequence, 1);
+        assert_ring(&run, 1);
+    }
+
+    #[test]
     fn landing_survives_until_inventory_wake_without_an_extra_emission() {
         let mut run = replay(continuing());
         run.batch(101, AnimClass::Skill);
