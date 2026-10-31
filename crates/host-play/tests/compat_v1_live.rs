@@ -944,13 +944,7 @@ fn wait_for_next_tick_without_restart_event(session: &mut LiveSession<'_>) -> Re
 
 fn run_events_cell(receipt: &mut Receipt) -> Result<(), String> {
     let mut session = session("compat-v1-events", receipt)?;
-    // Give the fresh account one item before its position seed.
-    // Load the inventory component before the first pack read or change.
-    wait_for_side_tab_available(&session.state, INVENTORY_SIDE_TAB)?;
-    request_side_tab(&session.state, INVENTORY_SIDE_TAB)?;
-    wait_for_inventory_count(&session.state, 995, 0)?;
-    request_command(&session, "give coins 1")?;
-    wait_command(&mut session, "give coins 1")?;
+    // The fresh account starts in the tutorial. Seed its position before opening the inventory.
     request_seed_at(
         &session.state,
         EVENTS_SEED_TILE.2,
@@ -958,6 +952,12 @@ fn run_events_cell(receipt: &mut Receipt) -> Result<(), String> {
         EVENTS_SEED_TILE.1,
     );
     wait_for_tile(&session.state, EVENTS_SEED_TILE)?;
+    // The item container loads only after its side tab opens.
+    wait_for_side_tab_available(&session.state, INVENTORY_SIDE_TAB)?;
+    request_side_tab(&session.state, INVENTORY_SIDE_TAB)?;
+    wait_for_inventory_count(&session.state, 995, 0)?;
+    request_command(&session, "give coins 1")?;
+    wait_command(&mut session, "give coins 1")?;
     wait_for_inventory_count(&session.state, 995, 1)?;
     session.receipt.logs.push(format!(
         "EVENTS:SEED:{},{},{}",
