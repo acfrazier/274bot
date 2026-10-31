@@ -22,6 +22,9 @@ pub struct ProxyObservation {
     pub packet_requests: Vec<(u64, usize)>,
     pub packet_opcodes: Vec<u8>,
     pub packet_lengths: Vec<usize>,
+    /// One standalone opener sent before the native dispatch; it has no
+    /// request ID and is deliberately separate from native packet metadata.
+    pub pre_batch_prefix: Option<(u8, usize)>,
     pub forwarded_bytes: usize,
     pub dropped_bytes: usize,
     pub release_edge_tick: Option<u32>,
@@ -33,6 +36,7 @@ pub struct ProxyObservation {
 #[derive(Default)]
 struct ProxyState {
     gate: Option<Gate>,
+    pending_guard_opener_prefix: Option<(u8, usize)>,
     completed: Vec<ProxyObservation>,
     error: Option<String>,
 }
@@ -78,6 +82,37 @@ impl LoopbackProxy {
         })
     }
 
+    /// Hold one ordinary Client packet as the prefix before the next native
+    /// dispatch's real encoded batch.
+    pub fn arm_guard_opener_prefix(
+        &self,
+        opcode: u8,
+        encoded_length: usize,
+    ) -> Result<(), String> {
+        let mut state = self
+            .state
+            .lock()
+            .map_err(|_| "loopback proxy state poisoned".to_owned())?;
+        if let Some(error) = &state.error {
+            return Err(error.clone());
+        }
+        let error = if encoded_length == 0 {
+            Some("guard opener prefix must be non-empty".to_owned())
+        } else if state.gate.is_some() {
+            Some("guard opener prefix cannot be armed while a transport gate is active".to_owned())
+        } else if state.pending_guard_opener_prefix.is_some() {
+            Some("a guard opener prefix is already pending".to_owned())
+        } else {
+            None
+        };
+        if let Some(error) = error {
+            state.error = Some(error.clone());
+            return Err(error);
+        }
+        state.pending_guard_opener_prefix = Some((opcode, encoded_length));
+        Ok(())
+    }
+
     pub fn address(&self) -> SocketAddr {
         self.address
     }
@@ -109,6 +144,13 @@ impl OrderedTransportController for LoopbackProxy {
         host_frame: u64,
     ) {
         let mut state = self.state.lock().expect("loopback proxy state poisoned");
+        let pre_batch_prefix = state.pending_guard_opener_prefix.take();
+        if pre_batch_prefix.is_some() && mutation != TransportMutation::HoldThroughNextEdge {
+            state.error = Some(format!(
+                "guard opener prefix for request {request_id} requires HoldThroughNextEdge"
+            ));
+            return;
+        }
         if mutation == TransportMutation::JoinActiveGate {
             if let Some(gate) = state.gate.as_mut().filter(|gate| {
                 matches!(
@@ -143,11 +185,12 @@ impl OrderedTransportController for LoopbackProxy {
         request_packets.insert(request_id, 0);
         let mut active_requests = HashSet::new();
         active_requests.insert(request_id);
+        let prefix_length = pre_batch_prefix.map_or(0, |(_, encoded_length)| encoded_length);
         state.gate = Some(Gate {
             mutation,
-            expected_bytes: 0,
+            expected_bytes: prefix_length,
             processed_bytes: 0,
-            release_prefix_bytes: 0,
+            release_prefix_bytes: prefix_length,
             release_all: false,
             next_edge_frame: None,
             request_packets,
@@ -161,6 +204,7 @@ impl OrderedTransportController for LoopbackProxy {
                 packet_requests: Vec::new(),
                 packet_opcodes: Vec::new(),
                 packet_lengths: Vec::new(),
+                pre_batch_prefix,
                 forwarded_bytes: 0,
                 dropped_bytes: 0,
                 release_edge_tick: None,
@@ -209,7 +253,9 @@ impl OrderedTransportController for LoopbackProxy {
         gate.observation.packet_lengths.push(encoded_length);
         match gate.mutation {
             TransportMutation::SplitAfterFirstPacket
-                if request_id == gate.observation.request_id && packet_index == 1 =>
+                if gate.observation.pre_batch_prefix.is_none()
+                    && request_id == gate.observation.request_id
+                    && packet_index == 1 =>
             {
                 gate.release_prefix_bytes = encoded_length;
             }
@@ -438,32 +484,42 @@ fn flush_upstream(
                 let prefix = gate
                     .release_prefix_bytes
                     .saturating_sub(gate.processed_bytes);
-                match gate.mutation {
-                    TransportMutation::HoldThroughNextEdge
-                    | TransportMutation::HoldUntilNextDispatch => {
-                        if gate.release_all {
-                            UpstreamAction::Forward(available)
-                        } else {
-                            UpstreamAction::Wait
-                        }
+                if gate.observation.pre_batch_prefix.is_some() {
+                    if gate.release_all {
+                        UpstreamAction::Forward(available)
+                    } else if prefix > 0 {
+                        UpstreamAction::Forward(min(available, prefix))
+                    } else {
+                        UpstreamAction::Wait
                     }
-                    TransportMutation::SplitAfterFirstPacket => {
-                        if gate.release_all {
-                            UpstreamAction::Forward(available)
-                        } else if prefix > 0 {
-                            UpstreamAction::Forward(min(available, prefix))
-                        } else {
-                            UpstreamAction::Wait
+                } else {
+                    match gate.mutation {
+                        TransportMutation::HoldThroughNextEdge
+                        | TransportMutation::HoldUntilNextDispatch => {
+                            if gate.release_all {
+                                UpstreamAction::Forward(available)
+                            } else {
+                                UpstreamAction::Wait
+                            }
                         }
-                    }
-                    TransportMutation::DropSuffixAfterPacket(_) => {
-                        if prefix > 0 {
-                            UpstreamAction::Forward(min(available, prefix))
-                        } else {
-                            UpstreamAction::Drop(available)
+                        TransportMutation::SplitAfterFirstPacket => {
+                            if gate.release_all {
+                                UpstreamAction::Forward(available)
+                            } else if prefix > 0 {
+                                UpstreamAction::Forward(min(available, prefix))
+                            } else {
+                                UpstreamAction::Wait
+                            }
                         }
+                        TransportMutation::DropSuffixAfterPacket(_) => {
+                            if prefix > 0 {
+                                UpstreamAction::Forward(min(available, prefix))
+                            } else {
+                                UpstreamAction::Drop(available)
+                            }
+                        }
+                        TransportMutation::JoinActiveGate => UpstreamAction::Pass,
                     }
-                    TransportMutation::JoinActiveGate => UpstreamAction::Pass,
                 }
             }
         };
