@@ -169,7 +169,7 @@ pub(super) fn script_slot_or_insert(wall: &ScriptWall, name: &str) -> ScriptSlot
 #[cfg(feature = "js")]
 fn shared_js_surface_factory() -> Arc<script_js::surface::JsSurfaceFactory> {
     static FACTORY: std::sync::LazyLock<Arc<script_js::surface::JsSurfaceFactory>> =
-        std::sync::LazyLock::new(|| Arc::new(script_js::surface::JsSurfaceFactory::default()));
+        std::sync::LazyLock::new(|| Arc::new(script_js::surface::JsSurfaceFactory));
     Arc::clone(&FACTORY)
 }
 
@@ -196,7 +196,7 @@ pub(super) fn js_start_card(
     })
 }
 
-#[cfg(feature = "js")]
+#[cfg(all(test, feature = "js"))]
 pub(super) fn js_surface_start(
     card: Arc<script_js::surface::JsStartCard>,
     settings_bag: Option<Arc<script::native::SettingsBag>>,

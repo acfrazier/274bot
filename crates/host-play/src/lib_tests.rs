@@ -4906,6 +4906,9 @@ fn posted_from_bot(bot: &NavBot) -> PostedWalkOutcome {
         radius: bot.walk_outcome_radius,
         allow_teleports: bot.walk_outcome_allow_teleports,
         blocked: false,
+        no_path: bot.walk_outcome_no_path,
+        remaining_request_id: bot.walk_remaining_request_id,
+        remaining: bot.walk_remaining,
         cancel_reason: bot.walk_outcome_cancel_reason,
         user_move_intent_seq: bot.user_move_intent_seq,
     }

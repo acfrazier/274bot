@@ -96,7 +96,7 @@ impl BankSlot {
             .map(|(_, family)| family);
         let mut slot = SlotScript::new();
         slot.bind_incarnation(1);
-        slot.bind_surface_factory(Arc::new(script_js::surface::JsSurfaceFactory::default()));
+        slot.bind_surface_factory(Arc::new(script_js::surface::JsSurfaceFactory));
         slot.start_surface_with_settings(script::surface::SurfaceStart {
             card: Arc::new(script_js::surface::JsStartCard {
                 source,

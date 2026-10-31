@@ -19,7 +19,7 @@ fn paint_slot(source: &str, incarnation: u64) -> SlotScript {
     let family = script_js::resolve_api_family(&source)
         .ok()
         .map(|(_, family)| family);
-    slot.bind_surface_factory(Arc::new(JsSurfaceFactory::default()));
+    slot.bind_surface_factory(Arc::new(JsSurfaceFactory));
     slot.start_surface(SurfaceStart {
         card: Arc::new(JsStartCard {
             source,

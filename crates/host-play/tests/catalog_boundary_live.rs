@@ -2958,7 +2958,7 @@ export default class NativeStop extends LoopingBot {{
 "#
         );
         let mut slot = script::SlotScript::new();
-        slot.bind_surface_factory(Arc::new(script_js::surface::JsSurfaceFactory::default()));
+        slot.bind_surface_factory(Arc::new(script_js::surface::JsSurfaceFactory));
         let family = script_js::resolve_api_family(&source)
             .ok()
             .map(|(_, family)| family);

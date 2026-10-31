@@ -16,7 +16,7 @@ fn js_slot(incarnation: u64) -> SlotScript {
     if incarnation != 0 {
         slot.bind_incarnation(incarnation);
     }
-    slot.bind_surface_factory(Arc::new(JsSurfaceFactory::default()));
+    slot.bind_surface_factory(Arc::new(JsSurfaceFactory));
     slot
 }
 

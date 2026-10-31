@@ -94,7 +94,7 @@ export async function tick(api) {{
         );
         let mut slot = script::SlotScript::new();
         slot.bind_incarnation(1);
-        slot.bind_surface_factory(Arc::new(script_js::surface::JsSurfaceFactory::default()));
+        slot.bind_surface_factory(Arc::new(script_js::surface::JsSurfaceFactory));
         let settings = serde_json::json!({"useMageBank": defaults, "useZanarisBank": defaults});
         let start = crate::script_runtime::js_surface_start(
             crate::script_runtime::js_start_card(source, script_js::LoadShape::NativeTick, vec![]),

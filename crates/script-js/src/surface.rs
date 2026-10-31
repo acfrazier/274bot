@@ -75,7 +75,7 @@ impl SurfaceFactory for JsSurfaceFactory {
             Arc::clone(&start.wilderness_zones),
             Some(execution),
         )
-            .map_err(|error| SurfaceError::Spawn(error.to_string()))?;
+        .map_err(|error| SurfaceError::Spawn(error.to_string()))?;
         isolate.post_loadouts(&start.loadouts);
         isolate.post_recovery_hints(recovery_hints);
         if let Some(bag) = start.settings_bag.as_deref() {
@@ -442,7 +442,7 @@ pub(crate) mod tests {
             Arc::from([]),
             None,
         )
-            .expect("gameplay isolate");
+        .expect("gameplay isolate");
         isolate.post_loadouts(&[]);
         isolate.post_recovery_hints(Arc::new(RecoveryHintsCell::new()));
         let run = JsSurfaceRun {
