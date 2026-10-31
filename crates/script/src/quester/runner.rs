@@ -3556,7 +3556,7 @@ impl Script for Quester {
             self.poll_survival(tick);
             self.reconcile_park_page(tick);
         }
-        if self.parked {
+        if self.parked && self.survival.parked().is_some() {
             self.publish(tick.output);
             return Ok(ScriptFlow::Blocked(self.blocked_failure()));
         }
@@ -7599,6 +7599,8 @@ mod tests {
 
         let (mut script, mut snapshot, _, _) = provisioning_survival_fixture();
         snapshot.seed_inventory(Vec::new(), 28);
+        snapshot.seed_main_modal(-1, Vec::new());
+        snapshot.seed_chat_modal(-1, Vec::new());
         let condition = BotCondition {
             tick: 20,
             session: SessionMark::Live,

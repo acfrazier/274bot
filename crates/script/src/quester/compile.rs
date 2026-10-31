@@ -2290,12 +2290,11 @@ mod tests {
         assert_eq!(error.code.as_ref(), "step-hazard-unsupported");
         assert_eq!(error.step.as_ref(), Some(&walk_id));
 
-        let mut combat_document: PathDocument = serde_json::from_str(HUNT_JSON).unwrap();
-        let combat_id = set_step_hazard(
-            &mut combat_document,
-            "combat",
-            hazard_document(HazardStat::Base, 1, 10, 0, Some(3), SOURCE),
-        );
+        let mut combat_document = decode_cook().unwrap();
+        let combat = find_step_mut(&mut combat_document, "talk").expect("Cook has a talk step");
+        combat.kind = "combat".into();
+        combat.hazard = Some(hazard_document(HazardStat::Base, 1, 10, 0, Some(3), SOURCE));
+        let combat_id = combat.id.clone();
         let error = compile_document_error(&combat_document);
         assert_eq!(error.code.as_ref(), "step-hazard-unsupported");
         assert_eq!(error.step.as_ref(), Some(&combat_id));

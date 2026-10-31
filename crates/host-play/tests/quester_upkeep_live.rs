@@ -295,14 +295,10 @@ fn parse_survival_op_event(line: &HostLog) -> Result<Option<SurvivalOpEvent>, St
         return Ok(None);
     };
     let malformed = || format!("malformed survival operation trace: {}", line.message);
-    let (event, remainder) = payload.split_once(" tick=").ok_or_else(|| malformed())?;
-    let (tick, remainder) = remainder.split_once(" kind=").ok_or_else(|| malformed())?;
-    let (kind, remainder) = remainder
-        .split_once(" applied=")
-        .ok_or_else(|| malformed())?;
-    let (applied, deadline) = remainder
-        .split_once(" deadline=")
-        .ok_or_else(|| malformed())?;
+    let (event, remainder) = payload.split_once(" tick=").ok_or_else(&malformed)?;
+    let (tick, remainder) = remainder.split_once(" kind=").ok_or_else(&malformed)?;
+    let (kind, remainder) = remainder.split_once(" applied=").ok_or_else(&malformed)?;
+    let (applied, deadline) = remainder.split_once(" deadline=").ok_or_else(&malformed)?;
     if kind.is_empty() {
         return Err(malformed());
     }
@@ -693,7 +689,7 @@ fn live_callbacks(
     let family_witness = Arc::clone(&witness);
     let observe_family: quester_live::ObserveFamily =
         Box::new(move |snapshot, status, lifecycle| {
-            let mut witness = family_witness
+            let witness = family_witness
                 .lock()
                 .map_err(|_| "C0 live witness poisoned".to_owned())?;
             let now = Mark {

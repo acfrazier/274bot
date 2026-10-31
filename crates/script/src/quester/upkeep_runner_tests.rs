@@ -38,6 +38,13 @@ const RAILING_SOURCE: &str = "quest_mcannon/scripts/locs/railings.rs2:87-91";
 #[derive(Default)]
 struct CapturedOutput {
     logs: Vec<(Level, String)>,
+    interactions: Vec<ObservedInteraction>,
+}
+
+struct ObservedInteraction {
+    ledger: usize,
+    request_id: u64,
+    request: crate::shim::InteractReq,
 }
 
 impl NativeOutput for CapturedOutput {
@@ -86,6 +93,10 @@ impl StepPlan for TogglePlan {
             complete: Arc::clone(&self.complete),
             cancelled: Arc::clone(&self.cancelled),
         }))
+    }
+
+    fn settle_timeout(&self) -> Duration {
+        Duration::from_secs(60)
     }
 }
 
@@ -272,15 +283,38 @@ fn with_frame_tick<R>(
         cure,
     } = frame;
     api::hostlog::set_tick(tick as u32);
-    super::super::families::tests::with_tick_output(snapshot, ledger, tick, output, |native| {
-        let mut condition = survival_condition(poison, hp);
-        condition.tick = tick as u32;
-        condition.hp_max = hp_max;
-        native.cx.condition = Some(condition);
-        native.cx.cure_poison = cure;
-        native.cx.poison_unknown_pulse = 11;
-        f(script, native)
-    })
+    let result =
+        super::super::families::tests::with_tick_output(snapshot, ledger, tick, output, |native| {
+            let mut condition = survival_condition(poison, hp);
+            condition.tick = tick as u32;
+            condition.hp_max = hp_max;
+            native.cx.condition = Some(condition);
+            native.cx.cure_poison = cure;
+            native.cx.poison_unknown_pulse = 11;
+            f(script, native)
+        });
+    // A cancelled owner clears its outbox. Retain each real request once
+    // before the next poll can retire it, separated by its test-owned ledger.
+    if let Some(ledger) = ledger.as_deref() {
+        let key = std::ptr::from_ref(ledger) as usize;
+        for action in &ledger.outbox {
+            if let HostEffect::Interaction(request) = &action.effect {
+                let request_id = action.authority().request_id().get();
+                if !output
+                    .interactions
+                    .iter()
+                    .any(|observed| observed.ledger == key && observed.request_id == request_id)
+                {
+                    output.interactions.push(ObservedInteraction {
+                        ledger: key,
+                        request_id,
+                        request: request.clone(),
+                    });
+                }
+            }
+        }
+    }
+    result
 }
 
 fn with_runner_tick<R>(
@@ -366,28 +400,29 @@ fn accept_latest_interaction(tick: &mut NativeTick<'_>) {
 
 fn interaction_count(
     ledger: &Option<Box<ledger::Ledger>>,
+    output: &CapturedOutput,
     predicate: impl Fn(&crate::shim::InteractReq) -> bool,
 ) -> usize {
-    ledger.as_ref().map_or(0, |ledger| {
-        ledger
-            .outbox
-            .iter()
-            .filter(|action| {
-                matches!(&action.effect, HostEffect::Interaction(request) if predicate(request))
-            })
-            .count()
-    })
+    let key = ledger
+        .as_deref()
+        .map(|ledger| std::ptr::from_ref(ledger) as usize);
+    output
+        .interactions
+        .iter()
+        .filter(|observed| Some(observed.ledger) == key && predicate(&observed.request))
+        .count()
 }
 
-fn eat_count(ledger: &Option<Box<ledger::Ledger>>) -> usize {
+fn eat_count(ledger: &Option<Box<ledger::Ledger>>, output: &CapturedOutput) -> usize {
     interaction_count(
         ledger,
+        output,
         |request| matches!(request, crate::shim::InteractReq::Held { action, .. } if action == "Eat"),
     )
 }
 
-fn close_count(ledger: &Option<Box<ledger::Ledger>>) -> usize {
-    interaction_count(ledger, |request| {
+fn close_count(ledger: &Option<Box<ledger::Ledger>>, output: &CapturedOutput) -> usize {
+    interaction_count(ledger, output, |request| {
         matches!(request, crate::shim::InteractReq::CloseModal)
     })
 }
@@ -408,19 +443,23 @@ fn live_close_count(ledger: &Option<Box<ledger::Ledger>>) -> usize {
     })
 }
 
-fn count_answers(ledger: &Option<Box<ledger::Ledger>>) -> Vec<i32> {
-    ledger.as_ref().map_or_else(Vec::new, |ledger| {
-        ledger
-            .outbox
-            .iter()
-            .filter_map(|action| match &action.effect {
-                HostEffect::Interaction(crate::shim::InteractReq::AnswerCount { value }) => {
-                    Some(*value)
-                }
+fn count_answers(ledger: &Option<Box<ledger::Ledger>>, output: &CapturedOutput) -> Vec<i32> {
+    let key = ledger
+        .as_deref()
+        .map(|ledger| std::ptr::from_ref(ledger) as usize);
+    output
+        .interactions
+        .iter()
+        .filter_map(|observed| {
+            if Some(observed.ledger) != key {
+                return None;
+            }
+            match &observed.request {
+                crate::shim::InteractReq::AnswerCount { value } => Some(*value),
                 _ => None,
-            })
-            .collect()
-    })
+            }
+        })
+        .collect()
 }
 
 fn warning_lines(output: &CapturedOutput) -> Vec<&str> {
@@ -788,7 +827,7 @@ fn quester_prices_the_hazard_from_selection_until_another_step_is_selected() {
         &mut output,
     );
     assert_eq!(
-        eat_count(&ledger),
+        eat_count(&ledger, &output),
         1,
         "the selected hazard prices the first low-HP poll"
     );
@@ -869,7 +908,7 @@ fn quester_prices_the_hazard_from_selection_until_another_step_is_selected() {
         &mut output,
     );
     assert_eq!(
-        eat_count(&ledger),
+        eat_count(&ledger, &output),
         2,
         "the hazard remains priced while the completed step settles"
     );
@@ -942,7 +981,7 @@ fn quester_prices_the_hazard_from_selection_until_another_step_is_selected() {
     assert!(script.survival_action.is_none());
     assert!(script.survival.parked().is_none());
     assert_eq!(
-        eat_count(&ledger),
+        eat_count(&ledger, &output),
         2,
         "the old hazard does not leak into step 2"
     );
@@ -1058,7 +1097,7 @@ fn regeneration_to_the_line_plus_one_releases_the_park_once() {
         0,
         "the park begins before any step attempt"
     );
-    drive(
+    with_runner_tick(
         &mut script,
         &mut snapshot,
         &mut ledger,
@@ -1070,6 +1109,7 @@ fn regeneration_to_the_line_plus_one_releases_the_park_once() {
             cure: CurePoison::Never,
         },
         &mut output,
+        |script, native| script.poll_survival(native),
     );
     assert!(script.survival.parked().is_none());
     assert!(script.needs_read, "unpark requests a fresh progress read");
@@ -1142,7 +1182,7 @@ fn food_that_appears_while_parked_is_eaten() {
         script.survival.report().decision,
         crate::survival::Decision::Eating
     );
-    assert_eq!(eat_count(&ledger), 1);
+    assert_eq!(eat_count(&ledger, &output), 1);
 }
 
 #[test]
@@ -1190,7 +1230,7 @@ fn a_dropped_bite_keeps_its_hazard_until_the_retry_settles() {
         },
         &mut output,
     );
-    assert_eq!(eat_count(&ledger), 1);
+    assert_eq!(eat_count(&ledger, &output), 1);
     for tick in 3..=9 {
         drive(
             &mut script,
@@ -1205,7 +1245,7 @@ fn a_dropped_bite_keeps_its_hazard_until_the_retry_settles() {
             },
             &mut output,
         );
-        assert_eq!(eat_count(&ledger), 1);
+        assert_eq!(eat_count(&ledger, &output), 1);
     }
     drive(
         &mut script,
@@ -1221,7 +1261,7 @@ fn a_dropped_bite_keeps_its_hazard_until_the_retry_settles() {
         &mut output,
     );
     assert_eq!(
-        eat_count(&ledger),
+        eat_count(&ledger, &output),
         2,
         "the unapplied first bite retries on its deadline tick"
     );
@@ -1253,7 +1293,7 @@ fn a_dropped_bite_keeps_its_hazard_until_the_retry_settles() {
         script.survival_action.is_none(),
         "the count drop settles the retry"
     );
-    assert_eq!(eat_count(&ledger), 2);
+    assert_eq!(eat_count(&ledger, &output), 2);
 }
 
 #[test]
@@ -1376,7 +1416,7 @@ fn quester_defers_the_begin_of_a_newly_selected_hazard_step_one_tick() {
         "selection emits no begin trace on tick t"
     );
     assert!(script.survival_deferred);
-    assert_eq!(eat_count(&ledger), 0);
+    assert_eq!(eat_count(&ledger, &output), 0);
 
     drive(
         &mut script,
@@ -1397,7 +1437,7 @@ fn quester_defers_the_begin_of_a_newly_selected_hazard_step_one_tick() {
         "the t+1 survival click still does not begin the step"
     );
     assert_eq!(
-        eat_count(&ledger),
+        eat_count(&ledger, &output),
         1,
         "the first post-selection poll begins the bite"
     );
@@ -1670,7 +1710,7 @@ fn quester_eats_inside_a_hazard_step_and_restarts_it() {
     assert!(script.needs_read);
     assert!(script.survival_action.is_some());
     assert_eq!(
-        eat_count(&ledger),
+        eat_count(&ledger, &output),
         1,
         "the bite op begins on the cancel tick"
     );
@@ -1701,7 +1741,7 @@ fn quester_eats_inside_a_hazard_step_and_restarts_it() {
             step_index: 0
         })
     );
-    assert_eq!(eat_count(&ledger), 1);
+    assert_eq!(eat_count(&ledger, &output), 1);
 }
 #[test]
 fn quester_closes_dialogue_page_before_bite_on_a_hazard_step() {
@@ -1752,9 +1792,9 @@ fn quester_closes_dialogue_page_before_bite_on_a_hazard_step() {
     );
     assert!(script.step.is_none());
     assert_eq!(counts.cancelled.load(Ordering::Relaxed), 1);
-    assert_eq!(close_count(&ledger), 1);
+    assert_eq!(close_count(&ledger, &output), 1);
     assert_eq!(
-        eat_count(&ledger),
+        eat_count(&ledger, &output),
         0,
         "the page closes before the held Eat request"
     );
@@ -1773,9 +1813,9 @@ fn quester_closes_dialogue_page_before_bite_on_a_hazard_step() {
         },
         &mut output,
     );
-    assert_eq!(close_count(&ledger), 1);
+    assert_eq!(close_count(&ledger, &output), 1);
     assert_eq!(
-        eat_count(&ledger),
+        eat_count(&ledger, &output),
         1,
         "the held bite starts after the close settles"
     );
@@ -1794,7 +1834,7 @@ fn quester_closes_dialogue_page_before_bite_on_a_hazard_step() {
         &mut output,
     );
     assert!(script.survival_action.is_none());
-    assert_eq!(eat_count(&ledger), 1);
+    assert_eq!(eat_count(&ledger, &output), 1);
 }
 #[test]
 fn quester_logs_an_undeclared_damage_source_once_per_step_identity() {
@@ -2035,7 +2075,7 @@ fn quester_unattributed_hit_bites_at_half_max_on_its_window() {
         3,
         &mut output,
     );
-    assert_eq!(eat_count(&ledger), 1);
+    assert_eq!(eat_count(&ledger, &output), 1);
     assert!(script.survival_action.is_some());
     set_inventory(&script, &mut snapshot, 0, 0, 0);
     drive(
@@ -2053,7 +2093,7 @@ fn quester_unattributed_hit_bites_at_half_max_on_its_window() {
     );
     assert!(script.survival_action.is_none());
     assert_eq!(
-        eat_count(&ledger),
+        eat_count(&ledger, &output),
         1,
         "the quiet next edge does not request another bite"
     );
@@ -2094,7 +2134,7 @@ fn food_park_closes_an_open_dialogue_page_on_the_need_tick() {
     );
     assert!(script.survival.parked().is_some());
     assert_eq!(script.park_page_ticks, 1);
-    assert_eq!(close_count(&ledger), 1);
+    assert_eq!(close_count(&ledger, &output), 1);
     assert!(script.survival_action.is_some());
     chat_page(&mut snapshot, -1);
     drive(
@@ -2333,7 +2373,7 @@ fn food_park_retries_a_refused_close() {
     assert!(script.survival.parked().is_some());
     assert_eq!(script.park_page_ticks, 1);
     assert_eq!(
-        close_count(&ledger),
+        close_count(&ledger, &output),
         0,
         "the live native owner refuses the close begin"
     );
@@ -2358,7 +2398,7 @@ fn food_park_retries_a_refused_close() {
     );
     assert_eq!(script.park_page_ticks, 2);
     assert_eq!(
-        close_count(&ledger),
+        close_count(&ledger, &output),
         1,
         "the refused close retries after the owner is cancelled"
     );
@@ -2399,7 +2439,7 @@ fn food_park_retries_an_unapplied_close_on_the_same_tick_and_stops_on_tick_24() 
         &mut output,
     );
     assert_eq!(script.park_page_ticks, 1);
-    assert_eq!(close_count(&ledger), 1);
+    assert_eq!(close_count(&ledger, &output), 1);
     assert_eq!(live_close_count(&ledger), 1);
     for tick in 2..=8 {
         drive(
@@ -2415,7 +2455,7 @@ fn food_park_retries_an_unapplied_close_on_the_same_tick_and_stops_on_tick_24() 
             },
             &mut output,
         );
-        assert_eq!(close_count(&ledger), 1);
+        assert_eq!(close_count(&ledger, &output), 1);
     }
     drive(
         &mut script,
@@ -2431,7 +2471,11 @@ fn food_park_retries_an_unapplied_close_on_the_same_tick_and_stops_on_tick_24() 
         &mut output,
     );
     assert_eq!(script.park_page_ticks, 9);
-    assert_eq!(close_count(&ledger), 2, "the second close starts at t+8");
+    assert_eq!(
+        close_count(&ledger, &output),
+        2,
+        "the second close starts at t+8"
+    );
     for tick in 10..=16 {
         drive(
             &mut script,
@@ -2446,7 +2490,7 @@ fn food_park_retries_an_unapplied_close_on_the_same_tick_and_stops_on_tick_24() 
             },
             &mut output,
         );
-        assert_eq!(close_count(&ledger), 2);
+        assert_eq!(close_count(&ledger, &output), 2);
     }
     drive(
         &mut script,
@@ -2462,7 +2506,11 @@ fn food_park_retries_an_unapplied_close_on_the_same_tick_and_stops_on_tick_24() 
         &mut output,
     );
     assert_eq!(script.park_page_ticks, 17);
-    assert_eq!(close_count(&ledger), 3, "the third close starts at t+16");
+    assert_eq!(
+        close_count(&ledger, &output),
+        3,
+        "the third close starts at t+16"
+    );
     for tick in 18..=24 {
         drive(
             &mut script,
@@ -2477,7 +2525,7 @@ fn food_park_retries_an_unapplied_close_on_the_same_tick_and_stops_on_tick_24() 
             },
             &mut output,
         );
-        assert_eq!(close_count(&ledger), 3);
+        assert_eq!(close_count(&ledger, &output), 3);
     }
     let flow = drive(
         &mut script,
@@ -2499,7 +2547,7 @@ fn food_park_retries_an_unapplied_close_on_the_same_tick_and_stops_on_tick_24() 
     assert_eq!(script.park_page_ticks, 25);
     assert!(script.survival.parked().is_some());
     assert_eq!(
-        close_count(&ledger),
+        close_count(&ledger, &output),
         3,
         "no fourth close request follows the tick-24 stop"
     );
@@ -2558,7 +2606,7 @@ fn food_park_stops_on_tick_24_under_permanent_refusal() {
     assert_eq!(script.park_page_ticks, 25);
     assert!(script.survival.parked().is_some());
     assert_eq!(
-        close_count(&ledger),
+        close_count(&ledger, &output),
         0,
         "the real active owner makes every close begin Busy"
     );
@@ -2615,7 +2663,7 @@ fn food_park_closes_a_page_that_opens_after_the_park_began() {
             &mut output,
         );
         assert_eq!(script.park_page_ticks, 0);
-        assert_eq!(close_count(&ledger), 0);
+        assert_eq!(close_count(&ledger, &output), 0);
     }
     chat_page(&mut snapshot, 2100);
     drive(
@@ -2632,7 +2680,7 @@ fn food_park_closes_a_page_that_opens_after_the_park_began() {
         &mut output,
     );
     assert_eq!(script.park_page_ticks, 1);
-    assert_eq!(close_count(&ledger), 1);
+    assert_eq!(close_count(&ledger, &output), 1);
     chat_page(&mut snapshot, -1);
     drive(
         &mut script,
@@ -2694,7 +2742,7 @@ fn food_park_closes_an_open_interface() {
     );
     assert!(script.survival.parked().is_some());
     assert_eq!(script.park_page_ticks, 1);
-    assert_eq!(close_count(&ledger), 1);
+    assert_eq!(close_count(&ledger, &output), 1);
     main_page(&mut snapshot, &mut client, -1);
     drive(
         &mut script,
@@ -2790,9 +2838,17 @@ fn hit_bound_run(unpark_tick: u64) -> (bool, Vec<String>, Quester) {
     assert_eq!(
         script.survival.report().need,
         Some(crate::survival::math::SurvivalNeed::Food {
-            count: 1,
+            count: 2,
             ref_heal: 12,
         })
+    );
+    assert_eq!(
+        script.survival.parked(),
+        Some(crate::survival::math::SurvivalNeed::Food {
+            count: 1,
+            ref_heal: 12
+        }),
+        "the unattributed hit raises the report, not the retained park",
     );
     for (tick, hp) in [(25, 5), (26, 6), (27, 7)] {
         drive(
@@ -2809,6 +2865,14 @@ fn hit_bound_run(unpark_tick: u64) -> (bool, Vec<String>, Quester) {
             &mut output,
         );
         assert!(script.survival.parked().is_some());
+        assert_eq!(
+            script.survival.report().need,
+            Some(crate::survival::math::SurvivalNeed::Food {
+                count: 1,
+                ref_heal: 12
+            }),
+            "the next quiet frame uses the known hazard line again",
+        );
     }
     let lines = hazard_bound_lines(&output)
         .iter()
@@ -3167,7 +3231,7 @@ fn pause_and_resume_keep_a_pending_bite_and_a_hazard_park_safe() {
         &mut output,
     );
     assert!(script.survival_action.is_some());
-    assert_eq!(eat_count(&ledger), 1);
+    assert_eq!(eat_count(&ledger, &output), 1);
     script.interrupt(Interrupt::Pause);
     script.interrupt(Interrupt::Resume);
     assert!(
@@ -3190,7 +3254,7 @@ fn pause_and_resume_keep_a_pending_bite_and_a_hazard_park_safe() {
     );
     assert!(script.survival_action.is_some());
     assert_eq!(
-        eat_count(&ledger),
+        eat_count(&ledger, &output),
         2,
         "the next poll retries the bite under the retained hazard"
     );
@@ -3346,7 +3410,7 @@ fn make_step_restarts_with_the_remaining_quantity_after_a_survival_cancel() {
         },
     );
     assert_eq!(
-        count_answers(&ledger),
+        count_answers(&ledger, &output),
         vec![5],
         "the first Make-X request targets five held bars"
     );
@@ -3414,7 +3478,7 @@ fn make_step_restarts_with_the_remaining_quantity_after_a_survival_cancel() {
         script.step.is_none(),
         "the survival bite cancels the active production run"
     );
-    assert_eq!(eat_count(&ledger), 1);
+    assert_eq!(eat_count(&ledger, &output), 1);
 
     set_inventory(&script, &mut snapshot, 2, 0, 0);
     drive(
@@ -3487,7 +3551,7 @@ fn make_step_restarts_with_the_remaining_quantity_after_a_survival_cancel() {
         },
     );
     assert_eq!(
-        count_answers(&ledger),
+        count_answers(&ledger, &output),
         vec![5, 3],
         "the restarted Make-X request asks only for the three bars still needed"
     );
