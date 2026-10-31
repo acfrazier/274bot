@@ -425,8 +425,9 @@ pub struct NativeFactsInput<'a> {
     /// The complete forest/result status page. `None` omits it; `Some` with
     /// empty slices explicitly clears both wire vectors.
     pub seat_page: Option<SeatPageInput<'a>>,
-    /// Whether a positive type-1 hitmark is active on the local player.
-    pub taking_damage: bool,
+    /// Optional observation that a positive type-1 hitmark is active.
+    /// `None` means this post did not observe hitmarks.
+    pub taking_damage: Option<bool>,
 }
 
 /// A terminal select-only result. Its ordinal is resolved against Start's

@@ -594,7 +594,7 @@ fn reader_catalog() -> &'static Value {
             bank_snapshot_generation: Some(9),
             side_modal_id: Some(300),
             client_adapter: Some(client),
-            taking_damage: true,
+            taking_damage: Some(true),
             ..NativeFactsInput::default()
         };
         let isolate = LoadIsolate::spawn(

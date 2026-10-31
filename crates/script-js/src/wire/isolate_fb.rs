@@ -1140,7 +1140,7 @@ pub struct SnapshotFingerprint {
     pub chat_page_fingerprint: u64,
     pub side_modal_id: Option<i32>,
     seat_page: Option<SeatPageFingerprint>,
-    pub taking_damage: bool,
+    pub taking_damage: Option<bool>,
 }
 
 #[derive(Clone, PartialEq, Eq, Debug, Default)]
@@ -2103,6 +2103,9 @@ impl IsolateBuf {
         force_banks: bool,
     ) -> (Vec<u8>, SnapshotFingerprint, bool) {
         let mut fp = SnapshotFingerprint::from_input_with_native(input, native);
+        if let Some(previous) = last {
+            fp.taking_damage = native.taking_damage.or(previous.taking_damage);
+        }
         fp.collision = collision_fp(last.map(|prev| &prev.collision), native.collision);
         let (mask, evidence_changed) = match last {
             None => (DeltaMask::all(), false),
@@ -2157,6 +2160,7 @@ impl IsolateBuf {
             );
         };
         let mut fp = SnapshotFingerprint::from_input_with_native(input, native);
+        fp.taking_damage = native.taking_damage.or(last.taking_damage);
         fp.collision = collision_fp(Some(&last.collision), native.collision);
         let mut mask = DeltaMask::changed(last, &fp, force_banks);
         mask.npc_boxes = false;
@@ -3076,7 +3080,9 @@ fn encode_snapshot_masked_into(
         table.add_local_player_motion(local_player_motion_code(native.local_player_moving));
     }
     if mask.taking_damage {
-        table.add_taking_damage(native.taking_damage);
+        if let Some(taking_damage) = native.taking_damage {
+            table.add_taking_damage(taking_damage);
+        }
     }
     table.add_canvas_width(SNAPSHOT_CANVAS_W);
     table.add_canvas_height(SNAPSHOT_CANVAS_H);
@@ -7428,20 +7434,35 @@ pub(crate) mod tests {
             ..NativeFactsInput::default()
         };
         let mut input = empty_input(1);
+        let (absent_bytes, absent_fingerprint) =
+            encode_snapshot_delta_with_native(None, &input, native(None), false);
+        let absent = decode_snapshot(&absent_bytes).expect("absent keyframe");
+        assert_eq!(absent.taking_damage(), None);
+        assert_eq!(absent_fingerprint.taking_damage, None);
+
         let (keyframe_bytes, fingerprint) =
-            encode_snapshot_delta_with_native(None, &input, native(true), false);
+            encode_snapshot_delta_with_native(None, &input, native(Some(true)), false);
         let keyframe = decode_snapshot(&keyframe_bytes).expect("keyframe");
         assert_eq!(keyframe.taking_damage(), Some(true));
 
         input.tick = 2;
         let (unchanged_bytes, fingerprint) =
-            encode_snapshot_delta_with_native(Some(&fingerprint), &input, native(true), false);
+            encode_snapshot_delta_with_native(Some(&fingerprint), &input, native(None), false);
         let unchanged = decode_snapshot(&unchanged_bytes).expect("unchanged");
-        assert_eq!(unchanged.taking_damage(), None, "unchanged is omitted");
+        assert_eq!(unchanged.taking_damage(), None, "absent is omitted");
+        assert_eq!(
+            fingerprint.taking_damage,
+            Some(true),
+            "absence retains state"
+        );
 
         input.tick = 3;
-        let (cleared_bytes, _) =
-            encode_snapshot_delta_with_native(Some(&fingerprint), &input, native(false), false);
+        let (cleared_bytes, _) = encode_snapshot_delta_with_native(
+            Some(&fingerprint),
+            &input,
+            native(Some(false)),
+            false,
+        );
         let cleared = decode_snapshot(&cleared_bytes).expect("clear");
         assert_eq!(cleared.taking_damage(), Some(false));
     }
