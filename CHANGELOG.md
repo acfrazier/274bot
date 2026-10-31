@@ -266,8 +266,8 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.8` 
 - The default-off Knife setting supports fly and net fishing, woodcutting from
   oak upward, and gainful mining with bronze-to-adamant pickaxes. Its optional
   kit can supply the knife and logs; rune pickaxes do not arm because they give
-  no gain. The live cadence gate remains provisional until the S6b probe
-  measures it.
+  no gain. Live fly-fishing, net-fishing, oak-chopping and iron-mining checks
+  passed the fixed cadence gate.
 - Bank opening now waits for its own walk to finish. Before, a walk that a
   script had finished could be taken for the end of the bank walk, and the bank
   walk then ended before the bot reached the bank.
