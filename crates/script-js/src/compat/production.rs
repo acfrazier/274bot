@@ -822,7 +822,7 @@ mod compat {
             };
             assert_eq!(step(&mut machine, &mut clock, &page_closed), (None, vec![]));
             let before_product_receipt = Probe {
-                tick: Some(6),
+                tick: Some(11),
                 ..page_closed
             };
             assert_eq!(
@@ -838,7 +838,7 @@ mod compat {
             }];
             let receipt = Probe {
                 inventory: Some(&after_inventory),
-                tick: Some(8),
+                tick: Some(12),
                 ..page_closed
             };
             assert_eq!(
