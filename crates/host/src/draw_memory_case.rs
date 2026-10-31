@@ -79,7 +79,10 @@ impl Control {
         census: Census,
     ) {
         let mut state = self.state.lock().unwrap();
-        state.paints = state.paints.checked_add(1).expect("diagnostic paint counter exhausted");
+        state.paints = state
+            .paints
+            .checked_add(1)
+            .expect("diagnostic paint counter exhausted");
         if loading {
             state.loading_paints = state
                 .loading_paints
