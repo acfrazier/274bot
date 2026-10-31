@@ -34,7 +34,6 @@ const PATH_SEEDS: &str = include_str!("fixtures/quester-path/desertrescue-cell-r
 const LOBSTER_ID: i32 = 379;
 const JOURNAL_ROOT: i32 = 8134;
 const PRE_START_DRAIN: &str = "~stat_drain hitpoints 26 0";
-const ATTEMPT_DRAIN: &str = "~stat_drain hitpoints 26 0";
 const CLIMB_LINE: &str = "You start climbing the rocky elevation.";
 const SLIP_LINE: &str = "You slip a little and tumble the rest of the way down the slope.";
 const ROCK_PROMPT: &str = "It looks as if there is a rocky escarpment";
@@ -643,7 +642,9 @@ fn insert_attempt_drain_and_anchors(
                 if witness.receipt.s_send.is_some() {
                     return true;
                 }
-                let sent = api::interact::cheat(client, ATTEMPT_DRAIN).is_sent();
+                let amount = stat_effective(snapshot, 3).saturating_sub(14).max(0);
+                let command = format!("~stat_drain hitpoints {amount} 0");
+                let sent = api::interact::cheat(client, &command).is_sent();
                 if sent {
                     witness.receipt.s_send = Some(Mark {
                         tick: snapshot.tick(),
