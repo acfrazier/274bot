@@ -1055,7 +1055,13 @@ fn probability_admission_engine_l() {
         std::fs::create_dir_all(&cell_dir).unwrap();
         let log_start = LOGS.0.lock().unwrap().len();
         let name = &names[usize::from(matches!(cell.mode, Mode::PoisonDuringHold))];
-        let mut rig = prepare(&profile, &template, name, cell.hp, cell_dir.join("setup.json"));
+        let mut rig = prepare(
+            &profile,
+            &template,
+            name,
+            cell.hp,
+            cell_dir.join("setup.json"),
+        );
         let mut receipt = json!({"cell":cell.name, "account":name});
         let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             exercise(&mut rig, cell, &mut receipt)

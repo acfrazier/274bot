@@ -2612,54 +2612,26 @@ fn native_cross_exemption_is_scoped_to_one_walk() {
     rig.rebuild_snapshot_at(origin);
     s2b_admission_contract::observed_loadout_with_hp(&mut rig.snapshot, 99);
     rig.observe_with_here(3, origin);
-    rig.wait_routed();
+    assert!(
+        rig.wait_for_route(5_000, || !rig.navs.lock().unwrap()["alice"]
+            .route_work_pending()),
+        "the planner completes the second, explicitly forbidden request"
+    );
     {
         let navs = rig.navs.lock().unwrap();
         let bot = &navs["alice"];
-        assert_eq!(
-            bot.requested_route.expect("second native route request").5,
-            nav_planner::zones::ZoneExempt::NONE,
+        assert!(
+            !bot.has_route(),
             "the second request does not inherit the first request's named grant"
         );
-        assert!(bot.risk_refusal.is_none());
-        let assessment = bot.assessment.as_ref().expect("second route assessment");
-        assert_eq!(
-            assessment.verdict,
-            script::combat::risk::Verdict::Survivable
-        );
-        assert!(assessment.bound <= script::combat::risk::consts::DEATH_BOUND);
-        assert!(assessment.plan.complete);
-        assert_eq!(assessment.plan.crossings.len(), 1);
-        assert!(matches!(
-            assessment.input.poison,
-            api::condition::PoisonState::Unknown { .. }
-        ));
-        assert!(matches!(
-            assessment.poison_test,
-            script::combat::risk::PoisonTest::WaitForClear { charged, until_index }
-                if charged > script::combat::risk::consts::DEATH_BOUND
-                    && until_index == assessment.plan.crossings[0].retreat
-        ));
-        assert!(bot.has_route());
+        assert!(bot.native_walk_failure.is_some());
+        assert!(bot.requested_route.is_none(), "the refused request is retired");
     }
-    crate::script_runtime::apply_nav_follow_outcome(
-        rig.navs.lock().unwrap().get_mut("alice").unwrap(),
-        Some(nav_executor::TravelOutcome::Arrived {
-            at: WorldTile {
-                x: 255,
-                z: 0,
-                level: 0,
-            },
-        }),
-        false,
-    );
-    rig.observe_at(4, goal);
+    rig.observe_with_here(4, origin);
     let shared = rig.shared.lock();
     assert_eq!(shared.results.len(), 2);
-    assert!(shared
-        .results
-        .iter()
-        .all(|result| result.as_ref().unwrap().end == WalkEnd::Arrived));
+    assert_eq!(shared.results[0].as_ref().unwrap().end, WalkEnd::Arrived);
+    assert_eq!(shared.results[1].as_ref().unwrap().end, WalkEnd::Refused);
 }
 
 #[test]
