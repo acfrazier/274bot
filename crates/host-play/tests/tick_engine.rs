@@ -4123,6 +4123,7 @@ mod packet_oracle_tests {
                     text: "You manage to mine some iron.".into(),
                     poll: PollKind::Edge,
                 }),
+                _ => unreachable!(),
             }
             assert!(
                 !fresh_mining_roll(&trace, 11, MITHRIL_PICK_ANIMATION),
