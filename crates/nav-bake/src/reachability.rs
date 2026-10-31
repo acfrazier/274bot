@@ -5,7 +5,7 @@ use std::path::Path;
 
 use api::obj_names::LocDefs;
 use api::query::loc_approach::{
-    loc_can_operate, loc_candidate_stands, loc_reach_strategy, LocReachStrategy,
+    loc_can_operate, loc_candidate_stands, loc_reach_strategy, LocOperateQuery, LocReachStrategy,
 };
 use api::snapshot::WorldTile;
 use nav_planner::collision::{game_plane, WorldCollision};
@@ -712,17 +712,17 @@ fn bake_placements(
                     }
                     let flags = collision.walkable_word(from.x, from.z, from.level) as i32;
                     let can_step = step_ok(collision, from, (origin.x - from.x, origin.z - from.z));
-                    match loc_can_operate(
+                    match loc_can_operate(LocOperateQuery {
                         origin,
                         from,
                         shape,
                         angle,
-                        def.width,
-                        def.length,
-                        def.force_approach,
+                        width: def.width,
+                        length: def.length,
+                        force_approach: def.force_approach,
                         flags,
-                        can_step,
-                    ) {
+                        can_step_into_origin: can_step,
+                    }) {
                         None => coverage = PLACEMENT_UNSUPPORTED_GEOMETRY,
                         Some(false) => {}
                         Some(true) => {

@@ -339,39 +339,51 @@ pub fn loc_reach_strategy(shape: u8) -> LocReachStrategy {
     }
 }
 
-/// Whether `from` can operate the placed loc using the engine size-1 strategy.
-///
-/// `None` is unsupported geometry. `flags` is the stand tile's collision word
-/// (`PL_WALK_*` bits for walls, raw `W_*` bits for footprints).
-/// `can_step_into_origin` is the engine along-wall open-step test.
-pub fn loc_can_operate(
-    origin: WorldTile,
-    from: WorldTile,
-    shape: u8,
-    angle: u8,
-    width: i32,
-    length: i32,
-    force_approach: i32,
-    flags: i32,
-    can_step_into_origin: bool,
-) -> Option<bool> {
-    if from.level != origin.level {
+/// Inputs for [`loc_can_operate`].
+pub struct LocOperateQuery {
+    pub origin: WorldTile,
+    pub from: WorldTile,
+    pub shape: u8,
+    pub angle: u8,
+    pub width: i32,
+    pub length: i32,
+    pub force_approach: i32,
+    /// Stand tile collision word (`PL_WALK_*` for walls, raw `W_*` for footprints).
+    pub flags: i32,
+    /// Engine along-wall open-step test.
+    pub can_step_into_origin: bool,
+}
+
+/// Whether `query.from` can operate the placed loc using the engine size-1
+/// strategy. `None` is unsupported geometry.
+pub fn loc_can_operate(query: LocOperateQuery) -> Option<bool> {
+    if query.from.level != query.origin.level {
         return Some(false);
     }
-    match loc_reach_strategy(shape) {
+    match loc_reach_strategy(query.shape) {
         LocReachStrategy::Unsupported => None,
         LocReachStrategy::Footprint => {
-            let approach =
-                LocApproach::from_loc_def(width, length, i32::from(angle), force_approach)?;
-            Some(approach.can_operate(origin, from, flags))
+            let approach = LocApproach::from_loc_def(
+                query.width,
+                query.length,
+                i32::from(query.angle),
+                query.force_approach,
+            )?;
+            Some(approach.can_operate(query.origin, query.from, query.flags))
         }
-        LocReachStrategy::Wall => Some(wall_can_operate(origin, from, shape, angle, flags)),
+        LocReachStrategy::Wall => Some(wall_can_operate(
+            query.origin,
+            query.from,
+            query.shape,
+            query.angle,
+            query.flags,
+        )),
         LocReachStrategy::WallDecor => Some(wall_decor_can_operate(
-            origin,
-            from,
-            shape,
-            angle,
-            can_step_into_origin,
+            query.origin,
+            query.from,
+            query.shape,
+            query.angle,
+            query.can_step_into_origin,
         )),
     }
 }
@@ -463,7 +475,7 @@ fn wall_decor_can_operate(
     };
     match shape {
         4 | 5 => facing,
-        6 | 7 | 8 => facing || can_step_into_origin,
+        6..=8 => facing || can_step_into_origin,
         _ => false,
     }
 }
