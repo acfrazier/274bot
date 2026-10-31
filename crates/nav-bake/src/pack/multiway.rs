@@ -181,7 +181,7 @@ mod tests {
     fn producer_rejects_malformed_and_out_of_range_rows() {
         assert!(matches!(
             produce_multiway_keys("not-a-coord").unwrap_err(),
-            MultiwayError::Malformed { line: 1, .. }
+            MultiwayError::ComponentInvalid { line: 1, .. }
         ));
         assert!(matches!(
             produce_multiway_keys("0_1_2_3").unwrap_err(),

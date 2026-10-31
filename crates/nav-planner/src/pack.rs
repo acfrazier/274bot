@@ -10,7 +10,7 @@
 //! The parser lives in `nav-bake::pack`. Blocking loc footprints come from
 //! `[loc_N]` `blockwalk` (default yes).
 //!
-//! Pack format (274V): magic `b"274V"`, version `u8` 17, the quest-family
+//! Pack format (274V): magic `b"274V"`, version `u8` 18, the quest-family
 //! binding (`u8` `0` = the bake consumed no quest family, `1` = bound, then
 //! the family artifact's 32-byte `quest_facts_sha256` and its
 //! `quest_extractor_schema` as a nonzero u16le), collision origin
@@ -38,10 +38,12 @@
 //! (zone index u16, north extent u8, and u64 row-major cell bits; shaped NPC
 //! rows store the east extent in `r`). Decode rebuilds the validated
 //! 8×8 zone index and recomputes Wilderness overlap; neither is on the wire.
-//! Every decoded v17 stream has `Some(ZoneTable)`, even when every row count
+//! Every decoded v18 stream has `Some(ZoneTable)`, even when every row count
 //! is zero; legacy grids and synthetic in-memory graphs use `zones: None`.
-//! Zone counts/indices are bounded to the packed namespaces; malformed rows
-//! return [`PackError::BadLength`]. A v15 or older whole-world stream is
+//! After the zone table the stream stores sorted unique multiway keys and
+//! the four length-prefixed reachability sections. Zone counts/indices are
+//! bounded to the packed namespaces; malformed rows return
+//! [`PackError::BadLength`]. A v17 or older whole-world stream is
 //! [`PackError::BadVersion`], never compat-loaded. Takeoff levels must match
 //! the loc anchor's valid game plane, and exact tiles must be standable in
 //! the decoded collision.

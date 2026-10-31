@@ -15,7 +15,6 @@ const ONE_KIND: [u32; 1] = [1];
 
 #[derive(Clone, Copy)]
 struct DirEnt {
-    kind: u32,
     offset: u32,
     count: u32,
     stride: u32,
@@ -180,7 +179,6 @@ fn decode_directory(payload: &[u8], expected: &[u32]) -> Result<(Vec<DirEnt>, us
             return Err(PackError::BadLength("reach table stride is zero".into()));
         }
         ents.push(DirEnt {
-            kind,
             offset,
             count,
             stride,

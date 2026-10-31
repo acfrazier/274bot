@@ -22,7 +22,7 @@ use nav_planner::reachability::{
 };
 use nav_planner::transport::{TransportEdge, TransportGraph};
 
-use crate::pack::{parse_loc_fields, parse_map_line, section, LocOnSquare, SQUARE};
+use crate::pack::{parse_loc_fields, parse_map_line, section, SQUARE};
 use crate::GenerationError;
 
 const DIRS: [(i32, i32); 8] = [
@@ -625,7 +625,7 @@ fn bake_placements(
     idx: impl Fn(WorldTile) -> Option<usize>,
 ) -> Result<(Box<[PlacementRow]>, Box<[StandRow]>), PackError> {
     let mut files: Vec<_> = std::fs::read_dir(maps_dir)
-        .map_err(|error| PackError::Io(error))?
+        .map_err(PackError::Io)?
         .filter_map(|entry| entry.ok())
         .map(|entry| entry.path())
         .filter(|path| path.extension().is_some_and(|ext| ext == "jm2"))
@@ -648,14 +648,12 @@ fn bake_placements(
             .parse()
             .map_err(|_| PackError::BadLength("mapsquare z is not an integer".into()))?;
         let text = std::fs::read_to_string(&path).map_err(PackError::Io)?;
-        let mut in_loc = false;
         let mut in_map = false;
         let mut link_below = HashSet::new();
         for line in text.lines() {
             let line = line.trim();
             if let Some(name) = section(line) {
                 in_map = name == "MAP";
-                in_loc = name == "LOC";
                 continue;
             }
             if in_map {
@@ -666,7 +664,7 @@ fn bake_placements(
                 }
             }
         }
-        in_loc = false;
+        let mut in_loc = false;
         for line in text.lines() {
             let line = line.trim();
             if let Some(name) = section(line) {

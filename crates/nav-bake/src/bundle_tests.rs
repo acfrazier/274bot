@@ -996,6 +996,7 @@ fn a_complete_inventory_tree_passes_and_the_reduced_round_one_set_fails() {
     for expected in [
         "pack/loc.pack",
         "pack/obj.pack",
+        "maps/multiway.csv",
         "scripts/interface_bank/configs/bank_booth.loc",
         "scripts/ladders+stairs/scripts/ladders.rs2",
         "scripts/areas/area_gnome/scripts/spirit_tree.rs2",
@@ -1010,7 +1011,10 @@ fn a_complete_inventory_tree_passes_and_the_reduced_round_one_set_fails() {
         );
     }
     assert!(
-        !missing.iter().any(|row| row.starts_with("maps/")),
+        missing
+            .iter()
+            .filter(|row| row.starts_with("maps/"))
+            .all(|row| row.starts_with("maps/multiway.csv")),
         "the reduced set keeps every mapsquare: {missing:?}"
     );
     assert!(missing.len() > 10, "the reduced set is far from complete");

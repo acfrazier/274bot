@@ -16,11 +16,12 @@ use nav_planner::collision::{derive_walkable, pack_walk, walk_word_from_parts, W
 use nav_planner::grid::StepGrid;
 use nav_planner::pack::{
     decode, decode_canlight_sidecar, decode_flags_sidecar, decode_grid, decode_reach_sidecar,
-    read_canlight_sidecar, read_flags_sidecar, read_reach_sidecar, read_reach_sidecar_header,
-    sha256_hex, walkable_dots, BankAccess, BankStand, PackError, MAGIC_FLAGS, MAX_GRID, VERSION,
-    VERSION_FLAGS,
+    encode_atlas_sections, encode_multiway_keys, read_canlight_sidecar, read_flags_sidecar,
+    read_reach_sidecar, read_reach_sidecar_header, sha256_hex, walkable_dots, BankAccess, BankStand,
+    PackError, MAGIC_FLAGS, MAX_GRID, VERSION, VERSION_FLAGS,
 };
 use nav_planner::quest_gates::{QuestFamilyId, QuestGates};
+use nav_planner::reachability::ReachabilityAtlas;
 use nav_planner::router::AvoidRect;
 use nav_planner::tile::Tile;
 use nav_planner::transport::{
@@ -46,6 +47,13 @@ fn gate_window(quest: &str, signal: &str, min: Option<i32>, max: Option<i32>) ->
         signal: FactKey::new(signal),
         values: api::selected::InclusiveRange { min, max },
     })
+}
+
+/// Bytes after the v17 trailer: empty multiway keys plus an unlabeled atlas.
+fn v18_unlabeled_tail(width: u32, height: u32) -> usize {
+    let atlas = ReachabilityAtlas::unlabeled(width, height).unwrap();
+    encode_multiway_keys(&[]).unwrap().len()
+        + encode_atlas_sections(&atlas).unwrap().len()
 }
 
 /// A BufRead that yields at most one byte per fill, exercising all parser
@@ -1294,7 +1302,8 @@ fn v13_shape_rows_preserve_square_and_rectangular_bounds() {
 #[test]
 fn v13_decode_rejects_malformed_zone_rows_and_shapes() {
     let (bytes, table) = zone_table_pack_fixture();
-    let zone_start = bytes.len() - super::zones::wire_size(Some(&table)).unwrap();
+    let zone_end = bytes.len() - v18_unlabeled_tail(4, 4);
+    let zone_start = zone_end - super::zones::wire_size(Some(&table)).unwrap();
     let kind_0_size = 15 + "ranger".len() + "Ranger".len();
     let kind_1_start = zone_start + 4 + kind_0_size;
     let zone_count_at = kind_1_start + 15 + "lava-bridge".len() + "Lava bridge".len();
@@ -1314,7 +1323,7 @@ fn v13_decode_rejects_malformed_zone_rows_and_shapes() {
     ));
 
     let mut bad_shape_index = bytes.clone();
-    let shape_row = bytes.len() - 11;
+    let shape_row = zone_end - 11;
     bad_shape_index[shape_row..shape_row + 2].copy_from_slice(&3u16.to_le_bytes());
     assert!(matches!(
         decode(&bad_shape_index),
@@ -1343,16 +1352,21 @@ fn v13_decode_rejects_malformed_zone_rows_and_shapes() {
         Err(PackError::BadLength(_))
     ));
     assert!(matches!(
-        decode(&bytes[..bytes.len() - 1]),
+        decode(&bytes[..zone_end - 1]),
         Err(PackError::BadLength(_))
     ));
 
     let mut duplicate_shape = bytes;
-    let shape_count_at = duplicate_shape.len() - 15;
+    let shape_count_at = zone_end - 15;
     duplicate_shape[shape_count_at..shape_count_at + 4].copy_from_slice(&2u32.to_le_bytes());
-    duplicate_shape.extend_from_slice(&1u16.to_le_bytes());
-    duplicate_shape.push(1);
-    duplicate_shape.extend_from_slice(&0b0011_1000u64.to_le_bytes());
+    let extra = {
+        let mut extra = Vec::new();
+        extra.extend_from_slice(&1u16.to_le_bytes());
+        extra.push(1);
+        extra.extend_from_slice(&0b0011_1000u64.to_le_bytes());
+        extra
+    };
+    duplicate_shape.splice(zone_end..zone_end, extra);
     assert!(matches!(
         decode(&duplicate_shape),
         Err(PackError::BadLength(_))
@@ -1611,8 +1625,9 @@ fn v9_decode_rejects_invalid_members_req_flag() {
     let mut bytes = encode(&collision, &graph, &[]).unwrap();
     // members_req sits just before wildy_cap (i32), the edge's quest-gate
     // count (u32), the takeoff field (13 B), bank-stand count (u32),
-    // wilderness rules (12 B), and the five zero-count zone tables (20 B).
-    let flag_at = bytes.len() - 20 - 12 - 4 - 4 - 4 - 13 - 1;
+    // wilderness rules (12 B), the five zero-count zone tables (20 B),
+    // and the v18 multiway/atlas tail.
+    let flag_at = bytes.len() - v18_unlabeled_tail(2, 2) - 20 - 12 - 4 - 4 - 4 - 13 - 1;
     bytes[flag_at] = 2;
     assert!(matches!(decode(&bytes), Err(PackError::BadLength(_))));
 }
@@ -2676,7 +2691,7 @@ fn v13_decode_refuses_unbound_or_malformed_quest_gates() {
     let mut graph = TransportGraph::default();
     graph.edges.push(gated_door(None));
     let unbound = encode(&tiny_collision(), &graph, &[]).unwrap();
-    let count_at = unbound.len() - TRAILER - 1 - 13 - 4;
+    let count_at = unbound.len() - v18_unlabeled_tail(2, 2) - TRAILER - 1 - 13 - 4;
     let mut spliced = unbound[..count_at].to_vec();
     spliced.extend_from_slice(&1u32.to_le_bytes());
     spliced.push(0); // a completed-quest gate
@@ -2706,7 +2721,7 @@ fn v13_decode_refuses_unbound_or_malformed_quest_gates() {
     schema_zero[6 + 32..6 + 34].copy_from_slice(&0u16.to_le_bytes());
     assert!(matches!(decode(&schema_zero), Err(PackError::BadLength(_))));
     // The window's bounds close the record: min flag + i32, max flag + i32.
-    let max_at = bytes.len() - TRAILER - 1 - 13 - 4;
+    let max_at = bytes.len() - v18_unlabeled_tail(2, 2) - TRAILER - 1 - 13 - 4;
     let min_at = max_at - 1 - 4;
     let mut empty_window = bytes.clone();
     empty_window[min_at..min_at + 4].copy_from_slice(&4i32.to_le_bytes());

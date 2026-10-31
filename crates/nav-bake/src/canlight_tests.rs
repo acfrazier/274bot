@@ -85,7 +85,7 @@ data=coord_pair,0_50_53_53_33,0_50_53_53_35
     ));
     assert!(matches!(
         parse_bank_zones("[bank_zones]\ndata=coord_pair,not-a-coord,0_0_0_0_0\n").unwrap_err(),
-        crate::GenerationError::Canlight(CanlightError::PackedCoordinateMalformed { .. })
+        crate::GenerationError::Canlight(CanlightError::PackedCoordinateComponentInvalid { .. })
     ));
     assert!(matches!(
         parse_bank_zones("[bank_zones]\ndata=npc,1,2\n").unwrap_err(),
