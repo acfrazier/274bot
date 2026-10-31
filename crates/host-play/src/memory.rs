@@ -3328,6 +3328,10 @@ impl Run {
                 value["frame_delivery"] = frame_delivery_samples(now);
                 if let Some(cell) = self.q4_frame_cell {
                     value["q4_frame_cell"] = cell.as_str().into();
+                    // Running scripts this row must show: the pause and stop
+                    // cells park them on purpose (0 while paused or after
+                    // stop, null in a transition the run itself bounds).
+                    value["q4_expected_active"] = self.q4_expected_active().into();
                 }
             }
             let cpu = process_cpu_seconds();
