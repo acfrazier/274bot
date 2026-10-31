@@ -636,4 +636,167 @@ mod tests {
     }
 
 
+    fn connected_game_proxy() -> (LoopbackProxy, TcpStream, TcpStream) {
+        let upstream = TcpListener::bind(("127.0.0.1", 0)).unwrap();
+        upstream.set_nonblocking(true).unwrap();
+        let proxy = LoopbackProxy::start(upstream.local_addr().unwrap()).unwrap();
+        let mut client = TcpStream::connect(proxy.address()).unwrap();
+        let (mut server, _) = accept_with_timeout(&upstream).unwrap();
+        client.set_read_timeout(Some(IO_TIMEOUT)).unwrap();
+        server.set_read_timeout(Some(IO_TIMEOUT)).unwrap();
+        client.write_all(&[14, 0]).unwrap();
+        let mut hello = [0; 2];
+        server.read_exact(&mut hello).unwrap();
+        assert_eq!(hello, [14, 0]);
+        (proxy, client, server)
+    }
+
+    fn assert_no_upstream_bytes(server: &mut TcpStream) {
+        server.set_nonblocking(true).unwrap();
+        let mut byte = [0];
+        let result = server.read(&mut byte);
+        server.set_nonblocking(false).unwrap();
+        assert!(
+            matches!(result, Err(error) if error.kind() == ErrorKind::WouldBlock),
+            "unexpected upstream bytes: {result:?}"
+        );
+    }
+
+    #[test]
+    fn guard_opener_prefix_precedes_a_held_native_batch_and_preserves_accounting() {
+        let (proxy, mut client, mut server) = connected_game_proxy();
+        let opener = [0xA1; 13];
+        let native_batch = [0xB2; 19];
+
+        proxy
+            .arm_guard_opener_prefix(200, opener.len())
+            .expect("one ordinary opener prefix can be armed");
+        proxy.begin_dispatch(41, TransportMutation::HoldThroughNextEdge, 7, 100);
+        proxy.packet_committed(41, 1, 196, native_batch.len());
+        proxy.end_dispatch(41, 100);
+        client.write_all(&opener).unwrap();
+        client.write_all(&native_batch).unwrap();
+
+        let mut received_opener = [0; 13];
+        server.read_exact(&mut received_opener).unwrap();
+        assert_eq!(received_opener, opener, "the lone opener passes immediately");
+        assert_no_upstream_bytes(&mut server);
+
+        proxy.observed_frame(8, true, 101);
+        assert_no_upstream_bytes(&mut server);
+        proxy.observed_frame(8, false, 102);
+        let mut received_batch = [0; 19];
+        server.read_exact(&mut received_batch).unwrap();
+        assert_eq!(received_batch, native_batch);
+
+        client.write_all(&[0xCC]).unwrap();
+        let mut tail = [0];
+        server.read_exact(&mut tail).unwrap();
+        assert_eq!(tail, [0xCC]);
+        let observations = proxy.observations();
+        assert_eq!(observations.len(), 1);
+        let observation = &observations[0];
+        assert_eq!(observation.pre_batch_prefix, Some((200, opener.len())));
+        assert_eq!(observation.request_id, 41);
+        assert_eq!(observation.request_ids, [41]);
+        assert_eq!(observation.packet_requests, [(41, 1)]);
+        assert_eq!(observation.packet_opcodes, [196]);
+        assert_eq!(observation.packet_lengths, [native_batch.len()]);
+        assert_eq!(observation.forwarded_bytes, opener.len() + native_batch.len());
+        assert_eq!(observation.dropped_bytes, 0);
+        assert_eq!(observation.release_edge_frame, Some(101));
+        assert_eq!(observation.released_host_frame, Some(102));
+        proxy.ensure_healthy().unwrap();
+    }
+
+    #[test]
+    fn guard_opener_prefix_rejects_empty_duplicate_and_mismatched_pairings() {
+        let upstream = TcpListener::bind(("127.0.0.1", 0)).unwrap();
+        let proxy = LoopbackProxy::start(upstream.local_addr().unwrap()).unwrap();
+        assert!(proxy.arm_guard_opener_prefix(200, 0).is_err());
+        assert!(proxy.ensure_healthy().is_err());
+
+        let upstream = TcpListener::bind(("127.0.0.1", 0)).unwrap();
+        let proxy = LoopbackProxy::start(upstream.local_addr().unwrap()).unwrap();
+        proxy.arm_guard_opener_prefix(200, 13).unwrap();
+        assert!(proxy.arm_guard_opener_prefix(200, 13).is_err());
+        assert!(proxy.ensure_healthy().is_err());
+
+        let upstream = TcpListener::bind(("127.0.0.1", 0)).unwrap();
+        let proxy = LoopbackProxy::start(upstream.local_addr().unwrap()).unwrap();
+        proxy.arm_guard_opener_prefix(200, 13).unwrap();
+        proxy.begin_dispatch(42, TransportMutation::SplitAfterFirstPacket, 7, 100);
+        assert!(proxy.ensure_healthy().is_err());
+
+        let upstream = TcpListener::bind(("127.0.0.1", 0)).unwrap();
+        let proxy = LoopbackProxy::start(upstream.local_addr().unwrap()).unwrap();
+        proxy.begin_dispatch(43, TransportMutation::HoldThroughNextEdge, 7, 100);
+        assert!(proxy.arm_guard_opener_prefix(200, 13).is_err());
+        assert!(proxy.ensure_healthy().is_err());
+    }
+
+    #[test]
+    fn ordinary_split_after_first_packet_still_holds_only_the_suffix() {
+        let (proxy, mut client, mut server) = connected_game_proxy();
+        let first = [0x31; 3];
+        let suffix = [0x42; 5];
+
+        proxy.begin_dispatch(51, TransportMutation::SplitAfterFirstPacket, 12, 200);
+        proxy.packet_committed(51, 1, 27, first.len());
+        proxy.packet_committed(51, 2, 28, suffix.len());
+        proxy.end_dispatch(51, 200);
+        client.write_all(&first).unwrap();
+        client.write_all(&suffix).unwrap();
+
+        let mut received_first = [0; 3];
+        server.read_exact(&mut received_first).unwrap();
+        assert_eq!(received_first, first);
+        assert_no_upstream_bytes(&mut server);
+        proxy.observed_frame(13, true, 201);
+        assert_no_upstream_bytes(&mut server);
+        proxy.observed_frame(13, false, 202);
+        let mut received_suffix = [0; 5];
+        server.read_exact(&mut received_suffix).unwrap();
+        assert_eq!(received_suffix, suffix);
+
+        client.write_all(&[0x53]).unwrap();
+        let mut tail = [0];
+        server.read_exact(&mut tail).unwrap();
+        assert_eq!(tail, [0x53]);
+        let observation = proxy.observations().pop().unwrap();
+        assert_eq!(observation.pre_batch_prefix, None);
+        assert_eq!(observation.packet_lengths, [first.len(), suffix.len()]);
+        assert_eq!(observation.forwarded_bytes, first.len() + suffix.len());
+        assert_eq!(observation.dropped_bytes, 0);
+        proxy.ensure_healthy().unwrap();
+    }
+
+    #[test]
+    fn ordinary_hold_through_next_edge_still_holds_every_byte() {
+        let (proxy, mut client, mut server) = connected_game_proxy();
+        let packet = [0x64; 9];
+
+        proxy.begin_dispatch(61, TransportMutation::HoldThroughNextEdge, 20, 300);
+        proxy.packet_committed(61, 1, 29, packet.len());
+        proxy.end_dispatch(61, 300);
+        client.write_all(&packet).unwrap();
+        assert_no_upstream_bytes(&mut server);
+        proxy.observed_frame(21, true, 301);
+        assert_no_upstream_bytes(&mut server);
+        proxy.observed_frame(21, false, 302);
+        let mut received = [0; 9];
+        server.read_exact(&mut received).unwrap();
+        assert_eq!(received, packet);
+
+        client.write_all(&[0x75]).unwrap();
+        let mut tail = [0];
+        server.read_exact(&mut tail).unwrap();
+        assert_eq!(tail, [0x75]);
+        let observation = proxy.observations().pop().unwrap();
+        assert_eq!(observation.pre_batch_prefix, None);
+        assert_eq!(observation.packet_lengths, [packet.len()]);
+        assert_eq!(observation.forwarded_bytes, packet.len());
+        assert_eq!(observation.dropped_bytes, 0);
+        proxy.ensure_healthy().unwrap();
+    }
 }
