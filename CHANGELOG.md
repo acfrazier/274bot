@@ -81,6 +81,20 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.8` 
   before opening their dialogue. Damage from a quest dialogue no longer looks
   like an attack when no visible NPC or player targets the bot. A failed walk
   also reports where its route ended.
+- Thieving steps now walk to the guide's anchor while the target NPC is out
+  of sight, instead of waiting beside the anchor for a target that the bot
+  never approached. The required level comes from the selected game content
+  whenever no NPC is visible, so a bot below it refuses before walking or
+  stealing. A failed approach walk is planned again once from where the bot
+  stands, and the second failure ends the step with its detail. Inside the
+  anchor, the bot waits one NPC respawn window for a target and then stops
+  with "no thieving target appeared at the anchor".
+- Anchor walks in thieving, gather, use-on and the Tribal Totem door steps now
+  accept any standable tile inside the authored radius. Before, the walk
+  required a path onto the anchor tile itself, so a bot that stopped short
+  could end with "walk route ended before arrival" while already inside the
+  area. The thieving approach settles the route end through the shared walk
+  adapter, so it accepts the area and goes on to look for a workman there.
 
 ## [0.2.8] — 2026-10-29 — Beta 2
 

@@ -1289,6 +1289,13 @@ fn observe<'a>(cx: &ActionContext<'a>) -> Option<ChatObs<'a>> {
     })
 }
 
+/// Whether `root` is a main document this revision treats as a scroll. A
+/// revision without a chapter-page interface has `chapter_root: None`, and no
+/// root can match it; the id is never guessed from another revision.
+pub(super) fn is_scroll_root(root: i32, ids: api::game_data::DialogueUiIds) -> bool {
+    root == ids.scroll_root || root == ids.quest_scroll_root || ids.chapter_root == Some(root)
+}
+
 fn observe_main<'a>(
     cx: &ActionContext<'a>,
     selected_ui: Option<api::game_data::DialogueUiIds>,
@@ -1299,7 +1306,7 @@ fn observe_main<'a>(
     let kind = if root == -1 {
         MainKind::Closed
     } else if let Some(ids) = ids {
-        if root == ids.scroll_root || root == ids.quest_scroll_root || root == ids.chapter_root {
+        if is_scroll_root(root, ids) {
             MainKind::Scroll
         } else if root == ids.book_root {
             MainKind::Book

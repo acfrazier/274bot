@@ -71,7 +71,7 @@ pub(super) fn compile(
         return Err(CompileError::code("invalid-args"));
     }
 
-    let targets = selected_targets(cx.selected, args.target.npc.trim())?;
+    let (targets, no_target_wait_ticks) = selected_targets(cx.selected, args.target.npc.trim())?;
     let item_id = args.until.obj.id(cx.selected)?;
     let qty = super::s2::compile_quantity(args.until.qty, cx)?;
     let anchor = super::anchor_tile(args.anchor.as_ref())?;
@@ -85,13 +85,14 @@ pub(super) fn compile(
         anchor,
         radius,
         duration,
+        no_target_wait_ticks,
     }))
 }
 
 fn selected_targets(
     selected: &SelectedGameData,
     selector: &str,
-) -> Result<Arc<[Target]>, CompileError> {
+) -> Result<(Arc<[Target]>, u64), CompileError> {
     let names = selected
         .npc_names()
         .ok_or_else(|| CompileError::code("thieving-npc-facts-unavailable"))?;
@@ -123,6 +124,9 @@ fn selected_targets(
             .required_thieving_npc(row.id)
             .filter(|level| *level >= 1)
             .ok_or_else(|| CompileError::code("unknown-thieving-level"))?;
+        let respawn_ticks = selected
+            .thieving_npc_respawn_ticks(row.id)
+            .ok_or_else(|| CompileError::code("unknown-thieving-respawn"))?;
         let display = row
             .display
             .as_deref()
@@ -134,13 +138,22 @@ fn selected_targets(
                 display: Arc::from(display),
                 action: Arc::from(action),
                 required_level,
+                respawn_ticks,
             });
         }
     }
     if targets.is_empty() {
         return Err(CompileError::code("unresolved-thieving-npc"));
     }
-    Ok(Arc::from(targets))
+    // The empty-anchor wait covers the longest selected respawn window plus
+    // one observed tick for the `PLAYER_INFO` that carries the spawn.
+    let no_target_wait_ticks = targets
+        .iter()
+        .map(|target| u64::from(target.respawn_ticks))
+        .max()
+        .unwrap_or_default()
+        .saturating_add(1);
+    Ok((Arc::from(targets), no_target_wait_ticks))
 }
 
 struct Plan {
@@ -150,6 +163,7 @@ struct Plan {
     anchor: Option<WorldTile>,
     radius: u8,
     duration: Duration,
+    no_target_wait_ticks: u64,
 }
 
 impl StepPlan for Plan {
@@ -165,6 +179,7 @@ impl StepPlan for Plan {
                 anchor: self.anchor,
                 radius: self.radius,
                 deadline: self.duration,
+                no_target_wait_ticks: self.no_target_wait_ticks,
             },
             &mut cx.tick.cx,
         )?;
@@ -219,13 +234,15 @@ mod tests {
 
     fn plan() -> Plan {
         let selected = selected();
+        let (targets, no_target_wait_ticks) = selected_targets(&selected, "digworkman1").unwrap();
         Plan {
-            targets: selected_targets(&selected, "digworkman1").unwrap(),
+            targets,
             item_id: 995,
             qty: super::super::s2::QuantityPlan::Fixed(1),
             anchor: None,
             radius: 12,
             duration: Duration::from_secs(60),
+            no_target_wait_ticks,
         }
     }
 
@@ -380,21 +397,27 @@ mod tests {
     #[test]
     fn target_alias_and_display_resolve_to_exact_selected_npc_levels() {
         let selected = selected();
-        let alias = selected_targets(&selected, "digworkman1").unwrap();
+        let (alias, wait_ticks) = selected_targets(&selected, "digworkman1").unwrap();
         assert_eq!(alias.len(), 1);
         assert_eq!(alias[0].id, 613);
         assert_eq!(alias[0].display.as_ref(), "Digsite workman");
         assert_eq!(alias[0].action.as_ref(), STEAL_FROM);
         assert_eq!(alias[0].required_level, 25);
+        assert_eq!(alias[0].respawn_ticks, 100);
+        assert_eq!(
+            wait_ticks, 101,
+            "the compiled empty-anchor bound is the respawn rate plus one observed tick"
+        );
 
-        let display = selected_targets(&selected, "Digsite workman").unwrap();
+        let (display, wait_ticks) = selected_targets(&selected, "Digsite workman").unwrap();
         assert_eq!(
             display.iter().map(|target| target.id).collect::<Vec<_>>(),
             vec![613, 614]
         );
         assert!(display.iter().all(|target| target.required_level == 25));
+        assert_eq!(wait_ticks, 101);
         for (alias, id) in [("troll_prison_guard1", 1128), ("troll_prison_guard2", 1129)] {
-            let target = selected_targets(&selected, alias).unwrap();
+            let (target, _) = selected_targets(&selected, alias).unwrap();
             assert!(
                 target
                     .iter()
@@ -404,14 +427,27 @@ mod tests {
         }
 
         for (alias, id) in [("man", 1), ("man2", 2), ("man3", 3)] {
-            let target = selected_targets(&selected, alias).unwrap();
+            let (target, wait_ticks) = selected_targets(&selected, alias).unwrap();
             assert!(
                 target
                     .iter()
                     .any(|target| target.id == id && target.required_level == 1),
                 "Waterfall men use the selected level-1 pickpocket fact for {alias}"
             );
+            assert_eq!(wait_ticks, 51, "{alias} respawns in 50 ticks");
         }
+
+        let (gnome, wait_ticks) = selected_targets(&selected, "gnome").unwrap();
+        assert_eq!(
+            gnome.iter().map(|target| target.id).collect::<Vec<_>>(),
+            vec![66],
+            "the alias resolves one NPC config"
+        );
+        assert_eq!(gnome[0].respawn_ticks, 120);
+        assert_eq!(
+            wait_ticks, 121,
+            "a 120-tick spawn outlives the 101-tick wait the fixed constant used"
+        );
     }
 
     #[test]

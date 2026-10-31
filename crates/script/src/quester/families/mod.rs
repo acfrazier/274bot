@@ -3273,16 +3273,17 @@ impl StepRun for UseOnRun {
                     if !here.is_some_and(|here| reach::within(here, tile, self.radius))
                         && !target_here
                     {
+                        let mut request = reach::walk_request(
+                            tile,
+                            self.radius.max(1) as u16,
+                            None,
+                            cx.required_after,
+                        );
+                        // The gate above is the anchor radius; any standable
+                        // tile inside it satisfies the anchor area.
+                        request.arrival = nav_planner::contract::ArrivalKind::Area;
                         self.walk = Some(std::task::ready!(crate::native::defer_budget(
-                            cx.tick.actions.begin::<Walk>(
-                                reach::walk_request(
-                                    tile,
-                                    self.radius.max(1) as u16,
-                                    None,
-                                    cx.required_after,
-                                ),
-                                &mut cx.tick.cx,
-                            ),
+                            cx.tick.actions.begin::<Walk>(request, &mut cx.tick.cx),
                         ))?);
                         self.anchor_walk = true;
                         return Poll::Pending;

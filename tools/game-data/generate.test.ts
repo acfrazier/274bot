@@ -202,10 +202,10 @@ const facts = extractFacts(content,
         { id: 7, debugname: 'cooked_chompy', name: 'Cooked chompy', cost: 0, stackable: false, members: false, certlink: -1, certtemplate: -1, wearpos: -1, wearpos2: -1, wearpos3: -1, category: 6, params: new Map() },
     ],
     [
-        { id: 10, debugname: 'guard1', name: 'Guard' },
+        { id: 10, debugname: 'guard1', name: 'Guard', respawnrate: 120 },
         { id: 11, debugname: 'guard2', name: 'Guard' },
         { id: 12, debugname: 'digworkman1', name: 'Digsite workman' },
-        { id: 13, debugname: 'digworkman2', name: 'Digsite workman' },
+        { id: 13, debugname: 'digworkman2', name: 'Digsite workman', respawnrate: 120 },
         { id: 14, debugname: 'troll_prison_guard1', name: 'Twig' },
         { id: 15, debugname: 'troll_prison_guard2', name: 'Berry' },
     ],
@@ -239,6 +239,11 @@ assert.equal(potionFact.dose_family, 'potion_prayerrestore');
 assert.equal(potionFact.dose_count, 1);
 const fullPickpocket = facts.pickpocket.find((fact) => !('kind' in fact))!;
 assert.deepEqual(fullPickpocket.npcs.map((npc) => npc.alias), ['guard1', 'guard2']);
+assert.deepEqual(
+    fullPickpocket.npcs.map((npc) => npc.respawn_ticks),
+    [120, 100],
+    'the declared respawnrate wins and an omitted one is the engine default 100',
+);
 assert.equal(fullPickpocket.loot.length, 2);
 assert.deepEqual(fullPickpocket.success_chance, { numerator: 1, denominator: 2 });
 const levelOnlyPickpocket = facts.pickpocket.filter((fact) => 'kind' in fact);
@@ -246,6 +251,7 @@ assert.deepEqual(
     levelOnlyPickpocket.map((fact) => ({
         alias: fact.npcs[0].alias,
         id: fact.npcs[0].id,
+        respawn_ticks: fact.npcs[0].respawn_ticks,
         level: fact.level,
         kind: fact.kind,
         source_file: fact.source_file,
@@ -253,10 +259,10 @@ assert.deepEqual(
         source_row: fact.source_row,
     })),
     [
-        { alias: 'digworkman1', id: 12, level: 25, kind: 'level_only', source_file: 'scripts/quests/quest_itexam/scripts/digsite_workman.rs2', target_row: '[opnpc3,digworkman1] @pickpocket_digworkman1;', source_row: 'if (stat (thieving) < 25) {' },
-        { alias: 'digworkman2', id: 13, level: 25, kind: 'level_only', source_file: 'scripts/quests/quest_itexam/scripts/digsite_workman.rs2', target_row: '[opnpc3,digworkman2] @pickpocket_digworkman1;', source_row: 'if (stat (thieving) < 25) {' },
-        { alias: 'troll_prison_guard1', id: 14, level: 30, kind: 'level_only', source_file: 'scripts/quests/quest_troll/scripts/troll_stronghold_camp_guard.rs2', target_row: '[opnpc3,troll_prison_guard1]', source_row: 'if (stat(thieving) < 30) {' },
-        { alias: 'troll_prison_guard2', id: 15, level: 30, kind: 'level_only', source_file: 'scripts/quests/quest_troll/scripts/troll_stronghold_camp_guard.rs2', target_row: '[opnpc3,troll_prison_guard2]', source_row: 'if (stat(thieving) < 30) {' },
+        { alias: 'digworkman1', id: 12, respawn_ticks: 100, level: 25, kind: 'level_only', source_file: 'scripts/quests/quest_itexam/scripts/digsite_workman.rs2', target_row: '[opnpc3,digworkman1] @pickpocket_digworkman1;', source_row: 'if (stat (thieving) < 25) {' },
+        { alias: 'digworkman2', id: 13, respawn_ticks: 120, level: 25, kind: 'level_only', source_file: 'scripts/quests/quest_itexam/scripts/digsite_workman.rs2', target_row: '[opnpc3,digworkman2] @pickpocket_digworkman1;', source_row: 'if (stat (thieving) < 25) {' },
+        { alias: 'troll_prison_guard1', id: 14, respawn_ticks: 100, level: 30, kind: 'level_only', source_file: 'scripts/quests/quest_troll/scripts/troll_stronghold_camp_guard.rs2', target_row: '[opnpc3,troll_prison_guard1]', source_row: 'if (stat(thieving) < 30) {' },
+        { alias: 'troll_prison_guard2', id: 15, respawn_ticks: 100, level: 30, kind: 'level_only', source_file: 'scripts/quests/quest_troll/scripts/troll_stronghold_camp_guard.rs2', target_row: '[opnpc3,troll_prison_guard2]', source_row: 'if (stat(thieving) < 30) {' },
     ],
 );
 for (const fact of levelOnlyPickpocket) {

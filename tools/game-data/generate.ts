@@ -22,7 +22,9 @@ import { loadServerOrderedFacts, serverOrderedContentFiles, serverOrderedEngineI
 import { extractNpcTransformClosure, npcTransformInputPaths, type NpcTransformClosureEvidence } from './extractors/npc-transforms.ts';
 
 type ObjType = { id: number; debugname: string | null; name: string | null; cost: number; stackable: boolean; members: boolean; certlink: number; certtemplate: number; wearpos: number; wearpos2: number; wearpos3: number; manwear: number; tradeable?: boolean; countobj?: ArrayLike<number> | null; category?: number; params?: Map<number, number | string> };
-type NpcType = { id: number; debugname?: string | null; name: string | null };
+type NpcType = { id: number; debugname?: string | null; name: string | null; respawnrate?: number };
+/** `NpcType.respawnrate` default: "default to 1-minute" (`engine/src/cache/config/NpcType.ts:105`). */
+const ENGINE_DEFAULT_NPC_RESPAWN_TICKS = 100;
 type GeneratedInputs = { engine_commit: string; content_commit: string; engine: InputHash[]; content: InputHash[] };
 type Revision = { revision: number; engine: string; content: string; expectedEngine: string; expectedContent: string; generatedInputs?: GeneratedInputs; cacheIdentity: { cache_id: string; content_id?: string; nav_sha256: string; flags_sha256: string }; output: string };
 
@@ -2373,7 +2375,7 @@ export function extractFacts(content: string, items: ObjType[], npcs: NpcType[])
     const itemIds = new Map(items.filter((item) => item.debugname !== null).map((item) => [item.debugname as string, { id: item.id, name: item.name }]));
     const objectsByAlias = new Map(items.filter((item) => item.debugname !== null).map((item) => [item.debugname as string, item]));
     const aliasesById = new Map(items.filter((item) => item.debugname !== null).map((item) => [item.id, item.debugname as string]));
-    const npcIds = new Map(npcs.filter((npc) => npc.debugname != null).map((npc) => [npc.debugname as string, { id: npc.id, name: npc.name }]));
+    const npcIds = new Map(npcs.filter((npc) => npc.debugname != null).map((npc) => [npc.debugname as string, { id: npc.id, name: npc.name, respawn_ticks: npc.respawnrate ?? ENGINE_DEFAULT_NPC_RESPAWN_TICKS }]));
     const categoryNames = new Map([...parsePack(requireGatherText(content, 'pack/category.pack'))].map(([name, id]) => [id, name]));
     const paramIds = parsePack(requireGatherText(content, 'pack/param.pack'));
     const enumNames = new Map([...parsePack(requireGatherText(content, 'pack/enum.pack'))].map(([name, id]) => [id, name]));
@@ -2509,7 +2511,7 @@ export function extractFacts(content: string, items: ObjType[], npcs: NpcType[])
             dose_count: info.dose_count,
         });
     }
-    type PickpocketNpc = { alias: string; id: number; name: string };
+    type PickpocketNpc = { alias: string; id: number; name: string; respawn_ticks: number };
     type PickpocketRow = {
         group: string;
         npcs: PickpocketNpc[];
@@ -2535,7 +2537,7 @@ export function extractFacts(content: string, items: ObjType[], npcs: NpcType[])
             const found = npcIds.get(value[0]);
             if (!found) throw new Error(`pickpocket ${parsed.name}: unknown NPC ${value[0]}`);
             if (!found.name) throw new Error(`pickpocket ${parsed.name}: NPC ${value[0]} has no display name`);
-            return { alias: value[0], id: found.id, name: found.name };
+            return { alias: value[0], id: found.id, name: found.name, respawn_ticks: found.respawn_ticks };
         });
         const chance = parsed.values.success_chance?.[0];
         if (!chance || chance.length !== 2) throw new Error(`${parsed.name}: malformed success chance`);
@@ -2588,7 +2590,7 @@ export function extractFacts(content: string, items: ObjType[], npcs: NpcType[])
                 source_file: source.file,
                 target_row: rows[0],
                 source_row: gates[0][0].trim(),
-                npcs: [{ alias, id: found.id, name: found.name }],
+                npcs: [{ alias, id: found.id, name: found.name, respawn_ticks: found.respawn_ticks }],
                 level,
             });
         }

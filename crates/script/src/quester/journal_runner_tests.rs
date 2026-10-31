@@ -1416,7 +1416,8 @@ fn a_transient_foreign_main_modal_waits_before_the_journal_begins() {
         .unwrap()
         .dialogue_ui()
         .unwrap()
-        .chapter_root;
+        .chapter_root
+        .expect("revision 289 publishes the chapter page root");
     snapshot.seed_main_modal(root, vec![]);
     snapshot.seed_main_modal_texts(vec!["Close Window".into()]);
     let mut ledger = None;

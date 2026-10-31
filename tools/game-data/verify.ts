@@ -232,7 +232,7 @@ async function verifyRevision(revision: number) {
     for (const input of [...payload.provenance.inputs, ...payload.provenance.decoder_sources, ...payload.provenance.content_inputs]) { const base = payload.provenance.content_inputs.includes(input) ? pin.contentRoot : pin.engineRoot; const actual = digest(path.join(base, input.path)); assertEqual(actual.bytes, input.bytes, `${revision} ${input.path} bytes`); assertEqual(actual.sha256, input.sha256, `${revision} ${input.path} hash`); }
     const output = digest(file); assertEqual(output.bytes, manifestRow.bytes, `${revision} output bytes`); assertEqual(output.sha256, manifestRow.sha256, `${revision} output hash`); assertEqual(JSON.stringify(payload.provenance.cache_identity), JSON.stringify(pin.cache), `${revision} cache identity`);
     const byAlias = new Map(payload.items.filter((item: any) => item.alias !== null).map((item: any) => [item.alias, item])); const plate = byAlias.get('rune_platebody'); const chain = byAlias.get('rune_chainbody'); if (!plate || plate.name !== 'Rune platebody' || !chain || chain.name !== 'Rune chainbody' || plate.cost <= chain.cost) throw new Error(`${revision}: Rune platebody/chainbody value order`); if (payload.items.filter((item: any) => item.name === 'Dragonhide').length < 2) throw new Error(`${revision}: same-name Dragonhide identity`); if (new Set(payload.items.map((item: any) => item.id)).size !== payload.items.length || new Set(payload.items.map((item: any) => item.alias)).size !== payload.items.length) throw new Error(`${revision}: duplicate IDs or aliases`);
-    const isNpc = (value: unknown): value is { alias: string; id: number; name: string } =>
+    const isNpc = (value: unknown): value is { alias: string; id: number; name: string; respawn_ticks: number } =>
         typeof value === 'object'
         && value !== null
         && !Array.isArray(value)
@@ -241,9 +241,13 @@ async function verifyRevision(revision: number) {
         && 'id' in value
         && typeof value.id === 'number'
         && 'name' in value
-        && typeof value.name === 'string';
+        && typeof value.name === 'string'
+        && 'respawn_ticks' in value
+        && typeof value.respawn_ticks === 'number'
+        && Number.isInteger(value.respawn_ticks)
+        && value.respawn_ticks >= 1;
     type PickpocketCheckRow = {
-        npcs: { alias: string; id: number; name: string }[];
+        npcs: { alias: string; id: number; name: string; respawn_ticks: number }[];
         kind?: unknown; level?: unknown; source_file?: unknown;
         target_row?: unknown; source_row?: unknown; loot?: unknown;
     };
@@ -320,6 +324,16 @@ async function verifyRevision(revision: number) {
     });
     if (invalidPickpocket) throw new Error(`${revision}: invalid pickpocket joins`);
     if (revision === 274 || revision === 289) {
+        // `digworkman1` declares no `respawnrate` (`scripts/quests/quest_itexam/configs/quest_itexam.npc:1`),
+        // so the engine default 100 applies (`engine/src/cache/config/NpcType.ts:105`);
+        // `gnome` declares `respawnrate=120` (`scripts/areas/area_gnome/configs/gnome.npc`).
+        for (const [alias, respawn] of [['digworkman1', 100], ['gnome', 120]] as const) {
+            const rows = pickpocket.filter((value) => hasPickpocketNpcs(value) && value.npcs.some((npc) => npc.alias === alias));
+            if (rows.length === 0) throw new Error(`${revision}: missing pickpocket row for ${alias}`);
+            for (const row of rows) {
+                assertEqual(row.npcs.find((npc) => npc.alias === alias)?.respawn_ticks, respawn, `${revision} ${alias} respawn_ticks`);
+            }
+        }
         const expected = [
             ['digworkman1', 25, 'scripts/quests/quest_itexam/scripts/digsite_workman.rs2', '[opnpc3,digworkman1] @pickpocket_digworkman1;', 'if (stat(thieving) < 25) {'],
             ['digworkman2', 25, 'scripts/quests/quest_itexam/scripts/digsite_workman.rs2', '[opnpc3,digworkman2] @pickpocket_digworkman1;', 'if (stat(thieving) < 25) {'],

@@ -269,6 +269,25 @@ fn thieving_requirements_are_selected_by_exact_npc_id() {
 }
 
 #[test]
+fn thieving_respawn_ticks_come_from_the_selected_npc_config() {
+    for revision in [ClientRevision::R274, ClientRevision::R289] {
+        let data = for_revision(revision).expect("selected data");
+        // 613 `digworkman1` declares no `respawnrate`
+        // (`scripts/quests/quest_itexam/configs/quest_itexam.npc:1`), so the
+        // engine default 100 applies (`NpcType.ts:105`).
+        assert_eq!(data.thieving_npc_respawn_ticks(613), Some(100));
+        // 66 `gnome` declares `respawnrate=120`
+        // (`scripts/areas/area_gnome/configs/gnome.npc`).
+        assert_eq!(data.thieving_npc_respawn_ticks(66), Some(120));
+        assert_eq!(
+            data.thieving_npc_respawn_ticks(-1),
+            None,
+            "an id outside the selected pickpocket rows is unknown"
+        );
+    }
+}
+
+#[test]
 fn generated_spell_and_staff_facts_match_selected_content() {
     for revision in [ClientRevision::R274, ClientRevision::R289] {
         let data = for_revision(revision).expect("selected data");

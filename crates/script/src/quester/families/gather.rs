@@ -354,11 +354,13 @@ impl StepRun for Run {
         };
         if let Some(anchor) = self.approach {
             if !super::reach::within(here.value, anchor, i32::from(self.radius)) {
+                let mut request =
+                    super::reach::walk_request(anchor, self.radius, None, cx.required_after);
+                // The approach gate is the authored anchor radius; any
+                // standable tile inside the gather area is enough.
+                request.arrival = nav_planner::contract::ArrivalKind::Area;
                 self.walk = Some(std::task::ready!(crate::native::defer_budget(
-                    cx.tick.actions.begin::<Walk>(
-                        super::reach::walk_request(anchor, self.radius, None, cx.required_after),
-                        &mut cx.tick.cx,
-                    ),
+                    cx.tick.actions.begin::<Walk>(request, &mut cx.tick.cx),
                 ))?);
                 self.approach = None;
                 return Poll::Pending;
@@ -917,6 +919,42 @@ mod tests {
                     crate::shim::InteractReq::Loc { action, .. }) if action == "Mine"));
             }
         }
+    }
+
+    /// The approach gate is `reach::within` against the authored anchor and
+    /// radius, so the approach walk must accept any standable tile inside
+    /// that area rather than demand a path onto the anchor tile.
+    #[test]
+    fn authored_gather_approach_walks_the_anchor_area() {
+        let mut plan = plan("mining.copper", 2);
+        let snapshot = snapshot(&plan, 1);
+        let origin = snapshot.local_player().unwrap().player.actor.tile;
+        let anchor = WorldTile {
+            x: origin.x + 20,
+            ..origin
+        };
+        plan.anchor = Some(anchor);
+        let mut ledger = None;
+        let mut run = with_tick(&snapshot, &mut ledger, 1, |tick| {
+            with_step(tick, |cx| plan.begin(cx).unwrap())
+        });
+        assert!(with_tick(&snapshot, &mut ledger, 2, |tick| {
+            with_step(tick, |cx| run.poll(cx))
+        })
+        .is_pending());
+        let crate::native::HostEffect::Walk(request) =
+            &ledger.as_ref().unwrap().outbox.last().unwrap().effect
+        else {
+            panic!("an authored anchor must approach before gathering");
+        };
+        assert_eq!(request.target, anchor);
+        assert_eq!(request.radius, 12);
+        assert_eq!(request.loc_id, None);
+        assert_eq!(
+            request.arrival,
+            nav_planner::contract::ArrivalKind::Area,
+            "the authored anchor radius accepts any standable tile inside it"
+        );
     }
 
     #[test]

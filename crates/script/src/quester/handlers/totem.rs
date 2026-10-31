@@ -6,7 +6,9 @@
 //! (`quest_totem.rs2` `tribal_door_combo`: `if_settext(tribal_door2:com_43..46,
 //! enum(alphabet, $stage))`).
 use crate::native::walk::Walk;
-use crate::native::{ActionContext, ActionError, ActionHandle, NativeActions, NativeMachine, WalkReceipt};
+use crate::native::{
+    ActionContext, ActionError, ActionHandle, NativeActions, NativeMachine, WalkReceipt,
+};
 use crate::quester::compile::{
     CompileContext, CompileError, StepContext, StepOutcome, StepPlan, StepRun,
 };
@@ -160,15 +162,16 @@ impl StepRun for Run {
         if !self.opened {
             let here = cx.tick.cx.snapshot().here();
             if !here.is_some_and(|obs| reach::within(obs.value, self.tile, self.radius)) {
-                self.walk = Some(cx.tick.actions.begin::<Walk>(
-                    reach::walk_request(
-                        self.tile,
-                        self.radius.max(1) as u16,
-                        None,
-                        cx.required_after,
-                    ),
-                    &mut cx.tick.cx,
-                )?);
+                let mut request = reach::walk_request(
+                    self.tile,
+                    self.radius.max(1) as u16,
+                    None,
+                    cx.required_after,
+                );
+                // The gate above is the authored anchor radius; any
+                // standable tile inside it is close enough to open the door.
+                request.arrival = nav_planner::contract::ArrivalKind::Area;
+                self.walk = Some(cx.tick.actions.begin::<Walk>(request, &mut cx.tick.cx)?);
                 return Poll::Pending;
             }
             if self.reach.is_none() {
@@ -444,6 +447,76 @@ fn dial_button(index: usize, current: char, target: char) -> i32 {
 #[cfg(test)]
 mod tests {
     use super::{dial_button, DIAL_DOWN, DIAL_UP};
+    use crate::quester::compile::StepPlan;
+    use crate::quester::families::tests::{local_player, with_tick};
+    use api::snapshot::GameSnapshot;
+    use api::WorldTile;
+    use std::sync::Arc;
+
+    fn with_step<R>(
+        tick: &mut crate::native::NativeTick<'_>,
+        f: impl FnOnce(&mut crate::quester::compile::StepContext<'_, '_>) -> R,
+    ) -> R {
+        let quests = api::quest_facts::QuestCatalog::empty();
+        let banks = Arc::new(api::named_banks::NamedBankFacts::empty());
+        let choices = crate::quester::choices::QuestChoices::default();
+        let required_after = tick.cx.evidence();
+        f(&mut crate::quester::compile::StepContext {
+            tick,
+            quests: &quests,
+            progress: &[],
+            required_after,
+            banks: &banks,
+            choices: &choices,
+        })
+    }
+
+    /// The door approach is gated on `reach::within` against the authored
+    /// anchor and radius, so it must accept any standable tile in that area
+    /// rather than demand a path onto the door tile.
+    #[test]
+    fn door_approach_walks_the_anchor_area() {
+        let door = WorldTile {
+            x: 2658,
+            z: 3322,
+            level: 0,
+        };
+        let plan = super::Plan {
+            word: Arc::from("KURT"),
+            door_id: 716,
+            door_name: Arc::from("combodoor"),
+            tile: door,
+            radius: 2,
+        };
+        let mut snapshot = GameSnapshot::new();
+        snapshot.seed_ingame(2);
+        snapshot.seed_local_player(local_player(WorldTile {
+            x: 2640,
+            z: 3322,
+            level: 0,
+        }));
+        let mut ledger = None;
+        let mut run = with_tick(&snapshot, &mut ledger, 1, |tick| {
+            with_step(tick, |cx| plan.begin(cx).unwrap())
+        });
+        assert!(with_tick(&snapshot, &mut ledger, 2, |tick| {
+            with_step(tick, |cx| run.poll(cx))
+        })
+        .is_pending());
+        let crate::native::HostEffect::Walk(request) =
+            &ledger.as_ref().unwrap().outbox.last().unwrap().effect
+        else {
+            panic!("the door approach must emit a native walk");
+        };
+        assert_eq!(request.target, door);
+        assert_eq!(request.radius, 2);
+        assert_eq!(request.loc_id, None);
+        assert_eq!(
+            request.arrival,
+            nav_planner::contract::ArrivalKind::Area,
+            "the authored door radius accepts any standable tile inside it"
+        );
+    }
 
     #[test]
     fn dial_picks_the_shorter_rotation() {
