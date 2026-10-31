@@ -3900,6 +3900,8 @@ pub(crate) struct PostedWalkOutcome {
     pub(crate) failed: bool,
     pub(crate) x: i32,
     pub(crate) z: i32,
+    pub(crate) level: i32,
+    pub(crate) radius: i32,
     pub(crate) allow_teleports: bool,
     /// The settled route end is frozen `'blocked'`.
     pub(crate) blocked: bool,

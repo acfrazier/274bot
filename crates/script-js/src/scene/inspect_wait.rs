@@ -350,26 +350,8 @@ impl InspectSlot {
     }
 
     fn apply_published(&mut self, snap: &Snapshot<'_>) {
-        let latest = published_terminal(
-            snap.route_inspect_seq(),
-            snap.route_inspect_request_id(),
-            snap.route_inspect_ok(),
-            snap.route_inspect_reason(),
-            snap.route_inspect_bank_planned(),
-            snap.route_inspect_ticks(),
-            snap.route_inspect_terminal(),
-            snap.route_inspect_hops(),
-        );
-        let prev = published_terminal(
-            snap.route_inspect_prev_seq(),
-            snap.route_inspect_prev_request_id(),
-            snap.route_inspect_prev_ok(),
-            snap.route_inspect_prev_reason(),
-            snap.route_inspect_prev_bank_planned(),
-            snap.route_inspect_prev_ticks(),
-            snap.route_inspect_prev_terminal(),
-            snap.route_inspect_prev_hops(),
-        );
+        let latest = published_terminal(snap, false);
+        let prev = published_terminal(snap, true);
         let mut i = 0;
         while i < self.unsettled.len() {
             let seq_at_begin = self.unsettled[i].seq_at_begin;
@@ -632,16 +614,30 @@ fn published_seq_for(snap: &Snapshot<'_>, request_id: u64) -> u64 {
     0
 }
 
-fn published_terminal<'a>(
-    seq: u64,
-    request_id: u64,
-    ok: bool,
-    reason: Option<&str>,
-    bank_planned: bool,
-    ticks: f64,
-    terminal: Option<TileTable<'a>>,
-    hops: Option<flatbuffers::Vector<'a, flatbuffers::ForwardsUOffset<InspectHopTable<'a>>>>,
-) -> Option<Terminal> {
+fn published_terminal(snap: &Snapshot<'_>, previous: bool) -> Option<Terminal> {
+    let (seq, request_id, ok, reason, bank_planned, ticks, terminal, hops) = if previous {
+        (
+            snap.route_inspect_prev_seq(),
+            snap.route_inspect_prev_request_id(),
+            snap.route_inspect_prev_ok(),
+            snap.route_inspect_prev_reason(),
+            snap.route_inspect_prev_bank_planned(),
+            snap.route_inspect_prev_ticks(),
+            snap.route_inspect_prev_terminal(),
+            snap.route_inspect_prev_hops(),
+        )
+    } else {
+        (
+            snap.route_inspect_seq(),
+            snap.route_inspect_request_id(),
+            snap.route_inspect_ok(),
+            snap.route_inspect_reason(),
+            snap.route_inspect_bank_planned(),
+            snap.route_inspect_ticks(),
+            snap.route_inspect_terminal(),
+            snap.route_inspect_hops(),
+        )
+    };
     if seq == 0 || request_id == 0 {
         return None;
     }

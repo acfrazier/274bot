@@ -408,7 +408,6 @@ pub(crate) struct GameplayFactory;
 
 impl GameplayFactory {
     pub(crate) fn spawn_with_content(
-        &self,
         js: String,
         shape: LoadShape,
         siblings: Vec<(String, String)>,

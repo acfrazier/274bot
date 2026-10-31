@@ -658,8 +658,14 @@ enum TalkProgress {
 }
 
 /// Frozen `searchBananaCrate` (`crate.ts:36–60`).
-enum SearchCrate {
-    Walk(Resilient),
+struct SearchCrate {
+    phase: SearchCratePhase,
+    walk: Option<Resilient>,
+}
+
+#[derive(Clone, Copy)]
+enum SearchCratePhase {
+    Walk,
     Settle(u32),
     Read { mark: i32 },
 }
@@ -671,8 +677,14 @@ impl SearchCrate {
         logs: &mut VecDeque<String>,
     ) -> Result<Self, Option<CrateState>> {
         match leg(facts.crate_tile, 2, cx) {
-            Ok(walk) => Ok(Self::Walk(walk)),
-            Err(true) => Ok(Self::Settle(SETTLE_TICKS)),
+            Ok(walk) => Ok(Self {
+                phase: SearchCratePhase::Walk,
+                walk: Some(walk),
+            }),
+            Err(true) => Ok(Self {
+                phase: SearchCratePhase::Settle(SETTLE_TICKS),
+                walk: None,
+            }),
             Err(false) => {
                 logs.push_back("could not reach the plantation crate".into());
                 Err(None)
@@ -686,22 +698,32 @@ impl SearchCrate {
         cx: &mut Cx<'_>,
         logs: &mut VecDeque<String>,
     ) -> Option<Option<CrateState>> {
-        match self {
-            Self::Walk(walk) => match step_leg(walk, cx, logs)? {
-                true => {
-                    *self = Self::Settle(SETTLE_TICKS);
-                    None
+        match self.phase {
+            SearchCratePhase::Walk => {
+                let reached = step_leg(
+                    self.walk
+                        .as_mut()
+                        .expect("walking crate search retains its resilient walk"),
+                    cx,
+                    logs,
+                )?;
+                match reached {
+                    true => {
+                        self.walk = None;
+                        self.phase = SearchCratePhase::Settle(SETTLE_TICKS);
+                        None
+                    }
+                    false => {
+                        logs.push_back("could not reach the plantation crate".into());
+                        Some(None)
+                    }
                 }
-                false => {
-                    logs.push_back("could not reach the plantation crate".into());
-                    Some(None)
-                }
-            },
-            Self::Settle(left) if *left > 1 => {
-                *left -= 1;
+            }
+            SearchCratePhase::Settle(left) if left > 1 => {
+                self.phase = SearchCratePhase::Settle(left - 1);
                 None
             }
-            Self::Settle(_) => {
+            SearchCratePhase::Settle(_) => {
                 let Some(crate_loc) = nearest_loc(6, |row| {
                     row.id == facts.crate_loc && has_op(row, &facts.crate_search)
                 }) else {
@@ -711,11 +733,11 @@ impl SearchCrate {
                 let mark = chat_mark();
                 search(&crate_loc, &facts.crate_search, cx);
                 cx.clock().arm(CRATE_READ_MS);
-                *self = Self::Read { mark };
+                self.phase = SearchCratePhase::Read { mark };
                 None
             }
-            Self::Read { mark } => {
-                let said = said_since(*mark);
+            SearchCratePhase::Read { mark } => {
+                let said = said_since(mark);
                 let state = read_crate_messages(&said, facts.crate_capacity);
                 if state.is_none() && !cx.clock().bound_reached() {
                     return None;
@@ -733,7 +755,7 @@ impl SearchCrate {
                                 .map_or_else(String::new, |lines| {
                                     lines
                                         .iter()
-                                        .filter(|line| line.seq > *mark)
+                                        .filter(|line| line.seq > mark)
                                         .map(|line| &*line.text)
                                         .collect::<Vec<_>>()
                                         .join(" | ")
@@ -753,10 +775,12 @@ struct Pick {
     want: i32,
     attempt: u32,
     phase: PickPhase,
+    walk: Option<Resilient>,
 }
 
+#[derive(Clone, Copy)]
 enum PickPhase {
-    Walk(Resilient),
+    Walk,
     Settle(u32),
     Wait { before: i32 },
 }
@@ -771,9 +795,9 @@ impl Pick {
         if held(facts.banana) >= want {
             return Err(held(facts.banana));
         }
-        let phase = match leg(facts.grove_tile, 4, cx) {
-            Ok(walk) => PickPhase::Walk(walk),
-            Err(true) => PickPhase::Settle(SETTLE_TICKS),
+        let (phase, walk) = match leg(facts.grove_tile, 4, cx) {
+            Ok(walk) => (PickPhase::Walk, Some(walk)),
+            Err(true) => (PickPhase::Settle(SETTLE_TICKS), None),
             Err(false) => {
                 logs.push_back("could not reach the banana grove".into());
                 return Err(held(facts.banana));
@@ -783,6 +807,7 @@ impl Pick {
             want,
             attempt: 0,
             phase,
+            walk,
         };
         if matches!(pick.phase, PickPhase::Settle(_)) {
             if let Some(done) = pick.next(facts, logs) {
@@ -797,6 +822,7 @@ impl Pick {
         if self.attempt >= PICK_ATTEMPTS || held(facts.banana) >= self.want || inventory_full() {
             return Some(self.finish(facts, logs));
         }
+        self.walk = None;
         self.phase = PickPhase::Settle(SETTLE_TICKS);
         None
     }
@@ -813,16 +839,28 @@ impl Pick {
         cx: &mut Cx<'_>,
         logs: &mut VecDeque<String>,
     ) -> Option<i32> {
-        match &mut self.phase {
-            PickPhase::Walk(walk) => match step_leg(walk, cx, logs)? {
-                true => self.next(facts, logs),
-                false => {
-                    logs.push_back("could not reach the banana grove".into());
-                    Some(held(facts.banana))
+        match self.phase {
+            PickPhase::Walk => {
+                let reached = step_leg(
+                    self.walk
+                        .as_mut()
+                        .expect("banana picker retains its resilient walk"),
+                    cx,
+                    logs,
+                )?;
+                match reached {
+                    true => {
+                        self.walk = None;
+                        self.next(facts, logs)
+                    }
+                    false => {
+                        logs.push_back("could not reach the banana grove".into());
+                        Some(held(facts.banana))
+                    }
                 }
-            },
-            PickPhase::Settle(left) if *left > 1 => {
-                *left -= 1;
+            }
+            PickPhase::Settle(left) if left > 1 => {
+                self.phase = PickPhase::Settle(left - 1);
                 None
             }
             PickPhase::Settle(_) => {
@@ -841,7 +879,7 @@ impl Pick {
                 None
             }
             PickPhase::Wait { before } => {
-                if held(facts.banana) <= *before && !cx.clock().bound_reached() {
+                if held(facts.banana) <= before && !cx.clock().bound_reached() {
                     return None;
                 }
                 cx.clock().deadline = None;

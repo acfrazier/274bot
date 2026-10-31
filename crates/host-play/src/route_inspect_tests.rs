@@ -392,6 +392,7 @@ fn bank_false_fare_is_nopath() {
         bank: Vec::new(),
         from: at,
         to,
+        max_expansions: nav_planner::router::NODE_BUDGET,
         opts: FindOptions {
             allow_wilderness: true,
             ..FindOptions::default()
@@ -446,6 +447,7 @@ fn pre_state_stand_proof_rejects_post_only_stand() {
         bank: vec![(995, 10)],
         from,
         to: dest,
+        max_expansions: nav_planner::router::NODE_BUDGET,
         opts: FindOptions {
             allow_wilderness: true,
             allow_bank_fetch: true,
@@ -479,6 +481,7 @@ fn no_path_reason_names_the_active_zone_witness() {
         bank: Vec::new(),
         from,
         to: tile(4, 0, 0),
+        max_expansions: nav_planner::router::NODE_BUDGET,
         opts: FindOptions {
             allow_wilderness: true,
             ..FindOptions::default()
@@ -529,6 +532,7 @@ fn bank_access_no_path_reason_names_the_active_zone_witness() {
         bank: vec![(995, 1)],
         from,
         to: destination,
+        max_expansions: nav_planner::router::NODE_BUDGET,
         opts: FindOptions {
             allow_wilderness: true,
             allow_bank_fetch: true,
@@ -590,6 +594,7 @@ fn ok_hops_are_post_from_to_not_bank_steps() {
         bank: vec![(995, 10)],
         from,
         to: dest,
+        max_expansions: nav_planner::router::NODE_BUDGET,
         opts: FindOptions {
             allow_wilderness: true,
             allow_bank_fetch: true,
@@ -657,6 +662,7 @@ fn cooperative_bank_fetch_postroute_uses_unique_world_state() {
         bank: bank.rows.clone(),
         from,
         to: destination,
+        max_expansions: nav_planner::router::NODE_BUDGET,
         opts: options,
         avoid: Vec::new(),
         cache: Some(Arc::clone(&cache)),
@@ -745,6 +751,7 @@ fn cooperative_hint_overlay_adds_missing_carry_before_planning() {
         bank: bank.rows.clone(),
         from,
         to: destination,
+        max_expansions: nav_planner::router::NODE_BUDGET,
         opts: options,
         avoid: Vec::new(),
         cache: Some(Arc::clone(&cache)),
@@ -1359,6 +1366,7 @@ fn capture(
         bank: bank.rows,
         from,
         to,
+        max_expansions: nav_planner::router::NODE_BUDGET,
         opts,
         avoid: vec![],
         cache: None,
@@ -3136,6 +3144,7 @@ fn real_content_inspection_capture_bytes() {
                 bank: Vec::new(),
                 from,
                 to,
+                max_expansions: nav_planner::router::NODE_BUDGET,
                 opts: FindOptions {
                     allow_wilderness: true,
                     ..FindOptions::default()
