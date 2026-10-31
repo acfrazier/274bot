@@ -3930,7 +3930,7 @@
       "name": "WalkOptions",
       "kind": "interface",
       "section": "movement",
-      "source_module": "api/walking/Traversal.js",
+      "source_module": null,
       "runtime": false,
       "signatures": [],
       "members": [
@@ -4042,7 +4042,8 @@
       "bases": [],
       "family_id": "walking",
       "source_modules": [
-        "api/walking/Traversal.js"
+        "api/walking/Traversal.js",
+        "event/webwalk/WalkExecutor.js"
       ],
       "nav_consuming": true
     },
@@ -9234,7 +9235,7 @@
       "name": "WalkDestination",
       "kind": "interface",
       "section": "world catalogs (data tables and pure helpers)",
-      "source_module": null,
+      "source_module": "api/map/WalkDestinations.js",
       "runtime": false,
       "signatures": [],
       "members": [
@@ -9267,40 +9268,46 @@
       ],
       "bases": [],
       "family_id": "walking",
-      "source_modules": [],
+      "source_modules": [
+        "api/map/WalkDestinations.js"
+      ],
       "nav_consuming": true
     },
     {
       "name": "WALK_DESTINATIONS",
       "kind": "value",
       "section": "world catalogs (data tables and pure helpers)",
-      "source_module": null,
+      "source_module": "api/map/WalkDestinations.js",
       "runtime": true,
       "signatures": [],
       "members": [],
       "family_id": "walking",
       "declaration_type": "WalkDestination[]",
-      "source_modules": [],
+      "source_modules": [
+        "api/map/WalkDestinations.js"
+      ],
       "nav_consuming": true
     },
     {
       "name": "WALK_OPTIONS",
       "kind": "value",
       "section": "world catalogs (data tables and pure helpers)",
-      "source_module": null,
+      "source_module": "api/map/WalkDestinations.js",
       "runtime": true,
       "signatures": [],
       "members": [],
       "family_id": "walking",
       "declaration_type": "string[]",
-      "source_modules": [],
+      "source_modules": [
+        "api/map/WalkDestinations.js"
+      ],
       "nav_consuming": true
     },
     {
       "name": "resolveDestination",
       "kind": "function",
       "section": "world catalogs (data tables and pure helpers)",
-      "source_module": null,
+      "source_module": "api/map/WalkDestinations.js",
       "runtime": true,
       "signatures": [
         {
@@ -9311,7 +9318,9 @@
       ],
       "members": [],
       "family_id": "walking",
-      "source_modules": [],
+      "source_modules": [
+        "api/map/WalkDestinations.js"
+      ],
       "nav_consuming": true
     },
     {
@@ -11519,6 +11528,45 @@
       "mapping_kind": "re-export"
     },
     {
+      "public_name": "WALK_DESTINATIONS",
+      "source_name": "WALK_DESTINATIONS",
+      "module": "api/map/WalkDestinations.js",
+      "family_id": "walking",
+      "shim": "walk_destinations.js",
+      "nav_consuming": true,
+      "source_modules": [
+        "api/map/WalkDestinations.js"
+      ],
+      "is_alias": false,
+      "mapping_kind": "re-export"
+    },
+    {
+      "public_name": "WALK_OPTIONS",
+      "source_name": "WALK_OPTIONS",
+      "module": "api/map/WalkDestinations.js",
+      "family_id": "walking",
+      "shim": "walk_destinations.js",
+      "nav_consuming": true,
+      "source_modules": [
+        "api/map/WalkDestinations.js"
+      ],
+      "is_alias": false,
+      "mapping_kind": "re-export"
+    },
+    {
+      "public_name": "resolveDestination",
+      "source_name": "resolveDestination",
+      "module": "api/map/WalkDestinations.js",
+      "family_id": "walking",
+      "shim": "walk_destinations.js",
+      "nav_consuming": true,
+      "source_modules": [
+        "api/map/WalkDestinations.js"
+      ],
+      "is_alias": false,
+      "mapping_kind": "re-export"
+    },
+    {
       "public_name": "AXE_BAR_FOR",
       "source_name": "AXE_BAR_FOR",
       "module": null,
@@ -11738,28 +11786,6 @@
       "mapping_kind": "direct-value"
     },
     {
-      "public_name": "WALK_DESTINATIONS",
-      "source_name": "WALK_DESTINATIONS",
-      "module": null,
-      "shim": null,
-      "source_modules": [],
-      "family_id": "walking",
-      "nav_consuming": true,
-      "is_alias": false,
-      "mapping_kind": "direct-value"
-    },
-    {
-      "public_name": "WALK_OPTIONS",
-      "source_name": "WALK_OPTIONS",
-      "module": null,
-      "shim": null,
-      "source_modules": [],
-      "family_id": "walking",
-      "nav_consuming": true,
-      "is_alias": false,
-      "mapping_kind": "direct-value"
-    },
-    {
       "public_name": "acquireKeepNames",
       "source_name": "acquireKeepNames",
       "module": null,
@@ -11954,17 +11980,6 @@
       "source_modules": [],
       "family_id": "bot",
       "nav_consuming": false,
-      "is_alias": false,
-      "mapping_kind": "direct-function"
-    },
-    {
-      "public_name": "resolveDestination",
-      "source_name": "resolveDestination",
-      "module": null,
-      "shim": null,
-      "source_modules": [],
-      "family_id": "walking",
-      "nav_consuming": true,
       "is_alias": false,
       "mapping_kind": "direct-function"
     }
@@ -12251,6 +12266,16 @@
       "nav_consuming": false
     },
     {
+      "module": "api/map/regions.js",
+      "family_id": "walking",
+      "nav_consuming": true
+    },
+    {
+      "module": "api/map/WalkDestinations.js",
+      "family_id": "walking",
+      "nav_consuming": true
+    },
+    {
       "module": "api/market/catalog.js",
       "family_id": "market",
       "nav_consuming": false
@@ -12501,7 +12526,17 @@
       "nav_consuming": true
     },
     {
+      "module": "event/webwalk/WalkExecutor.js",
+      "family_id": "walking",
+      "nav_consuming": true
+    },
+    {
       "module": "event/webwalk/walkOpening.js",
+      "family_id": "walking",
+      "nav_consuming": true
+    },
+    {
+      "module": "event/webwalk/wilderness.js",
       "family_id": "walking",
       "nav_consuming": true
     },
@@ -13464,6 +13499,17 @@
       "declaration": "import Tile from '../geometry/Tile.js'; import type { FishingGearPiece, FishingMethod } from '../data/fishingMethods.js'; export interface ToolVendor { keeper: string; stand: Tile; bankStand: Tile; hopFrom?: Tile; hopLoc?: string; hopAction?: string; } export type ToolAcquirePlan = { kind: 'repair'; brokenName: string; label: 'pickaxe' | 'axe'; vendor: ToolVendor; prefer: string[]; } | { kind: 'buy'; name: string; cost: number; qty: number; vendor: ToolVendor; equip: boolean; reason: string; } | { kind: 'smith'; name: string; bar: string; smithLevel: number; vendorBank: Tile; anvilStand: Tile; equip: boolean; reason: string; }; export interface AcquireWorld { skillLevel: (skill: string) => number; heldCount: (name: string) => number; invCount: (name: string) => number; bankCount: (name: string) => number; worn: (name: string) => boolean; } export interface FishingVendorNear { x: number; z: number; } export interface PlanFishingGearOpts { near?: FishingVendorNear | null; baitQty?: number; } export type FishingGearBuyPlan = Extract<ToolAcquirePlan, { kind: 'buy'; }>; export const GERRANT_ONLY_FISHING: ReadonlySet<string>; export const FISHING_SHOP_COSTS: Readonly<Record<string, number>>; export const GERRANT_VENDOR: ToolVendor; export const HARRY_VENDOR: ToolVendor; export function fishingVendorFor(name: string, near?: FishingVendorNear | null): ToolVendor; export function fishingShopCost(name: string): number | null; export function isFishingBaitPiece(g: Pick<FishingGearPiece, 'name' | 'restock'>): boolean; export function withBaitTarget(method: Pick<FishingMethod, 'gear'>, baitQty: number): { gear: FishingGearPiece[]; }; export function planFishingGearBuys(method: Pick<FishingMethod, 'gear'>, w: AcquireWorld, opts?: PlanFishingGearOpts): FishingGearBuyPlan[]; export function planFishingGearAcquire(method: Pick<FishingMethod, 'gear'>, w: AcquireWorld, opts?: PlanFishingGearOpts): ToolAcquirePlan | null; export function buyPlansCost(plans: readonly Pick<FishingGearBuyPlan, 'cost'>[]): number; export function fishingGearShopCart(method: Pick<FishingMethod, 'gear'>, w: AcquireWorld, opts?: PlanFishingGearOpts): FishingGearBuyPlan[]; export function shopableMissingFishingGear(gear: readonly FishingGearPiece[], count: (name: string) => number): string[];",
       "family_id": "fishing",
       "nav_consuming": false
+    },
+    {
+      "id": "reachability-native-probeable",
+      "module": "event/webwalk/geometry/Reachability.js",
+      "selector": "Reachability.probeable",
+      "add": true,
+      "reason": "The compatibility wrapper reads selected collision presence without path search, so blocked same-plane tiles remain probeable while absent planes and scene cells do not.",
+      "runtime": "crates/script-js/src/shim/reachability.js:29",
+      "declaration": "/** Whether selected collision evidence is present for this same-plane scene tile. */\nprobeable(dest: WorldTile): boolean;",
+      "family_id": "walking",
+      "nav_consuming": true
     },
     {
       "id": "scene-row-common-posted-shape",
@@ -24699,24 +24745,6 @@
       "reason": "The current compatibility name map unconditionally refuses this declared member."
     },
     {
-      "family_id": "walking",
-      "member": "WALK_DESTINATIONS",
-      "selector": "WALK_DESTINATIONS",
-      "module": null,
-      "state": "not-impl",
-      "source": "declared_surface.js",
-      "reason": "The current compatibility name map unconditionally refuses this declared member."
-    },
-    {
-      "family_id": "walking",
-      "member": "WALK_OPTIONS",
-      "selector": "WALK_OPTIONS",
-      "module": null,
-      "state": "not-impl",
-      "source": "declared_surface.js",
-      "reason": "The current compatibility name map unconditionally refuses this declared member."
-    },
-    {
       "family_id": "acquisition",
       "member": "acquireKeepNames",
       "selector": "acquireKeepNames",
@@ -24873,15 +24901,6 @@
       "family_id": "bot",
       "member": "registerScript",
       "selector": "registerScript",
-      "module": null,
-      "state": "not-impl",
-      "source": "declared_surface.js",
-      "reason": "The current compatibility name map unconditionally refuses this declared member."
-    },
-    {
-      "family_id": "walking",
-      "member": "resolveDestination",
-      "selector": "resolveDestination",
       "module": null,
       "state": "not-impl",
       "source": "declared_surface.js",
@@ -25367,7 +25386,7 @@
       "type_aliases": 0,
       "name_aliases": 0,
       "callbacks": 15,
-      "not_impl_debt": 5
+      "not_impl_debt": 2
     },
     {
       "family_id": "woodcutting",

@@ -620,8 +620,17 @@ table Snapshot {
   // Open bank side pack carries this session's full update
   // (`bankSideSnapshotReady`).
   bank_side_ready: bool;
-}
+  // The published walk reason is explicitly NoPath only for a route search
+  // that proved no route. Retained route progress is tagged by its request id.
+  walk_outcome_no_path: bool = false;
+  walk_remaining_request_id: ulong = 0;
+  walk_remaining: ulong = 0;
+  // Exact terminal selected by the latest successful route inspection.
+  route_inspect_terminal: Tile;
+  // Exact terminal selected by the previous successful route inspection.
+  route_inspect_prev_terminal: Tile;
 
+}
 table Collision {
   available: bool;
   base_x: int;
@@ -1003,6 +1012,8 @@ table Interact {
   progress_journal_only: bool = false;
   // NPC type for a `use-widget-on` target.
   target_id: int = null;
+  // Optional inspect-route search expansion limit; zero remains invalid.
+  max_expansions: ulong = null;
 }
 
 // The tick's shim interact queue, forwarded to the host.
