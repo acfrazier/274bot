@@ -4413,7 +4413,13 @@ impl GatherSlot {
                 return Err("unwieldable rune axe wear action was started".into());
             }
             self.witness.last_event = Some(event.to_owned());
-            if self.case == LiveCase::LocationAuto && event == "widening Auto within 128 tiles" {
+            if self.case == LiveCase::LocationAuto
+                && auto_search_beyond_start_ring(
+                    self.target,
+                    text_field(status, "area").unwrap_or_default(),
+                    event,
+                )
+            {
                 self.witness.auto_widen_seen = true;
             }
             if self.case == LiveCase::OakNearEdge
@@ -5442,6 +5448,10 @@ fn observe_death_respawn_region(
                 && death.1.div_euclid(64) == respawn.1.div_euclid(64)
                 && death.2 == respawn.2
         });
+}
+
+fn auto_search_beyond_start_ring(_start: WorldTile, _area: &str, event: &str) -> bool {
+    event == "widening Auto within 128 tiles"
 }
 
 fn auto_approach_options(width: i32, height: i32) -> api::query::SceneReachOptions {
@@ -10378,6 +10388,74 @@ mod fish_harpoon_auto_fixture_tests {
         };
         assert!(witness.fish_bank_complete(false));
         assert!(!witness.fish_bank_complete(true));
+    }
+}
+
+#[cfg(test)]
+mod auto_search_oracle_tests {
+    use super::*;
+
+    #[test]
+    fn initial_auto_search_beyond_empty_ring_qualifies_without_retry_event() {
+        for area in [
+            "auto (3292,3347,0) r32; searched: 64; tried: 0; limit: 128",
+            "auto (3294,3331,0) r32; searched: 33; tried: 0; limit: 128",
+            "auto (3295,3426,0) r32; searched: 128; tried: 1; limit: 128",
+        ] {
+            assert!(
+                auto_search_beyond_start_ring(
+                    AUTO_START,
+                    area,
+                    "searching Auto within 128 tiles",
+                ),
+                "{area}"
+            );
+        }
+    }
+
+    #[test]
+    fn auto_search_rejects_unresolved_or_in_ring_anchor() {
+        for area in [
+            "auto unresolved; searched: 64; tried: 0; limit: 128",
+            "start (3292,3347,0) r32; searched: 64; tried: 0; limit: 128",
+            "site (3292,3347,0) r32; searched: 64; tried: 0; limit: 128",
+            "auto (3295,3298,0) r32; searched: 64; tried: 0; limit: 128",
+            "auto (3295,3330,0) r32; searched: 64; tried: 0; limit: 128",
+            "auto (3292,3347,1) r32; searched: 64; tried: 0; limit: 128",
+        ] {
+            assert!(
+                !auto_search_beyond_start_ring(
+                    AUTO_START,
+                    area,
+                    "widening Auto within 128 tiles",
+                ),
+                "{area}"
+            );
+        }
+    }
+
+    #[test]
+    fn auto_search_rejects_unproven_or_out_of_bounds_search() {
+        for area in [
+            "auto (3292,3347,0) r32",
+            "auto (3292,3347,0) r32; searched: 32; tried: 0; limit: 128",
+            "auto (3292,3347,0) r32; searched: 129; tried: 0; limit: 128",
+            "auto (3292,3347,0) r32; searched: unknown; tried: 0; limit: 128",
+            "auto (3292,3347,0) r32; searched: 64; tried: 0; limit: 256",
+            "auto (3292,3347,0) r31; searched: 64; tried: 0; limit: 128",
+            "auto (3292,3347,0) r32; searched: 64; tried: unknown; limit: 128",
+            "auto (3295,3427,0) r32; searched: 128; tried: 0; limit: 128",
+            "auto (3295,3363,0) r32; searched: 64; tried: 0; limit: 128",
+        ] {
+            assert!(
+                !auto_search_beyond_start_ring(
+                    AUTO_START,
+                    area,
+                    "widening Auto within 128 tiles",
+                ),
+                "{area}"
+            );
+        }
     }
 }
 
