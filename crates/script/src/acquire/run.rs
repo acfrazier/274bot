@@ -6,7 +6,8 @@ use crate::bank::{self, BankStandAccess, PickKind};
 use crate::gatherer::oneop::{OneOp, OneOpArgs};
 use crate::native::walk::Walk;
 use crate::native::{
-    ActionContext, ActionHandle, NativeActions, NativeTick, ReturnStallRecovery, WalkRequest,
+    ActionContext, ActionHandle, NativeActions, NativeTick, ReturnStallRecovery, WalkReceipt,
+    WalkRequest,
 };
 use crate::native_bank::{BankMachine, BankRequest};
 use api::named_banks::NamedBankFacts;

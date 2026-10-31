@@ -2,6 +2,7 @@
 
 use super::buy::{BuyMachine, BuyReceipt, BuyRequest, PurchaseRefusal};
 use super::vendor::{self, VendorDecision};
+use super::*;
 use crate::native::walk::Walk;
 use crate::native::{ActionHandle, NativeActions, NativeTick, ReturnStallRecovery, WalkRequest};
 use crate::native_bank::{SelectService, ServiceFacts, ServicePickRequest};
