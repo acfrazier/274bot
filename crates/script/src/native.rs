@@ -1007,7 +1007,7 @@ impl std::fmt::Display for WalkRefusal {
                 f,
                 "poison state remained unsettled after {waited} observed ticks ({cause:?})",
             ),
-            Self::Unknown(why) => write!(f, "route risk is unknown: {why:?}"),
+            Self::Unknown(why) => write!(f, "route risk is unknown: {why}"),
             Self::EscapeInProgress => f.write_str("escape in progress"),
         }
     }
@@ -1507,6 +1507,10 @@ mod walk_permission_tests {
                 assert_ne!(refusals[left], refusals[right]);
             }
         }
+        assert_eq!(
+            WalkRefusal::Unknown(crate::combat::risk::UnknownWhy::MissingFacts).to_string(),
+            "route risk is unknown: required combat facts are unavailable"
+        );
     }
     #[test]
     fn poison_unsettled_display_names_wait_and_reset_cause() {

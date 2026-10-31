@@ -789,8 +789,9 @@ recorded, including reverse-proof shortcuts.
 Named grants permit the router to enter zones; they do not omit attacks or
 bypass the death-bound check. `Estimate.grants` carries those names into the
 assessment solely to distinguish a deliberately named no-exit endpoint.
-All-zone exemptions and the router's endpoint completion do not count as
-explicitly naming every zone in that crossing.
+Every zone explicitly named in a crossing, including zones covered by an
+all-zone exemption, counts as named for the NoWayOut exception. Router endpoint
+completion does not count as a named exemption.
 
 Permission layers above the router stay separate: the global Danger routing level in Nav config, the WalkTo-only **Route through danger zones** checkbox (one admission for the current picker opening, never persisted), per-script Script prefs (**Allow teleports**, **Allow wilderness**, **Allow danger zones**, each granting that script's own walks when the global switch is off), and per-walk Path overrides (`cross` names, `guard`, `allow_*`).
 

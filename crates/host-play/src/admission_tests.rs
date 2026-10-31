@@ -1098,11 +1098,15 @@ fn u7_proceed_avoid_inherit_and_compat_keep_the_seam_contract() {
         )
     });
     assert_eq!(avoid_kernels, 2);
-    assert!(
-        avoided.refusal.is_none(),
-        "the request-scoped named grant admits the crossing"
+    assert_eq!(
+        avoided.refusal,
+        Some(WalkRefusal::Unsurvivable),
+        "a named grant does not bypass the P1-C death bound"
     );
-    assert!(avoided.assessment.is_some());
+    assert_eq!(
+        avoided.assessment.as_ref().unwrap().verdict,
+        script::combat::risk::Verdict::Unsurvivable
+    );
 }
 
 #[cfg(feature = "test-support")]
@@ -1769,7 +1773,7 @@ fn s2b_admission_route_and_publication_microbenchmarks() {
         assert!(assessment.plan.complete);
         assert_eq!(assessment.plan.intervals.len(), 7);
         assert_eq!(assessment.plan.crossings.len(), 7);
-        assert!(!permitted);
+        assert!(permitted, "P1-C admits this bounded crossing route");
         if iteration >= WARMUPS {
             samples.push(elapsed);
         }
