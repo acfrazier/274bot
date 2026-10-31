@@ -808,6 +808,12 @@ handler result can still have a refused script outcome. The printed accepted
 event counts use `charged_user_event`, not the outcome string. An
 `ENGINE_PACKET_LOG_FAILED` sink error invalidates the run.
 
+Signal assertions retain the packet-position intervals from the tick-manipulation
+facts, section 1.5. A chat line first seen at a wake of `t` belongs to `t + 1`;
+at an edge it is bounded to `[t, t + 1]`. A fresh inbound `IF_CLOSE` count is
+exact at a wake and bounded to `[t - 1, t]` at an edge. Retained counts prove no
+new close. A chat-only close does not require a main-modal transition stamp.
+
 All fixtures seed only the tested account before Start. Shared spots, rocks and
 trees remain real content. Each case stops the script and logs out its account,
 including on assertion failure.

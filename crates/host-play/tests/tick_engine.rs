@@ -1961,10 +1961,23 @@ fn no_fresh_animation_on_edge(trace: &TickEngineTrace, tick: u64) -> bool {
 }
 
 fn has_chat_in_tick(trace: &TickEngineTrace, tick: u64, predicate: impl Fn(&str) -> bool) -> bool {
-    frames_in_tick(trace, tick)
-        .into_iter()
-        .flat_map(|frame| frame.chat.iter())
-        .any(|line| predicate(&line.text))
+    has_chat_in_range(trace, tick, tick, predicate)
+}
+
+fn has_chat_in_range(
+    trace: &TickEngineTrace,
+    from_tick: u64,
+    through_tick: u64,
+    predicate: impl Fn(&str) -> bool,
+) -> bool {
+    trace.frames.iter().flat_map(|frame| &frame.chat).any(|line| {
+        // Chat precedes PLAYER_INFO: an edge bounds it to [t, t + 1],
+        // while a wake attributes it exactly to t + 1 (facts r5 §1.5).
+        let observed = u64::from(line.game_tick);
+        let first = observed + u64::from(line.poll == PollKind::Wake);
+        let last = observed + 1;
+        first <= through_tick && last >= from_tick && predicate(&line.text)
+    })
 }
 
 fn has_act_line(trace: &TickEngineTrace, tick: u64) -> bool {
@@ -1975,34 +1988,18 @@ fn has_act_line(trace: &TickEngineTrace, tick: u64) -> bool {
 }
 
 fn has_fletching_members_line(trace: &TickEngineTrace, from_tick: u64, through_tick: u64) -> bool {
-    trace
-        .frames
-        .iter()
-        .filter(|frame| {
-            let tick = u64::from(frame.game_tick);
-            tick >= from_tick && tick <= through_tick
-        })
-        .flat_map(|frame| frame.chat.iter())
-        .any(|line| {
-            line.text.trim().eq_ignore_ascii_case(
-                "You need to be on a members' world to gain experience in Fletching.",
-            )
-        })
+    has_chat_in_range(trace, from_tick, through_tick, |line| {
+        line.trim().eq_ignore_ascii_case(
+            "You need to be on a members' world to gain experience in Fletching.",
+        )
+    })
 }
 
 fn has_copper_success(trace: &TickEngineTrace, from_tick: u64, through_tick: u64) -> bool {
-    trace
-        .frames
-        .iter()
-        .filter(|frame| {
-            let tick = u64::from(frame.game_tick);
-            tick >= from_tick && tick <= through_tick
-        })
-        .flat_map(|frame| frame.chat.iter())
-        .any(|line| {
-            let text = line.text.to_ascii_lowercase();
-            text.contains("copper") && text.contains("mine")
-        })
+    has_chat_in_range(trace, from_tick, through_tick, |line| {
+        let text = line.to_ascii_lowercase();
+        text.contains("copper") && text.contains("mine")
+    })
 }
 
 fn edge_has_openchat(trace: &TickEngineTrace, tick: u64) -> bool {
@@ -2012,9 +2009,15 @@ fn edge_has_openchat(trace: &TickEngineTrace, tick: u64) -> bool {
 }
 
 fn close_packet_seen(trace: &TickEngineTrace, tick: u64, baseline: &FrameObservation) -> bool {
-    frames_in_tick(trace, tick).into_iter().any(|frame| {
-        frame.server_if_close_packets > baseline.server_if_close_packets
-            && frame.main_modal_closed_observation > baseline.main_modal_closed_observation
+    let mut previous = baseline.server_if_close_packets;
+    trace.frames.iter().any(|frame| {
+        let fresh = frame.server_if_close_packets > previous;
+        previous = frame.server_if_close_packets;
+        let observed = u64::from(frame.game_tick);
+        // IF_CLOSE follows PLAYER_INFO: a wake is exact, an edge is [t - 1, t].
+        fresh
+            && frame.server_if_close_packets > baseline.server_if_close_packets
+            && (tick == observed || frame.tick_edge && observed.checked_sub(1) == Some(tick))
     })
 }
 
