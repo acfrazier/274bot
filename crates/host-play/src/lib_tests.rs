@@ -8223,7 +8223,7 @@ fn a_js_start_hydrates_cold_script_runtime_settings_before_first_resolve() {
     });
     vault::write_private_file(
         &path,
-        serde_json::to_vec_pretty(&document).unwrap().as_bytes(),
+        serde_json::to_vec_pretty(&document).unwrap().as_slice(),
     )
     .unwrap();
     let service = local_state::LocalStateService::open(
