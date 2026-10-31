@@ -272,5 +272,5 @@ export default class T extends LoopingBot {
     assert_eq!(value["tile"], "3200,3201,2");
     assert_eq!(value["saved"], "defence");
     assert!(value["absent"].is_null());
-    assert!(value["resolved"].is_null());
+    assert_eq!(value["resolved"], "Lobster");
 }

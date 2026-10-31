@@ -8198,15 +8198,15 @@ export default class T extends TaskBot {
     iso.join();
 }
 
-// Task 12b — SettingsStore is the host bag, not schema defaults pretending to be set.
+// Task 12b — SettingsStore.saved exposes raw values, not the host display bag.
 #[test]
-fn isolate_settings_store_does_not_return_schema_defaults() {
+fn isolate_settings_store_saved_omits_unset_values() {
     let src = r#"
 import { SettingsStore } from '../../runtime/Settings.js';
 export default class T extends LoopingBot {
     loop() {
-        const schema = { food: { type: 'string', default: 'Lobster' } };
-        globalThis.__probe = SettingsStore.resolve('T', schema).food;
+        globalThis.__rs2b0t_host.settingsBag = { food: 'Lobster' };
+        globalThis.__probe = SettingsStore.saved('T', 'food');
     }
 }
 "#;
@@ -8215,7 +8215,7 @@ export default class T extends LoopingBot {
     let value = iso.probe("__probe").unwrap();
     assert_ne!(
         value, "Lobster",
-        "SettingsStore must not return schema defaults as if they were set: {value:?}"
+        "SettingsStore.saved must not return the host display bag: {value:?}"
     );
     iso.join();
 }

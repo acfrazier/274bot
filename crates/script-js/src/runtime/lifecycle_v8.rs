@@ -740,7 +740,7 @@ fn resolve_settings<'s>(
         let value = if let Some(raw) = raw {
             parse_setting_value(scope, definition, &raw)?
         } else {
-            v8::null(scope).into()
+            cb::get(scope, definition, "default")?
         };
         cb::assign(scope, result.into(), key_value, value)?;
     }

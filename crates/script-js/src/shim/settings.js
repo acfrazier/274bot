@@ -67,7 +67,7 @@ class SettingsStoreImpl {
         const dispatch = globalThis.__rs2b0t_settings_store;
         if (typeof dispatch === 'function') {
             const raw = dispatch('saved', name, key);
-            if (raw !== null) return raw;
+            return raw === null ? undefined : raw;
         }
         const bag = (globalThis.__rs2b0t_host || {}).settingsBag || {};
         return Object.prototype.hasOwnProperty.call(bag, key) ? settingToString(bag[key]) : undefined;
