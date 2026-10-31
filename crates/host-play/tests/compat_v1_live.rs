@@ -1614,10 +1614,7 @@ fn run_runtime_account_leveler_frame_probe_cell(receipt: &mut Receipt) -> Result
         "The listener body copies pinned AccountLeveler.ts:96-103. This normal-Load probe is not AccountLeveler Catalog-card coverage. The catalog card is wave-4-blocked by its private journal.js import at line 17.".into(),
     );
     let mut session = session("compat-v1-runtime-accountleveler-frame", receipt)?;
-    start_script(
-        &session,
-        RUNTIME_ACCOUNT_LEVELER_FRAME_SOURCE.to_owned(),
-    )?;
+    start_script(&session, RUNTIME_ACCOUNT_LEVELER_FRAME_SOURCE.to_owned())?;
     wait_for_logs(&mut session, ACTION_DEADLINE, |logs| {
         logs.iter()
             .any(|line| line.starts_with("Still RUNTIME:ACCOUNT_LEVELER_FRAME;"))
@@ -1642,22 +1639,15 @@ fn run_runtime_account_leveler_frame_probe_cell(receipt: &mut Receipt) -> Result
             "AccountLeveler frame sample did not include the ready bank, state and tile: {frame_log}"
         ));
     }
-    if !session
-        .receipt
-        .logs
-        .iter()
-        .any(|line| line.starts_with("RUNTIME:ACCOUNT_LEVELER_BANK:items=") && line.ends_with(":ready=true"))
-    {
+    if !session.receipt.logs.iter().any(|line| {
+        line.starts_with("RUNTIME:ACCOUNT_LEVELER_BANK:items=") && line.ends_with(":ready=true")
+    }) {
         return Err(format!(
             "AccountLeveler frame probe did not record a ready bank: {:?}",
             session.receipt.logs
         ));
     }
-    stop_script(
-        &mut session,
-        "RUNTIME:ACCOUNT_LEVELER_STOP",
-        false,
-    )?;
+    stop_script(&mut session, "RUNTIME:ACCOUNT_LEVELER_STOP", false)?;
     Ok(())
 }
 

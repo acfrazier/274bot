@@ -46,21 +46,42 @@ mod tests {
 
     #[test]
     fn explicit_world_overrides_the_host() {
-        assert_eq!(resolve_world_number("w2.rs2b2t.com", Some("1"), false), Ok(1));
-        assert_eq!(resolve_world_number("w1.rs2b2t.com", Some("3"), false), Ok(3));
+        assert_eq!(
+            resolve_world_number("w2.rs2b2t.com", Some("1"), false),
+            Ok(1)
+        );
+        assert_eq!(
+            resolve_world_number("w1.rs2b2t.com", Some("3"), false),
+            Ok(3)
+        );
     }
 
     #[test]
     fn invalid_and_repeated_world_values_are_rejected() {
-        assert_eq!(resolve_world_number("w2.rs2b2t.com", Some("4"), false), Err(INVALID_WORLD));
-        assert_eq!(resolve_world_number("w2.rs2b2t.com", Some("01"), false), Err(INVALID_WORLD));
-        assert_eq!(resolve_world_number("w2.rs2b2t.com", None, true), Err(INVALID_WORLD));
+        assert_eq!(
+            resolve_world_number("w2.rs2b2t.com", Some("4"), false),
+            Err(INVALID_WORLD)
+        );
+        assert_eq!(
+            resolve_world_number("w2.rs2b2t.com", Some("01"), false),
+            Err(INVALID_WORLD)
+        );
+        assert_eq!(
+            resolve_world_number("w2.rs2b2t.com", None, true),
+            Err(INVALID_WORLD)
+        );
     }
 
     #[test]
     fn recognized_hosts_ignore_case_and_valid_ports() {
-        assert_eq!(resolve_world_number("w1.rs2b2t.com:443", None, false), Ok(1));
-        assert_eq!(resolve_world_number("W2.RS2B2T.COM:8080", None, false), Ok(2));
+        assert_eq!(
+            resolve_world_number("w1.rs2b2t.com:443", None, false),
+            Ok(1)
+        );
+        assert_eq!(
+            resolve_world_number("W2.RS2B2T.COM:8080", None, false),
+            Ok(2)
+        );
         assert_eq!(resolve_world_number("w3.rs2b2t.com", None, false), Ok(3));
     }
 
