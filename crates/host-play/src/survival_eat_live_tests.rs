@@ -726,8 +726,8 @@ fn capture_sample(
     last_tick: &mut Option<u32>,
     frames: &mut Vec<ObservedFrame>,
 ) -> Vec<Value> {
-    // Samples with one condition tick share a PLAYER_INFO generation. Keep the latest
-    // sample so a following stat packet can settle before the oracle checks HP.
+    // Samples within one condition tick share a PLAYER_INFO generation. Keep
+    // only that generation's latest sample for poison-mark adjudication.
     let actions = captured_actions(capture);
     if *last_tick == Some(frame.tick) {
         if let Some(last_frame) = frames.last_mut() {
@@ -861,6 +861,28 @@ fn poison_marks(frames: &[ObservedFrame]) -> Vec<&ObservedFrame> {
     marks
 }
 
+// Poison damage can arrive as a hitmark before its HP stat packet. Preserve the
+// mark's original tick and use its first sample that has left the pre-hit HP.
+fn settled_poison_mark_hp(
+    frames: &[ObservedFrame],
+    mark: &ObservedFrame,
+    before_hp: i32,
+) -> Option<i32> {
+    let PoisonState::Poisoned { last_mark, .. } = mark.poison else {
+        return None;
+    };
+    frames.iter().find_map(|frame| {
+        let same_mark = matches!(
+            frame.poison,
+            PoisonState::Poisoned {
+                last_mark: observed,
+                ..
+            } if observed == last_mark
+        );
+        (same_mark && frame.tick >= mark.tick && frame.hp != before_hp).then_some(frame.hp)
+    })
+}
+
 fn onset(frames: &[ObservedFrame]) -> Option<(u32, u32)> {
     frames.iter().find_map(|frame| match frame.poison {
         PoisonState::Onset {
@@ -966,11 +988,13 @@ fn evaluate_walk(
         EatCase::PoisonLine => 9,
         EatCase::FullHp => 4,
     };
-    if first.hp != expected_mark_hp {
-        return OracleDecision::Fail(format!(
-            "fixture: first poison mark left HP {}, expected {expected_mark_hp}",
-            first.hp
-        ));
+    let first_settled_hp = settled_poison_mark_hp(frames, first, case.expected_hp());
+    if let Some(hp) = first_settled_hp {
+        if hp != expected_mark_hp {
+            return OracleDecision::Fail(format!(
+                "fixture: first poison mark left HP {hp}, expected {expected_mark_hp}"
+            ));
+        }
     }
 
     match case {
@@ -994,13 +1018,22 @@ fn evaluate_walk(
                 }
                 return OracleDecision::Pending;
             };
+            let before_second_hp = frames
+                .iter()
+                .rev()
+                .find(|frame| frame.tick < second.tick)
+                .map_or(case.expected_hp(), |frame| frame.hp);
+            let second_settled_hp =
+                settled_poison_mark_hp(frames, second, before_second_hp);
             if second.tick != first.tick.saturating_add(30)
                 || !matches!(second.poison, PoisonState::Poisoned { per_tick: 6, .. })
-                || second.hp != 3
+                || second_settled_hp.is_some_and(|hp| hp != 3)
             {
                 return OracleDecision::Fail(format!(
                     "fixture: second poison mark mismatch at tick {}: hp={}, poison={:?}",
-                    second.tick, second.hp, second.poison
+                    second.tick,
+                    second_settled_hp.unwrap_or(second.hp),
+                    second.poison
                 ));
             }
             if eats
@@ -1043,7 +1076,11 @@ fn evaluate_walk(
                 ));
             }
             if healed_after(frames, eat, 15) {
-                OracleDecision::Pass
+                if first_settled_hp.is_some() && second_settled_hp.is_some() {
+                    OracleDecision::Pass
+                } else {
+                    OracleDecision::Pending
+                }
             } else if frames.last().is_some_and(|frame| {
                 action_at_condition_offset(eat.tick, frame.tick, i64::MIN..=-4)
             }) {
@@ -1127,13 +1164,22 @@ fn evaluate_walk(
                 }
                 return OracleDecision::Pending;
             };
+            let before_second_hp = frames
+                .iter()
+                .rev()
+                .find(|frame| frame.tick < second.tick)
+                .map_or(case.expected_hp(), |frame| frame.hp);
+            let second_settled_hp =
+                settled_poison_mark_hp(frames, second, before_second_hp);
             if second.tick != first.tick.saturating_add(30)
                 || !matches!(second.poison, PoisonState::Poisoned { per_tick: 6, .. })
-                || second.hp != 4
+                || second_settled_hp.is_some_and(|hp| hp != 4)
             {
                 return OracleDecision::Fail(format!(
                     "fixture: second poison mark mismatch at tick {}: hp={}, poison={:?}",
-                    second.tick, second.hp, second.poison
+                    second.tick,
+                    second_settled_hp.unwrap_or(second.hp),
+                    second.poison
                 ));
             }
             if eats.iter().any(|eat| {
@@ -1176,7 +1222,11 @@ fn evaluate_walk(
                 ));
             }
             if healed_after(frames, eat, 10) {
-                OracleDecision::Pass
+                if first_settled_hp.is_some() && second_settled_hp.is_some() {
+                    OracleDecision::Pass
+                } else {
+                    OracleDecision::Pending
+                }
             } else if frames.last().is_some_and(|frame| {
                 action_at_condition_offset(eat.tick, frame.tick, i64::MIN..=-4)
             }) {
@@ -1363,12 +1413,20 @@ fn evaluate_combat(
     if first.tick < since.saturating_add(30)
         || first.tick > since.saturating_add(32)
         || !matches!(first.poison, PoisonState::Poisoned { per_tick: 6, .. })
-        || first.hp != 4
     {
         return OracleDecision::Fail(format!(
             "fixture: first combat poison mark mismatch at {}: hp={}, poison={:?}",
             first.tick, first.hp, first.poison
         ));
+    }
+    let first_settled_hp = settled_poison_mark_hp(frames, first, 10);
+    if let Some(hp) = first_settled_hp {
+        if hp != 4 {
+            return OracleDecision::Fail(format!(
+                "fixture: first combat poison mark mismatch at {}: hp={hp}, poison={:?}",
+                first.tick, first.poison
+            ));
+        }
     }
     if eats
         .iter()
@@ -1424,7 +1482,11 @@ fn evaluate_combat(
         );
     }
     if healed_after(frames, eat, 10) {
-        OracleDecision::Pass
+        if first_settled_hp.is_some() {
+            OracleDecision::Pass
+        } else {
+            OracleDecision::Pending
+        }
     } else if frames
         .last()
         .is_some_and(|frame| action_at_condition_offset(eat.tick, frame.tick, i64::MIN..=-4))
@@ -2576,6 +2638,26 @@ mod oracle_tests {
         frames
     }
 
+    fn poison_line_delayed_stat_receipt(
+        first_settled_hp: i32,
+        second_settled_hp: i32,
+    ) -> Vec<ObservedFrame> {
+        let capture = Arc::new(StdMutex::new(CombatCapture::default()));
+        let mut last_tick = None;
+        let mut frames = Vec::new();
+        for frame in [
+            onset_frame(100, 15, 15),
+            mark_frame(130, 15, 15, 5, 130),
+            mark_frame(131, first_settled_hp, 15, 5, 130),
+            mark_frame(160, first_settled_hp, 15, 5, 160),
+            mark_frame(161, second_settled_hp, 15, 5, 160),
+            mark_frame(162, 15, 15, 4, 160),
+        ] {
+            let _ = capture_sample(&capture, frame, &mut last_tick, &mut frames);
+        }
+        frames
+    }
+
     fn full_hp_receipt() -> (Vec<ObservedFrame>, Vec<EatAction>) {
         (
             vec![
@@ -2617,6 +2699,23 @@ mod oracle_tests {
         assert_eq!(frames.len(), 4, "one frame is kept per PLAYER_INFO tick");
         assert_eq!(frames[1].tick, 130);
         assert_eq!(frames[1].hp, 9, "the settled same-tick HP must replace stale HP");
+        assert_eq!(
+            evaluate_walk(EatCase::PoisonLine, 69, &frames, &eats),
+            OracleDecision::Pass
+        );
+    }
+
+    #[test]
+    fn poison_line_oracle_waits_for_hp_settlement_after_each_mark() {
+        let frames = poison_line_delayed_stat_receipt(9, 3);
+        let (_, eats) = poison_line_receipt();
+        assert_eq!(frames[1].tick, 130);
+        assert_eq!(frames[1].hp, 15, "the mark can precede its HP stat");
+        assert_eq!(frames[2].tick, 131);
+        assert_eq!(frames[2].hp, 9);
+        assert_eq!(frames[3].tick, 160);
+        assert_eq!(frames[3].hp, 9, "the second mark can also be stale");
+        assert_eq!(frames[4].hp, 3);
         assert_eq!(
             evaluate_walk(EatCase::PoisonLine, 69, &frames, &eats),
             OracleDecision::Pass
