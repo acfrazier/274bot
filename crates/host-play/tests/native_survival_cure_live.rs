@@ -2757,7 +2757,12 @@ fn live_l_cure_quester_dialogue_updates_policy_on_desert_captain_page() {
         proof["inventory_total_at_start"],
         1 + TWISTED_CHEST_REWARD_COUNT
     );
-    assert_eq!(proof["inventory_total_after"], TWISTED_CHEST_REWARD_COUNT);
+    // The nine herbs and the empty vial the last dose leaves
+    // (`potions.obj:676`, `next_obj_stage,vial_empty`).
+    assert_eq!(
+        proof["inventory_total_after"],
+        TWISTED_CHEST_REWARD_COUNT + 1
+    );
     assert_eq!(proof["npc_config"], "desertminingcaptain");
     assert_eq!(proof["npc_stage"], DESERT_STAGE_REPLY);
     assert!(proof["npc_stage_tick"].as_u64().is_some());
