@@ -3779,7 +3779,7 @@ fn quester_combat_approach_replans_after_no_path() {
     // A newer render sequence on the failure tick must not start a retry.
     assert!(harness.poll_stamp(&scene.snapshot, 2, 20).is_pending());
     assert!(harness.machine.pending_walk.is_none());
-    assert!(harness.drain(None).is_empty());
+    assert_eq!(harness.drain(None).len(), 0);
     assert_eq!(
         harness.machine.counters.damage, 3,
         "same-tick polls do not count hits twice"
