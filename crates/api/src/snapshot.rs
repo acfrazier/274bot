@@ -417,9 +417,18 @@ impl GameSnapshot {
         self.scene_state = scene_state;
     }
 
-    /// Offline fixture seed for the host game-tick count.
+    /// Offline fixture seed for the session-relative snapshot tick.
+    /// This does not set the raw `PLAYER_INFO` generation used by ordered input.
     pub fn seed_tick(&mut self, tick: u32) {
         self.tick = tick;
+    }
+
+    /// Offline fixture seed for the raw Client `PLAYER_INFO` generation.
+    ///
+    /// This is the ordered-dispatch clock, not the session-relative
+    /// [`Self::tick`] or the host's native completion-evidence tick.
+    pub fn seed_player_info_generation(&mut self, generation: u64) {
+        self.gens.player_info = generation;
     }
 
     /// Offline fixture seed for a completed world build and its map origin.

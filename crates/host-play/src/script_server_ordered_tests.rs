@@ -249,10 +249,22 @@ impl Rig {
         tick: u64,
         packet_tick: u64,
     ) -> crate::script_runtime::ScriptObservation {
-        self.snapshot.seed_tick(u32::try_from(packet_tick).unwrap());
+        self.pump_three_clocks(tick, u32::try_from(packet_tick).unwrap(), packet_tick)
+    }
+
+    fn pump_three_clocks(
+        &mut self,
+        tick: u64,
+        session_relative_tick: u32,
+        raw_player_info_generation: u64,
+    ) -> crate::script_runtime::ScriptObservation {
+        self.snapshot.seed_tick(session_relative_tick);
+        self.snapshot
+            .seed_player_info_generation(raw_player_info_generation);
+        self.client.gens.player_info = raw_player_info_generation;
         self.input.observe_input_tick(
             self.client.revision(),
-            packet_tick,
+            raw_player_info_generation,
             self.client.gens.session,
         );
         let cache = Arc::clone(&self.client.cache);

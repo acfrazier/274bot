@@ -14,11 +14,12 @@ fn ordered_real_gatherer_knife_arm_uses_packet_clock_after_relog() {
     const BEFORE_RELOG_PACKET_TICK: u64 = 50_000;
     const RESET_NATIVE_TICK: u64 = 50_001;
     const RESET_PACKET_TICK: u64 = 1;
+    const RAW_GENERATION_BEFORE_RELOG: u64 = 700_000;
 
     rig.client.map_build_base_x = 3200;
     rig.client.map_build_base_z = 3200;
     rig.client.local_player = Some(client::dash3d::ClientPlayer::at(7, 5));
-    rig.client.gens.player_info = BEFORE_RELOG_PACKET_TICK;
+    rig.client.gens.player_info = RAW_GENERATION_BEFORE_RELOG;
     rig.client.gens.player += 1;
     rig.snapshot.rebuild(&rig.client);
 
@@ -34,6 +35,7 @@ fn ordered_real_gatherer_knife_arm_uses_packet_clock_after_relog() {
     let slot = script_slot_or_insert(&rig.scripts, "so3-wire");
     {
         let mut slot = slot.lock().unwrap();
+        slot.bind_world_members(api::selected::Truth::True);
         slot.start_compiled(
             "so3-wire",
             script::CompiledId("Gatherer"),
@@ -216,12 +218,16 @@ fn ordered_real_gatherer_knife_arm_uses_packet_clock_after_relog() {
     let _hook_reset = TickHookReset;
     let hook = crate::tick_engine_test_support::TickEngineTestHook::new("so3-wire");
     hook.bind_client(&mut rig.client, "so3-wire", Arc::clone(&rig.input));
-    rig.pump_clocks(BEFORE_RELOG_TICK, BEFORE_RELOG_PACKET_TICK);
+    rig.pump_three_clocks(
+        BEFORE_RELOG_TICK,
+        BEFORE_RELOG_PACKET_TICK as u32,
+        RAW_GENERATION_BEFORE_RELOG,
+    );
 
     rig.client.gens.session += 1;
-    rig.client.gens.player_info = 0;
+    rig.client.gens.player_info = RAW_GENERATION_BEFORE_RELOG;
     rig.snapshot.reset_session(rig.client.gens);
-    rig.client.gens.player_info = 1;
+    rig.client.gens.player_info += 1;
     rig.client.gens.player += 1;
     rig.snapshot.rebuild(&rig.client);
     seed_runtime_facts(&mut rig.snapshot, 2, skill_animation);
@@ -232,14 +238,23 @@ fn ordered_real_gatherer_knife_arm_uses_packet_clock_after_relog() {
     for offset in 0..8_u64 {
         let native_tick = RESET_NATIVE_TICK + offset;
         let packet_tick = RESET_PACKET_TICK + offset;
-        rig.pump_clocks(native_tick, packet_tick);
+        rig.pump_three_clocks(
+            native_tick,
+            packet_tick as u32,
+            RAW_GENERATION_BEFORE_RELOG + packet_tick,
+        );
         if !hook.trace().dispatches.is_empty() {
             observed_dispatch = Some((native_tick, packet_tick));
             break;
         }
     }
-    let (native_tick, packet_tick) = observed_dispatch
-        .expect("real compiled Gatherer must emit and dispatch KnifeArm after relog");
+    let (native_tick, packet_tick) = observed_dispatch.unwrap_or_else(|| {
+        panic!(
+            "real compiled Gatherer must emit and dispatch KnifeArm after relog: status={:?}, packets={:?}",
+            slot.lock().unwrap().native_status(),
+            rig.decoded()
+        )
+    });
     let trace = hook.trace();
     assert_eq!(
         trace.dispatches.len(),
@@ -269,7 +284,8 @@ fn ordered_real_gatherer_knife_arm_uses_packet_clock_after_relog() {
         "the complete KnifeArm prefix must reach the encrypted driver: {receipt:?}"
     );
     assert_eq!(
-        receipt.dispatch_tick, packet_tick,
+        receipt.dispatch_tick,
+        RAW_GENERATION_BEFORE_RELOG + packet_tick,
         "packet-clock receipt: {receipt:?}"
     );
     assert_eq!(
@@ -280,7 +296,10 @@ fn ordered_real_gatherer_knife_arm_uses_packet_clock_after_relog() {
     let input_observation = rig
         .input
         .with_server_ordered_input(|state| state.snapshot());
-    assert_eq!(input_observation.observed_tick(), Some(packet_tick as u32));
+    assert_eq!(
+        input_observation.observed_tick(),
+        Some((RAW_GENERATION_BEFORE_RELOG + packet_tick) as u32)
+    );
     assert_eq!(
         input_observation.session_generation(),
         rig.client.gens.session
