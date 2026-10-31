@@ -198,7 +198,6 @@ fn clear_frame_delivery() {
 ///
 /// The caller invokes this only in memory-profile builds. The atomic guard
 /// returns before locking or allocating when no Q4 run owns the counters.
-#[allow(dead_code)]
 pub(crate) fn frame_dispatch_begin(name: &str) {
     if !FRAME_DELIVERY_ACTIVE.load(Relaxed) {
         return;
@@ -219,7 +218,6 @@ pub(crate) fn frame_dispatch_begin(name: &str) {
 }
 
 /// Mark completion of the synchronous client-frame delivery path.
-#[allow(dead_code)]
 pub(crate) fn frame_dispatch_end(name: &str, delivered: bool) {
     if !FRAME_DELIVERY_ACTIVE.load(Relaxed) {
         return;
