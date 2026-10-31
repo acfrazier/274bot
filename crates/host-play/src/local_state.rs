@@ -3713,8 +3713,12 @@ struct CachedDecision {
 
 impl CachedDecision {
     fn from_cached(cached: &Cached, domain: LocalStateDomain) -> Self {
-        let needs_snapshot = domain == LocalStateDomain::LoadoutsReferences
-            || (domain == LocalStateDomain::Preferences && cached.preferences.is_none());
+        // A settings write replaces one row of the file's rows, so it needs
+        // them all, as a loadout write does.
+        let needs_snapshot = matches!(
+            domain,
+            LocalStateDomain::LoadoutsReferences | LocalStateDomain::ScriptRuntimeSettings
+        ) || (domain == LocalStateDomain::Preferences && cached.preferences.is_none());
         Self {
             version: cached.version,
             snapshot: needs_snapshot.then(|| cached.snapshot.clone()),
