@@ -1705,6 +1705,8 @@ struct DeathReturnStopWitness {
     terminal_tick: Option<u32>,
     terminal_tile: Option<(i32, i32, i32)>,
     terminal_request_id: Option<u64>,
+    latest_request_id: Option<u64>,
+    request_retired: bool,
     terminal_stopped: bool,
     quiet_through_tick: Option<u32>,
     walking_after_failure: bool,
@@ -1785,11 +1787,16 @@ impl DeathReturnStopWitness {
             return;
         };
         let request_id = nav.get("request_id").and_then(Value::as_u64);
+        self.latest_request_id = request_id;
         if let Some(prior) = self.terminal_request_id {
-            self.walking_after_failure |= request_id.is_some_and(|current| current != prior);
+            self.walking_after_failure |= request_id
+                .is_some_and(|current| current != 0 && (self.request_retired || current != prior));
         } else {
             self.terminal_request_id = request_id;
         }
+        // AbortWalk retires the completed request to zero. Only a later
+        // nonzero request is a rearm; zero must still have no active work.
+        self.request_retired |= request_id == Some(0);
         self.navigation_evidence_missing |= request_id.is_none();
         self.terminal_stopped = stopped;
         // The terminal frame may still contain the completed walk's cleanup.
@@ -11614,6 +11621,17 @@ mod death_return_stop_oracle_tests {
             .death_return_stop
             .observe_navigation(105, &quiet_nav(42), true);
         assert!(!interrupts_complete(LiveCase::DeathReturnRefused, &witness));
+
+        let mut active_retired = stopped_return("walk ended with NoPath");
+        let mut nav = quiet_nav(0);
+        nav["armed"] = json!(true);
+        active_retired
+            .death_return_stop
+            .observe_navigation(104, &nav, true);
+        assert!(!interrupts_complete(
+            LiveCase::DeathReturnRefused,
+            &active_retired
+        ));
     }
 
     #[test]

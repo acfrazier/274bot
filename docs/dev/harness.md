@@ -744,9 +744,10 @@ detail; it does not require the detail to name `Refused` rather than `NoPath`.
 It records the effective wilderness permission and every changed observed tile
 after respawn, using the selected world's wilderness facts. It must see no
 wilderness entry, no renewed navigation or movement after failure, and an
-Idle/Failed owner with three fresh quiet game ticks. Missing permission, tile
-or navigation evidence fails the check. Neither fixture seeds resources or
-changes the safety gate.
+Idle/Failed owner with three fresh quiet game ticks. Cleanup can retire the
+completed request ID to zero while all route work is inactive; any later
+nonzero request fails the check. Missing permission, tile or navigation
+evidence also fails. Neither fixture seeds resources or changes the safety gate.
 
 ### Target switching
 
