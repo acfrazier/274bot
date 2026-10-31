@@ -51,6 +51,7 @@ struct Receipt {
 struct LiveSession<'a> {
     _isolated: script::IsolatedEnv,
     account: String,
+    password: String,
     play: Play,
     state: Arc<Mutex<FrameState>>,
     receipt: &'a mut Receipt,
@@ -64,9 +65,11 @@ struct PreparedCatalogTask {
 
 struct FrameState {
     snapshot: GameSnapshot,
-    ready: bool,
     tick: u32,
     next_command: Option<String>,
+    next_mainland_hop: bool,
+    next_logout: bool,
+    next_login: Option<(String, String)>,
     next_seed_at: Option<(i32, i32, i32)>,
     next_side_tab: Option<i32>,
     commands: Vec<String>,
@@ -77,10 +80,12 @@ impl FrameState {
     fn new() -> Self {
         Self {
             snapshot: GameSnapshot::new(),
-            ready: false,
             tick: 0,
             next_command: None,
             next_seed_at: None,
+            next_mainland_hop: false,
+            next_logout: false,
+            next_login: None,
             next_side_tab: None,
             commands: Vec::new(),
             error: None,
@@ -89,21 +94,37 @@ impl FrameState {
 
     fn frame(&mut self, client: &mut Client, held: bool) {
         self.snapshot.rebuild(client);
+        if let Some((username, password)) = self.next_login.take() {
+            if !interact::login(client, &username, &password, false) {
+                self.error = Some("Engine L refused the generated account login".into());
+            }
+            return;
+        }
+        if held {
+            return;
+        }
         if !client.ingame || client.scene_state != 2 {
             return;
         }
-        self.ready = true;
         self.tick = self.snapshot.tick();
-        if held {
+        if self.next_mainland_hop {
+            self.next_mainland_hop = false;
+            interact::mainland_hop(client);
+            return;
+        }
+        if self.next_logout {
+            self.next_logout = false;
+            let ifaces = Arc::clone(&client.ifaces);
+            if !interact::logout(client, &ifaces) {
+                self.error = Some("Engine L refused the generated account logout".into());
+            }
             return;
         }
         if let Some(tab) = self.next_side_tab.take() {
             let result =
                 interact::Interactions::new(&self.snapshot, client).click_side_tab(tab);
             if let interact::SendResult::Refused { reason, .. } = result {
-                self.error = Some(format!(
-                    "Engine L refused side tab {tab}: {reason:?}"
-                ));
+                self.error = Some(format!("Engine L refused side tab {tab}: {reason:?}"));
                 return;
             }
         }
@@ -337,6 +358,7 @@ fn session<'a>(cell: &str, receipt: &'a mut Receipt) -> Result<LiveSession<'a>, 
     Ok(LiveSession {
         _isolated: isolated,
         account: account.clone(),
+        password: password.clone(),
         play,
         state,
         receipt,
@@ -354,12 +376,15 @@ fn wait_ready(state: &Arc<Mutex<FrameState>>) -> Result<(), String> {
         if let Some(error) = &frame.error {
             return Err(error.clone());
         }
-        if frame.ready && frame.snapshot.attached() {
+        let ready = frame.snapshot.ingame()
+            && frame.snapshot.attached()
+            && frame.snapshot.scene_state() == 2;
+        drop(frame);
+        if ready {
             return Ok(());
         }
-        drop(frame);
         if Instant::now() >= deadline {
-            return Err("timed out waiting for the generated account to attach in the game".into());
+            return Err("timed out waiting for the account to enter an attached game scene".into());
         }
         thread::sleep(POLL_INTERVAL);
     }
@@ -427,7 +452,93 @@ fn request_side_tab(state: &Arc<Mutex<FrameState>>, tab: i32) -> Result<(), Stri
     frame.next_side_tab = Some(tab);
     Ok(())
 }
+fn request_mainland_hop(state: &Arc<Mutex<FrameState>>) -> Result<(), String> {
+    let mut frame = lock_state(state);
+    if let Some(error) = &frame.error {
+        return Err(error.clone());
+    }
+    if frame.next_mainland_hop {
+        return Err("a mainland tutorial hop is already pending".into());
+    }
+    frame.next_mainland_hop = true;
+    Ok(())
+}
 
+fn request_logout(state: &Arc<Mutex<FrameState>>) -> Result<(), String> {
+    let mut frame = lock_state(state);
+    if let Some(error) = &frame.error {
+        return Err(error.clone());
+    }
+    if !frame.snapshot.ingame() {
+        return Err("the generated account is not in game before logout".into());
+    }
+    if frame.next_logout {
+        return Err("a live logout request is already pending".into());
+    }
+    frame.next_logout = true;
+    Ok(())
+}
+
+fn request_login(session: &LiveSession<'_>) -> Result<(), String> {
+    let credentials = (session.account.clone(), session.password.clone());
+    let mut frame = lock_state(&session.state);
+    if let Some(error) = &frame.error {
+        return Err(error.clone());
+    }
+    if frame.snapshot.ingame() {
+        return Err("the generated account is still in game before login".into());
+    }
+    if frame.next_login.is_some() {
+        return Err("a live login request is already pending".into());
+    }
+    frame.next_login = Some(credentials);
+    Ok(())
+}
+
+fn wait_for_logged_out(state: &Arc<Mutex<FrameState>>) -> Result<(), String> {
+    let deadline = Instant::now() + ACTION_DEADLINE;
+    loop {
+        let frame = lock_state(state);
+        if let Some(error) = &frame.error {
+            return Err(error.clone());
+        }
+        let ingame = frame.snapshot.ingame();
+        drop(frame);
+        if !ingame {
+            return Ok(());
+        }
+        if Instant::now() >= deadline {
+            return Err("timed out waiting for the generated account to log out".into());
+        }
+        thread::sleep(POLL_INTERVAL);
+    }
+}
+
+fn wait_for_chat_line(state: &Arc<Mutex<FrameState>>, suffix: &str) -> Result<String, String> {
+    let deadline = Instant::now() + ACTION_DEADLINE;
+    loop {
+        let frame = lock_state(state);
+        if let Some(error) = &frame.error {
+            return Err(error.clone());
+        }
+        let found = frame
+            .snapshot
+            .chat_lines()
+            .iter()
+            .find(|line| line.text.trim_end().ends_with(suffix))
+            .map(|line| line.text.clone());
+        drop(frame);
+        if let Some(line) = found {
+            return Ok(line);
+        }
+        if Instant::now() >= deadline {
+            return Err(format!(
+                "timed out waiting for chat line ending with {suffix:?}"
+            ));
+        }
+        thread::sleep(POLL_INTERVAL);
+    }
+}
 fn request_command(session: &LiveSession<'_>, command: &str) -> Result<(), String> {
     let mut frame = lock_state(&session.state);
     if let Some(error) = &frame.error {
@@ -443,11 +554,13 @@ fn request_command(session: &LiveSession<'_>, command: &str) -> Result<(), Strin
 fn wait_command(session: &mut LiveSession<'_>, command: &str) -> Result<(), String> {
     let deadline = Instant::now() + ACTION_DEADLINE;
     loop {
-        let frame = lock_state(&session.state);
+        let mut frame = lock_state(&session.state);
         if let Some(error) = &frame.error {
             return Err(error.clone());
         }
-        if frame.commands.iter().any(|sent| sent == command) {
+        if let Some(index) = frame.commands.iter().position(|sent| sent == command) {
+            frame.commands.remove(index);
+            drop(frame);
             session.receipt.commands.push(command.to_owned());
             return Ok(());
         }
@@ -944,7 +1057,35 @@ fn wait_for_next_tick_without_restart_event(session: &mut LiveSession<'_>) -> Re
 
 fn run_events_cell(receipt: &mut Receipt) -> Result<(), String> {
     let mut session = session("compat-v1-events", receipt)?;
-    // The fresh account starts in the tutorial. Seed its position before opening the inventory.
+    // Engine L locks tutorial side icons until the account logs in again.
+    request_mainland_hop(&session.state)?;
+    request_command(&session, "getvar tutorial")?;
+    wait_command(&mut session, "getvar tutorial")?;
+    let tutorial = wait_for_chat_line(&session.state, "get tutorial: 1000")?;
+    session
+        .receipt
+        .logs
+        .push(format!("EVENTS:TUTORIAL:{tutorial}"));
+    request_logout(&session.state)?;
+    wait_for_logged_out(&session.state)?;
+    request_login(&session)?;
+    wait_ready(&session.state)?;
+    session
+        .receipt
+        .logs
+        .push("EVENTS:RELOGIN:READY".into());
+
+    // Load the inventory component before the first pack read or change.
+    wait_for_side_tab_available(&session.state, INVENTORY_SIDE_TAB)?;
+    request_side_tab(&session.state, INVENTORY_SIDE_TAB)?;
+    let (_, coins_before) = wait_for_inventory_count(&session.state, 995, 0)?;
+    if coins_before != 0 {
+        return Err(format!(
+            "fresh account unexpectedly has {coins_before} coins before the event seed"
+        ));
+    }
+    request_command(&session, "give coins 1")?;
+    wait_command(&mut session, "give coins 1")?;
     request_seed_at(
         &session.state,
         EVENTS_SEED_TILE.2,
@@ -952,15 +1093,10 @@ fn run_events_cell(receipt: &mut Receipt) -> Result<(), String> {
         EVENTS_SEED_TILE.1,
     );
     wait_for_tile(&session.state, EVENTS_SEED_TILE)?;
-    // The item container loads only after its side tab opens.
-    wait_for_side_tab_available(&session.state, INVENTORY_SIDE_TAB)?;
-    request_side_tab(&session.state, INVENTORY_SIDE_TAB)?;
-    wait_for_inventory_count(&session.state, 995, 0)?;
-    request_command(&session, "give coins 1")?;
-    wait_command(&mut session, "give coins 1")?;
-    wait_for_inventory_count(&session.state, 995, 1)?;
+    let (inventory_size, coins_after_seed) =
+        wait_for_inventory_count(&session.state, 995, coins_before.saturating_add(1))?;
     session.receipt.logs.push(format!(
-        "EVENTS:SEED:{},{},{}",
+        "EVENTS:SEED:{},{},{}:slots={inventory_size}:coins={coins_after_seed}",
         EVENTS_SEED_TILE.0, EVENTS_SEED_TILE.1, EVENTS_SEED_TILE.2
     ));
     start_script(&session, events_source(1))?;
