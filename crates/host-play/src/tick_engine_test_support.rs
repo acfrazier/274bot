@@ -771,7 +771,7 @@ impl DispatchGuard<'_> {
 }
 
 
-impl Drop for DispatchGuard {
+impl Drop for DispatchGuard<'_> {
     fn drop(&mut self) {
         self.snapshot.restore();
         self.hook.end_dispatch(self.request_id);
