@@ -238,19 +238,14 @@ fn proven_idle_cycle(gatherer: &Gatherer, target: &TargetPlan) -> (TickCycle, Ti
         ..first
     };
     assert_eq!(cycle.drive(&success, &mut policy), CycleStep::Wait);
-    assert!(cycle.permits_short_depleting_handoff());
     (cycle, policy)
 }
 
 #[test]
-fn parked_depleting_idle_cycle_arms_a_live_replacement_within_two_posted_steps() {
+fn parked_depleting_idle_cycle_walks_before_remote_replacement_batch() {
     use crate::native::HostEffect;
-    use crate::surface::ServerOrderedPayload;
-    use api::interact::server_ordered::{
-        ExactLocOrNpcRef, ExactLocReference, KnifeArmShape, ServerOrderedRequest,
-    };
 
-    for (here, target_tile, steps) in [
+    for (here, target_tile) in [
         (
             WorldTile {
                 x: 3200,
@@ -262,7 +257,6 @@ fn parked_depleting_idle_cycle_arms_a_live_replacement_within_two_posted_steps()
                 z: 3202,
                 level: 0,
             },
-            1,
         ),
         (
             WorldTile {
@@ -275,18 +269,15 @@ fn parked_depleting_idle_cycle_arms_a_live_replacement_within_two_posted_steps()
                 z: 3203,
                 level: 0,
             },
-            2,
         ),
     ] {
         let (mut gatherer, mut snapshot, mut target) = fixture();
         target.tile = target_tile;
+        let api::selected::EntityId::Loc(loc_id) = target.entity else {
+            panic!("copper replacement is a loc")
+        };
         seed_timing_stock(&gatherer, &mut snapshot);
         let reach = seed_access_scene(&mut snapshot, &target, here, None);
-        let goal = WorldTile {
-            z: target_tile.z - 1,
-            ..target_tile
-        };
-        assert_eq!(crate::reach_route::exact_depth(&reach, goal), Some(steps));
         let (cycle, policy) = proven_idle_cycle(&gatherer, &target);
         gatherer.tick_policy = policy;
         gatherer.parked_cycle = Some(cycle);
@@ -300,62 +291,97 @@ fn parked_depleting_idle_cycle_arms_a_live_replacement_within_two_posted_steps()
             let request = selected
                 .approach(tick.cx.snapshot(), tick.cx.evidence(), tick.walk_danger)
                 .unwrap()
-                .expect("ordinary runner approach requires a walk");
-            assert!(short_loc_replacement_access(&selected, &request, tick));
+                .expect("a remote replacement requires a walk");
+            let frame = tick.frame.snapshot.unwrap();
+            let loc = frame
+                .locs()
+                .iter()
+                .find(|loc| loc.id == loc_id && loc.tile == target.tile)
+                .unwrap();
+            assert_eq!(
+                api::query::loc_approach::can_operate_from(loc, frame.scene(), here),
+                Some(false)
+            );
+            assert_eq!(request.target, target.tile);
             gatherer.start_target(selected, tick);
         });
         assert!(
-            matches!(gatherer.active, Active::Gather(_)),
-            "a one/two-step live access should start the replacement gatherer"
+            matches!(gatherer.active, Active::Walk(_)),
+            "a remote replacement must finish its normal walk before gathering"
         );
-        let action = ledger
-            .as_ref()
-            .unwrap()
-            .outbox
-            .last()
-            .expect("replacement batch emitted immediately");
-        let HostEffect::ServerOrdered(envelope) = &action.effect else {
-            panic!("replacement uses its checked server-ordered batch")
-        };
-        let ServerOrderedPayload::Content(ServerOrderedRequest::KnifeArm {
-            shape:
-                KnifeArmShape::Continuing {
-                    click: ExactLocOrNpcRef::Loc(loc),
-                },
-            ..
-        }) = envelope.payload()
-        else {
-            panic!("replacement batch clicks the selected loc")
-        };
-        let operation = api::gather_methods::known_rows(
-            &gatherer.prepared.catalog.methods()[usize::from(target.method_index)].targets,
-        )
-        .iter()
-        .find(|row| row.entity == target.entity)
-        .unwrap()
-        .op;
-        let expected = with_tick_reach(&snapshot, &reach, &mut None, 103, |tick| {
-            let snapshot = tick.cx.snapshot();
-            let row = snapshot
-                .locs()
-                .unwrap()
-                .value
-                .iter()
-                .find(|row| row.tile == target.tile)
-                .unwrap();
-            let (scene, static_locs, _) = snapshot.ground_collision_generations().unwrap();
-            ExactLocReference::new(
-                row.id,
-                row.typecode,
-                row.tile,
-                scene,
-                static_locs,
-                operation,
-            )
-            .unwrap()
-        });
-        assert_eq!(*loc, expected);
+        assert!(
+            ledger.as_ref().unwrap().outbox.iter().all(|action| {
+                !matches!(action.effect, HostEffect::ServerOrdered(_))
+            }),
+            "no replacement batch is emitted before the player reaches an exact stand"
+        );
+        assert!(
+            gatherer.parked_cycle.is_some(),
+            "the normal walk keeps ownership of the parked cycle"
+        );
     }
+}
+
+#[test]
+fn parked_depleting_idle_cycle_arms_a_local_operable_replacement() {
+    use crate::native::HostEffect;
+    use crate::surface::ServerOrderedPayload;
+    use api::interact::server_ordered::ServerOrderedRequest;
+
+    let (mut gatherer, mut snapshot, target) = fixture();
+    let api::selected::EntityId::Loc(loc_id) = target.entity else {
+        panic!("copper replacement is a loc")
+    };
+    let here = WorldTile {
+        x: 3200,
+        z: 3202,
+        level: 0,
+    };
+    seed_timing_stock(&gatherer, &mut snapshot);
+    let reach = seed_access_scene(&mut snapshot, &target, here, None);
+    let (cycle, policy) = proven_idle_cycle(&gatherer, &target);
+    gatherer.tick_policy = policy;
+    gatherer.parked_cycle = Some(cycle);
+    let selected = SelectedTarget {
+        plan: target.clone(),
+        class: PlacementClass::Live,
+        observation_goals: None,
+    };
+    let mut ledger = None;
+    with_tick_reach(&snapshot, &reach, &mut ledger, 103, |tick| {
+        assert!(
+            selected
+                .approach(tick.cx.snapshot(), tick.cx.evidence(), tick.walk_danger)
+                .unwrap()
+                .is_none(),
+            "a locally operable replacement needs no walk"
+        );
+        let frame = tick.frame.snapshot.unwrap();
+        let loc = frame
+            .locs()
+            .iter()
+            .find(|loc| loc.id == loc_id && loc.tile == target.tile)
+            .unwrap();
+        assert_eq!(
+            api::query::loc_approach::can_operate_from(loc, frame.scene(), here),
+            Some(true)
+        );
+        gatherer.start_target(selected, tick);
+    });
+    assert!(matches!(gatherer.active, Active::Gather(_)));
+    let action = ledger
+        .as_ref()
+        .unwrap()
+        .outbox
+        .last()
+        .expect("local replacement batch emitted immediately");
+    let HostEffect::ServerOrdered(envelope) = &action.effect else {
+        panic!("local replacement uses its checked server-ordered batch")
+    };
+    assert!(matches!(
+        envelope.payload(),
+        ServerOrderedPayload::Content(ServerOrderedRequest::KnifeArm { .. })
+    ));
 }
 
 #[test]
@@ -417,11 +443,8 @@ fn parked_depleting_idle_cycle_keeps_walk_for_long_or_unreachable_access() {
             "no replacement batch is emitted without short exact access"
         );
         assert!(
-            gatherer
-                .parked_cycle
-                .as_ref()
-                .is_some_and(|cycle| cycle.permits_short_depleting_handoff()),
-            "the normal walk keeps ownership of the still-parked cycle"
+            gatherer.parked_cycle.is_some(),
+            "the normal walk keeps the checked cycle parked"
         );
     }
 }
