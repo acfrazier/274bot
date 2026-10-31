@@ -26,9 +26,9 @@ mod compat {
     pub const PANEL_WAIT_MS: u64 = 5_000;
     /// Frozen `ChatDialog.make` / `chooseOption` modal-change wait.
     pub const MODAL_WAIT_MS: u64 = 3_000;
-    /// Wait past the twelve-tick receipt boundary observed in live probes
-    /// without relying on a wall-clock timeout.
-    const MAKE_ONE_WAIT_TICKS: u64 = 13;
+    /// Ten observed ticks cover the page change and delayed product receipt
+    /// without using a wall-clock timeout.
+    const MAKE_ONE_WAIT_TICKS: u64 = 10;
 
     impl MakeXProduct for MakeProduct {
         fn object_id(&self) -> i32 {
@@ -101,6 +101,7 @@ mod compat {
             chat: bool,
             before: i32,
             product_id: i32,
+            product_name: String,
             before_count: i64,
             login_mark: u64,
             deadline_tick: u64,
@@ -183,10 +184,19 @@ mod compat {
             self.chat_modal_id.unwrap_or(-1)
         }
 
-        fn inventory_count(&self, object_id: i32) -> Option<i64> {
+        /// Match posted names when available: content can create a different
+        /// inventory id than the UI product row reports.
+        fn inventory_count(&self, object_id: i32, product_name: &str) -> Option<i64> {
             self.inventory.map(|rows| {
                 rows.iter()
-                    .filter(|row| row.id == object_id)
+                    .filter(|row| {
+                        let name = row.name_or_empty();
+                        if name.is_empty() {
+                            row.id == object_id
+                        } else {
+                            name.eq_ignore_ascii_case(product_name)
+                        }
+                    })
                     .map(|row| i64::from(row.count.max(0)))
                     .sum()
             })
@@ -280,7 +290,9 @@ mod compat {
         let Some(component_id) = product.make_one_component_id() else {
             return Begin::Done(false);
         };
-        let Some(before_count) = probe.inventory_count(product.object_id()) else {
+        let product_id = product.object_id();
+        let product_name = product.name.clone();
+        let Some(before_count) = probe.inventory_count(product_id, &product_name) else {
             return Begin::Done(false);
         };
         let chat = probe.chat_modal() != -1;
@@ -294,7 +306,8 @@ mod compat {
             phase: Phase::WaitMakeOne {
                 chat,
                 before,
-                product_id: product.object_id(),
+                product_id,
+                product_name,
                 before_count,
                 login_mark: probe.login_mark,
                 deadline_tick,
@@ -462,6 +475,7 @@ mod compat {
                     chat,
                     before,
                     product_id,
+                    product_name,
                     before_count,
                     login_mark,
                     deadline_tick,
@@ -474,18 +488,9 @@ mod compat {
                     } else {
                         probe.main_modal_id
                     };
-                    let inventory_count = probe.inventory_count(product_id);
-                    let receipt = inventory_count
+                    let receipt = probe
+                        .inventory_count(product_id, &product_name)
                         .is_some_and(|count| count.checked_sub(before_count) == Some(1));
-                    let inventory_rows = probe.inventory.map(|rows| {
-                        rows.iter()
-                            .map(|row| (row.id, row.count))
-                            .collect::<Vec<_>>()
-                    });
-                    eprintln!(
-                        "[DEBUG-MAKEONE-50F9] tick={:?} product={product_id} page={now} before={before} inventory={inventory_count:?} rows={inventory_rows:?} before_count={before_count} receipt={receipt}",
-                        probe.tick
-                    );
                     let timed_out = probe.tick.is_some_and(|tick| tick >= deadline_tick);
                     done_or_wait(now != before && receipt, timed_out)
                 }
@@ -764,7 +769,7 @@ mod compat {
             let mut replacement_machine = replacement_machine.expect("running");
             let replaced_without_product = Probe {
                 chat_modal_id: Some(4999),
-                tick: Some(14),
+                tick: Some(11),
                 ..at
             };
             assert_eq!(
