@@ -7572,6 +7572,10 @@ mod diagnostic_tests {
         let detail = output.detail.expect("incomplete search has a detail");
         assert!(detail.contains("search_result=BudgetExhausted nodes_settled=524288"));
         assert!(!detail.contains("Insufficient route supplies"));
+        assert!(
+            output.missing.is_empty(),
+            "an incomplete search publishes no missing-supply list"
+        );
     }
     #[test]
     fn first_goal_area_complete_abandoned_flood_keeps_supply_diagnosis() {
