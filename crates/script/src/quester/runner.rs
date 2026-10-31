@@ -63,18 +63,18 @@ struct StepSlot {
 struct SelectedHazard {
     slot: Option<StepSlot>,
     hazard: Option<crate::survival::StepHazard>,
-    warned: bool,
+    /// Whether hazard admission finished or the runner emitted an undeclared-damage warning.
+    handled: bool,
 }
 
 impl SelectedHazard {
-    fn select(&mut self, slot: StepSlot, hazard: Option<crate::survival::StepHazard>) -> bool {
+    fn select(&mut self, slot: StepSlot, hazard: Option<crate::survival::StepHazard>) {
         if self.slot == Some(slot) {
-            return false;
+            return;
         }
         self.slot = Some(slot);
         self.hazard = hazard;
-        self.warned = false;
-        true
+        self.handled = false;
     }
 
     fn clear(&mut self) {
@@ -1786,7 +1786,7 @@ impl Quester {
     fn warn_undeclared_hazard(&mut self, tick: &mut NativeTick<'_>) {
         if self.selected_hazard.hazard.is_some()
             || self.selected_hazard.slot.is_none()
-            || self.selected_hazard.warned
+            || self.selected_hazard.handled
         {
             return;
         }
@@ -1804,7 +1804,7 @@ impl Quester {
                 tick.cx.condition().map_or(0, |condition| condition.hp)
             ),
         );
-        self.selected_hazard.warned = true;
+        self.selected_hazard.handled = true;
     }
 
     fn log_hazard_park_bound(&self, cause: &'static str, tick: &mut NativeTick<'_>) {
@@ -3125,7 +3125,7 @@ impl Quester {
             } else {
                 &self.path.sequences[self.seq_index].steps[index]
             };
-            let changed = self.selected_hazard.select(
+            self.selected_hazard.select(
                 StepSlot {
                     in_prelude: prelude,
                     seq_index: self.seq_index,
@@ -3133,13 +3133,17 @@ impl Quester {
                 },
                 step.hazard,
             );
-            if let Some(hazard) = step.hazard.filter(|_| changed) {
-                let hp_max = tick
+            if let Some(hazard) = step.hazard.filter(|_| !self.selected_hazard.handled) {
+                let Some(hp_max) = tick
                     .cx
                     .snapshot()
                     .stats()
                     .and_then(|stats| stats.value.iter().find(|stat| stat.index == 3))
-                    .map_or(0, |stat| stat.base);
+                    .map(|stat| stat.base)
+                else {
+                    self.publish(tick.output);
+                    return Ok(ScriptFlow::Continue);
+                };
                 let max = hazard.max_damage(hp_max, hp_max);
                 let line = crate::combat::select::lines(Some(max), hp_max).eat;
                 tick.output.log(
@@ -3150,6 +3154,7 @@ impl Quester {
                         step.hazard_source.as_deref().unwrap_or("")
                     ),
                 );
+                self.selected_hazard.handled = true;
                 if line >= hp_max {
                     let id = Arc::clone(&step.id.0);
                     self.parked_step = Some(ParkedStep {
@@ -3188,25 +3193,24 @@ impl Quester {
             let trace_snapshot = api::hostlog::enabled(api::hostlog::Category::ScriptTrace)
                 .then(|| tick.frame().snapshot())
                 .flatten();
+            trace_root_event(
+                &mut self.trace,
+                tick.output,
+                api::hostlog::Level::Info,
+                self.path.id.0.as_ref(),
+                stage,
+                step,
+                format_args!("begin"),
+            );
             if let Some(snapshot) = trace_snapshot {
-                trace_root_event(
-                    &mut self.trace,
-                    tick.output,
+                api::host_log!(
+                    api::hostlog::Category::ScriptTrace,
                     api::hostlog::Level::Info,
-                    self.path.id.0.as_ref(),
-                    stage,
-                    step,
-                    format_args!("begin player_info={}", snapshot.gens().player_info),
-                );
-            } else {
-                trace_root_event(
-                    &mut self.trace,
-                    tick.output,
-                    api::hostlog::Level::Info,
-                    self.path.id.0.as_ref(),
-                    stage,
-                    step,
-                    format_args!("begin"),
+                    "quester {}: stage {stage} step {} ({}) player_info={}",
+                    self.path.id.0,
+                    step.id.0,
+                    step.kind,
+                    snapshot.gens().player_info
                 );
             }
             #[cfg(test)]

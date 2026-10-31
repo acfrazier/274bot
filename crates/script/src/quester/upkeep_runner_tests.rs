@@ -15,8 +15,8 @@ use api::condition::PoisonState;
 use api::hostlog::Level;
 use api::selected::{FactKey, Truth};
 use api::snapshot::{
-    GameSnapshot, HitmarkView, HitmarksView, ItemActionFamily, ItemContainer, ItemView, LocLayer,
-    LocView, StatView, WorldStateView,
+    ChatLineView, GameSnapshot, HitmarkView, HitmarksView, ItemActionFamily, ItemContainer, ItemView,
+    LocLayer, LocView, StatView, WorldStateView,
 };
 use api::WorldTile;
 use client::client::{Client, ClientConfig};
@@ -194,6 +194,13 @@ fn replace_steps(script: &mut Quester, steps: Vec<CompiledStep>) {
     script.step = None;
 }
 
+fn remove_first_step_hazard(script: &mut Quester) {
+    let path = Arc::get_mut(&mut script.path).expect("test path is not shared");
+    let step = &mut path.sequences[script.seq_index].steps[0];
+    step.hazard = None;
+    step.hazard_source = None;
+}
+
 fn fixture(
     kind: &str,
     hazard: Option<StepHazard>,
@@ -353,6 +360,42 @@ fn drive(
     with_runner_tick(script, snapshot, ledger, frame, output, |script, native| {
         script.tick(native).expect("Quester tick")
     })
+}
+
+fn assert_no_stale_hazard_eat(
+    script: &mut Quester,
+    snapshot: &mut GameSnapshot,
+    ledger: &mut Option<Box<ledger::Ledger>>,
+    output: &mut CapturedOutput,
+    tick: u64,
+) {
+    let flow = drive(
+        script,
+        snapshot,
+        ledger,
+        TestFrame {
+            tick,
+            hp: 7,
+            hp_max: 40,
+            poison: PoisonState::Clear,
+            cure: CurePoison::Never,
+        },
+        output,
+    );
+    assert!(
+        matches!(flow, ScriptFlow::Continue),
+        "a low-HP poll after clearing a hazard must not stop the run"
+    );
+    assert_eq!(eat_count(ledger, output), 0, "the old hazard must not raise the eat line");
+    assert!(
+        script.survival_action.is_none(),
+        "a cleared hazard must not start a survival action"
+    );
+    assert_eq!(
+        script.survival.report().decision,
+        crate::survival::Decision::None,
+        "the low-HP frame stays below the ordinary eat line"
+    );
 }
 
 fn drive_with_hit(
@@ -1651,6 +1694,225 @@ fn quester_refuses_a_hazard_the_account_cannot_clear_at_full_hitpoints() {
     assert_eq!(safe_counts.began.load(Ordering::Relaxed), 1);
     assert!(safe.step.is_some());
 }
+#[test]
+fn quester_waits_for_hitpoints_before_admitting_a_hazard_step() {
+    let (mut script, mut snapshot, counts) = fixture("interact", Some(RAILING_HAZARD));
+    let mut ledger = None;
+    let mut output = CapturedOutput::default();
+    set_inventory(&script, &mut snapshot, 0, 1, 0);
+    seed_frame(&mut snapshot, 20, 40, 40);
+    snapshot.seed_stats(Vec::new());
+
+    let flow = with_frame_tick(
+        &mut script,
+        &snapshot,
+        &mut ledger,
+        TestFrame {
+            tick: 20,
+            hp: 40,
+            hp_max: 40,
+            poison: PoisonState::Clear,
+            cure: CurePoison::Never,
+        },
+        &mut output,
+        |script, native| script.tick(native).expect("Quester tick"),
+    );
+    assert!(
+        matches!(flow, ScriptFlow::Continue),
+        "a missing Hitpoints stat must not stop the run"
+    );
+    assert_eq!(script.selected_hazard.hazard, Some(RAILING_HAZARD));
+    assert!(!script.selected_hazard.handled);
+    assert_eq!(counts.began.load(Ordering::Relaxed), 0);
+    assert!(
+        output
+            .logs
+            .iter()
+            .all(|(_, line)| !line.starts_with("quester hazard step=")),
+        "admission waits until the Hitpoints stat is present"
+    );
+
+    let flow = drive(
+        &mut script,
+        &mut snapshot,
+        &mut ledger,
+        TestFrame {
+            tick: 21,
+            hp: 40,
+            hp_max: 40,
+            poison: PoisonState::Clear,
+            cure: CurePoison::Never,
+        },
+        &mut output,
+    );
+    assert!(matches!(flow, ScriptFlow::Continue));
+    assert!(script.selected_hazard.handled);
+    assert!(script.survival_deferred);
+    assert_eq!(counts.began.load(Ordering::Relaxed), 0);
+    assert_eq!(
+        output
+            .logs
+            .iter()
+            .filter(|(_, line)| line.starts_with("quester hazard step="))
+            .count(),
+        1,
+        "the first Hitpoints frame runs the hazard admission check"
+    );
+}
+
+#[test]
+fn no_selected_step_clears_the_old_hazard_before_the_next_eat_line() {
+    let (mut script, mut snapshot, _) = fixture("interact", Some(RAILING_HAZARD));
+    let mut ledger = None;
+    let mut output = CapturedOutput::default();
+    set_inventory(&script, &mut snapshot, 0, 1, 0);
+    drive(
+        &mut script,
+        &mut snapshot,
+        &mut ledger,
+        TestFrame {
+            tick: 20,
+            hp: 40,
+            hp_max: 40,
+            poison: PoisonState::Clear,
+            cure: CurePoison::Never,
+        },
+        &mut output,
+    );
+    assert_eq!(script.selected_hazard.hazard, Some(RAILING_HAZARD));
+
+    replace_steps(&mut script, Vec::new());
+    drive(
+        &mut script,
+        &mut snapshot,
+        &mut ledger,
+        TestFrame {
+            tick: 21,
+            hp: 40,
+            hp_max: 40,
+            poison: PoisonState::Clear,
+            cure: CurePoison::Never,
+        },
+        &mut output,
+    );
+    assert_eq!(script.selected_hazard.hazard, None);
+    assert_no_stale_hazard_eat(&mut script, &mut snapshot, &mut ledger, &mut output, 22);
+}
+
+#[test]
+fn run_change_clears_the_old_hazard_before_the_next_eat_line() {
+    let (mut script, mut snapshot, _) = fixture("interact", Some(RAILING_HAZARD));
+    let mut ledger = None;
+    let mut output = CapturedOutput::default();
+    set_inventory(&script, &mut snapshot, 0, 1, 0);
+    drive(
+        &mut script,
+        &mut snapshot,
+        &mut ledger,
+        TestFrame {
+            tick: 20,
+            hp: 40,
+            hp_max: 40,
+            poison: PoisonState::Clear,
+            cure: CurePoison::Never,
+        },
+        &mut output,
+    );
+    assert_eq!(script.selected_hazard.hazard, Some(RAILING_HAZARD));
+
+    remove_first_step_hazard(&mut script);
+    script.run.run = 2;
+    drive(
+        &mut script,
+        &mut snapshot,
+        &mut ledger,
+        TestFrame {
+            tick: 21,
+            hp: 40,
+            hp_max: 40,
+            poison: PoisonState::Clear,
+            cure: CurePoison::Never,
+        },
+        &mut output,
+    );
+    assert_eq!(script.selected_hazard.hazard, None);
+    assert_no_stale_hazard_eat(&mut script, &mut snapshot, &mut ledger, &mut output, 22);
+}
+
+#[test]
+fn death_clears_the_old_hazard_before_the_next_eat_line() {
+    let (mut script, mut snapshot, _) = fixture("interact", Some(RAILING_HAZARD));
+    let mut ledger = None;
+    let mut output = CapturedOutput::default();
+    set_inventory(&script, &mut snapshot, 0, 1, 0);
+    snapshot.seed_chat_lines(Vec::new());
+    drive(
+        &mut script,
+        &mut snapshot,
+        &mut ledger,
+        TestFrame {
+            tick: 20,
+            hp: 40,
+            hp_max: 40,
+            poison: PoisonState::Clear,
+            cure: CurePoison::Never,
+        },
+        &mut output,
+    );
+    assert_eq!(script.selected_hazard.hazard, Some(RAILING_HAZARD));
+
+    remove_first_step_hazard(&mut script);
+    snapshot.seed_chat_lines(vec![ChatLineView {
+        type_: 0,
+        username: None,
+        text: "Oh dear, you are dead!".into(),
+        sequence: 1,
+    }]);
+    drive(
+        &mut script,
+        &mut snapshot,
+        &mut ledger,
+        TestFrame {
+            tick: 21,
+            hp: 40,
+            hp_max: 40,
+            poison: PoisonState::Clear,
+            cure: CurePoison::Never,
+        },
+        &mut output,
+    );
+    assert_eq!(script.deaths, 1);
+    assert_eq!(script.selected_hazard.hazard, None);
+    assert_no_stale_hazard_eat(&mut script, &mut snapshot, &mut ledger, &mut output, 22);
+}
+
+#[test]
+fn session_ended_clears_the_old_hazard_before_the_next_eat_line() {
+    let (mut script, mut snapshot, _) = fixture("interact", Some(RAILING_HAZARD));
+    let mut ledger = None;
+    let mut output = CapturedOutput::default();
+    set_inventory(&script, &mut snapshot, 0, 1, 0);
+    drive(
+        &mut script,
+        &mut snapshot,
+        &mut ledger,
+        TestFrame {
+            tick: 20,
+            hp: 40,
+            hp_max: 40,
+            poison: PoisonState::Clear,
+            cure: CurePoison::Never,
+        },
+        &mut output,
+    );
+    assert_eq!(script.selected_hazard.hazard, Some(RAILING_HAZARD));
+
+    remove_first_step_hazard(&mut script);
+    script.interrupt(crate::native::Interrupt::SessionEnded);
+    assert_eq!(script.selected_hazard.hazard, None);
+    assert_no_stale_hazard_eat(&mut script, &mut snapshot, &mut ledger, &mut output, 21);
+}
+
 #[test]
 fn quester_eats_inside_a_hazard_step_and_restarts_it() {
     let (mut script, mut snapshot, counts) = fixture("interact", Some(RAILING_HAZARD));

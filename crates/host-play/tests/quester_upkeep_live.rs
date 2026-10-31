@@ -241,7 +241,7 @@ impl C0Receipt {
         });
         receipt["observability_limits"] = json!([
             "ScriptStatus has no observed game tick; this receipt pairs its status with the same polling GameSnapshot tick.",
-            "Quest-step begin lines can be folded; survival OneOp begin/end events retain their own ticks.",
+            "Quest-step begin lines can be folded. Separate ScriptTrace lines retain PLAYER_INFO generations. Survival OneOp begin/end events retain their own ticks.",
             "The engine does not publish a separate click-lock bit; applied=true/false is the observed OneOp outcome.",
         ]);
         receipt
@@ -397,21 +397,26 @@ fn hostlogs() -> Vec<HostLog> {
     C0_LOGS.lock().map(|logs| logs.clone()).unwrap_or_default()
 }
 
-fn read_survival_op_trace(path: &std::path::Path) -> Result<Vec<HostLog>, String> {
+fn read_script_trace(path: &std::path::Path) -> Result<Vec<HostLog>, String> {
     let text = std::fs::read_to_string(path).map_err(|error| {
         format!(
             "read C0 ScriptTrace stderr file {}: {error}",
             path.display()
         )
     })?;
-    Ok(parse_survival_op_stderr(&text))
+    Ok(parse_quester_script_trace_stderr(&text))
 }
 
-fn parse_survival_op_stderr(text: &str) -> Vec<HostLog> {
+fn parse_quester_script_trace_stderr(text: &str) -> Vec<HostLog> {
     text.lines()
         .filter(|line| line.starts_with("[script-trace ") || line.starts_with("[script-trace] "))
         .filter_map(|line| line.split_once("] ").map(|(_, message)| message))
-        .filter(|message| message.starts_with("quester survival op event="))
+        .filter(|message| {
+            message.starts_with("quester survival op event=")
+                || (message.starts_with("quester ")
+                    && message.contains(" step ")
+                    && message.contains(" player_info="))
+        })
         .map(|message| HostLog {
             tick: None,
             source: "ScriptTrace".into(),
@@ -778,7 +783,7 @@ fn run_c0(purpose: RunPurpose) -> Result<LiveCapture, String> {
     let (observe_family, observe_tick) = live_callbacks(purpose, Arc::clone(&witness));
     let result = quester_live::run_observed(cell, observe_family, observe_tick);
     let mut logs = hostlogs();
-    logs.extend(read_survival_op_trace(&trace_path)?);
+    logs.extend(read_script_trace(&trace_path)?);
     let mut receipt = witness
         .lock()
         .map_err(|_| "C0 live witness poisoned after run".to_owned())?
@@ -1267,20 +1272,25 @@ fn c0_acceptance_oracle(receipt: &C0Receipt, logs: &[HostLog]) -> Result<(), Str
     }
     require_phase_s_op_sequence(receipt, s1, s_drop)?;
 
+    let step_info = format!("step {CLIMB_STEP} (interact) player_info=");
+    let mut found_step_info = false;
     for line in logs.iter().filter(|line| {
-        line.message
-            .contains("step climb-cell-rock-1 (interact) begin")
+        line.source == "ScriptTrace" && line.message.contains(&step_info)
     }) {
+        found_step_info = true;
         let tick = line
             .message
             .rsplit_once(" player_info=")
             .and_then(|(_, tick)| tick.parse::<u64>().ok())
-            .ok_or("climb begin hostlog has no raw PLAYER_INFO generation")?;
+            .ok_or("climb-step ScriptTrace line has no raw PLAYER_INFO generation")?;
         if tick > s1.tick && tick < s_drop.at.tick {
             return Err(
-                "a climb-cell-rock-1 begin trace appeared between S1 and the phase-S drop".into(),
+                "a climb-cell-rock-1 step PLAYER_INFO line appeared between S1 and the phase-S drop".into(),
             );
         }
+    }
+    if !found_step_info {
+        return Err("C0 has no climb-cell-rock-1 ScriptTrace PLAYER_INFO line".into());
     }
 
     for frame in &receipt.frames {
@@ -1494,7 +1504,7 @@ mod tests {
             "[script-trace] unrelated diagnostic\n",
             "[script-trace qu1bot] quester survival op event=end tick=28 kind=Eat { item_id: 379, before_count: 7 } applied=false deadline=28 player_info=128\n",
         );
-        let logs = parse_survival_op_stderr(text);
+        let logs = parse_quester_script_trace_stderr(text);
         assert_eq!(logs.len(), 2);
         assert!(logs.iter().all(|line| line.tick.is_none()));
         let (events, errors) = parse_survival_op_logs(&logs);
@@ -1796,13 +1806,22 @@ mod tests {
     }
 
     fn valid_hazard_logs() -> Vec<HostLog> {
-        vec![HostLog {
-            tick: Some(11),
-            source: "Script".into(),
-            message: format!(
-                "quester hazard step={CLIMB_STEP} max=7 source={HAZARD_SOURCE} line=15"
-            ),
-        }]
+        vec![
+            HostLog {
+                tick: Some(11),
+                source: "Script".into(),
+                message: format!(
+                    "quester hazard step={CLIMB_STEP} max=7 source={HAZARD_SOURCE} line=15"
+                ),
+            },
+            HostLog {
+                tick: None,
+                source: "ScriptTrace".into(),
+                message: format!(
+                    "quester desertrescue: stage desertrescue:6 step {CLIMB_STEP} (interact) player_info=11"
+                ),
+            },
+        ]
     }
 
     fn expect_rejected(receipt: &C0Receipt, logs: &[HostLog]) {
@@ -1817,6 +1836,21 @@ mod tests {
     fn acceptance_oracle_accepts_the_dropped_first_click_retry_path() {
         let dropped_click_retry = valid_receipt(3, 2, 9, 16, 2, 20);
         c0_acceptance_oracle(&dropped_click_retry, &valid_hazard_logs()).unwrap();
+    }
+
+    #[test]
+    fn script_trace_parser_keeps_separate_step_player_info_records() {
+        let generation = 73;
+        let message = format!(
+            "quester desertrescue: stage desertrescue:6 step {CLIMB_STEP} (interact) player_info={generation}"
+        );
+        let logs = parse_quester_script_trace_stderr(&format!(
+            "[script-trace] {message}\n"
+        ));
+        assert_eq!(logs.len(), 1);
+        assert_eq!(logs[0].source, "ScriptTrace");
+        assert_eq!(logs[0].tick, None);
+        assert_eq!(logs[0].message, message);
     }
 
     #[test]
@@ -2014,11 +2048,17 @@ mod tests {
         s_drop_frame.at.tick = s_drop_tick;
         expect_rejected(
             &begun_between,
-            &[valid_hazard_logs()[0].clone(), HostLog {
-                tick: Some(s1.tick + 1),
-                source: "Script".into(),
-                message: format!("quester desertrescue: stage desertrescue:6 step {CLIMB_STEP} (interact) begin player_info={}", s1.tick + 1),
-            }],
+            &[
+                valid_hazard_logs()[0].clone(),
+                HostLog {
+                    tick: None,
+                    source: "ScriptTrace".into(),
+                    message: format!(
+                        "quester desertrescue: stage desertrescue:6 step {CLIMB_STEP} (interact) player_info={}",
+                        s1.tick + 1
+                    ),
+                },
+            ],
         );
 
         let restart_too_late = valid_receipt(3, 2, 9, 17, 2, 20);
