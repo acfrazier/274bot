@@ -517,12 +517,12 @@ impl StepPlan for BuyPlan {
     fn begin(&self, _cx: &mut StepContext<'_, '_>) -> Result<Box<dyn StepRun>, ActionError> {
         Ok(Box::new(BuyRun {
             tile: self.tile,
-            request: BuyRequest {
+            request: BuyRequest::Acquisition {
                 npc_id: self.npc_id,
                 npc_name: Arc::clone(&self.npc_name),
                 item_id: self.item.id,
                 item_name: Arc::clone(&self.item.name),
-                qty: self.qty,
+                target_held: self.qty,
             },
             walk: None,
             buy: None,

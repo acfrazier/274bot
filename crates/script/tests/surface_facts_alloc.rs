@@ -328,7 +328,7 @@ fn slot_size_stays_within_the_full_build_parent_layout() {
     let actual = std::mem::size_of::<SlotScript>();
     println!("S0d SlotScript layout: {actual} bytes");
     assert_eq!(
-        actual, 1624,
+        actual, 1632,
         "the surface slot changed from its measured size"
     );
 }

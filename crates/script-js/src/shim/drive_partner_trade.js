@@ -55,6 +55,11 @@ export function tradeScreenState() {
     return globalThis.__rs2b0t_partner_trade('tradeScreenState', snap());
 }
 
-export function stableClosedPoll() {
-    throw notImpl('stableClosedPoll');
+export function stableClosedPoll(minMs = 600, nowFn) {
+    const poll = globalThis.__rs2b0t_partner_trade('stableClosedPoll', minMs);
+    return () => {
+        if (tradeScreenState() !== 'closed') return poll(true, false, 0);
+        if (nowFn == null) return poll(false, false, snap().tick ?? 0);
+        return poll(false, true, nowFn());
+    };
 }
