@@ -3,7 +3,7 @@ use super::*;
 use crate::native::WalkStallReason;
 use crate::quester::families::tests::{def, with_tick};
 use api::gather_methods::{known_rows, TargetClass};
-use api::named_banks::NamedBankFacts;
+use api::named_banks::{NamedBank, NamedBankFacts};
 use api::selected::{EntityId, FamilyPreparation};
 use api::snapshot::{
     GameSnapshot, ItemActionFamily, ItemContainer, ItemView, NpcView, StatView, WorldStateView,

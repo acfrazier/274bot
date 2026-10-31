@@ -43,7 +43,6 @@ mod park;
 mod recover;
 use park::Park;
 
-const MAX_AVOID: usize = 8;
 // Fishing's maximum movement timer is 529 ticks (280 + random(250)):
 // skill_fishing/scripts/fishing_movement.rs2:8-12. Add a 60-tick whirlpool
 // (macro events/scripts/fishing/macro_event_whirlpool.rs2:7); 800 exceeds both.
