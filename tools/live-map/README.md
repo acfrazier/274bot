@@ -53,6 +53,8 @@ All cells not listed below normally run on merlot. Engine A uses game port
 |---|---|
 | `host.npc-hop-engine-b` | Run on chardonnay. The command sets `WORLD_CACHE_DIR` and `LIVE_EVIDENCE_DIR`. Engine B is reached through the loopback tunnel at game port `45594` and HTTP port `2080`. |
 | `host.sherlock-search-live` | Run on merlot or chardonnay when that host has Engine A at `127.0.0.1:44594` and `127.0.0.1:1080`. The cell uses loopback ports and has no host-specific code. Use chardonnay when merlot is measured or reserved. It needs `LIVE=1`, `BOT_CPU=1`, `BOT_LIVE_NAME_PREFIX`, `WORLD_NAV_PACK`, `WORLD_ENGINE_DIR`, `BOT_CACHE_DIR`, `RS2B0T`, `WORLD_GAME_PORT`, `WORLD_HTTP_PORT`, and `LIVE_EVIDENCE_DIR`. The command also uses `ISOHOME`. Leave `QUESTER_TICK_MS` unset. |
+| `host.bank-mage-teller-native` | Run on chardonnay with Engine L at `127.0.0.1:47594` and HTTP port `3080`. The cell uses local 289 assets, named-bank catalog data, a minted account, and `LIVE_EVIDENCE_DIR`. |
+| `host.bank-npc-pick-burst`, `host.grinch-cross-region-return` | Run on aubaine with the Engine L endpoint at `127.0.0.1:44594` and HTTP port `1080`. The bank-pick burst requires ten disposable accounts; Grinch uses real cross-region bank returns. |
 | `host.quester-path-engine-q`, `scenario.quester-engine-q` | Run on the Engine Q host. This setup uses merlot at `127.0.0.1:44694` and `127.0.0.1:1180`. Set `QUESTER_TICK_MS=300` only for these cells. |
 | `nav.essence-follow` | The orchestrator must start a 274 engine on the cell host at `127.0.0.1:43594`. The orchestrator supplies `ENGINE_274_DIR` and `NAV_PACK_274`. Do not run this cell until the orchestrator provides both inputs and starts the engine. |
 | `nav.essence-289-engine-a` | Run on merlot or chardonnay when that host has Engine A at `127.0.0.1:44594` and `127.0.0.1:1080`. Use chardonnay when merlot is measured or reserved. |
@@ -78,6 +80,19 @@ The NPC-hop test requires `WORLD_NAV_PACK` and reads its optional `WORLD_NAV_FLA
 `WORLD_ENGINE_DIR`, and `WORLD_CACHE_DIR` at `crates/host-play/tests/npc_hop_live.rs:87-115`.
 It checks `LIVE=1` and writes receipts when `LIVE_EVIDENCE_DIR` is set at
 `crates/host-play/tests/npc_hop_live.rs:53-58,308-323`.
+
+## Bank and acquisition call paths
+
+`host.bank-mage-teller-native` and `host.bank-npc-pick-burst` cover
+`crates/host-play/src/bank_npc_live.rs`. The first runs the real Mage Arena
+teller receipt; the second exercises the shared bank-pick retry burst.
+`host.script-bank-tests` covers `crates/host-play/src/script_bank_harness.rs`
+through its unit tests.
+
+`host.grinch-cross-region-return` covers
+`crates/script/src/acquire/run.rs`: `Grinch::start_bank` constructs
+`AcquireRun` at `crates/script/src/grinch.rs:630`, and the live cross-region
+return cell is selected at `crates/host-play/tests/grinch_live.rs:119-123`.
 
 ## ScriptWalkArm call paths
 
