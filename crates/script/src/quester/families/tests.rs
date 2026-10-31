@@ -2366,9 +2366,21 @@ fn same_tick_composed_approaches_defer_before_native_dispatch() {
                 "qty": 1
             })), compile).unwrap(),
         ];
+        // Make is last and starts with its loc outside the observed scene.
+        let make_index = plans.len() - 1;
         for (index, plan) in plans.into_iter().enumerate() {
             let mut snapshot = ready();
             snapshot.seed_local_player(local_player(tile(3200, 3200)));
+            if index != make_index {
+                let mut wheel = loc(
+                    compile.selected.loc_by_config("spinningwheel").unwrap().id,
+                    "Spinning wheel",
+                    "Spin",
+                );
+                wheel.tile = tile(3220, 3200);
+                wheel.distance = 20;
+                snapshot.seed_locs(vec![wheel]);
+            }
             snapshot.seed_inventory(
                 vec![ItemView {
                     def: def(resolve_obj(compile, "shears").unwrap(), "Shears"),
@@ -2423,8 +2435,8 @@ fn same_tick_make_trigger_retries_the_same_location_next_tick() {
         let mut snapshot = ready();
         snapshot.seed_local_player(local_player(tile(3200, 3200)));
         let mut wheel = loc(selected.id, "Spinning wheel", "Spin");
-        wheel.tile = tile(3201, 3200);
-        wheel.distance = 1;
+        wheel.tile = tile(3200, 3200);
+        wheel.distance = 0;
         snapshot.seed_locs(vec![wheel]);
         let plan = s2::compile_make(test_args::<s2::MakeArgs>(serde_json::json!({
             "loc": {"name": "spinningwheel", "op": "Spin"},
@@ -2439,7 +2451,11 @@ fn same_tick_make_trigger_retries_the_same_location_next_tick() {
             for _ in 0..3 {
                 assert!(with_step(tick, |cx| run.poll(cx)).is_pending());
             }
-            assert!(tick.cx.ledger.as_ref().unwrap().outbox.is_empty());
+            assert!(tick
+                .cx
+                .ledger
+                .as_ref()
+                .is_none_or(|ledger| ledger.outbox.is_empty()));
             run
         });
         assert!(with_tick(&snapshot, &mut ledger, 2, |tick| {
@@ -2450,6 +2466,47 @@ fn same_tick_make_trigger_retries_the_same_location_next_tick() {
             matches!(emitted(&ledger), InteractReq::Loc { id: Some(id), action, .. }
             if *id == selected.id && action == "Spin")
         );
+    });
+}
+#[test]
+fn make_walks_to_far_anchor_when_the_loc_is_not_observed() {
+    compile_context_test(|compile| {
+        let anchor = tile(2982, 3315);
+        let plan = s2::compile_make(
+            test_args::<s2::MakeArgs>(serde_json::json!({
+                "loc": {"name": "spinningwheel", "op": "Spin"},
+                "anchor": {"tile": [2982, 3315, 0], "source": "review far-start probe"},
+                "product": "ball_of_wool",
+                "menu": {"obj": "wool", "source": "review far-start probe"},
+                "qty": 1
+            })),
+            compile,
+        )
+        .unwrap();
+        let mut snapshot = ready();
+        snapshot.seed_local_player(local_player(tile(3092, 3243)));
+        let mut ledger = None;
+        let mut run = with_tick(&snapshot, &mut ledger, 1, |tick| {
+            let mut run = with_step(tick, |cx| plan.begin(cx).unwrap());
+            assert!(tick.cx.budget.event(false));
+            for _ in 0..3 {
+                assert!(with_step(tick, |cx| run.poll(cx)).is_pending());
+            }
+            assert!(tick
+                .cx
+                .ledger
+                .as_ref()
+                .is_none_or(|ledger| ledger.outbox.is_empty()));
+            run
+        });
+        assert!(with_tick(&snapshot, &mut ledger, 2, |tick| {
+            with_step(tick, |cx| run.poll(cx))
+        })
+        .is_pending());
+        assert!(matches!(
+            ledger.as_ref().unwrap().outbox.last().map(|entry| &entry.effect),
+            Some(HostEffect::Walk(request)) if request.target == anchor
+        ));
     });
 }
 
@@ -4344,6 +4401,8 @@ fn make_selects_the_input_menu_row_and_settles_on_the_output() {
                     product_id: 1759,
                     menu_id: 1737,
                     qty: 20,
+                    items_per_process: 1,
+                    after_trigger: false,
                     make_x: true,
                 },
                 &mut tick.cx,
@@ -5820,8 +5879,8 @@ fn assert_sheep_partial_spin(finish_target: bool) {
         let document: crate::quester::path::PathDocument =
             serde_json::from_str(crate::quester::compile::SHEEP_JSON).unwrap();
         let here = WorldTile {
-            x: 2982,
-            z: 3315,
+            x: 2981,
+            z: 3314,
             level: 0,
         };
         let path =
@@ -5845,7 +5904,7 @@ fn assert_sheep_partial_spin(finish_target: bool) {
                 z: 3314,
                 level: 0,
             },
-            distance: 1,
+            distance: 0,
             ..loc(2644, "Spinning wheel", "Spin")
         }]);
         snapshot.rebuild_family(&client, api::snapshot::Family::MakeProducts);
@@ -5869,12 +5928,29 @@ fn assert_sheep_partial_spin(finish_target: bool) {
             with_sheep_step(tick, 12, |cx| step.plan.begin(cx).unwrap())
         });
         for game_tick in 2..=4 {
-            if game_tick == 3 {
+            if game_tick == 4 {
                 accept_last(&mut ledger, game_tick, true);
             }
             let result = with_tick(&snapshot, &mut ledger, game_tick, |tick| {
                 with_sheep_step(tick, 12, |cx| run.poll(cx))
             });
+            if game_tick == 3 {
+                assert!(
+                    matches!(
+                        emitted(&ledger),
+                        InteractReq::Loc {
+                            x,
+                            z,
+                            id: Some(target),
+                            action,
+                            ..
+                        } if (*x, *z) == (here.x, here.z)
+                            && *target == 2644
+                            && action == "Spin"
+                    ),
+                    "the approach anchor must not replace the selected loc's actual tile"
+                );
+            }
             assert!(
                 result.is_pending(),
                 "tick {game_tick}: {:?}",
@@ -5943,22 +6019,23 @@ fn assert_sheep_partial_spin(finish_target: bool) {
             "11 held balls cannot settle the journal's remaining 12"
         );
         if !finish_target {
-            // No raw wool remains. A final queued output can still arrive within
-            // three ticks (skill_crafting/scripts/spinning/spinning.rs2:83-99).
+            // No raw wool remains. Keep the full five-tick Make-X progress
+            // window before we report a failed held target. See
+            // `content/scripts/skill_crafting/scripts/spinning/spinning.rs2:87-110`.
             for _ in 0..100 {
                 assert!(with_tick(&snapshot, &mut ledger, 8, |tick| {
                     with_sheep_step(tick, 12, |cx| run.poll(cx))
                 })
                 .is_pending());
             }
-            for game_tick in 9..=10 {
+            for game_tick in 9..=12 {
                 assert!(with_tick(&snapshot, &mut ledger, game_tick, |tick| {
                     with_sheep_step(tick, 12, |cx| run.poll(cx))
                 })
                 .is_pending());
             }
             assert!(matches!(
-                with_tick(&snapshot, &mut ledger, 11, |tick| {
+                with_tick(&snapshot, &mut ledger, 13, |tick| {
                     with_sheep_step(tick, 12, |cx| run.poll(cx))
                 }),
                 Poll::Ready(Err(ActionError::Failed(reason)))

@@ -55,6 +55,22 @@ The kill count persists across native re-engagements within that step.
 Only a confirmed `Killed` result spends the budget.
 Disappearance, a missing target, or an attempt timeout does not count as a kill.
 
+`until_drop` uses its authored `max_kills`. `until` and `win` use a separate
+content-derived bound. The pinned R289 NPC rows set the maximum respawn rate to
+700 ticks (`content/scripts/areas/area_desert/configs/desert.npc:65`;
+`content/scripts/areas/area_varrock/configs/varrock.npc:626`).
+`NPC_DEL` passes this rate to `World.removeNpc`
+(`engine/src/engine/script/handlers/NpcOps.ts:93-95`), which scales it down by
+player count (`engine/src/engine/World.ts:1312-1333,1731-1734`). The combat
+machine ends a missing-target attempt after three ticks
+(`crates/script/src/combat/machine.rs:1201-1207`). The bound allows enough
+retries to span the 700-tick respawn interval. The calculation uses the
+smaller of the attempt budget and three ticks. The engine uses 1,500 ticks
+when the request sets no budget (`crates/script/src/combat/machine.rs:271-275`).
+A shorter authored budget increases the retry count. The count spans the full
+step, including after successful kills. If it is spent, the step fails with
+the last combat report.
+
 The final permitted kill still receives the normal loot wait and pickup.
 The appearance deadline does not cancel a pickup that already started.
 If the item remains absent, the runner parks with the authored `stop`.
@@ -91,15 +107,34 @@ Then use `make` with neither `loc` nor `anchor`:
 }
 ```
 
-The `product` names the output item.
-The optional `menu.obj` names the item represented by the posted menu row.
-Some menus show an input item instead of the output.
 `qty` is a held target: hold at least this many output items after production.
-It is not an instruction to make that many additional items.
-The machine selects the named product and a quantity that does not exceed the remaining target.
+A fixed menu button counts processes, not output items. The step rounds the
+remaining item target up to the minimum whole-process count needed. A normal
+log fletching process yields 15 arrow shafts (`cut_logs.dbrow:4`, read by
+`cut_logs.rs2:29`). Smithing sets `product_amount` to 10 dart tips, 15
+arrowheads, five knives, or two nails per bar
+(`smithing.dbrow:1127,1193,1259,1347`). The selected game-data schema does not
+include these server production rows, so `s2.rs` keeps the map. The test
+parses `production_yields.r289.fixture` and checks each listed product against
+its content yield. Products without a listed yield use one item per process.
+
+When a loc-triggered step starts more than six tiles from its anchor, it walks
+to the anchor before it waits for an unseen loc. A failed walk to the anchor
+blocks the step, and the Quester parks; it is not retried.
+
+On a `skill_multi3` chat menu, a fixed button must match the remaining process
+count; `make_x: true` allows the Make-X count dialog when there is no exact
+fixed button. On a MainMake menu, the step chooses the largest posted fixed
+button not above the remaining process count. If more output is still needed,
+a loc-triggered step uses the item on the loc again for the next batch. A
+selector-only step stops as blocked if its MainMake menu closes before the
+held target is reached. Whole processes can leave the held count above `qty`
+when a product yields several items or the menu has no exact process count.
+The step does not request more processes than needed to cover the remaining
+item target.
+
 The compiler rejects a missing half of the `loc` and `anchor` trigger pair.
 Existing loc-triggered `make` steps retain both fields.
-
 The same selector works after item-on-item and item-on-loc use.
 Ikov can use it after a knife on logs.
 Zombie Queen can use it for bronze wire smithing.

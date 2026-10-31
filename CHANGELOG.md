@@ -16,8 +16,26 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.8` 
 - After an advancing step's settle timeout, the Quester rereads quest progress
   before it retries. Steps can also set their own attempt limit and a named
   stop.
-- Quest guides can select a product and quantity from a production menu
-  opened by using an item on another item or on a location.
+- Quest guides can now select a product and quantity from a production menu
+  opened by using an item on another item or on a location. Fixed menu buttons
+  count processes, while `qty` counts output items; guides select the smallest
+  whole-process quantity that reaches the held target when the content allows
+  it. If a loc-triggered batch closes before the target is met, the guide uses
+  the item on the loc again.
+- Loc-triggered production approaches its anchor when the player starts more
+  than six tiles away. The menu clock starts after the approach and an
+  accepted click. Its one-tick observation window includes a one-tick
+  packet-order margin for the engine's next-tick input and interface update
+  (`E: engine/src/engine/World.ts:350-355,
+  engine/src/engine/entity/NetworkPlayer.ts:171-177`).
+- Make-X production allows five game ticks for each spinning output: the
+  game adds one ball of wool every three ticks, plus one tick for the order in
+  which the server's updates arrive and one tick of margin.
+- Non-kill combat re-engagements are bounded by the 700-tick maximum NPC
+  respawn in revision 289 and the engine's three-tick target-gone end. The
+  request tick budget adjusts the bound. `until_drop` uses its authored
+  `max_kills`; `until` and `win` use the content-derived bound. Exhaustion
+  keeps the last combat report in the failure detail.
 - Ground-item Take steps can now use an observed game-tick budget. This
   lets a guide collect a temporary scripted drop such as the Jailer's key,
   without a wall-clock spawn wait.

@@ -3700,3 +3700,396 @@ fn item_on_anvil_make_selects_bronze_wire_main_make_row() {
         ));
     });
 }
+
+#[test]
+fn loc_make_starts_menu_clock_after_multi_tick_approach() {
+    // The accepted click follows approach arrival. World processes client input on
+    // a later tick (E engine/src/engine/World.ts:350-355), then NetworkPlayer
+    // writes the interface after that tick packet (E engine/src/engine/NetworkPlayer.ts:171-177).
+    // A snapshot on that tick can still lack the menu; it is observable on the next.
+    compile_context_test(|compile| {
+        let wheel_id = resolve_loc(compile, "spinningwheel").unwrap();
+        let wool_id = resolve_obj(compile, "wool").unwrap();
+        let anchor = tile(3200, 3200);
+        let plan = s2::compile_make(
+            test_args::<s2::MakeArgs>(serde_json::json!({
+                "loc": {"name": "spinningwheel", "op": "Spin"},
+                "anchor": {"tile": [3200, 3200, 0], "source": "C:scripts/skill_crafting/scripts/spinning/spinning.rs2:36-51"},
+                "product": "ball_of_wool",
+                "menu": {
+                    "obj": "wool",
+                    "source": "C:scripts/skill_crafting/scripts/spinning/spinning.rs2:36-51"
+                },
+                "qty": 1
+            })),
+            compile,
+        )
+        .unwrap();
+        let mut snapshot = ready();
+        snapshot.seed_local_player(local_player(tile(3195, 3200)));
+        let mut wheel = loc(wheel_id, "Spinning wheel", "Spin");
+        wheel.tile = anchor;
+        wheel.distance = 5;
+        snapshot.seed_locs(vec![wheel]);
+        snapshot.seed_inventory(Vec::new(), 28);
+
+        let mut ledger = None;
+        let mut run = with_tick(&snapshot, &mut ledger, 1, |tick| {
+            with_step(tick, |cx| plan.begin(cx).unwrap())
+        });
+        assert!(with_tick(&snapshot, &mut ledger, 2, |tick| {
+            with_step(tick, |cx| run.poll(cx))
+        })
+        .is_pending());
+        assert!(
+            matches!(
+                &ledger.as_ref().unwrap().outbox.last().unwrap().effect,
+                crate::native::HostEffect::Walk(request)
+                    if request.target == anchor && request.radius == 1
+            ),
+            "the loc op must wait for its multi-tick approach"
+        );
+
+        for tick in 3..=5 {
+            assert!(with_tick(&snapshot, &mut ledger, tick, |native| {
+                with_step(native, |cx| run.poll(cx))
+            })
+            .is_pending());
+        }
+        snapshot.seed_local_player(local_player(anchor));
+        let mut wheel = loc(wheel_id, "Spinning wheel", "Spin");
+        wheel.tile = anchor;
+        wheel.distance = 0;
+        snapshot.seed_locs(vec![wheel]);
+        let (request_id, run_key) = {
+            let action = ledger
+                .as_ref()
+                .unwrap()
+                .outbox
+                .iter()
+                .rev()
+                .find(|action| matches!(&action.effect, crate::native::HostEffect::Walk(_)))
+                .unwrap();
+            (action.request_id.get(), action.run())
+        };
+        ledger.as_mut().unwrap().walk = Some(crate::native::WalkReceipt {
+            goal: None,
+            request_id,
+            evidence: api::quest_progress::EvidenceStamp {
+                run: run_key,
+                tick: 6,
+                sequence: 6,
+            },
+            end: crate::native::WalkEnd::Arrived,
+            blocked: None,
+            detail: None,
+            refusal: None,
+            assessment: None,
+            escape: None,
+        });
+        assert!(with_tick(&snapshot, &mut ledger, 6, |tick| {
+            with_step(tick, |cx| run.poll(cx))
+        })
+        .is_pending());
+        assert!(matches!(
+            &ledger.as_ref().unwrap().outbox.last().unwrap().effect,
+            crate::native::HostEffect::Interaction(InteractReq::Loc {
+                id: Some(id),
+                ..
+            }) if *id == wheel_id
+        ));
+
+        accept_last(&mut ledger, 7, true);
+        assert!(with_tick(&snapshot, &mut ledger, 7, |tick| {
+            with_step(tick, |cx| run.poll(cx))
+        })
+        .is_pending());
+        assert!(with_tick(&snapshot, &mut ledger, 8, |tick| {
+            with_step(tick, |cx| run.poll(cx))
+        })
+        .is_pending());
+        let menu_client = production_menu_client(&[(wool_id, "Wool")]);
+        snapshot.rebuild_family(&menu_client, api::snapshot::Family::MakeProducts);
+        snapshot.rebuild_family(&menu_client, api::snapshot::Family::Modals);
+        assert!(with_tick(&snapshot, &mut ledger, 9, |tick| {
+            with_step(tick, |cx| run.poll(cx))
+        })
+        .is_pending());
+        assert!(matches!(emitted(&ledger), InteractReq::IfButton { .. }));
+    });
+}
+
+#[test]
+fn make_targets_item_yield_using_process_count_from_content() {
+    compile_context_test(|compile| {
+        let bar_id = resolve_obj(compile, "bronze_bar").unwrap();
+        let heads_id = resolve_obj(compile, "bronze_arrowheads").unwrap();
+        let plan = s2::compile_make(
+            test_args::<s2::MakeArgs>(serde_json::json!({
+                "product": "bronze_arrowheads",
+                "menu": {
+                    "obj": "bronze_bar",
+                    "source": "C:scripts/skill_smithing/configs/smithing/smithing.inv:30-35"
+                },
+                "qty": 7
+            })),
+            compile,
+        )
+        .unwrap();
+        let menu_client = production_menu_client(&[(bar_id, "Bronze bar")]);
+        let mut snapshot = ready();
+        snapshot.seed_inventory(
+            vec![
+                held(bar_id, "Bronze bar", 8, 1, None),
+                held(heads_id, "Bronze arrowheads", 9, 0, None),
+            ],
+            28,
+        );
+        snapshot.rebuild_family(&menu_client, api::snapshot::Family::MakeProducts);
+        snapshot.rebuild_family(&menu_client, api::snapshot::Family::Modals);
+        let mut ledger = None;
+        let mut run = with_tick(&snapshot, &mut ledger, 1, |tick| {
+            with_step(tick, |cx| plan.begin(cx).unwrap())
+        });
+        assert!(with_tick(&snapshot, &mut ledger, 2, |tick| {
+            with_step(tick, |cx| run.poll(cx))
+        })
+        .is_pending());
+        assert!(matches!(
+            emitted(&ledger),
+            InteractReq::IfButton { component_id: 2120 }
+        ));
+    });
+}
+
+#[test]
+fn main_make_retriggers_item_on_loc_after_each_closed_batch() {
+    use client::io::ServerProt;
+
+    compile_context_test(|compile| {
+        let bar_id = resolve_obj(compile, "bronze_bar").unwrap();
+        let wire_id = resolve_obj(compile, "bronzecraftwire").unwrap();
+        let anvil_id = resolve_loc(compile, "anvil").unwrap();
+        let make = s2::compile_make(
+            test_args::<s2::MakeArgs>(serde_json::json!({
+                "loc": {"name": "anvil"},
+                "anchor": {
+                    "tile": [6, 7, 0],
+                    "source": "unit fixture",
+                },
+                "product": "bronzecraftwire",
+                "menu": {
+                    "obj": "bronze_bar",
+                    "source": "C:scripts/skill_smithing/configs/smithing/smithing.inv:30-35"
+                },
+                "qty": 7
+            })),
+            compile,
+        )
+        .unwrap();
+        let mut menu_client =
+            production_main_make_client(bar_id, "Bronze bar", &["Make 1", "Make 5", "Make 10"]);
+        let mut snapshot = ready();
+        snapshot.seed_local_player(local_player(tile(5, 6)));
+        snapshot.seed_inventory(
+            vec![
+                held(bar_id, "Bronze bar", 8, 10, None),
+                held(wire_id, "Bronze wire", 9, 0, None),
+            ],
+            28,
+        );
+        let mut anvil = loc(anvil_id, "Anvil", "Use");
+        anvil.tile = tile(5, 6);
+        anvil.distance = 0;
+        snapshot.seed_locs(vec![anvil]);
+        let mut ledger = None;
+        let mut run = with_tick(&snapshot, &mut ledger, 1, |tick| {
+            with_step(tick, |cx| make.begin(cx).unwrap())
+        });
+
+        assert!(with_tick(&snapshot, &mut ledger, 2, |tick| {
+            with_step(tick, |cx| run.poll(cx))
+        })
+        .is_pending());
+        assert!(matches!(
+            emitted(&ledger),
+            InteractReq::UseOn {
+                kind,
+                x,
+                z,
+                source_item_id: Some(id),
+                target_item_id: Some(target),
+                ..
+            } if kind == "loc"
+                && (*x, *z) == (5, 6)
+                && *id == bar_id
+                && *target == anvil_id
+        ));
+        accept_last(&mut ledger, 3, true);
+        assert!(with_tick(&snapshot, &mut ledger, 3, |tick| {
+            with_step(tick, |cx| run.poll(cx))
+        })
+        .is_pending());
+
+        menu_client.main_modal_id = 2200;
+        menu_client.bump_gens(ServerProt::IF_OPENMAIN);
+        assert!(snapshot.rebuild_family(&menu_client, api::snapshot::Family::MainMake));
+        snapshot.rebuild_family(&menu_client, api::snapshot::Family::Modals);
+        assert!(with_tick(&snapshot, &mut ledger, 4, |tick| {
+            with_step(tick, |cx| run.poll(cx))
+        })
+        .is_pending());
+        assert!(matches!(
+            emitted(&ledger),
+            InteractReq::MakePanel { operation: 2, .. }
+        ));
+        accept_last(&mut ledger, 5, true);
+        // C:scripts/skill_smithing/scripts/smithing/smithing.rs2:213-214 closes the menu per attempt.
+        menu_client.main_modal_id = -1;
+        menu_client.bump_gens(ServerProt::IF_CLOSE);
+        assert!(snapshot.rebuild_family(&menu_client, api::snapshot::Family::MainMake));
+        snapshot.rebuild_family(&menu_client, api::snapshot::Family::Modals);
+        assert!(with_tick(&snapshot, &mut ledger, 6, |tick| {
+            with_step(tick, |cx| run.poll(cx))
+        })
+        .is_pending());
+
+        snapshot.seed_inventory(
+            vec![
+                held(bar_id, "Bronze bar", 8, 5, None),
+                held(wire_id, "Bronze wire", 9, 5, None),
+            ],
+            28,
+        );
+        for tick in 7..=10 {
+            assert!(with_tick(&snapshot, &mut ledger, tick, |native| {
+                with_step(native, |cx| run.poll(cx))
+            })
+            .is_pending());
+        }
+        assert!(with_tick(&snapshot, &mut ledger, 11, |tick| {
+            with_step(tick, |cx| run.poll(cx))
+        })
+        .is_pending());
+        assert!(matches!(
+            emitted(&ledger),
+            InteractReq::UseOn {
+                kind,
+                x,
+                z,
+                source_item_id: Some(id),
+                target_item_id: Some(target),
+                ..
+            } if kind == "loc"
+                && (*x, *z) == (5, 6)
+                && *id == bar_id
+                && *target == anvil_id
+        ));
+
+        accept_last(&mut ledger, 12, true);
+        assert!(with_tick(&snapshot, &mut ledger, 12, |tick| {
+            with_step(tick, |cx| run.poll(cx))
+        })
+        .is_pending());
+        menu_client.main_modal_id = 2200;
+        menu_client.bump_gens(ServerProt::IF_OPENMAIN);
+        assert!(snapshot.rebuild_family(&menu_client, api::snapshot::Family::MainMake));
+        snapshot.rebuild_family(&menu_client, api::snapshot::Family::Modals);
+        assert!(with_tick(&snapshot, &mut ledger, 13, |tick| {
+            with_step(tick, |cx| run.poll(cx))
+        })
+        .is_pending());
+        assert!(matches!(
+            emitted(&ledger),
+            InteractReq::MakePanel { operation: 1, .. }
+        ));
+
+        accept_last(&mut ledger, 14, true);
+        menu_client.main_modal_id = -1;
+        menu_client.bump_gens(ServerProt::IF_CLOSE);
+        assert!(snapshot.rebuild_family(&menu_client, api::snapshot::Family::MainMake));
+        snapshot.rebuild_family(&menu_client, api::snapshot::Family::Modals);
+        assert!(with_tick(&snapshot, &mut ledger, 15, |tick| {
+            with_step(tick, |cx| run.poll(cx))
+        })
+        .is_pending());
+        snapshot.seed_inventory(
+            vec![
+                held(bar_id, "Bronze bar", 8, 4, None),
+                held(wire_id, "Bronze wire", 9, 6, None),
+            ],
+            28,
+        );
+        for tick in 16..=19 {
+            assert!(with_tick(&snapshot, &mut ledger, tick, |native| {
+                with_step(native, |cx| run.poll(cx))
+            })
+            .is_pending());
+        }
+        assert!(with_tick(&snapshot, &mut ledger, 20, |tick| {
+            with_step(tick, |cx| run.poll(cx))
+        })
+        .is_pending());
+        assert!(matches!(
+            emitted(&ledger),
+            InteractReq::UseOn {
+                kind,
+                x,
+                z,
+                source_item_id: Some(id),
+                target_item_id: Some(target),
+                ..
+            } if kind == "loc"
+                && (*x, *z) == (5, 6)
+                && *id == bar_id
+                && *target == anvil_id
+        ));
+
+        accept_last(&mut ledger, 21, true);
+        assert!(with_tick(&snapshot, &mut ledger, 21, |tick| {
+            with_step(tick, |cx| run.poll(cx))
+        })
+        .is_pending());
+        menu_client.main_modal_id = 2200;
+        menu_client.bump_gens(ServerProt::IF_OPENMAIN);
+        assert!(snapshot.rebuild_family(&menu_client, api::snapshot::Family::MainMake));
+        snapshot.rebuild_family(&menu_client, api::snapshot::Family::Modals);
+        assert!(with_tick(&snapshot, &mut ledger, 22, |tick| {
+            with_step(tick, |cx| run.poll(cx))
+        })
+        .is_pending());
+        assert!(matches!(
+            emitted(&ledger),
+            InteractReq::MakePanel { operation: 1, .. }
+        ));
+
+        accept_last(&mut ledger, 23, true);
+        menu_client.main_modal_id = -1;
+        menu_client.bump_gens(ServerProt::IF_CLOSE);
+        assert!(snapshot.rebuild_family(&menu_client, api::snapshot::Family::MainMake));
+        snapshot.rebuild_family(&menu_client, api::snapshot::Family::Modals);
+        assert!(with_tick(&snapshot, &mut ledger, 24, |tick| {
+            with_step(tick, |cx| run.poll(cx))
+        })
+        .is_pending());
+        snapshot.seed_inventory(
+            vec![
+                held(bar_id, "Bronze bar", 8, 3, None),
+                held(wire_id, "Bronze wire", 9, 7, None),
+            ],
+            28,
+        );
+        for tick in 25..=27 {
+            assert!(with_tick(&snapshot, &mut ledger, tick, |native| {
+                with_step(native, |cx| run.poll(cx))
+            })
+            .is_pending());
+        }
+        assert!(matches!(
+            with_tick(&snapshot, &mut ledger, 28, |tick| {
+                with_step(tick, |cx| run.poll(cx))
+            }),
+            Poll::Ready(Ok(_))
+        ));
+    });
+}

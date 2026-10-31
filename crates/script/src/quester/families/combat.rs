@@ -218,6 +218,7 @@ struct UntilDropArgs {
     max_kills: u32,
     /// Authored stop name reported when the kill budget is spent without the item.
     #[cfg_attr(feature = "path-schema", schemars(length(min = 1)))]
+    #[cfg_attr(feature = "path-schema", schemars(regex(pattern = r"\S")))]
     stop: String,
 }
 
@@ -497,6 +498,13 @@ fn compile_plan(args: CombatArgs, cx: &CompileContext<'_>) -> Result<CombatPlan,
         .as_ref()
         .map(|predicate| super::compile_predicate(predicate, cx))
         .transpose()?;
+    let reengage_budget = if let Some(until_drop) = &until_drop {
+        until_drop.max_kills
+    } else if until.is_some() || win.is_some() {
+        content_reengagement_budget(args.kill_budget_ticks)
+    } else {
+        0
+    };
     let tables = build_tables(cx)?;
     let spells = if style == Style::Mage {
         args.spells
@@ -558,6 +566,7 @@ fn compile_plan(args: CombatArgs, cx: &CompileContext<'_>) -> Result<CombatPlan,
         loot: Arc::from(loot),
         finish,
         until_drop,
+        reengage_budget,
     })
 }
 
@@ -629,6 +638,30 @@ fn compile_target(args: TargetArgs, cx: &CompileContext<'_>) -> Result<Target, C
         npcs: attacker.npcs,
         players: attacker.players,
     })
+}
+
+/// The pinned R289 NPC rows top out at 700 ticks
+/// (`content/scripts/areas/area_desert/configs/desert.npc:65`;
+/// `content/scripts/areas/area_varrock/configs/varrock.npc:626`).
+/// `NPC_DEL` passes this rate to `World.removeNpc`
+/// (`engine/src/engine/script/handlers/NpcOps.ts:93-95`), which scales it down
+/// by player count (`engine/src/engine/World.ts:1312-1333,1731-1734`).
+/// The combat machine ends a missing-target attempt after three ticks
+/// (`combat/machine.rs:1201-1207`), so allow enough non-kill retries to cover
+/// one maximum respawn interval. A shorter requested combat budget needs more
+/// retries. Zero uses the engine's 1,500-tick default (`combat/machine.rs:271-275`).
+const MAX_CONTENT_NPC_RESPAWN_TICKS: u32 = 700;
+const TARGET_GONE_TICKS: u32 = 3;
+const DEFAULT_COMBAT_BUDGET_TICKS: u32 = 1_500;
+
+fn content_reengagement_budget(budget_ticks: u16) -> u32 {
+    let attempt_ticks = if budget_ticks == 0 {
+        DEFAULT_COMBAT_BUDGET_TICKS
+    } else {
+        u32::from(budget_ticks)
+    };
+    let shortest_end_ticks = attempt_ticks.min(TARGET_GONE_TICKS);
+    MAX_CONTENT_NPC_RESPAWN_TICKS.div_ceil(shortest_end_ticks) - 1
 }
 
 fn compile_finish(
@@ -859,6 +892,8 @@ struct CombatPlan {
     loot: Arc<[LootItem]>,
     finish: Option<FinishConfig>,
     until_drop: Option<UntilDropConfig>,
+    /// `until_drop` uses its authored kill budget; `until`/`win` span a content respawn window.
+    reengage_budget: u32,
 }
 
 impl StepPlan for CombatPlan {
@@ -873,6 +908,7 @@ impl StepPlan for CombatPlan {
             loot: Arc::clone(&self.loot),
             finish: self.finish.clone(),
             until_drop: self.until_drop.clone(),
+            reengage_budget: self.reengage_budget,
             action: None,
             phase: Phase::Combat,
             loot_index: 0,
@@ -880,6 +916,7 @@ impl StepPlan for CombatPlan {
             loot_missing_this_kill: false,
             last_report: None,
             kills: 0,
+            nonkill_reengagements: 0,
             last_outcome: None,
             target_gone_restarts: 0,
             raised_prayers: RaisedPrayers::empty(),
@@ -1226,6 +1263,9 @@ struct CombatRun {
     kills: u32,
     last_outcome: Option<StepOutcome>,
     target_gone_restarts: u8,
+    reengage_budget: u32,
+    /// Non-kill re-engagements used by this step; successful kills do not reset the bound.
+    nonkill_reengagements: u32,
     raised_prayers: RaisedPrayers,
     manual_takeover_watch: crate::native::ManualTakeoverWatch,
     finish: Option<FinishConfig>,
@@ -1799,13 +1839,13 @@ impl CombatRun {
                 Poll::Pending
             }
             CombatEnd::TargetGone => {
-                // Imp's next attempt is anchored at stand, so wait for its
-                // observed arrival before re-beginning (design-combat.md §1.1,
-                // §2.6; design-combat-s3.md §5.1).
                 if (self.until.is_none() && self.win.is_none() && self.until_drop.is_none())
                     || self.should_stop(cx)
                 {
                     return self.finish(cx);
+                }
+                if !self.reserve_nonkill_reengagement() {
+                    return self.reengagement_budget_failure();
                 }
                 if let Some(stand) = self.request.stand {
                     match self.begin_return_to_stand(stand, cx) {
@@ -1822,7 +1862,7 @@ impl CombatRun {
                 {
                     self.finish(cx)
                 } else {
-                    self.rebegin_combat(cx, false)
+                    self.rebegin_after_nonkill(cx, false)
                 }
             }
             CombatEnd::Died => self.finish(cx),
@@ -1880,6 +1920,33 @@ impl CombatRun {
             }
             Err(error) => Poll::Ready(Err(error)),
         }
+    }
+
+    fn reserve_nonkill_reengagement(&mut self) -> bool {
+        if self.nonkill_reengagements >= self.reengage_budget {
+            return false;
+        }
+        self.nonkill_reengagements += 1;
+        true
+    }
+
+    fn rebegin_after_nonkill(
+        &mut self,
+        cx: &mut StepContext<'_, '_>,
+        target_gone: bool,
+    ) -> Poll<Result<StepOutcome, ActionError>> {
+        if !self.reserve_nonkill_reengagement() {
+            return self.reengagement_budget_failure();
+        }
+        self.rebegin_combat(cx, target_gone)
+    }
+
+    fn reengagement_budget_failure(&self) -> Poll<Result<StepOutcome, ActionError>> {
+        let detail = self.last_report.as_ref().map_or_else(
+            || "combat re-engagement budget exhausted without a report".to_owned(),
+            |report| format!("combat re-engagement budget exhausted; last report: {report:?}"),
+        );
+        Poll::Ready(Err(ActionError::Failed(Arc::from(detail))))
     }
 
     fn begin_loot(&mut self, cx: &mut StepContext<'_, '_>) -> Result<LootStart, ActionError> {

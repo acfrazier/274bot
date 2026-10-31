@@ -451,6 +451,19 @@ fn generated_schema_uses_numeric_bounds_without_rust_formats() {
     assert_eq!(step["dependentRequired"]["max_attempts"], json!(["stop"]));
     assert_eq!(step["dependentRequired"]["stop"], json!(["max_attempts"]));
 }
+
+#[test]
+fn generated_schema_rejects_blank_make_source_and_until_drop_stop() {
+    let schema: Value = serde_json::from_str(&render()).expect("generated Path schema");
+    assert_eq!(
+        schema["$defs"]["MakeMenu"]["properties"]["source"]["pattern"],
+        json!("\\S")
+    );
+    assert_eq!(
+        schema["$defs"]["UntilDropArgs"]["properties"]["stop"]["pattern"],
+        json!("\\S")
+    );
+}
 #[test]
 #[ignore]
 fn regen_path_schema() {

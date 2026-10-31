@@ -1065,10 +1065,12 @@ fn combat_test_run_with_radius(
         lost_radius,
         ..CombatRequest::default()
     };
+    let reengage_budget = super::content_reengagement_budget(request.budget_ticks);
     CombatRun {
         request: Arc::new(request),
         tables,
         cross: Arc::from([]),
+        reengage_budget,
         protect: false,
         until,
         win: None,
@@ -1082,6 +1084,7 @@ fn combat_test_run_with_radius(
         last_report: None,
         kills: 0,
         last_outcome: None,
+        nonkill_reengagements: 0,
         target_gone_restarts: 0,
         manual_takeover_watch: crate::native::ManualTakeoverWatch::default(),
         raised_prayers: crate::combat::RaisedPrayers::empty(),
@@ -1131,6 +1134,7 @@ pub(crate) fn imp_plan_run_for_runner(cx: &mut StepContext<'_, '_>) -> Box<dyn S
         loot: run.loot,
         finish: None,
         until_drop: None,
+        reengage_budget: 0,
     }
     .begin(cx)
     .unwrap()
@@ -5075,6 +5079,7 @@ fn until_drop_test_run(
         max_kills,
         stop: Arc::from("bones_not_found"),
     });
+    run.reengage_budget = max_kills;
     run
 }
 
@@ -5290,7 +5295,7 @@ fn until_drop_no_kill_outcomes_do_not_spend_the_kill_budget() {
     let selected = api::game_data::for_revision(ClientRevision::R289).unwrap();
     let item = selected.item_by_alias("bones").unwrap();
     let item_name: Arc<str> = Arc::from(item.name.as_deref().unwrap_or("Bones"));
-    let mut run = until_drop_test_run(imp_target(&selected), None, item.id, item_name, 2);
+    let mut run = until_drop_test_run(imp_target(&selected), None, item.id, item_name, 3);
     let mut snapshot = GameSnapshot::new();
     snapshot.seed_ingame(2);
     snapshot.seed_inventory(Vec::new(), 28);
@@ -5326,6 +5331,145 @@ fn until_drop_no_kill_outcomes_do_not_spend_the_kill_budget() {
     })
     .is_pending());
     assert!(matches!(run.action.as_ref(), Some(Action::Combat(_))));
+}
+
+#[test]
+fn nonkill_combat_outcomes_reengage_with_a_bounded_content_budget() {
+    let selected = api::game_data::for_revision(ClientRevision::R289).unwrap();
+    let item = selected.item_by_alias("bones").unwrap();
+    let item_name: Arc<str> = Arc::from(item.name.as_deref().unwrap_or("Bones"));
+    let mut snapshot = GameSnapshot::new();
+    snapshot.seed_ingame(2);
+    snapshot.seed_inventory(Vec::new(), 28);
+    super::super::tests::seed_dialogue_combat(&mut snapshot, false);
+    let mut ledger = None;
+    let reengagement_budget = super::content_reengagement_budget(0);
+    assert_eq!(reengagement_budget, 233);
+    assert_eq!(super::content_reengagement_budget(1), 699);
+
+    let mut until_drop = until_drop_test_run(
+        imp_target(&selected),
+        None,
+        item.id,
+        Arc::clone(&item_name),
+        1,
+    );
+    assert!(with_step_context(&snapshot, &mut ledger, 20, |cx| {
+        until_drop.on_combat_report(report(CombatEnd::NoTarget), cx)
+    })
+    .is_pending());
+    let exhausted = with_step_context(&snapshot, &mut ledger, 21, |cx| {
+        until_drop.on_combat_report(report(CombatEnd::Budget), cx)
+    });
+    assert!(matches!(
+        exhausted,
+        Poll::Ready(Err(ActionError::Failed(detail))) if detail.contains("Budget")
+    ));
+    assert_eq!(until_drop.kills, 0);
+    assert_eq!(
+        last_test_combat_receipt(&until_drop).report.end,
+        CombatEnd::Budget
+    );
+
+    let target = Target::Npc {
+        types: Arc::from([
+            selected.npc_by_config("imp").unwrap().id,
+            selected.npc_by_config("delrith").unwrap().id,
+        ]),
+        pick: crate::combat::request::Pick::Nearest,
+        not_targeting_others: false,
+    };
+    let mut until = combat_test_run(target.clone(), None, Some(Arc::new(NeverStop)), vec![]);
+    for reengagement in 0..reengagement_budget {
+        let end = match reengagement % 3 {
+            0 => CombatEnd::NoTarget,
+            1 => CombatEnd::Budget,
+            _ => CombatEnd::TargetGone,
+        };
+        let tick = 30 + u64::from(reengagement);
+        assert!(with_step_context(&snapshot, &mut ledger, tick, |cx| {
+            until.on_combat_report(report(end), cx)
+        })
+        .is_pending());
+        assert_eq!(until.nonkill_reengagements, reengagement + 1);
+    }
+    let exhausted_tick = 30 + u64::from(reengagement_budget);
+    let exhausted = with_step_context(&snapshot, &mut ledger, exhausted_tick, |cx| {
+        until.on_combat_report(report(CombatEnd::TargetGone), cx)
+    });
+    assert!(matches!(
+        exhausted,
+        Poll::Ready(Err(ActionError::Failed(detail))) if detail.contains("TargetGone")
+    ));
+    assert_eq!(
+        last_test_combat_receipt(&until).report.end,
+        CombatEnd::TargetGone
+    );
+
+    let mut cumulative = combat_test_run(target.clone(), None, Some(Arc::new(NeverStop)), vec![]);
+    assert!(with_step_context(&snapshot, &mut ledger, 33, |cx| {
+        cumulative.on_combat_report(report(CombatEnd::NoTarget), cx)
+    })
+    .is_pending());
+    assert_eq!(cumulative.nonkill_reengagements, 1);
+    assert!(with_step_context(&snapshot, &mut ledger, 34, |cx| {
+        cumulative.on_combat_report(report(CombatEnd::Killed), cx)
+    })
+    .is_pending());
+    assert_eq!(cumulative.nonkill_reengagements, 1);
+    for reengagement in 1..reengagement_budget {
+        let end = if reengagement % 2 == 0 {
+            CombatEnd::Budget
+        } else {
+            CombatEnd::TargetGone
+        };
+        let tick = 35 + u64::from(reengagement - 1);
+        assert!(with_step_context(&snapshot, &mut ledger, tick, |cx| {
+            cumulative.on_combat_report(report(end), cx)
+        })
+        .is_pending());
+        assert_eq!(cumulative.nonkill_reengagements, reengagement + 1);
+    }
+    let exhausted_tick = 35 + u64::from(reengagement_budget - 1);
+    let exhausted = with_step_context(&snapshot, &mut ledger, exhausted_tick, |cx| {
+        cumulative.on_combat_report(report(CombatEnd::TargetGone), cx)
+    });
+    assert!(matches!(
+        exhausted,
+        Poll::Ready(Err(ActionError::Failed(detail))) if detail.contains("TargetGone")
+    ));
+    assert_eq!(
+        last_test_combat_receipt(&cumulative).report.end,
+        CombatEnd::TargetGone
+    );
+
+    let mut win = combat_test_run(target, None, None, vec![]);
+    win.win = Some(Arc::new(NeverStop));
+    for reengagement in 0..reengagement_budget {
+        let end = match reengagement % 3 {
+            0 => CombatEnd::Budget,
+            1 => CombatEnd::TargetGone,
+            _ => CombatEnd::NoTarget,
+        };
+        let tick = 40 + u64::from(reengagement);
+        assert!(with_step_context(&snapshot, &mut ledger, tick, |cx| {
+            win.on_combat_report(report(end), cx)
+        })
+        .is_pending());
+        assert_eq!(win.nonkill_reengagements, reengagement + 1);
+    }
+    let exhausted_tick = 40 + u64::from(reengagement_budget);
+    let exhausted = with_step_context(&snapshot, &mut ledger, exhausted_tick, |cx| {
+        win.on_combat_report(report(CombatEnd::NoTarget), cx)
+    });
+    assert!(matches!(
+        exhausted,
+        Poll::Ready(Err(ActionError::Failed(detail))) if detail.contains("NoTarget")
+    ));
+    assert_eq!(
+        last_test_combat_receipt(&win).report.end,
+        CombatEnd::NoTarget
+    );
 }
 
 #[test]

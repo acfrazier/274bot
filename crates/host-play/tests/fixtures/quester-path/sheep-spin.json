@@ -1,0 +1,10 @@
+{
+  "stage": "sheep:1",
+  "stand": [3092, 3242, 0],
+  "loadout": null,
+  "extra_items": [["shears", 1], ["wool", 20]],
+  "seed_vars": [["sheep", 1]],
+  "before_relog": [],
+  "expect": ["sheep:2"],
+  "mode": "stage"
+}

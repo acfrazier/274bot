@@ -10,25 +10,37 @@ use api::snapshot::{ItemActionFamily, ItemContainer, ItemView, MakeProductView};
 use std::sync::Arc;
 use std::task::Poll;
 
-// These menus are opened directly by `skill_multi2` in
+// These menus are opened directly by `skill_multi3` in
 // `content/scripts/skill_fletching/scripts/cut_logs.rs2:38-47` and
 // `content/scripts/skill_crafting/scripts/pottery/pottery.rs2:62-66`.
 // Neither waits before publishing its menu.
 const MENU_OBSERVATION_TICKS: u64 = 1;
-// `skill_multi2` calls `p_countdialog` after a Make-X button selection
+// The engine reads the click on a later world tick, then sends the interface
+// packet after that tick's update:
+// `engine/src/engine/World.ts:350-355` and `NetworkPlayer.ts:171-177`.
+const MENU_PACKET_ORDER_TICKS: u64 = 1;
+// `skill_multi3` calls `p_countdialog` after a Make-X button selection
 // (`content/scripts/interface_chat/scripts/chat.rs2:741-743`). The engine
 // opens the input dialog and suspends the script (`engine/src/engine/script/handlers/PlayerOps.ts:369-371`).
 // Allow two observed game ticks for the button and count-dialog signals.
 const MAKE_X_SIGNAL_TICKS: u64 = 2;
-// The slowest output/repeat bound is three ticks in
-// `content/scripts/skill_crafting/scripts/spinning/spinning.rs2:83-99` and
-// `content/scripts/skill_smithing/scripts/smithing/smithing.rs2:269-286`.
-// Fletching and pottery use two-tick output queues:
-// `content/scripts/skill_fletching/scripts/cut_logs.rs2:83-103` and
+// Make-X spinning adds one product every three game ticks, the first one
+// included. The content queues the first spin with delay 3 and each later spin
+// with delay 2 (`content/scripts/skill_crafting/scripts/spinning/spinning.rs2:87-110`).
+// The engine runs a weak-queue entry when its old delay is 0 or less
+// (`engine/src/engine/entity/Player.ts:916-925`), and a queue pass does not
+// visit an entry added during that pass (`engine/src/datastruct/LinkList.ts:97-110`),
+// so the delay-2 entry also takes three ticks. The wait is that interval, plus
+// the one-tick packet-order margin, plus one tick because the deadline check
+// uses `>=`: 3 + 1 + 1 = 5.
+const MAKE_X_PRODUCT_PROGRESS_TICKS: u64 = 5;
+// Smithing posts the product after its delay, then waits three ticks before it
+// returns or starts its next item. Fletching and pottery use two-tick queues.
+// Sources: `content/scripts/skill_smithing/scripts/smithing/smithing.rs2:269-286`,
+// `content/scripts/skill_fletching/scripts/cut_logs.rs2:83-103`, and
 // `content/scripts/skill_crafting/scripts/pottery/pottery.rs2:80-101`.
 const PRODUCT_PROGRESS_TICKS: u64 = 3;
-// Smithing posts the product after its delay, then delays three ticks before
-// it returns or starts its next item:
+// Main-make waits three ticks before returning or starting its next item:
 // `content/scripts/skill_smithing/scripts/smithing/smithing.rs2:269-286`.
 const MAIN_MAKE_RETURN_TICKS: u64 = 3;
 
@@ -144,6 +156,10 @@ pub struct MakeRequest {
     pub menu_id: i32,
     /// Desired held count after this run.
     pub qty: i32,
+    /// Product items yielded by one menu process, as authored in content.
+    pub items_per_process: i32,
+    /// Whether a production trigger was accepted before this menu opened.
+    pub after_trigger: bool,
     pub make_x: bool,
 }
 
@@ -163,6 +179,7 @@ enum Phase {
 enum Surface {
     Chat,
     MainMake,
+    MakeX,
 }
 
 pub struct MakeMachine {
@@ -181,12 +198,17 @@ impl NativeMachine for MakeMachine {
     type Output = MakeReceipt;
 
     fn begin(request: Self::Args, cx: &mut ActionContext<'_>) -> Result<Self, ActionError> {
-        if request.qty < 1 {
+        if request.qty < 1 || request.items_per_process < 1 {
             return Err(ActionError::Unavailable(Arc::from(
-                "make quantity must be positive",
+                "make quantity and process yield must be positive",
             )));
         }
         let tick = cx.evidence().tick;
+        let packet_order_ticks = if request.after_trigger {
+            MENU_PACKET_ORDER_TICKS
+        } else {
+            0
+        };
         let last_held = held(cx, request.product_id).unwrap_or(0);
         let make_x = MakeXCore::new();
         let phase = Phase::FixedMenu;
@@ -194,7 +216,9 @@ impl NativeMachine for MakeMachine {
             request,
             phase,
             make_x,
-            deadline_tick: tick.saturating_add(MENU_OBSERVATION_TICKS),
+            deadline_tick: tick
+                .saturating_add(MENU_OBSERVATION_TICKS)
+                .saturating_add(packet_order_ticks),
             last_held,
             active_target: 0,
             main_make_ready_tick: tick,
@@ -203,10 +227,14 @@ impl NativeMachine for MakeMachine {
     }
 
     fn poll(&mut self, cx: &mut ActionContext<'_>) -> Poll<Result<Self::Output, ActionError>> {
-        loop {
-            let tick = cx.evidence().tick;
-            let now_held = held(cx, self.request.product_id);
-            let current = now_held.unwrap_or(0);
+        let tick = cx.evidence().tick;
+        let now_held = held(cx, self.request.product_id);
+        let current = now_held.unwrap_or(0);
+        let remaining_processes = process_count_for_items(
+            self.request.qty.saturating_sub(current),
+            self.request.items_per_process,
+        );
+        'phases: loop {
             if now_held.is_some_and(|count| count >= self.request.qty) {
                 let make_x_pending =
                     self.phase == Phase::MakeX && self.make_x.phase() != MakeXPhase::Select;
@@ -228,7 +256,7 @@ impl NativeMachine for MakeMachine {
                         let selection = next_core.select(
                             products.as_ref().map(|rows| rows.value),
                             self.request.menu_id,
-                            Some(self.request.qty - current),
+                            Some(remaining_processes),
                         );
                         Some((selection, next_core))
                     } else {
@@ -257,7 +285,11 @@ impl NativeMachine for MakeMachine {
                                 ))?;
                                 self.make_x = next_core;
                                 self.surface = Some(Surface::Chat);
-                                self.active_target = self.request.qty;
+                                self.active_target = item_target(
+                                    current,
+                                    remaining_processes,
+                                    self.request.items_per_process,
+                                );
                                 self.last_held = current;
                                 self.deadline_tick = tick.saturating_add(MAKE_X_SIGNAL_TICKS);
                                 return Poll::Pending;
@@ -287,14 +319,18 @@ impl NativeMachine for MakeMachine {
                         MakeXStep::Complete => {
                             self.make_x = MakeXCore::new();
                             self.phase = Phase::Product;
-                            self.surface = Some(Surface::Chat);
-                            self.active_target = self.request.qty;
+                            self.surface = Some(Surface::MakeX);
+                            self.active_target = item_target(
+                                current,
+                                remaining_processes,
+                                self.request.items_per_process,
+                            );
                             self.last_held = current;
                             if now_held.is_some_and(|count| count >= self.request.qty) {
                                 return Poll::Ready(Ok(MakeReceipt { held: current }));
                             }
-                            self.deadline_tick = tick.saturating_add(PRODUCT_PROGRESS_TICKS);
-                            return Poll::Pending;
+                            self.deadline_tick = tick.saturating_add(MAKE_X_PRODUCT_PROGRESS_TICKS);
+                            continue 'phases;
                         }
                         MakeXStep::TimedOut(phase) => {
                             let message = match phase {
@@ -321,7 +357,10 @@ impl NativeMachine for MakeMachine {
                         }
                         return Poll::Pending;
                     }
-                    let remaining = self.request.qty - current;
+                    let remaining_processes = process_count_for_items(
+                        self.request.qty.saturating_sub(current),
+                        self.request.items_per_process,
+                    );
                     let chat_has_row = chat_rows
                         .iter()
                         .any(|row| row.object_id == self.request.menu_id);
@@ -337,7 +376,7 @@ impl NativeMachine for MakeMachine {
                         match self.make_x.select_fixed(
                             Some(chat_rows),
                             self.request.menu_id,
-                            remaining,
+                            remaining_processes,
                         ) {
                             MakeFixedSelection::Select {
                                 action:
@@ -351,7 +390,8 @@ impl NativeMachine for MakeMachine {
                                 ))?;
                                 self.phase = Phase::Product;
                                 self.surface = Some(Surface::Chat);
-                                self.active_target = current.saturating_add(quantity);
+                                self.active_target =
+                                    item_target(current, quantity, self.request.items_per_process);
                                 self.last_held = current;
                                 self.deadline_tick = tick.saturating_add(PRODUCT_PROGRESS_TICKS);
                                 return Poll::Pending;
@@ -379,7 +419,7 @@ impl NativeMachine for MakeMachine {
                                 match next_core.select(
                                     Some(chat_rows),
                                     self.request.menu_id,
-                                    Some(remaining),
+                                    Some(remaining_processes),
                                 ) {
                                     MakeXSelection::Click { component_id } => {
                                         std::task::ready!(crate::native::defer_budget(
@@ -388,7 +428,11 @@ impl NativeMachine for MakeMachine {
                                         self.phase = Phase::MakeX;
                                         self.make_x = next_core;
                                         self.surface = Some(Surface::Chat);
-                                        self.active_target = self.request.qty;
+                                        self.active_target = item_target(
+                                            current,
+                                            remaining_processes,
+                                            self.request.items_per_process,
+                                        );
                                         self.last_held = current;
                                         self.deadline_tick =
                                             tick.saturating_add(MAKE_X_SIGNAL_TICKS);
@@ -408,7 +452,7 @@ impl NativeMachine for MakeMachine {
                         match self.make_x.select_fixed_at_most(
                             Some(main_make_rows),
                             self.request.menu_id,
-                            remaining,
+                            remaining_processes,
                         ) {
                             MakeFixedSelection::Select {
                                 action:
@@ -431,8 +475,7 @@ impl NativeMachine for MakeMachine {
                                 self.phase = Phase::Product;
                                 self.surface = Some(Surface::MainMake);
                                 self.active_target =
-                                    current.saturating_add(quantity).min(self.request.qty);
-                                self.last_held = current;
+                                    item_target(current, quantity, self.request.items_per_process);
                                 self.deadline_tick = tick.saturating_add(PRODUCT_PROGRESS_TICKS);
                                 return Poll::Pending;
                             }
@@ -446,7 +489,7 @@ impl NativeMachine for MakeMachine {
                             MakeFixedSelection::MenuMissing => {}
                             MakeFixedSelection::MissingButton => {
                                 return Poll::Ready(Err(ActionError::Failed(Arc::from(
-                                    "main-make row has no fixed operation at or below remaining target",
+                                    "main-make row has no fixed operation at or below remaining process target",
                                 ))));
                             }
                             MakeFixedSelection::InvalidCount => {
@@ -466,7 +509,12 @@ impl NativeMachine for MakeMachine {
                 Phase::Product => {
                     if current > self.last_held {
                         self.last_held = current;
-                        self.deadline_tick = tick.saturating_add(PRODUCT_PROGRESS_TICKS);
+                        self.deadline_tick =
+                            tick.saturating_add(if self.surface == Some(Surface::MakeX) {
+                                MAKE_X_PRODUCT_PROGRESS_TICKS
+                            } else {
+                                PRODUCT_PROGRESS_TICKS
+                            });
                         if self.surface == Some(Surface::MainMake) {
                             self.main_make_ready_tick = tick.saturating_add(MAIN_MAKE_RETURN_TICKS);
                         }
@@ -483,11 +531,7 @@ impl NativeMachine for MakeMachine {
                         && current >= self.active_target
                         && tick >= self.main_make_ready_tick
                     {
-                        self.phase = Phase::FixedMenu;
-                        self.make_x = MakeXCore::new();
-                        self.surface = None;
-                        self.deadline_tick = tick.saturating_add(MENU_OBSERVATION_TICKS);
-                        continue;
+                        return Poll::Ready(Ok(MakeReceipt { held: current }));
                     }
                     if tick >= self.deadline_tick {
                         return Poll::Ready(Err(ActionError::Failed(Arc::from(
@@ -501,6 +545,19 @@ impl NativeMachine for MakeMachine {
     }
 
     fn cancel(&mut self) {}
+}
+
+fn process_count_for_items(remaining_items: i32, items_per_process: i32) -> i32 {
+    let remaining_items = remaining_items.max(0);
+    if remaining_items == 0 {
+        0
+    } else {
+        1 + (remaining_items - 1) / items_per_process
+    }
+}
+
+fn item_target(current: i32, processes: i32, items_per_process: i32) -> i32 {
+    current.saturating_add(processes.saturating_mul(items_per_process))
 }
 
 fn held(cx: &ActionContext<'_>, id: i32) -> Option<i32> {
@@ -702,6 +759,8 @@ mod tests {
             product_id: 1759,
             menu_id: 1737,
             qty: 20,
+            items_per_process: 1,
+            after_trigger: false,
             make_x,
         }
     }
@@ -892,6 +951,98 @@ mod tests {
     }
 
     #[test]
+    fn make_x_waits_for_the_first_queued_spinning_product() {
+        let mut client = make_menu_client("Make X");
+        let menu = menu_snapshot(&client);
+        let mut ledger = None;
+        let handle = start_machine(&menu, &mut ledger, request(true));
+
+        let clicked = with_tick(&menu, &mut ledger, 2, |tick| {
+            assert!(tick.actions.poll(&handle, &mut tick.cx).is_pending());
+            acknowledge_current(&mut tick.cx)
+        });
+        assert!(matches!(
+            clicked,
+            HostEffect::Interaction(InteractReq::IfButton { component_id: 2120 })
+        ));
+
+        client.dialog_input_open = true;
+        client.bump_gens(ServerProt::IF_OPENCHAT);
+        let mut count_open = menu_snapshot_with_held(&client, 0);
+        count_open.rebuild_family(&client, api::snapshot::Family::Modals);
+        let answered = with_tick(&count_open, &mut ledger, 3, |tick| {
+            assert!(tick.actions.poll(&handle, &mut tick.cx).is_pending());
+            acknowledge_current(&mut tick.cx)
+        });
+        assert!(matches!(
+            answered,
+            HostEffect::Interaction(InteractReq::AnswerCount { value: 20 })
+        ));
+
+        client.dialog_input_open = false;
+        client.bump_gens(ServerProt::IF_OPENCHAT);
+        let mut count_closed = menu_snapshot_with_held(&client, 0);
+        count_closed.rebuild_family(&client, api::snapshot::Family::Modals);
+        assert!(with_tick(&count_closed, &mut ledger, 4, |tick| {
+            tick.actions.poll(&handle, &mut tick.cx)
+        })
+        .is_pending());
+
+        client.chat_modal_id = -1;
+        client.bump_gens(ServerProt::IF_CLOSE);
+        let mut menu_closed = menu_snapshot_with_held(&client, 0);
+        menu_closed.rebuild_family(&client, api::snapshot::Family::Modals);
+        assert!(with_tick(&menu_closed, &mut ledger, 5, |tick| {
+            tick.actions.poll(&handle, &mut tick.cx)
+        })
+        .is_pending());
+
+        // No product is seen for four ticks. The first one arrives on the fifth
+        // tick after the count answer, the latest that the five-tick wait accepts.
+        assert!(with_tick(&menu_closed, &mut ledger, 8, |tick| {
+            tick.actions.poll(&handle, &mut tick.cx)
+        })
+        .is_pending());
+        assert!(with_tick(&menu_closed, &mut ledger, 9, |tick| {
+            tick.actions.poll(&handle, &mut tick.cx)
+        })
+        .is_pending());
+        let first_product = menu_snapshot_with_held(&client, 1);
+        assert!(with_tick(&first_product, &mut ledger, 10, |tick| {
+            tick.actions.poll(&handle, &mut tick.cx)
+        })
+        .is_pending());
+        // Later products arrive four ticks apart: the three-tick spin interval
+        // plus one packet-order tick.
+        assert!(with_tick(&first_product, &mut ledger, 12, |tick| {
+            tick.actions.poll(&handle, &mut tick.cx)
+        })
+        .is_pending());
+        assert!(with_tick(&first_product, &mut ledger, 13, |tick| {
+            tick.actions.poll(&handle, &mut tick.cx)
+        })
+        .is_pending());
+        let second_product = menu_snapshot_with_held(&client, 2);
+        assert!(with_tick(&second_product, &mut ledger, 14, |tick| {
+            tick.actions.poll(&handle, &mut tick.cx)
+        })
+        .is_pending());
+        assert!(with_tick(&second_product, &mut ledger, 16, |tick| {
+            tick.actions.poll(&handle, &mut tick.cx)
+        })
+        .is_pending());
+        assert!(with_tick(&second_product, &mut ledger, 17, |tick| {
+            tick.actions.poll(&handle, &mut tick.cx)
+        })
+        .is_pending());
+        let third_product = menu_snapshot_with_held(&client, 3);
+        assert!(with_tick(&third_product, &mut ledger, 18, |tick| {
+            tick.actions.poll(&handle, &mut tick.cx)
+        })
+        .is_pending());
+    }
+
+    #[test]
     fn same_tick_menu_polls_do_not_consume_observed_tick_deadline() {
         let client = make_menu_client("Make 1");
         let snapshot = menu_snapshot(&client);
@@ -933,6 +1084,8 @@ mod tests {
                     product_id: 1759,
                     menu_id: 1737,
                     qty: quantity,
+                    items_per_process: 1,
+                    after_trigger: false,
                     make_x: false,
                 },
             );
@@ -978,9 +1131,9 @@ mod tests {
     }
 
     #[test]
-    fn main_make_repeats_bounded_fixed_actions_until_held_target() {
+    fn main_make_returns_partial_target_when_content_closes_menu() {
         let menu_id = 1737;
-        let client = main_make_client(menu_id, "Bronze bar", &["Make 1", "Make 5", "Make 10"]);
+        let mut client = main_make_client(menu_id, "Bronze bar", &["Make 1", "Make 5", "Make 10"]);
         let mut snapshot = main_make_snapshot(&client);
         let mut ledger = None;
         let handle = start_machine(
@@ -990,6 +1143,8 @@ mod tests {
                 product_id: 1759,
                 menu_id,
                 qty: 7,
+                items_per_process: 1,
+                after_trigger: false,
                 make_x: false,
             },
         );
@@ -1000,45 +1155,47 @@ mod tests {
         });
         assert!(matches!(
             first,
-            HostEffect::Interaction(InteractReq::MakePanel {
-                id: 1737,
-                slot: 0,
-                component: 2210,
-                operation: 2,
-            })
+            HostEffect::Interaction(InteractReq::MakePanel { operation: 2, .. })
         ));
 
+        client.main_modal_id = -1;
+        client.bump_gens(ServerProt::IF_CLOSE);
+        snapshot.rebuild_family(&client, api::snapshot::Family::MainMake);
         snapshot.seed_inventory(vec![held_product(5)], 28);
         assert!(with_tick(&snapshot, &mut ledger, 3, |tick| {
             tick.actions.poll(&handle, &mut tick.cx)
         })
         .is_pending());
-        let second = with_tick(&snapshot, &mut ledger, 6, |tick| {
+        assert!(matches!(
+            with_tick(&snapshot, &mut ledger, 6, |tick| {
+                tick.actions.poll(&handle, &mut tick.cx)
+            }),
+            Poll::Ready(Ok(MakeReceipt { held: 5 }))
+        ));
+    }
+
+    #[test]
+    fn fixed_main_make_counts_processes_for_item_targets() {
+        let menu_id = 1737;
+        let client = main_make_client(menu_id, "Logs", &["Make 1", "Make 5", "Make 10"]);
+        let snapshot = main_make_snapshot(&client);
+        let mut ledger = None;
+        let mut request = request_with_qty(false, 15);
+        request.product_id = 52;
+        request.menu_id = menu_id;
+        // C:scripts/skill_fletching/scripts/cut_logs.rs2:44-47 yields 15 shafts per log.
+        request.items_per_process = 15;
+        let handle = start_machine(&snapshot, &mut ledger, request);
+        let effect = with_tick(&snapshot, &mut ledger, 2, |tick| {
             assert!(tick.actions.poll(&handle, &mut tick.cx).is_pending());
             acknowledge_current(&mut tick.cx)
         });
         assert!(matches!(
-            second,
-            HostEffect::Interaction(InteractReq::MakePanel {
-                id: 1737,
-                slot: 0,
-                component: 2210,
-                operation: 1,
-            })
-        ));
-
-        snapshot.seed_inventory(vec![held_product(7)], 28);
-        assert!(with_tick(&snapshot, &mut ledger, 9, |tick| {
-            tick.actions.poll(&handle, &mut tick.cx)
-        })
-        .is_pending());
-        assert!(matches!(
-            with_tick(&snapshot, &mut ledger, 12, |tick| {
-                tick.actions.poll(&handle, &mut tick.cx)
-            }),
-            Poll::Ready(Ok(MakeReceipt { held: 7 }))
+            effect,
+            HostEffect::Interaction(InteractReq::MakePanel { operation: 1, .. })
         ));
     }
+
     #[test]
     fn production_adapter_state_sizes_stay_within_explicit_bounds() {
         let request = std::mem::size_of::<MakeRequest>();

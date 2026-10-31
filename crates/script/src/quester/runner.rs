@@ -981,6 +981,11 @@ impl Quester {
     }
 
     fn finish_quest(&mut self, tick: &mut NativeTick<'_>) -> ScriptFlow {
+        self.step_index = self
+            .path
+            .sequences
+            .get(self.seq_index)
+            .map_or(self.path.prelude.len(), |sequence| sequence.steps.len());
         self.trace.flush_repeats(tick.output);
         self.trace.terminal(
             tick.output,
@@ -5521,6 +5526,56 @@ mod tests {
             true,
         );
         (script, snapshot)
+    }
+
+    #[test]
+    fn jailer_terminal_status_uses_the_completed_sequence_cursor() {
+        use super::super::path::PathDocument;
+
+        let document: PathDocument =
+            serde_json::from_slice(include_bytes!("../../paths/289/scorpcatcher.json")).unwrap();
+        let (mut script, snapshot) = status_fixture(document);
+        let stage = FactKey::new("scorpcatcher:2");
+        script.seq_index =
+            sequence_for_stage(&script.path, stage.0.as_ref()).expect("Jailer sequence");
+        script.stage = Some(stage);
+        script.step_index = 1;
+        let sequence_len = script.path.sequences[script.seq_index].steps.len();
+        let mut ledger = None;
+        let mut output = StatusCapture::default();
+        super::super::families::tests::with_tick_output(
+            &snapshot,
+            &mut ledger,
+            1,
+            &mut output,
+            |tick| assert_eq!(script.finish_quest(tick), ScriptFlow::Complete),
+        );
+
+        let status = output.0.last().expect("terminal status");
+        assert_eq!(status.phase, NativePhase::Complete);
+        assert_eq!(
+            status
+                .fields
+                .iter()
+                .find(|field| field.key == "step_index")
+                .and_then(|field| match &field.value {
+                    StatusValue::Integer(value) => Some(*value),
+                    _ => None,
+                }),
+            Some(sequence_len as i64)
+        );
+        assert_eq!(
+            status
+                .fields
+                .iter()
+                .find(|field| field.key == "remaining_steps")
+                .and_then(|field| match &field.value {
+                    StatusValue::Integer(value) => Some(*value),
+                    _ => None,
+                }),
+            Some(0)
+        );
+        assert_eq!(status_text(status, "step_id"), "");
     }
 
     #[derive(Default)]
