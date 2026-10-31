@@ -726,9 +726,16 @@ fn capture_sample(
     last_tick: &mut Option<u32>,
     frames: &mut Vec<ObservedFrame>,
 ) -> Vec<Value> {
-    // Actions can arrive after the first sample of their snapshot tick.
+    // Samples with one condition tick share a PLAYER_INFO generation. Keep the latest
+    // sample so a following stat packet can settle before the oracle checks HP.
     let actions = captured_actions(capture);
-    if *last_tick != Some(frame.tick) {
+    if *last_tick == Some(frame.tick) {
+        if let Some(last_frame) = frames.last_mut() {
+            *last_frame = frame;
+        } else {
+            frames.push(frame);
+        }
+    } else {
         *last_tick = Some(frame.tick);
         frames.push(frame);
     }
@@ -2553,6 +2560,22 @@ mod oracle_tests {
         )
     }
 
+    fn poison_line_sampled_receipt(first_settled_hp: i32) -> Vec<ObservedFrame> {
+        let capture = Arc::new(StdMutex::new(CombatCapture::default()));
+        let mut last_tick = None;
+        let mut frames = Vec::new();
+        for frame in [
+            onset_frame(100, 15, 15),
+            mark_frame(130, 15, 15, 5, 130),
+            mark_frame(130, first_settled_hp, 15, 5, 130),
+            mark_frame(160, 3, 15, 5, 160),
+            mark_frame(162, 15, 15, 4, 160),
+        ] {
+            let _ = capture_sample(&capture, frame, &mut last_tick, &mut frames);
+        }
+        frames
+    }
+
     fn full_hp_receipt() -> (Vec<ObservedFrame>, Vec<EatAction>) {
         (
             vec![
@@ -2584,6 +2607,40 @@ mod oracle_tests {
         assert!(matches!(
             evaluate_walk(EatCase::PoisonLine, 69, &frames[..2], &[]),
             OracleDecision::Pending
+        ));
+    }
+
+    #[test]
+    fn poison_line_oracle_uses_settled_sample_for_hitmark_tick() {
+        let frames = poison_line_sampled_receipt(9);
+        let (_, eats) = poison_line_receipt();
+        assert_eq!(frames.len(), 4, "one frame is kept per PLAYER_INFO tick");
+        assert_eq!(frames[1].tick, 130);
+        assert_eq!(frames[1].hp, 9, "the settled same-tick HP must replace stale HP");
+        assert_eq!(
+            evaluate_walk(EatCase::PoisonLine, 69, &frames, &eats),
+            OracleDecision::Pass
+        );
+    }
+
+    #[test]
+    fn poison_line_oracle_rejects_wrong_settled_hitmark_hp() {
+        let frames = poison_line_sampled_receipt(8);
+        let (_, eats) = poison_line_receipt();
+        assert_eq!(frames[1].hp, 8, "the final same-tick sample is authoritative");
+        assert!(matches!(
+            evaluate_walk(EatCase::PoisonLine, 69, &frames, &eats),
+            OracleDecision::Fail(reason) if reason.contains("first poison mark left HP 8")
+        ));
+    }
+
+    #[test]
+    fn poison_line_oracle_fails_when_eat_is_missing_from_the_three_tick_window() {
+        let mut frames = poison_line_sampled_receipt(9);
+        frames.push(mark_frame(164, 3, 15, 5, 160));
+        assert!(matches!(
+            evaluate_walk(EatCase::PoisonLine, 69, &frames, &[]),
+            OracleDecision::Fail(reason) if reason.contains("no bite within three observed ticks")
         ));
     }
 
