@@ -3440,6 +3440,33 @@ mod packet_oracle_tests {
         }
     }
 
+    #[test]
+    fn ordinary_click_pairs_require_one_real_client_frame_without_an_ordered_receipt() {
+        let mut movement = wire(ClientProt289::MOVE_OPCLICK.id as u8, 11, 7);
+        movement.request_id = None;
+        let mut target = wire(ClientProt289::OPLOC1.id as u8, 11, 7);
+        target.request_id = None;
+        let mut trace = TickEngineTrace {
+            wire: vec![movement, target],
+            ..TickEngineTrace::default()
+        };
+        assert!(trace.dispatches.is_empty());
+        assert_eq!(checked_click_pairs(&trace, 7), 1);
+        trace.wire[1].host_frame += 1;
+        assert_eq!(
+            checked_click_pairs(&trace, 7),
+            0,
+            "packets from separate Client frames are not one ordinary click"
+        );
+        trace.wire[1].host_frame = trace.wire[0].host_frame;
+        trace.wire[1].request_id = Some(11);
+        assert_eq!(
+            checked_click_pairs(&trace, 7),
+            0,
+            "an ordered packet cannot complete an ordinary click"
+        );
+    }
+
     fn wire(opcode: u8, request_id: u64, length: usize) -> WireObservation {
         WireObservation {
             host_frame: 1,
