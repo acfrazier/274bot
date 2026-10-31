@@ -19,7 +19,7 @@
 use crate::task_clock::InstantTaskClock;
 use crate::walk::avoid_refusal;
 use crate::walk_wait;
-use crate::wire::{InspectHop as InspectHopTable, Snapshot, Tile as TileTable};
+use crate::wire::{InspectHop as InspectHopTable, Snapshot};
 use script::shim::{InspectAvoidWire, InteractReq};
 use serde_json::{json, Value};
 use std::cell::RefCell;

@@ -2325,7 +2325,7 @@ pub(crate) mod tests {
                     radius,
                     allow_teleports: false,
                     blocked: false,
-                    ..WalkOutcome::default(),
+                    ..WalkOutcome::default()
                 });
         });
     }
@@ -2886,7 +2886,7 @@ pub(crate) mod tests {
                     radius: 0,
                     allow_teleports: false,
                     blocked: true,
-                    ..WalkOutcome::default(),
+                    ..WalkOutcome::default()
                 });
         });
         machine::step(&mut NoJs);
@@ -3092,7 +3092,7 @@ pub(crate) mod tests {
                     allow_teleports: false,
                     blocked: false,
                     no_path: true,
-                    ..WalkOutcome::default(),
+                    ..WalkOutcome::default()
                 });
         });
         machine::step(&mut NoJs);

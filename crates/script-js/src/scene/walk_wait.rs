@@ -479,7 +479,7 @@ mod tests {
                 allow_teleports: false,
                 blocked: false,
                 no_path: true,
-                ..crate::observed::WalkOutcome::default(),
+                ..crate::observed::WalkOutcome::default()
             });
         });
         assert!(

@@ -1511,11 +1511,18 @@ impl Recover {
             Stage::TalkWalk { walk, .. } | Stage::LocateLuthas { walk, .. } => Some(walk.release()),
             Stage::WaitLuthas { .. } => None,
             Stage::Fill(fill) => match &fill.phase {
-                FillPhase::Search(SearchCrate::Walk(walk))
-                | FillPhase::Final(SearchCrate::Walk(walk))
+                FillPhase::Search(SearchCrate {
+                    phase: SearchCratePhase::Walk,
+                    walk: Some(walk),
+                })
+                | FillPhase::Final(SearchCrate {
+                    phase: SearchCratePhase::Walk,
+                    walk: Some(walk),
+                })
                 | FillPhase::WalkCrate(walk)
                 | FillPhase::Pick(Pick {
-                    phase: PickPhase::Walk(walk),
+                    phase: PickPhase::Walk,
+                    walk: Some(walk),
                     ..
                 })
                 | FillPhase::Pack(PackOne::Walk { walk, .. }) => walk.release(),
