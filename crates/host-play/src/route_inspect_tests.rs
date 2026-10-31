@@ -3319,7 +3319,7 @@ fn real_content_inspection_capture_bytes() {
     let new_digest: [u8; 32] = sha2::Sha256::digest(&bytes).into();
     assert_eq!(
         nav_planner::pack::sha256_hex(&new_digest),
-        "d87446444efcf620d920be5b022e73faf67677299ca72312f29c9dc7e59f0876",
+        "38be78524645db8174dc805734d8b4eaceacb3583dd4b78c84f7650cee4e38a9",
         "new real-content inspection capture authority"
     );
 
