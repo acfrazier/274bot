@@ -7,7 +7,7 @@ use api::snapshot::{GameSnapshot, LocView, WorldTile};
 use client::client::{client::LocalAnimationUpdate, Client};
 use client::io::PacketObserver;
 use host::SlotInput;
-use script::native::HostAuthority;
+use script::native::{HostAuthority, ScriptStatus};
 use script::surface::ServerOrderedEnvelope;
 use std::cell::RefCell;
 use std::collections::{HashMap, VecDeque};
@@ -261,54 +261,48 @@ struct ActiveDispatch {
 /// A real, newly received Mining roll with no start-act or success line.
 /// A prior native start Act proves Mining is already running. A fresh
 /// non-null instruction excludes success/Idle (mining.rs2:109-111,183-192).
-pub fn fresh_mining_roll(trace: &TickEngineTrace, tick: u32, sequence: i32) -> bool {
-    let Some(edge_index) = trace
-        .frames
-        .iter()
-        .rposition(|frame| frame.game_tick == tick && frame.tick_edge)
-    else {
+pub fn fresh_mining_roll(
+    trace: &TickEngineTrace,
+    pending: Option<&FrameObservation>,
+    tick: u32,
+    sequence: i32,
+) -> bool {
+    let frames = trace.frames.iter().chain(pending);
+    let mut earlier = frames.clone().rev();
+    let Some(frame) = earlier.find(|frame| frame.game_tick == tick && frame.tick_edge) else {
         return false;
     };
-    let frame = &trace.frames[edge_index];
     let Some(animation) = frame.animation else {
         return false;
     };
     // Dispatch can follow unchanged wake polls in this same PLAYER_INFO window.
     // The fresh edge instruction stays valid only while its serial is retained.
-    trace
-        .frames
-        .last()
+    frames
+        .clone()
+        .next_back()
         .is_some_and(|latest| latest.game_tick == tick && latest.animation == Some(animation))
         && animation.sequence == sequence
-        && trace.frames[..edge_index]
-            .iter()
-            .rev()
+        && earlier
             .find_map(|frame| frame.animation)
             .is_none_or(|previous| previous.serial != animation.serial)
-        && trace
-            .frames
-            .iter()
-            .flat_map(|frame| &frame.chat)
-            .any(|line| {
-                line.first_attributable_tick() < u64::from(tick)
-                    && line.text.contains("You swing your pick at the rock.")
-            })
-        && !trace
-            .frames
-            .iter()
-            .flat_map(|frame| &frame.chat)
-            .any(|line| {
-                let observed = u64::from(line.game_tick);
-                let first = line.first_attributable_tick();
-                first <= u64::from(tick)
-                    && observed + 1 >= u64::from(tick)
-                    && (line.text.contains("You swing your pick at the rock.")
-                        || line.text.contains("You manage to mine some"))
-            })
+        && frames.clone().flat_map(|frame| &frame.chat).any(|line| {
+            line.first_attributable_tick() < u64::from(tick)
+                && line.text.contains("You swing your pick at the rock.")
+        })
+        && !frames.flat_map(|frame| &frame.chat).any(|line| {
+            let observed = u64::from(line.game_tick);
+            let first = line.first_attributable_tick();
+            first <= u64::from(tick)
+                && observed + 1 >= u64::from(tick)
+                && (line.text.contains("You swing your pick at the rock.")
+                    || line.text.contains("You manage to mine some"))
+        })
 }
 
 struct HookState {
     trace: TickEngineTrace,
+    pending_frame: Option<FrameObservation>,
+    native_statuses: Vec<(u64, u32, Arc<ScriptStatus>)>,
     next_host_frame: u64,
     last_game_tick: u32,
     last_chat_sequence: i32,
@@ -337,6 +331,8 @@ impl TickEngineTestHook {
             account: account.into(),
             state: Mutex::new(HookState {
                 trace: TickEngineTrace::default(),
+                pending_frame: None,
+                native_statuses: Vec::new(),
                 next_host_frame: 0,
                 last_game_tick: 0,
                 last_chat_sequence: 0,
@@ -518,6 +514,8 @@ impl TickEngineTestHook {
         state.fresh_roll_request = None;
         state.inventory_ids.extend_from_slice(inventory_ids);
         state.trace = TickEngineTrace::default();
+        state.pending_frame = None;
+        state.native_statuses.clear();
         state.measurement_armed = true;
     }
 
@@ -569,8 +567,9 @@ impl TickEngineTestHook {
         true
     }
 
-    /// Record one host poll and advance any transport release condition.
-    pub(crate) fn after_frame(
+    /// Capture the exact native input before the script can dispatch on it.
+    /// The completed frame is published only by `after_frame`.
+    pub(crate) fn before_frame(
         &self,
         client: &Client,
         account: &str,
@@ -582,77 +581,99 @@ impl TickEngineTestHook {
         if account != self.account {
             return;
         }
+        let mut state = self.state.lock().expect("tick-engine hook poisoned");
+        let host_frame = state.next_host_frame.wrapping_add(1);
+        let client_tick = snapshot.tick();
+        state.last_game_tick = game_tick;
+        if state.measurement_armed {
+            let poll = if tick_edge {
+                PollKind::Edge
+            } else {
+                PollKind::Wake
+            };
+            let mut chat = snapshot
+                .chat_lines()
+                .iter()
+                .filter(|line| line.sequence > state.last_chat_sequence)
+                .map(|line| ChatObservation {
+                    game_tick,
+                    sequence: line.sequence,
+                    text: line.text.clone(),
+                    poll,
+                })
+                .collect::<Vec<_>>();
+            chat.sort_by_key(|line| line.sequence);
+            if let Some(latest) = chat.iter().map(|line| line.sequence).max() {
+                state.last_chat_sequence = latest;
+            }
+            let inventory_counts = state
+                .inventory_ids
+                .iter()
+                .map(|id| (*id, snapshot.inv_count(*id)))
+                .collect();
+            let skill_xp = snapshot
+                .stats()
+                .iter()
+                .map(|stat| (stat.index, stat.xp))
+                .collect();
+            let player_tile = snapshot
+                .tile()
+                .map(|(x, z, level)| WorldTile { x, z, level });
+            let log_count = snapshot.inv_count(state.log_id);
+            let modal_packets = client.main_modal_packet_state();
+            let chat_modal_root = snapshot.modals().chat;
+            let actual_chat_modal_root = if suppressed_openchat {
+                8880
+            } else {
+                chat_modal_root
+            };
+            state.pending_frame = Some(FrameObservation {
+                host_frame,
+                game_tick,
+                client_tick,
+                tick_edge,
+                animation: client.local_animation_update(),
+                chat,
+                inventory_counts,
+                log_count,
+                skill_xp,
+                player_tile,
+                chat_modal_root,
+                actual_chat_modal_root,
+                server_if_close_packets: modal_packets.close_packets,
+                iface_generation: client.gens.iface,
+                main_modal_opened_observation: modal_packets.opened_observation,
+                main_modal_closed_observation: modal_packets.closed_observation,
+                suppressed_openchat,
+            });
+        } else if let Some(latest) = snapshot.chat_lines().iter().map(|line| line.sequence).max() {
+            state.last_chat_sequence = state.last_chat_sequence.max(latest);
+        }
+    }
+
+    /// Publish the frame and its exact post-observation native status, then
+    /// advance the same transport boundary used by the original hook.
+    pub(crate) fn after_frame(
+        &self,
+        account: &str,
+        tick_edge: bool,
+        status: Option<Arc<ScriptStatus>>,
+    ) {
+        if account != self.account {
+            return;
+        }
         let (controller, host_frame, game_tick) = {
             let mut state = self.state.lock().expect("tick-engine hook poisoned");
             state.next_host_frame = state.next_host_frame.wrapping_add(1);
             let host_frame = state.next_host_frame;
-            let client_tick = snapshot.tick();
-            state.last_game_tick = game_tick;
+            let game_tick = state.last_game_tick;
+            if let Some(frame) = state.pending_frame.take() {
+                state.trace.frames.push(frame);
+            }
             if state.measurement_armed {
-                let poll = if tick_edge {
-                    PollKind::Edge
-                } else {
-                    PollKind::Wake
-                };
-                let mut chat = snapshot
-                    .chat_lines()
-                    .iter()
-                    .filter(|line| line.sequence > state.last_chat_sequence)
-                    .map(|line| ChatObservation {
-                        game_tick,
-                        sequence: line.sequence,
-                        text: line.text.clone(),
-                        poll,
-                    })
-                    .collect::<Vec<_>>();
-                chat.sort_by_key(|line| line.sequence);
-                if let Some(latest) = chat.iter().map(|line| line.sequence).max() {
-                    state.last_chat_sequence = latest;
+                if let Some(status) = status {
+                    state.native_statuses.push((host_frame, game_tick, status));
                 }
-                let inventory_counts = state
-                    .inventory_ids
-                    .iter()
-                    .map(|id| (*id, snapshot.inv_count(*id)))
-                    .collect();
-                let skill_xp = snapshot
-                    .stats()
-                    .iter()
-                    .map(|stat| (stat.index, stat.xp))
-                    .collect();
-                let player_tile = snapshot
-                    .tile()
-                    .map(|(x, z, level)| WorldTile { x, z, level });
-                let log_count = snapshot.inv_count(state.log_id);
-                let modal_packets = client.main_modal_packet_state();
-                let chat_modal_root = snapshot.modals().chat;
-                let actual_chat_modal_root = if suppressed_openchat {
-                    8880
-                } else {
-                    chat_modal_root
-                };
-                state.trace.frames.push(FrameObservation {
-                    host_frame,
-                    game_tick,
-                    client_tick,
-                    tick_edge,
-                    animation: client.local_animation_update(),
-                    chat,
-                    inventory_counts,
-                    log_count,
-                    skill_xp,
-                    player_tile,
-                    chat_modal_root,
-                    actual_chat_modal_root,
-                    server_if_close_packets: modal_packets.close_packets,
-                    iface_generation: client.gens.iface,
-                    main_modal_opened_observation: modal_packets.opened_observation,
-                    main_modal_closed_observation: modal_packets.closed_observation,
-                    suppressed_openchat,
-                });
-            } else if let Some(latest) =
-                snapshot.chat_lines().iter().map(|line| line.sequence).max()
-            {
-                state.last_chat_sequence = state.last_chat_sequence.max(latest);
             }
             (state.transport.clone(), host_frame, game_tick)
         };
@@ -660,6 +681,15 @@ impl TickEngineTestHook {
             controller.observed_frame(game_tick, tick_edge, host_frame);
         }
         self.changed.notify_all();
+    }
+
+    /// Consume every host-observed native status without a second polling
+    /// clock. Retain the buffer capacity for the next observation batch.
+    pub fn drain_native_statuses(&self, mut record: impl FnMut(u64, u32, &ScriptStatus)) {
+        let mut state = self.state.lock().expect("tick-engine hook poisoned");
+        for (host_frame, game_tick, status) in state.native_statuses.drain(..) {
+            record(host_frame, game_tick, &status);
+        }
     }
 
     /// Begin a real ordered dispatch and apply its one queued mutation, if any.
@@ -686,7 +716,12 @@ impl TickEngineTestHook {
                 !request_debug
                     .as_deref()
                     .is_some_and(|request| request.contains("KnifeArm"))
-                    || !fresh_mining_roll(&state.trace, game_tick, sequence)
+                    || !fresh_mining_roll(
+                        &state.trace,
+                        state.pending_frame.as_ref(),
+                        game_tick,
+                        sequence,
+                    )
             }) {
                 None
             } else {
@@ -920,13 +955,58 @@ mod tests {
         let client = client();
         let snapshot = GameSnapshot::new();
         hook.arm_measurement(1511, &[]);
-        hook.after_frame(&client, "clock", &snapshot, 42, true, false);
+        hook.before_frame(&client, "clock", &snapshot, 42, true, false);
+        assert!(
+            hook.trace().frames.is_empty(),
+            "dispatch sees pending input before publication"
+        );
+        hook.after_frame("clock", true, None);
         let trace = hook.trace();
         assert_eq!(hook.observed_game_tick(), 42);
         assert_eq!(trace.frames[0].game_tick, 42);
         assert_eq!(trace.frames[0].client_tick, snapshot.tick());
         assert_ne!(trace.frames[0].game_tick, trace.frames[0].client_tick);
         assert_eq!(hook.observed_client_frame(), Some((snapshot.tick(), None)));
+    }
+
+    #[test]
+    fn native_status_history_keeps_each_exact_completed_frame_until_drained() {
+        use script::native::NativePhase;
+        let hook = TickEngineTestHook::new("status");
+        let client = client();
+        let snapshot = GameSnapshot::new();
+        let status = |phase| {
+            Arc::new(ScriptStatus {
+                run: dispatch_stamp().run,
+                card: script::CompiledId("test"),
+                phase,
+                active_settings: 1,
+                pending_settings: None,
+                fields: Arc::from([]),
+                failure: None,
+            })
+        };
+        hook.arm_measurement(1511, &[]);
+        for (tick, phase) in [(42, NativePhase::Working), (43, NativePhase::Waiting)] {
+            hook.before_frame(&client, "status", &snapshot, tick, true, false);
+            hook.after_frame("status", true, Some(status(phase)));
+        }
+        let mut observed = Vec::new();
+        hook.drain_native_statuses(|frame, tick, status| {
+            observed.push((frame, tick, status.phase))
+        });
+        assert_eq!(
+            observed,
+            [(1, 42, NativePhase::Working), (2, 43, NativePhase::Waiting)]
+        );
+        hook.drain_native_statuses(|_, _, _| panic!("statuses are consumed exactly once"));
+        hook.before_frame(&client, "status", &snapshot, 44, true, false);
+        hook.after_frame("status", true, Some(status(NativePhase::Working)));
+        observed.clear();
+        hook.drain_native_statuses(|frame, tick, status| {
+            observed.push((frame, tick, status.phase))
+        });
+        assert_eq!(observed, [(3, 44, NativePhase::Working)]);
     }
 
     #[test]
@@ -944,9 +1024,11 @@ mod tests {
                 xp,
                 used: true,
             }]);
-            hook.after_frame(&client, "xp", &snapshot, tick, true, false);
+            hook.before_frame(&client, "xp", &snapshot, tick, true, false);
+            hook.after_frame("xp", true, None);
         }
-        hook.after_frame(&client, "xp", &GameSnapshot::new(), 2, false, false);
+        hook.before_frame(&client, "xp", &GameSnapshot::new(), 2, false, false);
+        hook.after_frame("xp", false, None);
         assert_eq!(hook.observed_skill_xp(10).map(|xp| xp - 100), Some(40));
         assert_eq!(hook.observed_skill_xp(14), None);
     }

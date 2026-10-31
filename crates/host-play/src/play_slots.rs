@@ -1532,8 +1532,6 @@ fn spawn_slot_thread(
                             {
                                 test_hook.bind_client(c, name, Arc::clone(&slot_input));
                             }
-                            #[cfg(feature = "test-support")]
-                            let mut tick_engine_suppressed_openchat = false;
                             if !c.ingame {
                                 // The live title pump owns offline script/latch
                                 // synchronization. A hosted title click is only
@@ -1819,8 +1817,16 @@ fn spawn_slot_thread(
                             }
                             #[cfg(feature = "test-support")]
                             if let Some(test_hook) = TickEngineTestHook::current() {
-                                tick_engine_suppressed_openchat =
+                                let tick_engine_suppressed_openchat =
                                     test_hook.before_snapshot_observe(name, &mut nav_snapshot, *script_tick as u32);
+                                test_hook.before_frame(
+                                    c,
+                                    name,
+                                    &nav_snapshot,
+                                    *script_tick as u32,
+                                    tick_edge,
+                                    tick_engine_suppressed_openchat,
+                                );
                             }
                             // The slot's paint frame is read before the
                             // status lock (scripts -> statuses is the only
@@ -1958,14 +1964,9 @@ fn spawn_slot_thread(
                             );
                             #[cfg(feature = "test-support")]
                             if let Some(test_hook) = TickEngineTestHook::current() {
-                                test_hook.after_frame(
-                                    c,
-                                    name,
-                                    &nav_snapshot,
-                                    *script_tick as u32,
-                                    tick_edge,
-                                    tick_engine_suppressed_openchat,
-                                );
+                                let status = script_slot(&slot_scripts, name)
+                                    .and_then(|slot| slot.lock().ok()?.native_status());
+                                test_hook.after_frame(name, tick_edge, status);
                             }
                             #[cfg(feature = "test-support")]
                             if let Some(observer) = &post_host_frame {

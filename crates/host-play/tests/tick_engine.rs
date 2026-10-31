@@ -1215,22 +1215,11 @@ impl LiveRun {
             }
             history.replace_host_log(host_log);
         }
-        let Some(status) = self.play().script_native_status(&self.account) else {
-            return;
-        };
-        if self
-            .statuses
-            .last()
-            .is_some_and(|previous| previous.host_frame == host_frame)
-        {
-            return;
-        }
-        let game_tick = trace
-            .frames
-            .last()
-            .map_or_else(|| self.hook.observed_game_tick(), |frame| frame.game_tick);
-        self.statuses
-            .push(StatusObservation::capture(&status, host_frame, game_tick));
+        let statuses = &mut self.statuses;
+        self.hook
+            .drain_native_statuses(|host_frame, game_tick, status| {
+                statuses.push(StatusObservation::capture(status, host_frame, game_tick));
+            });
     }
 
     fn evidence(&self) -> RunEvidence {
@@ -4534,6 +4523,34 @@ mod packet_oracle_tests {
             .sequence = MITHRIL_PICK_ANIMATION;
         assert!(fresh_mining_roll(
             &evidence.trace,
+            None,
+            11,
+            MITHRIL_PICK_ANIMATION
+        ));
+        let mut before = evidence.trace.clone();
+        let pending = before.frames.pop().unwrap();
+        assert!(!fresh_mining_roll(
+            &before,
+            None,
+            11,
+            MITHRIL_PICK_ANIMATION
+        ));
+        assert!(fresh_mining_roll(
+            &before,
+            Some(&pending),
+            11,
+            MITHRIL_PICK_ANIMATION
+        ));
+        assert_eq!(
+            before.frames.len(),
+            4,
+            "selection does not publish an incomplete frame"
+        );
+        let mut stale_pending = pending.clone();
+        stale_pending.tick_edge = false;
+        assert!(!fresh_mining_roll(
+            &before,
+            Some(&stale_pending),
             11,
             MITHRIL_PICK_ANIMATION
         ));
@@ -4542,7 +4559,12 @@ mod packet_oracle_tests {
         wake.host_frame += 1;
         wake.tick_edge = false;
         retained.frames.push(wake);
-        assert!(fresh_mining_roll(&retained, 11, MITHRIL_PICK_ANIMATION));
+        assert!(fresh_mining_roll(
+            &retained,
+            None,
+            11,
+            MITHRIL_PICK_ANIMATION
+        ));
         retained
             .frames
             .last_mut()
@@ -4551,7 +4573,12 @@ mod packet_oracle_tests {
             .as_mut()
             .unwrap()
             .serial += 1;
-        assert!(!fresh_mining_roll(&retained, 11, MITHRIL_PICK_ANIMATION));
+        assert!(!fresh_mining_roll(
+            &retained,
+            None,
+            11,
+            MITHRIL_PICK_ANIMATION
+        ));
         let mut start_act = evidence.trace.clone();
         start_act.frames[4].chat.push(ChatObservation {
             game_tick: 11,
@@ -4560,7 +4587,7 @@ mod packet_oracle_tests {
             poll: PollKind::Edge,
         });
         assert!(
-            !fresh_mining_roll(&start_act, 11, MITHRIL_PICK_ANIMATION),
+            !fresh_mining_roll(&start_act, None, 11, MITHRIL_PICK_ANIMATION),
             "a fresh Mining animation with a start-Act line is not a natural roll"
         );
         for facet in 0..5 {
@@ -4579,7 +4606,7 @@ mod packet_oracle_tests {
                 _ => unreachable!(),
             }
             assert!(
-                !fresh_mining_roll(&trace, 11, MITHRIL_PICK_ANIMATION),
+                !fresh_mining_roll(&trace, None, 11, MITHRIL_PICK_ANIMATION),
                 "invalid facet {facet}"
             );
         }
