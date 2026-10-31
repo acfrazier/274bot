@@ -4316,17 +4316,17 @@ impl GatherSlot {
             }
         }
         self.witness.last_status_bank = text_field(status, "bank").map(str::to_owned);
-        let bank_step_is_return = self.witness.last_status_bank.as_deref().and_then(|bank| {
-            bank.rsplit_once("; ")
-                .map(|(_, step)| step == "Return")
-        });
+        let bank_step_is_return = self
+            .witness
+            .last_status_bank
+            .as_deref()
+            .and_then(|bank| bank.rsplit_once("; ").map(|(_, step)| step == "Return"));
         if let Some(step_is_return) = bank_step_is_return {
             self.witness.bank_loaded_observed |= self.snapshot.bank_loaded();
             if step_is_return {
                 record_bank_return_step(&mut self.witness, "Return");
-                self.witness.bank_return_after_pause |= self.case
-                    == LiveCase::PauseResumeOtherPlane
-                    && self.witness.resume_observed;
+                self.witness.bank_return_after_pause |=
+                    self.case == LiveCase::PauseResumeOtherPlane && self.witness.resume_observed;
                 self.witness.bank_return_after_reconnect |=
                     self.case == LiveCase::ReconnectReturn && self.witness.reconnect_observed;
             }
