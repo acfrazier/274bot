@@ -44,7 +44,8 @@ export default class ClientAdapterLiveProbe extends LoopingBot {
         if (reader.skillCount() !== 25) {
             throw new Error(`ClientAdapter skill catalog count was ${reader.skillCount()}, expected 25`);
         }
-        if (!Input.interactLoc(bankLoc.lx, bankLoc.lz, bankLoc.typecode, bankLoc.op)) {
+        // The ClientAdapter shim resolves location input by world tile.
+        if (!Input.interactLoc(bankLoc.x, bankLoc.z, bankLoc.typecode, bankLoc.op)) {
             throw new Error('ClientAdapter probe could not open the seeded Draynor bank');
         }
         if (!(await Execution.delayUntil(
@@ -160,7 +161,6 @@ fn send_cheat(client: &mut Client, command: &str) -> Result<(), String> {
     }
 }
 fn nearby_bank_loc(snapshot: &GameSnapshot) -> Option<Value> {
-    let (base_x, base_z) = snapshot.base()?;
     snapshot
         .locs()
         .iter()
@@ -187,8 +187,6 @@ fn nearby_bank_loc(snapshot: &GameSnapshot) -> Option<Value> {
                 json!({
                     "id": loc.id,
                     "typecode": loc.typecode,
-                    "lx": loc.tile.x - base_x,
-                    "lz": loc.tile.z - base_z,
                     "x": loc.tile.x,
                     "z": loc.tile.z,
                     "level": loc.tile.level,
