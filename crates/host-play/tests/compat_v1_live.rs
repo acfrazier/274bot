@@ -1664,6 +1664,10 @@ fn instrument_alcher_active_event(js: &mut String) -> Result<(), String> {
         "export default class Alcher extends TaskBot {",
         "class Alcher extends TaskBot {",
     )?;
+    js.insert_str(
+        0,
+        "import { SettingsStore } from '../../runtime/Settings.js';\n",
+    );
     js.push_str(
         r#"
 export default class CompatAlcherActiveEventProbe extends Alcher {
@@ -1671,6 +1675,16 @@ export default class CompatAlcherActiveEventProbe extends Alcher {
         this.sampleEvent();
         this.__compatLastActiveEvent = ScriptRunner.ctx?.activeEvent ?? null;
         this.log('RUNTIME:ALCHER_ACTIVE_EVENT:' + (this.__compatLastActiveEvent ?? '<null>'));
+        this.__compatSettingsUnsubscribe = SettingsStore.onChange((name, key, raw) => {
+            if (name === 'CompatRuntimeProbe' && key === 'catalogWrite') {
+                this.log('RUNTIME:CATALOG_SETTINGS_CHANGE:' + name + ':' + key + ':' + raw);
+            }
+        });
+        this.log('RUNTIME:CATALOG_SETTINGS_SAVE_BEFORE');
+        SettingsStore.save('CompatRuntimeProbe', 'catalogWrite', 'catalog-value');
+        this.log('RUNTIME:CATALOG_SETTINGS_SAVE_RETURN');
+        this.log('RUNTIME:CATALOG_SETTINGS_READBACK:' +
+            (SettingsStore.saved('CompatRuntimeProbe', 'catalogWrite') ?? '<undefined>'));
     }
     loop() {
         this.sampleEvent();
@@ -1680,7 +1694,10 @@ export default class CompatAlcherActiveEventProbe extends Alcher {
             this.log('RUNTIME:ALCHER_ACTIVE_EVENT:' + (activeEvent ?? '<null>'));
         }
     }
-    onStop() { this.log('RUNTIME:ALCHER_STOP'); }
+    onStop() {
+        this.__compatSettingsUnsubscribe?.();
+        this.log('RUNTIME:ALCHER_STOP');
+    }
 }
 "#,
     );
@@ -1688,6 +1705,9 @@ export default class CompatAlcherActiveEventProbe extends Alcher {
 }
 
 fn run_runtime_catalog_cell(receipt: &mut Receipt) -> Result<(), String> {
+    receipt.coverage_notes.push(
+        "The real Alcher Catalog card writes one isolated setting. It verifies one synchronous listener event and saved-value read-back. The WalkTo File card separately checks the map-pick consumer.".into(),
+    );
     receipt.coverage_notes.push(
         "AccountLeveler Catalog-card coverage is blocked by AccountLeveler.ts:17 importing private api/ai/quests/defs/dragonslayer/journal.js. Its lines 96-103 run in the separate normal-Load frame probe.".into(),
     );
@@ -1713,12 +1733,47 @@ fn run_runtime_catalog_cell(receipt: &mut Receipt) -> Result<(), String> {
             recent
                 .iter()
                 .any(|line| line.starts_with("RUNTIME:ALCHER_ACTIVE_EVENT:"))
+                && recent
+                    .iter()
+                    .any(|line| line == "RUNTIME:CATALOG_SETTINGS_CHANGE:CompatRuntimeProbe:catalogWrite:catalog-value")
+                && recent
+                    .iter()
+                    .any(|line| line == "RUNTIME:CATALOG_SETTINGS_SAVE_RETURN")
+                && recent
+                    .iter()
+                    .any(|line| line == "RUNTIME:CATALOG_SETTINGS_READBACK:catalog-value")
         })
     })?;
     if session.play.script_state(&session.account) != script::RunState::Running {
         return Err(format!(
             "Alcher did not reach Running: {:?}",
             session.play.script_state(&session.account)
+        ));
+    }
+    let catalog_logs = &session.receipt.logs[alcher_start..];
+    let save_before = catalog_logs
+        .iter()
+        .position(|line| line == "RUNTIME:CATALOG_SETTINGS_SAVE_BEFORE")
+        .ok_or_else(|| "Alcher Catalog settings save did not start".to_string())?;
+    let change = catalog_logs
+        .iter()
+        .position(|line| {
+            line == "RUNTIME:CATALOG_SETTINGS_CHANGE:CompatRuntimeProbe:catalogWrite:catalog-value"
+        })
+        .ok_or_else(|| "Alcher Catalog settings listener did not run".to_string())?;
+    let save_return = catalog_logs
+        .iter()
+        .position(|line| line == "RUNTIME:CATALOG_SETTINGS_SAVE_RETURN")
+        .ok_or_else(|| "Alcher Catalog settings save did not return".to_string())?;
+    let readback = catalog_logs
+        .iter()
+        .position(|line| line == "RUNTIME:CATALOG_SETTINGS_READBACK:catalog-value")
+        .ok_or_else(|| "Alcher Catalog settings read-back failed".to_string())?;
+    if count_prefix(catalog_logs, "RUNTIME:CATALOG_SETTINGS_CHANGE:") != 1
+        || !(save_before < change && change < save_return && save_return < readback)
+    {
+        return Err(format!(
+            "Alcher Catalog settings change was not synchronous and exactly once: {catalog_logs:?}"
         ));
     }
     stop_script(&mut session, "RUNTIME:ALCHER_STOP", false)?;
@@ -1853,7 +1908,7 @@ fn validate_walk_map_pick(logs: &[String], start: usize) -> Result<String, Strin
 
 fn run_runtime_settings_walk_cell(receipt: &mut Receipt) -> Result<(), String> {
     receipt.coverage_notes.push(
-        "Loaded pinned WalkToBot.ts as a ScriptSource::File card named WalkToBot. WalkTo is reserved by the runtime registry, so this proves File-card, not Catalog-card, coverage.".into(),
+        "WalkToBot.ts loads as a ScriptSource::File card. Its exact ../../api/map/WalkDestinations.js import resolves only under src/bot/scripts/WalkToBot. This proves File-card, not Catalog-card, coverage. The Alcher Catalog cell separately checks settings writes, listener delivery and read-back.".into(),
     );
     let mut session = session("compat-v1-runtime-settings-walk", receipt)?;
     let catalog_root = required_path("RS2B0T")?;
