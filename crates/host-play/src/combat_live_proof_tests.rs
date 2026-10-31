@@ -2135,7 +2135,7 @@ fn m4_cure_steps(capture: Arc<Mutex<CombatCapture>>) -> [Step; 2] {
                         .unwrap_or(0);
                     if !matches!(
                         Interactions::new(snapshot, client)
-                            .interact(OpTarget::Item(dose), ActionSpec::Label("Drink")),
+                            .interact(OpTarget::Item(dose), ActionSpec::Label("Drink".to_owned()),),
                         SendResult::Sent { .. }
                     ) {
                         return false;
