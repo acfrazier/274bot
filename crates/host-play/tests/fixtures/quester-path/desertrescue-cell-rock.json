@@ -1,0 +1,10 @@
+{
+  "stage": "desertrescue:6",
+  "stand": [3282, 3035, 0],
+  "loadout": null,
+  "extra_items": [["lobster", 8]],
+  "seed_vars": [],
+  "before_relog": [],
+  "expect": ["desertrescue:7"],
+  "mode": "stage"
+}
