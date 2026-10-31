@@ -35,6 +35,7 @@ quest starts on every walk. Use `"dialogue": true` to grant prerequisite
 dialogue steps on every walk.
 An omitted or `false` header field adds no path-level grant; it does not
 revoke global or script grants.
+
 For one `walk` step, use `allow_prereq_dialogue` or `allow_quest_start` in its
 arguments. A per-walk `true` adds a grant; `false` is the request-level
 prohibition. An omitted per-walk field uses the global, script, and header
