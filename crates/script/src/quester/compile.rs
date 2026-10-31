@@ -11,6 +11,7 @@ use crate::combat::RaisedPrayers;
 use crate::local_state::OperatorLoadouts;
 use crate::native::{ActionContext, ActionError, NativeActions, NativeTick};
 use crate::native_bank::BankItem;
+use crate::survival::{HazardStat, StepHazard};
 use api::game_data::SelectedGameData;
 use api::gather_methods::GatherCatalog;
 use api::named_banks::NamedBank;
@@ -20,7 +21,6 @@ use api::selected::{
     ClientRevision, FactKey, FamilyPreparation, ItemAmount, QuestGate, RequirementKind,
     SkillMinimum, SourceSpan, Truth,
 };
-use crate::survival::{HazardStat, StepHazard};
 use sha2::{Digest, Sha256};
 use std::{
     any::Any,
@@ -1257,10 +1257,7 @@ fn compile_step_hazard(
         return Err(step_compile_error(step, document, "step-hazard-bound"));
     }
 
-    Ok((
-        Some(compiled),
-        Some(Arc::from(hazard.source.as_str())),
-    ))
+    Ok((Some(compiled), Some(Arc::from(hazard.source.as_str()))))
 }
 
 fn compile_steps(
@@ -2173,11 +2170,7 @@ mod tests {
         None
     }
 
-    fn set_step_hazard(
-        document: &mut PathDocument,
-        kind: &str,
-        hazard: HazardDocument,
-    ) -> FactKey {
+    fn set_step_hazard(document: &mut PathDocument, kind: &str, hazard: HazardDocument) -> FactKey {
         let step = find_step_mut(document, kind).expect("fixture has the requested step kind");
         step.hazard = Some(hazard);
         step.id.clone()
@@ -2201,9 +2194,7 @@ mod tests {
         }
     }
 
-    fn compile_document(
-        document: &PathDocument,
-    ) -> Result<Arc<CompiledPath>, CompileError> {
+    fn compile_document(document: &PathDocument) -> Result<Arc<CompiledPath>, CompileError> {
         let data = selected();
         let quest_catalog = quests(&data);
         compile_uncached_for_test(document, &data, &quest_catalog)
@@ -2290,14 +2281,7 @@ mod tests {
         let mut walk_document = decode_cook().unwrap();
         let walk = find_step_mut(&mut walk_document, "talk").expect("Cook has a talk step");
         walk.kind = "walk".into();
-        walk.hazard = Some(hazard_document(
-            HazardStat::Base,
-            1,
-            10,
-            0,
-            Some(3),
-            SOURCE,
-        ));
+        walk.hazard = Some(hazard_document(HazardStat::Base, 1, 10, 0, Some(3), SOURCE));
         let walk_id = walk.id.clone();
         let error = compile_document_error(&walk_document);
         assert_eq!(error.code.as_ref(), "step-hazard-unsupported");

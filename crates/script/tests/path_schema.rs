@@ -337,23 +337,15 @@ fn generated_step_schema_accepts_optional_hazard() {
     let schema: Value = serde_json::from_str(&render()).expect("generated Path schema");
     let interact = &schema["$defs"]["step.interact.v1"];
     let hazard = &interact["properties"]["hazard"];
-    assert_eq!(
-        hazard["anyOf"][0]["$ref"],
-        json!("#/$defs/HazardDocument")
-    );
+    assert_eq!(hazard["anyOf"][0]["$ref"], json!("#/$defs/HazardDocument"));
     assert_eq!(hazard["anyOf"][1]["type"], json!("null"));
-    assert!(
-        !interact["required"]
-            .as_array()
-            .expect("required step fields")
-            .contains(&json!("hazard"))
-    );
+    assert!(!interact["required"]
+        .as_array()
+        .expect("required step fields")
+        .contains(&json!("hazard")));
 
     let hazard_schema = &schema["$defs"]["HazardDocument"];
-    assert_eq!(
-        hazard_schema["required"],
-        json!(["of", "source"])
-    );
+    assert_eq!(hazard_schema["required"], json!(["of", "source"]));
     assert_eq!(hazard_schema["properties"]["mul"]["default"], json!(0));
     assert_eq!(hazard_schema["properties"]["div"]["default"], json!(1));
     assert_eq!(hazard_schema["properties"]["plus"]["default"], json!(0));

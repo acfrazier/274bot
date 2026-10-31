@@ -48,9 +48,7 @@ impl StepHazard {
         };
         let scaled = i64::from(stat) * i64::from(self.mul) / i64::from(self.div);
         let damage = (scaled + i64::from(self.plus)).max(0);
-        let damage = self
-            .cap
-            .map_or(damage, |cap| damage.min(i64::from(cap)));
+        let damage = self.cap.map_or(damage, |cap| damage.min(i64::from(cap)));
         damage.min(i64::from(i32::MAX)) as i32
     }
 
@@ -380,8 +378,18 @@ mod tests {
     fn hazard_max_damage_matches_the_content_formulas() {
         for row in INVENTORY.iter().filter(|row| row.hazard.is_some()) {
             let hazard = row.hazard.expect("declared inventory row has a formula");
-            assert_eq!(hazard.max_damage(40, 40), row.h40.unwrap(), "{}", row.source);
-            assert_eq!(hazard.max_damage(10, 40), row.h10.unwrap(), "{}", row.source);
+            assert_eq!(
+                hazard.max_damage(40, 40),
+                row.h40.unwrap(),
+                "{}",
+                row.source
+            );
+            assert_eq!(
+                hazard.max_damage(10, 40),
+                row.h10.unwrap(),
+                "{}",
+                row.source
+            );
         }
 
         let after_plus_cap = StepHazard {
@@ -432,16 +440,38 @@ mod tests {
             match row.class {
                 InventoryClass::StepHazard | InventoryClass::Expressible => {
                     let hazard = row.hazard.expect("expressible damage has a declaration");
-                    assert_eq!(hazard.max_damage(40, 40), row.h40.unwrap(), "{}", row.source);
-                    assert_eq!(hazard.max_damage(10, 40), row.h10.unwrap(), "{}", row.source);
+                    assert_eq!(
+                        hazard.max_damage(40, 40),
+                        row.h40.unwrap(),
+                        "{}",
+                        row.source
+                    );
+                    assert_eq!(
+                        hazard.max_damage(10, 40),
+                        row.h10.unwrap(),
+                        "{}",
+                        row.source
+                    );
                 }
                 InventoryClass::RandomBound => {
                     let hazard = row.hazard.expect("random bound has a declaration");
-                    assert_eq!(hazard.max_damage(40, 40), row.h40.unwrap(), "{}", row.source);
-                    assert_eq!(hazard.max_damage(10, 40), row.h10.unwrap(), "{}", row.source);
+                    assert_eq!(
+                        hazard.max_damage(40, 40),
+                        row.h40.unwrap(),
+                        "{}",
+                        row.source
+                    );
+                    assert_eq!(
+                        hazard.max_damage(10, 40),
+                        row.h10.unwrap(),
+                        "{}",
+                        row.source
+                    );
                     assert!(hazard.max_damage(40, 40) >= 5, "{}", row.source);
                 }
-                InventoryClass::NpcInitiated | InventoryClass::ZoneTimer | InventoryClass::MultiHit => {
+                InventoryClass::NpcInitiated
+                | InventoryClass::ZoneTimer
+                | InventoryClass::MultiHit => {
                     assert!(row.hazard.is_none(), "{}", row.source);
                     assert!(row.h40.is_none(), "{}", row.source);
                     assert!(row.h10.is_none(), "{}", row.source);

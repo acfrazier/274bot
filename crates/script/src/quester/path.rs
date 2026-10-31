@@ -1,6 +1,6 @@
 //! Path authoring values, not a runtime JSON interpreter.
-use crate::survival::hazard::HazardStat;
 use super::pair::PartnerDeclaration;
+use crate::survival::hazard::HazardStat;
 use api::selected::{FactKey, SkillMinimum};
 use api::WorldTile;
 use serde::{Deserialize, Serialize};
