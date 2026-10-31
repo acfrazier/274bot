@@ -11,10 +11,11 @@ use api::shop_facts::{self, KeeperFact};
 use api::stock::Stock;
 use std::fmt::Write;
 use std::task::Poll;
-// One retry per access identity, with a small shared cap across this need's
-// eligible shops so a large catalog cannot multiply recovery requests.
+// AGENTS.md:131 retries a failed walk from the observed position and lets a
+// machine try another target; USER-0.2.3-GATHERER §4 requires a finite budget.
+// Two retries across this need's placements cover one alternate shop after the
+// per-identity recovery and keep a large catalog from multiplying requests.
 const MAX_SHOP_ACCESS_RETRIES: u8 = 2;
-const MAX_SHOP_ACCESS_ATTEMPTS: u8 = 2;
 
 #[derive(Clone, Copy)]
 enum Phase {
@@ -106,7 +107,7 @@ impl ShopRun {
             target: None,
             nearest: false,
             retry_used: false,
-            walk_recovery: ReturnStallRecovery::with_max_attempts(MAX_SHOP_ACCESS_ATTEMPTS),
+            walk_recovery: ReturnStallRecovery::default(),
             walk_retry_after_tick: None,
             total_walk_retries: 0,
             excluded_shops: Vec::new(),
@@ -1257,9 +1258,33 @@ mod tests {
         let Poll::Ready(Ok(Outcome::Blocked(block))) = result else {
             panic!("exhausted nearest shops must produce a terminal block");
         };
+        assert_eq!(
+            block.reason,
+            BlockReason::VendorUnreachable,
+            "a failed access walk proves the vendor unreachable, not absent"
+        );
+        assert!(
+            block
+                .message
+                .contains("Gerrant, Harry cannot be reached from here"),
+            "{}",
+            block.message
+        );
+        assert!(block
+            .message
+            .contains("waiting: Stop, move closer, then Start"));
         assert!(block
             .message
             .contains("last shop access walk: last eligible shop route detail"));
+        assert!(
+            block
+                .looked
+                .vendors
+                .iter()
+                .flatten()
+                .all(|tried| tried.outcome == VendorOutcome::NoPath),
+            "excluded placements stay recorded as unreachable"
+        );
         assert_eq!(walk_ids.len(), 5, "two shared retries cover all shops");
         assert_eq!(
             walk_request_id(&ledger),
