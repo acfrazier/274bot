@@ -90,10 +90,8 @@ const DEADLINE_GRACE: Duration = Duration::from_secs(15);
 const PAIR_CANCELLED_REASON: &str = "pair cancelled; Stop and freshly Start both accounts";
 /// The live teardown remains bounded even when a script or the server does not progress.
 const CLEAN_LOGOUT_DEADLINE: Duration = Duration::from_secs(30);
-/// Engine content sets the combat logout refusal to 16 game ticks:
-/// `content/scripts/login_logout/logout.rs2:26-30` in both Engine L and Engine Q.
-/// `GameSnapshot::tick()` advances only from observed `PLAYER_INFO` packets (`host/src/lib.rs:1457-1480`).
-const COMBAT_LOGOUT_RETRY_TICKS: u32 = 16;
+/// Shared fixture escape waits the same content-authored combat lockout.
+const COMBAT_LOGOUT_RETRY_TICKS: u32 = scenario::teardown::COMBAT_LOGOUT_TICKS;
 
 #[derive(Debug)]
 struct TeardownAccount {
@@ -742,6 +740,9 @@ struct ActorShared {
     snapshot: GameSnapshot,
     latest_status: Option<ScriptStatus>,
     pump: Pump,
+    logout: Option<scenario::teardown::CombatLogout>,
+    logout_retry_ready: bool,
+    logout_error: Option<String>,
     start_handle: Option<ScriptStartHandle>,
     named_banks: Option<Arc<api::named_banks::NamedBankFacts>>,
     start_family: Option<StartFamily>,
@@ -1396,6 +1397,9 @@ fn run_cells(
             snapshot: GameSnapshot::new(),
             latest_status: None,
             pump: Pump::new(),
+            logout: None,
+            logout_retry_ready: false,
+            logout_error: None,
             start_handle: None,
             named_banks: None,
             start_family: start_family.take(),
@@ -1489,6 +1493,16 @@ fn run_cells(
             host::publish_snapshot(&mut actor.snapshot, client, drain);
             actor.last_tile = observed_tile(&actor.snapshot);
             if !actor_frame_enabled(frame_state.teardown_started) {
+                if let Some(logout) = &mut actor.logout {
+                    actor.logout_retry_ready = logout.allows_retry(&actor.snapshot, Instant::now());
+                    match logout.send_escape(client, Instant::now()) {
+                        Ok(true) => eprintln!(
+                            "[quester-live] logout account-only safe tele account={username}"
+                        ),
+                        Ok(false) => {}
+                        Err(error) => actor.logout_error = Some(error),
+                    }
+                }
                 return;
             }
 
@@ -3039,6 +3053,7 @@ fn run_cells(
         play.script_stop(account);
     }
     let mut observed_ticks = Vec::with_capacity(names.len());
+    let mut logout_retry_ready = Vec::with_capacity(names.len());
     let mut disconnected = Vec::with_capacity(names.len());
     loop {
         let now = Instant::now();
@@ -3046,9 +3061,20 @@ fn run_cells(
             break;
         }
         observed_ticks.clear();
+        logout_retry_ready.clear();
         match shared.lock() {
             Ok(state) => {
-                observed_ticks.extend(state.actors.iter().map(|actor| actor.snapshot.tick()))
+                observed_ticks.extend(state.actors.iter().map(|actor| actor.snapshot.tick()));
+                logout_retry_ready
+                    .extend(state.actors.iter().map(|actor| actor.logout_retry_ready));
+                if let Some(error) = state
+                    .actors
+                    .iter()
+                    .find_map(|actor| actor.logout_error.as_ref())
+                {
+                    result = Err(error.clone());
+                    break;
+                }
             }
             Err(_) => {
                 result = Err("live state poisoned during logout teardown".into());
@@ -3059,6 +3085,19 @@ fn run_cells(
             if teardown.stop_ack_tick(index).is_none() && start_handle.idle(account) {
                 if let Some(tick) = observed_ticks.get(index).copied() {
                     teardown.acknowledge_stop(index, tick);
+                    match shared.lock() {
+                        Ok(mut state) => {
+                            let actor = &mut state.actors[index];
+                            actor.logout = Some(scenario::teardown::CombatLogout::new(
+                                &actor.snapshot,
+                                logout_deadline,
+                            ));
+                        }
+                        Err(_) => {
+                            result = Err("live state poisoned after script Stop".into());
+                            break;
+                        }
+                    }
                 }
             }
         }
@@ -3085,7 +3124,7 @@ fn run_cells(
             let Some(tick) = observed_ticks.get(index).copied() else {
                 continue;
             };
-            if !teardown.retry_due(index, tick, connected, now) {
+            if !logout_retry_ready[index] || !teardown.retry_due(index, tick, connected, now) {
                 continue;
             }
             if let Some(arm) = play.arm(account) {
@@ -3127,6 +3166,13 @@ fn run_cells(
         "engine_content": "content/scripts/login_logout/logout.rs2:27",
         "stop_ack_api": "ScriptStartHandle::idle",
         "tick_source": "GameSnapshot::tick from observed PLAYER_INFO packets",
+        "combat_escape": shared.lock().ok().map(|state| state.actors.iter().map(|actor| json!({
+            "account": actor.account,
+            "refusal_sequence": actor.logout.as_ref().and_then(|logout| logout.refusal_sequence()),
+            "account_only_teleport_sent": actor.logout.as_ref().is_some_and(|logout| logout.escape_sent()),
+            "safe_arrival_tick": actor.logout.as_ref().and_then(|logout| logout.safe_arrival_tick()),
+            "safe_tile": scenario::teardown::LOGOUT_SAFE_TILE,
+        })).collect::<Vec<_>>()),
         "accounts": names
             .iter()
             .zip(&disconnected)

@@ -22,9 +22,10 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.7` 
   could crash while it exited.
 - The terminal app's script pane now marks the selected compiled (native)
   script card with `>` the same way as a selected JavaScript card.
-- Live terminal runs now stop running scripts and cancel queued starts before
-  they request logout. A combat logout refusal is retried only after 16 more
-  observed game ticks, within the same fixed 30-second shutdown deadline.
+- Live terminal and Quester test runs stop scripts before logout. If the engine
+  refuses logout because combat is still active, fixture teardown teleports only
+  that account to the safe mainland tile, waits 16 observed game ticks after
+  arrival, then retries logout within the original fixed 30-second deadline.
 - On Linux, the known issue where the panel could close right after start
   on a desktop with two graphics chips no longer happens with current
   graphics drivers and desktop versions, so it is no longer listed. 274bot

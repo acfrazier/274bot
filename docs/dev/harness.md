@@ -249,6 +249,30 @@ content) is needed by:
 The scenario crate's `every_engine_patch_user_is_documented` test keeps
 these lists in step with what the cells send.
 
+## Clean logout after live proof
+
+The TUI live runner and the shared Quester runner (including Entrana and timed
+jail) acknowledge script Stop before requesting logout. Their shared
+`scenario::teardown::CombatLogout` helper acts only after that point.
+
+A fresh exact system message, `You can't log out until 10 seconds after the end
+of combat.`, permits one ordinary `::tele` of only the fixture account to
+`3220,3220,0`. No NPC, HP, inventory, world state or proof result is changed.
+A stale message, player chat or a different logout refusal does not permit it.
+The helper obeys normal cheat admission; refusal fails teardown.
+
+The fixture must observe the account at that tile, then observe 16 more game
+ticks before another logout request. R289 content sets this lockout in
+`content/scripts/login_logout/logout.rs2:26-30`; NPC hits renew it in
+`content/scripts/skill_combat/scripts/player/auto_retaliate.rs2:1-7`, even after
+the bot script stops. Render polls and elapsed wall time do not count as game
+ticks. The existing 30-second teardown deadline is not extended.
+
+This is post-proof fixture cleanup, not an in-script combat escape. Quester's
+cell actor is frozen before Stop, and its receipt records the combat refusal,
+account-only teleport and safe-tile arrival tick separately from quest proof.
+Interactive Stop and logout do not use this helper.
+
 ## M4 unattackable-target escape fixture
 
 The host-play M4 cell seeds one single-dose Antipoison in the account's kit.

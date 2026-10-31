@@ -267,6 +267,14 @@ fn seed_mainland_on_ready<D: api::interact::Driver>(
     }
 }
 
+struct LiveLogoutAccount {
+    name: String,
+    combat: frontend_core::live::CombatLogout,
+    error: Option<String>,
+}
+
+type LiveLogoutAccounts = Arc<Mutex<Vec<LiveLogoutAccount>>>;
+
 /// The TUI's per-frame client work on every slot. The core already
 /// publishes the frame and runs the shared live harness; this adds TUI-owned
 /// mainland seeding.
@@ -274,6 +282,7 @@ struct TuiFrameHook {
     /// Hop a fresh slot to the mainland once in a loaded scene.
     mainland: bool,
     mainland_sent: Mutex<HashSet<String>>,
+    live_logout: Option<LiveLogoutAccounts>,
 }
 
 impl frontend_core::frames::FrameHook for TuiFrameHook {
@@ -289,6 +298,7 @@ impl frontend_core::frames::FrameHook for TuiFrameHook {
         let Self {
             mainland,
             mainland_sent,
+            live_logout,
         } = self;
         if frame.session_boundary() {
             frame.mark_walk_clear();
@@ -307,6 +317,18 @@ impl frontend_core::frames::FrameHook for TuiFrameHook {
                 slot = name,
                 "mainland hop queued"
             );
+        }
+        if let Some(logouts) = live_logout {
+            let mut logouts = logouts.lock().unwrap();
+            if let Some(account) = logouts.iter_mut().find(|account| account.name == name) {
+                match account.combat.send_escape(c, Instant::now()) {
+                    Ok(true) => {
+                        eprintln!("[tui-play] live logout account-only safe tele account={name}");
+                    }
+                    Ok(false) => {}
+                    Err(error) => account.error = Some(error),
+                }
+            }
         }
     }
 }
@@ -419,6 +441,7 @@ pub struct TuiSession {
 
     /// The `--live` run's scenario name, for the PASS/FAIL label.
     live_name: Option<String>,
+    live_logout: Option<LiveLogoutAccounts>,
     /// `--catalog-core` / `--pair-core`: the shared witness the next
     /// `--live` prepare arms.
     live_catalog_core: bool,
@@ -768,6 +791,7 @@ impl TuiSession {
             last_focused: None,
             walk_reset: false,
             live_name: None,
+            live_logout: None,
             live_catalog_core: false,
             live_pair_core: false,
             live_core_deadline: None,
@@ -922,6 +946,7 @@ impl TuiSession {
         let hook = Arc::new(TuiFrameHook {
             mainland: self.mainland,
             mainland_sent: Mutex::new(HashSet::new()),
+            live_logout: self.live_logout.clone(),
         });
         let mut launch = self.launcher.take_launch();
         if let Some(number) = self.auto_world {
@@ -1450,6 +1475,7 @@ impl TuiSession {
         #[cfg(feature = "js")]
         let fleet_cards = scenario.fleet_cards(names)?;
         let path = profiles.tui_vault();
+        self.live_logout = Some(Arc::new(Mutex::new(Vec::new())));
         self.unlock_at(&path, profiles.passphrase())?;
         self.core.configure_live_core(names)?;
         self.live_name = Some(name);
@@ -4204,6 +4230,24 @@ impl TuiSession {
                     .with_slot_snapshot(account, |snapshot| snapshot.tick())
             );
         }
+        let logouts = self
+            .live_logout
+            .as_ref()
+            .ok_or("live logout client hook is unavailable")?
+            .clone();
+        *logouts.lock().unwrap() = self
+            .names
+            .iter()
+            .map(|account| {
+                self.core
+                    .with_slot_snapshot(account, |snapshot| LiveLogoutAccount {
+                        name: account.clone(),
+                        combat: frontend_core::live::CombatLogout::new(snapshot, deadline),
+                        error: None,
+                    })
+                    .ok_or_else(|| format!("live logout snapshot unavailable for {account}"))
+            })
+            .collect::<Result<Vec<_>, _>>()?;
         match self.submit_raw(OperatorCommand::Logout, Targets::Everyone) {
             Ok(_) | Err(SubmitError::NoTarget(_)) => {}
             Err(error) => return Err(format!("logout command failed: {error}")),
@@ -4216,43 +4260,8 @@ impl TuiSession {
                     .with_slot_snapshot(account, |snapshot| snapshot.tick())
             })
             .collect::<Vec<_>>();
-        let trace_logout = std::env::var_os("BOT_LIVE_LOGOUT_TRACE").is_some();
-        let mut trace_ticks = vec![None; self.names.len()];
         loop {
             self.pump(app);
-            if trace_logout {
-                for (account, last_tick) in self.names.iter().zip(&mut trace_ticks) {
-                    self.core.with_slot_snapshot(account, |snapshot| {
-                        if *last_tick == Some(snapshot.tick()) {
-                            return;
-                        }
-                        *last_tick = Some(snapshot.tick());
-                        let attackers = snapshot
-                            .npcs()
-                            .iter()
-                            .filter(|npc| {
-                                npc.target.is_some_and(|target| {
-                                    target.kind == api::snapshot::ActorKind::Player
-                                        && i32::try_from(target.index).ok()
-                                            == Some(snapshot.self_slot())
-                                })
-                            })
-                            .collect::<Vec<_>>();
-                        eprintln!(
-                            "[live-logout-observation] {}",
-                            serde_json::json!({
-                                "account": account,
-                                "tick": snapshot.tick(),
-                                "ingame": snapshot.ingame(),
-                                "player": snapshot.local_player(),
-                                "hp": snapshot.stats().iter().find(|stat| stat.index == 3),
-                                "attackers": attackers,
-                                "chat": snapshot.chat_lines(),
-                            })
-                        );
-                    });
-                }
-            }
             if self.names.iter().all(|account| {
                 self.core
                     .fleet_view()
@@ -4291,7 +4300,18 @@ impl TuiSession {
                 let tick = self
                     .core
                     .with_slot_snapshot(account, |snapshot| snapshot.tick());
-                if live_logout_retry_due(last_tick, tick) {
+                let may_retry = self
+                    .core
+                    .with_slot_snapshot(account, |snapshot| {
+                        let mut accounts = logouts.lock().unwrap();
+                        let state = &mut accounts[index];
+                        if let Some(error) = &state.error {
+                            return Err(error.clone());
+                        }
+                        Ok(state.combat.allows_retry(snapshot, Instant::now()))
+                    })
+                    .unwrap_or(Ok(false))?;
+                if may_retry && live_logout_retry_due(last_tick, tick) {
                     let account = account.clone();
                     eprintln!("[tui-play] live logout retry account={account} tick={tick:?}");
                     match self.submit_raw(OperatorCommand::Logout, Targets::Profile(&account)) {

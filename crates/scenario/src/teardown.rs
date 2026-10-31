@@ -26,6 +26,7 @@ enum Escape {
     Pending,
     Sent,
     Arrived(u32),
+    Refused,
 }
 
 /// Construct after Stop acknowledgement and immediately before the first logout.
@@ -55,8 +56,29 @@ impl CombatLogout {
         if now >= self.deadline {
             return false;
         }
+        if matches!(self.escape, Escape::Unneeded) {
+            if let Some(line) = snapshot.chat_lines().iter().find(|line| {
+                line.sequence > self.chat_baseline
+                    && line.type_ == 0
+                    && line.username.is_none()
+                    && line.text == COMBAT_LOGOUT_REFUSAL
+            }) {
+                self.refusal_sequence = Some(line.sequence);
+                self.escape = Escape::Pending;
+                eprintln!(
+                    "[live-logout] fresh combat refusal tick={} chat_sequence={}",
+                    snapshot.tick(),
+                    line.sequence
+                );
+            }
+        }
         if matches!(self.escape, Escape::Sent)
-            && snapshot.tile() == Some((LOGOUT_SAFE_TILE.x, LOGOUT_SAFE_TILE.z, LOGOUT_SAFE_TILE.level))
+            && snapshot.tile()
+                == Some((
+                    LOGOUT_SAFE_TILE.x,
+                    LOGOUT_SAFE_TILE.z,
+                    LOGOUT_SAFE_TILE.level,
+                ))
         {
             self.escape = Escape::Arrived(snapshot.tick());
             eprintln!(
@@ -66,7 +88,7 @@ impl CombatLogout {
         }
         match self.escape {
             Escape::Unneeded => true,
-            Escape::Pending | Escape::Sent => false,
+            Escape::Pending | Escape::Sent | Escape::Refused => false,
             Escape::Arrived(tick) => snapshot.tick().wrapping_sub(tick) >= COMBAT_LOGOUT_TICKS,
         }
     }
@@ -79,9 +101,14 @@ impl CombatLogout {
         }
         let sent = cheat(
             driver,
-            &tele_args(LOGOUT_SAFE_TILE.level, LOGOUT_SAFE_TILE.x, LOGOUT_SAFE_TILE.z),
+            &tele_args(
+                LOGOUT_SAFE_TILE.level,
+                LOGOUT_SAFE_TILE.x,
+                LOGOUT_SAFE_TILE.z,
+            ),
         );
         if !sent.is_sent() {
+            self.escape = Escape::Refused;
             return Err(format!("fixture combat logout escape refused: {sent:?}"));
         }
         self.escape = Escape::Sent;
@@ -157,6 +184,10 @@ mod tests {
             vec![refusal(10, 0)],
             vec![refusal(11, 2)],
             vec![ChatLineView {
+                username: Some("Player".to_owned()),
+                ..refusal(11, 0)
+            }],
+            vec![ChatLineView {
                 text: "You can't log out during a duel.".to_owned(),
                 ..refusal(12, 0)
             }],
@@ -184,5 +215,58 @@ mod tests {
         assert!(logout.allows_retry(&snapshot, now));
         assert!(!logout.allows_retry(&snapshot, deadline));
         assert_eq!(logout.deadline, deadline);
+    }
+
+    fn client() -> client::client::Client {
+        let mut client = client::client::Client::new(client::client::ClientConfig {
+            host: "127.0.0.1".to_owned(),
+            port: 43594,
+            cache_dir: crate::NO_CACHE_DIR.to_owned(),
+            members: true,
+            lowmem: false,
+        });
+        client.ingame = true;
+        client
+    }
+
+    #[test]
+    fn escape_sends_one_native_account_only_teleport_packet() {
+        let now = Instant::now();
+        let mut snapshot = GameSnapshot::new();
+        let mut logout = CombatLogout::new(&snapshot, now + Duration::from_secs(30));
+        snapshot.seed_chat_lines(vec![refusal(1, 0)]);
+        assert!(!logout.allows_retry(&snapshot, now));
+        let mut client = client();
+        client.set_cheat_admission(client::CheatAdmission::Granted);
+        assert_eq!(logout.send_escape(&mut client, now), Ok(true));
+        let bytes = &client.out.data()[..client.out.pos];
+        assert_eq!(bytes[0], client::io::ClientProt::CLIENT_CHEAT.id as u8);
+        let command = b"tele 0,50,50,20,20";
+        assert!(bytes.windows(command.len()).any(|bytes| bytes == command));
+        let sent_length = client.out.pos;
+        assert_eq!(logout.send_escape(&mut client, now), Ok(false));
+        assert_eq!(client.out.pos, sent_length);
+        assert!(logout.escape_sent());
+    }
+
+    #[test]
+    fn escape_honors_cheat_admission_and_never_sends_after_deadline() {
+        let now = Instant::now();
+        let deadline = now + Duration::from_secs(30);
+        let mut snapshot = GameSnapshot::new();
+        let mut logout = CombatLogout::new(&snapshot, deadline);
+        snapshot.seed_chat_lines(vec![refusal(1, 0)]);
+        assert!(!logout.allows_retry(&snapshot, now));
+        let mut client = client();
+        client.set_cheat_admission(client::CheatAdmission::Denied);
+        assert!(logout.send_escape(&mut client, now).is_err());
+        assert!(!logout.allows_retry(&snapshot, now));
+        assert_eq!(logout.send_escape(&mut client, now), Ok(false));
+        assert_eq!(client.out.pos, 0);
+        let mut expired = CombatLogout::new(&GameSnapshot::new(), deadline);
+        assert!(!expired.allows_retry(&snapshot, now));
+        client.set_cheat_admission(client::CheatAdmission::Granted);
+        assert_eq!(expired.send_escape(&mut client, deadline), Ok(false));
+        assert_eq!(client.out.pos, 0);
     }
 }
