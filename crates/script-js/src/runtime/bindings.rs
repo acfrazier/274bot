@@ -261,9 +261,7 @@ pub(super) fn wire_runtime(
                     .first()
                     .and_then(serde_json::Value::as_str)
                     .unwrap_or("");
-                let values = args
-                    .get(1)
-                    .and_then(serde_json::Value::as_array);
+                let values = args.get(1).and_then(serde_json::Value::as_array);
                 let explicit = values
                     .and_then(|values| values.first())
                     .and_then(serde_json::Value::as_str);
