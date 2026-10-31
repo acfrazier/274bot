@@ -3495,6 +3495,33 @@ mod packet_oracle_tests {
     }
 
     #[test]
+    fn make_prefix_counts_a_charged_opener_whose_dialogue_script_is_suspended() {
+        let mut opener = packet(ClientProt289::OPHELDU.id as u8, 1);
+        opener.outcome = "deferred".into();
+        opener.reason = "script-suspended".into();
+        opener.charged_user_event = true;
+        opener.scripts.push(engine_packet_log::EngineScript {
+            outcome: "deferred".into(),
+            reason: "script-suspended".into(),
+            script: "[proc,skill_multi3]".into(),
+            state: 3,
+        });
+        let mut make = packet(ClientProt289::IF_BUTTON.id as u8, 2);
+        make.charged_user_event = true;
+        let mut packets = [opener, make];
+        assert_engine_accepted_make_prefix(&packets)
+            .expect("the network accepted and charged both packets in one engine tick");
+        packets[0].handler_accepted = false;
+        assert!(assert_engine_accepted_make_prefix(&packets).is_err());
+        packets[0].handler_accepted = true;
+        packets[0].charged_user_event = false;
+        assert!(assert_engine_accepted_make_prefix(&packets).is_err());
+        packets[0].charged_user_event = true;
+        packets[1].tick += 1;
+        assert!(assert_engine_accepted_make_prefix(&packets).is_err());
+    }
+
+    #[test]
     fn ordinary_click_pairs_require_one_real_client_frame_without_an_ordered_receipt() {
         let mut movement = wire(ClientProt289::MOVE_OPCLICK.id as u8, 11, 7);
         movement.request_id = None;
