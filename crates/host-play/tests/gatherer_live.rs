@@ -102,6 +102,11 @@ const DEATH_REGION_START: WorldTile = WorldTile {
     z: 3208,
     level: 0,
 };
+const DEATH_RETURN_REFUSED_TARGET: WorldTile = WorldTile {
+    x: 3204,
+    z: 3525,
+    level: 0,
+};
 const FISH_NET_START: WorldTile = WorldTile {
     x: 3267,
     z: 3148,
@@ -185,8 +190,8 @@ const OAK_NO_PLACEMENT_BANK_BOOTH: WorldTile = WorldTile {
     level: 0,
 };
 const AUTO_START: WorldTile = WorldTile {
-    x: 2394,
-    z: 3518,
+    x: 3058,
+    z: 3169,
     level: 0,
 };
 const GAS_START: WorldTile = WorldTile {
@@ -1874,6 +1879,7 @@ struct Witness {
     death_chat_observed_while_paused: bool,
     death_recovery_in_area: bool,
     death_command_tile: Option<(i32, i32, i32)>,
+    death_respawn_tile: Option<(i32, i32, i32)>,
     death_respawn_region_unchanged: bool,
     death_progress_baselines: BTreeMap<u8, (i32, i32, i64)>,
     death_reprovision_deposits: Vec<ReprovisionDepositEvidence>,
@@ -4103,24 +4109,15 @@ impl GatherSlot {
                     .tile
                     .and_then(|tile| tile_distance(tile, self.target))
                     .is_some_and(|distance| distance <= 12);
-                if self.case == LiveCase::DeathRespawnRegion {
-                    self.witness.death_respawn_region_unchanged = self
-                        .witness
-                        .death_command_tile
-                        .zip(latest.tile)
-                        .is_some_and(|(death, respawn)| {
-                            let respawn_tile = WorldTile {
-                                x: respawn.0,
-                                z: respawn.1,
-                                level: respawn.2,
-                            };
-                            script::native::death::RESPAWN_SQUARE.contains(respawn_tile)
-                                && death.0.div_euclid(64) == respawn.0.div_euclid(64)
-                                && death.1.div_euclid(64) == respawn.1.div_euclid(64)
-                                && death.2 == respawn.2
-                        });
-                }
             }
+        }
+        if self.case == LiveCase::DeathRespawnRegion {
+            observe_death_respawn_region(
+                &mut self.witness,
+                current_recovery_step,
+                text_field(status, "last_event"),
+                self.latest.as_ref().and_then(|latest| latest.tile),
+            );
         }
         if self.case == LiveCase::MazeRandom
             && self.witness.maze_exited
@@ -5236,6 +5233,32 @@ fn tile_key(tile: WorldTile) -> (i32, i32, i32) {
 fn tile_distance(tile: (i32, i32, i32), target: WorldTile) -> Option<i32> {
     (tile.2 == target.level).then(|| (tile.0 - target.x).abs().max((tile.1 - target.z).abs()))
 }
+fn observe_death_respawn_region(
+    witness: &mut Witness,
+    _recovery_step: u8,
+    _last_event: Option<&str>,
+    sampled_tile: Option<(i32, i32, i32)>,
+) {
+    if witness.last_deaths == 0 || witness.death_respawn_tile.is_some() {
+        return;
+    }
+    let Some(respawn) = sampled_tile else {
+        return;
+    };
+    let respawn_tile = WorldTile {
+        x: respawn.0,
+        z: respawn.1,
+        level: respawn.2,
+    };
+    witness.death_respawn_tile = Some(respawn);
+    witness.death_respawn_region_unchanged =
+        script::native::death::RESPAWN_SQUARE.contains(respawn_tile)
+            && witness.death_command_tile.is_some_and(|death| {
+                death.0.div_euclid(64) == respawn.0.div_euclid(64)
+                    && death.1.div_euclid(64) == respawn.1.div_euclid(64)
+                    && death.2 == respawn.2
+            });
+}
 
 fn auto_start_candidate(
     origin: WorldTile,
@@ -5612,9 +5635,9 @@ fn fixture_plan(
         | LiveCase::DeathWatchdogProving => fixture_tile(cell.tile_env(case), DRAYNOR_OAK_TARGET)?,
         LiveCase::DeathRespawnRegion => fixture_tile(cell.tile_env(case), DEATH_REGION_START)?,
         LiveCase::DeathReturnRefused => {
-            // Authored oak in m48_55; its radius-12 return remains north of
-            // the wilderness boundary while allowWilderness stays false.
-            fixture_tile(cell.tile_env(case), world_tile(3101, 3535))?
+            // Use a quiet authored wilderness oak. After death, returning to it
+            // crosses the forbidden boundary with allowWilderness still false.
+            fixture_tile(cell.tile_env(case), DEATH_RETURN_REFUSED_TARGET)?
         }
         LiveCase::FishNet => fixture_tile("GATHERER_FISH_TILE", FISH_NET_START)?,
         LiveCase::FishSpotMoves => world_tile(2838, 3432),
@@ -7076,6 +7099,7 @@ fn run_cell_with_fixture(
             "resume_observed": witness.resume_observed,
             "death_recovery_in_area": witness.death_recovery_in_area,
             "death_command_tile": witness.death_command_tile,
+            "death_respawn_tile": witness.death_respawn_tile,
             "death_respawn_region_unchanged": witness.death_respawn_region_unchanged,
             "death_progress_baselines": witness.death_progress_baselines,
             "deaths": witness.last_deaths,
@@ -7974,6 +7998,7 @@ fn interrupts_complete(case: LiveCase, witness: &Witness) -> bool {
         }
         LiveCase::DeathRespawnRegion => {
             witness.death_recovery_in_area
+                && witness.death_respawn_tile.is_some()
                 && witness.death_respawn_region_unchanged
                 && witness.death_recovered.contains(&1)
                 && witness.death_products_after.contains(&1)
@@ -10129,16 +10154,26 @@ mod gatherer_real_content_fixture_tests {
         assert!(task.is_none());
 
         let build = BuildRect {
-            base_x: 2368,
-            base_z: 3456,
-            width: 64,
-            height: 64,
+            base_x: 3008,
+            base_z: 3136,
+            width: 104,
+            height: 104,
             level: 0,
         };
-        let real_scene_trees =
-            BTreeSet::from([tile_key(AUTO_START), tile_key(world_tile(2409, 3480))]);
+        let real_scene_trees = BTreeSet::from([
+            tile_key(world_tile(3025, 3169)),
+            tile_key(world_tile(3024, 3174)),
+            tile_key(world_tile(3024, 3176)),
+            tile_key(world_tile(3105, 3170)),
+            tile_key(world_tile(3011, 3213)),
+        ]);
+        assert_eq!(
+            tile_distance(tile_key(world_tile(3025, 3169)), AUTO_START),
+            Some(33)
+        );
         let start = auto_start_candidate(AUTO_START, build, &real_scene_trees, |_| true)
             .expect("real scene tree placements should admit an empty Auto ring");
+        assert_eq!(start, AUTO_START);
         assert!(real_scene_trees
             .iter()
             .all(|&tree| { tile_distance(tree, start).is_none_or(|distance| distance > 32) }));
@@ -10148,6 +10183,23 @@ mod gatherer_real_content_fixture_tests {
             auto_start_candidate(AUTO_START, build, &real_scene_trees, |tile| tile != start)
                 .expect("an inaccessible closest tile must not hide another empty ring");
         assert_ne!(alternate, start);
+    }
+
+    #[test]
+    fn refused_return_fixture_uses_the_authored_wilderness_oak() {
+        let (target, plan, task) =
+            fixture_plan(Cell::Woodcutting, LiveCase::DeathReturnRefused).unwrap();
+        assert_eq!(target, DEATH_RETURN_REFUSED_TARGET);
+        assert_eq!(tile_distance((3227, 3533, 0), target), Some(23));
+        let settings = Cell::Woodcutting.settings(LiveCase::DeathReturnRefused);
+        assert_eq!(settings.get("allowWilderness"), Some(&json!(false)));
+        assert!(plan.seed_locs.is_empty());
+        assert!(plan.oak_tiles.is_empty());
+        assert!(plan
+            .inventory_seed
+            .iter()
+            .any(|(alias, count)| alias == "bronze_axe" && *count == 1));
+        assert!(task.is_none());
     }
 
     #[test]
@@ -10935,7 +10987,7 @@ mod real_content_death_fixture_tests {
             death_no_stock_blocked_running: true,
             last_deaths: 1,
             death_recovery_command_sent: 1,
-            last_status_bank: Some("Draynor; Reachable; Withdraw".into()),
+            last_status_bank: Some("Draynor; Reachable; access:3092,3243,0; Supply".into()),
             ..Witness::default()
         };
         assert!(interrupts_complete(LiveCase::DeathNoStock, &witness));
@@ -10947,6 +10999,109 @@ mod real_content_death_fixture_tests {
         let mut stopped = witness;
         stopped.death_no_stock_blocked_running = false;
         assert!(!interrupts_complete(LiveCase::DeathNoStock, &stopped));
+    }
+}
+
+#[cfg(test)]
+mod death_oracle_tests {
+    use super::*;
+
+    fn no_stock_witness(bank: &str, trips: i64) -> Witness {
+        Witness {
+            native_phases: BTreeSet::from(["Blocked".to_owned()]),
+            death_no_stock_blocked_running: true,
+            last_status_block_reason: Some("missing Bronze axe".into()),
+            last_deaths: 1,
+            death_recovery_command_sent: 1,
+            last_status_bank: Some(bank.into()),
+            status_trips: trips,
+            ..Witness::default()
+        }
+    }
+
+    fn death_region_witness(death_tile: (i32, i32, i32)) -> Witness {
+        Witness {
+            death_recovery_in_area: true,
+            death_command_tile: Some(death_tile),
+            death_recovered: BTreeSet::from([1]),
+            death_products_after: BTreeSet::from([1]),
+            death_xp_after: BTreeSet::from([1]),
+            last_deaths: 1,
+            last_recoveries: 1,
+            ..Witness::default()
+        }
+    }
+
+    #[test]
+    fn death_no_stock_accepts_supply_bank_without_formatter_suffix() {
+        let witness = no_stock_witness(
+            "Draynor; Reachable; access:3092,3243,0; Supply",
+            0,
+        );
+        assert!(interrupts_complete(LiveCase::DeathNoStock, &witness));
+    }
+
+    #[test]
+    fn death_no_stock_rejects_a_repeated_supply_trip() {
+        let witness = no_stock_witness(
+            "Draynor; Reachable; access:3092,3243,0; Withdraw",
+            1,
+        );
+        assert!(!interrupts_complete(LiveCase::DeathNoStock, &witness));
+    }
+
+    #[test]
+    fn death_respawn_region_accepts_a_delayed_same_region_sample() {
+        let death_tile = (3219, 3208, 0);
+        let respawn_tile = (3224, 3221, 0);
+        let mut witness = death_region_witness(death_tile);
+
+        observe_death_respawn_region(
+            &mut witness,
+            0,
+            Some("death observed; inventory unknown"),
+            Some(death_tile),
+        );
+        assert_eq!(witness.death_respawn_tile, None);
+        assert!(!interrupts_complete(LiveCase::DeathRespawnRegion, &witness));
+
+        observe_death_respawn_region(
+            &mut witness,
+            1,
+            Some("respawn observed; settling"),
+            Some(respawn_tile),
+        );
+        assert_eq!(witness.death_respawn_tile, Some(respawn_tile));
+        assert!(witness.death_respawn_region_unchanged);
+        assert!(interrupts_complete(LiveCase::DeathRespawnRegion, &witness));
+    }
+
+    #[test]
+    fn death_respawn_region_rejects_a_different_region_sample() {
+        let mut witness = death_region_witness((3264, 3208, 0));
+        observe_death_respawn_region(
+            &mut witness,
+            1,
+            Some("respawn observed; settling"),
+            Some((3224, 3221, 0)),
+        );
+        assert_eq!(witness.death_respawn_tile, Some((3224, 3221, 0)));
+        assert!(!witness.death_respawn_region_unchanged);
+        assert!(!interrupts_complete(LiveCase::DeathRespawnRegion, &witness));
+    }
+
+    #[test]
+    fn death_respawn_region_rejects_a_non_respawn_tile() {
+        let mut witness = death_region_witness((3219, 3208, 0));
+        observe_death_respawn_region(
+            &mut witness,
+            1,
+            Some("respawn observed; settling"),
+            Some((3225, 3218, 0)),
+        );
+        assert_eq!(witness.death_respawn_tile, Some((3225, 3218, 0)));
+        assert!(!witness.death_respawn_region_unchanged);
+        assert!(!interrupts_complete(LiveCase::DeathRespawnRegion, &witness));
     }
 }
 
