@@ -1440,6 +1440,68 @@ fn park_observation_collects_play_facts_before_locking_trace() {
     assert_eq!(observation.no_bank_trip, Some(true));
 }
 
+fn fixture_terminal_failure(cell: &Mutex<Cell>) -> Option<String> {
+    let cell = cell.lock();
+    (cell.terminal && !cell.trace.passed).then(|| {
+        cell.trace
+            .failure
+            .clone()
+            .unwrap_or_else(|| "bank fixture failed without a reason".into())
+    })
+}
+
+fn content_window_finished(trace: &Mutex<LiveTrace>) -> bool {
+    let trace = trace.lock();
+    let Some(end_tick) = trace.content_window_end_tick else {
+        return false;
+    };
+    trace
+        .frames
+        .last()
+        .and_then(|frame| frame["snapshot_tick"].as_u64())
+        .is_some_and(|tick| (tick as u32).wrapping_sub(end_tick) < (u32::MAX / 2))
+}
+
+#[test]
+fn live_poll_reads_failed_fixture_and_content_window_without_recursive_locks() {
+    let (sent, received) = std::sync::mpsc::channel();
+    let worker = thread::spawn(move || {
+        let cell = Mutex::new(Cell::new(
+            CELL_BOUND,
+            &[],
+            |_| true,
+            &[],
+            json!({}),
+            |_| true,
+            PathBuf::new(),
+        ));
+        assert_eq!(fixture_terminal_failure(&cell), None);
+        cell.lock().fail("fixture deadline".into());
+        assert_eq!(
+            fixture_terminal_failure(&cell).as_deref(),
+            Some("fixture deadline")
+        );
+        cell.lock().trace.passed = true;
+        assert_eq!(fixture_terminal_failure(&cell), None);
+        assert!(cell.try_lock().is_some());
+
+        let trace = Mutex::new(LiveTrace::default());
+        assert!(!content_window_finished(&trace));
+        trace.lock().content_window_end_tick = Some(10);
+        assert!(!content_window_finished(&trace));
+        trace.lock().frames.push(json!({"snapshot_tick": 9}));
+        assert!(!content_window_finished(&trace));
+        trace.lock().frames.push(json!({"snapshot_tick": 10}));
+        assert!(content_window_finished(&trace));
+        assert!(trace.try_lock().is_some());
+        sent.send(()).expect("report completed poll observations");
+    });
+    received
+        .recv_timeout(Duration::from_secs(5))
+        .expect("terminal and content-window observations must not deadlock the live deadline");
+    worker.join().expect("poll observation assertions pass");
+}
+
 fn field_text<'a>(status: &'a ScriptStatus, key: &str) -> Option<&'a str> {
     status
         .fields
@@ -1886,8 +1948,8 @@ fn run_cell_with_transition(case: Case, transition: ParkTransition) {
             cell_failure = Some(format!("{} exceeded its fixed live deadline", case.name()));
             break;
         }
-        if cell.lock().terminal && !cell.lock().trace.passed {
-            cell_failure = cell.lock().trace.failure.clone();
+        if let Some(failure) = fixture_terminal_failure(&cell) {
+            cell_failure = Some(failure);
             break;
         }
         let status = play.script_native_status(&account);
@@ -2139,17 +2201,8 @@ fn run_cell_with_transition(case: Case, transition: ParkTransition) {
                         guard.content_window_end_tick =
                             Some(tick.wrapping_add(case.content_window() as u32));
                     }
-                    if let Some(end_tick) = trace.lock().content_window_end_tick {
-                        let current = trace
-                            .lock()
-                            .frames
-                            .last()
-                            .and_then(|frame| frame["snapshot_tick"].as_u64())
-                            .map(|tick| tick as u32);
-                        if current.is_some_and(|tick| tick.wrapping_sub(end_tick) < (u32::MAX / 2))
-                        {
-                            stage = RunStage::Done;
-                        }
+                    if content_window_finished(&trace) {
+                        stage = RunStage::Done;
                     }
                 }
             }
