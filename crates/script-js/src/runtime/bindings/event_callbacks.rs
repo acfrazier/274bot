@@ -457,8 +457,8 @@ mod v8_tests {
     use serde_json::json;
 
     use super::{clear_all, install};
-    use crate::snapshot::dispatch_native_events;
     use crate::events::NativeEvent;
+    use crate::snapshot::dispatch_native_events;
 
     const FAST_CHILD: &str = "SCRIPT_EVENT_FAST_TEST_CHILD";
     const FAST_TEST: &str =

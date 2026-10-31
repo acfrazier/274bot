@@ -355,10 +355,7 @@ fn request_seed_at(state: &Arc<Mutex<FrameState>>, level: i32, x: i32, z: i32) {
     lock_state(state).next_seed_at = Some((level, x, z));
 }
 
-fn wait_for_tile(
-    state: &Arc<Mutex<FrameState>>,
-    expected: (i32, i32, i32),
-) -> Result<(), String> {
+fn wait_for_tile(state: &Arc<Mutex<FrameState>>, expected: (i32, i32, i32)) -> Result<(), String> {
     let deadline = Instant::now() + ACTION_DEADLINE;
     loop {
         let frame = lock_state(state);
@@ -906,13 +903,10 @@ fn run_events_cell(receipt: &mut Receipt) -> Result<(), String> {
     );
     wait_for_tile(&session.state, EVENTS_SEED_TILE)?;
     wait_for_inventory_count(&session.state, 995, 1)?;
-    session
-        .receipt
-        .logs
-        .push(format!(
-            "EVENTS:SEED:{},{},{}",
-            EVENTS_SEED_TILE.0, EVENTS_SEED_TILE.1, EVENTS_SEED_TILE.2
-        ));
+    session.receipt.logs.push(format!(
+        "EVENTS:SEED:{},{},{}",
+        EVENTS_SEED_TILE.0, EVENTS_SEED_TILE.1, EVENTS_SEED_TILE.2
+    ));
     start_script(&session, events_source(1))?;
     wait_for_logs(&mut session, ACTION_DEADLINE, |logs| {
         logs.iter().any(|line| line == "EVENTS:READY:1")
