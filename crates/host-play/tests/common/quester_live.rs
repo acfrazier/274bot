@@ -88,6 +88,110 @@ const MID_STEP: Duration = Duration::from_secs(4);
 /// Grace after the scenario deadline for terminal bookkeeping.
 const DEADLINE_GRACE: Duration = Duration::from_secs(15);
 const PAIR_CANCELLED_REASON: &str = "pair cancelled; Stop and freshly Start both accounts";
+/// The live teardown remains bounded even when a script or the server does not progress.
+const CLEAN_LOGOUT_DEADLINE: Duration = Duration::from_secs(30);
+/// Engine content sets the combat logout refusal to 16 game ticks:
+/// `/Volumes/dev-scratch/engines/lostcity-289/content/scripts/login_logout/logout.rs2:27`.
+/// `GameSnapshot::tick()` advances only from observed `PLAYER_INFO` packets (`host/src/lib.rs:1457-1480`).
+const COMBAT_LOGOUT_RETRY_TICKS: u32 = 16;
+
+#[derive(Debug)]
+struct TeardownAccount {
+    stop_ack_tick: Option<u32>,
+    logout_attempt_ticks: Vec<u32>,
+    no_logout_arm: bool,
+}
+
+#[derive(Debug)]
+struct TeardownSchedule {
+    accounts: Vec<TeardownAccount>,
+    deadline: Instant,
+}
+
+impl TeardownSchedule {
+    fn new(account_count: usize, deadline: Instant) -> Self {
+        Self {
+            accounts: (0..account_count)
+                .map(|_| TeardownAccount {
+                    stop_ack_tick: None,
+                    logout_attempt_ticks: Vec::new(),
+                    no_logout_arm: false,
+                })
+                .collect(),
+            deadline,
+        }
+    }
+
+    fn acknowledge_stop(&mut self, index: usize, tick: u32) {
+        self.accounts[index].stop_ack_tick.get_or_insert(tick);
+    }
+
+    fn all_stopped(&self) -> bool {
+        self.accounts
+            .iter()
+            .all(|account| account.stop_ack_tick.is_some())
+    }
+
+    fn initial_logout_due(&self, index: usize, now: Instant) -> bool {
+        let account = &self.accounts[index];
+        self.all_stopped()
+            && now < self.deadline
+            && !account.no_logout_arm
+            && account.logout_attempt_ticks.is_empty()
+    }
+
+    fn retry_due(&self, index: usize, tick: u32, connected: bool, now: Instant) -> bool {
+        if !self.all_stopped() || !connected || now >= self.deadline {
+            return false;
+        }
+        self.accounts[index]
+            .logout_attempt_ticks
+            .last()
+            .is_some_and(|last_tick| {
+                tick.saturating_sub(*last_tick) >= COMBAT_LOGOUT_RETRY_TICKS
+            })
+    }
+
+    fn record_logout_attempt(&mut self, index: usize, tick: u32, now: Instant) -> bool {
+        if !self.all_stopped() || now >= self.deadline || self.accounts[index].no_logout_arm {
+            return false;
+        }
+        self.accounts[index].logout_attempt_ticks.push(tick);
+        true
+    }
+
+    fn mark_no_logout_arm(&mut self, index: usize) {
+        self.accounts[index].no_logout_arm = true;
+    }
+
+    fn stop_ack_tick(&self, index: usize) -> Option<u32> {
+        self.accounts[index].stop_ack_tick
+    }
+
+    fn logout_attempt_ticks(&self, index: usize) -> &[u32] {
+        &self.accounts[index].logout_attempt_ticks
+    }
+
+    fn deadline_expired(&self, now: Instant) -> bool {
+        now >= self.deadline
+    }
+
+    fn complete(&self, disconnected: &[bool]) -> bool {
+        disconnected.len() == self.accounts.len()
+            && self.all_stopped()
+            && self
+                .accounts
+                .iter()
+                .zip(disconnected)
+                .all(|(account, disconnected)| {
+                    !account.logout_attempt_ticks.is_empty() && *disconnected
+                })
+    }
+}
+
+fn actor_frame_enabled(teardown_started: bool) -> bool {
+    !teardown_started
+}
 
 /// What the cell proves after the fixture's Start.
 #[derive(Debug, Clone)]
@@ -695,6 +799,7 @@ struct Shared {
     actors: Vec<ActorShared>,
     start_handles_ready: bool,
     initial_start_released: bool,
+    teardown_started: bool,
     inventory_proof: Option<PairInventoryProof>,
     inventory_initial_absence: [bool; 2],
     inventory_boundary: Option<Value>,
@@ -1341,6 +1446,7 @@ fn run_cells(
         actors,
         start_handles_ready: false,
         initial_start_released: false,
+        teardown_started: false,
         inventory_proof: mode.inventory_proof().cloned(),
         inventory_initial_absence: [false; 2],
         inventory_boundary: None,
@@ -1384,6 +1490,9 @@ fn run_cells(
             let drain = actor.pump.drain_client(client);
             host::publish_snapshot(&mut actor.snapshot, client, drain);
             actor.last_tile = observed_tile(&actor.snapshot);
+            if !actor_frame_enabled(frame_state.teardown_started) {
+                return;
+            }
 
             if first_start {
                 if let Some(proof) = inventory_proof.as_ref() {
@@ -2922,55 +3031,134 @@ fn run_cells(
             "end_captured": actor["end_captured"],
         })
     };
+    let logout_deadline = Instant::now() + CLEAN_LOGOUT_DEADLINE;
+    let mut teardown = TeardownSchedule::new(names.len(), logout_deadline);
+    match shared.lock() {
+        Ok(mut state) => state.teardown_started = true,
+        Err(_) => result = Err("live state poisoned before logout teardown".into()),
+    }
     for account in &names {
         play.script_stop(account);
     }
-    let mut logout_requested = Vec::with_capacity(names.len());
-    for account in &names {
-        if let Some(arm) = play.arm(account) {
-            arm.request_logout();
-            play.wake(account);
-            logout_requested.push(true);
-        } else {
-            logout_requested.push(false);
+    loop {
+        let now = Instant::now();
+        if teardown.deadline_expired(now) {
+            break;
         }
-    }
-    let logout_deadline = Instant::now() + Duration::from_secs(30);
-    while names.iter().any(|account| play.slot_connected(account))
-        && Instant::now() < logout_deadline
-    {
+        let observed_ticks = match shared.lock() {
+            Ok(state) => state
+                .actors
+                .iter()
+                .map(|actor| actor.snapshot.tick())
+                .collect::<Vec<_>>(),
+            Err(_) => {
+                result = Err("live state poisoned during logout teardown".into());
+                break;
+            }
+        };
+        for (index, account) in names.iter().enumerate() {
+            if teardown.stop_ack_tick(index).is_none() && start_handle.idle(account) {
+                if let Some(tick) = observed_ticks.get(index).copied() {
+                    teardown.acknowledge_stop(index, tick);
+                }
+            }
+        }
+        for (index, account) in names.iter().enumerate() {
+            let now = Instant::now();
+            if !teardown.initial_logout_due(index, now) {
+                continue;
+            }
+            let Some(tick) = observed_ticks.get(index).copied() else {
+                continue;
+            };
+            if let Some(arm) = play.arm(account) {
+                if teardown.record_logout_attempt(index, tick, now) {
+                    arm.request_logout();
+                    play.wake(account);
+                }
+            } else {
+                teardown.mark_no_logout_arm(index);
+            }
+        }
+        for (index, account) in names.iter().enumerate() {
+            let connected = play.slot_connected(account);
+            let now = Instant::now();
+            let Some(tick) = observed_ticks.get(index).copied() else {
+                continue;
+            };
+            if !teardown.retry_due(index, tick, connected, now) {
+                continue;
+            }
+            if let Some(arm) = play.arm(account) {
+                if teardown.record_logout_attempt(index, tick, now) {
+                    arm.request_logout();
+                    play.wake(account);
+                }
+            } else {
+                teardown.mark_no_logout_arm(index);
+            }
+        }
+        let disconnected = names
+            .iter()
+            .map(|account| !play.slot_connected(account))
+            .collect::<Vec<_>>();
+        if teardown.complete(&disconnected) || teardown.deadline_expired(Instant::now()) {
+            break;
+        }
         std::thread::sleep(POLL_INTERVAL);
     }
     let disconnected = names
         .iter()
         .map(|account| !play.slot_connected(account))
         .collect::<Vec<_>>();
-    let stuck_accounts = names
+    let failed_accounts = names
         .iter()
-        .zip(&disconnected)
-        .filter(|(_, disconnected)| !**disconnected)
-        .map(|(account, _)| account.clone())
+        .enumerate()
+        .filter_map(|(index, account)| {
+            (teardown.stop_ack_tick(index).is_none()
+                || teardown.logout_attempt_ticks(index).is_empty()
+                || !disconnected[index])
+            .then(|| account.clone())
+        })
         .collect::<Vec<_>>();
-    let logout_complete = stuck_accounts.is_empty();
+    let logout_complete = teardown.complete(&disconnected);
     for account in &names {
         play.stop_slot(account);
     }
     receipt["clean_logout"] = json!({
         "complete": logout_complete,
-        "timeout_ms": 30_000,
+        "timeout_ms": CLEAN_LOGOUT_DEADLINE.as_millis(),
+        "combat_retry_game_ticks": COMBAT_LOGOUT_RETRY_TICKS,
+        "engine_content": "content/scripts/login_logout/logout.rs2:27",
+        "stop_ack_api": "ScriptStartHandle::idle",
+        "tick_source": "GameSnapshot::tick from observed PLAYER_INFO packets",
         "accounts": names
             .iter()
-            .zip(&logout_requested)
             .zip(&disconnected)
-            .map(|((account, requested), disconnected)| json!({
+            .enumerate()
+            .map(|(index, (account, disconnected))| json!({
                 "account": account,
-                "requested": requested,
+                "script_stop_requested": true,
+                "stop_acknowledged": teardown.stop_ack_tick(index).is_some(),
+                "stop_ack_tick": teardown.stop_ack_tick(index),
+                "logout_attempts": teardown
+                    .logout_attempt_ticks(index)
+                    .iter()
+                    .enumerate()
+                    .map(|(attempt, tick)| json!({
+                        "attempt": attempt + 1,
+                        "game_tick": tick,
+                    }))
+                    .collect::<Vec<_>>(),
                 "disconnected": disconnected,
             }))
             .collect::<Vec<_>>(),
     });
     if !logout_complete {
-        let reason = format!("clean logout timed out for {}", stuck_accounts.join(", "));
+        let reason = format!(
+            "clean logout teardown failed for {}",
+            failed_accounts.join(", ")
+        );
         result = match result {
             Ok(()) => Err(reason),
             Err(previous) => Err(format!("{previous}; {reason}")),
@@ -3209,5 +3397,74 @@ mod tests {
         assert!(!completion_proven(true, false, true, true));
         assert!(!completion_proven(true, true, false, true));
         assert!(!completion_proven(true, true, true, false));
+    }
+}
+
+#[cfg(test)]
+mod teardown_tests {
+    use super::*;
+
+    #[test]
+    fn logout_waits_for_every_script_stop_acknowledgement() {
+        let now = Instant::now();
+        let mut teardown = TeardownSchedule::new(2, now + CLEAN_LOGOUT_DEADLINE);
+
+        assert!(!teardown.initial_logout_due(0, now));
+        assert!(!teardown.record_logout_attempt(0, 100, now));
+        teardown.acknowledge_stop(0, 100);
+        assert!(!teardown.initial_logout_due(0, now));
+        assert!(!teardown.record_logout_attempt(0, 100, now));
+        teardown.acknowledge_stop(1, 100);
+        assert!(teardown.initial_logout_due(0, now));
+        assert!(teardown.record_logout_attempt(0, 100, now));
+    }
+
+    #[test]
+    fn unchanged_game_tick_does_not_retry_logout() {
+        let now = Instant::now();
+        let mut teardown = TeardownSchedule::new(1, now + CLEAN_LOGOUT_DEADLINE);
+        teardown.acknowledge_stop(0, 100);
+        assert!(teardown.record_logout_attempt(0, 100, now));
+
+        let later_wall_time = now + Duration::from_secs(25);
+        assert!(!teardown.retry_due(0, 100, true, later_wall_time));
+        assert!(!teardown.retry_due(0, 100, true, now));
+        assert!(!teardown.retry_due(0, 115, true, now));
+    }
+
+    #[test]
+    fn refused_logout_retries_after_sixteen_new_game_ticks() {
+        let now = Instant::now();
+        let mut teardown = TeardownSchedule::new(2, now + CLEAN_LOGOUT_DEADLINE);
+        teardown.acknowledge_stop(0, 100);
+        teardown.acknowledge_stop(1, 104);
+        assert!(teardown.record_logout_attempt(0, 100, now));
+        assert!(teardown.record_logout_attempt(1, 104, now));
+
+        assert!(!teardown.retry_due(0, 115, true, now));
+        assert!(teardown.retry_due(0, 116, true, now));
+        assert!(!teardown.retry_due(1, 116, true, now));
+        assert!(teardown.retry_due(1, 120, true, now));
+        assert!(!teardown.retry_due(0, 116, false, now));
+    }
+
+    #[test]
+    fn fixed_deadline_fails_while_an_account_remains_connected() {
+        let started = Instant::now();
+        let deadline = started + CLEAN_LOGOUT_DEADLINE;
+        let mut teardown = TeardownSchedule::new(1, deadline);
+        teardown.acknowledge_stop(0, 200);
+        assert!(teardown.record_logout_attempt(0, 200, started));
+
+        assert!(teardown.deadline_expired(deadline));
+        assert!(!teardown.record_logout_attempt(0, 216, deadline));
+        assert!(!teardown.retry_due(0, 216, true, deadline));
+        assert!(!teardown.complete(&[false]));
+    }
+
+    #[test]
+    fn teardown_stops_queued_actor_work() {
+        assert!(actor_frame_enabled(false));
+        assert!(!actor_frame_enabled(true));
     }
 }
