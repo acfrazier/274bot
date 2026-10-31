@@ -10550,6 +10550,28 @@ fn static_tree_identity_uses_selected_type_not_debug_name() {
 }
 
 #[test]
+fn m4_observes_its_own_poison_cure_before_the_hostile_teleport_and_start() {
+    let scenario = scenario_for(
+        Case::M4,
+        TREE_APPROACH,
+        None,
+        Arc::new(Mutex::new(CombatCapture::default())),
+    );
+    assert!(Case::M4.items().contains(&("1doseantipoison", 1)));
+    let index = |name| scenario.steps.iter().position(|step| step.name == name).unwrap();
+    let drink = index("drink the pre-Start antipoison dose");
+    let cure = index("observe the fresh cure message and consumed dose before Start");
+    let drain = index("drain Hitpoints to eight before hostile-area teleport");
+    let stand = index("stand at the quest start");
+    let start = scenario
+        .steps
+        .iter()
+        .position(|step| matches!(step.kind, StepKind::StartScript))
+        .unwrap();
+    assert!(drink < cure && cure < drain && drain < stand && stand < start);
+}
+
+#[test]
 fn m4_walk_out_oracle_reads_the_captured_walk_target_object() {
     let mut capture = CombatCapture::default();
     capture.actions.push(json!({
