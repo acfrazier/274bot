@@ -2137,63 +2137,74 @@ mod tests {
             .expect("the bundled registry has a qualified Path")
             .id
             .clone();
-        let draft = registry
+        let drafts: Vec<_> = registry
             .rows()
             .iter()
-            .find(|row| {
+            .filter(|row| {
                 row.status == Some(script::quester::queue::ReleasePathStatus::Draft)
                     && row.unavailable.is_none()
             })
-            .expect("the bundled registry has a draft Path")
-            .id
-            .clone();
-        let mut bag = serde_json::Map::new();
-        bag.insert(
-            "quests".into(),
-            serde_json::json!([qualified.as_str(), draft.as_str()]),
-        );
-        let quests = resolve_parameter_options_with_registry(
-            quester_setting("quests"),
-            &bag,
-            loadouts.store(),
-            None,
-            Some(&registry),
-        );
-        assert!(quests.selectable().contains(&qualified));
-        assert!(!quests.selectable().contains(&draft));
-        assert!(
-            quests
-                .label_for(&draft)
-                .contains(script::quester::queue::UNQUALIFIED_PATH_REASON),
-            "{}",
-            quests.label_for(&draft)
-        );
-        assert!(registry.rows().iter().all(|row| {
-            quests.selectable().iter().all(|id| {
-                id != &row.id
-                    || (row.unavailable.is_none()
-                        && row.status == Some(script::quester::queue::ReleasePathStatus::Qualified))
-            })
-        }));
+            .map(|row| row.id.clone())
+            .collect();
+        assert!(!drafts.is_empty(), "the bundled registry has draft Paths");
+        for draft in drafts {
+            let mut bag = serde_json::Map::new();
+            bag.insert(
+                "quests".into(),
+                serde_json::json!([qualified.as_str(), draft.as_str()]),
+            );
+            let quests = resolve_parameter_options_with_registry(
+                quester_setting("quests"),
+                &bag,
+                loadouts.store(),
+                None,
+                Some(&registry),
+            );
+            assert!(quests.selectable().contains(&qualified));
+            assert!(!quests.selectable().contains(&draft));
+            assert!(
+                quests
+                    .label_for(&draft)
+                    .contains(script::quester::queue::UNQUALIFIED_PATH_REASON),
+                "{}",
+                quests.label_for(&draft)
+            );
+            assert!(registry.rows().iter().all(|row| {
+                quests.selectable().iter().all(|id| {
+                    id != &row.id
+                        || (row.unavailable.is_none()
+                            && row.status
+                                == Some(script::quester::queue::ReleasePathStatus::Qualified))
+                })
+            }));
+            println!(
+                "release-refusal picker quests: {}",
+                quests.label_for(&draft)
+            );
 
-        bag.insert("quests".into(), serde_json::json!([qualified.as_str()]));
-        bag.insert("order_override".into(), serde_json::json!([draft.as_str()]));
-        let priorities = resolve_parameter_options_with_registry(
-            quester_setting("order_override"),
-            &bag,
-            loadouts.store(),
-            None,
-            Some(&registry),
-        );
-        assert!(priorities.selectable().contains(&qualified));
-        assert!(!priorities.selectable().contains(&draft));
-        assert!(
-            priorities
-                .label_for(&draft)
-                .contains(script::quester::queue::UNQUALIFIED_PATH_REASON),
-            "{}",
-            priorities.label_for(&draft)
-        );
+            bag.insert("quests".into(), serde_json::json!([qualified.as_str()]));
+            bag.insert("order_override".into(), serde_json::json!([draft.as_str()]));
+            let priorities = resolve_parameter_options_with_registry(
+                quester_setting("order_override"),
+                &bag,
+                loadouts.store(),
+                None,
+                Some(&registry),
+            );
+            assert!(priorities.selectable().contains(&qualified));
+            assert!(!priorities.selectable().contains(&draft));
+            assert!(
+                priorities
+                    .label_for(&draft)
+                    .contains(script::quester::queue::UNQUALIFIED_PATH_REASON),
+                "{}",
+                priorities.label_for(&draft)
+            );
+            println!(
+                "release-refusal picker order_override: {}",
+                priorities.label_for(&draft)
+            );
+        }
     }
 
     #[cfg(feature = "js")]

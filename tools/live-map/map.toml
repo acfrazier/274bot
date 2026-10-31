@@ -436,6 +436,58 @@ cells = [
   "host.quester-qualified-priest-engine-q|LIVE=1 BOT_LIVE_NAME_PREFIX=${BOT_LIVE_NAME_PREFIX:?} BOT_CPU=1 BOT_NAV_BUILD=skip QUESTER_PATH=priest QUESTER_SEEDS=${PWD}/crates/host-play/tests/fixtures/quester-path/priest-start.json WORLD_GAME_PORT=44694 WORLD_HTTP_PORT=1180 WORLD_ENGINE_DIR=${ENGINE_Q_DIR:?} WORLD_NAV_PACK=${NAV_PACK_289:?} RS2B0T=${CATALOG_ROOT:?} BOT_CACHE_DIR=${BOT_CACHE_DIR:?} LIVE_EVIDENCE_DIR=${LIVE_EVIDENCE_DIR:?} ${ISOHOME:?} env -u QUESTER_TICK_MS -u QUESTER_SPEED_RESTORE nice -n 10 cargo test --locked -p host-play --features live-harness,test-support,live-probe --test quester_path_live -- --ignored --exact live_quester_path_smoke --nocapture --test-threads=1",
 ]
 
+# Refusal coverage ONLY: these exact drafts are not shipped as runnable guides.
+# The release cell proves typed admission refusal and the picker reason, not
+# quest-body execution. Priest supplies the paired qualified live witness.
+# The quest campaign must qualify each draft before its status changes; that
+# same diff must remove it from this row and add its own real quest cell.
+[[cover]]
+globs = [
+  "crates/script/paths/289/arena.json",
+  "crates/script/paths/289/ball.json",
+  "crates/script/paths/289/biohazard.json",
+  "crates/script/paths/289/chompybird.json",
+  "crates/script/paths/289/crest.json",
+  "crates/script/paths/289/dragon.json",
+  "crates/script/paths/289/druid.json",
+  "crates/script/paths/289/druidspirit.json",
+  "crates/script/paths/289/eadgar.json",
+  "crates/script/paths/289/elemental_workshop.json",
+  "crates/script/paths/289/fishingcompo.json",
+  "crates/script/paths/289/fortress.json",
+  "crates/script/paths/289/grail.json",
+  "crates/script/paths/289/grandtree.json",
+  "crates/script/paths/289/haunted.json",
+  "crates/script/paths/289/hero.json",
+  "crates/script/paths/289/horror.json",
+  "crates/script/paths/289/ikov.json",
+  "crates/script/paths/289/itgronigen.json",
+  "crates/script/paths/289/itwatchtower.json",
+  "crates/script/paths/289/legends.json",
+  "crates/script/paths/289/mcannon.json",
+  "crates/script/paths/289/misc.json",
+  "crates/script/paths/289/mm.json",
+  "crates/script/paths/289/mortton.json",
+  "crates/script/paths/289/murder.json",
+  "crates/script/paths/289/regicide.json",
+  "crates/script/paths/289/routequest.json",
+  "crates/script/paths/289/scorpcatcher.json",
+  "crates/script/paths/289/sheepherder.json",
+  "crates/script/paths/289/tbwt.json",
+  "crates/script/paths/289/tree.json",
+  "crates/script/paths/289/troll.json",
+  "crates/script/paths/289/troll_love.json",
+  "crates/script/paths/289/upass.json",
+  "crates/script/paths/289/viking.json",
+  "crates/script/paths/289/waterfall.json",
+  "crates/script/paths/289/zanaris.json",
+  "crates/script/paths/289/zombiequeen.json",
+]
+cells = [
+  "script.release-path-refusal|${ISOHOME:?} nice -n 10 python3 -B tools/live-map/release_refusal.py && ${ISOHOME:?} nice -n 10 cargo test --release --locked -p frontend-core --lib scripts::parameter_edit::tests::bundled_drafts_are_refused_in_both_quest_and_priority_pickers -- --exact --nocapture --test-threads=1",
+  "host.quester-qualified-priest-engine-q|LIVE=1 BOT_LIVE_NAME_PREFIX=${BOT_LIVE_NAME_PREFIX:?} BOT_CPU=1 BOT_NAV_BUILD=skip QUESTER_PATH=priest QUESTER_SEEDS=${PWD}/crates/host-play/tests/fixtures/quester-path/priest-start.json WORLD_GAME_PORT=44694 WORLD_HTTP_PORT=1180 WORLD_ENGINE_DIR=${ENGINE_Q_DIR:?} WORLD_NAV_PACK=${NAV_PACK_289:?} RS2B0T=${CATALOG_ROOT:?} BOT_CACHE_DIR=${BOT_CACHE_DIR:?} LIVE_EVIDENCE_DIR=${LIVE_EVIDENCE_DIR:?} ${ISOHOME:?} env -u QUESTER_TICK_MS -u QUESTER_SPEED_RESTORE nice -n 10 cargo test --locked -p host-play --features live-harness,test-support,live-probe --test quester_path_live -- --ignored --exact live_quester_path_smoke --nocapture --test-threads=1",
+]
+
 [[cover]]
 globs = ["crates/script/paths/289/blackarmgang.json", "crates/script/src/combat/machine.rs", "crates/script/src/quester/families/combat.rs"]
 cells = [

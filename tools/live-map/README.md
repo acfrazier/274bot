@@ -66,6 +66,7 @@ All cells not listed below normally run on merlot. Engine A uses game port
 | `host.sherlock-search-live` | Run on merlot or chardonnay when that host has Engine A at `127.0.0.1:44594` and `127.0.0.1:1080`. The cell uses loopback ports and has no host-specific code. Use chardonnay when merlot is measured or reserved. It needs `LIVE=1`, `BOT_CPU=1`, `BOT_LIVE_NAME_PREFIX`, `WORLD_NAV_PACK`, `WORLD_ENGINE_DIR`, `BOT_CACHE_DIR`, `RS2B0T`, `WORLD_GAME_PORT`, `WORLD_HTTP_PORT`, and `LIVE_EVIDENCE_DIR`. The command also uses `ISOHOME`. Leave `QUESTER_TICK_MS` unset. |
 | `host.quester-path-engine-q`, `host.quester-sheep-spin-engine-q`, `host.quester-prince-smelt-wig-spin-engine-q`, `host.quester-qualified-priest-engine-q`, `host.quester-jonny-stand-engine-q`, `host.quester-mordred-continuation-engine-q`, `host.quester-digsite-thieve-engine-q`, `scenario.quester-engine-q` | Run on the Engine Q host at game port `44694` and HTTP port `1180`. Engine Q uses fixed 300 ms ticks. Leave `QUESTER_TICK_MS` unset. Do not send `::speed`. |
 | `host.quester-bank-teller-engine-q`, `host.quester-bank-player-open-engine-q`, `host.quester-bank-chest-engine-q` | Use the Engine Q endpoint and tick rules in the row above. |
+| `script.release-path-refusal` | Run on a build-enabled lab host with an isolated HOME and `LIVE_EVIDENCE_DIR`. It builds production release libraries but opens no game session. |
 | `nav.essence-follow` | The orchestrator must start a 274 engine on the cell host at `127.0.0.1:43594`. The orchestrator supplies `ENGINE_274_DIR` and `NAV_PACK_274`. Do not run this cell until the orchestrator provides both inputs and starts the engine. |
 | `nav.essence-289-engine-a` | Run on merlot or chardonnay when that host has Engine A at `127.0.0.1:44594` and `127.0.0.1:1080`. Use chardonnay when merlot is measured or reserved. |
 | `panel.headed-render` | Run on merlot with its interactive GPU and display. The command removes `BOT_CPU` so the client uses the GPU renderer. |
@@ -93,6 +94,41 @@ the withdrawal. The Gundai case requires a player-open bank to remain open in
 the same generation. The Duel Arena case requires the naturally closed lid to
 open before the actual bank opens. It refuses an already-open shared chest
 without resetting world content.
+
+**Draft release refusal**
+
+The exact draft files in the `script.release-path-refusal` row do not ship as
+runnable guides. This cell proves refusal only. It does not execute their quest
+bodies or qualify them for release. Run its paired qualified-Priest live cell as
+well.
+
+The cell first builds `script` with `cargo build --release --locked --lib`.
+It selects the exact rlib from that invocation's Cargo artifact record and
+refuses a test artifact, debug assertions, `test-hooks`, or an ambiguous library.
+The external Rust consumer calls the public production queue entry point for
+each mapped draft, with both an explicit pick and an explicit priority. It
+requires the typed `UnqualifiedPath` reason and its complete display text, even
+when saved settings request draft inclusion. It also checks that Priest remains
+selectable. This uses the external-library proof pattern in
+`tools/architecture/nav_clippy.py`; no probe crate or product API is added.
+
+The second part runs the real shared picker model against every bundled draft.
+It requires a non-selectable saved row with the full refusal reason in both the
+quest and priority pickers. These labels are the panel/TUI presentation source.
+The production-library part is separate because the script and frontend test
+targets deliberately enable test hooks through their self dev-dependencies.
+Running a release-mode unit test alone would not prove release admission.
+
+Each draft's own run stays with the quest campaign. Before changing its status
+to qualified, that campaign must qualify it. The same diff must remove the exact
+file from refusal coverage and add its real quest cell. The production probe
+fails if a qualified row remains in the refusal map. A Priest pass does not
+substitute for that quest's live qualification.
+
+`python3 -B tools/live-map/release_refusal.py --self-test` checks exact-path and
+artifact selection. `--verify-cells` lists only this cell's picker-test selector;
+it does not run or validate the external production-library proof.
+
 
 
 Client submodule paths have separate coverage. The gitlink and the client
