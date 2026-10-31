@@ -554,6 +554,8 @@ fn fishing_knife_request_uses_the_current_published_npc_generation() {
     );
     let mut npc = ClientNpc::at(tile.x, tile.z);
     npc.r#type = Some(type_id);
+    npc.entity.x = tile.x * 128 + npc.entity.size * 64;
+    npc.entity.z = tile.z * 128 + npc.entity.size * 64;
     client.npc[42] = Some(Box::new(npc));
     client.npc_ids[0] = 42;
     client.npc_count = 1;
