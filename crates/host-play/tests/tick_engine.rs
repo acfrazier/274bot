@@ -207,7 +207,8 @@ impl Scenario {
             products: vec![IRON_ORE_ID],
             required_loc: None,
             require_free_world: false,
-            require_knife_arm: true,
+            // The first successful rock may reach an Idle replacement before a KnifeArm.
+            require_knife_arm: false,
             mutations: Vec::new(),
             use_proxy: false,
             suppress_openchat_span: None,
@@ -3384,6 +3385,14 @@ fn tick_engine_plain_late_river_and_mithril_iron() {
             sequence: MITHRIL_PICK_ANIMATION,
         });
     run_case(iron, |run| {
+        let native_start = run
+            .baseline
+            .as_ref()
+            .map(|baseline| baseline.game_tick)
+            .ok_or_else(|| run.failure("missing iron setup baseline"))?;
+        run.wait_until(native_start, STARTUP_EDGE_BUDGET, |trace, _| {
+            tick_startup::native_click_within(trace, native_start, STARTUP_EDGE_BUDGET)
+        })?;
         let selection = Arc::clone(&run.hook);
         let start = run.hook.observed_game_tick();
         run.wait_until(start, NATURAL_IRON_ROLL_BUDGET, |trace, _| {
@@ -3396,8 +3405,32 @@ fn tick_engine_plain_late_river_and_mithril_iron() {
         let first = run.hook.trace().dispatches.into_iter()
             .find(|dispatch| dispatch.receipt.request_id == request_id)
             .ok_or_else(|| run.failure("selected Mining-roll receipt disappeared"))?;
-        let origin = first.game_tick;
         assert_batch(run, &first, 3, 4)?;
+        let selected_tick = first.game_tick;
+        let release_edge_tick = selected_tick as u32 + 1;
+        let held_proxy = run
+            .proxy
+            .as_ref()
+            .cloned()
+            .ok_or_else(|| run.failure("iron roll hold requires the real loopback proxy"))?;
+        run.wait_until(selected_tick as u32, LATE_IRON_BUDGET, |_, _| {
+            held_proxy.observations().iter().any(|observation| {
+                observation.request_id == request_id
+                    && observation.release_edge_tick == Some(release_edge_tick)
+            })
+        })?;
+        assert_held_batch(
+            run,
+            request_id,
+            &[
+                ClientProt289::OPHELDU.id as u8,
+                ClientProt289::IF_BUTTON.id as u8,
+                ClientProt289::MOVE_OPCLICK.id as u8,
+                ClientProt289::OPLOC1.id as u8,
+            ],
+            release_edge_tick,
+        )?;
+        let origin = first.game_tick;
         run.wait_until(origin as u32, LATE_IRON_BUDGET, |trace, statuses| {
             fresh_animation_on_edge(trace, origin + 2).is_some_and(|(sequence, _)| {
                 sequence == MITHRIL_PICK_ANIMATION || sequence == FLETCHING_ANIMATION
@@ -3435,17 +3468,6 @@ fn tick_engine_plain_late_river_and_mithril_iron() {
         {
             return Err(run.failure("iron/mithril branch emitted a second batch before R+1+4"));
         }
-        assert_held_batch(
-            run,
-            first.receipt.request_id,
-            &[
-                ClientProt289::OPHELDU.id as u8,
-                ClientProt289::IF_BUTTON.id as u8,
-                ClientProt289::MOVE_OPCLICK.id as u8,
-                ClientProt289::OPLOC1.id as u8,
-            ],
-            origin as u32 + 1,
-        )?;
         assert_log_unchanged(run)?;
         assert_running(run)
     })
