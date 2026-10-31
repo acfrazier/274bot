@@ -419,6 +419,8 @@ struct SetupState {
     error: Option<String>,
     logout_session: Option<u64>,
     tutorial_reseed: Option<scenario::tutorial::PostRelogTutorial>,
+    npc_pump: host::Pump,
+    npc_snapshot: GameSnapshot,
     npc_observation_generation: Option<u64>,
     npc_observations: Vec<interact::server_ordered::ExactNpcReference>,
 }
@@ -458,6 +460,8 @@ impl SetupState {
             error: None,
             logout_session: None,
             tutorial_reseed: None,
+            npc_pump: host::Pump::default(),
+            npc_snapshot: GameSnapshot::new(),
             npc_observation_generation: None,
             npc_observations: Vec::new(),
         }
@@ -469,9 +473,7 @@ impl SetupState {
         }
         if self.phase == SetupPhase::Ready {
             if self.scenario.resource == ResourceKind::NpcRiver {
-                let mut snapshot = GameSnapshot::new();
-                snapshot.rebuild(client);
-                self.observe_npc(&snapshot);
+                self.observe_npc(client);
             }
             return;
         }
@@ -563,7 +565,7 @@ impl SetupState {
                             self.error = Some(error);
                         }
                     } else {
-                        self.observe_npc(&snapshot);
+                        self.observe_npc(client);
                         self.phase = SetupPhase::Ready;
                     }
                 }
@@ -577,11 +579,16 @@ impl SetupState {
         }
     }
 
-    fn observe_npc(&mut self, snapshot: &GameSnapshot) {
+    fn observe_npc(&mut self, client: &Client) {
         let Some((type_id, _)) = self.scenario.required_npc else {
             return;
         };
-        let generation = snapshot.gens().npc_info;
+        // Match the production host's retained publication stamp, not a fresh
+        // snapshot's default stamp. Keep received-packet cadence separate.
+        let drain = self.npc_pump.drain_client(client);
+        host::publish_snapshot(&mut self.npc_snapshot, client, drain);
+        let snapshot = &self.npc_snapshot;
+        let generation = client.gens.npc_info;
         if self.npc_observation_generation == Some(generation) {
             return;
         }
@@ -6110,6 +6117,77 @@ mod packet_oracle_tests {
                 "give feather 200".to_owned(),
                 interact::tele_args(0, 2_382, 3_415),
             ]
+        );
+    }
+
+    #[test]
+    fn npc_observer_keeps_host_stamp_and_received_network_tile() {
+        let mut client = Client::new_with_revision(
+            client::client::ClientConfig {
+                host: "127.0.0.1".into(),
+                port: 1,
+                cache_dir: String::new(),
+                members: true,
+                lowmem: true,
+            },
+            client::client::ClientRevision::R289,
+        );
+        client.ingame = true;
+        client.scene_state = 2;
+        client.map_build_base_x = 2374;
+        client.map_build_base_z = 3410;
+        let mut npc = client::dash3d::ClientNpc::at(8, 5);
+        npc.r#type = Some(309);
+        // The displayed actor is still one tile behind its received path head.
+        npc.entity.size = 1;
+        npc.entity.x = 8 * 128 + 64;
+        npc.entity.z = 4 * 128 + 64;
+        client.npc[3712] = Some(Box::new(npc));
+        client.npc_ids = vec![3712];
+        client.npc_count = 1;
+        client.gens.npc = 1;
+        client.gens.npc_info = 3;
+        let mut setup = SetupState::new("tmx-oracle".into(), Scenario::npc_river("tick-npc-knife"));
+        // Seed the same retained session watermark as the host. The NPC
+        // family itself is newer and must be republished from the Client.
+        let mut watermark = client.gens;
+        watermark.npc = 0;
+        setup.npc_snapshot.reset_session(watermark);
+        setup.observe_npc(&client);
+        assert_eq!(setup.npc_snapshot.npcs()[0].tile, tile(2382, 3414, 0));
+        let first =
+            interact::server_ordered::ExactNpcReference::new(3712, 309, tile(2382, 3415, 0), 3, 1)
+                .unwrap();
+        assert_eq!(setup.npc_observations, vec![first]);
+        setup.observe_npc(&client);
+        assert_eq!(
+            setup.npc_observations,
+            vec![first],
+            "no duplicate generation"
+        );
+
+        client.npc[3712].as_mut().unwrap().entity.route_z[0] = 6;
+        client.gens.npc += 1;
+        client.gens.npc_info += 1;
+        setup.observe_npc(&client);
+        let second = interact::server_ordered::ExactNpcReference::new(
+            3712,
+            309,
+            tile(2382, 3416, 0),
+            setup.npc_snapshot.gens().npc_info,
+            1,
+        )
+        .unwrap();
+        assert_eq!(setup.npc_observations, vec![first, second]);
+
+        client.npc[3712].as_mut().unwrap().r#type = Some(330);
+        client.gens.npc += 1;
+        client.gens.npc_info += 1;
+        setup.observe_npc(&client);
+        assert_eq!(
+            setup.npc_observations,
+            vec![first, second],
+            "different type is not an observation"
         );
     }
 
