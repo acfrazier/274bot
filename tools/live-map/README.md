@@ -43,6 +43,17 @@ It fails if the selector exits with an error or lists no tests. For a
 not validate the `cargo run` command, the `--live` name, the input values, or
 the assigned host. It does not run the live cell.
 
+## Clean logout
+
+A gameplay pass does not excuse a failed shutdown. Live terminal runs and the
+Quester path helper stop scripts and wait for Stop acknowledgement before
+requesting logout. If an account stays connected, another logout request waits
+for 16 more observed game ticks. R289 content sets this combat lockout in
+`content/scripts/login_logout/logout.rs2:26-30`. The wait does not count render
+frames or wall-clock seconds. A fixed 30-second deadline bounds the whole
+shutdown, including Stop. A forced worker close is not a clean logout.
+
+
 ## Cell hosts
 
 The map format has no host field. This table assigns each live cell to a host.

@@ -4188,8 +4188,7 @@ impl TuiSession {
         loop {
             self.pump(app);
             if self.names.iter().all(|account| {
-                !self.core.script_state(account).is_live()
-                    && !self.scripts.start_waiting(account)
+                !self.core.script_state(account).is_live() && !self.scripts.start_waiting(account)
             }) {
                 break;
             }
@@ -4201,7 +4200,8 @@ impl TuiSession {
         for account in &self.names {
             eprintln!(
                 "[tui-play] live logout script stopped account={account} tick={:?}",
-                self.core.with_slot_snapshot(account, |snapshot| snapshot.tick())
+                self.core
+                    .with_slot_snapshot(account, |snapshot| snapshot.tick())
             );
         }
         match self.submit_raw(OperatorCommand::Logout, Targets::Everyone) {
@@ -4211,7 +4211,10 @@ impl TuiSession {
         let mut logout_ticks = self
             .names
             .iter()
-            .map(|account| self.core.with_slot_snapshot(account, |snapshot| snapshot.tick()))
+            .map(|account| {
+                self.core
+                    .with_slot_snapshot(account, |snapshot| snapshot.tick())
+            })
             .collect::<Vec<_>>();
         loop {
             self.pump(app);
@@ -4250,12 +4253,12 @@ impl TuiSession {
                 {
                     continue;
                 }
-                let tick = self.core.with_slot_snapshot(account, |snapshot| snapshot.tick());
+                let tick = self
+                    .core
+                    .with_slot_snapshot(account, |snapshot| snapshot.tick());
                 if live_logout_retry_due(last_tick, tick) {
                     let account = account.clone();
-                    eprintln!(
-                        "[tui-play] live logout retry account={account} tick={tick:?}"
-                    );
+                    eprintln!("[tui-play] live logout retry account={account} tick={tick:?}");
                     match self.submit_raw(OperatorCommand::Logout, Targets::Profile(&account)) {
                         Ok(_) | Err(SubmitError::NoTarget(_)) => {}
                         Err(error) => return Err(format!("logout retry failed: {error}")),
