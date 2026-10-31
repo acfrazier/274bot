@@ -38,6 +38,22 @@ export default class CompatMakeOneProbe extends LoopingBot {
 }
 "#;
 
+// makeOne emits its click during the call. Yield first so Stop precedes the next request.
+const MAKE_CANCEL_SOURCE: &str = r#"
+import { ChatDialog } from '../../api/ui/dialogue/ChatDialog.js';
+import { Execution } from '../../api/execution/Execution.js';
+export default class CompatMakeOneCancelProbe extends LoopingBot {
+    async loop() {
+        if (this.started) return;
+        this.started = true;
+        this.log('MAKE_PENDING');
+        await Execution.delayTicks(1);
+        const result = await ChatDialog.makeOne('Shortbow');
+        this.log('MAKE_RESULT:' + JSON.stringify(result));
+    }
+}
+"#;
+
 const CAST_SOURCE: &str = r#"
 import { Game } from '../../api/game/Game.js';
 import { Inventory } from '../../api/inventory/Inventory.js';
@@ -913,7 +929,7 @@ fn run_make_one_cell() {
     });
     let cancel_start_tick = fixture.lock().unwrap().snapshot.tick();
     let mut cancel_logs = Vec::new();
-    start_script(&play, &account, MAKE_SOURCE);
+    start_script(&play, &account, MAKE_CANCEL_SOURCE);
     wait_for_log(
         &play,
         &account,
@@ -926,6 +942,11 @@ fn run_make_one_cell() {
     wait_for(&play, &account, &fixture, CELL_DEADLINE, |_, state| {
         state.snapshot.tick() >= cancel_start_tick.saturating_add(5)
     });
+    take_logs(&play, &account, &mut cancel_logs);
+    assert!(
+        !cancel_logs.iter().any(|line| line.starts_with("MAKE_RESULT:")),
+        "stopped MakeOne published a result: {cancel_logs:?}"
+    );
     let cancel_end_tick = fixture.lock().unwrap().snapshot.tick();
     let after_cancel = inventory_count(&fixture.lock().unwrap().snapshot, "Shortbow");
     assert_eq!(after_cancel, 1, "cancelled MakeOne produced no shortbow");
