@@ -50,6 +50,33 @@ pub struct NeedObservation {
     pub index: u8,
 }
 
+/// Why an optional need finished below its target.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum UnmetCause {
+    /// The plan found nothing more to draw it from.
+    NoSupply,
+    /// The pack had no free slot for it, so it was left out of the plan.
+    NoRoom,
+}
+
+impl UnmetCause {
+    pub const fn describe(self) -> &'static str {
+        match self {
+            Self::NoSupply => "nothing more to draw it from",
+            Self::NoRoom => "no free pack slot for it",
+        }
+    }
+}
+
+/// An optional need that stays below its target while the plan still succeeds.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct UnmetNeed {
+    pub item: Arc<str>,
+    pub need: i32,
+    pub have: i32,
+    pub cause: UnmetCause,
+}
+
 pub struct Planner<'a> {
     counts: &'a dyn Counts,
     plan: AcquirePlan,
@@ -58,6 +85,7 @@ pub struct Planner<'a> {
     blocked: Option<NeedObservation>,
     child: Option<NeedObservation>,
     next_index: usize,
+    unmet: Vec<UnmetNeed>,
 }
 
 impl<'a> Planner<'a> {
@@ -70,6 +98,7 @@ impl<'a> Planner<'a> {
             blocked: None,
             child: None,
             next_index: 0,
+            unmet: Vec::new(),
         }
     }
 
@@ -162,6 +191,14 @@ impl<'a> Planner<'a> {
             }
         } else if reach >= need.minimum || need.kind == NeedKind::Optional {
             self.plan.looked.short_of_target = self.plan.looked.short_of_target.saturating_add(1);
+            if need.kind == NeedKind::Optional {
+                self.unmet.push(UnmetNeed {
+                    item: Arc::clone(&need.name),
+                    need: need.target,
+                    have: reach,
+                    cause: UnmetCause::NoSupply,
+                });
+            }
         } else if self.blocked.is_none() {
             self.blocked = Some(detail);
             self.plan.looked = Looked {
@@ -172,6 +209,14 @@ impl<'a> Planner<'a> {
         Ok(())
     }
 
+    /// Records an optional need that the caller left out of the plan.
+    pub fn note_unmet(&mut self, unmet: UnmetNeed) {
+        self.unmet.push(unmet);
+    }
+    /// Optional needs that stay below their target.
+    pub fn unmet(&self) -> &[UnmetNeed] {
+        &self.unmet
+    }
     pub fn withdrawal_count(&self) -> usize {
         self.plan.withdrawal_count
     }

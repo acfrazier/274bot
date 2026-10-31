@@ -8,7 +8,9 @@ use super::families::dialogue::{
     page_open, Dialogue, DialogueArgs, DialogueOptions, DialogueTarget,
 };
 use super::progress::{quest_colour, resolve_colour, resolve_journal};
-use super::provision::{ProvisionEvent, ProvisionPhase, Provisioner};
+use super::provision::{
+    BankCloser, BankLease, Closed, ProvisionEvent, ProvisionPhase, Provisioner,
+};
 use super::queue::QueueStatus;
 use super::registry::PathSource;
 use super::select::{select_with_skips, sequence_for_stage, SelectionDecision};
@@ -853,7 +855,9 @@ impl Quester {
                     if !tick.cx.may_continue_this_tick() {
                         return false;
                     }
-                    if self.step.is_some() {
+                    // A step waiting on its scan polls only after provisioning
+                    // closed the bank its own trips opened.
+                    if self.step.is_some() && !self.provisioner.session_open() {
                         return true;
                     }
                 }
@@ -909,6 +913,7 @@ impl Quester {
                 ProvisionPhase::Scanning => "scan",
                 ProvisionPhase::Spillover => "deposit-capacity",
                 ProvisionPhase::Withdrawing => "withdraw",
+                ProvisionPhase::Closing => "close",
                 _ => "other",
             };
             self.trace.record(
@@ -1011,6 +1016,15 @@ impl Quester {
         );
         self.emit_status(tick.output, NativePhase::Complete);
         ScriptFlow::Complete
+    }
+
+    pub(super) fn bank_lease(&self) -> Option<BankLease> {
+        self.provisioner.bank_lease()
+    }
+
+    /// The lease of a provisioning session that has ended with its bank open.
+    pub(super) fn take_unowned_bank_lease(&mut self) -> Option<BankLease> {
+        self.provisioner.take_unowned_lease()
     }
 
     pub fn journal_opened(&self) -> bool {
@@ -1250,7 +1264,10 @@ impl Quester {
             "blocked"
         } else if matches!(
             provision.phase,
-            ProvisionPhase::Scanning | ProvisionPhase::Spillover | ProvisionPhase::Withdrawing
+            ProvisionPhase::Scanning
+                | ProvisionPhase::Spillover
+                | ProvisionPhase::Withdrawing
+                | ProvisionPhase::Closing
         ) {
             "banking"
         } else if self.waiting.is_some() || self.needs_read || self.settling {
@@ -3676,6 +3693,10 @@ pub struct QueuedQuester {
     fields: Arc<[StatusField]>,
     gate_fields: Arc<[StatusField]>,
     quest_status_since: Option<Duration>,
+    /// An open bank that this run's provisioning left, owed a close before
+    /// anything else acts. Ended sessions hand their lease here.
+    owed_bank: Option<BankLease>,
+    owed_closer: BankCloser,
     dirty: bool,
 }
 
@@ -3717,6 +3738,8 @@ impl QueuedQuester {
             fields: Arc::from([]),
             gate_fields: Arc::from([]),
             quest_status_since: None,
+            owed_bank: None,
+            owed_closer: BankCloser::default(),
             dirty: true,
         };
         this.refresh_fields();
@@ -3734,6 +3757,7 @@ impl QueuedQuester {
         self.anchor = retained.anchor;
         self.deaths = retained.deaths;
         self.completed = retained.completed;
+        self.owed_bank = retained.bank_lease;
         self.refresh_fields();
     }
 
@@ -3742,6 +3766,57 @@ impl QueuedQuester {
         retained.anchor = self.anchor;
         retained.deaths = self.deaths;
         retained.completed = self.completed;
+    }
+
+    /// Takes the lease of an ended provisioning session from the active
+    /// Quester. It then owes the close. Called after anything that can end a
+    /// session without a close: an error, a cancel, a resume, a random event.
+    /// Never called on Stop: a Stop sends no close.
+    fn reclaim_bank(&mut self) {
+        if let Some(lease) = self
+            .active
+            .as_mut()
+            .and_then(|active| active.take_unowned_bank_lease())
+        {
+            self.owed_bank = Some(lease);
+        }
+    }
+
+    /// Closes the bank provisioning left open, through the bank kernel's
+    /// close. `true` while the close runs. This runs after the held-tick check
+    /// and before any journal read, Path compile or step, so a resumed or
+    /// restarted run does not read under the bank. It sends nothing at zero
+    /// hitpoints, and nothing unless this frame still shows the leased bank
+    /// open. A close the kernel gives up on is logged and dropped, which
+    /// bounds it.
+    fn settle_owed_bank(&mut self, tick: &mut NativeTick<'_>) -> bool {
+        self.reclaim_bank();
+        if self.owed_bank.is_none() && !self.owed_closer.active() {
+            return false;
+        }
+        if crate::native::death::hitpoints_zero(tick.cx.snapshot().stats().map(|stats| stats.value))
+        {
+            return false;
+        }
+        match self.owed_closer.drive(tick, &mut self.owed_bank) {
+            Closed::Done => false,
+            Closed::Pending => true,
+            Closed::Failed(error) => {
+                tick.output.log(
+                    api::hostlog::Level::Warn,
+                    &format!("quester queue: the open bank was not closed: {error}"),
+                );
+                false
+            }
+        }
+    }
+
+    /// Keeps the lease in the slot's retained cell, so an automatic restart
+    /// can close the bank. Operator Stop discards that cell.
+    fn sync_bank_lease(&self, tick: &mut NativeTick<'_>) {
+        tick.cx.retained().quester().bank_lease = self
+            .owed_bank
+            .or_else(|| self.active.as_ref().and_then(|active| active.bank_lease()));
     }
 
     fn refresh_fields(&mut self) {
@@ -4121,10 +4196,18 @@ impl Script for QueuedQuester {
             baseline.observe(tick.cx.snapshot());
             tick.cx.retained().quester().death_seq = baseline.watermark();
         }
+        let closing = self.settle_owed_bank(tick);
+        self.sync_bank_lease(tick);
+        if closing {
+            self.publish(tick.output, NativePhase::Waiting);
+            return Ok(ScriptFlow::Continue);
+        }
         if let Some(active) = self.active.as_mut() {
             let flow = active.tick(tick)?;
             self.anchor = active.anchor;
             tick.cx.retained().quester().anchor = self.anchor;
+            self.reclaim_bank();
+            self.sync_bank_lease(tick);
             match &flow {
                 ScriptFlow::Continue => return Ok(ScriptFlow::Continue),
                 ScriptFlow::Blocked(failure)
@@ -4367,9 +4450,13 @@ impl Script for QueuedQuester {
     fn interrupt(&mut self, event: Interrupt) {
         self.gang_reader.cancel();
         self.pair_selection = None;
+        if !matches!(event, Interrupt::Hold(_)) {
+            self.owed_closer.cancel();
+        }
         if let Some(active) = self.active.as_mut() {
             active.interrupt(event);
         }
+        self.reclaim_bank();
     }
 
     fn on_stop(&mut self, reason: StopReason) {
@@ -4391,9 +4478,12 @@ impl Script for QueuedQuester {
     fn on_random(&mut self, event: &DetectedRandom) -> RandomClaim {
         self.gang_reader.cancel();
         self.pair_selection = None;
-        self.active
+        let claim = self
+            .active
             .as_mut()
-            .map_or(RandomClaim::Host, |active| active.on_random(event))
+            .map_or(RandomClaim::Host, |active| active.on_random(event));
+        self.reclaim_bank();
+        claim
     }
 
     fn recovery_anchor(&self) -> Option<api::WorldTile> {
@@ -7434,6 +7524,14 @@ mod tests {
                     )
                 })
             });
+            let close_pending = self.ledger.as_ref().is_some_and(|ledger| {
+                ledger.outbox.first().is_some_and(|action| {
+                    matches!(
+                        &action.effect,
+                        crate::native::HostEffect::Interaction(crate::shim::InteractReq::Close)
+                    )
+                })
+            });
             if bank_pick_pending {
                 let action = self.ledger.as_mut().unwrap().outbox.remove(0);
                 let authority = action.authority();
@@ -7481,6 +7579,24 @@ mod tests {
                 self.snapshot
                     .seed_bank_observation(1, tick, Some(self.stock.clone()), Vec::new());
                 self.opened_bank = true;
+            } else if close_pending {
+                let action = self.ledger.as_mut().unwrap().outbox.remove(0);
+                let authority = action.authority();
+                self.ledger.as_mut().unwrap().complete_interaction(
+                    &authority,
+                    crate::native::InteractionReceipt {
+                        request_id: authority.request_id().get(),
+                        evidence: api::quest_progress::EvidenceStamp {
+                            run: authority.run(),
+                            tick,
+                            sequence: tick,
+                        },
+                        accepted: true,
+                        chat_since: 0,
+                    },
+                );
+                self.snapshot
+                    .seed_bank_observation(-1, tick, None, Vec::new());
             } else if self
                 .ledger
                 .as_ref()

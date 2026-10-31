@@ -294,6 +294,11 @@ impl CookFixture {
                             self.observe_bank(tick);
                         }
                         InteractReq::SetNoteMode { on: false } => {}
+                        // The provisioner closes the bank when its session ends.
+                        InteractReq::Close => {
+                            self.snapshot
+                                .seed_bank_observation(-1, tick, None, Vec::new());
+                        }
                         // The root step is polled on its begin tick (TICK-FIX
                         // #4); these tests stop at that begin.
                         InteractReq::Npc { ref action, .. } if action == "Talk-to" => {}

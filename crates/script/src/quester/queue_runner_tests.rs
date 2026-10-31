@@ -749,3 +749,269 @@ fn a_refused_loadouts_store_blocks_the_path_instead_of_waiting() {
         "a refused store is not a cold one"
     );
 }
+
+fn cook_status(colour: i32) -> Vec<QuestStatusView> {
+    vec![QuestStatusView {
+        name: "Cook's Assistant".into(),
+        component_id: 42,
+        colour,
+    }]
+}
+
+/// The kinds of effect the host was asked for, in order.
+fn effects(ledger: &Option<Box<crate::native::ledger::Ledger>>) -> Vec<&'static str> {
+    ledger.as_ref().map_or_else(Vec::new, |ledger| {
+        ledger
+            .outbox
+            .iter()
+            .map(|action| match &action.effect {
+                crate::native::HostEffect::Interaction(crate::shim::InteractReq::Close) => "close",
+                crate::native::HostEffect::Interaction(_) => "interaction",
+                _ => "other",
+            })
+            .collect()
+    })
+}
+
+/// The host accepts the interaction at the end of the outbox.
+fn accept_last_interaction(ledger: &mut Option<Box<crate::native::ledger::Ledger>>, tick: u64) {
+    let authority = ledger.as_ref().unwrap().outbox.last().unwrap().authority();
+    ledger.as_mut().unwrap().complete_interaction(
+        &authority,
+        crate::native::InteractionReceipt {
+            request_id: authority.request_id().get(),
+            evidence: EvidenceStamp {
+                run: authority.run(),
+                tick,
+                sequence: tick,
+            },
+            accepted: true,
+            chat_since: 0,
+        },
+    );
+    ledger.as_mut().unwrap().outbox.clear();
+}
+
+fn open_bank(snapshot: &mut GameSnapshot, tick: u64) -> BankLease {
+    snapshot.seed_bank_observation(1, tick, Some(Vec::new()), Vec::new());
+    // The test frames carry login session 1.
+    BankLease::new(1, snapshot.bank_session_generation())
+}
+
+#[test]
+fn a_restarted_run_closes_the_open_bank_before_it_reads_or_plans_anything() {
+    let (mut queued, mut snapshot) = fixture(cook_settings());
+    snapshot.seed_quest_statuses(cook_status(0xf80000), true);
+    let lease = open_bank(&mut snapshot, 1);
+    // The retained cell of the replaced instance carried the lease.
+    queued.restore(&super::super::QuesterRetained {
+        bank_lease: Some(lease),
+        ..Default::default()
+    });
+    let mut ledger = None;
+    let mut output = Capture::default();
+    let flow = with_tick_output(&snapshot, &mut ledger, 1, &mut output, |native| {
+        let flow = queued.tick(native).unwrap();
+        assert_eq!(
+            native.cx.retained().quester().bank_lease,
+            Some(lease),
+            "the lease stays retained until the bank is shut"
+        );
+        flow
+    });
+    assert_eq!(flow, ScriptFlow::Continue);
+    assert_eq!(output.0.last().unwrap().phase, NativePhase::Waiting);
+    assert_eq!(
+        effects(&ledger),
+        ["close"],
+        "the close is the first and only input"
+    );
+    assert!(
+        queued.preparing.is_none(),
+        "no Path compile starts under the open bank"
+    );
+    accept_last_interaction(&mut ledger, 1);
+    snapshot.seed_bank_observation(-1, 2, None, Vec::new());
+    with_tick_output(&snapshot, &mut ledger, 2, &mut output, |native| {
+        queued.tick(native).unwrap();
+        assert_eq!(native.cx.retained().quester().bank_lease, None);
+    });
+    assert!(queued.owed_bank.is_none());
+    assert!(
+        effects(&ledger).iter().all(|effect| *effect != "close"),
+        "one close only"
+    );
+}
+
+#[test]
+fn resume_closes_the_bank_the_run_left_open_before_the_journal_is_read() {
+    let (mut queued, mut snapshot) = fixture(cook_settings());
+    snapshot.seed_quest_statuses(cook_status(0xf80000), true);
+    let mut ledger = None;
+    let mut output = Capture::default();
+    with_tick_output(&snapshot, &mut ledger, 1, &mut output, |native| {
+        queued.tick(native).unwrap();
+    });
+    let path = queued.preparing.take().unwrap().join().unwrap().unwrap();
+    with_tick_output(&snapshot, &mut ledger, 2, &mut output, |native| {
+        queued.activate(native, path);
+    });
+    assert!(queued.active.is_some());
+    // Provisioning opened the bank, then the run was paused.
+    let lease = open_bank(&mut snapshot, 3);
+    queued
+        .active
+        .as_mut()
+        .unwrap()
+        .provisioner
+        .set_lease_for_test(lease);
+    queued.interrupt(Interrupt::Resume);
+    assert_eq!(
+        queued.owed_bank,
+        Some(lease),
+        "resume hands the bank to the closer"
+    );
+    with_tick_output(&snapshot, &mut ledger, 3, &mut output, |native| {
+        assert_eq!(queued.tick(native).unwrap(), ScriptFlow::Continue);
+    });
+    assert_eq!(
+        effects(&ledger),
+        ["close"],
+        "the close comes before the journal read that resume owes"
+    );
+    assert!(!queued.active.as_ref().unwrap().journal_opened());
+}
+
+#[test]
+fn a_run_started_after_stop_leaves_an_open_bank_alone() {
+    let (mut queued, mut snapshot) = fixture(cook_settings());
+    open_bank(&mut snapshot, 1);
+    // Stop discards the retained cell, so the next run starts without a lease.
+    queued.restore(&super::super::QuesterRetained::default());
+    let mut ledger = None;
+    let mut output = Capture::default();
+    with_tick_output(&snapshot, &mut ledger, 1, &mut output, |native| {
+        queued.tick(native).unwrap();
+    });
+    assert_eq!(effects(&ledger), Vec::<&str>::new());
+    assert!(queued.owed_bank.is_none());
+}
+
+#[test]
+fn operator_stop_hands_nothing_to_the_closer() {
+    let (mut queued, mut snapshot) = fixture(cook_settings());
+    snapshot.seed_quest_statuses(cook_status(0xf80000), true);
+    let mut ledger = None;
+    let mut output = Capture::default();
+    with_tick_output(&snapshot, &mut ledger, 1, &mut output, |native| {
+        queued.tick(native).unwrap();
+    });
+    let path = queued.preparing.take().unwrap().join().unwrap().unwrap();
+    with_tick_output(&snapshot, &mut ledger, 2, &mut output, |native| {
+        queued.activate(native, path);
+    });
+    let lease = open_bank(&mut snapshot, 3);
+    queued
+        .active
+        .as_mut()
+        .unwrap()
+        .provisioner
+        .set_lease_for_test(lease);
+    queued.on_stop(StopReason::Operator);
+    assert!(
+        queued.owed_bank.is_none(),
+        "Stop does not reclaim the lease, so no tick can close it"
+    );
+    assert_eq!(effects(&ledger), Vec::<&str>::new());
+}
+
+#[test]
+fn a_held_tick_sends_no_close() {
+    let (mut queued, mut snapshot) = fixture(cook_settings());
+    let lease = open_bank(&mut snapshot, 1);
+    queued.restore(&super::super::QuesterRetained {
+        bank_lease: Some(lease),
+        ..Default::default()
+    });
+    let data = api::game_data::for_revision(api::selected::ClientRevision::R289).unwrap();
+    let pin = data.selected_pin().unwrap();
+    let evidence = EvidenceStamp {
+        run: queued.run,
+        tick: 1,
+        sequence: 1,
+    };
+    let compiled = crate::CompiledTick {
+        condition: None,
+        poison_unknown_pulse: None,
+        cure_poison: crate::survival::CurePoison::WhenNeeded,
+        walk_danger: Some(&crate::native::AllowWalkDanger),
+        selected: Some(&data),
+        reach: None,
+        reach_flood: None,
+        bank_memory: None,
+        collision: None,
+        // The host holds the account: a user takeover or a survival hold.
+        hold: true,
+        world_members: Truth::Unknown,
+        interacts: Some(Vec::new()),
+        service_gate: None,
+    };
+    let frame = crate::native::HostFrame::for_test(None, Some(&snapshot), None, compiled);
+    let mut ledger = None;
+    let mut output = Capture::default();
+    let flow = crate::native::with_test_tick(
+        frame,
+        evidence,
+        &pin,
+        (Duration::from_millis(600), std::time::Instant::now()),
+        &mut ledger,
+        &mut output,
+        |native| queued.tick(native).unwrap(),
+    );
+    assert_eq!(flow, ScriptFlow::Continue);
+    assert_eq!(effects(&ledger), Vec::<&str>::new());
+    assert_eq!(
+        queued.owed_bank,
+        Some(lease),
+        "the obligation waits for the hold to end"
+    );
+}
+
+#[test]
+fn a_close_the_bank_never_honours_is_bounded_and_then_dropped() {
+    let (mut queued, mut snapshot) = fixture(cook_settings());
+    let lease = open_bank(&mut snapshot, 1);
+    queued.restore(&super::super::QuesterRetained {
+        bank_lease: Some(lease),
+        ..Default::default()
+    });
+    let mut ledger = None;
+    let mut output = Capture::default();
+    let mut sent = 0;
+    for tick in 1..=400 {
+        with_tick_output(&snapshot, &mut ledger, tick, &mut output, |native| {
+            queued.tick(native).unwrap();
+        });
+        if effects(&ledger) == ["close"] {
+            sent += 1;
+            // The click is accepted but the interface never goes away.
+            accept_last_interaction(&mut ledger, tick);
+        }
+        if queued.owed_bank.is_none() && !queued.owed_closer.active() {
+            break;
+        }
+    }
+    assert_eq!(sent, crate::acquire::run::MAX_CLOSE_ATTEMPTS);
+    assert!(
+        queued.owed_bank.is_none(),
+        "the obligation is dropped, not retried forever"
+    );
+    assert!(
+        output
+            .1
+            .iter()
+            .any(|line| line.contains("the open bank was not closed")),
+        "{:?}",
+        output.1
+    );
+}

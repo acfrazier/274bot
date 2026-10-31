@@ -293,6 +293,25 @@ impl Fixture {
                 );
                 self.opens += 1;
             }
+            HostEffect::Interaction(crate::shim::InteractReq::Close) => {
+                let action = ledger.outbox.remove(0);
+                let authority = action.authority();
+                ledger.complete_interaction(
+                    &authority,
+                    InteractionReceipt {
+                        request_id: authority.request_id().get(),
+                        evidence: api::quest_progress::EvidenceStamp {
+                            run: authority.run(),
+                            tick,
+                            sequence: tick,
+                        },
+                        accepted: true,
+                        chat_since: 0,
+                    },
+                );
+                self.snapshot
+                    .seed_bank_observation(-1, tick, None, Vec::new());
+            }
             _ => {}
         }
         flow

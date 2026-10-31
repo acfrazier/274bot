@@ -2389,6 +2389,14 @@ impl NestedBankFixture {
                 )
             })
         });
+        let close_pending = self.ledger.as_ref().is_some_and(|ledger| {
+            ledger.outbox.first().is_some_and(|action| {
+                matches!(
+                    &action.effect,
+                    HostEffect::Interaction(crate::shim::InteractReq::Close)
+                )
+            })
+        });
         if bank_pick_pending {
             let action = self.ledger.as_mut().unwrap().outbox.remove(0);
             let authority = action.authority();
@@ -2426,6 +2434,13 @@ impl NestedBankFixture {
                 .seed_bank_observation(1, tick, Some(vec![]), vec![]);
             self.opened_bank = true;
             self.visits += 1;
+        } else if close_pending {
+            assert!(matches!(
+                ack(&mut self.ledger, tick),
+                HostEffect::Interaction(crate::shim::InteractReq::Close)
+            ));
+            self.snapshot
+                .seed_bank_observation(-1, tick, None, Vec::new());
         } else if self
             .ledger
             .as_ref()

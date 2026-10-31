@@ -278,11 +278,25 @@ pub struct Ledger {
     pub(crate) batch_receipts: [Option<InteractionReceipt>; 5],
     next_batch_receipt: usize,
     pub(crate) quiet_since: Option<(NonZeroU64, NonZeroU64, Instant)>,
-    /// The open bank session (login run, snapshot session generation) known
-    /// to be in Item withdraw mode: a native machine opened it (the server
-    /// resets `%bankcert` on open) or pressed Item in it. It outlives one
-    /// machine so a later verb in the same session skips the press.
-    pub(crate) bank_item_session: Option<(RunKey, u64)>,
+    /// The latest open bank session a native machine of this account touched.
+    /// It outlives one machine, so a later verb in the same session skips the
+    /// Item press and a later reader can tell whose open it was.
+    pub(crate) bank_session: Option<BankSessionMark>,
+}
+
+/// What a native machine knows about one open bank session: the login run and
+/// the snapshot session generation it names, and two separate facts.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct BankSessionMark {
+    pub(crate) run: RunKey,
+    pub(crate) generation: u64,
+    /// The session withdraws as items: a native machine opened it (the server
+    /// resets `%bankcert` on open) or pressed Item in it.
+    pub(crate) item_mode: bool,
+    /// A native bank machine of this account sent its own open request, and
+    /// this is the session that appeared after it. A session that a player
+    /// opened, or that a machine only found already open, never has this.
+    pub(crate) opened_by_machine: bool,
 }
 
 impl Default for Ledger {
@@ -305,7 +319,7 @@ impl Default for Ledger {
             batch_receipts: std::array::from_fn(|_| None),
             next_batch_receipt: 0,
             quiet_since: None,
-            bank_item_session: None,
+            bank_session: None,
         }
     }
 }
@@ -399,7 +413,7 @@ impl Ledger {
         self.outbox.clear();
         self.assess_receipt = None;
         self.assess_request = None;
-        self.bank_item_session = None;
+        self.bank_session = None;
     }
 
     pub fn complete_assess_walk(&mut self, authority: &HostAuthority, receipt: AssessReceipt) {

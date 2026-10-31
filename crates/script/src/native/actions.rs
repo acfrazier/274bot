@@ -120,18 +120,56 @@ impl ActionContext<'_> {
     /// resets `%bankcert` to 0 (`content/scripts/interface_bank/scripts/
     /// bank.rs2:18-19`), or it pressed Item in it. No native path presses Note.
     pub(crate) fn bank_item_mode(&self, generation: u64) -> bool {
-        let run = self.run();
-        self.ledger
-            .as_ref()
-            .is_some_and(|ledger| ledger.bank_item_session == Some((run, generation)))
+        self.bank_mark(generation)
+            .is_some_and(|mark| mark.item_mode)
     }
 
-    /// Record that bank session `generation` withdraws as items.
+    /// Record that bank session `generation` withdraws as items. A machine
+    /// that only pressed Item in a session it found open does not make that
+    /// session its own open.
     pub(crate) fn note_bank_item_mode(&mut self, generation: u64) {
         let run = self.run();
+        let opened_by_machine = self
+            .bank_mark(generation)
+            .is_some_and(|mark| mark.opened_by_machine);
         if let Some(ledger) = self.ledger.as_mut() {
-            ledger.bank_item_session = Some((run, generation));
+            ledger.bank_session = Some(ledger::BankSessionMark {
+                run,
+                generation,
+                item_mode: true,
+                opened_by_machine,
+            });
         }
+    }
+
+    /// Record that this account's native bank machine sent its own open
+    /// request and bank session `generation` appeared after it. That session
+    /// starts in Item mode (`bank.rs2:18-19`).
+    pub(crate) fn note_bank_opened_by_machine(&mut self, generation: u64) {
+        let run = self.run();
+        if let Some(ledger) = self.ledger.as_mut() {
+            ledger.bank_session = Some(ledger::BankSessionMark {
+                run,
+                generation,
+                item_mode: true,
+                opened_by_machine: true,
+            });
+        }
+    }
+
+    /// The open bank session `generation` of this login run is the one a
+    /// native bank machine of this account opened with its own open request.
+    pub(crate) fn bank_opened_by_machine(&self, generation: u64) -> bool {
+        self.bank_mark(generation)
+            .is_some_and(|mark| mark.opened_by_machine)
+    }
+
+    fn bank_mark(&self, generation: u64) -> Option<ledger::BankSessionMark> {
+        let run = self.run();
+        self.ledger
+            .as_ref()?
+            .bank_session
+            .filter(|mark| mark.run == run && mark.generation == generation)
     }
 
     /// Queue one game interaction. Walks go through [`Self::walk`], which owns

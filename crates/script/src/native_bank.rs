@@ -510,6 +510,9 @@ pub struct BankMachine {
     object_dialogue: ObjectDialogue,
     /// The until-empty side-view bound is armed.
     view_armed: bool,
+    /// The session generation when this machine sent its own bank-open request
+    /// (stand, booth, bank object or teller). It is set only after that
+    /// request was emitted. It stays empty while no such request went out.
     opened_from: Option<u64>,
     /// Re-opens taken after a lost session (`MAX_BANK_REOPENS`).
     reopens: u8,
@@ -681,6 +684,15 @@ impl NativeMachine for BankMachine {
                     self.phase,
                     Phase::Open | Phase::NpcAccess { .. } | Phase::AwaitOpen { .. }
                 );
+            // A session that appears after this machine's own open request is
+            // that request's session, with or without its table yet. A session
+            // seen in any later phase may be a player's reopen: it is not noted.
+            if bank_open && (opening || matches!(self.phase, Phase::AwaitTable)) {
+                let generation = open_generation(cx);
+                if self.opened_from.is_some_and(|from| from != generation) {
+                    cx.note_bank_opened_by_machine(generation);
+                }
+            }
             // A stale open whose table is down is a closed bank once a
             // transfer's reopen is due: the stand click goes out regardless
             // (the engine closes and re-opens on it, `OpLocHandler.ts:53`).
@@ -729,7 +741,9 @@ impl NativeMachine for BankMachine {
                     // A transfer verb re-opening through a teller goes to
                     // the dialogue only while the table is down.
                     if teller && (is_open_stand || cx.snapshot().bank().is_none()) {
-                        self.opened_from = Some(open_generation(cx));
+                        // The teller attempt counts only once its core sends a
+                        // request (`NpcAccess` phase below), not when it starts.
+                        self.opened_from = None;
                         self.deadline = None;
                         self.phase = Phase::NpcAccess {
                             core: npc::NpcAccess::new(),
@@ -835,7 +849,8 @@ impl NativeMachine for BankMachine {
                                 },
                             )))?;
                         }
-                        self.opened_from = Some(open_generation(cx));
+                        // The opener's click (a chest lid) does not open the bank.
+                        self.opened_from = first_target.is_none().then(|| open_generation(cx));
                         self.reopen_pending = false;
                         self.phase = Phase::AwaitOpen { first_target };
                         return Poll::Pending;
@@ -891,13 +906,24 @@ impl NativeMachine for BankMachine {
                         },
                     };
                     let deadline = self.deadline;
-                    let step = match crate::native::defer_budget(core.step(
-                        intent,
-                        &mut NativeNpcContext {
-                            cx,
-                            deadline: &mut self.deadline,
-                        },
-                    )) {
+                    let mut npc_cx = NativeNpcContext {
+                        cx,
+                        deadline: &mut self.deadline,
+                        sent: false,
+                    };
+                    let polled = crate::native::defer_budget(core.step(intent, &mut npc_cx));
+                    // A request that the teller core actually emitted is this
+                    // machine's open attempt. A wait without a banker or a
+                    // budget denial sends nothing and records nothing. An
+                    // object's dialogue follows a click that already recorded
+                    // (or, for a chest lid, must not record) the attempt.
+                    if npc_cx.sent
+                        && dialogue == AccessDialogue::Teller
+                        && self.opened_from.is_none()
+                    {
+                        self.opened_from = Some(open_generation(cx));
+                    }
+                    let step = match polled {
                         Poll::Pending => {
                             self.deadline = deadline;
                             return Poll::Pending;
@@ -995,7 +1021,6 @@ impl NativeMachine for BankMachine {
                                 continue;
                             }
                             self.session = session.value.generation;
-                            self.note_fresh_session(cx);
                             self.clear_wait_deadlines();
                             self.phase = Phase::Act;
                             continue;
@@ -1008,7 +1033,6 @@ impl NativeMachine for BankMachine {
                             .snapshot()
                             .bank_session()
                             .map_or(0, |session| session.value.generation);
-                        self.note_fresh_session(cx);
                         self.clear_wait_deadlines();
                         self.phase = Phase::Act;
                         continue;
@@ -1071,7 +1095,6 @@ impl NativeMachine for BankMachine {
                             .snapshot()
                             .bank_session()
                             .map_or(0, |session| session.value.generation);
-                        self.note_fresh_session(cx);
                         self.clear_wait_deadlines();
                         self.phase = Phase::Act;
                         continue;
@@ -1753,6 +1776,8 @@ impl NativeMachine for BankMachine {
 struct NativeNpcContext<'a, 'frame> {
     cx: &'a mut ActionContext<'frame>,
     deadline: &'a mut Option<BankDeadline>,
+    /// The core emitted a request in this step.
+    sent: bool,
 }
 
 impl npc::Context for NativeNpcContext<'_, '_> {
@@ -1820,7 +1845,9 @@ impl npc::Context for NativeNpcContext<'_, '_> {
             .is_some_and(|deadline| deadline.reached(self.cx.evidence().tick, self.cx.active_now()))
     }
     fn emit(&mut self, request: InteractReq) -> Result<(), Self::Error> {
-        self.cx.emit(request).map(|_| ())
+        self.cx.emit(request)?;
+        self.sent = true;
+        Ok(())
     }
 }
 
@@ -2365,15 +2392,6 @@ impl BankMachine {
         cx.snapshot()
             .bank_session()
             .is_some_and(|session| session.value.open && session.value.generation == self.session)
-    }
-
-    /// A session this machine's own open created starts in Item mode
-    /// (`bank.rs2:18-19` resets `%bankcert`); later verbs read it from the
-    /// ledger instead of pressing Item again (TICK-FIX #11, D3).
-    fn note_fresh_session(&self, cx: &mut ActionContext<'_>) {
-        if self.opened_from.is_some_and(|from| from != self.session) {
-            cx.note_bank_item_mode(self.session);
-        }
     }
 
     /// Send the kernel's next click toward `goal`, after selecting Item mode
@@ -3465,6 +3483,77 @@ mod tests {
         });
         assert!(matches!(result, Poll::Ready(Ok(receipt)) if receipt.complete));
         assert!(ledger.as_ref().unwrap().outbox.is_empty());
+        assert!(
+            ledger
+                .as_ref()
+                .unwrap()
+                .bank_session
+                .is_some_and(|mark| mark.opened_by_machine),
+            "the chest's Bank click is this machine's open"
+        );
+    }
+
+    /// The chest lid click is not a bank-open request. A bank that opens
+    /// after it (the player's) is not marked as this machine's open.
+    #[test]
+    fn a_bank_the_player_opens_after_the_chest_lid_click_is_not_marked() {
+        let bank = catalog_bank("Duel Arena");
+        let loc_tile = WorldTile {
+            x: bank.tile.x - 1,
+            z: bank.tile.z,
+            level: bank.tile.level,
+        };
+        let mut snapshot = GameSnapshot::new();
+        snapshot.seed_ingame(2);
+        snapshot.seed_local_player(local_player(bank.tile));
+        snapshot.seed_locs(vec![bank_object_loc(
+            4001,
+            "Closed chest",
+            "Open",
+            loc_tile,
+            1,
+        )]);
+        let reach = object_reach_view(bank.tile, loc_tile);
+        let access = Arc::new(BankStandAccess {
+            bank,
+            stand_tile: bank.tile,
+            kind: AccessKind::Booth,
+            stand_op: 0,
+            name: Some(Arc::from("Open chest")),
+            choose: None,
+        });
+        let mut ledger = None;
+        let handle = with_tick_reach(&snapshot, &reach, &mut ledger, 1, |tick| {
+            let handle = tick
+                .actions
+                .begin::<BankMachine>(open_request(access), &mut tick.cx)
+                .unwrap();
+            assert!(tick.actions.poll(&handle, &mut tick.cx).is_pending());
+            handle
+        });
+        assert!(matches!(
+            acknowledge(&mut ledger, 1),
+            HostEffect::Interaction(InteractReq::Loc {
+                action,
+                id: Some(4001),
+                ..
+            }) if action == "Open"
+        ));
+        // The lid stays shut. The player opens a bank.
+        snapshot.seed_bank_observation(10, 1, Some(Vec::new()), Vec::new());
+        let result = with_tick_reach(&snapshot, &reach, &mut ledger, 2, |tick| {
+            tick.actions.poll(&handle, &mut tick.cx)
+        });
+        assert!(matches!(result, Poll::Ready(Ok(_))), "{result:?}");
+        assert!(
+            !ledger
+                .as_ref()
+                .unwrap()
+                .bank_session
+                .is_some_and(|mark| mark.opened_by_machine),
+            "{:?}",
+            ledger.as_ref().unwrap().bank_session
+        );
     }
 
     #[test]
@@ -5629,6 +5718,49 @@ mod tests {
         );
     }
 
+    /// The machine's first teller talk is refused by the tick budget, so no
+    /// request went out. A bank that the player opens next is not marked as
+    /// this machine's open.
+    #[test]
+    fn a_bank_the_player_opens_after_a_denied_first_teller_talk_is_not_marked() {
+        let mut snapshot = GameSnapshot::new();
+        snapshot.seed_ingame(2);
+        snapshot.seed_npcs(vec![npc_row(7, "Gundai", &["Talk-to"])]);
+        let mut ledger = None;
+        let handle = start_bank(
+            &snapshot,
+            &mut ledger,
+            open_request(teller_access(
+                catalog_bank("Mage Arena"),
+                Some("Gundai"),
+                0,
+                None,
+            )),
+        );
+        let denied = with_tick(&snapshot, &mut ledger, 2, |tick| {
+            spend_interaction(&mut tick.cx);
+            tick.actions.poll(&handle, &mut tick.cx)
+        });
+        assert!(denied.is_pending(), "budget denial must remain Pending");
+        assert!(ledger.as_ref().unwrap().outbox.is_empty());
+
+        snapshot.seed_bank_observation(10, 1, Some(Vec::new()), Vec::new());
+        let result = with_tick(&snapshot, &mut ledger, 3, |tick| {
+            tick.actions.poll(&handle, &mut tick.cx)
+        });
+        assert!(matches!(result, Poll::Ready(Ok(_))), "{result:?}");
+        assert!(ledger.as_ref().unwrap().outbox.is_empty());
+        assert!(
+            !ledger
+                .as_ref()
+                .unwrap()
+                .bank_session
+                .is_some_and(|mark| mark.opened_by_machine),
+            "{:?}",
+            ledger.as_ref().unwrap().bank_session
+        );
+    }
+
     fn assert_teller_page_deferral(
         page: &GameSnapshot,
         access: Arc<BankStandAccess>,
@@ -6107,6 +6239,108 @@ mod tests {
         });
         let locs = vec![bank_object_loc(2213, "Bank booth", "Use-quickly", stand, 0)];
         (access, locs)
+    }
+
+    /// The ledger names the session that appeared after this machine's own
+    /// open request, so a reader can tell it from a player's bank.
+    #[test]
+    fn a_session_that_appears_after_the_machines_own_open_is_marked_as_its_own() {
+        let stand = WorldTile {
+            x: 2809,
+            z: 3441,
+            level: 0,
+        };
+        let (access, locs) = booth_trip(stand);
+        let mut snapshot = GameSnapshot::new();
+        snapshot.seed_ingame(2);
+        snapshot.seed_local_player(local_player(stand));
+        snapshot.seed_locs(locs);
+        let mut ledger = None;
+        let (handle, poll) = begin_bank(
+            &snapshot,
+            &mut ledger,
+            BankRequest {
+                bank: None,
+                action: BankAction::Scan,
+                partial_ok: false,
+                access: Some(access),
+            },
+        );
+        assert!(poll.is_pending());
+        assert!(matches!(
+            acknowledge(&mut ledger, 1),
+            HostEffect::Interaction(InteractReq::OpenStand { .. })
+        ));
+        assert_eq!(ledger.as_ref().unwrap().bank_session, None);
+
+        // A session opens, with its table not yet loaded.
+        snapshot.seed_bank_observation(10, 2, None, Vec::new());
+        let waiting = with_tick(&snapshot, &mut ledger, 2, |tick| {
+            tick.actions.poll(&handle, &mut tick.cx)
+        });
+        assert!(waiting.is_pending(), "{waiting:?}");
+        let mark = ledger.as_ref().unwrap().bank_session.expect("open mark");
+        assert_eq!(mark.generation, snapshot.bank_session_generation());
+        assert!(mark.opened_by_machine && mark.item_mode);
+
+        snapshot.seed_bank_observation(10, 3, Some(Vec::new()), Vec::new());
+        let done = with_tick(&snapshot, &mut ledger, 3, |tick| {
+            tick.actions.poll(&handle, &mut tick.cx)
+        });
+        assert!(matches!(done, Poll::Ready(Ok(_))), "{done:?}");
+        assert_eq!(
+            ledger.as_ref().unwrap().bank_session,
+            Some(mark),
+            "the table's arrival does not change whose open it was"
+        );
+    }
+
+    /// A bank that a player left open, and a machine that only works in it,
+    /// never make that session the machine's own open.
+    #[test]
+    fn a_session_found_already_open_is_not_marked_as_the_machines_own() {
+        let stand = WorldTile {
+            x: 2809,
+            z: 3441,
+            level: 0,
+        };
+        let (access, locs) = booth_trip(stand);
+        let mut snapshot = GameSnapshot::new();
+        snapshot.seed_ingame(2);
+        snapshot.seed_local_player(local_player(stand));
+        snapshot.seed_locs(locs);
+        snapshot.seed_bank_observation(10, 1, Some(Vec::new()), Vec::new());
+        let mut ledger = None;
+        let (_handle, poll) = begin_bank(
+            &snapshot,
+            &mut ledger,
+            BankRequest {
+                bank: None,
+                action: BankAction::Scan,
+                partial_ok: false,
+                access: Some(access),
+            },
+        );
+        assert!(matches!(poll, Poll::Ready(Ok(_))), "{poll:?}");
+        assert_eq!(ledger.as_ref().unwrap().bank_session, None);
+
+        // Pressing Item in the player's bank marks its mode, not its owner.
+        let id = 314;
+        let mut snapshot = GameSnapshot::new();
+        snapshot.seed_ingame(2);
+        snapshot.seed_inventory(Vec::new(), 28);
+        snapshot.seed_bank_observation(
+            10,
+            1,
+            Some(vec![item(id, "Bait", 5, ItemContainer::Bank)]),
+            Vec::new(),
+        );
+        let mut ledger = None;
+        let _handle = begin_withdraw_after_item_mode(&snapshot, &mut ledger, id);
+        let mark = ledger.as_ref().unwrap().bank_session.expect("mode mark");
+        assert_eq!(mark.generation, snapshot.bank_session_generation());
+        assert!(mark.item_mode);
+        assert!(!mark.opened_by_machine);
     }
 
     fn reopen_deposit_request(

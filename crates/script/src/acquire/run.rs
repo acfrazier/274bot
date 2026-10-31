@@ -16,7 +16,7 @@ use api::stock::Stock;
 use std::task::Poll;
 
 const MAX_OPEN_ATTEMPTS: u8 = 3;
-const MAX_CLOSE_ATTEMPTS: u8 = 3;
+pub(crate) const MAX_CLOSE_ATTEMPTS: u8 = 3;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Phase {
@@ -738,7 +738,7 @@ impl AcquireRun {
     }
 }
 
-fn bank_open(cx: &ActionContext<'_>) -> bool {
+pub(crate) fn bank_open(cx: &ActionContext<'_>) -> bool {
     cx.snapshot()
         .bank_session()
         .is_some_and(|session| session.value.open)
