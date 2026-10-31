@@ -827,7 +827,7 @@ mod compat {
                 chat_modal_id: Some(4882),
                 ..probe(&products, None, false, 3000)
             };
-            let (out, ops, machine) = begin(|cx| begin_make_one(&at, "wool", cx));
+            let (out, ops, machine) = begin(|cx| begin_make_one(&at, "shortbow", cx));
             assert_eq!(out, None);
             assert_eq!(ops, vec![InteractReq::IfButton { component_id: 881 }]);
             let mut machine = machine.expect("running");
