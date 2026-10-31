@@ -311,7 +311,6 @@ impl StateComposition {
             .map(|_| ())
             .map_err(|code| format!("script runtime settings: {code} ({})", path.display()))
     }
-
 }
 
 /// Where an accepted request stands, for host-side observers that must

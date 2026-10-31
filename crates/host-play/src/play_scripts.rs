@@ -386,9 +386,7 @@ impl ScriptStartHandle {
                 let resolved_loadouts: Result<Arc<[api::loadout::Loadout]>, String> = self
                     .state
                     .as_ref()
-                    .map_or(Ok(()), |state| {
-                        state.prepare_script_runtime_settings(name)
-                    })
+                    .map_or(Ok(()), |state| state.prepare_script_runtime_settings(name))
                     .and_then(|()| match loadouts {
                         Some(loadouts) => Ok(Arc::from(loadouts.to_vec())),
                         None => self.operator_loadouts(name).map(Arc::from),

@@ -8238,11 +8238,7 @@ fn a_js_start_hydrates_cold_script_runtime_settings_before_first_resolve() {
     let composition = Arc::new(local_state::StateComposition::new(
         Arc::clone(&service),
         profile,
-        api::local_state::ContentScope::try_new(
-            client::io::ClientRevision::R289,
-            content,
-        )
-        .unwrap(),
+        api::local_state::ContentScope::try_new(client::io::ClientRevision::R289, content).unwrap(),
     ));
     play.local_state = Some(Arc::clone(&composition));
     play.attach_arm("alice", SlotArm::new(7, false));
@@ -8283,7 +8279,6 @@ export function tick(api) {
         });
         slot.probe("true").expect("the first script tick completes");
     }
-
 
     let mut logs = Vec::new();
     let settled = wait_until(5_000, || {
