@@ -752,14 +752,17 @@ fn run_tree_cell(receipt: &mut Receipt) -> Result<(), String> {
     card.settings
         .insert("loadout".into(), Value::String(CLUE_LOADOUT.into()));
     let loadouts = [api::loadout::Loadout::new(CLUE_LOADOUT)];
-    session.play.script_start_handle().start_load_with_loadouts(
-        &session.account,
-        card.js,
-        card.shape,
-        Some(card.settings),
-        card.siblings,
-        &loadouts,
-    )?;
+    session
+        .play
+        .script_start_handle()
+        .start_load_with_loadouts(
+            &session.account,
+            card.js,
+            card.shape,
+            Some(card.settings),
+            card.siblings,
+            &loadouts,
+        )?;
     wait_for_logs(&mut session, ACTION_DEADLINE, |logs| {
         logs.iter().any(|line| {
             line.starts_with("ClueSolver — watching the pack for easy clue scrolls/caskets")

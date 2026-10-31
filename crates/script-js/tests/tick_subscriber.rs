@@ -302,7 +302,11 @@ export default class T extends LoopingBot {
     let iso = spawn(src);
     post_tick(&iso, 1, false);
     post_tick(&iso, 2, false);
-    assert_eq!(fires(&iso), 1, "native event registry deduplicates callbacks");
+    assert_eq!(
+        fires(&iso),
+        1,
+        "native event registry deduplicates callbacks"
+    );
     iso.join();
 }
 

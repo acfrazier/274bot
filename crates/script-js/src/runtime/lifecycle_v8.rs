@@ -734,13 +734,13 @@ fn resolve_settings<'s>(
         let key = v8::Local::<v8::String>::try_from(key)
             .map_err(|_| cb::type_error(scope, "SettingsStore schema key is not a string"))?;
         let key_value: v8::Local<v8::Value> = key.into();
-        let present = cb::catching(scope, |scope| bag.has_own_property(scope, key_value))?;
+        let present = cb::catching(scope, |scope| bag.has_own_property(scope, key.into()))?;
         let value = if present {
             cb::catching(scope, |scope| bag.get(scope, key_value))?
         } else {
             v8::null(scope).into()
         };
-        cb::assign(scope, result.into(), key, value)?;
+        cb::assign(scope, result.into(), key_value, value)?;
     }
     Ok(result.into())
 }
