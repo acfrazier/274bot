@@ -702,9 +702,10 @@ fn drawing_memory_verdict_with_process(
                         head.name
                     ));
                 }
-                if head.owner_bytes.is_none_or(|bytes| {
-                    bytes.head_total() != 0 || bytes.process_total() != 0
-                }) {
+                if head
+                    .owner_bytes
+                    .is_none_or(|bytes| bytes.head_total() != 0 || bytes.process_total() != 0)
+                {
                     return Err(format!(
                         "{}: no-head render-owner census was not all zero",
                         head.name
