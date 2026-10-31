@@ -958,6 +958,7 @@ fn a_held_tick_sends_no_close() {
         walk_danger: Some(&crate::native::AllowWalkDanger),
         selected: Some(&data),
         reach: None,
+        nav: None,
         reach_flood: None,
         bank_memory: None,
         collision: None,

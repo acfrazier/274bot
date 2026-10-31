@@ -3917,7 +3917,7 @@ fn default_combat_stand_approach_bounds_each_retryable_class_and_keeps_last_deta
                 .poll_stamp(&scene.snapshot, failure_tick, failure_tick + 20)
                 .is_pending());
             assert!(harness.machine.pending_walk.is_none(), "{end:?}");
-            assert!(harness.drain(None).is_empty(), "{end:?}");
+            assert_eq!(harness.drain(None).len(), 0, "{end:?}");
             let retry_tick = failure_tick + 1;
             let Some(HostEffect::Walk(walk)) = harness.pending(&scene, retry_tick) else {
                 panic!("{end:?} attempt {attempt} must submit a fresh approach walk");
@@ -3928,7 +3928,7 @@ fn default_combat_stand_approach_bounds_each_retryable_class_and_keeps_last_deta
             assert_ne!(retry_request, previous_request);
             previous_request = retry_request;
         }
-        assert!(harness.drain(None).is_empty(), "{end:?}");
+        assert_eq!(harness.drain(None).len(), 0, "{end:?}");
     }
 }
 
@@ -4000,7 +4000,7 @@ fn default_combat_stand_approach_stops_for_each_terminal_class() {
             panic!("{expected:?} must stop the first stand walk");
         };
         assert_eq!(error, expected);
-        assert!(harness.drain(None).is_empty());
+        assert_eq!(harness.drain(None).len(), 0);
         assert_eq!(harness.machine.stand_walk_failures, 0);
     }
 }
