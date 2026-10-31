@@ -1199,14 +1199,16 @@ fn exact_harpoon_coin_shortage_keeps_the_typed_park() {
         VendorChoice::Nearest,
         SourceSet::PACK,
     );
-    let counts = fixture(&[], &[], Origin::Session);
+    let minimum_quote = minimum_shop_quote(Some(&data), &request.vendor, harpoon, false, 1)
+        .expect("pinned harpoon minimum quote");
+    let counts = fixture(&[], &[(COINS, minimum_quote as i32 - 1)], Origin::Session);
 
     let block = shop_block(&request, &counts, &data, false);
 
     assert_eq!(
         block.reason,
         BlockReason::TooFewCoins {
-            needed: 1,
+            needed: minimum_quote,
             held: 0,
             banked: 0,
         }
@@ -1644,7 +1646,13 @@ fn shop_pack_only_coin_policy_never_withdraws_coins() {
         },
         SourceSet::PACK,
     );
-    let counts = fixture(&[(COINS, 1)], &[(COINS, 1_000)], Origin::Session);
+    let minimum_quote = minimum_shop_quote(Some(&data), &request.vendor, vial_water, false, 1)
+        .expect("pinned Aemad vial water minimum quote");
+    let counts = fixture(
+        &[(COINS, minimum_quote as i32)],
+        &[(COINS, 1_000)],
+        Origin::Session,
+    );
     let plan = shop_plan(&request, &counts, &data, false);
 
     assert_eq!(plan.purchase_count, 1);
@@ -1675,9 +1683,13 @@ fn shop_reserve_caps_held_target_and_merges_optional_coin_target() {
         },
         SourceSet::PACK | SourceSet::BANK,
     );
-    let limited = fixture(&[(COINS, 2)], &[(COINS, 5)], Origin::Session);
+    let minimum_quote = minimum_shop_quote(Some(&data), &request.vendor, bronze_axe, false, 1)
+        .expect("pinned Bob bronze axe minimum quote");
+    let held = 2;
+    let banked = minimum_quote as i32 - held;
+    let limited = fixture(&[(COINS, held)], &[(COINS, banked)], Origin::Session);
     let plan = shop_plan(&request, &limited, &data, false);
-    assert_eq!(withdrawal_target(&plan, COINS), Some(7));
+    assert_eq!(withdrawal_target(&plan, COINS), Some(held + banked));
 
     let coin_target = need(
         COINS,
@@ -1695,7 +1707,7 @@ fn shop_reserve_caps_held_target_and_merges_optional_coin_target() {
         },
         SourceSet::PACK | SourceSet::BANK,
     );
-    let counts = fixture(&[(COINS, 2)], &[(COINS, 1_000)], Origin::Session);
+    let counts = fixture(&[(COINS, held)], &[(COINS, 1_000)], Origin::Session);
     let plan = shop_plan(&request, &counts, &data, false);
     assert!(reserve < 100);
     assert_eq!(withdrawal_target(&plan, COINS), Some(100));
@@ -1787,7 +1799,9 @@ fn shop_unknown_and_hint_coin_banks_request_verification() {
     );
 
     for origin in [Origin::Unknown, Origin::Hint] {
-        let enough_for_floor = fixture(&[(COINS, 1)], &[(COINS, 100)], origin);
+        let minimum_quote = minimum_shop_quote(Some(&data), &request.vendor, vial_water, false, 1)
+            .expect("pinned Aemad vial water minimum quote");
+        let enough_for_floor = fixture(&[(COINS, minimum_quote as i32)], &[(COINS, 100)], origin);
         let plan = shop_plan(&request, &enough_for_floor, &data, false);
         assert!(plan.scan, "{origin:?}");
         assert_eq!(plan.purchase_count, 1, "{origin:?}");
@@ -1834,10 +1848,14 @@ fn nearest_reserve_covers_every_vendor_then_clamps_to_held_plus_bank() {
         assert!(*quote <= i64::from(withdrawal_target(&plan, COINS).unwrap()));
     }
 
-    let capped = fixture(&[(COINS, 3)], &[(COINS, 5)], Origin::Session);
+    let minimum_quote = minimum_shop_quote(Some(&data), &request.vendor, iron_axe, false, 1)
+        .expect("minimum quote across eligible iron axe vendors");
+    let held = 3;
+    let banked = minimum_quote as i32 - held;
+    let capped = fixture(&[(COINS, held)], &[(COINS, banked)], Origin::Session);
     let plan = shop_plan(&request, &capped, &data, false);
     assert!(maximum > 8);
-    assert_eq!(withdrawal_target(&plan, COINS), Some(8));
+    assert_eq!(withdrawal_target(&plan, COINS), Some(held + banked));
 }
 
 #[test]

@@ -904,7 +904,6 @@ mod tests {
 
     fn complete_service_pick(
         ledger: &mut Option<Box<Ledger>>,
-        selection: usize,
         tick: u64,
         outcome: crate::native_bank::ServicePickOutcome,
     ) {
@@ -912,8 +911,7 @@ mod tests {
         let authority = ledger
             .outbox
             .iter()
-            .filter(|action| matches!(&action.effect, HostEffect::ServicePick(_)))
-            .nth(selection)
+            .find(|action| matches!(&action.effect, HostEffect::ServicePick(_)))
             .expect("service pick request exists")
             .authority();
         ledger.complete_service_pick(
@@ -961,7 +959,7 @@ mod tests {
         request.vendor = VendorChoice::Nearest;
         let mut run = start(request, purchase, snapshot, facts, ledger);
         assert!(poll_shop(&mut run, request, snapshot, facts, ledger, 2).is_pending());
-        complete_service_pick(ledger, 0, 2, routed_shop(0, tile(3201)));
+        complete_service_pick(ledger, 2, routed_shop(0, tile(3201)));
         assert!(poll_shop(&mut run, request, snapshot, facts, ledger, 3).is_pending());
         assert_eq!(last_walk_request(ledger).target, tile(3201));
         run
@@ -1002,14 +1000,16 @@ mod tests {
         });
     }
 
-    fn walk_count(ledger: &Option<Box<Ledger>>) -> usize {
-        ledger.as_ref().map_or(0, |ledger| {
-            ledger
-                .outbox
-                .iter()
-                .filter(|action| matches!(&action.effect, HostEffect::Walk(_)))
-                .count()
-        })
+    fn walk_request_id(ledger: &Option<Box<Ledger>>) -> u64 {
+        ledger
+            .as_ref()
+            .expect("walk request queued")
+            .outbox
+            .iter()
+            .find(|action| matches!(&action.effect, HostEffect::Walk(_)))
+            .expect("walk request queued")
+            .request_id
+            .get()
     }
 
     fn last_walk_request(ledger: &Option<Box<Ledger>>) -> &crate::native::WalkRequest {
@@ -1026,18 +1026,17 @@ mod tests {
             .expect("walk request queued")
     }
 
-    fn service_pick_eligible(ledger: &Option<Box<Ledger>>, selection: usize) -> Arc<[u16]> {
+    fn service_pick_eligible(ledger: &Option<Box<Ledger>>) -> Arc<[u16]> {
         Arc::clone(
             ledger
                 .as_ref()
                 .expect("service pick queued")
                 .outbox
                 .iter()
-                .filter_map(|action| match &action.effect {
+                .find_map(|action| match &action.effect {
                     HostEffect::ServicePick(pick) => Some(&pick.eligible),
                     _ => None,
                 })
-                .nth(selection)
                 .expect("service pick request exists"),
         )
     }
@@ -1048,6 +1047,7 @@ mod tests {
         let mut ledger = None;
         let mut run =
             start_nearest_first_walk(&mut request, purchase, &snapshot, &facts, &mut ledger);
+        let first_walk_id = walk_request_id(&ledger);
 
         finish_walk(
             &mut ledger,
@@ -1058,11 +1058,19 @@ mod tests {
             None,
         );
         assert!(poll_shop(&mut run, &request, &snapshot, &facts, &mut ledger, 4).is_pending());
-        assert_eq!(walk_count(&ledger), 1, "same-tick retries are deferred");
+        assert_eq!(
+            walk_request_id(&ledger),
+            first_walk_id,
+            "same-tick retries are deferred"
+        );
 
         snapshot.seed_local_player(crate::quester::families::tests::local_player(tile(3204)));
         assert!(poll_shop(&mut run, &request, &snapshot, &facts, &mut ledger, 5).is_pending());
-        assert_eq!(walk_count(&ledger), 2);
+        assert_ne!(
+            walk_request_id(&ledger),
+            first_walk_id,
+            "the later tick issues a new walk"
+        );
         assert_eq!(last_walk_request(&ledger).target, tile(3201));
         assert_eq!(last_walk_request(&ledger).required_after.tick, 5);
 
@@ -1076,9 +1084,9 @@ mod tests {
         );
         assert!(poll_shop(&mut run, &request, &snapshot, &facts, &mut ledger, 6).is_pending());
         assert!(poll_shop(&mut run, &request, &snapshot, &facts, &mut ledger, 7).is_pending());
-        assert_eq!(&*service_pick_eligible(&ledger, 1), &[1, 2]);
+        assert_eq!(&*service_pick_eligible(&ledger), &[1, 2]);
 
-        complete_service_pick(&mut ledger, 1, 7, routed_shop(1, tile(3209)));
+        complete_service_pick(&mut ledger, 7, routed_shop(1, tile(3209)));
         assert!(poll_shop(&mut run, &request, &snapshot, &facts, &mut ledger, 8).is_pending());
         assert_eq!(last_walk_request(&ledger).target, tile(3209));
         assert_eq!(last_walk_request(&ledger).required_after.tick, 8);
@@ -1105,6 +1113,7 @@ mod tests {
             let mut ledger = None;
             let mut run =
                 start_nearest_first_walk(&mut request, purchase, &snapshot, &facts, &mut ledger);
+            let first_walk_id = walk_request_id(&ledger);
             finish_walk(
                 &mut ledger,
                 4,
@@ -1115,6 +1124,9 @@ mod tests {
             );
             assert!(poll_shop(&mut run, &request, &snapshot, &facts, &mut ledger, 4).is_pending());
             assert!(poll_shop(&mut run, &request, &snapshot, &facts, &mut ledger, 5).is_pending());
+            let retry_walk_id = walk_request_id(&ledger);
+            assert_ne!(retry_walk_id, first_walk_id);
+            assert_eq!(last_walk_request(&ledger).required_after.tick, 5);
             finish_walk(
                 &mut ledger,
                 6,
@@ -1127,7 +1139,11 @@ mod tests {
                 poll_shop(&mut run, &request, &snapshot, &facts, &mut ledger, 6),
                 Poll::Ready(Err(ActionError::Blocked(_)))
             ));
-            assert_eq!(walk_count(&ledger), 2, "terminal evidence is not retried");
+            assert_eq!(
+                walk_request_id(&ledger),
+                retry_walk_id,
+                "terminal evidence is not retried"
+            );
         }
     }
 
@@ -1137,10 +1153,11 @@ mod tests {
         let mut ledger = None;
         let mut run =
             start_nearest_first_walk(&mut request, purchase, &snapshot, &facts, &mut ledger);
+        let mut walk_ids = vec![walk_request_id(&ledger)];
 
-        for (first_failure, retry_failure, selection, keeper, access, eligible) in [
-            (4, 6, 1, 1, 3209, &[1_u16, 2][..]),
-            (9, 11, 2, 2, 3219, &[2_u16][..]),
+        for (first_failure, retry_failure, keeper, access, eligible) in [
+            (4, 6, 1, 3209, &[1_u16, 2][..]),
+            (9, 11, 2, 3219, &[2_u16][..]),
         ] {
             finish_walk(
                 &mut ledger,
@@ -1172,6 +1189,9 @@ mod tests {
                 last_walk_request(&ledger).required_after.tick,
                 first_failure + 1
             );
+            let retry_id = walk_request_id(&ledger);
+            assert!(retry_id > *walk_ids.last().unwrap());
+            walk_ids.push(retry_id);
             finish_walk(
                 &mut ledger,
                 retry_failure,
@@ -1198,10 +1218,9 @@ mod tests {
                 retry_failure + 1
             )
             .is_pending());
-            assert_eq!(&*service_pick_eligible(&ledger, selection), eligible);
+            assert_eq!(&*service_pick_eligible(&ledger), eligible);
             complete_service_pick(
                 &mut ledger,
-                selection,
                 retry_failure + 1,
                 routed_shop(keeper, tile(access)),
             );
@@ -1214,6 +1233,13 @@ mod tests {
                 retry_failure + 2
             )
             .is_pending());
+            let fallback_id = walk_request_id(&ledger);
+            assert!(fallback_id > *walk_ids.last().unwrap());
+            assert_eq!(
+                last_walk_request(&ledger).required_after.tick,
+                retry_failure + 2
+            );
+            walk_ids.push(fallback_id);
         }
 
         finish_walk(
@@ -1234,7 +1260,12 @@ mod tests {
         assert!(block
             .message
             .contains("last shop access walk: last eligible shop route detail"));
-        assert_eq!(walk_count(&ledger), 5, "two shared retries cover all shops");
+        assert_eq!(walk_ids.len(), 5, "two shared retries cover all shops");
+        assert_eq!(
+            walk_request_id(&ledger),
+            *walk_ids.last().unwrap(),
+            "the terminal block issues no walk"
+        );
     }
 
     #[test]
@@ -1383,7 +1414,6 @@ mod tests {
         let mut picks = vec![Arc::clone(&first.eligible)];
         complete_service_pick(
             &mut ledger,
-            0,
             2,
             crate::native_bank::ServicePickOutcome::NoPath { unresolved: None },
         );
@@ -1408,7 +1438,6 @@ mod tests {
         );
         complete_service_pick(
             &mut ledger,
-            0,
             4,
             crate::native_bank::ServicePickOutcome::Routed {
                 index: 1,

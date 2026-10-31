@@ -4417,34 +4417,6 @@ impl GatherSlot {
             if self.status_claims_bank_close(status) {
                 self.witness.bank_closed_observed = true;
             }
-            if event == "bank selected" {
-                self.witness.bank_selected = true;
-                if self.case == LiveCase::PowerToBank {
-                    let completed = self
-                        .witness
-                        .confirmed_drops
-                        .saturating_sub(self.witness.power_to_bank_edit_drop_baseline)
-                        >= self.witness.power_to_bank_edit_slots;
-                    if !self.witness.power_to_bank_edit_requested
-                        || !self.witness.power_to_bank_applied
-                        || !completed
-                    {
-                        return Err(format!(
-                            "bank selection preempted the boundary-applied Power to Bank batch: {:?}",
-                            self.witness
-                        ));
-                    }
-                }
-            }
-            if event == "withdrawal confirmed" {
-                self.witness.bank_withdrawal_confirmed = true;
-            }
-            if self.case == LiveCase::FishBait
-                && event == "withdrawal confirmed"
-                && integer_field(status, "bait") == Some(3)
-            {
-                self.witness.bait_exact = true;
-            }
             if self.case == LiveCase::WoodcuttingBankUnwieldable && event == "wielding tool" {
                 return Err("unwieldable rune axe wear action was started".into());
             }
