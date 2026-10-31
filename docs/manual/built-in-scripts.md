@@ -97,7 +97,7 @@ next quest. Two stops need your action:
 
 | Reason | What to do |
 | --- | --- |
-| `quest list was not observed within 30 seconds: log out and log in normally outside the tutorial (finish it if needed), then Stop/Start Quester` | Do what the message says. |
+| `quest list was not observed within 30 seconds: log out and log in normally outside the tutorial (finish it if needed), then start the Quester again` | Do what the message says. |
 | `cancelled by user input` | You moved the bot while the Quester walked or acted, so it stopped. Click **Start**; [Pause, resume and stop](running-scripts.md#pause-resume-and-stop) explains. |
 
 The Log window shows the run in more detail. When a guide starts, the Log names

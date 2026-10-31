@@ -1244,7 +1244,7 @@ mod tests {
         let status = NativeStatus::blocked(
             CompiledCardId::QUESTER,
             "queue-blocked",
-            "quest list unavailable; log in normally, then Stop/Start Quester",
+            "quest list unavailable; log in normally, then start the Quester again",
         );
         let text = render(
             ScriptPane::new(ScriptRunState::Running, None, &[], &[], false, false)
@@ -1254,7 +1254,7 @@ mod tests {
         );
         assert!(text.contains("script: blocked"), "{text:?}");
         assert!(text.contains("quest list unavailable"), "{text:?}");
-        assert!(text.contains("Stop/Start Quester"), "{text:?}");
+        assert!(text.contains("start the Quester again"), "{text:?}");
         assert!(!text.contains("script: running"), "{text:?}");
     }
 

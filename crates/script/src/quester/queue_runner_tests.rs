@@ -114,7 +114,7 @@ fn missing_login_quest_observation_times_out_with_recovery_instructions() {
     assert_eq!(output.0.last().unwrap().phase, NativePhase::Blocked);
     assert!(failure.message.contains("quest"));
     assert!(failure.message.contains("log in"));
-    assert!(failure.message.contains("Stop"));
+    assert!(failure.message.contains("start the Quester again"));
     assert!(ledger
         .as_ref()
         .is_none_or(|ledger| ledger.outbox.is_empty()));
@@ -426,7 +426,7 @@ fn a_parked_run_is_not_sent_to_script_prefs_but_a_requirement_block_is() {
     );
     let parked = queued.blocked().message;
     assert!(parked.starts_with("no route: blocked by danger zones: White Wolf Mountain; "));
-    assert!(parked.contains("Stop/Start Quester"));
+    assert!(parked.contains("start the Quester again"));
     assert!(
         !parked.contains("Script prefs"),
         "a refused walk can't be fixed in Script prefs: {parked}"

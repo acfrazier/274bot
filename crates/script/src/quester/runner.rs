@@ -4006,7 +4006,7 @@ impl QueuedQuester {
             return ScriptFailure {
                 code: Arc::from("quest-status-unobserved"),
                 message: Arc::from(
-                    "quest list was not observed within 30 seconds: log out and log in normally outside the tutorial (finish it if needed), then Stop/Start Quester",
+                    "quest list was not observed within 30 seconds: log out and log in normally outside the tutorial (finish it if needed), then start the Quester again",
                 ),
             };
         }
@@ -4019,7 +4019,7 @@ impl QueuedQuester {
             return ScriptFailure {
                 code: Arc::from("empty-queue"),
                 message: Arc::from(
-                    "no quests selected: review Quests and Skip in Script prefs; empty Quests selects all released quests, then Stop/Start Quester",
+                    "no quests selected: review Quests and Skip in Script prefs; empty Quests selects all released quests, then start the Quester again",
                 ),
             };
         }
@@ -4033,9 +4033,9 @@ impl QueuedQuester {
         // A requirement block can be changed in Script prefs; a parked run
         // (a refused walk, a failed action) can't, so don't send the user there.
         let recovery = if status == QueueStatus::Blocked {
-            "review Quests/Skip and requirements in Script prefs, resolve the condition, then Stop/Start Quester"
+            "review Quests/Skip and requirements in Script prefs, resolve the condition, then start the Quester again"
         } else {
-            "resolve the condition, then Stop/Start Quester"
+            "resolve the condition, then start the Quester again"
         };
         ScriptFailure {
             code: Arc::from("queue-blocked"),
