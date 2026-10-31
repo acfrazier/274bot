@@ -1023,8 +1023,7 @@ fn evaluate_walk(
                 .rev()
                 .find(|frame| frame.tick < second.tick)
                 .map_or(case.expected_hp(), |frame| frame.hp);
-            let second_settled_hp =
-                settled_poison_mark_hp(frames, second, before_second_hp);
+            let second_settled_hp = settled_poison_mark_hp(frames, second, before_second_hp);
             if second.tick != first.tick.saturating_add(30)
                 || !matches!(second.poison, PoisonState::Poisoned { per_tick: 6, .. })
                 || second_settled_hp.is_some_and(|hp| hp != 3)
@@ -1169,8 +1168,7 @@ fn evaluate_walk(
                 .rev()
                 .find(|frame| frame.tick < second.tick)
                 .map_or(case.expected_hp(), |frame| frame.hp);
-            let second_settled_hp =
-                settled_poison_mark_hp(frames, second, before_second_hp);
+            let second_settled_hp = settled_poison_mark_hp(frames, second, before_second_hp);
             if second.tick != first.tick.saturating_add(30)
                 || !matches!(second.poison, PoisonState::Poisoned { per_tick: 6, .. })
                 || second_settled_hp.is_some_and(|hp| hp != 4)
@@ -2698,7 +2696,10 @@ mod oracle_tests {
         let (_, eats) = poison_line_receipt();
         assert_eq!(frames.len(), 4, "one frame is kept per PLAYER_INFO tick");
         assert_eq!(frames[1].tick, 130);
-        assert_eq!(frames[1].hp, 9, "the settled same-tick HP must replace stale HP");
+        assert_eq!(
+            frames[1].hp, 9,
+            "the settled same-tick HP must replace stale HP"
+        );
         assert_eq!(
             evaluate_walk(EatCase::PoisonLine, 69, &frames, &eats),
             OracleDecision::Pass
@@ -2726,7 +2727,10 @@ mod oracle_tests {
     fn poison_line_oracle_rejects_wrong_settled_hitmark_hp() {
         let frames = poison_line_sampled_receipt(8);
         let (_, eats) = poison_line_receipt();
-        assert_eq!(frames[1].hp, 8, "the final same-tick sample is authoritative");
+        assert_eq!(
+            frames[1].hp, 8,
+            "the final same-tick sample is authoritative"
+        );
         assert!(matches!(
             evaluate_walk(EatCase::PoisonLine, 69, &frames, &eats),
             OracleDecision::Fail(reason) if reason.contains("first poison mark left HP 8")
