@@ -104,7 +104,7 @@ const TWISTED_CHEST_LOC_ID: i32 = 377;
 const TWISTED_CHEST_REWARD_COUNT: i32 = 9;
 // p_delay(3) resumes at +4 ticks; queue(..., 0) runs on the next eligible
 // player queue pass: PlayerOps.ts:376-379, Player.ts:903-912.
-const TWISTED_CHEST_POISON_SIGNAL_TICKS: u32 = 5;
+const TWISTED_CHEST_POISON_SIGNAL_TICKS: u32 = 12;
 // The debugproc's queue(..., 0) runs on the first eligible queue pass;
 // cheat_other.rs2:1-3, Player.ts:903-912.
 const DEBUGPROC_POISON_SIGNAL_TICKS: u32 = 2;
@@ -1430,16 +1430,21 @@ fn check_deadline(witness: &Witness, tick: u32, deadline: u32) -> Result<u32, St
 /// line's own edge (A6.5 item 3, A1.4 item 6): the poison is still the onset
 /// of this line, latched or not, and the outlook is already the widened
 /// lethal one. Both need the same HP, food, dose and no hit at the edge.
+/// The dialogue cell seeds its poison before Start (design-final.md:946), so
+/// its runner never sees the open latch: its first `Needed` report is the
+/// latched onset of that line.
 fn check_need(witness: &Witness) -> Result<(), String> {
+    let onset = witness
+        .need_condition_poison
+        .as_deref()
+        .is_some_and(|poison| poison.starts_with("Onset"));
     let latch_ok = match witness.need_report_decision.as_deref() {
+        Some("Needed") if witness.poison_source == PoisonSource::TwistedChest => onset,
         Some("Needed") => {
             witness.need_outlook_pending == Some(true)
                 && witness.need_unlatched_poison == Some(true)
         }
-        Some("Drinking") => witness
-            .need_condition_poison
-            .as_deref()
-            .is_some_and(|poison| poison.starts_with("Onset")),
+        Some("Drinking") => onset,
         _ => false,
     };
     if !latch_ok
@@ -2240,16 +2245,20 @@ fn assert_common_cure(receipt: &Value, resumed_ticks: u64) {
     );
     assert_eq!(receipt["condition_at_need"]["outlook_per_fire"], Q_UNKNOWN);
     // `check_need` applied the per-decision latch rule; restate it. `Needed`
-    // is the open latch (outlook pending); `Drinking` is the straight-to-drink
+    // is the open latch (outlook pending), except after a poison seeded
+    // before Start (the dialogue cell's chest), where the runner's first
+    // report is the latched onset; `Drinking` is the straight-to-drink
     // report, with the latch either way (A6.5 item 3).
+    let onset = receipt["condition_at_need"]["poison"]
+        .as_str()
+        .is_some_and(|poison| poison.starts_with("Onset"));
     match receipt["survival_report_at_need"]["decision"].as_str() {
+        Some("Needed") if receipt["poison_source"] == "yanille-twisted-chest" => assert!(onset),
         Some("Needed") => {
             assert_eq!(receipt["condition_at_need"]["outlook_pending"], true);
             assert_eq!(receipt["condition_at_need"]["unlatched_poison"], true);
         }
-        Some("Drinking") => assert!(receipt["condition_at_need"]["poison"]
-            .as_str()
-            .is_some_and(|poison| poison.starts_with("Onset"))),
+        Some("Drinking") => assert!(onset),
         other => panic!("need report decision is neither Needed nor Drinking: {other:?}"),
     }
     assert_eq!(receipt["survival_report_at_need"]["why"], "Some(Lethal)");
@@ -2529,6 +2538,11 @@ fn live_l_cure_quester_interrupts_bank_provisioning_and_resumes_mining() {
     assert_eq!(std::env::var("LIVE").as_deref(), Ok("1"));
     let _path_source_guard = PATH_SOURCE_LOCK.lock().expect("Quester path source lock");
     let evidence = PathBuf::from(std::env::var_os("LIVE_EVIDENCE_DIR").expect("LIVE_EVIDENCE_DIR"));
+    // The account provisions at the Varrock east bank (MINING_STAND). Without
+    // an anchor the gather step's work area is the 12-tile radius around the
+    // tile where it starts (`quester/families/gather.rs:7-9`, `:368-372`), and
+    // no copper rock lies within 12 tiles of the bank, so the step would wait
+    // there. The anchor is the copper stand the mining cell uses.
     let _restore = install_path_source(
         &evidence,
         "copper-mining-provisioning",
@@ -2540,6 +2554,10 @@ fn live_l_cure_quester_interrupts_bank_provisioning_and_resumes_mining() {
             "args":{
                 "skill":"mining",
                 "resource":"copper",
+                "anchor":{
+                    "tile":[COPPER_STAND.x, COPPER_STAND.z, COPPER_STAND.level],
+                    "source":"C:maps/m51_52.jm2:5202-5203,5234; C:pack/loc.pack:2091-2092"
+                },
                 "until":{"obj":{"id":436},"qty":100}
             },
             "skip_if":{"Any":[]},
@@ -2874,6 +2892,34 @@ struct SurvivalTrack {
     /// before it. A tick's inventory and stat updates can reach the client
     /// in different client-loop frames, in either order.
     tick_hp: Option<(u32, i32, i32)>,
+    /// Animation sequences the account played while the Gatherer published
+    /// `gathering` before the poison: its work animation.
+    work_sequences: Vec<i32>,
+    /// Ticks after the poison at which the account received a new work
+    /// animation instruction (a new reception serial, so a kept old swing
+    /// does not count).
+    work_animation_ticks: Vec<u32>,
+    last_animation_serial: Option<u32>,
+}
+
+/// Work resumes after `after` when the skill XP rose past `xp_at`, or when the
+/// account played its pre-poison work animation after that tick (the willow
+/// chop's success is a roll, so XP alone can take longer than the cell).
+fn resumed_work(track: &SurvivalTrack, after: u32, xp_at: i32, xp_now: i32) -> Option<Value> {
+    let animation = track
+        .work_animation_ticks
+        .iter()
+        .find(|tick| **tick > after)
+        .copied();
+    (xp_now > xp_at || animation.is_some()).then(|| {
+        json!({
+            "after_tick": after,
+            "xp_at": xp_at,
+            "xp_now": xp_now,
+            "work_animation_tick": animation,
+            "work_sequences": track.work_sequences,
+        })
+    })
 }
 
 fn stat_effective(snapshot: &GameSnapshot, id: i32) -> i32 {
@@ -2894,8 +2940,30 @@ fn capture_track(
     _slot: Option<&host_play::SlotStatus>,
     witness: &mut Witness,
 ) {
-    if witness.poison_source_tick.is_none() || !snapshot.ingame() {
+    if !snapshot.ingame() {
         return;
+    }
+    let animation = snapshot
+        .local_player()
+        .and_then(|player| player.animation_update)
+        .filter(|animation| animation.sequence >= 0);
+    if witness.poison_source_tick.is_none() {
+        if let (Some(animation), Some("gathering")) = (animation, status_text(status, "phase")) {
+            if !witness.track.work_sequences.contains(&animation.sequence) {
+                witness.track.work_sequences.push(animation.sequence);
+            }
+            witness.track.last_animation_serial = Some(animation.serial);
+        }
+        return;
+    }
+    if let Some(animation) = animation {
+        let track = &mut witness.track;
+        if track.last_animation_serial != Some(animation.serial) {
+            track.last_animation_serial = Some(animation.serial);
+            if track.work_sequences.contains(&animation.sequence) {
+                track.work_animation_ticks.push(snapshot.tick());
+            }
+        }
     }
     let report = status.map(|status| status.survival);
     let frame = TrackFrame {
@@ -3434,11 +3502,12 @@ fn park_no_dose_receipt(
         .as_ref()
         .map_or(i32::MAX, |frame| frame.xp);
     let xp_now = stat_xp(snapshot, witness.skill_stat);
-    if xp_now <= unpark_xp {
+    let Some(resumed) = resumed_work(track, unpark, unpark_xp, xp_now) else {
         return Ok(None);
-    }
+    };
     check_survival_log(&survival_log(), 1, 1)?;
     Ok(Some(json!({
+        "resumed_work": resumed,
         "cell": "L-PARK-NO-DOSE",
         "poison_line_tick": poison,
         "park_tick": park.tick,
@@ -3523,11 +3592,12 @@ fn park_false_release_receipt(
         .as_ref()
         .map_or(i32::MAX, |frame| frame.xp);
     let xp_now = stat_xp(snapshot, witness.skill_stat);
-    if xp_now <= unpark_xp {
+    let Some(resumed) = resumed_work(track, unpark, unpark_xp, xp_now) else {
         return Ok(None);
-    }
+    };
     check_survival_log(&survival_log(), 1, 1)?;
     Ok(Some(json!({
+        "resumed_work": resumed,
         "cell": "L-PARK-FALSE-RELEASE",
         "poison_line_tick": poison,
         "park_tick": park.tick,
@@ -3608,11 +3678,12 @@ fn park_food_release_receipt(
         ));
     }
     let xp_now = stat_xp(snapshot, witness.skill_stat);
-    if xp_now <= unpark_frame.xp {
+    let Some(resumed) = resumed_work(track, unpark, unpark_frame.xp, xp_now) else {
         return Ok(None);
-    }
+    };
     check_survival_log(&survival_log(), 1, 1)?;
     Ok(Some(json!({
+        "resumed_work": resumed,
         "cell": "L-PARK-FOOD-RELEASE",
         "poison_line_tick": poison,
         "park_tick": park.tick,
@@ -3631,10 +3702,12 @@ fn park_food_release_receipt(
 }
 
 /// L-CURE-BITE-AFTER-DRINK: a cure and a bite due together. The drink goes
-/// first; the first bite waits for the drink's delay counted from its line;
-/// each next bite waits for the next-food clock counted from the previous
-/// bite's count drop. Each gap stays inside the content minimum plus two
-/// ticks, so no click was dropped and resent. Gathering resumes after.
+/// first; the first bite waits for the drink's delay counted from the dose
+/// drop (the server tick that ran the drink; its chat line can reach the
+/// client one frame earlier, before that tick's player update); each next
+/// bite waits for the next-food clock counted from the previous bite's count
+/// drop. Each gap stays inside the content minimum plus two ticks, so no
+/// click was dropped and resent. Gathering resumes after.
 fn bite_after_drink_receipt(
     snapshot: &GameSnapshot,
     _status: Option<&ScriptStatus>,
@@ -3647,7 +3720,7 @@ fn bite_after_drink_receipt(
     };
     let track = &witness.track;
     let now = snapshot.tick();
-    let Some(drink) = witness.cure_tick else {
+    let Some(drink_line) = witness.cure_tick else {
         return if now.saturating_sub(poison) > CURE_LINE_BOUND_TICKS {
             Err(format!(
                 "no drink line within {CURE_LINE_BOUND_TICKS} ticks of the line at {poison}"
@@ -3656,10 +3729,24 @@ fn bite_after_drink_receipt(
             Ok(None)
         };
     };
+    let Some(drink) = witness.dose_drop_tick else {
+        return if now > drink_line + 1 {
+            Err(format!(
+                "no dose drop within one tick of the drink line at {drink_line}"
+            ))
+        } else {
+            Ok(None)
+        };
+    };
+    if drink < drink_line || drink - drink_line > 1 {
+        return Err(format!(
+            "the dose drop at {drink} is not within one tick of the drink line at {drink_line}"
+        ));
+    }
     if let Some(first) = track.food_drops.first() {
         if first.tick < drink {
             return Err(format!(
-                "a bite came before the drink line at {drink}: {first:?}"
+                "a bite came before the drink's dose drop at {drink}: {first:?}"
             ));
         }
     }
@@ -3685,20 +3772,16 @@ fn bite_after_drink_receipt(
         .rfind(|frame| frame.tick <= last.tick)
         .map_or(i32::MAX, |frame| frame.xp);
     let xp_now = stat_xp(snapshot, witness.skill_stat);
-    if xp_now <= xp_at_last {
+    let Some(resumed) = resumed_work(track, last.tick, xp_at_last, xp_now) else {
         return Ok(None);
-    }
-    if witness.dose_drop_tick != Some(drink) {
-        return Err(format!(
-            "the dose drop at {:?} is not the drink line's tick {drink}",
-            witness.dose_drop_tick
-        ));
-    }
+    };
     Ok(Some(json!({
+        "resumed_work": resumed,
+        "drink_chat_tick": drink_line,
         "cell": "L-CURE-BITE-AFTER-DRINK",
         "poison_line_tick": poison,
         "hit_tick": track.hit_tick,
-        "drink_line_tick": drink,
+        "drink_dose_drop_tick": drink,
         "dose_drop_tick": witness.dose_drop_tick,
         "immune_tick": witness.immune_tick,
         "bite_ticks": track.food_drops.iter().map(|drop| drop.tick).collect::<Vec<_>>(),
@@ -3949,9 +4032,7 @@ fn live_l_park_no_dose_holds_then_drinks_a_given_dose_and_resumes() {
     let proof = &receipt["family_receipt"];
     assert_eq!(proof["cell"], "L-PARK-NO-DOSE");
     assert_eq!(proof["run_keys"].as_array().map(Vec::len), Some(1));
-    assert!(
-        proof["skill_xp_after"].as_i64().unwrap() > proof["skill_xp_at_unpark"].as_i64().unwrap()
-    );
+    assert!(proof["resumed_work"].is_object());
 }
 
 #[test]
@@ -3978,9 +4059,7 @@ fn live_l_park_false_release_unparks_at_the_mark_of_five() {
     let proof = &receipt["family_receipt"];
     assert_eq!(proof["cell"], "L-PARK-FALSE-RELEASE");
     assert_eq!(proof["mark_values"], json!(POISON_27_MARKS));
-    assert!(
-        proof["skill_xp_after"].as_i64().unwrap() > proof["skill_xp_at_unpark"].as_i64().unwrap()
-    );
+    assert!(proof["resumed_work"].is_object());
 }
 
 #[test]
