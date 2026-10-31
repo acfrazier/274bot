@@ -4,6 +4,7 @@ use std::io::{Read, Write};
 use std::num::NonZeroUsize;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::mpsc::Receiver;
+use std::sync::{Arc, Mutex};
 #[cfg(any(feature = "render-diagnostics", feature = "render-test-hooks"))]
 use std::sync::Weak;
 use std::time::Duration;

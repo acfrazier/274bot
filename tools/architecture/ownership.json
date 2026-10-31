@@ -7685,6 +7685,10 @@
     {
       "path": "vendor/fr-client-rust/crates/client/src/render/backend/gpu_compact_vertex_tests.rs",
       "owner": "T4"
+    },
+    {
+      "path": "crates/panel/tests/t44_focus_wake.rs",
+      "owner": "T4"
     }
   ]
 }

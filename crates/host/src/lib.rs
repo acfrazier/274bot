@@ -772,6 +772,7 @@ impl Host {
                     .head
                     .as_ref()
                     .is_some_and(|head| head.has_grant(paced_at)));
+        let mut frame = None;
         if paint {
             let t_r = std::time::Instant::now();
             if slot.head.is_none() {
