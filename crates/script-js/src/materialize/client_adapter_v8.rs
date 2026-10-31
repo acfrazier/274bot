@@ -110,8 +110,10 @@ pub(super) fn read<'s>(
         "modalButtons" => modal_buttons(scope, facts, arg0),
         "buttonByText" => button_by_text(scope, facts, arg0, arg1),
         "targetButtonByBase" => target_button_by_base(scope, facts, arg0, arg1),
-        "selectButtonByVarp" => select_button_by_varp(scope, facts, arg0, arg1, arg2),
-        "selectButtonLabelsByVarp" => select_button_labels_by_varp(scope, facts, arg0, arg1),
+        "selectButtonByVarp" => select_button_by_varp(scope, snapshot, facts, arg0, arg1, arg2),
+        "selectButtonLabelsByVarp" => {
+            select_button_labels_by_varp(scope, snapshot, facts, arg0, arg1)
+        }
         "mainModalButtonNearText" => main_modal_button_near_text(scope, snapshot, facts, arg0),
         "mainSkillMultiItems" => main_skill_multi_items(scope, snapshot),
         "questStatuses" => quest_statuses(scope, snapshot, facts),
@@ -1156,8 +1158,38 @@ fn target_button_by_base<'s>(
     Ok(v8::Integer::new(scope, -1).into())
 }
 
+/// The combat tab's posted style rows (`mode`, `label`, `component_id`) when
+/// `root` is the combat tab, `varp` is its mode varp and its component tree is
+/// not in the posted widget facts. The widget facts walk only the shown side
+/// tab (`api` `widget_roots`), but upstream's reader reads the loaded combat
+/// tab whichever tab is shown. Rust posts these rows from the combat tab's own
+/// tree (`host-play` `script_snapshot.rs`, `combat_style_labels`).
+fn combat_tab_style_rows<'s>(
+    scope: &mut v8::HandleScope<'s>,
+    snapshot: v8::Local<'s, v8::Value>,
+    root: i32,
+    varp: i32,
+    posted_rows: usize,
+) -> Result<Option<v8::Local<'s, v8::Array>>, String> {
+    if posted_rows > 0
+        || varp != COMBAT_MODE_VARP
+        || root < 0
+        || side_tab_interface_value(scope, snapshot, COMBAT_SIDE_TAB)? != root
+    {
+        return Ok(None);
+    }
+    let rows = property(scope, snapshot, "combat_styles")?;
+    Ok(array(rows))
+}
+
+/// Content `varp` 43 (`com_mode`) selects the combat style, and side tab 0 is
+/// the combat tab.
+const COMBAT_MODE_VARP: i32 = 43;
+const COMBAT_SIDE_TAB: i32 = 0;
+
 fn select_button_by_varp<'s>(
     scope: &mut v8::HandleScope<'s>,
+    snapshot: v8::Local<'s, v8::Value>,
     facts: v8::Local<'s, v8::Value>,
     root: v8::Local<'s, v8::Value>,
     varp: v8::Local<'s, v8::Value>,
@@ -1166,14 +1198,26 @@ fn select_button_by_varp<'s>(
     let root = js_i32(scope, root)?.unwrap_or(-1);
     let varp = js_i32(scope, varp)?.unwrap_or(i32::MIN);
     let value = js_i32(scope, value)?.unwrap_or(i32::MIN);
-    for row in widget_rows_under(scope, facts, root)? {
-        if object_i32(scope, row, "button_type")? == Some(5)
-            && object_i32(scope, row, "script_opcode")? == Some(5)
-            && object_i32(scope, row, "script_varp")? == Some(varp)
-            && object_i32(scope, row, "script_value")? == Some(value)
+    let rows = widget_rows_under(scope, facts, root)?;
+    for row in &rows {
+        if object_i32(scope, *row, "button_type")? == Some(5)
+            && object_i32(scope, *row, "script_opcode")? == Some(5)
+            && object_i32(scope, *row, "script_varp")? == Some(varp)
+            && object_i32(scope, *row, "script_value")? == Some(value)
         {
-            let component_id = object_i32(scope, row, "component_id")?.unwrap_or(-1);
+            let component_id = object_i32(scope, *row, "component_id")?.unwrap_or(-1);
             return Ok(v8::Integer::new(scope, component_id).into());
+        }
+    }
+    if let Some(styles) = combat_tab_style_rows(scope, snapshot, root, varp, rows.len())? {
+        for index in 0..styles.length() {
+            let style = styles
+                .get_index(scope, index)
+                .ok_or_else(|| PENDING.to_string())?;
+            if object_i32(scope, style, "mode")? == Some(value) {
+                let component_id = object_i32(scope, style, "component_id")?.unwrap_or(-1);
+                return Ok(v8::Integer::new(scope, component_id).into());
+            }
         }
     }
     Ok(v8::Integer::new(scope, -1).into())
@@ -1181,6 +1225,7 @@ fn select_button_by_varp<'s>(
 
 fn select_button_labels_by_varp<'s>(
     scope: &mut v8::HandleScope<'s>,
+    snapshot: v8::Local<'s, v8::Value>,
     facts: v8::Local<'s, v8::Value>,
     root: v8::Local<'s, v8::Value>,
     varp: v8::Local<'s, v8::Value>,
@@ -1188,6 +1233,28 @@ fn select_button_labels_by_varp<'s>(
     let root = js_i32(scope, root)?.unwrap_or(-1);
     let varp = js_i32(scope, varp)?.unwrap_or(i32::MIN);
     let rows = widget_rows_under(scope, facts, root)?;
+    if let Some(styles) = combat_tab_style_rows(scope, snapshot, root, varp, rows.len())? {
+        let output = v8::Array::new(scope, 0);
+        let mut out_index = 0;
+        for index in 0..styles.length() {
+            let style = styles
+                .get_index(scope, index)
+                .ok_or_else(|| PENDING.to_string())?;
+            let mode = object_i32(scope, style, "mode")?.unwrap_or(0);
+            let label = property(scope, style, "label")?;
+            if !label.is_string() {
+                continue;
+            }
+            let item = v8::Object::new(scope);
+            set_i32(scope, item, "mode", mode);
+            set_key(scope, item, "label", label);
+            output
+                .set_index(scope, out_index, item.into())
+                .ok_or_else(|| PENDING.to_string())?;
+            out_index += 1;
+        }
+        return Ok(output.into());
+    }
     let mut buttons = Vec::new();
     for row in &rows {
         if object_i32(scope, *row, "button_type")? == Some(5)

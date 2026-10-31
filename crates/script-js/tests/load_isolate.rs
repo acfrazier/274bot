@@ -8793,6 +8793,62 @@ export default class T extends LoopingBot {
     iso.join();
 }
 
+/// The posted widget facts walk only the shown side tab. With the inventory
+/// shown, the combat tab's styles still come from the rows Rust posts from the
+/// combat tab's own tree (JiveKQ found no styles on the wave-2 head and left
+/// the Kalphite lair three times without attacking).
+#[test]
+fn combat_styles_and_set_combat_mode_read_the_combat_tab_while_another_tab_is_shown() {
+    let src = r#"
+import { Game } from '../../api/game/Game.js';
+export default class T extends LoopingBot {
+    loop() {
+        globalThis.__styles = Game.combatStyles();
+        globalThis.__set = Game.setCombatMode(1);
+        globalThis.__missing = Game.setCombatMode(3);
+    }
+}
+"#;
+    let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![]).unwrap();
+    let mut snap = base_snapshot();
+    let styles = [
+        script_js::wire::CombatStyleInput {
+            mode: 0,
+            label: "Accurate",
+            component_id: 76,
+        },
+        script_js::wire::CombatStyleInput {
+            mode: 1,
+            label: "Aggressive",
+            component_id: 77,
+        },
+    ];
+    snap.combat_styles = &styles;
+    let tabs = [
+        script_js::wire::SideTabIfaceInput { index: 0, id: 900 },
+        script_js::wire::SideTabIfaceInput { index: 3, id: 3213 },
+    ];
+    snap.side_tab_ifaces = &tabs;
+    // The inventory tab is shown: no posted widget sits under the combat root.
+    let facts = client_adapter_facts(None, -1, -1, &[]);
+    post_snapshot_with_client_adapter(&iso, &snap, facts);
+    iso.on_game_tick(1);
+    assert_eq!(
+        iso.probe("__styles").unwrap(),
+        serde_json::json!([
+            { "mode": 0, "label": "Accurate" },
+            { "mode": 1, "label": "Aggressive" }
+        ])
+    );
+    assert_eq!(iso.probe("__set").unwrap(), serde_json::json!(true));
+    assert_eq!(iso.probe("__missing").unwrap(), serde_json::json!(false));
+    assert_eq!(
+        iso.drain_interacts(),
+        vec![script::shim::InteractReq::IfButton { component_id: 77 }]
+    );
+    iso.join();
+}
+
 #[test]
 fn has_combat_style_strength_requires_current_mode_not_just_a_posted_row() {
     let src = r#"
