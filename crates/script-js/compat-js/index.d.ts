@@ -1267,6 +1267,9 @@ export class AbstractBot {
     get delegated(): boolean;
     requestFinish(reason: string): void;
     bindFinish(sink: (reason: string) => void): void;
+    bindLog(sink: unknown): void;
+    disposeSubscriptions(): void;
+    subscriptions: Array<() => boolean>;
 }
 export class LoopingBot extends AbstractBot {
     loop(): number | void | Promise<number | void>;
@@ -1295,8 +1298,9 @@ export abstract class LeafTask {
     abstract execute(): void | Promise<void>;
 }
 export type TreeNode = BranchTask | LeafTask;
-export class TreeBot extends LoopingBot {
-    root(): TreeNode;
+export abstract class TreeBot extends LoopingBot {
+    lastSceneWaitLogAt: number;
+    abstract root(): TreeNode;
 }
 
 }
@@ -2562,6 +2566,9 @@ export const Execution: {
     delayUntilTicks(cond: () => boolean, maxTicks: number): Promise<boolean>;
 };
 export function parkMachine(handle: number): Promise<______shim__kernel_js.MachineResult>;
+export class ScriptAborted extends Error {
+    constructor();
+}
 
 }
 
@@ -4921,6 +4928,7 @@ declare module '*runtime/BotHost.js' {
 export const BotHost: {
     tickCount: number;
     addTickListener(cb: () => void): () => boolean;
+    addFrameListener(cb: () => void): () => boolean;
 };
 export class BotHostImpl {
     constructor();
@@ -5071,6 +5079,7 @@ export class ScriptActivity {
 declare module '*runtime/ScriptRegistry.js' {
 import { AbstractBot } from "*api/bot/Bot.js";
 import { SettingsSchema } from "*runtime/Settings.js";
+import { BotManifestInput } from "*runtime/defineBot.js";
 export interface ScriptMeta {
     name: string;
     description: string;
@@ -5086,6 +5095,7 @@ export const ScriptRegistry: {
     list(): ScriptMeta[];
     get(name: string): ScriptMeta | undefined;
 };
+export function registerScript(manifest: BotManifestInput, origin?: string): ScriptMeta;
 
 }
 
