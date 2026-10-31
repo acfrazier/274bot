@@ -2680,13 +2680,13 @@ mod tests {
         assert!(!snapshot.projection_locs_built);
 
         snapshot.set_loc_projection_wanted(true);
-        assert!(snapshot.rebuild_loc(&client));
+        assert!(!snapshot.rebuild_loc(&client));
         assert!(snapshot.projection_scene().locs.is_empty());
         assert!(snapshot.projection_locs_built);
         snapshot.projection_scene.locs = vec![ProjectionLocView::default()].into();
 
         snapshot.set_loc_projection_wanted(false);
-        assert!(snapshot.rebuild_loc(&client));
+        assert!(!snapshot.rebuild_loc(&client));
         assert!(snapshot.projection_scene().locs.is_empty());
         assert!(!snapshot.projection_locs_built);
     }
