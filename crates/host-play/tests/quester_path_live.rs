@@ -1595,10 +1595,7 @@ mod smoke_tests {
                 other => panic!("expected fresh stage mode, found {other:?}"),
             }
             assert_eq!(cell.scenario.settings.deadline, DEADLINE);
-            assert_eq!(
-                cell.scenario.settings.start_script.as_deref(),
-                Some("Quester")
-            );
+            assert_eq!(cell.scenario.settings.start_script, Some("Quester"));
             let stage_seed = cell
                 .scenario
                 .steps
