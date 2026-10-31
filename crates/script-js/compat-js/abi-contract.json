@@ -12695,7 +12695,7 @@
       "module": "api/bot/Bot.js",
       "selector": "LoopingBot",
       "reason": "Prelude loop is a concrete synchronous no-op and subclasses can return synchronous values or promises, as frozen types already admit.",
-      "runtime": "crates/script-js/src/shim/bot.js:5",
+      "runtime": "crates/script-js/src/shim/bot.js:4",
       "declaration": "export class LoopingBot extends AbstractBot { loop(): number | void | Promise<number | void>; }",
       "family_id": "bot",
       "nav_consuming": false
