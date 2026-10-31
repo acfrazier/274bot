@@ -1,4 +1,5 @@
 use super::{js_i32, js_to_string, object_i32, set_key, v8_str, PENDING};
+use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
