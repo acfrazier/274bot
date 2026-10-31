@@ -41,6 +41,7 @@ export default class CompatMakeOneProbe extends LoopingBot {
 "#;
 
 // An IfButton already sent to Engine L cannot be revoked by local Stop.
+// Engine L may still complete that one Make-1; that completion is content behaviour, not a bot action.
 // The live cell checks the result and dispatch trace after stopping the pending wait.
 const MAKE_CANCEL_SOURCE: &str = r#"
 import { ChatDialog } from '../../api/ui/dialogue/ChatDialog.js';
