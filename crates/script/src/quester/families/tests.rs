@@ -14,6 +14,20 @@ fn test_args<T: serde::de::DeserializeOwned>(value: serde_json::Value) -> T {
     serde_json::from_value(value).expect("valid typed family test args")
 }
 
+pub fn compile_with_tree_crossing(
+    document: &crate::quester::path::PathDocument,
+    data: &api::game_data::SelectedGameData,
+    quests: &api::quest_facts::QuestCatalog,
+) -> Result<Arc<crate::quester::compile::CompiledPath>, CompileError> {
+    let lease = crate::quester::compile::stage_cross_lease(&["nasty_tree@3108,3346,0"]);
+    crate::quester::compile::compile_uncached_for_test_with_zones(
+        document,
+        data,
+        quests,
+        lease.zones().expect("tree fixture zone catalog"),
+    )
+}
+
 struct Output;
 impl NativeOutput for Output {
     fn status(&mut self, _: ScriptStatus) {}
@@ -8928,15 +8942,14 @@ fn members_world_rejects_arguments() {
 
 // Exercise the compiled fixture through its host action boundary.
 #[test]
-fn unattackable_fixture_walk_emits_safe_hunt_stand() {
+fn unattackable_fixture_walk_preserves_the_content_target_and_radius() {
     let data = api::game_data::for_revision(ClientRevision::R289).unwrap();
     let quests = api::quest_facts::QuestCatalog::from_identity(data.quest_identity()).unwrap();
     let document: crate::quester::path::PathDocument = serde_json::from_slice(include_bytes!(
         "../../../paths/289/fixtures/combat_unattackable.json"
     ))
     .unwrap();
-    let path =
-        crate::quester::compile::compile_uncached_for_test(&document, &data, &quests).unwrap();
+    let path = compile_with_tree_crossing(&document, &data, &quests).unwrap();
     let step = &path.sequences[0].steps[0];
     let mut snapshot = ready();
     snapshot.seed_local_player(local_player(tile(3110, 3346)));
@@ -8956,8 +8969,8 @@ fn unattackable_fixture_walk_emits_safe_hunt_stand() {
     let HostEffect::Walk(request) = &ledger.as_ref().unwrap().outbox[0].effect else {
         panic!("M4's pre-combat step must submit a walk");
     };
-    assert_eq!(request.target, tile(3109, 3346));
-    assert_eq!(request.radius, 0);
+    assert_eq!(request.target, tile(3108, 3346));
+    assert_eq!(request.radius, 1);
 }
 
 #[test]

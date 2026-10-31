@@ -3747,6 +3747,7 @@ fn quester_combat_approach_replans_after_no_path() {
         Some("first route failed"),
     );
     scene.local.player.actor.tile = tile(here.x + 1, here.z);
+    scene.face_us();
     scene.refresh();
     scene.snapshot.seed_hitmarks(HitmarksView {
         marks: [
