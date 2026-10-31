@@ -1031,8 +1031,14 @@ fn boot_is_deferred_and_maps_live_smoke_and_vault_pass() {
 #[test]
 fn deferred_startup_requests_a_second_frame_before_any_job_exists() {
     let startup = StartupPreparation::new(Some(Boot::Live(LiveBoot::Smoke)));
-    assert!(!startup.in_flight(), "the first frame intentionally starts no work");
-    assert!(startup.needs_redraw(true), "Wait must reach deferred startup");
+    assert!(
+        !startup.in_flight(),
+        "the first frame intentionally starts no work"
+    );
+    assert!(
+        startup.needs_redraw(true),
+        "Wait must reach deferred startup"
+    );
     assert!(!StartupPreparation::new(None).needs_redraw(false));
 }
 
@@ -1075,7 +1081,8 @@ fn injected_client_gpu_uses_the_process_render_budget() {
     let limit = 1024 * 1024 * 1024;
     host::render_head::test_hooks::configure_render_budgets(
         client::render::budget::RenderBudgetLimits::new(
-            limit, limit, limit, limit, limit, limit, limit, limit, limit, limit, limit, limit, limit,
+            limit, limit, limit, limit, limit, limit, limit, limit, limit, limit, limit, limit,
+            limit,
         ),
     )
     .expect("configure explicit finite byte ceilings before context creation");
@@ -1248,7 +1255,10 @@ fn profile_selection_retries_after_work_admission_is_full() {
     );
     assert!(state.session.profile_preparing());
     assert!(state.session.error.is_none());
-    assert!(startup.needs_redraw(false), "pending admission must keep startup live");
+    assert!(
+        startup.needs_redraw(false),
+        "pending admission must keep startup live"
+    );
     assert!(startup_progress(&startup, generation).is_some());
 
     drop(full);

@@ -879,7 +879,7 @@ fn bounded_window_fixed_layout_receipt() {
                 "terminal_status": size_of::<TerminalStatus>(),
                 "terminal_outcome": size_of::<TerminalOutcome>(),
                 "frame_stamp": size_of::<FrameStamp>(),
-                "record_ui_deadline_bytes_once_per_process": size_of::<Option<Instant>>(),
+                "ui_work_deadline_bytes_once_per_process": size_of::<Option<Instant>>(),
                 "recording_busy_counter_bytes_once_per_process": size_of::<std::sync::atomic::AtomicU64>(),
                 "borrowed_pair_label_stack": size_of::<[[u8; CAPTURE_NAME_BYTES]; 2]>(),
             },
