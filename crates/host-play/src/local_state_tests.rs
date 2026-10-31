@@ -2596,6 +2596,71 @@ fn runtime_settings_are_written_from_a_cold_store_and_read_back() {
     assert_eq!(rows[0].raw(), "false");
 }
 
+/// WalkTo saves `customTile`, and its change listener saves `destination`
+/// in the same call; a MapPicker row is written just before. All three
+/// writes queue back to back. After they settle, the file and every read
+/// hold all three rows (the restart in the WalkTo live cell found only
+/// `destination`).
+#[test]
+fn back_to_back_runtime_settings_writes_keep_every_row() {
+    let scratch = IsolatedEnv::enter("local-state-runtime-settings-back-to-back");
+    let (service, identity, path) = runtime_settings_at(&scratch, "settings");
+    service
+        .readback_lease(&identity, WAIT)
+        .expect("an absent file is ready");
+    let rows = [
+        ("MapPicker", "showBasemap", "false"),
+        ("WalkTo", "customTile", "3110,3106,0"),
+        ("WalkTo", "destination", "Map pick"),
+    ];
+    let requests: Vec<_> = rows
+        .iter()
+        .map(|(namespace, key, raw)| {
+            let edit =
+                RuntimeSettingsEdit::try_set(identity.clone(), None, namespace, key, raw).unwrap();
+            request(service.submit(DomainEdit::ScriptRuntimeSettings(edit)))
+        })
+        .collect();
+    for request in requests {
+        completed(&service, request);
+    }
+
+    let document: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+    assert_eq!(
+        document["rows"],
+        serde_json::json!([
+            { "namespace": "MapPicker", "key": "showBasemap", "raw": "false" },
+            { "namespace": "WalkTo", "key": "customTile", "raw": "3110,3106,0" },
+            { "namespace": "WalkTo", "key": "destination", "raw": "Map pick" },
+        ]),
+        "the file keeps every row"
+    );
+    for (namespace, key, raw) in rows {
+        assert_eq!(
+            LocalStatePort::runtime_setting_raw(&*service, &identity, namespace, key).unwrap(),
+            Some(raw.to_string()),
+            "{namespace}.{key} reads from the settled cache"
+        );
+    }
+    let lease = service
+        .readback_lease(&identity, WAIT)
+        .unwrap()
+        .expect("the writes created a settings file");
+    assert_eq!(
+        lease.snapshot().as_script_runtime_settings().unwrap().len(),
+        3,
+        "a later readback keeps every row"
+    );
+    for (namespace, key, raw) in rows {
+        assert_eq!(
+            LocalStatePort::runtime_setting_raw(&*service, &identity, namespace, key).unwrap(),
+            Some(raw.to_string()),
+            "{namespace}.{key} reads after a readback"
+        );
+    }
+}
+
 #[test]
 fn malformed_runtime_settings_are_kept_and_quarantined_by_a_save() {
     let scratch = IsolatedEnv::enter("local-state-runtime-settings-quarantine");
