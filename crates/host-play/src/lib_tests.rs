@@ -8266,6 +8266,24 @@ export function tick(api) {
         vec![],
     )
     .unwrap();
+    wait_script_state(&play, "alice", script::RunState::Running);
+    {
+        let slot = script_slot(&play.scripts, "alice").expect("started slot exists");
+        let mut slot = slot.lock().unwrap();
+        slot.on_game_tick(&mut script::ScriptCtx {
+            driver: &mut NavRec::default(),
+            tick: 1,
+            here: None,
+            walk: None,
+            walk_with: None,
+            inv: None,
+            snapshot: None,
+            obj_names: None,
+            compiled: script::CompiledTick::default(),
+        });
+        slot.probe("true").expect("the first script tick completes");
+    }
+
 
     let mut logs = Vec::new();
     let settled = wait_until(5_000, || {
