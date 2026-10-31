@@ -530,6 +530,61 @@ fn absent_packet_generation_does_not_start_a_batch_or_reuse_a_roll() {
 }
 
 #[test]
+fn fishing_knife_request_uses_the_current_published_npc_generation() {
+    use api::interact::server_ordered::{ExactLocOrNpcRef, ExactNpcReference, KnifeArmShape};
+    use api::snapshot::Family;
+    use client::client::{Client, ClientConfig, ClientNpc, ClientRevision};
+
+    let mut rig = Rig::new("fishing.freshfish.op1");
+    let row = &rig.snapshot.npcs()[0];
+    let tile = row.tile;
+    let type_id = row.r#type.unwrap();
+    let mut client = Client::from_shared_with_revision(
+        ClientConfig {
+            host: "127.0.0.1".into(),
+            port: 1,
+            cache_dir: String::new(),
+            members: true,
+            lowmem: true,
+        },
+        Arc::new(client::config::Cache::default()),
+        Arc::new(Vec::new()),
+        Vec::new(),
+        ClientRevision::R289,
+    );
+    let mut npc = ClientNpc::at(tile.x, tile.z);
+    npc.r#type = Some(type_id);
+    client.npc[42] = Some(Box::new(npc));
+    client.npc_ids[0] = 42;
+    client.npc_count = 1;
+    client.gens.npc = 1;
+    client.gens.npc_info = 37;
+    assert!(rig.snapshot.rebuild_family(&client, Family::Npc));
+
+    rig.animate(AnimClass::Roll);
+    assert!(rig.poll(101).is_pending());
+    assert_eq!(rig.arms(), 1);
+    let HostEffect::ServerOrdered(envelope) =
+        &rig.ledger.as_ref().unwrap().outbox.last().unwrap().effect
+    else {
+        panic!("the fishing cycle must emit its Knife request")
+    };
+    let ServerOrderedPayload::Content(ServerOrderedRequest::KnifeArm {
+        shape: KnifeArmShape::Continuing {
+            click: ExactLocOrNpcRef::Npc(reference),
+        },
+        ..
+    }) = envelope.payload()
+    else {
+        panic!("the Knife request must retain its NPC click")
+    };
+    assert_eq!(
+        *reference,
+        ExactNpcReference::new(42, type_id as i32, tile, client.gens.npc_info, 1).unwrap()
+    );
+}
+
+#[test]
 fn transformed_fishing_types_are_not_armed_on_their_observed_click_tick() {
     for event_type in [390, 403, i32::MAX] {
         let mut rig = Rig::new("fishing.freshfish.op1");

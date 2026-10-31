@@ -2435,6 +2435,44 @@ fn ordered_builtin_gatherer_knife_npc_fishing_uses_operation_click_then_exact_np
 }
 
 #[test]
+fn ordered_builtin_gatherer_knife_npc_packet_between_capture_and_dispatch_is_stale() {
+    for intervening_packet in [false, true] {
+        let mut rig = Rig::new();
+        let request = knife_npc_request(&mut rig, 309, 1);
+        let captured = rig.snapshot.gens().npc_info;
+        if intervening_packet {
+            // Retain slot, type and tile so only the packet watermark can
+            // reject this reference. Decode a real revision-289 NPC_INFO.
+            let mut packet = client::io::Packet::new(vec![1, 0]);
+            rig.client.psize = 2;
+            packet.set_frame_end(2);
+            rig.client.handle_packet(
+                client::io::ServerProt289::NPC_INFO,
+                &mut packet,
+            );
+            assert!(rig.client.ingame);
+            assert_eq!(packet.pos, 2);
+            assert_eq!(rig.client.gens.npc_info, captured + 1);
+            let mut pump = host::Pump::new();
+            host::publish_snapshot(
+                &mut rig.snapshot,
+                &rig.client,
+                pump.drain_client(&rig.client),
+            );
+        }
+        let receipt = dispatch_with_builtin_gatherer_context(&mut rig, request);
+        if intervening_packet {
+            assert_eq!(receipt.terminal, Some(ServerOrderedError::StaleTarget));
+            assert_eq!((receipt.dispatched_prefix, receipt.wire_events), (0, 0));
+            assert_no_cipher_movement(&rig);
+        } else {
+            assert_eq!(receipt.terminal, None);
+            assert_eq!((receipt.dispatched_prefix, receipt.wire_events), (3, 4));
+        }
+    }
+}
+
+#[test]
 fn ordered_builtin_gatherer_knife_refuses_event_and_unproved_npc_operations() {
     for (type_id, operation) in [
         (390, 1),
