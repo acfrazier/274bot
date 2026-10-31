@@ -26,9 +26,9 @@ mod compat {
     pub const PANEL_WAIT_MS: u64 = 5_000;
     /// Frozen `ChatDialog.make` / `chooseOption` modal-change wait.
     pub const MODAL_WAIT_MS: u64 = 3_000;
-    /// Ten observed game ticks cover the page change and delayed product receipt
-    /// without using a wall-clock timeout.
-    const MAKE_ONE_WAIT_TICKS: u64 = 10;
+    /// Allow the inventory update to be observed after the ten-tick boundary
+    /// seen on Engine L, without relying on a wall-clock timeout.
+    const MAKE_ONE_WAIT_TICKS: u64 = 11;
 
     impl MakeXProduct for MakeProduct {
         fn object_id(&self) -> i32 {
@@ -755,7 +755,7 @@ mod compat {
             let mut replacement_machine = replacement_machine.expect("running");
             let replaced_without_product = Probe {
                 chat_modal_id: Some(4999),
-                tick: Some(11),
+                tick: Some(12),
                 ..at
             };
             assert_eq!(
