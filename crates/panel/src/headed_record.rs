@@ -3038,6 +3038,12 @@ mod tests {
 
     #[cfg(all(feature = "render-test-hooks", unix))]
     #[test]
+    fn retired_play_keeps_polling_recording_completion() {
+        run_isolated_recorder_fixture("retired-play");
+    }
+
+    #[cfg(all(feature = "render-test-hooks", unix))]
+    #[test]
     #[ignore = "invoked in an isolated process by recorder acceptance tests"]
     fn recorder_fixture_child() {
         let mode = std::env::var("RECORDER_CHILD_MODE").expect("recorder fixture mode");
@@ -3133,6 +3139,40 @@ mod tests {
                     !oversized_base.exists(),
                     "path refusal does not create output directories"
                 );
+            }
+            "retired-play" => {
+                let output_dir = fixture_dir.join("retired play recording");
+                let mut record = configured_fixture_record();
+                record
+                    .arm(&output_dir, "retired play")
+                    .expect("arm through the gated recorder path");
+                assert!(offer_fixture_frame(
+                    &mut record,
+                    &StepInfo {
+                        step: 0,
+                        total: 1,
+                        name: "last benchmark frame".into(),
+                        tick: 1,
+                    },
+                    2,
+                    2,
+                    1,
+                ));
+                record.request_finish(Instant::now());
+                let deadline = Instant::now() + Duration::from_secs(5);
+                while !record
+                    .finalizing
+                    .as_ref()
+                    .unwrap()
+                    .supervisor
+                    .as_ref()
+                    .unwrap()
+                    .is_finished()
+                {
+                    assert!(Instant::now() < deadline, "recorder did not finish");
+                    thread::yield_now();
+                }
+                crate::app::tests::recording_exit_with_retired_play(record);
             }
             "sidecar-memory" => {
                 let output_dir = fixture_dir.join("new output directory/recording");

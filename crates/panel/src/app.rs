@@ -8883,7 +8883,11 @@ fn frame_pumps_inner(
     let wrote_shots = pump_shots(state);
     pump_record(state);
     state.session.pump_status();
-    if crate::window::render_fair_capture_enabled() && terminal_failure.lock().unwrap().is_some() {
+    // Memory completion retires Play before the asynchronous encoder finishes.
+    // Keep polling that owner even when no benchmark or live runner can tick.
+    if crate::window::render_fair_capture_enabled()
+        && (state.record.is_finalizing() || terminal_failure.lock().unwrap().is_some())
+    {
         return finish_recording_for_exit(&mut state.record, terminal_failure);
     }
     #[cfg(feature = "memory-profile")]
@@ -9182,7 +9186,7 @@ mod parameter_options_tests {
 
 #[cfg(test)]
 #[path = "app_tests.rs"]
-mod tests;
+pub(super) mod tests;
 
 #[cfg(test)]
 #[path = "app_window_tests.rs"]

@@ -51,6 +51,28 @@ fn hydrate_panel_preferences(session: &mut crate::session::Session) {
     assert!(session.panel_preferences_ready());
 }
 
+#[cfg(all(feature = "render-test-hooks", unix))]
+pub(super) fn recording_exit_with_retired_play(record: crate::headed_record::HeadedRecord) {
+    let mut state = PanelState::default();
+    assert!(!state.session.core.has_play());
+    assert!(record.is_finalizing());
+    state.record = record;
+    let mut ctx = crate::test_support::imgui_context();
+    ctx.prepare_frame(
+        dear_imgui_rs::FramePrepareOptions::new([800.0, 600.0], 1.0 / 60.0)
+            .renderer_has_textures(),
+    );
+    let _ui = ctx.frame();
+    let failure = std::sync::Mutex::new(None);
+    assert!(
+        super::frame_pumps(&mut state, &failure),
+        "a completed recorder must end the UI run after Play retirement"
+    );
+    assert!(failure.lock().unwrap().is_none());
+    assert!(!state.record.is_finalizing(), "the supervisor was joined");
+    ctx.render();
+}
+
 #[test]
 #[ignore]
 fn panel_exit_status_child() {

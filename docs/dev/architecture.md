@@ -472,9 +472,11 @@ storage keeps the permit quarantined until completion. Bounded recorder
 frames carry pixels and one sidecar line together; the writer owns the file.
 An independent supervisor owns encoder termination and finalization. A
 quarantined writer prevents re-arming another recorder.
-Gated live exits keep submitting UI frames while polling that supervisor;
-an encoder failure or finalization timeout makes the live result fail. They
-never join a blocked writer on the UI thread. Gate-off exits keep their
+Gated live exits keep submitting UI frames while polling that supervisor.
+The finalizing recorder itself keeps this exit path active after a benchmark
+retires Play; it does not depend on another benchmark or live-runner tick.
+An encoder failure or finalization timeout makes the live result fail. These
+paths never join a blocked writer on the UI thread. Gate-off exits keep their
 original synchronous finalization.
 
 Recording keeps all three outputs: `record.mp4`, `record.txt` and
