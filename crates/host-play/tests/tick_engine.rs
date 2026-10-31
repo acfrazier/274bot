@@ -199,7 +199,8 @@ impl Scenario {
             name,
             skill: "Mining",
             skill_index: 14,
-            level: 55,
+            // The real mithril tool starts at 21; this cell needs a failed roll.
+            level: 21,
             resource: ResourceKind::Iron,
             target: mining_start()?,
             tool: item("mithril_pickaxe", MITHRIL_PICKAXE_ID, 1),
@@ -2641,10 +2642,11 @@ fn suffix_drop_relogin_ready(
             && observation.scene_state == 2
             && observation.startup_phase == host_play::StartupPhase::Ready
     });
-    let read_eof = history
-        .host_log
-        .iter()
-        .position(|observation| observation.message.starts_with("session exit reason=read_eof"));
+    let read_eof = history.host_log.iter().position(|observation| {
+        observation
+            .message
+            .starts_with("session exit reason=read_eof")
+    });
     let reconnect_attempt = read_eof.and_then(|exit_index| {
         history
             .host_log
@@ -2669,9 +2671,8 @@ fn suffix_drop_relogin_ready(
     });
     let old_session_verified_increment = statuses.iter().any(|status| {
         status.host_frame >= baseline.baseline_host_frame
-            && first_new_session_frame.is_none_or(|new_session_frame| {
-                status.host_frame < new_session_frame
-            })
+            && first_new_session_frame
+                .is_none_or(|new_session_frame| status.host_frame < new_session_frame)
             && status.tick_verified != Some(baseline.initial_verified)
     });
     let roll_tick = origin.wrapping_add(3) as u32;
@@ -2712,10 +2713,7 @@ fn suffix_drop_relogin_ready(
     Ok(None)
 }
 
-fn validate_drop_relogin_evidence(
-    evidence: &RunEvidence,
-    request_id: u64,
-) -> Result<(), String> {
+fn validate_drop_relogin_evidence(evidence: &RunEvidence, request_id: u64) -> Result<(), String> {
     let history = evidence
         .drop_history
         .as_ref()
@@ -2770,10 +2768,10 @@ fn assert_drop_relogin(
         .as_ref()
         .map(Arc::clone)
         .ok_or("suffix-drop case has no lifecycle recorder")?;
-    let baseline_host_frame = run
-        .baseline
-        .as_ref()
-        .map_or_else(|| run.hook.observed_host_frame(), |baseline| baseline.host_frame);
+    let baseline_host_frame = run.baseline.as_ref().map_or_else(
+        || run.hook.observed_host_frame(),
+        |baseline| baseline.host_frame,
+    );
     let trace = run.hook.trace();
     run.capture_status(&trace);
     let history_snapshot = history
@@ -2810,14 +2808,9 @@ fn assert_drop_relogin(
                 baseline.initial_slot
             )));
         }
-        if let Some(new_session) = suffix_drop_relogin_ready(
-            &history_snapshot,
-            &trace,
-            &run.statuses,
-            &baseline,
-            origin,
-        )
-        .map_err(|error| run.failure(error))?
+        if let Some(new_session) =
+            suffix_drop_relogin_ready(&history_snapshot, &trace, &run.statuses, &baseline, origin)
+                .map_err(|error| run.failure(error))?
         {
             println!(
                 "TICK-MANIP dropped suffix closed session={} at read_eof, then session={new_session} reached Ready within {LOGOUT_DEADLINE:?}; tick_verified stayed {} with no old-session R+3 roll",
@@ -4578,8 +4571,8 @@ mod packet_oracle_tests {
 
     #[test]
     fn late_iron_scenario_skips_the_first_arm_wait_but_keeps_knife_method() {
-        let scenario = Scenario::iron("tick-late-iron")
-            .expect("iron setup uses the default mining tile");
+        let scenario =
+            Scenario::iron("tick-late-iron").expect("iron setup uses the default mining tile");
         assert!(!scenario.require_knife_arm);
         assert_eq!(scenario.settings()["tickMethod"], json!("Knife"));
         // pickaxes.obj:162-164 permits the real four-tick mithril tool at 21.

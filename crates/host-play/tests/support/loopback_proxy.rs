@@ -413,9 +413,8 @@ fn flush_upstream(
 ) -> io::Result<bool> {
     let mut activity = false;
     loop {
-        if buffer.is_empty() {
-            return Ok(activity);
-        }
+        // Record completion even when the last write drained the whole buffer.
+        // A later client packet must not be needed to publish that receipt.
         let action = {
             let mut state = state
                 .lock()
@@ -467,6 +466,9 @@ fn flush_upstream(
                 }
             }
         };
+        if buffer.is_empty() {
+            return Ok(activity);
+        }
         match action {
             UpstreamAction::Wait => return Ok(activity),
             UpstreamAction::Pass => match server.write(buffer) {
