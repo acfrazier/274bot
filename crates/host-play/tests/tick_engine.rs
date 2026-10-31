@@ -4777,24 +4777,44 @@ mod packet_oracle_tests {
         }
     }
 
-    #[test]
-    fn engine_correlation_accepts_suffix_drop_only_at_unknown_opcode_boundary() {
-        let request = 11;
-        let make_opcodes = vec![
+    fn drop_status(host_frame: u64, tick_verified: i64) -> StatusObservation {
+        StatusObservation {
+            host_frame,
+            game_tick: 7,
+            phase: "Working".into(),
+            method: Some("loc_2027".into()),
+            tick_method: Some("Knife".into()),
+            target: Some("loc_2027".into()),
+            last_event: Some("gathering".into()),
+            tick_cycle: Some(-1),
+            tick_verified: Some(tick_verified),
+            tick_unobserved: Some(0),
+            tick_slips: Some(0),
+            tick_lost: Some(0),
+            tick_delayed: Some(0),
+            tick_paused: Some(0),
+            tick_fallbacks: Some(0),
+            tick_fallback_failed: Some(0),
+            tick_events: Some(0),
+        }
+    }
+
+    fn suffix_drop_evidence(request_id: u64) -> RunEvidence {
+        let opcodes = vec![
             ClientProt289::OPHELDU.id as u8,
             ClientProt289::IF_BUTTON.id as u8,
             ClientProt289::MOVE_OPCLICK.id as u8,
             ClientProt289::OPLOC1.id as u8,
         ];
-        let make_lengths = vec![13, 3, 7, 7];
-        let wire_packets: Vec<_> = make_opcodes
+        let lengths = vec![13, 3, 7, 7];
+        let wire_packets = opcodes
             .iter()
-            .zip(&make_lengths)
-            .map(|(opcode, length)| wire(*opcode, request, *length))
+            .zip(&lengths)
+            .map(|(opcode, length)| wire(*opcode, request_id, *length))
             .collect();
-        let mut opener = packet(make_opcodes[0], 1);
+        let mut opener = packet(opcodes[0], 1);
         opener.charged_user_event = true;
-        let mut make = packet(make_opcodes[1], 2);
+        let mut make = packet(opcodes[1], 2);
         make.charged_user_event = true;
         let mut unknown = packet(54, 3);
         unknown.tick = 8;
@@ -4802,16 +4822,120 @@ mod packet_oracle_tests {
         unknown.outcome = "refused".into();
         unknown.reason = "unknown-opcode".into();
         unknown.handler_accepted = false;
-        let transport = vec![drop_observation(
-            request,
-            make_opcodes,
-            make_lengths,
-            16,
-            14,
-        )];
-        let mut evidence = evidence(wire_packets, transport, vec![opener, make, unknown]);
+        let mut evidence = evidence(
+            wire_packets,
+            vec![drop_observation(request_id, opcodes, lengths, 16, 14)],
+            vec![opener, make, unknown],
+        );
         evidence.case = "tick-make-proxy-drop";
+
+        let mut receipt = interact::server_ordered::ServerOrderedDispatch::refused(
+            request_id,
+            7,
+            3,
+            0,
+            interact::server_ordered::ServerOrderedError::Cancelled,
+        );
+        receipt.rows[0] = interact::server_ordered::RowDispatch::HostQueued { wire_events: 1 };
+        receipt.rows[1] = interact::server_ordered::RowDispatch::HostQueued { wire_events: 1 };
+        receipt.rows[2] = interact::server_ordered::RowDispatch::HostQueued { wire_events: 2 };
+        receipt.dispatched_prefix = 3;
+        receipt.wire_events = 4;
+        receipt.terminal = None;
+        evidence.trace.dispatches.push(DispatchObservation {
+            game_tick: 7,
+            receipt,
+            request_debug: Some("KnifeArm".into()),
+            mutation_applied: false,
+        });
+        evidence.statuses = vec![drop_status(1, 0), drop_status(2, 0)];
+        evidence.drop_history = Some(drop_history::DropHistory {
+            client_sessions: vec![
+                drop_history::ClientSessionObservation {
+                    host_frame: 1,
+                    session: 100,
+                    ingame: true,
+                    scene_state: 2,
+                },
+                drop_history::ClientSessionObservation {
+                    host_frame: 3,
+                    session: 101,
+                    ingame: true,
+                    scene_state: 2,
+                },
+            ],
+            slot_status: vec![
+                drop_history::SlotObservation {
+                    host_frame: 1,
+                    connected: true,
+                    ingame: true,
+                    scene_state: 2,
+                    startup_phase: host_play::StartupPhase::Ready,
+                    stream_epoch: 4,
+                },
+                drop_history::SlotObservation {
+                    host_frame: 2,
+                    connected: false,
+                    ingame: false,
+                    scene_state: 0,
+                    startup_phase: host_play::StartupPhase::Connecting,
+                    stream_epoch: 4,
+                },
+                drop_history::SlotObservation {
+                    host_frame: 4,
+                    connected: true,
+                    ingame: true,
+                    scene_state: 2,
+                    startup_phase: host_play::StartupPhase::Ready,
+                    stream_epoch: 5,
+                },
+            ],
+            host_log: vec![
+                drop_history::HostLogObservation {
+                    slot: Some("tmx-oracle".into()),
+                    tick: Some(7),
+                    message: "session exit reason=read_eof".into(),
+                },
+                drop_history::HostLogObservation {
+                    slot: Some("tmx-oracle".into()),
+                    tick: Some(7),
+                    message: "relog decision attempt reconnect=true".into(),
+                },
+                drop_history::HostLogObservation {
+                    slot: Some("tmx-oracle".into()),
+                    tick: Some(7),
+                    message: "handshake ok".into(),
+                },
+            ],
+        });
+        evidence
+    }
+
+    #[test]
+    fn engine_correlation_accepts_suffix_drop_only_at_unknown_opcode_boundary() {
+        let evidence = suffix_drop_evidence(11);
         assert!(correlate_engine_packets(&evidence).is_ok());
+    }
+
+    #[test]
+    fn engine_correlation_rejects_old_session_r_plus_three_continuation() {
+        let mut evidence = suffix_drop_evidence(12);
+        evidence.statuses[1].tick_verified = Some(1);
+        let mut roll = observed_frame(10, true, 0);
+        roll.host_frame = 2;
+        roll.animation = Some(client::client::client::LocalAnimationUpdate {
+            serial: 1,
+            sequence: ROLL_ANIMATION,
+        });
+        evidence.trace.frames.push(roll);
+        assert!(correlate_engine_packets(&evidence).is_err());
+    }
+
+    #[test]
+    fn engine_correlation_rejects_disconnect_without_full_host_receipt() {
+        let mut evidence = suffix_drop_evidence(13);
+        evidence.trace.dispatches[0].receipt.wire_events = 3;
+        assert!(correlate_engine_packets(&evidence).is_err());
     }
 
     #[test]
