@@ -27,8 +27,8 @@ pub enum CalibrationError {
     Instrumented,
     #[error(transparent)]
     Render(#[from] host::render::RenderError),
-    #[error("retained-present calibration configuration failed: {0}")]
-    RetainedPresent(#[from] client::render::backend::ReadbackError),
+    #[error("retained-present calibration configuration failed: {0:?}")]
+    RetainedPresent(client::render::backend::ReadbackError),
 }
 
 #[derive(Debug, Clone, Copy, Deserialize, Serialize)]
@@ -147,7 +147,8 @@ pub fn configure_from_env() -> Result<Option<Inputs>, CalibrationError> {
         return Err(CalibrationError::Instrumented);
     }
     host::render_head::configure_calibration_limits(inputs.byte_limits.limits())?;
-    client::render::backend::configure_retained_present_budget(inputs.retained_present_cap)?;
+    client::render::backend::configure_retained_present_budget(inputs.retained_present_cap)
+        .map_err(CalibrationError::RetainedPresent)?;
     host::render_head::configure_calibration(host::render_head::CalibrationConfig {
         grant_ttl: Duration::from_millis(inputs.grant_ttl_ms),
         scene_quantum: Duration::from_millis(inputs.scene_quantum_ms),
