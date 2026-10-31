@@ -8242,6 +8242,16 @@ fn a_js_start_hydrates_cold_script_runtime_settings_before_first_resolve() {
     ));
     play.local_state = Some(Arc::clone(&composition));
     play.attach_arm("alice", SlotArm::new(7, false));
+    // Slot spawn binds the account's state capability (`play_slots.rs`);
+    // this offline Play spawns no slot, so bind it the same way here.
+    script_slot_or_insert(&play.scripts, "alice")
+        .lock()
+        .unwrap()
+        .bind_local_state(
+            composition
+                .slot_state("alice")
+                .expect("alice is a login identity"),
+        );
 
     // The resolve runs at module evaluation, before the first tick. Read its
     // result straight from the isolate: script log rows reach the panel only
