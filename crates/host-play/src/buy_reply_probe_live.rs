@@ -40,6 +40,7 @@ use vault::{Profile, ProfileSettings};
 
 use super::combat_proof::{
     self, CaptureRegistration, CombatCapture, DriverPacketCounts, DriverPacketTrace,
+    MAX_DRIVER_PACKETS_PER_TICK,
 };
 use super::gather_bait_live::PlayerInfoClock;
 use super::{run_with_template, ProfileOptions, ScriptStartHandle};
@@ -65,7 +66,6 @@ const REFUSAL_PACK_OBSERVE_TICKS: u64 = 2;
 const PREPARATION_DEADLINE: Duration = Duration::from_secs(600);
 const CELL_DEADLINE: Duration = Duration::from_secs(3_600);
 const POLL_INTERVAL: Duration = Duration::from_millis(100);
-const MAX_DRIVER_PACKETS_PER_TICK: usize = 5;
 const MAX_CAPTURE_ROWS: usize = 100_000;
 const SEED_ITEMS: &[(&str, i32)] = &[(COINS_ALIAS, SEED_COINS)];
 

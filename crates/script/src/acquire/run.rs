@@ -17,8 +17,10 @@ use api::stock::Stock;
 use std::task::Poll;
 
 const MAX_OPEN_ATTEMPTS: u8 = 3;
-// A request plus one recovery request per walk identity; retries across
-// alternative banks are separately capped so a large roster stays bounded.
+// AGENTS.md:131 retries a failed walk from the observed position and lets a
+// machine try another target; USER-0.2.3-GATHERER §4 requires a finite budget.
+// One request plus one recovery per walk identity, then at most two retries
+// across alternative banks, keeps a large bank roster bounded.
 const MAX_BANK_ACCESS_RETRIES: u8 = 2;
 const MAX_CLOSE_ATTEMPTS: u8 = 3;
 const _: () = assert!(2 * MAX_MEMO <= u8::MAX as usize);

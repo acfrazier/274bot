@@ -31,6 +31,7 @@ use vault::{Profile, ProfileSettings};
 
 use super::combat_proof::{
     self, CaptureRegistration, CombatCapture, DriverPacketCounts, DriverPacketTrace,
+    MAX_DRIVER_PACKETS_PER_TICK,
 };
 use super::{run_with_template, ProfileOptions, ScriptStartHandle};
 
@@ -1458,15 +1459,15 @@ fn run_cell(kind: CellKind) {
     if !driver_packets_complete {
         failures.push("outgoing Driver packet trace was incomplete".into());
     }
-    if max_driver_packets > 5 {
+    if max_driver_packets > MAX_DRIVER_PACKETS_PER_TICK {
         failures.push(format!(
-            "observed {max_driver_packets} Driver packets in one captured tick (limit 5)"
+            "observed {max_driver_packets} Driver packets in one captured tick (limit {MAX_DRIVER_PACKETS_PER_TICK})"
         ));
     }
     let (interaction_packets, max_interaction_packets) = packet_action_ticks(&actions);
-    if max_interaction_packets > 5 {
+    if max_interaction_packets > MAX_DRIVER_PACKETS_PER_TICK {
         failures.push(format!(
-            "observed {max_interaction_packets} interaction packets in one captured tick (limit 5)"
+            "observed {max_interaction_packets} interaction packets in one captured tick (limit {MAX_DRIVER_PACKETS_PER_TICK})"
         ));
     }
     let final_frame = shop_frames.last();

@@ -1009,11 +1009,17 @@ pub(crate) fn block_message(
             let age = std::time::UNIX_EPOCH
                 .checked_add(std::time::Duration::from_secs(bank.observed_at_unix))
                 .and_then(|seen| now.duration_since(seen).ok());
+            // A bank carried across a relog or loaded from the saved hint is
+            // not "this session"; the status line labels it "Hint (saved)".
+            let source = match bank.origin {
+                Origin::Session | Origin::Unknown => "this session",
+                Origin::Hint => "from a saved hint",
+            };
             let seen = match age.map(|age| age.as_secs() / 60) {
-                Some(0) => "less than a minute ago this session".to_string(),
-                Some(1) => "1 minute ago this session".to_string(),
-                Some(minutes) => format!("{minutes} minutes ago this session"),
-                None => "this session".to_string(),
+                Some(0) => format!("less than a minute ago {source}"),
+                Some(1) => format!("1 minute ago {source}"),
+                Some(minutes) => format!("{minutes} minutes ago {source}"),
+                None => source.to_string(),
             };
             format!("in the bank as seen {seen} ({} rows)", bank.rows)
         }

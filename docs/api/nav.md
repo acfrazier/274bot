@@ -15,7 +15,8 @@ shared edge. A keeper placement is a one-tile footprint with all sides open.
 `NavWorld` resolves every pinned keeper placement once when selected-content
 facts are bound. All bots share those rows and their inline access rings.
 
-`nearest_service_air` streams borrowed candidates with no heap allocation.
+`nearest_service_air` is a test-only ordering oracle over borrowed candidates
+with no heap allocation.
 Its order is same level, footprint Chebyshev distance, access distance, then
 access x and z. Air order is not a route-cost decision.
 

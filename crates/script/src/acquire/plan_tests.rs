@@ -721,6 +721,52 @@ fn bank_observation_text_uses_relative_age_and_keeps_the_unix_time() {
 }
 
 #[test]
+fn saved_hint_block_text_reports_provenance_instead_of_this_session() {
+    let observed_at_unix = 1_700_000_000;
+    let looked = Looked {
+        bank: Some(BankSeen {
+            origin: Origin::Hint,
+            observed_at_unix,
+            rows: 12,
+            count: 0,
+        }),
+        ..Looked::default()
+    };
+    let now = std::time::UNIX_EPOCH + std::time::Duration::from_secs(observed_at_unix + 12 * 60);
+    assert_eq!(
+        block_message(
+            "Harpoon",
+            &BlockReason::SupplyMissing,
+            &looked,
+            "nobody sells it",
+            now,
+            0,
+        )
+        .as_ref(),
+        "no Harpoon in the pack, worn, or in the bank as seen 12 minutes ago from a saved hint (12 rows); nobody sells it; waiting: put a Harpoon in the pack"
+    );
+    let future = Looked {
+        bank: Some(BankSeen {
+            observed_at_unix: observed_at_unix + 1,
+            ..looked.bank.unwrap()
+        }),
+        ..Looked::default()
+    };
+    assert_eq!(
+        block_message(
+            "Harpoon",
+            &BlockReason::SupplyMissing,
+            &future,
+            "nobody sells it",
+            now,
+            0,
+        )
+        .as_ref(),
+        "no Harpoon in the pack, worn, or in the bank as seen from a saved hint (12 rows); nobody sells it; waiting: put a Harpoon in the pack"
+    );
+}
+
+#[test]
 fn planner_accepts_sixty_four_distinct_withdrawals_and_refuses_sixty_five() {
     let rows: Vec<_> = (0..65).map(|offset| (1_000 + offset, 1)).collect();
     let counts = fixture(&[], &rows, Origin::Session);

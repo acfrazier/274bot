@@ -813,6 +813,14 @@ pub(crate) fn snapshot_facts(snapshot: &GameSnapshot, host_tick: Option<u64>) ->
     })
 }
 
+/// Maximum Driver packets an oracle accepts in one observed game tick.
+///
+/// Measured, not derived from content: the Engine L buy-reply probe's real
+/// encrypted sink peaked at 4 packets per PLAYER_INFO tick, so five keeps one
+/// packet of headroom (`GATHERER-SHOP/buy-reply/README.md:59`; the same bound
+/// is stated in `docs/dev/harness.md:710`).
+pub(crate) const MAX_DRIVER_PACKETS_PER_TICK: usize = 5;
+
 #[derive(Default)]
 pub(crate) struct DriverPacketTrace {
     packets_by_tick: BTreeMap<u32, Vec<u8>>,

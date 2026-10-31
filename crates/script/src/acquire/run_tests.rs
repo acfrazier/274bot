@@ -1490,7 +1490,8 @@ fn acquisition_owner_layout() {
         size_of::<crate::quester::provision::Provisioner>(),
         size_of::<crate::quester::runner::Quester>(),
     );
-    // First arm64 build: 712 bytes. Keep 56 bytes of explicit headroom.
+    // Measured on Linux x86_64 at the round-4 head: 744 bytes. Keep 24 bytes
+    // of explicit headroom under the 768-byte cap.
     assert!(size_of::<AcquireRun>() <= 768);
     assert!(size_of::<WearStep>() <= 8);
     assert_eq!(size_of::<Option<Box<[WearStep]>>>(), 2 * size_of::<usize>());

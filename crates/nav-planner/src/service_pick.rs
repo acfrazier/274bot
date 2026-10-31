@@ -135,7 +135,10 @@ pub(crate) fn air_rank(
 /// Select the air-nearest access over borrowed, prevalidated candidates.
 /// Ties preserve the bank rule: same level, footprint Chebyshev distance,
 /// access Chebyshev distance, then access x and z.
-pub fn nearest_service_air<'a>(
+///
+/// Test-only ordering oracle: the host always routes the complete domain.
+#[cfg(test)]
+pub(crate) fn nearest_service_air<'a>(
     candidates: impl Iterator<Item = ServiceCandidate<'a>>,
     from: WorldTile,
 ) -> Option<ServicePick> {
@@ -160,11 +163,14 @@ pub fn nearest_service_air<'a>(
 /// Run one first-goal search over the complete target set, with teleports and
 /// bank fetching disabled. The owner decides candidate eligibility before
 /// constructing `targets`.
+///
+/// Test-only: the host submits [`routed_request`] to the cooperative job.
+#[cfg(test)]
 #[expect(
     clippy::too_many_arguments,
     reason = "Complete routed service-search inputs."
 )]
-pub fn nearest_service_routed(
+pub(crate) fn nearest_service_routed(
     collision: &WorldCollision,
     graph: &TransportGraph,
     from: WorldTile,

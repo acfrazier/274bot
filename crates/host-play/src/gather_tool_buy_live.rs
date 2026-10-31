@@ -45,7 +45,9 @@ use vault::{Profile, ProfileSettings};
 use super::bank_core_live::{
     check_prerequisites, frame, live_profile, Cell, Prep, DRAYNOR, PREPARATION_DEADLINE,
 };
-use super::combat_proof::{self, CaptureRegistration, CombatCapture, DriverPacketCounts};
+use super::combat_proof::{
+    self, CaptureRegistration, CombatCapture, DriverPacketCounts, MAX_DRIVER_PACKETS_PER_TICK,
+};
 use super::{run_with_template, tele_args, SharedClientTemplate};
 
 const PROFILE: &str = "local-289";
@@ -2782,9 +2784,9 @@ fn run_cell_with_transition(case: Case, transition: ParkTransition) {
     if !driver_trace_complete {
         failures.push("Driver packet trace was incomplete".into());
     }
-    if max_driver_packets > 5 {
+    if max_driver_packets > MAX_DRIVER_PACKETS_PER_TICK {
         failures.push(format!(
-            "{max_driver_packets} Driver packets in one game tick; limit is five"
+            "{max_driver_packets} Driver packets in one game tick; limit is {MAX_DRIVER_PACKETS_PER_TICK}"
         ));
     }
     let bank_open_observed = game_frames
