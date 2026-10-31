@@ -99,8 +99,16 @@ export default class ClientAdapterLiveProbe extends LoopingBot {
             level: bankLoc.level,
         });
         if (!npcBounds || !Array.isArray(locPoints) || locPoints.length !== 8) {
-            const targetNpc = npcRows.find((npc) => Number.isInteger(npc.x) && Number.isInteger(npc.z));
-            if (targetNpc && await face(targetNpc.x, targetNpc.z)) {
+            const npcTargets = npcRows
+                .filter((npc) => Number.isInteger(npc.x) && Number.isInteger(npc.z))
+                .slice()
+                .sort((left, right) => {
+                    const leftDistance = Number.isFinite(left.distance) ? left.distance : Infinity;
+                    const rightDistance = Number.isFinite(right.distance) ? right.distance : Infinity;
+                    return leftDistance - rightDistance;
+                });
+            for (const targetNpc of npcTargets) {
+                if (!(await face(targetNpc.x, targetNpc.z))) continue;
                 npcRows = reader.npcs();
                 npcBounds = npcBoundsFor(npcRows);
                 locPoints = reader.locBox({
@@ -109,18 +117,20 @@ export default class ClientAdapterLiveProbe extends LoopingBot {
                     z: bankLoc.z,
                     level: bankLoc.level,
                 });
+                if (npcBounds && Array.isArray(locPoints) && locPoints.length === 8) break;
             }
         }
         const locBounds = Array.isArray(locPoints) && locPoints.length === 8
             ? { id: bankLoc.id, x: bankLoc.x, z: bankLoc.z, points: locPoints }
             : null;
         if (!npcBounds || !locBounds) {
-            const npcBoxLengths = npcRows.slice(0, 4).map((npc) => {
+            const npcDiagnostics = npcRows.slice(0, 8).map((npc) => {
                 const points = reader.npcBox(npc.index);
-                return `${npc.index}:${Array.isArray(points) ? points.length : -1}`;
+                const pointCount = Array.isArray(points) ? points.length : -1;
+                return `${npc.index}@${npc.x},${npc.z}/d${npc.distance}:box=${pointCount}`;
             });
             throw new Error(
-                `ClientAdapter did not expose real NPC and loc bounds (npcCount=${npcRows.length}, npcBoxes=${npcBoxLengths.join(',')}, locPoints=${Array.isArray(locPoints) ? locPoints.length : -1}, cameraYaw=${Game.cameraYaw()})`,
+                `ClientAdapter did not expose real NPC and loc bounds (npcCount=${npcRows.length}, npcs=${npcDiagnostics.join(',')}, locPoints=${Array.isArray(locPoints) ? locPoints.length : -1}, cameraYaw=${Game.cameraYaw()}, cameraPitch=${Game.cameraPitch()})`,
             );
         }
 
