@@ -3262,6 +3262,87 @@ impl LiveRun {
 #[cfg(test)]
 mod packet_oracle_tests {
     use super::*;
+    use host_play::tick_engine_test_support::ChatObservation;
+
+    fn observed_frame(game_tick: u32, tick_edge: bool, if_close: u64) -> FrameObservation {
+        FrameObservation {
+            host_frame: u64::from(game_tick) * 10,
+            game_tick,
+            client_tick: game_tick,
+            tick_edge,
+            animation: None,
+            chat: Vec::new(),
+            inventory_counts: Vec::new(),
+            log_count: 1,
+            skill_xp: Vec::new(),
+            player_tile: None,
+            chat_modal_root: -1,
+            actual_chat_modal_root: -1,
+            server_if_close_packets: if_close,
+            main_modal_opened_observation: 0,
+            main_modal_closed_observation: 0,
+            suppressed_openchat: false,
+        }
+    }
+
+    #[test]
+    fn chat_attribution_uses_first_seen_poll_position() {
+        for poll in [PollKind::Wake, PollKind::Edge] {
+            let mut frame = observed_frame(15, poll == PollKind::Edge, 1);
+            frame.chat.push(ChatObservation {
+                game_tick: 15,
+                sequence: 11,
+                text: "You attempt to catch a fish.".into(),
+                poll,
+            });
+            let trace = TickEngineTrace {
+                frames: vec![frame],
+                ..TickEngineTrace::default()
+            };
+            assert!(has_act_line(&trace, 16), "{poll:?}");
+            assert_eq!(has_act_line(&trace, 15), poll == PollKind::Edge);
+            assert!(!has_act_line(&trace, 14));
+            assert!(!has_act_line(&trace, 17));
+        }
+    }
+
+    #[test]
+    fn chat_only_if_close_needs_a_fresh_packet_not_a_main_modal_transition() {
+        let baseline = observed_frame(15, false, 1);
+        let trace = TickEngineTrace {
+            frames: vec![
+                baseline.clone(),
+                observed_frame(16, false, 2),
+                observed_frame(17, true, 2),
+            ],
+            ..TickEngineTrace::default()
+        };
+        assert!(close_packet_seen(&trace, 16, &baseline));
+        assert!(!close_packet_seen(&trace, 15, &baseline));
+        assert!(!close_packet_seen(&trace, 17, &baseline));
+
+        let mut transition_without_packet = observed_frame(16, false, 1);
+        transition_without_packet.main_modal_closed_observation = 1;
+        let trace = TickEngineTrace {
+            frames: vec![baseline.clone(), transition_without_packet],
+            ..TickEngineTrace::default()
+        };
+        assert!(!close_packet_seen(&trace, 16, &baseline));
+    }
+
+    #[test]
+    fn if_close_first_seen_on_an_edge_keeps_its_two_tick_interval() {
+        let baseline = observed_frame(15, false, 1);
+        let trace = TickEngineTrace {
+            frames: vec![baseline.clone(), observed_frame(16, true, 2)],
+            ..TickEngineTrace::default()
+        };
+        assert!(close_packet_seen(&trace, 15, &baseline));
+        assert!(close_packet_seen(&trace, 16, &baseline));
+        assert!(!close_packet_seen(&trace, 14, &baseline));
+        assert!(!close_packet_seen(&trace, 17, &baseline));
+    }
+
 
     #[test]
     fn river_setup_starts_on_a_real_standable_tile() {
