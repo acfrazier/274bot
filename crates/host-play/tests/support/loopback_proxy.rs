@@ -306,6 +306,8 @@ fn relay_connection(
     let mut bytes = [0_u8; RELAY_BUFFER];
     let mut client_eof = false;
     let mut server_eof = false;
+    let mut client_write_shutdown = false;
+    let mut server_write_shutdown = false;
     while !stop.load(Ordering::Acquire) {
         let mut activity = false;
         if !client_eof {
@@ -334,15 +336,29 @@ fn relay_connection(
         }
         activity |= flush_upstream(&mut client_to_server, &mut server, state)?;
         activity |= flush_downstream(&mut server_to_client, &mut client)?;
-        if client_eof || server_eof {
+        if client_eof && client_to_server.is_empty() && !server_write_shutdown {
+            server.shutdown(Shutdown::Write)?;
+            server_write_shutdown = true;
+            activity = true;
+        }
+        if server_eof && server_to_client.is_empty() && !client_write_shutdown {
+            client.shutdown(Shutdown::Write)?;
+            client_write_shutdown = true;
+            activity = true;
+        }
+        if client_eof
+            && server_eof
+            && client_to_server.is_empty()
+            && server_to_client.is_empty()
+        {
             break;
         }
         if !activity {
             thread::sleep(POLL_PAUSE);
         }
     }
-    let _ = client.shutdown(std::net::Shutdown::Both);
-    let _ = server.shutdown(std::net::Shutdown::Both);
+    let _ = client.shutdown(Shutdown::Both);
+    let _ = server.shutdown(Shutdown::Both);
     Ok(())
 }
 
@@ -582,5 +598,6 @@ mod tests {
         );
         proxy.ensure_healthy().unwrap();
     }
+
 
 }
