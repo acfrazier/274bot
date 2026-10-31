@@ -197,6 +197,13 @@ impl<'a> DispatchSnapshot<'a> {
         let Some(snapshot) = scope.snapshot.as_deref_mut() else {
             return scope;
         };
+        if !snapshot
+            .locs()
+            .iter()
+            .any(|loc| loc.id == id && loc.tile == tile)
+        {
+            return scope;
+        }
 
         let original_locs = snapshot.locs().to_vec();
         let kept: Vec<_> = original_locs
@@ -204,16 +211,32 @@ impl<'a> DispatchSnapshot<'a> {
             .filter(|loc| !(loc.id == id && loc.tile == tile))
             .cloned()
             .collect();
-        scope.mutation_applied = kept.len() != original_locs.len();
-        if scope.mutation_applied {
-            snapshot.seed_locs(kept);
-            scope.original_locs = Some(original_locs);
-        }
+        snapshot.seed_locs(kept);
+        scope.original_locs = Some(original_locs);
+        scope.mutation_applied = true;
         scope
     }
 
     fn snapshot(&self) -> Option<&GameSnapshot> {
         self.snapshot.as_deref()
+    }
+
+    fn mutation_applied(&self) -> bool {
+        self.mutation_applied
+    }
+
+    fn restore(&mut self) {
+        if let Some(original_locs) = self.original_locs.take() {
+            if let Some(snapshot) = self.snapshot.as_deref_mut() {
+                snapshot.seed_locs(original_locs);
+            }
+        }
+    }
+}
+
+impl Drop for DispatchSnapshot<'_> {
+    fn drop(&mut self) {
+        self.restore();
     }
 }
 
@@ -569,19 +592,19 @@ impl TickEngineTestHook {
     }
 
     /// Begin a real ordered dispatch and apply its one queued mutation, if any.
-    pub(crate) fn begin_dispatch(
+    pub(crate) fn begin_dispatch<'a>(
         self: &Arc<Self>,
-        snapshot: Option<&mut GameSnapshot>,
+        snapshot: Option<&'a mut GameSnapshot>,
         game_tick: u32,
         authority: &HostAuthority,
         envelope: &ServerOrderedEnvelope,
-    ) -> DispatchGuard {
+    ) -> DispatchGuard<'a> {
         let mutation = {
             let mut state = self.state.lock().expect("tick-engine hook poisoned");
             state.last_game_tick = game_tick;
             state.pending_mutations.pop_front()
         };
-        let mut mutation_applied = false;
+        let mut remove_loc = None;
         let request_id = authority.request_id().get();
         let request_debug = match envelope.payload() {
             script::surface::ServerOrderedPayload::Content(request) => Some(format!("{request:?}")),
@@ -591,19 +614,7 @@ impl TickEngineTestHook {
         let mut transport = None;
         match mutation {
             Some(DispatchMutation::RemoveLoc { id, tile }) => {
-                if let Some(snapshot) = snapshot {
-                    let mut kept = Vec::with_capacity(snapshot.locs().len());
-                    let before = snapshot.locs().len();
-                    kept.extend(
-                        snapshot
-                            .locs()
-                            .iter()
-                            .filter(|loc| !(loc.id == id && loc.tile == tile))
-                            .cloned(),
-                    );
-                    mutation_applied = kept.len() != before;
-                    snapshot.seed_locs(kept);
-                }
+                remove_loc = Some((id, tile));
             }
             Some(DispatchMutation::CancelAfterPackets(count)) => {
                 cancel_after = Some(count);
@@ -613,6 +624,7 @@ impl TickEngineTestHook {
             }
             None => {}
         }
+        let snapshot = DispatchSnapshot::begin(snapshot, remove_loc);
         let content_request = matches!(
             envelope.payload(),
             script::surface::ServerOrderedPayload::Content(_)
@@ -651,7 +663,7 @@ impl TickEngineTestHook {
         DispatchGuard {
             hook: Arc::clone(self),
             request_id,
-            mutation_applied,
+            snapshot,
             request_debug,
         }
     }
@@ -734,17 +746,22 @@ impl TickEngineTestHook {
 }
 
 /// RAII fence for the packet observer's request-specific authority.
-pub(crate) struct DispatchGuard {
+pub(crate) struct DispatchGuard<'a> {
     hook: Arc<TickEngineTestHook>,
     request_id: u64,
-    mutation_applied: bool,
+    snapshot: DispatchSnapshot<'a>,
     request_debug: Option<String>,
 }
 
-impl DispatchGuard {
+impl DispatchGuard<'_> {
     /// Whether the requested snapshot edit removed the named live object.
     pub(crate) fn mutation_applied(&self) -> bool {
-        self.mutation_applied
+        self.snapshot.mutation_applied()
+    }
+
+    /// Snapshot view presented to the real dispatcher, scoped to this request.
+    pub(crate) fn snapshot(&self) -> Option<&GameSnapshot> {
+        self.snapshot.snapshot()
     }
 
     /// Return the real request's typed debug representation.
@@ -753,8 +770,10 @@ impl DispatchGuard {
     }
 }
 
+
 impl Drop for DispatchGuard {
     fn drop(&mut self) {
+        self.snapshot.restore();
         self.hook.end_dispatch(self.request_id);
     }
 }

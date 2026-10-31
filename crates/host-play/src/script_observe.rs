@@ -1514,37 +1514,76 @@ where
                                 #[cfg(test)]
                                 run_ordered_dispatch_hook(&authority);
                                 let selected = slot.compiled_game_data();
-                                #[cfg(feature = "test-support")]
-                                let test_dispatch = TickEngineTestHook::current().map(|hook| {
-                                    let guard = hook.begin_dispatch(
-                                        snapshot.write(),
-                                        tick as u32,
-                                        &authority,
-                                        &envelope,
-                                    );
-                                    (hook, guard)
-                                });
-                                let dispatch = super::dispatch_native_server_ordered(
-                                    driver,
-                                    super::OrderedDispatchContext {
-                                        snapshot: &snapshot,
-                                        selected: selected.as_deref(),
-                                        input: slot_input,
-                                        builtin_gatherer_knife: slot
-                                            .is_builtin_gatherer_run(authority.run()),
-                                    },
-                                    &authority,
-                                    &envelope,
-                                );
-                                #[cfg(feature = "test-support")]
-                                if let Some((hook, guard)) = test_dispatch.as_ref() {
-                                    hook.record_dispatch(
-                                        dispatch,
-                                        tick,
-                                        guard.request_debug(),
-                                        guard.mutation_applied(),
-                                    );
-                                }
+                                let builtin_gatherer_knife =
+                                    slot.is_builtin_gatherer_run(authority.run());
+                                let dispatch = {
+                                    let mut dispatch_with_snapshot =
+                                        |dispatch_snapshot: &GameSnapshot| {
+                                            super::dispatch_native_server_ordered(
+                                                driver,
+                                                super::OrderedDispatchContext {
+                                                    snapshot: dispatch_snapshot,
+                                                    selected: selected.as_deref(),
+                                                    input: slot_input,
+                                                    builtin_gatherer_knife,
+                                                },
+                                                &authority,
+                                                &envelope,
+                                            )
+                                        };
+                                    #[cfg(feature = "test-support")]
+                                    let dispatch = if let Some(hook) =
+                                        TickEngineTestHook::current()
+                                    {
+                                        match &mut snapshot {
+                                            SnapshotArgument::Mutable(snapshot) => {
+                                                let guard = hook.begin_dispatch(
+                                                    Some(&mut **snapshot),
+                                                    tick as u32,
+                                                    &authority,
+                                                    &envelope,
+                                                );
+                                                let dispatch = dispatch_with_snapshot(
+                                                    guard
+                                                        .snapshot()
+                                                        .expect("mutable dispatch snapshot exists"),
+                                                );
+                                                hook.record_dispatch(
+                                                    dispatch,
+                                                    tick,
+                                                    guard.request_debug(),
+                                                    guard.mutation_applied(),
+                                                );
+                                                dispatch
+                                            }
+                                            SnapshotArgument::ReadOnly(snapshot) => {
+                                                let guard = hook.begin_dispatch(
+                                                    None,
+                                                    tick as u32,
+                                                    &authority,
+                                                    &envelope,
+                                                );
+                                                let dispatch = dispatch_with_snapshot(
+                                                    snapshot
+                                                        .as_deref()
+                                                        .expect("dispatch snapshot is published"),
+                                                );
+                                                hook.record_dispatch(
+                                                    dispatch,
+                                                    tick,
+                                                    guard.request_debug(),
+                                                    guard.mutation_applied(),
+                                                );
+                                                dispatch
+                                            }
+                                        }
+                                    } else {
+                                        dispatch_with_snapshot(&snapshot)
+                                    };
+                                    #[cfg(not(feature = "test-support"))]
+                                    let dispatch = dispatch_with_snapshot(&snapshot);
+                                    dispatch
+                                };
                                 wrote |= dispatch.wire_events != 0;
                                 slot.complete_native_server_ordered(
                                     &authority,
@@ -1557,8 +1596,6 @@ where
                                         dispatch,
                                     },
                                 );
-                                #[cfg(feature = "test-support")]
-                                drop(test_dispatch);
                             }
                             script::native::HostEffect::Interaction(request) => {
                                 #[cfg(test)]
