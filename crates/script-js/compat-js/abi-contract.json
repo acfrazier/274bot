@@ -13287,7 +13287,7 @@
         "opts"
       ],
       "reason": "Native walker defaults its options while retaining the frozen typed option fields.",
-      "runtime": "crates/script-js/src/shim/traversal.js:51",
+      "runtime": "crates/script-js/src/shim/traversal.js:52",
       "family_id": "walking",
       "nav_consuming": true
     },
@@ -13704,28 +13704,6 @@
       "runtime": "crates/script-js/src/shim/shop.js:64",
       "async": false,
       "family_id": "shop",
-      "nav_consuming": true
-    },
-    {
-      "id": "not-impl:api/walking/Traversal.js:Traversal.remaining",
-      "module": "api/walking/Traversal.js",
-      "selector": "Traversal.remaining",
-      "operation": "not-impl",
-      "reason": "Unconditional not-impl: no arguments are inspected and no successful result is produced.",
-      "runtime": "crates/script-js/src/shim/traversal.js:93",
-      "async": false,
-      "family_id": "walking",
-      "nav_consuming": true
-    },
-    {
-      "id": "not-impl:api/walking/Traversal.js:Traversal.requestRepath",
-      "module": "api/walking/Traversal.js",
-      "selector": "Traversal.requestRepath",
-      "operation": "not-impl",
-      "reason": "Unconditional not-impl: no arguments are inspected and no successful result is produced.",
-      "runtime": "crates/script-js/src/shim/traversal.js:99",
-      "async": false,
-      "family_id": "walking",
       "nav_consuming": true
     },
     {
@@ -23529,26 +23507,6 @@
       "overlay_id": "not-impl:api/shop/Shop.js:Shop.buyById"
     },
     {
-      "family_id": "walking",
-      "member": "remaining",
-      "selector": "Traversal.remaining",
-      "module": "api/walking/Traversal.js",
-      "state": "not-impl",
-      "source": "crates/script-js/src/shim/traversal.js:93",
-      "reason": "Unconditional not-impl: no arguments are inspected and no successful result is produced.",
-      "overlay_id": "not-impl:api/walking/Traversal.js:Traversal.remaining"
-    },
-    {
-      "family_id": "walking",
-      "member": "requestRepath",
-      "selector": "Traversal.requestRepath",
-      "module": "api/walking/Traversal.js",
-      "state": "not-impl",
-      "source": "crates/script-js/src/shim/traversal.js:99",
-      "reason": "Unconditional not-impl: no arguments are inspected and no successful result is produced.",
-      "overlay_id": "not-impl:api/walking/Traversal.js:Traversal.requestRepath"
-    },
-    {
       "family_id": "quests",
       "member": "gotoNpc",
       "selector": "gotoNpc",
@@ -25386,7 +25344,7 @@
       "type_aliases": 0,
       "name_aliases": 0,
       "callbacks": 15,
-      "not_impl_debt": 2
+      "not_impl_debt": 0
     },
     {
       "family_id": "woodcutting",

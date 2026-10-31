@@ -3965,10 +3965,10 @@ export const Traversal: {
     teleportsEnabled(): boolean;
     walkTo(dest: WorldTile, opts?: WalkOptions): Promise<boolean>;
     /** Force the active (or next) world walk to repath without waiting for a stall or deviation; see path stickiness on WalkExecutor. */
-    requestRepath(reason?: string): never;
+    requestRepath(reason?: string): void;
     walkResilient(dest: WorldTile, opts?: WalkResilientOptions): Promise<boolean>;
     preload(): void;
-    remaining(): never;
+    remaining(): number;
 };
 
 }

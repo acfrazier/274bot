@@ -931,16 +931,16 @@ pub fn shim_modules() -> Vec<Module> {
             include_str!("bot_host.js"),
         ),
         Module::new(
+            "/rs2b0t/bot/api/map/WalkDestinations.js",
+            include_str!("walk_destinations.js"),
+        ),
+        Module::new(
             "/rs2b0t/bot/scripts/bot/declared_surface.js",
             include_str!("declared_surface.js"),
         ),
         Module::new(
             "/rs2b0t/bot/scripts/bot/rs2b0t-api.js",
             include_str!("rs2b0t_api.js"),
-        ),
-        Module::new(
-            "/rs2b0t/bot/api/map/WalkDestinations.js",
-            include_str!("walk_destinations.js"),
         ),
         Module::new("/rs2b0t/bot/api/map/regions.js", include_str!("regions.js")),
         Module::new(
