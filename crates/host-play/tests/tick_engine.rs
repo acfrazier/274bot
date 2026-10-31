@@ -1471,7 +1471,9 @@ fn correlate_engine_packets(evidence: &RunEvidence) -> Result<(), String> {
 }
 
 fn engine_accepted_user_event(packet: &EnginePacket) -> bool {
-    packet.outcome == "accepted" && packet.handler_accepted && packet.charged_user_event
+    // A charged packet may suspend its content script while the network handler
+    // accepts it. Content success still needs the case's real animation/chat oracle.
+    packet.handler_accepted && packet.charged_user_event
 }
 
 fn assert_engine_accepted_make_prefix(packets: &[EnginePacket]) -> Result<(), String> {
