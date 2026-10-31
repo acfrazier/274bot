@@ -577,25 +577,13 @@ journal read only when the colour is in-progress and the released Path
 has journal rules. Like the rest of `NativeApi`, these are host verbs;
 frozen rs2b0t signatures are irrelevant to them.
 
-The shared Quester release index holds twenty-five revision-289 Paths, in
-release order: Cook's Assistant (`cook`), Sheep Shearer (`sheep`), Rune
-Mysteries (`runemysteries`), Romeo & Juliet (`romeojuliet`), Imp Catcher
-(`imp`), Vampire Slayer (`vampire`), Doric's Quest (`doric`), Goblin Diplomacy
-(`gobdip`), Witch's Potion (`hetty`), Prince Ali Rescue (`prince`), Pirate's
-Treasure (`hunt`), Demon Slayer (`demon`), The Knight's Sword (`squire`), Death
-Plateau (`death`), The Tourist Trap (`desertrescue`), Priest in Peril
-(`priestperil`), Clock Tower (`cog`), Monk's Friend (`drunkmonk`), Hazeel Cult
-(`hazeelcult`), Plague City (`elena`), and the five untested draft guides
-Druidic Ritual (`druid`), Gertrude's Cat (`fluffs`), Jungle Potion
-(`junglepotion`), Sea Slug Quest (`seaslug`) and Tribal Totem (`totem`). Each
-row's `draft` is `true` for those five and `false` for the twenty released
-Paths. Haunted Mine, which this server can't run,
-has no Path and is not a row. Each row's `stages` comes from that Path's
-authored role sequences. Cook and Imp Catcher are colour-only
-(`journal: false`); the rest have journal rules (`journal: true`). For example,
-Romeo & Juliet includes the six journal stages `romeojuliet:10` through
-`romeojuliet:60`, plus its not-started and complete stages (`romeojuliet:0` and
-`romeojuliet:100`).
+The shared Quester index retains qualified and drafted revision-289 Paths.
+Only rows explicitly marked `qualified` can start in a release build.
+Currently, The Restless Ghost (`priest`) is qualified. Each API row reports its
+authored `draft` status. A row's presence does not grant Start permission.
+Haunted Mine has no runnable Path and is not an API row.
+Each row's `stages` comes from that Path's authored role sequences.
+`journal` reports whether the Path has journal rules.
 Stages are listed role by role in the guide's role order. Within a role,
 stages with a numeric suffix (`romeojuliet:10`) come first in ascending order,
 then named stages (`itexam:stamping`, `itexam:find`) in authored sequence

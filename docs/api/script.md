@@ -258,9 +258,9 @@ A Load slot can also host one API seat: `api.gather.run` prepares and ticks
 the genuine Gatherer card inside the slot with the slot's own ledger, and
 `api.snapshot.gather` reports its live session; `api.combat.fight` runs one
 fight of the native Combat machine the same way, and `api.snapshot.combat`
-reports its live session. `api.questPaths()` is a sync read of the release Path
-index for the twenty-five bundled Paths (twenty released, five draft guides; each
-row's `draft` says which), needing no seat;
+reports its live session. `api.questPaths()` synchronously reads the embedded Path
+index without a seat. Each row reports its authored `draft` status. Listing a Path
+does not grant permission to start it in a release build.
 `api.questProgress({ quest })` runs one owned progress read in the same seat —
 tab colour first, then the quiet host journal read only when the colour is
 in-progress and the released Path has journal rules. While the seat is live the
@@ -332,17 +332,10 @@ begins, without specializing the shared compiled Path. Omitted saved values use
 `chaos`, and unknown or random values are refused.
 
 In the panel, edit these settings in **Script prefs**; in the TUI, use **Params**.
-For Cook's Assistant alone, set `quests` to `cook` while stopped, then Start.
-The bundled Path IDs in roster order are `cook` (Cook's Assistant), `sheep`
-(Sheep Shearer), `runemysteries` (Rune Mysteries), `romeojuliet` (Romeo &
-Juliet), `imp` (Imp Catcher), `vampire` (Vampire Slayer), `doric` (Doric's
-Quest), `gobdip` (Goblin Diplomacy), `hetty` (Witch's Potion), `prince` (Prince
-Ali Rescue), `hunt` (Pirate's Treasure), `demon` (Demon Slayer), `squire` (The
-Knight's Sword), `death` (Death Plateau), `desertrescue` (The Tourist Trap),
-`priestperil` (Priest in Peril), `cog` (Clock Tower), `drunkmonk` (Monk's
-Friend), `hazeelcult` (Hazeel Cult), `elena` (Plague City), `druid` (Druidic
-Ritual, draft), `fluffs` (Gertrude's Cat, draft), `junglepotion` (Jungle Potion,
-draft), `seaslug` (Sea Slug Quest, draft), and `totem` (Tribal Totem, draft).
+For The Restless Ghost alone, set `quests` to `priest` while stopped, then Start.
+The embedded index also retains drafted Paths for qualification work.
+`api.questPaths()` lists their metadata, but release Start accepts only explicitly
+qualified rows. Embedding a Path does not qualify it.
 The roster also carries one unavailable row, Haunted Mine, which pickers list
 as non-selectable with its reason.
 

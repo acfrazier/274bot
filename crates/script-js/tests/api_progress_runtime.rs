@@ -255,7 +255,7 @@ fn quest_paths_is_synchronous_and_lists_every_released_path() {
             .clone()
     };
     assert_eq!(draft_of("druid"), serde_json::json!(true));
-    assert_eq!(draft_of("cook"), serde_json::json!(false));
+    assert_eq!(draft_of("priest"), serde_json::json!(false));
     iso.join();
 }
 
