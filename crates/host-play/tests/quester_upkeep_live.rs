@@ -45,13 +45,14 @@ const OBSERVED_TICK_LIMIT: u32 = 600;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 struct Mark {
-    tick: u32,
+    // Raw PLAYER_INFO generation is shared by the scenario and host snapshots.
+    tick: u64,
     poll: u64,
 }
 
 impl Mark {
-    fn gap(self, earlier: Self) -> i64 {
-        i64::from(self.tick) - i64::from(earlier.tick)
+    fn gap(self, earlier: Self) -> i128 {
+        i128::from(self.tick) - i128::from(earlier.tick)
     }
 }
 
@@ -208,6 +209,8 @@ impl C0Receipt {
             "r_gap_ticks": self.s_drop.as_ref().zip(phase_r).map(|(drop, (r, _))| r.gap(drop.at)),
             "s1_after_l0_ticks": self.s1.zip(self.l0).map(|(s1, l0)| s1.gap(l0)),
         });
+        receipt["frame_clock"] = json!("raw PLAYER_INFO generation");
+        receipt["survival_deadline_clock"] = json!("native script tick");
         receipt["survival_op_events"] = json!(self
             .survival_op_events
             .iter()
@@ -268,6 +271,7 @@ enum SurvivalOpEventKind {
 struct SurvivalOpEvent {
     event: SurvivalOpEventKind,
     tick: u64,
+    player_info: u64,
     kind: String,
     deadline: u64,
     hostlog_tick: Option<u64>,
@@ -282,6 +286,7 @@ impl SurvivalOpEvent {
         json!({
             "event": event,
             "tick": self.tick,
+            "player_info": self.player_info,
             "kind": self.kind,
             "applied": applied,
             "deadline": self.deadline,
@@ -299,6 +304,7 @@ fn parse_survival_op_event(line: &HostLog) -> Result<Option<SurvivalOpEvent>, St
     let (tick, remainder) = remainder.split_once(" kind=").ok_or_else(&malformed)?;
     let (kind, remainder) = remainder.split_once(" applied=").ok_or_else(&malformed)?;
     let (applied, deadline) = remainder.split_once(" deadline=").ok_or_else(&malformed)?;
+    let (deadline, player_info) = deadline.split_once(" player_info=").ok_or_else(&malformed)?;
     if kind.is_empty() {
         return Err(malformed());
     }
@@ -311,6 +317,7 @@ fn parse_survival_op_event(line: &HostLog) -> Result<Option<SurvivalOpEvent>, St
     Ok(Some(SurvivalOpEvent {
         event,
         tick: tick.parse().map_err(|_| malformed())?,
+        player_info: player_info.parse().map_err(|_| malformed())?,
         kind: kind.to_owned(),
         deadline: deadline.parse().map_err(|_| malformed())?,
         hostlog_tick: line.tick,
@@ -325,14 +332,14 @@ fn parse_survival_op_logs(logs: &[HostLog]) -> (Vec<SurvivalOpEvent>, Vec<String
         match parse_survival_op_event(line) {
             Ok(Some(event)) => {
                 if let Some(previous_tick) = previous_tick {
-                    if event.tick < previous_tick {
+                    if event.player_info < previous_tick {
                         errors.push(format!(
-                            "survival operation trace tick {} follows later tick {}",
-                            event.tick, previous_tick
+                            "survival operation PLAYER_INFO generation {} follows later generation {}",
+                            event.player_info, previous_tick
                         ));
                     }
                 }
-                previous_tick = Some(event.tick);
+                previous_tick = Some(event.player_info);
                 events.push(event);
             }
             Ok(None) => {}
@@ -546,7 +553,7 @@ fn insert_pre_start_drain(
                 let sent = api::interact::cheat(client, PRE_START_DRAIN).is_sent();
                 if sent {
                     witness.receipt.pre_drain_send = Some(Mark {
-                        tick: snapshot.tick(),
+                        tick: snapshot.gens().player_info,
                         poll: witness.polls.saturating_add(1),
                     });
                 }
@@ -624,7 +631,7 @@ fn insert_attempt_drain_and_anchors(
                 {
                     let poll = witness.polls.saturating_add(1);
                     witness.receipt.l0.get_or_insert(Mark {
-                        tick: snapshot.tick(),
+                        tick: snapshot.gens().player_info,
                         poll,
                     });
                 }
@@ -653,7 +660,7 @@ fn insert_attempt_drain_and_anchors(
                 let sent = api::interact::cheat(client, &command).is_sent();
                 if sent {
                     witness.receipt.s_send = Some(Mark {
-                        tick: snapshot.tick(),
+                        tick: snapshot.gens().player_info,
                         poll: witness.polls.saturating_add(1),
                     });
                 }
@@ -693,7 +700,7 @@ fn live_callbacks(
                 .lock()
                 .map_err(|_| "C0 live witness poisoned".to_owned())?;
             let now = Mark {
-                tick: snapshot.tick(),
+                tick: snapshot.gens().player_info,
                 poll: witness.polls,
             };
             let logs = hostlogs();
@@ -725,7 +732,7 @@ fn live_callbacks(
                 return Err("C0 failed: named Stop observed in hostlog".into());
             }
             if let Some(start) = witness.receipt.start {
-                if now.tick.saturating_sub(start.tick) > OBSERVED_TICK_LIMIT {
+                if now.tick.saturating_sub(start.tick) > u64::from(OBSERVED_TICK_LIMIT) {
                     return Err(format!(
                     "C0 exceeded {OBSERVED_TICK_LIMIT} observed ticks before its terminal witness"
                 ));
@@ -789,7 +796,7 @@ fn run_c0(purpose: RunPurpose) -> Result<LiveCapture, String> {
 fn record_frame(witness: &mut LiveWitness, snapshot: &GameSnapshot, status: &ScriptStatus) -> bool {
     witness.polls = witness.polls.saturating_add(1);
     let at = Mark {
-        tick: snapshot.tick(),
+        tick: snapshot.gens().player_info,
         poll: witness.polls,
     };
     witness.receipt.start.get_or_insert(at);
@@ -959,7 +966,7 @@ fn record_frame(witness: &mut LiveWitness, snapshot: &GameSnapshot, status: &Scr
 
 fn observe_journal(witness: &mut LiveWitness, snapshot: &GameSnapshot, poll: u64) {
     let at = Mark {
-        tick: snapshot.tick(),
+        tick: snapshot.gens().player_info,
         poll,
     };
     if snapshot.modals().main == JOURNAL_ROOT {
@@ -1026,7 +1033,7 @@ fn survival_op_pending_before_tick(receipt: &C0Receipt, tick: u64) -> Result<boo
     }
     let mut active: Option<(&str, u64)> = None;
     for event in &receipt.survival_op_events {
-        if event.tick >= tick {
+        if event.player_info >= tick {
             break;
         }
         match event.event {
@@ -1061,21 +1068,21 @@ fn require_phase_s_op_sequence(
 ) -> Result<(), String> {
     let mut events = receipt.survival_op_events.iter().filter(|event| {
         parse_eat_kind(&event.kind) == Some((LOBSTER_ID, 7))
-            && event.tick >= u64::from(s1.tick)
-            && event.tick <= u64::from(s_drop.at.tick)
+            && event.player_info >= s1.tick
+            && event.player_info <= s_drop.at.tick
     });
     let begin = events.next().ok_or(
         "R4-S2: missing survival OneOp begin at S1; no pending/applied operation evidence",
     )?;
-    if begin.event != SurvivalOpEventKind::Begin || begin.tick != u64::from(s1.tick) {
+    if begin.event != SurvivalOpEventKind::Begin || begin.player_info != s1.tick {
         return Err(format!(
             "R4-S2: first Eat(379, 7) event must begin at S1 tick {}; got {:?} at {}",
-            s1.tick, begin.event, begin.tick
+            s1.tick, begin.event, begin.player_info
         ));
     }
     if begin.deadline != begin.tick.saturating_add(8) {
         return Err(format!(
-            "R4-S2: first Eat(379, 7) deadline {} is not S1+8",
+            "R4-S2: first Eat(379, 7) deadline {} is not native begin+8",
             begin.deadline
         ));
     }
@@ -1097,6 +1104,7 @@ fn require_phase_s_op_sequence(
         .ok_or("R4-S2: missing retry begin at the first unapplied end tick")?;
     if retry_begin.event != SurvivalOpEventKind::Begin
         || retry_begin.tick != first_end.tick
+        || retry_begin.player_info != first_end.player_info
         || retry_begin.kind != begin.kind
     {
         return Err(format!(
@@ -1114,21 +1122,21 @@ fn require_phase_s_op_sequence(
         .next()
         .ok_or("R4-S2: missing applied retry end at the phase-S food drop")?;
     if retry_end.event != (SurvivalOpEventKind::End { applied: true })
-        || retry_end.tick != u64::from(s_drop.at.tick)
+        || retry_end.player_info != s_drop.at.tick
         || retry_end.kind != retry_begin.kind
         || retry_end.deadline != retry_begin.deadline
         || events.next().is_some()
     {
         return Err(format!(
             "R4-S2: retry must end applied=true on S_drop tick {}; got {:?} at {}",
-            s_drop.at.tick, retry_end.event, retry_end.tick
+            s_drop.at.tick, retry_end.event, retry_end.player_info
         ));
     }
     Ok(())
 }
 
 fn require_o2_applied_bite(receipt: &C0Receipt, frame: &C0Frame) -> Result<(), String> {
-    let tick = u64::from(frame.at.tick);
+    let tick = frame.at.tick;
     if survival_op_pending_before_tick(receipt, tick)? {
         return Ok(());
     }
@@ -1136,25 +1144,24 @@ fn require_o2_applied_bite(receipt: &C0Receipt, frame: &C0Frame) -> Result<(), S
         "Eat {{ item_id: {LOBSTER_ID}, before_count: {} }}",
         frame.lobsters
     );
-    let deadline = tick.saturating_add(8);
     let applied = receipt.survival_op_events.iter().any(|begin| {
         if begin.event != SurvivalOpEventKind::Begin
-            || begin.tick != tick
+            || begin.player_info != tick
             || begin.kind != kind
-            || begin.deadline != deadline
+            || begin.deadline != begin.tick.saturating_add(8)
         {
             return false;
         }
         receipt.survival_op_events.iter().any(|end| {
             end.event == (SurvivalOpEventKind::End { applied: true })
-                && end.tick >= tick
-                && end.tick <= tick.saturating_add(2)
+                && end.player_info >= tick
+                && end.player_info <= tick.saturating_add(2)
                 && end.kind == begin.kind
                 && end.deadline == begin.deadline
                 && receipt.drops.iter().any(|drop| {
                     drop.from == frame.lobsters
                         && drop.to == frame.lobsters - 1
-                        && u64::from(drop.at.tick) == end.tick
+                        && drop.at.tick == end.player_info
                 })
         })
     });
@@ -1263,9 +1270,11 @@ fn c0_acceptance_oracle(receipt: &C0Receipt, logs: &[HostLog]) -> Result<(), Str
             .contains("step climb-cell-rock-1 (interact) begin")
     }) {
         let tick = line
-            .tick
-            .ok_or("climb begin hostlog has no observed tick")?;
-        if tick > u64::from(s1.tick) && tick < u64::from(s_drop.at.tick) {
+            .message
+            .rsplit_once(" player_info=")
+            .and_then(|(_, tick)| tick.parse::<u64>().ok())
+            .ok_or("climb begin hostlog has no raw PLAYER_INFO generation")?;
+        if tick > s1.tick && tick < s_drop.at.tick {
             return Err(
                 "a climb-cell-rock-1 begin trace appeared between S1 and the phase-S drop".into(),
             );
@@ -1478,10 +1487,10 @@ mod tests {
     #[test]
     fn reads_actual_scripttrace_stderr_without_inventing_a_carrier_tick() {
         let text = concat!(
-            "[script-trace qu1bot] quester survival op event=begin tick=20 kind=Eat { item_id: 379, before_count: 7 } applied=pending deadline=28\n",
-            "[script] quester survival op event=begin tick=99 kind=CloseModal applied=pending deadline=107\n",
+            "[script-trace qu1bot] quester survival op event=begin tick=20 kind=Eat { item_id: 379, before_count: 7 } applied=pending deadline=28 player_info=120\n",
+            "[script] quester survival op event=begin tick=99 kind=CloseModal applied=pending deadline=107 player_info=199\n",
             "[script-trace] unrelated diagnostic\n",
-            "[script-trace qu1bot] quester survival op event=end tick=28 kind=Eat { item_id: 379, before_count: 7 } applied=false deadline=28\n",
+            "[script-trace qu1bot] quester survival op event=end tick=28 kind=Eat { item_id: 379, before_count: 7 } applied=false deadline=28 player_info=128\n",
         );
         let logs = parse_survival_op_stderr(text);
         assert_eq!(logs.len(), 2);
@@ -1489,8 +1498,10 @@ mod tests {
         let (events, errors) = parse_survival_op_logs(&logs);
         assert!(errors.is_empty());
         assert_eq!(events[0].tick, 20);
+        assert_eq!(events[0].player_info, 120);
         assert_eq!(events[0].event, SurvivalOpEventKind::Begin);
         assert_eq!(events[1].tick, 28);
+        assert_eq!(events[1].player_info, 128);
         assert_eq!(events[1].event, SurvivalOpEventKind::End { applied: false });
         assert!(events.iter().all(|event| event.hostlog_tick.is_none()));
     }
@@ -1501,7 +1512,7 @@ mod tests {
             tick: Some(20),
             source: "Script".into(),
             message: format!(
-                "quester survival op event=begin tick=20 kind=Eat {{ item_id: {LOBSTER_ID}, before_count: 7 }} applied=pending deadline=28"
+                "quester survival op event=begin tick=20 kind=Eat {{ item_id: {LOBSTER_ID}, before_count: 7 }} applied=pending deadline=28 player_info=120"
             ),
         };
         assert_eq!(
@@ -1509,6 +1520,7 @@ mod tests {
             Ok(Some(SurvivalOpEvent {
                 event: SurvivalOpEventKind::Begin,
                 tick: 20,
+                player_info: 120,
                 kind: format!("Eat {{ item_id: {LOBSTER_ID}, before_count: 7 }}"),
                 deadline: 28,
                 hostlog_tick: Some(20),
@@ -1519,7 +1531,7 @@ mod tests {
             tick: Some(28),
             source: "Script".into(),
             message: format!(
-                "quester survival op event=end tick=28 kind=Eat {{ item_id: {LOBSTER_ID}, before_count: 7 }} applied=false deadline=28"
+                "quester survival op event=end tick=28 kind=Eat {{ item_id: {LOBSTER_ID}, before_count: 7 }} applied=false deadline=28 player_info=128"
             ),
         };
         assert_eq!(
@@ -1527,6 +1539,7 @@ mod tests {
             Ok(Some(SurvivalOpEvent {
                 event: SurvivalOpEventKind::End { applied: false },
                 tick: 28,
+                player_info: 128,
                 kind: format!("Eat {{ item_id: {LOBSTER_ID}, before_count: 7 }}"),
                 deadline: 28,
                 hostlog_tick: Some(28),
@@ -1542,25 +1555,26 @@ mod tests {
 
     fn test_op_event(
         event: SurvivalOpEventKind,
-        tick: u32,
+        tick: u64,
         before_count: i32,
-        deadline: u32,
+        deadline: u64,
     ) -> SurvivalOpEvent {
         SurvivalOpEvent {
             event,
-            tick: u64::from(tick),
+            tick,
+            player_info: tick,
             kind: format!("Eat {{ item_id: {LOBSTER_ID}, before_count: {before_count} }}"),
-            deadline: u64::from(deadline),
-            hostlog_tick: Some(u64::from(tick)),
+            deadline,
+            hostlog_tick: Some(tick),
         }
     }
 
     fn valid_receipt(
-        g_gap: u32,
-        s1_gap: u32,
-        s_drop_gap: u32,
-        restart_gap: u32,
-        o2_drop_gap: u32,
+        g_gap: u64,
+        s1_gap: u64,
+        s_drop_gap: u64,
+        restart_gap: u64,
+        o2_drop_gap: u64,
         slip_hp: i32,
     ) -> C0Receipt {
         let r0 = Mark { tick: 12, poll: 12 };
@@ -1804,9 +1818,20 @@ mod tests {
     }
 
     #[test]
+    fn acceptance_oracle_keeps_player_info_bounds_separate_from_native_deadlines() {
+        let mut receipt = valid_receipt(3, 2, 9, 16, 2, 20);
+        for event in &mut receipt.survival_op_events {
+            event.tick += 1_000;
+            event.deadline += 1_000;
+            event.hostlog_tick = Some(event.tick);
+        }
+        c0_acceptance_oracle(&receipt, &valid_hazard_logs()).unwrap();
+    }
+
+    #[test]
     fn acceptance_oracle_requires_the_retry_at_the_unapplied_deadline() {
         let mut receipt = valid_receipt(3, 2, 9, 16, 2, 20);
-        let retry_tick = u64::from(receipt.s1.unwrap().tick + 8);
+        let retry_tick = receipt.s1.unwrap().tick + 8;
         let retry_index = receipt
             .survival_op_events
             .iter()
@@ -1972,12 +1997,13 @@ mod tests {
             .iter_mut()
             .find(|event| {
                 event.event == SurvivalOpEventKind::End { applied: true }
-                    && event.tick == u64::from(s1.tick + 9)
+                    && event.player_info == s1.tick + 9
                     && parse_eat_kind(&event.kind) == Some((LOBSTER_ID, 7))
             })
             .expect("receipt has the applied phase-S end");
-        s_drop_event.tick = u64::from(s_drop_tick);
-        s_drop_event.hostlog_tick = Some(u64::from(s_drop_tick));
+        s_drop_event.tick = s_drop_tick;
+        s_drop_event.player_info = s_drop_tick;
+        s_drop_event.hostlog_tick = Some(s_drop_tick);
         let s_drop_frame = begun_between
             .frames
             .iter_mut()
@@ -1987,9 +2013,9 @@ mod tests {
         expect_rejected(
             &begun_between,
             &[valid_hazard_logs()[0].clone(), HostLog {
-                tick: Some(u64::from(s1.tick + 1)),
+                tick: Some(s1.tick + 1),
                 source: "Script".into(),
-                message: format!("quester desertrescue: stage desertrescue:6 step {CLIMB_STEP} (interact) begin"),
+                message: format!("quester desertrescue: stage desertrescue:6 step {CLIMB_STEP} (interact) begin player_info={}", s1.tick + 1),
             }],
         );
 
@@ -2028,8 +2054,8 @@ mod tests {
     #[test]
     fn await_then_perform_uses_the_next_client_cycle_at_the_same_game_tick() {
         let mut client = seeded_client();
-        let anchor = Arc::new(Mutex::new(None::<u32>));
-        let send_tick = Arc::new(Mutex::new(None::<u32>));
+        let anchor = Arc::new(Mutex::new(None::<u64>));
+        let send_tick = Arc::new(Mutex::new(None::<u64>));
         let ready_anchor = Arc::clone(&anchor);
         let perform_tick = Arc::clone(&send_tick);
         let scenario = scenario::Scenario {
@@ -2045,7 +2071,7 @@ mod tests {
                         evidence: "snapshot tick captured",
                         ready: Box::new(move |snapshot| {
                             if let Ok(mut anchor) = ready_anchor.lock() {
-                                anchor.get_or_insert(snapshot.tick());
+                                anchor.get_or_insert(snapshot.gens().player_info);
                             }
                             true
                         }),
@@ -2061,7 +2087,7 @@ mod tests {
                     kind: StepKind::Perform {
                         send: Box::new(move |_, snapshot| {
                             if let Ok(mut tick) = perform_tick.lock() {
-                                *tick = Some(snapshot.tick());
+                                *tick = Some(snapshot.gens().player_info);
                                 true
                             } else {
                                 false
@@ -2133,7 +2159,23 @@ mod tests {
         assert_eq!(seeds.stage, "desertrescue:6");
         assert_eq!(seeds.stand, [3282, 3035, 0]);
         assert!(seeds.loadout.is_none());
-        assert_eq!(seeds.extra_items, vec![("lobster".to_owned(), 8)]);
+        assert_eq!(
+            seeds.extra_items,
+            [
+                ("rune_scimitar", 1),
+                ("lobster", 8),
+                ("shantay_pass", 4),
+                ("water_skin4", 4),
+                ("desert_shirt", 1),
+                ("desert_robe", 1),
+                ("desert_boots", 1),
+                ("bronze_bar", 4),
+                ("feather", 50),
+                ("hammer", 1),
+                ("coins", 1_000),
+            ]
+            .map(|(item, count)| (item.to_owned(), count))
+        );
         assert!(seeds.seed_vars.is_empty());
         assert!(seeds.before_relog.is_empty());
         let row = fixture_row(QUEST).expect("desertrescue fixture row");

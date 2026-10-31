@@ -1673,8 +1673,9 @@ impl Quester {
                         api::host_log!(
                             api::hostlog::Category::ScriptTrace,
                             api::hostlog::Level::Debug,
-                            "quester survival op event=begin tick={} kind={kind:?} applied=pending deadline={deadline}",
-                            tick.cx.evidence().tick
+                            "quester survival op event=begin tick={} kind={kind:?} applied=pending deadline={deadline} player_info={}",
+                            tick.cx.evidence().tick,
+                            tick.cx.snapshot().gens().player_info
                         );
                     }
                 }
@@ -1885,9 +1886,10 @@ impl Quester {
             api::host_log!(
                 api::hostlog::Category::ScriptTrace,
                 api::hostlog::Level::Debug,
-                "quester survival op event=end tick={} kind={kind:?} applied={} deadline={deadline}",
+                "quester survival op event=end tick={} kind={kind:?} applied={} deadline={deadline} player_info={}",
                 tick.cx.evidence().tick,
-                matches!(result, Ok(true))
+                matches!(result, Ok(true)),
+                tick.cx.snapshot().gens().player_info
             );
         }
         let applied = match result {
@@ -3175,15 +3177,27 @@ impl Quester {
                 .stage
                 .as_ref()
                 .map_or("unknown", |stage| stage.0.as_ref());
-            trace_root_event(
-                &mut self.trace,
-                tick.output,
-                api::hostlog::Level::Info,
-                self.path.id.0.as_ref(),
-                stage,
-                step,
-                format_args!("begin"),
-            );
+            if api::hostlog::enabled(api::hostlog::Category::ScriptTrace) {
+                trace_root_event(
+                    &mut self.trace,
+                    tick.output,
+                    api::hostlog::Level::Info,
+                    self.path.id.0.as_ref(),
+                    stage,
+                    step,
+                    format_args!("begin player_info={}", tick.cx.snapshot().gens().player_info),
+                );
+            } else {
+                trace_root_event(
+                    &mut self.trace,
+                    tick.output,
+                    api::hostlog::Level::Info,
+                    self.path.id.0.as_ref(),
+                    stage,
+                    step,
+                    format_args!("begin"),
+                );
+            }
             #[cfg(test)]
             self.begun.push(Arc::clone(&step.id.0));
             let result = {
@@ -6310,10 +6324,10 @@ mod tests {
             assert_eq!(
                 lines,
                 [
-                    format!("event=begin tick=2 kind=Eat {{ item_id: {item_id}, before_count: 2 }} applied=pending deadline=10"),
-                    format!("event=end tick=10 kind=Eat {{ item_id: {item_id}, before_count: 2 }} applied=false deadline=10"),
-                    format!("event=begin tick=10 kind=Eat {{ item_id: {item_id}, before_count: 2 }} applied=pending deadline=18"),
-                    format!("event=end tick=11 kind=Eat {{ item_id: {item_id}, before_count: 2 }} applied=true deadline=18"),
+                    format!("event=begin tick=2 kind=Eat {{ item_id: {item_id}, before_count: 2 }} applied=pending deadline=10 player_info=0"),
+                    format!("event=end tick=10 kind=Eat {{ item_id: {item_id}, before_count: 2 }} applied=false deadline=10 player_info=0"),
+                    format!("event=begin tick=10 kind=Eat {{ item_id: {item_id}, before_count: 2 }} applied=pending deadline=18 player_info=0"),
+                    format!("event=end tick=11 kind=Eat {{ item_id: {item_id}, before_count: 2 }} applied=true deadline=18 player_info=0"),
                 ],
                 "the first bite must end unapplied before its same-tick retry begins"
             );
