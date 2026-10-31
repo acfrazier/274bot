@@ -3338,10 +3338,11 @@ fn real_content_inspection_capture_bytes() {
             "new capture omits retired vtable offset {retired_field}"
         );
     }
-    // `inv_ready`, `bank_side_ready` and `walk_outcome_no_path` are new
-    // trailing fields at vtable offsets 298, 300 and 302. The full snapshot
-    // writes them; the old capture predates them.
-    for added_field in [298_u16, 300, 302] {
+    // The earlier `inv_ready`, `bank_side_ready` and `walk_outcome_no_path`
+    // fields occupy offsets 298, 300 and 302. This walking slice adds
+    // `walk_remaining_request_id` at 304 and `walk_remaining` at 306. The full
+    // snapshot writes all five; the old capture predates them.
+    for added_field in [298_u16, 300, 302, 304, 306] {
         assert_eq!(
             old_vtable.get(added_field),
             0,
@@ -3357,7 +3358,7 @@ fn real_content_inspection_capture_bytes() {
     for field_index in 0..field_count {
         let field_offset =
             4 + 2 * u16::try_from(field_index).expect("snapshot vtable field index fits in u16");
-        if matches!(field_offset, 126 | 128 | 298 | 300 | 302) {
+        if matches!(field_offset, 126 | 128 | 298 | 300 | 302 | 304 | 306) {
             continue;
         }
         assert_eq!(
