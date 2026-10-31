@@ -2142,6 +2142,7 @@ fn dialogue_receipt(
     receipt["dialogue_reopened_tick"] = json!(reopened);
     receipt["dialogue_options_after_resume"] = json!(witness.dialogue_reopened_options);
     receipt["resumed_step_id"] = json!(witness.dialogue_reopened_step);
+    receipt["antipoison_remaining"] = json!(item_count(snapshot, witness.antipoison_id));
     Ok(Some(receipt))
 }
 
