@@ -548,7 +548,15 @@ fn q4_accountleveler_probe_scenario() -> scenario::Scenario {
     scenario
 }
 
-const Q4_ACCOUNTLEVELER_PROBE_SOURCE: &str = r##"export default class AccountLevelerListenerProbe extends LoopingBot {
+// The probe imports what AccountLeveler.ts imports for its listener block;
+// a compat-class card has no `Bank`, `BotHost`, `ScriptRunner` or `Game`
+// globals (the first guest pilot failed with "Bank is not defined").
+const Q4_ACCOUNTLEVELER_PROBE_SOURCE: &str = r##"import { Bank } from '../../api/bank/Bank.js';
+import { Game } from '../../api/game/Game.js';
+import { BotHost } from '../../runtime/BotHost.js';
+import { ScriptRunner } from '../../runtime/ScriptRunner.js';
+
+export default class AccountLevelerListenerProbe extends LoopingBot {
     override loopDelay = 100;
 
     private phase = 'train';
@@ -3696,6 +3704,15 @@ mod tests {
             (Q4FrameArm::Listener, Q4FrameCell::Stop),
             (Q4FrameArm::Listener, Q4FrameCell::BusyFullBankSampling),
         ];
+        // A compat-class card has no catalog globals, and a missing one fails
+        // only when the body runs (the first guest pilot: "Bank is not
+        // defined" at tick 16), so check the imports the probe body needs.
+        for name in ["Bank", "Game", "BotHost", "ScriptRunner"] {
+            assert!(
+                Q4_ACCOUNTLEVELER_PROBE_SOURCE.contains(&format!("import {{ {name} }} from ")),
+                "Q4 probe must import {name}"
+            );
+        }
         for (index, (arm, cell)) in cases.into_iter().enumerate() {
             let card = q4_accountleveler_probe_card(arm, cell)
                 .unwrap_or_else(|error| panic!("construct {cell:?} Q4 probe: {error}"));
