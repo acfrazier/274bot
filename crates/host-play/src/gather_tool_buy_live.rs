@@ -1561,27 +1561,48 @@ fn nearest_vendor_line(
     )
 }
 
+/// The parked reason's bank clause for the observed status `bank_seen` line,
+/// e.g. `Session, 12 min ago, 37 rows` or `Hint (saved), 37 rows`. A relog
+/// carries the same observation but relabels it a saved hint.
+fn bank_clause_from_seen(bank_seen: &str) -> Option<String> {
+    let (source, rest) = if let Some(rest) = bank_seen.strip_prefix("Session") {
+        ("this session", rest)
+    } else {
+        ("from a saved hint", bank_seen.strip_prefix("Hint (saved)")?)
+    };
+    let rest = rest.strip_prefix(", ")?;
+    let rows = rest.strip_suffix(" rows")?;
+    let (age, rows) = match rows.rsplit_once(", ") {
+        Some((age, rows)) => (Some(age), rows),
+        None => (None, rows),
+    };
+    let seen = match age {
+        Some(age) => format!("{age} {source}"),
+        None => source.to_owned(),
+    };
+    Some(format!("in the bank as seen {seen} ({rows} rows)"))
+}
+
+/// Rewrite a parked reason's bank clause to the one `bank_seen` names.
+fn parked_reason_for_bank_seen(reason: &str, bank_seen: &str) -> Option<String> {
+    let start = reason.find("in the bank as seen ")?;
+    let end = reason[start..]
+        .find(" rows)")
+        .map(|at| at + start + " rows)".len())?;
+    let clause = bank_clause_from_seen(bank_seen)?;
+    Some(format!("{}{clause}{}", &reason[..start], &reason[end..]))
+}
+
 fn expected_empty_bank_block(
     data: &SelectedGameData,
     tool: &ItemFact,
     bank_seen: &str,
     members: bool,
 ) -> Option<String> {
-    let remainder = bank_seen.strip_prefix("Session")?;
-    let (age, rows) = if let Some(remainder) = remainder.strip_prefix(", ") {
-        let (age, rows) = remainder.rsplit_once(", ")?;
-        (Some(age), rows)
-    } else {
-        (None, remainder.strip_prefix(", ")?)
-    };
-    let rows = rows.strip_suffix(" rows")?;
-    let age = age.map_or_else(
-        || "this session".to_owned(),
-        |age| format!("{age} this session"),
-    );
+    let clause = bank_clause_from_seen(bank_seen)?;
     let vendor = nearest_vendor_line(data, tool.id, members, 0, 0);
     Some(format!(
-        "no {} in the pack, worn, or in the bank as seen {age} ({rows} rows); {vendor}; waiting: put a {} or coins in the pack",
+        "no {} in the pack, worn, or {clause}; {vendor}; waiting: put a {} or coins in the pack",
         tool.name, tool.name
     ))
 }
@@ -1682,7 +1703,18 @@ fn park_observation(
 }
 
 fn relog_park_preserved(initial: &ParkObservation, observation: &ParkObservation) -> bool {
-    observation.phase.as_deref() == Some("Blocked")
+    let reason_matches = match (
+        initial.block_reason.as_deref(),
+        observation.block_reason.as_deref(),
+        observation.bank_seen.as_deref(),
+    ) {
+        (Some(before), Some(after), Some(bank_seen)) => {
+            parked_reason_for_bank_seen(before, bank_seen).is_some_and(|expected| expected == after)
+        }
+        _ => false,
+    };
+    reason_matches
+        && observation.phase.as_deref() == Some("Blocked")
         && observation.phase_label.as_deref() == Some("blocked")
         && observation.want_run == Some(true)
         && observation.host_up.is_some()
@@ -1691,7 +1723,6 @@ fn relog_park_preserved(initial: &ParkObservation, observation: &ParkObservation
             (Some("Running"), Some(true)) | (Some("Paused"), Some(false))
         )
         && observation.failure.is_none()
-        && observation.block_reason == initial.block_reason
         && observation.run_slot == initial.run_slot
         && observation.run_generation == initial.run_generation
         && observation.run_session != initial.run_session
@@ -1726,12 +1757,16 @@ fn relog_park_settled(
 }
 
 fn relog_park_oracle_fixture() -> (ParkObservation, ParkObservation) {
+    let initial_reason = "no Harpoon in the pack, worn, or in the bank as seen less than a minute ago this session (0 rows); nobody sells it; waiting: put a Harpoon in the pack";
+    let after_relog_reason = "no Harpoon in the pack, worn, or in the bank as seen less than a minute ago from a saved hint (0 rows); nobody sells it; waiting: put a Harpoon in the pack";
     let initial = ParkObservation {
         run_slot: Some(1),
         run_generation: Some(3),
         run_session: Some(1),
         session_generation: Some(2),
-        block_reason: Some("missing Harpoon; waiting for supply".into()),
+        block_reason: Some(initial_reason.into()),
+        bank_seen: Some("Session, less than a minute ago, 0 rows".into()),
+        bank_origin: Some("Session".into()),
         ..ParkObservation::default()
     };
     let loading = ParkObservation {
@@ -1745,7 +1780,8 @@ fn relog_park_oracle_fixture() -> (ParkObservation, ParkObservation) {
         slot_running: Some(false),
         want_run: Some(true),
         host_up: Some(false),
-        block_reason: initial.block_reason.clone(),
+        block_reason: Some(after_relog_reason.into()),
+        bank_seen: Some("Hint (saved), less than a minute ago, 0 rows".into()),
         bank_origin: Some("Hint".into()),
         bank_rows: Some(Vec::new()),
         bank_open: Some(false),
@@ -2915,17 +2951,24 @@ fn run_cell_with_transition(case: Case, transition: ParkTransition) {
             }
             ParkTransition::Relog => {
                 let after_relog = lifecycle.after_relog.as_ref();
+                let expected_after_relog = after_relog.and_then(|park| {
+                    parked_reason_for_bank_seen(
+                        expected_no_coin_reason.as_deref()?,
+                        park.bank_seen.as_deref()?,
+                    )
+                });
                 if !lifecycle.logout_requested
                     || !lifecycle.logout_observed
                     || !lifecycle.relog_requested
                     || !lifecycle.relog_observed
                     || after_relog.is_none()
+                    || expected_after_relog.is_none()
                     || after_relog.is_some_and(|park| {
                         park.phase.as_deref() != Some("Blocked")
                             || park.phase_label.as_deref() != Some("blocked")
                             || park.slot_running != Some(true)
                             || park.failure.is_some()
-                            || park.block_reason.as_deref() != expected_no_coin_reason.as_deref()
+                            || park.block_reason.as_deref() != expected_after_relog.as_deref()
                             || park.bank_origin.as_deref() != Some("Hint")
                             || park.bank_rows.as_ref().is_none_or(|rows| !rows.is_empty())
                             || park.bank_open != Some(false)
@@ -2947,7 +2990,9 @@ fn run_cell_with_transition(case: Case, transition: ParkTransition) {
                     || final_phase_label.as_deref() != Some("blocked")
                     || final_slot_running != Some(true)
                     || final_failure.is_some()
-                    || final_block_reason.as_deref() != expected_no_coin_reason.as_deref()
+                    || final_block_reason
+                        .as_deref()
+                        .is_none_or(|reason| !reason.contains("from a saved hint"))
                     || final_bank_open != Some(false)
                     || final_bank_origin.as_deref() != Some("Hint")
                     || final_bank_rows
