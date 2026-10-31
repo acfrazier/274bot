@@ -262,8 +262,7 @@ fn catherby_partial_return_fixture() -> (Gatherer, GameSnapshot, TargetPlan, Tar
         .actor
         .tile;
     let old_here = WorldTile {
-        x: observed_here.x
-            - i32::from(gatherer.area.expect("the fixture has a work area").radius),
+        x: observed_here.x - i32::from(gatherer.area.expect("the fixture has a work area").radius),
         z: observed_here.z,
         level: observed_here.level,
     };
@@ -1818,7 +1817,10 @@ fn return_failures_across_alternating_stands_stop_within_phase_budget() {
     let stand_a = resource_return_plan(&gatherer, &snapshot, position_a).tile;
     move_actor_to(&mut snapshot, position_b);
     let stand_b = resource_return_plan(&gatherer, &snapshot, position_b).tile;
-    assert_ne!(stand_a, stand_b, "the chooser must select both Draynor stands");
+    assert_ne!(
+        stand_a, stand_b,
+        "the chooser must select both Draynor stands"
+    );
 
     gatherer.trip = TripStep::Return;
     let mut ledger = None;
