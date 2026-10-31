@@ -786,27 +786,35 @@ cargo test -p host-play --features live-harness,test-support --test tick_engine 
 The cases cover clean continuing and ending arms, the three distinct late
 histories, two copper histories, preflight target removal, Make without its
 click, two lone-opener histories, and members-only refusal on a free world.
+The suffix-drop case forwards the opener and Make, drops the remaining byte
+suffix, then requires an unknown-opcode refusal and a `read_eof` reconnect to a
+new Ready session. It does not require an old-session roll after EOF.
 The ending-net case observes twenty cycles. The free-world case requires
 Engine T's real `engine/data/config/world.json` to set `node.members=false`.
 The selected local profile must bind that guarded file; a client-side override
 cannot replace the engine mode. Only Main may prepare and restore that phase.
 
-The test-only hooks hold or split encoded transport, cancel a real request
-after an encoded prefix, remove a target from the dispatch snapshot, or suppress
-the snapshot's open-chat observation. They do not inject products, XP, animation
-signals or successful receipts. Non-`test-support` builds have neither the
-mutable snapshot variant nor these dispatch hooks.
+The test-only hooks hold or split encoded transport, drop a suffix after
+`IF_BUTTON`, cancel a real request after an encoded prefix, remove a target from
+the dispatch snapshot, or suppress the snapshot's open-chat observation. They
+do not inject products, XP, animation signals or successful receipts.
+Non-`test-support` builds have neither the mutable snapshot variant nor these
+dispatch hooks.
 
 Each case writes the receipt and actual-wire streams, per-frame signals,
 status, transport history and account-filtered engine packet outcomes to its
-own evidence directory. The engine log's decoded relevant opcode order must
-match the Client's encoded stream. Missing, incomplete or gapped engine records
-fail the case. The engine tick and Client observation tick are separate clocks.
-`handler_accepted` and `charged_user_event` report handler and event accounting;
-`outcome` separately records script acceptance, suspension or refusal. A true
-handler result can still have a refused script outcome. The printed accepted
-event counts use `charged_user_event`, not the outcome string. An
-`ENGINE_PACKET_LOG_FAILED` sink error invalidates the run.
+own evidence directory. Except for the suffix-drop case, the engine log's
+decoded relevant opcode order must match the Client's encoded stream. The
+suffix-drop case verifies the complete proxy byte accounting, accepted opener
+and Make, and the first post-drop unknown-opcode refusal; it records the
+client-session, slot-stream and host-log lifecycle through reconnect and Ready.
+Missing, incomplete or gapped engine records fail the case. The engine tick and
+Client observation tick are separate clocks. `handler_accepted` and
+`charged_user_event` report handler and event accounting; `outcome` separately
+records script acceptance, suspension or refusal. A true handler result can
+still have a refused script outcome. The printed accepted event counts use
+`charged_user_event`, not the outcome string. An `ENGINE_PACKET_LOG_FAILED`
+sink error invalidates the run.
 
 Signal assertions retain the packet-position intervals from the tick-manipulation
 facts, section 1.5. A chat line first seen at a wake of `t` belongs to `t + 1`;

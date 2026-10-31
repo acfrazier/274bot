@@ -30,6 +30,8 @@ mod tick_startup;
 #[path = "support/guard_opener.rs"]
 mod guard_opener;
 use guard_opener::GuardOpenerState;
+#[path = "support/drop_history.rs"]
+mod drop_history;
 
 const ENGINE_HOST: &str = "127.0.0.1";
 const ENGINE_GAME_PORT: u16 = 48_594;
@@ -656,6 +658,7 @@ struct RunEvidence {
     baseline: Option<FrameObservation>,
     trace: TickEngineTrace,
     statuses: Vec<StatusObservation>,
+    drop_history: Option<drop_history::DropHistory>,
     transport: Vec<ProxyObservation>,
     engine_packets: Option<Result<Vec<EnginePacket>, String>>,
 }
@@ -801,6 +804,7 @@ struct LiveRun {
     first_arm_budget: u32,
     baseline: Option<FrameObservation>,
     statuses: Vec<StatusObservation>,
+    drop_history: Option<Arc<Mutex<drop_history::DropHistory>>>,
     engine_log: Option<EnginePacketLog>,
     shutdown: bool,
 }
@@ -922,6 +926,8 @@ impl LiveRun {
         }));
         let guard_opener = Arc::new(Mutex::new(GuardOpenerState::default()));
         let hook = TickEngineTestHook::new(account.clone());
+        let drop_history = (scenario.name == "tick-make-proxy-drop")
+            .then(|| Arc::new(Mutex::new(drop_history::DropHistory::default())));
         hook.install();
         if let Some(proxy) = &proxy {
             hook.set_transport_controller(proxy.clone());
@@ -929,6 +935,7 @@ impl LiveRun {
         let frame_setup = Arc::clone(&setup);
         let frame_foreign_events = Arc::clone(&foreign_events);
         let frame_guard_opener = Arc::clone(&guard_opener);
+        let frame_drop_history = drop_history.as_ref().map(Arc::clone);
         let frame_hook = Arc::clone(&hook);
         let frame_account = account.clone();
         let play = match host_play::run_with_template(
@@ -938,6 +945,12 @@ impl LiveRun {
             |_| (None, None),
             move |client, username, frame| {
                 if username == frame_account {
+                    if let Some(history) = &frame_drop_history {
+                        history
+                            .lock()
+                            .expect("tick-engine drop history poisoned")
+                            .observe_client(client, frame_hook.observed_host_frame());
+                    }
                     frame_setup
                         .lock()
                         .expect("tick-engine setup poisoned")
@@ -981,6 +994,7 @@ impl LiveRun {
             first_arm_budget,
             baseline: None,
             statuses: Vec::new(),
+            drop_history,
             engine_log: None,
             shutdown: false,
         })
@@ -1012,6 +1026,9 @@ impl LiveRun {
             .expect("live Play exists until shutdown")
             .focus(&self.account);
         self.wait_setup_ready()?;
+        if self.drop_history.is_some() {
+            drop_history::clear_host_log()?;
+        }
         self.scenario.target = self
             .setup
             .lock()
@@ -1184,13 +1201,27 @@ impl LiveRun {
     }
 
     fn capture_status(&mut self, trace: &TickEngineTrace) {
-        let Some(status) = self.play().script_native_status(&self.account) else {
-            return;
-        };
         let host_frame = trace
             .frames
             .last()
             .map_or_else(|| self.hook.observed_host_frame(), |frame| frame.host_frame);
+        if let Some(history) = &self.drop_history {
+            let slot_statuses = self.play().statuses();
+            let host_log = drop_history::host_log_for(&self.account);
+            let mut history = history
+                .lock()
+                .expect("tick-engine drop history poisoned");
+            if let Some(status) = slot_statuses
+                .iter()
+                .find(|status| status.username == self.account)
+            {
+                history.observe_slot(status, host_frame);
+            }
+            history.replace_host_log(host_log);
+        }
+        let Some(status) = self.play().script_native_status(&self.account) else {
+            return;
+        };
         if self
             .statuses
             .last()
@@ -1227,6 +1258,12 @@ impl LiveRun {
             baseline: self.baseline.clone(),
             trace: self.hook.trace(),
             statuses: self.statuses.clone(),
+            drop_history: self.drop_history.as_ref().map(|history| {
+                history
+                    .lock()
+                    .expect("tick-engine drop history poisoned")
+                    .clone()
+            }),
             transport: self
                 .proxy
                 .as_ref()
@@ -1373,6 +1410,9 @@ fn run_case(
     let _serial = LIVE_RUN_LOCK
         .lock()
         .map_err(|_| "tick-engine live-run lock poisoned")?;
+    if scenario.name == "tick-make-proxy-drop" {
+        drop_history::begin_case()?;
+    }
     let mut run = LiveRun::new(scenario)?;
     let result = run.start().and_then(|()| assertion(&mut run));
     let account = run.account.clone();
@@ -1420,6 +1460,9 @@ fn correlate_engine_packets(evidence: &RunEvidence) -> Result<(), String> {
         .ok_or("Engine T packet capture was not armed")?
         .as_ref()
         .map_err(|error| format!("Engine T packet capture failed: {error}"))?;
+    if evidence.case == "tick-make-proxy-drop" {
+        return correlate_dropped_cipher_suffix(evidence, packets);
+    }
     let relevant = |opcode| {
         [
             ClientProt289::OPHELDU.id as u8,
@@ -1533,6 +1576,108 @@ fn correlate_engine_packets(evidence: &RunEvidence) -> Result<(), String> {
     }
     Ok(())
 }
+fn correlate_dropped_cipher_suffix(
+    evidence: &RunEvidence,
+    packets: &[EnginePacket],
+) -> Result<(), String> {
+    let observations = evidence
+        .transport
+        .iter()
+        .filter(|observation| observation.dropped_bytes > 0)
+        .count();
+    if observations != 1 {
+        return Err(format!(
+            "Make suffix-drop case needs exactly one dropped proxy observation, got {}",
+            observations
+        ));
+    }
+    let observation = evidence
+        .transport
+        .iter()
+        .find(|observation| observation.dropped_bytes > 0)
+        .expect("one dropped proxy observation was counted");
+    validate_proxy_drop_after_make(
+        &evidence.trace,
+        &evidence.transport,
+        observation.request_id,
+    )?;
+    assert_engine_accepted_make_prefix(packets)?;
+    let make_index = packets
+        .iter()
+        .position(|packet| packet.opcode == ClientProt289::OPHELDU.id as u8)
+        .and_then(|opener_index| {
+            packets
+                .iter()
+                .enumerate()
+                .skip(opener_index + 1)
+                .find(|(_, packet)| packet.opcode == ClientProt289::IF_BUTTON.id as u8)
+                .map(|(index, _)| index)
+        })
+        .ok_or("Engine T accepted-Make prefix has no Make packet")?;
+    let make = &packets[make_index];
+    let unknown = packets.get(make_index + 1).ok_or(
+        "Engine T did not record the post-drop ciphertext as an unknown opcode",
+    )?;
+    if unknown.sequence <= make.sequence
+        || unknown.tick < make.tick
+        || unknown.name != "UNKNOWN"
+        || unknown.outcome != "refused"
+        || unknown.reason != "unknown-opcode"
+        || unknown.handler_accepted
+        || unknown.charged_user_event
+    {
+        return Err(format!(
+            "Engine T did not close the cipher-desynchronized stream at the first post-Make packet: make={make:?} next={unknown:?}"
+        ));
+    }
+    println!(
+        "TICK-MANIP Engine T accepted the opener and Make, then closed the dropped-cipher stream at unknown-opcode sequence={}",
+        unknown.sequence
+    );
+    Ok(())
+}
+
+fn validate_proxy_drop_after_make(
+    trace: &TickEngineTrace,
+    observations: &[ProxyObservation],
+    request_id: u64,
+) -> Result<(), String> {
+    let Some(observation) = observations.first() else {
+        return Err("Make suffix drop has no completed proxy observation".into());
+    };
+    let wires = wires_for_request(trace, request_id);
+    let packet_lengths: Vec<_> = wires.iter().map(|wire| wire.encoded_length).collect();
+    let packet_opcodes: Vec<_> = wires.iter().map(|wire| wire.opcode).collect();
+    let expected_packets: Vec<_> = (1..=wires.len())
+        .map(|packet_index| (request_id, packet_index))
+        .collect();
+    let forwarded_bytes: usize = packet_lengths.iter().take(2).sum();
+    let dropped_bytes: usize = packet_lengths.iter().skip(2).sum();
+    if observations.len() != 1
+        || observation.request_id != request_id
+        || observation.request_ids != vec![request_id]
+        || observation.mutation != "DropSuffixAfterPacket(2)"
+        || packet_opcodes.as_slice()
+            != [
+                ClientProt289::OPHELDU.id as u8,
+                ClientProt289::IF_BUTTON.id as u8,
+                ClientProt289::MOVE_OPCLICK.id as u8,
+                ClientProt289::OPLOC1.id as u8,
+            ]
+        || observation.packet_requests != expected_packets
+        || observation.packet_opcodes != packet_opcodes
+        || observation.packet_lengths != packet_lengths
+        || observation.forwarded_bytes != forwarded_bytes
+        || observation.dropped_bytes != dropped_bytes
+        || observation.forwarded_bytes + observation.dropped_bytes
+            != packet_lengths.iter().sum::<usize>()
+    {
+        return Err(format!(
+            "proxy did not forward only the two-packet Make prefix and drop its byte suffix: {observation:?}"
+        ));
+    }
+    Ok(())
+}
 
 fn engine_accepted_user_event(packet: &EnginePacket) -> bool {
     // A charged packet may suspend its content script while the network handler
@@ -1562,7 +1707,7 @@ fn assert_engine_accepted_make_prefix(packets: &[EnginePacket]) -> Result<(), St
             "Engine T did not accept the Make prefix in one tick: opener={opener:?} make={make:?}"
         ));
     }
-    println!("TICK-MANIP Engine T accepted Knife opener and Make before the absent terminal click");
+    println!("TICK-MANIP Engine T accepted Knife opener and Make in one engine tick");
     Ok(())
 }
 fn assert_deferred_terminal_row(
@@ -1810,6 +1955,10 @@ fn evidence_json(evidence: &RunEvidence) -> Value {
         Some(Err(error)) => json!({"status": "error", "error": error}),
         None => json!({"status": "not_armed"}),
     };
+    let drop_history = evidence
+        .drop_history
+        .as_ref()
+        .map_or(Value::Null, drop_history::DropHistory::json);
     json!({
         "case": evidence.case,
         "account": evidence.account,
@@ -1842,6 +1991,7 @@ fn evidence_json(evidence: &RunEvidence) -> Value {
         "native_status_history": statuses,
         "proxy_transport_history": transport,
         "engine_packet_history": engine_packets,
+        "drop_lifecycle_history": drop_history,
         "interpretation": {
             "host_dispatch_receipts_are_not_server_acknowledgements": true,
             "client_game_ticks_and_engine_ticks_are_distinct_clocks": true,
@@ -2330,46 +2480,218 @@ fn assert_held_batch(
     Ok(())
 }
 
-fn assert_proxy_drop_after_make(run: &LiveRun, request_id: u64) -> Result<(), String> {
+fn assert_proxy_drop_after_make(
+    run: &mut LiveRun,
+    request_id: u64,
+    origin: u64,
+) -> Result<(), String> {
     let observations = run
         .proxy
         .as_ref()
         .map_or_else(Vec::new, |proxy| proxy.observations());
-    let Some(observation) = observations.first() else {
-        return Err(run.failure("Make suffix drop has no completed proxy observation"));
+    validate_proxy_drop_after_make(&run.hook.trace(), &observations, request_id)
+        .map_err(|error| run.failure(error))?;
+    assert_drop_relogin(run, request_id, origin)
+}
+
+fn assert_drop_relogin(
+    run: &mut LiveRun,
+    request_id: u64,
+    origin: u64,
+) -> Result<(), String> {
+    let trace = run.hook.trace();
+    run.capture_status(&trace);
+    let history = run
+        .drop_history
+        .as_ref()
+        .map(Arc::clone)
+        .ok_or("suffix-drop case has no lifecycle recorder")?;
+    let batch_host_frame = wires_for_request(&trace, request_id)
+        .first()
+        .map(|wire| wire.host_frame)
+        .ok_or("suffix-drop request has no encrypted wire frames")?;
+    let (initial_session, initial_slot, initial_verified) = {
+        let history = history
+            .lock()
+            .expect("tick-engine drop history poisoned");
+        let initial_session = history
+            .client_sessions
+            .iter()
+            .filter(|observation| {
+                observation.host_frame <= batch_host_frame
+                    && observation.ingame
+                    && observation.scene_state == 2
+            })
+            .max_by_key(|observation| observation.host_frame)
+            .map(|observation| observation.session)
+            .ok_or("suffix-drop request has no ready client-session baseline")?;
+        let initial_slot = history
+            .slot_status
+            .iter()
+            .filter(|observation| {
+                observation.host_frame <= batch_host_frame
+                    && observation.connected
+                    && observation.ingame
+                    && observation.scene_state == 2
+            })
+            .max_by_key(|observation| observation.host_frame)
+            .cloned()
+            .ok_or("suffix-drop request has no ready slot-status baseline")?;
+        let initial_verified = run
+            .statuses
+            .iter()
+            .filter(|status| status.host_frame <= batch_host_frame)
+            .max_by_key(|status| status.host_frame)
+            .and_then(|status| status.tick_verified)
+            .ok_or("suffix-drop request has no tick_verified baseline")?;
+        (initial_session, initial_slot, initial_verified)
     };
-    let wires = wires_for_request(&run.hook.trace(), request_id);
-    let packet_lengths: Vec<_> = wires.iter().map(|wire| wire.encoded_length).collect();
-    let packet_opcodes: Vec<_> = wires.iter().map(|wire| wire.opcode).collect();
-    let expected_packets: Vec<_> = (1..=wires.len())
-        .map(|packet_index| (request_id, packet_index))
-        .collect();
-    let forwarded_bytes: usize = packet_lengths.iter().take(2).sum();
-    let dropped_bytes: usize = packet_lengths.iter().skip(2).sum();
-    if observations.len() != 1
-        || observation.request_id != request_id
-        || observation.request_ids != vec![request_id]
-        || observation.mutation != "DropSuffixAfterPacket(2)"
-        || packet_opcodes.as_slice()
-            != [
-                ClientProt289::OPHELDU.id as u8,
-                ClientProt289::IF_BUTTON.id as u8,
-                ClientProt289::MOVE_OPCLICK.id as u8,
-                ClientProt289::OPLOC1.id as u8,
-            ]
-        || observation.packet_requests != expected_packets
-        || observation.packet_opcodes != packet_opcodes
-        || observation.packet_lengths != packet_lengths
-        || observation.forwarded_bytes != forwarded_bytes
-        || observation.dropped_bytes != dropped_bytes
-        || observation.forwarded_bytes + observation.dropped_bytes
-            != packet_lengths.iter().sum::<usize>()
-    {
+    if initial_verified != 0 {
         return Err(run.failure(format!(
-            "proxy did not forward only the two-packet Make prefix and drop its byte suffix: {observation:?}"
+            "first dropped Make request began after an unexpected verified cycle: tick_verified={initial_verified}"
         )));
     }
-    Ok(())
+    let baseline_host_frame = run
+        .baseline
+        .as_ref()
+        .map_or(batch_host_frame, |baseline| baseline.host_frame);
+    let deadline = Instant::now() + LOGOUT_DEADLINE;
+    let mut after_host_frame = run.hook.observed_host_frame();
+    loop {
+        let trace = run.hook.trace();
+        run.capture_status(&trace);
+        let history_snapshot = history
+            .lock()
+            .expect("tick-engine drop history poisoned")
+            .clone();
+        let first_new_session_frame = history_snapshot
+            .client_sessions
+            .iter()
+            .filter(|observation| {
+                observation.host_frame > batch_host_frame
+                    && observation.session != initial_session
+            })
+            .map(|observation| observation.host_frame)
+            .min();
+        let session_ready = history_snapshot.client_sessions.iter().any(|observation| {
+            observation.host_frame > batch_host_frame
+                && observation.session != initial_session
+                && observation.ingame
+                && observation.scene_state == 2
+        });
+        let disconnect_boundary = history_snapshot.slot_status.iter().any(|observation| {
+            observation.host_frame > batch_host_frame
+                && (!observation.connected
+                    || observation.stream_epoch != initial_slot.stream_epoch)
+        });
+        let ready_slot = history_snapshot.slot_status.iter().any(|observation| {
+            observation.host_frame > batch_host_frame
+                && observation.stream_epoch != initial_slot.stream_epoch
+                && observation.connected
+                && observation.ingame
+                && observation.scene_state == 2
+                && observation.startup_phase == host_play::StartupPhase::Ready
+        });
+        let read_eof = history_snapshot
+            .host_log
+            .iter()
+            .position(|observation| observation.message.starts_with("session exit reason=read_eof"));
+        let reconnect_attempt = read_eof.and_then(|exit_index| {
+            history_snapshot
+                .host_log
+                .iter()
+                .enumerate()
+                .find(|(index, observation)| {
+                    *index > exit_index
+                        && observation
+                            .message
+                            .starts_with("relog decision attempt reconnect=true")
+                })
+                .map(|(index, _)| index)
+        });
+        let handshake_after_reconnect = reconnect_attempt.is_some_and(|attempt_index| {
+            history_snapshot
+                .host_log
+                .iter()
+                .enumerate()
+                .any(|(index, observation)| {
+                    index > attempt_index && observation.message.starts_with("handshake ok")
+                })
+        });
+        let old_session_verified_increment = run.statuses.iter().any(|status| {
+            status.host_frame >= baseline_host_frame
+                && first_new_session_frame
+                    .is_none_or(|new_session_frame| status.host_frame < new_session_frame)
+                && status.tick_verified != Some(initial_verified)
+        });
+        let roll_tick = origin.wrapping_add(3) as u32;
+        let old_session_frames: Vec<_> = trace
+            .frames
+            .iter()
+            .filter(|frame| {
+                frame.host_frame >= baseline_host_frame
+                    && first_new_session_frame
+                        .is_none_or(|new_session_frame| frame.host_frame < new_session_frame)
+            })
+            .collect();
+        let old_session_roll = old_session_frames.iter().any(|edge| {
+            if edge.game_tick != roll_tick || !edge.tick_edge {
+                return false;
+            }
+            let Some(current) = edge.animation else {
+                return false;
+            };
+            current.sequence == ROLL_ANIMATION
+                && old_session_frames
+                    .iter()
+                    .filter(|frame| frame.host_frame < edge.host_frame)
+                    .max_by_key(|frame| frame.host_frame)
+                    .and_then(|frame| frame.animation)
+                    .is_none_or(|previous| previous.serial != current.serial)
+        });
+        if old_session_verified_increment || old_session_roll {
+            return Err(run.failure(format!(
+                "dropped suffix produced an old-session R+3 success: verified_increment={old_session_verified_increment} fresh_roll={old_session_roll} roll_tick={roll_tick}"
+            )));
+        }
+        if read_eof.is_some()
+            && reconnect_attempt.is_some()
+            && handshake_after_reconnect
+            && disconnect_boundary
+            && session_ready
+            && ready_slot
+        {
+            println!(
+                "TICK-MANIP dropped suffix closed session={} at read_eof, then session={} reached Ready within {LOGOUT_DEADLINE:?}; tick_verified stayed {initial_verified} with no old-session R+3 roll",
+                initial_session,
+                history_snapshot
+                    .client_sessions
+                    .iter()
+                    .find(|observation| {
+                        observation.host_frame > batch_host_frame
+                            && observation.session != initial_session
+                            && observation.ingame
+                            && observation.scene_state == 2
+                    })
+                    .map_or(initial_session, |observation| observation.session)
+            );
+            return Ok(());
+        }
+        let remaining = deadline.saturating_duration_since(Instant::now());
+        if remaining.is_zero() {
+            return Err(run.failure(format!(
+                "suffix-drop session did not observe read_eof, reconnect, handshake and Ready within {LOGOUT_DEADLINE:?}: initial_session={initial_session} initial_slot={initial_slot:?} history={history_snapshot:?}"
+            )));
+        }
+        after_host_frame = run
+            .hook
+            .wait_for_frame(after_host_frame, remaining.min(FRAME_HANG_GUARD))
+            .ok_or_else(|| {
+                run.failure(format!(
+                    "host-frame hang guard expired while awaiting suffix-drop relog within {LOGOUT_DEADLINE:?}"
+                ))
+            })?;
+    }
 }
 
 fn assert_make_without_click_outcome(run: &mut LiveRun, origin: u64) -> Result<(), String> {
@@ -3425,8 +3747,7 @@ fn tick_engine_proxy_drop_after_make_keeps_full_host_receipt() {
                 ClientProt289::OPLOC1.id as u8,
             ],
         )?;
-        assert_make_without_click_outcome(run, origin)?;
-        assert_proxy_drop_after_make(run, first.receipt.request_id)
+        assert_proxy_drop_after_make(run, first.receipt.request_id, origin)
     })
     .unwrap_or_else(|error| panic!("{error}"));
 }
@@ -4281,6 +4602,7 @@ mod packet_oracle_tests {
                 wire,
             },
             statuses: Vec::new(),
+            drop_history: None,
             transport,
             engine_packets: Some(Ok(packets)),
         }
@@ -4424,8 +4746,8 @@ mod packet_oracle_tests {
             .collect();
         let engine_packets = vec![packet(opcodes[0], 1), packet(opcodes[1], 2)];
         let transport = vec![drop_observation(request, opcodes, lengths, 11, 11)];
-        assert!(
-            correlate_engine_packets(&evidence(wire_packets, transport, engine_packets,)).is_err()
-        );
+        let mut evidence = evidence(wire_packets, transport, engine_packets);
+        evidence.case = "tick-make-proxy-drop";
+        assert!(correlate_engine_packets(&evidence).is_err());
     }
 }
