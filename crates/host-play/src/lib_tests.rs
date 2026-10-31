@@ -32612,7 +32612,7 @@ export default class T extends LoopingBot {
             let bot = &navs["alice"];
             assert!(matches!(
                 bot.native_walk_failure.as_ref(),
-                Some((request, WalkEnd::Refused)) if *request == first_request
+                Some((request, script::native::WalkEnd::Refused)) if *request == first_request
             ));
             assert!(matches!(
                 bot.risk_refusal.as_deref(),
