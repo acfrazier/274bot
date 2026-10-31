@@ -8243,16 +8243,16 @@ fn a_js_start_hydrates_cold_script_runtime_settings_before_first_resolve() {
     play.local_state = Some(Arc::clone(&composition));
     play.attach_arm("alice", SlotArm::new(7, false));
 
+    // The resolve runs at module evaluation, before the first tick. Read its
+    // result straight from the isolate: script log rows reach the panel only
+    // through the bot thread's observe drain, which this offline Play has not.
     let source = r#"
 import { SettingsStore } from '../../runtime/Settings.js';
 const first = SettingsStore.resolve('WalkTo', {
     destination: { type: 'string', default: 'Draynor' },
 });
-export function tick(api) {
-    if (globalThis.__firstResolveLogged) return;
-    globalThis.__firstResolveLogged = true;
-    api.log(`first-resolve:${first.destination}`);
-}
+globalThis.__firstResolve = first.destination;
+export function tick(api) {}
 "#;
     play.script_start_load(
         "alice",
@@ -8263,41 +8263,16 @@ export function tick(api) {
     )
     .unwrap();
     wait_script_state(&play, "alice", script::RunState::Running);
-    {
+    let first = {
         let slot = script_slot(&play.scripts, "alice").expect("started slot exists");
-        let mut slot = slot.lock().unwrap();
-        slot.on_game_tick(&mut script::ScriptCtx {
-            driver: &mut NavRec::default(),
-            tick: 1,
-            here: None,
-            walk: None,
-            walk_with: None,
-            inv: None,
-            snapshot: None,
-            obj_names: None,
-            compiled: script::CompiledTick::default(),
-        });
-        slot.probe("true").expect("the first script tick completes");
-    }
-
-    let mut logs = Vec::new();
-    let settled = wait_until(5_000, || {
-        play.pump_script_lifecycle("alice");
-        logs.extend(play.script_take_pending_logs("alice"));
-        logs.iter()
-            .any(|line| line.contains("first-resolve:Varrock"))
-            || play.script_last_error("alice").is_some()
-    });
-    assert!(
-        settled,
-        "the first SettingsStore.resolve did not settle: state={:?}, error={:?}, logs={logs:?}",
-        play.script_state("alice"),
-        play.script_last_error("alice"),
-    );
-    assert!(
-        logs.iter()
-            .any(|line| line.contains("first-resolve:Varrock")),
-        "the first SettingsStore.resolve did not see persisted data: state={:?}, error={:?}, logs={logs:?}",
+        let slot = slot.lock().unwrap();
+        slot.probe("globalThis.__firstResolve ?? null")
+            .expect("the started isolate answers a probe")
+    };
+    assert_eq!(
+        first,
+        serde_json::json!("Varrock"),
+        "the first SettingsStore.resolve did not see persisted data: state={:?}, error={:?}",
         play.script_state("alice"),
         play.script_last_error("alice"),
     );

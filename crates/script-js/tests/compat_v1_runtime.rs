@@ -704,6 +704,48 @@ globalThis.__resumeFacts = { state: ScriptRunner.state };
     );
 }
 
+/// Upstream `this.log` writes at once. An operator pause parks ticks, so the
+/// rows that `onPause` writes must reach the host without waiting for a tick
+/// (the WalkTo live cell waited on them before it resumed).
+#[test]
+fn operator_pause_and_resume_hook_logs_reach_the_host_without_a_tick() {
+    let src = r#"
+export default class T extends LoopingBot {
+    loop() {}
+    onPause() { this.log('HOOK:PAUSE'); }
+    onResume() { this.log('HOOK:RESUME'); }
+}
+"#;
+    let iso = spawn(src);
+    iso.on_game_tick(1);
+    iso.probe("true").unwrap();
+    let _ = iso.drain_logs();
+
+    iso.pause();
+    // Commands run in order, so the hook ran before this probe answers.
+    iso.probe("true").unwrap();
+    let paused = iso.drain_logs();
+    assert_eq!(
+        paused.iter().filter(|line| *line == "HOOK:PAUSE").count(),
+        1,
+        "the pause hook row is delivered once, with no tick: {paused:?}"
+    );
+    assert!(
+        !paused.iter().any(|line| line == "HOOK:RESUME"),
+        "{paused:?}"
+    );
+
+    iso.resume();
+    iso.probe("true").unwrap();
+    let resumed = iso.drain_logs();
+    assert_eq!(
+        resumed,
+        vec!["HOOK:RESUME".to_string()],
+        "the resume hook row is delivered once, before the next tick"
+    );
+    iso.join();
+}
+
 #[test]
 #[expect(non_snake_case, reason = "the runtime census names this contract test")]
 fn compat_v1_runtime__scriptrunner_ctx__contract() {
