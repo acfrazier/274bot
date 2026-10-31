@@ -28,6 +28,8 @@ A guide is one JSON file with schema 3. It names the quest, the checks the Quest
 
 Step ids must stay unique across recipes and the selected role's prelude, sequences, and `progress_reader`. A solo guide declares exactly one role. Paired guides declare one role per gang.
 
+### Prerequisite switches
+
 The optional header `"prereq": {"quest_start": false}` forbids prerequisite quest starts on every walk in the guide.
 Use `"dialogue": false` in that header to forbid prerequisite dialogue steps.
 An omitted field inherits the global and script grants.
@@ -35,7 +37,6 @@ A true header field grants that permission.
 A false header field or a false per-step permission always forbids it.
 For one `walk` step, use `allow_prereq_dialogue` or `allow_quest_start` in its arguments.
 These switches do not change the guide's explicitly authored quest conversations.
-
 
 ## Steps
 
