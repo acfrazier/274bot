@@ -185,6 +185,8 @@ fn seed_timing_stock(gatherer: &Gatherer, snapshot: &mut GameSnapshot) {
             .collect(),
         28,
     );
+    // KnifeArm references require an observed packet generation.
+    snapshot.seed_inventory_packet_generations(Some(1), None);
 }
 
 fn proven_idle_cycle(gatherer: &Gatherer, target: &TargetPlan) -> (TickCycle, TickPolicy) {

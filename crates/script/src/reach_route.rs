@@ -117,13 +117,6 @@ pub(crate) fn nearest_depth(view: &ReachQueryView, goals: &[WorldTile]) -> Optio
     Some(flood_depth(view, tile, rank).unwrap_or(u32::from(rank)))
 }
 
-/// Exact walking steps to one tile in the posted flood. Missing or
-/// inconsistent step masks leave the route unproven.
-pub(crate) fn exact_depth(view: &ReachQueryView, tile: WorldTile) -> Option<u32> {
-    let rank = exact_rank_at(view, tile)?;
-    flood_depth(view, tile, rank)
-}
-
 /// The tile whose exact rank produced `rank`: the tile itself or one of its
 /// orthogonal neighbours.
 fn stand_for(view: &ReachQueryView, tile: WorldTile, rank: u16) -> WorldTile {
