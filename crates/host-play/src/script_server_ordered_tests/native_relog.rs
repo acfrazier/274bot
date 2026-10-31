@@ -279,3 +279,39 @@ fn ordered_packet_clock_old_session_is_refused_at_the_same_relative_tick() {
     assert_eq!((receipt.dispatched_prefix, receipt.wire_events), (0, 0));
     assert_no_cipher_movement(&rig);
 }
+
+#[test]
+fn ordered_packet_clock_unrepresentable_raw_generation_is_stale() {
+    let mut rig = Rig::new();
+    let generation = u64::from(u32::MAX) + 1;
+    rig.client.gens.player_info = generation;
+    rig.snapshot.seed_tick(1);
+    rig.snapshot.seed_player_info_generation(generation);
+    rig.input
+        .observe_input_tick(rig.client.revision(), generation, rig.client.gens.session);
+    let observed = rig
+        .input
+        .with_server_ordered_input(|state| state.snapshot());
+    assert_eq!(observed.observed_tick(), None);
+    let mut authority_calls = 0;
+    let mut authority = || {
+        authority_calls += 1;
+        Ok(())
+    };
+    let receipt = ServerOrderedInputs::dispatch_advanced(
+        &rig.snapshot,
+        &mut rig.client,
+        &[Send::close_modal()],
+        ServerOrderedDispatchContext {
+            request_id: 1,
+            dispatch_tick: generation,
+            input: observed,
+            debug: None,
+            authority: &mut authority,
+        },
+    );
+    assert_eq!(receipt.terminal, Some(ServerOrderedError::StaleOwner));
+    assert_eq!((receipt.dispatched_prefix, receipt.wire_events), (0, 0));
+    assert_eq!(authority_calls, 0);
+    assert_no_cipher_movement(&rig);
+}

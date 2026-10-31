@@ -104,9 +104,9 @@ pub struct ChatObservation {
 pub struct FrameObservation {
     /// Monotonic host-observation index since this hook was created.
     pub host_frame: u64,
-    /// Play's monotonic script tick, shared with real dispatch receipts.
+    /// Play's native script tick, shared with completion evidence.
     pub game_tick: u32,
-    /// Raw Client snapshot tick, which can restart at a session boundary.
+    /// Session-relative Client snapshot tick, reset at a session boundary.
     pub client_tick: u32,
     /// Whether this observation is the PLAYER_INFO edge.
     pub tick_edge: bool,
