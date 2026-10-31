@@ -553,7 +553,10 @@ globalThis.__stop = () => ScriptRunner.stop('frame census stop');
         iso.script_stop_receipt().is_some(),
         "stop receipt arrives before joining"
     );
-    assert!(!iso.test_client_frame(), "stopped isolates receive no frames");
+    assert!(
+        !iso.test_client_frame(),
+        "stopped isolates receive no frames"
+    );
     iso.join();
 }
 #[test]

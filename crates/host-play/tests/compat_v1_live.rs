@@ -407,6 +407,40 @@ fn wait_for_logs(
         thread::sleep(POLL_INTERVAL);
     }
 }
+fn inventory_count(snapshot: &GameSnapshot, item_id: i32) -> i64 {
+    snapshot
+        .inventory()
+        .iter()
+        .filter(|item| item.def.id == item_id)
+        .map(|item| i64::from(item.count))
+        .sum()
+}
+
+fn wait_for_inventory_count(
+    state: &Arc<Mutex<FrameState>>,
+    item_id: i32,
+    minimum: i64,
+) -> Result<(i32, i64), String> {
+    let deadline = Instant::now() + ACTION_DEADLINE;
+    loop {
+        let frame = lock_state(state);
+        if let Some(error) = &frame.error {
+            return Err(error.clone());
+        }
+        let inventory_size = frame.snapshot.inventory_size();
+        let count = inventory_count(&frame.snapshot, item_id);
+        drop(frame);
+        if inventory_size > 0 && count >= minimum {
+            return Ok((inventory_size, count));
+        }
+        if Instant::now() >= deadline {
+            return Err(format!(
+                "timed out waiting for inventory item {item_id} count {minimum}; snapshot inventory_size={inventory_size}, count={count}"
+            ));
+        }
+        thread::sleep(POLL_INTERVAL);
+    }
+}
 
 fn start_script(session: &LiveSession<'_>, source: String) -> Result<(), String> {
     session.play.script_start_load(
@@ -577,6 +611,7 @@ export default class CompatEventsProbe extends LoopingBot {
                 this.log('INV:OFF:' + JSON.stringify({ result: result === undefined, id: event.id }));
             };
             const inventoryWitness = event => {
+                this.log('INV:RAW:' + JSON.stringify(event));
                 if (event.id === 995) this.log('INV:WITNESS:' + JSON.stringify(event));
             };
             events.on('inventory.changed', removeInventory);
@@ -848,14 +883,28 @@ fn run_events_cell(receipt: &mut Receipt) -> Result<(), String> {
             && count_prefix(logs, "CHAT:INSTANCE:") == 2
     })?;
 
+    let (inventory_size, coins_before) = wait_for_inventory_count(&session.state, 995, 0)?;
+    session.receipt.logs.push(format!(
+        "INV:SNAPSHOT:BEFORE:slots={inventory_size}:count={coins_before}"
+    ));
     request_command(&session, "give coins 1")?;
     wait_command(&mut session, "give coins 1")?;
+    let (inventory_size, coins_after_first) =
+        wait_for_inventory_count(&session.state, 995, coins_before.saturating_add(1))?;
+    session.receipt.logs.push(format!(
+        "INV:SNAPSHOT:AFTER_ONE:slots={inventory_size}:count={coins_after_first}"
+    ));
     wait_for_logs(&mut session, ACTION_DEADLINE, |logs| {
         count_prefix(logs, "INV:OFF:") == 1 && count_prefix(logs, "INV:WITNESS:") == 1
     })?;
 
     request_command(&session, "give coins 2")?;
     wait_command(&mut session, "give coins 2")?;
+    let (inventory_size, coins_after_second) =
+        wait_for_inventory_count(&session.state, 995, coins_after_first.saturating_add(2))?;
+    session.receipt.logs.push(format!(
+        "INV:SNAPSHOT:AFTER_TWO:slots={inventory_size}:count={coins_after_second}"
+    ));
     wait_for_logs(&mut session, ACTION_DEADLINE, |logs| {
         count_prefix(logs, "INV:OFF:") == 1 && count_prefix(logs, "INV:WITNESS:") == 2
     })?;
@@ -1531,7 +1580,9 @@ fn run_runtime_settings_walk_cell(receipt: &mut Receipt) -> Result<(), String> {
         || !(restart_map_picker_save_before < restart_map_picker_change
             && restart_map_picker_change < restart_map_picker_save_return)
     {
-        return Err("restarted MapPicker change delivery was not synchronous and exactly once".into());
+        return Err(
+            "restarted MapPicker change delivery was not synchronous and exactly once".into(),
+        );
     }
     stop_script(&mut session, "RUNTIME:WALK_STOP", false)?;
     Ok(())

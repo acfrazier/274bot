@@ -67,7 +67,6 @@ fn abstract_declared_members() -> std::collections::HashSet<(String, String)> {
     abstract_members
 }
 
-
 /// Every fixture export is on `@rs2b0t/api` and every concrete member is
 /// loadable. Abstract subclass hooks are type-only on their base classes.
 /// Missing members that throw `not impl` from the Proxy get trap fail here.
