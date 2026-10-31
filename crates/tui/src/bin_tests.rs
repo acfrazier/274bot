@@ -4292,6 +4292,45 @@ fn incomplete_live_run_still_fails_after_shutdown_cleanup() {
     assert!(!session.core.has_play(), "cleanup quits the Play session");
 }
 
+#[cfg(feature = "js")]
+#[test]
+fn live_logout_waits_for_running_and_queued_scripts_to_stop() {
+    let iso = IsolatedStores::enter("tui-live-logout-stop");
+    let names = ["alice", "bob", "carol", "dave", "erin"];
+    let (mut session, mut app) = tui_with_profiles(&iso, &names);
+    let path = iso.dir().join("loop.ts");
+    std::fs::write(&path, LOOPING_TS).unwrap();
+    let card = session.scripts.load_card(&path).unwrap();
+    for name in names {
+        assign(&mut session, name, &card);
+    }
+    run_fleet_action(&mut session, &mut app, frontend_core::FleetAction::Start);
+    let queued = names
+        .iter()
+        .find(|name| session.scripts.start_queue_place(name).is_some())
+        .expect("the frame leaves a queued Start")
+        .to_string();
+    assert!(names
+        .iter()
+        .any(|name| session.core.script_state(name) != ScriptRunState::Idle));
+    session.live_name = Some("auto_fighter".into());
+
+    session.clean_logout_live(&mut app).unwrap();
+
+    for name in names {
+        assert_eq!(
+            session.core.script_state(name),
+            ScriptRunState::Idle,
+            "{name} must acknowledge Stop before logout completes"
+        );
+        assert!(
+            !session.scripts.start_waiting(name),
+            "{name} must not retain a queued Start"
+        );
+    }
+    assert!(!session.scripts.start_waiting(&queued));
+}
+
 /// Nothing loaded is not an error when quitting.
 #[test]
 fn quit_with_nothing_loaded_is_not_an_error() {
