@@ -1042,12 +1042,10 @@ fn run_make_one_cell() {
     stop_script(&play, &account, &fixture);
     let cancel_stopped_tick = fixture.lock().unwrap().snapshot.tick();
     assert_eq!(
-        cancel_stopped_tick,
-        cancel_stop_tick,
+        cancel_stopped_tick, cancel_stop_tick,
         "Stop completed on the click's first following tick"
     );
-    let cancel_deadline_tick =
-        cancel_stop_tick.saturating_add(MAKE_ONE_CANCEL_WINDOW_TICKS);
+    let cancel_deadline_tick = cancel_stop_tick.saturating_add(MAKE_ONE_CANCEL_WINDOW_TICKS);
     wait_for(&play, &account, &fixture, CELL_DEADLINE, |_, state| {
         state.snapshot.tick() >= cancel_deadline_tick
     });
@@ -1557,7 +1555,7 @@ fn run_captured(test_name: &str, cell: Cell, body: fn()) {
             &text,
             account,
             "COMPAT_MAKE_CANCEL_STOP",
-            "COMPAT_MAKE_CANCEL_WINDOW_END"
+            "COMPAT_MAKE_CANCEL_WINDOW_END",
         );
         assert_eq!(
             clicks["success"], 1,
