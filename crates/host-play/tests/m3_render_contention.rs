@@ -1528,6 +1528,7 @@ fn focus_churn_covers_every_head_and_sidecar_population() {
             }
             assert!(seen.into_iter().all(|seen| seen));
         }
+    }
 }
 
 #[test]
