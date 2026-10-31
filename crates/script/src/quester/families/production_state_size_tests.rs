@@ -29,6 +29,7 @@ fn production_state_sizes_stay_within_explicit_bounds() {
     let run = std::mem::size_of::<MakeRun>();
     let previous_plan = std::mem::size_of::<PreviousMakePlan>();
     let previous_run = std::mem::size_of::<PreviousMakeRun>();
+    let talk = std::mem::size_of::<super::super::TalkRun>();
     let previous_plan_offsets = [
         std::mem::offset_of!(PreviousMakePlan, tile),
         std::mem::offset_of!(PreviousMakePlan, loc_id),
@@ -57,6 +58,7 @@ fn production_state_sizes_stay_within_explicit_bounds() {
     println!(
         "previous field offsets: MakePlan={previous_plan_offsets:?}; MakeRun={previous_run_offsets:?}"
     );
+    println!("composed TalkRun size: {talk} bytes");
     assert!(trigger <= 64, "MakeTrigger grew to {trigger} bytes");
     assert!(plan <= 192, "MakePlan grew to {plan} bytes");
     assert!(
