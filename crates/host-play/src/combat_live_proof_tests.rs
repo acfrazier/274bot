@@ -75,14 +75,9 @@ const RANGED_ABORT_SURVIVAL_TICKS: i64 = 12;
 // Selected R289 data: Protect from Melee requires base Prayer 43.
 const RANGED_ABORT_MIN_PROTECT_LEVEL: i64 = 43;
 
-// Outside every nearby static tree's one-tile hunt range. The fixture's first
-// native walk reaches the stand east of 3108/3346 after the exact HP8 Start.
-const TREE_APPROACH: WorldTile = WorldTile {
-    x: 3110,
-    z: 3346,
-    level: 0,
-};
-/// Stand inside the nasty tree's hunt range without routing through its tile.
+/// Native routing to the source-backed tree at 3108/3346 with radius one
+/// selects this adjacent stand. M4 teleports only its account here before
+/// Start, so the authored near predicate skips the inadmissible HP8 approach.
 const TREE_HUNT_STAND: WorldTile = WorldTile {
     x: 3109,
     z: 3346,
@@ -389,12 +384,11 @@ impl Case {
                     },
                 )
             }
-            Self::M4 => (world.collision.standable(TREE_APPROACH)
-                && world.collision.standable(TREE_HUNT_STAND))
-            .then_some(TREE_APPROACH)
-            .ok_or_else(|| {
-                "Draynor Manor M4 start and adjacent tree-hunt stand must be standable".to_owned()
-            }),
+            Self::M4 => world
+                .collision
+                .standable(TREE_HUNT_STAND)
+                .then_some(TREE_HUNT_STAND)
+                .ok_or_else(|| "Draynor Manor M4 tree-hunt stand must be standable".to_owned()),
             Self::R1 | Self::R2 | Self::R3 => ranged_placement(self, world).map(|p| p.spawn),
         }
     }
@@ -10724,7 +10718,7 @@ fn m4_stages_at_the_native_tree_hunt_stand() {
 fn m4_observes_its_own_poison_cure_before_the_hostile_teleport_and_start() {
     let scenario = scenario_for(
         Case::M4,
-        TREE_APPROACH,
+        TREE_HUNT_STAND,
         None,
         Arc::new(Mutex::new(CombatCapture::default())),
     );

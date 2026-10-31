@@ -262,6 +262,12 @@ chat and repeated snapshots cannot open the gate or extend it. The receipt
 records the cure in `random_events` as `M4PoisonCure`.
 Admission policy is unchanged.
 
+The fixture uses `::tele` to place only its account at `3109,3346,0`, the
+adjacent stand selected by the native route to the real tree at
+`3108,3346/r1`. The existing authored near predicate skips the approach walk
+from this stand. The authored exact walk target and radius zero remain
+unchanged, as do admission, danger consent and the eight-Hitpoint Start.
+
 M4 tests escape from an unattackable Nasty tree, not poison treatment. The
 tree uses ordinary melee crush damage, not poison. The fixture still starts
 with eight of 30 Hitpoints, one Prayer and four lobsters, so the temporary
