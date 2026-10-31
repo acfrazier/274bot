@@ -27,8 +27,10 @@ mod compat {
     /// Frozen `ChatDialog.make` / `chooseOption` modal-change wait.
     pub const MODAL_WAIT_MS: u64 = 3_000;
 
-    // Keep rs2b0t's existing ChatDialog pacing until the compat rearchitecture
-    // replaces these adapter-owned waits. Native Quester waits use observed ticks.
+    // Open compat-track wait debt: Make-X retains 3s/3s/5s wall-clock waits,
+    // like the queued WaitChoiceAck and Main-doc 3000ms waits. The compat
+    // track must count them in observed ticks; this adapter proof does not
+    // fix them. Native Quester waits already use observed ticks.
     const COUNT_OPEN_MS: u64 = 3_000;
     const COUNT_CLOSE_MS: u64 = 3_000;
     const MAKE_MENU_MS: u64 = 5_000;

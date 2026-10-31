@@ -348,3 +348,21 @@ The scenario registry and nightly cell lists are separate from changed-path matc
 ```sh
 python3 -B tools/nightly/run_nightly.py --list
 ```
+
+## Controlled legacy adapter limits
+
+`compat.dialog-combat-close-adapter` and `compat.make-x-clock-adapter` are
+**adapter proof, not a game witness**. No catalog script reaches these branches
+in a fixed-deadline cell. The first test checks the legacy dialogue result for
+combat with a visible NPC or player targeting this account, unrelated targets,
+and self-damage without an attacker. The second checks the legacy Make-X
+count-open, count-close and menu-close deadlines. Native Mordred dialogue and
+native Sheep spinning do not exercise these adapters.
+
+Keep both limits in the W6 report. W5 also adds its direct makeOne game cell;
+that cell does not prove the Make-X count/menu waits. The retained **3 s / 3 s /
+5 s wall-clock waits** in `compat/production.rs` are an open item for the compat
+track, in the same class as its queued `WaitChoiceAck` and Main-doc 3000 ms
+waits. That track must count these waits in observed ticks. This mapping does
+not fix or retire the timing debt.
+
