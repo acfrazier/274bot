@@ -7,6 +7,7 @@ use api::snapshot::WorldTile;
 use rustyscript::Runtime;
 use std::cell::RefCell;
 use std::sync::{Arc, Weak};
+use std::sync::atomic::{AtomicBool, Ordering};
 #[path = "client_adapter_v8.rs"]
 mod client_adapter_v8;
 
@@ -26,7 +27,17 @@ pub(super) fn reset_obj_records_cache() {
     drop(stale);
 }
 
-pub(super) fn install(runtime: &mut Runtime) -> Result<(), String> {
+pub(super) fn install(
+    runtime: &mut Runtime,
+    loc_projection_interest: Arc<AtomicBool>,
+) -> Result<(), String> {
+    if !runtime
+        .deno_runtime()
+        .v8_isolate()
+        .set_slot(loc_projection_interest)
+    {
+        return Err("loc projection interest already installed".to_string());
+    }
     let context = runtime.deno_runtime().main_context();
     let mut scope = runtime.deno_runtime().handle_scope();
     let global = context.open(&mut scope).global(&mut scope);
@@ -92,15 +103,22 @@ fn run_selected_facts<'s>(
         "resolve-rock-ids" => selected_resolve_rock_ids(scope, args.get(1)),
         "worth-stocking" => worth_stocking(scope, args.get(1)),
         "world-number" => world_number(scope, args.get(1), args.get(2), args.get(3)),
-        "client-adapter-reader" => client_adapter_v8::read(
-            scope,
-            args.get(1),
-            args.get(2),
-            args.get(3),
-            args.get(4),
-            args.get(5),
-            args.get(6),
-        ),
+        "client-adapter-reader" => {
+            let interest = scope
+                .get_slot::<Arc<AtomicBool>>()
+                .cloned()
+                .ok_or_else(|| "loc projection interest is not installed".to_string())?;
+            client_adapter_v8::read(
+                scope,
+                args.get(1),
+                args.get(2),
+                args.get(3),
+                args.get(4),
+                args.get(5),
+                args.get(6),
+                &interest,
+            )
+        }
         _ => Err(format!("unsupported selected facts operation: {op}")),
     }
 }

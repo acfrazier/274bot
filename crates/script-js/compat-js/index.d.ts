@@ -233,6 +233,7 @@ export const reader: {
     /**
      * Loc object hull: eight corners of the object AABB in overlay pixels, or areaGame pixels when `areaGame`.
      * Centre comes from live scene placement; size from LocType, multi-tile footprint or model minY. Null when off-scene.
+     * The projection list is built on the next host snapshot after this first request, so an earlier call may return null.
      */
     locBox(opts: {
         id?: number;

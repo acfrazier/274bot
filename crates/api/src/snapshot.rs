@@ -120,6 +120,12 @@ pub struct GameSnapshot {
     /// Native-only bounded camera/height/loc data for synchronous projection.
     #[serde(skip)]
     projection_scene: ProjectionSceneView,
+    /// Whether the projection loc list is requested by a live script reader.
+    #[serde(skip)]
+    projection_locs_wanted: bool,
+    /// Whether the projection loc list has been built for the current wanted state.
+    #[serde(skip)]
+    projection_locs_built: bool,
     /// The client's world scalars from the last world rebuild.
     world: WorldStateView,
     /// The camera state from the last camera rebuild.
@@ -362,6 +368,8 @@ impl Default for GameSnapshot {
             ground_item: Vec::new(),
             scene: SceneView::default(),
             projection_scene: ProjectionSceneView::default(),
+            projection_locs_wanted: false,
+            projection_locs_built: false,
             world: WorldStateView::default(),
             camera: CameraView::default(),
             map_flag: None,
@@ -461,6 +469,11 @@ impl GameSnapshot {
         Self::default()
     }
 
+    /// Request or release the expensive loc list used by the client-adapter
+    /// projection reader. The next loc-family rebuild reflects this setting.
+    pub fn set_loc_projection_wanted(&mut self, wanted: bool) {
+        self.projection_locs_wanted = wanted;
+    }
     /// Offline fixture seed: an in-game frame. Production rebuilds never
     /// call this; readiness getters then observe empty families instead of
     /// treating a disconnected default as an empty world.

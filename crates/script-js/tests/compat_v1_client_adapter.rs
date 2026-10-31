@@ -611,6 +611,7 @@ fn reader_catalog() -> &'static Value {
         let catalog = isolate
             .probe("__clientAdapterCatalog")
             .expect("reader catalog");
+        let loc_projection_wanted = isolate.loc_projection_wanted_for_test();
         let skill = isolate
             .probe("__clientAdapterSkill")
             .expect("Skill catalog");
@@ -618,6 +619,10 @@ fn reader_catalog() -> &'static Value {
         let mut all = serde_json::Map::new();
         all.insert("reader".to_string(), catalog);
         all.insert("skill".to_string(), skill);
+        all.insert(
+            "locProjectionWanted".to_string(),
+            Value::Bool(loc_projection_wanted),
+        );
         Value::Object(all)
     })
 }
@@ -1513,6 +1518,11 @@ reader_contract!(
             "locBoxOutside"
         )
         .is_null());
+        assert_eq!(
+            reader_catalog()["locProjectionWanted"],
+            Value::Bool(true),
+            "the native reader must publish demand on the first locBox call"
+        );
     }
 );
 reader_contract!(

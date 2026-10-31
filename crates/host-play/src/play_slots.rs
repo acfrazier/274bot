@@ -1613,6 +1613,8 @@ fn spawn_slot_thread(
                                 }
                                 last_nav_step = None;
                             }
+                            nav_snapshot
+                                .set_loc_projection_wanted(run_policy.loc_projection_wanted());
                             host::publish_snapshot(&mut nav_snapshot, c, drain);
                             if session_boundary && c.ingame {
                                 slot_navs.lock().unwrap().entry(name.to_owned()).or_default()
@@ -2318,6 +2320,45 @@ mod active_guardian_event_tests {
         assert_eq!(
             active_guardian_event_name(&status),
             Some("abyssal guardian")
+        );
+    }
+}
+#[cfg(test)]
+mod loc_projection_tests {
+    use super::*;
+    use client::client::ClientConfig;
+    use client::io::ClientRevision;
+
+    #[test]
+    fn slot_without_js_surface_does_not_build_projection_locs() {
+        let script = script::SlotScript::new();
+        assert!(!script.loc_projection_wanted());
+        let mut run_policy = ScriptRunPolicy::default();
+        run_policy.set_loc_projection_wanted(script.loc_projection_wanted());
+        assert!(!run_policy.loc_projection_wanted());
+
+        let mut client = Client::from_shared_with_revision(
+            ClientConfig {
+                host: "127.0.0.1".into(),
+                port: 43594,
+                cache_dir: "/tmp".into(),
+                members: true,
+                lowmem: true,
+            },
+            Arc::new(Cache::default()),
+            Arc::new(Vec::new()),
+            Vec::new(),
+            ClientRevision::R289,
+        );
+        client.ingame = true;
+        client.scene_state = 2;
+        client.gens.scene = 1;
+        let mut snapshot = GameSnapshot::new();
+        snapshot.set_loc_projection_wanted(run_policy.loc_projection_wanted());
+        snapshot.rebuild_family(&client, api::snapshot::Family::Loc);
+        assert!(
+            snapshot.projection_scene().locs.is_empty(),
+            "a slot without a JavaScript surface does not request loc projection data"
         );
     }
 }

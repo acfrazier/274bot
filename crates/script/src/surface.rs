@@ -576,6 +576,10 @@ pub trait SurfaceRun: Send {
     fn on_client_frame(&mut self) -> bool {
         false
     }
+    /// Return whether this run has requested the lazy projection loc list.
+    fn loc_projection_wanted(&self) -> bool {
+        false
+    }
     /// Transfer this run to retirement and send its logs to `done`.
     fn stop(self: Box<Self>, done: Sender<Vec<String>>);
     /// Return whether the script has stopped.

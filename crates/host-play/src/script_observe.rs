@@ -498,6 +498,7 @@ pub(crate) fn script_observe_cached_with_channels(
     let mut channel_active = false;
     let mut policy_runtime_generation = None;
     let mut run_policy_update = None;
+    let mut loc_projection_wanted = false;
     'script_slot: {
         let Some(slot) = observed_slot.as_ref() else {
             break 'script_slot;
@@ -1292,11 +1293,13 @@ pub(crate) fn script_observe_cached_with_channels(
             script::RunState::Starting | script::RunState::Running | script::RunState::Paused
         )
         .then_some(slot.runtime_generation());
+        loc_projection_wanted = slot.loc_projection_wanted();
         has_native_actions = slot.has_native_actions();
         journal_paint_hidden = journal_wall_now.is_some_and(|now| slot.journal_paint_hidden(now));
     }
     if let Some(run_policy) = run_policy {
         run_policy.sync_runtime(policy_runtime_generation);
+        run_policy.set_loc_projection_wanted(loc_projection_wanted);
         if let Some(update) = run_policy_update {
             update.apply(run_policy);
         }
