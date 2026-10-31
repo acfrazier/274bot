@@ -1374,9 +1374,9 @@ mod smoke_tests {
     }
 
     #[test]
-    fn base60_arthur_profile_is_accepted_by_smoke_selection() {
+    fn arthur_smoke_selection_uses_the_base40_floor() {
         let row = smoke_row("arthur").unwrap();
-        assert_eq!(row.profile, TestProfile::Base60);
+        assert_eq!(row.profile, TestProfile::Base40);
     }
 
     fn cook_cell(seeds: &QuesterPathSeeds) -> Cell {

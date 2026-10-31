@@ -181,7 +181,7 @@ pub const FIXTURE_PROFILES: &[QuestFixtureProfile] = &[
     QuestFixtureProfile {
         quest: "arthur",
         display: "Merlin's Crystal",
-        profile: TestProfile::Base60,
+        profile: TestProfile::Base40,
     },
     QuestFixtureProfile {
         quest: "cog",
@@ -1951,10 +1951,10 @@ mod tests {
             "legends",
             "elemental_workshop",
             "horror",
-            "arthur",
         ] {
             assert_eq!(fixture_profile(quest).unwrap(), TestProfile::Base60);
         }
+        assert_eq!(fixture_profile("arthur").unwrap(), TestProfile::Base40);
     }
 
     #[test]
