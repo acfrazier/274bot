@@ -4292,6 +4292,42 @@ fn incomplete_live_run_still_fails_after_shutdown_cleanup() {
     assert!(!session.core.has_play(), "cleanup quits the Play session");
 }
 
+#[test]
+fn live_logout_retries_only_after_sixteen_observed_game_ticks() {
+    let mut tick = Some(100);
+    for observed in [None, Some(100), Some(100), Some(115)] {
+        assert!(!live_logout_retry_due(&mut tick, observed));
+        assert_eq!(tick, Some(100));
+    }
+    assert!(live_logout_retry_due(&mut tick, Some(116)));
+    assert_eq!(tick, Some(116));
+    assert!(!live_logout_retry_due(&mut tick, Some(116)));
+    assert!(!live_logout_retry_due(&mut tick, Some(131)));
+    assert!(live_logout_retry_due(&mut tick, Some(132)));
+}
+
+#[test]
+fn live_logout_without_a_snapshot_starts_its_wait_at_the_first_observed_tick() {
+    let mut tick = None;
+    assert!(!live_logout_retry_due(&mut tick, None));
+    assert!(!live_logout_retry_due(&mut tick, Some(500)));
+    assert_eq!(tick, Some(500));
+    assert!(!live_logout_retry_due(&mut tick, Some(515)));
+    assert!(live_logout_retry_due(&mut tick, Some(516)));
+}
+
+#[test]
+fn live_logout_tick_wait_is_per_account_and_handles_tick_wrap() {
+    let mut early = Some(100);
+    let mut late = Some(108);
+    assert!(live_logout_retry_due(&mut early, Some(116)));
+    assert!(!live_logout_retry_due(&mut late, Some(116)));
+    assert!(live_logout_retry_due(&mut late, Some(124)));
+    let mut wrapped = Some(u32::MAX - 7);
+    assert!(!live_logout_retry_due(&mut wrapped, Some(7)));
+    assert!(live_logout_retry_due(&mut wrapped, Some(8)));
+}
+
 #[cfg(feature = "js")]
 #[test]
 fn live_logout_waits_for_running_and_queued_scripts_to_stop() {

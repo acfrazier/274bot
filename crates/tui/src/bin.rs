@@ -4180,11 +4180,39 @@ impl TuiSession {
         if self.live_name.is_none() {
             return Ok(());
         }
+        let deadline = Instant::now() + Duration::from_secs(30);
+        match self.submit_raw(OperatorCommand::StopScript, Targets::Everyone) {
+            Ok(_) | Err(SubmitError::NoTarget(_)) => {}
+            Err(error) => return Err(format!("script stop command failed: {error}")),
+        }
+        loop {
+            self.pump(app);
+            if self.names.iter().all(|account| {
+                !self.core.script_state(account).is_live()
+                    && !self.scripts.start_waiting(account)
+            }) {
+                break;
+            }
+            if Instant::now() >= deadline {
+                return Err("script stop timed out before live logout".into());
+            }
+            std::thread::sleep(Duration::from_millis(50));
+        }
+        for account in &self.names {
+            eprintln!(
+                "[tui-play] live logout script stopped account={account} tick={:?}",
+                self.core.with_slot_snapshot(account, |snapshot| snapshot.tick())
+            );
+        }
         match self.submit_raw(OperatorCommand::Logout, Targets::Everyone) {
             Ok(_) | Err(SubmitError::NoTarget(_)) => {}
             Err(error) => return Err(format!("logout command failed: {error}")),
         }
-        let deadline = Instant::now() + Duration::from_secs(30);
+        let mut logout_ticks = self
+            .names
+            .iter()
+            .map(|account| self.core.with_slot_snapshot(account, |snapshot| snapshot.tick()))
+            .collect::<Vec<_>>();
         loop {
             self.pump(app);
             if self.names.iter().all(|account| {
@@ -4211,6 +4239,28 @@ impl TuiSession {
                     "logout timed out after 30 seconds for {}",
                     connected.join(", ")
                 ));
+            }
+            for (index, last_tick) in logout_ticks.iter_mut().enumerate() {
+                let account = &self.names[index];
+                if !self
+                    .core
+                    .fleet_view()
+                    .row(account)
+                    .is_some_and(|row| row.connected())
+                {
+                    continue;
+                }
+                let tick = self.core.with_slot_snapshot(account, |snapshot| snapshot.tick());
+                if live_logout_retry_due(last_tick, tick) {
+                    let account = account.clone();
+                    eprintln!(
+                        "[tui-play] live logout retry account={account} tick={tick:?}"
+                    );
+                    match self.submit_raw(OperatorCommand::Logout, Targets::Profile(&account)) {
+                        Ok(_) | Err(SubmitError::NoTarget(_)) => {}
+                        Err(error) => return Err(format!("logout retry failed: {error}")),
+                    }
+                }
             }
             std::thread::sleep(Duration::from_millis(50));
         }
@@ -4614,6 +4664,25 @@ impl TuiSession {
 enum ProofLine {
     Stdout(String),
     Stderr(String),
+}
+
+/// R289 content `content/scripts/login_logout/logout.rs2:26-30` prevents
+/// logout for 16 game ticks after combat. Snapshot ticks count PLAYER_INFO,
+/// not render frames or elapsed wall time. A missing first snapshot starts
+/// the wait at the first observed tick; it never authorizes an early retry.
+fn live_logout_retry_due(last_tick: &mut Option<u32>, tick: Option<u32>) -> bool {
+    let Some(tick) = tick else {
+        return false;
+    };
+    let Some(previous) = *last_tick else {
+        *last_tick = Some(tick);
+        return false;
+    };
+    if tick.wrapping_sub(previous) < 16 {
+        return false;
+    }
+    *last_tick = Some(tick);
+    true
 }
 
 impl ProofLine {
