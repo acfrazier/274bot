@@ -55,6 +55,7 @@ const RIVER_LOC_ID: i32 = 2_027;
 const FLETCHING_ANIMATION: i32 = 1_248;
 const CAST_ANIMATION: i32 = 622;
 const ROLL_ANIMATION: i32 = 623;
+const BRONZE_PICK_ANIMATION: i32 = 625;
 const MITHRIL_PICK_ANIMATION: i32 = 629;
 
 // Start submits the first native action on the next PLAYER_INFO, allowing one
@@ -66,6 +67,7 @@ const STALE_MENU_BUDGET: u32 = 4;
 const SPLIT_OPENER_BUDGET: u32 = 4;
 const LATE_RIVER_BUDGET: u32 = 5;
 const LATE_IRON_BUDGET: u32 = 5;
+const NATURAL_IRON_ROLL_BUDGET: u32 = 60;
 const COPPER_BUDGET: u32 = 4;
 const HOST_REFUSAL_BUDGET: u32 = 1;
 const MAKE_WITHOUT_CLICK_BUDGET: u32 = 3;
@@ -235,7 +237,10 @@ impl Scenario {
     }
 
     fn with_mutation(mut self, mutation: DispatchMutation) -> Self {
-        self.use_proxy |= matches!(&mutation, DispatchMutation::Transport(_));
+        self.use_proxy |= matches!(
+            &mutation,
+            DispatchMutation::Transport(_) | DispatchMutation::HoldOnFreshMiningRoll { .. }
+        );
         self.mutations.push(mutation);
         self
     }
@@ -1515,7 +1520,7 @@ fn correlate_engine_packets(evidence: &RunEvidence) -> Result<(), String> {
     if evidence.pre_batch_user_events.requested > 0 {
         assert_deferred_terminal_row(evidence, packets)?;
     }
-    if evidence.pre_batch_guard_opener.armed {
+    if evidence.case == "tick-stale-menu" {
         let user_events = guard_carrier_user_events(evidence)?;
         assert_engine_stale_guard(packets)?;
         println!("TICK-MANIP stale-menu carrier: ordinary opener plus unchanged native prefix=3 wire=4; total user events={user_events}");
@@ -2126,6 +2131,16 @@ fn close_packet_seen(trace: &TickEngineTrace, tick: u64, baseline: &FrameObserva
     })
 }
 
+fn iron_roll_on_edge(trace: &TickEngineTrace, tick: u64) -> bool {
+    fresh_animation_on_edge(trace, tick).is_some_and(|(sequence, _)| {
+        sequence == MITHRIL_PICK_ANIMATION
+            || sequence == -1
+                && has_chat_in_tick(trace, tick, |line| {
+                    line.contains("You manage to mine some iron.")
+                })
+    })
+}
+
 fn iface_moved_in_window(
     trace: &TickEngineTrace,
     tick: u64,
@@ -2168,8 +2183,7 @@ fn guard_carrier_user_events(evidence: &RunEvidence) -> Result<usize, String> {
         ClientProt289::MOVE_OPCLICK.id as u8,
         ClientProt289::OPLOC1.id as u8,
     ];
-    if !opener.armed
-        || !opener.sent
+    if !opener.sent
         || opener.error.is_some()
         || opener.host_frame != Some(carrier[0].host_frame)
         || opener.encoded_length != Some(carrier[0].encoded_length)
@@ -2180,7 +2194,10 @@ fn guard_carrier_user_events(evidence: &RunEvidence) -> Result<usize, String> {
         || carrier.iter().map(|wire| wire.opcode).ne(expected)
         || !carrier[1..]
             .iter()
-            .all(|wire| wire.request_id == Some(first.receipt.request_id))
+            .all(|wire| {
+                wire.request_id == Some(first.receipt.request_id)
+                    && wire.host_frame == carrier[0].host_frame
+            })
         || first.receipt.dispatched_prefix != 3
         || first.receipt.wire_events != 4
         || first.receipt.terminal.is_some()
@@ -2726,6 +2743,12 @@ fn normalized_prefix(evidence: &RunEvidence, end_offset: u32) -> PrefixTrace {
         .trace
         .wire
         .iter()
+        // Client frame upkeep, not a host action (client.rs:12873-12879).
+        // Raw evidence still retains every such packet and its actual window.
+        .filter(|packet| {
+            packet.request_id.is_some()
+                || packet.opcode != ClientProt289::ANTICHEAT_CYCLELOGIC7.id as u8
+        })
         .filter_map(|packet| {
             let offset = packet.game_tick.wrapping_sub(origin);
             (offset < end_offset).then_some(PrefixWire {
@@ -3047,11 +3070,22 @@ fn tick_engine_plain_late_river_and_mithril_iron() {
 
     let iron = Scenario::iron("tick-late-iron")
         .unwrap_or_else(|error| panic!("{error}"))
-        .with_mutation(DispatchMutation::Transport(
-            TransportMutation::HoldThroughNextEdge,
-        ));
+        .with_mutation(DispatchMutation::HoldOnFreshMiningRoll {
+            sequence: MITHRIL_PICK_ANIMATION,
+        });
     run_case(iron, |run| {
-        let first = first_knife(&run.hook.trace()).map_err(|error| run.failure(error))?;
+        let selection = Arc::clone(&run.hook);
+        let start = run.hook.observed_game_tick();
+        run.wait_until(start, NATURAL_IRON_ROLL_BUDGET, |trace, _| {
+            selection.fresh_roll_request_id().is_some_and(|request_id| {
+                trace.dispatches.iter().any(|dispatch| dispatch.receipt.request_id == request_id)
+            })
+        })?;
+        let request_id = run.hook.fresh_roll_request_id()
+            .ok_or_else(|| run.failure("no naturally eligible Mining-roll dispatch was held"))?;
+        let first = run.hook.trace().dispatches.into_iter()
+            .find(|dispatch| dispatch.receipt.request_id == request_id)
+            .ok_or_else(|| run.failure("selected Mining-roll receipt disappeared"))?;
         let origin = first.game_tick;
         assert_batch(run, &first, 3, 4)?;
         run.wait_until(origin as u32, LATE_IRON_BUDGET, |trace, statuses| {
@@ -3061,19 +3095,33 @@ fn tick_engine_plain_late_river_and_mithril_iron() {
                 line.to_ascii_lowercase()
                     .contains("swing your pick at the rock")
             }) && checked_click_pairs(trace, origin + 2) == 1
-                && fresh_animation_on_edge(trace, origin + 5)
-                    .is_some_and(|(sequence, _)| sequence == ROLL_ANIMATION)
+                && iron_roll_on_edge(trace, origin + 5)
                 && statuses
                     .last()
                     .is_some_and(|status| status.tick_slips.unwrap_or(0) >= 1)
         })?;
         let trace = run.hook.trace();
         assert_click(run, &trace, origin + 2)?;
-        assert_roll(run, origin + 5)?;
-        require_first_nonverified_verdict(run, "tick_slips")?;
+        if !iron_roll_on_edge(&trace, origin + 5) {
+            return Err(run.failure("no real mithril/iron roll at R+1+4"));
+        }
+        let before_landing = run.statuses.iter().rev()
+            .find(|status| u64::from(status.game_tick) <= origin + 1)
+            .ok_or_else(|| run.failure("missing status before the late iron landing"))?;
+        let final_status = run.statuses.last()
+            .ok_or_else(|| run.failure("missing late iron verdict"))?;
+        if final_status.tick_slips != before_landing.tick_slips.map(|count| count + 1)
+            || final_status.tick_verified != before_landing.tick_verified
+            || final_status.tick_unobserved != before_landing.tick_unobserved
+            || final_status.tick_cycle != before_landing.tick_cycle
+        {
+            return Err(run.failure(format!(
+                "late iron did not add one slip while preserving prior verified/unobserved cycles: before={before_landing:?} after={final_status:?}"
+            )));
+        }
         if knife_dispatches(&trace)
             .iter()
-            .any(|dispatch| dispatch.game_tick < origin + 5 && dispatch.game_tick != origin)
+            .any(|dispatch| dispatch.game_tick > origin && dispatch.game_tick < origin + 5)
         {
             return Err(run.failure("iron/mithril branch emitted a second batch before R+1+4"));
         }
@@ -3125,7 +3173,7 @@ fn copper_history(scenario: Scenario, expect_held_join: bool) -> Result<RunEvide
                     edge_frame(trace, origin + 2).is_some()
                 } else {
                     fresh_animation_on_edge(trace, origin + 4)
-                        .is_some_and(|(sequence, _)| sequence == ROLL_ANIMATION)
+                        .is_some_and(|(sequence, _)| sequence == BRONZE_PICK_ANIMATION)
                         && statuses.last().is_some_and(|status| status.tick_cycle == Some(3))
                 }
         })?;
@@ -3625,7 +3673,7 @@ mod packet_oracle_tests {
         receipt.wire_events = 4;
         receipt.terminal = None;
         evidence.pre_batch_guard_opener = GuardOpenerState {
-            armed: true,
+            armed: false,
             sent: true,
             error: None,
             client_tick: Some(7),
@@ -3637,7 +3685,7 @@ mod packet_oracle_tests {
             .enumerate()
             .map(|(index, opcode)| {
                 let mut wire = wire(opcode, 1, if opcode == 200 { 13 } else { 1 });
-                wire.host_frame = if index == 0 { 70 } else { 71 };
+                wire.host_frame = 70;
                 if index == 0 {
                     wire.request_id = None;
                 }
@@ -3667,6 +3715,55 @@ mod packet_oracle_tests {
             })
             .collect();
         evidence
+    }
+
+    #[test]
+    fn natural_mining_roll_gate_rejects_start_acts_stale_frames_and_successes() {
+        use host_play::tick_engine_test_support::fresh_mining_roll;
+        let mut evidence = stale_guard_evidence();
+        evidence.trace.frames[4].animation.as_mut().unwrap().sequence = MITHRIL_PICK_ANIMATION;
+        assert!(fresh_mining_roll(&evidence.trace, 11, MITHRIL_PICK_ANIMATION));
+        for facet in 0..6 {
+            let mut trace = evidence.trace.clone();
+            match facet {
+                0 => trace.frames[4].tick_edge = false,
+                1 => trace.frames[4].animation.as_mut().unwrap().serial = 2,
+                2 => trace.frames[4].animation.as_mut().unwrap().sequence = -1,
+                3 => trace.dispatches.clear(),
+                4 | 5 => trace.frames[4].chat.push(ChatObservation {
+                    game_tick: 11,
+                    sequence: 11,
+                    text: if facet == 4 {
+                        "You swing your pick at the rock."
+                    } else {
+                        "You manage to mine some iron."
+                    }.into(),
+                    poll: PollKind::Edge,
+                }),
+                _ => unreachable!(),
+            }
+            assert!(!fresh_mining_roll(&trace, 11, MITHRIL_PICK_ANIMATION), "invalid facet {facet}");
+        }
+    }
+
+    #[test]
+    fn iron_roll_accepts_real_pick_or_fast_rock_success_not_fishing_or_a_bare_null() {
+        let mut evidence = stale_guard_evidence();
+        evidence.trace.frames[4].animation.as_mut().unwrap().sequence = MITHRIL_PICK_ANIMATION;
+        assert!(iron_roll_on_edge(&evidence.trace, 11));
+        evidence.trace.frames[4].animation.as_mut().unwrap().sequence = ROLL_ANIMATION;
+        assert!(!iron_roll_on_edge(&evidence.trace, 11));
+        evidence.trace.frames[4].animation.as_mut().unwrap().sequence = -1;
+        assert!(!iron_roll_on_edge(&evidence.trace, 11));
+        evidence.trace.frames[4].chat.push(ChatObservation {
+            game_tick: 11,
+            sequence: 11,
+            text: "You manage to mine some iron.".into(),
+            poll: PollKind::Edge,
+        });
+        assert!(iron_roll_on_edge(&evidence.trace, 11));
+        evidence.trace.frames[4].game_tick = 12;
+        assert!(!iron_roll_on_edge(&evidence.trace, 11));
     }
 
     #[test]
@@ -3745,6 +3842,23 @@ mod packet_oracle_tests {
         repeated.statuses.push(repeated.statuses[0].clone());
         repeated.statuses.last_mut().unwrap().host_frame += 1;
         assert_eq!(normalized_prefix(&original, 2), normalized_prefix(&repeated, 2));
+    }
+
+    #[test]
+    fn normalized_control_trace_ignores_only_automatic_cyclelogic7_upkeep() {
+        let original = prefix_evidence();
+        let reference = normalized_prefix(&original, 3);
+        let mut upkeep = original.clone();
+        let mut packet = wire(ClientProt289::ANTICHEAT_CYCLELOGIC7.id as u8, 1, 1);
+        packet.request_id = None;
+        packet.game_tick = 8;
+        upkeep.trace.wire.push(packet);
+        assert_eq!(reference, normalized_prefix(&upkeep, 3));
+        upkeep.trace.wire.last_mut().unwrap().game_tick = 9;
+        assert_eq!(reference, normalized_prefix(&upkeep, 3));
+        let mut action = original;
+        action.trace.wire[0].game_tick = 8;
+        assert_ne!(reference, normalized_prefix(&action, 3), "host action moved");
     }
 
     #[test]

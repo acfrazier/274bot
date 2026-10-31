@@ -462,7 +462,7 @@ fn lone_opener_consumes_its_receipt_before_stray_menu_tending() {
 }
 
 #[test]
-fn accepted_make_without_its_click_uses_one_checked_act_and_verifies() {
+fn accepted_make_without_its_click_uses_one_checked_act_and_slips() {
     let mut rig = Rig::new("mining.iron");
     rig.animate(AnimClass::Skill);
     assert!(rig.poll(101).is_pending());
@@ -477,7 +477,10 @@ fn accepted_make_without_its_click_uses_one_checked_act_and_verifies() {
     rig.animate(AnimClass::Skill);
     assert!(rig.poll(104).is_pending());
     assert_eq!(rig.arms(), 2);
-    assert_eq!((rig.stats().verified, rig.stats().lost), (1, 0));
+    assert_eq!(
+        (rig.stats().verified, rig.stats().slipped, rig.stats().lost),
+        (0, 1, 0)
+    );
 }
 
 #[test]
@@ -1002,7 +1005,11 @@ fn depleting_idle_handoff_survives_two_tick_replacement_approach_with_real_recei
         .unwrap()
     });
     assert_eq!(*loc, expected);
-    assert_eq!(rig.stats().delayed, 1);
+    assert_eq!(
+        (rig.stats().delayed, rig.stats().slipped),
+        (0, 1),
+        "a recovered late cycle stays a slip while preserving the proven Idle handoff"
+    );
 }
 
 #[test]
@@ -1038,7 +1045,8 @@ fn a_terminal_row_observed_after_landing_never_enters_the_verified_fraction() {
     assert!(rig.poll(103).is_pending());
     assert_eq!(
         (rig.stats().verified, rig.stats().slipped, rig.stats().lost),
-        (0, 1, 0)
+        (0, 0, 0),
+        "the accepted recovery waits for its native roll before closing the cycle"
     );
     rig.complete_last(None, true);
     assert!(rig.poll(103).is_pending());

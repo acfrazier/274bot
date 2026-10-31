@@ -75,6 +75,9 @@ pub enum DispatchMutation {
     CancelAfterPackets(usize),
     /// Gate actual encoded bytes through the installed loopback proxy.
     Transport(TransportMutation),
+    /// Hold only a dispatch from a fresh non-success Mining roll, not an
+    /// initial act or an Idle replacement after depletion.
+    HoldOnFreshMiningRoll { sequence: i32 },
 }
 
 /// Whether a frame was first observed on a PLAYER_INFO edge or a wake poll.
@@ -250,6 +253,35 @@ struct ActiveDispatch {
     transport: Option<TransportMutation>,
 }
 
+/// A real, newly received Mining roll with no start-act or success line.
+/// The prior dispatch excludes startup; a fresh non-null instruction excludes
+/// the fast-rock success/Idle replacement path (mining.rs2:109-111,183-192).
+pub fn fresh_mining_roll(trace: &TickEngineTrace, tick: u32, sequence: i32) -> bool {
+    let Some(frame) = trace.frames.last() else {
+        return false;
+    };
+    let Some(animation) = frame.animation else {
+        return false;
+    };
+    frame.game_tick == tick
+        && frame.tick_edge
+        && animation.sequence == sequence
+        && trace.frames.iter().rev().skip(1).find_map(|frame| frame.animation)
+            .is_none_or(|previous| previous.serial != animation.serial)
+        && trace.dispatches.iter().any(|dispatch| {
+            dispatch.game_tick < u64::from(tick)
+                && dispatch.request_debug.as_deref().is_some_and(|request| request.contains("KnifeArm"))
+        })
+        && !trace.frames.iter().flat_map(|frame| &frame.chat).any(|line| {
+            let observed = u64::from(line.game_tick);
+            let first = observed + u64::from(line.poll == PollKind::Wake);
+            first <= u64::from(tick)
+                && observed + 1 >= u64::from(tick)
+                && (line.text.contains("You swing your pick at the rock.")
+                    || line.text.contains("You manage to mine some"))
+        })
+}
+
 struct HookState {
     trace: TickEngineTrace,
     next_host_frame: u64,
@@ -259,6 +291,7 @@ struct HookState {
     log_id: i32,
     measurement_armed: bool,
     pending_mutations: VecDeque<DispatchMutation>,
+    fresh_roll_request: Option<u64>,
     active_dispatch: Option<ActiveDispatch>,
     transport: Option<Arc<dyn OrderedTransportController>>,
     observer_session: Option<u64>,
@@ -286,6 +319,7 @@ impl TickEngineTestHook {
                 log_id: 1511,
                 measurement_armed: false,
                 pending_mutations: VecDeque::new(),
+                fresh_roll_request: None,
                 active_dispatch: None,
                 transport: None,
                 observer_session: None,
@@ -390,6 +424,14 @@ impl TickEngineTestHook {
             .push_back(mutation);
     }
 
+    /// Request selected by the one-shot natural Mining-roll transport hook.
+    pub fn fresh_roll_request_id(&self) -> Option<u64> {
+        self.state
+            .lock()
+            .expect("tick-engine hook poisoned")
+            .fresh_roll_request
+    }
+
     /// Suppress the root of a real IF_OPENCHAT observation through `tick`.
     /// Chat lines and the underlying Client state remain untouched.
     pub fn suppress_openchat_through_tick(&self, tick: u32) {
@@ -448,6 +490,7 @@ impl TickEngineTestHook {
         let mut state = self.state.lock().expect("tick-engine hook poisoned");
         state.log_id = log_id;
         state.inventory_ids.clear();
+        state.fresh_roll_request = None;
         state.inventory_ids.extend_from_slice(inventory_ids);
         state.trace = TickEngineTrace::default();
         state.measurement_armed = true;
@@ -602,16 +645,29 @@ impl TickEngineTestHook {
         authority: &HostAuthority,
         envelope: &ServerOrderedEnvelope,
     ) -> DispatchGuard<'a> {
-        let mutation = {
-            let mut state = self.state.lock().expect("tick-engine hook poisoned");
-            state.last_game_tick = game_tick;
-            state.pending_mutations.pop_front()
-        };
-        let mut remove_loc = None;
         let request_id = authority.request_id().get();
         let request_debug = match envelope.payload() {
             script::surface::ServerOrderedPayload::Content(request) => Some(format!("{request:?}")),
             script::surface::ServerOrderedPayload::Advanced(_) => None,
+        };
+        let mutation = {
+            let mut state = self.state.lock().expect("tick-engine hook poisoned");
+            state.last_game_tick = game_tick;
+            let conditional = match state.pending_mutations.front() {
+                Some(DispatchMutation::HoldOnFreshMiningRoll { sequence }) => Some(*sequence),
+                _ => None,
+            };
+            if conditional.is_some_and(|sequence| {
+                !request_debug.as_deref().is_some_and(|request| request.contains("KnifeArm"))
+                    || !fresh_mining_roll(&state.trace, game_tick, sequence)
+            }) {
+                None
+            } else {
+                if conditional.is_some() {
+                    state.fresh_roll_request = Some(request_id);
+                }
+                state.pending_mutations.pop_front()
+            }
         };
         let mut cancel_after = None;
         let mut transport = None;
@@ -624,6 +680,9 @@ impl TickEngineTestHook {
             }
             Some(DispatchMutation::Transport(mode)) => {
                 transport = Some(mode);
+            }
+            Some(DispatchMutation::HoldOnFreshMiningRoll { .. }) => {
+                transport = Some(TransportMutation::HoldThroughNextEdge);
             }
             None => {}
         }
