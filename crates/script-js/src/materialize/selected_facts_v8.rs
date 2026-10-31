@@ -6,7 +6,7 @@ use api::game_data::SelectedGameData;
 use api::snapshot::WorldTile;
 use rustyscript::Runtime;
 use std::cell::RefCell;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::AtomicBool;
 use std::sync::{Arc, Weak};
 #[path = "client_adapter_v8.rs"]
 mod client_adapter_v8;
@@ -104,10 +104,6 @@ fn run_selected_facts<'s>(
         "worth-stocking" => worth_stocking(scope, args.get(1)),
         "world-number" => world_number(scope, args.get(1), args.get(2), args.get(3)),
         "client-adapter-reader" => {
-            let interest = scope
-                .get_slot::<Arc<AtomicBool>>()
-                .cloned()
-                .ok_or_else(|| "loc projection interest is not installed".to_string())?;
             client_adapter_v8::read(
                 scope,
                 args.get(1),
@@ -116,7 +112,6 @@ fn run_selected_facts<'s>(
                 args.get(4),
                 args.get(5),
                 args.get(6),
-                &interest,
             )
         }
         _ => Err(format!("unsupported selected facts operation: {op}")),

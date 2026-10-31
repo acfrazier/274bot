@@ -1,6 +1,6 @@
 use super::{js_i32, js_to_string, object_i32, set_key, v8_str, PENDING};
-use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 
 pub(super) fn read<'s>(
     scope: &mut v8::HandleScope<'s>,
@@ -10,7 +10,6 @@ pub(super) fn read<'s>(
     arg2: v8::Local<'s, v8::Value>,
     arg3: v8::Local<'s, v8::Value>,
     arg4: v8::Local<'s, v8::Value>,
-    loc_projection_interest: &AtomicBool,
 ) -> Result<v8::Local<'s, v8::Value>, String> {
     let method = js_to_string(scope, method)?;
     match method.as_str() {
@@ -129,7 +128,10 @@ pub(super) fn read<'s>(
             overlay_pos_world(scope, facts, [arg0, arg1, arg2, arg3, arg4], true)
         }
         "locBox" => {
-            loc_projection_interest.store(true, Ordering::Release);
+            scope
+                .get_slot::<Arc<AtomicBool>>()
+                .ok_or_else(|| "loc projection interest is not installed".to_string())?
+                .store(true, Ordering::Release);
             loc_box(scope, snapshot, facts, arg0, arg1)
         }
         "itemIconPixels" => item_icon_pixels(scope, facts, arg0),
