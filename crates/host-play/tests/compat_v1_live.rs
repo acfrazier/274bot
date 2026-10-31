@@ -1256,8 +1256,18 @@ fn instrument_walk_to_settings(js: &mut String) -> Result<(), String> {
     js.push_str(
         r#"
 export default class CompatWalkToSettingsProbe extends WalkToBot {
+    __mapPickerUnsubscribe = null;
     async onStart() {
         await super.onStart();
+        // Mirror the map picker's listener for a display-setting change.
+        this.__mapPickerUnsubscribe = SettingsStore.onChange((name, key, raw) => {
+            if (name === 'MapPicker' && key === 'showBasemap') {
+                this.log(`RUNTIME:MAP_PICKER_CHANGE:${name}:${key}:${raw}`);
+            }
+        });
+        this.log('RUNTIME:MAP_PICKER_SAVE_BEFORE');
+        SettingsStore.save('MapPicker', 'showBasemap', 'false');
+        this.log('RUNTIME:MAP_PICKER_SAVE_RETURN');
         if (SettingsStore.saved('WalkTo', 'customTile') === undefined) {
             const here = Game.tile();
             if (!here) throw new Error('WalkTo settings probe has no player tile');
@@ -1291,6 +1301,7 @@ export default class CompatWalkToSettingsProbe extends WalkToBot {
     onPause() { this.log('RUNTIME:WALK_PAUSE'); }
     onResume() { this.log('RUNTIME:WALK_RESUME'); }
     onStop() {
+        this.__mapPickerUnsubscribe?.();
         super.onStop();
         this.log('RUNTIME:WALK_STOP');
     }
@@ -1376,6 +1387,12 @@ fn run_runtime_settings_walk_cell(receipt: &mut Receipt) -> Result<(), String> {
         logs.iter()
             .any(|line| line.starts_with("RUNTIME:WALK_WRITE:"))
             && logs.iter().any(|line| line == "RUNTIME:WALK_PENDING")
+            && logs
+                .iter()
+                .any(|line| line == "RUNTIME:MAP_PICKER_CHANGE:MapPicker:showBasemap:false")
+            && logs
+                .iter()
+                .any(|line| line == "RUNTIME:MAP_PICKER_SAVE_RETURN")
     })?;
     if session.play.script_state(&session.account) != script::RunState::Running {
         return Err(format!(
@@ -1393,6 +1410,33 @@ fn run_runtime_settings_walk_cell(receipt: &mut Receipt) -> Result<(), String> {
     if written_tile != first_map_pick {
         return Err(format!(
             "WalkTo saved tile {written_tile:?} differs from its resolved tile {first_map_pick:?}"
+        ));
+    }
+    let map_picker_save_before = session
+        .receipt
+        .logs
+        .iter()
+        .position(|line| line == "RUNTIME:MAP_PICKER_SAVE_BEFORE")
+        .ok_or_else(|| "MapPicker save did not start".to_string())?;
+    let map_picker_change = session
+        .receipt
+        .logs
+        .iter()
+        .position(|line| line == "RUNTIME:MAP_PICKER_CHANGE:MapPicker:showBasemap:false")
+        .ok_or_else(|| "MapPicker change consumer did not run".to_string())?;
+    let map_picker_save_return = session
+        .receipt
+        .logs
+        .iter()
+        .position(|line| line == "RUNTIME:MAP_PICKER_SAVE_RETURN")
+        .ok_or_else(|| "MapPicker save did not return".to_string())?;
+    if count_prefix(&session.receipt.logs, "RUNTIME:MAP_PICKER_CHANGE:") != 1
+        || !(map_picker_save_before < map_picker_change
+            && map_picker_change < map_picker_save_return)
+    {
+        return Err(format!(
+            "MapPicker change delivery was not synchronous and exactly once: {:?}",
+            session.receipt.logs
         ));
     }
 
@@ -1450,6 +1494,12 @@ fn run_runtime_settings_walk_cell(receipt: &mut Receipt) -> Result<(), String> {
                 .iter()
                 .any(|line| line.starts_with("RUNTIME:WALK_SETTINGS:"))
                 && recent.iter().any(|line| line == "RUNTIME:WALK_PENDING")
+                && recent
+                    .iter()
+                    .any(|line| line == "RUNTIME:MAP_PICKER_CHANGE:MapPicker:showBasemap:false")
+                && recent
+                    .iter()
+                    .any(|line| line == "RUNTIME:MAP_PICKER_SAVE_RETURN")
         })
     })?;
     if session.receipt.logs[restart_start..]
@@ -1463,6 +1513,25 @@ fn run_runtime_settings_walk_cell(receipt: &mut Receipt) -> Result<(), String> {
         return Err(format!(
             "WalkTo restart changed the saved map-pick tile from {first_map_pick:?} to {restarted_map_pick:?}"
         ));
+    }
+    let restart_logs = &session.receipt.logs[restart_start..];
+    let restart_map_picker_save_before = restart_logs
+        .iter()
+        .position(|line| line == "RUNTIME:MAP_PICKER_SAVE_BEFORE")
+        .ok_or_else(|| "restarted MapPicker save did not start".to_string())?;
+    let restart_map_picker_change = restart_logs
+        .iter()
+        .position(|line| line == "RUNTIME:MAP_PICKER_CHANGE:MapPicker:showBasemap:false")
+        .ok_or_else(|| "restarted MapPicker consumer did not run".to_string())?;
+    let restart_map_picker_save_return = restart_logs
+        .iter()
+        .position(|line| line == "RUNTIME:MAP_PICKER_SAVE_RETURN")
+        .ok_or_else(|| "restarted MapPicker save did not return".to_string())?;
+    if count_prefix(restart_logs, "RUNTIME:MAP_PICKER_CHANGE:") != 1
+        || !(restart_map_picker_save_before < restart_map_picker_change
+            && restart_map_picker_change < restart_map_picker_save_return)
+    {
+        return Err("restarted MapPicker change delivery was not synchronous and exactly once".into());
     }
     stop_script(&mut session, "RUNTIME:WALK_STOP", false)?;
     Ok(())
