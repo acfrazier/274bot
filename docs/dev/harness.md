@@ -707,6 +707,34 @@ Gatherer cells live in `crates/host-play/tests/gatherer_live.rs`. Each uses an
 isolated `HOME` plus absolute `GATHERER_ENGINE_DIR`, `GATHERER_NAV_PACK` and
 `GATHERER_CATALOG_ROOT`, and the `BOT_LIVE_NAME_PREFIX` namespace.
 
+The tool-buy packet-rate oracle keeps the limit of five Driver packets per
+observed game tick. In `test-support` builds, the real outbound observer counts
+commits owned by a host request or made inside a Driver call. It does not count
+client keepalives or map-completion packets outside those scopes. A deferred
+client packet is committed before the Driver scope starts. The scope and counter
+do not exist in production builds; they do not change production input lineage.
+
+The bait cells read the run-tagged native status format
+(`native Gatherer run=<n> phase=...`). A clean Running/Blocked sample with an
+open bank is not yet the final park: the cell keeps observing, within its
+original deadline, until the bank closes. A failure or a non-Running slot still
+ends the check at once. The receipt records how many open-bank polls it saw.
+
+The death/no-stock check requires Running/Blocked recovery, a missing-tool
+reason, bank-access evidence and zero status trips. It does not require the
+selected bank's purpose label to be `Withdraw`: a recovery supply read can
+correctly show `Supply`. The same-region death check waits for the native
+`respawn observed; settling` event at recovery step 1, then persists the sampled
+death and respawn tiles. Its positive witness still needs the respawn square,
+the same 64-tile region and plane, and fresh progress after recovery.
+
+The Auto-mode fixture starts near `(3058,3169,0)` and must find a reachable
+empty 32-tile ring among the real observed trees before Start. The refused
+death-return fixture uses the real oak at `(3204,3525,0)`, away from the old
+Skeleton danger zone. It starts in the wilderness but leaves
+`allowWilderness=false`, so the return from respawn still crosses a forbidden
+boundary. Neither fixture seeds resources or changes the safety gate.
+
 ### Target switching
 
 `gatherer_live::gatherer_mine_tier_power` supports a single selected ore through

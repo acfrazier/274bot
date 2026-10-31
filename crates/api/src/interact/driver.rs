@@ -207,6 +207,11 @@ impl Driver for Client {
         Client::cheat_admission(self)
     }
     fn send_cheat(&mut self, cmd: &str) -> client::CheatSend {
+        #[cfg(feature = "test-support")]
+        {
+            driver_packet_scope_for_test(self, |client| Client::send_cheat(client, cmd))
+        }
+        #[cfg(not(feature = "test-support"))]
         Client::send_cheat(self, cmd)
     }
     fn set_menu(&mut self, slot: i32, action: i32, a: i32, b: i32, c: i32) {
@@ -217,8 +222,18 @@ impl Driver for Client {
     }
 
     fn do_action(&mut self, slot: i32) -> bool {
-        self.doAction(slot);
-        true
+        #[cfg(feature = "test-support")]
+        {
+            driver_packet_scope_for_test(self, |client| {
+                client.doAction(slot);
+                true
+            })
+        }
+        #[cfg(not(feature = "test-support"))]
+        {
+            self.doAction(slot);
+            true
+        }
     }
 
     fn try_move(
@@ -235,6 +250,25 @@ impl Driver for Client {
         forceapproach: i32,
         r#type: i32,
     ) -> bool {
+        #[cfg(feature = "test-support")]
+        {
+            driver_packet_scope_for_test(self, |client| {
+                client.tryMove(
+                    src_x,
+                    src_z,
+                    dx,
+                    dz,
+                    try_nearest,
+                    loc_width,
+                    loc_length,
+                    loc_angle,
+                    loc_shape,
+                    forceapproach,
+                    r#type,
+                )
+            })
+        }
+        #[cfg(not(feature = "test-support"))]
         self.tryMove(
             src_x,
             src_z,
@@ -279,6 +313,13 @@ impl Driver for Client {
     }
 
     fn send_packet(&mut self, packet: &Send) -> Result<(), crate::prot::PacketError> {
+        #[cfg(feature = "test-support")]
+        {
+            driver_packet_scope_for_test(self, |client| {
+                packet.write_for_revision(client.revision(), &mut client.out)
+            })
+        }
+        #[cfg(not(feature = "test-support"))]
         packet.write_for_revision(self.revision(), &mut self.out)
     }
     fn finish_pending_packet(&mut self) {
@@ -388,6 +429,9 @@ impl Driver for Client {
     }
 
     fn handle_chat_input(&mut self) {
+        #[cfg(feature = "test-support")]
+        driver_packet_scope_for_test(self, Client::handle_chat_input);
+        #[cfg(not(feature = "test-support"))]
         Client::handle_chat_input(self);
     }
 
@@ -396,8 +440,16 @@ impl Driver for Client {
     }
 
     fn consume_chat_key(&mut self, key: i32) {
-        self.out.observe_foreign_local_input();
-        Client::consume_chat_key(self, key);
+        #[cfg(feature = "test-support")]
+        driver_packet_scope_for_test(self, |client| {
+            client.out.observe_foreign_local_input();
+            Client::consume_chat_key(client, key);
+        });
+        #[cfg(not(feature = "test-support"))]
+        {
+            self.out.observe_foreign_local_input();
+            Client::consume_chat_key(self, key);
+        }
     }
 
     fn note_input_activity(&mut self) {

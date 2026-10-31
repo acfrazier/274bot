@@ -1,6 +1,7 @@
 use std::collections::{BTreeMap, HashMap};
 use std::sync::{Arc, LazyLock, Mutex};
 
+#[cfg(not(feature = "test-support"))]
 use api::interact::Driver;
 use api::snapshot::{ActorKind, GameSnapshot, ItemContainer};
 use client::client::Client;
@@ -872,8 +873,8 @@ impl DriverPacketTrace {
         (json!(rows), max, self.complete)
     }
 }
-/// The real encrypted sink count spans host interactions and Traveller writes.
-/// The next frame observes writes after the previous frontend callback.
+/// Real sink commits that the host attributes to Driver writes. Test-only
+/// Driver scopes include Traveller writes and exclude client background traffic.
 pub(crate) struct DriverPacketCounts {
     packets_by_tick: BTreeMap<u32, u64>,
     last: Option<(u32, u64)>,
@@ -902,7 +903,14 @@ impl DriverPacketCounts {
     }
 
     pub(crate) fn observe(&mut self, client: &Client, tick: u32) {
-        self.record_count(Driver::packet_commit_count(client), tick);
+        #[cfg(feature = "test-support")]
+        let count = client
+            .out
+            .has_observer()
+            .then(api::interact::classified_driver_packet_count_for_test);
+        #[cfg(not(feature = "test-support"))]
+        let count = Driver::packet_commit_count(client);
+        self.record_count(count, tick);
     }
 
     pub(crate) fn begin(&mut self, client: &Client, tick: u32) {
@@ -971,9 +979,17 @@ impl DriverPacketCounts {
     }
 
     pub(crate) fn value(&self) -> (Value, usize, bool) {
-        let rows = self.packets_by_tick.iter().map(|(tick, count)| {
-            json!({"tick": tick, "count": count, "source": "real-encrypted-sink-commits"})
-        }).collect::<Vec<_>>();
+        let rows = self
+            .packets_by_tick
+            .iter()
+            .map(|(tick, count)| {
+                json!({"tick": tick, "count": count, "source": if cfg!(feature = "test-support") {
+                    "host-classified-driver-commits"
+                } else {
+                    "real-encrypted-sink-commits"
+                }})
+            })
+            .collect::<Vec<_>>();
         let maximum = self.packets_by_tick.values().copied().max().unwrap_or(0);
         let maximum = usize::try_from(maximum);
         let complete =

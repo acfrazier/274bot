@@ -142,6 +142,11 @@ impl PacketObserver for SlotInput {
             LineageKind::Content => InputLineage::ContentRequest(state.request_id),
             LineageKind::Advanced => InputLineage::AdvancedRequest(state.request_id),
         };
+        #[cfg(feature = "test-support")]
+        api::interact::record_classified_driver_packet_for_test(!matches!(
+            lineage,
+            InputLineage::Foreign
+        ));
         state.inputs.record_opcode(revision, opcode, lineage);
     }
 
@@ -281,8 +286,13 @@ mod tests {
         );
         input.bind_outbound_observer(&mut client);
         let before = classified_driver_packet_count_for_test();
-        for packet in [api::prot::Send::no_timeout(), api::prot::Send::map_build_complete()] {
-            packet.write_for_revision(ClientRevision::R289, &mut client.out).unwrap();
+        for packet in [
+            api::prot::Send::no_timeout(),
+            api::prot::Send::map_build_complete(),
+        ] {
+            packet
+                .write_for_revision(ClientRevision::R289, &mut client.out)
+                .unwrap();
         }
         assert_eq!(classified_driver_packet_count_for_test(), before);
         Driver::send_packet(&mut client, &api::prot::Send::close_modal()).unwrap();

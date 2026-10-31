@@ -114,14 +114,25 @@ fn account_lines(account: &str) -> Vec<String> {
         .collect()
 }
 
+/// Phase labels written by the native status formatter.
+const STATUS_PHASES: [&str; 5] = ["preparing", "working", "waiting", "blocked", "complete"];
+
 /// The `last_event` of one native Gatherer status line. The formatter at
 /// `script/src/slot/compiled.rs:333-343` writes
 /// `native Gatherer run=<n> phase=<label> failure=<code>[details] last_event=<event>`.
 /// Any other line, or a line with a malformed run, phase or empty event, gives `None`.
 fn gatherer_status_event(line: &str) -> Option<&str> {
-    line.starts_with("native Gatherer phase=")
-        .then(|| line.split_once(" last_event=").map(|(_, event)| event))
-        .flatten()
+    let rest = line.strip_prefix("native Gatherer run=")?;
+    let (run, rest) = rest.split_once(" phase=")?;
+    if run.is_empty() || !run.bytes().all(|byte| byte.is_ascii_digit()) {
+        return None;
+    }
+    let (phase, rest) = rest.split_once(" failure=")?;
+    if !STATUS_PHASES.contains(&phase) {
+        return None;
+    }
+    let (_, event) = rest.split_once(" last_event=")?;
+    (!event.is_empty()).then_some(event)
 }
 
 /// The Gatherer `last_event` values in the order the status lines changed
@@ -426,7 +437,12 @@ fn verdict(variant: Variant, trace: &BaitTrace) -> Result<(), String> {
 /// (`script/src/gatherer/park.rs:55-72`), so the cell keeps observing under its
 /// unchanged deadline. Every other Blocked sample gives the verdict at once.
 fn blocked_verdict(variant: Variant, trace: &BaitTrace) -> Option<Result<(), String>> {
-    // First-Blocked behavior retained until the regression tests are exercised.
+    let clean_park = trace.failure_code.is_none()
+        && trace.failure_message.is_none()
+        && trace.slot_running == Some(true);
+    if clean_park && trace.final_bank_open == Some(true) {
+        return None;
+    }
     Some(verdict(variant, trace))
 }
 

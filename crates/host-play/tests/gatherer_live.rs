@@ -5235,11 +5235,14 @@ fn tile_distance(tile: (i32, i32, i32), target: WorldTile) -> Option<i32> {
 }
 fn observe_death_respawn_region(
     witness: &mut Witness,
-    _recovery_step: u8,
-    _last_event: Option<&str>,
+    recovery_step: u8,
+    last_event: Option<&str>,
     sampled_tile: Option<(i32, i32, i32)>,
 ) {
     if witness.last_deaths == 0 || witness.death_respawn_tile.is_some() {
+        return;
+    }
+    if recovery_step != 1 || last_event != Some("respawn observed; settling") {
         return;
     }
     let Some(respawn) = sampled_tile else {
@@ -5251,13 +5254,13 @@ fn observe_death_respawn_region(
         level: respawn.2,
     };
     witness.death_respawn_tile = Some(respawn);
-    witness.death_respawn_region_unchanged =
-        script::native::death::RESPAWN_SQUARE.contains(respawn_tile)
-            && witness.death_command_tile.is_some_and(|death| {
-                death.0.div_euclid(64) == respawn.0.div_euclid(64)
-                    && death.1.div_euclid(64) == respawn.1.div_euclid(64)
-                    && death.2 == respawn.2
-            });
+    witness.death_respawn_region_unchanged = script::native::death::RESPAWN_SQUARE
+        .contains(respawn_tile)
+        && witness.death_command_tile.is_some_and(|death| {
+            death.0.div_euclid(64) == respawn.0.div_euclid(64)
+                && death.1.div_euclid(64) == respawn.1.div_euclid(64)
+                && death.2 == respawn.2
+        });
 }
 
 fn auto_start_candidate(
@@ -8017,10 +8020,11 @@ fn interrupts_complete(case: LiveCase, witness: &Witness) -> bool {
                     .is_some_and(|reason| !reason.trim().is_empty())
                 && witness.last_deaths == 1
                 && witness.death_recovery_command_sent == 1
+                && witness.status_trips == 0
                 && witness
                     .last_status_bank
                     .as_deref()
-                    .is_some_and(|bank| bank.ends_with("; Withdraw"))
+                    .is_some_and(|bank| bank.contains("; access:"))
         }
         LiveCase::DeathReturnRefused => {
             witness.death_return_refused
@@ -11034,19 +11038,22 @@ mod death_oracle_tests {
 
     #[test]
     fn death_no_stock_accepts_supply_bank_without_formatter_suffix() {
-        let witness = no_stock_witness(
-            "Draynor; Reachable; access:3092,3243,0; Supply",
-            0,
-        );
+        let witness = no_stock_witness("Draynor; Reachable; access:3092,3243,0; Supply", 0);
         assert!(interrupts_complete(LiveCase::DeathNoStock, &witness));
     }
 
     #[test]
     fn death_no_stock_rejects_a_repeated_supply_trip() {
-        let witness = no_stock_witness(
-            "Draynor; Reachable; access:3092,3243,0; Withdraw",
-            1,
-        );
+        let witness = no_stock_witness("Draynor; Reachable; access:3092,3243,0; Withdraw", 1);
+        assert!(!interrupts_complete(LiveCase::DeathNoStock, &witness));
+    }
+
+    #[test]
+    fn death_no_stock_rejects_missing_bank_access_or_an_error() {
+        let mut witness = no_stock_witness("Draynor; Supply", 0);
+        assert!(!interrupts_complete(LiveCase::DeathNoStock, &witness));
+        witness.last_status_bank = Some("Draynor; Reachable; access:3092,3243,0; Supply".into());
+        witness.failure_code = Some("bank-unavailable".into());
         assert!(!interrupts_complete(LiveCase::DeathNoStock, &witness));
     }
 
