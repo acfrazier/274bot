@@ -7,6 +7,23 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.8` 
 
 ### Gatherer
 
+- Gatherer can buy a missing gathering tool or bait from a reachable shop.
+  `buyTools` is on by default. A usable tool in the pack, equipment or observed
+  bank is used first; the bot does not buy an upgrade in its place. Shop
+  purchases choose the best skill-usable tier that a reachable vendor sells
+  within the account's budget. A tool bought for wearing must also meet the
+  account's wield requirement. Prices follow the content rule.
+- A supply shortage now parks the running card instead of stopping it.
+  The panel, terminal and fleet show the reason and the bank information used.
+  The card closes the bank and waits without repeated trips or purchase clicks.
+  Fresh supply evidence, Resume or a relevant setting change can start one
+  new plan. A saved bank hint alone cannot. Pause, Stop, relog handling and
+  connection checks remain active.
+- Bank-only navigation no longer loads the shop catalog. Shop users still
+  prepare the shared catalog before the first purchase.
+- A fresh "can't reach" reply now lets a shop purchase retry its rejected
+  Trade. A timeout alone still cannot start another Trade while the first
+  response is unconfirmed.
 - Gatherer retries eligible walk failures from the observed position. Return and
   resource-approach failures share a four-failure budget across targets. A
   successful arrival or gather resets the budget. Gatherer fails with the last
@@ -26,6 +43,11 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.8` 
 
 - Added stock and pricing facts for ten more shops used by Quester paths.
 
+### Navigation
+
+- Active route walks send at most one movement packet per observed game tick.
+  A refused click that sends no packet does not use that tick's allowance.
+
 ### Fixed during development
 
 #### Shop purchases
@@ -37,6 +59,9 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.8` 
 - Shop acquisition checks whether required bait is affordable at the minimum
   content price before walking to its seller. It does not require the full
   refill reserve first.
+- When every eligible shop's access walk fails, the blocked reason now says
+  the shop cannot be reached from here and asks you to move closer, instead
+  of saying nobody sells the item.
 
 #### Banking
 
@@ -113,26 +138,6 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.8` 
   save its category order again on every frame after a failure and show
   "Saving…" without end.
 
-### Gatherer
-
-- Gatherer can buy a missing gathering tool or bait from a reachable shop.
-  `buyTools` is on by default. A usable tool in the pack, equipment or observed
-  bank is used first; the bot does not buy an upgrade in its place. Shop
-  purchases choose the best skill-usable tier that a reachable vendor sells
-  within the account's budget. A tool bought for wearing must also meet the
-  account's wield requirement. Prices follow the content rule.
-- A supply shortage now parks the running card instead of stopping it.
-  The panel, terminal and fleet show the reason and the bank information used.
-  The card closes the bank and waits without repeated trips or purchase clicks.
-  Fresh supply evidence, Resume or a relevant setting change can start one
-  new plan. A saved bank hint alone cannot. Pause, Stop, relog handling and
-  connection checks remain active.
-- Bank-only navigation no longer loads the shop catalog. Shop users still
-  prepare the shared catalog before the first purchase.
-- A fresh "can't reach" reply now lets a shop purchase retry its rejected
-  Trade. A timeout alone still cannot start another Trade while the first
-  response is unconfirmed.
-
 ### Combat
 
 - Bots now drink their boost potion before the first hit even when the target
@@ -173,8 +178,6 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.8` 
 
 ### Navigation
 
-- Active route walks send at most one movement packet per observed game tick.
-  A refused click that sends no packet does not use that tick's allowance.
 - Bots now wait and try again when another player is using a shortcut,
   instead of giving up. The Yanille dungeon ledge ("The ledge is being
   used") stays held for at most 9 game ticks after a refusal, so the bot
@@ -959,7 +962,6 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.8` 
   transport checks while unrelated quest rewards still run.
 
 ### Fixed during development
-
 
 #### Startup and saved state
 
