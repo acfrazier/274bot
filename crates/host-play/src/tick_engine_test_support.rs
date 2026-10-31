@@ -3,7 +3,7 @@
 //! slot observer; it changes no bytes, cipher state, or authority rules.
 
 use api::interact::server_ordered::ServerOrderedDispatch;
-use api::snapshot::{GameSnapshot, WorldTile};
+use api::snapshot::{GameSnapshot, LocView, WorldTile};
 use client::client::{client::LocalAnimationUpdate, Client};
 use client::io::PacketObserver;
 use host::SlotInput;
@@ -172,6 +172,49 @@ pub struct TickEngineTrace {
     pub dispatches: Vec<DispatchObservation>,
     /// Actual encrypted Client packets emitted during measurement.
     pub wire: Vec<WireObservation>,
+}
+
+/// Snapshot view scoped to one real dispatcher call.
+struct DispatchSnapshot<'a> {
+    snapshot: Option<&'a mut GameSnapshot>,
+    original_locs: Option<Vec<LocView>>,
+    mutation_applied: bool,
+}
+
+impl<'a> DispatchSnapshot<'a> {
+    fn begin(
+        snapshot: Option<&'a mut GameSnapshot>,
+        remove_loc: Option<(i32, WorldTile)>,
+    ) -> Self {
+        let mut scope = Self {
+            snapshot,
+            original_locs: None,
+            mutation_applied: false,
+        };
+        let Some((id, tile)) = remove_loc else {
+            return scope;
+        };
+        let Some(snapshot) = scope.snapshot.as_deref_mut() else {
+            return scope;
+        };
+
+        let original_locs = snapshot.locs().to_vec();
+        let kept: Vec<_> = original_locs
+            .iter()
+            .filter(|loc| !(loc.id == id && loc.tile == tile))
+            .cloned()
+            .collect();
+        scope.mutation_applied = kept.len() != original_locs.len();
+        if scope.mutation_applied {
+            snapshot.seed_locs(kept);
+            scope.original_locs = Some(original_locs);
+        }
+        scope
+    }
+
+    fn snapshot(&self) -> Option<&GameSnapshot> {
+        self.snapshot.as_deref()
+    }
 }
 
 struct ActiveDispatch {
@@ -820,4 +863,156 @@ mod tests {
         assert!(!hook.before_snapshot_observe("clock", &mut snapshot, 43));
         assert_eq!(snapshot.modals().chat, 8880);
     }
+
+    fn dispatch_stamp() -> api::quest_progress::EvidenceStamp {
+        api::quest_progress::EvidenceStamp {
+            run: api::selected::RunKey {
+                slot: 1,
+                run: 1,
+                session: 1,
+            },
+            tick: 7,
+            sequence: 7,
+        }
+    }
+
+    fn scene_identity(snapshot: &GameSnapshot) -> (u64, u64, u64) {
+        (
+            snapshot.scene_generation(),
+            snapshot.loc_static_generation(),
+            snapshot.loc_model_stamp(),
+        )
+    }
+
+    fn loc(id: i32, tile: WorldTile) -> LocView {
+        LocView {
+            typecode: 10,
+            info: 0,
+            id,
+            name: Some(format!("loc-{id}")),
+            description: None,
+            actions: Vec::new(),
+            tile,
+            distance: 0,
+            layer: api::snapshot::LocLayer::Ground,
+            shape: 10,
+            angle: 0,
+            width: 1,
+            length: 1,
+            footprint_width: 1,
+            footprint_length: 1,
+            block_walk: false,
+            block_range: false,
+            active: true,
+            animation: -1,
+            map_function: -1,
+            map_scene: -1,
+            force_approach: 0,
+        }
+    }
+
+    fn snapshot_with_locs() -> GameSnapshot {
+        let mut snapshot = GameSnapshot::new();
+        snapshot.seed_ingame(2);
+        snapshot.seed_locs(vec![
+            loc(
+                41,
+                WorldTile {
+                    x: 3200,
+                    z: 3400,
+                    level: 0,
+                },
+            ),
+            loc(
+                42,
+                WorldTile {
+                    x: 3201,
+                    z: 3400,
+                    level: 0,
+                },
+            ),
+        ]);
+        snapshot
+    }
+
+    fn observed_locs(snapshot: &GameSnapshot) -> Vec<(i32, WorldTile)> {
+        api::snapshot::SnapshotView::new(Some(snapshot), dispatch_stamp())
+            .locs()
+            .expect("seeded scene is ordinarily observable")
+            .value
+            .iter()
+            .map(|loc| (loc.id, loc.tile))
+            .collect()
+    }
+
+    #[test]
+    fn remove_loc_is_scoped_to_dispatch_and_restores_scene_identity() {
+        let mut snapshot = snapshot_with_locs();
+        let target = WorldTile {
+            x: 3200,
+            z: 3400,
+            level: 0,
+        };
+        let original_locs = format!("{:?}", snapshot.locs());
+        let original_scene_identity = scene_identity(&snapshot);
+
+        let scope = DispatchSnapshot::begin(Some(&mut snapshot), Some((41, target)));
+        let dispatch_view = scope.snapshot().expect("dispatch snapshot is available");
+        assert_eq!(
+            format!("{:?}", scope.original_locs.as_deref().unwrap()),
+            original_locs
+        );
+        assert!(scope.mutation_applied);
+        assert_eq!(
+            observed_locs(dispatch_view),
+            vec![(
+                42,
+                WorldTile {
+                    x: 3201,
+                    z: 3400,
+                    level: 0,
+                }
+            )],
+            "API preflight sees the selected target removed and other locs intact"
+        );
+        drop(scope);
+
+        assert_eq!(
+            format!("{:?}", snapshot.locs()),
+            original_locs,
+            "the next ordinary observation retains the original loc views"
+        );
+        assert_eq!(scene_identity(&snapshot), original_scene_identity);
+        assert_eq!(observed_locs(&snapshot).len(), 2);
+        assert!(observed_locs(&snapshot)
+            .iter()
+            .any(|(id, tile)| *id == 41 && *tile == target));
+    }
+
+    #[test]
+    fn remove_loc_nonmatch_is_a_noop() {
+        let mut snapshot = snapshot_with_locs();
+        let original_locs = format!("{:?}", snapshot.locs());
+        let original_scene_identity = scene_identity(&snapshot);
+        let scope = DispatchSnapshot::begin(
+            Some(&mut snapshot),
+            Some((
+                99,
+                WorldTile {
+                    x: 3200,
+                    z: 3400,
+                    level: 0,
+                },
+            )),
+        );
+        assert!(!scope.mutation_applied);
+        assert_eq!(
+            format!("{:?}", scope.snapshot().unwrap().locs()),
+            original_locs
+        );
+        drop(scope);
+        assert_eq!(format!("{:?}", snapshot.locs()), original_locs);
+        assert_eq!(scene_identity(&snapshot), original_scene_identity);
+    }
+
 }
