@@ -1065,7 +1065,8 @@ pub enum WalkEnd {
 // from the observed position is the supported recovery.
 const MAX_RETURN_RECOVERY_ATTEMPTS: u8 = 2;
 
-/// Match the three-request cap of the combat escape pass, including the first walk.
+/// Shared bounded-recovery policy, not a content timer: one initial route and
+/// two fresh replans. Quester walk first set this cap in b26097813.
 pub(crate) const QUEST_WALK_MAX_ATTEMPTS: u8 = 3;
 
 /// Shares Quester's walk-step retry budget and next-tick recovery state with
@@ -1193,7 +1194,8 @@ impl ReturnStallRecovery {
         self.observe_retryable(WalkRetryState::retryable_receipt(receipt))
     }
 
-    fn observe_retryable(&mut self, retryable: bool) -> bool {
+    /// Dialogue also retries expired assessments, which have no walk receipt.
+    pub(crate) fn observe_retryable(&mut self, retryable: bool) -> bool {
         if retryable && self.actions.saturating_add(1) < self.max_attempts && !self.pending {
             self.pending = true;
             true

@@ -391,8 +391,8 @@ pub struct Dialogue {
     /// wait.
     content_deadline_tick: u64,
     walk_request_id: u64,
-    /// Fresh route attempts remaining after the initial approach attempt.
-    walk_retries_left: u8,
+    /// Shared attempt accounting. `due_tick` holds its later-tick retry.
+    walk_recovery: crate::native::ReturnStallRecovery,
     /// Remaining routes to replan after the NPC wanders.
     approach_replans_left: u16,
     /// Planned walking ticks plus slack from Talk request to adjacent stand.
@@ -465,7 +465,9 @@ impl NativeMachine for Dialogue {
             deadline_ms: 0,
             content_deadline_tick: 0,
             walk_request_id: 0,
-            walk_retries_left: crate::native::QUEST_WALK_MAX_ATTEMPTS - 1,
+            walk_recovery: crate::native::ReturnStallRecovery::with_max_attempts(
+                crate::native::QUEST_WALK_MAX_ATTEMPTS,
+            ),
             approach_replans_left,
             talk_approach_budget_ticks: 0,
             refusal_recovery_active: false,
@@ -633,7 +635,7 @@ impl NativeMachine for Dialogue {
                         .expect_err("non-arrival walk receipt must return an error")));
                 }
                 if goal.close {
-                    self.walk_retries_left = crate::native::QUEST_WALK_MAX_ATTEMPTS - 1;
+                    self.walk_recovery.reset();
                     std::task::ready!(crate::native::defer_budget(self.open(cx)))?;
                     self.cancel_route(cx);
                     return Poll::Pending;
@@ -672,7 +674,7 @@ impl NativeMachine for Dialogue {
                     std::task::ready!(crate::native::defer_budget(self.start_route(cx, goal)))?;
                     self.cancel_talk_request(cx);
                     self.refusal_recovery_active = true;
-                    self.walk_retries_left = crate::native::QUEST_WALK_MAX_ATTEMPTS - 1;
+                    self.walk_recovery.reset();
                     self.chat_advanced = false;
                     self.chat_page_owned = false;
                     self.chat_advance_request_id = None;
@@ -1083,7 +1085,7 @@ impl Dialogue {
             }
             std::task::ready!(crate::native::defer_budget(self.start_route(cx, goal)))?;
             self.approach_replans_left -= 1;
-            self.walk_retries_left = crate::native::QUEST_WALK_MAX_ATTEMPTS - 1;
+            self.walk_recovery.reset();
             return Poll::Pending;
         }
         self.walk_failed(cx, tick, why)
@@ -1102,6 +1104,7 @@ impl Dialogue {
                 return Poll::Pending;
             }
             std::task::ready!(crate::native::defer_budget(self.start_route(cx, goal)))?;
+            self.walk_recovery.action_submitted();
             return Poll::Pending;
         }
         let Some(receipt) = cx.assess_receipt(self.assess_request_id) else {
@@ -1147,25 +1150,21 @@ impl Dialogue {
     ) -> Poll<Result<DialogueOutcome, ActionError>> {
         let walk_request_id = self.walk_request_id;
         let assess_request_id = self.assess_request_id;
-        let attempt = crate::native::QUEST_WALK_MAX_ATTEMPTS - self.walk_retries_left;
-        let result = if self.walk_retries_left == 0 {
-            "exhausted"
-        } else {
-            "retry"
-        };
+        let attempt = self.walk_recovery.retry_attempt_number().saturating_sub(1);
+        let retry = self.walk_recovery.observe_retryable(true);
+        let result = if retry { "retry" } else { "exhausted" };
         api::host_log!(
             api::hostlog::Category::NavTrace,
             api::hostlog::Level::Debug,
             "quester-dialogue-approach-{result} tick={tick} attempt={attempt}/{} remaining={} walk_request={walk_request_id} assess_request={assess_request_id} goal={:?} reason={why:?}",
             crate::native::QUEST_WALK_MAX_ATTEMPTS,
-            self.walk_retries_left,
+            crate::native::QUEST_WALK_MAX_ATTEMPTS.saturating_sub(attempt),
             self.plan_tile,
         );
         self.cancel_route(cx);
-        if self.walk_retries_left == 0 {
+        if !retry {
             return Poll::Ready(Err(self.approach_error(cx, why)));
         }
-        self.walk_retries_left -= 1;
         self.phase = Phase::Plan;
         self.due_tick = tick.saturating_add(1);
         Poll::Pending

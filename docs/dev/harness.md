@@ -275,28 +275,17 @@ Interactive Stop and logout do not use this helper.
 
 ## M4 unattackable-target escape fixture
 
-The host-play M4 cell seeds one single-dose Antipoison in the account's kit.
-Before the hostile-area teleport, the fixture drinks it through the ordinary
-inventory action. Start waits for a new server antipoison message, the dose
-leaving the inventory, and a later new server message that the potion has
-finished. The last message follows the engine's consumption busy delay, so
-drain and teleport do not run while the potion action is busy. A fixed 16
-received-game-tick deadline from Drink bounds all three observations; stale
-chat and repeated snapshots cannot open the gate or extend it. The receipt
-records the cure in `random_events` as `M4PoisonCure`.
-Admission policy is unchanged.
+The host-play M4 cell starts its account at `3110,3346,0`, outside the natural
+tree's one-tile hunt range. It preserves the exact Start baseline: eight of
+30 Hitpoints, one Prayer and four lobsters. It seeds no antipoison and uses
+no cure gate. The tree uses ordinary melee crush damage, not poison.
 
-The fixture uses `::tele` to place only its account at `3109,3346,0`, the
-adjacent stand selected by the native route to the real tree at
-`3108,3346/r1`. The existing authored near predicate skips the approach walk
-from this stand. The authored exact walk target and radius zero remain
-unchanged, as do admission, danger consent and the eight-Hitpoint Start.
-
-M4 tests escape from an unattackable Nasty tree, not poison treatment. The
-tree uses ordinary melee crush damage, not poison. The fixture still starts
-with eight of 30 Hitpoints, one Prayer and four lobsters, so the temporary
-poison immunity does not alter the attack, unattackable-target abort or
-escape predicates.
+The authored approach targets `3108,3346,0` with radius one. Its stage declares
+`nasty_tree@3108,3346,0` in `cross`, because this test deliberately enters the
+tree's hunt range. Quester forbids undeclared danger crossings. The declared
+zone permits this route without changing admission policy or poison facts.
+The bot must perform the approach after Start, observe the unattackable
+attacker, abort combat and walk out.
 
 ## Random-event Guardian cells
 

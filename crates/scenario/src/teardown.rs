@@ -65,7 +65,9 @@ impl CombatLogout {
             }) {
                 self.refusal_sequence = Some(line.sequence);
                 self.escape = Escape::Pending;
-                eprintln!(
+                api::host_log!(
+                    api::hostlog::Category::Login,
+                    api::hostlog::Level::Info,
                     "[live-logout] fresh combat refusal tick={} chat_sequence={}",
                     snapshot.tick(),
                     line.sequence
@@ -81,7 +83,9 @@ impl CombatLogout {
                 ))
         {
             self.escape = Escape::Arrived(snapshot.tick());
-            eprintln!(
+            api::host_log!(
+                api::hostlog::Category::Login,
+                api::hostlog::Level::Info,
                 "[live-logout] safe tile observed tick={} wait_game_ticks={COMBAT_LOGOUT_TICKS}",
                 snapshot.tick()
             );

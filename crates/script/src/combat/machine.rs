@@ -434,6 +434,12 @@ impl NativeMachine for Combat {
             self.schedule.cycle.known = false;
         }
         self.flags |= OBSERVED;
+        let events = self.threats.observe(&frame, &self.tables, tick);
+        self.counters.damage = self.counters.damage.saturating_add(events.damage);
+        self.counters.protected = self
+            .counters
+            .protected
+            .saturating_add(events.positive_protected);
         if self.approach_walk_pending() {
             if let Some(receipt) = self.pending_walk.and_then(|id| cx.walk_receipt(id.get())) {
                 match receipt.clone().into_arrival() {
@@ -458,12 +464,6 @@ impl NativeMachine for Combat {
             self.pending_walk = None;
             self.set_approach_walk_pending(false);
         }
-        let events = self.threats.observe(&frame, &self.tables, tick);
-        self.counters.damage = self.counters.damage.saturating_add(events.damage);
-        self.counters.protected = self
-            .counters
-            .protected
-            .saturating_add(events.positive_protected);
         self.observe_magic(&frame, tick);
         self.settle(&frame, tick);
         let died = chat

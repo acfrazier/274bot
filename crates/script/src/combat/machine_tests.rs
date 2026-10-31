@@ -3748,8 +3748,42 @@ fn quester_combat_approach_replans_after_no_path() {
     );
     scene.local.player.actor.tile = tile(here.x + 1, here.z);
     scene.refresh();
+    scene.snapshot.seed_hitmarks(HitmarksView {
+        marks: [
+            HitmarkView {
+                value: 3,
+                kind: crate::combat::threats::HITMARK_DAMAGE,
+                cycle: 100,
+            },
+            HitmarkView {
+                value: 0,
+                kind: 0,
+                cycle: 0,
+            },
+            HitmarkView {
+                value: 0,
+                kind: 0,
+                cycle: 0,
+            },
+            HitmarkView {
+                value: 0,
+                kind: 0,
+                cycle: 0,
+            },
+        ],
+        loop_cycle: 70,
+    });
     assert!(harness.pending(&scene, 2).is_none());
     assert!(harness.machine.pending_walk.is_none());
+    assert_eq!(harness.machine.counters.damage, 3);
+    // A newer render sequence on the failure tick must not start a retry.
+    assert!(harness.poll_stamp(&scene.snapshot, 2, 20).is_pending());
+    assert!(harness.machine.pending_walk.is_none());
+    assert!(harness.drain(None).is_empty());
+    assert_eq!(
+        harness.machine.counters.damage, 3,
+        "same-tick polls do not count hits twice"
+    );
 
     assert!(matches!(
         harness.pending(&scene, 3),
