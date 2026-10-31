@@ -400,6 +400,8 @@ for one paint. Its scope restores scene and crosshair state before simulation
 resumes, including on unwind.
 
 Budget scopes require explicit calibration or fixture inputs until qualification.
+`RenderBudget::new` and its thread-bound scope are available in every build;
+there is no feature-disabled budget implementation or constructor alias.
 Growing scene, model, nav, sprite and GPU storage reserves its byte charge before allocation,
 including old-plus-new replacement peaks and nested payloads. GPU heads share
 one process-owned scene vertex buffer, brightness uniform and scene bind group.

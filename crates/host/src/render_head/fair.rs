@@ -102,7 +102,7 @@ pub mod test_hooks {
         if config.started || config.fixture.is_none() || config.budget.is_some() {
             return Err(RenderError::ConfigurationLocked);
         }
-        config.budget = Some(client::render::budget::RenderBudget::fixture(limits));
+        config.budget = Some(client::render::budget::RenderBudget::new(limits));
         Ok(())
     }
 
@@ -414,7 +414,7 @@ pub fn configure_calibration_limits(
     if process.started || process.budget.is_some() {
         return Err(RenderError::ConfigurationLocked);
     }
-    process.budget = Some(client::render::budget::RenderBudget::fixture(limits));
+    process.budget = Some(client::render::budget::RenderBudget::new(limits));
     Ok(())
 }
 
