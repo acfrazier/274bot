@@ -183,20 +183,19 @@ impl NativeMachine for CastNpc {
                     }
                 }
                 if let Some(npc) = npc {
+                    // `Game.castOnNpc` reports that the cast was sent
+                    // (`Game.ts:177-185` returns `Input.castOnNpc`). A splash
+                    // (the shared failed-spell impact) is a cast that missed:
+                    // the runes are spent, so it is `true` like a hit.
                     let new_spot_animation =
                         npc.spot_animation_stamp != awaiting.spot_animation_stamp;
-                    if new_spot_animation
-                        && self
+                    let landed = (spell.impact_spotanim >= 0
+                        && npc.spot_animation == spell.impact_spotanim)
+                        || self
                             .selected
                             .failed_spell_impact()
-                            .is_some_and(|failed| npc.spot_animation == failed)
-                    {
-                        return Poll::Ready(Ok(false));
-                    }
-                    if new_spot_animation
-                        && spell.impact_spotanim >= 0
-                        && npc.spot_animation == spell.impact_spotanim
-                    {
+                            .is_some_and(|failed| npc.spot_animation == failed);
+                    if new_spot_animation && landed {
                         return Poll::Ready(Ok(true));
                     }
                 }

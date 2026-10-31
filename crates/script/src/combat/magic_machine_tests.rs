@@ -1086,7 +1086,7 @@ fn npc_cast_reports_consumed_runes_after_target_despawns() {
 }
 
 #[test]
-fn npc_cast_uses_target_impact_and_rejection_before_rune_success() {
+fn npc_cast_uses_target_impact_or_splash_and_rejection_before_rune_success() {
     let mut impact_scene = npc_cast_scene(true);
     let (mut impact_runtime, impact_handle) = begin_npc_cast(&impact_scene);
     assert!(matches!(
@@ -1120,9 +1120,11 @@ fn npc_cast_uses_target_impact_and_rejection_before_rune_success() {
     failed_scene.npcs[0].spot_animation = failed_impact;
     failed_scene.npcs[0].spot_animation_stamp = 1;
     spend_npc_cast_runes(&mut failed_scene);
+    // A splash is a sent cast that missed: upstream `Game.castOnNpc` returns
+    // the dispatch result (`Game.ts:177-185`), so it is `true`.
     assert_eq!(
         poll_npc_cast(&mut failed_runtime, &failed_scene, &failed_handle, 3),
-        Poll::Ready(Ok(false))
+        Poll::Ready(Ok(true))
     );
 
     let mut chat_scene = npc_cast_scene(true);
