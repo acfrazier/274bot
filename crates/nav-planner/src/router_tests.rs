@@ -1202,6 +1202,49 @@ fn find_prefers_walking_around_over_a_cheap_door() {
     assert!(r.legs.iter().all(|l| matches!(l, Leg::Walk { .. })));
 }
 
+#[test]
+fn false_complete_gate_selects_an_alternate_walk_route() {
+    let wc = bake(5, 5, &[(2, 2, CollisionFlag::W_W as u32)]);
+    let family = gate_family(1);
+    let mut graph = door(tile(1, 2, 0), tile(2, 2, 0), 2);
+    graph.quest_family = Some(family);
+    graph.edges[0].quest_gates = Some(
+        QuestGates::new(
+            family,
+            [QuestGate::Complete(api::selected::FactKey::new(
+                "biohazard",
+            ))],
+        )
+        .unwrap(),
+    );
+    let evidence = QuestEvidence::new(
+        Arc::new(Resolved {
+            stamp: stamp(1),
+            signals: Vec::new(),
+            complete: vec![("biohazard", false)],
+        }),
+        family,
+        stamp(1),
+    );
+    let state = WorldState::empty().with_quest_evidence(evidence);
+
+    let route = find_with(
+        &wc,
+        &graph,
+        tile(0, 2, 0),
+        tile(3, 2, 0),
+        FindOptions::default(),
+        &state,
+    )
+    .unwrap();
+    assert_eq!(route.dest, tile(3, 2, 0));
+    assert_eq!(route.ticks, 1.5);
+    assert!(
+        route.legs.iter().all(|leg| matches!(leg, Leg::Walk { .. })),
+        "a false completion gate must be bypassed, not reported as unresolved"
+    );
+}
+
 // --- WorldState gating (Task 1: find fails closed on unpaid edges) ---
 
 /// An Al Kharid toll shape: the 5×5 wall is unbroken except for one

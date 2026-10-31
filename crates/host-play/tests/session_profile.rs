@@ -1379,6 +1379,63 @@ fn external_nav_identity_includes_trailing_bytes_beyond_the_read_buffer() {
 }
 
 #[test]
+fn external_quest_family_mismatch_is_reported_before_any_route_request() {
+    let fixture = Fixture::new();
+    let mut bytes = tiny_v8_pack();
+    assert_eq!(bytes[5], 0, "fixture starts without a quest-family binding");
+    let mut family = [0x42; 35];
+    family[0] = 1;
+    family[33..].copy_from_slice(&1u16.to_le_bytes());
+    bytes.splice(5..6, family);
+    let pack = fixture.0.join("wrong-quest-family.navpack");
+    std::fs::write(&pack, &bytes).unwrap();
+    let cache_id = CacheManifest::capture(289, &fixture.0).unwrap().identity();
+    write_nav_sidecar(&pack, 289, cache_id, &bytes);
+    let mut options = fixture.options(289);
+    options.nav_pack = Some(pack);
+    let selection = options.resolve_with_env(None, &fixture.env()).unwrap();
+    let result = selection.bind();
+    assert!(
+        result.is_err(),
+        "a pack from another quest family must be refused before a walk can report missing evidence",
+    );
+    let error = result.unwrap_err();
+    assert!(error.contains("quest family"), "{error}");
+    assert!(error.contains(&"42".repeat(32)), "{error}");
+    assert!(error.contains("rebuild or replace"), "{error}");
+}
+
+#[test]
+fn external_quest_family_accepts_matching_binding_but_rejects_another_schema() {
+    let selected = api::game_data::for_revision(api::selected::ClientRevision::R289).unwrap();
+    let identity = selected.verify_quest_family_identity().unwrap();
+    for schema in [identity.schema.get(), identity.schema.get() + 1] {
+        let fixture = Fixture::new();
+        let mut bytes = tiny_v8_pack();
+        let mut family = [0; 35];
+        family[0] = 1;
+        family[1..33].copy_from_slice(&identity.sha256);
+        family[33..].copy_from_slice(&schema.to_le_bytes());
+        bytes.splice(5..6, family);
+        let pack = fixture.0.join("quest-family.navpack");
+        std::fs::write(&pack, &bytes).unwrap();
+        let cache_id = CacheManifest::capture(289, &fixture.0).unwrap().identity();
+        write_nav_sidecar(&pack, 289, cache_id, &bytes);
+        let mut options = fixture.options(289);
+        options.nav_pack = Some(pack);
+        let selection = options.resolve_with_env(None, &fixture.env()).unwrap();
+        let result = selection.bind();
+        if schema == identity.schema.get() {
+            assert!(result.unwrap().world().is_some());
+        } else {
+            let error = result.unwrap_err();
+            assert!(error.contains("extractor schema"), "{error}");
+            assert!(error.contains("rebuild or replace"), "{error}");
+        }
+    }
+}
+
+#[test]
 fn external_wrong_hash_revision_or_corrupt_bytes_are_rejected() {
     let fixture = Fixture::new();
     let bytes = tiny_v8_pack();

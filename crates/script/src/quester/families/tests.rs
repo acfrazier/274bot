@@ -2208,7 +2208,11 @@ fn reach_wait_walk_preserves_typed_needs_evidence() {
         escape: None,
     });
 
-    let result = with_tick_reach(&s, &reach, &mut ledger, 3, |t| {
+    assert!(with_tick_reach(&s, &reach, &mut ledger, 3, |t| {
+        t.actions.poll(&handle, &mut t.cx)
+    })
+    .is_pending());
+    let result = with_tick_reach(&s, &reach, &mut ledger, 4, |t| {
         t.actions.poll(&handle, &mut t.cx)
     });
     assert_eq!(

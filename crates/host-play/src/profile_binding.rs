@@ -847,6 +847,22 @@ impl ProfileSelection {
         }
         let world_result =
             decode_nav_world(&mut reader, length, pack_path, observer, &mut counters);
+        if let Ok(world) = &world_result {
+            if world.graph.quest_family.is_some() {
+                let data = api::game_data::for_revision(self.revision())?;
+                let identity = data
+                    .verify_quest_family_identity()
+                    .map_err(|error| format!("navigation quest family: {error:?}"))?;
+                let expected =
+                    nav_planner::quest_gates::QuestFamilyId::new(identity.sha256, identity.schema);
+                world.graph.admit_quest_family(&expected).map_err(|error| {
+                    format!(
+                        "navigation/profile mismatch: {error}; rebuild or replace the navigation pack: {}",
+                        pack_path.display(),
+                    )
+                })?;
+            }
+        }
         let decoded_zone_counts = world_result
             .as_ref()
             .ok()

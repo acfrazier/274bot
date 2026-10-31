@@ -1932,6 +1932,13 @@ impl SelectedGameData {
         crate::quest_facts::cached_identity(self)
     }
 
+    /// Verify the selected quest artifact's digest and schema without decoding
+    /// its catalog. Profile preparation uses this to reject incompatible
+    /// navigation packs before any route request. Do not call this on a tick.
+    pub fn verify_quest_family_identity(&self) -> Result<QuestFamilyIdentity, FactError> {
+        crate::quest_facts::verify_identity(self)
+    }
+
     fn bind_pin(
         &self,
         byte_len: u64,

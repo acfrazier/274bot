@@ -552,11 +552,12 @@ other; neither hides behind the other's gate. A `False` gate closes both.
 
 `QuestFamilyId::new(quest_facts_sha256, NonZeroU16)` is the only way to build
 a family: extractor schema 0 is malformed in a pack and cannot be constructed,
-so `encode` never writes a binding its decoder refuses. Runtime admission
-compares the pack with the selected manifest:
+so `encode` never writes a binding its decoder refuses.
 `TransportGraph::admit_quest_family(&manifest_family)` refuses a pack baked
-against another family digest or extractor schema, or against none. The
-standard bake verifies the selected `quests` family artifact before deriving
+against another family digest or extractor schema. It also refuses a pack
+without a quest family. Profile loading calls this check only when the pack
+declares a quest family. It still accepts packs without one.
+The standard bake verifies the selected `quests` family artifact before deriving
 content entrances and binds its digest and schema into the graph. Supported
 quest-complete predicates become canonical `QuestGate::Complete` requirements;
 an intermediate or exact hidden quest stage is not inferred from completion.

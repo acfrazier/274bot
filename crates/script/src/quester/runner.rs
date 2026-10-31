@@ -400,6 +400,42 @@ fn trace_error_reason(error: &ActionError) -> &str {
         _ => "step error",
     }
 }
+fn quest_gate_evidence_detail(gates: &[api::selected::QuestGate]) -> Arc<str> {
+    let mut detail = String::from("needs evidence:");
+    for (index, gate) in gates.iter().enumerate() {
+        if index > 0 {
+            detail.push(';');
+        }
+        detail.push_str(" quest ");
+        match gate {
+            api::selected::QuestGate::Complete(quest) => {
+                let _ = write!(detail, "{}; completion; evidence state unknown", quest.0);
+            }
+            api::selected::QuestGate::Window(window) => {
+                let _ = write!(
+                    detail,
+                    "{}; signal {}; window; minimum ",
+                    window.quest.0, window.signal.0
+                );
+                match window.values.min {
+                    Some(minimum) => {
+                        let _ = write!(detail, "{minimum}");
+                    }
+                    None => detail.push_str("none"),
+                }
+                detail.push_str("; maximum ");
+                match window.values.max {
+                    Some(maximum) => {
+                        let _ = write!(detail, "{maximum}");
+                    }
+                    None => detail.push_str("none"),
+                }
+                detail.push_str("; evidence state unknown");
+            }
+        }
+    }
+    Arc::from(detail)
+}
 
 pub struct Quester {
     run: RunKey,
@@ -1221,7 +1257,7 @@ impl Quester {
                         None => Arc::from("needs evidence: no current wait detail"),
                     }
                 } else {
-                    Arc::from("walk needs authoritative quest-gate evidence")
+                    quest_gate_evidence_detail(gates.as_ref())
                 };
                 self.set_last_error(QuesterFailureKind::NeedsEvidence, message);
                 return;
@@ -7513,12 +7549,25 @@ mod tests {
     #[test]
     fn quester_reports_walk_evidence_as_a_terminal_block() {
         let (mut script, _) = fixture();
-        let gates: Arc<[api::selected::QuestGate]> =
-            Arc::from([api::selected::QuestGate::Complete(FactKey::new(
-                "test-quest",
-            ))]);
+        let gates: Arc<[api::selected::QuestGate]> = Arc::from([api::selected::QuestGate::Window(
+            api::selected::StageWindow {
+                quest: FactKey::new("biohazard"),
+                signal: FactKey::new("biohazard"),
+                values: api::selected::InclusiveRange {
+                    min: None,
+                    max: Some(9),
+                },
+            },
+        )]);
         script.record_failure(ActionError::NeedsEvidence(gates));
         assert_eq!(script.blocked_failure().code.as_ref(), "needs-evidence");
+        let detail = script.blocked_failure().message;
+        assert!(detail.contains("biohazard"), "{detail}");
+        assert!(detail.contains("signal biohazard"), "{detail}");
+        assert!(detail.contains("window"), "{detail}");
+        assert!(detail.contains("minimum none"), "{detail}");
+        assert!(detail.contains("maximum 9"), "{detail}");
+        assert!(detail.contains("evidence state unknown"), "{detail}");
         script.clear_last_error();
         assert!(script.last_error.is_none());
     }

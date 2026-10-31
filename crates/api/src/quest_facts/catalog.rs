@@ -107,6 +107,9 @@ fn facts_from_row(row: &QuestIdentityRow) -> QuestFacts {
             code: Arc::from("identity-only"),
             sources: Arc::from([]),
         }),
+        progress_signal: (row.varp_id >= 0 && !row.varp.is_empty())
+            .then(|| FactKey::new(&row.varp)),
+        completion_value: (row.complete > 0).then_some(row.complete),
         component_name: Arc::from(row.component.as_str()),
         members: row.members,
         quest_points: row.quest_points,
@@ -167,6 +170,12 @@ pub struct QuestFacts {
     pub display: Arc<str>,
     pub kind: QuestKind,
     pub component: Knowledge<Option<i32>>,
+    /// Content-declared quest varp used by stage windows and quest-list colour.
+    #[serde(default)]
+    pub progress_signal: Option<FactKey>,
+    /// Content's completion constant, which bounds the quest-list in-progress colour.
+    #[serde(default)]
+    pub completion_value: Option<i32>,
     #[serde(default)]
     pub component_name: Arc<str>,
     #[serde(default)]

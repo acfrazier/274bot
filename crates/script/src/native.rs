@@ -1627,6 +1627,9 @@ pub trait NativeMachine: Send + 'static {
             "this machine keeps no request across a hold",
         ))
     }
+    /// Cancel an unfinished machine before abandoning it.
+    /// After cancellation, the owner must not call `poll` or `after_hold`.
+    /// Nested owners obey the same rule as the native action slot.
     fn cancel(&mut self) {}
     fn prayer_cleanup(&self) -> crate::combat::RaisedPrayers {
         crate::combat::RaisedPrayers::empty()

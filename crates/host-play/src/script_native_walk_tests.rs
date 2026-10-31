@@ -2522,6 +2522,19 @@ fn an_unproven_crossing_reaches_the_native_owner_typed() {
             false,
         );
         rig.observe(2);
+        if matches!(&expected, WalkEnd::NeedsEvidence(_)) {
+            assert_eq!(
+                rig.end(),
+                None,
+                "one observed game tick is allowed for the quest-list row"
+            );
+        }
+        for tick in 3..=4 {
+            if rig.end().is_some() {
+                break;
+            }
+            rig.observe(tick);
+        }
         assert_eq!(rig.end(), Some(Ok(expected)));
     }
 }

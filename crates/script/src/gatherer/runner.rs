@@ -2668,12 +2668,10 @@ mod tests {
 
     #[test]
     fn instance_with_widening_stays_inside_the_inline_budget() {
-        // QUESTER-READ-KEEPS-STEP-R3: Walk keeps one boxed replay (the request
-        // without the target, radius and request id, which its correlation
-        // core already holds) to send the request again after a guardian
-        // hold. Inline it goes from 136 B (before R2) to 64 B; the replay is
-        // pinned in `native::walk` tests.
-        assert_eq!(size_of::<Walk>(), 64, "Walk inline layout changed");
+        // 88 B inline plus the 112 B boxed replay, pinned in native/walk.rs.
+        // Quest-list retry state adds 24 B to the 64 B hold-resume adapter.
+        // Both resume paths reuse the same replay allocation.
+        assert_eq!(size_of::<Walk>(), 88, "Walk inline layout changed");
         assert!(
             size_of::<Gatherer>() <= 1024,
             "Gatherer={} exceeds its inline budget",
