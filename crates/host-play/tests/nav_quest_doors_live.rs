@@ -1189,19 +1189,17 @@ impl Script for KitchenPrereqScript {
                 report
                     .journal_attempts
                     .retain(|record| record.get("gate") != Some(&gate_value));
-                report
-                    .journal_attempts
-                    .extend(run.journal_attempts().map(
-                        |(attempt, started_tick, terminal_tick, failure)| {
-                            json!({
-                                "gate": &gate,
-                                "attempt": attempt,
-                                "started_tick": started_tick,
-                                "terminal_tick": terminal_tick,
-                                "failure": failure,
-                            })
-                        },
-                    ));
+                report.journal_attempts.extend(run.journal_attempts().map(
+                    |(attempt, started_tick, terminal_tick, failure)| {
+                        json!({
+                            "gate": &gate,
+                            "attempt": attempt,
+                            "started_tick": started_tick,
+                            "terminal_tick": terminal_tick,
+                            "failure": failure,
+                        })
+                    },
+                ));
             }
             match result {
                 Poll::Pending => {

@@ -869,7 +869,10 @@ fn auto_run_yields_to_script_action_and_recurs_after_energy_and_session_changes(
     slot.after_drain(&mut client);
     assert_eq!(slot.snapshot.tick(), action_tick + 2);
     slot.apply_auto_run(&mut client);
-    assert_eq!(slot.run_sends, 1, "the host acts after the modal is observed closed");
+    assert_eq!(
+        slot.run_sends, 1,
+        "the host acts after the modal is observed closed"
+    );
 
     client.out.pos = 0;
     client.runenergy = 0;

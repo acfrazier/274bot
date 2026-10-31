@@ -1143,7 +1143,10 @@ fn journal_attempt_started(
     tick: u64,
 ) {
     let index = *attempts_len;
-    assert!(index < attempts.len(), "journal retry bound exceeds trace capacity");
+    assert!(
+        index < attempts.len(),
+        "journal retry bound exceeds trace capacity"
+    );
     attempts[index] = Some(JournalAttemptTrace {
         started_tick: tick,
         ..JournalAttemptTrace::default()
@@ -1159,7 +1162,11 @@ fn journal_attempt_finished(
     failure: Option<Arc<str>>,
 ) {
     let attempt = attempts
-        .get_mut(attempts_len.checked_sub(1).expect("journal attempt started"))
+        .get_mut(
+            attempts_len
+                .checked_sub(1)
+                .expect("journal attempt started"),
+        )
         .and_then(Option::as_mut)
         .expect("journal attempt trace exists");
     attempt.terminal_tick = Some(tick);

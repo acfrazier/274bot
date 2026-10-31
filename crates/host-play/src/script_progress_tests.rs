@@ -212,10 +212,7 @@ fn native_script_button_action_defers_auto_run_until_the_next_observed_tick() {
     script_slot_or_insert(&scripts, "alice")
         .lock()
         .unwrap()
-        .start_test_script(
-            Box::new(QueueNativeButton { handle: None }),
-            None,
-        )
+        .start_test_script(Box::new(QueueNativeButton { handle: None }), None)
         .expect("native script starts");
 
     let cache = Arc::clone(&client.cache);
@@ -246,7 +243,10 @@ fn native_script_button_action_defers_auto_run_until_the_next_observed_tick() {
         Some(&mut run_policy),
     );
 
-    assert!(client.out.pos > 0, "the native script sends its interface action");
+    assert!(
+        client.out.pos > 0,
+        "the native script sends its interface action"
+    );
     assert_eq!(
         client.out.data()[0],
         client::io::ClientProt::IF_BUTTON.id as u8
