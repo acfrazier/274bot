@@ -1963,7 +1963,21 @@ impl Run {
     /// failure is recorded per slot before it is returned, because both
     /// frontends exit on it.
     pub fn poll(&mut self, play: &Play) -> Result<bool, String> {
-        let result = self.poll_inner(play);
+        let result = self.poll_inner(play, None);
+        if let Err(error) = &result {
+            self.record_failure(play, error);
+        }
+        result
+    }
+
+    /// Sample the headed owner's real mailboxes only when a benchmark row is due.
+    #[cfg(feature = "render-diagnostics")]
+    pub fn poll_with_render_samples(
+        &mut self,
+        play: &Play,
+        mut sample: impl FnMut(&str) -> Option<serde_json::Value>,
+    ) -> Result<bool, String> {
+        let result = self.poll_inner(play, Some(&mut sample));
         if let Err(error) = &result {
             self.record_failure(play, error);
         }
@@ -1977,7 +1991,11 @@ impl Run {
         self.config.teardown = Duration::ZERO;
     }
 
-    fn poll_inner(&mut self, play: &Play) -> Result<bool, String> {
+    fn poll_inner(
+        &mut self,
+        play: &Play,
+        mut render_sample: Option<&mut dyn FnMut(&str) -> Option<serde_json::Value>>,
+    ) -> Result<bool, String> {
         let now = Instant::now();
         let statuses = play.statuses();
         self.ready_latch.observe(&statuses, now);
@@ -2348,7 +2366,16 @@ impl Run {
                     "fault_totals": render.faults().totals(),
                     "client_test_controls_compiled": client::render::backend::render_test_hooks_compiled(),
                     "drawing_instrumentation_compiled": client::render::backend::draw_memory_profile_compiled(),
+                    "calibration_inputs": crate::render_calibration::configured_inputs(),
+                    "calibration_static_bytes": crate::render_calibration::static_storage_bytes(),
                 });
+            }
+            if let Some(sample) = render_sample.as_mut() {
+                value["render_heads"] = self
+                    .names
+                    .iter()
+                    .map(|name| serde_json::json!({"name": name, "head": sample(name)}))
+                    .collect();
             }
             value["v8_live_isolates"] = live.into();
             value["v8_sampled_isolates"] = sampled.into();

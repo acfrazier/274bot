@@ -607,6 +607,9 @@ impl Drop for Play {
     }
 }
 
+#[cfg(feature = "render-diagnostics")]
+pub mod render_calibration;
+
 #[cfg(feature = "memory-profile")]
 pub mod memory;
 

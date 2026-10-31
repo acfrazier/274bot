@@ -358,6 +358,18 @@ consumes separately. Pump maxima retain nanosecond precision without a
 histogram ceiling. Churn samples record the selected head and full-rate set.
 `M3_BACKEND=mixed` takes an explicit `M3_CPU_HEADS` count. `M3_FOCUS_INDEX`
 selects either backend's focused head without changing simulation cadence.
+M3 and hook-free panel timing share the same pre-worker calibration decoder.
+The explicit inputs are `M3_GRANT_TTL_MS`, `M3_SCENE_QUANTUM_MS`,
+`T44_RENDER_BUDGET_LIMITS_JSON`, and `T44_RETAINED_PRESENT_CAP`.
+The panel binary requires `memory-profile,render-diagnostics` and
+`T44_HEADED_REDRAW=normal` or `wait`. Its calibration rejects compiled test
+controls before any worker starts. The existing capture and recorder paths
+keep their explicit metadata and completion-deadline inputs.
+Headed benchmark rows sample real mailboxes, applied focus and Play wake
+channels once per second. They retain Busy, Granted and scene-consume counts
+as separate values. Per-head counters cover the head lifetime, not just the
+observation window. Rows also identify the process calibration inputs and
+their static storage. Normal builds retain the unqualified wrap defaults.
 
 The slice-4 fixture keeps one 684,032-byte clean CPU scene per drawing CPU
 head after its first successful live scene. Loading restores that storage and

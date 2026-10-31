@@ -446,7 +446,7 @@ fn run_fixture() -> Result<(), String> {
     )
     .map_err(|(_, message)| message)?;
     frontend_core::process::raise_fd_limit();
-    let result = with_process_render_budget(|| panel::run_panel_render_fixture(args, redraw))
+    let result = with_process_render_budget(|| panel::run_panel_calibrated(args, redraw))
         .map_err(|error| error.to_string());
     let evidence = control.validate();
     let mut record_log = frontend_core::log::LogView::new(frontend_core::log::LogScope::Process);

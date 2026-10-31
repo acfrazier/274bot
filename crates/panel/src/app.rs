@@ -8114,15 +8114,15 @@ pub fn run_panel(args: PanelArgs) -> Result<(), window::PanelError> {
     run_panel_inner(args, None)
 }
 
-/// Main-thread headed fixture; it cannot activate admission or choose budgets.
-#[cfg(feature = "render-test-hooks")]
-pub fn run_panel_render_fixture(
+/// Run an explicitly configured renderer with the selected UI pump.
+#[cfg(any(feature = "render-diagnostics", feature = "render-test-hooks"))]
+pub fn run_panel_calibrated(
     args: PanelArgs,
     redraw: RedrawMode,
 ) -> Result<(), window::PanelError> {
     if !frontend_core::surface::render_fair_enabled() {
         return Err(window::PanelError::LiveHarnessFailure(
-            "render fixture process is not configured".into(),
+            "render calibration process is not configured".into(),
         ));
     }
     run_panel_inner(args, Some(redraw))
@@ -8875,7 +8875,19 @@ fn frame_pumps_inner(
     #[cfg(feature = "memory-profile")]
     if let Some(run) = state.memory.as_mut() {
         state.session.memory_focus(run);
-        match run.poll(&state.session.core) {
+        #[cfg(feature = "render-diagnostics")]
+        let result = if frontend_core::surface::render_fair_enabled() {
+            let core = &state.session.core;
+            run.poll_with_render_samples(core, |name| {
+                let slot = core.slot_io(name)?;
+                frontend_core::bench::sample_render_head(core, name, &slot.input, &slot.pixels)
+            })
+        } else {
+            run.poll(&state.session.core)
+        };
+        #[cfg(not(feature = "render-diagnostics"))]
+        let result = run.poll(&state.session.core);
+        match result {
             Ok(true) => {
                 // Quit joins workers before the GPU window and driver close.
                 state.session.retire_play();

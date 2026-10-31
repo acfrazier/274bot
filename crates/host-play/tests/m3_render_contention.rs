@@ -80,99 +80,24 @@ struct FairProbeInputs {
     scene_quantum_ms: u64,
 }
 
-fn fair_probe_inputs() -> Option<FairProbeInputs> {
-    let enabled = match std::env::var("M3_FAIR_PROBE") {
-        Ok(value) if value == "1" => true,
-        Ok(value) if value == "0" => false,
-        Ok(value) => panic!("M3_FAIR_PROBE must be 0 or 1, got {value}"),
-        Err(_) => false,
-    };
-    if !enabled {
-        return None;
-    }
-    let grant_ttl_ms = required("M3_GRANT_TTL_MS")
-        .parse::<u64>()
-        .expect("M3_GRANT_TTL_MS must be a positive integer number of milliseconds");
-    let scene_quantum_ms = required("M3_SCENE_QUANTUM_MS")
-        .parse::<u64>()
-        .expect("M3_SCENE_QUANTUM_MS must be a positive integer number of milliseconds");
-    assert!(grant_ttl_ms > 0, "M3_GRANT_TTL_MS must be positive");
-    assert!(scene_quantum_ms > 0, "M3_SCENE_QUANTUM_MS must be positive");
-    Some(FairProbeInputs {
-        grant_ttl_ms,
-        scene_quantum_ms,
-    })
-}
-
-#[cfg(any(feature = "render-test-hooks", feature = "render-diagnostics"))]
-#[derive(serde::Deserialize)]
-#[serde(deny_unknown_fields)]
-struct RenderBudgetInputs {
-    capture: usize,
-    nav_vertices: usize,
-    nav_quads: usize,
-    nav_edges: usize,
-    nav_input: usize,
-    head_models: usize,
-    head_misc: usize,
-    temp_models: usize,
-    shared_models: usize,
-    shared_sprites: usize,
-    vertex: usize,
-    context_cpu: usize,
-    context_gpu: usize,
-}
-
-#[cfg(any(feature = "render-test-hooks", feature = "render-diagnostics"))]
-impl RenderBudgetInputs {
-    fn into_limits(self) -> client::render::budget::RenderBudgetLimits {
-        client::render::budget::RenderBudgetLimits::new(
-            self.capture,
-            self.nav_vertices,
-            self.nav_quads,
-            self.nav_edges,
-            self.nav_input,
-            self.head_models,
-            self.head_misc,
-            self.temp_models,
-            self.shared_models,
-            self.shared_sprites,
-            self.vertex,
-            self.context_cpu,
-            self.context_gpu,
-        )
-    }
-}
-
-fn configure_fair_probe(inputs: Option<FairProbeInputs>) {
-    let Some(inputs) = inputs else {
-        return;
-    };
-    #[cfg(any(feature = "render-test-hooks", feature = "render-diagnostics"))]
+fn configure_fair_probe() -> Option<FairProbeInputs> {
+    #[cfg(feature = "render-diagnostics")]
     {
-        let budgets: RenderBudgetInputs =
-            serde_json::from_str(&required("T44_RENDER_BUDGET_LIMITS_JSON"))
-                .expect("all thirteen explicit render byte ceilings are required");
-        render_head::configure_calibration_limits(budgets.into_limits())
-            .expect("configure M3 budgets before creating any head");
-        let cap = required("M3_RETAINED_PRESENT_CAP")
-            .parse()
-            .ok()
-            .and_then(std::num::NonZeroUsize::new)
-            .expect("M3_RETAINED_PRESENT_CAP is a positive process resource count");
-        client::render::backend::present::configure_retained_present_budget(cap)
-            .expect("configure retained-present resources before any registration");
-        render_head::configure_calibration(render_head::CalibrationConfig {
-            grant_ttl: Duration::from_millis(inputs.grant_ttl_ms),
-            scene_quantum: Duration::from_millis(inputs.scene_quantum_ms),
-        })
-        .expect("configure M3 render process before its first use");
+        host_play::render_calibration::configure_from_env()
+            .expect("configure explicit M3 timing inputs before creating any head")
+            .map(|inputs| FairProbeInputs {
+                grant_ttl_ms: inputs.grant_ttl_ms(),
+                scene_quantum_ms: inputs.scene_quantum_ms(),
+            })
     }
-    #[cfg(not(any(feature = "render-test-hooks", feature = "render-diagnostics")))]
-    panic!(
-        "M3_FAIR_PROBE=1 requires host-play --features render-diagnostics; inputs were {:?} ms TTL and {:?} ms quantum",
-        inputs.grant_ttl_ms, inputs.scene_quantum_ms
-    );
+    #[cfg(not(feature = "render-diagnostics"))]
+    {
+        match std::env::var("M3_FAIR_PROBE").as_deref() {
+            Err(_) | Ok("0") => None,
+            Ok("1") => panic!("M3_FAIR_PROBE=1 requires host-play --features render-diagnostics"),
+            Ok(_) => panic!("M3_FAIR_PROBE must be 0 or 1"),
+        }
+    }
 }
 
 fn client_compiled_features() -> Value {
@@ -202,7 +127,7 @@ fn add_probe_receipt(receipt: &mut Value, inputs: Option<FairProbeInputs>) {
                 "M3_SCENE_QUANTUM_MS": inputs.scene_quantum_ms,
             },
             "byte_limits": serde_json::from_str::<Value>(&required("T44_RENDER_BUDGET_LIMITS_JSON")).expect("validated explicit byte limits"),
-            "retained_present_cap": required("M3_RETAINED_PRESENT_CAP").parse::<usize>().expect("validated retained cap"),
+            "retained_present_cap": required("T44_RETAINED_PRESENT_CAP").parse::<usize>().expect("validated retained cap"),
             "background_scene_progress_oracle": {
                 "ordinary_cadence_ms": BACKGROUND_CADENCE.as_millis(),
                 "max_gap_ms": BACKGROUND_SCENE_GAP.as_millis(),
@@ -1567,7 +1492,7 @@ fn m3_fair_head_progress() {
         );
     }
     assert!(
-        fair_probe_inputs().is_some(),
+        std::env::var("M3_FAIR_PROBE").as_deref() == Ok("1"),
         "explicit calibration values are required"
     );
     assert_eq!(env_or("M3_WARMUP_S", 10), 10u64);
@@ -1590,8 +1515,7 @@ fn run_m3_render_contention() {
         cpu_heads == n,
         "BOT_CPU=1 exactly for an all-CPU composition"
     );
-    let probe = fair_probe_inputs();
-    configure_fair_probe(probe);
+    let probe = configure_fair_probe();
     LazyLock::force(&CLOCK_RESOLUTION);
 
     let out = PathBuf::from(required("M3_OUT"));

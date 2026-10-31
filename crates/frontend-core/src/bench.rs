@@ -77,6 +77,23 @@ impl BenchConfig {
     }
 }
 
+/// Apply explicit, hook-free timing inputs before any benchmark slot starts.
+#[cfg(feature = "render-diagnostics")]
+pub fn configure_render_calibration() -> Result<bool, BenchError> {
+    let inputs = host_play::render_calibration::configure_from_env()
+        .map_err(|error| BenchError(BenchStep::RenderCalibration(error.to_string())))?;
+    if let Some(inputs) = inputs {
+        api::host_log!(
+            api::hostlog::Category::Lifecycle,
+            api::hostlog::Level::Info,
+            "PROVISIONAL render calibration: {inputs:?}"
+        );
+        Ok(true)
+    } else {
+        Ok(false)
+    }
+}
+
 /// Why a benchmark step failed: the sentence `host-play` reports for that
 /// step. Callers show it; the step stays private.
 #[derive(Debug, PartialEq, Eq, thiserror::Error)]
@@ -101,6 +118,10 @@ enum BenchStep {
     /// The observation run failed (already recorded per slot).
     #[error("{0}")]
     Run(String),
+    /// Explicit provisional rendering inputs are invalid or were applied late.
+    #[cfg(feature = "render-diagnostics")]
+    #[error("{0}")]
+    RenderCalibration(String),
 }
 
 /// Refuse a benchmark run against a profile that is not a live local one.
@@ -173,11 +194,69 @@ impl BenchRun {
         }
     }
 
+    /// Include real headed IO samples without sampling on every UI frame.
+    #[cfg(feature = "render-diagnostics")]
+    pub fn poll_with_render_samples<Io>(
+        &mut self,
+        core: &OperatorSession<Io>,
+        sample: impl FnMut(&str) -> Option<serde_json::Value>,
+    ) -> Result<bool, BenchError> {
+        match core.play() {
+            Some(play) => self
+                .0
+                .poll_with_render_samples(play, sample)
+                .map_err(|error| BenchError(BenchStep::Run(error))),
+            None => Ok(false),
+        }
+    }
+
     /// Put a test run at the terminal observation boundary without a live server.
     #[cfg(any(test, feature = "test-support"))]
     pub fn finish_for_test(&mut self) {
         self.0.finish_for_test();
     }
+}
+
+/// Read the actual mailbox, input latches, renderer statistics and Play wake pair.
+#[cfg(feature = "render-diagnostics")]
+pub fn sample_render_head<Io>(
+    core: &OperatorSession<Io>,
+    name: &str,
+    input: &crate::surface::SlotInput,
+    mailbox: &crate::surface::FrameBuf,
+) -> Option<serde_json::Value> {
+    let stats = mailbox.fair_stats()?;
+    let wake = core.play()?.slot_wake_snapshot(name)?;
+    Some(serde_json::json!({
+        "identity": format!("{:?}", stats.identity()),
+        "identity_matches": mailbox.head() == Some(stats.identity()),
+        "backend": format!("{:?}", stats.backend()),
+        "mailbox_generation": mailbox.generation(),
+        "requested_focus": input.render_focused(),
+        "full_rate": input.full_rate(),
+        "applied_focus": stats.render_focused(),
+        "focus_applications": stats.focus_applications(),
+        "wake_writes": wake.successful_writes(),
+        "wake_drained_bytes": wake.drained_bytes(),
+        "busy_paints": stats.busy_paints(),
+        "granted_paints": stats.granted_paints(),
+        "scene_consumes": stats.scene_consumes(),
+        "scene_releases": stats.scene_releases(),
+        "has_valid_scene": stats.has_valid_scene(),
+        "scene_progress": format!("{:?}", stats.scene_progress()),
+        "skipped_due_opportunities": stats.skipped_due_opportunities(),
+        "due_skip_streak": stats.due_skips(),
+        "max_due_skips": stats.max_due_skips(),
+        "expiry_events": stats.expiry_events(),
+        "max_publication_to_notice_ns": stats.max_publication_to_notice().as_nanos(),
+        "max_notice_to_wake_ns": stats.max_notice_to_wake().as_nanos(),
+        "max_wake_to_consume_ns": stats.max_wake_to_consume().as_nanos(),
+        "max_grant_to_consume_ns": stats.max_grant_to_consume().as_nanos(),
+        "max_scene_lease_ns": stats.max_scene_lease_time().as_nanos(),
+        "max_scene_consume_gap_ns": stats.max_scene_consume_gap().as_nanos(),
+        "last_scene_age_ns": stats.last_scene_consume_at().map(|at| at.elapsed().as_nanos()),
+        "counter_scope": "head lifetime",
+    }))
 }
 
 /// A startup milestone the benchmark record times.
