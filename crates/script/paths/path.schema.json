@@ -1794,14 +1794,6 @@
       ],
       "additionalProperties": false
     },
-    "HazardStat": {
-      "type": "string",
-      "enum": [
-        "none",
-        "current",
-        "base"
-      ]
-    },
     "HazardDocument": {
       "type": "object",
       "additionalProperties": false,
@@ -1811,21 +1803,30 @@
         },
         "mul": {
           "type": "integer",
-          "default": 0
+          "default": 0,
+          "minimum": 0,
+          "maximum": 255
         },
         "div": {
           "type": "integer",
-          "default": 1
+          "default": 1,
+          "minimum": 0,
+          "maximum": 255
         },
         "plus": {
           "type": "integer",
-          "default": 0
+          "default": 0,
+          "minimum": -128,
+          "maximum": 127
         },
         "cap": {
           "type": [
             "integer",
             "null"
-          ]
+          ],
+          "default": null,
+          "minimum": 0,
+          "maximum": 255
         },
         "source": {
           "type": "string"
@@ -1834,7 +1835,28 @@
       "required": [
         "of",
         "source"
-      ]
+      ],
+      "description": "Authored formula and citation for one damage event from a step."
+    },
+    "HazardStat": {
+      "oneOf": [
+        {
+          "type": "string",
+          "const": "none",
+          "description": "A constant formula that uses only `plus`."
+        },
+        {
+          "type": "string",
+          "const": "current",
+          "description": "The current Hitpoints level."
+        },
+        {
+          "type": "string",
+          "const": "base",
+          "description": "The Hitpoints base level."
+        }
+      ],
+      "description": "The Hitpoints value used to evaluate a step's damage formula."
     },
     "step.walk.v1": {
       "type": "object",
