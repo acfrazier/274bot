@@ -10726,6 +10726,15 @@ fn m4_cure_gate_requires_both_observations_before_a_fixed_game_tick_deadline() {
 }
 
 #[test]
+fn m4_cure_gate_waits_for_potion_completion_before_teleport() {
+    assert_eq!(
+        m4_cure_gate(25, 26, true, true),
+        Ok(false),
+        "the cure message and consumed dose precede the engine's potion busy delay"
+    );
+}
+
+#[test]
 fn m4_cure_chat_must_be_new_server_chat_not_a_stale_or_player_message() {
     let mut snapshot = GameSnapshot::default();
     for (sequence, type_, username, text, expected) in [
