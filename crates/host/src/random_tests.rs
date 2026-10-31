@@ -294,6 +294,57 @@ fn unmatched_scene_fixture() -> GameSnapshot {
 }
 
 #[test]
+fn lowercase_name_match_preserves_unicode_and_exactness() {
+    for (name, lowercase) in [
+        ("GENIE", "genie"),
+        ("Kelvin", "kelvin"),
+        ("İstanbul", "istanbul"),
+        ("Genie ", "genie"),
+    ] {
+        assert_eq!(
+            matches_lower_name(name, lowercase),
+            name.to_lowercase() == lowercase,
+            "{name:?} against {lowercase:?}"
+        );
+    }
+
+    let greek_lowercase = "ΟΣ".to_lowercase();
+    assert!(matches_lower_name("ΟΣ", &greek_lowercase));
+}
+
+#[test]
+fn scene_name_matching_allocates_only_for_a_matched_diagnostic_name() {
+    let unmatched = unmatched_scene_fixture();
+    let cooldown = no_cooldown();
+    let unmatched_allocations = allocation_counter::measure(|| {
+        assert!(detect_scene(&unmatched, 0, &cooldown).is_none());
+    });
+
+    let mut c = new_client();
+    plant_npc(&mut c, 0, "Genie", 32768, None);
+    let matched = snap_at(&mut c);
+    let mut event = None;
+    let matched_allocations = allocation_counter::measure(|| {
+        event = detect_scene(&matched, 0, &cooldown);
+    });
+    let event = event.expect("owned genie is detected");
+    eprintln!(
+        "guardian name-match allocations: unmatched={} ({} bytes), matched={} ({} bytes retained)",
+        unmatched_allocations.count_total,
+        unmatched_allocations.bytes_total,
+        matched_allocations.count_total,
+        matched_allocations.bytes_current,
+    );
+
+    assert_eq!(unmatched_allocations.count_total, 0);
+    assert_eq!(unmatched_allocations.bytes_current, 0);
+    assert_eq!(matched_allocations.count_total, 1);
+    assert!(matched_allocations.bytes_current > 0);
+    assert_eq!(event.kind, RandomKind::Dialog);
+    assert_eq!(event.name, "genie");
+}
+
+#[test]
 #[ignore = "manual CPU comparison for the guardian name-matching fixture"]
 fn guardian_name_matching_cpu_probe() {
     const ITERATIONS: usize = 1_000_000;

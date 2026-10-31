@@ -4,6 +4,8 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.8` 
 `publish = false` (not on crates.io). Git tags are `0.1.0`, `0.1.1`, …
 
 ## Unreleased
+- Random-event detection avoids temporary lowercase names for non-matching
+  NPCs and hazard locs. Matching and event handling are unchanged.
 
 ## [0.2.8] — 2026-10-29 — Beta 2
 

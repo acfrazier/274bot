@@ -89,6 +89,9 @@ Random-event handling is a profile option, not an app option. Set
 [Manage your accounts and log in](profiles-and-accounts.md#add-change-or-remove-a-profile)
 describes.
 
+The guardian matches dialog and strange-plant NPC names, and hazard loc names,
+without regard to letter case.
+
 The **Loadouts** button opens the window of saved gear lists, which all
 profiles share.
 
