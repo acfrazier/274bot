@@ -200,6 +200,33 @@ mod tests {
         }
     }
 
+    #[test]
+    fn canonical_progress_varps_and_completion_bounds_match_both_revisions() {
+        for revision in [ClientRevision::R274, ClientRevision::R289] {
+            let selected = crate::game_data::for_revision(revision).unwrap();
+            let (facts, _) = for_bake(&selected).unwrap();
+            let catalog = QuestCatalog::from_identity(Some(&facts)).unwrap();
+            for (id, signal, varp_id, complete) in [
+                ("cog", "cogquest", 10, 8),
+                ("itexam", "itexamlevel", 131, 9),
+            ] {
+                let row = facts.rows.iter().find(|row| row.id == id).unwrap();
+                assert_eq!(
+                    (row.varp.as_str(), row.varp_id, row.complete),
+                    (signal, varp_id, complete),
+                    "{revision:?} {id}"
+                );
+                let quest = catalog.quest(id).unwrap();
+                assert_eq!(
+                    quest.progress_signal,
+                    Some(crate::selected::FactKey::new(signal)),
+                    "{revision:?} {id}"
+                );
+                assert_eq!(quest.completion_value, Some(complete), "{revision:?} {id}");
+            }
+        }
+    }
+
     fn pin(revision: ClientRevision) -> Arc<SelectedPin> {
         crate::game_data::for_revision(revision)
             .unwrap()
