@@ -1839,8 +1839,8 @@ export default class CompatWalkToSettingsProbe extends WalkToBot {
     }
     onPause() { this.log('RUNTIME:WALK_PAUSE'); }
     onResume() { this.log('RUNTIME:WALK_RESUME'); }
-    // Progress painting reads the unsupported Traversal.remaining member.
-    // This live cell covers settings and lifecycle, not progress painting.
+    // The progress paint calls Traversal.remaining, which lands in wave 3.
+    // This probe covers settings and lifecycle only.
     onPaint() {}
     onStop() {
         this.__mapPickerUnsubscribe?.();
