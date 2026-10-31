@@ -680,6 +680,9 @@ fn classify_fishing_placement(
     avoided: &[AvoidedTile; MAX_AVOID],
     now: u64,
 ) -> PlacementClass {
+    if matches!(spot.entity, EntityId::Loc(_)) {
+        return classify_placement(spot, method, scene, avoided, now);
+    }
     let PlacementScene {
         world,
         npcs,
@@ -839,6 +842,38 @@ fn select_with_access(
                     zone_gated = zone_gated.saturating_add(1);
                     continue;
                 }
+                if matches!(spot.entity, EntityId::Loc(_)) {
+                    if classify_placement(
+                        spot,
+                        method,
+                        PlacementScene {
+                            world,
+                            locs,
+                            npcs,
+                            hazard_npcs: catalog.hazard_npcs(),
+                        },
+                        avoided,
+                        now,
+                    ) == PlacementClass::Live
+                        && danger.allows_live(spot.origin, spot.entity, snapshot)
+                    {
+                        consider_candidate(
+                            &mut best_live,
+                            preference,
+                            (
+                                method_index,
+                                method,
+                                spot,
+                                PlacementClass::Live,
+                                spot.origin,
+                                NO_NPC_INDEX,
+                                distance(here, spot.origin),
+                            ),
+                            skill_stat,
+                        );
+                    }
+                    continue;
+                }
                 let Some(bounds) = movement_bounds(spot) else {
                     continue;
                 };
@@ -975,9 +1010,17 @@ fn select_with_access(
                     avoided,
                     now,
                 );
-                let bounds = movement_bounds(spot).expect("eligible fishing movement");
                 let mut stand = spot.origin;
-                if matches!(class, PlacementClass::Unloaded | PlacementClass::Absent) {
+                if matches!(spot.entity, EntityId::Loc(_))
+                    && !matches!(class, PlacementClass::Live | PlacementClass::Absent)
+                    && !danger.allows_live(spot.origin, spot.entity, snapshot)
+                {
+                    continue;
+                }
+                if matches!(spot.entity, EntityId::Npc(_))
+                    && matches!(class, PlacementClass::Unloaded | PlacementClass::Absent)
+                {
+                    let bounds = movement_bounds(spot).expect("eligible fishing movement");
                     // Quest gather keeps only Live targets and discards any
                     // computed observation stand. Do not scan collision for a
                     // stand that will not be chosen.
@@ -1133,7 +1176,7 @@ fn select_with_access(
             skill_stat,
         );
         let mut goals = None;
-        if method.skill == GatherSkill::Fishing {
+        if matches!(spot.entity, EntityId::Npc(_)) {
             let survey = fishing.placement(method_index, spot.id.0);
             let bounds = movement_bounds(spot).expect("eligible fishing movement");
             match observation_goals(survey.unobserved_cells(bounds), collision, Some(tile)) {
@@ -1317,7 +1360,7 @@ pub fn resource_return_target(
             observation.skill_stat,
         );
         let mut goals = None;
-        if method.skill == GatherSkill::Fishing {
+        if matches!(spot.entity, EntityId::Npc(_)) {
             let bounds = movement_bounds(spot).expect("eligible fishing movement");
             match observation_goals(observation_cells(bounds), observation.collision, Some(tile)) {
                 Ok(candidates) => goals = Some(candidates),
@@ -1365,6 +1408,15 @@ fn fishing_return_stand(
     let until = avoid_until(spot, method.skill, observation.avoided);
     if until > observation.now {
         return ReturnStand::Excluded(until);
+    }
+    if matches!(spot.entity, EntityId::Loc(_)) {
+        return if has_area_arrival(observation.collision, spot.origin)
+            && danger.allows(spot.origin, None, nav_planner::contract::ArrivalKind::Area)
+        {
+            ReturnStand::Ready(spot.origin)
+        } else {
+            ReturnStand::Collision
+        };
     }
     // Observe the resource from the resource, never from `here`. Clamping
     // toward the player is how a Draynor bank trip lands a stand inside the

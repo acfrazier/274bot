@@ -13,6 +13,9 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.8` 
   callers still need complete transform-closure proof.
 - The host's disposal integration tests now use Gatherer's protected-item bound,
   so the optional knife and log supply does not break their compilation.
+- Fishing at a fixed loc spot now selects the observed loc, approaches it when
+  unloaded, and returns to it after banking. Moving NPC spots keep their own
+  observation and return paths.
 
 ### Not in this release
 
