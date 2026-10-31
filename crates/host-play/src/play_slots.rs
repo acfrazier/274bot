@@ -1807,6 +1807,9 @@ fn spawn_slot_thread(
                             #[cfg(feature = "memory-profile")]
                             memory::client_frame(c, name, hold, script_state);
                             slot_frame(c, name, frame_input);
+                            // Operator pause parks ScriptRunner work, not
+                            // BotHost client frames (`BotHost.ts:48-55`).
+                            let mut frame_delivered = false;
                             if matches!(
                                 script_state,
                                 Some(
@@ -1818,11 +1821,9 @@ fn spawn_slot_thread(
                                 if let Some(slot) = script_slot(&slot_scripts, name) {
                                     #[cfg(feature = "memory-profile")]
                                     memory::frame_dispatch_begin(name);
-                                    let delivered = slot.lock().unwrap().on_client_frame();
+                                    frame_delivered = slot.lock().unwrap().on_client_frame();
                                     #[cfg(feature = "memory-profile")]
-                                    memory::frame_dispatch_end(name, delivered);
-                                    #[cfg(not(feature = "memory-profile"))]
-                                    let _ = delivered;
+                                    memory::frame_dispatch_end(name, frame_delivered);
                                 }
                             }
                             if !mainland_sent && mainland && ready {
@@ -2089,10 +2090,13 @@ fn spawn_slot_thread(
                                 }
                             }
                             // Busy flag for the idle scheduler: a slot with
-                            // a running script, queued cheats, or an armed
-                            // nav bot must keep ticking (never parked), so
-                            // the observe hook reports it every frame.
+                            // a running script, a frame listener (also while
+                            // paused: one callback per 20 ms client loop),
+                            // queued cheats, or an armed nav bot must keep
+                            // ticking (never parked), so the observe hook
+                            // reports it every frame.
                             running
+                                || frame_delivered
                                 || slot_cheats
                                     .lock()
                                     .unwrap()
