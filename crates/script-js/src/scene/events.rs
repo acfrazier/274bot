@@ -120,6 +120,9 @@ impl NativeEventProducer {
         if snap.has_ingame() && !snap.ingame() {
             self.offline = true;
             self.reset_baselines();
+            // An offline boundary clears identity; the next online sequence
+            // is fresh, even when it was also present while offline.
+            self.chat_seeded = true;
             return ObserveResult::default();
         }
         if self.offline {

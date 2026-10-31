@@ -1890,16 +1890,23 @@ export default class T extends LoopingBot {
 }
 "#;
     let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![]).unwrap();
+    // Establish the initial producer baseline before posting a new line.
+    let mut snap = base_snapshot();
+    post_snapshot_input(&iso, &snap);
+    iso.on_game_tick(1);
+    let _ = iso.probe("1 + 1");
+    assert_eq!(iso.probe("__chat.length").unwrap().as_i64(), Some(0));
+
     let lines = [script_js::wire::ChatLineInput {
         seq: 11,
         text: "wishes to trade with you.",
         type_: 4,
         username: Some("Partner"),
     }];
-    let mut snap = base_snapshot();
     snap.chat_lines = &lines;
+    snap.tick = 2;
     post_snapshot_input(&iso, &snap);
-    iso.on_game_tick(1);
+    iso.on_game_tick(2);
     let _ = iso.probe("1 + 1");
     assert_eq!(iso.probe("__chat.length").unwrap().as_i64(), Some(1));
     assert_eq!(iso.probe("__chat[0]").unwrap()["type"], 4);
@@ -1917,14 +1924,15 @@ export default class T extends LoopingBot {
         username: Some("Partner"),
     }];
     snap.chat_lines = &repeat;
-    snap.tick = 2;
+    snap.tick = 3;
     post_snapshot_input(&iso, &snap);
-    iso.on_game_tick(2);
+    iso.on_game_tick(3);
     let _ = iso.probe("1 + 1");
     assert_eq!(iso.probe("__chat.length").unwrap().as_i64(), Some(2));
 
+    snap.tick = 4;
     post_snapshot_input(&iso, &snap);
-    iso.on_game_tick(3);
+    iso.on_game_tick(4);
     let _ = iso.probe("1 + 1");
     assert_eq!(iso.probe("__chat.length").unwrap().as_i64(), Some(2));
     iso.join();
