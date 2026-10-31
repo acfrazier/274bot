@@ -482,6 +482,8 @@ const CORE: &[(&str, Decision)] = &[
     ("live/mod.rs::create_shot_run_dir", Excluded(HARNESS)),
     ("live/mod.rs::write_shot", Excluded(HARNESS)),
     ("live/mod.rs::external_loader_scenario_name", Excluded(HARNESS)),
+    ("live/mod.rs::CombatLogout::allows_retry", Excluded(HARNESS)),
+    ("live/mod.rs::CombatLogout::send_escape", Excluded(HARNESS)),
     ("live/mod.rs::external_loader_live_name", Excluded(HARNESS)),
     ("live/mod.rs::external_loader_terminal_shot", Excluded(HARNESS)),
     ("live/mod.rs::external_loader_prereq_shot", Excluded(HARNESS)),
@@ -1057,6 +1059,13 @@ const SURFACE: &[(&str, Decision)] = &[
     (
         "tui/bin.rs::map_bundle",
         Excluded("`--map-bundle` packaging flag: bakes the shipped map bundle; not an operator command"),
+    ),
+    (
+        "tui/bin.rs::TuiSession::clean_logout_live",
+        Rows(
+            &[C::StopScript, C::Logout],
+            "post-proof live fixture teardown: acknowledge Stop, then request and retry clean logout",
+        ),
     ),
     // --- tui: routers and the pump ---
     (
