@@ -103,17 +103,15 @@ fn run_selected_facts<'s>(
         "resolve-rock-ids" => selected_resolve_rock_ids(scope, args.get(1)),
         "worth-stocking" => worth_stocking(scope, args.get(1)),
         "world-number" => world_number(scope, args.get(1), args.get(2), args.get(3)),
-        "client-adapter-reader" => {
-            client_adapter_v8::read(
-                scope,
-                args.get(1),
-                args.get(2),
-                args.get(3),
-                args.get(4),
-                args.get(5),
-                args.get(6),
-            )
-        }
+        "client-adapter-reader" => client_adapter_v8::read(
+            scope,
+            args.get(1),
+            args.get(2),
+            args.get(3),
+            args.get(4),
+            args.get(5),
+            args.get(6),
+        ),
         _ => Err(format!("unsupported selected facts operation: {op}")),
     }
 }
