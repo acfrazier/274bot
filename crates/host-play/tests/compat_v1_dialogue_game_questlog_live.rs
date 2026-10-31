@@ -1170,6 +1170,7 @@ fn run_make_one_cell() {
             "cancel_stop_completed": cancel_stopped_tick,
             "cancel_deadline": cancel_deadline_tick,
             "cancel_end": cancel_end_tick,
+            "replacement_start": replacement_start_tick,
             "replacement_end": replacement_end_tick
         },
         "success_logs": success_logs,
