@@ -44,6 +44,7 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.8` 
   values can overlap those domains and are not an RSS total. A common
   drawing-memory case selector records the same owner fields on both comparison
   sources without replacing either renderer or changing the timing binaries.
+  Its full and focus1 memory phases use the shared cadence input.
 
 ## [0.2.8] — 2026-10-29 — Beta 2
 

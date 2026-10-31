@@ -189,8 +189,9 @@ fn wait_live(play: &Play, heads: &[Head]) -> Vec<Observation> {
 
 fn set_policy(play: &Play, heads: &[Head], policy: &str, focus: usize) {
     assert!(matches!(policy, "full" | "focus1"));
+    // Both arms expose the cadence input. The comparator predates the separate
+    // pane-focus priority input, so this headless comparison does not set it.
     for (index, head) in heads.iter().enumerate() {
-        head.input.set_render_focused(index == focus);
         head.input.set_full_rate(policy == "full" || index == focus);
         play.wake(&head.name);
     }
@@ -240,6 +241,7 @@ fn sample(
             );
             json!({
                 "name": head.name,
+                "full_rate": head.input.full_rate(),
                 "stream_epoch": status.stream_epoch,
                 "login_present": status.login_started.is_some(),
                 "frame_generation": head.mailbox.generation(),
@@ -389,6 +391,7 @@ fn t44_cpu_draw_memory_ab() {
             "arm": required("T44_MEMORY_ARM"), "n": n, "cpu_heads": cpu_heads, "backend": backend,
             "diagnostic_source_sha256": required("T44_MEMORY_DIAGNOSTIC_SHA256"),
             "warmup_s": warmup.as_secs(), "observe_s": duration.as_secs(), "focus_index": focus,
+            "policy_input": "shared full-rate cadence, not native pane focus",
             "consumer_period_ns": CONSUMER_PERIOD.as_nanos(),
         })
     )

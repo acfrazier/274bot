@@ -516,6 +516,10 @@ detach and reattach phases. Its allocation-only test measures the diagnostic
 control with rendering disabled. Those receipts establish diagnostic overhead;
 they do not establish the comparator A/A spread or an A/B verdict.
 
+The `focus1` phase changes the shared full-rate cadence input in both arms.
+It does not set the later pane-focus priority input.
+Native focus and fairness remain separate live proofs.
+
 Memory samples also report native allocator observations separately from RSS,
 requested Rust live bytes, V8 and logical GPU storage. Linux GNU samples use
 `malloc_info` across all arenas and direct allocator mmap allocations. Arena
