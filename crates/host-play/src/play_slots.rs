@@ -1840,7 +1840,7 @@ fn spawn_slot_thread(
                                     "[DEBUG-park-relog] producer tick={} session={} player_info={} up={} client_ingame={} client_scene={} snapshot_scene={} player={} stats={} ready={} session_ready={} boundary={} welcome_hold={} hold={}",
                                     *script_tick, nav_snapshot.gens().session, c.gens.player_info,
                                     up, c.ingame, c.scene_state, nav_snapshot.scene_state(),
-                                    nav_snapshot.local_player().is_some(), nav_snapshot.stats().is_some(),
+                                    nav_snapshot.local_player().is_some(), nav_snapshot.stats().len(),
                                     ready, session_ready, session_boundary, welcome_step.hold, hold
                                 );
                             }
