@@ -26,10 +26,10 @@ const BANK_TILE: (i32, i32, i32) = (3093, 3243, 0);
 const PROBE_SOURCE: &str = r#"import { LoopingBot } from '../../api/bot/Bot.js';
 import { reader, actions } from '../../adapter/ClientAdapter.js';
 import { Bank } from '../../api/bank/Bank.js';
-import { Banking } from '../../api/bank/Banking.js';
 import { Execution } from '../../api/execution/Execution.js';
 import { Input } from '../../input/Input.js';
 import { Inventory } from '../../api/inventory/Inventory.js';
+const bankLoc = __BANK_LOC_JSON__;
 
 export default class ClientAdapterLiveProbe extends LoopingBot {
     complete = false;
@@ -44,7 +44,9 @@ export default class ClientAdapterLiveProbe extends LoopingBot {
         if (reader.skillCount() !== 25) {
             throw new Error(`ClientAdapter skill catalog count was ${reader.skillCount()}, expected 25`);
         }
-        if (!(await Banking.open())) throw new Error('ClientAdapter probe could not open the seeded Draynor bank');
+        if (!Input.interactLoc(bankLoc.lx, bankLoc.lz, bankLoc.typecode, bankLoc.op)) {
+            throw new Error('ClientAdapter probe could not open the seeded Draynor bank');
+        }
         if (!(await Execution.delayUntil(
             () => reader.bankSnapshotReady() && reader.bankItems().length > 0,
             3000,
@@ -63,13 +65,23 @@ export default class ClientAdapterLiveProbe extends LoopingBot {
             throw new Error('Withdraw X did not open the count dialog');
         }
         const npcRows = reader.npcs();
-        const locRows = reader.locs();
-        const npcBounds = npcRows
-            .map((npc) => ({ index: npc.index, id: npc.id, points: reader.npcBox(npc.index) }))
-            .find((row) => Array.isArray(row.points) && row.points.length === 8);
-        const locBounds = locRows
-            .map((loc) => ({ id: loc.id, x: loc.x, z: loc.z, points: reader.locBox({ x: loc.x, z: loc.z, id: loc.id }) }))
-            .find((row) => Array.isArray(row.points) && row.points.length === 8);
+        let npcBounds = null;
+        for (const npc of npcRows) {
+            const points = reader.npcBox(npc.index);
+            if (Array.isArray(points) && points.length === 8) {
+                npcBounds = { index: npc.index, id: npc.id, points };
+                break;
+            }
+        }
+        const locPoints = reader.locBox({
+            id: bankLoc.id,
+            x: bankLoc.x,
+            z: bankLoc.z,
+            level: bankLoc.level,
+        });
+        const locBounds = Array.isArray(locPoints) && locPoints.length === 8
+            ? { id: bankLoc.id, x: bankLoc.x, z: bankLoc.z, points: locPoints }
+            : null;
         if (!npcBounds || !locBounds) throw new Error('ClientAdapter did not expose real NPC and loc bounds');
         const unknownControl = {
             button: reader.buttonByText(2147483647, 'unknown control'),
@@ -106,7 +118,7 @@ export default class ClientAdapterLiveProbe extends LoopingBot {
             npcCount: npcRows.length,
             coinsBefore,
             coinsAfter: Inventory.count('Coins'),
-            locCount: locRows.length,
+            bankBooth: { id: bankLoc.id, x: bankLoc.x, z: bankLoc.z },
             npc: npcBounds,
             loc: locBounds,
             unknownControl,
@@ -146,6 +158,46 @@ fn send_cheat(client: &mut Client, command: &str) -> Result<(), String> {
             "live ClientAdapter seed command was refused: {command}"
         ))
     }
+}
+fn nearby_bank_loc(snapshot: &GameSnapshot) -> Option<Value> {
+    let (base_x, base_z) = snapshot.base()?;
+    snapshot
+        .locs()
+        .iter()
+        .filter_map(|loc| {
+            if loc.distance > 8
+                || !loc
+                    .name
+                    .as_deref()
+                    .is_some_and(|name| name.eq_ignore_ascii_case("Bank booth"))
+            {
+                return None;
+            }
+            let op = loc.actions.iter().position(|action| {
+                action
+                    .as_deref()
+                    .is_some_and(|action| action.eq_ignore_ascii_case("Use-quickly"))
+            })?;
+            let op = i32::try_from(op + 1).ok()?;
+            if !(1..=5).contains(&op) {
+                return None;
+            }
+            Some((
+                loc.distance,
+                json!({
+                    "id": loc.id,
+                    "typecode": loc.typecode,
+                    "lx": loc.tile.x - base_x,
+                    "lz": loc.tile.z - base_z,
+                    "x": loc.tile.x,
+                    "z": loc.tile.z,
+                    "level": loc.tile.level,
+                    "op": op,
+                }),
+            ))
+        })
+        .min_by_key(|(distance, _)| *distance)
+        .map(|(_, bank_loc)| bank_loc)
 }
 
 fn seed_frame(client: &mut Client, held: bool, shared: &Mutex<SeedPrep>) {
@@ -233,12 +285,16 @@ fn seed_frame(client: &mut Client, held: bool, shared: &Mutex<SeedPrep>) {
                     && tile == Some(BANK_TILE)
                     && attack == Some(20)
                 {
+                    let bank_loc = nearby_bank_loc(&snapshot).ok_or_else(|| {
+                        "no nearby Draynor bank booth with Use-quickly".to_string()
+                    })?;
                     prep.evidence = Some(json!({
                         "tutorial_relogin_confirmed": true,
                         "observed_attack": attack,
                         "observed_tile": tile,
                         "ingame": client.ingame,
                         "scene_state": client.scene_state,
+                        "bank_loc": bank_loc,
                     }));
                     prep.phase = Some(PrepPhase::Ready);
                 }
@@ -438,9 +494,14 @@ fn run_cell(receipt: &mut Value) -> Result<(), String> {
         std::thread::sleep(POLL);
     }
 
+    let bank_loc = receipt["preparation"]["bank_loc"].clone();
+    if bank_loc.is_null() {
+        return Err("ClientAdapter preparation did not capture a nearby bank booth".into());
+    }
+    let probe_source = PROBE_SOURCE.replace("__BANK_LOC_JSON__", &bank_loc.to_string());
     play.script_start_load(
         account,
-        PROBE_SOURCE.to_owned(),
+        probe_source,
         script_js::LoadShape::CompatClass,
         None,
         vec![],
