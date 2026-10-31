@@ -81,7 +81,11 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.7` 
   the dose again after 3 game ticks with no dose used, and then go back to
   work. After a drink they wait out the game's short drink delay before the
   next bite or work click, and a second bite waits for the game's next-food
-  delay, so the game does not drop either click.
+  delay, so the game does not drop either click. Both waits count from the
+  game tick in which the game used the dose or the food, so they stay right
+  when the game applies a click late.
+- After a bite or a closed page that leaves nothing more to do, the Quester
+  goes back to its step in the same game tick.
 
 ### Scripting
 

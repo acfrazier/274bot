@@ -598,40 +598,6 @@ fn fixture(
     before_relog: Vec<scenario::Step>,
     mode: Mode,
 ) -> Cell {
-    fixture_with_hp(
-        activity,
-        label,
-        stand,
-        extra_items,
-        seed_vars,
-        before_relog,
-        mode,
-        30,
-    )
-}
-
-/// The Base40 qualification profile's Hitpoints level, observed by the
-/// fixture's profile proof before the cell seeds its own level.
-const PROFILE_HITPOINTS: i32 = 40;
-
-#[expect(
-    clippy::too_many_arguments,
-    reason = "the fixture's account-owned seeds stay explicit at each cell"
-)]
-fn fixture_with_hp(
-    activity: Activity,
-    label: &str,
-    stand: WorldTile,
-    extra_items: &[(&str, i32)],
-    seed_vars: &[(&str, i32)],
-    before_relog: Vec<scenario::Step>,
-    mode: Mode,
-    hitpoints: i32,
-) -> Cell {
-    assert_ne!(
-        hitpoints, PROFILE_HITPOINTS,
-        "the seeded level must differ from the profile's to prove the setstat landed"
-    );
     let mut cell = quester_live::path_cell(PathCell {
         quest: "cook",
         display: "Cook's Assistant",
@@ -683,19 +649,47 @@ fn fixture_with_hp(
             budget_ticks: 10,
         },
     });
-    let hitpoints_command = format!("setstat hitpoints {hitpoints}");
     before_start.push(scenario::Step {
-        name: "seed the cell's Hitpoints level after the fixture profile proof",
+        name: "seed Hitpoints 30 after the fixture profile proof",
         kind: scenario::StepKind::Perform {
-            send: Box::new(move |client, _| {
-                api::interact::cheat(client, &hitpoints_command).is_sent()
+            send: Box::new(|client, _| {
+                api::interact::cheat(client, "setstat hitpoints 30").is_sent()
             }),
         },
         wait: scenario::Wait {
             // The profile proof just observed Hitpoints 40, so only the
-            // landed `setstat` (Player.ts:1904-1909 sets base and current)
-            // satisfies a bound on the other side of 40.
-            arm: if hitpoints < PROFILE_HITPOINTS {
+            // landed `setstat` satisfies an upper bound of 30.
+            arm: scenario::Proof::StatAtMost {
+                id: HITPOINTS_STAT,
+                max: 30,
+            },
+            budget_ticks: 10,
+        },
+    });
+    insert_before_start(&mut cell.scenario, before_start);
+    cell
+}
+
+/// The fixture's Hitpoints level before a cell seeds its own.
+const FIXTURE_HITPOINTS: i32 = 30;
+
+/// A pre-Start step that sets the cell's own Hitpoints level after the
+/// fixture's level of 30 (`setstat` sets base and current,
+/// Player.ts:1904-1909). Only the landed `setstat` satisfies a bound on the
+/// other side of 30.
+fn hitpoints_step(hitpoints: i32) -> scenario::Step {
+    assert_ne!(
+        hitpoints, FIXTURE_HITPOINTS,
+        "the cell's level must differ from the fixture's"
+    );
+    let command = format!("setstat hitpoints {hitpoints}");
+    scenario::Step {
+        name: "seed the cell's own Hitpoints level",
+        kind: scenario::StepKind::Perform {
+            send: Box::new(move |client, _| api::interact::cheat(client, &command).is_sent()),
+        },
+        wait: scenario::Wait {
+            arm: if hitpoints < FIXTURE_HITPOINTS {
                 scenario::Proof::StatAtMost {
                     id: HITPOINTS_STAT,
                     max: hitpoints,
@@ -708,9 +702,7 @@ fn fixture_with_hp(
             },
             budget_ticks: 10,
         },
-    });
-    insert_before_start(&mut cell.scenario, before_start);
-    cell
+    }
 }
 
 fn bank_seed_step(alias: &'static str) -> scenario::Step {
@@ -3820,7 +3812,7 @@ fn track_cell(
     poison_commands: Vec<&'static str>,
     deadline: u32,
 ) -> (Cell, Arc<Mutex<Witness>>) {
-    let mut cell = fixture_with_hp(
+    let mut cell = fixture(
         Activity::Woodcutting,
         label,
         GATHERER_STAND,
@@ -3830,8 +3822,10 @@ fn track_cell(
         Mode::Stage {
             expect: vec!["cook:0".into()],
         },
-        hitpoints,
     );
+    if hitpoints != FIXTURE_HITPOINTS {
+        insert_before_start(&mut cell.scenario, vec![hitpoints_step(hitpoints)]);
+    }
     let witness = new_witness(
         Activity::Woodcutting,
         "Woodcutting",
