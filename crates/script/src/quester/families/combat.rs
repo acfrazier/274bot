@@ -914,7 +914,7 @@ impl StepPlan for CombatPlan {
             loot_index: 0,
             loot_wait_deadline: None,
             loot_missing_this_kill: false,
-            loot_retake: None,
+            loot_retake_tick: None,
             last_report: None,
             kills: 0,
             nonkill_reengagements: 0,
@@ -1262,9 +1262,9 @@ struct CombatRun {
     loot_index: usize,
     loot_wait_deadline: Option<u64>,
     loot_missing_this_kill: bool,
-    /// The loot index whose Take was cancelled by a rebuilt scene. That item
-    /// gets one retake; any further cancel for it is missed loot.
-    loot_retake: Option<usize>,
+    /// First rebuilt-scene failure tick for the current row. `Some` also
+    /// marks its one retake as spent; every row advancement clears it.
+    loot_retake_tick: Option<u64>,
     last_report: Option<CombatReport>,
     kills: u32,
     last_outcome: Option<StepOutcome>,
@@ -1881,7 +1881,7 @@ impl CombatRun {
                         .saturating_add(LOOT_ITEM_WAIT_TICKS),
                 );
                 self.loot_missing_this_kill = false;
-                self.loot_retake = None;
+                self.loot_retake_tick = None;
                 Poll::Pending
             }
             CombatEnd::TargetGone => {
@@ -2025,6 +2025,7 @@ impl CombatRun {
                 .sum::<i64>();
             if held >= i64::from(item.qty) {
                 self.loot_index += 1;
+                self.loot_retake_tick = None;
                 continue;
             }
             let target_tile = match self.ground_loot_tile(cx, item, area) {
@@ -2032,6 +2033,7 @@ impl CombatRun {
                 Some(None) if wait_expired => {
                     self.loot_missing_this_kill = true;
                     self.loot_index += 1;
+                    self.loot_retake_tick = None;
                     continue;
                 }
                 Some(None) => return Ok(LootStart::Waiting),
@@ -2297,6 +2299,12 @@ impl StepRun for CombatRun {
             return Poll::Pending;
         }
         if matches!(self.phase, Phase::Loot) && self.action.is_none() {
+            if self
+                .loot_retake_tick
+                .is_some_and(|failed_at| cx.tick.cx.evidence().tick <= failed_at)
+            {
+                return Poll::Pending;
+            }
             return self.next_loot_or_reengage(cx);
         }
         if !matches!(
@@ -2378,6 +2386,7 @@ impl StepRun for CombatRun {
                 // needs loot; optional drops remain non-blocking.
                 self.action = None;
                 self.loot_index += 1;
+                self.loot_retake_tick = None;
                 self.loot_missing_this_kill = true;
                 self.next_loot_or_reengage(cx)
             }
@@ -2392,16 +2401,15 @@ impl StepRun for CombatRun {
                 // the new Take binds the new scene; a second cancel for that
                 // item is missed loot like an unreachable drop.
                 self.action = None;
-                // The index advances only after a Take settles, not when
-                // it starts. A rebuild must not retarget an earlier row.
-                let cancelled = self.loot_index;
-                if self.loot_retake == Some(cancelled) {
-                    self.loot_retake = None;
+                // The current row remains owned until its Take settles.
+                // Its first failure tick also marks its one retake as spent.
+                if self.loot_retake_tick.is_some() {
+                    self.loot_retake_tick = None;
                     self.loot_index += 1;
                     self.loot_missing_this_kill = true;
                     self.next_loot_or_reengage(cx)
                 } else {
-                    self.loot_retake = Some(cancelled);
+                    self.loot_retake_tick = Some(cx.tick.cx.evidence().tick);
                     Poll::Pending
                 }
             }
@@ -2446,6 +2454,7 @@ impl StepRun for CombatRun {
             ActionPoll::Loot(taken) => {
                 self.action = None;
                 self.loot_index += 1;
+                self.loot_retake_tick = None;
                 if !taken {
                     // A stale or absent drop is not evidence for another click.
                     // The next combat run can produce a fresh ground row.

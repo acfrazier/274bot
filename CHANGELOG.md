@@ -97,9 +97,9 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.8` 
   the last walk failure. The fight's budget still limits the walk and fight
   together.
 - A Quester fight now retakes its drop when the game reloads the scene just as
-  the take starts. The drop stays on the ground after a reload, so the Quester
-  takes the same item once more on the next tick. If that try also fails, the
-  fight step moves on to the next item as it does for an unreachable drop.
+  the take starts. It waits for a later observed game tick before it takes the
+  same item once more. Evidence wakes within the cancelled tick cannot send a
+  retake. A second scene reload skips that item. Required-loot checks still apply.
   Before, the whole step failed with "step error" and the item was left behind.
 - Quester's Blocked status keeps the quest stage, step and last failure after
   a parked executor stops. A park with no selected step reports an empty

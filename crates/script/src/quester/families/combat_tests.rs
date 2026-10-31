@@ -1135,7 +1135,7 @@ fn combat_test_run_with_radius(
         loot_index: 0,
         loot_wait_deadline: None,
         loot_missing_this_kill: false,
-        loot_retake: None,
+        loot_retake_tick: None,
         last_report: None,
         kills: 0,
         last_outcome: None,
@@ -6363,6 +6363,20 @@ fn a_rebuilt_scene_retakes_the_same_loot_item_on_the_next_observed_tick() {
         let scene = loot_scene(here, vec![row.clone()], (3168, 3168), inventory.clone());
         let rebuilt = loot_scene(here, vec![row], (3176, 3168), inventory.clone());
         let reach = open_flood(here, 8);
+        let poll_at = |run: &mut CombatRun,
+                       snapshot: &GameSnapshot,
+                       ledger: &mut TestLedger,
+                       tick: u64,
+                       sequence: u64| {
+            with_step_context_reach(snapshot, &reach, ledger, tick, |cx| {
+                let mut evidence = cx.tick.cx.evidence();
+                evidence.sequence = sequence;
+                cx.tick.cx.evidence = evidence;
+                cx.tick.cx.snapshot = SnapshotView::new(cx.tick.frame.snapshot, evidence);
+                cx.required_after = evidence;
+                run.poll(cx)
+            })
+        };
         let mut ledger = None;
         run.action = Some(Action::Loot(begin_exact_loot_take(
             &scene,
@@ -6373,15 +6387,24 @@ fn a_rebuilt_scene_retakes_the_same_loot_item_on_the_next_observed_tick() {
         )));
         assert_eq!(loot_takes(&ledger, bead.id), 1, "the queued Take");
 
-        let stale = with_step_context_reach(&rebuilt, &reach, &mut ledger, 31, |cx| run.poll(cx));
+        let stale = poll_at(&mut run, &rebuilt, &mut ledger, 31, 31);
         assert!(stale.is_pending(), "{}", describe_poll(&stale));
         assert!(run.action.is_none(), "the cancelled Take is cleared");
         assert_eq!(run.loot_index, first_index, "the same row is addressed again");
-        assert_eq!(run.loot_retake, Some(first_index));
+        assert_eq!(run.loot_retake_tick, Some(31));
         assert_eq!(loot_takes(&ledger, bead.id), 1, "no Take on the cancelled tick");
 
         ledger.as_mut().unwrap().outbox.clear();
-        let retake = with_step_context_reach(&rebuilt, &reach, &mut ledger, 32, |cx| run.poll(cx));
+        // Fresh evidence sequences wake the script without a PLAYER_INFO tick.
+        // Neither wake may submit a retake on the cancellation tick.
+        for sequence in [32, 33] {
+            let wake = poll_at(&mut run, &rebuilt, &mut ledger, 31, sequence);
+            assert!(wake.is_pending(), "{}", describe_poll(&wake));
+            assert!(run.action.is_none());
+            assert_eq!(loot_takes(&ledger, bead.id), 0, "same-tick wakes do not retake");
+            assert_eq!(run.loot_retake_tick, Some(31));
+        }
+        let retake = poll_at(&mut run, &rebuilt, &mut ledger, 32, 34);
         assert!(retake.is_pending(), "{}", describe_poll(&retake));
         assert_eq!(run.loot_index, first_index, "submission does not advance the row");
         assert_eq!(loot_takes(&ledger, bead.id), 1, "one retake for the same item");
@@ -6389,9 +6412,10 @@ fn a_rebuilt_scene_retakes_the_same_loot_item_on_the_next_observed_tick() {
 
         inventory.push(inventory_item(bead.id, bead.name.as_deref().unwrap(), 1));
         let gained = loot_scene(here, Vec::new(), (3176, 3168), inventory);
-        let done = with_step_context_reach(&gained, &reach, &mut ledger, 33, |cx| run.poll(cx));
+        let done = poll_at(&mut run, &gained, &mut ledger, 33, 35);
         assert!(matches!(&done, Poll::Ready(Ok(_))), "{}", describe_poll(&done));
         assert_eq!(run.loot_index, first_index + 1, "only settlement advances the row");
+        assert!(run.loot_retake_tick.is_none());
     }
 }
 
@@ -6422,7 +6446,7 @@ fn a_second_rebuilt_scene_cancel_on_the_retaken_item_is_missed_loot() {
         run.phase = Phase::Loot;
         // A Take still owns its row until settlement, including its one retake.
         run.loot_index = 0;
-        run.loot_retake = Some(0);
+        run.loot_retake_tick = Some(29);
         let bead_row = ground_item(bead.id, bead.name.as_deref().unwrap(), here, 0);
         let bones_row = ground_item(bones.id, bones.name.as_deref().unwrap(), here, 0);
         let scene = loot_scene(
@@ -6440,7 +6464,7 @@ fn a_second_rebuilt_scene_cancel_on_the_retaken_item_is_missed_loot() {
         ledger.as_mut().unwrap().outbox.clear();
         let stale = with_step_context_reach(&rebuilt, &reach, &mut ledger, 31, |cx| run.poll(cx));
         assert!(stale.is_pending(), "{}", describe_poll(&stale));
-        assert!(run.loot_retake.is_none());
+        assert!(run.loot_retake_tick.is_none());
         assert_eq!(run.loot_index, 1, "the next item owns the unsettled Take");
         assert!(run.loot_missing_this_kill);
         assert_eq!(loot_takes(&ledger, bead.id), 0, "no third Take");
