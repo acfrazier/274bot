@@ -419,7 +419,7 @@ struct SetupState {
     error: Option<String>,
     logout_session: Option<u64>,
     tutorial_reseed: Option<scenario::tutorial::PostRelogTutorial>,
-    npc_index: Option<usize>,
+    npc_observation_generation: Option<u64>,
     npc_observations: Vec<interact::server_ordered::ExactNpcReference>,
 }
 
@@ -458,7 +458,7 @@ impl SetupState {
             error: None,
             logout_session: None,
             tutorial_reseed: None,
-            npc_index: None,
+            npc_observation_generation: None,
             npc_observations: Vec::new(),
         }
     }
@@ -578,24 +578,26 @@ impl SetupState {
     }
 
     fn observe_npc(&mut self, snapshot: &GameSnapshot) {
-        let Some((type_id, spawn)) = self.scenario.required_npc else {
+        let Some((type_id, _)) = self.scenario.required_npc else {
             return;
         };
-        let Some(npc) = snapshot.npcs().iter().find(|npc| {
-            npc.r#type.and_then(|id| i32::try_from(id).ok()) == Some(type_id)
-                && self
-                    .npc_index
-                    .map_or(npc.tile == spawn, |index| npc.index == index)
-        }) else {
+        let generation = snapshot.gens().npc_info;
+        if self.npc_observation_generation == Some(generation) {
             return;
-        };
-        // ExactNpcReference::from_snapshot uses NpcView.network: build base
-        // plus route[0], not the rendered tile (snapshot/decode.rs:1388).
-        if let Ok(reference) =
-            interact::server_ordered::ExactNpcReference::from_snapshot(snapshot, npc, 1)
+        }
+        self.npc_observation_generation = Some(generation);
+        // Record each observed row, not the first NPC sharing the display
+        // spawn. Gatherer may choose another real spot after normal movement.
+        // from_snapshot uses NpcView.network: build base plus route[0], not
+        // the rendered tile (snapshot/decode.rs:1388).
+        for npc in snapshot
+            .npcs()
+            .iter()
+            .filter(|npc| npc.r#type.and_then(|id| i32::try_from(id).ok()) == Some(type_id))
         {
-            self.npc_index = Some(npc.index);
-            if self.npc_observations.last() != Some(&reference) {
+            if let Ok(reference) =
+                interact::server_ordered::ExactNpcReference::from_snapshot(snapshot, npc, 1)
+            {
                 self.npc_observations.push(reference);
             }
         }
@@ -6114,21 +6116,21 @@ mod packet_oracle_tests {
     #[test]
     fn npc_knife_receipt_requires_exact_continuing_freshfish_operation() {
         let dispatch = freshfish_dispatch_fixture();
-        let observed = [interact::server_ordered::ExactNpcReference::new(
-            3712,
-            309,
-            tile(2382, 3415, 0),
-            3,
-            1,
-        )
-        .unwrap()];
+        let observed = [
+            interact::server_ordered::ExactNpcReference::new(3712, 309, tile(2382, 3415, 0), 3, 1)
+                .unwrap(),
+            interact::server_ordered::ExactNpcReference::new(3714, 309, tile(2382, 3414, 0), 3, 1)
+                .unwrap(),
+        ];
         assert!(npc_freshfish_knife_dispatch_matches(&dispatch, &observed));
 
         // The real spawn's rendered tile is (2382,3414), but its observed
         // path-head network tile in the retained receipt is (2382,3415).
-        // Neither that rendered tile nor another NPC/operation is acceptable.
+        // Changing only this request's tile or NPC must fail, even when that
+        // field belongs to another observed row. The whole tuple must match.
         for (from, to) in [
             ("index: 3712", "index: 3713"),
+            ("index: 3712", "index: 3714"),
             ("type_id: 309", "type_id: 330"),
             ("z: 3415", "z: 3414"),
             ("npc_info_generation: 3", "npc_info_generation: 2"),
