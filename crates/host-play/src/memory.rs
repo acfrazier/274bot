@@ -46,6 +46,8 @@ const Q4_PAUSE_AFTER: Duration = Duration::from_secs(10);
 const Q4_PAUSE_FOR: Duration = Duration::from_secs(5);
 const Q4_PAUSE_RESUME_TIMEOUT: Duration = Duration::from_secs(5);
 const Q4_STOP_AFTER: Duration = Duration::from_secs(20);
+/// How long ten Load isolates may take to reap after Stop.
+const Q4_STOP_IDLE_TIMEOUT: Duration = Duration::from_secs(10);
 const Q4_WORKLOAD_NAME: &str = "AccountLeveler-listener probe";
 const Q4_CATALOG_DEFERRED_REASON: &str = "Catalog AccountLeveler imports wave-4 quest modules, including readDragonProgress from api/ai/quests/defs/dragonslayer/journal.js; the catalog A/B moves to wave 4.";
 
@@ -2166,6 +2168,8 @@ pub struct Run {
     q4_pause_counts: Option<HashMap<String, FrameDeliveryObservation>>,
     q4_resume_counts: Option<HashMap<String, FrameDeliveryObservation>>,
     q4_stop_counts: Option<HashMap<String, FrameDeliveryObservation>>,
+    /// Set from the Stop request until every slot reports Idle.
+    q4_stop_requested_at: Option<Instant>,
     q4_lifecycle_events: Vec<serde_json::Value>,
     output: BufWriter<std::fs::File>,
     diagnostics: bool,
@@ -2478,6 +2482,7 @@ impl Run {
             q4_pause_counts: None,
             q4_resume_counts: None,
             q4_stop_counts: None,
+            q4_stop_requested_at: None,
             q4_lifecycle_events: Vec::with_capacity(2),
             output,
             diagnostics,
@@ -2794,14 +2799,22 @@ impl Run {
                     for name in &self.names {
                         play.script_stop(name);
                     }
+                    // A Load slot reaps its isolate asynchronously (Stopping,
+                    // then Idle); the host delivers no client frame to a
+                    // Stopping slot, so the counts at the request are final.
                     self.q4_stop_counts = Some(
                         frame_delivery_observations(&self.names)
                             .ok_or("q4_stop_counters_unavailable")?,
                     );
-                    if !self.q4_scripts_are(play, script::RunState::Idle) {
+                    self.q4_stop_requested_at = Some(now);
+                }
+                if let Some(requested) = self.q4_stop_requested_at {
+                    if self.q4_scripts_are(play, script::RunState::Idle) {
+                        self.q4_stop_requested_at = None;
+                        self.record_q4_lifecycle_event(play, now, "stopped");
+                    } else if now.duration_since(requested) >= Q4_STOP_IDLE_TIMEOUT {
                         return Err("q4_script_idle_state_not_observed_after_stop".into());
                     }
-                    self.record_q4_lifecycle_event(play, now, "stopped");
                 }
             }
             Some(
