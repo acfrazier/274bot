@@ -588,12 +588,13 @@ fn send_pre_batch_user_events(
     if hold {
         return;
     }
-    if {
+    let unavailable = {
         let state = state
             .lock()
             .expect("tick-engine foreign event state poisoned");
         !state.armed || state.sent || state.error.is_some()
-    } {
+    };
+    if unavailable {
         return;
     }
     let mut snapshot = GameSnapshot::new();
@@ -2860,7 +2861,7 @@ fn copper_history(scenario: Scenario, expect_held_join: bool) -> Result<RunEvide
                 .proxy
                 .as_ref()
                 .map_or_else(Vec::new, |proxy| proxy.observations());
-            let expected_opcodes = vec![
+            let expected_opcodes = [
                 ClientProt289::OPHELDU.id as u8,
                 ClientProt289::IF_BUTTON.id as u8,
                 ClientProt289::MOVE_OPCLICK.id as u8,

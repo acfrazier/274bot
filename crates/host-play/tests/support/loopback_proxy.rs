@@ -367,9 +367,9 @@ fn flush_upstream(
         let action = {
             let mut state = state
                 .lock()
-                .map_err(|_| io::Error::new(ErrorKind::Other, "loopback proxy state poisoned"))?;
+                .map_err(|_| io::Error::other("loopback proxy state poisoned"))?;
             if let Some(error) = &state.error {
-                return Err(io::Error::new(ErrorKind::Other, error.clone()));
+                return Err(io::Error::other(error.clone()));
             }
             if state.gate.is_none() {
                 UpstreamAction::Pass
@@ -435,9 +435,9 @@ fn flush_upstream(
                     Ok(0) => return Ok(activity),
                     Ok(written) => {
                         buffer.drain(..written);
-                        let mut state = state.lock().map_err(|_| {
-                            io::Error::new(ErrorKind::Other, "loopback proxy state poisoned")
-                        })?;
+                        let mut state = state
+                            .lock()
+                            .map_err(|_| io::Error::other("loopback proxy state poisoned"))?;
                         if let Some(gate) = state.gate.as_mut() {
                             gate.processed_bytes = gate.processed_bytes.saturating_add(written);
                             gate.observation.forwarded_bytes =
@@ -455,9 +455,9 @@ fn flush_upstream(
                     return Ok(activity);
                 }
                 buffer.drain(..length);
-                let mut state = state.lock().map_err(|_| {
-                    io::Error::new(ErrorKind::Other, "loopback proxy state poisoned")
-                })?;
+                let mut state = state
+                    .lock()
+                    .map_err(|_| io::Error::other("loopback proxy state poisoned"))?;
                 if let Some(gate) = state.gate.as_mut() {
                     gate.processed_bytes = gate.processed_bytes.saturating_add(length);
                     gate.observation.dropped_bytes =
