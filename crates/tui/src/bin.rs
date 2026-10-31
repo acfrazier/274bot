@@ -4230,6 +4230,14 @@ impl TuiSession {
                     .with_slot_snapshot(account, |snapshot| snapshot.tick())
             );
         }
+        if self.names.iter().all(|account| {
+            self.core
+                .fleet_view()
+                .row(account)
+                .is_none_or(|row| !row.connected())
+        }) {
+            return Ok(());
+        }
         let logouts = self
             .live_logout
             .as_ref()
