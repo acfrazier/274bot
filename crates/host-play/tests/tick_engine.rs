@@ -2014,14 +2014,18 @@ fn has_chat_in_range(
     through_tick: u64,
     predicate: impl Fn(&str) -> bool,
 ) -> bool {
-    trace.frames.iter().flat_map(|frame| &frame.chat).any(|line| {
-        // Chat precedes PLAYER_INFO: an edge bounds it to [t, t + 1],
-        // while a wake attributes it exactly to t + 1 (facts r5 §1.5).
-        let observed = u64::from(line.game_tick);
-        let first = observed + u64::from(line.poll == PollKind::Wake);
-        let last = observed + 1;
-        first <= through_tick && last >= from_tick && predicate(&line.text)
-    })
+    trace
+        .frames
+        .iter()
+        .flat_map(|frame| &frame.chat)
+        .any(|line| {
+            // Chat precedes PLAYER_INFO: an edge bounds it to [t, t + 1],
+            // while a wake attributes it exactly to t + 1 (facts r5 §1.5).
+            let observed = u64::from(line.game_tick);
+            let first = observed + u64::from(line.poll == PollKind::Wake);
+            let last = observed + 1;
+            first <= through_tick && last >= from_tick && predicate(&line.text)
+        })
 }
 
 fn has_act_line(trace: &TickEngineTrace, tick: u64) -> bool {
@@ -3396,7 +3400,6 @@ mod packet_oracle_tests {
         assert!(!close_packet_seen(&trace, 14, &baseline));
         assert!(!close_packet_seen(&trace, 17, &baseline));
     }
-
 
     #[test]
     fn river_setup_starts_on_a_real_standable_tile() {
