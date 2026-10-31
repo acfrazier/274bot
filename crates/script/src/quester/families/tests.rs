@@ -7155,6 +7155,14 @@ fn anchored_interact_wall_retries_typed_incomplete_route() {
             with_step(tick, |step| run.poll(step))
         })
         .is_pending());
+        let first_request_id = ledger
+            .as_ref()
+            .unwrap()
+            .outbox
+            .last()
+            .expect("the first walk request is queued")
+            .request_id
+            .get();
 
         post_user_input_walk_receipt(&mut ledger, 3);
         {
@@ -7184,16 +7192,17 @@ fn anchored_interact_wall_retries_typed_incomplete_route() {
             Some(HostEffect::Walk(request))
                 if request.target == wall_tile && request.radius == 1
         ));
-        assert_eq!(
-            ledger
-                .as_ref()
-                .unwrap()
-                .outbox
-                .iter()
-                .filter(|entry| matches!(&entry.effect, HostEffect::Walk(_)))
-                .count(),
-            2,
-            "the incomplete first walk starts its bounded fallback walk",
+        let fallback_request_id = ledger
+            .as_ref()
+            .unwrap()
+            .outbox
+            .last()
+            .expect("the fallback walk request is queued")
+            .request_id
+            .get();
+        assert_ne!(
+            fallback_request_id, first_request_id,
+            "the incomplete first walk starts a new bounded fallback walk",
         );
         assert!(!ledger
             .as_ref()
