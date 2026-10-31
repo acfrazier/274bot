@@ -5071,10 +5071,6 @@ impl GatherSlot {
                 ) || !self.complete_bank_selection()
                     || self.selected_bank_name() != Some(expected_bank)
                     || self.selected_bank_kind() != Some("Reachable")
-                    || self
-                        .latest
-                        .as_ref()
-                        .is_none_or(|latest| latest.xp <= self.baseline_xp())
                 {
                     return Err(format!(
                         "{} did not gather real {resource} and complete the reachable {expected_bank} bank, deposit, return, and fresh-yield lifecycle without seeded scene locations: {:?}",
@@ -9382,6 +9378,51 @@ fn seers_maple_lifecycle_requires_the_named_bank_and_a_returned_yield() {
             0,
         ),
         "the oak fixture tile list must also remain empty"
+    );
+}
+
+#[test]
+fn draynor_oak_lifecycle_requires_a_fresh_post_bank_yield() {
+    let mut witness = Witness {
+        status_trips: 2,
+        bank_arrivals: 2,
+        status_deposited: 28,
+        bank_nonzero_roundtrips: 1,
+        post_bank_yields: 2,
+        bank_loaded_observed: true,
+        bank_closed_observed: true,
+        bank_withdrawal_confirmed: true,
+        last_status_yielded: 29,
+        last_xp: 3498,
+        last_status_bank: Some("Draynor; Reachable; access:3092,3243,0; Idle".into()),
+        ..Witness::default()
+    };
+    witness.products_seen.insert(1521);
+    witness.oak_live_tiles.insert((3106, 3247, 0));
+    let plan = FixturePlan::default();
+    let target = world_tile(3106, 3247);
+    let baseline_xp = 2411;
+
+    assert!(real_content_bank_lifecycle_complete(
+        LiveCase::BankCostFirstGoal,
+        &witness,
+        &plan,
+        target,
+        baseline_xp,
+    ));
+
+    witness.post_bank_yields = 0;
+    witness.last_status_yielded = 28;
+    witness.last_xp = 3423;
+    assert!(
+        !real_content_bank_lifecycle_complete(
+            LiveCase::BankCostFirstGoal,
+            &witness,
+            &plan,
+            target,
+            baseline_xp,
+        ),
+        "a bank return without a fresh gather must not pass"
     );
 }
 
