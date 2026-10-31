@@ -933,20 +933,21 @@ fn depleting_idle_handoff_survives_two_tick_replacement_approach_with_real_recei
     rig.animate(AnimClass::Null);
     rig.chat("You manage to mine some iron.");
     assert!(rig.poll(104).is_pending());
-    assert!(authority.live(), "the old click owner waits for its receipt");
+    assert!(
+        authority.live(),
+        "the old click owner waits for its receipt"
+    );
     rig.complete_last(None, true);
     let Poll::Ready(Ok(result)) = rig.poll(104) else {
         panic!("the consumed receipt must release the depleted owner")
     };
     assert_eq!(result.end, GatherEnd::Depleted);
-    assert!(
-        !result
-            .timing
-            .as_ref()
-            .unwrap()
-            .cycle
-            .has_unresolved_requests()
-    );
+    assert!(!result
+        .timing
+        .as_ref()
+        .unwrap()
+        .cycle
+        .has_unresolved_requests());
 
     adopt(&mut rig, target.clone(), result, 106);
     assert!(
@@ -1006,7 +1007,11 @@ fn depleting_idle_handoff_survives_two_tick_replacement_approach_with_real_recei
     });
     assert_eq!(*loc, expected);
     assert_eq!(
-        (rig.stats().verified, rig.stats().delayed, rig.stats().slipped),
+        (
+            rig.stats().verified,
+            rig.stats().delayed,
+            rig.stats().slipped
+        ),
         (0, 0, 1),
         "a recovered late cycle stays a slip while preserving the proven Idle handoff"
     );

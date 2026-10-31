@@ -39,7 +39,9 @@ pub fn frame(
         Err(poisoned) => {
             let mut state = poisoned.into_inner();
             state.armed = false;
-            state.error.get_or_insert_with(|| "guard opener state poisoned".into());
+            state
+                .error
+                .get_or_insert_with(|| "guard opener state poisoned".into());
             return;
         }
     }
@@ -83,7 +85,9 @@ pub fn frame(
             state.armed = false;
             state.client_tick = Some(client_tick);
             state.host_frame = Some(host_frame);
-            state.error.get_or_insert_with(|| "guard opener state poisoned".into());
+            state
+                .error
+                .get_or_insert_with(|| "guard opener state poisoned".into());
             return;
         }
     }
@@ -93,7 +97,10 @@ pub fn frame(
             state,
             client_tick,
             host_frame,
-            format!("Client.out had {} pending bytes before guard opener", client.out.pos),
+            format!(
+                "Client.out had {} pending bytes before guard opener",
+                client.out.pos
+            ),
         );
         return;
     }
@@ -121,16 +128,13 @@ pub fn frame(
 
     let opcode = ClientProt289::OPHELDU.id as u8;
     let trace = hook.trace();
-    let has_one_matching_wire = trace
-        .wire
-        .get(previous_wire_count..)
-        .is_some_and(|wires| {
-            wires.len() == 1
-                && wires[0].host_frame == host_frame
-                && wires[0].request_id.is_none()
-                && wires[0].opcode == opcode
-                && wires[0].encoded_length == encoded_length
-        });
+    let has_one_matching_wire = trace.wire.get(previous_wire_count..).is_some_and(|wires| {
+        wires.len() == 1
+            && wires[0].host_frame == host_frame
+            && wires[0].request_id.is_none()
+            && wires[0].opcode == opcode
+            && wires[0].encoded_length == encoded_length
+    });
     if !has_one_matching_wire {
         record_error(
             state,
@@ -151,7 +155,9 @@ pub fn frame(
         Err(poisoned) => {
             let mut state = poisoned.into_inner();
             state.sent = false;
-            state.error.get_or_insert_with(|| "guard opener state poisoned".into());
+            state
+                .error
+                .get_or_insert_with(|| "guard opener state poisoned".into());
         }
     }
 }
@@ -191,17 +197,14 @@ fn unique_inventory_item(snapshot: &GameSnapshot, id: i32) -> Result<&ItemView, 
         return Err(format!("real inventory has no positive-count item {id}"));
     };
     if rows.next().is_some() {
-        return Err(format!("real inventory has multiple positive-count rows for item {id}"));
+        return Err(format!(
+            "real inventory has multiple positive-count rows for item {id}"
+        ));
     }
     Ok(row)
 }
 
-fn record_error(
-    state: &Mutex<GuardOpenerState>,
-    client_tick: u32,
-    host_frame: u64,
-    error: String,
-) {
+fn record_error(state: &Mutex<GuardOpenerState>, client_tick: u32, host_frame: u64, error: String) {
     let mut state = state
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
@@ -280,7 +283,9 @@ mod tests {
 
         let encoded_length = emit_guard_opener(&mut client, &snapshot).unwrap();
         let mut opcodes = Vec::new();
-        assert!(Driver::trace_packets(&client, *checkpoint, &mut |opcode| opcodes.push(opcode)));
+        assert!(Driver::trace_packets(&client, *checkpoint, &mut |opcode| {
+            opcodes.push(opcode)
+        }));
         assert_eq!(opcodes, [ClientProt289::OPHELDU.id as u8]);
         assert_eq!(encoded_length, client.out.pos);
         assert_eq!(encoded_length, ClientProt289::OPHELDU.length as usize + 1);

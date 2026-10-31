@@ -25,10 +25,10 @@ use loopback_proxy::{LoopbackProxy, ProxyObservation};
 #[path = "support/engine_packet_log.rs"]
 mod engine_packet_log;
 use engine_packet_log::{EnginePacket, EnginePacketLog};
-#[path = "support/tick_startup.rs"]
-mod tick_startup;
 #[path = "support/guard_opener.rs"]
 mod guard_opener;
+#[path = "support/tick_startup.rs"]
+mod tick_startup;
 use guard_opener::GuardOpenerState;
 #[path = "support/drop_history.rs"]
 mod drop_history;
@@ -961,12 +961,7 @@ impl LiveRun {
                         &frame_hook,
                         &frame_foreign_events,
                     );
-                    guard_opener::frame(
-                        client,
-                        frame.hold,
-                        &frame_hook,
-                        &frame_guard_opener,
-                    );
+                    guard_opener::frame(client, frame.hold, &frame_hook, &frame_guard_opener);
                 }
             },
         ) {
@@ -1208,9 +1203,7 @@ impl LiveRun {
         if let Some(history) = &self.drop_history {
             let slot_statuses = self.play().statuses();
             let host_log = drop_history::host_log_for(&self.account);
-            let mut history = history
-                .lock()
-                .expect("tick-engine drop history poisoned");
+            let mut history = history.lock().expect("tick-engine drop history poisoned");
             if let Some(status) = slot_statuses
                 .iter()
                 .find(|status| status.username == self.account)
@@ -1596,11 +1589,7 @@ fn correlate_dropped_cipher_suffix(
         .iter()
         .find(|observation| observation.dropped_bytes > 0)
         .expect("one dropped proxy observation was counted");
-    validate_proxy_drop_after_make(
-        &evidence.trace,
-        &evidence.transport,
-        observation.request_id,
-    )?;
+    validate_proxy_drop_after_make(&evidence.trace, &evidence.transport, observation.request_id)?;
     assert_engine_accepted_make_prefix(packets)?;
     let make_index = packets
         .iter()
@@ -1615,9 +1604,9 @@ fn correlate_dropped_cipher_suffix(
         })
         .ok_or("Engine T accepted-Make prefix has no Make packet")?;
     let make = &packets[make_index];
-    let unknown = packets.get(make_index + 1).ok_or(
-        "Engine T did not record the post-drop ciphertext as an unknown opcode",
-    )?;
+    let unknown = packets
+        .get(make_index + 1)
+        .ok_or("Engine T did not record the post-drop ciphertext as an unknown opcode")?;
     if unknown.sequence <= make.sequence
         || unknown.tick < make.tick
         || unknown.name != "UNKNOWN"
@@ -1751,7 +1740,9 @@ fn assert_deferred_terminal_row(
             || !rows.iter().all(|packet| engine_accepted_user_event(packet))
             || !rows[..5].iter().all(|packet| packet.tick == tick)
             || !rows[5..].iter().all(|packet| packet.tick == tick + 1)
-            || !rows.windows(2).all(|pair| pair[0].sequence < pair[1].sequence)
+            || !rows
+                .windows(2)
+                .all(|pair| pair[0].sequence < pair[1].sequence)
             || packets
                 .iter()
                 .filter(|packet| packet.tick == tick && packet.charged_user_event)
@@ -2291,11 +2282,7 @@ fn iron_roll_on_edge(trace: &TickEngineTrace, tick: u64) -> bool {
     })
 }
 
-fn iface_moved_in_window(
-    trace: &TickEngineTrace,
-    tick: u64,
-    baseline: &FrameObservation,
-) -> bool {
+fn iface_moved_in_window(trace: &TickEngineTrace, tick: u64, baseline: &FrameObservation) -> bool {
     let mut previous = baseline.iface_generation;
     trace.frames.iter().any(|frame| {
         let fresh = frame.iface_generation != previous;
@@ -2337,17 +2324,21 @@ fn guard_carrier_user_events(evidence: &RunEvidence) -> Result<usize, String> {
         || opener.error.is_some()
         || opener.host_frame != Some(carrier[0].host_frame)
         || opener.encoded_length != Some(carrier[0].encoded_length)
-        || evidence.trace.wire.iter().filter(|wire| {
-            wire.request_id.is_none() && wire.opcode == ClientProt289::OPHELDU.id as u8
-        }).count() != 1
+        || evidence
+            .trace
+            .wire
+            .iter()
+            .filter(|wire| {
+                wire.request_id.is_none() && wire.opcode == ClientProt289::OPHELDU.id as u8
+            })
+            .count()
+            != 1
         || carrier[0].request_id.is_some()
         || carrier.iter().map(|wire| wire.opcode).ne(expected)
-        || !carrier[1..]
-            .iter()
-            .all(|wire| {
-                wire.request_id == Some(first.receipt.request_id)
-                    && wire.host_frame == carrier[0].host_frame
-            })
+        || !carrier[1..].iter().all(|wire| {
+            wire.request_id == Some(first.receipt.request_id)
+                && wire.host_frame == carrier[0].host_frame
+        })
         || first.receipt.dispatched_prefix != 3
         || first.receipt.wire_events != 4
         || first.receipt.terminal.is_some()
@@ -2369,11 +2360,15 @@ fn assert_engine_stale_guard(packets: &[EnginePacket]) -> Result<(), String> {
     for rows in relevant.windows(expected.len()) {
         if rows.iter().map(|packet| packet.opcode).eq(expected)
             && rows.iter().all(|packet| packet.tick == rows[0].tick)
-            && rows[..3].iter().all(|packet| engine_accepted_user_event(packet))
+            && rows[..3]
+                .iter()
+                .all(|packet| engine_accepted_user_event(packet))
             && rows[3..]
                 .iter()
                 .all(|packet| !packet.handler_accepted && !packet.charged_user_event)
-            && rows.windows(2).all(|pair| pair[0].sequence < pair[1].sequence)
+            && rows
+                .windows(2)
+                .all(|pair| pair[0].sequence < pair[1].sequence)
         {
             println!(
                 "TICK-MANIP stale-menu guard Engine T tick={} (host R+1): two accepted openers, accepted Make, refused terminal pair; chat.rs2:830-834; Fletching must follow at R+2 and roll at R+4",
@@ -2382,14 +2377,12 @@ fn assert_engine_stale_guard(packets: &[EnginePacket]) -> Result<(), String> {
             return Ok(());
         }
     }
-    Err(format!("Engine T did not decode the five-event stale-menu guard carrier in one tick: {packets:?}"))
+    Err(format!(
+        "Engine T did not decode the five-event stale-menu guard carrier in one tick: {packets:?}"
+    ))
 }
 
-fn stale_guard_landing(
-    trace: &TickEngineTrace,
-    origin: u64,
-    baseline: &FrameObservation,
-) -> bool {
+fn stale_guard_landing(trace: &TickEngineTrace, origin: u64, baseline: &FrameObservation) -> bool {
     close_packet_seen(trace, origin + 1, baseline)
         && iface_moved_in_window(trace, origin + 1, baseline)
         && no_fresh_animation_on_edge(trace, origin + 1)
@@ -2404,11 +2397,13 @@ fn stale_guard_landing(
             .filter(|dispatch| dispatch.game_tick < origin + 4)
             .count()
             == 1
-        && trace.frames.iter().all(|frame| frame.log_count == baseline.log_count)
+        && trace
+            .frames
+            .iter()
+            .all(|frame| frame.log_count == baseline.log_count)
         && !trace.wire.iter().any(|wire| {
             wire.opcode == ClientProt289::CLOSE_MODAL.id as u8
-                || wire.opcode == ClientProt289::IF_BUTTON.id as u8
-                    && wire.request_id.is_none()
+                || wire.opcode == ClientProt289::IF_BUTTON.id as u8 && wire.request_id.is_none()
         })
 }
 
@@ -2494,11 +2489,7 @@ fn assert_proxy_drop_after_make(
     assert_drop_relogin(run, request_id, origin)
 }
 
-fn assert_drop_relogin(
-    run: &mut LiveRun,
-    request_id: u64,
-    origin: u64,
-) -> Result<(), String> {
+fn assert_drop_relogin(run: &mut LiveRun, request_id: u64, origin: u64) -> Result<(), String> {
     let trace = run.hook.trace();
     run.capture_status(&trace);
     let history = run
@@ -2511,9 +2502,7 @@ fn assert_drop_relogin(
         .map(|wire| wire.host_frame)
         .ok_or("suffix-drop request has no encrypted wire frames")?;
     let (initial_session, initial_slot, initial_verified) = {
-        let history = history
-            .lock()
-            .expect("tick-engine drop history poisoned");
+        let history = history.lock().expect("tick-engine drop history poisoned");
         let initial_session = history
             .client_sessions
             .iter()
@@ -2568,8 +2557,7 @@ fn assert_drop_relogin(
             .client_sessions
             .iter()
             .filter(|observation| {
-                observation.host_frame > batch_host_frame
-                    && observation.session != initial_session
+                observation.host_frame > batch_host_frame && observation.session != initial_session
             })
             .map(|observation| observation.host_frame)
             .min();
@@ -2581,8 +2569,7 @@ fn assert_drop_relogin(
         });
         let disconnect_boundary = history_snapshot.slot_status.iter().any(|observation| {
             observation.host_frame > batch_host_frame
-                && (!observation.connected
-                    || observation.stream_epoch != initial_slot.stream_epoch)
+                && (!observation.connected || observation.stream_epoch != initial_slot.stream_epoch)
         });
         let ready_slot = history_snapshot.slot_status.iter().any(|observation| {
             observation.host_frame > batch_host_frame
@@ -2592,10 +2579,11 @@ fn assert_drop_relogin(
                 && observation.scene_state == 2
                 && observation.startup_phase == host_play::StartupPhase::Ready
         });
-        let read_eof = history_snapshot
-            .host_log
-            .iter()
-            .position(|observation| observation.message.starts_with("session exit reason=read_eof"));
+        let read_eof = history_snapshot.host_log.iter().position(|observation| {
+            observation
+                .message
+                .starts_with("session exit reason=read_eof")
+        });
         let reconnect_attempt = read_eof.and_then(|exit_index| {
             history_snapshot
                 .host_log
@@ -3496,7 +3484,9 @@ fn copper_history(scenario: Scenario, expect_held_join: bool) -> Result<RunEvide
                 } else {
                     fresh_animation_on_edge(trace, origin + 4)
                         .is_some_and(|(sequence, _)| sequence == BRONZE_PICK_ANIMATION)
-                        && statuses.last().is_some_and(|status| status.tick_cycle == Some(3))
+                        && statuses
+                            .last()
+                            .is_some_and(|status| status.tick_cycle == Some(3))
                 }
         })?;
         let trace = run.hook.trace();
@@ -3824,7 +3814,9 @@ fn tick_engine_lone_opener_with_and_without_snapshot_suppression() {
     let visible_prefix = normalized_prefix(&visible, 3);
     let hidden_prefix = normalized_prefix(&hidden, 3);
     if let Some(difference) = prefix_difference(&visible_prefix, &hidden_prefix) {
-        panic!("lone-opener host trace changed when IF_OPENCHAT was snapshot-suppressed: {difference}");
+        panic!(
+            "lone-opener host trace changed when IF_OPENCHAT was snapshot-suppressed: {difference}"
+        );
     }
 }
 
@@ -3931,7 +3923,11 @@ mod packet_oracle_tests {
     }
 
     fn prefix_evidence() -> RunEvidence {
-        let mut evidence = evidence(vec![wire(ClientProt289::OPHELDU.id as u8, 1, 13)], vec![], vec![]);
+        let mut evidence = evidence(
+            vec![wire(ClientProt289::OPHELDU.id as u8, 1, 13)],
+            vec![],
+            vec![],
+        );
         evidence.baseline = Some(observed_frame(6, true, 1));
         evidence.trace.dispatches.push(DispatchObservation {
             game_tick: 7,
@@ -3971,7 +3967,10 @@ mod packet_oracle_tests {
     #[test]
     fn first_nonverified_verdict_does_not_invent_a_last_verified_duration() {
         assert!(first_nonverified_verdict_present(
-            Some(1), Some(-1), Some(0), Some(0)
+            Some(1),
+            Some(-1),
+            Some(0),
+            Some(0)
         ));
         for (counter, cycle, verified, unobserved) in [
             (Some(0), Some(-1), Some(0), Some(0)),
@@ -4030,7 +4029,13 @@ mod packet_oracle_tests {
                     } else {
                         ROLL_ANIMATION
                     },
-                    serial: if tick < 9 { 1 } else if tick < 11 { 2 } else { 3 },
+                    serial: if tick < 9 {
+                        1
+                    } else if tick < 11 {
+                        2
+                    } else {
+                        3
+                    },
                 });
                 frame
             })
@@ -4042,8 +4047,16 @@ mod packet_oracle_tests {
     fn natural_mining_roll_gate_rejects_start_acts_stale_frames_and_successes() {
         use host_play::tick_engine_test_support::fresh_mining_roll;
         let mut evidence = stale_guard_evidence();
-        evidence.trace.frames[4].animation.as_mut().unwrap().sequence = MITHRIL_PICK_ANIMATION;
-        assert!(fresh_mining_roll(&evidence.trace, 11, MITHRIL_PICK_ANIMATION));
+        evidence.trace.frames[4]
+            .animation
+            .as_mut()
+            .unwrap()
+            .sequence = MITHRIL_PICK_ANIMATION;
+        assert!(fresh_mining_roll(
+            &evidence.trace,
+            11,
+            MITHRIL_PICK_ANIMATION
+        ));
         for facet in 0..6 {
             let mut trace = evidence.trace.clone();
             match facet {
@@ -4058,23 +4071,39 @@ mod packet_oracle_tests {
                         "You swing your pick at the rock."
                     } else {
                         "You manage to mine some iron."
-                    }.into(),
+                    }
+                    .into(),
                     poll: PollKind::Edge,
                 }),
                 _ => unreachable!(),
             }
-            assert!(!fresh_mining_roll(&trace, 11, MITHRIL_PICK_ANIMATION), "invalid facet {facet}");
+            assert!(
+                !fresh_mining_roll(&trace, 11, MITHRIL_PICK_ANIMATION),
+                "invalid facet {facet}"
+            );
         }
     }
 
     #[test]
     fn iron_roll_accepts_real_pick_or_fast_rock_success_not_fishing_or_a_bare_null() {
         let mut evidence = stale_guard_evidence();
-        evidence.trace.frames[4].animation.as_mut().unwrap().sequence = MITHRIL_PICK_ANIMATION;
+        evidence.trace.frames[4]
+            .animation
+            .as_mut()
+            .unwrap()
+            .sequence = MITHRIL_PICK_ANIMATION;
         assert!(iron_roll_on_edge(&evidence.trace, 11));
-        evidence.trace.frames[4].animation.as_mut().unwrap().sequence = ROLL_ANIMATION;
+        evidence.trace.frames[4]
+            .animation
+            .as_mut()
+            .unwrap()
+            .sequence = ROLL_ANIMATION;
         assert!(!iron_roll_on_edge(&evidence.trace, 11));
-        evidence.trace.frames[4].animation.as_mut().unwrap().sequence = -1;
+        evidence.trace.frames[4]
+            .animation
+            .as_mut()
+            .unwrap()
+            .sequence = -1;
         assert!(!iron_roll_on_edge(&evidence.trace, 11));
         evidence.trace.frames[4].chat.push(ChatObservation {
             game_tick: 11,
@@ -4110,8 +4139,14 @@ mod packet_oracle_tests {
         for facet in 0..8 {
             let mut trace = evidence.trace.clone();
             match facet {
-                0 => trace.frames.iter_mut().for_each(|frame| frame.server_if_close_packets = 1),
-                1 => trace.frames.iter_mut().for_each(|frame| frame.iface_generation = 0),
+                0 => trace
+                    .frames
+                    .iter_mut()
+                    .for_each(|frame| frame.server_if_close_packets = 1),
+                1 => trace
+                    .frames
+                    .iter_mut()
+                    .for_each(|frame| frame.iface_generation = 0),
                 2 => trace.frames[1].animation.as_mut().unwrap().serial = 99,
                 3 => trace.frames[2].animation.as_mut().unwrap().sequence = CAST_ANIMATION,
                 4 => {
@@ -4127,7 +4162,10 @@ mod packet_oracle_tests {
                 }),
                 _ => unreachable!(),
             }
-            assert!(!stale_guard_landing(&trace, 7, baseline), "missing facet {facet}");
+            assert!(
+                !stale_guard_landing(&trace, 7, baseline),
+                "missing facet {facet}"
+            );
         }
     }
 
@@ -4162,7 +4200,10 @@ mod packet_oracle_tests {
         repeated.trace.frames.last_mut().unwrap().host_frame += 1;
         repeated.statuses.push(repeated.statuses[0].clone());
         repeated.statuses.last_mut().unwrap().host_frame += 1;
-        assert_eq!(normalized_prefix(&original, 2), normalized_prefix(&repeated, 2));
+        assert_eq!(
+            normalized_prefix(&original, 2),
+            normalized_prefix(&repeated, 2)
+        );
     }
 
     #[test]
@@ -4179,7 +4220,11 @@ mod packet_oracle_tests {
         assert_eq!(reference, normalized_prefix(&upkeep, 3));
         let mut action = original;
         action.trace.wire[0].game_tick = 8;
-        assert_ne!(reference, normalized_prefix(&action, 3), "host action moved");
+        assert_ne!(
+            reference,
+            normalized_prefix(&action, 3),
+            "host action moved"
+        );
     }
 
     #[test]
@@ -4188,20 +4233,36 @@ mod packet_oracle_tests {
         let reference = normalized_prefix(&original, 2);
         let mut changed = original.clone();
         changed.trace.frames[0].tick_edge = false;
-        assert_ne!(reference, normalized_prefix(&changed, 2), "edge disappeared");
+        assert_ne!(
+            reference,
+            normalized_prefix(&changed, 2),
+            "edge disappeared"
+        );
         let mut changed = original.clone();
         let mut frame = changed.trace.frames[1].clone();
         frame.server_if_close_packets += 1;
         changed.trace.frames.push(frame);
-        assert_ne!(reference, normalized_prefix(&changed, 2), "IF_CLOSE disappeared");
+        assert_ne!(
+            reference,
+            normalized_prefix(&changed, 2),
+            "IF_CLOSE disappeared"
+        );
         let mut changed = original.clone();
         let mut status = changed.statuses[0].clone();
         status.tick_slips = Some(1);
         changed.statuses.push(status);
-        assert_ne!(reference, normalized_prefix(&changed, 2), "verdict disappeared");
+        assert_ne!(
+            reference,
+            normalized_prefix(&changed, 2),
+            "verdict disappeared"
+        );
         let mut changed = original;
         changed.trace.wire.push(changed.trace.wire[0]);
-        assert_ne!(reference, normalized_prefix(&changed, 2), "duplicate packet disappeared");
+        assert_ne!(
+            reference,
+            normalized_prefix(&changed, 2),
+            "duplicate packet disappeared"
+        );
     }
 
     #[test]
@@ -4219,15 +4280,26 @@ mod packet_oracle_tests {
         });
         assert_eq!(reference, normalized_prefix(&caught, 2));
         caught.trace.frames[1].chat[0].text = "You attempt to catch a fish.".into();
-        assert_ne!(reference, normalized_prefix(&caught, 2), "act chat disappeared");
+        assert_ne!(
+            reference,
+            normalized_prefix(&caught, 2),
+            "act chat disappeared"
+        );
         let mut changed = original.clone();
         changed.trace.frames[1].skill_xp.push((9, 1));
-        assert_ne!(reference, normalized_prefix(&changed, 2), "Fletching XP disappeared");
+        assert_ne!(
+            reference,
+            normalized_prefix(&changed, 2),
+            "Fletching XP disappeared"
+        );
         let mut changed = original;
         changed.trace.frames[1].log_count = 0;
-        assert_ne!(reference, normalized_prefix(&changed, 2), "log use disappeared");
+        assert_ne!(
+            reference,
+            normalized_prefix(&changed, 2),
+            "log use disappeared"
+        );
     }
-
 
     #[test]
     fn chat_attribution_uses_first_seen_poll_position() {
@@ -4507,7 +4579,6 @@ mod packet_oracle_tests {
         assert!(assert_deferred_terminal_row(&evidence, &packets).is_err());
     }
 
-
     #[test]
     fn ordinary_click_pairs_require_one_real_client_frame_without_an_ordered_receipt() {
         let mut movement = wire(ClientProt289::MOVE_OPCLICK.id as u8, 11, 7);
@@ -4691,12 +4762,7 @@ mod packet_oracle_tests {
         opener.charged_user_event = true;
         let mut make = packet(opcodes[1], 2);
         make.charged_user_event = true;
-        let engine_packets = vec![
-            opener,
-            make,
-            packet(opcodes[2], 3),
-            packet(opcodes[3], 4),
-        ];
+        let engine_packets = vec![opener, make, packet(opcodes[2], 3), packet(opcodes[3], 4)];
         let transport = vec![drop_observation(request, opcodes, lengths, 16, 14)];
         let mut evidence = evidence(wire_packets, transport, engine_packets);
         evidence.case = "tick-make-proxy-drop";

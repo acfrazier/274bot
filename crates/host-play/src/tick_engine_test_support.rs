@@ -187,10 +187,7 @@ struct DispatchSnapshot<'a> {
 }
 
 impl<'a> DispatchSnapshot<'a> {
-    fn begin(
-        snapshot: Option<&'a mut GameSnapshot>,
-        remove_loc: Option<(i32, WorldTile)>,
-    ) -> Self {
+    fn begin(snapshot: Option<&'a mut GameSnapshot>, remove_loc: Option<(i32, WorldTile)>) -> Self {
         let mut scope = Self {
             snapshot,
             original_locs: None,
@@ -266,20 +263,32 @@ pub fn fresh_mining_roll(trace: &TickEngineTrace, tick: u32, sequence: i32) -> b
     frame.game_tick == tick
         && frame.tick_edge
         && animation.sequence == sequence
-        && trace.frames.iter().rev().skip(1).find_map(|frame| frame.animation)
+        && trace
+            .frames
+            .iter()
+            .rev()
+            .skip(1)
+            .find_map(|frame| frame.animation)
             .is_none_or(|previous| previous.serial != animation.serial)
         && trace.dispatches.iter().any(|dispatch| {
             dispatch.game_tick < u64::from(tick)
-                && dispatch.request_debug.as_deref().is_some_and(|request| request.contains("KnifeArm"))
+                && dispatch
+                    .request_debug
+                    .as_deref()
+                    .is_some_and(|request| request.contains("KnifeArm"))
         })
-        && !trace.frames.iter().flat_map(|frame| &frame.chat).any(|line| {
-            let observed = u64::from(line.game_tick);
-            let first = observed + u64::from(line.poll == PollKind::Wake);
-            first <= u64::from(tick)
-                && observed + 1 >= u64::from(tick)
-                && (line.text.contains("You swing your pick at the rock.")
-                    || line.text.contains("You manage to mine some"))
-        })
+        && !trace
+            .frames
+            .iter()
+            .flat_map(|frame| &frame.chat)
+            .any(|line| {
+                let observed = u64::from(line.game_tick);
+                let first = observed + u64::from(line.poll == PollKind::Wake);
+                first <= u64::from(tick)
+                    && observed + 1 >= u64::from(tick)
+                    && (line.text.contains("You swing your pick at the rock.")
+                        || line.text.contains("You manage to mine some"))
+            })
 }
 
 struct HookState {
@@ -658,7 +667,9 @@ impl TickEngineTestHook {
                 _ => None,
             };
             if conditional.is_some_and(|sequence| {
-                !request_debug.as_deref().is_some_and(|request| request.contains("KnifeArm"))
+                !request_debug
+                    .as_deref()
+                    .is_some_and(|request| request.contains("KnifeArm"))
                     || !fresh_mining_roll(&state.trace, game_tick, sequence)
             }) {
                 None
@@ -832,7 +843,6 @@ impl DispatchGuard<'_> {
         self.request_debug.as_deref()
     }
 }
-
 
 impl Drop for DispatchGuard<'_> {
     fn drop(&mut self) {
@@ -1096,5 +1106,4 @@ mod tests {
         assert_eq!(format!("{:?}", snapshot.locs()), original_locs);
         assert_eq!(scene_identity(&snapshot), original_scene_identity);
     }
-
 }

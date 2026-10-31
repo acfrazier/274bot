@@ -2136,10 +2136,7 @@ mod tests {
         assert_eq!(run.policy.stats().slipped, 1);
         assert_eq!(run.policy.stats().lost, 0);
         assert_eq!(run.policy.diagnostic().sequence, 1);
-        assert_eq!(
-            run.policy.diagnostic().reason,
-            Some(CycleReason::LateAct)
-        );
+        assert_eq!(run.policy.diagnostic().reason, Some(CycleReason::LateAct));
         assert_ring(&run, 1);
 
         // The act line can first arrive in the roll's wake (bounded through
@@ -3006,10 +3003,7 @@ mod tests {
         assert_eq!(run.policy.stats().verified, 0);
         assert_eq!(run.policy.stats().slipped, 1);
         assert_eq!(run.policy.stats().unobserved, 0);
-        assert_eq!(
-            run.policy.diagnostic().reason,
-            Some(CycleReason::LateAct)
-        );
+        assert_eq!(run.policy.diagnostic().reason, Some(CycleReason::LateAct));
         assert_ring(&run, 1);
 
         let mut prefix3 = replay(continuing());

@@ -287,8 +287,8 @@ fn accept_loop(
                 let relay_state = Arc::clone(&state);
                 let relay_stop = Arc::clone(&stop);
                 relays.push(thread::spawn(move || {
-                    let result = TcpStream::connect_timeout(&upstream, CONNECT_TIMEOUT)
-                        .and_then(|server| {
+                    let result =
+                        TcpStream::connect_timeout(&upstream, CONNECT_TIMEOUT).and_then(|server| {
                             relay_connection(client, server, &relay_state, &relay_stop)
                         });
                     if let Err(error) = result {
@@ -578,7 +578,9 @@ mod tests {
             let mut login_hello = [0_u8; 2];
             game.read_exact(&mut login_hello)?;
             if login_hello != [14, 0] {
-                return Err(io::Error::other("game stream did not start with login opcode 14"));
+                return Err(io::Error::other(
+                    "game stream did not start with login opcode 14",
+                ));
             }
             game.write_all(&[1, 2, 3, 4, 5, 6, 7, 8])?;
 
@@ -588,7 +590,9 @@ mod tests {
             let mut js5_hello = [0_u8; 1];
             js5.read_exact(&mut js5_hello)?;
             if js5_hello != [15] {
-                return Err(io::Error::other("update stream did not start with opcode 15"));
+                return Err(io::Error::other(
+                    "update stream did not start with opcode 15",
+                ));
             }
             js5.write_all(&[8, 7, 6, 5, 4, 3, 2, 1])?;
             let mut request = [0_u8; 4];
@@ -627,14 +631,16 @@ mod tests {
         let _ = js5.shutdown(Shutdown::Write);
         let server_result = server.join().expect("upstream thread panicked");
 
-        assert_eq!(js5_exchange.unwrap(), ([8, 7, 6, 5, 4, 3, 2, 1], *b"map-data"));
+        assert_eq!(
+            js5_exchange.unwrap(),
+            ([8, 7, 6, 5, 4, 3, 2, 1], *b"map-data")
+        );
         assert!(
             server_result.is_ok(),
             "upstream could not finish both live streams: {server_result:?}"
         );
         proxy.ensure_healthy().unwrap();
     }
-
 
     fn connected_game_proxy() -> (LoopbackProxy, TcpStream, TcpStream) {
         let upstream = TcpListener::bind(("127.0.0.1", 0)).unwrap();

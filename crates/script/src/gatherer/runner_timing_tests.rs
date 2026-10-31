@@ -115,14 +115,16 @@ fn seed_access_scene(
         height: SIDE,
         collision_flags: vec![0; (SIDE * SIDE) as usize],
     };
-    let index = |tile: WorldTile| {
-        ((tile.x - base_x) * SIDE + tile.z - base_z) as usize
-    };
+    let index = |tile: WorldTile| ((tile.x - base_x) * SIDE + tile.z - base_z) as usize;
     let blocked = client::dash3d::CollisionFlag::SQ_BLOCKED;
     scene.collision_flags[index(target.tile)] |= blocked;
     if let Some(x) = wall_x {
         for z in base_z..base_z + SIDE {
-            scene.collision_flags[index(WorldTile { x, z, level: here.level })] |= blocked;
+            scene.collision_flags[index(WorldTile {
+                x,
+                z,
+                level: here.level,
+            })] |= blocked;
         }
     }
     snapshot.seed_ingame(2);
@@ -312,9 +314,12 @@ fn parked_depleting_idle_cycle_walks_before_remote_replacement_batch() {
             "a remote replacement must finish its normal walk before gathering"
         );
         assert!(
-            ledger.as_ref().unwrap().outbox.iter().all(|action| {
-                !matches!(action.effect, HostEffect::ServerOrdered(_))
-            }),
+            ledger
+                .as_ref()
+                .unwrap()
+                .outbox
+                .iter()
+                .all(|action| { !matches!(action.effect, HostEffect::ServerOrdered(_)) }),
             "no replacement batch is emitted before the player reaches an exact stand"
         );
         assert!(
@@ -439,9 +444,12 @@ fn parked_depleting_idle_cycle_keeps_walk_for_long_or_unreachable_access() {
             "a long or flood-unreachable loc must retain the normal walk"
         );
         assert!(
-            ledger.as_ref().unwrap().outbox.iter().all(|action| {
-                !matches!(action.effect, HostEffect::ServerOrdered(_))
-            }),
+            ledger
+                .as_ref()
+                .unwrap()
+                .outbox
+                .iter()
+                .all(|action| { !matches!(action.effect, HostEffect::ServerOrdered(_)) }),
             "no replacement batch is emitted while the normal approach walk remains active"
         );
         assert!(
