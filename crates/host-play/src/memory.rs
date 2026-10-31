@@ -207,8 +207,7 @@ pub(crate) fn frame_dispatch_begin(name: &str) {
     counters.interval_peak_pending = counters.interval_peak_pending.max(counters.pending);
     if counters.observation_started.is_some() {
         counters.observation_attempted += 1;
-        counters.observation_peak_pending =
-            counters.observation_peak_pending.max(counters.pending);
+        counters.observation_peak_pending = counters.observation_peak_pending.max(counters.pending);
     }
 }
 
@@ -269,14 +268,18 @@ fn accountleveler_bank_state(c: &client::client::Client) -> (usize, bool) {
         }
         let component = c.if_(id as usize)?;
         if component.r#type == client::config::if_type::ComponentType::TYPE_INV
-            && component.iop.first().and_then(Option::as_deref).is_some_and(|ops| {
-                ops.as_bytes().windows(8).any(|window| {
-                    window
-                        .iter()
-                        .zip(b"withdraw")
-                        .all(|(left, right)| left.eq_ignore_ascii_case(right))
+            && component
+                .iop
+                .first()
+                .and_then(Option::as_deref)
+                .is_some_and(|ops| {
+                    ops.as_bytes().windows(8).any(|window| {
+                        window
+                            .iter()
+                            .zip(b"withdraw")
+                            .all(|(left, right)| left.eq_ignore_ascii_case(right))
+                    })
                 })
-            })
         {
             return Some(id);
         }
@@ -307,26 +310,21 @@ fn accountleveler_bank_state(c: &client::client::Client) -> (usize, bool) {
 fn collect_script_bank_rows(play: &Play, name: &str) {
     for line in play.script_take_pending_logs(name) {
         let listener_removed = line.contains("MEMAB_LISTENER_REMOVED");
-        let bank_rows = line
-            .find("MEMAB_BANK_ROWS:")
-            .and_then(|marker| {
-                let value = line[marker + "MEMAB_BANK_ROWS:".len()..]
-                    .split_whitespace()
-                    .next()
-                    .unwrap_or_default();
-                let (ready, rows) = value.split_once(':')?;
-                let ready = ready.parse::<u8>().ok()?;
-                let rows = rows.parse::<usize>().ok()?;
-                Some((ready == 1, rows))
-            });
+        let bank_rows = line.find("MEMAB_BANK_ROWS:").and_then(|marker| {
+            let value = line[marker + "MEMAB_BANK_ROWS:".len()..]
+                .split_whitespace()
+                .next()
+                .unwrap_or_default();
+            let (ready, rows) = value.split_once(':')?;
+            let ready = ready.parse::<u8>().ok()?;
+            let rows = rows.parse::<usize>().ok()?;
+            Some((ready == 1, rows))
+        });
         if !listener_removed && bank_rows.is_none() {
             continue;
         }
         let mut delivery = FRAME_DELIVERY.lock().unwrap();
-        if let Some(counters) = delivery
-            .as_mut()
-            .and_then(|slots| slots.get_mut(name))
-        {
+        if let Some(counters) = delivery.as_mut().and_then(|slots| slots.get_mut(name)) {
             if listener_removed && counters.listener_removed_delivered.is_none() {
                 counters.listener_removed_delivered = Some(counters.observation_delivered);
             }
@@ -418,7 +416,6 @@ fn frame_delivery_removal_stable(names: &[String]) -> Option<bool> {
     }
     all_removed.then_some(true)
 }
- 
 
 fn frame_delivery_samples(now: Instant) -> serde_json::Value {
     let mut delivery = FRAME_DELIVERY.lock().unwrap();
@@ -435,8 +432,7 @@ fn frame_delivery_samples(now: Instant) -> serde_json::Value {
             .max(0.001);
         let attempted = std::mem::take(&mut counters.interval_attempted);
         let delivered = std::mem::take(&mut counters.interval_delivered);
-        let peak_pending =
-            std::mem::replace(&mut counters.interval_peak_pending, counters.pending);
+        let peak_pending = std::mem::replace(&mut counters.interval_peak_pending, counters.pending);
         samples.push(serde_json::json!({
             "account": name,
             "attempted_frames": attempted,
@@ -552,7 +548,8 @@ fn q4_accountleveler_source(
     arm: Q4FrameArm,
     cell: Q4FrameCell,
 ) -> Result<String, String> {
-    let loop_anchor = "override async loop(): Promise<void> {\n        if (!Game.sceneReady()) return;";
+    let loop_anchor =
+        "override async loop(): Promise<void> {\n        if (!Game.sceneReady()) return;";
     let listener_start = "        this.stopObserving = BotHost.addFrameListener(() => {\n";
     if cell.has_listener() != (arm == Q4FrameArm::Listener) {
         return Err("Q4 cell and listener arm do not match".into());
@@ -2090,11 +2087,8 @@ fn q4_accountleveler_card(
             api_family: Some(card.api_family.as_str().into()),
         },
     )?;
-    let bag = script::settings_store::merge_bag(
-        &card.settings_schema,
-        &serde_json::Map::new(),
-        None,
-    );
+    let bag =
+        script::settings_store::merge_bag(&card.settings_schema, &serde_json::Map::new(), None);
     Ok(ScriptCard {
         catalog: Some(crate::script_runtime::js_start_card(
             card.js, card.shape, siblings,
@@ -2748,9 +2742,7 @@ impl Run {
                 }
             }
             Some(Q4FrameCell::Stop) => {
-                if self.q4_stop_counts.is_none()
-                    && now.duration_since(observing) >= Q4_STOP_AFTER
-                {
+                if self.q4_stop_counts.is_none() && now.duration_since(observing) >= Q4_STOP_AFTER {
                     if !self.q4_scripts_are(play, script::RunState::Running) {
                         return Err("q4_stop_started_from_nonrunning_script".into());
                     }
@@ -2804,21 +2796,24 @@ impl Run {
         let cell = self.q4_frame_cell.ok_or("q4_cell_missing")?;
         let observations =
             frame_delivery_observations(&self.names).ok_or("q4_frame_counters_unavailable")?;
-        if observations.values().any(|observation| observation.pending != 0) {
+        if observations
+            .values()
+            .any(|observation| observation.pending != 0)
+        {
             return Err("q4_pending_frame_work_at_observe_end".into());
         }
         match cell {
             Q4FrameCell::ZeroListeners => {
-                if observations.values().any(|observation| {
-                    observation.attempted == 0 || observation.delivered != 0
-                }) {
+                if observations
+                    .values()
+                    .any(|observation| observation.attempted == 0 || observation.delivered != 0)
+                {
                     return Err("q4_zero_listener_delivery_mismatch".into());
                 }
             }
             Q4FrameCell::OneListener | Q4FrameCell::BusyFullBankSampling => {
                 if observations.values().any(|observation| {
-                    observation.attempted == 0
-                        || observation.delivered != observation.attempted
+                    observation.attempted == 0 || observation.delivered != observation.attempted
                 }) {
                     return Err("q4_one_listener_delivery_mismatch".into());
                 }
@@ -2826,8 +2821,7 @@ impl Run {
             Q4FrameCell::Removal => {
                 if frame_delivery_removal_stable(&self.names) != Some(true)
                     || observations.values().any(|observation| {
-                        observation.delivered == 0
-                            || observation.attempted <= observation.delivered
+                        observation.delivered == 0 || observation.attempted <= observation.delivered
                     })
                     || !self.q4_scripts_are(play, script::RunState::Running)
                 {
@@ -2841,24 +2835,21 @@ impl Run {
                     .ok_or("q4_pause_resume_not_proven")?;
                 if !self.q4_scripts_are(play, script::RunState::Running)
                     || observations.iter().any(|(name, observation)| {
-                        resumed.get(name).is_none_or(|after| {
-                            observation.delivered <= after.delivered
-                        })
+                        resumed
+                            .get(name)
+                            .is_none_or(|after| observation.delivered <= after.delivered)
                     })
                 {
                     return Err("q4_listener_not_delivered_after_resume".into());
                 }
             }
             Q4FrameCell::Stop => {
-                let stopped = self
-                    .q4_stop_counts
-                    .as_ref()
-                    .ok_or("q4_stop_not_proven")?;
+                let stopped = self.q4_stop_counts.as_ref().ok_or("q4_stop_not_proven")?;
                 if !self.q4_scripts_are(play, script::RunState::Idle)
                     || observations.iter().any(|(name, observation)| {
-                        stopped.get(name).is_none_or(|at_stop| {
-                            observation.delivered != at_stop.delivered
-                        })
+                        stopped
+                            .get(name)
+                            .is_none_or(|at_stop| observation.delivered != at_stop.delivered)
                     })
                 {
                     return Err("q4_listener_delivered_after_stop".into());
@@ -3683,18 +3674,11 @@ mod tests {
             Q4FrameCell::BusyFullBankSampling,
         )
         .expect("listener transform");
-        let no_listener = q4_accountleveler_source(
-            SOURCE,
-            Q4FrameArm::NoListener,
-            Q4FrameCell::ZeroListeners,
-        )
-        .expect("no-listener transform");
-        let removal = q4_accountleveler_source(
-            SOURCE,
-            Q4FrameArm::Listener,
-            Q4FrameCell::Removal,
-        )
-        .expect("removal transform");
+        let no_listener =
+            q4_accountleveler_source(SOURCE, Q4FrameArm::NoListener, Q4FrameCell::ZeroListeners)
+                .expect("no-listener transform");
+        let removal = q4_accountleveler_source(SOURCE, Q4FrameArm::Listener, Q4FrameCell::Removal)
+            .expect("removal transform");
         assert_eq!(listener.matches("BotHost.addFrameListener(").count(), 1);
         assert!(listener.contains("this.stock.observe(Bank.items(), Bank.ready())"));
         assert!(listener.contains("MEMAB_BANK_ROWS:"));
@@ -3741,7 +3725,6 @@ mod tests {
         .is_err());
     }
 
-
     #[test]
     fn q4_scenario_keeps_live_seed_steps_and_proves_an_open_bank() {
         let thiever = scenario::thiever_sustained_scenario();
@@ -3756,8 +3739,14 @@ mod tests {
         for (actual, expected) in q4.steps.iter().zip(&thiever.steps).take(seed_step) {
             assert_eq!(actual.name, expected.name);
         }
-        assert_eq!(q4.steps[seed_step].name, "seed and open this account's full bank");
-        assert_eq!(q4.steps[seed_step + 1].name, "start AccountLeveler on the full bank");
+        assert_eq!(
+            q4.steps[seed_step].name,
+            "seed and open this account's full bank"
+        );
+        assert_eq!(
+            q4.steps[seed_step + 1].name,
+            "start AccountLeveler on the full bank"
+        );
         assert_eq!(q4.proof, scenario::Proof::BankOpen);
         assert_eq!(q4.settings.start_script, Some("AccountLeveler"));
     }
@@ -3922,7 +3911,6 @@ mod tests {
         }
         assert_eq!(frame_delivery_bank_rows(&names), None);
     }
-
 
     #[test]
     #[cfg(any(unix, windows))]
