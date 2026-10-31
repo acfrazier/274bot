@@ -2301,6 +2301,7 @@ fn kitchen_journal_timeout_retries_once_on_a_later_observed_tick_and_recovers() 
     let (mut run, mut snapshot, mut ledger, state, mut budget) = kitchen_journal_timeout_run();
     assert!(poll(&mut run, &snapshot, &mut ledger, 1, &state, &mut budget).is_pending());
     accept_last(&mut ledger, 1, 0);
+    let first_request = ledger.as_ref().unwrap().outbox[0].authority().request_id();
     // Inject the lost page by leaving the modal closed for the reader's five ticks.
     for tick in 2..=6 {
         assert!(poll(&mut run, &snapshot, &mut ledger, tick, &state, &mut budget).is_pending());
@@ -2311,21 +2312,41 @@ fn kitchen_journal_timeout_retries_once_on_a_later_observed_tick_and_recovers() 
         assert_eq!(ledger.as_ref().unwrap().outbox.len(), 1);
     }
     assert!(poll(&mut run, &snapshot, &mut ledger, 7, &state, &mut budget).is_pending());
-    assert_eq!(ledger.as_ref().unwrap().outbox.len(), 2);
-    assert!(matches!(last_interaction(&ledger), InteractReq::IfButton { component_id: 42 }));
-    assert_eq!(budget.rows_run, 1, "a retry does not spend another catalog row");
+    // Beginning the retry retires the first owner's queued actions.
+    assert_eq!(ledger.as_ref().unwrap().outbox.len(), 1);
+    assert_ne!(
+        ledger.as_ref().unwrap().outbox[0].authority().request_id(),
+        first_request
+    );
+    assert!(matches!(
+        last_interaction(&ledger),
+        InteractReq::IfButton { component_id: 42 }
+    ));
+    assert_eq!(
+        budget.rows_run, 1,
+        "a retry does not spend another catalog row"
+    );
     accept_last(&mut ledger, 7, 0);
     snapshot.seed_main_modal(
         crate::quest_journal::ROOT_289,
         vec![
-            crate::quest_journal::test_widget(crate::quest_journal::TITLE_289, "@dre@Shield of Arrav"),
-            crate::quest_journal::test_widget(8145, "@str@I searched the Phoenix Gang Headquarters and found"),
+            crate::quest_journal::test_widget(
+                crate::quest_journal::TITLE_289,
+                "@dre@Shield of Arrav",
+            ),
+            crate::quest_journal::test_widget(
+                8145,
+                "@str@I searched the Phoenix Gang Headquarters and found",
+            ),
             crate::quest_journal::test_widget(8146, "@str@half of the Shield of Arrav."),
             crate::quest_journal::test_widget(8147, "@red@QUEST COMPLETE!"),
         ],
     );
     assert!(poll(&mut run, &snapshot, &mut ledger, 8, &state, &mut budget).is_pending());
-    assert!(state.prereq_snapshot().facts().is_empty(), "an observed close still gates proof");
+    assert!(
+        state.prereq_snapshot().facts().is_empty(),
+        "an observed close still gates proof"
+    );
     assert!(matches!(last_interaction(&ledger), InteractReq::CloseModal));
     accept_last(&mut ledger, 8, 0);
     snapshot.seed_main_modal(-1, vec![]);
@@ -2334,7 +2355,7 @@ fn kitchen_journal_timeout_retries_once_on_a_later_observed_tick_and_recovers() 
         Poll::Ready(Ok(Done { crossed: false }))
     ));
     assert_eq!(state.prereq_snapshot().facts().len(), 1);
-    assert_eq!(ledger.as_ref().unwrap().outbox.len(), 3);
+    assert_eq!(ledger.as_ref().unwrap().outbox.len(), 2);
 }
 
 #[test]
@@ -2342,11 +2363,16 @@ fn kitchen_journal_timeout_stops_after_two_reads_with_the_last_timeout_detail() 
     let (mut run, snapshot, mut ledger, state, mut budget) = kitchen_journal_timeout_run();
     assert!(poll(&mut run, &snapshot, &mut ledger, 1, &state, &mut budget).is_pending());
     accept_last(&mut ledger, 1, 0);
+    let first_request = ledger.as_ref().unwrap().outbox[0].authority().request_id();
     for tick in 2..=7 {
         assert!(poll(&mut run, &snapshot, &mut ledger, tick, &state, &mut budget).is_pending());
         assert!(state.prereq_snapshot().facts().is_empty());
     }
-    assert_eq!(ledger.as_ref().unwrap().outbox.len(), 2);
+    assert_eq!(ledger.as_ref().unwrap().outbox.len(), 1);
+    assert_ne!(
+        ledger.as_ref().unwrap().outbox[0].authority().request_id(),
+        first_request
+    );
     accept_last(&mut ledger, 7, 0);
     for tick in 8..12 {
         assert!(poll(&mut run, &snapshot, &mut ledger, tick, &state, &mut budget).is_pending());
@@ -2358,7 +2384,11 @@ fn kitchen_journal_timeout_stops_after_two_reads_with_the_last_timeout_detail() 
         })) if detail.as_ref() == "the native action failed: journal modal timeout"
     ));
     assert!(state.prereq_snapshot().facts().is_empty());
-    assert_eq!(ledger.as_ref().unwrap().outbox.len(), 2, "no third read or gate probe");
+    assert_eq!(
+        ledger.as_ref().unwrap().outbox.len(),
+        1,
+        "no third read or gate probe"
+    );
     assert!(!ledger.as_ref().unwrap().test_owner_live());
 }
 
@@ -2375,7 +2405,11 @@ fn kitchen_journal_timeout_retry_keeps_a_different_last_failure_detail() {
         &authority,
         InteractionReceipt {
             request_id: authority.request_id().get(),
-            evidence: EvidenceStamp { run: authority.run(), tick: 7, sequence: 7 },
+            evidence: EvidenceStamp {
+                run: authority.run(),
+                tick: 7,
+                sequence: 7,
+            },
             accepted: false,
             chat_since: 0,
         },
@@ -2387,7 +2421,7 @@ fn kitchen_journal_timeout_retry_keeps_a_different_last_failure_detail() {
         })) if detail.as_ref() == "the native action failed: journal click refused"
     ));
     assert!(state.prereq_snapshot().facts().is_empty());
-    assert_eq!(ledger.as_ref().unwrap().outbox.len(), 2);
+    assert_eq!(ledger.as_ref().unwrap().outbox.len(), 1);
 }
 
 #[test]
