@@ -5,7 +5,8 @@ Request: `BAKED-REACH-1023`, BR0. Status: accepted integration contract.
 This contract fixes the combined `274V18` format and the BR1 ownership cut.
 It does not enable a partial v18 reader or producer. BR2 changes the version,
 reader, encoder, sizing, fixtures, identities, sidecars, and release bake together.
-Until that cut, the product continues to read and produce `274V17`.
+BR2 publishes `274V18`. The product reads and produces that combined pack.
+A `274V17` pack is a typed rebake failure.
 The nav integrator owns the format and release bake. No consumer track publishes
 another v18. Revision content is immutable. Users do not rebuild its connectivity.
 

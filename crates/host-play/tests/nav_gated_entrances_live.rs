@@ -1089,8 +1089,8 @@ fn run_case(case: EntranceCase) {
     let world = template.world().expect("explicit WORLD_NAV_PACK");
     assert_eq!(
         nav_planner::pack::FORMAT_ID,
-        "274V17",
-        "acceptance requires pack v17"
+        "274V18",
+        "acceptance requires pack v18"
     );
     let identity = profile.nav_identity().expect("navigation identity");
     receipt["nav_identity"] = json!({

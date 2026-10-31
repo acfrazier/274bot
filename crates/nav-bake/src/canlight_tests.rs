@@ -75,28 +75,26 @@ data=coord_pair,0_50_53_53_33,0_50_53_53_35
 ";
     let zones = parse_bank_zones(text).unwrap();
     assert_eq!(zones.len(), 2);
-    assert!(parse_bank_zones("")
-        .unwrap_err()
-        .to_string()
-        .contains("header"));
-    assert!(parse_bank_zones("[bank_zones]\ntable=coord_pair_table\n")
-        .unwrap_err()
-        .to_string()
-        .contains("no coord_pair"));
-    assert!(
-        parse_bank_zones("[bank_zones]\ndata=coord_pair,not-a-coord,0_0_0_0_0\n")
-            .unwrap_err()
-            .to_string()
-            .contains("packed coord")
-    );
-    assert!(parse_bank_zones("[bank_zones]\ndata=npc,1,2\n")
-        .unwrap_err()
-        .to_string()
-        .contains("coord_pair"));
-    assert!(parse_bank_zones("[bank_zones]\nbanana=1\n")
-        .unwrap_err()
-        .to_string()
-        .contains("unexpected"));
+    assert!(matches!(
+        parse_bank_zones("").unwrap_err(),
+        crate::GenerationError::Canlight(CanlightError::BankZonesHeaderMissing)
+    ));
+    assert!(matches!(
+        parse_bank_zones("[bank_zones]\ntable=coord_pair_table\n").unwrap_err(),
+        crate::GenerationError::Canlight(CanlightError::BankZonesNoPairs)
+    ));
+    assert!(matches!(
+        parse_bank_zones("[bank_zones]\ndata=coord_pair,not-a-coord,0_0_0_0_0\n").unwrap_err(),
+        crate::GenerationError::Canlight(CanlightError::PackedCoordinateMalformed { .. })
+    ));
+    assert!(matches!(
+        parse_bank_zones("[bank_zones]\ndata=npc,1,2\n").unwrap_err(),
+        crate::GenerationError::Canlight(CanlightError::BankZonesDataKindMismatch { .. })
+    ));
+    assert!(matches!(
+        parse_bank_zones("[bank_zones]\nbanana=1\n").unwrap_err(),
+        crate::GenerationError::Canlight(CanlightError::BankZonesUnexpectedRow { .. })
+    ));
 }
 
 #[test]

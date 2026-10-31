@@ -23,12 +23,16 @@ use crate::world::NavWorld;
 mod arrival;
 mod collision;
 mod envelope;
+mod reachability;
 mod route;
 mod transport;
 mod zones;
 
 pub use arrival::ArrivalSpec;
 pub use collision::CollisionView;
+pub use reachability::{
+    BoundComponentKey, LocPlacementKey, LocStandView, ReachabilityError, ReachabilityView,
+};
 pub use envelope::{
     BoundRouteRequest, RouteFamilyError, RouteFamilyResult, RoutePermissions, RoutePhase,
     RouteRequest, RouteService,

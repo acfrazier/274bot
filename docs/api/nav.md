@@ -98,9 +98,11 @@ Door/NPC/teleport admission. Zone data includes stable kind identities/labels,
 NPC/hazard rows, curated groups, carves and shaped masks. A shape row stores a
 zone index u16, north extent u8, and row-major u64 cell mask; the shaped NPC's
 `r` byte stores its east extent.
-Thus shaped bounds up to 8×8 remain self-describing. Decoding any v17 pack
+Thus shaped bounds up to 8×8 remain self-describing. Decoding any v18 pack
 installs `Some(ZoneTable)`, even when its row counts are zero; legacy grids
-and synthetic in-memory graphs use `zones: None`. The decoder rebuilds the zone
+and synthetic in-memory graphs use `zones: None`. After the zone table the
+pack stores sorted unique multiway keys and the reachability atlas. A v17
+pack is a typed rebake failure. The decoder rebuilds the zone
 spatial index. Raw `u32` flags are not on the pack wire. The optional
 `274F` sidecar holds them for collision paint; the paint-reach bitset is a
 separate `274R` sidecar bound to the pack identity.
@@ -481,10 +483,11 @@ door opens, so callers must not relax it for door hops. Diagonal doors keep
 their separate content-derived geometry.
 
 The corrected straight-door geometry uses generator version `nav-bake-2`;
-it adds no door-specific wire fields. The v17 pack retains the v12 zone table
-described above, carries the resource-accounting vectors described above, and
+it adds no door-specific wire fields. The v18 pack retains the v12 zone table
+described above, carries the resource-accounting vectors described above,
 appends `worn_all_req` after `worn_req` plus the `forbidden_held` and
-`forbidden_worn` exclusion vectors after that. Generator and producer-source
+`forbidden_worn` exclusion vectors after that, then the multiway key list
+and the reachability atlas. Generator and producer-source
 digests
 invalidate staged bundles and trigger a normal rebake, with refreshed
 pack/reach/canlight/navpois bindings. Explicit custom packs baked with the

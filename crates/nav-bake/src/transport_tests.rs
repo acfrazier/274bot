@@ -1924,16 +1924,16 @@ fn derive_transports_emits_shilo_brimhaven_cart() {
         );
     }
 
-    let brimhaven_to_shilo = carts
+    let hajedy = carts
         .iter()
-        .find(|edge| edge.at == routes[0].origin())
-        .expect("Brimhaven → Shilo cart");
-    assert_eq!(brimhaven_to_shilo.quest_req, [SHILO_JOURNAL_NAME]);
-    let shilo_to_brimhaven = carts
+        .find(|edge| edge.loc_id == 510)
+        .expect("Hajedy cart identified by NPC id");
+    assert_eq!(hajedy.quest_req, [SHILO_JOURNAL_NAME]);
+    let vigroy = carts
         .iter()
-        .find(|edge| edge.at == routes[1].origin())
-        .expect("Shilo → Brimhaven cart");
-    assert!(shilo_to_brimhaven.quest_req.is_empty());
+        .find(|edge| edge.loc_id == 511)
+        .expect("Vigroy cart identified by NPC id");
+    assert!(vigroy.quest_req.is_empty());
 }
 
 /// Both wilderness levers (`wilderness_lever.rs2` `[oploc1,wildinlever]` /

@@ -7524,6 +7524,10 @@ impl<'a> GoalSet<'a> {
         steps: usize,
         reachable_budget: usize,
     ) -> Result<(), SearchCursorError> {
+        if gates.graph.has_reachability {
+            self.budget = self.budget.max(reachable_budget);
+            return Ok(());
+        }
         match self.proof.run_to(gates, self.seeds, steps).await? {
             Some(ReverseProof::Reachable) => self.budget = self.budget.max(reachable_budget),
             Some(ReverseProof::Unreachable) => self.close(RouteError::NoPath),
@@ -7886,6 +7890,9 @@ impl<'a> ReverseRun<'a> {
     ) -> Result<Option<ReverseProof>, SearchCursorError> {
         if !self.started {
             self.started = true;
+            if gates.graph.has_reachability {
+                return Ok(None);
+            }
             let mut closure = ReverseClosure::new(gates).await?;
             for &seed in seeds {
                 work_unit().await;

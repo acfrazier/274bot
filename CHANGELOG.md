@@ -5,6 +5,13 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.8` 
 
 ## Unreleased
 
+### Navigation
+
+- Navigation packs are now `274V18`. They include the multiway combat-cell list
+  and a baked reachability atlas (movement components, directed links, loc
+  stands). An older `274V17` pack is refused with a rebake error. 274bot does
+  not convert an old pack at run time.
+
 ## [0.2.8] — 2026-10-29 — Beta 2
 
 ### Panel and terminal app

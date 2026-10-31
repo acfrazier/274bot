@@ -217,6 +217,13 @@ pub struct TransportGraph {
     /// (digest + extractor schema). `None` when it consumed none; then no
     /// edge carries [`TransportEdge::quest_gates`].
     pub quest_family: Option<QuestFamilyId>,
+    /// Sorted unique packed multiway 8×8 cell keys (`level << 28 | x << 14 | z`).
+    /// Empty on legacy grids and synthetic graphs that did not consume a
+    /// revision's `maps/multiway.csv`.
+    pub multiway: Box<[u32]>,
+    /// True when the loaded pack carried a labelled reachability atlas.
+    /// Synthetic unlabeled worlds keep the legacy reverse-proof path.
+    pub has_reachability: bool,
 }
 
 impl TransportGraph {
@@ -248,7 +255,7 @@ impl TransportGraph {
         }
     }
 
-    pub(crate) fn takeoff_bounds(&self, index: usize) -> (WorldTile, WorldTile) {
+    pub fn takeoff_bounds(&self, index: usize) -> (WorldTile, WorldTile) {
         let edge = &self.edges[index];
         if let Some(takeoff) = edge.takeoff {
             return (takeoff, takeoff);

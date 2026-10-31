@@ -315,3 +315,209 @@ pub(crate) fn booth_approach_by(
         dest,
     })
 }
+
+/// Engine `ReachStrategy.exitStrategy` family for a packed loc shape.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LocReachStrategy {
+    /// Shapes 0..=3 and 9: wall.
+    Wall,
+    /// Shapes 4..=8: wall decoration.
+    WallDecor,
+    /// Shapes 10, 11, and 22: rotated footprint.
+    Footprint,
+    /// Roofs and other shapes the engine does not interact through.
+    Unsupported,
+}
+
+/// Classify a loc shape into the engine reach family.
+pub fn loc_reach_strategy(shape: u8) -> LocReachStrategy {
+    match shape {
+        0..=3 | 9 => LocReachStrategy::Wall,
+        4..=8 => LocReachStrategy::WallDecor,
+        10 | 11 | 22 => LocReachStrategy::Footprint,
+        _ => LocReachStrategy::Unsupported,
+    }
+}
+
+/// Whether `from` can operate the placed loc using the engine size-1 strategy.
+///
+/// `None` is unsupported geometry. `flags` is the stand tile's collision word
+/// (`PL_WALK_*` bits for walls, raw `W_*` bits for footprints).
+/// `can_step_into_origin` is the engine along-wall open-step test.
+pub fn loc_can_operate(
+    origin: WorldTile,
+    from: WorldTile,
+    shape: u8,
+    angle: u8,
+    width: i32,
+    length: i32,
+    force_approach: i32,
+    flags: i32,
+    can_step_into_origin: bool,
+) -> Option<bool> {
+    if from.level != origin.level {
+        return Some(false);
+    }
+    match loc_reach_strategy(shape) {
+        LocReachStrategy::Unsupported => None,
+        LocReachStrategy::Footprint => {
+            let approach =
+                LocApproach::from_loc_def(width, length, i32::from(angle), force_approach)?;
+            Some(approach.can_operate(origin, from, flags))
+        }
+        LocReachStrategy::Wall => Some(wall_can_operate(origin, from, shape, angle, flags)),
+        LocReachStrategy::WallDecor => {
+            Some(wall_decor_can_operate(origin, from, shape, angle, can_step_into_origin))
+        }
+    }
+}
+
+fn wall_can_operate(
+    origin: WorldTile,
+    from: WorldTile,
+    shape: u8,
+    angle: u8,
+    flags: i32,
+) -> bool {
+    if from == origin {
+        return true;
+    }
+    let dx = from.x - origin.x;
+    let dz = from.z - origin.z;
+    let open = |mask: i32| flags & mask == CollisionFlag::_OPEN;
+    match shape {
+        0 => match angle {
+            0 => {
+                (dx == -1 && dz == 0)
+                    || (dx == 0 && dz == 1 && open(CollisionFlag::PL_WALK_S))
+                    || (dx == 0 && dz == -1 && open(CollisionFlag::PL_WALK_N))
+            }
+            1 => {
+                (dx == 0 && dz == 1)
+                    || (dx == -1 && dz == 0 && open(CollisionFlag::PL_WALK_E))
+                    || (dx == 1 && dz == 0 && open(CollisionFlag::PL_WALK_W))
+            }
+            2 => {
+                (dx == 1 && dz == 0)
+                    || (dx == 0 && dz == 1 && open(CollisionFlag::PL_WALK_S))
+                    || (dx == 0 && dz == -1 && open(CollisionFlag::PL_WALK_N))
+            }
+            _ => {
+                (dx == 0 && dz == -1)
+                    || (dx == -1 && dz == 0 && open(CollisionFlag::PL_WALK_E))
+                    || (dx == 1 && dz == 0 && open(CollisionFlag::PL_WALK_W))
+            }
+        },
+        2 => match angle {
+            0 => {
+                (dx == -1 && dz == 0)
+                    || (dx == 0 && dz == 1)
+                    || (dx == 1 && dz == 0 && open(CollisionFlag::PL_WALK_W))
+                    || (dx == 0 && dz == -1 && open(CollisionFlag::PL_WALK_N))
+            }
+            1 => {
+                (dx == -1 && dz == 0 && open(CollisionFlag::PL_WALK_E))
+                    || (dx == 0 && dz == 1)
+                    || (dx == 1 && dz == 0)
+                    || (dx == 0 && dz == -1 && open(CollisionFlag::PL_WALK_N))
+            }
+            2 => {
+                (dx == -1 && dz == 0 && open(CollisionFlag::PL_WALK_E))
+                    || (dx == 0 && dz == 1 && open(CollisionFlag::PL_WALK_S))
+                    || (dx == 1 && dz == 0)
+                    || (dx == 0 && dz == -1)
+            }
+            _ => {
+                (dx == -1 && dz == 0)
+                    || (dx == 0 && dz == 1 && open(CollisionFlag::PL_WALK_S))
+                    || (dx == 1 && dz == 0 && open(CollisionFlag::PL_WALK_W))
+                    || (dx == 0 && dz == -1)
+            }
+        },
+        9 => {
+            (dx == 0 && dz == 1 && open(CollisionFlag::W_S))
+                || (dx == 0 && dz == -1 && open(CollisionFlag::W_N))
+                || (dx == -1 && dz == 0 && open(CollisionFlag::W_E))
+                || (dx == 1 && dz == 0 && open(CollisionFlag::W_W))
+        }
+        1 | 3 => dx.abs() + dz.abs() == 1,
+        _ => false,
+    }
+}
+
+fn wall_decor_can_operate(
+    origin: WorldTile,
+    from: WorldTile,
+    shape: u8,
+    angle: u8,
+    can_step_into_origin: bool,
+) -> bool {
+    if from == origin {
+        return true;
+    }
+    let dx = from.x - origin.x;
+    let dz = from.z - origin.z;
+    let facing = match angle {
+        0 => dx == -1 && dz == 0,
+        1 => dx == 0 && dz == 1,
+        2 => dx == 1 && dz == 0,
+        _ => dx == 0 && dz == -1,
+    };
+    match shape {
+        4 | 5 => facing,
+        6 | 7 | 8 => facing || can_step_into_origin,
+        _ => false,
+    }
+}
+
+/// Candidate tiles to test for a size-1 interaction, including the origin.
+pub fn loc_candidate_stands(
+    origin: WorldTile,
+    shape: u8,
+    angle: u8,
+    width: i32,
+    length: i32,
+) -> Option<Vec<WorldTile>> {
+    match loc_reach_strategy(shape) {
+        LocReachStrategy::Unsupported => None,
+        LocReachStrategy::Footprint => {
+            let approach = LocApproach::from_loc_def(width, length, i32::from(angle), 0)?;
+            let max_x = origin.x + i32::from(approach.width);
+            let max_z = origin.z + i32::from(approach.length);
+            let mut tiles = Vec::new();
+            for x in (origin.x - 1)..=max_x {
+                for z in (origin.z - 1)..=max_z {
+                    tiles.push(WorldTile {
+                        x,
+                        z,
+                        level: origin.level,
+                    });
+                }
+            }
+            Some(tiles)
+        }
+        LocReachStrategy::Wall | LocReachStrategy::WallDecor => Some(vec![
+            origin,
+            WorldTile {
+                x: origin.x - 1,
+                z: origin.z,
+                level: origin.level,
+            },
+            WorldTile {
+                x: origin.x + 1,
+                z: origin.z,
+                level: origin.level,
+            },
+            WorldTile {
+                x: origin.x,
+                z: origin.z - 1,
+                level: origin.level,
+            },
+            WorldTile {
+                x: origin.x,
+                z: origin.z + 1,
+                level: origin.level,
+            },
+        ]),
+    }
+}

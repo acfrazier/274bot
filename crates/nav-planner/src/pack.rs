@@ -62,12 +62,20 @@ use crate::tile::Tile;
 use crate::transport::{DoorDir, TransportEdge, TransportGraph, TransportKind};
 
 mod banks;
+mod coord;
 mod mapsquare;
+mod multiway;
+mod reach;
 mod sidecars;
 mod zones;
 use banks::read_bank_stands;
 pub use banks::{BankAccess, BankStand};
+pub use coord::{pack_tile_key, unpack_tile_key, KEY_COORD_MAX, KEY_LEVELS};
 pub use mapsquare::walkable_dots;
+pub use multiway::{
+    decode_multiway_section, encode_multiway_keys, keys_from_tiles, validate_multiway_keys,
+};
+pub use reach::encode_atlas_sections;
 pub use sidecars::{
     decode_canlight_sidecar, decode_flags_sidecar, decode_flags_sidecar_arc, decode_reach_sidecar,
     read_canlight_sidecar, read_flags_sidecar, read_reach_sidecar, read_reach_sidecar_header,
@@ -94,14 +102,15 @@ pub const MAGIC_GRID: &[u8; 4] = b"274N";
 /// table, v13 approach geometry, v14 player-relative landings, v15 consumed
 /// resources and returns, v16 `worn_all_req` plus optional exact takeoff,
 /// and v17 observed held/equipment exclusion requirements.
-pub const VERSION: u8 = 17;
+/// v18 appends survivable multiway keys and the reachability atlas.
+pub const VERSION: u8 = 18;
 
 /// Current pack file magic.
 pub const MAGIC: &[u8; 4] = b"274V";
 
 /// Pack format identity as it appears in bundled navigation identities.
 /// A format improvement changes this identity and invalidates staged builds.
-pub const FORMAT_ID: &str = "274V17";
+pub const FORMAT_ID: &str = "274V18";
 
 /// Bytes per door entry.
 pub const DOOR_BYTES: usize = 40;
@@ -145,7 +154,7 @@ impl fmt::Display for PackError {
 impl std::error::Error for PackError {}
 
 /// Bounded input shared by the byte-slice and streaming decoders.
-pub(super) trait PackRead {
+pub(crate) trait PackRead {
     fn remaining(&self) -> usize;
     fn read_bytes_exact(&mut self, buf: &mut [u8]) -> Result<(), PackError>;
 
@@ -345,16 +354,21 @@ fn decode_grid_body<R: PackRead>(mut r: R) -> Result<StepGrid, PackError> {
 pub(super) fn decode_any_reader<R: BufRead, T>(
     reader: &mut R,
     length: usize,
-    from_pack: impl FnOnce(WorldCollision, TransportGraph, Vec<BankStand>) -> T,
+    from_pack: impl FnOnce(
+        WorldCollision,
+        TransportGraph,
+        Vec<BankStand>,
+        crate::reachability::ReachabilityAtlas,
+    ) -> T,
     from_grid: impl FnOnce(StepGrid) -> T,
 ) -> Result<T, PackError> {
     let mut r = BoundedReader::new(reader, length);
     let mut magic = [0u8; 4];
     r.read_bytes_exact(&mut magic)?;
     if &magic == MAGIC {
-        let (collision, graph, banks) = decode_pack_body(&mut r)?;
+        let (collision, graph, banks, atlas) = decode_pack_body(&mut r)?;
         r.drain_remaining()?;
-        Ok(from_pack(collision, graph, banks))
+        Ok(from_pack(collision, graph, banks, atlas))
     } else if &magic == MAGIC_GRID {
         let grid = decode_grid_body(&mut r)?;
         r.drain_remaining()?;
@@ -386,6 +400,15 @@ pub fn load_grid(path: &Path) -> Result<StepGrid, PackError> {
 /// than compat-loaded. Quest-stage gates bind to the header's quest family;
 /// malformed resource requirements, gates, or approach geometry are rejected.
 pub fn decode(bytes: &[u8]) -> Result<(WorldCollision, TransportGraph, Vec<BankStand>), PackError> {
+    let (collision, graph, banks, _) = decode_full(bytes)?;
+    Ok((collision, graph, banks))
+}
+
+/// Decode a v18 pack including its reachability atlas.
+pub fn decode_full(
+    bytes: &[u8],
+) -> Result<(WorldCollision, TransportGraph, Vec<BankStand>, crate::reachability::ReachabilityAtlas), PackError>
+{
     let mut r = Cursor::new(bytes);
     read_magic(&mut r, MAGIC)?;
     decode_pack_body(r)
@@ -393,7 +416,8 @@ pub fn decode(bytes: &[u8]) -> Result<(WorldCollision, TransportGraph, Vec<BankS
 
 fn decode_pack_body<R: PackRead>(
     mut r: R,
-) -> Result<(WorldCollision, TransportGraph, Vec<BankStand>), PackError> {
+) -> Result<(WorldCollision, TransportGraph, Vec<BankStand>, crate::reachability::ReachabilityAtlas), PackError>
+{
     let version = read_u8(&mut r)?;
     if version != VERSION {
         return Err(PackError::BadVersion(version));
@@ -544,6 +568,9 @@ fn decode_pack_body<R: PackRead>(
         &mut keys,
     )?;
     graph.zones = zone_table;
+    graph.multiway = multiway::decode_multiway_keys(&mut r)?;
+    let atlas = reach::decode_atlas_sections(&mut r)?;
+    graph.has_reachability = atlas.base_count() > 0;
     let collision = WorldCollision {
         origin,
         width,
@@ -570,7 +597,7 @@ fn decode_pack_body<R: PackRead>(
         }
     }
     graph.rebuild_index(&collision);
-    Ok((collision, graph, banks))
+    Ok((collision, graph, banks, atlas))
 }
 
 /// Wire byte → [`TransportKind`], rejecting unknown values.
