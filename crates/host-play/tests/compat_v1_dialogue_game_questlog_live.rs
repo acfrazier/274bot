@@ -38,17 +38,17 @@ export default class CompatMakeOneProbe extends LoopingBot {
 }
 "#;
 
-// makeOne emits its click during the call. Yield first so Stop precedes the next request.
+// Start MakeOne before the fixture stops the script on the next game tick.
 const MAKE_CANCEL_SOURCE: &str = r#"
 import { ChatDialog } from '../../api/ui/dialogue/ChatDialog.js';
-import { Execution } from '../../api/execution/Execution.js';
 export default class CompatMakeOneCancelProbe extends LoopingBot {
     async loop() {
         if (this.started) return;
         this.started = true;
         this.log('MAKE_PENDING');
-        await Execution.delayTicks(1);
-        const result = await ChatDialog.makeOne('Shortbow');
+        const request = ChatDialog.makeOne('Shortbow');
+        this.log('MAKE_CLICK_SENT');
+        const result = await request;
         this.log('MAKE_RESULT:' + JSON.stringify(result));
     }
 }
@@ -795,12 +795,16 @@ fn wait_for_log(
     timeout: Duration,
     marker: &str,
     logs: &mut Vec<String>,
-) {
+) -> u64 {
     let deadline = Instant::now() + timeout;
     loop {
         take_logs(play, account, logs);
         if logs.iter().any(|line| line.contains(marker)) {
-            return;
+            return fixture
+                .lock()
+                .unwrap_or_else(|error| error.into_inner())
+                .snapshot
+                .tick();
         }
         if let Some(error) = play.script_last_error(account) {
             panic!("compatibility script failed before {marker}: {error}");
@@ -929,23 +933,59 @@ fn run_make_one_cell() {
     });
     let cancel_start_tick = fixture.lock().unwrap().snapshot.tick();
     let mut cancel_logs = Vec::new();
-    start_script(&play, &account, MAKE_CANCEL_SOURCE);
-    wait_for_log(
+    let click_seen_tick = wait_for_log(
         &play,
         &account,
         &fixture,
         CELL_DEADLINE,
-        "MAKE_PENDING",
+        "MAKE_CLICK_SENT",
         &mut cancel_logs,
+    );
+    assert_eq!(
+        play.script_state(&account),
+        script::RunState::Running,
+        "MakeOne remains in flight after its click"
+    );
+    wait_for(&play, &account, &fixture, CELL_DEADLINE, |_, state| {
+        state.snapshot.tick() > click_seen_tick
+    });
+    let cancel_stop_tick = fixture.lock().unwrap().snapshot.tick();
+    assert_eq!(
+        cancel_stop_tick,
+        click_seen_tick.saturating_add(1),
+        "Stop follows the click on its first game tick"
     );
     stop_script(&play, &account, &fixture);
     wait_for(&play, &account, &fixture, CELL_DEADLINE, |_, state| {
         state.snapshot.tick() >= cancel_start_tick.saturating_add(5)
     });
     take_logs(&play, &account, &mut cancel_logs);
+    assert_eq!(
+        cancel_logs
+            .iter()
+            .filter(|line| line.starts_with("MAKE_PENDING"))
+            .count(),
+        1,
+        "cancel probe started one request: {cancel_logs:?}"
+    );
+    assert_eq!(
+        cancel_logs
+            .iter()
+            .filter(|line| line.starts_with("MAKE_CLICK_SENT"))
+            .count(),
+        1,
+        "cancel probe dispatched one Make-1 click: {cancel_logs:?}"
+    );
     assert!(
-        !cancel_logs.iter().any(|line| line.starts_with("MAKE_RESULT:")),
+        !cancel_logs
+            .iter()
+            .any(|line| line.starts_with("MAKE_RESULT:")),
         "stopped MakeOne published a result: {cancel_logs:?}"
+    );
+    assert_eq!(
+        play.script_state(&account),
+        script::RunState::Idle,
+        "the stopped MakeOne script is idle"
     );
     let cancel_end_tick = fixture.lock().unwrap().snapshot.tick();
     let after_cancel = inventory_count(&fixture.lock().unwrap().snapshot, "Shortbow");
@@ -1022,6 +1062,8 @@ fn run_make_one_cell() {
             "missing_start": missing_start_tick,
             "missing_end": missing_end_tick,
             "cancel_start": cancel_start_tick,
+            "cancel_click_seen": click_seen_tick,
+            "cancel_stop": cancel_stop_tick,
             "cancel_end": cancel_end_tick,
             "replacement_start": replacement_start_tick,
             "replacement_end": replacement_end_tick
@@ -1029,6 +1071,7 @@ fn run_make_one_cell() {
         "success_logs": success_logs,
         "missing_menu_result": log_json(&missing_logs, "MAKE_RESULT:"),
         "cancel_pending": cancel_logs,
+        "cancelled_on_stop": true,
         "cancel_output_count": after_cancel,
         "replacement_result": log_json(&replacement_logs, "MAKE_RESULT:"),
         "replacement_output_count": after_replacement,
@@ -1402,6 +1445,12 @@ fn run_captured(test_name: &str, cell: Cell, body: fn()) {
                 button,
                 tick_boundary(&receipt, "replacement_start"),
                 tick_boundary(&receipt, "replacement_end")
+            ),
+            "cancel_after_stop": packet_count(
+                &opcodes,
+                button,
+                tick_boundary(&receipt, "cancel_stop").saturating_add(1),
+                tick_boundary(&receipt, "cancel_end")
             )
         });
         assert_eq!(
@@ -1411,6 +1460,14 @@ fn run_captured(test_name: &str, cell: Cell, body: fn()) {
         assert_eq!(
             counts["missing"], 0,
             "missing menu must not dispatch; trace={opcodes:?}"
+        );
+        assert_eq!(
+            counts["cancel"], 1,
+            "one Make-1 click started the cancelled request; trace={opcodes:?}"
+        );
+        assert_eq!(
+            counts["cancel_after_stop"], 0,
+            "no Make-1 click followed Stop; trace={opcodes:?}"
         );
         assert_eq!(
             counts["replacement"], 1,
