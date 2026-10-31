@@ -69,6 +69,11 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.8` 
 
 ### Quester
 
+- A Quester fight now retakes its drop when the game reloads the scene just as
+  the take starts. The drop stays on the ground after a reload, so the Quester
+  takes the same item once more on the next tick. If that try also fails, the
+  fight step moves on to the next item as it does for an unreachable drop.
+  Before, the whole step failed with "step error" and the item was left behind.
 - Quester's Blocked status keeps the quest stage, step and last failure after
   a parked executor stops. A park with no selected step reports an empty
   `step_id`. A row that becomes Done or Blocked discards its old parked detail.

@@ -1135,6 +1135,7 @@ fn combat_test_run_with_radius(
         loot_index: 0,
         loot_wait_deadline: None,
         loot_missing_this_kill: false,
+        loot_retake: None,
         last_report: None,
         kills: 0,
         last_outcome: None,
@@ -6228,6 +6229,301 @@ fn same_tick_loot_settle_defers_next_item_without_skipping_it() {
             ..
         }) if *id == second.id && name == second.name.as_deref().unwrap()
     ));
+}
+
+/// The loot scene the host observes: the player, the ground rows, the bound
+/// world map base an exact ground Take records (`GroundAttempt.map_base`), and
+/// the pack.
+fn loot_scene(
+    here: api::WorldTile,
+    rows: Vec<GroundItemView>,
+    map_base: (i32, i32),
+    inventory: Vec<api::snapshot::ItemView>,
+) -> GameSnapshot {
+    let mut snapshot = GameSnapshot::new();
+    snapshot.seed_ingame(2);
+    snapshot.seed_world(api::snapshot::WorldStateView {
+        map_base_x: map_base.0,
+        map_base_z: map_base.1,
+        ..Default::default()
+    });
+    snapshot.seed_local_player(super::super::tests::local_player(here));
+    snapshot.seed_inventory(inventory, 28);
+    snapshot.seed_ground_items(rows);
+    snapshot
+}
+
+/// The loot Take that records the map base it was queued from, as the live
+/// run's loot Take did: a rebuilt scene then cancels it in
+/// `reach::Reach::poll_ground` instead of the item op running.
+fn exact_loot_take_args(
+    id: i32,
+    name: &Arc<str>,
+    anchor: api::WorldTile,
+    tile: api::WorldTile,
+) -> ReachArgs {
+    ReachArgs {
+        kind: ReachKind::Ground {
+            id,
+            obj: Arc::clone(name),
+        },
+        op: Arc::from("Take"),
+        anchor: Some(anchor),
+        radius: 12,
+        wait_if_missing: false,
+        target_tile: Some(tile),
+        reachable_only: false,
+    }
+}
+
+fn begin_exact_loot_take(
+    scene: &GameSnapshot,
+    reach: &api::query::ReachQueryView,
+    ledger: &mut TestLedger,
+    tick: u64,
+    args: ReachArgs,
+) -> ActionHandle<Reach> {
+    with_step_context_reach(scene, reach, ledger, tick, |cx| {
+        cx.tick
+            .actions
+            .begin::<Reach>(args, &mut cx.tick.cx)
+            .expect("the loot Take is admitted")
+    })
+}
+
+fn loot_takes(ledger: &TestLedger, id: i32) -> usize {
+    ledger.as_ref().map_or(0, |ledger| {
+        ledger
+            .outbox
+            .iter()
+            .filter(|action| {
+                matches!(
+                    &action.effect,
+                    crate::native::HostEffect::Interaction(crate::shim::InteractReq::Obj {
+                        id: Some(taken),
+                        action,
+                        ..
+                    }) if *taken == id && action == "Take"
+                )
+            })
+            .count()
+    })
+}
+
+/// The host refusing a dispatch the loot action sent, as a rejection receipt.
+fn reject_last_interaction(ledger: &mut TestLedger, tick: u64) {
+    let authority = ledger.as_ref().unwrap().outbox.last().unwrap().authority();
+    ledger.as_mut().unwrap().complete_interaction(
+        &authority,
+        crate::native::InteractionReceipt {
+            request_id: authority.request_id().get(),
+            evidence: EvidenceStamp {
+                run: authority.run(),
+                tick,
+                sequence: tick,
+            },
+            accepted: false,
+            chat_since: 0,
+        },
+    );
+}
+
+/// A rebuilt scene cancels the queued loot Take, but the drop stays on the
+/// floor: a rebuild only rewrites the build area and the player's origin
+/// (`BuildArea.ts:57-91`), the object leaves when the item op runs
+/// (`ObjOps.ts:137-164`, `pickup.rs2:15`), and a click inside origin ± 52 is
+/// still accepted (`OpObjHandler.ts:19-28`). The step retakes the same item
+/// once, on the next observed tick, instead of failing.
+#[test]
+fn a_rebuilt_scene_retakes_the_same_loot_item_on_the_next_observed_tick() {
+    let data = api::game_data::for_revision(ClientRevision::R289).unwrap();
+    let bead = data.item_by_alias("white_bead").unwrap();
+    let bones = data.item_by_alias("bones").unwrap();
+    let bead_name: Arc<str> = Arc::from(bead.name.as_deref().unwrap());
+    let here = api::WorldTile { x: 3216, z: 3216, level: 0 };
+    for first_index in [0, 1] {
+        let mut loot = vec![LootItem {
+            id: bead.id,
+            name: Arc::clone(&bead_name),
+            qty: 1,
+        }];
+        let mut inventory = Vec::new();
+        if first_index == 1 {
+            loot.insert(0, LootItem {
+                id: bones.id,
+                name: Arc::from(bones.name.as_deref().unwrap()),
+                qty: 1,
+            });
+            inventory.push(inventory_item(bones.id, bones.name.as_deref().unwrap(), 1));
+        }
+        let mut run = combat_test_run(imp_target(&data), Some(here), None, loot);
+        run.phase = Phase::Loot;
+        run.loot_index = first_index;
+        let row = ground_item(bead.id, bead.name.as_deref().unwrap(), here, 0);
+        let scene = loot_scene(here, vec![row.clone()], (3168, 3168), inventory.clone());
+        let rebuilt = loot_scene(here, vec![row], (3176, 3168), inventory.clone());
+        let reach = open_flood(here, 8);
+        let mut ledger = None;
+        run.action = Some(Action::Loot(begin_exact_loot_take(
+            &scene,
+            &reach,
+            &mut ledger,
+            30,
+            exact_loot_take_args(bead.id, &bead_name, here, here),
+        )));
+        assert_eq!(loot_takes(&ledger, bead.id), 1, "the queued Take");
+
+        let stale = with_step_context_reach(&rebuilt, &reach, &mut ledger, 31, |cx| run.poll(cx));
+        assert!(stale.is_pending(), "{}", describe_poll(&stale));
+        assert!(run.action.is_none(), "the cancelled Take is cleared");
+        assert_eq!(run.loot_index, first_index, "the same row is addressed again");
+        assert_eq!(run.loot_retake, Some(first_index));
+        assert_eq!(loot_takes(&ledger, bead.id), 1, "no Take on the cancelled tick");
+
+        ledger.as_mut().unwrap().outbox.clear();
+        let retake = with_step_context_reach(&rebuilt, &reach, &mut ledger, 32, |cx| run.poll(cx));
+        assert!(retake.is_pending(), "{}", describe_poll(&retake));
+        assert_eq!(run.loot_index, first_index, "submission does not advance the row");
+        assert_eq!(loot_takes(&ledger, bead.id), 1, "one retake for the same item");
+        assert_eq!(loot_takes(&ledger, bones.id), 0, "an earlier row is not retaken");
+
+        inventory.push(inventory_item(bead.id, bead.name.as_deref().unwrap(), 1));
+        let gained = loot_scene(here, Vec::new(), (3176, 3168), inventory);
+        let done = with_step_context_reach(&gained, &reach, &mut ledger, 33, |cx| run.poll(cx));
+        assert!(matches!(&done, Poll::Ready(Ok(_))), "{}", describe_poll(&done));
+        assert_eq!(run.loot_index, first_index + 1, "only settlement advances the row");
+    }
+}
+
+/// The one retake can be cancelled too. That is missed loot like an
+/// unreachable drop: the next item starts, no third Take is sent for the
+/// cancelled one, and the step continues.
+#[test]
+fn a_second_rebuilt_scene_cancel_on_the_retaken_item_is_missed_loot() {
+    let data = api::game_data::for_revision(ClientRevision::R289).unwrap();
+    let bead = data.item_by_alias("white_bead").unwrap();
+    let bones = data.item_by_alias("bones").unwrap();
+    let bead_name: Arc<str> = Arc::from(bead.name.as_deref().unwrap());
+    let here = api::WorldTile { x: 3216, z: 3216, level: 0 };
+    for required in [false, true] {
+        let mut run = combat_test_run(
+            imp_target(&data),
+            Some(here),
+            if required { Some(Arc::new(NeverStop)) } else { None },
+            vec![
+                LootItem { id: bead.id, name: Arc::clone(&bead_name), qty: 1 },
+                LootItem {
+                    id: bones.id,
+                    name: Arc::from(bones.name.as_deref().unwrap()),
+                    qty: 1,
+                },
+            ],
+        );
+        run.phase = Phase::Loot;
+        // A Take still owns its row until settlement, including its one retake.
+        run.loot_index = 0;
+        run.loot_retake = Some(0);
+        let bead_row = ground_item(bead.id, bead.name.as_deref().unwrap(), here, 0);
+        let bones_row = ground_item(bones.id, bones.name.as_deref().unwrap(), here, 0);
+        let scene = loot_scene(
+            here, vec![bead_row.clone(), bones_row.clone()], (3168, 3168), Vec::new(),
+        );
+        let rebuilt = loot_scene(here, vec![bead_row, bones_row], (3176, 3168), Vec::new());
+        let reach = open_flood(here, 8);
+        let mut ledger = None;
+        run.action = Some(Action::Loot(begin_exact_loot_take(
+            &scene, &reach, &mut ledger, 30,
+            exact_loot_take_args(bead.id, &bead_name, here, here),
+        )));
+        assert_eq!(loot_takes(&ledger, bead.id), 1);
+
+        ledger.as_mut().unwrap().outbox.clear();
+        let stale = with_step_context_reach(&rebuilt, &reach, &mut ledger, 31, |cx| run.poll(cx));
+        assert!(stale.is_pending(), "{}", describe_poll(&stale));
+        assert!(run.loot_retake.is_none());
+        assert_eq!(run.loot_index, 1, "the next item owns the unsettled Take");
+        assert!(run.loot_missing_this_kill);
+        assert_eq!(loot_takes(&ledger, bead.id), 0, "no third Take");
+        assert_eq!(loot_takes(&ledger, bones.id), 1, "the next loot item starts");
+        assert!(matches!(run.action.as_ref(), Some(Action::Loot(_))));
+
+        let gained = loot_scene(
+            here, Vec::new(), (3176, 3168),
+            vec![inventory_item(bones.id, bones.name.as_deref().unwrap(), 1)],
+        );
+        let done = with_step_context_reach(&gained, &reach, &mut ledger, 32, |cx| run.poll(cx));
+        if required {
+            assert!(matches!(
+                &done,
+                Poll::Ready(Err(ActionError::Failed(reason)))
+                    if reason.contains("required combat loot was not acquired")
+            ), "{}", describe_poll(&done));
+        } else {
+            assert!(matches!(&done, Poll::Ready(Ok(_))), "{}", describe_poll(&done));
+        }
+    }
+}
+
+/// Only a rebuilt-scene cancel is retried in the loot phase. Every other
+/// loot error still ends the step.
+#[test]
+fn other_loot_phase_errors_still_fail_the_combat_step() {
+    let data = api::game_data::for_revision(ClientRevision::R289).unwrap();
+    let bones = data.item_by_alias("bones").unwrap();
+    let bones_name: Arc<str> = Arc::from(bones.name.as_deref().unwrap());
+    let mut run = combat_test_run(
+        imp_target(&data),
+        None,
+        None,
+        vec![LootItem {
+            id: bones.id,
+            name: Arc::clone(&bones_name),
+            qty: 1,
+        }],
+    );
+    run.phase = Phase::Loot;
+    let mut item = inventory_item(bones.id, bones.name.as_deref().unwrap(), 1);
+    item.actions = vec![Some("Take".into())];
+    let mut snapshot = GameSnapshot::new();
+    snapshot.seed_ingame(2);
+    snapshot.seed_inventory(vec![item], 28);
+    let mut ledger = None;
+    // A held operation whose dispatch the host rejects is a plain
+    // `ActionError::Failed` from Reach (`reach.rs:239`), not a scene cancel.
+    run.action = Some(Action::Loot(with_step_context(
+        &snapshot,
+        &mut ledger,
+        30,
+        |cx| {
+            cx.tick
+                .actions
+                .begin::<Reach>(
+                    ReachArgs {
+                        kind: ReachKind::Held {
+                            id: bones.id,
+                            obj: Arc::clone(&bones_name),
+                        },
+                        op: Arc::from("Take"),
+                        anchor: None,
+                        radius: 0,
+                        wait_if_missing: false,
+                        target_tile: None,
+                        reachable_only: false,
+                    },
+                    &mut cx.tick.cx,
+                )
+                .expect("the held Take is admitted")
+        },
+    )));
+    reject_last_interaction(&mut ledger, 30);
+    let failed = with_step_context(&snapshot, &mut ledger, 31, |cx| run.poll(cx));
+    assert!(
+        matches!(&failed, Poll::Ready(Err(ActionError::Failed(_)))),
+        "a non-cancel loot error still ends the step: {}",
+        describe_poll(&failed)
+    );
+    assert!(run.action.is_none());
+    assert_eq!(loot_takes(&ledger, bones.id), 0);
 }
 
 #[test]

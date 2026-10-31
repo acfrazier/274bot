@@ -914,6 +914,7 @@ impl StepPlan for CombatPlan {
             loot_index: 0,
             loot_wait_deadline: None,
             loot_missing_this_kill: false,
+            loot_retake: None,
             last_report: None,
             kills: 0,
             nonkill_reengagements: 0,
@@ -1261,6 +1262,9 @@ struct CombatRun {
     loot_index: usize,
     loot_wait_deadline: Option<u64>,
     loot_missing_this_kill: bool,
+    /// The loot index whose Take was cancelled by a rebuilt scene. That item
+    /// gets one retake; any further cancel for it is missed loot.
+    loot_retake: Option<usize>,
     last_report: Option<CombatReport>,
     kills: u32,
     last_outcome: Option<StepOutcome>,
@@ -1877,6 +1881,7 @@ impl CombatRun {
                         .saturating_add(LOOT_ITEM_WAIT_TICKS),
                 );
                 self.loot_missing_this_kill = false;
+                self.loot_retake = None;
                 Poll::Pending
             }
             CombatEnd::TargetGone => {
@@ -2375,6 +2380,30 @@ impl StepRun for CombatRun {
                 self.loot_index += 1;
                 self.loot_missing_this_kill = true;
                 self.next_loot_or_reengage(cx)
+            }
+            ActionPoll::Failed(ActionError::Stale) if matches!(&self.phase, Phase::Loot) => {
+                // A rebuilt scene cancels the queued ground Take before the
+                // item op runs, but the item stays on the floor: a rebuild
+                // only rewrites the player's build area (`BuildArea.ts:57-91`),
+                // the op removes the object when it takes it
+                // (`ObjOps.ts:137-164`, `pickup.rs2:15`), and a click inside
+                // origin ± 52 is still accepted (`OpObjHandler.ts:19-28`).
+                // Re-address the same item once, on the next observed tick so
+                // the new Take binds the new scene; a second cancel for that
+                // item is missed loot like an unreachable drop.
+                self.action = None;
+                // The index advances only after a Take settles, not when
+                // it starts. A rebuild must not retarget an earlier row.
+                let cancelled = self.loot_index;
+                if self.loot_retake == Some(cancelled) {
+                    self.loot_retake = None;
+                    self.loot_index += 1;
+                    self.loot_missing_this_kill = true;
+                    self.next_loot_or_reengage(cx)
+                } else {
+                    self.loot_retake = Some(cancelled);
+                    Poll::Pending
+                }
             }
             ActionPoll::Failed(ActionError::Failed(reason))
                 if matches!(&self.phase, Phase::FinishDialogue) =>
