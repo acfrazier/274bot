@@ -26,9 +26,30 @@ const BANK_TILE: (i32, i32, i32) = (3093, 3243, 0);
 const PROBE_SOURCE: &str = r#"import { LoopingBot } from '../../api/bot/Bot.js';
 import { reader, actions } from '../../adapter/ClientAdapter.js';
 import { Bank } from '../../api/bank/Bank.js';
+import { Game } from '../../api/game/Game.js';
 import { Execution } from '../../api/execution/Execution.js';
 import { Input } from '../../input/Input.js';
 import { Inventory } from '../../api/inventory/Inventory.js';
+async function face(x, z) {
+    const here = Game.tile();
+    if (!here) return false;
+    const yaw = (Math.trunc(Math.atan2(x - here.x, z - here.z) * -325.949) & 0x7ff);
+    if (!Game.setCameraYaw(yaw)) return false;
+    if (!(await Execution.delayUntil(() => Game.cameraYaw() === yaw, 3000))) return false;
+    await Execution.delayTicks(1);
+    return true;
+}
+
+function npcBoundsFor(rows) {
+    for (const npc of rows) {
+        const points = reader.npcBox(npc.index);
+        if (Array.isArray(points) && points.length === 8) {
+            return { index: npc.index, id: npc.id, points };
+        }
+    }
+    return null;
+}
+
 const bankLoc = __BANK_LOC_JSON__;
 
 export default class ClientAdapterLiveProbe extends LoopingBot {
@@ -43,6 +64,10 @@ export default class ClientAdapterLiveProbe extends LoopingBot {
         }
         if (reader.skillCount() !== 25) {
             throw new Error(`ClientAdapter skill catalog count was ${reader.skillCount()}, expected 25`);
+        }
+        // Face the selected booth before the input and its projected bounds.
+        if (!(await face(bankLoc.x, bankLoc.z))) {
+            throw new Error('ClientAdapter probe could not face the seeded Draynor bank');
         }
         // The ClientAdapter shim resolves location input by world tile.
         if (!Input.interactLoc(bankLoc.x, bankLoc.z, bankLoc.typecode, bankLoc.op)) {
@@ -65,25 +90,40 @@ export default class ClientAdapterLiveProbe extends LoopingBot {
         if (!(await Execution.delayUntil(() => reader.countDialogOpen(), 3000))) {
             throw new Error('Withdraw X did not open the count dialog');
         }
-        const npcRows = reader.npcs();
-        let npcBounds = null;
-        for (const npc of npcRows) {
-            const points = reader.npcBox(npc.index);
-            if (Array.isArray(points) && points.length === 8) {
-                npcBounds = { index: npc.index, id: npc.id, points };
-                break;
-            }
-        }
-        const locPoints = reader.locBox({
+        let npcRows = reader.npcs();
+        let npcBounds = npcBoundsFor(npcRows);
+        let locPoints = reader.locBox({
             id: bankLoc.id,
             x: bankLoc.x,
             z: bankLoc.z,
             level: bankLoc.level,
         });
+        if (!npcBounds || !Array.isArray(locPoints) || locPoints.length !== 8) {
+            const targetNpc = npcRows.find((npc) => Number.isInteger(npc.x) && Number.isInteger(npc.z));
+            if (targetNpc && await face(targetNpc.x, targetNpc.z)) {
+                npcRows = reader.npcs();
+                npcBounds = npcBoundsFor(npcRows);
+                locPoints = reader.locBox({
+                    id: bankLoc.id,
+                    x: bankLoc.x,
+                    z: bankLoc.z,
+                    level: bankLoc.level,
+                });
+            }
+        }
         const locBounds = Array.isArray(locPoints) && locPoints.length === 8
             ? { id: bankLoc.id, x: bankLoc.x, z: bankLoc.z, points: locPoints }
             : null;
-        if (!npcBounds || !locBounds) throw new Error('ClientAdapter did not expose real NPC and loc bounds');
+        if (!npcBounds || !locBounds) {
+            const npcBoxLengths = npcRows.slice(0, 4).map((npc) => {
+                const points = reader.npcBox(npc.index);
+                return `${npc.index}:${Array.isArray(points) ? points.length : -1}`;
+            });
+            throw new Error(
+                `ClientAdapter did not expose real NPC and loc bounds (npcCount=${npcRows.length}, npcBoxes=${npcBoxLengths.join(',')}, locPoints=${Array.isArray(locPoints) ? locPoints.length : -1}, cameraYaw=${Game.cameraYaw()})`,
+            );
+        }
+
         const unknownControl = {
             button: reader.buttonByText(2147483647, 'unknown control'),
             close: reader.closeButtonComId(2147483647),
