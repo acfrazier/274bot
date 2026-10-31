@@ -3309,7 +3309,7 @@ fn real_content_inspection_capture_bytes() {
     let new_digest: [u8; 32] = sha2::Sha256::digest(&bytes).into();
     assert_eq!(
         nav_planner::pack::sha256_hex(&new_digest),
-        "d87446444efcf620d920be5b022e73faf67677299ca72312f29c9dc7e59f0876",
+        "7812896a46b73f2be3f525d20ff5b5dc8fa02693651870200c93fbe9b77c8806",
         "new real-content inspection capture authority"
     );
 
@@ -3328,9 +3328,11 @@ fn real_content_inspection_capture_bytes() {
             "new capture omits retired vtable offset {retired_field}"
         );
     }
-    // `inv_ready` and `bank_side_ready` (vtable offsets 298 and 300) are new
-    // trailing fields: the full snapshot writes them, the old capture predates them.
-    for added_field in [298_u16, 300] {
+    // `inv_ready`, `bank_side_ready` and `stats_ready` (vtable offsets 298,
+    // 300 and 302) are new trailing bool fields: the full snapshot writes them,
+    // the old capture predates them. Wave 2 added `stats_ready`, which moved the
+    // new capture digest from d8744644… to the value above at the same length.
+    for added_field in [298_u16, 300, 302] {
         assert_eq!(
             old_vtable.get(added_field),
             0,
@@ -3346,7 +3348,7 @@ fn real_content_inspection_capture_bytes() {
     for field_index in 0..field_count {
         let field_offset =
             4 + 2 * u16::try_from(field_index).expect("snapshot vtable field index fits in u16");
-        if matches!(field_offset, 126 | 128 | 298 | 300) {
+        if matches!(field_offset, 126 | 128 | 298 | 300 | 302) {
             continue;
         }
         assert_eq!(
