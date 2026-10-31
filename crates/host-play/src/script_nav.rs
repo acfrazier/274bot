@@ -7661,12 +7661,14 @@ mod diagnostic_tests {
             .unwrap_or_default()
             .contains("Insufficient route supplies"),);
 
-        let mut bot = NavBot::default();
-        bot.route_generation = output.generation;
-        bot.walk_request_id = output.request_id;
-        bot.walk_outcome_generation = output.generation;
-        bot.walk_outcome_request_id = output.request_id;
-        bot.requested_route = Some((to, 0, false, false, true, ZoneExempt::NONE));
+        let bot = NavBot {
+            route_generation: output.generation,
+            walk_request_id: output.request_id,
+            walk_outcome_generation: output.generation,
+            walk_outcome_request_id: output.request_id,
+            requested_route: Some((to, 0, false, false, true, ZoneExempt::NONE)),
+            ..NavBot::default()
+        };
         let navs = Arc::new(Mutex::new(HashMap::from([(
             "first-goal-budget-test".to_owned(),
             bot,
