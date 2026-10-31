@@ -1,5 +1,5 @@
 //! Bank, shop, production, equipment and loadout compiled families.
-use super::{reach, walk_step_evidence, NoArgs};
+use super::{begin_approach_walk, reach, walk_step_evidence, NoArgs};
 use crate::acquire::run::AcquireRun;
 use crate::acquire::{AcquireOutcome, AcquirePlan, AcquireRequest, OpenGate};
 use crate::combat::RaisedPrayers;
