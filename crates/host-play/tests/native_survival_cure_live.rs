@@ -1193,10 +1193,14 @@ fn lethal_cure_report(report: &SurvivalReport) -> bool {
         )
 }
 
-fn typed_lethal_need(slot: &host_play::SlotStatus) -> bool {
-    lethal_cure_report(&slot.survival)
+fn typed_lethal_need(report: &SurvivalReport) -> bool {
+    lethal_cure_report(report)
 }
 
+/// The need, read from the runner's published status (the typed report and
+/// its text come from one `ScriptStatus`; the slot row's copy can lag one
+/// client-loop frame, `host-play/src/script_paint.rs` `script_survival_of`),
+/// with the slot's condition of this frame.
 fn capture_need(
     snapshot: &GameSnapshot,
     status: Option<&ScriptStatus>,
@@ -1208,10 +1212,12 @@ fn capture_need(
     else {
         return false;
     };
-    if witness.poison_tick.is_none() || !typed_lethal_need(slot) {
+    let Some(report) = status.map(|status| status.survival) else {
+        return false;
+    };
+    if witness.poison_tick.is_none() || !typed_lethal_need(&report) {
         return false;
     }
-    let report = slot.survival;
     let condition = slot.condition;
     let now = condition.tick as u16;
     let outlook =
@@ -1265,7 +1271,7 @@ fn capture_need(
             .map(|option| option.text.clone())
             .collect();
     }
-    typed_lethal_need(slot)
+    typed_lethal_need(&report)
 }
 
 fn observe_frame(
@@ -1328,7 +1334,7 @@ fn observe_frame(
             witness.dose_drop_tick = Some(snapshot.tick());
         }
         if witness.drink_decision_tick.is_none()
-            && slot.is_some_and(|slot| slot.survival.decision == Decision::Drinking)
+            && status.is_some_and(|status| status.survival.decision == Decision::Drinking)
         {
             witness.drink_decision_tick = Some(snapshot.tick());
             witness.drink_decision_modal = Some(snapshot.modals().chat);
@@ -1432,14 +1438,18 @@ fn check_deadline(witness: &Witness, tick: u32, deadline: u32) -> Result<u32, St
 /// lethal one. Both need the same HP, food, dose and no hit at the edge.
 /// The dialogue cell seeds its poison before Start (design-final.md:946), so
 /// its runner never sees the open latch: its first `Needed` report is the
-/// latched onset of that line.
+/// latched onset of that line. The provisioning cell seeds it during a bank
+/// transfer, which the runner lets settle first and reports as `Needed`
+/// (design A6.6, `SurvivalStep::defer`), also with a latched onset.
 fn check_need(witness: &Witness) -> Result<(), String> {
     let onset = witness
         .need_condition_poison
         .as_deref()
         .is_some_and(|poison| poison.starts_with("Onset"));
+    let latched_needed =
+        witness.poison_source == PoisonSource::TwistedChest || witness.poison_during_provisioning;
     let latch_ok = match witness.need_report_decision.as_deref() {
-        Some("Needed") if witness.poison_source == PoisonSource::TwistedChest => onset,
+        Some("Needed") if latched_needed => onset,
         Some("Needed") => {
             witness.need_outlook_pending == Some(true)
                 && witness.need_unlatched_poison == Some(true)
@@ -1619,7 +1629,17 @@ fn common_receipt(
             snapshot.tick()
         ));
     }
-    if witness.drink_decision_modal != Some(-1) {
+    // In the dialogue cell a one-line chat page (`chat1`, interface 968) was
+    // open on the frame of the drink decision once (fix-r2/diag, 2026-10-31),
+    // and the drink line still came two ticks later: the engine ran the click.
+    // Only the options page that was open at the policy change blocks it there.
+    let blocked_modal = if witness.activity == Activity::Dialogue {
+        witness.drink_decision_modal.is_none()
+            || witness.drink_decision_modal == witness.profile_change_modal
+    } else {
+        witness.drink_decision_modal != Some(-1)
+    };
+    if blocked_modal {
         return Err(format!(
             "antipoison click was requested while a modal was open: {:?}",
             witness.drink_decision_modal
@@ -2057,7 +2077,7 @@ fn dialogue_receipt(
         || closed > change.saturating_add(2)
         || drink < closed
         || drink > change.saturating_add(2)
-        || drink_modal != -1
+        || witness.profile_change_modal == Some(drink_modal)
         || cure < change
         || cure.saturating_sub(change) > 10
         || drop < change
@@ -2246,14 +2266,17 @@ fn assert_common_cure(receipt: &Value, resumed_ticks: u64) {
     assert_eq!(receipt["condition_at_need"]["outlook_per_fire"], Q_UNKNOWN);
     // `check_need` applied the per-decision latch rule; restate it. `Needed`
     // is the open latch (outlook pending), except after a poison seeded
-    // before Start (the dialogue cell's chest), where the runner's first
-    // report is the latched onset; `Drinking` is the straight-to-drink
-    // report, with the latch either way (A6.5 item 3).
+    // before Start (the dialogue cell's chest) or during a bank transfer (the
+    // provisioning cell), where the runner's first report is the latched
+    // onset; `Drinking` is the straight-to-drink report, with the latch
+    // either way (A6.5 item 3).
     let onset = receipt["condition_at_need"]["poison"]
         .as_str()
         .is_some_and(|poison| poison.starts_with("Onset"));
+    let latched_needed = receipt["poison_source"] == "yanille-twisted-chest"
+        || receipt["poison_seed_bank_open"] == true;
     match receipt["survival_report_at_need"]["decision"].as_str() {
-        Some("Needed") if receipt["poison_source"] == "yanille-twisted-chest" => assert!(onset),
+        Some("Needed") if latched_needed => assert!(onset),
         Some("Needed") => {
             assert_eq!(receipt["condition_at_need"]["outlook_pending"], true);
             assert_eq!(receipt["condition_at_need"]["unlatched_poison"], true);
