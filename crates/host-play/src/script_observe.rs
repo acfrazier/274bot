@@ -1529,7 +1529,6 @@ where
                                     super::OrderedDispatchContext {
                                         snapshot: &snapshot,
                                         selected: selected.as_deref(),
-                                        tick,
                                         input: slot_input,
                                         builtin_gatherer_knife: slot
                                             .is_builtin_gatherer_run(authority.run()),

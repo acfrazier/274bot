@@ -250,7 +250,6 @@ pub(crate) fn dispatch_native_bank_deposit(
 pub(crate) struct OrderedDispatchContext<'a> {
     pub snapshot: &'a GameSnapshot,
     pub selected: Option<&'a api::game_data::SelectedGameData>,
-    pub tick: u64,
     pub input: Option<&'a host::SlotInput>,
     /// Derived by the host from the exact active compiled Gatherer run, never the payload.
     pub builtin_gatherer_knife: bool,
@@ -269,6 +268,9 @@ pub(crate) fn dispatch_native_server_ordered(
     };
     use script::surface::ServerOrderedPayload;
 
+    // The API validates the Client packet clock against the snapshot and input
+    // lineage. Play's native completion clock survives relogs and is separate.
+    let dispatch_tick = u64::from(context.snapshot.tick());
     let request_id = authority.request_id().get();
     let row_count = match envelope.payload() {
         ServerOrderedPayload::Content(request) => request.row_count(),
@@ -277,7 +279,7 @@ pub(crate) fn dispatch_native_server_ordered(
     let Some(input) = context.input else {
         return ServerOrderedDispatch::refused(
             request_id,
-            context.tick,
+            dispatch_tick,
             row_count,
             0,
             ServerOrderedError::ObservationUnavailable,
@@ -299,7 +301,7 @@ pub(crate) fn dispatch_native_server_ordered(
             let Some(selected) = context.selected else {
                 return ServerOrderedDispatch::refused(
                     request_id,
-                    context.tick,
+                    dispatch_tick,
                     row_count,
                     0,
                     ServerOrderedError::ContractUnavailable,
@@ -308,7 +310,7 @@ pub(crate) fn dispatch_native_server_ordered(
             let Ok(pin) = selected.selected_pin() else {
                 return ServerOrderedDispatch::refused(
                     request_id,
-                    context.tick,
+                    dispatch_tick,
                     row_count,
                     0,
                     ServerOrderedError::ContractUnavailable,
@@ -317,7 +319,7 @@ pub(crate) fn dispatch_native_server_ordered(
             let Ok(catalog) = selected.server_ordered_catalog(&pin) else {
                 return ServerOrderedDispatch::refused(
                     request_id,
-                    context.tick,
+                    dispatch_tick,
                     row_count,
                     0,
                     ServerOrderedError::ContractUnavailable,
@@ -326,7 +328,7 @@ pub(crate) fn dispatch_native_server_ordered(
             let _lineage = input.input_lineage(InputLineage::ContentRequest(request_id));
             let dispatch_context = ServerOrderedDispatchContext {
                 request_id,
-                dispatch_tick: context.tick,
+                dispatch_tick,
                 input: observed,
                 debug: None,
                 authority: &mut live,
@@ -364,7 +366,7 @@ pub(crate) fn dispatch_native_server_ordered(
                 operations,
                 ServerOrderedDispatchContext {
                     request_id,
-                    dispatch_tick: context.tick,
+                    dispatch_tick,
                     input: observed,
                     debug: envelope.debug_catalog(),
                     authority: &mut live,
