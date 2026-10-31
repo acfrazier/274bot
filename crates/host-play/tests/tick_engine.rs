@@ -3557,7 +3557,13 @@ fn copper_history(scenario: Scenario, expect_held_join: bool) -> Result<RunEvide
         run.wait_until(stopped_at, 2, |trace, _| {
             edge_frame(trace, u64::from(stopped_at) + 2).is_some()
         })?;
-        assert_log_unchanged(run)
+        // SPEC 11.3(6) requires only the common prefix through the second
+        // edge for the held history; later engine outcomes remain evidence.
+        // Its queued Fletching can consume the log during this cleanup.
+        if !expect_held_join {
+            assert_log_unchanged(run)?;
+        }
+        Ok(())
     })
 }
 
