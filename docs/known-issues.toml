@@ -571,3 +571,15 @@ listed = "0.2.8"
 target = "0.2.9"
 severity = "medium"
 owner = "host background work (WorkAdmission)"
+
+[[item]]
+id = "music-first-song-font-read"
+kind = "known-issue"
+area = "Audio"
+text = """When music is on, a bot reads the music font once, at its first song.
+  Music is off in the default low-memory mode."""
+first = "0.1.0"
+listed = "0.2.9"
+target = "0.3.0"
+severity = "low"
+owner = "T1 shared audio resource admission"
