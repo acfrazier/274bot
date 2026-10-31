@@ -102,6 +102,14 @@ pub struct ChatObservation {
     pub poll: PollKind,
 }
 
+impl ChatObservation {
+    /// First possible PLAYER_INFO tick for this first-seen chat row.
+    /// Edge rows span [t, t+1]; a wake row belongs to [t+1, t+1].
+    pub fn first_attributable_tick(&self) -> u64 {
+        u64::from(self.game_tick) + u64::from(self.poll == PollKind::Wake)
+    }
+}
+
 /// One host observation of the real encrypted Client session.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FrameObservation {
@@ -251,8 +259,8 @@ struct ActiveDispatch {
 }
 
 /// A real, newly received Mining roll with no start-act or success line.
-/// The prior dispatch excludes startup; a fresh non-null instruction excludes
-/// the fast-rock success/Idle replacement path (mining.rs2:109-111,183-192).
+/// A prior native start Act proves Mining is already running. A fresh
+/// non-null instruction excludes success/Idle (mining.rs2:109-111,183-192).
 pub fn fresh_mining_roll(trace: &TickEngineTrace, tick: u32, sequence: i32) -> bool {
     let Some(frame) = trace.frames.last() else {
         return false;
@@ -270,20 +278,21 @@ pub fn fresh_mining_roll(trace: &TickEngineTrace, tick: u32, sequence: i32) -> b
             .skip(1)
             .find_map(|frame| frame.animation)
             .is_none_or(|previous| previous.serial != animation.serial)
-        && trace.dispatches.iter().any(|dispatch| {
-            dispatch.game_tick < u64::from(tick)
-                && dispatch
-                    .request_debug
-                    .as_deref()
-                    .is_some_and(|request| request.contains("KnifeArm"))
-        })
+        && trace
+            .frames
+            .iter()
+            .flat_map(|frame| &frame.chat)
+            .any(|line| {
+                line.first_attributable_tick() < u64::from(tick)
+                    && line.text.contains("You swing your pick at the rock.")
+            })
         && !trace
             .frames
             .iter()
             .flat_map(|frame| &frame.chat)
             .any(|line| {
                 let observed = u64::from(line.game_tick);
-                let first = observed + u64::from(line.poll == PollKind::Wake);
+                let first = line.first_attributable_tick();
                 first <= u64::from(tick)
                     && observed + 1 >= u64::from(tick)
                     && (line.text.contains("You swing your pick at the rock.")

@@ -1141,13 +1141,10 @@ fn frame_json(frame: &FrameObservation) -> Value {
 }
 
 fn chat_json(chat: &ChatObservation) -> Value {
-    let interval = match chat.poll {
-        PollKind::Edge => json!([chat.game_tick, chat.game_tick.wrapping_add(1)]),
-        PollKind::Wake => json!([
-            chat.game_tick.wrapping_add(1),
-            chat.game_tick.wrapping_add(1)
-        ]),
-    };
+    let interval = json!([
+        chat.first_attributable_tick(),
+        u64::from(chat.game_tick) + 1
+    ]);
     json!({
         "observed_tick": chat.game_tick,
         "sequence": chat.sequence,

@@ -69,7 +69,8 @@ const STALE_MENU_BUDGET: u32 = 4;
 const SPLIT_OPENER_BUDGET: u32 = 4;
 const LATE_RIVER_BUDGET: u32 = 5;
 const LATE_IRON_BUDGET: u32 = 5;
-const NATURAL_IRON_ROLL_BUDGET: u32 = 60;
+const NATURAL_IRON_ROLL_BUDGET: u32 = 600;
+const IRON_ROLL_OPPORTUNITY_LIMIT: usize = 32;
 const COPPER_BUDGET: u32 = 4;
 const HOST_REFUSAL_BUDGET: u32 = 1;
 const MAKE_WITHOUT_CLICK_BUDGET: u32 = 3;
@@ -2257,7 +2258,7 @@ fn has_chat_in_range(
             // Chat precedes PLAYER_INFO: an edge bounds it to [t, t + 1],
             // while a wake attributes it exactly to t + 1 (facts r5 §1.5).
             let observed = u64::from(line.game_tick);
-            let first = observed + u64::from(line.poll == PollKind::Wake);
+            let first = line.first_attributable_tick();
             let last = observed + 1;
             first <= through_tick && last >= from_tick && predicate(&line.text)
         })
@@ -2312,6 +2313,130 @@ fn iron_roll_on_edge(trace: &TickEngineTrace, tick: u64) -> bool {
                     line.contains("You manage to mine some iron.")
                 })
     })
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum IronPrecondition {
+    Waiting {
+        opportunities: usize,
+    },
+    Selected {
+        request_id: u64,
+        roll_tick: u64,
+        opportunities: usize,
+    },
+    NoEligibleFailure {
+        opportunities: usize,
+    },
+    GuardExhausted {
+        opportunities: usize,
+    },
+    SelectionMissing {
+        roll_tick: u64,
+        opportunities: usize,
+    },
+}
+
+fn iron_precondition(
+    trace: &TickEngineTrace,
+    selected_request: Option<u64>,
+    start: u32,
+    current: u32,
+) -> IronPrecondition {
+    let mut opportunities = 0;
+    let mut previous_tick = None;
+    for frame in &trace.frames {
+        let tick = u64::from(frame.game_tick);
+        if !frame.tick_edge
+            || frame.game_tick < start
+            || frame.game_tick.saturating_sub(start) > NATURAL_IRON_ROLL_BUDGET
+            || previous_tick == Some(tick)
+            || !iron_roll_on_edge(trace, tick)
+            || has_chat_in_tick(trace, tick, |line| {
+                line.contains("You swing your pick at the rock.")
+            })
+        {
+            continue;
+        }
+        previous_tick = Some(tick);
+        opportunities += 1;
+        let success = has_chat_in_tick(trace, tick, |line| {
+            line.contains("You manage to mine some iron.")
+        });
+        if !success {
+            if let Some(dispatch) = trace.dispatches.iter().find(|dispatch| {
+                Some(dispatch.receipt.request_id) == selected_request && dispatch.game_tick == tick
+            }) {
+                return IronPrecondition::Selected {
+                    request_id: dispatch.receipt.request_id,
+                    roll_tick: tick,
+                    opportunities,
+                };
+            }
+            // The receipt may still be in flight in this same host window.
+            if u64::from(current) > tick {
+                return IronPrecondition::SelectionMissing {
+                    roll_tick: tick,
+                    opportunities,
+                };
+            }
+            return IronPrecondition::Waiting { opportunities };
+        }
+        if opportunities == IRON_ROLL_OPPORTUNITY_LIMIT {
+            return IronPrecondition::NoEligibleFailure { opportunities };
+        }
+    }
+    if current.saturating_sub(start) >= NATURAL_IRON_ROLL_BUDGET {
+        IronPrecondition::GuardExhausted { opportunities }
+    } else {
+        IronPrecondition::Waiting { opportunities }
+    }
+}
+
+fn validate_late_iron_history(
+    trace: &TickEngineTrace,
+    statuses: &[StatusObservation],
+    origin: u64,
+) -> Result<(), &'static str> {
+    if !fresh_animation_on_edge(trace, origin + 2).is_some_and(|(sequence, _)| {
+        sequence == MITHRIL_PICK_ANIMATION || sequence == FLETCHING_ANIMATION
+    }) || !has_chat_in_tick(trace, origin + 2, |line| {
+        line.contains("You swing your pick at the rock.")
+    }) || checked_click_pairs(trace, origin + 2) != 1
+        || !iron_roll_on_edge(trace, origin + 5)
+    {
+        return Err("late-acceptance failed: missing R+2 act/click or real R+5 iron roll");
+    }
+    let before = statuses
+        .iter()
+        .rev()
+        .find(|status| u64::from(status.game_tick) <= origin + 1)
+        .ok_or("late-acceptance failed: missing pre-landing status")?;
+    let after = statuses
+        .last()
+        .ok_or("late-acceptance failed: missing final status")?;
+    if after.tick_slips != before.tick_slips.map(|count| count + 1)
+        || after.tick_verified != before.tick_verified
+        || after.tick_unobserved != before.tick_unobserved
+        || after.tick_cycle != before.tick_cycle
+    {
+        return Err("late-acceptance failed: expected one Slip and unchanged prior cycle totals");
+    }
+    if knife_dispatches(trace)
+        .iter()
+        .any(|dispatch| dispatch.game_tick > origin && dispatch.game_tick < origin + 5)
+    {
+        return Err("late-acceptance failed: second batch before R+5");
+    }
+    if trace.frames.first().is_some_and(|baseline| {
+        trace
+            .frames
+            .iter()
+            .any(|frame| frame.log_count != baseline.log_count)
+    }) {
+        return Err("late-acceptance failed: raw log count changed");
+    }
+    Ok(())
 }
 
 fn iface_moved_in_window(trace: &TickEngineTrace, tick: u64, baseline: &FrameObservation) -> bool {
@@ -3149,6 +3274,11 @@ fn normalized_prefix(evidence: &RunEvidence, end_offset: u32) -> PrefixTrace {
                     .chat
                     .iter()
                     .filter(|line| !chance_gather_success(&line.text))
+                    .filter(|line| {
+                        line.first_attributable_tick()
+                            .checked_sub(u64::from(origin))
+                            .is_some_and(|offset| offset < u64::from(end_offset))
+                    })
                     .map(|line| (line.text.clone(), line.poll))
                     .collect(),
                 log_count: frame.log_count,
@@ -3542,18 +3672,33 @@ fn tick_engine_plain_late_river_and_mithril_iron() {
         })?;
         let selection = Arc::clone(&run.hook);
         let start = run.hook.observed_game_tick();
+        let mut precondition = IronPrecondition::Waiting { opportunities: 0 };
         run.wait_until(start, NATURAL_IRON_ROLL_BUDGET, |trace, _| {
-            selection.fresh_roll_request_id().is_some_and(|request_id| {
-                trace.dispatches.iter().any(|dispatch| dispatch.receipt.request_id == request_id)
-            })
+            let current = trace.frames.last().map_or(start, |frame| frame.game_tick);
+            precondition = iron_precondition(trace, selection.fresh_roll_request_id(), start, current);
+            !matches!(precondition, IronPrecondition::Waiting { .. })
         })?;
-        let request_id = run.hook.fresh_roll_request_id()
-            .ok_or_else(|| run.failure("no naturally eligible Mining-roll dispatch was held"))?;
+        let (request_id, selected_tick, opportunities) = match precondition {
+            IronPrecondition::Selected { request_id, roll_tick, opportunities } => {
+                (request_id, roll_tick, opportunities)
+            }
+            IronPrecondition::NoEligibleFailure { opportunities } => return Err(run.failure(format!(
+                "chance precondition: no eligible failed roll in {opportunities} observed opportunities; p <= 4.07e-8, not a late-acceptance result"
+            ))),
+            IronPrecondition::GuardExhausted { opportunities } => return Err(run.failure(format!(
+                "scheduling/target precondition: only {opportunities} observed opportunities by the fixed {NATURAL_IRON_ROLL_BUDGET}-edge guard; not a chance or late-acceptance result"
+            ))),
+            IronPrecondition::SelectionMissing { roll_tick, opportunities } => return Err(run.failure(format!(
+                "scheduling precondition: eligible failed roll at {roll_tick}, opportunity {opportunities}, has no selected held request"
+            ))),
+            IronPrecondition::Waiting { .. } => unreachable!("wait stopped on a terminal precondition"),
+        };
+        println!("TICK-MANIP iron precondition selected real failed roll R={selected_tick}, request={request_id}, observed_opportunities={opportunities}; fixed_guard={NATURAL_IRON_ROLL_BUDGET}, limit={IRON_ROLL_OPPORTUNITY_LIMIT}");
         let first = run.hook.trace().dispatches.into_iter()
             .find(|dispatch| dispatch.receipt.request_id == request_id)
             .ok_or_else(|| run.failure("selected Mining-roll receipt disappeared"))?;
         assert_batch(run, &first, 3, 4)?;
-        let selected_tick = first.game_tick;
+        debug_assert_eq!(first.game_tick, selected_tick);
         let release_edge_tick = selected_tick as u32 + 1;
         let held_proxy = run
             .proxy
@@ -3579,42 +3724,13 @@ fn tick_engine_plain_late_river_and_mithril_iron() {
         )?;
         let origin = first.game_tick;
         run.wait_until(origin as u32, LATE_IRON_BUDGET, |trace, statuses| {
-            fresh_animation_on_edge(trace, origin + 2).is_some_and(|(sequence, _)| {
-                sequence == MITHRIL_PICK_ANIMATION || sequence == FLETCHING_ANIMATION
-            }) && has_chat_in_tick(trace, origin + 2, |line| {
-                line.to_ascii_lowercase()
-                    .contains("swing your pick at the rock")
-            }) && checked_click_pairs(trace, origin + 2) == 1
-                && iron_roll_on_edge(trace, origin + 5)
-                && statuses
-                    .last()
-                    .is_some_and(|status| status.tick_slips.unwrap_or(0) >= 1)
-        })?;
+            validate_late_iron_history(trace, statuses, origin).is_ok()
+        }).map_err(|error| format!("late-acceptance failed after its selected-roll precondition: {error}"))?;
         let trace = run.hook.trace();
         assert_click(run, &trace, origin + 2)?;
-        if !iron_roll_on_edge(&trace, origin + 5) {
-            return Err(run.failure("no real mithril/iron roll at R+1+4"));
-        }
-        let before_landing = run.statuses.iter().rev()
-            .find(|status| u64::from(status.game_tick) <= origin + 1)
-            .ok_or_else(|| run.failure("missing status before the late iron landing"))?;
-        let final_status = run.statuses.last()
-            .ok_or_else(|| run.failure("missing late iron verdict"))?;
-        if final_status.tick_slips != before_landing.tick_slips.map(|count| count + 1)
-            || final_status.tick_verified != before_landing.tick_verified
-            || final_status.tick_unobserved != before_landing.tick_unobserved
-            || final_status.tick_cycle != before_landing.tick_cycle
-        {
-            return Err(run.failure(format!(
-                "late iron did not add one slip while preserving prior verified/unobserved cycles: before={before_landing:?} after={final_status:?}"
-            )));
-        }
-        if knife_dispatches(&trace)
-            .iter()
-            .any(|dispatch| dispatch.game_tick > origin && dispatch.game_tick < origin + 5)
-        {
-            return Err(run.failure("iron/mithril branch emitted a second batch before R+1+4"));
-        }
+        validate_late_iron_history(&trace, &run.statuses, origin)
+            .map_err(|error| run.failure(error))?;
+        println!("TICK-MANIP iron late-acceptance passed independently of precondition selection: R+2 act/click, R+5 real roll, one Slip, unchanged prior cycle totals");
         assert_log_unchanged(run)?;
         assert_running(run)
     })
@@ -4232,10 +4348,185 @@ mod packet_oracle_tests {
         evidence
     }
 
+    fn iron_success_opportunities(count: u32) -> TickEngineTrace {
+        let mut trace = prefix_evidence().trace;
+        trace.frames.clear();
+        for index in 0..count {
+            let tick = 10 + index * 4;
+            let mut frame = observed_frame(tick, true, 1);
+            frame.animation = Some(client::client::client::LocalAnimationUpdate {
+                sequence: -1,
+                serial: u64::from(index + 1),
+            });
+            frame.chat.push(ChatObservation {
+                game_tick: tick,
+                sequence: i32::try_from(index).unwrap(),
+                text: "You manage to mine some iron.".into(),
+                poll: PollKind::Edge,
+            });
+            trace.frames.push(frame);
+        }
+        trace
+    }
+
+    fn late_iron_evidence() -> RunEvidence {
+        let mut evidence = prefix_evidence();
+        let mut receipt = interact::server_ordered::ServerOrderedDispatch::refused(
+            2,
+            10,
+            3,
+            0,
+            interact::server_ordered::ServerOrderedError::Cancelled,
+        );
+        receipt.dispatched_prefix = 3;
+        receipt.wire_events = 4;
+        receipt.terminal = None;
+        for (row, wire_events) in receipt.rows[..3].iter_mut().zip([1, 1, 2]) {
+            *row = interact::server_ordered::RowDispatch::HostQueued { wire_events };
+        }
+        evidence.trace.dispatches.push(DispatchObservation {
+            game_tick: 10,
+            receipt,
+            request_debug: Some("KnifeArm".into()),
+            mutation_applied: false,
+        });
+        evidence.trace.frames = (9..=15)
+            .map(|tick| {
+                let mut frame = observed_frame(tick, true, 1);
+                if tick >= 10 {
+                    frame.animation = Some(client::client::client::LocalAnimationUpdate {
+                        sequence: if (12..15).contains(&tick) {
+                            FLETCHING_ANIMATION
+                        } else {
+                            MITHRIL_PICK_ANIMATION
+                        },
+                        serial: if tick < 12 {
+                            1
+                        } else if tick < 15 {
+                            2
+                        } else {
+                            3
+                        },
+                    });
+                }
+                if tick == 12 {
+                    frame.chat.push(ChatObservation {
+                        game_tick: 12,
+                        sequence: 1,
+                        text: "You swing your pick at the rock.".into(),
+                        poll: PollKind::Edge,
+                    });
+                }
+                frame
+            })
+            .collect();
+        for opcode in [
+            ClientProt289::MOVE_OPCLICK.id as u8,
+            ClientProt289::OPLOC1.id as u8,
+        ] {
+            let mut packet = wire(opcode, 2, 7);
+            packet.host_frame = 120;
+            packet.game_tick = 12;
+            packet.request_id = None;
+            evidence.trace.wire.push(packet);
+        }
+        let before = &mut evidence.statuses[0];
+        before.game_tick = 11;
+        before.host_frame = 110;
+        before.tick_cycle = Some(3);
+        before.tick_verified = Some(4);
+        before.tick_slips = Some(1);
+        let mut after = before.clone();
+        after.game_tick = 15;
+        after.host_frame = 150;
+        after.tick_slips = Some(2);
+        evidence.statuses.push(after);
+        evidence
+    }
+
+    #[test]
+    fn iron_precondition_reports_thirty_two_successes_as_a_chance_outcome() {
+        let trace = iron_success_opportunities(32);
+        assert_eq!(
+            iron_precondition(&trace, None, 8, 138),
+            IronPrecondition::NoEligibleFailure { opportunities: 32 }
+        );
+    }
+
+    #[test]
+    fn iron_precondition_guard_counts_observed_rolls_not_elapsed_edges() {
+        for opportunities in [0, 1, 31] {
+            let trace = iron_success_opportunities(opportunities);
+            assert_eq!(
+                iron_precondition(&trace, None, 8, 608),
+                IronPrecondition::GuardExhausted {
+                    opportunities: opportunities as usize
+                }
+            );
+        }
+    }
+
+    #[test]
+    fn late_iron_oracle_accepts_selected_failed_roll_and_valid_late_history() {
+        let evidence = late_iron_evidence();
+        assert_eq!(
+            iron_precondition(&evidence.trace, Some(2), 8, 15),
+            IronPrecondition::Selected {
+                request_id: 2,
+                roll_tick: 10,
+                opportunities: 1
+            }
+        );
+        assert!(validate_late_iron_history(&evidence.trace, &evidence.statuses, 10).is_ok());
+    }
+
+    #[test]
+    fn late_iron_acceptance_failure_is_not_a_chance_or_precondition_result() {
+        for facet in 0..6 {
+            let mut evidence = late_iron_evidence();
+            match facet {
+                0 => {
+                    evidence
+                        .trace
+                        .frames
+                        .last_mut()
+                        .unwrap()
+                        .animation
+                        .as_mut()
+                        .unwrap()
+                        .sequence = ROLL_ANIMATION
+                }
+                1 => evidence.trace.wire.retain(|wire| {
+                    wire.game_tick != 12 || wire.opcode != ClientProt289::OPLOC1.id as u8
+                }),
+                2 => evidence.trace.frames[3].chat.clear(),
+                3 => evidence.statuses.last_mut().unwrap().tick_verified = Some(5),
+                4 => {
+                    let mut early = evidence.trace.dispatches[1].clone();
+                    early.game_tick = 12;
+                    evidence.trace.dispatches.push(early);
+                }
+                5 => evidence.trace.frames.last_mut().unwrap().log_count = 0,
+                _ => unreachable!(),
+            }
+            assert!(
+                validate_late_iron_history(&evidence.trace, &evidence.statuses, 10).is_err(),
+                "late-acceptance facet {facet}"
+            );
+        }
+    }
+
     #[test]
     fn natural_mining_roll_gate_rejects_start_acts_stale_frames_and_successes() {
         use host_play::tick_engine_test_support::fresh_mining_roll;
         let mut evidence = stale_guard_evidence();
+        evidence.trace.frames[0].chat.push(ChatObservation {
+            game_tick: 7,
+            sequence: 7,
+            text: "You swing your pick at the rock.".into(),
+            poll: PollKind::Edge,
+        });
+        evidence.trace.dispatches.clear();
         evidence.trace.frames[4]
             .animation
             .as_mut()
@@ -4263,7 +4554,7 @@ mod packet_oracle_tests {
                 0 => trace.frames[4].tick_edge = false,
                 1 => trace.frames[4].animation.as_mut().unwrap().serial = 2,
                 2 => trace.frames[4].animation.as_mut().unwrap().sequence = -1,
-                3 => trace.dispatches.clear(),
+                3 => trace.frames[0].chat.clear(),
                 4 => trace.frames[4].chat.push(ChatObservation {
                     game_tick: 11,
                     sequence: 11,
@@ -4400,6 +4691,59 @@ mod packet_oracle_tests {
         let mut held = packets;
         held[1..].iter_mut().for_each(|packet| packet.tick += 1);
         assert!(assert_engine_stale_guard(&held).is_err());
+    }
+
+    #[test]
+    fn normalized_prefix_attributes_boundary_chat_before_comparing() {
+        let mut absent = prefix_evidence();
+        absent.trace.frames.push(observed_frame(8, false, 1));
+        let mut present = absent.clone();
+        present
+            .trace
+            .frames
+            .last_mut()
+            .unwrap()
+            .chat
+            .push(ChatObservation {
+                game_tick: 8,
+                sequence: 1,
+                text: "You swing your pick at the rock.".into(),
+                poll: PollKind::Wake,
+            });
+        assert_eq!(
+            normalized_prefix(&absent, 2),
+            normalized_prefix(&present, 2)
+        );
+        let later = normalized_prefix(&present, 3);
+        assert!(later.frames.iter().any(|frame| {
+            frame
+                .chat
+                .iter()
+                .any(|(text, _)| text == "You swing your pick at the rock.")
+        }));
+        assert_ne!(normalized_prefix(&absent, 3), later);
+    }
+
+    #[test]
+    fn normalized_prefix_still_rejects_earlier_control_chat_differences() {
+        let absent = prefix_evidence();
+        for poll in [PollKind::Edge, PollKind::Wake] {
+            let mut present = absent.clone();
+            present.trace.frames[1].chat.push(ChatObservation {
+                game_tick: 7,
+                sequence: 1,
+                text: "You swing your pick at the rock.".into(),
+                poll,
+            });
+            assert!(
+                prefix_difference(
+                    &normalized_prefix(&absent, 2),
+                    &normalized_prefix(&present, 2)
+                )
+                .is_some(),
+                "poll={poll:?}"
+            );
+        }
     }
 
     #[test]
