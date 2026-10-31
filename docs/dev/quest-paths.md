@@ -201,6 +201,10 @@ An explicit draft quest or priority pick returns a typed refusal. A saved
 The `host-play/test-support` feature enables `script/test-hooks` for draft
 qualification. The normal TUI's `live-harness` feature does not grant draft
 admission. Interactive pickers offer only qualified rows in every build.
+
+Terminal draft cells enable `frontend-core/test-support` explicitly. Use the
+exact mapped command in `tools/live-map/map.toml`.
+
 Unavailable content rows retain their existing reasons.
 
 ## Folder loading pipeline
