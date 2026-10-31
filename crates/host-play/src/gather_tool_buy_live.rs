@@ -1709,8 +1709,7 @@ fn relog_park_preserved(initial: &ParkObservation, observation: &ParkObservation
         observation.bank_seen.as_deref(),
     ) {
         (Some(before), Some(after), Some(bank_seen)) => {
-            parked_reason_for_bank_seen(before, bank_seen)
-                .is_some_and(|expected| expected == after)
+            parked_reason_for_bank_seen(before, bank_seen).is_some_and(|expected| expected == after)
         }
         _ => false,
     };

@@ -178,15 +178,17 @@ impl Gatherer {
         let Some(bank) = park.block.looked.bank else {
             return;
         };
-        let Some(current) =
-            crate::acquire::plan::Counts::bank_seen(&tick.cx.snapshot().stock())
+        let Some(current) = crate::acquire::plan::Counts::bank_seen(&tick.cx.snapshot().stock())
         else {
             return;
         };
         if current.origin == bank.origin {
             return;
         }
-        let refreshed = crate::acquire::BankSeen { origin: current.origin, ..bank };
+        let refreshed = crate::acquire::BankSeen {
+            origin: current.origin,
+            ..bank
+        };
         park.block.message = crate::acquire::plan::rebank_message(
             &park.block.message,
             refreshed,
