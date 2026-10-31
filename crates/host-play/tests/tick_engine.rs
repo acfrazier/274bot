@@ -989,17 +989,26 @@ impl LiveRun {
                 }
             }
             let remaining = deadline.saturating_duration_since(Instant::now());
-            if remaining.is_zero() {
+            let frame = if remaining.is_zero() {
+                None
+            } else {
+                self.hook.wait_for_frame(after, remaining)
+            };
+            let Some(frame) = frame else {
+                let setup = self
+                    .setup
+                    .lock()
+                    .map_err(|_| "tick-engine setup poisoned")?;
                 return Err(format!(
-                    "per-account tutorial/seed setup did not reach its real target within {SETUP_DEADLINE:?}"
-                ));
-            }
-            after = self.hook.wait_for_frame(after, remaining).ok_or_else(|| {
-                format!(
-                    "live setup produced no host frame within {SETUP_DEADLINE:?}; connected={}",
+                    "live setup did not reach Ready within {SETUP_DEADLINE:?}; phase={:?} command={}/{} last_host_frame={} connected={}",
+                    setup.phase,
+                    setup.next_command,
+                    setup.commands.len(),
+                    self.hook.observed_host_frame(),
                     self.play().slot_connected(&self.account)
-                )
-            })?;
+                ));
+            };
+            after = frame;
         }
     }
 
@@ -3244,7 +3253,7 @@ mod packet_oracle_tests {
             panic!("river fixture needs complete fishing placement data");
         };
         let mut accessible = Vec::new();
-        for spot in spots {
+        for spot in spots.iter() {
             for (dx, dz) in [(-1, 0), (1, 0), (0, -1), (0, 1)] {
                 let stand = tile(spot.origin.x + dx, spot.origin.z + dz, spot.origin.level);
                 if world.collision.standable(stand) {

@@ -296,7 +296,7 @@ impl SetupState {
             commands.push(format!("give {alias} {count}"));
         }
         let tile = case.target();
-        commands.push(format!("tele {},{},{}", tile.x, tile.z, tile.level));
+        commands.push(interact::tele_args(tile.level, tile.x, tile.z));
         Self {
             account,
             case,
@@ -590,6 +590,7 @@ impl LiveRun {
             )
         })?;
         let _isolated_home = script::IsolatedEnv::enter(case.name());
+        api::hostlog::set_debug(true);
         let _temp = TempRoot::new(case.name())?;
         let nav_pack = absolute_path("GATHERER_NAV_PACK")?;
         let engine_dir = absolute_path("GATHERER_ENGINE_DIR")?;
@@ -764,17 +765,23 @@ impl LiveRun {
                 }
             }
             let remaining = deadline.saturating_duration_since(Instant::now());
-            if remaining.is_zero() {
-                return Err(
-                    "per-account tutorial/seed setup missed its fixed 180s deadline".into(),
-                );
-            }
-            after = self.hook.wait_for_frame(after, remaining).ok_or_else(|| {
-                format!(
-                    "live setup produced no frame within {SETUP_DEADLINE:?}; connected={}",
+            let frame = if remaining.is_zero() {
+                None
+            } else {
+                self.hook.wait_for_frame(after, remaining)
+            };
+            let Some(frame) = frame else {
+                let setup = self.setup.lock().map_err(|_| "live tick setup poisoned")?;
+                return Err(format!(
+                    "live setup did not reach Ready within {SETUP_DEADLINE:?}; phase={:?} command={}/{} last_host_frame={} connected={}",
+                    setup.phase,
+                    setup.next_command,
+                    setup.commands.len(),
+                    self.hook.observed_host_frame(),
                     self.play().slot_connected(&self.account)
-                )
-            })?;
+                ));
+            };
+            after = frame;
         }
     }
 
