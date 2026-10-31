@@ -904,6 +904,127 @@ fn depletion_keeps_the_real_action_owner_until_its_checked_receipt_is_consumed()
 }
 
 #[test]
+fn depleting_idle_handoff_survives_two_tick_replacement_approach_with_real_receipt() {
+    let mut rig = Rig::new("mining.iron");
+    rig.animate(AnimClass::Skill);
+    assert!(rig.poll(101).is_pending());
+    rig.complete_last(Some(2), false);
+    rig.animate(AnimClass::Fletching);
+    assert!(rig.poll(102).is_pending());
+    let authority = rig
+        .ledger
+        .as_ref()
+        .unwrap()
+        .outbox
+        .last()
+        .unwrap()
+        .authority();
+    assert!(rig.poll(103).is_pending());
+
+    let old_tile = rig
+        .handle
+        .inspect(|machine| machine.args.target.tile)
+        .unwrap();
+    let target = replacement(&mut rig);
+    assert_eq!(target.tile.x.abs_diff(old_tile.x), 1);
+    rig.animate(AnimClass::Null);
+    rig.chat("You manage to mine some iron.");
+    assert!(rig.poll(104).is_pending());
+    assert!(authority.live(), "the old click owner waits for its receipt");
+    rig.complete_last(None, true);
+    let Poll::Ready(Ok(result)) = rig.poll(104) else {
+        panic!("the consumed receipt must release the depleted owner")
+    };
+    assert_eq!(result.end, GatherEnd::Depleted);
+    assert!(
+        !result
+            .timing
+            .as_ref()
+            .unwrap()
+            .cycle
+            .has_unresolved_requests()
+    );
+
+    adopt(&mut rig, target.clone(), result, 106);
+    assert!(
+        !authority.live(),
+        "the replacement revokes the old action only after receipt consumption"
+    );
+    assert_eq!(
+        (rig.arms(), rig.clicks()),
+        (0, 0),
+        "the replacement waits through the skipped approach edge"
+    );
+    assert!(rig.poll(106).is_pending());
+    assert_eq!(
+        (rig.arms(), rig.clicks()),
+        (1, 0),
+        "the proven idle cycle arms the adjacent replacement exactly once"
+    );
+    let HostEffect::ServerOrdered(envelope) =
+        &rig.ledger.as_ref().unwrap().outbox.last().unwrap().effect
+    else {
+        panic!("the replacement must use its knife arm")
+    };
+    let ServerOrderedPayload::Content(ServerOrderedRequest::KnifeArm {
+        shape:
+            api::interact::server_ordered::KnifeArmShape::Continuing {
+                click: api::interact::server_ordered::ExactLocOrNpcRef::Loc(loc),
+            },
+        ..
+    }) = envelope.payload()
+    else {
+        panic!("the replacement arm must click the selected rock")
+    };
+    let expected = with_tick(&rig.snapshot, &mut None, 106, |tick| {
+        let snapshot = tick.cx.snapshot();
+        let row = snapshot
+            .locs()
+            .unwrap()
+            .value
+            .iter()
+            .find(|row| row.tile == target.tile)
+            .unwrap();
+        let (scene, static_locs, _) = snapshot.ground_collision_generations().unwrap();
+        let op = known_rows(&rig.catalog.methods()[rig.method_index].targets)
+            .iter()
+            .find(|row| row.entity == target.entity)
+            .unwrap()
+            .op;
+        api::interact::server_ordered::ExactLocReference::new(
+            row.id,
+            row.typecode,
+            row.tile,
+            scene,
+            static_locs,
+            op,
+        )
+        .unwrap()
+    });
+    assert_eq!(*loc, expected);
+    assert_eq!(rig.stats().delayed, 1);
+}
+
+#[test]
+fn skipped_edge_during_unproven_live_cycle_stays_unobserved_without_rearming() {
+    let mut rig = Rig::new("mining.iron");
+    rig.animate(AnimClass::Skill);
+    assert!(rig.poll(101).is_pending());
+    assert_eq!(rig.arms(), 1);
+    rig.complete_last(None, true);
+    assert!(rig.poll(101).is_pending());
+
+    assert!(rig.poll(103).is_pending());
+    assert_eq!(rig.stats().unobserved, 1);
+    assert!(rig.poll(103).is_pending());
+    assert_eq!(
+        rig.arms(),
+        1,
+        "a skipped live cycle must wait for a fresh native roll"
+    );
+}
+
+#[test]
 fn a_terminal_row_observed_after_landing_never_enters_the_verified_fraction() {
     let mut rig = Rig::new("fishing.freshfish.op1");
     rig.animate(AnimClass::Roll);
