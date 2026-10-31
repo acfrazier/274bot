@@ -185,6 +185,51 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.7` 
   sorts the bank with the built-in bank sorter and reports the quest items
   left in the bank. The Woodcutter, Miner and Fisher cards of GatheringBot
   stay dimmed: the built-in Gatherer replaces them.
+- rs2b0t scripts can read the game client through `ClientAdapter`. Its reader
+  returns what 274bot already observes, for example stats, the open bank, the
+  count dialog, nearby NPCs and locations, and interface components. Its
+  supported actions go through the normal action queue.
+- `ChatDialog.makeOne` makes one item from a make dialog, for example one
+  Shortbow from logs and a knife. It returns `false` when an input item is
+  missing. If you stop the script while its click is in flight, the bot makes
+  at most one item.
+- `Game.castOnNpc` casts a spell on an NPC. It returns `false` when the runes
+  are missing.
+- `Quests.journal` opens and reads the journal of the quest that you name. It
+  refuses a different quest and a window that is not that journal.
+- `BotHost.addFrameListener` calls its listener on each 20 ms client frame
+  while the script runs or is paused. The function that it returns removes the
+  listener. A stopped script gets no more frames.
+- `ScriptRunner.state`, `pause`, `resume`, `ctx` and `meta` work. `pause` and
+  `resume` ask the bot to pause or resume the script, as the Pause and Resume
+  buttons do.
+- `SettingsStore.save` and `SettingsStore.onChange` work. A saved script
+  setting is kept for each account and game revision in
+  `.274bot/script-runtime-settings/`, and the next start of the script reads
+  it. Each listener hears a save at once, before `save` returns.
+- `ScriptRegistry`, `registerScript`, `isBotManifest`, `Scheduler`,
+  `ScriptActivity` and `stepOffCandidates` work. A tree script can extend
+  `BranchTask` and `LeafTask` and override their hooks.
+- `events.on` and `events.off` deliver chat messages, inventory changes and
+  skill XP to the script.
+- Removed unused members that only reported `not impl`:
+  `resolveLoopCadence`, `resolveRunPolicy`, `shouldEnableRun`,
+  `loopReadyOrDetached`, `stopReasonOf`, `settingOptionLabel`; the settings
+  tables `GLOBAL_SETTINGS_CORE`, `GLOBAL_SETTINGS`, `NAV_SETTINGS`,
+  `MAP_PICKER_SETTINGS`, `MAP_PICKER_SETTINGS_NS`, `LOADOUT_SETTINGS`,
+  `LOADOUT_SETTINGS_NS`, `PRICE_BOOK_SETTINGS` and `PRICE_BOOK_SETTINGS_NS`;
+  the `Input` methods `useItemOnLoc`, `useItemOnNpc`, `useItemOnObj`,
+  `useItemOnItem`, `castOnNpc`, `castOnLoc`, `castOnItem` and
+  `continueDialog` (use the `Game` and `ChatDialog` methods instead); and the
+  `ClientAdapter` members `attach`, `detach`, `setPacketListener`,
+  `invalidateLocSnapshots`, `resetObjCatalog`, `activeStatsReady`,
+  `currentLoginStatsReady`, `locHullHeight`, `resolveLocModelExtents`,
+  `readRetaliateControls`, `readModalButtons`,
+  `readSelectButtonLabelsByVarp`, `combatShowingThreshold` and
+  `WELCOME_SCREEN`.
+- Removed the 274bot-only members `Game.autoRetaliate` (use
+  `Game.autoRetaliateOn`), `EventSignal.ignoredRandoms` and
+  `reader.selfTarget` (use `reader.selfFaceEntity`).
 
 ### Fixed during development
 
