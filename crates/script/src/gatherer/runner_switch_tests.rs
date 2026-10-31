@@ -132,7 +132,97 @@ fn catherby_fishing_fixture() -> (Gatherer, GameSnapshot) {
     (gatherer, snapshot)
 }
 
-fn catherby_return_plan(
+fn draynor_willow_fixture() -> (Gatherer, GameSnapshot) {
+    let (config, snapshot) = FamilyPreparation::run(|families| {
+        let selected = api::game_data::for_revision(api::selected::ClientRevision::R289).unwrap();
+        let mut settings = crate::native::SettingsBag::new();
+        for (key, value) in [
+            ("skill", serde_json::json!("Woodcutting")),
+            ("woodcuttingResources", serde_json::json!(["willow"])),
+            ("location", serde_json::json!("Site")),
+            ("site", serde_json::json!("woodcutting.draynor")),
+            ("radius", serde_json::json!(32)),
+            ("disposition", serde_json::json!("Bank")),
+        ] {
+            settings.insert(key.into(), value);
+        }
+        let mut cx = crate::native::PrepareContext {
+            pin: selected.selected_pin().unwrap(),
+            selected,
+            banks: Arc::default(),
+            families,
+        };
+        let config = super::super::card::prepare(&mut cx, 1, Arc::new(settings)).unwrap();
+        let here = WorldTile {
+            x: 3087,
+            z: 3235,
+            level: 0,
+        };
+        let mut snapshot = GameSnapshot::new();
+        snapshot.seed_ingame(2);
+        snapshot.seed_local_player(crate::quester::families::tests::local_player(here));
+        snapshot.seed_world(WorldStateView {
+            map_base_x: 3040,
+            map_base_z: 3184,
+            members: true,
+            ..WorldStateView::default()
+        });
+        snapshot.seed_stats(vec![StatView {
+            index: 8,
+            name: "woodcutting".into(),
+            effective: 30,
+            base: 30,
+            xp: 14_000,
+            used: true,
+        }]);
+        snapshot.seed_inventory(vec![], 28);
+        snapshot.seed_equipment(vec![]);
+        snapshot.seed_locs(vec![]);
+        snapshot.seed_npcs(vec![]);
+        (config, snapshot)
+    })
+    .unwrap()
+    .join()
+    .unwrap();
+    let anchor = WorldTile {
+        x: 3087,
+        z: 3235,
+        level: 0,
+    };
+    let mut gatherer = Gatherer::new(
+        RunKey {
+            slot: 1,
+            run: 1,
+            session: 1,
+        },
+        Arc::clone(&config),
+        Arc::clone(config.get::<Arc<Prepared>>().unwrap()),
+        GatherRetained {
+            anchor: Some(anchor),
+            ..GatherRetained::default()
+        },
+    );
+    gatherer.area = Some(WorkArea {
+        mode: super::super::area::AreaMode::Site,
+        anchor,
+        radius: 32,
+    });
+    gatherer.needs_validate = false;
+    (gatherer, snapshot)
+}
+
+fn move_actor_to(snapshot: &mut GameSnapshot, at: WorldTile) {
+    let mut player = snapshot
+        .local_player()
+        .expect("the fixture has an observed player")
+        .clone();
+    player.player.network = at;
+    player.player.actor.tile = at;
+    player.player.actor.moving = false;
+    snapshot.seed_local_player(player);
+}
+
+fn resource_return_plan(
     gatherer: &Gatherer,
     snapshot: &GameSnapshot,
     here: WorldTile,
@@ -157,7 +247,7 @@ fn catherby_return_plan(
             collision: None,
         },
     ) else {
-        panic!("the fixture has a return stand in each work-area quadrant");
+        panic!("the fixture has a return stand");
     };
     plan.plan
 }
@@ -177,15 +267,8 @@ fn catherby_partial_return_fixture() -> (Gatherer, GameSnapshot, TargetPlan, Tar
         z: observed_here.z,
         level: observed_here.level,
     };
-    let mut player = snapshot
-        .local_player()
-        .expect("the fixture has a player")
-        .clone();
-    player.player.network = old_here;
-    player.player.actor.tile = old_here;
-    player.player.actor.moving = false;
-    snapshot.seed_local_player(player);
-    let initial = catherby_return_plan(&gatherer, &snapshot, old_here);
+    move_actor_to(&mut snapshot, old_here);
+    let initial = resource_return_plan(&gatherer, &snapshot, old_here);
     let current = WorldTile {
         x: initial.tile.x,
         z: initial.tile.z + i32::from(RESOURCE_APPROACH_RADIUS) + 1,
@@ -201,15 +284,8 @@ fn catherby_partial_return_fixture() -> (Gatherer, GameSnapshot, TargetPlan, Tar
     );
     // Fishing observation stands are selected from content, not clamped toward
     // the player (select.rs:1060-1077). A fresh plan can correctly keep its goal.
-    let mut player = snapshot
-        .local_player()
-        .expect("the fixture has a player")
-        .clone();
-    player.player.network = current;
-    player.player.actor.tile = current;
-    player.player.actor.moving = false;
-    snapshot.seed_local_player(player);
-    let replan = catherby_return_plan(&gatherer, &snapshot, current);
+    move_actor_to(&mut snapshot, current);
+    let replan = resource_return_plan(&gatherer, &snapshot, current);
     gatherer.trip = TripStep::Return;
     gatherer.target = Some(initial.clone());
     gatherer.begin_walk_retry(WalkRetryTarget::Return(initial.tile));
@@ -1665,7 +1741,7 @@ fn progressed_return_stall_replans_once_from_the_observed_position() {
 fn second_return_stall_shuns_the_failed_stand_before_terminal_failure() {
     let (mut gatherer, snapshot, initial, _, current) = catherby_partial_return_fixture();
     loop {
-        let candidate = catherby_return_plan(&gatherer, &snapshot, current);
+        let candidate = resource_return_plan(&gatherer, &snapshot, current);
         if candidate.tile == initial.tile {
             break;
         }
@@ -1727,75 +1803,53 @@ fn second_return_stall_shuns_the_failed_stand_before_terminal_failure() {
 
 #[test]
 fn return_failures_across_alternating_stands_stop_within_phase_budget() {
-    let (mut gatherer, mut snapshot) = catherby_fishing_fixture();
-    let area = gatherer.area.expect("the fixture has a work area");
-    let place_actor = |snapshot: &mut GameSnapshot, at: WorldTile| {
-        let mut player = snapshot
-            .local_player()
-            .expect("the fixture has an observed player")
-            .clone();
-        player.player.network = at;
-        player.player.actor.tile = at;
-        player.player.actor.moving = false;
-        snapshot.seed_local_player(player);
+    let (mut gatherer, mut snapshot) = draynor_willow_fixture();
+    let position_a = WorldTile {
+        x: 3057,
+        z: 3205,
+        level: 0,
     };
-    let mut positions = Vec::new();
-    for dx in (-30..=30).step_by(5) {
-        for dz in (-30..=30).step_by(5) {
-            positions.push(WorldTile {
-                x: area.anchor.x + dx,
-                z: area.anchor.z + dz,
-                level: area.anchor.level,
-            });
-        }
-    }
-    let plans: Vec<_> = positions
-        .into_iter()
-        .map(|position| {
-            place_actor(&mut snapshot, position);
-            let stand = catherby_return_plan(&gatherer, &snapshot, position).tile;
-            (position, stand)
-        })
-        .collect();
-    let (position_a, stand_a) = plans[0];
-    let (position_b, stand_b) = *plans
-        .iter()
-        .find(|(_, stand)| *stand != stand_a)
-        .expect("the fixture has at least two return stands");
+    let position_b = WorldTile {
+        x: 3057,
+        z: 3210,
+        level: 0,
+    };
+    move_actor_to(&mut snapshot, position_a);
+    let stand_a = resource_return_plan(&gatherer, &snapshot, position_a).tile;
+    move_actor_to(&mut snapshot, position_b);
+    let stand_b = resource_return_plan(&gatherer, &snapshot, position_b).tile;
+    assert_ne!(stand_a, stand_b, "the chooser must select both Draynor stands");
 
     gatherer.trip = TripStep::Return;
     let mut ledger = None;
     let mut now = 800;
     let mut failed_walks = 0;
     let mut last_detail = String::new();
-    for cycle in 0..10 {
-        let (position, expected_stand) = if cycle % 2 == 0 {
-            (position_a, stand_a)
-        } else {
-            (position_b, stand_b)
-        };
-        place_actor(&mut snapshot, position);
-        with_tick(&snapshot, &mut ledger, now, |tick| {
-            gatherer.return_to_resources(tick)
-        });
-        if gatherer.failure.is_some() {
-            break;
-        }
-        assert_eq!(
-            gatherer.target.as_ref().map(|target| target.tile),
-            Some(expected_stand),
-            "the chooser must alternate stands from actor.tile"
-        );
-        assert!(matches!(gatherer.active, Active::Walk(_)));
+    move_actor_to(&mut snapshot, position_a);
+    with_tick(&snapshot, &mut ledger, now, |tick| {
+        gatherer.return_to_resources(tick)
+    });
+    assert_eq!(
+        gatherer.target.as_ref().map(|target| target.tile),
+        Some(stand_a)
+    );
+    assert!(matches!(gatherer.active, Active::Walk(_)));
 
+    for cycle in 0..10u32 {
+        let (stall_at, aiming, expected_next) = if cycle % 2 == 0 {
+            (position_b, stand_a, stand_b)
+        } else {
+            (position_a, stand_b, stand_a)
+        };
+        move_actor_to(&mut snapshot, stall_at);
         now += 1;
         last_detail = format!("alternating return failure {cycle}");
         with_tick(&snapshot, &mut ledger, now, |tick| {
             gatherer.active = Active::None;
             let mut receipt = stalled_return_receipt(
                 tick.cx.evidence(),
-                position,
-                expected_stand,
+                stall_at,
+                aiming,
                 WalkStallReason::Expired,
                 1,
             );
@@ -1807,6 +1861,18 @@ fn return_failures_across_alternating_stands_stop_within_phase_budget() {
             break;
         }
         now += 1;
+        with_tick(&snapshot, &mut ledger, now, |tick| {
+            gatherer.return_to_resources(tick)
+        });
+        if gatherer.failure.is_some() {
+            break;
+        }
+        assert_eq!(
+            gatherer.target.as_ref().map(|target| target.tile),
+            Some(expected_next),
+            "the chooser must alternate stands from actor.tile"
+        );
+        assert!(matches!(gatherer.active, Active::Walk(_)));
     }
 
     let failure = gatherer
@@ -1816,16 +1882,30 @@ fn return_failures_across_alternating_stands_stop_within_phase_budget() {
     assert_ne!(stand_a, stand_b);
     assert_eq!(failure.code.as_ref(), "return-failed");
     assert!(failure.message.contains(&last_detail));
-    assert!(failed_walks <= usize::from(MAX_FAILED_WALKS_PER_PHASE));
+    assert!(failed_walks <= 4);
 }
-
 #[test]
 fn temporary_typed_return_refusals_have_a_finite_shun() {
+    let position_a = WorldTile {
+        x: 3057,
+        z: 3205,
+        level: 0,
+    };
+    let position_b = WorldTile {
+        x: 3057,
+        z: 3210,
+        level: 0,
+    };
     for refusal in [
         crate::native::WalkRefusal::EscapeInProgress,
         crate::native::WalkRefusal::Unknown(crate::combat::risk::UnknownWhy::Poison),
     ] {
-        let (mut gatherer, snapshot, initial, _, _) = catherby_partial_return_fixture();
+        let (mut gatherer, mut snapshot) = draynor_willow_fixture();
+        move_actor_to(&mut snapshot, position_a);
+        let initial = resource_return_plan(&gatherer, &snapshot, position_a);
+        gatherer.trip = TripStep::Return;
+        gatherer.target = Some(initial.clone());
+        gatherer.begin_walk_retry(WalkRetryTarget::Return(initial.tile));
         let now = 740;
         let mut ledger = None;
         with_tick(&snapshot, &mut ledger, now, |tick| {
@@ -1856,6 +1936,7 @@ fn temporary_typed_return_refusals_have_a_finite_shun() {
             .iter()
             .any(|entry| entry.tile == initial.tile
                 && u64::from(entry.until) == now + IDLE_AVOID_TICKS));
+        move_actor_to(&mut snapshot, position_b);
         with_tick(&snapshot, &mut ledger, now + 1, |tick| {
             gatherer.return_to_resources(tick);
         });
@@ -1869,7 +1950,22 @@ fn temporary_typed_return_refusals_have_a_finite_shun() {
 }
 #[test]
 fn blocked_return_walk_selects_another_stand_without_retrying_the_failed_plan() {
-    let (mut gatherer, snapshot, initial, _, _) = catherby_partial_return_fixture();
+    let (mut gatherer, mut snapshot) = draynor_willow_fixture();
+    let position_a = WorldTile {
+        x: 3057,
+        z: 3205,
+        level: 0,
+    };
+    let position_b = WorldTile {
+        x: 3057,
+        z: 3210,
+        level: 0,
+    };
+    move_actor_to(&mut snapshot, position_a);
+    let initial = resource_return_plan(&gatherer, &snapshot, position_a);
+    gatherer.trip = TripStep::Return;
+    gatherer.target = Some(initial.clone());
+    gatherer.begin_walk_retry(WalkRetryTarget::Return(initial.tile));
     let mut ledger = None;
     with_tick(&snapshot, &mut ledger, 750, |tick| {
         gatherer.active = Active::None;
@@ -1894,6 +1990,7 @@ fn blocked_return_walk_selects_another_stand_without_retrying_the_failed_plan() 
         .map_or(true, |ledger| ledger.outbox.is_empty()));
     assert!(gatherer.failure.is_none());
 
+    move_actor_to(&mut snapshot, position_b);
     with_tick(&snapshot, &mut ledger, 751, |tick| {
         gatherer.return_to_resources(tick);
     });
