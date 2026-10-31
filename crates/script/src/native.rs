@@ -40,7 +40,10 @@ pub mod thieving_core;
 pub use server_ordered::ServerOrderedCompletion;
 pub mod walk;
 pub mod walk_wait;
-pub use ledger::{BankDepositTrace, HostAction, HostAuthority, HostEffect, QuietReadOwner};
+pub use ledger::{
+    is_teleport, AfterHold, BankDepositTrace, HostAction, HostAuthority, HostEffect,
+    QuietReadOwner, WALK_TILES_PER_TICK,
+};
 /// Static avoid-catalog identities shared with external runtime adapters.
 pub use nav_planner::contract::AVOID_CATALOG_IDS;
 
@@ -940,6 +943,7 @@ impl WalkGoals {
     }
 }
 
+#[derive(Clone)]
 pub struct WalkRequest {
     pub target: WorldTile,
     /// Exact alternatives for a native Area walk with radius zero and no loc.
@@ -1547,13 +1551,82 @@ pub fn defer_budget<T>(result: Result<T, ActionError>) -> Poll<Result<T, ActionE
     }
 }
 
+/// What a machine did when it resumed after a guardian hold
+/// ([`NativeMachine::after_hold`]). [`NativeActions::poll`] logs it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HoldResume {
+    /// The request needs nothing: its goal is already met, or the host still
+    /// holds it, or the machine has none in flight. The text says which.
+    Kept(&'static str),
+    /// The machine sent its request again, once. The text names the request.
+    Reissued(&'static str),
+    /// The host dropped the request unsent, and the machine ends so that its
+    /// owner, which holds the goal, checks the goal before it sends another.
+    /// The text names the request.
+    Returned(&'static str),
+}
+
+/// The one `info` line for a resume after a guardian hold, logged by whoever
+/// consumed it ([`ActionContext::take_hold_resume`]).
+pub fn log_hold_resume(action: &str, resume: HoldResume) {
+    let (what, text) = match resume {
+        HoldResume::Kept(text) => ("kept its request", text),
+        HoldResume::Reissued(text) => ("re-issued its request once", text),
+        HoldResume::Returned(text) => ("returned its dropped request to its owner", text),
+    };
+    #[cfg(test)]
+    RESUME_LOG.with(|lines| {
+        lines.borrow_mut().push(format!(
+            "native action {action} resumed after a guardian hold and {what}: {text}"
+        ));
+    });
+    api::host_log!(
+        api::hostlog::Category::ScriptLifecycle,
+        api::hostlog::Level::Info,
+        "native action {action} resumed after a guardian hold and {what}: {text}"
+    );
+}
+
+#[cfg(test)]
+thread_local! {
+    static RESUME_LOG: RefCell<Vec<String>> = const { RefCell::new(Vec::new()) };
+}
+
+/// The resume lines this test thread has logged ([`log_hold_resume`]).
+#[cfg(test)]
+pub(crate) fn take_resume_log() -> Vec<String> {
+    RESUME_LOG.with(|lines| std::mem::take(&mut *lines.borrow_mut()))
+}
+
 pub trait NativeMachine: Send + 'static {
     type Args: Send;
     type Output: Send;
+    /// A machine that keeps a request in flight across a guardian hold sets
+    /// this and implements [`Self::after_hold`]. The hold drops queued host
+    /// work and the guardian sends its own interactions, so such a request can
+    /// be lost, or taken over, with no failure the machine would see. The
+    /// owner layer ([`NativeActions::poll`]) then leaves the machine alone for
+    /// the first observed tick after the hold, so an in-flight server effect
+    /// can land, and calls [`Self::after_hold`] once on the next.
+    const RESUMES_AFTER_HOLD: bool = false;
     fn begin(args: Self::Args, cx: &mut ActionContext<'_>) -> Result<Self, ActionError>
     where
         Self: Sized;
     fn poll(&mut self, cx: &mut ActionContext<'_>) -> Poll<Result<Self::Output, ActionError>>;
+    /// Called once, before the machine's next [`Self::poll`], on the first
+    /// observed tick that follows the settle tick of a guardian hold. The
+    /// machine re-checks its own goal first (the page is open, the item count
+    /// rose, the receipt arrived) and re-issues its request at most once only
+    /// when the goal is not met and the request was lost or taken over. A
+    /// machine that does not know the goal (it is its owner's) does not send
+    /// again: it returns [`HoldResume::Returned`] and its next poll ends it,
+    /// so the owner checks the goal first. A `BudgetExhausted` error retries
+    /// on the next tick.
+    fn after_hold(&mut self, _cx: &mut ActionContext<'_>) -> Result<HoldResume, ActionError> {
+        Ok(HoldResume::Kept(
+            "this machine keeps no request across a hold",
+        ))
+    }
     fn cancel(&mut self) {}
     fn prayer_cleanup(&self) -> crate::combat::RaisedPrayers {
         crate::combat::RaisedPrayers::empty()

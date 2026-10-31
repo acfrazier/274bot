@@ -396,7 +396,7 @@ impl ActionContext<'_> {
         ledger.walk = None;
         ledger.walk_events.clear();
         ledger.outbox.push(HostAction {
-            custody: HostCustody::owner(owner),
+            custody: HostCustody::walk(owner, request_id),
             request_id,
             batch: 0,
             effect: HostEffect::Walk(request),
@@ -459,6 +459,45 @@ impl ActionContext<'_> {
         } else {
             InteractionDispatch::Unsent
         }
+    }
+
+    /// Whether the host discarded this action's walk `request_id` before it
+    /// armed the route (a guardian hold, a held tick, a session reset dropped
+    /// its queued action). No walk receipt will come for it: the machine that
+    /// still wants the walk sends it again.
+    pub fn walk_unsent(&self, request_id: u64) -> bool {
+        let Some((ledger, request)) = self.ledger.as_ref().zip(NonZeroU64::new(request_id)) else {
+            return false;
+        };
+        ledger.owner.as_ref().is_some_and(|owner| {
+            owner.run == self.run()
+                && owner.id.get() == self.action_id
+                && owner.walk_unsent(request)
+        })
+    }
+
+    /// Where this tick stands after a guardian hold ([`AfterHold`]). Only a
+    /// machine that keeps a request in flight across a hold looks at it:
+    /// [`NativeActions::poll`] does for every machine that sets
+    /// [`NativeMachine::RESUMES_AFTER_HOLD`], and a step that waits on a
+    /// finished request's effect with no live handle does itself.
+    pub fn after_hold(&self) -> AfterHold {
+        self.budget.after_hold()
+    }
+
+    /// Consume the one resume that follows a guardian hold: `true` on the
+    /// first observed tick that is later than the hold's settle tick. The
+    /// caller then re-checks its goal and re-issues its request at most once,
+    /// and logs it ([`log_hold_resume`]).
+    pub fn take_hold_resume(&mut self) -> bool {
+        self.budget.take_hold_resume()
+    }
+
+    /// Consume the teleport that the last guardian hold observed: the player's
+    /// plane changed, or a jump between two observed frames was beyond what
+    /// running covers in their ticks ([`is_teleport`]). `true` once.
+    pub fn take_hold_teleport(&mut self) -> bool {
+        self.budget.take_hold_teleport()
     }
 
     pub fn cancel_request(&mut self, request_id: u64) {
@@ -747,6 +786,8 @@ impl NativeActions {
         let owner = Owner::new(run, ledger.next_id()?);
         ledger.owner = Some(Arc::clone(&owner));
         cx.action_id = owner.id.get();
+        // A machine that begins now was not interrupted by an earlier hold.
+        cx.budget.clear_hold();
         let result = catch_unwind(AssertUnwindSafe(|| M::begin(args, cx)));
         match result {
             Ok(Ok(machine)) => Ok(ActionHandle {
@@ -800,6 +841,7 @@ impl NativeActions {
         let owner = Owner::new(run, ledger.next_id()?);
         ledger.owner = Some(Arc::clone(&owner));
         cx.action_id = owner.id.get();
+        cx.budget.clear_hold();
         handle.owner = owner;
         Ok(())
     }
@@ -829,6 +871,32 @@ impl NativeActions {
         let Some(active) = machine.as_mut() else {
             return Poll::Ready(Err(ActionError::Cancelled));
         };
+        if M::RESUMES_AFTER_HOLD {
+            match cx.after_hold() {
+                // The guardian's last request can still be taking effect.
+                AfterHold::Settling => return Poll::Pending,
+                AfterHold::Resume => {
+                    let resumed = catch_unwind(AssertUnwindSafe(|| active.after_hold(cx)));
+                    match resumed {
+                        Ok(Ok(resume)) => {
+                            cx.take_hold_resume();
+                            log_hold_resume(&handle.owner.id.to_string(), resume);
+                        }
+                        // The tick's event allowance is spent: try next tick.
+                        Ok(Err(ActionError::BudgetExhausted)) => return Poll::Pending,
+                        Ok(Err(error)) => {
+                            cx.take_hold_resume();
+                            return Poll::Ready(Err(error));
+                        }
+                        Err(panic) => {
+                            handle.owner.revoke();
+                            resume_unwind(panic)
+                        }
+                    }
+                }
+                AfterHold::None => {}
+            }
+        }
         let result = catch_unwind(AssertUnwindSafe(|| active.poll(cx)));
         match result {
             Ok(Poll::Pending) => Poll::Pending,

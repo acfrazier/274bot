@@ -880,6 +880,44 @@ fn toggle_off_detects_but_never_sends() {
     assert!(!status.hold);
 }
 
+/// QUESTER-READ-KEEPS-STEP-R2, item 3: with `settings.random_events` off the
+/// guardian does not act, so the slot never sees a hold and an in-flight
+/// Quester step is not interrupted. The script still gets its one rising-edge
+/// knock (the Quester logs the event and keeps its step, progress and cursor),
+/// and the host sends nothing on any later tick of the event.
+#[test]
+fn toggle_off_knocks_the_script_once_but_never_holds_or_sends() {
+    let mut c = new_client();
+    ingame_scene(&mut c);
+    plant_player(&mut c, "Test", 0, 0);
+    plant_npc(&mut c, 0, "Genie", -1, Some("Greetings Test!"));
+    let mut g = Guardian::new();
+    let mut drv = FakeDriver::default();
+    let settings = ProfileSettings {
+        random_events: false,
+        ..ProfileSettings::default()
+    };
+    let mut snap = GameSnapshot::new();
+    let knocks = std::sync::Arc::new(std::sync::Mutex::new(0usize));
+
+    for now in [0, 600, 1200, 300_000] {
+        tick_at(&mut c, &mut snap);
+        let mut knock = |_: &DetectedRandom| {
+            *knocks.lock().unwrap() += 1;
+            RandomClaim::Host
+        };
+        let status = g.tick(&mut drv, &snap, &settings, now, Some(&mut knock));
+        assert!(!status.hold, "the guardian never holds the slot");
+        assert!(!status.ours, "the event latches no pending script work");
+        assert!(!status.handling);
+        assert!(
+            drv.menus.is_empty() && drv.actions.is_empty(),
+            "nothing is sent"
+        );
+    }
+    assert_eq!(*knocks.lock().unwrap(), 1, "one knock on the event's edge");
+}
+
 #[test]
 fn disabled_strange_boxes_remain_detected_without_latching_script_pending() {
     for boxes in [1, 28] {

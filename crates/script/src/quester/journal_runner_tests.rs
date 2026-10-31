@@ -322,7 +322,42 @@ fn random_event() -> DetectedRandom {
 }
 
 #[test]
-fn random_event_revokes_active_step_owner_and_rereads_progress() {
+fn a_random_event_alone_keeps_the_active_step_owner() {
+    let (mut script, mut snapshot) = fixture(true);
+    Arc::get_mut(&mut script.path).unwrap().sequences[1].steps[0].plan = Arc::new(IdlePlan);
+    let mut ledger = None;
+    drive(&mut script, &snapshot, &mut ledger, 1);
+    finish_read(&mut script, &mut snapshot, &mut ledger, 2, "seeded branch");
+    assert_eq!(script.stage().unwrap().0.as_ref(), "cook:1");
+
+    let cancelled = Arc::new(AtomicBool::new(false));
+    with_tick(&snapshot, &mut ledger, 6, |tick| {
+        let handle = tick
+            .actions
+            .begin::<PendingNativeAction>(Arc::clone(&cancelled), &mut tick.cx)
+            .unwrap();
+        assert!(matches!(
+            tick.actions.poll(&handle, &mut tick.cx),
+            Poll::Pending
+        ));
+        script.step = Some(Box::new(OwnedActionStep {
+            handle: Some(handle),
+        }));
+    });
+    let authority = ledger.as_ref().unwrap().outbox[0].authority();
+    let cursor = script.cursor;
+
+    assert_eq!(script.on_random(&random_event()), RandomClaim::Host);
+    assert!(!cancelled.load(Ordering::Acquire));
+    assert!(authority.live());
+    assert!(script.step.is_some());
+    assert!(script.progress.is_some());
+    assert_eq!(script.cursor, cursor);
+    assert!(!script.needs_read);
+}
+
+#[test]
+fn a_teleport_during_a_hold_revokes_active_step_owner_and_rereads_progress() {
     let (mut script, mut snapshot) = fixture(true);
     Arc::get_mut(&mut script.path).unwrap().sequences[1].steps[0].plan = Arc::new(IdlePlan);
     let mut ledger = None;
@@ -356,11 +391,13 @@ fn random_event_revokes_active_step_owner_and_rereads_progress() {
     script.unreadable_since = Some(Duration::from_secs(6));
     script.dirty = false;
 
-    assert_eq!(script.on_random(&random_event()), RandomClaim::Host);
+    // The hold's frames showed a teleport: the next tick drops the step
+    // (`Quester::tick`, `take_hold_teleport`).
+    script.drop_step_for_teleport();
     assert!(cancelled.load(Ordering::Acquire));
     assert!(!authority.live());
     assert!(script.step.is_none());
-    assert!(script.progress.is_none());
+    assert!(script.progress.is_some());
     assert!(script.needs_read && script.dirty);
     assert!(!script.prayer_cleanup_pending);
     assert_eq!(script.attempts, 0);
@@ -382,7 +419,7 @@ fn random_event_revokes_active_step_owner_and_rereads_progress() {
 }
 
 #[test]
-fn random_event_revokes_journal_owner_and_discards_settlement_state() {
+fn a_teleport_during_a_hold_revokes_journal_owner_and_keeps_settlement_state() {
     let (mut script, mut snapshot) = fixture(true);
     let mut ledger = None;
     drive(&mut script, &snapshot, &mut ledger, 1);
@@ -401,13 +438,19 @@ fn random_event_revokes_journal_owner_and_discards_settlement_state() {
     script.journal_quiet_since = NonZeroU32::new(3);
     script.dirty = false;
 
-    assert_eq!(script.on_random(&random_event()), RandomClaim::Host);
+    // The hold's frames showed a teleport: the next tick drops the step
+    // (`Quester::tick`, `take_hold_teleport`).
+    script.drop_step_for_teleport();
     assert!(!authority.live());
     assert!(script.journal.is_none());
-    assert!(script.progress.is_none());
-    assert!(script.last_outcome.is_none());
-    assert!(!script.settling);
-    assert_eq!(script.settle_deadline, Duration::ZERO);
+    assert!(
+        script.progress.is_some(),
+        "a moving event keeps the quest progress and the ordered cursor"
+    );
+    assert!(
+        script.settling && script.last_outcome.is_some(),
+        "a completed step keeps settling on its own settle predicate"
+    );
     assert_eq!(script.journal_attempts, 0);
     assert!(!script.journal_retry_pending);
     assert!(script.journal_quiet_since.is_none());
@@ -422,7 +465,7 @@ fn random_event_revokes_journal_owner_and_discards_settlement_state() {
 }
 
 #[test]
-fn random_event_revokes_clear_prayer_owner_and_preserves_parked_state() {
+fn a_teleport_during_a_hold_revokes_clear_prayer_owner_and_preserves_parked_state() {
     let (mut script, mut snapshot) = fixture(true);
     let prayer_varp = script.selected.prayers()[0].varp;
     snapshot.seed_varps(vec![VarpView {
@@ -441,7 +484,9 @@ fn random_event_revokes_clear_prayer_owner_and_preserves_parked_state() {
     let authority = ledger.as_ref().unwrap().outbox[0].authority();
     assert!(authority.live());
 
-    assert_eq!(script.on_random(&random_event()), RandomClaim::Host);
+    // The hold's frames showed a teleport: the next tick drops the step
+    // (`Quester::tick`, `take_hold_teleport`).
+    script.drop_step_for_teleport();
     assert!(!authority.live());
     assert!(script.clear_prayers.is_none());
     assert!(script.prayer_cleanup_pending);

@@ -86,6 +86,35 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.8` 
   observed tile on a later game tick. The shared three-attempt limit matches
   `walk`. Danger refusals, blocked zones, user input, cancellation and missing
   evidence still stop at once. Exhaustion keeps the last failure detail.
+- A random event no longer restarts the Quester's step. About 500 game ticks
+  after login the server can spawn a random event beside the player. Before,
+  the Quester then dropped its quest progress, read the quest journal and began
+  the step it was running again from the top of its sequence, with no failure
+  shown. Now the step, the quest progress and the place in an ordered sequence
+  stay. The Quester no longer goes by the event's name. A step is dropped only
+  when the player was teleported while the random-event handler held the
+  script: a plane change, or a jump between two observed frames that running
+  cannot cover in the ticks between them. The Maze and Mime events, the
+  teleport of an ignored Genie or Mysterious Old Man and the return to
+  Lumbridge are such cases; a few tiles of walking away from a hostile event are
+  not. The Quester then goes on from the same place in the sequence, and a step
+  that had finished keeps waiting for its own check.
+  With the setting for random events off the handler does not act, nothing
+  holds the script, and the Quester keeps its step.
+- A Talk, Use-on, Thieve or walk step that a random event interrupted now
+  sends its request again, once. The event's handler sends its own
+  interactions and the host drops the script's queued requests while it holds
+  the script. Before, a Use-on dropped this way waited for a receipt that never
+  came, a Thieve attempt ended at its receipt deadline, and a Talk whose
+  dialogue never opened failed at its deadline. Now the action waits one game
+  tick after the hold, checks its goal again, and sends its request again only if
+  the goal is not met: a Use-on checks its `until` count or product first, and
+  a Talk still walking to its NPC plans its route again only when the route
+  was lost or ran out of time during the hold. The log shows one line for
+  each resume.
+- The log now names the reason each time the Quester drops its step or
+  progress (a teleport during a random event, a new run, a death, a pause and
+  resume, or a session end).
 - A Talk step no longer fails when the NPC is out of view for a moment while
   the bot walks to it, for example while it wanders. The bot keeps walking
   to where it last saw the NPC and talks to it when it sees it again. If the

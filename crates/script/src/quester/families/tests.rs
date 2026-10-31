@@ -1,6 +1,7 @@
 use super::*;
 use crate::native::{
-    ledger, HostEffect, NativeOutput, NativeTick, RetainedMemory, ScriptStatus, WalkEnd,
+    ledger, HostAuthority, HostEffect, NativeOutput, NativeTick, RetainedMemory, ScriptStatus,
+    WalkEnd,
 };
 use api::obj_names::ItemDefView;
 use api::quest_progress::{EvidenceStamp, ProgressFlag, QuestProgress};
@@ -303,6 +304,140 @@ fn with_tick_output_reach<R>(
         .with_bank_memory(bank);
     f(&mut native, next_snapshot, next_view)
 }
+/// One observed tick on a budget that outlives the call, so a guardian hold
+/// the test starts and ends on it ([`ledger::TickBudget::hold_begin`],
+/// [`ledger::TickBudget::hold_end`]) moves on tick by tick as the slot's does
+/// (`Runtime::budget`). Every other helper starts each tick from a fresh budget.
+pub(crate) fn with_tick_budget<R>(
+    snapshot: &GameSnapshot,
+    ledger: &mut Option<Box<ledger::Ledger>>,
+    budget: &mut ledger::TickBudget,
+    tick: u64,
+    f: impl FnOnce(&mut NativeTick<'_>) -> R,
+) -> R {
+    with_tick_budget_output(snapshot, ledger, budget, tick, &mut Output, f)
+}
+
+pub(crate) fn with_tick_budget_output<R>(
+    snapshot: &GameSnapshot,
+    ledger: &mut Option<Box<ledger::Ledger>>,
+    budget: &mut ledger::TickBudget,
+    tick: u64,
+    output: &mut dyn NativeOutput,
+    f: impl FnOnce(&mut NativeTick<'_>) -> R,
+) -> R {
+    let data = api::game_data::for_revision(ClientRevision::R289).unwrap();
+    let pin = data.selected_pin().unwrap();
+    let evidence = api::quest_progress::EvidenceStamp {
+        run: RunKey {
+            slot: 1,
+            run: 1,
+            session: 1,
+        },
+        tick,
+        sequence: tick,
+    };
+    let mut retained = RetainedMemory::default();
+    budget.observe_frame(tick, Some(snapshot));
+    let mut actions = NativeActions { _private: () };
+    let mut native = NativeTick {
+        walk_danger: Some(&crate::native::AllowWalkDanger),
+        state: None,
+        service_authority: None,
+        prompt_port: None,
+        actions: &mut actions,
+        cx: crate::native::ActionContext {
+            stage_cross: None,
+            condition: None,
+            poison_unknown_pulse: u8::MAX,
+            cure_poison: crate::survival::CurePoison::WhenNeeded,
+            evidence,
+            observed_walk_outcome_seq: 0,
+            observed_walk_cancel_reason: crate::native::WalkCancelReason::None,
+            pin: &pin,
+            snapshot: SnapshotView::new(Some(snapshot), evidence),
+            retained: &mut retained,
+            action_id: 0,
+            active_now: Duration::from_millis(tick * 600),
+            wall_now: Instant::now(),
+            ledger,
+            pending_note_progress: None,
+            budget,
+            eligible: true,
+        },
+        output,
+        pairs: None,
+        frame: crate::native::HostFrame {
+            here: None,
+            snapshot: Some(snapshot),
+            obj_names: None,
+            compiled: crate::CompiledTick {
+                nav: None,
+                condition: None,
+                poison_unknown_pulse: None,
+                cure_poison: crate::survival::CurePoison::WhenNeeded,
+                walk_danger: Some(&crate::native::AllowWalkDanger),
+                selected: Some(&data),
+                reach: None,
+                reach_flood: None,
+                bank_memory: None,
+                collision: None,
+                hold: false,
+                world_members: Truth::Unknown,
+                interacts: Some(Vec::new()),
+                service_gate: None,
+            },
+        },
+    };
+    f(&mut native)
+}
+
+/// What the host does with the queued native work when a guardian hold
+/// starts: it takes none of it, and dropping each action marks its request
+/// unsent (`HostCustody`).
+pub(crate) fn host_drops_queued_work(ledger: &mut Option<Box<ledger::Ledger>>) -> usize {
+    let outbox = &mut ledger.as_mut().expect("native ledger").outbox;
+    let dropped = outbox.len();
+    outbox.clear();
+    dropped
+}
+
+/// What the host does with the queued native work in a pass that may
+/// dispatch: it takes each action (releasing its custody) and answers it
+/// later, or not at all. Returns the effects it sent.
+pub(crate) fn host_takes_queued_work(
+    ledger: &mut Option<Box<ledger::Ledger>>,
+) -> Vec<(HostAuthority, HostEffect)> {
+    std::mem::take(&mut ledger.as_mut().expect("native ledger").outbox)
+        .into_iter()
+        .map(|mut action| {
+            action.release_custody();
+            (action.authority(), action.effect)
+        })
+        .collect()
+}
+
+/// The host accepts a request it took, on `tick`.
+pub(crate) fn host_accepts(
+    ledger: &mut Option<Box<ledger::Ledger>>,
+    authority: &HostAuthority,
+    tick: u64,
+) {
+    ledger.as_mut().unwrap().complete_interaction(
+        authority,
+        crate::native::InteractionReceipt {
+            request_id: authority.request_id().get(),
+            evidence: EvidenceStamp {
+                run: authority.run(),
+                tick,
+                sequence: tick,
+            },
+            accepted: true,
+            chat_since: 0,
+        },
+    );
+}
+
 fn accept_last(ledger: &mut Option<Box<ledger::Ledger>>, tick: u64, accepted: bool) {
     let authority = ledger.as_ref().unwrap().outbox.last().unwrap().authority();
     ledger.as_mut().unwrap().complete_interaction(
@@ -9861,3 +9996,6 @@ fn walk_arrival_in_a_new_scene_is_read_on_the_next_tick() {
 
 #[path = "timed_ground_tests.rs"]
 mod timed_ground_tests;
+
+#[path = "hold_resume_tests.rs"]
+mod hold_resume_tests;

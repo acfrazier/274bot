@@ -120,7 +120,7 @@ fn npc_args() -> DialogueArgs {
         name: Arc::from("Aubury"),
     })
 }
-fn content_npc_id(config: &str) -> i32 {
+pub(super) fn content_npc_id(config: &str) -> i32 {
     api::game_data::for_revision(ClientRevision::R289)
         .unwrap()
         .npc_by_config(config)
@@ -138,7 +138,7 @@ fn content_wander_range(config: &str) -> i32 {
         .wanderrange
 }
 
-fn npc_args_for(id: i32, name: &str) -> DialogueArgs {
+pub(super) fn npc_args_for(id: i32, name: &str) -> DialogueArgs {
     args(DialogueTarget::Npc {
         id,
         name: Arc::from(name),
@@ -3578,7 +3578,7 @@ fn answer_once_rejects_more_prefer_entries_than_the_mask_width() {
 }
 
 /// Continue requests the driver has emitted, accepted or not.
-fn continues(ledger: &Option<Box<ledger::Ledger>>) -> usize {
+pub(super) fn continues(ledger: &Option<Box<ledger::Ledger>>) -> usize {
     ledger
         .as_ref()
         .expect("dialogue test ledger")
@@ -3594,7 +3594,7 @@ fn continues(ledger: &Option<Box<ledger::Ledger>>) -> usize {
 }
 
 /// Talk-to clicks queued in the outbox.
-fn talks(ledger: &Option<Box<ledger::Ledger>>) -> usize {
+pub(super) fn talks(ledger: &Option<Box<ledger::Ledger>>) -> usize {
     ledger
         .as_ref()
         .expect("dialogue test ledger")
@@ -3842,7 +3842,7 @@ fn a_poll_that_jumps_over_the_bound_still_acknowledges_a_changed_page() {
 }
 
 /// The Cook beside a player one tile away, as the open-wait tests use.
-fn cook_beside_player() -> GameSnapshot {
+pub(super) fn cook_beside_player() -> GameSnapshot {
     let mut page = snapshot();
     page.seed_local_player(super::tests::local_player(api::WorldTile {
         x: 6,
@@ -3855,6 +3855,29 @@ fn cook_beside_player() -> GameSnapshot {
         1,
         api::WorldTile {
             x: 7,
+            z: 5,
+            level: 0,
+        },
+    )]);
+    page
+}
+
+/// The Cook on (0, 5) and the player `distance` tiles east of it on the same
+/// row. No reach flood is posted, so an approach asks the router for the
+/// route first (`Phase::Plan`); within two tiles the Cook is in reach.
+pub(super) fn cook_away_from_player(distance: i32) -> GameSnapshot {
+    let mut page = snapshot();
+    page.seed_local_player(super::tests::local_player(api::WorldTile {
+        x: distance,
+        z: 5,
+        level: 0,
+    }));
+    page.seed_npcs(vec![content_dialogue_npc(
+        content_npc_id("cook"),
+        "Cook",
+        distance,
+        api::WorldTile {
+            x: 0,
             z: 5,
             level: 0,
         },

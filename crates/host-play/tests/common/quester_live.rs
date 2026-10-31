@@ -758,6 +758,9 @@ struct ActorShared {
     starts: u32,
     stops: u32,
     restart_due: bool,
+    /// QUESTER-READ-KEEPS-STEP-R2: summon one random event while a step runs
+    /// (`QUESTER_MACRO_EVENT=<1-8>`, `QUESTER_MACRO_EVENT_STEP=<step id>`).
+    macro_event: Option<MacroEventPlan>,
     death_due: bool,
     death_sent: bool,
     death_seen: bool,
@@ -1424,6 +1427,7 @@ fn run_cells(
             starts: 0,
             stops: 0,
             restart_due: false,
+            macro_event: macro_event_plan_from_env(),
             death_due: false,
             death_sent: false,
             death_seen: false,
@@ -1605,6 +1609,91 @@ fn run_cells(
                 )
             {
                 actor.runner.tick_with_hold(client, hold.hold);
+            }
+            if let Some(plan) = actor.macro_event.as_mut() {
+                // The engine cheat `::macro_event <n>` runs the same
+                // `~macro_event_general_spawn` as the 500-tick login timer
+                // (`cheat_macro_event.rs2`, `macro_events.rs2:2-12`), and
+                // AGENTS.md allows it for random-event tests.
+                if !plan.sent && !hold.hold {
+                    if let Some(status) = actor.latest_status.as_ref() {
+                        if status.phase == NativePhase::Working && step_matches(status, &plan.step)
+                        {
+                            let command = format!("~macro_event {}", plan.event);
+                            if interact::cheat(client, &command).is_sent() {
+                                plan.sent = true;
+                                plan.before =
+                                    actor.snapshot.npcs().iter().map(|npc| npc.index).collect();
+                                plan.chat_baseline = actor
+                                    .snapshot
+                                    .chat_lines()
+                                    .iter()
+                                    .map(|line| line.sequence)
+                                    .max()
+                                    .unwrap_or(0);
+                                actor.transitions.push(json!({
+                                    "event": "macro-event-injected",
+                                    "account": actor.account,
+                                    "command": command,
+                                    "step": plan.step,
+                                    "observed_tick": actor.snapshot.tick(),
+                                    "tile": actor.last_tile.map(|tile| [tile.x, tile.z, tile.level]),
+                                    "status": status_json(status),
+                                    "authorized_injection": "~macro_event (the engine's debugproc char)",
+                                }));
+                            }
+                        }
+                    }
+                }
+            }
+            if let Some(plan) = actor.macro_event.as_mut().filter(|plan| plan.sent) {
+                let tick = actor.snapshot.tick();
+                if !plan.npc_seen {
+                    if let Some(npc) = actor
+                        .snapshot
+                        .npcs()
+                        .iter()
+                        .find(|npc| !plan.before.contains(&npc.index) && npc.distance <= 8)
+                    {
+                        plan.npc_seen = true;
+                        actor.transitions.push(json!({
+                            "event": "macro-event-npc",
+                            "observed_tick": tick,
+                            "npc": npc.name,
+                            "type": npc.r#type,
+                            "index": npc.index,
+                            "tile": [npc.tile.x, npc.tile.z, npc.tile.level],
+                        }));
+                    }
+                }
+                if plan.chat_logged < 8 {
+                    let baseline = plan.chat_baseline;
+                    let fresh = actor
+                        .snapshot
+                        .chat_lines()
+                        .iter()
+                        .filter(|line| line.sequence > baseline)
+                        .map(|line| (line.sequence, line.text.clone()))
+                        .collect::<Vec<_>>();
+                    for (sequence, text) in fresh.into_iter().take(8 - plan.chat_logged) {
+                        plan.chat_logged += 1;
+                        plan.chat_baseline = plan.chat_baseline.max(sequence);
+                        actor.transitions.push(json!({
+                            "event": "macro-event-chat",
+                            "observed_tick": tick,
+                            "text": text,
+                        }));
+                    }
+                }
+                if hold.hold != plan.last_hold {
+                    plan.last_hold = hold.hold;
+                    actor.transitions.push(json!({
+                        "event": "guardian-hold",
+                        "held": hold.hold,
+                        "observed_tick": tick,
+                        "tile": actor.last_tile.map(|tile| [tile.x, tile.z, tile.level]),
+                    }));
+                }
             }
             let active_death_combat = actor.latest_status.as_ref().and_then(|status| {
                 let target_step = actor.death_target.as_ref().is_some_and(|(stage, step)| {
@@ -3250,6 +3339,41 @@ fn run_cells(
 /// extras, and an explicitly selected stand tile that may differ from the
 /// Path's authored not-started anchor. Start uses the fixture's own settings;
 /// the fixture seed's `observe_start` proves the exact stats/kit/tile at Start.
+/// One random event summoned while the named step is in flight.
+struct MacroEventPlan {
+    event: u8,
+    step: String,
+    sent: bool,
+    /// NPC indexes in view when the cheat was sent.
+    before: HashSet<usize>,
+    /// Chat sequence when the cheat was sent.
+    chat_baseline: i32,
+    npc_seen: bool,
+    last_hold: bool,
+    chat_logged: usize,
+}
+
+fn macro_event_plan_from_env() -> Option<MacroEventPlan> {
+    let event = std::env::var("QUESTER_MACRO_EVENT").ok()?;
+    let event: u8 = event
+        .parse()
+        .ok()
+        .filter(|event| (1..=8).contains(event))
+        .expect("QUESTER_MACRO_EVENT is 1-8");
+    let step = std::env::var("QUESTER_MACRO_EVENT_STEP")
+        .expect("QUESTER_MACRO_EVENT_STEP names the step to interrupt");
+    Some(MacroEventPlan {
+        event,
+        step,
+        sent: false,
+        before: HashSet::new(),
+        chat_baseline: 0,
+        npc_seen: false,
+        last_hold: false,
+        chat_logged: 0,
+    })
+}
+
 pub struct PathCell<'a> {
     /// Content quest id; the Path body comes from the release index, or from
     /// the folder the `FolderSource` registry currently serves.

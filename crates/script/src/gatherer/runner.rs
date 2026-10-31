@@ -2668,7 +2668,12 @@ mod tests {
 
     #[test]
     fn instance_with_widening_stays_inside_the_inline_budget() {
-        assert_eq!(size_of::<Walk>(), 136, "Walk inline layout changed");
+        // QUESTER-READ-KEEPS-STEP-R3: Walk keeps one boxed replay (the request
+        // without the target, radius and request id, which its correlation
+        // core already holds) to send the request again after a guardian
+        // hold. Inline it goes from 136 B (before R2) to 64 B; the replay is
+        // pinned in `native::walk` tests.
+        assert_eq!(size_of::<Walk>(), 64, "Walk inline layout changed");
         assert!(
             size_of::<Gatherer>() <= 1024,
             "Gatherer={} exceeds its inline budget",

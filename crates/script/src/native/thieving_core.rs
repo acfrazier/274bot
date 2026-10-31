@@ -169,6 +169,18 @@ impl ThieveCore {
             .is_some_and(|attempt| attempt.request_id.is_some() && attempt.accepted.is_none())
     }
 
+    /// The pending attempt never reached the server (the host dropped its
+    /// request unsent): forget it, refund it and let the next poll dispatch
+    /// again at once. Nothing was tried, so nothing is retried or counted.
+    pub(crate) fn abandon_attempt(&mut self, now: Duration) {
+        if self.pending.take().is_some() {
+            if let Some(left) = self.attempts_left.as_mut() {
+                *left = left.saturating_add(1);
+            }
+            self.next_attempt = now;
+        }
+    }
+
     pub(crate) fn stun_active(&self, now: Duration) -> bool {
         self.stunned_until.is_some_and(|until| now < until)
     }

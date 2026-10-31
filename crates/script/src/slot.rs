@@ -765,6 +765,15 @@ impl SlotScript {
     /// Guardian authority precedes every request foreground. Called even
     /// when the host suppresses the compiled tick itself.
     pub fn seat_guardian_hold(&mut self, held: bool) {
+        if held != self.guardian_held {
+            // The edges tell native machines that a hold interrupted them
+            // ([`crate::native::NativeMachine::after_hold`]).
+            if held {
+                self.native_runtime.budget.hold_begin();
+            } else {
+                self.native_runtime.budget.hold_end();
+            }
+        }
         self.guardian_held = held;
         if let Some(seat) = &mut self.seat {
             seat.hold(held || self.seat_session_held);
@@ -776,6 +785,23 @@ impl SlotScript {
         } else {
             self.flush_held_walk_terminal();
         }
+    }
+
+    /// One host frame's observed player position, for the teleport rule
+    /// ([`crate::native::is_teleport`]). The host calls it on every frame,
+    /// after [`Self::seat_guardian_hold`], held or not: the script does not run
+    /// while the guardian holds the slot, and the guardian's Maze and Mime
+    /// events move the player and return it to the tile it left, so only the
+    /// frames of the hold itself can show the jump.
+    pub fn observe_player_fix(
+        &mut self,
+        tick: u64,
+        snapshot: Option<&api::snapshot::GameSnapshot>,
+    ) {
+        let tile = snapshot
+            .and_then(|snapshot| snapshot.local_player())
+            .map(|player| player.player.network);
+        self.native_runtime.budget.observe_fix(tick, tile);
     }
 
     /// The slot loop's frame hold that is not the guardian's: the scene is

@@ -116,7 +116,7 @@ pub struct HostAction {
 }
 
 /// The owner of one queued host action, and the host's custody of a single
-/// interaction. The host takes queued work only through
+/// interaction or walk. The host takes queued work only through
 /// `SlotScript::take_native_action`, which releases the custody, and it
 /// records the interaction's receipt in that same observation pass. Every
 /// other way out of the queue drops the action unsent: a held tick
@@ -143,8 +143,18 @@ impl HostCustody {
         }
     }
 
-    /// Owner-only custody: walks, batches, picks and assessments keep their
-    /// own receipt rules.
+    /// Custody of a walk: the request is marked unsent if it leaves the queue
+    /// other than through the host's take, so its machine can tell a route the
+    /// host never armed from one that is still being followed.
+    pub(crate) fn walk(owner: Arc<Owner>, request: NonZeroU64) -> Self {
+        Self {
+            owner,
+            unsent: Some(request),
+        }
+    }
+
+    /// Owner-only custody: batches, picks and assessments keep their own
+    /// receipt rules.
     pub(crate) fn owner(owner: Arc<Owner>) -> Self {
         Self {
             owner,
@@ -479,12 +489,126 @@ impl Drop for Ledger {
 
 /// The observed tick, not the caller's polling rate, replenishes the allowance.
 /// This value is slot-owned even when there is no native action ledger.
-#[derive(Default)]
+///
+/// It also holds the slot's view of a guardian hold, in the spare bytes of its
+/// 24-byte layout (`scene_fence_uses_four_bytes_and_tick_budget_stays_compact`):
+/// where the hold stands, whether the player was teleported while it lasted,
+/// and the last observed player position that the teleport rule compares.
 pub(crate) struct TickBudget {
-    tick: Option<u64>,
+    /// The last observed tick, or [`NO_TICK`] before the first one.
+    tick: u64,
+    scene: SceneFence,
+    /// The tick (low 32 bits) and packed tile of the last host frame's player
+    /// fix ([`pack_fix`]); `fix == 0` means none was observed.
+    fix_tick: u32,
+    fix: u32,
     transitions: u8,
     pub(super) events: u8,
-    scene: SceneFence,
+    /// [`HOLD_PHASE_MASK`] bits: where the guardian hold stands; and
+    /// [`HOLD_TELEPORTED`].
+    hold: u8,
+}
+
+const NO_TICK: u64 = u64::MAX;
+
+impl Default for TickBudget {
+    fn default() -> Self {
+        Self {
+            tick: NO_TICK,
+            scene: SceneFence::default(),
+            fix_tick: 0,
+            fix: 0,
+            transitions: 0,
+            events: 0,
+            hold: 0,
+        }
+    }
+}
+
+/// No hold is pending for the actions.
+const HOLD_NONE: u8 = 0;
+/// The guardian holds the slot: no script tick runs.
+const HOLD_HELD: u8 = 1;
+/// The hold ended and no script tick has run since.
+const HOLD_ENDED: u8 = 2;
+/// The first observed tick after the hold. An in-flight server effect of the
+/// guardian's last packet can still land in it, so an interrupted action
+/// waits ([`AfterHold::Settling`]).
+const HOLD_SETTLE: u8 = 3;
+/// A later observed tick: the interrupted action re-checks its goal and
+/// resumes once ([`AfterHold::Resume`]).
+const HOLD_RESUME: u8 = 4;
+const HOLD_PHASE_MASK: u8 = 0b111;
+/// The player's position changed by a teleport while the hold lasted.
+const HOLD_TELEPORTED: u8 = 0x80;
+
+/// Where an action's own tick stands after a guardian hold.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AfterHold {
+    /// No guardian hold is pending for the actions.
+    None,
+    /// The first observed tick after the hold: the guardian's last request may
+    /// still be taking effect, so an interrupted action only waits.
+    Settling,
+    /// A later observed tick: an interrupted action re-checks its goal and
+    /// re-issues its request at most once (consume with
+    /// [`ActionContext::take_hold_resume`](super::ActionContext)).
+    Resume,
+}
+
+/// Most tiles a player walks in one engine cycle: running advances two
+/// (`PathingEntity.ts:135-149`).
+pub const WALK_TILES_PER_TICK: u32 = 2;
+
+/// Whether the player's observed position changed by a teleport instead of by
+/// walking, between two observations `ticks` engine cycles apart. A plane
+/// change is always one (stairs and ladders are the player's own click, and
+/// the guardian climbs none). On a plane, a jump beyond what running covers in
+/// the observed cycles is one, plus one cycle of slack: the position reaches
+/// the client in the PLAYER_INFO that follows the tick marker (`World.ts:
+/// 1108-1123`, `dialogue.rs` `DIALOGUE_APPROACH_SLACK_TICKS`).
+///
+/// Content that moves the player this way: the Maze and Mime events
+/// (`macro_event_maze.rs2:15-18` `p_telejump`, `macro_event_mime.rs2:9-11`
+/// `p_teleport`), the teleport of an ignored Genie or Mysterious Old Man
+/// (`macro_events.rs2:120-137` `macro_event_fail_teleport`), and the return
+/// to Lumbridge when the tile the player left is blocked or gone
+/// (`macro_events.rs2:235-241`). A guardian walk away from a hostile event
+/// covers a few tiles at running speed, which this rule never calls a
+/// teleport.
+pub fn is_teleport(from: api::WorldTile, to: api::WorldTile, ticks: u32) -> bool {
+    if from.level != to.level {
+        return true;
+    }
+    let distance = (from.x - to.x)
+        .unsigned_abs()
+        .max((from.z - to.z).unsigned_abs());
+    distance > WALK_TILES_PER_TICK.saturating_mul(ticks.saturating_add(1))
+}
+
+const FIX_COORD_BITS: u32 = 14;
+const FIX_COORD_MASK: u32 = (1 << FIX_COORD_BITS) - 1;
+const FIX_VALID: u32 = 1 << 31;
+
+/// A tile in 31 bits: x and z in 14 bits each, the plane in 2. A tile outside
+/// that range packs to `None`.
+fn pack_fix(tile: api::WorldTile) -> Option<u32> {
+    let coord = |value: i32| u32::try_from(value).ok().filter(|v| *v <= FIX_COORD_MASK);
+    let level = u32::try_from(tile.level).ok().filter(|level| *level <= 3)?;
+    Some(
+        FIX_VALID
+            | coord(tile.x)?
+            | (coord(tile.z)? << FIX_COORD_BITS)
+            | (level << (2 * FIX_COORD_BITS)),
+    )
+}
+
+fn unpack_fix(fix: u32) -> api::WorldTile {
+    api::WorldTile {
+        x: (fix & FIX_COORD_MASK) as i32,
+        z: ((fix >> FIX_COORD_BITS) & FIX_COORD_MASK) as i32,
+        level: ((fix >> (2 * FIX_COORD_BITS)) & 0b11) as i32,
+    }
 }
 
 const SCENE_KEY_BITS: u32 = 25;
@@ -585,12 +709,100 @@ impl TickBudget {
     const MAX_TRANSITIONS: u8 = 32;
 
     pub fn observe(&mut self, tick: u64) {
-        if self.tick != Some(tick) {
-            self.tick = Some(tick);
+        if self.tick != tick {
+            self.tick = tick;
             self.transitions = 0;
             self.events = 0;
             self.scene.next_tick();
+            // Each new observed tick moves a finished hold one step on: the
+            // first is the settle tick, the next one resumes.
+            match self.hold & HOLD_PHASE_MASK {
+                HOLD_ENDED => self.set_hold_phase(HOLD_SETTLE),
+                HOLD_SETTLE => self.set_hold_phase(HOLD_RESUME),
+                _ => {}
+            }
         }
+    }
+
+    fn set_hold_phase(&mut self, phase: u8) {
+        self.hold = (self.hold & !HOLD_PHASE_MASK) | phase;
+    }
+
+    /// The guardian took the slot (the seat's rising edge).
+    pub fn hold_begin(&mut self) {
+        self.set_hold_phase(HOLD_HELD);
+    }
+
+    /// The guardian released the slot (the seat's falling edge).
+    pub fn hold_end(&mut self) {
+        if self.hold & HOLD_PHASE_MASK == HOLD_HELD {
+            self.set_hold_phase(HOLD_ENDED);
+        }
+    }
+
+    /// Forget a pending hold: a machine that begins now has not been
+    /// interrupted by it.
+    pub fn clear_hold(&mut self) {
+        self.hold = HOLD_NONE;
+    }
+
+    pub fn after_hold(&self) -> AfterHold {
+        match self.hold & HOLD_PHASE_MASK {
+            HOLD_SETTLE => AfterHold::Settling,
+            HOLD_RESUME => AfterHold::Resume,
+            _ => AfterHold::None,
+        }
+    }
+
+    /// Consume the one resume that follows a hold.
+    pub fn take_hold_resume(&mut self) -> bool {
+        let resume = self.hold & HOLD_PHASE_MASK == HOLD_RESUME;
+        if resume {
+            self.set_hold_phase(HOLD_NONE);
+        }
+        resume
+    }
+
+    /// Consume the teleport that the finished hold observed, once.
+    pub fn take_hold_teleport(&mut self) -> bool {
+        let finished = self.hold & HOLD_PHASE_MASK != HOLD_HELD;
+        let teleported = self.hold & HOLD_TELEPORTED != 0;
+        if finished && teleported {
+            self.hold &= !HOLD_TELEPORTED;
+            return true;
+        }
+        false
+    }
+
+    /// Whether a teleport is latched and not yet taken; reading it takes
+    /// nothing.
+    #[cfg(test)]
+    pub(crate) fn hold_teleport_latched(&self) -> bool {
+        self.hold & HOLD_TELEPORTED != 0
+    }
+
+    /// One host frame's player position. The frame before a hold, every frame
+    /// of it and the first after it are compared pairwise: a teleport between
+    /// two of them is remembered for [`Self::take_hold_teleport`]. The
+    /// position is kept on every frame, held or not, and stays as it was on a
+    /// frame with no usable position.
+    pub fn observe_fix(&mut self, tick: u64, tile: Option<api::WorldTile>) {
+        let Some(fix) = tile.and_then(pack_fix) else {
+            return;
+        };
+        let tick = tick as u32;
+        let watching = matches!(self.hold & HOLD_PHASE_MASK, HOLD_HELD | HOLD_ENDED);
+        if self.fix != 0 && watching {
+            let elapsed = tick.wrapping_sub(self.fix_tick);
+            // A wrapped (negative) elapsed count is a restarted tick clock,
+            // not time that passed.
+            if elapsed < u32::MAX / 2 && is_teleport(unpack_fix(self.fix), unpack_fix(fix), elapsed)
+            {
+                self.hold |= HOLD_TELEPORTED;
+            }
+        }
+        self.fix_tick = tick;
+        self.fix = fix;
     }
 
     /// One host frame: replenish on a new tick, and mark the tick that first
@@ -891,6 +1103,129 @@ mod tests {
         assert!(budget.batch(), "the next observed tick starts uncharged");
         assert_eq!(budget.events, 5);
     }
+    #[test]
+    fn a_finished_guardian_hold_settles_for_one_observed_tick_then_resumes_once() {
+        let mut budget = TickBudget::default();
+        budget.observe(5);
+        assert_eq!(budget.after_hold(), AfterHold::None);
+        budget.hold_begin();
+        // Ticks that pass while the guardian holds move nothing on.
+        budget.observe(6);
+        budget.observe(7);
+        assert_eq!(budget.after_hold(), AfterHold::None);
+        budget.hold_end();
+        assert_eq!(budget.after_hold(), AfterHold::None, "no tick has run yet");
+        budget.observe(8);
+        assert_eq!(budget.after_hold(), AfterHold::Settling);
+        budget.observe(8);
+        assert_eq!(
+            budget.after_hold(),
+            AfterHold::Settling,
+            "a second poll of the same tick does not move it"
+        );
+        assert!(!budget.take_hold_resume());
+        budget.observe(9);
+        assert_eq!(budget.after_hold(), AfterHold::Resume);
+        assert!(budget.take_hold_resume());
+        assert!(!budget.take_hold_resume(), "the resume is consumed once");
+        assert_eq!(budget.after_hold(), AfterHold::None);
+    }
+
+    #[test]
+    fn a_new_hold_restarts_the_settle_and_an_action_begun_after_one_is_not_resumed() {
+        let mut budget = TickBudget::default();
+        budget.observe(1);
+        budget.hold_begin();
+        budget.hold_end();
+        budget.observe(2);
+        budget.hold_begin();
+        budget.observe(3);
+        assert_eq!(budget.after_hold(), AfterHold::None, "held again");
+        budget.hold_end();
+        budget.observe(4);
+        assert_eq!(budget.after_hold(), AfterHold::Settling);
+        budget.clear_hold();
+        budget.observe(5);
+        assert_eq!(budget.after_hold(), AfterHold::None);
+    }
+
+    #[test]
+    fn the_teleport_rule_separates_a_walk_from_a_jump() {
+        let at = |x, z, level| api::WorldTile { x, z, level };
+        // Running covers two tiles a cycle; one cycle of slack on the count.
+        assert!(!is_teleport(at(3200, 3200, 0), at(3204, 3200, 0), 1));
+        assert!(is_teleport(at(3200, 3200, 0), at(3205, 3200, 0), 1));
+        assert!(!is_teleport(at(3200, 3200, 0), at(3220, 3200, 0), 9));
+        assert!(is_teleport(at(3200, 3200, 0), at(3231, 3200, 0), 9));
+        // A plane change is a teleport at any distance.
+        assert!(is_teleport(at(3200, 3200, 0), at(3200, 3200, 1), 50));
+        // The Maze and Mime squares are far from anywhere a player is sent from.
+        assert!(is_teleport(at(3200, 3200, 0), at(2900, 4555, 0), 30));
+    }
+
+    #[test]
+    fn only_frames_of_a_hold_can_report_a_teleport() {
+        let at = |x, z| Some(api::WorldTile { x, z, level: 0 });
+        let mut budget = TickBudget::default();
+        // A teleport the player makes on their own (a spell, a lodestone) with
+        // no guardian hold is not reported.
+        budget.observe_fix(1, at(3200, 3200));
+        budget.observe_fix(2, at(3000, 3500));
+        assert!(!budget.take_hold_teleport());
+        budget.hold_begin();
+        budget.observe_fix(3, at(3002, 3500));
+        budget.observe_fix(4, at(3004, 3500));
+        budget.hold_end();
+        budget.observe_fix(5, at(3005, 3500));
+        assert!(!budget.take_hold_teleport(), "a few tiles of walking");
+        budget.hold_begin();
+        budget.observe_fix(6, at(2900, 4555));
+        assert!(!budget.take_hold_teleport(), "not before the hold is over");
+        budget.observe_fix(7, at(3005, 3500));
+        budget.hold_end();
+        assert!(budget.take_hold_teleport(), "out and back is a teleport");
+        assert!(!budget.take_hold_teleport(), "reported once");
+        // A frame with no player keeps the last position.
+        budget.hold_begin();
+        budget.observe_fix(8, None);
+        budget.observe_fix(9, at(3500, 3500));
+        budget.hold_end();
+        assert!(budget.take_hold_teleport());
+    }
+
+    /// Two frames with the same observed tick number are zero ticks apart,
+    /// not an invalid pair: a jump out and back inside one tick is latched,
+    /// the return frame does not clear it, and it is taken once after the
+    /// hold. The start, the jump and the return all carry tick 11, so only
+    /// the zero-elapsed comparison can see the jump.
+    #[test]
+    fn a_jump_out_and_back_inside_one_observed_tick_is_latched_and_taken_once() {
+        let at = |x, z| Some(api::WorldTile { x, z, level: 0 });
+        let mut budget = TickBudget::default();
+        budget.observe_fix(11, at(3209, 3215));
+        budget.hold_begin();
+        budget.observe_fix(11, at(2893, 4555));
+        budget.observe_fix(11, at(3209, 3215));
+        assert!(budget.hold_teleport_latched(), "latched inside the tick");
+        assert!(!budget.take_hold_teleport(), "not before the hold is over");
+        budget.observe_fix(12, at(3209, 3215));
+        budget.hold_end();
+        budget.observe_fix(12, at(3209, 3215));
+        assert!(
+            budget.hold_teleport_latched(),
+            "the return did not clear it"
+        );
+        assert!(budget.take_hold_teleport());
+        assert!(!budget.take_hold_teleport(), "taken once");
+        assert!(!budget.hold_teleport_latched());
+        // Inside one tick, two tiles of running is still a walk.
+        budget.hold_begin();
+        budget.observe_fix(13, at(3211, 3215));
+        budget.observe_fix(13, at(3209, 3215));
+        budget.hold_end();
+        assert!(!budget.take_hold_teleport());
+    }
+
     #[test]
     fn scene_fence_uses_four_bytes_and_tick_budget_stays_compact() {
         assert_eq!(std::mem::size_of::<SceneFence>(), 4);

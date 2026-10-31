@@ -4,13 +4,15 @@
 //! sequences still re-select from the top at every boundary.
 use super::tests::status_fixture;
 use super::*;
-use crate::native::ledger::Ledger;
+use crate::native::ledger::{Ledger, TickBudget};
 use crate::native::NativeActions;
 use crate::quester::compile::{PredicateContext, PredicatePlan, StepPlan, StepRun};
-use crate::quester::families::tests::{with_tick, with_tick_output};
+use crate::quester::families::tests::{
+    local_player, with_tick, with_tick_budget_output, with_tick_output,
+};
 use crate::quester::path::{PathDocument, PredicateDocument, SequenceOrder, StepDocument};
 use api::snapshot::{GameSnapshot, QuestStatusView, StatView};
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
 const NOT_STARTED: i32 = 0xF80000;
 const IN_PROGRESS: i32 = 0xF8F800;
@@ -94,6 +96,55 @@ fn random_event() -> DetectedRandom {
         name: "genie".into(),
         ours: true,
         npc_index: Some(0),
+    }
+}
+
+fn maze_event() -> DetectedRandom {
+    DetectedRandom {
+        kind: api::random::RandomKind::Maze,
+        name: "maze".into(),
+        ours: true,
+        npc_index: None,
+    }
+}
+
+/// A step that stays in flight until released and counts the progress reads
+/// it was handed.
+struct HeldStep {
+    release: Arc<AtomicBool>,
+    reads: Arc<AtomicUsize>,
+}
+
+impl StepPlan for HeldStep {
+    fn begin(&self, _: &mut StepContext<'_, '_>) -> Result<Box<dyn StepRun>, ActionError> {
+        Ok(Box::new(HeldRun {
+            release: Arc::clone(&self.release),
+            reads: Arc::clone(&self.reads),
+        }))
+    }
+}
+
+struct HeldRun {
+    release: Arc<AtomicBool>,
+    reads: Arc<AtomicUsize>,
+}
+
+impl StepRun for HeldRun {
+    fn poll(&mut self, cx: &mut StepContext<'_, '_>) -> Poll<Result<StepOutcome, ActionError>> {
+        if !self.release.load(Ordering::Acquire) {
+            return Poll::Pending;
+        }
+        Poll::Ready(Ok(StepOutcome {
+            progress: None,
+            evidence: cx.tick.cx.evidence(),
+            receipt: None,
+        }))
+    }
+
+    fn cancel(&mut self, _: &mut NativeActions) {}
+
+    fn progress_read_completed(&mut self, _: Duration) {
+        self.reads.fetch_add(1, Ordering::Relaxed);
     }
 }
 
@@ -263,6 +314,9 @@ struct Harness {
     script: Quester,
     snapshot: GameSnapshot,
     ledger: Option<Box<Ledger>>,
+    /// The slot's budget, which outlives each tick and carries the guardian
+    /// hold the test starts and ends on it.
+    budget: TickBudget,
     logs: Logs,
     tick: u64,
     advance_xp: bool,
@@ -287,11 +341,38 @@ impl Harness {
             script,
             snapshot,
             ledger: None,
+            budget: TickBudget::default(),
             logs: Logs::default(),
             tick: 0,
             advance_xp: false,
             begun: Vec::new(),
         }
+    }
+
+    /// The player stands on `tile` from the next frame on.
+    fn stand(&mut self, tile: api::WorldTile) {
+        self.snapshot.seed_local_player(local_player(tile));
+    }
+
+    /// The host's per-frame position report (`SlotScript::observe_player_fix`).
+    fn observe_fix(&mut self) {
+        let tile = self
+            .snapshot
+            .local_player()
+            .map(|player| player.player.network);
+        self.budget.observe_fix(self.tick, tile);
+    }
+
+    /// A guardian hold: the script does not run, the host reports one frame
+    /// per tile in `frames` (one tick each), and the hold ends.
+    fn guardian_hold(&mut self, frames: &[api::WorldTile]) {
+        self.budget.hold_begin();
+        for tile in frames {
+            self.tick += 1;
+            self.stand(*tile);
+            self.observe_fix();
+        }
+        self.budget.hold_end();
     }
 
     fn colour(&mut self, colour: i32) {
@@ -396,9 +477,11 @@ impl Harness {
                 used: api::snapshot::stat_used(0),
             }]);
         }
-        with_tick_output(
+        self.observe_fix();
+        with_tick_budget_output(
             &self.snapshot,
             &mut self.ledger,
+            &mut self.budget,
             self.tick,
             &mut self.logs,
             |t| {
@@ -624,37 +707,202 @@ fn unresolved_first_read_after_resume_still_resets_the_cursor() {
     );
 }
 
+/// QUESTER-READ-KEEPS-STEP: the engine's 500-tick login timer spawns a random
+/// event while a step runs (`login.rs2:40`, `macro_events.rs2:2-12`), and the
+/// quest journal read that follows must find the same stage with the same
+/// step still in flight. Dig Site `steal-green-sample` and Ernest
+/// `unlock-closet` began again from cursor 0 here, with no failure.
 #[test]
-fn random_event_replays_an_ordered_sequence_unless_paired_work_is_pending() {
+fn random_event_then_a_same_stage_read_keeps_the_step_in_flight() {
     let mut harness = Harness::new(document(SequenceOrder::Ordered, |_| never(), always()));
+    let release = Arc::new(AtomicBool::new(false));
+    let reads = Arc::new(AtomicUsize::new(0));
+    Arc::get_mut(&mut harness.script.path)
+        .expect("unshared path")
+        .sequences[0]
+        .steps[1]
+        .plan = Arc::new(HeldStep {
+        release: Arc::clone(&release),
+        reads: Arc::clone(&reads),
+    });
     harness.run_until_begun(2);
+    assert!(harness.script.step.is_some());
+    assert_eq!(harness.script.cursor, 1);
     assert_eq!(harness.script.on_random(&random_event()), RandomClaim::Host);
-    assert!(harness.script.progress.is_none());
-    harness.run_until_begun(4);
-    assert_eq!(
-        harness.begun,
-        ["step-1", "step-2", "step-1", "step-2"],
-        "an ordinary random event drops progress, so the sequence replays from step 1"
+    assert!(
+        harness.script.step.is_some(),
+        "the event does not end step 2"
     );
-    // Let step 2 complete and settle so the cursor sits past it (step 3 is
-    // selected on that same tick), then model partner admission in flight,
-    // which is pending paired work.
-    while harness.script.cursor < 2 {
+    assert!(harness.script.progress.is_some());
+    // The journal read of the same stage, as the live runs sent it.
+    harness.script.needs_read = true;
+    for _ in 0..6 {
         harness.step();
     }
-    assert_eq!(harness.begun.len(), 5);
-    assert_eq!(harness.script.cursor, 2);
-    harness.script.pair_admission_since = Some(harness.active_now());
-    assert_eq!(harness.script.on_random(&random_event()), RandomClaim::Host);
-    assert!(harness.script.progress.is_some());
-    assert_eq!(harness.script.cursor, 2);
-    // Step 3 stays in flight through the event and the sequence carries on
-    // from the kept cursor: the next begin is step 4, not a replay.
-    harness.run_until_begun(6);
     assert_eq!(
-        harness.begun[5], "step-4",
-        "while paired work is pending a random event keeps the cursor: replaying mid-pairing would desync the partners"
+        harness.begun,
+        ["step-1", "step-2"],
+        "the read of an unchanged stage must not begin step 2 again"
     );
+    assert!(harness.script.step.is_some());
+    assert!(harness.script.progress.is_some());
+    assert_eq!(harness.script.cursor, 1);
+    assert!(!harness.script.needs_read);
+    assert_eq!(
+        reads.load(Ordering::Relaxed),
+        1,
+        "the in-flight step takes the finished read through progress_read_completed"
+    );
+    release.store(true, Ordering::Release);
+    harness.run_until_begun(3);
+    assert_eq!(
+        harness.begun[2], "step-3",
+        "the sequence carries on past the kept step"
+    );
+}
+
+fn tile(x: i32, z: i32) -> api::WorldTile {
+    api::WorldTile { x, z, level: 0 }
+}
+
+/// A harness whose second step stays in flight until its plan is released,
+/// with the player standing at `(3200, 3200)`.
+fn held_second_step() -> (Harness, Arc<AtomicBool>) {
+    let mut harness = Harness::new(document(SequenceOrder::Ordered, |_| never(), always()));
+    let release = Arc::new(AtomicBool::new(false));
+    Arc::get_mut(&mut harness.script.path)
+        .expect("unshared path")
+        .sequences[0]
+        .steps[1]
+        .plan = Arc::new(HeldStep {
+        release: Arc::clone(&release),
+        reads: Arc::new(AtomicUsize::new(0)),
+    });
+    harness.stand(tile(3200, 3200));
+    harness.run_until_begun(2);
+    assert!(harness.script.step.is_some());
+    (harness, release)
+}
+
+/// The classification is by what the frames of the hold show, never by the
+/// event's name. A teleport ends the step handle only: progress and the
+/// cursor stay, so selection resumes at the same step (R2). The Genie's
+/// ignored-event teleport (`macro_event_genie.rs2:29-35`) is not a Maze or a
+/// Mime event, and moves the player the same way (`macro_events.rs2:120-137`).
+#[test]
+fn a_teleport_seen_during_a_guardian_hold_drops_only_the_step_whatever_the_event() {
+    let (mut harness, _release) = held_second_step();
+    harness.script.on_random(&random_event());
+    harness.guardian_hold(&[tile(3200, 3200), tile(3280, 3290), tile(3281, 3290)]);
+    harness.step();
+    assert!(harness.script.progress.is_some(), "progress stays");
+    assert_eq!(harness.script.cursor, 1, "the cursor stays");
+    harness.run_until_begun(3);
+    assert_eq!(
+        harness.begun,
+        ["step-1", "step-2", "step-2"],
+        "the sequence resumes at the kept cursor, not at step 1"
+    );
+}
+
+/// A plane change is a teleport whatever its distance (stairs are the
+/// player's own click; the guardian climbs none).
+#[test]
+fn a_plane_change_during_a_guardian_hold_is_a_teleport() {
+    let (mut harness, _release) = held_second_step();
+    harness.script.on_random(&random_event());
+    harness.guardian_hold(&[api::WorldTile {
+        level: 1,
+        ..tile(3200, 3200)
+    }]);
+    harness.step();
+    harness.run_until_begun(3);
+    assert_eq!(harness.begun, ["step-1", "step-2", "step-2"]);
+}
+
+/// The Maze and Mime events return the player to the tile they left
+/// (`macro_event_maze.rs2:15-18`, `macro_event_mime.rs2:9-11`), so the hold's
+/// last frame shows the tile the first one did. The jump is in between.
+#[test]
+fn a_teleport_out_and_back_to_the_same_tile_inside_the_hold_is_still_a_teleport() {
+    let (mut harness, _release) = held_second_step();
+    harness.script.on_random(&maze_event());
+    harness.guardian_hold(&[tile(2900, 4555), tile(2900, 4556), tile(3200, 3200)]);
+    harness.step();
+    harness.run_until_begun(3);
+    assert_eq!(harness.begun, ["step-1", "step-2", "step-2"]);
+}
+
+/// A guardian walk away from a hostile event covers a few tiles at running
+/// speed: it keeps the step, and the step's action resumes by itself. The
+/// event's name changes nothing: a Maze-named event that shows no jump keeps
+/// the step as well.
+#[test]
+fn a_guardian_walk_of_a_few_tiles_keeps_the_step_for_every_event_name() {
+    for event in [random_event(), maze_event()] {
+        let (mut harness, release) = held_second_step();
+        harness.script.on_random(&event);
+        harness.guardian_hold(&[tile(3202, 3200), tile(3204, 3200), tile(3206, 3201)]);
+        for _ in 0..4 {
+            harness.step();
+        }
+        assert!(harness.script.step.is_some(), "{event:?}: the step stays");
+        assert!(harness.script.progress.is_some());
+        assert_eq!(harness.script.cursor, 1);
+        assert_eq!(
+            harness.begun,
+            ["step-1", "step-2"],
+            "{event:?}: no new begin, so the ordered guide is not restarted"
+        );
+        release.store(true, Ordering::Release);
+        harness.run_until_begun(3);
+        assert_eq!(harness.begun[2], "step-3");
+    }
+}
+
+/// Partner work pending keeps the step even through a teleport: replaying
+/// mid-pairing would desync the partners.
+#[test]
+fn a_teleport_keeps_the_step_while_partner_work_is_pending() {
+    let (mut harness, release) = held_second_step();
+    harness.script.pair_admission_since = Some(harness.active_now());
+    harness.script.on_random(&random_event());
+    harness.guardian_hold(&[tile(3280, 3290)]);
+    harness.step();
+    assert!(harness.script.step.is_some(), "the step stays");
+    assert!(harness.script.progress.is_some());
+    assert_eq!(harness.script.cursor, 1);
+    release.store(true, Ordering::Release);
+    harness.run_until_begun(3);
+    assert_eq!(
+        harness.begun,
+        ["step-1", "step-2", "step-3"],
+        "the next begin is step 3, not a replay of step 2"
+    );
+}
+
+/// With `settings.random_events` off the guardian neither holds nor acts
+/// (`RandomStatus::hold` and `ours` need the setting), so the slot sees no
+/// hold edge and the event interrupts nothing. The Quester keeps the step,
+/// progress and cursor and does not classify a teleport that no hold
+/// surrounds, even one the position reports show.
+#[test]
+fn with_random_events_off_the_event_changes_nothing_for_the_step() {
+    let (mut harness, release) = held_second_step();
+    assert_eq!(harness.script.on_random(&random_event()), RandomClaim::Host);
+    // No `hold_begin`: the guardian is off. The player is moved anyway.
+    for z in [3201, 3290, 3291] {
+        harness.step();
+        harness.stand(tile(3200, z));
+    }
+    harness.step();
+    assert!(harness.script.step.is_some());
+    assert!(harness.script.progress.is_some());
+    assert_eq!(harness.script.cursor, 1);
+    assert_eq!(harness.begun, ["step-1", "step-2"]);
+    release.store(true, Ordering::Release);
+    harness.run_until_begun(3);
+    assert_eq!(harness.begun[2], "step-3");
 }
 
 #[test]

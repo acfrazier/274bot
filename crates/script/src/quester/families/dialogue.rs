@@ -5,7 +5,8 @@
 use super::reach;
 use crate::dialogue_outcome::DialogueOutcome;
 use crate::native::{
-    ActionContext, ActionError, ActionHandle, InteractionDispatch, NativeActions, NativeMachine,
+    ActionContext, ActionError, ActionHandle, HoldResume, InteractionDispatch, NativeActions,
+    NativeMachine,
 };
 use crate::shim::InteractReq;
 use api::snapshot::{chat_page_fingerprint, WidgetRoot, WidgetView};
@@ -858,6 +859,68 @@ impl NativeMachine for Dialogue {
             | Phase::WaitMainCloseAck
             | Phase::WaitMainCloseTick
             | Phase::Failed => Poll::Ready(Ok(DialogueOutcome::Failed)),
+        }
+    }
+
+    const RESUMES_AFTER_HOLD: bool = true;
+
+    /// A guardian hold interrupts the opening of a conversation in three ways:
+    /// the host drops the queued Talk-to unsent; the guardian's own
+    /// interaction replaces the one the server accepted (the player never
+    /// reaches this NPC, so no page opens and the first-page deadline would
+    /// end the action as "did not open"); or the walk to the NPC is lost or
+    /// outlasted by the hold, which counts observed ticks. Each re-issues once
+    /// here, and only while no page is open and the NPC is still out of reach
+    /// or unspoken to. An open page, a request the host still holds, a refused
+    /// one and a walk the host still follows are left to [`Self::poll`].
+    fn after_hold(&mut self, cx: &mut ActionContext<'_>) -> Result<HoldResume, ActionError> {
+        let tick = cx.evidence().tick;
+        match self.phase {
+            Phase::Open => {
+                let Some(request_id) = self.talk_request_id else {
+                    return Ok(HoldResume::Kept("no Talk-to is in flight"));
+                };
+                if observe(cx).is_some_and(|obs| obs.ready) {
+                    return Ok(HoldResume::Kept("the dialogue page is open"));
+                }
+                match cx.interaction_dispatch(request_id) {
+                    InteractionDispatch::Queued => {
+                        Ok(HoldResume::Kept("the host still holds the Talk-to"))
+                    }
+                    InteractionDispatch::Settled(receipt) if !receipt.accepted => {
+                        Ok(HoldResume::Kept("the host refused the Talk-to"))
+                    }
+                    InteractionDispatch::Unsent | InteractionDispatch::Settled(_) => {
+                        self.open(cx)?;
+                        Ok(HoldResume::Reissued("Talk-to"))
+                    }
+                }
+            }
+            Phase::Approach | Phase::Plan => {
+                let goal = self
+                    .npc_id()
+                    .and_then(|id| nearest_talk(cx, id))
+                    .map(|target| approach_goal(cx, &target))
+                    .unwrap_or_else(|| held_goal(cx, self.last_seen_tile));
+                if goal.close {
+                    return Ok(HoldResume::Kept("the NPC is already in reach"));
+                }
+                let walk_lost = self.walk_request_id != 0
+                    && cx.walk_unsent(self.walk_request_id)
+                    && cx.walk_receipt(self.walk_request_id).is_none();
+                // The hold's observed ticks are spent against the route's
+                // budget: a route that ran out in it was not slow.
+                let out_of_budget = tick >= self.content_deadline_tick
+                    && (self.phase == Phase::Plan
+                        || (self.walk_request_id != 0
+                            && cx.walk_receipt(self.walk_request_id).is_none()));
+                if !(walk_lost || out_of_budget) {
+                    return Ok(HoldResume::Kept("the approach is still followed"));
+                }
+                self.start_route(cx, goal)?;
+                Ok(HoldResume::Reissued("approach walk"))
+            }
+            _ => Ok(HoldResume::Kept("no request is in flight")),
         }
     }
 
