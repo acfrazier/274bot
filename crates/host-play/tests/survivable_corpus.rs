@@ -1910,7 +1910,10 @@ fn grants_for(world: &NavWorld, names: &[String]) -> ZoneExempt {
     }
 }
 
-#[allow(clippy::too_many_arguments)]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "one corpus row needs the route, world, profile and both risk tables; a bundle struct would only rename them"
+)]
 fn end_to_end_search(
     input: &CorpusInput,
     from: WorldTile,
