@@ -3546,7 +3546,18 @@ fn copper_history(scenario: Scenario, expect_held_join: bool) -> Result<RunEvide
             }
         }
         assert_log_unchanged(run)?;
-        assert_running(run)
+        assert_running(run)?;
+        // The measured four-edge history is complete. A normal-rock success
+        // can still own protected access through its following edge (SPEC
+        // section 4 / facts 3.3), so stop new work and drain those two windows
+        // before the ordinary logout button. This is cleanup, not an
+        // extension of COPPER_BUDGET or a new recovery action.
+        run.play().script_stop(&run.account);
+        let stopped_at = run.hook.observed_game_tick();
+        run.wait_until(stopped_at, 2, |trace, _| {
+            edge_frame(trace, u64::from(stopped_at) + 2).is_some()
+        })?;
+        assert_log_unchanged(run)
     })
 }
 
@@ -3775,6 +3786,9 @@ fn lone_opener_history(name: &'static str, suppress: bool) -> Result<RunEvidence
             .clone();
         run.wait_until(origin as u32, LONE_OPENER_BUDGET, |trace, statuses| {
             lone_opener_continues(trace, origin, &baseline)
+                // Compare three complete windows, not whichever partial wake
+                // happened to deliver the act line first in each account.
+                && edge_frame(trace, origin + 3).is_some()
                 && statuses
                     .last()
                     .is_some_and(|status| status.tick_method.is_some())
@@ -4136,7 +4150,7 @@ mod packet_oracle_tests {
         let evidence = stale_guard_evidence();
         let baseline = evidence.baseline.as_ref().unwrap();
         assert!(stale_guard_landing(&evidence.trace, 7, baseline));
-        for facet in 0..8 {
+        for facet in 0..11 {
             let mut trace = evidence.trace.clone();
             match facet {
                 0 => trace
@@ -4160,6 +4174,21 @@ mod packet_oracle_tests {
                     text: "You attempt to catch a fish.".into(),
                     poll: PollKind::Edge,
                 }),
+                8 => {
+                    let mut early = trace.dispatches[0].clone();
+                    early.game_tick = 8;
+                    trace.dispatches.push(early);
+                }
+                9 | 10 => {
+                    let opcode = if facet == 9 {
+                        ClientProt289::IF_BUTTON.id as u8
+                    } else {
+                        ClientProt289::CLOSE_MODAL.id as u8
+                    };
+                    let mut press = wire(opcode, 1, 3);
+                    press.request_id = None;
+                    trace.wire.push(press);
+                }
                 _ => unreachable!(),
             }
             assert!(
