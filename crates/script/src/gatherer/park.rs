@@ -60,12 +60,12 @@ impl Gatherer {
         {
             if tick.cx.may_continue_this_tick() {
                 let request = self.acquire_request(Arc::from([]), None, CloseBank::Close, &tick.cx);
-                self.active = Active::ParkClose(AcquireRun::new(
+                self.active = Active::ParkClose(Box::new(AcquireRun::new(
                     request,
                     AcquirePlan::empty(),
                     &self.prepared.banks,
                     &tick.cx,
-                ));
+                )));
                 self.poll_active(tick);
             }
             return true;

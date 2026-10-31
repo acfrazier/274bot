@@ -69,6 +69,22 @@ pub fn eligible_indices(
     indices
 }
 
+/// Remove exhausted placement identities without confusing repeated keeper
+/// types at different shops.
+pub(crate) fn exclude_placements(eligible: &[u16], excluded: &[u16]) -> Arc<[u16]> {
+    let count = eligible
+        .iter()
+        .filter(|index| !excluded.contains(index))
+        .count();
+    let mut remaining = eligible
+        .iter()
+        .copied()
+        .filter(|index| !excluded.contains(index));
+    (0..count)
+        .map(|_| remaining.next().expect("counted eligible placement"))
+        .collect()
+}
+
 /// Map one typed service outcome without inventing an air or reachability result.
 ///
 /// One `BudgetExhausted` or `NotSettled` retries the same domain. A second one
@@ -237,6 +253,7 @@ mod tests {
         assert!(!indices.contains(&3));
         assert!(eligible_indices(&facts, &data, i32::MAX, true, tile(0, 0), |_| true).is_empty());
     }
+
 
     #[test]
     fn routed_identity_is_the_exact_eligible_row_even_with_repeated_display_names() {

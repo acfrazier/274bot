@@ -1057,26 +1057,67 @@ pub enum WalkEnd {
     Cancelled,
     NeedsEvidence(Arc<[QuestGate]>),
 }
-// USER-0.2.3-GATHERER §1 records a progressed return ending Expired at the
-// Traveller's 60-call bound (equal to observed ticks in the current host);
-// §3 records the normal content-derived stand succeeding. One fresh plan
-// from the observed position is the supported recovery.
-const MAX_RETURN_RECOVERY_ACTIONS: u8 = 1;
+// USER-0.2.3-GATHERER §4 supports one recovery for a transient stalled return.
+// AGENTS.md:131 also covers NoPath, RouteEnded, Failed, untyped Refused, and
+// Stalled(EndBlocked): make one fresh observed-position plan before failure.
+const MAX_RETURN_RECOVERY_ATTEMPTS: u8 = 2;
 
-#[derive(Default)]
+/// Counts recovery submissions separately from the initial action.
+/// `max_attempts` includes the initial action.
 pub(crate) struct ReturnStallRecovery {
     actions: u8,
+    max_attempts: u8,
     pending: bool,
 }
 
+impl Default for ReturnStallRecovery {
+    fn default() -> Self {
+        Self::with_max_attempts(MAX_RETURN_RECOVERY_ATTEMPTS)
+    }
+}
+
 impl ReturnStallRecovery {
+    /// Set a total request limit, including the initial request.
+    pub(crate) fn with_max_attempts(max_attempts: u8) -> Self {
+        Self {
+            actions: 0,
+            max_attempts: max_attempts.max(1),
+            pending: false,
+        }
+    }
+
     pub(crate) fn observe(&mut self, end: &WalkEnd) -> bool {
         let transient = matches!(
             end,
             WalkEnd::Stalled(stall)
                 if matches!(stall.why, WalkStallReason::Expired | WalkStallReason::Dropped)
         );
-        if transient && self.actions < MAX_RETURN_RECOVERY_ACTIONS && !self.pending {
+        self.observe_retryable(transient)
+    }
+
+    pub(crate) fn receipt_retryable(receipt: &WalkReceipt) -> bool {
+        let has_blocked_zones = receipt
+            .blocked
+            .as_deref()
+            .is_some_and(|blocked| !blocked.is_empty());
+        receipt.refusal.is_none()
+            && !has_blocked_zones
+            && matches!(
+                &receipt.end,
+                WalkEnd::NoPath
+                    | WalkEnd::RouteEnded
+                    | WalkEnd::Stalled(_)
+                    | WalkEnd::Refused
+                    | WalkEnd::Failed
+            )
+    }
+
+    pub(crate) fn observe_receipt(&mut self, receipt: &WalkReceipt) -> bool {
+        self.observe_retryable(Self::receipt_retryable(receipt))
+    }
+
+    fn observe_retryable(&mut self, retryable: bool) -> bool {
+        if retryable && self.retry_attempt_number() <= self.max_attempts && !self.pending {
             self.pending = true;
             true
         } else {
@@ -1098,6 +1139,11 @@ impl ReturnStallRecovery {
     pub(crate) fn reset(&mut self) {
         self.actions = 0;
         self.pending = false;
+    }
+
+    /// Number of the next request after the initial request.
+    pub(crate) fn retry_attempt_number(&self) -> u8 {
+        self.actions.saturating_add(2)
     }
 
     #[cfg(test)]
@@ -1143,6 +1189,16 @@ impl WalkReceipt {
                     .as_ref()
                     .map(|refusal| Arc::from(refusal.to_string()))
             })
+    }
+    /// Return the host or typed detail, with the same fallback used by `into_arrival`.
+    pub(crate) fn failure_detail_or_fallback(&self) -> Arc<str> {
+        self.failure_detail().unwrap_or_else(|| {
+            Arc::from(match &self.end {
+                WalkEnd::NoPath => "walk has no route",
+                WalkEnd::RouteEnded => "walk route ended before arrival",
+                _ => "walk failed",
+            })
+        })
     }
 
     /// Accept a walk only when the adapter proved its requested arrival.
@@ -1556,6 +1612,57 @@ mod walk_permission_tests {
             receipt.failure_detail().as_deref(),
             Some("escape in progress")
         );
+    }
+
+    fn walk_retry_receipt(
+        end: WalkEnd,
+        blocked: Option<Arc<[nav_planner::contract::ZoneKey]>>,
+        refusal: Option<WalkRefusal>,
+    ) -> WalkReceipt {
+        WalkReceipt {
+            goal: None,
+            request_id: 19,
+            evidence: EvidenceStamp {
+                run: RunKey {
+                    slot: 1,
+                    run: 1,
+                    session: 1,
+                },
+                tick: 1,
+                sequence: 1,
+            },
+            end,
+            blocked,
+            detail: None,
+            refusal,
+            assessment: None,
+            escape: None,
+        }
+    }
+
+    #[test]
+    fn typed_walk_refusal_does_not_schedule_a_fresh_plan() {
+        let receipt =
+            walk_retry_receipt(WalkEnd::Refused, None, Some(WalkRefusal::EscapeInProgress));
+        let mut recovery = ReturnStallRecovery::default();
+
+        assert!(!ReturnStallRecovery::receipt_retryable(&receipt));
+        assert!(!recovery.observe_receipt(&receipt));
+        assert!(!recovery.pending());
+    }
+
+    #[test]
+    fn blocked_zones_do_not_schedule_a_fresh_plan() {
+        let receipt = walk_retry_receipt(
+            WalkEnd::NoPath,
+            Some(Arc::from([nav_planner::contract::ZoneKey::Zone(17)])),
+            None,
+        );
+        let mut recovery = ReturnStallRecovery::default();
+
+        assert!(!ReturnStallRecovery::receipt_retryable(&receipt));
+        assert!(!recovery.observe_receipt(&receipt));
+        assert!(!recovery.pending());
     }
 
     #[test]

@@ -277,10 +277,15 @@ impl<'a> Planner<'a> {
                 }
                 return Ok(());
             }
-            if let Some((_, reserve)) = shop_quote(world.data, vendor, id, world.members, units) {
+            let purchase_quote = shop_quote(world.data, vendor, id, world.members, units).and_then(
+                |(_, reserve)| {
+                    minimum_shop_quote(world.data, vendor, id, world.members, minimum_units)
+                        .map(|minimum_quote| (reserve, minimum_quote))
+                },
+            );
+            if let Some((reserve, minimum_quote)) = purchase_quote {
                 let (held_coins, banked_coins, unknown_bank) = purchase_coins(self.counts, coins);
-                if i64::from(held_coins).saturating_add(i64::from(banked_coins))
-                    < i64::from(minimum_units)
+                if i64::from(held_coins).saturating_add(i64::from(banked_coins)) < minimum_quote
                 {
                     if unknown_bank {
                         self.plan.scan = true;
@@ -301,7 +306,7 @@ impl<'a> Planner<'a> {
                             need,
                             id,
                             BlockReason::TooFewCoins {
-                                needed: i64::from(minimum_units),
+                                needed: minimum_quote,
                                 held: i64::from(held_coins),
                                 banked: i64::from(banked_coins),
                             },

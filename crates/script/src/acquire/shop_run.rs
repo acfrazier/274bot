@@ -2,15 +2,20 @@
 
 use super::buy::{BuyMachine, BuyReceipt, BuyRequest, PurchaseRefusal};
 use super::vendor::{self, VendorDecision};
-use super::*;
 use crate::native::walk::Walk;
-use crate::native::{ActionHandle, NativeActions, NativeTick, WalkRequest};
+use crate::native::{
+    ActionHandle, NativeActions, NativeTick, ReturnStallRecovery, WalkRequest,
+};
 use crate::native_bank::{SelectService, ServiceFacts, ServicePickRequest};
 use api::service_pick::{ServiceKind, ShopKeeperFacts};
 use api::shop_facts::{self, KeeperFact};
 use api::stock::Stock;
 use std::fmt::Write;
 use std::task::Poll;
+// One retry per access identity, with a small shared cap across this need's
+// eligible shops so a large catalog cannot multiply recovery requests.
+const MAX_SHOP_ACCESS_RETRIES: u8 = 2;
+const MAX_SHOP_ACCESS_ATTEMPTS: u8 = 2;
 
 #[derive(Clone, Copy)]
 enum Phase {
@@ -56,9 +61,15 @@ pub(super) struct ShopRun {
     facts: Option<Arc<ShopKeeperFacts>>,
     eligible: Option<Arc<[u16]>>,
     keeper: Option<KeeperFact<'static>>,
+    keeper_index: Option<u16>,
     target: Option<WorldTile>,
     nearest: bool,
     retry_used: bool,
+    walk_recovery: ReturnStallRecovery,
+    walk_retry_after_tick: Option<u64>,
+    total_walk_retries: u8,
+    excluded_shops: Vec<u16>,
+    last_walk_failure: Option<Arc<str>>,
     looked: Looked,
     bought: u32,
 }
@@ -92,9 +103,17 @@ impl ShopRun {
             facts: None,
             eligible: None,
             keeper: None,
+            keeper_index: None,
             target: None,
             nearest: false,
             retry_used: false,
+            walk_recovery: ReturnStallRecovery::with_max_attempts(
+                MAX_SHOP_ACCESS_ATTEMPTS,
+            ),
+            walk_retry_after_tick: None,
+            total_walk_retries: 0,
+            excluded_shops: Vec::new(),
+            last_walk_failure: None,
             looked,
             bought: 0,
         };
@@ -187,6 +206,9 @@ impl ShopRun {
                     }));
                 }
             }
+            if self.wait_for_access_retry(tick.cx.evidence().tick) {
+                return Poll::Pending;
+            }
             match std::mem::take(&mut self.active) {
                 Active::None => {}
                 Active::Select(handle) => match tick.actions.poll(&handle, &mut tick.cx) {
@@ -194,7 +216,9 @@ impl ShopRun {
                         self.active = Active::Select(handle);
                         return Poll::Pending;
                     }
-                    Poll::Ready(Err(error)) => return Poll::Ready(Err(error)),
+                    Poll::Ready(Err(error)) => {
+                        return Poll::Ready(Err(self.attach_last_walk(error)));
+                    }
                     Poll::Ready(Ok(outcome)) => {
                         let facts = self.facts.as_ref().expect("nearest facts retained");
                         let eligible = self.eligible.as_deref().expect("nearest indices retained");
@@ -209,7 +233,10 @@ impl ShopRun {
                                 index, access_tile, ..
                             } => {
                                 self.keeper = Some(facts.rows()[usize::from(index)].keeper);
+                                self.keeper_index = Some(index);
                                 self.target = Some(access_tile);
+                                self.walk_recovery.reset();
+                                self.walk_retry_after_tick = None;
                                 self.phase = Phase::Walk;
                             }
                             VendorDecision::Retry => self.phase = Phase::Select,
@@ -247,10 +274,33 @@ impl ShopRun {
                         self.active = Active::Walk(handle);
                         return Poll::Pending;
                     }
-                    Poll::Ready(Err(error)) => return Poll::Ready(Err(error)),
-                    Poll::Ready(Ok(receipt)) => {
-                        receipt.into_arrival()?;
+                    Poll::Ready(Err(error)) => {
+                        return Poll::Ready(Err(self.attach_last_walk(error)));
+                    }
+                    Poll::Ready(Ok(receipt))
+                        if matches!(&receipt.end, crate::native::WalkEnd::Arrived) =>
+                    {
+                        self.walk_recovery.reset();
+                        self.walk_retry_after_tick = None;
+                        self.last_walk_failure = None;
                         self.phase = Phase::Buy;
+                    }
+                    Poll::Ready(Ok(receipt)) => {
+                        if !ReturnStallRecovery::receipt_retryable(&receipt) {
+                            return Poll::Ready(Err(
+                                receipt.into_arrival().expect_err("non-arrival is an error")
+                            ));
+                        }
+                        let now = tick.cx.evidence().tick;
+                        self.last_walk_failure =
+                            Some(receipt.failure_detail_or_fallback());
+                        if self.total_walk_retries < MAX_SHOP_ACCESS_RETRIES
+                            && self.walk_recovery.observe_receipt(&receipt)
+                        {
+                            self.walk_retry_after_tick = Some(now);
+                        } else if let Err(error) = self.exclude_failed_shop(now) {
+                            return Poll::Ready(Err(error));
+                        }
                     }
                 },
                 Active::Buy(handle) => match tick.actions.poll(&handle, &mut tick.cx) {
@@ -265,6 +315,9 @@ impl ShopRun {
                         }
                     }
                 },
+            }
+            if self.wait_for_access_retry(tick.cx.evidence().tick) {
+                return Poll::Pending;
             }
             if !tick.cx.may_continue_this_tick() {
                 return Poll::Pending;
@@ -300,40 +353,54 @@ impl ShopRun {
                     let Some(from) = tick.cx.snapshot().here().map(|here| here.value) else {
                         return Poll::Pending;
                     };
-                    self.active = Active::Select(tick.actions.begin::<SelectService>(
-                        ServicePickRequest {
-                            kind: ServiceKind::ShopKeeper,
-                            from,
-                            options: request.walk,
-                            facts: ServiceFacts::ShopKeeper(Arc::clone(facts)),
-                            eligible: Arc::clone(eligible),
-                            prefer_order: true,
-                        },
-                        &mut tick.cx,
-                    )?);
+                    let handle = tick
+                        .actions
+                        .begin::<SelectService>(
+                            ServicePickRequest {
+                                kind: ServiceKind::ShopKeeper,
+                                from,
+                                options: request.walk,
+                                facts: ServiceFacts::ShopKeeper(Arc::clone(facts)),
+                                eligible: Arc::clone(eligible),
+                                prefer_order: true,
+                            },
+                            &mut tick.cx,
+                        )
+                        .map_err(|error| self.attach_last_walk(error))?;
+                    self.active = Active::Select(handle);
                 }
                 Phase::Walk => {
                     let Some(target) = self.target else {
                         self.phase = Phase::Buy;
                         continue;
                     };
-                    self.active = Active::Walk(tick.actions.begin::<Walk>(
-                        WalkRequest {
-                            target,
-                            candidate_goals: None,
-                            loc_id: None,
-                            radius: if self.nearest { 0 } else { 6 },
-                            arrival: nav_planner::contract::ArrivalKind::Reach,
-                            options: request.walk,
-                            required_after: request.required_after,
-                            evidence: None,
-                            cross: Box::default(),
-                            protect: false,
-                            food_guard: false,
-                            allow: Default::default(),
-                        },
-                        &mut tick.cx,
-                    )?);
+                    let retrying = self.walk_recovery.pending();
+                    let handle = tick
+                        .actions
+                        .begin::<Walk>(
+                            WalkRequest {
+                                target,
+                                candidate_goals: None,
+                                loc_id: None,
+                                radius: if self.nearest { 0 } else { 6 },
+                                arrival: nav_planner::contract::ArrivalKind::Reach,
+                                options: request.walk,
+                                required_after: tick.cx.evidence(),
+                                evidence: None,
+                                cross: Box::default(),
+                                protect: false,
+                                food_guard: false,
+                                allow: Default::default(),
+                            },
+                            &mut tick.cx,
+                        )
+                        .map_err(|error| self.attach_last_walk(error))?;
+                    if retrying {
+                        self.walk_recovery.action_submitted();
+                        self.walk_retry_after_tick = None;
+                        self.total_walk_retries = self.total_walk_retries.saturating_add(1);
+                    }
+                    self.active = Active::Walk(handle);
                 }
                 Phase::Buy => {
                     if gate == OpenGate::Hold {
@@ -412,8 +479,13 @@ impl ShopRun {
                 }
                 continue;
             }
-            let eligible =
-                vendor::eligible_indices(&facts, &data, id, members, from, |candidate| {
+            let eligible = vendor::eligible_indices(
+                &facts,
+                &data,
+                id,
+                members,
+                from,
+                |candidate| {
                     plan::keeper_minimum_shop_quote(
                         &data,
                         candidate.keeper.keeper_config,
@@ -422,7 +494,13 @@ impl ShopRun {
                         units,
                     )
                     .is_some_and(|price| price <= budget)
-                });
+                },
+            );
+            let eligible = if self.excluded_shops.is_empty() {
+                eligible
+            } else {
+                vendor::exclude_placements(&eligible, &self.excluded_shops)
+            };
             if eligible.is_empty() {
                 continue;
             }
@@ -434,12 +512,79 @@ impl ShopRun {
             self.candidate_index = index;
             self.eligible = Some(eligible);
             self.keeper = None;
+            self.keeper_index = None;
             self.target = None;
             self.retry_used = false;
+            self.walk_recovery.reset();
+            self.walk_retry_after_tick = None;
             self.phase = Phase::Select;
             return TierAdvance::Advanced;
         }
         TierAdvance::Exhausted
+    }
+
+    fn wait_for_access_retry(&mut self, now: u64) -> bool {
+        match self.walk_retry_after_tick {
+            Some(after) if now <= after => true,
+            Some(_) => {
+                self.walk_retry_after_tick = None;
+                false
+            }
+            None => false,
+        }
+    }
+
+    fn exclude_failed_shop(&mut self, now: u64) -> Result<(), ActionError> {
+        let detail = self
+            .last_walk_failure
+            .as_ref()
+            .map(Arc::clone)
+            .unwrap_or_else(|| Arc::from("shop access walk failed"));
+        let Some(index) = self.keeper_index.take().filter(|_| self.nearest) else {
+            return Err(ActionError::Blocked(detail));
+        };
+        if self.excluded_shops.contains(&index) {
+            return Err(ActionError::Blocked(detail));
+        }
+        self.excluded_shops.push(index);
+        let eligible = self.eligible.as_deref().unwrap_or_default();
+        self.eligible = Some(vendor::exclude_placements(eligible, &[index]));
+        if let Some(row) = self
+            .facts
+            .as_ref()
+            .and_then(|facts| facts.rows().get(usize::from(index)))
+        {
+            vendor::record_vendor(
+                &mut self.looked,
+                row.keeper.keeper_id,
+                VendorOutcome::Undecided,
+            );
+        }
+        self.keeper = None;
+        self.target = None;
+        self.retry_used = false;
+        self.walk_recovery.reset();
+        self.walk_retry_after_tick = Some(now);
+        self.phase = Phase::Select;
+        Ok(())
+    }
+
+    fn attach_last_walk(&self, error: ActionError) -> ActionError {
+        let Some(detail) = self.last_walk_failure.as_ref() else {
+            return error;
+        };
+        match error {
+            ActionError::Blocked(message) => ActionError::Blocked(Arc::from(format!(
+                "{message}; last shop access walk: {detail}"
+            ))),
+            ActionError::Failed(message) => ActionError::Failed(Arc::from(format!(
+                "{message}; last shop access walk: {detail}"
+            ))),
+            ActionError::Unavailable(message) => ActionError::Unavailable(Arc::from(format!(
+                "{message}; last shop access walk: {detail}"
+            ))),
+            other => other,
+        }
     }
 
     fn bought(
@@ -619,6 +764,10 @@ impl ShopRun {
                 unreachable!("shop refusal reason")
             }
         };
+        let line = match self.last_walk_failure.as_deref() {
+            Some(detail) => format!("{line}; last shop access walk: {detail}"),
+            None => line,
+        };
         let item = if self.tiered && matches!(&reason, BlockReason::NoVendor) {
             plan::item_name(self.data.as_deref(), need, self.best_item)
         } else {
@@ -789,6 +938,305 @@ mod tests {
                 outcome,
             },
         );
+    }
+
+    fn poll_shop(
+        run: &mut ShopRun,
+        request: &AcquireRequest,
+        snapshot: &GameSnapshot,
+        facts: &Arc<ShopKeeperFacts>,
+        ledger: &mut Option<Box<Ledger>>,
+        tick_number: u64,
+    ) -> Poll<Result<Outcome, ActionError>> {
+        with_tick_shop(snapshot, facts, None, ledger, tick_number, |tick| {
+            run.poll(request, tick, OpenGate::Open)
+        })
+    }
+
+    fn routed_shop(index: u16, access_tile: WorldTile) -> crate::native_bank::ServicePickOutcome {
+        crate::native_bank::ServicePickOutcome::Routed {
+            index,
+            access_tile,
+            cost: 0,
+        }
+    }
+
+    fn start_nearest_first_walk(
+        request: &mut AcquireRequest,
+        purchase: Purchase,
+        snapshot: &GameSnapshot,
+        facts: &Arc<ShopKeeperFacts>,
+        ledger: &mut Option<Box<Ledger>>,
+    ) -> ShopRun {
+        request.vendor = VendorChoice::Nearest;
+        let mut run = start(request, purchase, snapshot, facts, ledger);
+        assert!(poll_shop(&mut run, request, snapshot, facts, ledger, 2).is_pending());
+        complete_service_pick(ledger, 0, 2, routed_shop(0, tile(3201)));
+        assert!(poll_shop(&mut run, request, snapshot, facts, ledger, 3).is_pending());
+        assert_eq!(last_walk_request(ledger).target, tile(3201));
+        run
+    }
+
+    fn finish_walk(
+        ledger: &mut Option<Box<Ledger>>,
+        tick: u64,
+        end: crate::native::WalkEnd,
+        detail: &str,
+        blocked: Option<Arc<[nav_planner::contract::ZoneKey]>>,
+        refusal: Option<crate::native::WalkRefusal>,
+    ) {
+        let (request_id, run) = {
+            let ledger = ledger.as_ref().expect("walk request queued");
+            let action = ledger
+                .outbox
+                .iter()
+                .rev()
+                .find(|action| matches!(&action.effect, HostEffect::Walk(_)))
+                .expect("walk request queued");
+            (action.request_id.get(), action.authority().run())
+        };
+        ledger.as_mut().expect("walk request queued").walk = Some(crate::native::WalkReceipt {
+            goal: None,
+            request_id,
+            evidence: api::quest_progress::EvidenceStamp {
+                run,
+                tick,
+                sequence: tick,
+            },
+            end,
+            blocked,
+            detail: Some(Arc::from(detail)),
+            refusal,
+            assessment: None,
+            escape: None,
+        });
+    }
+
+    fn walk_count(ledger: &Option<Box<Ledger>>) -> usize {
+        ledger
+            .as_ref()
+            .map_or(0, |ledger| {
+                ledger
+                    .outbox
+                    .iter()
+                    .filter(|action| matches!(&action.effect, HostEffect::Walk(_)))
+                    .count()
+            })
+    }
+
+    fn last_walk_request(ledger: &Option<Box<Ledger>>) -> &crate::native::WalkRequest {
+        ledger
+            .as_ref()
+            .expect("walk request queued")
+            .outbox
+            .iter()
+            .rev()
+            .find_map(|action| match &action.effect {
+                HostEffect::Walk(request) => Some(request),
+                _ => None,
+            })
+            .expect("walk request queued")
+    }
+
+    fn service_pick_eligible(ledger: &Option<Box<Ledger>>, selection: usize) -> Arc<[u16]> {
+        Arc::clone(
+            &ledger
+                .as_ref()
+                .expect("service pick queued")
+                .outbox
+                .iter()
+                .filter_map(|action| match &action.effect {
+                    HostEffect::ServicePick(pick) => Some(&pick.eligible),
+                    _ => None,
+                })
+                .nth(selection)
+                .expect("service pick request exists"),
+        )
+    }
+
+    #[test]
+    fn nearest_shop_walk_retries_later_then_switches_placement() {
+        let (mut request, purchase, mut snapshot, facts) = fixture();
+        let mut ledger = None;
+        let mut run =
+            start_nearest_first_walk(&mut request, purchase, &snapshot, &facts, &mut ledger);
+
+        finish_walk(
+            &mut ledger,
+            4,
+            crate::native::WalkEnd::NoPath,
+            "first shop route failed",
+            None,
+            None,
+        );
+        assert!(poll_shop(&mut run, &request, &snapshot, &facts, &mut ledger, 4).is_pending());
+        assert_eq!(walk_count(&ledger), 1, "same-tick retries are deferred");
+
+        snapshot.seed_local_player(crate::quester::families::tests::local_player(tile(3204)));
+        assert!(poll_shop(&mut run, &request, &snapshot, &facts, &mut ledger, 5).is_pending());
+        assert_eq!(walk_count(&ledger), 2);
+        assert_eq!(last_walk_request(&ledger).target, tile(3201));
+        assert_eq!(last_walk_request(&ledger).required_after.tick, 5);
+
+        finish_walk(
+            &mut ledger,
+            6,
+            crate::native::WalkEnd::NoPath,
+            "first shop retry failed",
+            None,
+            None,
+        );
+        assert!(poll_shop(&mut run, &request, &snapshot, &facts, &mut ledger, 6).is_pending());
+        assert!(poll_shop(&mut run, &request, &snapshot, &facts, &mut ledger, 7).is_pending());
+        assert_eq!(&*service_pick_eligible(&ledger, 1), &[1, 2]);
+
+        complete_service_pick(&mut ledger, 1, 7, routed_shop(1, tile(3209)));
+        assert!(poll_shop(&mut run, &request, &snapshot, &facts, &mut ledger, 8).is_pending());
+        assert_eq!(last_walk_request(&ledger).target, tile(3209));
+        assert_eq!(last_walk_request(&ledger).required_after.tick, 8);
+    }
+
+    #[test]
+    fn typed_refusal_and_blocked_zone_receipts_are_terminal_after_a_retry() {
+        for (end, blocked, refusal) in [
+            (
+                crate::native::WalkEnd::Refused,
+                None,
+                Some(crate::native::WalkRefusal::RouteTooLarge {
+                    required_bytes: 10,
+                    maximum_bytes: 1,
+                }),
+            ),
+            (
+                crate::native::WalkEnd::NoPath,
+                Some(Arc::from([nav_planner::contract::ZoneKey::Zone(7)])),
+                None,
+            ),
+        ] {
+            let (mut request, purchase, snapshot, facts) = fixture();
+            let mut ledger = None;
+            let mut run =
+                start_nearest_first_walk(&mut request, purchase, &snapshot, &facts, &mut ledger);
+            finish_walk(
+                &mut ledger,
+                4,
+                crate::native::WalkEnd::NoPath,
+                "retryable route failure",
+                None,
+                None,
+            );
+            assert!(poll_shop(&mut run, &request, &snapshot, &facts, &mut ledger, 4).is_pending());
+            assert!(poll_shop(&mut run, &request, &snapshot, &facts, &mut ledger, 5).is_pending());
+            finish_walk(&mut ledger, 6, end, "terminal walk receipt", blocked, refusal);
+            assert!(matches!(
+                poll_shop(&mut run, &request, &snapshot, &facts, &mut ledger, 6),
+                Poll::Ready(Err(ActionError::Blocked(_)))
+            ));
+            assert_eq!(walk_count(&ledger), 2, "terminal evidence is not retried");
+        }
+    }
+
+    #[test]
+    fn shop_retry_budget_is_shared_and_terminal_block_keeps_last_walk_detail() {
+        let (mut request, purchase, snapshot, facts) = fixture();
+        let mut ledger = None;
+        let mut run =
+            start_nearest_first_walk(&mut request, purchase, &snapshot, &facts, &mut ledger);
+
+        for (first_failure, retry_failure, selection, keeper, access, eligible) in [
+            (4, 6, 1, 1, 3209, &[1_u16, 2][..]),
+            (9, 11, 2, 2, 3219, &[2_u16][..]),
+        ] {
+            finish_walk(
+                &mut ledger,
+                first_failure,
+                crate::native::WalkEnd::NoPath,
+                "shop access failed",
+                None,
+                None,
+            );
+            assert!(poll_shop(
+                &mut run,
+                &request,
+                &snapshot,
+                &facts,
+                &mut ledger,
+                first_failure
+            )
+            .is_pending());
+            assert!(poll_shop(
+                &mut run,
+                &request,
+                &snapshot,
+                &facts,
+                &mut ledger,
+                first_failure + 1
+            )
+            .is_pending());
+            assert_eq!(last_walk_request(&ledger).required_after.tick, first_failure + 1);
+            finish_walk(
+                &mut ledger,
+                retry_failure,
+                crate::native::WalkEnd::NoPath,
+                "shop access retry failed",
+                None,
+                None,
+            );
+            assert!(poll_shop(
+                &mut run,
+                &request,
+                &snapshot,
+                &facts,
+                &mut ledger,
+                retry_failure
+            )
+            .is_pending());
+            assert!(poll_shop(
+                &mut run,
+                &request,
+                &snapshot,
+                &facts,
+                &mut ledger,
+                retry_failure + 1
+            )
+            .is_pending());
+            assert_eq!(&*service_pick_eligible(&ledger, selection), eligible);
+            complete_service_pick(
+                &mut ledger,
+                selection,
+                retry_failure + 1,
+                routed_shop(keeper, tile(access)),
+            );
+            assert!(poll_shop(
+                &mut run,
+                &request,
+                &snapshot,
+                &facts,
+                &mut ledger,
+                retry_failure + 2
+            )
+            .is_pending());
+        }
+
+        finish_walk(
+            &mut ledger,
+            14,
+            crate::native::WalkEnd::NoPath,
+            "last eligible shop route detail",
+            None,
+            None,
+        );
+        let mut result = poll_shop(&mut run, &request, &snapshot, &facts, &mut ledger, 14);
+        if result.is_pending() {
+            result = poll_shop(&mut run, &request, &snapshot, &facts, &mut ledger, 15);
+        }
+        let Poll::Ready(Ok(Outcome::Blocked(block))) = result else {
+            panic!("exhausted nearest shops must produce a terminal block");
+        };
+        assert!(block
+            .message
+            .contains("last shop access walk: last eligible shop route detail"));
+        assert_eq!(walk_count(&ledger), 5, "two shared retries cover all shops");
     }
 
     #[test]

@@ -281,6 +281,7 @@ impl Script for OpenClose {
                     },
                     options: script::native::WalkOptions::default(),
                     explicit: Some(Arc::clone(&self.bank_name)),
+                    excluded_banks: None,
                     allow_air_fallback: false,
                 };
                 match tick.actions.begin::<Select>(args, &mut tick.cx) {

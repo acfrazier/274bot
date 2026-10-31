@@ -1214,6 +1214,7 @@ impl Script for TellerScript {
                             ..Default::default()
                         },
                         explicit: Some(Arc::from(MAGE_BANK_NAME)),
+                        excluded_banks: None,
                         allow_air_fallback: false,
                     };
                     match tick.actions.begin::<Select>(args, &mut tick.cx) {
@@ -2434,6 +2435,7 @@ impl Script for BankPickBurstScript {
                         preferences: BankPreferences::default(),
                         options: script::native::WalkOptions::default(),
                         explicit: Some(Arc::from(BANK_PICK_BURST_BANK)),
+                        excluded_banks: None,
                         allow_air_fallback: false,
                     };
                     {

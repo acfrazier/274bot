@@ -433,7 +433,10 @@ fn keeper_placement_cache_is_bound_once_per_world_and_shared_without_per_bot_row
                 <= 16,
             "the shared world keeper cache slot grew"
         );
-        assert!(world.bind_shop_keeper_facts(&data).is_err());
+        assert_eq!(
+            world.bind_shop_keeper_facts(&data),
+            Err(crate::world::ShopKeeperBindError::AlreadyBound)
+        );
         println!(
             "A3 keeper cache {revision:?}: rows={} row_bytes={} retained_bytes={} world_slot_bytes={}",
             first.rows().len(),

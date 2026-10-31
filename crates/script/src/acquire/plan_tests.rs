@@ -1702,12 +1702,12 @@ fn shop_reserve_caps_held_target_and_merges_optional_coin_target() {
 }
 
 #[test]
-fn shop_floor_coin_shortage_blocks_but_below_reserve_still_plans() {
+fn shop_uses_content_price_floor_before_walking_but_not_the_full_reserve() {
     let data = pinned_shop_data();
-    let vial_water = shop_item_id(&data, "vial_water");
+    let bait = shop_item_id(&data, "fishing_bait");
     let short_request = shop_request(
         vec![need(
-            vial_water,
+            bait,
             2,
             2,
             Presence::Held,
@@ -1715,42 +1715,60 @@ fn shop_floor_coin_shortage_blocks_but_below_reserve_still_plans() {
             SourceSet::PACK | SourceSet::SHOP,
         )],
         VendorChoice::Explicit {
-            keeper_config: Arc::from("aemad"),
+            keeper_config: Arc::from("gerrant"),
             anchor: None,
         },
         SourceSet::PACK | SourceSet::BANK,
     );
-    let one_coin = fixture(&[(COINS, 1)], &[(COINS, 0)], Origin::Session);
-    let block = shop_block(&short_request, &one_coin, &data, false);
+    let minimum_quote =
+        minimum_shop_quote(Some(&data), &short_request.vendor, bait, false, 2)
+            .expect("pinned Gerrant minimum quote");
+    assert!(
+        minimum_quote > 2,
+        "the two-bait quote must exceed the 1 gp-per-bait floor"
+    );
+
+    let insufficient_coins = fixture(&[(COINS, 2)], &[(COINS, 0)], Origin::Session);
+    let world = WorldFacts {
+        data: Some(&data),
+        members: false,
+    };
+    let mut planner = Planner::new(&insufficient_coins, world);
+    planner
+        .require_with_purchase(
+            &short_request.needs[0],
+            &short_request.vendor,
+            short_request.coins,
+            world,
+        )
+        .expect("shop planning");
+    assert_eq!(
+        planner.plan.purchase_count, 0,
+        "insufficient coins must block before a purchase is created"
+    );
+    let block = blocked(planner.verdict(None));
     assert_eq!(
         block.reason,
         BlockReason::TooFewCoins {
-            needed: 2,
-            held: 1,
+            needed: minimum_quote,
+            held: 2,
             banked: 0,
         }
     );
 
-    let reserve = max_shop_quote(&data, vial_water, false, 1);
-    assert!(reserve > 1);
-    let usable_request = shop_request(
-        vec![need(
-            vial_water,
-            1,
-            1,
-            Presence::Held,
-            NeedKind::Required,
-            SourceSet::PACK | SourceSet::SHOP,
-        )],
-        VendorChoice::Explicit {
-            keeper_config: Arc::from("aemad"),
-            anchor: None,
-        },
-        SourceSet::PACK | SourceSet::BANK,
+    let gerrant = shop_facts::vendor_by_keeper_config(&data, "gerrant", bait)
+        .expect("pinned Gerrant fishing bait stock");
+    let reserve = two_chunk_fact_quote(&gerrant, 2);
+    assert!(reserve > minimum_quote);
+    let coins = [(COINS, minimum_quote as i32)];
+    let enough_for_minimum = fixture(
+        &coins,
+        &[(COINS, 0)],
+        Origin::Session,
     );
-    let usable = shop_plan(&usable_request, &one_coin, &data, false);
-    assert_eq!(usable.purchase_count, 1);
-    assert_eq!(withdrawal_target(&usable, COINS), None);
+    let plan = shop_plan(&short_request, &enough_for_minimum, &data, false);
+    assert_eq!(plan.purchase_count, 1);
+    assert_eq!(withdrawal_target(&plan, COINS), None);
 }
 
 #[test]

@@ -3,6 +3,8 @@
 pub use obj_names::{ItemDefView, LocDefView, LocDefs, ObjNames};
 pub use random::{DetectedRandom, RandomClaim, RandomKind};
 pub use snapshot::{LocalTile, WorldTile};
+/// Maximum further bank returns accepted by the ChickenKiller bank check.
+pub const CHICKEN_BANK_MAX_RESTARTS: u8 = 3;
 
 pub mod bank_memory;
 pub mod cake_stall;

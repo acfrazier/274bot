@@ -1043,7 +1043,7 @@ fn status_card_shows_the_current_park_reason_not_an_earlier_quests() {
 }
 
 #[test]
-fn bank_seen_and_draft_path_are_projected_to_short_status_rows() {
+fn bank_seen_and_draft_path_rows_include_comments_only_with_a_path_source() {
     use script::native::{NativePhase, ScriptStatus, StatusField, StatusValue};
     use std::sync::Arc;
 
@@ -1064,9 +1064,24 @@ fn bank_seen_and_draft_path_are_projected_to_short_status_rows() {
                 value: StatusValue::Text(Arc::from("Session, 12 min ago, 6 rows")),
             },
             StatusField {
+                key: "path_source",
+                label: "Path source",
+                value: StatusValue::Text(Arc::from("folder")),
+            },
+            StatusField {
+                key: "step_comment",
+                label: "Step comment",
+                value: StatusValue::Text(Arc::from("Folder Path comment")),
+            },
+            StatusField {
                 key: "draft_status",
                 label: "Path status",
                 value: StatusValue::Text(Arc::from("Untested draft Path")),
+            },
+            StatusField {
+                key: "step_comment",
+                label: "Empty step comment",
+                value: StatusValue::Text(Arc::from("")),
             },
         ]),
         failure: None,
@@ -1078,8 +1093,33 @@ fn bank_seen_and_draft_path_are_projected_to_short_status_rows() {
                 "Bank seen (at status update)",
                 "Session, 12 min ago, 6 rows"
             ),
+            ("Path source", "folder"),
+            ("Step comment", "Folder Path comment"),
             ("Path status", "Untested draft Path")
         ]
+    );
+
+    let without_source = ScriptStatus {
+        fields: Arc::from([
+            StatusField {
+                key: "bank_seen",
+                label: "Bank seen (at status update)",
+                value: StatusValue::Text(Arc::from("Session, 12 min ago, 6 rows")),
+            },
+            StatusField {
+                key: "step_comment",
+                label: "Step comment",
+                value: StatusValue::Text(Arc::from("Folder Path comment")),
+            },
+        ]),
+        ..status
+    };
+    assert_eq!(
+        script_status_rows(StatusView::new(&without_source)).collect::<Vec<_>>(),
+        vec![(
+            "Bank seen (at status update)",
+            "Session, 12 min ago, 6 rows"
+        )]
     );
 }
 

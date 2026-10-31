@@ -3466,18 +3466,20 @@ fn site_first_walk_resume_and_changed_site_fresh_start_keep_selected_resource_an
 }
 
 #[test]
-fn site_refused_initial_walk_stops_with_nav_detail() {
+fn site_refused_initial_walk_retries_from_observed_position() {
     let selected = selected();
     let mut slot = started_with(4422, &selected, site_willow_bag("woodcutting.draynor"));
     let frame = site_willow_frame();
     let mut now = 0;
-    let (authority, request, effect) = next_trip_effect(&mut slot, &frame, &mut now);
-    assert!(matches!(effect, HostEffect::Walk(_)));
+    let (authority, initial_id, effect) = next_trip_effect(&mut slot, &frame, &mut now);
+    let HostEffect::Walk(initial) = effect else {
+        panic!("initial Site approach")
+    };
     slot.complete_native_walk(
         &authority,
         script::native::WalkReceipt {
             goal: None,
-            request_id: request,
+            request_id: initial_id,
             evidence: EvidenceStamp {
                 run: authority.run(),
                 tick: now,
@@ -3491,19 +3493,15 @@ fn site_refused_initial_walk_stops_with_nav_detail() {
             escape: None,
         },
     );
-    now += 1;
-    tick(&mut slot, &frame, now);
-    assert_eq!(slot.state(), script::RunState::Idle);
-    assert!(!slot.want_run);
-    let status = slot.native_status().unwrap();
-    assert_eq!(status.phase, NativePhase::Blocked);
-    assert!(status
-        .failure
-        .as_ref()
-        .unwrap()
-        .message
-        .contains("no route to the selected site"));
-    assert!(!slot.has_native_actions());
+    let (_, _, effect) = next_trip_effect(&mut slot, &frame, &mut now);
+    let HostEffect::Walk(retry) = effect else {
+        panic!("fresh Site retry")
+    };
+    assert_eq!(retry.target, initial.target);
+    assert_eq!(retry.required_after.tick, now);
+    assert!(retry.required_after.tick > initial.required_after.tick);
+    assert!(slot.native_status().unwrap().failure.is_none());
+    slot.stop();
 }
 
 #[test]

@@ -1,7 +1,9 @@
 use super::*;
 use crate::bank::{AccessKind, BankPickReceipt, BankStandAccess, PickKind, SelectedBank};
 use crate::native::ledger::{HostEffect, Ledger};
-use crate::native::{ActionError, InteractionReceipt};
+use crate::native::{
+    ActionError, InteractionReceipt, WalkEnd, WalkReceipt, WalkRequest,
+};
 use crate::native_bank::{BankAction, BankItem};
 use api::bank_memory::{BankMemory, Origin};
 use api::named_banks::{BankPreferences, NamedBank};
@@ -228,6 +230,16 @@ fn first_effect(ledger: &TestLedger) -> &HostEffect {
 }
 
 fn complete_pick(ledger: &mut TestLedger, bank: NamedBank, tick: u64) {
+    complete_pick_at(ledger, 0, bank, STAND, tick);
+}
+
+fn complete_pick_at(
+    ledger: &mut TestLedger,
+    bank_index: u16,
+    bank: NamedBank,
+    access_tile: WorldTile,
+    tick: u64,
+) {
     let ledger = ledger.as_mut().expect("bank selection queued a pick");
     let action = ledger.outbox.remove(0);
     assert!(matches!(&action.effect, HostEffect::BankPick(_)));
@@ -242,12 +254,12 @@ fn complete_pick(ledger: &mut TestLedger, bank: NamedBank, tick: u64) {
                 sequence: tick,
             },
             selected: SelectedBank {
-                bank_index: 0,
-                access_tile: STAND,
+                bank_index,
+                access_tile,
                 kind: PickKind::Reachable,
                 access: Some(Arc::new(BankStandAccess {
                     bank,
-                    stand_tile: STAND,
+                    stand_tile: access_tile,
                     kind: AccessKind::Booth,
                     stand_op: 1,
                     name: None,
@@ -256,6 +268,53 @@ fn complete_pick(ledger: &mut TestLedger, bank: NamedBank, tick: u64) {
             },
         },
     );
+}
+
+fn bank_pick_eligible(ledger: &TestLedger) -> Arc<[u16]> {
+    match first_effect(ledger) {
+        HostEffect::BankPick(request) => Arc::clone(&request.eligible),
+        _ => panic!("bank selection must queue a pick"),
+    }
+}
+
+fn last_walk_request(ledger: &TestLedger) -> &WalkRequest {
+    ledger
+        .as_ref()
+        .expect("walk request queued")
+        .outbox
+        .iter()
+        .rev()
+        .find_map(|action| match &action.effect {
+            HostEffect::Walk(request) => Some(request),
+            _ => None,
+        })
+        .expect("walk request queued")
+}
+
+fn complete_walk(ledger: &mut TestLedger, tick: u64, end: WalkEnd, detail: &str) {
+    let ledger = ledger.as_mut().expect("walk request queued");
+    let index = ledger
+        .outbox
+        .iter()
+        .rposition(|action| matches!(&action.effect, HostEffect::Walk(_)))
+        .expect("walk request queued");
+    let action = ledger.outbox.remove(index);
+    let authority = action.authority();
+    ledger.walk = Some(WalkReceipt {
+        goal: None,
+        request_id: authority.request_id().get(),
+        evidence: EvidenceStamp {
+            run: authority.run(),
+            tick,
+            sequence: tick,
+        },
+        end,
+        blocked: None,
+        detail: Some(Arc::from(detail)),
+        refusal: None,
+        assessment: None,
+        escape: None,
+    });
 }
 
 fn complete_interaction(ledger: &mut TestLedger, tick: u64) -> HostEffect {
@@ -298,6 +357,90 @@ fn is_close(effect: &HostEffect) -> bool {
         effect,
         HostEffect::Interaction(crate::shim::InteractReq::Close)
     )
+}
+
+#[test]
+fn nearest_bank_walk_retries_on_fresh_ticks_then_excludes_and_switches_banks() {
+    let (mut snapshot, _, _) = fixture();
+    let origin = WorldTile {
+        x: 3200,
+        z: 3200,
+        level: 0,
+    };
+    let retry_position = WorldTile {
+        x: 3204,
+        z: 3205,
+        level: 0,
+    };
+    let bank_zero_tile = WorldTile {
+        x: 3210,
+        z: 3210,
+        level: 0,
+    };
+    let bank_one_tile = WorldTile {
+        x: 3220,
+        z: 3220,
+        level: 0,
+    };
+    snapshot.seed_local_player(crate::quester::families::tests::local_player(origin));
+    let bank_zero = NamedBank::new("First bank", bank_zero_tile);
+    let bank_one = NamedBank::new("Second bank", bank_one_tile);
+    let banks = Arc::new(api::named_banks::NamedBankFacts::from_banks(vec![
+        bank_zero, bank_one,
+    ]));
+    let request = authored_request(None, false, Vec::new());
+    let mut ledger = None;
+    let mut run = new_run(request, &snapshot, None, &mut ledger, &banks);
+
+    assert!(poll_at(&mut run, &snapshot, None, &mut ledger, 1, OpenGate::Open).is_pending());
+    assert_eq!(&*bank_pick_eligible(&ledger), &[0, 1]);
+    complete_pick_at(&mut ledger, 0, bank_zero, bank_zero_tile, 1);
+    assert!(poll_at(&mut run, &snapshot, None, &mut ledger, 2, OpenGate::Open).is_pending());
+    assert_eq!(last_walk_request(&ledger).target, bank_zero_tile);
+    let mut walks_by_bank = [1_u8, 0];
+
+    complete_walk(&mut ledger, 3, WalkEnd::NoPath, "first bank route failed");
+    assert!(poll_at(&mut run, &snapshot, None, &mut ledger, 3, OpenGate::Open).is_pending());
+    snapshot.seed_local_player(crate::quester::families::tests::local_player(retry_position));
+    assert!(poll_at(&mut run, &snapshot, None, &mut ledger, 4, OpenGate::Open).is_pending());
+    walks_by_bank[0] += 1;
+    assert_eq!(last_walk_request(&ledger).target, bank_zero_tile);
+    assert_eq!(last_walk_request(&ledger).required_after.tick, 4);
+
+    complete_walk(&mut ledger, 5, WalkEnd::NoPath, "first bank retry failed");
+    assert!(poll_at(&mut run, &snapshot, None, &mut ledger, 5, OpenGate::Open).is_pending());
+    assert!(poll_at(&mut run, &snapshot, None, &mut ledger, 6, OpenGate::Open).is_pending());
+    assert_eq!(&*bank_pick_eligible(&ledger), &[1]);
+    match first_effect(&ledger) {
+        HostEffect::BankPick(request) => assert_eq!(request.from, retry_position),
+        _ => panic!("the fallback must select from the current player position"),
+    }
+    complete_pick_at(&mut ledger, 1, bank_one, bank_one_tile, 6);
+    assert!(poll_at(&mut run, &snapshot, None, &mut ledger, 7, OpenGate::Open).is_pending());
+    assert_eq!(last_walk_request(&ledger).target, bank_one_tile);
+    assert_eq!(last_walk_request(&ledger).required_after.tick, 7);
+    walks_by_bank[1] += 1;
+
+    complete_walk(&mut ledger, 8, WalkEnd::NoPath, "second bank route failed");
+    assert!(poll_at(&mut run, &snapshot, None, &mut ledger, 8, OpenGate::Open).is_pending());
+    snapshot.seed_local_player(crate::quester::families::tests::local_player(origin));
+    assert!(poll_at(&mut run, &snapshot, None, &mut ledger, 9, OpenGate::Open).is_pending());
+    assert_eq!(last_walk_request(&ledger).target, bank_one_tile);
+    assert_eq!(last_walk_request(&ledger).required_after.tick, 9);
+    walks_by_bank[1] += 1;
+
+    complete_walk(&mut ledger, 10, WalkEnd::NoPath, "last bank retry detail");
+    assert!(poll_at(&mut run, &snapshot, None, &mut ledger, 10, OpenGate::Open).is_pending());
+    let Poll::Ready(Err(ActionError::Blocked(message))) =
+        poll_at(&mut run, &snapshot, None, &mut ledger, 11, OpenGate::Open)
+    else {
+        panic!("all failed bank identities must stop with the last walk detail");
+    };
+    assert_eq!(walks_by_bank, [2, 2]);
+    assert!(message.contains(
+        "no eligible bank after access walk failure: last bank retry detail"
+    ));
+    assert!(ledger.as_ref().unwrap().outbox.is_empty());
 }
 
 #[test]

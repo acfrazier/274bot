@@ -31,7 +31,7 @@ use crate::native::{
 };
 use api::game_data::GatherForbiddenState;
 use api::gather_methods::known_rows;
-use api::selected::{RunKey, Truth};
+use api::selected::{EntityId, RunKey, Truth};
 use api::snapshot::{ItemView, StatView, WorldTile};
 use nav_planner::contract::ArrivalKind;
 use std::sync::Arc;
@@ -44,12 +44,14 @@ mod recover;
 use park::Park;
 
 const MAX_AVOID: usize = 8;
-
 // Fishing's maximum movement timer is 529 ticks (280 + random(250)):
 // skill_fishing/scripts/fishing_movement.rs2:8-12. Add a 60-tick whirlpool
 // (macro events/scripts/fishing/macro_event_whirlpool.rs2:7); 800 exceeds both.
 const WAIT_GAMEPLAY_TICKS: u64 = 800; // Eight minutes at 600 ms per server tick.
 const IDLE_AVOID_TICKS: u64 = 60;
+// USER-0.2.3-GATHERER §4 requires a finite total action budget. Four failed
+// walks allow two targets to use their initial request and one recovery each.
+const MAX_FAILED_WALKS_PER_PHASE: u8 = 4;
 const HAZARD_RETREAT_RADIUS: i32 = 8;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -105,8 +107,8 @@ enum Active {
     Drop(ActionHandle<DropBatch>),
     Walk(ActionHandle<Walk>),
     Tend(ActionHandle<OneOp>),
-    Acquire(AcquireRun),
-    ParkClose(AcquireRun),
+    Acquire(Box<AcquireRun>),
+    ParkClose(Box<AcquireRun>),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -234,6 +236,17 @@ fn hazard_retreat_stand(
     best.map(|(tile, _)| tile)
 }
 
+/// The identity of the current walk plan, so retry state cannot leak to a
+/// different resource, return stand, or hazard.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum WalkRetryTarget {
+    Resource(EntityId, WorldTile),
+    /// A resource target held for another attempt after a host escape.
+    EscapeResource(EntityId, WorldTile),
+    Return(WorldTile),
+    Hazard(WorldTile),
+}
+
 /// Cold session collections share one allocation to retain the inline budget.
 #[derive(Default)]
 struct GatherScratch {
@@ -242,8 +255,18 @@ struct GatherScratch {
     needs: Option<Arc<[Need]>>,
     /// Last tick a catch or XP was credited; bounds fishing surveys.
     last_yield_tick: u64,
-    /// Tracks one pending or admitted return recovery across ticks.
+    /// Bounded retry state for Gatherer walk plans.
     return_stall_recovery: ReturnStallRecovery,
+    /// Failed return or approach walks across targets since the last progress.
+    phase_walk_failures: u8,
+    /// Existing target exclusions grow only as the finite live search needs them.
+    avoid: Vec<AvoidedTile>,
+    /// The identity whose next action, if any, is the pending bounded retry.
+    walk_retry_target: Option<WalkRetryTarget>,
+    /// A retry waits until a later observed game tick.
+    retry_after_tick: Option<u64>,
+    /// Detail from the newest failed walk, retained across target fallbacks.
+    last_walk_failure: Option<Arc<str>>,
     /// Whether this trip found an item at Deposit that engine content forbids banking.
     /// Retained across action restarts until the next trip begins.
     kept_unbankable: bool,
@@ -265,7 +288,6 @@ pub struct Gatherer {
     target: Option<TargetPlan>,
     active: Active,
     tool: ToolState,
-    avoid: [AvoidedTile; MAX_AVOID],
     scratch: Box<GatherScratch>,
     wait_until: Option<u64>,
     widen: WidenCursor,
@@ -321,7 +343,6 @@ impl Gatherer {
                 id: -1,
                 worn: false,
             },
-            avoid: [AvoidedTile::EMPTY; MAX_AVOID],
             scratch: Box::default(),
             wait_until: None,
             widen: WidenCursor::default(),
@@ -380,7 +401,9 @@ impl Gatherer {
         self.scratch.needs = None;
         self.scratch.kept_unbankable = false;
         self.scratch.withdrew_supplies = false;
-        self.scratch.return_stall_recovery.reset();
+        self.reset_walk_retry();
+        self.reset_phase_walk_budget();
+        self.scratch.last_walk_failure = None;
         self.advance_trip(step);
         self.set_event("bank trip due");
     }
@@ -512,7 +535,12 @@ impl Gatherer {
             self.start_trip(step);
         }
         self.scratch.needs = Some(Arc::clone(&request.needs));
-        self.active = Active::Acquire(AcquireRun::new(request, plan, &self.prepared.banks, cx));
+        self.active = Active::Acquire(Box::new(AcquireRun::new(
+            request,
+            plan,
+            &self.prepared.banks,
+            cx,
+        )));
     }
 
     fn start_dispose(&mut self, tick: &mut NativeTick<'_>) {
@@ -561,6 +589,9 @@ impl Gatherer {
 
     fn return_to_resources(&mut self, tick: &mut NativeTick<'_>) {
         let now = tick.cx.evidence().tick;
+        if self.wait_for_walk_retry(now) {
+            return;
+        }
         if self.wait_until.is_some_and(|until| now < until)
             && self
                 .last_event
@@ -587,7 +618,7 @@ impl Gatherer {
                 here: here.value,
                 now: tick.cx.evidence().tick,
                 skill_stat: self.skill_stat(snapshot.stats()),
-                avoided: &self.avoid,
+                avoided: &self.scratch.avoid,
                 collision: tick.frame.compiled.collision,
             },
         ) {
@@ -602,17 +633,22 @@ impl Gatherer {
                 };
                 self.method = Arc::clone(&selected.plan.alias);
                 self.target = Some(selected.plan);
-                let recovery = self.scratch.return_stall_recovery.pending();
+                let retrying = self.begin_walk_retry(WalkRetryTarget::Return(stand));
                 let submitted = self.trip_walk(stand, radius, ArrivalKind::Area, goals, tick);
-                if recovery && submitted {
+                if retrying && submitted {
                     self.scratch.return_stall_recovery.action_submitted();
-                    self.set_event("return recovery action submitted after transient Stalled");
-                } else if !recovery {
+                    self.set_event("return walk retry submitted from the observed position");
+                } else if !retrying {
                     self.set_event("returning to work area");
                 }
                 self.dirty = true;
             }
             ResourceReturn::ExcludedUntil { until } => {
+                if until == u64::from(u32::MAX)
+                    && self.fail_last_walk("return-failed", "no other resource stand is reachable")
+                {
+                    return;
+                }
                 self.wait_until = Some(until);
                 self.set_event(&self.block_context(
                     Some(here.value),
@@ -620,19 +656,22 @@ impl Gatherer {
                 ));
             }
             ResourceReturn::Unavailable { reason } => {
-                self.fail(
-                    "return-failed",
-                    self.block_context(Some(here.value), reason),
-                );
+                let context = self.block_context(Some(here.value), reason);
+                if !self.fail_last_walk("return-failed", &context) {
+                    self.fail("return-failed", context);
+                }
             }
             ResourceReturn::InvalidGoals(error) => {
-                self.fail("return-failed", format!("observation goals: {error}"));
+                let message = format!("observation goals: {error}");
+                if !self.fail_last_walk("return-failed", &message) {
+                    self.fail("return-failed", message);
+                }
             }
             ResourceReturn::Danger(failure) => {
-                self.fail(
-                    "return-failed",
-                    self.block_context(Some(here.value), &failure.to_string()),
-                );
+                let context = self.block_context(Some(here.value), &failure.to_string());
+                if !self.fail_last_walk("return-failed", &context) {
+                    self.fail("return-failed", context);
+                }
             }
         }
     }
@@ -653,7 +692,7 @@ impl Gatherer {
     }
 
     fn begin_trip(&mut self, tick: &mut NativeTick<'_>) {
-        if matches!(self.active, Active::Acquire(_)) {
+        if matches!(self.active, Active::Acquire(_) | Active::ParkClose(_)) {
             self.poll_active(tick);
             return;
         }
@@ -749,12 +788,12 @@ impl Gatherer {
                 return;
             }
         };
-        self.active = Active::Acquire(AcquireRun::new(
+        self.active = Active::Acquire(Box::new(AcquireRun::new(
             request,
             plan,
             &self.prepared.banks,
             &tick.cx,
-        ));
+        )));
         self.poll_active(tick);
     }
 
@@ -768,6 +807,50 @@ impl Gatherer {
         });
         self.dirty = true;
     }
+    /// Retry only after an observed game tick newer than the failed receipt.
+    fn wait_for_walk_retry(&mut self, now: u64) -> bool {
+        match self.scratch.retry_after_tick {
+            Some(after) if now <= after => true,
+            Some(_) => {
+                self.scratch.retry_after_tick = None;
+                false
+            }
+            None => false,
+        }
+    }
+
+    /// Start a retry sequence for one identity, resetting any previous budget.
+    fn begin_walk_retry(&mut self, target: WalkRetryTarget) -> bool {
+        let retrying = self.scratch.walk_retry_target == Some(target)
+            && self.scratch.return_stall_recovery.pending();
+        if !retrying {
+            self.scratch.return_stall_recovery.reset();
+            self.scratch.walk_retry_target = Some(target);
+        }
+        retrying
+    }
+
+    fn reset_walk_retry(&mut self) {
+        self.scratch.return_stall_recovery.reset();
+        self.scratch.walk_retry_target = None;
+        self.scratch.retry_after_tick = None;
+    }
+    fn reset_phase_walk_budget(&mut self) {
+        self.scratch.phase_walk_failures = 0;
+    }
+
+    fn remember_walk_failure(&mut self, receipt: &WalkReceipt) {
+        self.scratch.last_walk_failure = Some(receipt.failure_detail_or_fallback());
+    }
+
+    fn fail_last_walk(&mut self, code: &'static str, reason: &str) -> bool {
+        let Some(detail) = self.scratch.last_walk_failure.as_ref() else {
+            return false;
+        };
+        self.fail(code, format!("{reason}; last walk failure: {detail}"));
+        true
+    }
+
 
     fn block_context(&self, here: Option<WorldTile>, reason: &str) -> String {
         use std::fmt::Write;
@@ -970,7 +1053,7 @@ impl Gatherer {
                 &self.prepared.catalog,
                 &self.prepared.methods,
                 &site.region,
-                &self.avoid,
+                &self.scratch.avoid,
                 cx.evidence().tick,
             ) else {
                 self.fail(
@@ -989,7 +1072,7 @@ impl Gatherer {
                 self.retained.start_tile.unwrap_or(here.value),
                 self.prepared.settings.radius,
                 SearchExclusions {
-                    avoided: &self.avoid,
+                    avoided: &self.scratch.avoid,
                     tried: &self.tried_groups,
                 },
                 cx.evidence().tick,
@@ -1241,28 +1324,43 @@ impl Gatherer {
             match selected.approach(tick.cx.snapshot(), tick.cx.evidence(), tick.walk_danger) {
                 Ok(approach) => approach,
                 Err(error) => {
-                    self.fail(
-                        if self.trip == TripStep::Return {
-                            "return-failed"
-                        } else {
-                            "resource-unavailable"
-                        },
-                        format!("safe resource access goals: {error}"),
-                    );
+                    let code = if self.trip == TripStep::Return {
+                        "return-failed"
+                    } else {
+                        "resource-unavailable"
+                    };
+                    let context = format!("safe resource access goals: {error}");
+                    if !self.fail_last_walk(code, &context) {
+                        self.fail(code, context);
+                    }
                     return;
                 }
             };
         if let Some(request) = approach {
+            let retrying = self.begin_walk_retry(WalkRetryTarget::Resource(
+                selected.plan.entity,
+                selected.plan.tile,
+            ));
             match tick.actions.begin::<Walk>(request, &mut tick.cx) {
                 Ok(handle) => {
+                    if retrying {
+                        self.scratch.return_stall_recovery.action_submitted();
+                    }
                     self.scratch.observation_walk = selected.observation_goals.is_some();
                     self.active = Active::Walk(handle);
-                    self.set_event("approaching target");
+                    self.set_event(if retrying {
+                        "resource approach retry submitted from the observed position"
+                    } else {
+                        "approaching target"
+                    });
                 }
                 Err(error) => self.action_failure(error),
             }
             return;
         }
+        self.reset_walk_retry();
+        self.reset_phase_walk_budget();
+        self.scratch.last_walk_failure = None;
         let Some(plan) = self.target.clone() else {
             return;
         };
@@ -1332,6 +1430,7 @@ impl Gatherer {
                 self.last_gameplay_tick = tick.cx.evidence().tick;
             }
             if gained != 0 || xp != 0 {
+                self.reset_phase_walk_budget();
                 self.scratch.last_yield_tick = tick.cx.evidence().tick;
                 self.scratch.fishing.progress();
                 self.yielded = self.yielded.saturating_add(gained);
@@ -1347,6 +1446,7 @@ impl Gatherer {
     fn handle_gather(&mut self, result: GatherResult, tick: &mut NativeTick<'_>) {
         self.needs_validate = true;
         if result.gained > 0 || result.xp > 0 {
+            self.reset_phase_walk_budget();
             self.last_gameplay_tick = tick.cx.evidence().tick;
             self.scratch.last_yield_tick = tick.cx.evidence().tick;
             self.wait_until = None;
@@ -1430,6 +1530,11 @@ impl Gatherer {
     }
 
     fn handle_walk(&mut self, result: WalkReceipt, tick: &mut NativeTick<'_>) {
+        if result.end == WalkEnd::Arrived {
+            self.reset_walk_retry();
+            self.reset_phase_walk_budget();
+            self.scratch.last_walk_failure = None;
+        }
         if result.end == WalkEnd::Arrived && std::mem::take(&mut self.scratch.observation_walk) {
             let Some(goal) = result.goal else {
                 self.fail(
@@ -1475,6 +1580,23 @@ impl Gatherer {
                 self.target.as_ref().map(|target| (target.entity, target.tile)),
             );
         }
+        if matches!(
+            result.refusal,
+            Some(crate::native::WalkRefusal::EscapeInProgress)
+        ) {
+            // Host admission refuses every walk while its escape is live
+            // (host-play/src/script_nav.rs:4599-4611). Recheck on the next
+            // observed game tick; another refusal means the escape is live.
+            if self.trip == TripStep::Idle {
+                if let Some(target) = self.target.as_ref() {
+                    self.scratch.walk_retry_target =
+                        Some(WalkRetryTarget::EscapeResource(target.entity, target.tile));
+                }
+            }
+            self.scratch.retry_after_tick = Some(tick.cx.evidence().tick);
+            self.set_event("waiting for the active escape to end");
+            return;
+        }
         if self.retained.recovery == (RecoveryState::Pending { step: 5 }) {
             self.finish_recovery_return(result, tick);
             return;
@@ -1488,18 +1610,13 @@ impl Gatherer {
                     .as_ref()
                     .map(|target| (target.entity, target.tile)),
             );
+            self.reset_walk_retry();
             self.target = None;
             self.fail("manual-movement", "cancelled by user input");
             return;
         }
-        if self.trip == TripStep::Return && self.scratch.return_stall_recovery.observe(&result.end)
-        {
-            // The typed Traveller terminal includes its current server tile;
-            // rebuild the content-derived observation stand from the fresh
-            // snapshot, not from the route that stalled.
-            self.target = None;
-            self.return_to_resources(tick);
-            return;
+        if result.end != WalkEnd::Arrived {
+            self.remember_walk_failure(&result);
         }
         if result.end == WalkEnd::RouteEnded && self.trip == TripStep::Idle {
             let snapshot = tick.cx.snapshot();
@@ -1522,6 +1639,7 @@ impl Gatherer {
                     "gather-approach clear reason=route-target-gone target={:?}",
                     (target.entity, target.tile),
                 );
+                self.reset_walk_retry();
                 self.target = None;
                 self.set_event("target gone during approach; observing resources");
                 return;
@@ -1537,16 +1655,94 @@ impl Gatherer {
                     .as_ref()
                     .map(|target| (target.entity, target.tile)),
             );
-            self.target = None;
-            self.fail(
-                if self.trip == TripStep::Return {
-                    "return-failed"
-                } else {
-                    "walk-failed"
-                },
-                walk_failure_message(&result),
-            );
-            return;
+            let now = tick.cx.evidence().tick;
+            if matches!(self.trip, TripStep::Return | TripStep::Idle) {
+                self.scratch.phase_walk_failures =
+                    self.scratch.phase_walk_failures.saturating_add(1);
+                if self.scratch.phase_walk_failures >= MAX_FAILED_WALKS_PER_PHASE {
+                    self.reset_walk_retry();
+                    let code = if self.trip == TripStep::Return {
+                        "return-failed"
+                    } else {
+                        "walk-failed"
+                    };
+                    if !self
+                        .fail_last_walk(code, "total walk failure budget across targets was spent")
+                    {
+                        self.fail(code, walk_failure_message(&result));
+                    }
+                    return;
+                }
+            }
+            let avoid_until = u64::from(u32::MAX);
+            if self.scratch.return_stall_recovery.observe_receipt(&result) {
+                self.scratch.retry_after_tick = Some(now);
+                match self.trip {
+                    TripStep::Return => {
+                        self.target = None;
+                        self.set_event("retrying return from the observed position");
+                    }
+                    TripStep::Idle => {
+                        if self.hazard_escape.is_some() {
+                            self.target = None;
+                        }
+                        self.set_event(if self.hazard_escape.is_some() {
+                            "retrying hazard escape from the observed position"
+                        } else {
+                            "retrying resource approach from the observed position"
+                        });
+                    }
+                    _ => {
+                        self.reset_walk_retry();
+                        let code = if self.trip == TripStep::Return {
+                            "return-failed"
+                        } else {
+                            "walk-failed"
+                        };
+                        if !self.fail_last_walk(code, "walk retry is unavailable for this step") {
+                            self.fail(code, walk_failure_message(&result));
+                        }
+                    }
+                }
+                return;
+            }
+            let target = self.target.take();
+            match self.trip {
+                TripStep::Return => {
+                    if let Some(target) = target {
+                        self.avoid(target.tile, avoid_until);
+                    }
+                    self.reset_walk_retry();
+                    self.scratch.retry_after_tick = Some(now);
+                    self.set_event("return stand failed; selecting another resource stand");
+                    return;
+                }
+                TripStep::Idle => {
+                    if let Some(target) = target {
+                        self.avoid(target.tile, avoid_until);
+                        self.reset_walk_retry();
+                        self.scratch.retry_after_tick = Some(now);
+                        self.set_event("resource approach failed; selecting another target");
+                        return;
+                    }
+                    self.reset_walk_retry();
+                    if self.hazard_escape.is_some() {
+                        if !self.fail_last_walk("walk-failed", "hazard escape walk failed") {
+                            self.fail("walk-failed", walk_failure_message(&result));
+                        }
+                    } else if !self.fail_last_walk("walk-failed", "walk retry budget was spent") {
+                        self.fail("walk-failed", walk_failure_message(&result));
+                    }
+                    return;
+                }
+                _ => {
+                    self.reset_walk_retry();
+                    if !self.fail_last_walk("walk-failed", "walk retry budget was spent") {
+                        self.fail("walk-failed", walk_failure_message(&result));
+                    }
+                    return;
+                }
+            }
         }
         match self.trip {
             TripStep::Return => {
@@ -1718,7 +1914,7 @@ impl Gatherer {
                         );
                     }
                     Poll::Ready(Err(error)) => {
-                        self.acquire_failure(run, error, tick);
+                        self.acquire_failure(*run, error, tick);
                     }
                 }
             }
@@ -1732,7 +1928,7 @@ impl Gatherer {
                     self.fail("action-error", "a park close selected a child");
                 }
                 Poll::Ready(Err(error)) => {
-                    self.acquire_failure(run, error, tick);
+                    self.acquire_failure(*run, error, tick);
                 }
             },
         }
@@ -1844,6 +2040,9 @@ impl Gatherer {
     }
 
     fn begin_idle(&mut self, tick: &mut NativeTick<'_>, handoff: bool) {
+        if self.wait_for_walk_retry(tick.cx.evidence().tick) {
+            return;
+        }
         if self.needs_validate {
             match self.validate(&mut tick.cx) {
                 Validation::Pending => return,
@@ -1853,7 +2052,7 @@ impl Gatherer {
         if self.scratch.parked.is_some() {
             return;
         }
-        if matches!(self.active, Active::Acquire(_)) {
+        if matches!(self.active, Active::Acquire(_) | Active::ParkClose(_)) {
             self.begin_trip(tick);
             return;
         }
@@ -1910,6 +2109,12 @@ impl Gatherer {
             return;
         };
         if let Some(plan) = self.target.take() {
+            // Hold this identity after an escape or bounded retry, before ranking.
+            let retrying = self.scratch.walk_retry_target
+                == Some(WalkRetryTarget::EscapeResource(plan.entity, plan.tile))
+                || (self.scratch.return_stall_recovery.pending()
+                    && self.scratch.walk_retry_target
+                        == Some(WalkRetryTarget::Resource(plan.entity, plan.tile)));
             let observation = observe_target(snapshot, &self.prepared.catalog, &plan);
             let enabled = self
                 .prepared
@@ -1922,7 +2127,8 @@ impl Gatherer {
             };
             if enabled
                 && observation == Some(TargetObservation::Active)
-                && (selected.plan.npc_index >= 0
+                && (retrying
+                    || selected.plan.npc_index >= 0
                     || super::select::resource_arrived(
                         Some(snapshot),
                         selected.plan.entity,
@@ -1961,7 +2167,7 @@ impl Gatherer {
             &self.prepared.methods,
             &self.prepared.settings,
             area,
-            &self.avoid,
+            &self.scratch.avoid,
             super::select::SelectionObservation {
                 snapshot: Some(snapshot),
                 walk_danger: tick.walk_danger,
@@ -1980,6 +2186,24 @@ impl Gatherer {
         // target warrants a same-frame handoff; confirm terminal unavailability
         // on the next observation so the last yield is accounted before blocking.
         if handoff && selected.target.is_none() {
+            return;
+        }
+        // Only permanent exclusions from failed walks spend the target set.
+        // Temporary absence and finite survey waits keep their usual paths.
+        if selected.target.is_none()
+            && self.hazard_escape.is_none()
+            && self.scratch.last_walk_failure.is_some()
+            && matches!(
+                &selected.outcome,
+                Selection::Exhausted { wait_until, .. }
+                    if *wait_until == u64::from(u32::MAX)
+            )
+        {
+            let reason =
+                self.block_context(Some(here.value), "no alternate resource target remains");
+            if !self.fail_last_walk("walk-failed", &reason) {
+                self.fail("walk-failed", reason);
+            }
             return;
         }
         let fishing = self.settings().skill_kind() == Skill::Fishing;
@@ -2122,7 +2346,11 @@ impl Gatherer {
             .last_event
             .as_ref()
             .starts_with("waiting for hazard to clear")
-            && self.avoid.iter().any(|entry| u64::from(entry.until) > now)
+            && self
+                .scratch
+                .avoid
+                .iter()
+                .any(|entry| u64::from(entry.until) > now)
         {
             return;
         }
@@ -2133,13 +2361,21 @@ impl Gatherer {
             return;
         };
         let Some(target) = hazard_retreat_stand(here, hazard, collision) else {
-            if self.avoid.iter().any(|entry| u64::from(entry.until) > now) {
+            if self
+                .scratch
+                .avoid
+                .iter()
+                .any(|entry| u64::from(entry.until) > now)
+            {
                 self.set_event(&self.block_context(Some(here), "waiting for hazard to clear"));
             } else {
-                self.hazard_escape = None;
-                self.set_event(
-                    &self.block_context(Some(here), "no reachable stand away from hazard"),
-                );
+                let context = self.block_context(Some(here), "no reachable stand away from hazard");
+                if self.scratch.last_walk_failure.is_some() {
+                    self.fail_last_walk("walk-failed", &context);
+                } else {
+                    self.hazard_escape = None;
+                    self.set_event(&context);
+                }
             }
             return;
         };
@@ -2160,11 +2396,19 @@ impl Gatherer {
             food_guard: false,
             allow: Default::default(),
         };
+        let retrying = self.begin_walk_retry(WalkRetryTarget::Hazard(hazard));
         match tick.actions.begin::<Walk>(request, &mut tick.cx) {
             Ok(handle) => {
+                if retrying {
+                    self.scratch.return_stall_recovery.action_submitted();
+                }
                 self.scratch.observation_walk = false;
                 self.active = Active::Walk(handle);
-                self.set_event("walking away from hazard");
+                self.set_event(if retrying {
+                    "hazard escape retry submitted from the observed position"
+                } else {
+                    "walking away from hazard"
+                });
             }
             Err(error) => self.action_failure(error),
         }
@@ -2186,25 +2430,24 @@ impl Gatherer {
 
     fn avoid(&mut self, tile: WorldTile, until: u64) {
         let until = until.min(u64::from(u32::MAX)) as u32;
-        if let Some(entry) = self.avoid.iter_mut().find(|entry| entry.tile == tile) {
+        if let Some(entry) = self
+            .scratch
+            .avoid
+            .iter_mut()
+            .find(|entry| entry.tile == tile)
+        {
             entry.until = until;
             return;
         }
         if let Some(entry) = self
+            .scratch
             .avoid
             .iter_mut()
             .find(|entry| u64::from(entry.until) <= self.last_gameplay_tick)
         {
             *entry = AvoidedTile { tile, until };
-            return;
-        }
-        if let Some((index, _)) = self
-            .avoid
-            .iter()
-            .enumerate()
-            .min_by_key(|(_, entry)| entry.until)
-        {
-            self.avoid[index] = AvoidedTile { tile, until };
+        } else {
+            self.scratch.avoid.push(AvoidedTile { tile, until });
         }
     }
 
@@ -2686,6 +2929,7 @@ mod tests {
 
     #[test]
     fn instance_with_widening_stays_inside_the_inline_budget() {
+        // Last measured head: 1,432 B; retain the 1,440-B cap until the parent remeasures this cutover.
         assert_eq!(size_of::<Walk>(), 136, "Walk inline layout changed");
         assert!(
             size_of::<Gatherer>() <= 1440,
@@ -2694,7 +2938,7 @@ mod tests {
         );
         assert!(size_of::<GatherRetained>() <= 80);
         println!(
-            "Gatherer={} Active={} GatherRun={} DropBatch={} OneOp={} GatherRetained={} GatherScratch={} TargetPlan={} Walk={} WalkGoals={} WalkRequest={} WalkReceipt={}",
+            "Gatherer={} Active={} GatherRun={} DropBatch={} OneOp={} GatherRetained={} GatherScratch={} RetryTargetOption={} AvoidedTile={} TargetPlan={} Walk={} WalkGoals={} WalkRequest={} WalkReceipt={}",
             size_of::<Gatherer>(),
             size_of::<Active>(),
             size_of::<GatherRun>(),
@@ -2702,6 +2946,8 @@ mod tests {
             size_of::<OneOp>(),
             size_of::<GatherRetained>(),
             size_of::<GatherScratch>(),
+            size_of::<Option<WalkRetryTarget>>(),
+            size_of::<AvoidedTile>(),
             size_of::<TargetPlan>(),
             size_of::<Walk>(),
             size_of::<crate::native::WalkGoals>(),
@@ -2858,7 +3104,7 @@ mod tests {
     }
 
     #[test]
-    fn bank_return_failure_preserves_walk_receipt_detail() {
+    fn bank_return_failure_preserves_walk_receipt_detail_for_retry() {
         use crate::quester::families::tests::with_tick;
         use api::snapshot::GameSnapshot;
 
@@ -2912,12 +3158,13 @@ mod tests {
                 tick,
             );
         });
-        let failure = gatherer.failure.as_ref().unwrap();
-        assert_eq!(failure.code.as_ref(), "return-failed");
-        assert!(failure.message.contains("Dropped"));
-        assert!(failure.message.contains("2809,3441,0"));
-        assert!(failure.message.contains("2848,3426,0"));
-        assert_eq!(gatherer.phase(), ("blocked", NativePhase::Blocked));
+        assert!(gatherer.failure.is_none());
+        assert_eq!(gatherer.scratch.retry_after_tick, Some(1));
+        assert!(gatherer.scratch.return_stall_recovery.pending());
+        assert_eq!(
+            gatherer.scratch.last_walk_failure.as_deref(),
+            Some("Dropped: stuck at (2809,3441,0), aiming (2848,3426,0)")
+        );
         assert_eq!(gatherer.trips, 0);
     }
 
@@ -3812,14 +4059,14 @@ mod tests {
 
         let mut gatherer = draynor_net_gatherer();
         gatherer.trip = TripStep::Return;
-        gatherer.avoid[0] = AvoidedTile {
-            tile: WorldTile {
+        gatherer.avoid(
+            WorldTile {
                 x: 3085,
                 z: 3231,
                 level: 0,
             },
-            until: 167,
-        };
+            167,
+        );
         let bank = WorldTile {
             x: 3092,
             z: 3243,
@@ -3893,14 +4140,14 @@ mod tests {
 
         let mut gatherer = draynor_net_gatherer();
         gatherer.retained.recovery = RecoveryState::Pending { step: 5 };
-        gatherer.avoid[0] = AvoidedTile {
-            tile: WorldTile {
+        gatherer.avoid(
+            WorldTile {
                 x: 3085,
                 z: 3231,
                 level: 0,
             },
-            until: 167,
-        };
+            167,
+        );
         let bank = WorldTile {
             x: 3092,
             z: 3243,
@@ -4123,10 +4370,7 @@ mod tests {
 
         let mut gatherer = draynor_net_gatherer();
         gatherer.hazard_escape = Some(hazard);
-        gatherer.avoid[0] = AvoidedTile {
-            tile: hazard,
-            until: 180,
-        };
+        gatherer.avoid(hazard, 180);
         let snapshot = bank_snapshot(here);
         let mut ledger = None;
         with_tick(&snapshot, &mut ledger, 120, |tick| {
@@ -4196,10 +4440,7 @@ mod tests {
 
         let mut gatherer = draynor_net_gatherer();
         gatherer.hazard_escape = Some(hazard);
-        gatherer.avoid[0] = AvoidedTile {
-            tile: hazard,
-            until: 180,
-        };
+        gatherer.avoid(hazard, 180);
         let snapshot = bank_snapshot(here);
         let mut ledger = None;
         with_tick(&snapshot, &mut ledger, 120, |tick| {

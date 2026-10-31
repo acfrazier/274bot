@@ -64,6 +64,7 @@ const PREP_DEADLINE: Duration = Duration::from_secs(180);
 const POWER_DEADLINE: Duration = Duration::from_secs(1800);
 const WEDGE_DEADLINE: Duration = Duration::from_secs(900);
 const POLL_INTERVAL: Duration = Duration::from_millis(20);
+const CLEAN_LOGOUT_DEADLINE: Duration = Duration::from_secs(30);
 const REQUIRED_CYCLES: u32 = 2;
 const REQUIRED_POST_DROP_GATHERS: u32 = 2;
 const LOG_ID: i32 = 1511;
@@ -4327,17 +4328,19 @@ impl GatherSlot {
             }
         }
         self.witness.last_status_bank = text_field(status, "bank").map(str::to_owned);
-        if let Some(bank) = self.witness.last_status_bank.as_deref() {
-            if let Some((_, step)) = bank.rsplit_once("; ") {
-                self.witness.bank_loaded_observed |= self.snapshot.bank_loaded();
-                self.witness.bank_return_step_seen |= step == "Return";
-                if step == "Return" {
-                    self.witness.bank_return_after_pause |= self.case
-                        == LiveCase::PauseResumeOtherPlane
-                        && self.witness.resume_observed;
-                    self.witness.bank_return_after_reconnect |=
-                        self.case == LiveCase::ReconnectReturn && self.witness.reconnect_observed;
-                }
+        let bank_step_is_return = self
+            .witness
+            .last_status_bank
+            .as_deref()
+            .and_then(|bank| bank.rsplit_once("; ").map(|(_, step)| step == "Return"));
+        if let Some(step_is_return) = bank_step_is_return {
+            self.witness.bank_loaded_observed |= self.snapshot.bank_loaded();
+            if step_is_return {
+                record_bank_return_step(&mut self.witness, "Return");
+                self.witness.bank_return_after_pause |=
+                    self.case == LiveCase::PauseResumeOtherPlane && self.witness.resume_observed;
+                self.witness.bank_return_after_reconnect |=
+                    self.case == LiveCase::ReconnectReturn && self.witness.reconnect_observed;
             }
         }
         if matches!(
@@ -4413,6 +4416,33 @@ impl GatherSlot {
             }
             if self.status_claims_bank_close(status) {
                 self.witness.bank_closed_observed = true;
+            if event == "bank selected" {
+                self.witness.bank_selected = true;
+                if self.case == LiveCase::PowerToBank {
+                    let completed = self
+                        .witness
+                        .confirmed_drops
+                        .saturating_sub(self.witness.power_to_bank_edit_drop_baseline)
+                        >= self.witness.power_to_bank_edit_slots;
+                    if !self.witness.power_to_bank_edit_requested
+                        || !self.witness.power_to_bank_applied
+                        || !completed
+                    {
+                        return Err(format!(
+                            "bank selection preempted the boundary-applied Power to Bank batch: {:?}",
+                            self.witness
+                        ));
+                    }
+                }
+            }
+            if event == "withdrawal confirmed" {
+                self.witness.bank_withdrawal_confirmed = true;
+            }
+            if self.case == LiveCase::FishBait
+                && event == "withdrawal confirmed"
+                && integer_field(status, "bait") == Some(3)
+            {
+                self.witness.bait_exact = true;
             }
             if self.case == LiveCase::WoodcuttingBankUnwieldable && event == "wielding tool" {
                 return Err("unwieldable rune axe wear action was started".into());
@@ -5074,10 +5104,6 @@ impl GatherSlot {
                 ) || !self.complete_bank_selection()
                     || self.selected_bank_name() != Some(expected_bank)
                     || self.selected_bank_kind() != Some("Reachable")
-                    || self
-                        .latest
-                        .as_ref()
-                        .is_none_or(|latest| latest.xp <= self.baseline_xp())
                 {
                     return Err(format!(
                         "{} did not gather real {resource} and complete the reachable {expected_bank} bank, deposit, return, and fresh-yield lifecycle without seeded scene locations: {:?}",
@@ -6030,6 +6056,8 @@ fn macro_event_fixture_blocker(case: LiveCase) -> Option<&'static str> {
         _ => None,
     }
 }
+include!("../src/clean_logout_guard.inc.rs");
+define_clean_logout_guard!(host_play::Play, CLEAN_LOGOUT_DEADLINE);
 
 fn run_cell(cell: Cell, case: LiveCase) -> Result<(), String> {
     run_cell_with_fixture(cell, case, fixture_plan)
@@ -6391,6 +6419,12 @@ fn run_cell_with_fixture(
             None,
         )?;
     }
+    let mut logout_guard = (case == LiveCase::BankCostFirstGoal).then(|| CleanLogoutGuard {
+        play: &play,
+        account: &account,
+        label: cell_name,
+        attempted: false,
+    });
     let settings = cell.settings(case);
     let mut identity = json!({
         "phase": "identity",
@@ -7705,11 +7739,18 @@ fn run_cell_with_fixture(
             std::thread::sleep(POLL_INTERVAL);
         }
     }
-    play.script_stop(&account);
+    let clean_logout = if let Some(guard) = logout_guard.as_mut() {
+        guard.logout()
+    } else {
+        play.script_stop(&account);
+        Ok(())
+    };
+    drop(logout_guard);
     play.stop_slot(&account);
     if let Some(helper_account) = &helper_account {
         play.stop_slot(helper_account);
     }
+    clean_logout?;
     result?;
     let qualification = state.lock().map_err(|_| "live state poisoned")?.qualifies();
     qualification
@@ -9616,6 +9657,14 @@ fn is_mining_gem(id: i32) -> bool {
     MINE_PRODUCTS.contains(&id) && ![COPPER_ID, TIN_ID, IRON_ID, COAL_ID].contains(&id)
 }
 
+fn record_bank_return_step(witness: &mut Witness, step: &str) {
+    if step == "Return" {
+        // Return is persistent runner evidence that Close completed.
+        witness.bank_return_step_seen = true;
+        witness.bank_closed_observed = true;
+    }
+}
+
 fn real_content_bank_lifecycle_complete(
     case: LiveCase,
     witness: &Witness,
@@ -9938,6 +9987,93 @@ fn seers_maple_lifecycle_requires_the_named_bank_and_a_returned_yield() {
             0,
         ),
         "the oak fixture tile list must also remain empty"
+    );
+}
+
+#[test]
+fn draynor_oak_lifecycle_requires_bank_close_and_fresh_post_bank_yield() {
+    let mut witness = Witness {
+        status_trips: 2,
+        bank_arrivals: 2,
+        status_deposited: 28,
+        bank_nonzero_roundtrips: 1,
+        post_bank_yields: 2,
+        bank_loaded_observed: true,
+        bank_withdrawal_confirmed: true,
+        last_status_yielded: 29,
+        last_xp: 3498,
+        last_status_bank: Some("Draynor; Reachable; access:3092,3243,0; Return".into()),
+        last_event: Some("returning to work area".into()),
+        ..Witness::default()
+    };
+    witness.products_seen.insert(1521);
+    witness.oak_live_tiles.insert((3106, 3247, 0));
+    let plan = FixturePlan::default();
+    let target = world_tile(3106, 3247);
+    let baseline_xp = 2411;
+
+    record_bank_return_step(&mut witness, "Return");
+    assert!(witness.bank_closed_observed);
+    assert!(real_content_bank_lifecycle_complete(
+        LiveCase::BankCostFirstGoal,
+        &witness,
+        &plan,
+        target,
+        baseline_xp,
+    ));
+
+    let valid_xp = witness.last_xp;
+    for xp in [baseline_xp, baseline_xp - 1] {
+        witness.last_xp = xp;
+        assert!(
+            witness.post_bank_yields >= 1,
+            "the negative XP case keeps a fresh post-bank yield"
+        );
+        assert!(
+            !real_content_bank_lifecycle_complete(
+                LiveCase::BankCostFirstGoal,
+                &witness,
+                &plan,
+                target,
+                baseline_xp,
+            ),
+            "XP at or below the baseline must not pass with a fresh yield"
+        );
+    }
+    witness.last_xp = valid_xp;
+
+    witness.post_bank_yields = 0;
+    witness.last_status_yielded = 28;
+    witness.last_xp = 3423;
+    assert!(
+        !real_content_bank_lifecycle_complete(
+            LiveCase::BankCostFirstGoal,
+            &witness,
+            &plan,
+            target,
+            baseline_xp,
+        ),
+        "a bank return without a fresh gather must not pass"
+    );
+
+    witness.post_bank_yields = 2;
+    witness.last_status_yielded = 29;
+    witness.last_xp = 3498;
+    witness.bank_return_step_seen = false;
+    witness.bank_closed_observed = false;
+    witness.last_status_bank = Some("Draynor; Reachable; access:3092,3243,0; Close".into());
+    witness.last_event = Some("withdrawal confirmed".into());
+    record_bank_return_step(&mut witness, "Close");
+    assert!(!witness.bank_closed_observed);
+    assert!(
+        !real_content_bank_lifecycle_complete(
+            LiveCase::BankCostFirstGoal,
+            &witness,
+            &plan,
+            target,
+            baseline_xp,
+        ),
+        "a run that did not leave the open-bank Close step must not pass"
     );
 }
 

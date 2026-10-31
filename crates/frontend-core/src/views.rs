@@ -1671,12 +1671,13 @@ fn field_text<'a>(field: &'a script::native::StatusField, key: &str) -> Option<&
 /// `(label, value)`. Folder Path comments are shown only with a source marker.
 pub fn script_status_rows(status: StatusView<'_>) -> impl Iterator<Item = (&str, &str)> {
     let status = status.status();
+    let has_path_source = status.fields.iter().any(|field| field.key == "path_source");
     status.fields.iter().filter_map(|field| match &field.value {
         script::native::StatusValue::Text(value)
-            if matches!(
+            if (matches!(
                 field.key,
                 "display" | "queue" | "path_source" | "draft_status" | "bank_seen"
-            ) && !value.is_empty() =>
+            ) || (field.key == "step_comment" && has_path_source)) && !value.is_empty() =>
         {
             Some((field.label, value.as_ref()))
         }

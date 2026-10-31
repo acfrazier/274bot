@@ -55,6 +55,14 @@ struct TransportItemNames {
     max_name_bytes: usize,
 }
 
+/// Why selected shop placements could not be bound to a navigation world.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
+pub enum ShopKeeperBindError {
+    /// This world already owns its selected-content shop placements.
+    #[error("shop keeper facts already bound")]
+    AlreadyBound,
+}
+
 impl NavWorld {
     /// Cache the admission layer's immutable facts once per bound world.
     /// The higher layer owns the concrete type, avoiding a nav → script dependency.
@@ -164,16 +172,16 @@ impl NavWorld {
     pub fn bind_shop_keeper_facts(
         &self,
         data: &api::game_data::SelectedGameData,
-    ) -> Result<(), &'static str> {
+    ) -> Result<(), ShopKeeperBindError> {
         if self.shop_keepers.get().is_some() {
-            return Err("shop keeper facts already bound");
+            return Err(ShopKeeperBindError::AlreadyBound);
         }
         self.shop_keepers
             .set(Arc::new(crate::service_pick::resolve_shop_keepers(
                 data,
                 &self.collision,
             )))
-            .map_err(|_| "shop keeper facts already bound")
+            .map_err(|_| ShopKeeperBindError::AlreadyBound)
     }
 
     /// Decode already-read pack bytes into the router's world. Whole-world

@@ -40,7 +40,17 @@ globs = [
   "tools/**",
   "crates/e2e/**",
   "crates/script-js/src/tooling/compat_dts.rs",
+  # These exact paths cover test-only or declaration-only changes in this revision.
+  # Product changes in these files need live coverage instead of this exemption.
+  "crates/host/Cargo.toml",
+  "crates/host-play/Cargo.toml",
+  "crates/host/src/input_observation.rs",
+  "crates/host-play/src/combat_proof.rs",
+  "crates/host-play/src/script_bank_harness.rs",
+  "crates/script/src/native/server_ordered.rs",
+  "crates/script-js/host-js/index.d.ts",
   "crates/host-play/src/bank_core_live.rs",
+  "crates/host-play/src/clean_logout_guard.inc.rs",
   "crates/host-play/src/bank_fetch_closed_live.rs",
   "crates/host-play/src/bank_memory_live.rs",
   "crates/host-play/src/gather_bait_live.rs",
@@ -289,6 +299,14 @@ cells = [
 ]
 
 [[cover]]
+globs = ["crates/host-play/src/bank_npc_live.rs"]
+cells = [
+  "host.bank-mage-teller-native|LIVE=1 BOT_LIVE_NAME_PREFIX=${BOT_LIVE_NAME_PREFIX:?} BOT_CPU=1 BOT_NAV_BUILD=skip GATHERER_GAME_PORT=47594 GATHERER_HTTP_PORT=3080 GATHERER_NAV_PACK=${NAV_PACK_289:?} GATHERER_NAV_FLAGS=${NAV_FLAGS_289:?} GATHERER_ENGINE_DIR=${ENGINE_A_DIR:?} GATHERER_CATALOG_ROOT=${CATALOG_ROOT:?} LIVE_EVIDENCE_DIR=${LIVE_EVIDENCE_DIR:?} ${ISOHOME:?} nice -n 10 cargo test --locked -p host-play --features live-harness,test-support,live-probe --lib -- --ignored --exact bank_npc_live::live_mage_teller_native_real_play_receipt --nocapture --test-threads=1",
+  "host.bank-npc-pick-burst|LIVE=1 BOT_LIVE_NAME_PREFIX=${BOT_LIVE_NAME_PREFIX:?} BOT_CPU=1 BOT_NAV_BUILD=skip GATHERER_GAME_PORT=44594 GATHERER_HTTP_PORT=1080 GATHERER_NAV_PACK=${NAV_PACK_289:?} GATHERER_NAV_FLAGS=${NAV_FLAGS_289:?} GATHERER_ENGINE_DIR=${ENGINE_A_DIR:?} GATHERER_CATALOG_ROOT=${CATALOG_ROOT:?} BOT_CACHE_DIR=${BOT_CACHE_DIR:?} CLIENT_UNPACK_DIR=${CLIENT_UNPACK_DIR:?} LIVE_EVIDENCE_DIR=${LIVE_EVIDENCE_DIR:?} ${ISOHOME:?} nice -n 10 cargo test --locked -p host-play --features live-harness,test-support,live-probe --lib -- --ignored --exact bank_npc_live::live_ten_guest_shared_bank_pick_full_retry_burst --nocapture --test-threads=1",
+]
+
+
+[[cover]]
 globs = ["crates/api/src/condition.rs", "crates/api/src/lib.rs", "crates/host-play/src/slot_condition.rs", "crates/script/src/survival/**"]
 cells = [
   "host.condition-poison-ordinary|LIVE=1 BOT_LIVE_NAME_PREFIX=${BOT_LIVE_NAME_PREFIX:?} BOT_CPU=1 BOT_NAV_BUILD=skip GATHERER_GAME_PORT=44594 GATHERER_HTTP_PORT=1080 GATHERER_ENGINE_DIR=${ENGINE_A_DIR:?} GATHERER_NAV_PACK=${NAV_PACK_289:?} GATHERER_NAV_FLAGS=${NAV_FLAGS_289:?} GATHERER_CATALOG_ROOT=${CATALOG_ROOT:?} BOT_CACHE_DIR=${BOT_CACHE_DIR:?} CLIENT_UNPACK_DIR=${CLIENT_UNPACK_DIR:?} LIVE_EVIDENCE_DIR=${LIVE_EVIDENCE_DIR:?} ${ISOHOME:?} nice -n 10 cargo test --locked -p host-play --features live-harness,test-support,live-probe --lib -- --ignored --exact slot_condition_live_tests::live_condition_poison_ordinary_no_script --nocapture --test-threads=1",
@@ -459,7 +477,7 @@ cells = [
 ]
 
 [[cover]]
-globs = ["crates/script/src/grinch.rs", "crates/script-js/src/compat/anchor_return.rs"]
+globs = ["crates/script/src/grinch.rs", "crates/script/src/acquire/run.rs", "crates/script-js/src/compat/anchor_return.rs"]
 cells = [
   "host.grinch-cross-region-return|LIVE=1 BOT_LIVE_NAME_PREFIX=${BOT_LIVE_NAME_PREFIX:?} BOT_CPU=1 BOT_NAV_BUILD=skip BOT_GAME_PORT=44594 BOT_HTTP_PORT=1080 ENGINE_DIR=${ENGINE_A_DIR:?} NAV_PACK=${NAV_PACK_289:?} CATALOG_ROOT=${CATALOG_ROOT:?} BOT_CACHE_DIR=${BOT_CACHE_DIR:?} CLIENT_UNPACK_DIR=${CLIENT_UNPACK_DIR:?} LIVE_EVIDENCE_DIR=${LIVE_EVIDENCE_DIR:?} ${ISOHOME:?} nice -n 10 cargo test --locked -p host-play --features live-harness,test-support,live-probe --test grinch_live -- --ignored --exact grinch_three_bank_returns_cross_region_live --nocapture --test-threads=1",
 ]
@@ -546,6 +564,13 @@ cells = [
   "host.acquire-shop-explicit|LIVE=1 BOT_LIVE_NAME_PREFIX=${BOT_LIVE_NAME_PREFIX:?} BOT_CPU=1 BOT_NAV_BUILD=skip BOT_GAME_PORT=47594 BOT_HTTP_PORT=3080 GATHERER_ENGINE_DIR=${ENGINE_L_DIR:?} BOT_ENGINE_DIR=${ENGINE_L_DIR:?} GATHERER_NAV_PACK=${NAV_PACK_289:?} GATHERER_NAV_FLAGS=${NAV_FLAGS_289:?} BOT_CACHE_DIR=${BOT_CACHE_DIR:?} LIVE_EVIDENCE_DIR=${LIVE_EVIDENCE_DIR:?} ${ISOHOME:?} nice -n 10 cargo test --locked -p host-play --features live-harness,test-support,live-probe --lib -- --ignored --exact acquire_shop_live::acquire_shop_explicit_live --nocapture --test-threads=1",
   "host.acquire-shop-nearest|LIVE=1 BOT_LIVE_NAME_PREFIX=${BOT_LIVE_NAME_PREFIX:?} BOT_CPU=1 BOT_NAV_BUILD=skip BOT_GAME_PORT=47594 BOT_HTTP_PORT=3080 GATHERER_ENGINE_DIR=${ENGINE_L_DIR:?} BOT_ENGINE_DIR=${ENGINE_L_DIR:?} GATHERER_NAV_PACK=${NAV_PACK_289:?} GATHERER_NAV_FLAGS=${NAV_FLAGS_289:?} BOT_CACHE_DIR=${BOT_CACHE_DIR:?} LIVE_EVIDENCE_DIR=${LIVE_EVIDENCE_DIR:?} ${ISOHOME:?} nice -n 10 cargo test --locked -p host-play --features live-harness,test-support,live-probe --lib -- --ignored --exact acquire_shop_live::acquire_shop_nearest_live --nocapture --test-threads=1",
   "host.buy-reply-probe|LIVE=1 BOT_LIVE_NAME_PREFIX=${BOT_LIVE_NAME_PREFIX:?} BOT_CPU=1 BOT_NAV_BUILD=skip BOT_GAME_PORT=47594 BOT_HTTP_PORT=3080 GATHERER_ENGINE_DIR=${ENGINE_L_DIR:?} BOT_ENGINE_DIR=${ENGINE_L_DIR:?} GATHERER_NAV_PACK=${NAV_PACK_289:?} GATHERER_NAV_FLAGS=${NAV_FLAGS_289:?} BOT_CACHE_DIR=${BOT_CACHE_DIR:?} LIVE_EVIDENCE_DIR=${LIVE_EVIDENCE_DIR:?} ${ISOHOME:?} nice -n 10 cargo test --locked -p host-play --features live-harness,test-support,live-probe --lib -- --ignored --exact buy_reply_probe_live::live_buy_reply_probe_engine_l --nocapture --test-threads=1",
+]
+# Startup binds shop facts for both explicit and nearest acquisition.
+[[cover]]
+globs = ["crates/host-play/src/play_bootstrap.rs"]
+cells = [
+  "host.acquire-shop-explicit|LIVE=1 BOT_LIVE_NAME_PREFIX=${BOT_LIVE_NAME_PREFIX:?} BOT_CPU=1 BOT_NAV_BUILD=skip BOT_GAME_PORT=47594 BOT_HTTP_PORT=3080 GATHERER_ENGINE_DIR=${ENGINE_L_DIR:?} BOT_ENGINE_DIR=${ENGINE_L_DIR:?} GATHERER_NAV_PACK=${NAV_PACK_289:?} GATHERER_NAV_FLAGS=${NAV_FLAGS_289:?} BOT_CACHE_DIR=${BOT_CACHE_DIR:?} LIVE_EVIDENCE_DIR=${LIVE_EVIDENCE_DIR:?} ${ISOHOME:?} nice -n 10 cargo test --locked -p host-play --features live-harness,test-support,live-probe --lib -- --ignored --exact acquire_shop_live::acquire_shop_explicit_live --nocapture --test-threads=1",
+  "host.acquire-shop-nearest|LIVE=1 BOT_LIVE_NAME_PREFIX=${BOT_LIVE_NAME_PREFIX:?} BOT_CPU=1 BOT_NAV_BUILD=skip BOT_GAME_PORT=47594 BOT_HTTP_PORT=3080 GATHERER_ENGINE_DIR=${ENGINE_L_DIR:?} BOT_ENGINE_DIR=${ENGINE_L_DIR:?} GATHERER_NAV_PACK=${NAV_PACK_289:?} GATHERER_NAV_FLAGS=${NAV_FLAGS_289:?} BOT_CACHE_DIR=${BOT_CACHE_DIR:?} LIVE_EVIDENCE_DIR=${LIVE_EVIDENCE_DIR:?} ${ISOHOME:?} nice -n 10 cargo test --locked -p host-play --features live-harness,test-support,live-probe --lib -- --ignored --exact acquire_shop_live::acquire_shop_nearest_live --nocapture --test-threads=1",
 ]
 
 # Tool buying and shortage parking use the shared acquisition owner. These
