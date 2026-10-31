@@ -1283,10 +1283,12 @@ mod tests {
         another_bot_acquires_navs_before_release(&mut held, &navs);
         held.release();
     }
-    /// Retry the globals write while it stays queued past the frontend's
-    /// bounded durability wait; under machine load it settles later. The
-    /// update re-reads and re-applies its merge on a conflict, so a retry
-    /// after a late-landing write converges instead of duplicating it.
+    /// Retry the globals write while it is one of the two bounded waits:
+    /// the write stays queued past the frontend's durability wait, or the
+    /// read finds the store still hydrating (typed `NotReady`). Under
+    /// machine load both settle later. The update re-reads and re-applies
+    /// its merge on a conflict, so a retry after a late-landing write
+    /// converges instead of duplicating it.
     fn set_nav_patiently(
         preferences: &super::super::local_state::Preferences,
         value: serde_json::Value,
@@ -1296,7 +1298,7 @@ mod tests {
             match preferences.set("nav", value.clone()) {
                 Ok(()) => return,
                 Err(error)
-                    if error.to_string().contains("not durable within")
+                    if super::super::local_state::transient_wait(&error)
                         && start.elapsed() < std::time::Duration::from_secs(60) =>
                 {
                     std::thread::yield_now();

@@ -78,68 +78,124 @@ fn completed(service: &LocalStateService, request: RequestId) -> DurableReceipt 
     }
 }
 
-/// Retry a frontend write while it reports the write queued past the
-/// frontend's bounded durability wait: under machine load a write stays
-/// queued past the frontend timeout (a product deadline this suite must
-/// not change) and settles later. Any other error returns at once, so
-/// refusals and genuine conflicts keep their fast verdict.
-fn patiently(mut attempt: impl FnMut() -> Result<(), String>) -> Result<(), String> {
+/// Retry an attempt while `transient` says its failure is one of the two
+/// bounded waits this suite retries: the typed `NotReady` outcome (the
+/// store was still hydrating) or the write staying queued past the
+/// frontend's own bound. Both settle later under machine load (a product
+/// deadline this suite must not change). Any other failure returns at
+/// once, so refusals and genuine conflicts keep their fast verdict. The
+/// bound is the suite's 60 s, as before.
+fn patiently<E>(
+    mut attempt: impl FnMut() -> Result<(), E>,
+    transient: impl Fn(&E) -> bool,
+) -> Result<(), E> {
     let start = std::time::Instant::now();
     loop {
         match attempt() {
             Ok(()) => return Ok(()),
-            Err(error)
-                if error.contains("not durable within")
-                    && start.elapsed() < Duration::from_secs(60) =>
-            {
+            Err(error) if transient(&error) && start.elapsed() < Duration::from_secs(60) => {
                 std::thread::yield_now();
             }
             Err(error) => return Err(error),
         }
     }
 }
-/// A preferences `set`, retrying a load-slow durability wait.
+/// A preferences `set`, retrying the two transient waits: a load-slow
+/// durability wait, or a read queued while the store still hydrates.
 fn set_patiently(preferences: &Preferences, key: &str, value: serde_json::Value) {
-    patiently(|| {
-        preferences
-            .set(key, value.clone())
-            .map_err(|error| error.to_string())
-    })
-    .unwrap();
+    patiently(|| preferences.set(key, value.clone()), transient_wait).unwrap();
 }
-/// A preferences `update`, retrying a load-slow durability wait. A write
-/// of an earlier attempt that lands late is merged over, not duplicated:
-/// the update re-reads and re-applies `merge` on a conflict.
+/// A preferences `update`, retrying the two transient waits. A write of an
+/// earlier attempt that lands late is merged over, not duplicated: the
+/// update re-reads and re-applies `merge` on a conflict.
 fn update_patiently(
     preferences: &Preferences,
     mut merge: impl FnMut(&mut serde_json::Map<String, serde_json::Value>) -> std::io::Result<()>,
 ) {
-    patiently(|| {
-        preferences
-            .update(|document| merge(document))
-            .map_err(|error| error.to_string())
-    })
+    patiently(
+        || preferences.update(|document| merge(document)),
+        transient_wait,
+    )
     .unwrap();
+}
+/// A loadouts-store wait this suite retries. The store's save seam reports
+/// text, not a typed code (`script::LoadoutsStore::save` returns
+/// `Result<(), String>`), so this reads the two wait messages the frontend
+/// writes: the write stayed queued, or the domain was still hydrating.
+fn transient_save_wait(error: &str) -> bool {
+    error.contains("not durable within") || error.contains("is not ready")
 }
 /// A loadouts form `save`, retrying a load-slow durability wait. A write
 /// of an earlier attempt that lands late conflicts with its own retry;
 /// the save replays the store's latest on a conflict, so a retry converges
 /// instead of duplicating rows.
 fn save_patiently(form: &mut script::LoadoutsStore) {
-    let start = std::time::Instant::now();
-    loop {
-        match form.save() {
-            Ok(()) => return,
-            Err(error)
-                if (error.contains("not durable within")
-                    || error.contains("changed since this list was loaded"))
-                    && start.elapsed() < Duration::from_secs(60) =>
-            {
-                std::thread::yield_now();
+    patiently(
+        || form.save(),
+        |error| transient_save_wait(error) || error.contains("changed since this list was loaded"),
+    )
+    .unwrap_or_else(|error| panic!("save failed: {error}"));
+}
+
+/// An attempt outcome for the retry-helper test: only the wait is
+/// transient.
+#[derive(Debug, PartialEq, Eq)]
+enum TestAttempt {
+    Wait,
+    Refused,
+}
+
+/// The shared retry both ways: a typed `NotReady` attempt is retried and
+/// the next attempt succeeds; a permanent failure returns after one
+/// attempt. A service with the preferences domain closed reports the same
+/// typed `NotReady` the fixture's Reading-phase wait reports, without a
+/// five-second frontend wait.
+#[test]
+fn the_retry_helper_retries_not_ready_and_returns_a_permanent_failure() {
+    let scratch = IsolatedEnv::enter("local-state-retry-outcomes");
+    let closed = service(&scratch, &[]);
+    let not_ready = closed.preferences();
+    let attempts = AtomicUsize::new(0);
+    let result = patiently(
+        || {
+            if attempts.fetch_add(1, Ordering::SeqCst) == 0 {
+                not_ready.set("map_bake", serde_json::json!("always"))
+            } else {
+                Ok(())
             }
-            Err(error) => panic!("save failed: {error}"),
-        }
-    }
+        },
+        transient_wait,
+    );
+    assert!(result.is_ok(), "a NotReady attempt is retried");
+    assert_eq!(attempts.load(Ordering::SeqCst), 2);
+    let error = not_ready
+        .set("map_bake", serde_json::json!("always"))
+        .expect_err("a closed domain refuses the write");
+    assert_eq!(
+        wait_outcome(&error),
+        WaitOutcome::NotReady,
+        "the typed Reading-phase outcome: {error}"
+    );
+
+    let attempts = AtomicUsize::new(0);
+    let result: Result<(), TestAttempt> = patiently(
+        || {
+            attempts.fetch_add(1, Ordering::SeqCst);
+            Err(TestAttempt::Refused)
+        },
+        |error| *error == TestAttempt::Wait,
+    );
+    assert_eq!(result.unwrap_err(), TestAttempt::Refused);
+    assert_eq!(
+        attempts.load(Ordering::SeqCst),
+        1,
+        "a refusal is not retried"
+    );
+
+    // An error the fixture did not mint is not a wait.
+    let terminal = std::io::Error::new(std::io::ErrorKind::InvalidData, "unreadable rows");
+    assert_eq!(wait_outcome(&terminal), WaitOutcome::Terminal);
+    assert!(!transient_wait(&terminal), "an unminted error is terminal");
 }
 
 /// How many stores the service holds.
@@ -2253,7 +2309,7 @@ fn a_failed_or_interrupted_many_member_update_changes_nothing() {
         step.store(failure, Ordering::SeqCst);
         let error = preferences.update(renumber).expect_err(case);
         assert!(
-            !error.to_string().contains("not durable within"),
+            !matches!(wait_outcome(&error), WaitOutcome::WriteExpired),
             "{case}: {error}"
         );
         assert_eq!(std::fs::read(&path).unwrap(), bytes_before, "{case}: file");
@@ -2353,14 +2409,13 @@ fn a_form_save_and_a_slot_edit_through_one_service_keep_both_rows() {
 
     form.upsert(Loadout::new("form-row"));
     // The conflict is decided without waiting for durability, but a worker
-    // starved by machine load answers the first save with the bounded-wait
-    // timeout instead: retry those, keep the first decisive answer.
+    // starved by machine load answers the first save with one of the two
+    // bounded waits instead: retry those, keep the first decisive answer.
     let start = std::time::Instant::now();
     let error = loop {
         match form.save() {
             Err(error)
-                if error.contains("not durable within")
-                    && start.elapsed() < Duration::from_secs(60) =>
+                if transient_save_wait(&error) && start.elapsed() < Duration::from_secs(60) =>
             {
                 std::thread::yield_now()
             }
@@ -2591,11 +2646,10 @@ fn a_malformed_preferences_file_is_quarantined_byte_for_byte_and_started_fresh()
             "{case}: reads write nothing"
         );
 
-        patiently(|| {
-            preferences
-                .set("map_bake", serde_json::json!("always"))
-                .map_err(|error| error.to_string())
-        })
+        patiently(
+            || preferences.set("map_bake", serde_json::json!("always")),
+            transient_wait,
+        )
         .expect(case);
         assert_eq!(
             std::fs::read(&path).unwrap(),
@@ -2673,13 +2727,13 @@ fn a_preferences_quarantine_waits_for_the_files_lock() {
     assert_eq!(siblings(&path), ["panel-ui.json"]);
     drop(lock);
     // The save stays queued past the frontend's bounded wait under load and
-    // settles later: retry a timed-out save against what is on disk now.
+    // settles later: retry either bounded wait against what is on disk now.
     let mut saved = saver.join().unwrap();
     let start = std::time::Instant::now();
     while start.elapsed() < Duration::from_secs(60) {
         match saved {
             Ok(()) => break,
-            Err(error) if error.to_string().contains("not durable within") => {
+            Err(error) if transient_wait(&error) => {
                 saved = preferences.set("map_bake", serde_json::json!("always"));
             }
             Err(error) => panic!("save failed: {error}"),

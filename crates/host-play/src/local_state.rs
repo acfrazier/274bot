@@ -117,6 +117,8 @@ mod frontend;
 
 use files::{ContentDigest, LockError, ReadDocument, ReadError, RenameRefusal, Rewrite, StoreKey};
 pub use files::{StateRoot, HINT_SCHEMA_VERSION, MAX_PREFERENCES_BYTES};
+#[cfg(any(test, feature = "test-support"))]
+pub use frontend::{transient_wait, wait_outcome, WaitOutcome};
 pub use frontend::{
     PreferenceError, PreferencePatch, PreferenceSnapshot, Preferences, QueuedUpdate,
     ServiceLoadouts, Update,
