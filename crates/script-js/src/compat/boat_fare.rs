@@ -1799,6 +1799,8 @@ pub(crate) struct WalkToArgs {
     /// Whether the caller passed `pathFollow` overrides.
     #[serde(default)]
     path_follow: bool,
+    #[serde(default)]
+    force_repath: bool,
 }
 
 /// Frozen `opts?.radius ?? 2` (`WalkExecutor.ts:227`).
@@ -1823,6 +1825,9 @@ impl WalkToArgs {
         }
         if self.path_follow {
             return Some("pathFollow: the host follow has no stall/deviation overrides".into());
+        }
+        if self.force_repath {
+            return Some("forceRepath: the host walk has no request-repath wire".into());
         }
         None
     }

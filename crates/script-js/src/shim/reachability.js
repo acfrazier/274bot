@@ -50,7 +50,3 @@ export const Reachability = proxy('Reachability', {
     },
 });
 
-export function isArrived(target, radius) {
-    const tile = resolveTile(target);
-    return tile ? globalThis.__rs2b0t_reach('arrived', tile, radius) : false;
-}
