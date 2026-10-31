@@ -182,7 +182,7 @@ impl NpcTransformEvidence {
                 .iter()
                 .any(|action| {
                     action.npc_type_id < 0
-                        || matches!(action.npc_type_id, 390 | 403)
+                        || matches!(action.npc_type_id, 390 | 403..=406)
                         || !(1..=5).contains(&action.slot)
                         || !is_digest(&action.operation_fingerprint)
                 })
@@ -258,7 +258,7 @@ mod tests {
 
     #[test]
     fn static_fishing_rows_cannot_replace_full_closure_or_admit_event_npcs() {
-        for npc_type_id in [390, 403] {
+        for npc_type_id in [390, 403, 404, 405, 406] {
             let facts = decode(&format!(
                 r#"{{"schema":2,"evidence_sha256":"{}","operations":[],"builtin_gatherer_fishing_operations":[{{"npc_type_id":{npc_type_id},"slot":1,"operation_fingerprint":"{}"}}]}}"#,
                 "a".repeat(64),

@@ -2330,9 +2330,7 @@ fn knife_npc_request(rig: &mut Rig, type_id: usize, operation: u8) -> ServerOrde
             ..Default::default()
         };
     }
-    let mut npc = client::dash3d::ClientNpc::default();
-    npc.entity.x = 8 * 128;
-    npc.entity.z = 5 * 128;
+    let mut npc = client::dash3d::ClientNpc::at(8, 5);
     npc.r#type = Some(type_id);
     rig.client.npc[7] = Some(Box::new(npc));
     rig.client.npc_ids = vec![7];
@@ -2348,6 +2346,149 @@ fn knife_npc_request(rig: &mut Rig, type_id: usize, operation: u8) -> ServerOrde
         };
     }
     request
+}
+
+fn dispatch_with_builtin_gatherer_context(
+    rig: &mut Rig,
+    request: ServerOrderedRequest,
+) -> ServerOrderedDispatch {
+    rig.start([Emission::Content(request)]);
+    let slot = script_slot_or_insert(&rig.scripts, "so3-wire");
+    let action = {
+        let mut slot = slot.lock().unwrap();
+        slot.on_game_tick(&mut script::ScriptCtx {
+            driver: &mut rig.client,
+            tick: 1,
+            here: None,
+            walk: None,
+            walk_with: None,
+            inv: None,
+            snapshot: Some(&rig.snapshot),
+            obj_names: None,
+            compiled: script::CompiledTick::default(),
+        });
+        slot.take_native_action().expect("pending ordered request")
+    };
+    let authority = action.authority();
+    assert!(authority.live());
+    let script::native::HostEffect::ServerOrdered(envelope) = action.effect else {
+        panic!("expected the real pending ordered envelope")
+    };
+    let selected = api::game_data::for_revision(api::selected::ClientRevision::R289).unwrap();
+    super::dispatch_native_server_ordered(
+        &mut rig.client,
+        super::OrderedDispatchContext {
+            snapshot: &rig.snapshot,
+            selected: Some(&selected),
+            input: Some(&rig.input),
+            builtin_gatherer_knife: true,
+        },
+        &authority,
+        &envelope,
+    )
+}
+
+#[test]
+fn ordered_builtin_gatherer_knife_npc_fishing_uses_operation_click_then_exact_npc_op() {
+    for (type_id, operation) in [(309, 1), (309, 3), (800, 1)] {
+        let mut rig = Rig::new();
+        let request = knife_npc_request(&mut rig, type_id, operation);
+        let receipt = dispatch_with_builtin_gatherer_context(&mut rig, request);
+        assert_eq!(receipt.terminal, None, "{type_id}/{operation}: {receipt:?}");
+        assert_eq!(
+            (
+                receipt.row_count,
+                receipt.dispatched_prefix,
+                receipt.wire_events
+            ),
+            (3, 3, 4)
+        );
+        let selected = api::game_data::for_revision(api::selected::ClientRevision::R289).unwrap();
+        let pin = selected.selected_pin().unwrap();
+        let catalog = selected.server_ordered_catalog(&pin).unwrap();
+        let npc_op = match operation {
+            1 => Send::opnpc1(7).unwrap(),
+            3 => Send::opnpc3(7).unwrap(),
+            _ => unreachable!(),
+        };
+        let expected = [
+            Send::opheldu(1511, 1, 3214, 946, 0, 3214).unwrap(),
+            Send::if_button(catalog.component("skill_multi3:make1_a").unwrap().id()).unwrap(),
+            Send::move_opclick(false, 3207, 3205, &[]).unwrap(),
+            npc_op,
+        ];
+        let expected: Vec<_> = expected
+            .iter()
+            .map(|packet| {
+                (
+                    packet
+                        .validate_for_revision(rig.client.revision())
+                        .unwrap()
+                        .opcode,
+                    packet.body().to_vec(),
+                )
+            })
+            .collect();
+        assert_eq!(expected[2].0, 67, "289 mode-2 MOVE_OPCLICK");
+        assert_eq!(rig.decoded(), expected, "{type_id}/{operation}");
+    }
+}
+
+#[test]
+fn ordered_builtin_gatherer_knife_refuses_event_and_unproved_npc_operations() {
+    for (type_id, operation) in [
+        (390, 1),
+        (403, 1),
+        (404, 1),
+        (405, 1),
+        (406, 1),
+        (309, 2),
+        (9, 1),
+        (9, 2),
+    ] {
+        let mut rig = Rig::new();
+        let request = knife_npc_request(&mut rig, type_id, operation);
+        let receipt = dispatch_with_builtin_gatherer_context(&mut rig, request);
+        assert_eq!(
+            receipt.terminal,
+            Some(ServerOrderedError::ContractUnavailable),
+            "{type_id}/{operation}: {receipt:?}"
+        );
+        assert_eq!((receipt.dispatched_prefix, receipt.wire_events), (0, 0));
+        assert_no_cipher_movement(&rig);
+    }
+}
+
+#[test]
+fn ordered_builtin_gatherer_knife_refuses_npc_transformed_since_request() {
+    for transformed_type in [390, 403, 404, 405, 406] {
+        let mut rig = Rig::new();
+        let posted = knife_npc_request(&mut rig, 309, 1);
+        let _transformed = knife_npc_request(&mut rig, transformed_type, 1);
+        let receipt = dispatch_with_builtin_gatherer_context(&mut rig, posted);
+        assert_eq!(receipt.terminal, Some(ServerOrderedError::StaleTarget));
+        assert_eq!((receipt.dispatched_prefix, receipt.wire_events), (0, 0));
+        assert_no_cipher_movement(&rig);
+    }
+}
+
+#[test]
+fn ordered_builtin_gatherer_context_keeps_non_knife_content_on_generic_dispatch() {
+    let mut rig = Rig::new();
+    let receipt = dispatch_with_builtin_gatherer_context(&mut rig, close_request());
+    assert_eq!(receipt.terminal, None);
+    assert_eq!((receipt.dispatched_prefix, receipt.wire_events), (1, 1));
+    let packet = Send::close_modal();
+    assert_eq!(
+        rig.decoded(),
+        vec![(
+            packet
+                .validate_for_revision(rig.client.revision())
+                .unwrap()
+                .opcode,
+            packet.body().to_vec(),
+        )]
+    );
 }
 
 #[test]

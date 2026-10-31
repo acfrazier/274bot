@@ -177,7 +177,7 @@
         "test": 2
       },
       "dead_code": {
-        "non_test": 19,
+        "non_test": 0,
         "test": 0
       }
     },

@@ -11,6 +11,8 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.8` 
   NPC type and its fishing operation observed at the click tick; a same-tick
   transform remains possible. Whirlpool and Big fish types stay unarmed; other
   callers still need complete transform-closure proof.
+- NPC Knife tests cover the built-in fishing exception and its refusal paths.
+  Runtime content validation rejects every whirlpool type, including 404–406.
 - The host's disposal integration tests now use Gatherer's protected-item bound,
   so the optional knife and log supply does not break their compilation.
 - Fishing at a fixed loc spot now selects the observed loc, approaches it when

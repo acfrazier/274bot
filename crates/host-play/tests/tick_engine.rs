@@ -49,8 +49,15 @@ const COPPER_ORE_ID: i32 = 436;
 const IRON_ORE_ID: i32 = 440;
 const SHRIMP_ID: i32 = 317;
 const ANCHOVY_ID: i32 = 321;
-const TROUT_ID: i32 = 335;
-const SALMON_ID: i32 = 331;
+const FRESHFISH_NPC_ID: i32 = 309;
+const FRESHFISH_NPC_TILE: (i32, i32, i32) = (2_382, 3_414, 0);
+// This KnifeClick uses movement mode 2 for MOVE_OPCLICK, then sends OPNPC1.
+const NPC_KNIFE_WIRE_OPCODES: [u8; 4] = [
+    ClientProt289::OPHELDU.id as u8,
+    ClientProt289::IF_BUTTON.id as u8,
+    ClientProt289::MOVE_OPCLICK.id as u8,
+    ClientProt289::OPNPC1.id as u8,
+];
 const OAK_LOG_ID: i32 = 1_521;
 const OAK_LOC_ID: i32 = 1_281;
 const RIVER_LOC_ID: i32 = 2_027;
@@ -80,10 +87,15 @@ const MAKE_WITHOUT_CLICK_BUDGET: u32 = 3;
 const LONE_OPENER_BUDGET: u32 = 4;
 const FREE_WORLD_BUDGET: u32 = 2;
 const NET_REQUIRED_CYCLES: i64 = 20;
-// Ending-family net cycles have no roll signal and count as unobserved; six
-// edges per cycle bound the arm, checked click and next-cycle observation.
-const NET_EDGES_PER_CYCLE: u32 = 6;
-const NET_TICK_BUDGET: u32 = NET_REQUIRED_CYCLES as u32 * NET_EDGES_PER_CYCLE;
+// freshfish.rs2's first roll is four ticks after the NPC click. After each
+// roll, the expired-delay branch rearms for +4 on the next tick, so later
+// rolls are five ticks apart. Twenty Fishing-20 trout rolls fit in 99 ticks;
+// the 100-tick bound includes one observation edge. At level 20 the authored
+// trout success range is 32..192, and STAT_RANDOM accepts 63 of 256 values,
+// giving about 99.6% chance of at least one catch in twenty independent rolls.
+const FRESHFISH_MAX_ROLLS: u32 = 20;
+const FRESHFISH_ROLL_INTERVAL_TICKS: u32 = 5;
+const FRESHFISH_TICK_BUDGET: u32 = FRESHFISH_MAX_ROLLS * FRESHFISH_ROLL_INTERVAL_TICKS;
 
 const FRAME_HANG_GUARD: Duration = Duration::from_secs(5);
 const SETUP_DEADLINE: Duration = Duration::from_secs(180);
@@ -100,13 +112,13 @@ struct SeedItem {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum ResourceKind {
     River,
+    NpcRiver,
     Net,
     Copper,
     Iron,
     Oak,
 }
 
-#[derive(Debug, Clone)]
 struct Scenario {
     name: &'static str,
     skill: &'static str,
@@ -118,6 +130,7 @@ struct Scenario {
     extra_items: Vec<SeedItem>,
     products: Vec<i32>,
     required_loc: Option<(i32, WorldTile)>,
+    required_npc: Option<(i32, WorldTile)>,
     require_free_world: bool,
     require_knife_arm: bool,
     mutations: Vec<DispatchMutation>,
@@ -141,6 +154,37 @@ impl Scenario {
             extra_items: vec![item("feather", FEATHER_ID, 200)],
             products: vec![TROUT_ID, SALMON_ID],
             required_loc: Some((RIVER_LOC_ID, spot)),
+            required_npc: None,
+            require_free_world: false,
+            require_knife_arm: true,
+            mutations: Vec::new(),
+            use_proxy: false,
+            suppress_openchat_span: None,
+            pre_batch_user_events: 0,
+            pre_batch_guard_opener: false,
+        }
+    }
+
+    fn npc_river(name: &'static str) -> Self {
+        let npc_tile = tile(
+            FRESHFISH_NPC_TILE.0,
+            FRESHFISH_NPC_TILE.1,
+            FRESHFISH_NPC_TILE.2,
+        );
+        Self {
+            name,
+            skill: "Fishing",
+            skill_index: 10,
+            level: 20,
+            resource: ResourceKind::NpcRiver,
+            // The Gnome Stronghold freshfish spawn is adjacent to this bank
+            // tile, and the setup teleports only the player's own character.
+            target: tile(npc_tile.x, npc_tile.z + 1, npc_tile.level),
+            tool: item("fly_fishing_rod", FLY_ROD_ID, 1),
+            extra_items: vec![item("feather", FEATHER_ID, 200)],
+            products: vec![TROUT_ID],
+            required_loc: None,
+            required_npc: Some((FRESHFISH_NPC_ID, npc_tile)),
             require_free_world: false,
             require_knife_arm: true,
             mutations: Vec::new(),
@@ -163,6 +207,7 @@ impl Scenario {
             extra_items: Vec::new(),
             products: vec![SHRIMP_ID, ANCHOVY_ID],
             required_loc: None,
+            required_npc: None,
             require_free_world: false,
             require_knife_arm: true,
             mutations: Vec::new(),
@@ -172,7 +217,6 @@ impl Scenario {
             pre_batch_guard_opener: false,
         }
     }
-
     fn copper(name: &'static str) -> Result<Self, String> {
         Ok(Self {
             name,
@@ -185,6 +229,7 @@ impl Scenario {
             extra_items: Vec::new(),
             products: vec![COPPER_ORE_ID],
             required_loc: Some((2_090, tile(3_286, 3_364, 0))),
+            required_npc: None,
             require_free_world: false,
             require_knife_arm: true,
             mutations: Vec::new(),
@@ -208,6 +253,7 @@ impl Scenario {
             extra_items: Vec::new(),
             products: vec![IRON_ORE_ID],
             required_loc: None,
+            required_npc: None,
             require_free_world: false,
             // The first successful rock may reach an Idle replacement before a KnifeArm.
             require_knife_arm: false,
@@ -231,6 +277,7 @@ impl Scenario {
             extra_items: Vec::new(),
             products: vec![OAK_LOG_ID],
             required_loc: Some((OAK_LOC_ID, tile(3_017, 3_170, 0))),
+            required_npc: None,
             require_free_world: true,
             require_knife_arm: true,
             mutations: Vec::new(),
@@ -240,7 +287,6 @@ impl Scenario {
             pre_batch_guard_opener: false,
         }
     }
-
     fn with_mutation(mut self, mutation: DispatchMutation) -> Self {
         self.use_proxy |= matches!(
             &mutation,
@@ -295,13 +341,17 @@ impl Scenario {
                 _ => Vec::<&str>::new(),
             }),
         );
-        if matches!(self.resource, ResourceKind::River | ResourceKind::Net) {
+        if matches!(
+            self.resource,
+            ResourceKind::River | ResourceKind::NpcRiver | ResourceKind::Net
+        ) {
             settings.insert(
                 "fishingMethod".into(),
-                json!(if self.resource == ResourceKind::River {
-                    "fishing.loc_2027.op1"
-                } else {
-                    "fishing.saltfish.op1"
+                json!(match self.resource {
+                    ResourceKind::River => "fishing.loc_2027.op1",
+                    ResourceKind::NpcRiver => "fishing.freshfish.op1",
+                    ResourceKind::Net => "fishing.saltfish.op1",
+                    _ => unreachable!("non-fishing resource matched"),
                 }),
             );
         }
@@ -366,16 +416,19 @@ struct SetupState {
 
 impl SetupState {
     fn new(account: String, scenario: Scenario) -> Self {
-        let mut commands = vec![
-            "setstat attack 1".to_owned(),
-            "setstat defence 99".to_owned(),
-            "setstat hitpoints 99".to_owned(),
-            format!(
-                "setstat {} {}",
-                scenario.skill.to_ascii_lowercase(),
-                scenario.level
-            ),
-        ];
+        let mut commands = Vec::new();
+        if scenario.resource != ResourceKind::NpcRiver {
+            commands.extend([
+                "setstat attack 1".to_owned(),
+                "setstat defence 99".to_owned(),
+                "setstat hitpoints 99".to_owned(),
+            ]);
+        }
+        commands.push(format!(
+            "setstat {} {}",
+            scenario.skill.to_ascii_lowercase(),
+            scenario.level
+        ));
         commands.extend(
             scenario
                 .seed_items()
@@ -568,15 +621,30 @@ impl SetupState {
                 .iter()
                 .any(|loc| loc.id == id && loc.tile == target)
         });
-        let npc_ready = self.scenario.resource != ResourceKind::Net
-            || snapshot.npcs().iter().any(|npc| {
+        let npc_ready = match self.scenario.resource {
+            ResourceKind::Net => snapshot.npcs().iter().any(|npc| {
                 npc.r#type == Some(330)
                     && (self.phase != SetupPhase::WaitNetPosition
                         || (npc.tile.level == self.scenario.target.level
                             && (npc.tile.x - self.scenario.target.x).abs()
                                 + (npc.tile.z - self.scenario.target.z).abs()
                                 == 1))
-            });
+            }),
+            ResourceKind::NpcRiver => {
+                self.scenario.required_npc.is_some_and(|(type_id, target)| {
+                    snapshot.tile().is_some_and(|(x, z, level)| {
+                        level == target.level
+                            && snapshot.npcs().iter().any(|npc| {
+                                npc.r#type == Some(type_id)
+                                    && npc.tile == target
+                                    && (x - target.x).abs() + (z - target.z).abs() == 1
+                                    && npc.actions.get(0).is_some_and(Option::is_some)
+                            })
+                    })
+                })
+            }
+            _ => true,
+        };
         at_target && level_ready && items_ready && loc_ready && npc_ready
     }
 }
@@ -881,6 +949,7 @@ impl LiveRun {
                 .ok_or("Engine T profile has no selected data")?,
             match scenario.resource {
                 ResourceKind::River => "fishing.loc_2027.op1",
+                ResourceKind::NpcRiver => "fishing.freshfish.op1",
                 ResourceKind::Net => "fishing.saltfish.op1",
                 ResourceKind::Copper => "mining.copper",
                 ResourceKind::Iron => "mining.iron",
@@ -918,6 +987,11 @@ impl LiveRun {
             .ok_or("live credential mint returned no account")?;
         if minted_account != account {
             return Err("live credential mint changed the account name".into());
+        }
+        if scenario.resource == ResourceKind::NpcRiver && !account.starts_with("tmx") {
+            return Err(format!(
+                "NPC fishing live proof requires BOT_LIVE_NAME_PREFIX=tmx; minted {account}"
+            ));
         }
         let setup = Arc::new(Mutex::new(SetupState::new(
             account.clone(),
@@ -1559,8 +1633,12 @@ fn correlate_engine_packets(evidence: &RunEvidence) -> Result<(), String> {
     ) {
         assert_engine_accepted_make_prefix(packets)?;
     }
+    if evidence.case == "tick-npc-knife" {
+        assert_engine_npc_knife_sequence(packets, &evidence.account)?;
+    }
     Ok(())
 }
+
 fn correlate_dropped_cipher_suffix(
     evidence: &RunEvidence,
     packets: &[EnginePacket],
@@ -1721,6 +1799,39 @@ fn assert_engine_accepted_make_prefix(packets: &[EnginePacket]) -> Result<(), St
     println!("TICK-MANIP Engine T accepted Knife opener and Make in one engine tick");
     Ok(())
 }
+
+fn assert_engine_npc_knife_sequence(packets: &[EnginePacket], account: &str) -> Result<(), String> {
+    if !account.starts_with("tmx") {
+        return Err(format!(
+            "NPC Knife Engine T correlation requires the minted tmx account, got {account}"
+        ));
+    }
+    let relevant: Vec<_> = packets
+        .iter()
+        .filter(|packet| NPC_KNIFE_WIRE_OPCODES.contains(&packet.opcode))
+        .collect();
+    for rows in relevant.windows(NPC_KNIFE_WIRE_OPCODES.len()) {
+        if rows
+            .iter()
+            .map(|packet| packet.opcode)
+            .eq(NPC_KNIFE_WIRE_OPCODES)
+            && rows
+                .iter()
+                .all(|packet| packet.username == account && packet.handler_accepted)
+            && engine_accepted_user_event(rows[0])
+            && engine_accepted_user_event(rows[1])
+            && rows
+                .windows(2)
+                .all(|pair| pair[0].sequence < pair[1].sequence)
+        {
+            return Ok(());
+        }
+    }
+    Err(format!(
+        "Engine T did not accept the ordered NPC Knife action for {account}: {packets:?}"
+    ))
+}
+
 fn assert_deferred_terminal_row(
     evidence: &RunEvidence,
     packets: &[EnginePacket],
@@ -2121,6 +2232,29 @@ fn skill_xp(frame: &FrameObservation, skill_index: i32) -> Option<i32> {
         .map(|(_, xp)| *xp)
 }
 
+fn inventory_product_count(frame: &FrameObservation, product_ids: &[i32]) -> i32 {
+    frame
+        .inventory_counts
+        .iter()
+        .filter(|(id, _)| product_ids.contains(id))
+        .map(|(_, count)| *count)
+        .sum()
+}
+
+fn fishing_gain_observed(
+    baseline: &FrameObservation,
+    observed: &FrameObservation,
+    product_ids: &[i32],
+    skill_index: i32,
+) -> bool {
+    let fish_gained = inventory_product_count(observed, product_ids)
+        > inventory_product_count(baseline, product_ids);
+    let xp_gained = skill_xp(baseline, skill_index)
+        .zip(skill_xp(observed, skill_index))
+        .is_some_and(|(before, after)| after > before);
+    fish_gained || xp_gained
+}
+
 fn is_knife_arm(dispatch: &DispatchObservation) -> bool {
     dispatch
         .request_debug
@@ -2153,6 +2287,48 @@ fn wires_for_request(trace: &TickEngineTrace, request_id: u64) -> Vec<WireObserv
         .filter(|wire| wire.request_id == Some(request_id))
         .copied()
         .collect()
+}
+
+fn request_wire_opcodes(trace: &TickEngineTrace, dispatch: &DispatchObservation) -> Vec<u8> {
+    wires_for_request(trace, dispatch.receipt.request_id)
+        .into_iter()
+        .map(|wire| wire.opcode)
+        .collect()
+}
+
+fn npc_freshfish_knife_dispatch_matches(dispatch: &DispatchObservation) -> bool {
+    let exact_request = dispatch.request_debug.as_deref().is_some_and(|request| {
+        request.contains("KnifeArm {")
+            && request.contains("Continuing {")
+            && request.contains("Npc(ExactNpcReference")
+            && request.contains("type_id: 309")
+            && request.contains("WorldTile { x: 2382, z: 3414, level: 0 }")
+            && request.contains("operation: 1")
+            && !request.contains("Loc(")
+    });
+    let receipt = dispatch.receipt;
+    exact_request
+        && !dispatch.mutation_applied
+        && receipt.row_count == 3
+        && receipt.dispatched_prefix == 3
+        && receipt.wire_events == 4
+        && receipt.terminal.is_none()
+        && matches!(
+            receipt.rows[0],
+            interact::server_ordered::RowDispatch::HostQueued { wire_events: 1 }
+        )
+        && matches!(
+            receipt.rows[1],
+            interact::server_ordered::RowDispatch::HostQueued { wire_events: 1 }
+        )
+        && matches!(
+            receipt.rows[2],
+            interact::server_ordered::RowDispatch::HostQueued { wire_events: 2 }
+        )
+}
+
+fn npc_knife_wire_order_matches(trace: &TickEngineTrace, dispatch: &DispatchObservation) -> bool {
+    request_wire_opcodes(trace, dispatch) == NPC_KNIFE_WIRE_OPCODES
 }
 
 fn checked_click_pair_completions(
@@ -2577,10 +2753,7 @@ fn assert_knife_wire_order(
     dispatch: &DispatchObservation,
     expected: &[u8],
 ) -> Result<(), String> {
-    let observed: Vec<u8> = wires_for_request(trace, dispatch.receipt.request_id)
-        .into_iter()
-        .map(|wire| wire.opcode)
-        .collect();
+    let observed = request_wire_opcodes(trace, dispatch);
     if observed != expected {
         return Err(run.failure(format!(
             "request {} encoded opcodes {observed:?}, expected {expected:?}",
@@ -3553,6 +3726,38 @@ fn tick_engine_clean_continuing_river() {
             );
         }
         assert_log_unchanged(run)?;
+        assert_running(run)
+    })
+    .unwrap_or_else(|error| panic!("{error}"));
+}
+
+#[test]
+#[ignore = "requires LIVE=1, GATHERER_ENGINE_DIR/NAV_PACK/CATALOG_ROOT, LIVE_EVIDENCE_DIR and Engine T 127.0.0.1:48594/4080"]
+fn tick_engine_builtin_gatherer_npc_knife() {
+    run_case(Scenario::npc_river("tick-npc-knife"), |run| {
+        let trace = run.hook.trace();
+        let dispatch = first_knife(&trace).map_err(|error| run.failure(error))?;
+        if !npc_freshfish_knife_dispatch_matches(&dispatch) {
+            return Err(run.failure(format!(
+                "expected a full KnifeArm Continuing receipt for freshfish NPC 309 op1: {dispatch:?}"
+            )));
+        }
+        assert_knife_wire_order(run, &trace, &dispatch, &NPC_KNIFE_WIRE_OPCODES)?;
+
+        let origin = dispatch.game_tick as u32;
+        let baseline = run
+            .baseline
+            .as_ref()
+            .expect("started run has baseline")
+            .clone();
+        let products = run.scenario.products.clone();
+        let skill_index = run.scenario.skill_index;
+        run.wait_until(origin, FRESHFISH_TICK_BUDGET, |trace, _| {
+            trace.frames.iter().any(|frame| {
+                frame.game_tick.wrapping_sub(origin) <= FRESHFISH_TICK_BUDGET
+                    && fishing_gain_observed(&baseline, frame, &products, skill_index)
+            })
+        })?;
         assert_running(run)
     })
     .unwrap_or_else(|error| panic!("{error}"));
@@ -5779,5 +5984,208 @@ mod packet_oracle_tests {
         let mut evidence = evidence(wire_packets, transport, engine_packets);
         evidence.case = "tick-make-proxy-drop";
         assert!(correlate_engine_packets(&evidence).is_err());
+    }
+
+    fn freshfish_dispatch_fixture() -> DispatchObservation {
+        let mut receipt = interact::server_ordered::ServerOrderedDispatch::refused(
+            41,
+            7,
+            3,
+            0,
+            interact::server_ordered::ServerOrderedError::Cancelled,
+        );
+        receipt.rows[0] = interact::server_ordered::RowDispatch::HostQueued { wire_events: 1 };
+        receipt.rows[1] = interact::server_ordered::RowDispatch::HostQueued { wire_events: 1 };
+        receipt.rows[2] = interact::server_ordered::RowDispatch::HostQueued { wire_events: 2 };
+        receipt.dispatched_prefix = 3;
+        receipt.wire_events = 4;
+        receipt.terminal = None;
+        DispatchObservation {
+            game_tick: 7,
+            receipt,
+            request_debug: Some(
+                "KnifeArm { shape: Continuing { click: Npc(ExactNpcReference { index: 0, type_id: 309, tile: WorldTile { x: 2382, z: 3414, level: 0 }, npc_info_generation: 1, operation: 1 }) } }"
+                    .into(),
+            ),
+            mutation_applied: false,
+        }
+    }
+
+    fn accepted_freshfish_packets() -> Vec<EnginePacket> {
+        NPC_KNIFE_WIRE_OPCODES
+            .iter()
+            .enumerate()
+            .map(|(index, opcode)| {
+                let mut row = packet(*opcode, index as u64 + 1);
+                row.reason = "handler-accepted".into();
+                row.charged_user_event = index < 2;
+                row
+            })
+            .collect()
+    }
+
+    #[test]
+    fn npc_river_scenario_uses_real_freshfish_and_seeds_only_the_player() {
+        let scenario = Scenario::npc_river("tick-npc-knife");
+        let settings = scenario.settings();
+        assert_eq!(
+            settings.get("fishingMethod").and_then(Value::as_str),
+            Some("fishing.freshfish.op1")
+        );
+        assert_eq!(scenario.target, tile(2_382, 3_415, 0));
+        assert_eq!(
+            scenario.required_npc,
+            Some((FRESHFISH_NPC_ID, tile(2_382, 3_414, 0)))
+        );
+        assert_eq!(scenario.required_loc, None);
+        assert_eq!(scenario.products.as_slice(), &[TROUT_ID]);
+        let setup = SetupState::new("tmx-oracle".into(), scenario);
+        assert_eq!(
+            setup.commands,
+            vec![
+                "setstat fishing 20".to_owned(),
+                "give knife 1".to_owned(),
+                "give logs 1".to_owned(),
+                "give fly_fishing_rod 1".to_owned(),
+                "give feather 200".to_owned(),
+                interact::tele_args(0, 2_382, 3_415),
+            ]
+        );
+    }
+
+    #[test]
+    fn npc_knife_receipt_requires_exact_continuing_freshfish_operation() {
+        let dispatch = freshfish_dispatch_fixture();
+        assert!(npc_freshfish_knife_dispatch_matches(&dispatch));
+
+        let mut wrong_target = dispatch.clone();
+        wrong_target.request_debug = Some(
+            "KnifeArm { shape: Continuing { click: Npc(ExactNpcReference { type_id: 330, operation: 1 }) } }"
+                .into(),
+        );
+        assert!(!npc_freshfish_knife_dispatch_matches(&wrong_target));
+
+        let mut wrong_shape = dispatch.clone();
+        wrong_shape.request_debug = Some(
+            "KnifeArm { shape: Ending, click: Npc(ExactNpcReference { type_id: 309, operation: 1 }) }"
+                .into(),
+        );
+        assert!(!npc_freshfish_knife_dispatch_matches(&wrong_shape));
+
+        let mut partial = dispatch.clone();
+        partial.receipt.wire_events = 3;
+        assert!(!npc_freshfish_knife_dispatch_matches(&partial));
+
+        let mut mutated = dispatch;
+        mutated.mutation_applied = true;
+        assert!(!npc_freshfish_knife_dispatch_matches(&mutated));
+    }
+
+    #[test]
+    fn npc_wire_oracle_requires_mode_two_packet_sequence_and_exact_request() {
+        let dispatch = freshfish_dispatch_fixture();
+        assert_eq!(NPC_KNIFE_WIRE_OPCODES, [200, 86, 67, 252]);
+        let trace = TickEngineTrace {
+            wire: NPC_KNIFE_WIRE_OPCODES
+                .iter()
+                .map(|opcode| wire(*opcode, dispatch.receipt.request_id, 1))
+                .collect(),
+            ..TickEngineTrace::default()
+        };
+        assert!(npc_knife_wire_order_matches(&trace, &dispatch));
+
+        for index in 0..trace.wire.len() {
+            let mut wrong_opcode = trace.clone();
+            wrong_opcode.wire[index].opcode = wrong_opcode.wire[index].opcode.wrapping_add(1);
+            assert!(!npc_knife_wire_order_matches(&wrong_opcode, &dispatch));
+        }
+        let mut wrong_request = trace;
+        wrong_request.wire[0].request_id = Some(dispatch.receipt.request_id + 1);
+        assert!(!npc_knife_wire_order_matches(&wrong_request, &dispatch));
+    }
+
+    #[test]
+    fn npc_fishing_success_requires_a_real_fish_or_xp_gain() {
+        let mut baseline = observed_frame(7, true, 0);
+        baseline.inventory_counts = vec![(TROUT_ID, 0)];
+        baseline.skill_xp = vec![(10, 1_000)];
+
+        let mut fish = baseline.clone();
+        fish.inventory_counts[0].1 = 1;
+        assert!(fishing_gain_observed(&baseline, &fish, &[TROUT_ID], 10));
+
+        let mut xp = baseline.clone();
+        xp.skill_xp[0].1 += 500;
+        assert!(fishing_gain_observed(&baseline, &xp, &[TROUT_ID], 10));
+
+        let mut animation_only = baseline.clone();
+        animation_only.animation = Some(client::client::client::LocalAnimationUpdate {
+            serial: 1,
+            sequence: ROLL_ANIMATION,
+        });
+        animation_only.chat.push(ChatObservation {
+            game_tick: 8,
+            sequence: 1,
+            text: "You attempt to catch a fish.".into(),
+            poll: PollKind::Edge,
+        });
+        assert!(!fishing_gain_observed(
+            &baseline,
+            &animation_only,
+            &[TROUT_ID],
+            10
+        ));
+    }
+
+    #[test]
+    fn npc_engine_correlation_requires_accepted_order_for_the_minted_tmx_account() {
+        let request = 41;
+        let wire_packets = NPC_KNIFE_WIRE_OPCODES
+            .iter()
+            .map(|opcode| wire(*opcode, request, 1))
+            .collect();
+        let accepted = accepted_freshfish_packets();
+        let mut evidence = evidence(wire_packets, vec![], accepted.clone());
+        evidence.case = "tick-npc-knife";
+        assert!(correlate_engine_packets(&evidence).is_ok());
+
+        for index in 0..accepted.len() {
+            let mut refused = accepted.clone();
+            refused[index].handler_accepted = false;
+            refused[index].charged_user_event = false;
+            let mut wrong = evidence.clone();
+            wrong.engine_packets = Some(Ok(refused));
+            assert!(correlate_engine_packets(&wrong).is_err());
+        }
+
+        let mut wrong_account = evidence.clone();
+        wrong_account.account = "other-oracle".into();
+        assert!(correlate_engine_packets(&wrong_account).is_err());
+
+        let mut wrong_packet_account = evidence.clone();
+        wrong_packet_account
+            .engine_packets
+            .as_mut()
+            .unwrap()
+            .as_mut()
+            .unwrap()[2]
+            .username = "other-account".into();
+        assert!(correlate_engine_packets(&wrong_packet_account).is_err());
+
+        let mut wrong_sequence = evidence.clone();
+        let rows = wrong_sequence
+            .engine_packets
+            .as_mut()
+            .unwrap()
+            .as_mut()
+            .unwrap();
+        rows[2].sequence = rows[1].sequence;
+        assert!(correlate_engine_packets(&wrong_sequence).is_err());
+
+        let mut wrong_order = evidence;
+        let mut reordered = accepted;
+        reordered.swap(2, 3);
+        wrong_order.engine_packets = Some(Ok(reordered));
+        assert!(correlate_engine_packets(&wrong_order).is_err());
     }
 }
