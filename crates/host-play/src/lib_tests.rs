@@ -32557,6 +32557,7 @@ export default class T extends LoopingBot {
             footprint_length: 1,
             block_walk: true,
             block_range: false,
+            active: true,
             animation: -1,
             map_function: -1,
             map_scene: -1,
