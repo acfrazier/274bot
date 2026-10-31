@@ -252,6 +252,67 @@ fn no_cooldown() -> CooldownMap {
     HashMap::new()
 }
 
+fn unmatched_scene_fixture() -> GameSnapshot {
+    let mut c = new_client();
+    for (slot, name) in [
+        "Fisherman",
+        "Man",
+        "Goblin",
+        "Chicken",
+        "Cow",
+        "Shopkeeper",
+        "Banker",
+        "Guard",
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        plant_npc(&mut c, slot, name, 32768, None);
+    }
+    for (index, name) in [
+        "Chest",
+        "Rocks",
+        "Fishing spot",
+        "Table",
+        "Door",
+        "Chair",
+        "Bank booth",
+        "Tree",
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        plant_loc(
+            &mut c,
+            1000 + index as i32,
+            name,
+            index as i32 % 4,
+            index as i32 / 4,
+        );
+    }
+    snap_at(&mut c)
+}
+
+#[test]
+#[ignore = "manual CPU comparison for the guardian name-matching fixture"]
+fn guardian_name_matching_cpu_probe() {
+    const ITERATIONS: usize = 1_000_000;
+    let snapshot = unmatched_scene_fixture();
+    let cooldown = no_cooldown();
+    let start = std::time::Instant::now();
+    let mut matches = 0;
+    for _ in 0..ITERATIONS {
+        if detect_scene(&snapshot, 0, &cooldown).is_some() {
+            matches += 1;
+        }
+    }
+    eprintln!(
+        "guardian_name_matching_cpu_probe iterations={ITERATIONS} matches={matches} elapsed_ns={}",
+        start.elapsed().as_nanos()
+    );
+    assert_eq!(matches, 0);
+}
+
 #[test]
 fn overhead_greetings_with_local_name_is_dialog_ours() {
     let mut c = new_client();
