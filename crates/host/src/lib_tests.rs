@@ -3568,7 +3568,7 @@ fn client_frame_kicks_guardian_after_drain() {
     lp.name = Some("Test".to_string());
     c.local_player = Some(lp);
     {
-        let cache = Arc::get_mut(&mut c.cache).expect("sole cache owner");
+        let cache = Arc::make_mut(&mut c.cache);
         cache.npcs.push(NpcType {
             id: 0,
             name: "Genie".to_string(),
@@ -3625,7 +3625,7 @@ fn lamp_auto_live_mirror_reaches_guardian_without_respawn() {
     c.map_build_base_x = 0;
     c.map_build_base_z = 0;
     {
-        let cache = Arc::get_mut(&mut c.cache).expect("sole cache owner");
+        let cache = Arc::make_mut(&mut c.cache);
         while cache.objs.len() <= LAMP_OBJ as usize {
             cache.objs.push(client::config::ObjType::default());
         }
