@@ -344,6 +344,17 @@ impl TickEngineTestHook {
             .next_host_frame
     }
 
+    /// Copy the raw Client clock and animation from the last measured frame.
+    pub fn observed_client_frame(&self) -> Option<(u32, Option<LocalAnimationUpdate>)> {
+        self.state
+            .lock()
+            .expect("tick-engine hook poisoned")
+            .trace
+            .frames
+            .last()
+            .map(|frame| (frame.client_tick, frame.animation))
+    }
+
     /// Start evidence capture after per-account setup. Existing chat sequences
     /// remain the watermark, so setup messages are never reported as proof.
     pub fn arm_measurement(&self, log_id: i32, inventory_ids: &[i32]) {
@@ -744,6 +755,7 @@ mod tests {
         assert_eq!(trace.frames[0].game_tick, 42);
         assert_eq!(trace.frames[0].client_tick, snapshot.tick());
         assert_ne!(trace.frames[0].game_tick, trace.frames[0].client_tick);
+        assert_eq!(hook.observed_client_frame(), Some((snapshot.tick(), None)));
     }
 
     #[test]

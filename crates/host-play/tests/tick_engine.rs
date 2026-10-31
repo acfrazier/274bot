@@ -601,9 +601,18 @@ fn send_pre_batch_user_events(
     }
     let mut snapshot = GameSnapshot::new();
     snapshot.rebuild(client);
+    let Some((previous_tick, previous_animation)) = hook.observed_client_frame() else {
+        return;
+    };
     if !snapshot.ingame()
         || snapshot.scene_state() != 2
-        || snapshot.tick() == hook.observed_game_tick()
+        || snapshot.tick() == previous_tick
+        // This river case needs foreign events immediately before the first
+        // Knife batch, not before Start's earlier ordinary native click.
+        || client.local_animation_update().is_none_or(|update| {
+            update.sequence != ROLL_ANIMATION
+                || previous_animation.is_some_and(|previous| previous.serial == update.serial)
+        })
     {
         return;
     }
