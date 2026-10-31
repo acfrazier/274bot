@@ -164,6 +164,9 @@ struct FrameDeliveryCounters {
     observation_delivered: u64,
     observation_pending_start: u64,
     observation_peak_pending: u64,
+    /// Lifetime delivered frames when the probe reported its listener
+    /// removal. Lifetime, not observation-window: with a staggered fleet a
+    /// bot can remove its listener before the observation starts.
     listener_removed_delivered: Option<u64>,
 }
 
@@ -331,7 +334,7 @@ fn collect_script_bank_row(name: &str, line: &str) {
     let mut delivery = FRAME_DELIVERY.lock().unwrap();
     if let Some(counters) = delivery.as_mut().and_then(|slots| slots.get_mut(name)) {
         if listener_removed && counters.listener_removed_delivered.is_none() {
-            counters.listener_removed_delivered = Some(counters.observation_delivered);
+            counters.listener_removed_delivered = Some(counters.delivered);
         }
         if let Some((ready, rows)) = bank_rows {
             counters.script_bank_ready = ready;
@@ -404,6 +407,8 @@ fn frame_delivery_observations(
     Some(observations)
 }
 
+/// `Some(true)` once every slot reported its listener removal after at
+/// least one delivered frame and no frame was delivered after it.
 fn frame_delivery_removal_stable(names: &[String]) -> Option<bool> {
     let delivery = FRAME_DELIVERY.lock().unwrap();
     let slots = delivery.as_ref()?;
@@ -414,7 +419,7 @@ fn frame_delivery_removal_stable(names: &[String]) -> Option<bool> {
             all_removed = false;
             continue;
         };
-        if counters.observation_delivered != delivered_at_removal {
+        if delivered_at_removal == 0 || counters.delivered != delivered_at_removal {
             return Some(false);
         }
     }
@@ -2851,10 +2856,15 @@ impl Run {
                 }
             }
             Q4FrameCell::Removal => {
+                // The removal delay counts from each bot's script start, so
+                // in a staggered fleet an early bot can remove its listener
+                // before the observation starts (0 frames delivered in the
+                // window). The proof uses lifetime counts: delivered before
+                // removal, none after, frames still attempted, still Running.
                 if frame_delivery_removal_stable(&self.names) != Some(true)
-                    || observations.values().any(|observation| {
-                        observation.delivered == 0 || observation.attempted <= observation.delivered
-                    })
+                    || observations
+                        .values()
+                        .any(|observation| observation.attempted <= observation.delivered)
                     || !self.q4_scripts_are(play, script::RunState::Running)
                 {
                     return Err("q4_listener_removal_not_proven".into());
@@ -3891,8 +3901,11 @@ mod tests {
                 .as_mut()
                 .and_then(|slots| slots.get_mut("alice"))
                 .expect("configured account counters");
+            // Removed before the observation window: 0 frames delivered in
+            // the window, 1 over the bot's lifetime, none after removal.
+            counters.delivered = 1;
             counters.listener_removed_delivered = Some(1);
-            counters.observation_delivered = 1;
+            counters.observation_delivered = 0;
         }
         assert_eq!(frame_delivery_removal_stable(&names), Some(true));
         {
@@ -3901,7 +3914,18 @@ mod tests {
                 .as_mut()
                 .and_then(|slots| slots.get_mut("alice"))
                 .expect("configured account counters")
-                .observation_delivered = 2;
+                .delivered = 2;
+        }
+        assert_eq!(frame_delivery_removal_stable(&names), Some(false));
+        {
+            let mut delivery = FRAME_DELIVERY.lock().unwrap();
+            let counters = delivery
+                .as_mut()
+                .and_then(|slots| slots.get_mut("alice"))
+                .expect("configured account counters");
+            // Removed before any delivery: the listener was never proven live.
+            counters.delivered = 0;
+            counters.listener_removed_delivered = Some(0);
         }
         assert_eq!(frame_delivery_removal_stable(&names), Some(false));
     }
