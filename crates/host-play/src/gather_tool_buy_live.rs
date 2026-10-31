@@ -1956,6 +1956,14 @@ fn run_cell_with_transition(case: Case, transition: ParkTransition) {
         if let Some(status) = status.as_ref() {
             combat_proof::record_status(&account, status, None);
         }
+        if transition == ParkTransition::Relog {
+            api::host_log!(
+                stderr; api::hostlog::Category::Echo, api::hostlog::Level::Info,
+                slot = account.as_str(),
+                "[DEBUG-park-relog] cell stage={stage:?} slot={:?} native={status:?}",
+                play.script_state(&account)
+            );
+        }
         match stage {
             RunStage::Prepare => {
                 let clock = trace.lock().clock.clone();

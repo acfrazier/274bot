@@ -580,7 +580,15 @@ pub(crate) fn script_observe_cached_with_channels(
                 retire_run_status(statuses, name);
             }
         }
+        let gate_before = slot.state();
         slot.on_is_up(up);
+        if gate_before != slot.state() || tick_edge {
+            host_log!(
+                stderr; Category::Echo, Level::Info, slot = name,
+                "[DEBUG-park-relog] gate tick={} up={} want_run={} before={:?} after={:?} native={:?}",
+                tick, up, slot.want_run, gate_before, slot.state(), slot.native_status()
+            );
+        }
         // Compiled clue machine: apply the owed abort and this frame's
         // pause/hold freeze here, on the slot's own thread, whether or not
         // this frame dispatches a tick. A Load slot's isolate thread runs the
