@@ -1623,6 +1623,9 @@ mod smoke_tests {
                 "blackarmgang" => {
                     assert_eq!(row.profile, TestProfile::Base40);
                     assert_eq!(seeds.expect, vec!["p:9".to_owned()]);
+                    // p:8 has a journal predicate, not a varp hint. The content
+                    // constant phoenixgang_spoken_straven is 8, before joining.
+                    assert_eq!(seed_vars, [("phoenixgang", 8)]);
                     assert_eq!(cell.start_settings["gang"], "phoenix");
                     assert_ne!(seeds.stage, seeds.expect[0]);
                     assert!(!seeds

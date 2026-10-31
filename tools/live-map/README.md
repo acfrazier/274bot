@@ -79,7 +79,7 @@ transition beyond the seeded stage, or actual quest completion.
 | Cell | Seed and required result |
 |---|---|
 | `host.quester-qualified-priest-engine-q` | `priest-start.json`: Father Aereck advances the qualified Path from `priest:0` to `priest:1`. |
-| `host.quester-jonny-stand-engine-q` | `blackarm-jonny.json`: the Phoenix role walks from the cabbage field, fights real Jonny, and hands in his report to reach `p:9`. The report is not seeded. |
+| `host.quester-jonny-stand-engine-q` | `blackarm-jonny.json`: one explicit pre-Start `phoenixgang=8` seed selects the journal-only `p:8` stage (`quest_blackarmgang.constant:11`; journal:33-46). The Phoenix role walks from the cabbage field, fights real Jonny, and hands in his report to reach `p:9`. The report and joined state are not seeded. |
 | `host.quester-mordred-continuation-engine-q` | `arthur-mordred.json`: Base40 fights real Mordred and continues Morgan's dialogue to reach `arthur:4`. Neither success state is seeded. |
 | `host.quester-digsite-thieve-engine-q` | `itexam-thieve.json`: Thieving25 approaches the workman from the recorded route start and advances from the first exam to the second. Only the unrelated orange and purple samples are seeded. |
 

@@ -3,7 +3,7 @@
   "stand": [3046, 3287, 0],
   "loadout": null,
   "extra_items": [["cabbage", 10]],
-  "seed_vars": [],
+  "seed_vars": [["phoenixgang", 8]],
   "before_relog": [],
   "expect": ["p:9"],
   "mode": "stage"
