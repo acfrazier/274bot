@@ -855,11 +855,15 @@ impl TickCycle {
             } if obligation.request_id == Some(request_id) => {
                 if accepted {
                     policy.add_wire_events(2);
+                    // A continuing Act is only a recovered host click: its receipt
+                    // cannot prove the original terminal row executed in time.
+                    let recovered_act = self.spec.shape == Shape::Continuing
+                        && obligation.kind == ObligationKind::Act;
                     self.phase = Phase::Armed {
                         armed,
                         roll_due,
                         act: ActState::Done,
-                        late,
+                        late: late || recovered_act,
                         null_edge,
                     };
                     None
@@ -1278,10 +1282,11 @@ impl TickCycle {
     ) -> CycleStep {
         let tick = signals.tick;
 
-        // A continuing act first observed after its landing edge is ambiguous:
-        // the original batch suffix may have been deferred. Count one slip and
-        // return to the native loop instead of claiming a verified cycle.
+        // A continuing act first observed after its landing edge is ambiguous.
+        // If a recovered Act receipt already resolved the one click obligation,
+        // that late line cannot justify asking for another recovery click.
         if self.spec.shape == Shape::Continuing
+            && !late
             && tick > armed
             && self.evidence.contains_act(tick, tick)
             && !self.evidence.contains_act(armed, tick)
@@ -1302,7 +1307,7 @@ impl TickCycle {
                     late,
                     success,
                     if late {
-                        CycleReason::LateBatch
+                        Self::late_slip_reason(self.spec.shape)
                     } else {
                         CycleReason::OnSchedule
                     },
@@ -1322,7 +1327,7 @@ impl TickCycle {
             }
             if self.spec.roll_signal != RollSignal::Always && !signals.menu_open {
                 let (verdict, reason) = if late {
-                    (Verdict::Slip, CycleReason::LateBatch)
+                    (Verdict::Slip, Self::late_slip_reason(self.spec.shape))
                 } else {
                     (Verdict::Unobserved, CycleReason::PredictedRoll)
                 };
@@ -1340,6 +1345,9 @@ impl TickCycle {
                     fallback: None,
                     pending: self.asked_act(act),
                 };
+                if late && self.spec.shape == Shape::Continuing {
+                    return CycleStep::Wait;
+                }
                 return self.start_batch(signals, true, policy);
             }
         }
@@ -1369,7 +1377,7 @@ impl TickCycle {
             }
             if self.evidence.product_contains(roll_due, tick) {
                 let (verdict, reason) = if late {
-                    (Verdict::Slip, CycleReason::LateBatch)
+                    (Verdict::Slip, Self::late_slip_reason(self.spec.shape))
                 } else {
                     (Verdict::Unobserved, CycleReason::BoundedRoll)
                 };
@@ -1426,7 +1434,7 @@ impl TickCycle {
                 Verdict::Unobserved
             },
             if late {
-                CycleReason::LateBatch
+                Self::late_slip_reason(self.spec.shape)
             } else {
                 CycleReason::BoundedRoll
             },
@@ -1448,19 +1456,17 @@ impl TickCycle {
             };
             return self.drive_idle(signals, policy);
         }
-        if !signals.menu_open {
-            self.phase = Phase::Native {
-                roll_due: None,
-                fallback: None,
-                pending: self.asked_act(act),
-            };
-            return self.start_batch(signals, true, policy);
-        }
         self.phase = Phase::Native {
             roll_due: None,
             fallback: None,
             pending: self.asked_act(act),
         };
+        if late && self.spec.shape == Shape::Continuing {
+            return CycleStep::Wait;
+        }
+        if !signals.menu_open {
+            return self.start_batch(signals, true, policy);
+        }
         CycleStep::Wait
     }
 
@@ -1647,6 +1653,13 @@ impl TickCycle {
         };
         policy.record(verdict, reason, tick, cycle_ticks);
         self.cycle_started_tick = None;
+    }
+
+    fn late_slip_reason(shape: Shape) -> CycleReason {
+        match shape {
+            Shape::Continuing => CycleReason::LateAct,
+            Shape::Ending => CycleReason::LateBatch,
+        }
     }
 
     fn asked_act(&self, act: ActState) -> Option<Obligation> {
@@ -2091,6 +2104,8 @@ mod tests {
         );
         assert_eq!(run.cycle.checked_request_id(), None);
         assert_eq!(run.policy.stats().wire_events, 6);
+        assert_eq!(run.cycle.click_kind(), None);
+        assert!(!run.cycle.has_unresolved_requests());
 
         assert_eq!(
             run.poll(103, None, false, false, false, false, false, false, false),
@@ -2984,7 +2999,13 @@ mod tests {
             ),
             CycleStep::Batch
         );
-        assert_eq!(run.policy.stats().verified, 1);
+        assert_eq!(run.policy.stats().verified, 0);
+        assert_eq!(run.policy.stats().slipped, 1);
+        assert_eq!(run.policy.stats().unobserved, 0);
+        assert_eq!(
+            run.policy.diagnostic().reason,
+            Some(CycleReason::LateAct)
+        );
         assert_ring(&run, 1);
 
         let mut prefix3 = replay(continuing());
