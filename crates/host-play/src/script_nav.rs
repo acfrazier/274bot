@@ -2023,9 +2023,7 @@ impl RouteJob {
                     Ok(Some(gates)) if !gates.is_empty() => {
                         script::native::WalkEnd::NeedsEvidence(Arc::from(gates))
                     }
-                    Ok(_) if self.budget_settled.is_some() => {
-                        script::native::WalkEnd::Refused
-                    }
+                    Ok(_) if self.budget_settled.is_some() => script::native::WalkEnd::Refused,
                     Ok(_) => script::native::WalkEnd::Failed,
                     Err(_) => script::native::WalkEnd::Refused,
                 });

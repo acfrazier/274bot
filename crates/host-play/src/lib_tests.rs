@@ -32641,9 +32641,8 @@ export default class T extends LoopingBot {
             (bot.walk_request_id != first_request && bot.native_walk.is_some())
                 .then_some(bot.walk_request_id)
         });
-        let retry_request = retry_request.expect(
-            "typed incomplete route must start the Quester's bounded wall fallback walk",
-        );
+        let retry_request = retry_request
+            .expect("typed incomplete route must start the Quester's bounded wall fallback walk");
         assert!(retry_request > first_request);
         assert!(
             wait_for_route_work(&rig.navs, "alice", |bot| {
