@@ -3084,6 +3084,7 @@ export function tick() {{}}
             std::sync::Arc::new(api::named_banks::NamedBankFacts::empty()),
             None,
             std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0)),
+            std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
         )
     })
     .unwrap();
@@ -3135,6 +3136,7 @@ export default class RuntimeShapeProbe extends LoopingBot {}
             std::sync::Arc::new(api::named_banks::NamedBankFacts::empty()),
             None,
             std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0)),
+            std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
         )
     })
     .unwrap();

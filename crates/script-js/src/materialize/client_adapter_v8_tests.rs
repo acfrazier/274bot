@@ -142,7 +142,11 @@ fn seed_item_icon() -> Arc<Cache> {
 fn setup() -> (Runtime, Arc<Cache>) {
     crate::platform::bootstrap_test_v8_platform();
     let mut runtime = Runtime::new(RuntimeOptions::default()).unwrap();
-    super::super::install(&mut runtime).unwrap();
+    super::super::install(
+        &mut runtime,
+        Arc::new(std::sync::atomic::AtomicBool::new(false)),
+    )
+    .unwrap();
     let cache = seed_item_icon();
     runtime.eval::<()>(SETUP).unwrap();
     (runtime, cache)
