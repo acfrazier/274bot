@@ -3167,7 +3167,9 @@ struct PrefixTrace {
     frames: Vec<PrefixFrame>,
     dispatches: Vec<PrefixDispatch>,
     wire: Vec<PrefixWire>,
-    statuses: Vec<PrefixStatus>,
+    statuses: Vec<(u32, PrefixStatus)>,
+    status_events: Vec<(u32, String)>,
+    counter_error: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -3201,12 +3203,10 @@ struct PrefixWire {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct PrefixStatus {
-    offset: u32,
     phase: String,
     method: Option<String>,
     tick_method: Option<String>,
     target: Option<String>,
-    last_event: Option<String>,
     tick_cycle: Option<i64>,
     tick_verified: Option<i64>,
     tick_unobserved: Option<i64>,
@@ -3216,7 +3216,6 @@ struct PrefixStatus {
     tick_paused: Option<i64>,
     tick_fallbacks: Option<i64>,
     tick_fallback_failed: Option<i64>,
-    tick_events: Option<i64>,
 }
 
 // Compare host control, not chance-gated gathering yield. Keep all raw yield
@@ -3226,6 +3225,70 @@ fn chance_gather_success(line: &str) -> bool {
     line.starts_with("You catch ")
         || line.starts_with("You manage to mine some ")
         || matches!(line, "You get some logs." | "You get some oak logs.")
+}
+
+fn prefix_receipt_counter_error(
+    evidence: &RunEvidence,
+    origin: u32,
+    end_offset: u32,
+) -> Option<String> {
+    let mut receipts = Vec::new();
+    let mut total = 0_i64;
+    for dispatch in &evidence.trace.dispatches {
+        if (dispatch.game_tick as u32).wrapping_sub(origin) >= end_offset
+            || dispatch.receipt.wire_events == 0
+        {
+            continue;
+        }
+        let mut count = 0;
+        let mut last_wire_frame = 0;
+        for packet in &evidence.trace.wire {
+            if packet.request_id == Some(dispatch.receipt.request_id) {
+                count += 1;
+                last_wire_frame = last_wire_frame.max(packet.host_frame);
+            }
+        }
+        if count != usize::from(dispatch.receipt.wire_events) {
+            return Some(format!(
+                "prefix receipt {} lacks its actual wire events",
+                dispatch.receipt.request_id
+            ));
+        }
+        // Ordered dispatch runs inside the next host observation. Wire records
+        // name the last completed frame; native status names the completed one.
+        let completed_frame = last_wire_frame + 1;
+        let events = i64::from(dispatch.receipt.wire_events);
+        receipts.push((completed_frame, events));
+        total += events;
+    }
+    let mut next_receipt = 0;
+    let mut emitted = 0_i64;
+    let mut last_counter = None;
+    for status in &evidence.statuses {
+        if status.game_tick.wrapping_sub(origin) >= end_offset {
+            continue;
+        }
+        while let Some(&(frame, events)) = receipts.get(next_receipt) {
+            if frame > status.host_frame {
+                break;
+            }
+            emitted += events;
+            next_receipt += 1;
+        }
+        let Some(counter) = status.tick_events else {
+            return Some("prefix status lacks its host event counter".into());
+        };
+        if !(0..=emitted).contains(&counter) {
+            return Some(format!("prefix event counter {counter} exceeds {emitted} emitted receipt events at frame {}", status.host_frame));
+        }
+        last_counter = Some(counter);
+    }
+    if last_counter != Some(total) {
+        return Some(format!(
+            "prefix boundary counter {last_counter:?} differs from {total} receipt events"
+        ));
+    }
+    None
 }
 
 fn normalized_prefix(evidence: &RunEvidence, end_offset: u32) -> PrefixTrace {
@@ -3340,36 +3403,56 @@ fn normalized_prefix(evidence: &RunEvidence, end_offset: u32) -> PrefixTrace {
         .iter()
         .filter_map(|status| {
             let offset = status.game_tick.wrapping_sub(origin);
-            (offset < end_offset).then(|| PrefixStatus {
-                offset,
-                phase: status.phase.clone(),
-                method: status.method.clone(),
-                tick_method: status.tick_method.clone(),
-                target: status.target.clone(),
-                last_event: status.last_event.clone(),
-                tick_cycle: status.tick_cycle,
-                tick_verified: status.tick_verified,
-                tick_unobserved: status.tick_unobserved,
-                tick_slips: status.tick_slips,
-                tick_lost: status.tick_lost,
-                tick_delayed: status.tick_delayed,
-                tick_paused: status.tick_paused,
-                tick_fallbacks: status.tick_fallbacks,
-                tick_fallback_failed: status.tick_fallback_failed,
-                tick_events: status.tick_events,
+            (offset < end_offset).then(|| {
+                (
+                    offset,
+                    PrefixStatus {
+                        phase: status.phase.clone(),
+                        method: status.method.clone(),
+                        tick_method: status.tick_method.clone(),
+                        target: status.target.clone(),
+                        tick_cycle: status.tick_cycle,
+                        tick_verified: status.tick_verified,
+                        tick_unobserved: status.tick_unobserved,
+                        tick_slips: status.tick_slips,
+                        tick_lost: status.tick_lost,
+                        tick_delayed: status.tick_delayed,
+                        tick_paused: status.tick_paused,
+                        tick_fallbacks: status.tick_fallbacks,
+                        tick_fallback_failed: status.tick_fallback_failed,
+                    },
+                )
             })
         })
         .collect();
-    statuses.dedup();
+    statuses.dedup_by(|next, previous| next.1 == previous.1);
+    let mut status_events: Vec<_> = evidence
+        .statuses
+        .iter()
+        .filter_map(|status| {
+            let offset = status.game_tick.wrapping_sub(origin);
+            let event = status.last_event.as_deref()?;
+            (offset < end_offset && event != "gathering").then(|| (offset, event.to_owned()))
+        })
+        .collect();
+    status_events.dedup();
     PrefixTrace {
         frames,
         dispatches,
         wire,
         statuses,
+        status_events,
+        counter_error: prefix_receipt_counter_error(evidence, origin, end_offset),
     }
 }
 
 fn prefix_difference(left: &PrefixTrace, right: &PrefixTrace) -> Option<String> {
+    if let Some(error) = &left.counter_error {
+        return Some(format!("left status receipt counter: {error}"));
+    }
+    if let Some(error) = &right.counter_error {
+        return Some(format!("right status receipt counter: {error}"));
+    }
     fn first_difference<T: PartialEq + std::fmt::Debug>(
         name: &str,
         left: &[T],
@@ -3395,6 +3478,7 @@ fn prefix_difference(left: &PrefixTrace, right: &PrefixTrace) -> Option<String> 
         .or_else(|| first_difference("dispatches", &left.dispatches, &right.dispatches))
         .or_else(|| first_difference("wire", &left.wire, &right.wire))
         .or_else(|| first_difference("statuses", &left.statuses, &right.statuses))
+        .or_else(|| first_difference("status events", &left.status_events, &right.status_events))
 }
 
 #[test]
@@ -4256,6 +4340,97 @@ mod packet_oracle_tests {
             tick_events: Some(0),
         });
         evidence
+    }
+
+    fn receipt_status_evidence() -> RunEvidence {
+        let mut evidence = prefix_evidence();
+        let receipt = &mut evidence.trace.dispatches[0].receipt;
+        receipt.rows[0] = interact::server_ordered::RowDispatch::HostQueued { wire_events: 1 };
+        receipt.rows[1] = interact::server_ordered::RowDispatch::Refused {
+            reason: interact::server_ordered::ServerOrderedError::Cancelled,
+        };
+        receipt.dispatched_prefix = 1;
+        receipt.wire_events = 1;
+        evidence.statuses[0].tick_events = Some(1);
+        let mut boundary = evidence.statuses[0].clone();
+        boundary.host_frame += 10;
+        boundary.game_tick += 1;
+        evidence.statuses.push(boundary);
+        evidence
+    }
+
+    #[test]
+    fn prefix_status_accepts_generic_pulses_in_both_directions() {
+        let mut original = receipt_status_evidence();
+        for status in &mut original.statuses {
+            status.last_event = Some("tick: armed".into());
+        }
+        let reference = normalized_prefix(&original, 2);
+        assert_eq!(reference.counter_error, None);
+        for at in 0..2 {
+            let mut pulsed = original.clone();
+            let mut pulse = pulsed.statuses[at].clone();
+            pulse.host_frame += 1;
+            pulse.last_event = Some("gathering".into());
+            pulsed.statuses.insert(at + 1, pulse);
+            let observed = normalized_prefix(&pulsed, 2);
+            assert_eq!(prefix_difference(&reference, &observed), None);
+            assert_eq!(prefix_difference(&observed, &reference), None);
+            assert_eq!(pulsed.statuses.len(), original.statuses.len() + 1);
+        }
+    }
+
+    #[test]
+    fn prefix_status_accepts_one_tick_receipt_display_lag_in_both_directions() {
+        let original = receipt_status_evidence();
+        let mut lagged = original.clone();
+        lagged.statuses[0].tick_events = Some(0);
+        let reference = normalized_prefix(&original, 2);
+        let observed = normalized_prefix(&lagged, 2);
+        assert_eq!(prefix_difference(&reference, &observed), None);
+        assert_eq!(prefix_difference(&observed, &reference), None);
+        assert_eq!(lagged.statuses[1].tick_events, Some(1));
+    }
+
+    #[test]
+    fn prefix_status_rejects_semantic_events_and_counter_errors_in_both_directions() {
+        let original = receipt_status_evidence();
+        let reference = normalized_prefix(&original, 2);
+        assert_eq!(reference.counter_error, None);
+        for facet in 0..18 {
+            let mut changed = original.clone();
+            let status = &mut changed.statuses[0];
+            match facet {
+                0 => status.phase = "Blocked".into(),
+                1 => status.method = Some("other-method".into()),
+                2 => status.tick_method = Some("Off".into()),
+                3 => status.target = Some("other-target".into()),
+                4 => status.tick_cycle = Some(3),
+                5 => status.tick_verified = Some(1),
+                6 => status.tick_unobserved = Some(1),
+                7 => status.tick_slips = Some(1),
+                8 => status.tick_lost = Some(1),
+                9 => status.tick_delayed = Some(1),
+                10 => status.tick_paused = Some(1),
+                11 => status.tick_fallbacks = Some(1),
+                12 => status.tick_fallback_failed = Some(1),
+                13 => status.last_event = Some("tick: unexpected".into()),
+                14 => status.tick_events = Some(2),
+                15 => changed.statuses[1].tick_events = Some(0),
+                16 => status.tick_events = None,
+                17 => status.host_frame = 1,
+                _ => unreachable!(),
+            }
+            let observed = normalized_prefix(&changed, 2);
+            assert!(
+                prefix_difference(&reference, &observed).is_some(),
+                "forward facet {facet}"
+            );
+            assert!(
+                prefix_difference(&observed, &reference).is_some(),
+                "reverse facet {facet}"
+            );
+        }
     }
 
     #[test]
