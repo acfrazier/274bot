@@ -1479,7 +1479,10 @@ fn run_captured(test_name: &str, cell: Cell, body: fn()) {
         json!(cell.name()),
         "child receipt cell mismatch"
     );
-    let account = receipt["account"].as_str().expect("receipt account").to_owned();
+    let account = receipt["account"]
+        .as_str()
+        .expect("receipt account")
+        .to_owned();
     let mut opcodes = Vec::new();
     let mut accepted_requests = 0usize;
     for line in text
