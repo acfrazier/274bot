@@ -91,3 +91,14 @@ fn cached_item_sprite(id: i32) -> Option<Arc<Pix32>> {
 pub fn set_client_adapter_cache_for_tests(cache: Arc<Cache>) {
     publish(&cache);
 }
+#[cfg(feature = "test-support")]
+#[doc(hidden)]
+pub fn clear_client_adapter_cache_for_tests(cache: &Arc<Cache>) {
+    let mut current = CLIENT_CACHE.write();
+    if current
+        .as_ref()
+        .is_some_and(|current| current.as_ptr() == Arc::as_ptr(cache))
+    {
+        *current = None;
+    }
+}

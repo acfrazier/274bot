@@ -12,7 +12,9 @@ mod views;
 pub use views::*;
 mod client_adapter_cache;
 #[cfg(feature = "test-support")]
-pub use client_adapter_cache::set_client_adapter_cache_for_tests;
+pub use client_adapter_cache::{
+    clear_client_adapter_cache_for_tests, set_client_adapter_cache_for_tests,
+};
 #[doc(hidden)]
 pub use client_adapter_cache::{client_adapter_cache, ClientAdapterCache, ItemIconPixels};
 mod native;

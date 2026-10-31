@@ -1799,7 +1799,7 @@ fn ordered_existing_compat_loop_keeps_twenty_eight_immediate_true_drops_without_
 {
     let mut rig = Rig::new();
     {
-        let cache = Arc::get_mut(&mut rig.client.cache).unwrap();
+        let cache = test_cache_mut(&mut rig.client);
         cache.objs.resize(1539, client::config::ObjType::default());
         for slot in 0..28 {
             let id = 1511 + slot;
@@ -1869,7 +1869,7 @@ fn ordered_existing_shop_move_op_npc_spills_to_engine_without_host_deferral_or_r
     let mut rig = Rig::new();
     let _ = knife_request(&mut rig, false);
     {
-        let cache = Arc::get_mut(&mut rig.client.cache).unwrap();
+        let cache = test_cache_mut(&mut rig.client);
         cache.npcs.resize_with(10, client::config::NpcType::default);
         cache.npcs[9] = client::config::NpcType {
             id: 9,
