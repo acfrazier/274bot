@@ -72,7 +72,9 @@ mod quester_live;
 
 use api::snapshot::WorldTile;
 use quester_live::{Cell, Mode, PathCell};
-use scenario::quester::{FixtureLoadout, QuestFixtureProfile, QuesterPathSeeds, TestProfile};
+use scenario::quester::{
+    FixtureLoadout, QuestFixtureProfile, QuesterPathSeeds, QuesterStage, TestProfile,
+};
 use script::quester::registry;
 use std::path::PathBuf;
 use std::time::Duration;
@@ -113,7 +115,7 @@ fn smoke_cell(
         "clean" => (Mode::Clean, None),
         other => return Err(format!("unknown smoke mode {other:?}")),
     };
-    let mut cell = quester_live::path_cell(PathCell {
+    let spec = PathCell {
         quest: row.quest,
         display: row.display,
         label: "path-smoke".to_owned(),
@@ -128,9 +130,66 @@ fn smoke_cell(
         },
         mode,
         before_relog: seeds.before_relog_steps(),
-    })?;
+    };
+    let mut cell = if row.quest == "blackarmgang" {
+        blackarmgang_role_smoke_cell(spec)?
+    } else {
+        quester_live::path_cell(spec)?
+    };
     cell.scenario.settings.deadline = DEADLINE;
     Ok(cell)
+}
+
+/// The early Phoenix Path stage is single-account even though the complete
+/// Shield of Arrav Path declares a partner role.
+fn blackarmgang_role_smoke_cell(spec: PathCell<'_>) -> Result<Cell, String> {
+    let stage = spec
+        .stage
+        .ok_or("blackarmgang smoke needs an explicit role stage")?;
+    let (path, _) = scenario::quester::load_quester_path_document(spec.quest)?;
+    let selected = api::game_data::for_revision(api::selected::ClientRevision::R289)?;
+    let identity = selected
+        .quest_identity()
+        .and_then(|facts| facts.rows.iter().find(|identity| identity.id == spec.quest))
+        .ok_or_else(|| format!("no quest identity row for {}", spec.quest))?;
+    let mut fixture = scenario::quester::quester_role_stage(
+        QuesterStage {
+            name: spec.quest,
+            quest_display: spec.display,
+            path: &path,
+            identity,
+            selected: &selected,
+            stage,
+            loadout: spec.loadout,
+            extra_items: spec.extra_items,
+            stand: spec.stand,
+        },
+        script::quester::pair::Gang::Phoenix,
+        &identity.varp,
+        spec.seed_vars,
+    )?;
+    if !spec.before_relog.is_empty() {
+        let relog = fixture
+            .scenario
+            .steps
+            .iter()
+            .rposition(|step| matches!(step.kind, scenario::StepKind::Relog))
+            .ok_or("blackarmgang role fixture has no final relog")?;
+        fixture
+            .scenario
+            .steps
+            .splice(relog..relog, spec.before_relog);
+    }
+    let seed = fixture.seed;
+    Ok(Cell {
+        quest: spec.quest,
+        display: spec.display,
+        label: spec.label,
+        scenario: fixture.scenario,
+        start_settings: fixture.start_settings,
+        mode: spec.mode,
+        observe_start: Some(Box::new(move |snapshot| seed.observe_start(snapshot))),
+    })
 }
 
 #[test]
@@ -1502,6 +1561,26 @@ mod smoke_tests {
                 "prince:20",
                 include_str!("fixtures/quester-path/prince-production.json"),
             ),
+            (
+                "blackarmgang",
+                "p:8",
+                include_str!("fixtures/quester-path/blackarm-jonny.json"),
+            ),
+            (
+                "arthur",
+                "arthur:3",
+                include_str!("fixtures/quester-path/arthur-mordred.json"),
+            ),
+            (
+                "itexam",
+                "itexam:first",
+                include_str!("fixtures/quester-path/itexam-thieve.json"),
+            ),
+            (
+                "priest",
+                "priest:0",
+                include_str!("fixtures/quester-path/priest-start.json"),
+            ),
         ] {
             let seeds = parse_seeds(text).unwrap();
             assert_eq!(seeds.stage, stage);
@@ -1511,9 +1590,117 @@ mod smoke_tests {
             let seed_vars = seeds.seed_var_refs();
             let cell = smoke_cell(row, &seeds, loadout, &extra_items, &seed_vars).unwrap();
             assert_eq!(cell.quest, quest);
-            assert!(matches!(cell.mode, Mode::Stage { .. }));
+            match &cell.mode {
+                Mode::Stage { expect } => assert_eq!(expect, &seeds.expect),
+                other => panic!("expected fresh stage mode, found {other:?}"),
+            }
             assert_eq!(cell.scenario.settings.deadline, DEADLINE);
+            assert_eq!(
+                cell.scenario.settings.start_script.as_deref(),
+                Some("Quester")
+            );
+            let stage_seed = cell
+                .scenario
+                .steps
+                .iter()
+                .position(|step| step.name == "reset authored content stage")
+                .expect("fixture seeds its authored starting stage");
+            let relog = cell
+                .scenario
+                .steps
+                .iter()
+                .rposition(|step| matches!(step.kind, scenario::StepKind::Relog))
+                .expect("fixture relogs after seeding");
+            let stand = cell
+                .scenario
+                .steps
+                .iter()
+                .position(|step| step.name == "stand at the authored sequence")
+                .expect("fixture stands before Start");
+            assert!(stage_seed < relog && relog < stand);
+
+            match quest {
+                "blackarmgang" => {
+                    assert_eq!(row.profile, TestProfile::Base40);
+                    assert_eq!(seeds.expect, vec!["p:9".to_owned()]);
+                    assert_eq!(cell.start_settings["gang"], "phoenix");
+                    assert_ne!(seeds.stage, seeds.expect[0]);
+                    assert!(!seeds
+                        .extra_items
+                        .iter()
+                        .any(|(item, _)| item == "intelligence_report"));
+                }
+                "arthur" => {
+                    assert_eq!(row.profile, TestProfile::Base40);
+                    assert_eq!(seeds.expect, vec!["arthur:4".to_owned()]);
+                    assert!(seeds.extra_items.is_empty());
+                    assert!(seeds.seed_vars.is_empty());
+                    assert!(seeds.before_relog.is_empty());
+                    assert_ne!(seeds.stage, seeds.expect[0]);
+                }
+                "itexam" => {
+                    assert_eq!(row.profile, TestProfile::Base40);
+                    assert_eq!(seeds.expect, vec!["itexam:second".to_owned()]);
+                    assert!(seeds.seed_vars.is_empty());
+                    assert!(seeds.before_relog.is_empty());
+                    assert!(seeds
+                        .extra_items
+                        .iter()
+                        .any(|(item, _)| item == "rock_sample2"));
+                    assert!(seeds
+                        .extra_items
+                        .iter()
+                        .any(|(item, _)| item == "rock_sample3"));
+                    assert!(!seeds
+                        .extra_items
+                        .iter()
+                        .any(|(item, _)| item == "rock_sample1"));
+                    assert_ne!(seeds.stage, seeds.expect[0]);
+                }
+                _ => {}
+            }
         }
+    }
+
+    #[test]
+    fn itexam_fixture_starts_thieving_at_the_authored_minimum() {
+        let _registry_guard = PATH_REGISTRY_LOCK.lock().unwrap();
+        let seeds = parse_seeds(include_str!("fixtures/quester-path/itexam-thieve.json")).unwrap();
+        let row = smoke_row("itexam").unwrap();
+        let path =
+            serde_json::from_str(include_str!("../../script/paths/289/itexam.json")).unwrap();
+        let selected = api::game_data::for_revision(api::selected::ClientRevision::R289).unwrap();
+        let extra_items = seeds.extra_item_refs();
+        let seed_vars = seeds.seed_var_refs();
+        let fixture =
+            scenario::quester::build_quester_path_fixture(scenario::quester::QuesterPathFixture {
+                name: "itexam-thieve",
+                quest_display: row.display,
+                path: &path,
+                selected: &selected,
+                stage: Some(&seeds.stage),
+                loadout: seeds.fixture_loadout().unwrap(),
+                extra_items: &extra_items,
+                seed_vars: &seed_vars,
+                stand: WorldTile {
+                    x: seeds.stand[0],
+                    z: seeds.stand[1],
+                    level: seeds.stand[2],
+                },
+                before_relog: seeds.before_relog_steps(),
+            })
+            .unwrap();
+        let thieving_skill = client::client::skill::Skill::names
+            .iter()
+            .position(|name| name.eq_ignore_ascii_case("thieving"))
+            .unwrap() as u8;
+        let thieving = fixture
+            .seed
+            .stats
+            .iter()
+            .find(|minimum| minimum.skill == thieving_skill)
+            .unwrap();
+        assert_eq!(thieving.level, 25);
     }
 
     #[test]

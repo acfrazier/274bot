@@ -268,6 +268,11 @@ pub const FIXTURE_PROFILES: &[QuestFixtureProfile] = &[
         display: "Tribal Totem",
         profile: TestProfile::Base40,
     },
+    QuestFixtureProfile {
+        quest: "itexam",
+        display: "Digsite Quest",
+        profile: TestProfile::Base40,
+    },
     // Operator-mandated Base60 quests (README, Q-RESET qualification floor).
     QuestFixtureProfile {
         quest: "dragon",

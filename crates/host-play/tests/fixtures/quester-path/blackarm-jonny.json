@@ -1,0 +1,10 @@
+{
+  "stage": "p:8",
+  "stand": [3046, 3287, 0],
+  "loadout": null,
+  "extra_items": [["cabbage", 10]],
+  "seed_vars": [],
+  "before_relog": [],
+  "expect": ["p:9"],
+  "mode": "stage"
+}
