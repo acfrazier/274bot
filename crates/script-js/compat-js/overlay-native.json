@@ -222,7 +222,7 @@
     "module": "event/webwalk/Navigator.js",
     "selector": "$add",
     "reason": "Host additionally exports its Navigator value as default.",
-    "runtime": "crates/script-js/src/shim/navigator.js:54",
+    "runtime": "crates/script-js/src/shim/navigator.js:55",
     "declaration": "export default Navigator;"
   },
   {
