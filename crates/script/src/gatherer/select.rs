@@ -2817,6 +2817,119 @@ pub(crate) mod tests {
         }
     }
 
+    fn static_fishing_loc_fixture() -> (Arc<GatherCatalog>, usize, WorkArea) {
+        let catalog = real_catalog();
+        let method = catalog.method("fishing.loc_2027.op1").unwrap();
+        let origin = WorldTile {
+            x: 2501,
+            z: 3506,
+            level: 0,
+        };
+        assert!(complete_spots(method).unwrap().iter().any(|spot| {
+            spot.entity == EntityId::Loc(2027)
+                && spot.origin == origin
+                && known_resource_target(method, spot.entity)
+        }));
+        let index = method_index(&catalog, method);
+        let area = WorkArea {
+            mode: super::super::area::AreaMode::Custom,
+            anchor: origin,
+            radius: 1,
+        };
+        (catalog, index, area)
+    }
+
+    #[test]
+    fn static_fishing_loc_is_selected_live() {
+        let (catalog, index, area) = static_fishing_loc_fixture();
+        let result = select(
+            &catalog,
+            &[index],
+            &GathererSettings::default(),
+            area,
+            &[AvoidedTile::EMPTY; MAX_AVOID],
+            SelectionObservation {
+                world: &scene_around(area.anchor),
+                locs: &[loc(2027, area.anchor)],
+                npcs: &[],
+                here: area.anchor,
+                now: 1,
+                skill_stat: 10,
+                fishing: &mut FishingSurvey::default(),
+                collision: None,
+                snapshot: None,
+                walk_danger: Some(&crate::native::AllowWalkDanger),
+            },
+        );
+        let target = result.target.expect("the authored fishing loc is live");
+        assert_eq!(target.class, PlacementClass::Live);
+        assert_eq!(target.plan.entity, EntityId::Loc(2027));
+        assert_eq!(target.plan.tile, area.anchor);
+        assert_eq!(target.plan.npc_index, NO_NPC_INDEX);
+        assert!(target.observation_goals.is_none());
+    }
+
+    #[test]
+    fn static_fishing_loc_is_selected_unloaded() {
+        let (catalog, index, area) = static_fishing_loc_fixture();
+        let here = WorldTile {
+            x: 2000,
+            z: 3000,
+            level: 0,
+        };
+        let result = select(
+            &catalog,
+            &[index],
+            &GathererSettings::default(),
+            area,
+            &[AvoidedTile::EMPTY; MAX_AVOID],
+            SelectionObservation {
+                world: &scene_around(here),
+                locs: &[],
+                npcs: &[],
+                here,
+                now: 1,
+                skill_stat: 10,
+                fishing: &mut FishingSurvey::default(),
+                collision: None,
+                snapshot: None,
+                walk_danger: Some(&crate::native::AllowWalkDanger),
+            },
+        );
+        let target = result.target.expect("return to the authored fishing loc");
+        assert_eq!(target.class, PlacementClass::Unloaded);
+        assert_eq!(target.plan.entity, EntityId::Loc(2027));
+        assert_eq!(target.plan.tile, area.anchor);
+        assert_eq!(target.plan.npc_index, NO_NPC_INDEX);
+        assert!(target.observation_goals.is_none());
+    }
+
+    #[test]
+    fn static_fishing_loc_has_a_return_target() {
+        let (catalog, index, area) = static_fishing_loc_fixture();
+        let returned = resource_return_target(
+            &catalog,
+            &[index],
+            &GathererSettings::default(),
+            area,
+            ReturnObservation {
+                here: area.anchor,
+                now: 1,
+                skill_stat: 10,
+                avoided: &[AvoidedTile::EMPTY; MAX_AVOID],
+                collision: None,
+                walk_danger: Some(&crate::native::AllowWalkDanger),
+            },
+        );
+        let ResourceReturn::Ready(target) = returned else {
+            panic!("the authored fishing loc must remain a return target");
+        };
+        assert_eq!(target.plan.entity, EntityId::Loc(2027));
+        assert_eq!(target.plan.tile, area.anchor);
+        assert_eq!(target.plan.npc_index, NO_NPC_INDEX);
+        assert!(target.observation_goals.is_none());
+    }
+
     fn radius_one_tiles(centre: WorldTile) -> impl Iterator<Item = WorldTile> {
         let radius = i32::from(RESOURCE_APPROACH_RADIUS);
         (-radius..=radius).flat_map(move |dx| {
