@@ -620,12 +620,13 @@ therefore prove Phoenix completion, not Black Arm completion.
 Its Black Arm completion text proves `phoenixgang < 9`.
 The Brimhaven kitchen can therefore
 use real membership evidence rather than guessing from that shared row.
-The runner reads once per prerequisite attempt, not per tick or search.
+The runner reads at most twice per prerequisite attempt (one read and one retry), never per tick or search.
 A `journal modal timeout` permits one retry, on the next observed game tick
 after the timeout. Each read retains the journal owner's five-tick window.
 The run-on button closes modals once before enabling run
-(`player_controls.rs2:34-46`). The host latches that send
-(`crates/host/src/lib.rs:1429-1439`), so one retry covers this login race.
+(`player_controls.rs2:34-46`). The host latches that send until run energy
+reaches 0 or the session changes (`crates/host/src/lib.rs:1411-1439`), so one
+retry covers this login race.
 The journal content opens the page without a delay (`quest_journal.rs2:1-55`).
 If the retry fails, the walk blocks with the last failure's detail.
 Later walks in the same run retain the completed Phoenix proof. The Black

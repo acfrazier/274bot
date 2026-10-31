@@ -36,7 +36,8 @@ pub(crate) const NPC_STEP_TICKS: u16 = 2;
 // Accepted send allowance, not a content guarantee. Live cells pin observed counts.
 pub(crate) const SEND_SLACK_TICKS: u16 = 2;
 // One retry covers the one-shot auto-run press: player_controls.rs2:34-46
-// closes the modal and enables run; host/src/lib.rs:1429-1439 latches it.
+// closes the modal and enables run; host/src/lib.rs:1411-1439 latches it until
+// run energy reaches 0 or the session changes.
 // quest_journal.rs2:1-55 has no delay. After the reader's five observed-tick
 // window, retry on the next observed tick, never again within that same tick.
 const JOURNAL_TIMEOUT_RETRIES: u8 = 1;
