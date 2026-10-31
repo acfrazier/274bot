@@ -6,7 +6,7 @@
 platforms:
 
 ```sh
-TAG=0.2.7   # after `[workspace.package] version` is `0.2.7`; a numeric patch tag may begin with that version
+TAG=0.2.8   # after `[workspace.package] version` is `0.2.8`; a numeric patch tag may begin with that version
 COMMIT="$(git rev-parse HEAD)"
 python3 tools/release/release.py build --commit "$COMMIT" --platform all --dry-run
 python3 tools/release/release.py finalize --commit "$COMMIT" --platform all \
@@ -247,9 +247,9 @@ When a release section is cut, render the blocks for the next release,
 paste them over the old ones, then check:
 
 ```sh
-python3 tools/known-issues/known_issues.py render --release 0.2.7
-python3 tools/known-issues/known_issues.py check --release 0.2.7
-python3 tools/known-issues/known_issues.py carried --release 0.2.7
+python3 tools/known-issues/known_issues.py render --release 0.2.8
+python3 tools/known-issues/known_issues.py check --release 0.2.8
+python3 tools/known-issues/known_issues.py carried --release 0.2.8
 ```
 
 `check` fails when the CHANGELOG blocks differ from the render. `carried`
@@ -262,7 +262,7 @@ through development. `preflight` runs the same check against a commit's own
 tree before packaging:
 
 ```sh
-python3 tools/release/release.py preflight --commit "$COMMIT" --tag 0.2.7
+python3 tools/release/release.py preflight --commit "$COMMIT" --tag 0.2.8
 ```
 
 ### Retry and cleanup
@@ -358,7 +358,9 @@ The app's Finder launch selects `rs2b2t` through its Info.plist environment.
 The standalone executables retain their normal CLI profile selection. The
 bundle has its own navigation and map resources under Contents/Resources;
 standalone binaries use the adjacent nav and map directories. Keep each layout
-intact.
+intact. The app bundle is the macOS deliverable for another reason too: macOS
+accessibility tooling, which drives the panel in headed checks, has not worked
+on a bare binary launch and needs `274bot.app`.
 
 macOS signing enables hardened runtime with only the JIT entitlement needed
 by V8. Test script execution after signing. Verify signatures and native launch
@@ -387,7 +389,9 @@ The Linux package ships `panel-play` beside `tui-play` with the same adjacent
 `nav/289/` and `map/289/` resources as the Windows package; the panel's fonts
 are compiled in. Build both binaries in the release build (`cargo build
 --locked --release`). They are built on Ubuntu 24.04 and need glibc 2.39 or
-newer.
+newer. The builder stays on 24.04 on purpose: its glibc is the package's
+minimum. Newer Ubuntu is covered by test environments (the `ubuntu-26.04` CI
+lane), never by the builder.
 
 - **Display:** an X11 or Wayland session. winit loads the display libraries at
   runtime: libX11, libX11-xcb, libXcursor, libXi, libxcb, libxkbcommon and

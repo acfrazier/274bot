@@ -3873,6 +3873,208 @@ const ROCK_SEEDED_ORACLE: OracleCell = OracleCell {
     selects_style: false,
 };
 
+const CHICKEN_ORACLE: OracleCell = OracleCell {
+    name: "chicken_killer_bank",
+    field: WorldTile {
+        x: 3029,
+        z: 3294,
+        level: 0,
+    },
+    bank: WorldTile {
+        x: 3013,
+        z: 3355,
+        level: 0,
+    },
+    carried: &[],
+    supplied: &[(526, 1)],
+    bank_rows: &[(526, 1)],
+    restocked: &[],
+    deposited: Some((526, 1)),
+    supply_step: "watch exact Bones 526 looted after Start",
+    visit_step: "watch script-looted Bones enter a fresh bank",
+    return_step: "watch return to the Falador chicken anchor within radius 6",
+    xp_step: "watch fresh Strength XP after the bank return",
+    selects_style: false,
+};
+
+#[test]
+fn chicken_bank_oracle_passes_without_feathers() {
+    oracle_assert_passes(&CHICKEN_ORACLE, Flaw::Correct);
+}
+
+#[test]
+fn chicken_bank_oracle_rejects_no_pickup() {
+    oracle_assert_fails_at(
+        &CHICKEN_ORACLE,
+        Flaw::NoSupplyEvent,
+        CHICKEN_ORACLE.supply_step,
+    );
+}
+
+#[test]
+fn chicken_bank_oracle_rejects_no_deposit() {
+    oracle_assert_fails_at(
+        &CHICKEN_ORACLE,
+        Flaw::NotDeposited,
+        CHICKEN_ORACLE.visit_step,
+    );
+}
+
+#[test]
+fn chicken_bank_oracle_rejects_a_stalled_outbound_route() {
+    oracle_assert_fails_at(
+        &CHICKEN_ORACLE,
+        Flaw::OutboundStall,
+        CHICKEN_ORACLE.visit_step,
+    );
+}
+
+#[test]
+fn chicken_bank_oracle_rejects_a_stalled_return_route() {
+    oracle_assert_fails_at(
+        &CHICKEN_ORACLE,
+        Flaw::ReturnStall,
+        CHICKEN_ORACLE.return_step,
+    );
+}
+
+#[test]
+fn chicken_bank_oracle_rejects_no_fresh_xp() {
+    oracle_assert_fails_at(&CHICKEN_ORACLE, Flaw::StaleXp, CHICKEN_ORACLE.xp_step);
+}
+
+fn chicken_bank_at_first_return() -> (ScenarioRunner, Client) {
+    let cell = &CHICKEN_ORACLE;
+    let (mut runner, mut c) = from_start(cell.name);
+    set_inv(&mut c, cell.carried);
+    oracle_settle(&mut runner, &mut c, 2);
+    oracle_gain_strength(&mut c);
+    oracle_settle(&mut runner, &mut c, 2);
+    set_inv(&mut c, cell.supplied);
+    oracle_settle(&mut runner, &mut c, 2);
+    set_world_tile(&mut c, cell.bank);
+    oracle_open_bank(&mut c, cell.bank_rows);
+    set_inv(&mut c, &[]);
+    oracle_settle(&mut runner, &mut c, 3);
+    oracle_close_bank(&mut c);
+    oracle_settle(&mut runner, &mut c, 2);
+    set_world_tile(&mut c, cell.field);
+    oracle_settle(&mut runner, &mut c, 2);
+    assert_eq!(runner.current_step().name, cell.xp_step);
+    (runner, c)
+}
+
+fn chicken_bank_extra_return(runner: &mut ScenarioRunner, c: &mut Client, count: i32) {
+    set_inv(c, &[(526, 1)]);
+    set_world_tile(c, CHICKEN_ORACLE.bank);
+    oracle_open_bank(c, &[(526, count)]);
+    set_inv(c, &[]);
+    oracle_settle(runner, c, 1);
+    oracle_close_bank(c);
+    oracle_settle(runner, c, 1);
+    set_world_tile(c, CHICKEN_ORACLE.field);
+    oracle_settle(runner, c, 1);
+}
+
+#[test]
+fn chicken_bank_oracle_restarts_after_an_extra_bank_return_then_accepts_fresh_xp() {
+    let (mut runner, mut c) = chicken_bank_at_first_return();
+    oracle_settle(&mut runner, &mut c, 100);
+    set_world_tile(&mut c, CHICKEN_ORACLE.bank);
+    oracle_open_bank(&mut c, &[(526, 2)]);
+    oracle_settle(&mut runner, &mut c, 1);
+    oracle_close_bank(&mut c);
+    oracle_settle(&mut runner, &mut c, 100);
+    set_world_tile(&mut c, CHICKEN_ORACLE.field);
+    oracle_settle(&mut runner, &mut c, 1);
+    assert_eq!(runner.game_ticks_waited, 0);
+    assert_eq!(runner.combat_bank_returns.unwrap().restarts, 1);
+    let budget = runner.current_step().wait.budget_ticks;
+    oracle_settle(&mut runner, &mut c, (budget - 2) as usize);
+    assert!(matches!(runner.status(), RunnerStatus::Running { .. }));
+    oracle_gain_strength(&mut c);
+    assert_eq!(oracle_finish(&mut runner, &mut c), RunnerStatus::Passed);
+}
+
+#[test]
+fn chicken_bank_oracle_accepts_fresh_combat_after_chasing_outside_the_return_radius() {
+    let (mut runner, mut c) = chicken_bank_at_first_return();
+    set_world_tile(
+        &mut c,
+        WorldTile {
+            x: 3019,
+            z: 3288,
+            level: 0,
+        },
+    );
+    oracle_gain_strength(&mut c);
+    assert_eq!(oracle_finish(&mut runner, &mut c), RunnerStatus::Passed);
+}
+
+#[test]
+fn chicken_bank_oracle_rejects_no_xp_after_the_last_bank_return() {
+    let (mut runner, mut c) = chicken_bank_at_first_return();
+    chicken_bank_extra_return(&mut runner, &mut c, 2);
+    let RunnerStatus::Failed(message) = oracle_finish(&mut runner, &mut c) else {
+        panic!("the latest return must still require fresh XP");
+    };
+    assert!(
+        message.contains("not seen within 150 game ticks"),
+        "{message}"
+    );
+}
+
+#[test]
+fn chicken_bank_oracle_rejects_xp_first_observed_at_the_latest_return() {
+    let (mut runner, mut c) = chicken_bank_at_first_return();
+    set_world_tile(&mut c, CHICKEN_ORACLE.bank);
+    oracle_open_bank(&mut c, &[(526, 2)]);
+    oracle_settle(&mut runner, &mut c, 1);
+    oracle_close_bank(&mut c);
+    oracle_settle(&mut runner, &mut c, 1);
+    oracle_gain_strength(&mut c);
+    set_world_tile(&mut c, CHICKEN_ORACLE.field);
+    oracle_settle(&mut runner, &mut c, 1);
+    assert!(matches!(
+        oracle_finish(&mut runner, &mut c),
+        RunnerStatus::Failed(_)
+    ));
+}
+
+#[test]
+fn chicken_bank_oracle_rejects_banking_past_the_restart_limit() {
+    let (mut runner, mut c) = chicken_bank_at_first_return();
+    for count in 2..=4 {
+        chicken_bank_extra_return(&mut runner, &mut c, count);
+        assert!(matches!(runner.status(), RunnerStatus::Running { .. }));
+    }
+    assert_eq!(runner.combat_bank_returns.unwrap().restarts, 3);
+    set_world_tile(&mut c, CHICKEN_ORACLE.bank);
+    oracle_open_bank(&mut c, &[(526, 5)]);
+    oracle_gain_strength(&mut c);
+    oracle_settle(&mut runner, &mut c, 1);
+    let RunnerStatus::Failed(message) = runner.status() else {
+        panic!("a fourth restart must fail even if XP rises at the bank");
+    };
+    assert!(message.contains("restart limit spent"), "{message}");
+}
+
+#[test]
+fn chicken_bank_oracle_does_not_restart_on_an_unfinished_bank_return() {
+    let (mut runner, mut c) = chicken_bank_at_first_return();
+    set_world_tile(&mut c, CHICKEN_ORACLE.bank);
+    oracle_open_bank(&mut c, &[(526, 2)]);
+    oracle_settle(&mut runner, &mut c, 1);
+    let RunnerStatus::Failed(message) = oracle_finish(&mut runner, &mut c) else {
+        panic!("an unfinished bank return must fail");
+    };
+    assert!(
+        message.contains("bank_return=CombatBankReturnObservation { bank_open_seen: true"),
+        "{message}"
+    );
+    assert_eq!(runner.combat_bank_returns.unwrap().restarts, 0);
+}
+
 #[test]
 fn rock_crab_seeded_bank_oracle_passes_deposit_return_and_fresh_combat() {
     oracle_assert_passes(&ROCK_SEEDED_ORACLE, Flaw::Correct);

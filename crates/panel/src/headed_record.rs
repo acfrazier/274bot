@@ -3196,8 +3196,8 @@ mod tests {
                 assert!(failure
                     .lock()
                     .unwrap()
-                    .as_deref()
-                    .is_some_and(|message| message.contains("Failed")));
+                    .as_ref()
+                    .is_some_and(|error| error.to_string().contains("Failed")));
                 assert!(!record.is_finalizing(), "the exited supervisor was joined");
                 drop(RecorderPermit::try_acquire().expect("failed encoder releases permit"));
             }
@@ -3310,8 +3310,8 @@ mod tests {
                 assert!(failure
                     .lock()
                     .unwrap()
-                    .as_deref()
-                    .is_some_and(|message| message.contains("TimedOut")));
+                    .as_ref()
+                    .is_some_and(|error| error.to_string().contains("TimedOut")));
                 assert!(
                     record.is_finalizing(),
                     "live exit does not join the blocked writer"

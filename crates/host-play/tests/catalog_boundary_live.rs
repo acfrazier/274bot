@@ -1262,19 +1262,19 @@ mod tests {
         baseline.levels.insert("strength".into(), 30);
         validate_case_baseline(CoreCase::ChickenKillerBank, &baseline).unwrap();
 
-        let looted = chicken_bank_obs(FALADOR_CHICKENS, &[(r289_item_id("feather"), 5)], &[], 104);
+        let looted = chicken_bank_obs(FALADOR_CHICKENS, &[(r289_item_id("bones"), 1)], &[], 104);
         let mut deposited =
-            chicken_bank_obs((3012, 3355, 0), &[], &[(r289_item_id("feather"), 5)], 104);
+            chicken_bank_obs((3012, 3355, 0), &[], &[(r289_item_id("bones"), 1)], 104);
         deposited.bank_open = true;
         deposited.bank_loaded = true;
         deposited.bank_generation = 1;
         let mut returned =
-            chicken_bank_obs(FALADOR_CHICKENS, &[], &[(r289_item_id("feather"), 5)], 104);
+            chicken_bank_obs(FALADOR_CHICKENS, &[], &[(r289_item_id("bones"), 1)], 104);
         returned.bank_generation = 2;
-        let mut further =
-            chicken_bank_obs(FALADOR_CHICKENS, &[(r289_item_id("feather"), 3)], &[], 108);
+        let mut further = chicken_bank_obs(FALADOR_CHICKENS, &[], &[], 108);
         further.bank_generation = 2;
 
+        // No Feather drop is needed for the guaranteed Bones bank trip.
         assert!(witness(
             CoreCase::ChickenKillerBank,
             &baseline,
@@ -1282,6 +1282,64 @@ mod tests {
         )
         .qualify()
         .is_ok());
+        let mut second_deposit = deposited.clone();
+        second_deposit.bank_generation = 3;
+        let mut second_return = returned.clone();
+        second_return.bank_generation = 4;
+        second_return.xp.insert("strength".into(), 108);
+        let mut after_second_return = further.clone();
+        after_second_return.bank_generation = 4;
+        after_second_return.xp.insert("strength".into(), 112);
+        assert!(witness(
+            CoreCase::ChickenKillerBank,
+            &baseline,
+            [
+                &looted,
+                &deposited,
+                &returned,
+                &second_deposit,
+                &second_return,
+                &after_second_return
+            ]
+        )
+        .qualify()
+        .is_ok());
+        after_second_return.xp.insert("strength".into(), 108);
+        assert!(witness(
+            CoreCase::ChickenKillerBank,
+            &baseline,
+            [
+                &looted,
+                &deposited,
+                &returned,
+                &second_deposit,
+                &second_return,
+                &after_second_return
+            ]
+        )
+        .qualify()
+        .is_err());
+        let mut too_many_trips = vec![looted.clone(), deposited.clone(), returned.clone()];
+        for trip in 1..=4 {
+            let mut next_deposit = deposited.clone();
+            next_deposit.bank_generation = trip * 2 + 1;
+            too_many_trips.push(next_deposit);
+            let mut next_return = returned.clone();
+            next_return.bank_generation = trip * 2 + 2;
+            too_many_trips.push(next_return);
+        }
+        too_many_trips
+            .last_mut()
+            .unwrap()
+            .xp
+            .insert("strength".into(), 112);
+        assert!(witness(
+            CoreCase::ChickenKillerBank,
+            &baseline,
+            too_many_trips.iter()
+        )
+        .qualify()
+        .is_err());
         assert!(witness(CoreCase::ChickenKillerBank, &baseline, [&baseline])
             .qualify()
             .is_err());
@@ -1292,6 +1350,35 @@ mod tests {
             CoreCase::ChickenKillerBank,
             &baseline,
             [&looted, &deposited, &returned]
+        )
+        .qualify()
+        .is_err());
+        assert!(witness(
+            CoreCase::ChickenKillerBank,
+            &baseline,
+            [&looted, &returned, &further]
+        )
+        .qualify()
+        .is_err());
+
+        let mut no_fresh_xp = returned.clone();
+        no_fresh_xp.item_ids.insert(r289_item_id("bones"), 1);
+        no_fresh_xp.item_ids.insert(r289_item_id("feather"), 3);
+        assert!(witness(
+            CoreCase::ChickenKillerBank,
+            &baseline,
+            [&looted, &deposited, &returned, &no_fresh_xp]
+        )
+        .qualify()
+        .is_err());
+
+        // XP earned before the return cannot qualify as further combat.
+        let mut xp_before_return = returned.clone();
+        xp_before_return.xp.insert("strength".into(), 108);
+        assert!(witness(
+            CoreCase::ChickenKillerBank,
+            &baseline,
+            [&looted, &deposited, &xp_before_return, &further]
         )
         .qualify()
         .is_err());
@@ -1320,7 +1407,7 @@ mod tests {
 
         let mut name_only = looted.clone();
         name_only.item_ids.clear();
-        name_only.items.insert("Feather".into(), 5);
+        name_only.items.insert("Bones".into(), 1);
         assert!(witness(
             CoreCase::ChickenKillerBank,
             &baseline,
@@ -1348,7 +1435,7 @@ mod tests {
         .qualify()
         .is_err());
 
-        let mut far = chicken_bank_obs((3185, 3440, 0), &[], &[(r289_item_id("feather"), 5)], 104);
+        let mut far = chicken_bank_obs((3185, 3440, 0), &[], &[(r289_item_id("bones"), 1)], 104);
         far.bank_generation = 2;
         let mut further_far = further.clone();
         further_far.tile = Some((3185, 3440, 0));
@@ -1361,7 +1448,7 @@ mod tests {
         .is_err());
 
         let mut seeded = baseline.clone();
-        seeded.item_ids.insert(r289_item_id("feather"), 1);
+        seeded.item_ids.insert(r289_item_id("bones"), 1);
         assert!(validate_case_baseline(CoreCase::ChickenKillerBank, &seeded).is_err());
 
         let lumbridge = chicken_bank_obs((3235, 3295, 0), &[], &[], 100);

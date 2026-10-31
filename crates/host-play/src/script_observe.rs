@@ -2037,10 +2037,13 @@ fn deliver_native_walk_end(slot: &mut script::SlotScript, bot: &mut NavBot, tick
     let Some(owner) = bot.native_walk.as_ref() else {
         return;
     };
+    // Compatibility walks and native actions can reuse request ids. Only
+    // the current route generation can complete the owner's walk.
     if !owner.live()
         || bot.walk_outcome_seq == 0
         || bot.native_receipt_seq == bot.walk_outcome_seq
         || bot.walk_outcome_request_id != owner.request_id().get()
+        || bot.walk_outcome_generation != bot.route_generation
     {
         return;
     }
