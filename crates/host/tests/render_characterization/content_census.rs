@@ -5162,10 +5162,22 @@ fn admitted_geometry_rejects_face_overflow() {
 #[test]
 fn census_reports_exact_nav_alignment_and_separate_vertex_replacement_charge() {
     let nav = render_test_nav_layout();
-    assert_eq!(resource_alignment(RenderResource::NavVertices), nav.vertex_alignment);
-    assert_eq!(resource_alignment(RenderResource::NavQuads), nav.quad_alignment);
-    assert_eq!(resource_alignment(RenderResource::NavEdges), nav.edge_alignment);
-    assert_eq!(resource_alignment(RenderResource::NavInput), nav.input_alignment);
+    assert_eq!(
+        resource_alignment(RenderResource::NavVertices),
+        nav.vertex_alignment
+    );
+    assert_eq!(
+        resource_alignment(RenderResource::NavQuads),
+        nav.quad_alignment
+    );
+    assert_eq!(
+        resource_alignment(RenderResource::NavEdges),
+        nav.edge_alignment
+    );
+    assert_eq!(
+        resource_alignment(RenderResource::NavInput),
+        nav.input_alignment
+    );
     for resource in [
         RenderResource::Capture,
         RenderResource::NavVertices,
@@ -5196,7 +5208,10 @@ fn census_reports_exact_nav_alignment_and_separate_vertex_replacement_charge() {
         None,
         None,
     );
-    let vertex = resources.iter().find(|row| row["resource"] == "Vertex").unwrap();
+    let vertex = resources
+        .iter()
+        .find(|row| row["resource"] == "Vertex")
+        .unwrap();
     assert_eq!(vertex["B_bytes"], 128_u64 * 1024 * 1024);
     assert_eq!(vertex["charge_limit_bytes"], (64_u64 + 128) * 1024 * 1024);
     assert_eq!(vertex["status"], "incomplete");

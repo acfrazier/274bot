@@ -236,11 +236,7 @@ struct GlibcHeapFields {
 #[cfg(any(test, all(target_os = "linux", target_env = "gnu")))]
 impl GlibcHeapFields {
     fn complete(&self) -> bool {
-        self.fast
-            && self.rest
-            && self.system_current
-            && self.aspace_total
-            && self.aspace_mprotect
+        self.fast && self.rest && self.system_current && self.aspace_total && self.aspace_mprotect
     }
 }
 
@@ -289,9 +285,7 @@ fn parse_glibc_malloc_info(xml: &str) -> Option<GlibcAllocatorStats> {
             continue;
         }
         if !root_started {
-            if !line.starts_with("<malloc ")
-                || xml_attribute(line, "version") != Some("1")
-            {
+            if !line.starts_with("<malloc ") || xml_attribute(line, "version") != Some("1") {
                 return None;
             }
             root_started = true;
@@ -426,11 +420,7 @@ fn glibc_native_allocator_sample() -> Option<serde_json::Value> {
     let info_result = unsafe { libc::malloc_info(0, stream) };
     // SAFETY: closes the stream returned above and finalizes its buffer.
     let close_result = unsafe { libc::fclose(stream) };
-    if info_result != 0
-        || close_result != 0
-        || buffer.is_null()
-        || length > isize::MAX as usize
-    {
+    if info_result != 0 || close_result != 0 || buffer.is_null() || length > isize::MAX as usize {
         if !buffer.is_null() {
             // SAFETY: open_memstream returned this buffer for libc to free.
             unsafe { libc::free(buffer.cast()) };
@@ -487,7 +477,6 @@ fn macos_native_allocator_sample() -> Option<serde_json::Value> {
         .to_json(),
     )
 }
-
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Workload {
@@ -3361,12 +3350,10 @@ mod tests {
 
         let receipt = stats.to_json();
         assert_eq!(receipt["source"], GLIBC_ALLOCATOR_SOURCE);
-        assert!(
-            receipt["coverage"]
-                .as_str()
-                .expect("coverage text")
-                .contains("All glibc arenas")
-        );
+        assert!(receipt["coverage"]
+            .as_str()
+            .expect("coverage text")
+            .contains("All glibc arenas"));
         assert_eq!(receipt["glibc_arena_in_use_bytes"], 540);
         assert_eq!(receipt["glibc_arena_free_bytes"], 228);
         assert_eq!(receipt["glibc_arena_system_bytes"], 768);
@@ -3380,10 +3367,8 @@ mod tests {
 
     #[test]
     fn glibc_malloc_info_rejects_missing_or_inconsistent_totals() {
-        let missing_mmap = GLIBC_MALLOC_INFO_TWO_ARENAS.replace(
-            "<total type=\"mmap\" count=\"7\" size=\"700\"/>",
-            "",
-        );
+        let missing_mmap = GLIBC_MALLOC_INFO_TWO_ARENAS
+            .replace("<total type=\"mmap\" count=\"7\" size=\"700\"/>", "");
         assert!(parse_glibc_malloc_info(&missing_mmap).is_none());
 
         let free_exceeds_system = GLIBC_MALLOC_INFO_TWO_ARENAS.replace(
@@ -3401,12 +3386,10 @@ mod tests {
         }
         .to_json();
         assert_eq!(receipt["source"], MACOS_ALLOCATOR_SOURCE);
-        assert!(
-            receipt["coverage"]
-                .as_str()
-                .expect("coverage text")
-                .contains("all registered malloc zones")
-        );
+        assert!(receipt["coverage"]
+            .as_str()
+            .expect("coverage text")
+            .contains("all registered malloc zones"));
         assert_eq!(receipt["malloc_zone_in_use_bytes"], 123);
         assert_eq!(receipt["malloc_zone_allocated_bytes"], 456);
         assert!(receipt.get("glibc_mmap_bytes").is_none());
@@ -3428,9 +3411,7 @@ mod tests {
         let arena_in_use = receipt["glibc_arena_in_use_bytes"]
             .as_u64()
             .expect("arena-in-use value");
-        let mmap_bytes = receipt["glibc_mmap_bytes"]
-            .as_u64()
-            .expect("mmap value");
+        let mmap_bytes = receipt["glibc_mmap_bytes"].as_u64().expect("mmap value");
         assert!(
             arena_in_use + mmap_bytes >= REQUEST_BYTES as u64,
             "retained allocation should be represented in arena or mmap bytes"
@@ -3503,10 +3484,7 @@ mod tests {
         ] {
             assert!(obj.contains_key(key), "missing sibling field {key}");
         }
-        assert_eq!(
-            obj["native_allocator"]["glibc_arena_in_use_bytes"],
-            540
-        );
+        assert_eq!(obj["native_allocator"]["glibc_arena_in_use_bytes"], 540);
         // Not one summed byte count: the distinct metric keys stay separate.
         assert!(obj.get("total_bytes").is_none());
         assert!(obj.get("bytes").is_none());

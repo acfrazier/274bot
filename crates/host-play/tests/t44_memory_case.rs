@@ -210,7 +210,10 @@ fn sample(
     let rss = current_resident_bytes();
     let native = native_allocator_sample();
     #[cfg(any(all(target_os = "linux", target_env = "gnu"), target_os = "macos"))]
-    assert!(native.is_some(), "the supported native allocator sampler failed");
+    assert!(
+        native.is_some(),
+        "the supported native allocator sampler failed"
+    );
     let statuses = statuses(play, heads);
     let gpu = client::profiling::gpu_bytes();
     let rows: Vec<_> = heads

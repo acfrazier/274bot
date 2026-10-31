@@ -1730,8 +1730,8 @@ mod tests {
         // u64 counters, and one aligned focus-state word. Hooks plus drawing
         // profiling now measure 1,584 B. Preserve the existing 24 B headroom.
         // Production has its own no-hooks receipt in slot_io::tests.
-        let instrumented_mailbox_ceiling = 1_536 + 3 * std::mem::size_of::<Duration>()
-            + 3 * std::mem::size_of::<u64>();
+        let instrumented_mailbox_ceiling =
+            1_536 + 3 * std::mem::size_of::<Duration>() + 3 * std::mem::size_of::<u64>();
         assert!(
             receipt.mailbox_per_loaded_bot_bytes() <= instrumented_mailbox_ceiling,
             "instrumented mailbox={} B exceeds {} B ceiling",
