@@ -809,8 +809,8 @@ impl SlotDetail {
 }
 
 impl SlotDetail {
-    /// The retained native status of the focused slot; `None` for a slot
-    /// that runs no native script.
+    /// The focused slot's native status, including its last status after the run ends.
+    /// Returns `None` when the slot has no native status to retain.
     pub fn native_status(&self) -> Option<StatusView<'_>> {
         self.native_status.as_deref().map(StatusView::new)
     }

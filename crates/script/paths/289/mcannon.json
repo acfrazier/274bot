@@ -1,0 +1,518 @@
+{
+  "$schema": "../path.schema.json",
+  "schema": 3,
+  "id": "mcannon",
+  "display_name": "Dwarf Cannon",
+  "required": [],
+  "tested_stats": null,
+  "partner": null,
+  "quest": {
+    "members": true,
+    "quest_points": 1,
+    "requirements": [],
+    "items": [],
+    "acquire": {},
+    "bank": "nearest",
+    "coin_float": 0,
+    "loadouts": {},
+    "areas": {},
+    "tools": [
+      "obj:mcannonrailing1_obj"
+    ],
+    "owns_inventory": true
+  },
+  "roles": [
+    {
+      "role": null,
+      "progress_binding": "journal:mcannon",
+      "progress": {
+        "colour": {
+          "not_started": "mcannon:0",
+          "in_progress": "mcannon:1",
+          "complete": "mcannon:11"
+        },
+        "rules": [
+          {"stage":"mcannon:5","all":["i have rescued the dwarf child"],"any":[],"not":[],"varp":5},
+          {"stage":"mcannon:4","all":["i found the goblin's base"],"any":[],"not":[],"varp":4},
+          {"stage":"mcannon:3","all":["he sent me to find the goblin base"],"any":[],"not":[],"varp":3},
+          {
+            "stage": "mcannon:2",
+            "all": [],
+            "any": [
+              "the commander has asked me to check up on his guards",
+              "i went to the watchtower where i found some dwarf"
+            ],
+            "not": [],
+            "varp": 2
+          },
+          {
+            "stage": "mcannon:1",
+            "all": [],
+            "any": [
+              "my first task is to fix the broken railings",
+              "i should report back to the commander"
+            ],
+            "not": [],
+            "varp": 1
+          }
+        ],
+        "flags": [],
+        "monotonic": false
+      },
+      "prelude": [],
+      "sequences": [
+        {
+          "stage": "mcannon:0",
+          "required": [],
+          "terminal": false,
+          "recovery_entry": null,
+          "steps": [
+            {
+              "id": "start-commander",
+              "kind": "talk",
+              "version": 1,
+              "advances": true,
+              "comment": "content/scripts/quests/quest_mcannon/scripts/npcs/lawgof2.rs2:17-41; content/maps/m40_54.jm2:5920",
+              "args": {
+                "npc": "lawgof2",
+                "anchor": {
+                  "tile": [
+                    2571,
+                    3463,
+                    0
+                  ],
+                  "source": "content/maps/m40_54.jm2:5920"
+                },
+                "leash": 8,
+                "prefer": [
+                  "Yeah, I'd love to help."
+                ]
+              },
+              "skip_if": {
+                "Any": []
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "quest_colour",
+                  "version": 1,
+                  "args": {
+                    "quest": "mcannon",
+                    "is": "in_progress"
+                  }
+                }
+              }
+            }
+          ]
+        },
+        {
+          "stage": "mcannon:1",
+          "required": [],
+          "terminal": false,
+          "recovery_entry": null,
+          "steps": [
+            {
+              "id": "repair-railing-1",
+              "kind": "interact",
+              "version": 1,
+              "advances": false,
+              "comment": "content/scripts/quests/quest_mcannon/scripts/locs/railings.rs2:24-40,57-92; content/maps/m39_54.jm2:6353. Crafting 1 success 61/256 (engine PlayerOps.ts:591-600); six repairs within 32 attempts each succeed with probability (1-(195/256)^32)^6 = 0.9990105342.",
+              "max_attempts": 32,
+              "stop": "railing-1-repair-attempts-exhausted",
+              "args": {
+                "target": {
+                  "loc": "mcannonrailing1"
+                },
+                "op": "Inspect",
+                "anchor": {
+                  "tile": [
+                    2556,
+                    3475,
+                    0
+                  ],
+                  "source": "content/maps/m39_54.jm2:6353"
+                },
+                "radius": 4,
+                "dialogue": {
+                  "prefer": [
+                    "Try to replace the railing."
+                  ],
+                  "gap_ticks": 3
+                }
+              },
+              "skip_if": {
+                "Not": {
+                  "Fact": {
+                    "kind": "item_count_at_least",
+                    "version": 1,
+                    "args": {
+                      "obj": "mcannonrailing1_obj",
+                      "qty": 6
+                    }
+                  }
+                }
+              },
+              "settle": {
+                "Not": {
+                  "Fact": {
+                    "kind": "item_count_at_least",
+                    "version": 1,
+                    "args": {
+                      "obj": "mcannonrailing1_obj",
+                      "qty": 6
+                    }
+                  }
+                }
+              }
+            },
+            {
+              "id": "repair-railing-2",
+              "kind": "interact",
+              "version": 1,
+              "advances": false,
+              "comment": "content/scripts/quests/quest_mcannon/scripts/locs/railings.rs2:24-40,57-92; content/maps/m39_54.jm2:6377. Crafting 1 success 61/256 (engine PlayerOps.ts:591-600); six repairs within 32 attempts each succeed with probability (1-(195/256)^32)^6 = 0.9990105342.",
+              "max_attempts": 32,
+              "stop": "railing-2-repair-attempts-exhausted",
+              "args": {
+                "target": {
+                  "loc": "mcannonrailing2"
+                },
+                "op": "Inspect",
+                "anchor": {
+                  "tile": [
+                    2558,
+                    3472,
+                    0
+                  ],
+                  "source": "content/maps/m39_54.jm2:6377"
+                },
+                "radius": 4,
+                "dialogue": {
+                  "prefer": [
+                    "Try to replace the railing."
+                  ],
+                  "gap_ticks": 3
+                }
+              },
+              "skip_if": {
+                "Not": {
+                  "Fact": {
+                    "kind": "item_count_at_least",
+                    "version": 1,
+                    "args": {
+                      "obj": "mcannonrailing1_obj",
+                      "qty": 5
+                    }
+                  }
+                }
+              },
+              "settle": {
+                "Not": {
+                  "Fact": {
+                    "kind": "item_count_at_least",
+                    "version": 1,
+                    "args": {
+                      "obj": "mcannonrailing1_obj",
+                      "qty": 5
+                    }
+                  }
+                }
+              }
+            },
+            {
+              "id": "repair-railing-3",
+              "kind": "interact",
+              "version": 1,
+              "advances": false,
+              "comment": "content/scripts/quests/quest_mcannon/scripts/locs/railings.rs2:24-40,57-92; content/maps/m39_54.jm2:6359. Crafting 1 success 61/256 (engine PlayerOps.ts:591-600); six repairs within 32 attempts each succeed with probability (1-(195/256)^32)^6 = 0.9990105342.",
+              "max_attempts": 32,
+              "stop": "railing-3-repair-attempts-exhausted",
+              "args": {
+                "target": {
+                  "loc": "mcannonrailing3"
+                },
+                "op": "Inspect",
+                "anchor": {
+                  "tile": [
+                    2557,
+                    3464,
+                    0
+                  ],
+                  "source": "content/maps/m39_54.jm2:6359"
+                },
+                "radius": 4,
+                "dialogue": {
+                  "prefer": [
+                    "Try to replace the railing."
+                  ],
+                  "gap_ticks": 3
+                }
+              },
+              "skip_if": {
+                "Not": {
+                  "Fact": {
+                    "kind": "item_count_at_least",
+                    "version": 1,
+                    "args": {
+                      "obj": "mcannonrailing1_obj",
+                      "qty": 4
+                    }
+                  }
+                }
+              },
+              "settle": {
+                "Not": {
+                  "Fact": {
+                    "kind": "item_count_at_least",
+                    "version": 1,
+                    "args": {
+                      "obj": "mcannonrailing1_obj",
+                      "qty": 4
+                    }
+                  }
+                }
+              }
+            },
+            {
+              "id": "repair-railing-4",
+              "kind": "interact",
+              "version": 1,
+              "advances": false,
+              "comment": "content/scripts/quests/quest_mcannon/scripts/locs/railings.rs2:24-40,57-92; content/maps/m39_54.jm2:6389. Crafting 1 success 61/256 (engine PlayerOps.ts:591-600); six repairs within 32 attempts each succeed with probability (1-(195/256)^32)^6 = 0.9990105342.",
+              "max_attempts": 32,
+              "stop": "railing-4-repair-attempts-exhausted",
+              "args": {
+                "target": {
+                  "loc": "mcannonrailing4"
+                },
+                "op": "Inspect",
+                "anchor": {
+                  "tile": [
+                    2559,
+                    3462,
+                    0
+                  ],
+                  "source": "content/maps/m39_54.jm2:6389"
+                },
+                "radius": 4,
+                "dialogue": {
+                  "prefer": [
+                    "Try to replace the railing."
+                  ],
+                  "gap_ticks": 3
+                }
+              },
+              "skip_if": {
+                "Not": {
+                  "Fact": {
+                    "kind": "item_count_at_least",
+                    "version": 1,
+                    "args": {
+                      "obj": "mcannonrailing1_obj",
+                      "qty": 3
+                    }
+                  }
+                }
+              },
+              "settle": {
+                "Not": {
+                  "Fact": {
+                    "kind": "item_count_at_least",
+                    "version": 1,
+                    "args": {
+                      "obj": "mcannonrailing1_obj",
+                      "qty": 3
+                    }
+                  }
+                }
+              }
+            },
+            {
+              "id": "repair-railing-5",
+              "kind": "interact",
+              "version": 1,
+              "advances": false,
+              "comment": "content/scripts/quests/quest_mcannon/scripts/locs/railings.rs2:24-40,57-92; content/maps/m40_54.jm2:4286. Crafting 1 success 61/256 (engine PlayerOps.ts:591-600); six repairs within 32 attempts each succeed with probability (1-(195/256)^32)^6 = 0.9990105342.",
+              "max_attempts": 32,
+              "stop": "railing-5-repair-attempts-exhausted",
+              "args": {
+                "target": {
+                  "loc": "mcannonrailing5"
+                },
+                "op": "Inspect",
+                "anchor": {
+                  "tile": [
+                    2564,
+                    3460,
+                    0
+                  ],
+                  "source": "content/maps/m40_54.jm2:4286"
+                },
+                "radius": 4,
+                "dialogue": {
+                  "prefer": [
+                    "Try to replace the railing."
+                  ],
+                  "gap_ticks": 3
+                }
+              },
+              "skip_if": {
+                "Not": {
+                  "Fact": {
+                    "kind": "item_count_at_least",
+                    "version": 1,
+                    "args": {
+                      "obj": "mcannonrailing1_obj",
+                      "qty": 2
+                    }
+                  }
+                }
+              },
+              "settle": {
+                "Not": {
+                  "Fact": {
+                    "kind": "item_count_at_least",
+                    "version": 1,
+                    "args": {
+                      "obj": "mcannonrailing1_obj",
+                      "qty": 2
+                    }
+                  }
+                }
+              }
+            },
+            {
+              "id": "repair-railing-6",
+              "kind": "interact",
+              "version": 1,
+              "advances": false,
+              "comment": "content/scripts/quests/quest_mcannon/scripts/locs/railings.rs2:24-40,57-92; content/maps/m40_54.jm2:4491. Crafting 1 success 61/256 (engine PlayerOps.ts:591-600); six repairs within 32 attempts each succeed with probability (1-(195/256)^32)^6 = 0.9990105342.",
+              "max_attempts": 32,
+              "stop": "railing-6-repair-attempts-exhausted",
+              "args": {
+                "target": {
+                  "loc": "mcannonrailing6"
+                },
+                "op": "Inspect",
+                "anchor": {
+                  "tile": [
+                    2572,
+                    3460,
+                    0
+                  ],
+                  "source": "content/maps/m40_54.jm2:4491"
+                },
+                "radius": 4,
+                "dialogue": {
+                  "prefer": [
+                    "Try to replace the railing."
+                  ],
+                  "gap_ticks": 3
+                }
+              },
+              "skip_if": {
+                "Not": {
+                  "Fact": {
+                    "kind": "item_count_at_least",
+                    "version": 1,
+                    "args": {
+                      "obj": "mcannonrailing1_obj",
+                      "qty": 1
+                    }
+                  }
+                }
+              },
+              "settle": {
+                "Not": {
+                  "Fact": {
+                    "kind": "item_count_at_least",
+                    "version": 1,
+                    "args": {
+                      "obj": "mcannonrailing1_obj",
+                      "qty": 1
+                    }
+                  }
+                }
+              }
+            },
+            {
+              "id": "report-repairs",
+              "kind": "talk",
+              "version": 1,
+              "advances": true,
+              "comment": "content/scripts/quests/quest_mcannon/scripts/npcs/lawgof2.rs2:44-58; content/maps/m40_54.jm2:5920",
+              "args": {
+                "npc": "lawgof2",
+                "anchor": {
+                  "tile": [
+                    2571,
+                    3463,
+                    0
+                  ],
+                  "source": "content/maps/m40_54.jm2:5920"
+                },
+                "leash": 8,
+                "prefer": []
+              },
+              "skip_if": {
+                "Any": []
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "stage_in",
+                  "version": 1,
+                  "args": {
+                    "quest": "mcannon",
+                    "any": [
+                      "mcannon:2"
+                    ]
+                  }
+                }
+              }
+            }
+          ]
+        },
+        {
+          "stage": "mcannon:2",
+          "required": [],
+          "terminal": false,
+          "recovery_entry": null,
+          "steps": [
+            {"id":"take-remains","kind":"interact","version":1,"advances":false,
+             "comment":"content/scripts/quests/quest_mcannon/scripts/objs/dwarf_remains.rs2:1-8; content/maps/m40_53.jm2:6803",
+             "args":{"target":{"ground":"mcannonremains"},"op":"Take","anchor":{"tile":[2567,3444,2],"source":"content/maps/m40_53.jm2:6803"},"radius":5,"wait_if_missing":true},
+             "skip_if":{"Fact":{"kind":"has_item","version":1,"args":{"obj":"mcannonremains"}}},"settle":{"Fact":{"kind":"has_item","version":1,"args":{"obj":"mcannonremains"}}}},
+            {"id":"report-remains","kind":"talk","version":1,"advances":true,
+             "comment":"content/scripts/quests/quest_mcannon/scripts/npcs/lawgof2.rs2:71-91; content/maps/m40_54.jm2:5920",
+             "args":{"npc":"lawgof2","anchor":{"tile":[2571,3463,0],"source":"content/maps/m40_54.jm2:5920"},"leash":8,"prefer":[]},
+             "skip_if":{"Any":[]},"settle":{"Fact":{"kind":"stage_in","version":1,"args":{"quest":"mcannon","any":["mcannon:3"]}}}}
+          ]
+        },
+        {"stage":"mcannon:3","required":[],"terminal":false,"recovery_entry":null,"steps":[
+          {"id":"enter-goblin-cave","kind":"interact","version":1,"advances":true,
+           "comment":"content/scripts/quests/quest_mcannon/scripts/locs/mcannon_cave.rs2:1-10; content/maps/m40_53.jm2:5979",
+           "args":{"target":{"loc":"mcannoncave"},"op":"Enter","anchor":{"tile":[2622,3392,0],"source":"content/maps/m40_53.jm2:5979"},"radius":5},
+           "skip_if":{"Any":[]},"settle":{"Fact":{"kind":"stage_in","version":1,"args":{"quest":"mcannon","any":["mcannon:4"]}}}}
+        ]},
+        {"stage":"mcannon:4","required":[],"terminal":false,"recovery_entry":null,"steps":[
+          {"id":"rescue-child","kind":"interact","version":1,"advances":true,
+           "comment":"content/scripts/quests/quest_mcannon/scripts/locs/mcannon_crate.rs2:1-19; content/scripts/quests/quest_mcannon/scripts/npcs/dwarfchildtw1.rs2:4-16; content/maps/m40_153.jm2:5277",
+           "args":{"target":{"loc":"mcannoncrateboy"},"op":"Search","anchor":{"tile":[2571,9850,0],"source":"content/maps/m40_153.jm2:5277"},"radius":5},
+           "skip_if":{"Any":[]},"settle":{"Fact":{"kind":"stage_in","version":1,"args":{"quest":"mcannon","any":["mcannon:5"]}}}}
+        ]},
+        {"stage":"mcannon:5","required":[],"terminal":false,"recovery_entry":null,"steps":[
+          {"id":"report-rescue","kind":"talk","version":1,"advances":true,
+           "comment":"content/scripts/quests/quest_mcannon/scripts/npcs/lawgof2.rs2:106-125; content/maps/m40_54.jm2:5920",
+           "args":{"npc":"lawgof2","anchor":{"tile":[2571,3463,0],"source":"content/maps/m40_54.jm2:5920"},"leash":8,"prefer":["Ok, I'll see what I can do."]},
+           "skip_if":{"Any":[]},"settle":{"Fact":{"kind":"has_item","version":1,"args":{"obj":"mcannontoolkit"}}}}
+        ]},
+        {
+          "stage": "mcannon:11",
+          "required": [],
+          "terminal": true,
+          "recovery_entry": null,
+          "steps": []
+        }
+      ]
+    }
+  ]
+}

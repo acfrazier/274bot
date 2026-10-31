@@ -64,6 +64,7 @@ impl Runtime {
             .map_or(0, |owner| owner.id.get());
         let mut actions = NativeActions { _private: () };
         let mut cx = ActionContext {
+            stage_cross: None,
             condition: self.condition,
             poison_unknown_pulse: self.poison_unknown_pulse,
             cure_poison: self.cure_poison,

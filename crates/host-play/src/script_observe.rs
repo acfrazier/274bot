@@ -384,13 +384,14 @@ impl DrainedRunPolicyUpdate {
 
 pub(crate) fn drain_observed_host_interacts(
     slot: &mut SlotScript,
+    nav: Option<&nav_planner::contract::NavLease>,
 ) -> (
     Option<DrainedRunPolicyUpdate>,
     Vec<script::interact::QueuedInteract>,
     bool,
 ) {
     let producer_generation = slot.runtime_generation();
-    let (update, interacts, owned) = slot.drain_host_interacts();
+    let (update, interacts, owned) = slot.drain_host_interacts(nav);
     (
         update.map(|policy| DrainedRunPolicyUpdate {
             producer_generation,
@@ -503,6 +504,9 @@ pub(crate) fn script_observe_cached_with_channels(
         let Ok(mut slot) = slot.lock() else {
             break 'script_slot;
         };
+        let nav = world
+            .as_ref()
+            .and_then(|world| nav_planner::producer::lease(world).ok());
         slot.observe_lifecycle();
         let bank_selection = slot.bank_selection_input();
         let work_scope = slot.work_scope();
@@ -550,7 +554,7 @@ pub(crate) fn script_observe_cached_with_channels(
             script::RunState::Starting | script::RunState::Paused
         ) && slot.surface_active()
         {
-            let (update, queued, _) = drain_observed_host_interacts(&mut slot);
+            let (update, queued, _) = drain_observed_host_interacts(&mut slot, nav.as_ref());
             if let Some(update) = update {
                 run_policy_update = Some(update);
             }
@@ -1051,6 +1055,7 @@ pub(crate) fn script_observe_cached_with_channels(
                         collision: world
                             .as_deref()
                             .and_then(|world| nav_planner::producer::collision_view(world).ok()),
+                        nav: nav.as_ref(),
                         walk_danger: walk_danger
                             .as_ref()
                             .map(|query| query as &dyn script::native::WalkDangerQuery),
@@ -1218,7 +1223,7 @@ pub(crate) fn script_observe_cached_with_channels(
                 // The seat admits controls and filters captured gameplay before
                 // this host stage. A live API Session still fences a carried
                 // pre-seat route, not releases or already-admitted rows.
-                let (update, reqs, owned) = drain_observed_host_interacts(&mut slot);
+                let (update, reqs, owned) = drain_observed_host_interacts(&mut slot, nav.as_ref());
                 if slot.watchdog().holds_script_actions() || owned {
                     if owned {
                         let _ = take_carried_walk(navs, name, slot.runtime_generation());
@@ -1274,7 +1279,7 @@ pub(crate) fn script_observe_cached_with_channels(
             && !prayer_cleanup_hold)
             || slot.completed_seat_dispatch_open()
         {
-            let (update, reqs, _) = drain_observed_host_interacts(&mut slot);
+            let (update, reqs, _) = drain_observed_host_interacts(&mut slot, nav.as_ref());
             if let Some(update) = update {
                 run_policy_update = Some(update);
             }

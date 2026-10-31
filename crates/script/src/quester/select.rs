@@ -220,6 +220,7 @@ mod tests {
         let mut ledger = None;
         let mut budget = TickBudget::default();
         let cx = ActionContext {
+            stage_cross: None,
             condition: None,
             poison_unknown_pulse: u8::MAX,
             cure_poison: crate::survival::CurePoison::WhenNeeded,
@@ -720,6 +721,7 @@ mod tests {
             loadout: None,
             tactic: None,
             advances: false,
+            attempt_budget: None,
             skip_if: Arc::new(Skip(Truth::False)),
             skip_if_summary: Arc::from("never"),
             settle: Arc::new(Skip(Truth::True)),

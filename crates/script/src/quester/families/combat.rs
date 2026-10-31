@@ -69,6 +69,13 @@ static ABORT_ESCAPE_UNSAFE: std::sync::LazyLock<Arc<str>> =
     std::sync::LazyLock::new(|| Arc::from(ABORT_ESCAPE_UNSAFE_REASON));
 static ABORT_ESCAPE_STALLED: std::sync::LazyLock<Arc<str>> =
     std::sync::LazyLock::new(|| Arc::from(ABORT_ESCAPE_STALLED_REASON));
+/// From hitpoints reaching zero, the queued death callback runs on the next NPC
+/// turn, then arrival delay 1–2 plus `npc_delay(1)` precede the drop: at most
+/// five server ticks (`npc_combat.rs2:78-93`, `Npc.ts:250-253,566-575`,
+/// `LinkList.ts:67-70`, `npc_death.rs2:15-20`, `NpcOps.ts:97-100,557-571`,
+/// `elemental_earth.rs2:1-6`). Add one observed tick for the single
+/// `PLAYER_INFO` received per tick.
+const LOOT_ITEM_WAIT_TICKS: u64 = 5 + 1;
 
 fn tile_distance(a: api::WorldTile, b: api::WorldTile) -> i32 {
     if a.level != b.level {
@@ -122,6 +129,7 @@ fn has_live_attacker(
 pub struct CombatReceipt {
     pub report: CombatReport,
     pub target_gone_restarts: u8,
+    pub kills: u32,
 }
 
 impl FamilyReceipt for CombatReceipt {
@@ -193,7 +201,26 @@ pub(super) struct CombatArgs {
     /// Optional success predicate that ends the combat loop when true.
     #[serde(default)]
     win: Option<PredicateDocument>,
+    /// Loot one selected item until held, re-engaging up to `max_kills`.
+    #[serde(default)]
+    until_drop: Option<UntilDropArgs>,
 }
+
+/// Item and confirmed-kill budget for a combat step that waits for its drop.
+#[derive(Deserialize)]
+#[cfg_attr(feature = "path-schema", derive(schemars::JsonSchema))]
+#[serde(deny_unknown_fields)]
+struct UntilDropArgs {
+    /// Selected item alias to loot and hold.
+    obj: String,
+    /// Maximum confirmed kills, including the kill whose loot is collected.
+    #[cfg_attr(feature = "path-schema", schemars(range(min = 1)))]
+    max_kills: u32,
+    /// Authored stop name reported when the kill budget is spent without the item.
+    #[cfg_attr(feature = "path-schema", schemars(length(min = 1)))]
+    stop: String,
+}
+
 /// One optional loot item, either a single-item or explicit per-kill threshold.
 #[derive(Deserialize)]
 #[cfg_attr(feature = "path-schema", derive(schemars::JsonSchema))]
@@ -235,6 +262,12 @@ struct FinishArgs {
     /// Refuse missing or ambiguous answer text instead of choosing a fallback.
     #[serde(default)]
     strict: bool,
+    /// Skip a `prefer` entry that already answered a page in this
+    /// conversation, so a repeated menu can be answered once and left.
+    /// `line_rules` and `choose` are unaffected. With this option on,
+    /// `prefer` holds at most 32 entries; a longer list fails compilation.
+    #[serde(default)]
+    answer_once: bool,
     /// Positive game-tick budget for the complete transformation and dialogue.
     max_ticks: u32,
 }
@@ -385,6 +418,11 @@ pub(super) fn compile(
 }
 
 fn compile_plan(args: CombatArgs, cx: &CompileContext<'_>) -> Result<CombatPlan, CompileError> {
+    if args.until_drop.is_some()
+        && (args.finish.is_some() || args.until.is_some() || args.win.is_some())
+    {
+        return Err(CompileError::code("conflicting-combat-until-drop"));
+    }
     let protect = match args.guard.as_deref() {
         None | Some("") => false,
         Some("protect") => true,
@@ -438,7 +476,17 @@ fn compile_plan(args: CombatArgs, cx: &CompileContext<'_>) -> Result<CombatPlan,
         .as_deref()
         .map(|name| compile_kit(name, cx))
         .transpose()?;
-    let loot = compile_loot(&args.loot, cx)?;
+    let mut loot = compile_loot(&args.loot, cx)?;
+    let until_drop = match args.until_drop {
+        Some(args) => {
+            let (required, loot_item) = compile_until_drop(args, cx)?;
+            if !loot.iter().any(|item| item.id == required.item_id) {
+                loot.push(loot_item);
+            }
+            Some(required)
+        }
+        None => None,
+    };
     let until = args
         .until
         .as_ref()
@@ -476,6 +524,7 @@ fn compile_plan(args: CombatArgs, cx: &CompileContext<'_>) -> Result<CombatPlan,
         None
     };
 
+    let cross: Arc<[Arc<str>]> = args.cross.into_iter().map(Arc::from).collect();
     let request = CombatRequest {
         target,
         tactic: Tactic::Open,
@@ -487,6 +536,7 @@ fn compile_plan(args: CombatArgs, cx: &CompileContext<'_>) -> Result<CombatPlan,
         fallback_spells: args.fallback_spells,
         stand,
         search_bounds,
+        cross: Some(Arc::clone(&cross)),
         engage_radius: args.tactic.engage_radius,
         lost_radius: args.lost_radius,
         budget_ticks: args.kill_budget_ticks,
@@ -501,12 +551,13 @@ fn compile_plan(args: CombatArgs, cx: &CompileContext<'_>) -> Result<CombatPlan,
     Ok(CombatPlan {
         request: Arc::new(request),
         tables,
-        cross: args.cross.into_iter().map(Arc::from).collect(),
+        cross,
         protect,
         until,
         win,
         loot: Arc::from(loot),
         finish,
+        until_drop,
     })
 }
 
@@ -605,6 +656,7 @@ fn compile_finish(
         choose: args.choose,
         line_rules: args.line_rules,
         strict: args.strict,
+        answer_once: args.answer_once,
         gap_ticks: None,
     })?;
     Ok(FinishConfig {
@@ -731,6 +783,31 @@ fn compile_loot(loot: &[LootArg], cx: &CompileContext<'_>) -> Result<Vec<LootIte
     Ok(rows)
 }
 
+fn compile_until_drop(
+    args: UntilDropArgs,
+    cx: &CompileContext<'_>,
+) -> Result<(UntilDropConfig, LootItem), CompileError> {
+    if args.max_kills == 0 {
+        return Err(CompileError::code("invalid-combat-until-drop-kill-budget"));
+    }
+    if args.stop.trim().is_empty() {
+        return Err(CompileError::code("invalid-combat-until-drop-stop"));
+    }
+    let (item_id, item_name) = resolve_loadout_item(cx, &args.obj)?;
+    Ok((
+        UntilDropConfig {
+            item_id,
+            max_kills: args.max_kills,
+            stop: Arc::from(args.stop),
+        },
+        LootItem {
+            id: item_id,
+            name: item_name,
+            qty: 1,
+        },
+    ))
+}
+
 fn resolve_loadout_item(
     cx: &CompileContext<'_>,
     name: &str,
@@ -765,6 +842,13 @@ struct LootItem {
     qty: u32,
 }
 
+#[derive(Clone)]
+struct UntilDropConfig {
+    item_id: i32,
+    max_kills: u32,
+    stop: Arc<str>,
+}
+
 struct CombatPlan {
     request: Arc<CombatRequest>,
     tables: Arc<CombatTables>,
@@ -774,6 +858,7 @@ struct CombatPlan {
     win: Option<Arc<dyn PredicatePlan>>,
     loot: Arc<[LootItem]>,
     finish: Option<FinishConfig>,
+    until_drop: Option<UntilDropConfig>,
 }
 
 impl StepPlan for CombatPlan {
@@ -787,10 +872,14 @@ impl StepPlan for CombatPlan {
             win: self.win.as_ref().map(Arc::clone),
             loot: Arc::clone(&self.loot),
             finish: self.finish.clone(),
+            until_drop: self.until_drop.clone(),
             action: None,
             phase: Phase::Combat,
             loot_index: 0,
+            loot_wait_deadline: None,
+            loot_missing_this_kill: false,
             last_report: None,
+            kills: 0,
             last_outcome: None,
             target_gone_restarts: 0,
             raised_prayers: RaisedPrayers::empty(),
@@ -801,7 +890,9 @@ impl StepPlan for CombatPlan {
             trace_event: None,
             abort_escape: AbortEscape::new(),
         };
-        run.begin_combat(cx)?;
+        if !run.until_drop_item_held(cx) {
+            run.begin_combat(cx)?;
+        }
         run.manual_takeover_watch = crate::native::ManualTakeoverWatch::begin(&cx.tick.cx);
 
         Ok(Box::new(run))
@@ -1125,10 +1216,14 @@ struct CombatRun {
     until: Option<Arc<dyn PredicatePlan>>,
     win: Option<Arc<dyn PredicatePlan>>,
     loot: Arc<[LootItem]>,
+    until_drop: Option<UntilDropConfig>,
     action: Option<Action>,
     phase: Phase,
     loot_index: usize,
+    loot_wait_deadline: Option<u64>,
+    loot_missing_this_kill: bool,
     last_report: Option<CombatReport>,
+    kills: u32,
     last_outcome: Option<StepOutcome>,
     target_gone_restarts: u8,
     raised_prayers: RaisedPrayers,
@@ -1673,6 +1768,9 @@ impl CombatRun {
     ) -> Poll<Result<StepOutcome, ActionError>> {
         self.action = None;
         self.raised_prayers = RaisedPrayers::empty();
+        if matches!(report.end, CombatEnd::Killed) {
+            self.kills = self.kills.saturating_add(1);
+        }
         self.last_report = Some(report);
         self.refresh_outcome();
         self.trace_event = Some(StepTraceEvent::CombatSubOperationEnd {
@@ -1690,13 +1788,23 @@ impl CombatRun {
             CombatEnd::Killed => {
                 self.phase = Phase::Loot;
                 self.loot_index = 0;
+                self.loot_wait_deadline = Some(
+                    cx.tick
+                        .cx
+                        .evidence()
+                        .tick
+                        .saturating_add(LOOT_ITEM_WAIT_TICKS),
+                );
+                self.loot_missing_this_kill = false;
                 Poll::Pending
             }
             CombatEnd::TargetGone => {
                 // Imp's next attempt is anchored at stand, so wait for its
                 // observed arrival before re-beginning (design-combat.md §1.1,
                 // §2.6; design-combat-s3.md §5.1).
-                if (self.until.is_none() && self.win.is_none()) || self.should_stop(cx) {
+                if (self.until.is_none() && self.win.is_none() && self.until_drop.is_none())
+                    || self.should_stop(cx)
+                {
                     return self.finish(cx);
                 }
                 if let Some(stand) = self.request.stand {
@@ -1709,7 +1817,9 @@ impl CombatRun {
                 }
             }
             CombatEnd::NoTarget | CombatEnd::Budget => {
-                if (self.until.is_none() && self.win.is_none()) || self.should_stop(cx) {
+                if (self.until.is_none() && self.win.is_none() && self.until_drop.is_none())
+                    || self.should_stop(cx)
+                {
                     self.finish(cx)
                 } else {
                     self.rebegin_combat(cx, false)
@@ -1731,13 +1841,14 @@ impl CombatRun {
         }
     }
 
-    fn outcome_for(report: CombatReport, target_gone_restarts: u8) -> StepOutcome {
+    fn outcome_for(report: CombatReport, target_gone_restarts: u8, kills: u32) -> StepOutcome {
         StepOutcome {
             progress: None,
             evidence: report.evidence,
             receipt: Some(Arc::new(CombatReceipt {
                 report,
                 target_gone_restarts,
+                kills,
             })),
         }
     }
@@ -1747,7 +1858,11 @@ impl CombatRun {
             self.last_outcome = None;
             return;
         };
-        self.last_outcome = Some(Self::outcome_for(report, self.target_gone_restarts));
+        self.last_outcome = Some(Self::outcome_for(
+            report,
+            self.target_gone_restarts,
+            self.kills,
+        ));
     }
 
     fn rebegin_combat(
@@ -1768,10 +1883,25 @@ impl CombatRun {
     }
 
     fn begin_loot(&mut self, cx: &mut StepContext<'_, '_>) -> Result<LootStart, ActionError> {
+        if self.loot.is_empty() {
+            return Ok(LootStart::Complete);
+        }
         let snapshot = cx.tick.cx.snapshot();
+        let tick = cx.tick.cx.evidence().tick;
+        let wait_expired = self
+            .loot_wait_deadline
+            .is_some_and(|deadline| tick > deadline);
         let Some(inventory) = snapshot.inventory() else {
-            return Ok(LootStart::Waiting);
+            return if wait_expired {
+                Err(ActionError::NeedsEvidence(Arc::from([])))
+            } else {
+                Ok(LootStart::Waiting)
+            };
         };
+        let radius = reach::ground_area(self.request.stand, i32::from(self.request.lost_radius))
+            .radius
+            .max(reach::PROBE_RADIUS);
+        let area = reach::Area::new(self.request.stand, radius);
         while let Some(item) = self.loot.get(self.loot_index) {
             let held = inventory
                 .value
@@ -1783,6 +1913,19 @@ impl CombatRun {
                 self.loot_index += 1;
                 continue;
             }
+            let target_tile = match self.ground_loot_tile(cx, item, area) {
+                Some(Some(tile)) => tile,
+                Some(None) if wait_expired => {
+                    self.loot_missing_this_kill = true;
+                    self.loot_index += 1;
+                    continue;
+                }
+                Some(None) => return Ok(LootStart::Waiting),
+                None if wait_expired => {
+                    return Err(ActionError::NeedsEvidence(Arc::from([])));
+                }
+                None => return Ok(LootStart::Waiting),
+            };
             let handle = cx.tick.actions.begin::<Reach>(
                 ReachArgs {
                     kind: ReachKind::Ground {
@@ -1791,18 +1934,31 @@ impl CombatRun {
                     },
                     op: Arc::from("Take"),
                     anchor: self.request.stand,
-                    radius: i32::from(self.request.lost_radius),
+                    radius,
                     wait_if_missing: false,
-                    target_tile: None,
+                    target_tile: Some(target_tile),
                     reachable_only: false,
                 },
                 &mut cx.tick.cx,
             )?;
-            self.loot_index += 1;
             self.action = Some(Action::Loot(handle));
             return Ok(LootStart::Started);
         }
         Ok(LootStart::Complete)
+    }
+
+    fn ground_loot_tile(
+        &self,
+        cx: &StepContext<'_, '_>,
+        item: &LootItem,
+        area: reach::Area,
+    ) -> Option<Option<api::WorldTile>> {
+        cx.tick.cx.snapshot().ground_items()?;
+        Some(
+            reach::choose_ground(&cx.tick.cx, item.id, None, area, &reach::Avoid::default())
+                .any()
+                .map(|choice| choice.tile),
+        )
     }
 
     fn enter_finish_wait(&mut self, tick: u64) {
@@ -1899,14 +2055,44 @@ impl CombatRun {
     ) -> Poll<Result<StepOutcome, ActionError>> {
         match std::task::ready!(crate::native::defer_budget(self.begin_loot(cx))) {
             Ok(LootStart::Waiting | LootStart::Started) => Poll::Pending,
-            Ok(LootStart::Complete) => {
-                if (self.until.is_none() && self.win.is_none()) || self.should_stop(cx) {
-                    self.finish(cx)
-                } else {
-                    self.rebegin_combat(cx, false)
-                }
-            }
+            Ok(LootStart::Complete) => self.after_loot_complete(cx),
             Err(error) => Poll::Ready(Err(error)),
+        }
+    }
+
+    /// Decide whether a settled loot pass completed the step or may re-engage.
+    fn after_loot_complete(
+        &mut self,
+        cx: &mut StepContext<'_, '_>,
+    ) -> Poll<Result<StepOutcome, ActionError>> {
+        let should_stop = self.should_stop(cx);
+        let missing_required_loot = !should_stop
+            && self.until_drop.is_none()
+            && self.loot_missing_this_kill
+            && self
+                .until
+                .as_ref()
+                .is_some_and(|predicate| self.evaluate_predicate(predicate, cx) == Truth::False);
+        self.loot_wait_deadline = None;
+        self.loot_missing_this_kill = false;
+        if should_stop {
+            return self.finish(cx);
+        }
+        if let Some(until_drop) = &self.until_drop {
+            if self.kills >= until_drop.max_kills {
+                return Poll::Ready(Err(ActionError::Blocked(Arc::clone(&until_drop.stop))));
+            }
+            return self.rebegin_combat(cx, false);
+        }
+        if missing_required_loot {
+            return Poll::Ready(Err(ActionError::Failed(Arc::from(
+                "required combat loot was not acquired during the post-kill search",
+            ))));
+        }
+        if self.until.is_none() && self.win.is_none() {
+            self.finish(cx)
+        } else {
+            self.rebegin_combat(cx, false)
         }
     }
 
@@ -1928,10 +2114,27 @@ impl CombatRun {
         predicate.evaluate(&context)
     }
 
+    fn until_drop_item_held(&self, cx: &StepContext<'_, '_>) -> bool {
+        let Some(required) = self.until_drop.as_ref() else {
+            return false;
+        };
+        cx.tick.cx.snapshot().inventory().is_some_and(|inventory| {
+            inventory
+                .value
+                .iter()
+                .filter(|item| item.def.id == required.item_id)
+                .map(|item| i64::from(item.count))
+                .sum::<i64>()
+                > 0
+        })
+    }
+
     fn should_stop(&self, cx: &StepContext<'_, '_>) -> bool {
-        self.until
-            .as_ref()
-            .is_some_and(|predicate| self.evaluate_predicate(predicate, cx) == Truth::True)
+        self.until_drop_item_held(cx)
+            || self
+                .until
+                .as_ref()
+                .is_some_and(|predicate| self.evaluate_predicate(predicate, cx) == Truth::True)
             || self
                 .win
                 .as_ref()
@@ -1979,16 +2182,7 @@ impl StepRun for CombatRun {
             return Poll::Pending;
         }
         if matches!(self.phase, Phase::Loot) && self.action.is_none() {
-            match std::task::ready!(crate::native::defer_budget(self.begin_loot(cx))) {
-                Ok(LootStart::Waiting | LootStart::Started) => return Poll::Pending,
-                Ok(LootStart::Complete) => {
-                    if (self.until.is_none() && self.win.is_none()) || self.should_stop(cx) {
-                        return self.finish(cx);
-                    }
-                    return self.rebegin_combat(cx, false);
-                }
-                Err(error) => return Poll::Ready(Err(error)),
-            }
+            return self.next_loot_or_reengage(cx);
         }
         if !matches!(
             self.phase,
@@ -2048,9 +2242,11 @@ impl StepRun for CombatRun {
                 }
             }
             ActionPoll::Failed(ActionError::Blocked(_)) if matches!(&self.phase, Phase::Loot) => {
-                // Loot is optional: an unreachable ground item does not end
-                // the combat step. Other errors remain visible to the caller.
+                // An unrouteable loot row counts as missed when this step still
+                // needs loot; optional drops remain non-blocking.
                 self.action = None;
+                self.loot_index += 1;
+                self.loot_missing_this_kill = true;
                 self.next_loot_or_reengage(cx)
             }
             ActionPoll::Failed(ActionError::Failed(reason))
@@ -2093,9 +2289,11 @@ impl StepRun for CombatRun {
             ActionPoll::Walk(receipt) => self.on_return_walk(receipt, cx),
             ActionPoll::Loot(taken) => {
                 self.action = None;
+                self.loot_index += 1;
                 if !taken {
                     // A stale or absent drop is not evidence for another click.
                     // The next combat run can produce a fresh ground row.
+                    self.loot_missing_this_kill = true;
                 }
                 self.next_loot_or_reengage(cx)
             }

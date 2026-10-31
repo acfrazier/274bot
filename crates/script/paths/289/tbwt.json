@@ -1,0 +1,2971 @@
+{
+  "$schema": "../path.schema.json",
+  "schema": 3,
+  "id": "tbwt",
+  "display_name": "Tai Bwo Wannai Trio",
+  "required": [
+    "quest:junglepotion",
+    "cooking:30",
+    "agility:15",
+    "fishing:5"
+  ],
+  "tested_stats": null,
+  "partner": null,
+  "quest": {
+    "members": true,
+    "quest_points": 2,
+    "requirements": [
+      {
+        "id": "quest:junglepotion",
+        "kind": {
+          "Quest": "junglepotion"
+        },
+        "at": "start",
+        "source": "content/scripts/areas/area_karamja/scripts/tbwt_timfraku.rs2:49-56"
+      },
+      {
+        "id": "cooking:30",
+        "kind": {
+          "Skill": {
+            "skill": "cooking",
+            "level": 30
+          }
+        },
+        "at": "start",
+        "source": "content/scripts/skill_cooking/configs/cooking_source/cooking_generic.dbrow:587-595"
+      },
+      {
+        "id": "agility:15",
+        "kind": {
+          "Skill": {
+            "skill": "agility",
+            "level": 15
+          }
+        },
+        "at": "start",
+        "source": "content/scripts/quests/quest_tbwt/scripts/tbwt_journal.rs2:9-15"
+      },
+      {
+        "id": "fishing:5",
+        "kind": {
+          "Skill": {
+            "skill": "fishing",
+            "level": 5
+          }
+        },
+        "at": "start",
+        "source": "content/scripts/skill_fishing/scripts/fishing_spots/tbwt.rs2:25-27"
+      }
+    ],
+    "items": [],
+    "acquire": {
+      "GAP-tbwt-karambwan-retry-budget": [
+        {"id":"recover-cooking-vessel","kind":"talk","version":1,"advances":false,
+         "args":{"npc":"tbwt_lubufu","anchor":{"tile":[2770,3169,0],"source":"content/maps/m43_49.jm2:9181"},"leash":8,"prefer":["Actually, I've lost my Karambwan vessel.","... a shark ate it!"],"strict":true},
+         "skip_if":{"Any":[{"Fact":{"kind":"has_item","version":1,"args":{"obj":"tbwt_karambwan_vessel"}}},{"Fact":{"kind":"has_item","version":1,"args":{"obj":"tbwt_karambwan_vessel_loaded_with_karambwanji"}}},{"Fact":{"kind":"has_item","version":1,"args":{"obj":"tbwt_raw_karambwan"}}},{"Fact":{"kind":"has_item","version":1,"args":{"obj":"tbwt_poorly_cooked_karambwan"}}}]},
+         "settle":{"Fact":{"kind":"has_item","version":1,"args":{"obj":"tbwt_karambwan_vessel"}}},
+         "comment":"Lubufu replaces a lost vessel after apprenticeship: content/scripts/quests/quest_tbwt/scripts/tbwt_lubufu.rs2:380-392,406-423."},
+        {"id":"catch-replacement-bait","kind":"interact","version":1,"advances":false,
+         "args":{"target":{"npc":"0_43_47_karambwanji"},"op":"Net","anchor":{"tile":[2791,3019,0],"source":"content/maps/m43_47.jm2:6487"},"radius":8,"until":{"obj":"tbwt_raw_karambwanji","qty":1}},
+         "skip_if":{"Any":[{"Fact":{"kind":"has_item","version":1,"args":{"obj":"tbwt_raw_karambwanji"}}},{"Fact":{"kind":"has_item","version":1,"args":{"obj":"tbwt_karambwan_vessel_loaded_with_karambwanji"}}},{"Fact":{"kind":"has_item","version":1,"args":{"obj":"tbwt_raw_karambwan"}}},{"Fact":{"kind":"has_item","version":1,"args":{"obj":"tbwt_poorly_cooked_karambwan"}}}]},
+         "settle":{"Fact":{"kind":"has_item","version":1,"args":{"obj":"tbwt_raw_karambwanji"}}},
+         "comment":"content/scripts/skill_fishing/scripts/fishing_spots/tbwt.rs2:25-53."},
+        {"id":"load-replacement-vessel","kind":"use_on","version":1,"advances":false,
+         "args":{"item":"tbwt_raw_karambwanji","target":{"item":"tbwt_karambwan_vessel"},"product":"tbwt_karambwan_vessel_loaded_with_karambwanji"},
+         "skip_if":{"Any":[{"Fact":{"kind":"has_item","version":1,"args":{"obj":"tbwt_karambwan_vessel_loaded_with_karambwanji"}}},{"Fact":{"kind":"has_item","version":1,"args":{"obj":"tbwt_raw_karambwan"}}},{"Fact":{"kind":"has_item","version":1,"args":{"obj":"tbwt_poorly_cooked_karambwan"}}}]},
+         "settle":{"Fact":{"kind":"has_item","version":1,"args":{"obj":"tbwt_karambwan_vessel_loaded_with_karambwanji"}}},
+         "comment":"content/scripts/quests/quest_tbwt/scripts/quest_tbwt.rs2:42-56,243-258."},
+        {"id":"fish-replacement-karambwan","kind":"interact","version":1,"advances":false,
+         "args":{"target":{"npc":"lubufu_karambwan"},"op":"Fish","anchor":{"tile":[2768,3165,0],"source":"content/maps/m43_49.jm2:9180; content/pack/npc.pack:1179"},"radius":8,"settle_ms":30000},
+         "skip_if":{"Any":[{"Fact":{"kind":"has_item","version":1,"args":{"obj":"tbwt_raw_karambwan"}}},{"Fact":{"kind":"has_item","version":1,"args":{"obj":"tbwt_poorly_cooked_karambwan"}}}]},
+         "settle":{"Any":[{"Fact":{"kind":"has_item","version":1,"args":{"obj":"tbwt_raw_karambwan"}}},{"Fact":{"kind":"has_item","version":1,"args":{"obj":"tbwt_karambwan_vessel"}}}]},
+         "comment":"Fishing 65; each attempt either catches one fish or consumes the bait: content/scripts/skill_fishing/scripts/fishing_spots/tbwt.rs2:99-133."},
+        {"id":"cook-replacement-karambwan","kind":"use_on","version":1,"advances":false,
+         "args":{"item":"tbwt_raw_karambwan","target":{"loc":"range"},"anchor":{"tile":[2787,3191,0],"source":"content/maps/m43_49.jm2:6474"},"radius":8,"settle_ms":30000},
+         "skip_if":{"Any":[{"Not":{"Fact":{"kind":"has_item","version":1,"args":{"obj":"tbwt_raw_karambwan"}}}},{"Fact":{"kind":"has_item","version":1,"args":{"obj":"tbwt_poorly_cooked_karambwan"}}}]},
+         "settle":{"Any":[{"Fact":{"kind":"has_item","version":1,"args":{"obj":"tbwt_poorly_cooked_karambwan"}}},{"Not":{"Fact":{"kind":"has_item","version":1,"args":{"obj":"tbwt_raw_karambwan"}}}}]},
+         "comment":"Before the reward cooking yields the poorly cooked fish or burns it: content/scripts/skill_cooking/scripts/cooking.rs2:32-50,142-154; content/scripts/skill_cooking/configs/cooking_source/cooking_generic.dbrow:559-571."}
+      ]
+    },
+    "bank": "nearest",
+    "coin_float": 0,
+    "loadouts": {},
+    "areas": {
+      "cairn_west": {
+        "boxes": [
+          [
+            2752,
+            2960,
+            2791,
+            3007,
+            0
+          ]
+        ],
+        "source": "content/maps/m43_46.jm2:4915; content/scripts/quests/quest_zombiequeen/scripts/quest_zombiequeen.rs2:519-559"
+      }
+    },
+    "tools": [
+      "obj:net",
+      "obj:4dose1agility",
+      "obj:iron_spear",
+      "obj:banana",
+      "obj:karamja_rum",
+      "obj:knife",
+      "obj:seaweed",
+      "obj:pestle_and_mortar",
+      "obj:airrune",
+      "obj:mindrune"
+    ],
+    "owns_inventory": true
+  },
+  "roles": [
+    {
+      "role": null,
+      "progress_binding": "journal:tbwt",
+      "progress": {
+        "colour": {
+          "not_started": "tbwt:0",
+          "in_progress": "tbwt:started",
+          "complete": "tbwt:complete"
+        },
+        "rules": [
+          {
+            "stage": "tbwt:complete",
+            "all": [
+              "quest complete!"
+            ],
+            "any": [],
+            "not": [],
+            "varp": 5
+          },
+          {
+            "stage": "tbwt:ready",
+            "all": [
+              "i have convinced them to return to the village"
+            ],
+            "any": [],
+            "not": [],
+            "varp": 4
+          },
+          {
+            "stage": "tbwt:started",
+            "all": [
+              "i need to convince them to return to the village"
+            ],
+            "any": [],
+            "not": [],
+            "varp": 3
+          }
+        ],
+        "flags": [
+          {
+            "flag": "tbwt:tamayu_watched",
+            "any": [
+              "he appears to be having difficulty in the hunt"
+            ],
+            "all": []
+          },
+          {
+            "flag": "tbwt:tamayu_agile",
+            "any": [
+              "i have increased his agility to match"
+            ],
+            "all": []
+          },
+          {
+            "flag": "tbwt:tamayu_spear",
+            "any": [
+              "i have give him a stronger and karambwan poisoned spear"
+            ],
+            "all": []
+          },
+          {
+            "flag": "tbwt:tamayu_done",
+            "any": [
+              "tamayu has slain the shaikahan"
+            ],
+            "all": []
+          },
+          {
+            "flag": "tbwt:tiadeche_needs_fish",
+            "any": [
+              "he will only return to the village once he has caught a"
+            ],
+            "all": []
+          },
+          {
+            "flag": "tbwt:tiadeche_manual",
+            "any": [
+              "i must take a karambwan vessel to tinsay"
+            ],
+            "all": []
+          },
+          {
+            "flag": "tbwt:tiadeche_done",
+            "any": [
+              "retrieved crafting instructions for tiadeche"
+            ],
+            "all": []
+          },
+          {
+            "flag": "tbwt:lubufu_bait",
+            "any": [
+              "i need to give lubufu 20 karambwanji"
+            ],
+            "all": []
+          },
+          {
+            "flag": "tbwt:lubufu_given",
+            "any": [
+              "i have given lubufu 20 karambwanji"
+            ],
+            "all": []
+          },
+          {
+            "flag": "tbwt:lubufu_apprentice",
+            "any": [
+              "i have accepted lubufu's offer"
+            ],
+            "all": []
+          },
+          {
+            "flag": "tbwt:tinsay_banana",
+            "any": [
+              "he requires banana in karamja rum"
+            ],
+            "all": []
+          },
+          {
+            "flag": "tbwt:tinsay_banana_given",
+            "any": [
+              "i have given him sliced banana in karamja rum"
+            ],
+            "all": []
+          },
+          {
+            "flag": "tbwt:tinsay_sandwich",
+            "any": [
+              "he requires a seaweed in monkey skin sandwich"
+            ],
+            "all": []
+          },
+          {
+            "flag": "tbwt:tinsay_sandwich_given",
+            "any": [
+              "i have given him a seaweed in monkey skin sandwich"
+            ],
+            "all": []
+          },
+          {
+            "flag": "tbwt:tinsay_bones",
+            "any": [
+              "he requires burnt jogre bones marinated in karambwanji"
+            ],
+            "all": []
+          },
+          {
+            "flag": "tbwt:tinsay_done",
+            "any": [
+              "i have given him a burnt jogre bones marinated in"
+            ],
+            "all": []
+          }
+        ],
+        "monotonic": false
+      },
+      "prelude": [],
+      "sequences": [
+        {
+          "stage": "tbwt:0",
+          "required": [],
+          "terminal": false,
+          "recovery_entry": null,
+          "steps": [
+            {
+              "id": "start",
+              "kind": "talk",
+              "version": 1,
+              "advances": true,
+              "args": {
+                "npc": "tbwt_timfraku",
+                "anchor": {
+                  "tile": [
+                    2780,
+                    3087,
+                    1
+                  ],
+                  "source": "content/maps/m43_48.jm2:7133; content/pack/npc.pack:1163"
+                },
+                "leash": 8,
+                "prefer": [
+                  "Yes",
+                  "So far??",
+                  "Trufitus sent me.",
+                  "I am a roving adventurer."
+                ],
+                "strict": true,
+                "gap_ticks": 5
+              },
+              "skip_if": {
+                "Any": []
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "quest_colour",
+                  "version": 1,
+                  "args": {
+                    "quest": "tbwt",
+                    "is": "in_progress"
+                  }
+                }
+              },
+              "comment": "content/scripts/areas/area_karamja/scripts/tbwt_timfraku.rs2:1-9,49-56,88-103,116-132"
+            }
+          ]
+        },
+        {
+          "stage": "tbwt:started",
+          "required": [],
+          "terminal": false,
+          "recovery_entry": null,
+          "steps": [
+            {
+              "id": "watch-hunt",
+              "kind": "talk",
+              "version": 1,
+              "advances": true,
+              "args": {
+                "npc": "tbwt_tamayu",
+                "anchor": {
+                  "tile": [
+                    2844,
+                    3042,
+                    0
+                  ],
+                  "source": "content/scripts/quests/quest_tbwt/scripts/tbwt_tamayu.rs2:1-21,140-186,202-267; content/maps/m44_47.jm2:7573"
+                },
+                "leash": 8,
+                "prefer": [
+                  "Yes",
+                  "When will you succeed?",
+                  "Take me on your next hunt"
+                ],
+                "strict": true,
+                "gap_ticks": 30
+              },
+              "skip_if": {
+                "Any": [
+                  {
+                    "Fact": {
+                      "kind": "flag",
+                      "version": 1,
+                      "args": {
+                        "quest": "tbwt",
+                        "flag": "tbwt:tamayu_watched",
+                        "is": true
+                      }
+                    }
+                  },
+                  {
+                    "Fact": {
+                      "kind": "flag",
+                      "version": 1,
+                      "args": {
+                        "quest": "tbwt",
+                        "flag": "tbwt:tamayu_done",
+                        "is": true
+                      }
+                    }
+                  }
+                ]
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "flag",
+                  "version": 1,
+                  "args": {
+                    "quest": "tbwt",
+                    "flag": "tbwt:tamayu_watched",
+                    "is": true
+                  }
+                }
+              },
+              "comment": "content/scripts/quests/quest_tbwt/scripts/tbwt_tamayu.rs2:1-21,140-186,202-267; content/maps/m44_47.jm2:7573"
+            },
+            {
+              "id": "meet-tiadeche",
+              "kind": "talk",
+              "version": 1,
+              "advances": true,
+              "args": {
+                "npc": "tbwt_tiadeche",
+                "anchor": {
+                  "tile": [
+                    2912,
+                    3118,
+                    0
+                  ],
+                  "source": "content/scripts/quests/quest_tbwt/scripts/tbwt_tiadeche.rs2:1-19,113-125; content/maps/m45_48.jm2:6005"
+                },
+                "leash": 8,
+                "prefer": [
+                  "Is there anything I can do to help?"
+                ],
+                "strict": true
+              },
+              "skip_if": {
+                "Any": [
+                  {
+                    "Fact": {
+                      "kind": "flag",
+                      "version": 1,
+                      "args": {
+                        "quest": "tbwt",
+                        "flag": "tbwt:tiadeche_needs_fish",
+                        "is": true
+                      }
+                    }
+                  },
+                  {
+                    "Fact": {
+                      "kind": "flag",
+                      "version": 1,
+                      "args": {
+                        "quest": "tbwt",
+                        "flag": "tbwt:tiadeche_manual",
+                        "is": true
+                      }
+                    }
+                  },
+                  {
+                    "Fact": {
+                      "kind": "flag",
+                      "version": 1,
+                      "args": {
+                        "quest": "tbwt",
+                        "flag": "tbwt:tiadeche_done",
+                        "is": true
+                      }
+                    }
+                  }
+                ]
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "flag",
+                  "version": 1,
+                  "args": {
+                    "quest": "tbwt",
+                    "flag": "tbwt:tiadeche_needs_fish",
+                    "is": true
+                  }
+                }
+              },
+              "comment": "content/scripts/quests/quest_tbwt/scripts/tbwt_tiadeche.rs2:1-19,113-125; content/maps/m45_48.jm2:6005"
+            },
+            {
+              "id": "meet-lubufu",
+              "kind": "talk",
+              "version": 1,
+              "advances": true,
+              "args": {
+                "npc": "tbwt_lubufu",
+                "anchor": {
+                  "tile": [
+                    2770,
+                    3169,
+                    0
+                  ],
+                  "source": "content/scripts/quests/quest_tbwt/scripts/tbwt_lubufu.rs2:8-22,148-162; content/maps/m43_49.jm2:9181"
+                },
+                "leash": 8,
+                "prefer": [
+                  "Leave...",
+                  "Who are you?",
+                  "Talk about him..."
+                ],
+                "strict": true
+              },
+              "skip_if": {
+                "Any": [
+                  {
+                    "Fact": {
+                      "kind": "flag",
+                      "version": 1,
+                      "args": {
+                        "quest": "tbwt",
+                        "flag": "tbwt:lubufu_bait",
+                        "is": true
+                      }
+                    }
+                  },
+                  {
+                    "Fact": {
+                      "kind": "flag",
+                      "version": 1,
+                      "args": {
+                        "quest": "tbwt",
+                        "flag": "tbwt:lubufu_given",
+                        "is": true
+                      }
+                    }
+                  },
+                  {
+                    "Fact": {
+                      "kind": "flag",
+                      "version": 1,
+                      "args": {
+                        "quest": "tbwt",
+                        "flag": "tbwt:lubufu_apprentice",
+                        "is": true
+                      }
+                    }
+                  }
+                ]
+              },
+              "settle": {
+                "All": []
+              },
+              "comment": "content/scripts/quests/quest_tbwt/scripts/tbwt_lubufu.rs2:8-22,148-162; content/maps/m43_49.jm2:9181"
+            },
+            {
+              "id": "offer-bait-help",
+              "kind": "talk",
+              "version": 1,
+              "advances": true,
+              "args": {
+                "npc": "tbwt_lubufu",
+                "anchor": {
+                  "tile": [
+                    2770,
+                    3169,
+                    0
+                  ],
+                  "source": "content/scripts/quests/quest_tbwt/scripts/tbwt_lubufu.rs2:44-50,85-99,221-268; content/maps/m43_49.jm2:9181"
+                },
+                "leash": 8,
+                "prefer": [
+                  "You sound like you could do with the help.",
+                  "I could help collect the bait.",
+                  "How old are you?",
+                  "Talk about him..."
+                ],
+                "strict": true
+              },
+              "skip_if": {
+                "Any": [
+                  {
+                    "Fact": {
+                      "kind": "flag",
+                      "version": 1,
+                      "args": {
+                        "quest": "tbwt",
+                        "flag": "tbwt:lubufu_bait",
+                        "is": true
+                      }
+                    }
+                  },
+                  {
+                    "Fact": {
+                      "kind": "flag",
+                      "version": 1,
+                      "args": {
+                        "quest": "tbwt",
+                        "flag": "tbwt:lubufu_given",
+                        "is": true
+                      }
+                    }
+                  },
+                  {
+                    "Fact": {
+                      "kind": "flag",
+                      "version": 1,
+                      "args": {
+                        "quest": "tbwt",
+                        "flag": "tbwt:lubufu_apprentice",
+                        "is": true
+                      }
+                    }
+                  }
+                ]
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "flag",
+                  "version": 1,
+                  "args": {
+                    "quest": "tbwt",
+                    "flag": "tbwt:lubufu_bait",
+                    "is": true
+                  }
+                }
+              },
+              "comment": "content/scripts/quests/quest_tbwt/scripts/tbwt_lubufu.rs2:44-50,85-99,221-268; content/maps/m43_49.jm2:9181"
+            },
+            {
+              "id": "catch-ten-bait",
+              "kind": "interact",
+              "version": 1,
+              "advances": false,
+              "args": {
+                "target": {
+                  "npc": "0_43_47_karambwanji"
+                },
+                "op": "Net",
+                "anchor": {
+                  "tile": [
+                    2791,
+                    3019,
+                    0
+                  ],
+                  "source": "content/maps/m43_47.jm2:6487; content/pack/npc.pack:1175"
+                },
+                "radius": 8,
+                "until": {
+                  "obj": "tbwt_raw_karambwanji",
+                  "qty": 10
+                }
+              },
+              "skip_if": {
+                "Any": [
+                  {
+                    "Fact": {
+                      "kind": "flag",
+                      "version": 1,
+                      "args": {
+                        "quest": "tbwt",
+                        "flag": "tbwt:lubufu_given",
+                        "is": true
+                      }
+                    }
+                  },
+                  {
+                    "Fact": {
+                      "kind": "flag",
+                      "version": 1,
+                      "args": {
+                        "quest": "tbwt",
+                        "flag": "tbwt:lubufu_apprentice",
+                        "is": true
+                      }
+                    }
+                  },
+                  {
+                    "Fact": {
+                      "kind": "item_count_at_least",
+                      "version": 1,
+                      "args": {
+                        "obj": "tbwt_raw_karambwanji",
+                        "qty": 10
+                      }
+                    }
+                  }
+                ]
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "item_count_at_least",
+                  "version": 1,
+                  "args": {
+                    "obj": "tbwt_raw_karambwanji",
+                    "qty": 10
+                  }
+                }
+              },
+              "comment": "content/scripts/skill_fishing/scripts/fishing_spots/tbwt.rs2:25-53; content/scripts/skill_fishing/configs/fishing.npc:564-574"
+            },
+            {
+              "id": "give-bait",
+              "kind": "use_on",
+              "version": 1,
+              "advances": true,
+              "args": {
+                "item": "tbwt_raw_karambwanji",
+                "target": {
+                  "npc": "tbwt_lubufu"
+                },
+                "anchor": {
+                  "tile": [
+                    2770,
+                    3169,
+                    0
+                  ],
+                  "source": "content/scripts/quests/quest_tbwt/scripts/tbwt_lubufu.rs2:285-305; ten at a time until 20 are given; content/maps/m43_49.jm2:9181"
+                },
+                "radius": 8
+              },
+              "skip_if": {
+                "Any": [
+                  {
+                    "Fact": {
+                      "kind": "flag",
+                      "version": 1,
+                      "args": {
+                        "quest": "tbwt",
+                        "flag": "tbwt:lubufu_given",
+                        "is": true
+                      }
+                    }
+                  },
+                  {
+                    "Fact": {
+                      "kind": "flag",
+                      "version": 1,
+                      "args": {
+                        "quest": "tbwt",
+                        "flag": "tbwt:lubufu_apprentice",
+                        "is": true
+                      }
+                    }
+                  }
+                ]
+              },
+              "settle": {
+                "Any": [
+                  {"Not":{"Fact":{"kind":"has_item","version":1,"args":{"obj":"tbwt_raw_karambwanji"}}}},
+                  {"Fact":{"kind":"flag","version":1,"args":{"quest":"tbwt","flag":"tbwt:lubufu_given","is":true}}},
+                  {"Fact":{"kind":"flag","version":1,"args":{"quest":"tbwt","flag":"tbwt:lubufu_apprentice","is":true}}}
+                ]
+              },
+              "comment": "content/scripts/quests/quest_tbwt/scripts/tbwt_lubufu.rs2:285-305; ten at a time until 20 are given; content/maps/m43_49.jm2:9181"
+            },
+            {
+              "id": "catch-ten-bait-second",
+              "kind": "interact",
+              "version": 1,
+              "advances": false,
+              "args": {
+                "target": {
+                  "npc": "0_43_47_karambwanji"
+                },
+                "op": "Net",
+                "anchor": {
+                  "tile": [
+                    2791,
+                    3019,
+                    0
+                  ],
+                  "source": "content/maps/m43_47.jm2:6487; content/pack/npc.pack:1175"
+                },
+                "radius": 8,
+                "until": {
+                  "obj": "tbwt_raw_karambwanji",
+                  "qty": 10
+                }
+              },
+              "skip_if": {
+                "Any": [
+                  {
+                    "Fact": {
+                      "kind": "flag",
+                      "version": 1,
+                      "args": {
+                        "quest": "tbwt",
+                        "flag": "tbwt:lubufu_given",
+                        "is": true
+                      }
+                    }
+                  },
+                  {
+                    "Fact": {
+                      "kind": "flag",
+                      "version": 1,
+                      "args": {
+                        "quest": "tbwt",
+                        "flag": "tbwt:lubufu_apprentice",
+                        "is": true
+                      }
+                    }
+                  },
+                  {
+                    "Fact": {
+                      "kind": "item_count_at_least",
+                      "version": 1,
+                      "args": {
+                        "obj": "tbwt_raw_karambwanji",
+                        "qty": 10
+                      }
+                    }
+                  }
+                ]
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "item_count_at_least",
+                  "version": 1,
+                  "args": {
+                    "obj": "tbwt_raw_karambwanji",
+                    "qty": 10
+                  }
+                }
+              },
+              "comment": "content/scripts/skill_fishing/scripts/fishing_spots/tbwt.rs2:25-53; content/scripts/skill_fishing/configs/fishing.npc:564-574"
+            },
+            {
+              "id": "give-bait-second",
+              "kind": "use_on",
+              "version": 1,
+              "advances": true,
+              "args": {
+                "item": "tbwt_raw_karambwanji",
+                "target": {
+                  "npc": "tbwt_lubufu"
+                },
+                "anchor": {
+                  "tile": [
+                    2770,
+                    3169,
+                    0
+                  ],
+                  "source": "content/scripts/quests/quest_tbwt/scripts/tbwt_lubufu.rs2:285-305; ten at a time until 20 are given; content/maps/m43_49.jm2:9181"
+                },
+                "radius": 8
+              },
+              "skip_if": {
+                "Any": [
+                  {
+                    "Fact": {
+                      "kind": "flag",
+                      "version": 1,
+                      "args": {
+                        "quest": "tbwt",
+                        "flag": "tbwt:lubufu_given",
+                        "is": true
+                      }
+                    }
+                  },
+                  {
+                    "Fact": {
+                      "kind": "flag",
+                      "version": 1,
+                      "args": {
+                        "quest": "tbwt",
+                        "flag": "tbwt:lubufu_apprentice",
+                        "is": true
+                      }
+                    }
+                  }
+                ]
+              },
+              "settle": {
+                "Any": [
+                  {"Not":{"Fact":{"kind":"has_item","version":1,"args":{"obj":"tbwt_raw_karambwanji"}}}},
+                  {"Fact":{"kind":"flag","version":1,"args":{"quest":"tbwt","flag":"tbwt:lubufu_given","is":true}}},
+                  {"Fact":{"kind":"flag","version":1,"args":{"quest":"tbwt","flag":"tbwt:lubufu_apprentice","is":true}}}
+                ]
+              },
+              "comment": "content/scripts/quests/quest_tbwt/scripts/tbwt_lubufu.rs2:285-305; ten at a time until 20 are given; content/maps/m43_49.jm2:9181"
+            },
+            {
+              "id": "become-apprentice",
+              "kind": "talk",
+              "version": 1,
+              "advances": true,
+              "args": {
+                "npc": "tbwt_lubufu",
+                "anchor": {
+                  "tile": [
+                    2770,
+                    3169,
+                    0
+                  ],
+                  "source": "content/scripts/quests/quest_tbwt/scripts/tbwt_lubufu.rs2:170-182,307-367; content/maps/m43_49.jm2:9181"
+                },
+                "leash": 8,
+                "prefer": [
+                  "Yes!",
+                  "What is a Karambwan?"
+                ],
+                "strict": true,
+                "gap_ticks": 3
+              },
+              "skip_if": {
+                "Fact": {
+                  "kind": "flag",
+                  "version": 1,
+                  "args": {
+                    "quest": "tbwt",
+                    "flag": "tbwt:lubufu_apprentice",
+                    "is": true
+                  }
+                }
+              },
+              "settle": {
+                "All": []
+              },
+              "comment": "content/scripts/quests/quest_tbwt/scripts/tbwt_lubufu.rs2:170-182,307-367; content/maps/m43_49.jm2:9181"
+            },
+            {
+              "id": "apprentice-question-two",
+              "kind": "talk",
+              "version": 1,
+              "advances": true,
+              "args": {
+                "npc": "tbwt_lubufu",
+                "anchor": {
+                  "tile": [
+                    2770,
+                    3169,
+                    0
+                  ],
+                  "source": "content/scripts/quests/quest_tbwt/scripts/tbwt_lubufu.rs2:170-182,307-367; content/maps/m43_49.jm2:9181"
+                },
+                "leash": 8,
+                "prefer": [
+                  "Yes!",
+                  "What is a Karambwan?"
+                ],
+                "strict": true,
+                "gap_ticks": 3
+              },
+              "skip_if": {
+                "Fact": {
+                  "kind": "flag",
+                  "version": 1,
+                  "args": {
+                    "quest": "tbwt",
+                    "flag": "tbwt:lubufu_apprentice",
+                    "is": true
+                  }
+                }
+              },
+              "settle": {
+                "All": []
+              },
+              "comment": "content/scripts/quests/quest_tbwt/scripts/tbwt_lubufu.rs2:170-182,307-367; content/maps/m43_49.jm2:9181"
+            },
+            {
+              "id": "apprentice-question-three",
+              "kind": "talk",
+              "version": 1,
+              "advances": true,
+              "args": {
+                "npc": "tbwt_lubufu",
+                "anchor": {
+                  "tile": [
+                    2770,
+                    3169,
+                    0
+                  ],
+                  "source": "content/scripts/quests/quest_tbwt/scripts/tbwt_lubufu.rs2:170-182,307-367; content/maps/m43_49.jm2:9181"
+                },
+                "leash": 8,
+                "prefer": [
+                  "Yes!",
+                  "What is a Karambwan?"
+                ],
+                "strict": true,
+                "gap_ticks": 3
+              },
+              "skip_if": {
+                "Fact": {
+                  "kind": "flag",
+                  "version": 1,
+                  "args": {
+                    "quest": "tbwt",
+                    "flag": "tbwt:lubufu_apprentice",
+                    "is": true
+                  }
+                }
+              },
+              "settle": {
+                "All": []
+              },
+              "comment": "content/scripts/quests/quest_tbwt/scripts/tbwt_lubufu.rs2:170-182,307-367; content/maps/m43_49.jm2:9181"
+            },
+            {
+              "id": "catch-two-bait",
+              "kind": "interact",
+              "version": 1,
+              "advances": false,
+              "args": {
+                "target": {
+                  "npc": "0_43_47_karambwanji"
+                },
+                "op": "Net",
+                "anchor": {
+                  "tile": [
+                    2791,
+                    3019,
+                    0
+                  ],
+                  "source": "content/maps/m43_47.jm2:6487"
+                },
+                "radius": 8,
+                "until": {
+                  "obj": "tbwt_raw_karambwanji",
+                  "qty": 2
+                }
+              },
+              "skip_if": {
+                "Any": [
+                  {
+                    "Fact": {
+                      "kind": "item_count_at_least",
+                      "version": 1,
+                      "args": {
+                        "obj": "tbwt_raw_karambwanji",
+                        "qty": 2
+                      }
+                    }
+                  },
+                  {
+                    "Fact": {
+                      "kind": "flag",
+                      "version": 1,
+                      "args": {
+                        "quest": "tbwt",
+                        "flag": "tbwt:tiadeche_manual",
+                        "is": true
+                      }
+                    }
+                  },
+                  {
+                    "Fact": {
+                      "kind": "flag",
+                      "version": 1,
+                      "args": {
+                        "quest": "tbwt",
+                        "flag": "tbwt:tiadeche_done",
+                        "is": true
+                      }
+                    }
+                  }
+                ]
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "item_count_at_least",
+                  "version": 1,
+                  "args": {
+                    "obj": "tbwt_raw_karambwanji",
+                    "qty": 2
+                  }
+                }
+              },
+              "comment": "content/scripts/skill_fishing/scripts/fishing_spots/tbwt.rs2:25-53"
+            },
+            {
+              "id": "bait-vessel",
+              "kind": "use_on",
+              "version": 1,
+              "advances": false,
+              "args": {
+                "item": "tbwt_raw_karambwanji",
+                "target": {
+                  "item": "tbwt_karambwan_vessel"
+                },
+                "product": "tbwt_karambwan_vessel_loaded_with_karambwanji"
+              },
+              "skip_if": {
+                "Any": [
+                  {
+                    "Fact": {
+                      "kind": "has_item",
+                      "version": 1,
+                      "args": {
+                        "obj": "tbwt_karambwan_vessel_loaded_with_karambwanji"
+                      }
+                    }
+                  },
+                  {
+                    "Fact": {
+                      "kind": "flag",
+                      "version": 1,
+                      "args": {
+                        "quest": "tbwt",
+                        "flag": "tbwt:tiadeche_manual",
+                        "is": true
+                      }
+                    }
+                  },
+                  {
+                    "Fact": {
+                      "kind": "flag",
+                      "version": 1,
+                      "args": {
+                        "quest": "tbwt",
+                        "flag": "tbwt:tiadeche_done",
+                        "is": true
+                      }
+                    }
+                  }
+                ]
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "has_item",
+                  "version": 1,
+                  "args": {
+                    "obj": "tbwt_karambwan_vessel_loaded_with_karambwanji"
+                  }
+                }
+              },
+              "comment": "content/scripts/quests/quest_tbwt/scripts/quest_tbwt.rs2:42-56,243-258"
+            },
+            {
+              "id": "give-loaded-vessel",
+              "kind": "use_on",
+              "version": 1,
+              "advances": true,
+              "args": {
+                "item": "tbwt_karambwan_vessel_loaded_with_karambwanji",
+                "target": {
+                  "npc": "tbwt_tiadeche"
+                },
+                "anchor": {
+                  "tile": [
+                    2912,
+                    3118,
+                    0
+                  ],
+                  "source": "content/scripts/quests/quest_tbwt/scripts/tbwt_tiadeche.rs2:65-95,155-164; content/maps/m45_48.jm2:6005"
+                },
+                "radius": 8,
+                "dialogue": {
+                  "prefer": [
+                    "Yes"
+                  ],
+                  "strict": true,
+                  "gap_ticks": 11
+                }
+              },
+              "skip_if": {
+                "Any": [
+                  {
+                    "Fact": {
+                      "kind": "flag",
+                      "version": 1,
+                      "args": {
+                        "quest": "tbwt",
+                        "flag": "tbwt:tiadeche_manual",
+                        "is": true
+                      }
+                    }
+                  },
+                  {
+                    "Fact": {
+                      "kind": "flag",
+                      "version": 1,
+                      "args": {
+                        "quest": "tbwt",
+                        "flag": "tbwt:tiadeche_done",
+                        "is": true
+                      }
+                    }
+                  }
+                ]
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "flag",
+                  "version": 1,
+                  "args": {
+                    "quest": "tbwt",
+                    "flag": "tbwt:tiadeche_manual",
+                    "is": true
+                  }
+                }
+              },
+              "comment": "content/scripts/quests/quest_tbwt/scripts/tbwt_tiadeche.rs2:65-95,155-164; content/maps/m45_48.jm2:6005"
+            },
+            {
+              "id": "cook-poison-karambwan",
+              "kind": "acquire",
+              "version": 1,
+              "args": {"recipe": "GAP-tbwt-karambwan-retry-budget", "max_restarts": 31},
+              "skip_if": {
+                "Any": [
+                  {
+                    "Fact": {
+                      "kind": "has_item",
+                      "version": 1,
+                      "args": {
+                        "obj": "tbwt_poorly_cooked_karambwan"
+                      }
+                    }
+                  },
+                  {
+                    "Fact": {
+                      "kind": "has_item",
+                      "version": 1,
+                      "args": {
+                        "obj": "tbwt_poisonous_karambwan_paste"
+                      }
+                    }
+                  },
+                  {
+                    "Fact": {
+                      "kind": "has_item",
+                      "version": 1,
+                      "args": {
+                        "obj": "tbwt_iron_spear_kp"
+                      }
+                    }
+                  },
+                  {
+                    "Fact": {
+                      "kind": "flag",
+                      "version": 1,
+                      "args": {
+                        "quest": "tbwt",
+                        "flag": "tbwt:tamayu_spear",
+                        "is": true
+                      }
+                    }
+                  },
+                  {
+                    "Fact": {
+                      "kind": "flag",
+                      "version": 1,
+                      "args": {
+                        "quest": "tbwt",
+                        "flag": "tbwt:tamayu_done",
+                        "is": true
+                      }
+                    }
+                  }
+                ]
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "has_item",
+                  "version": 1,
+                  "args": {
+                    "obj": "tbwt_poorly_cooked_karambwan"
+                  }
+                }
+              },
+              "comment": "content/scripts/skill_cooking/scripts/cooking.rs2:32-50,142-154; content/scripts/skill_cooking/configs/cooking_source/cooking_generic.dbrow:559-571; content/maps/m43_49.jm2:6474"
+            },
+            {
+              "id": "grind-poison-karambwan",
+              "kind": "use_on",
+              "version": 1,
+              "advances": false,
+              "args": {
+                "item": "pestle_and_mortar",
+                "target": {
+                  "item": "tbwt_poorly_cooked_karambwan"
+                },
+                "product": "tbwt_poisonous_karambwan_paste"
+              },
+              "skip_if": {
+                "Any": [
+                  {
+                    "Fact": {
+                      "kind": "has_item",
+                      "version": 1,
+                      "args": {
+                        "obj": "tbwt_poisonous_karambwan_paste"
+                      }
+                    }
+                  },
+                  {
+                    "Fact": {
+                      "kind": "has_item",
+                      "version": 1,
+                      "args": {
+                        "obj": "tbwt_iron_spear_kp"
+                      }
+                    }
+                  },
+                  {
+                    "Fact": {
+                      "kind": "flag",
+                      "version": 1,
+                      "args": {
+                        "quest": "tbwt",
+                        "flag": "tbwt:tamayu_spear",
+                        "is": true
+                      }
+                    }
+                  },
+                  {
+                    "Fact": {
+                      "kind": "flag",
+                      "version": 1,
+                      "args": {
+                        "quest": "tbwt",
+                        "flag": "tbwt:tamayu_done",
+                        "is": true
+                      }
+                    }
+                  }
+                ]
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "has_item",
+                  "version": 1,
+                  "args": {
+                    "obj": "tbwt_poisonous_karambwan_paste"
+                  }
+                }
+              },
+              "comment": "content/scripts/quests/quest_tbwt/scripts/quest_tbwt.rs2:231-234; content/scripts/_unpack/274/all.obj:19-36"
+            },
+            {
+              "id": "hunt-jogre-for-iron-spear",
+              "kind": "combat",
+              "version": 1,
+              "advances": false,
+              "args": {
+                "target": {"npc": "jogre", "not_targeting_others": true, "pick": "nearest"},
+                "stand": {"tile": [2916, 3055, 0], "source": "content/maps/m45_47.jm2:7425; content/scripts/_unpack/225/all.npc:2905-2939"},
+                "tactic": {"kind": "open", "style": "melee", "engage_radius": 8, "auto_retaliate": true},
+                "lost_radius": 18,
+                "kill_budget_ticks": 240,
+                "loot": ["tbwt_jogre_bones"],
+                "until_drop": {"obj": "iron_spear", "max_kills": 293, "stop": "GAP-tbwt-jogre-spear-budget"}
+              },
+              "skip_if": {"Any": [
+                {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "iron_spear"}}},
+                {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "tbwt_iron_spear_kp"}}},
+                {"Fact": {"kind": "flag", "version": 1, "args": {"quest": "tbwt", "flag": "tbwt:tamayu_spear", "is": true}}},
+                {"Fact": {"kind": "flag", "version": 1, "args": {"quest": "tbwt", "flag": "tbwt:tamayu_done", "is": true}}}
+              ]},
+              "settle": {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "iron_spear"}}},
+              "comment": "The quest requires Jogre bones: content/scripts/quests/quest_tbwt/scripts/tbwt_journal.rs2:13-15,149-153; content/scripts/_unpack/225/all.npc:2905-2939. The same kills drop iron spear at 4/129: content/scripts/drop tables/scripts/jogre.rs2:12-22. Expected kills 129/4 = 32.25; (125/129)^293 = 0.00009814. Bronze spears do not set the acceptable flag: content/scripts/quests/quest_tbwt/scripts/tbwt_tamayu.rs2:96-125."
+            },
+            {
+              "id": "poison-iron-spear",
+              "kind": "use_on",
+              "version": 1,
+              "advances": false,
+              "args": {
+                "item": "tbwt_poisonous_karambwan_paste",
+                "target": {
+                  "item": "iron_spear"
+                },
+                "product": "tbwt_iron_spear_kp"
+              },
+              "skip_if": {
+                "Any": [
+                  {
+                    "Fact": {
+                      "kind": "has_item",
+                      "version": 1,
+                      "args": {
+                        "obj": "tbwt_iron_spear_kp"
+                      }
+                    }
+                  },
+                  {
+                    "Fact": {
+                      "kind": "flag",
+                      "version": 1,
+                      "args": {
+                        "quest": "tbwt",
+                        "flag": "tbwt:tamayu_spear",
+                        "is": true
+                      }
+                    }
+                  },
+                  {
+                    "Fact": {
+                      "kind": "flag",
+                      "version": 1,
+                      "args": {
+                        "quest": "tbwt",
+                        "flag": "tbwt:tamayu_done",
+                        "is": true
+                      }
+                    }
+                  }
+                ]
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "has_item",
+                  "version": 1,
+                  "args": {
+                    "obj": "tbwt_iron_spear_kp"
+                  }
+                }
+              },
+              "comment": "content/scripts/skill_combat/scripts/weapon_poison.rs2:10-12,122-134; content/scripts/skill_combat/configs/melee/spears.obj:93-96"
+            },
+            {
+              "id": "give-poisoned-spear",
+              "kind": "use_on",
+              "version": 1,
+              "advances": true,
+              "args": {
+                "item": "tbwt_iron_spear_kp",
+                "target": {
+                  "npc": "tbwt_tamayu"
+                },
+                "anchor": {
+                  "tile": [
+                    2844,
+                    3042,
+                    0
+                  ],
+                  "source": "content/scripts/quests/quest_tbwt/scripts/tbwt_tamayu.rs2:96-131; content/maps/m44_47.jm2:7573"
+                },
+                "radius": 8
+              },
+              "skip_if": {
+                "Any": [
+                  {
+                    "Fact": {
+                      "kind": "flag",
+                      "version": 1,
+                      "args": {
+                        "quest": "tbwt",
+                        "flag": "tbwt:tamayu_spear",
+                        "is": true
+                      }
+                    }
+                  },
+                  {
+                    "Fact": {
+                      "kind": "flag",
+                      "version": 1,
+                      "args": {
+                        "quest": "tbwt",
+                        "flag": "tbwt:tamayu_done",
+                        "is": true
+                      }
+                    }
+                  }
+                ]
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "flag",
+                  "version": 1,
+                  "args": {
+                    "quest": "tbwt",
+                    "flag": "tbwt:tamayu_spear",
+                    "is": true
+                  }
+                }
+              },
+              "comment": "content/scripts/quests/quest_tbwt/scripts/tbwt_tamayu.rs2:96-131; content/maps/m44_47.jm2:7573"
+            },
+            {
+              "id": "GAP-tbwt-agility-arena",
+              "kind": "wait",
+              "version": 1,
+              "args": {"until": {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "4dose1agility"}}}, "max_ticks": 20, "park_on_timeout": true},
+              "skip_if": {"Any": [{"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "4dose1agility"}}}, {"Fact": {"kind": "flag", "version": 1, "args": {"quest": "tbwt", "flag": "tbwt:tamayu_agile", "is": true}}}, {"Fact": {"kind": "flag", "version": 1, "args": {"quest": "tbwt", "flag": "tbwt:tamayu_done", "is": true}}}]},
+              "settle": {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "4dose1agility"}}},
+              "comment": "GAP: Agility Arena pillar tracking and the ticket exchange widget. The trader sells toadflax for three tickets: content/scripts/minigames/game_agilityarena/scripts/agilityarena_tickettrader.rs2:17-20,51-52,70-76. Successive active pillars award tickets: content/scripts/minigames/game_agilityarena/scripts/agilityarena.rs2:50-84. Herblore 34 produces three-dose potions: content/scripts/skill_herblore/configs/brewing/brew_potion.struct:229-249. This wait does not perform these actions."
+            },
+            {
+              "id": "give-agility",
+              "kind": "use_on",
+              "version": 1,
+              "advances": true,
+              "args": {
+                "item": "4dose1agility",
+                "target": {
+                  "npc": "tbwt_tamayu"
+                },
+                "anchor": {
+                  "tile": [
+                    2844,
+                    3042,
+                    0
+                  ],
+                  "source": "content/scripts/quests/quest_tbwt/scripts/tbwt_tamayu.rs2:58-93; content/maps/m44_47.jm2:7573"
+                },
+                "radius": 8,
+                "dialogue": {
+                  "gap_ticks": 4
+                }
+              },
+              "skip_if": {
+                "Any": [
+                  {
+                    "Fact": {
+                      "kind": "flag",
+                      "version": 1,
+                      "args": {
+                        "quest": "tbwt",
+                        "flag": "tbwt:tamayu_agile",
+                        "is": true
+                      }
+                    }
+                  },
+                  {
+                    "Fact": {
+                      "kind": "flag",
+                      "version": 1,
+                      "args": {
+                        "quest": "tbwt",
+                        "flag": "tbwt:tamayu_done",
+                        "is": true
+                      }
+                    }
+                  }
+                ]
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "flag",
+                  "version": 1,
+                  "args": {
+                    "quest": "tbwt",
+                    "flag": "tbwt:tamayu_agile",
+                    "is": true
+                  }
+                }
+              },
+              "comment": "content/scripts/quests/quest_tbwt/scripts/tbwt_tamayu.rs2:58-93; content/maps/m44_47.jm2:7573"
+            },
+            {
+              "id": "finish-hunt",
+              "kind": "talk",
+              "version": 1,
+              "advances": true,
+              "args": {
+                "npc": "tbwt_tamayu",
+                "anchor": {
+                  "tile": [
+                    2844,
+                    3042,
+                    0
+                  ],
+                  "source": "content/scripts/quests/quest_tbwt/scripts/tbwt_tamayu.rs2:191-196,202-208,271-329; content/maps/m44_47.jm2:7573"
+                },
+                "leash": 8,
+                "prefer": [
+                  "Take me on your next hunt for the Shaikahan"
+                ],
+                "strict": true,
+                "gap_ticks": 30
+              },
+              "skip_if": {
+                "Fact": {
+                  "kind": "flag",
+                  "version": 1,
+                  "args": {
+                    "quest": "tbwt",
+                    "flag": "tbwt:tamayu_done",
+                    "is": true
+                  }
+                }
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "flag",
+                  "version": 1,
+                  "args": {
+                    "quest": "tbwt",
+                    "flag": "tbwt:tamayu_done",
+                    "is": true
+                  }
+                }
+              },
+              "comment": "content/scripts/quests/quest_tbwt/scripts/tbwt_tamayu.rs2:191-196,202-208,271-329; content/maps/m44_47.jm2:7573"
+            },
+            {
+              "id": "buy-monkey-air-runes", "kind": "buy", "version": 1,
+              "args": {"shop": {"npc": "betty", "anchor": {"tile": [3012, 3259, 0], "source": "content/maps/m47_50.jm2:10002; content/pack/npc.pack:584"}}, "obj": "airrune", "qty": 50, "est_gp": 225},
+              "skip_if": {"Any": [{"Fact": {"kind": "item_count_at_least", "version": 1, "args": {"obj": "airrune", "qty": 50}}}, {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "tbwt_monkey_corpse"}}}, {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "tbwt_monkey_skin"}}}, {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "tbwt_seaweed_in_monkey_skin_sandwich"}}}, {"Fact": {"kind": "flag", "version": 1, "args": {"quest": "tbwt", "flag": "tbwt:tinsay_sandwich_given", "is": true}}}]},
+              "settle": {"Fact": {"kind": "item_count_at_least", "version": 1, "args": {"obj": "airrune", "qty": 50}}},
+              "comment": "Fifty at full stock cost 25*4 + 25*5 = 225: content/scripts/areas/area_port_sarim/configs/port_sarim.inv:35-46; content/scripts/areas/area_port_sarim/configs/port_sarim.npc:187-222; content/scripts/skill_magic/configs/runes.obj:26-30; content/scripts/shop/scripts/shop.rs2:131-147,182-187."
+            },
+            {
+              "id": "buy-monkey-mind-runes", "kind": "buy", "version": 1,
+              "args": {"shop": {"npc": "betty", "anchor": {"tile": [3012, 3259, 0], "source": "content/maps/m47_50.jm2:10002; content/pack/npc.pack:584"}}, "obj": "mindrune", "qty": 50, "est_gp": 166},
+              "skip_if": {"Any": [{"Fact": {"kind": "item_count_at_least", "version": 1, "args": {"obj": "mindrune", "qty": 50}}}, {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "tbwt_monkey_corpse"}}}, {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "tbwt_monkey_skin"}}}, {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "tbwt_seaweed_in_monkey_skin_sandwich"}}}, {"Fact": {"kind": "flag", "version": 1, "args": {"quest": "tbwt", "flag": "tbwt:tinsay_sandwich_given", "is": true}}}]},
+              "settle": {"Fact": {"kind": "item_count_at_least", "version": 1, "args": {"obj": "mindrune", "qty": 50}}},
+              "comment": "Fifty at full stock cost 34*3 + 16*4 = 166: content/scripts/areas/area_port_sarim/configs/port_sarim.inv:35-46; content/scripts/areas/area_port_sarim/configs/port_sarim.npc:187-222; content/scripts/skill_magic/configs/runes.obj:50-54; content/scripts/shop/scripts/shop.rs2:131-147,182-187."
+            },
+            {
+              "id": "hunt-monkey",
+              "kind": "combat",
+              "version": 1,
+              "advances": false,
+              "args": {
+                "target": {
+                  "npc": "monkey",
+                  "not_targeting_others": true,
+                  "pick": "nearest"
+                },
+                "stand": {
+                  "tile": [
+                    2837,
+                    3029,
+                    0
+                  ],
+                  "source": "content/scripts/quests/quest_tbwt/scripts/monkey.rs2:11-15,63-73; content/maps/m44_47.jm2:7568"
+                },
+                "tactic": {
+                  "kind": "open",
+                  "style": "mage",
+                  "engage_radius": 8,
+                  "auto_retaliate": false
+                },
+                "spells": [
+                  "wind_strike"
+                ],
+                "lost_radius": 18,
+                "kill_budget_ticks": 240,
+                "loot": [
+                  "tbwt_monkey_corpse"
+                ],
+                "until": {
+                  "Fact": {
+                    "kind": "has_item",
+                    "version": 1,
+                    "args": {
+                      "obj": "tbwt_monkey_corpse"
+                    }
+                  }
+                }
+              },
+              "skip_if": {
+                "Any": [
+                  {
+                    "Fact": {
+                      "kind": "has_item",
+                      "version": 1,
+                      "args": {
+                        "obj": "tbwt_monkey_corpse"
+                      }
+                    }
+                  },
+                  {
+                    "Fact": {
+                      "kind": "has_item",
+                      "version": 1,
+                      "args": {
+                        "obj": "tbwt_monkey_skin"
+                      }
+                    }
+                  },
+                  {
+                    "Fact": {
+                      "kind": "has_item",
+                      "version": 1,
+                      "args": {
+                        "obj": "tbwt_seaweed_in_monkey_skin_sandwich"
+                      }
+                    }
+                  },
+                  {
+                    "Fact": {
+                      "kind": "flag",
+                      "version": 1,
+                      "args": {
+                        "quest": "tbwt",
+                        "flag": "tbwt:tinsay_sandwich_given",
+                        "is": true
+                      }
+                    }
+                  },
+                  {
+                    "Fact": {
+                      "kind": "flag",
+                      "version": 1,
+                      "args": {
+                        "quest": "tbwt",
+                        "flag": "tbwt:tinsay_done",
+                        "is": true
+                      }
+                    }
+                  }
+                ]
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "has_item",
+                  "version": 1,
+                  "args": {
+                    "obj": "tbwt_monkey_corpse"
+                  }
+                }
+              },
+              "comment": "content/scripts/quests/quest_tbwt/scripts/monkey.rs2:11-15,63-73; content/maps/m44_47.jm2:7568"
+            },
+            {
+              "id": "skin-monkey",
+              "kind": "use_on",
+              "version": 1,
+              "advances": false,
+              "args": {
+                "item": "tbwt_monkey_corpse",
+                "target": {
+                  "npc": "tbwt_tamayu"
+                },
+                "anchor": {
+                  "tile": [
+                    2844,
+                    3042,
+                    0
+                  ],
+                  "source": "content/scripts/quests/quest_tbwt/scripts/tbwt_tamayu.rs2:27-55; content/maps/m44_47.jm2:7573"
+                },
+                "radius": 8,
+                "dialogue": {
+                  "gap_ticks": 4
+                }
+              },
+              "skip_if": {
+                "Any": [
+                  {
+                    "Fact": {
+                      "kind": "has_item",
+                      "version": 1,
+                      "args": {
+                        "obj": "tbwt_monkey_skin"
+                      }
+                    }
+                  },
+                  {
+                    "Fact": {
+                      "kind": "has_item",
+                      "version": 1,
+                      "args": {
+                        "obj": "tbwt_seaweed_in_monkey_skin_sandwich"
+                      }
+                    }
+                  },
+                  {
+                    "Fact": {
+                      "kind": "flag",
+                      "version": 1,
+                      "args": {
+                        "quest": "tbwt",
+                        "flag": "tbwt:tinsay_sandwich",
+                        "is": true
+                      }
+                    }
+                  },
+                  {
+                    "Fact": {
+                      "kind": "flag",
+                      "version": 1,
+                      "args": {
+                        "quest": "tbwt",
+                        "flag": "tbwt:tinsay_done",
+                        "is": true
+                      }
+                    }
+                  }
+                ]
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "has_item",
+                  "version": 1,
+                  "args": {
+                    "obj": "tbwt_monkey_skin"
+                  }
+                }
+              },
+              "comment": "content/scripts/quests/quest_tbwt/scripts/tbwt_tamayu.rs2:27-55; content/maps/m44_47.jm2:7573"
+            },
+            {
+              "id": "take-seaweed", "kind": "interact", "version": 1, "advances": false,
+              "args": {"target": {"ground": "seaweed"}, "op": "Take", "anchor": {"tile": [2757,3109,0], "source": "content/maps/m43_48.jm2:7135-7139; content/pack/obj.pack:402"}, "radius": 2, "wait_if_missing": true},
+              "comment": "The ground spawn supplies seaweed for the sandwich: content/maps/m43_48.jm2:7135-7139; content/scripts/quests/quest_tbwt/scripts/quest_tbwt.rs2:136-143.",
+              "skip_if": {"Any": [{"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "seaweed"}}}, {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "tbwt_seaweed_in_monkey_skin_sandwich"}}}]},
+              "settle": {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "seaweed"}}}
+            },
+            {
+              "id": "make-sandwich",
+              "kind": "use_on",
+              "version": 1,
+              "advances": false,
+              "args": {
+                "item": "seaweed",
+                "target": {
+                  "item": "tbwt_monkey_skin"
+                },
+                "product": "tbwt_seaweed_in_monkey_skin_sandwich"
+              },
+              "skip_if": {
+                "Any": [
+                  {
+                    "Fact": {
+                      "kind": "has_item",
+                      "version": 1,
+                      "args": {
+                        "obj": "tbwt_seaweed_in_monkey_skin_sandwich"
+                      }
+                    }
+                  },
+                  {
+                    "Fact": {
+                      "kind": "flag",
+                      "version": 1,
+                      "args": {
+                        "quest": "tbwt",
+                        "flag": "tbwt:tinsay_sandwich",
+                        "is": true
+                      }
+                    }
+                  },
+                  {
+                    "Fact": {
+                      "kind": "flag",
+                      "version": 1,
+                      "args": {
+                        "quest": "tbwt",
+                        "flag": "tbwt:tinsay_done",
+                        "is": true
+                      }
+                    }
+                  }
+                ]
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "has_item",
+                  "version": 1,
+                  "args": {
+                    "obj": "tbwt_seaweed_in_monkey_skin_sandwich"
+                  }
+                }
+              },
+              "comment": "content/scripts/quests/quest_tbwt/scripts/quest_tbwt.rs2:171-177"
+            },
+            {
+              "id": "pick-banana", "kind": "interact", "version": 1, "advances": false,
+              "args": {"target": {"loc": "bananatreefull"}, "op": "Search", "anchor": {"tile": [2909,3158,0], "source": "content/maps/m45_49.jm2:5238; content/pack/loc.pack:2074"}, "radius": 6},
+              "comment": "content/scripts/areas/area_karamja/configs/plantation.loc:1-10 defines Search; content/scripts/areas/area_karamja/scripts/banana_tree.rs2:1-12 adds a banana.",
+              "skip_if": {"Any": [{"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "banana"}}}, {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "tbwt_sliced_banana"}}}, {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "tbwt_sliced_banana_in_karamja_rum"}}}]},
+              "settle": {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "banana"}}}
+            },
+            {
+              "id": "buy-karamja-rum", "kind": "talk", "version": 1, "advances": false,
+              "args": {"npc": "deadmans_bartender", "anchor": {"tile": [2797,3155,0], "source": "content/maps/m43_49.jm2:9209; content/pack/npc.pack:736"}, "leash": 8, "prefer": ["A bottle of rum please."], "strict": true},
+              "comment": "content/scripts/areas/area_brimhaven/scripts/bartender.rs2:22-30 charges 27 coins for the rum.",
+              "skip_if": {"Any": [{"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "karamja_rum"}}}, {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "tbwt_sliced_banana_in_karamja_rum"}}}]},
+              "settle": {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "karamja_rum"}}}
+            },
+            {
+              "id": "slice-banana",
+              "kind": "use_on",
+              "version": 1,
+              "advances": false,
+              "args": {
+                "item": "knife",
+                "target": {
+                  "item": "banana"
+                },
+                "product": "tbwt_sliced_banana"
+              },
+              "skip_if": {
+                "Any": [
+                  {
+                    "Fact": {
+                      "kind": "has_item",
+                      "version": 1,
+                      "args": {
+                        "obj": "tbwt_sliced_banana"
+                      }
+                    }
+                  },
+                  {
+                    "Fact": {
+                      "kind": "has_item",
+                      "version": 1,
+                      "args": {
+                        "obj": "tbwt_sliced_banana_in_karamja_rum"
+                      }
+                    }
+                  },
+                  {
+                    "Fact": {
+                      "kind": "flag",
+                      "version": 1,
+                      "args": {
+                        "quest": "tbwt",
+                        "flag": "tbwt:tinsay_banana_given",
+                        "is": true
+                      }
+                    }
+                  },
+                  {
+                    "Fact": {
+                      "kind": "flag",
+                      "version": 1,
+                      "args": {
+                        "quest": "tbwt",
+                        "flag": "tbwt:tinsay_done",
+                        "is": true
+                      }
+                    }
+                  }
+                ]
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "has_item",
+                  "version": 1,
+                  "args": {
+                    "obj": "tbwt_sliced_banana"
+                  }
+                }
+              },
+              "comment": "content/scripts/quests/quest_tbwt/scripts/quest_tbwt.rs2:181-193"
+            },
+            {
+              "id": "mix-banana-rum",
+              "kind": "use_on",
+              "version": 1,
+              "advances": false,
+              "args": {
+                "item": "tbwt_sliced_banana",
+                "target": {
+                  "item": "karamja_rum"
+                },
+                "product": "tbwt_sliced_banana_in_karamja_rum"
+              },
+              "skip_if": {
+                "Any": [
+                  {
+                    "Fact": {
+                      "kind": "has_item",
+                      "version": 1,
+                      "args": {
+                        "obj": "tbwt_sliced_banana_in_karamja_rum"
+                      }
+                    }
+                  },
+                  {
+                    "Fact": {
+                      "kind": "flag",
+                      "version": 1,
+                      "args": {
+                        "quest": "tbwt",
+                        "flag": "tbwt:tinsay_banana_given",
+                        "is": true
+                      }
+                    }
+                  },
+                  {
+                    "Fact": {
+                      "kind": "flag",
+                      "version": 1,
+                      "args": {
+                        "quest": "tbwt",
+                        "flag": "tbwt:tinsay_done",
+                        "is": true
+                      }
+                    }
+                  }
+                ]
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "has_item",
+                  "version": 1,
+                  "args": {
+                    "obj": "tbwt_sliced_banana_in_karamja_rum"
+                  }
+                }
+              },
+              "comment": "content/scripts/quests/quest_tbwt/scripts/quest_tbwt.rs2:136-143"
+            },
+            {
+              "id": "hunt-jogre",
+              "kind": "combat",
+              "version": 1,
+              "advances": false,
+              "args": {
+                "target": {
+                  "npc": "jogre",
+                  "not_targeting_others": true,
+                  "pick": "nearest"
+                },
+                "stand": {
+                  "tile": [
+                    2916,
+                    3055,
+                    0
+                  ],
+                  "source": "content/scripts/quests/quest_tbwt/scripts/tbwt_journal.rs2:13-15; content/scripts/_unpack/225/all.npc:2939; content/maps/m45_47.jm2:7425"
+                },
+                "tactic": {
+                  "kind": "open",
+                  "style": "melee",
+                  "engage_radius": 8,
+                  "auto_retaliate": true
+                },
+                "lost_radius": 18,
+                "kill_budget_ticks": 240,
+                "loot": [
+                  "tbwt_jogre_bones"
+                ],
+                "until": {
+                  "Fact": {
+                    "kind": "has_item",
+                    "version": 1,
+                    "args": {
+                      "obj": "tbwt_jogre_bones"
+                    }
+                  }
+                }
+              },
+              "skip_if": {
+                "Any": [
+                  {
+                    "Fact": {
+                      "kind": "has_item",
+                      "version": 1,
+                      "args": {
+                        "obj": "tbwt_jogre_bones"
+                      }
+                    }
+                  },
+                  {
+                    "Fact": {
+                      "kind": "has_item",
+                      "version": 1,
+                      "args": {
+                        "obj": "tbwt_burnt_jogre_bones"
+                      }
+                    }
+                  },
+                  {
+                    "Fact": {
+                      "kind": "has_item",
+                      "version": 1,
+                      "args": {
+                        "obj": "tbwt_burnt_jogre_bones_in_raw_karambwanji_paste"
+                      }
+                    }
+                  },
+                  {
+                    "Fact": {
+                      "kind": "has_item",
+                      "version": 1,
+                      "args": {
+                        "obj": "tbwt_burnt_jogre_bones_marinated_in_karambwanji"
+                      }
+                    }
+                  },
+                  {
+                    "Fact": {
+                      "kind": "flag",
+                      "version": 1,
+                      "args": {
+                        "quest": "tbwt",
+                        "flag": "tbwt:tinsay_done",
+                        "is": true
+                      }
+                    }
+                  }
+                ]
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "has_item",
+                  "version": 1,
+                  "args": {
+                    "obj": "tbwt_jogre_bones"
+                  }
+                }
+              },
+              "comment": "content/scripts/quests/quest_tbwt/scripts/tbwt_journal.rs2:13-15; content/scripts/_unpack/225/all.npc:2939; content/maps/m45_47.jm2:7425"
+            },
+            {
+              "id": "burn-jogre-bones",
+              "kind": "use_on",
+              "version": 1,
+              "advances": false,
+              "args": {
+                "item": "tbwt_jogre_bones",
+                "target": {
+                  "loc": "furnace1"
+                },
+                "product": "tbwt_burnt_jogre_bones",
+                "anchor": {
+                  "tile": [
+                    2856,
+                    2966,
+                    0
+                  ],
+                  "source": "content/scripts/skill_smithing/scripts/smelting/smelting.rs2:20-21; content/scripts/quests/quest_tbwt/scripts/tbwt_jogre_bones.rs2:1-11; content/maps/m44_46.jm2:7057"
+                },
+                "radius": 8
+              },
+              "skip_if": {
+                "Any": [
+                  {
+                    "Fact": {
+                      "kind": "has_item",
+                      "version": 1,
+                      "args": {
+                        "obj": "tbwt_burnt_jogre_bones"
+                      }
+                    }
+                  },
+                  {
+                    "Fact": {
+                      "kind": "has_item",
+                      "version": 1,
+                      "args": {
+                        "obj": "tbwt_burnt_jogre_bones_in_raw_karambwanji_paste"
+                      }
+                    }
+                  },
+                  {
+                    "Fact": {
+                      "kind": "has_item",
+                      "version": 1,
+                      "args": {
+                        "obj": "tbwt_burnt_jogre_bones_marinated_in_karambwanji"
+                      }
+                    }
+                  },
+                  {
+                    "Fact": {
+                      "kind": "flag",
+                      "version": 1,
+                      "args": {
+                        "quest": "tbwt",
+                        "flag": "tbwt:tinsay_done",
+                        "is": true
+                      }
+                    }
+                  }
+                ]
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "has_item",
+                  "version": 1,
+                  "args": {
+                    "obj": "tbwt_burnt_jogre_bones"
+                  }
+                }
+              },
+              "comment": "content/scripts/skill_smithing/scripts/smelting/smelting.rs2:20-21; content/scripts/quests/quest_tbwt/scripts/tbwt_jogre_bones.rs2:1-11; content/maps/m44_46.jm2:7057"
+            },
+            {
+              "id": "grind-bait",
+              "kind": "use_on",
+              "version": 1,
+              "advances": false,
+              "args": {
+                "item": "pestle_and_mortar",
+                "target": {
+                  "item": "tbwt_raw_karambwanji"
+                },
+                "product": "tbwt_raw_karambwanji_paste"
+              },
+              "skip_if": {
+                "Any": [
+                  {
+                    "Fact": {
+                      "kind": "has_item",
+                      "version": 1,
+                      "args": {
+                        "obj": "tbwt_raw_karambwanji_paste"
+                      }
+                    }
+                  },
+                  {
+                    "Fact": {
+                      "kind": "has_item",
+                      "version": 1,
+                      "args": {
+                        "obj": "tbwt_burnt_jogre_bones_in_raw_karambwanji_paste"
+                      }
+                    }
+                  },
+                  {
+                    "Fact": {
+                      "kind": "has_item",
+                      "version": 1,
+                      "args": {
+                        "obj": "tbwt_burnt_jogre_bones_marinated_in_karambwanji"
+                      }
+                    }
+                  },
+                  {
+                    "Fact": {
+                      "kind": "flag",
+                      "version": 1,
+                      "args": {
+                        "quest": "tbwt",
+                        "flag": "tbwt:tinsay_done",
+                        "is": true
+                      }
+                    }
+                  }
+                ]
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "has_item",
+                  "version": 1,
+                  "args": {
+                    "obj": "tbwt_raw_karambwanji_paste"
+                  }
+                }
+              },
+              "comment": "content/scripts/skill_fishing/configs/fishing.obj:221-235; content/scripts/quests/quest_tbwt/scripts/quest_tbwt.rs2:243-245"
+            },
+            {
+              "id": "coat-burnt-bones",
+              "kind": "use_on",
+              "version": 1,
+              "advances": false,
+              "args": {
+                "item": "tbwt_raw_karambwanji_paste",
+                "target": {
+                  "item": "tbwt_burnt_jogre_bones"
+                },
+                "product": "tbwt_burnt_jogre_bones_in_raw_karambwanji_paste"
+              },
+              "skip_if": {
+                "Any": [
+                  {
+                    "Fact": {
+                      "kind": "has_item",
+                      "version": 1,
+                      "args": {
+                        "obj": "tbwt_burnt_jogre_bones_in_raw_karambwanji_paste"
+                      }
+                    }
+                  },
+                  {
+                    "Fact": {
+                      "kind": "has_item",
+                      "version": 1,
+                      "args": {
+                        "obj": "tbwt_burnt_jogre_bones_marinated_in_karambwanji"
+                      }
+                    }
+                  },
+                  {
+                    "Fact": {
+                      "kind": "flag",
+                      "version": 1,
+                      "args": {
+                        "quest": "tbwt",
+                        "flag": "tbwt:tinsay_done",
+                        "is": true
+                      }
+                    }
+                  }
+                ]
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "has_item",
+                  "version": 1,
+                  "args": {
+                    "obj": "tbwt_burnt_jogre_bones_in_raw_karambwanji_paste"
+                  }
+                }
+              },
+              "comment": "content/scripts/quests/quest_tbwt/scripts/quest_tbwt.rs2:195-205"
+            },
+            {
+              "id": "marinate-bones",
+              "kind": "use_on",
+              "version": 1,
+              "advances": false,
+              "args": {
+                "item": "tbwt_burnt_jogre_bones_in_raw_karambwanji_paste",
+                "target": {
+                  "loc": "range"
+                },
+                "product": "tbwt_burnt_jogre_bones_marinated_in_karambwanji",
+                "anchor": {
+                  "tile": [
+                    2787,
+                    3191,
+                    0
+                  ],
+                  "source": "content/scripts/skill_cooking/configs/cooking_source/cooking_generic.dbrow:587-598; content/maps/m43_49.jm2:6474"
+                },
+                "radius": 8
+              },
+              "skip_if": {
+                "Any": [
+                  {
+                    "Fact": {
+                      "kind": "has_item",
+                      "version": 1,
+                      "args": {
+                        "obj": "tbwt_burnt_jogre_bones_marinated_in_karambwanji"
+                      }
+                    }
+                  },
+                  {
+                    "Fact": {
+                      "kind": "flag",
+                      "version": 1,
+                      "args": {
+                        "quest": "tbwt",
+                        "flag": "tbwt:tinsay_done",
+                        "is": true
+                      }
+                    }
+                  }
+                ]
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "has_item",
+                  "version": 1,
+                  "args": {
+                    "obj": "tbwt_burnt_jogre_bones_marinated_in_karambwanji"
+                  }
+                }
+              },
+              "comment": "content/scripts/skill_cooking/configs/cooking_source/cooking_generic.dbrow:587-598; content/maps/m43_49.jm2:6474"
+            },
+            {
+              "id": "climb-to-tinsay",
+              "kind": "interact",
+              "version": 1,
+              "advances": false,
+              "args": {
+                "target": {
+                  "loc": "zqclimbingrocks",
+                  "tile": [
+                    2792,
+                    2979,
+                    0
+                  ],
+                  "source": "content/maps/m43_46.jm2:4915"
+                },
+                "op": "Climb",
+                "anchor": {
+                  "tile": [
+                    2792,
+                    2979,
+                    0
+                  ],
+                  "source": "content/maps/m43_46.jm2:4915"
+                },
+                "radius": 3
+              },
+              "skip_if": {
+                "Fact": {
+                  "kind": "in_area",
+                  "version": 1,
+                  "args": {
+                    "area": "cairn_west"
+                  }
+                }
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "in_area",
+                  "version": 1,
+                  "args": {
+                    "area": "cairn_west"
+                  }
+                }
+              },
+              "comment": "content/scripts/quests/quest_zombiequeen/scripts/quest_zombiequeen.rs2:519-559; the agility roll can fail"
+            },
+            {
+              "id": "meet-tinsay",
+              "kind": "talk",
+              "version": 1,
+              "advances": true,
+              "args": {
+                "npc": "tbwt_tinsay",
+                "anchor": {
+                  "tile": [
+                    2764,
+                    2976,
+                    0
+                  ],
+                  "source": "content/scripts/quests/quest_tbwt/scripts/tbwt_tinsay.rs2:1-16,87-111; content/maps/m43_46.jm2:5681"
+                },
+                "leash": 8,
+                "prefer": [],
+                "strict": true,
+                "gap_ticks": 5
+              },
+              "skip_if": {
+                "Any": [
+                  {
+                    "Fact": {
+                      "kind": "flag",
+                      "version": 1,
+                      "args": {
+                        "quest": "tbwt",
+                        "flag": "tbwt:tinsay_banana",
+                        "is": true
+                      }
+                    }
+                  },
+                  {
+                    "Fact": {
+                      "kind": "flag",
+                      "version": 1,
+                      "args": {
+                        "quest": "tbwt",
+                        "flag": "tbwt:tinsay_banana_given",
+                        "is": true
+                      }
+                    }
+                  },
+                  {
+                    "Fact": {
+                      "kind": "flag",
+                      "version": 1,
+                      "args": {
+                        "quest": "tbwt",
+                        "flag": "tbwt:tinsay_done",
+                        "is": true
+                      }
+                    }
+                  }
+                ]
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "flag",
+                  "version": 1,
+                  "args": {
+                    "quest": "tbwt",
+                    "flag": "tbwt:tinsay_banana",
+                    "is": true
+                  }
+                }
+              },
+              "comment": "content/scripts/quests/quest_tbwt/scripts/tbwt_tinsay.rs2:1-16,87-111; content/maps/m43_46.jm2:5681"
+            },
+            {
+              "id": "give-banana-rum",
+              "kind": "use_on",
+              "version": 1,
+              "advances": true,
+              "args": {
+                "item": "tbwt_sliced_banana_in_karamja_rum",
+                "target": {
+                  "npc": "tbwt_tinsay"
+                },
+                "anchor": {
+                  "tile": [
+                    2764,
+                    2976,
+                    0
+                  ],
+                  "source": "content/scripts/quests/quest_tbwt/scripts/tbwt_tinsay.rs2:222-243; content/maps/m43_46.jm2:5681"
+                },
+                "radius": 8,
+                "dialogue": {
+                  "gap_ticks": 5
+                }
+              },
+              "skip_if": {
+                "Any": [
+                  {
+                    "Fact": {
+                      "kind": "flag",
+                      "version": 1,
+                      "args": {
+                        "quest": "tbwt",
+                        "flag": "tbwt:tinsay_banana_given",
+                        "is": true
+                      }
+                    }
+                  },
+                  {
+                    "Fact": {
+                      "kind": "flag",
+                      "version": 1,
+                      "args": {
+                        "quest": "tbwt",
+                        "flag": "tbwt:tinsay_done",
+                        "is": true
+                      }
+                    }
+                  }
+                ]
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "flag",
+                  "version": 1,
+                  "args": {
+                    "quest": "tbwt",
+                    "flag": "tbwt:tinsay_sandwich",
+                    "is": true
+                  }
+                }
+              },
+              "comment": "content/scripts/quests/quest_tbwt/scripts/tbwt_tinsay.rs2:222-243; content/maps/m43_46.jm2:5681"
+            },
+            {
+              "id": "give-sandwich",
+              "kind": "use_on",
+              "version": 1,
+              "advances": true,
+              "args": {
+                "item": "tbwt_seaweed_in_monkey_skin_sandwich",
+                "target": {
+                  "npc": "tbwt_tinsay"
+                },
+                "anchor": {
+                  "tile": [
+                    2764,
+                    2976,
+                    0
+                  ],
+                  "source": "content/scripts/quests/quest_tbwt/scripts/tbwt_tinsay.rs2:324-358; content/maps/m43_46.jm2:5681"
+                },
+                "radius": 8,
+                "dialogue": {
+                  "gap_ticks": 4
+                }
+              },
+              "skip_if": {
+                "Any": [
+                  {
+                    "Fact": {
+                      "kind": "flag",
+                      "version": 1,
+                      "args": {
+                        "quest": "tbwt",
+                        "flag": "tbwt:tinsay_sandwich_given",
+                        "is": true
+                      }
+                    }
+                  },
+                  {
+                    "Fact": {
+                      "kind": "flag",
+                      "version": 1,
+                      "args": {
+                        "quest": "tbwt",
+                        "flag": "tbwt:tinsay_done",
+                        "is": true
+                      }
+                    }
+                  }
+                ]
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "flag",
+                  "version": 1,
+                  "args": {
+                    "quest": "tbwt",
+                    "flag": "tbwt:tinsay_bones",
+                    "is": true
+                  }
+                }
+              },
+              "comment": "content/scripts/quests/quest_tbwt/scripts/tbwt_tinsay.rs2:324-358; content/maps/m43_46.jm2:5681"
+            },
+            {
+              "id": "give-marinated-bones",
+              "kind": "use_on",
+              "version": 1,
+              "advances": true,
+              "args": {
+                "item": "tbwt_burnt_jogre_bones_marinated_in_karambwanji",
+                "target": {
+                  "npc": "tbwt_tinsay"
+                },
+                "anchor": {
+                  "tile": [
+                    2764,
+                    2976,
+                    0
+                  ],
+                  "source": "content/scripts/quests/quest_tbwt/scripts/tbwt_tinsay.rs2:391-416; content/maps/m43_46.jm2:5681"
+                },
+                "radius": 8,
+                "dialogue": {
+                  "gap_ticks": 7
+                }
+              },
+              "skip_if": {
+                "Fact": {
+                  "kind": "flag",
+                  "version": 1,
+                  "args": {
+                    "quest": "tbwt",
+                    "flag": "tbwt:tinsay_done",
+                    "is": true
+                  }
+                }
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "flag",
+                  "version": 1,
+                  "args": {
+                    "quest": "tbwt",
+                    "flag": "tbwt:tinsay_done",
+                    "is": true
+                  }
+                }
+              },
+              "comment": "content/scripts/quests/quest_tbwt/scripts/tbwt_tinsay.rs2:391-416; content/maps/m43_46.jm2:5681"
+            },
+            {
+              "id": "leave-tinsay",
+              "kind": "interact",
+              "version": 1,
+              "advances": false,
+              "args": {
+                "target": {
+                  "loc": "zqclimbingrocks",
+                  "tile": [
+                    2792,
+                    2979,
+                    0
+                  ],
+                  "source": "content/maps/m43_46.jm2:4915"
+                },
+                "op": "Climb",
+                "anchor": {
+                  "tile": [
+                    2792,
+                    2979,
+                    0
+                  ],
+                  "source": "content/maps/m43_46.jm2:4915"
+                },
+                "radius": 3
+              },
+              "skip_if": {
+                "Not": {
+                  "Fact": {
+                    "kind": "in_area",
+                    "version": 1,
+                    "args": {
+                      "area": "cairn_west"
+                    }
+                  }
+                }
+              },
+              "settle": {
+                "Not": {
+                  "Fact": {
+                    "kind": "in_area",
+                    "version": 1,
+                    "args": {
+                      "area": "cairn_west"
+                    }
+                  }
+                }
+              },
+              "comment": "content/scripts/quests/quest_zombiequeen/scripts/quest_zombiequeen.rs2:519-559; the agility roll can fail"
+            },
+            {
+              "id": "replace-vessel",
+              "kind": "talk",
+              "version": 1,
+              "advances": false,
+              "args": {
+                "npc": "tbwt_lubufu",
+                "anchor": {
+                  "tile": [
+                    2770,
+                    3169,
+                    0
+                  ],
+                  "source": "content/scripts/quests/quest_tbwt/scripts/tbwt_lubufu.rs2:379-423; content/maps/m43_49.jm2:9181"
+                },
+                "leash": 8,
+                "prefer": [
+                  "Actually, I've lost my Karambwan vessel.",
+                  "a shark ate it"
+                ],
+                "strict": true
+              },
+              "skip_if": {
+                "Any": [
+                  {
+                    "Fact": {
+                      "kind": "has_item",
+                      "version": 1,
+                      "args": {
+                        "obj": "tbwt_karambwan_vessel"
+                      }
+                    }
+                  },
+                  {
+                    "Fact": {
+                      "kind": "has_item",
+                      "version": 1,
+                      "args": {
+                        "obj": "tbwt_crafting_manual"
+                      }
+                    }
+                  },
+                  {
+                    "Fact": {
+                      "kind": "flag",
+                      "version": 1,
+                      "args": {
+                        "quest": "tbwt",
+                        "flag": "tbwt:tiadeche_done",
+                        "is": true
+                      }
+                    }
+                  }
+                ]
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "has_item",
+                  "version": 1,
+                  "args": {
+                    "obj": "tbwt_karambwan_vessel"
+                  }
+                }
+              },
+              "comment": "content/scripts/quests/quest_tbwt/scripts/tbwt_lubufu.rs2:379-423; content/maps/m43_49.jm2:9181"
+            },
+            {
+              "id": "return-to-tinsay",
+              "kind": "interact",
+              "version": 1,
+              "advances": false,
+              "args": {
+                "target": {
+                  "loc": "zqclimbingrocks",
+                  "tile": [
+                    2792,
+                    2979,
+                    0
+                  ],
+                  "source": "content/maps/m43_46.jm2:4915"
+                },
+                "op": "Climb",
+                "anchor": {
+                  "tile": [
+                    2792,
+                    2979,
+                    0
+                  ],
+                  "source": "content/maps/m43_46.jm2:4915"
+                },
+                "radius": 3
+              },
+              "skip_if": {
+                "Fact": {
+                  "kind": "in_area",
+                  "version": 1,
+                  "args": {
+                    "area": "cairn_west"
+                  }
+                }
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "in_area",
+                  "version": 1,
+                  "args": {
+                    "area": "cairn_west"
+                  }
+                }
+              },
+              "comment": "content/scripts/quests/quest_zombiequeen/scripts/quest_zombiequeen.rs2:519-559; the agility roll can fail"
+            },
+            {
+              "id": "get-crafting-manual",
+              "kind": "use_on",
+              "version": 1,
+              "advances": true,
+              "args": {
+                "item": "tbwt_karambwan_vessel",
+                "target": {
+                  "npc": "tbwt_tinsay"
+                },
+                "anchor": {
+                  "tile": [
+                    2764,
+                    2976,
+                    0
+                  ],
+                  "source": "content/scripts/quests/quest_tbwt/scripts/tbwt_tinsay.rs2:35-60; content/maps/m43_46.jm2:5681"
+                },
+                "radius": 8
+              },
+              "skip_if": {
+                "Any": [
+                  {
+                    "Fact": {
+                      "kind": "has_item",
+                      "version": 1,
+                      "args": {
+                        "obj": "tbwt_crafting_manual"
+                      }
+                    }
+                  },
+                  {
+                    "Fact": {
+                      "kind": "flag",
+                      "version": 1,
+                      "args": {
+                        "quest": "tbwt",
+                        "flag": "tbwt:tiadeche_done",
+                        "is": true
+                      }
+                    }
+                  }
+                ]
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "has_item",
+                  "version": 1,
+                  "args": {
+                    "obj": "tbwt_crafting_manual"
+                  }
+                }
+              },
+              "comment": "content/scripts/quests/quest_tbwt/scripts/tbwt_tinsay.rs2:35-60; content/maps/m43_46.jm2:5681"
+            },
+            {
+              "id": "leave-tinsay-with-manual",
+              "kind": "interact",
+              "version": 1,
+              "advances": false,
+              "args": {
+                "target": {
+                  "loc": "zqclimbingrocks",
+                  "tile": [
+                    2792,
+                    2979,
+                    0
+                  ],
+                  "source": "content/maps/m43_46.jm2:4915"
+                },
+                "op": "Climb",
+                "anchor": {
+                  "tile": [
+                    2792,
+                    2979,
+                    0
+                  ],
+                  "source": "content/maps/m43_46.jm2:4915"
+                },
+                "radius": 3
+              },
+              "skip_if": {
+                "Not": {
+                  "Fact": {
+                    "kind": "in_area",
+                    "version": 1,
+                    "args": {
+                      "area": "cairn_west"
+                    }
+                  }
+                }
+              },
+              "settle": {
+                "Not": {
+                  "Fact": {
+                    "kind": "in_area",
+                    "version": 1,
+                    "args": {
+                      "area": "cairn_west"
+                    }
+                  }
+                }
+              },
+              "comment": "content/scripts/quests/quest_zombiequeen/scripts/quest_zombiequeen.rs2:519-559; the agility roll can fail"
+            },
+            {
+              "id": "deliver-manual",
+              "kind": "use_on",
+              "version": 1,
+              "advances": true,
+              "args": {
+                "item": "tbwt_crafting_manual",
+                "target": {
+                  "npc": "tbwt_tiadeche"
+                },
+                "anchor": {
+                  "tile": [
+                    2912,
+                    3118,
+                    0
+                  ],
+                  "source": "content/scripts/quests/quest_tbwt/scripts/tbwt_tiadeche.rs2:100-105,190-205; content/maps/m45_48.jm2:6005"
+                },
+                "radius": 8
+              },
+              "skip_if": {
+                "Any": []
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "stage_in",
+                  "version": 1,
+                  "args": {
+                    "quest": "tbwt",
+                    "any": [
+                      "tbwt:ready"
+                    ]
+                  }
+                }
+              },
+              "comment": "content/scripts/quests/quest_tbwt/scripts/tbwt_tiadeche.rs2:100-105,190-205; content/maps/m45_48.jm2:6005"
+            }
+          ],
+          "order": "ordered"
+        },
+        {
+          "stage": "tbwt:ready",
+          "required": [],
+          "terminal": false,
+          "recovery_entry": null,
+          "steps": [
+            {
+              "id": "report-to-timfraku",
+              "kind": "talk",
+              "version": 1,
+              "advances": true,
+              "args": {
+                "npc": "tbwt_timfraku",
+                "anchor": {
+                  "tile": [
+                    2780,
+                    3087,
+                    1
+                  ],
+                  "source": "content/scripts/areas/area_karamja/scripts/tbwt_timfraku.rs2:17-20,230-273; content/maps/m43_48.jm2:7133"
+                },
+                "leash": 8,
+                "prefer": [
+                  "Oh it was nothing really.",
+                  "Ok, thanks."
+                ],
+                "strict": true,
+                "gap_ticks": 5
+              },
+              "skip_if": {
+                "Any": []
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "quest_colour",
+                  "version": 1,
+                  "args": {
+                    "quest": "tbwt",
+                    "is": "complete"
+                  }
+                }
+              },
+              "comment": "content/scripts/areas/area_karamja/scripts/tbwt_timfraku.rs2:17-20,230-273; content/maps/m43_48.jm2:7133"
+            }
+          ]
+        },
+        {
+          "stage": "tbwt:complete",
+          "required": [],
+          "terminal": true,
+          "recovery_entry": null,
+          "steps": []
+        }
+      ]
+    }
+  ]
+}

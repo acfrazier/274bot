@@ -1,0 +1,2215 @@
+{
+  "$schema": "../path.schema.json",
+  "schema": 3,
+  "id": "grail",
+  "display_name": "Holy Grail",
+  "required": [
+    "merlin-complete",
+    "attack-20"
+  ],
+  "tested_stats": null,
+  "partner": null,
+  "quest": {
+    "members": true,
+    "quest_points": 2,
+    "requirements": [
+      {
+        "id": "merlin-complete",
+        "kind": {
+          "Quest": "arthur"
+        },
+        "at": "start",
+        "source": "scripts/areas/area_camelot/scripts/king_arthur.rs2:40-45,53-67"
+      },
+      {
+        "id": "attack-20",
+        "kind": {"Skill": {"skill": "attack", "level": 20}},
+        "at": "start",
+        "source": "content/scripts/levelrequire/scripts/tier20.rs2:16; content/scripts/quests/quest_grail/scripts/black_knight_titan.rs2:27-45"
+      }
+    ],
+    "items": [],
+    "acquire": {},
+    "bank": "nearest",
+    "coin_float": 0,
+    "loadouts": {},
+    "areas": {
+      "entrana": {
+        "boxes": [
+          [
+            2816,
+            3328,
+            2879,
+            3391,
+            0
+          ],
+          [
+            2816,
+            3328,
+            2879,
+            3391,
+            1
+          ]
+        ],
+        "source": "scripts/areas/area_port_sarim/scripts/monk_of_entrana.rs2:20-23; maps/m44_52.jm2:8070"
+      },
+      "fisher_old": {
+        "boxes": [
+          [
+            2752,
+            4672,
+            2815,
+            4735,
+            0
+          ],
+          [
+            2752,
+            4672,
+            2815,
+            4735,
+            1
+          ],
+          [
+            2752,
+            4672,
+            2815,
+            4735,
+            2
+          ]
+        ],
+        "source": "scripts/quests/quest_grail/scripts/quest_grail.rs2:37-47"
+      },
+      "fisher_new": {
+        "boxes": [
+          [
+            2624,
+            4672,
+            2687,
+            4735,
+            0
+          ],
+          [
+            2624,
+            4672,
+            2687,
+            4735,
+            1
+          ],
+          [
+            2624,
+            4672,
+            2687,
+            4735,
+            2
+          ]
+        ],
+        "source": "scripts/quests/quest_grail/scripts/quest_grail.rs2:37-47"
+      },
+      "west_of_titan": {
+        "boxes": [
+          [
+            2752,
+            4672,
+            2790,
+            4735,
+            0
+          ],
+          [
+            2752,
+            4672,
+            2790,
+            4735,
+            1
+          ],
+          [
+            2752,
+            4672,
+            2790,
+            4735,
+            2
+          ]
+        ],
+        "source": "scripts/quests/quest_grail/scripts/black_knight_titan.rs2:38-45; maps/m43_73.jm2:6155"
+      }
+    },
+    "tools": [
+      "obj:holy_table_napkin",
+      "obj:magic_whistle",
+      "obj:grail_bell",
+      "obj:magic_golden_feather",
+      "obj:holy_grail"
+    ],
+    "owns_inventory": true
+  },
+  "roles": [
+    {
+      "role": null,
+      "progress_binding": "journal:grail",
+      "progress": {
+        "colour": {
+          "not_started": "grail:0",
+          "in_progress": "grail:2",
+          "complete": "grail:done"
+        },
+        "rules": [
+          {
+            "stage": "grail:9",
+            "all": [
+              "i honoured the fisher king's request to find his son"
+            ],
+            "any": [],
+            "not": [],
+            "varp": null
+          },
+          {
+            "stage": "grail:8",
+            "all": [
+              "the fisher king is very sick"
+            ],
+            "any": [],
+            "not": [],
+            "varp": null
+          },
+          {
+            "stage": "grail:7",
+            "all": [
+              "i need to find a weapon that can defeat him somehow"
+            ],
+            "any": [],
+            "not": [],
+            "varp": null
+          },
+          {
+            "stage": "grail:4",
+            "all": [
+              "according to a crone on entrana"
+            ],
+            "any": [],
+            "not": [],
+            "varp": null
+          },
+          {
+            "stage": "grail:3",
+            "all": [
+              "merlin suggested two things to help find the grail"
+            ],
+            "any": [],
+            "not": [],
+            "varp": null
+          },
+          {
+            "stage": "grail:2",
+            "all": [
+              "king arthur has sent me questing for the holy grail"
+            ],
+            "any": [],
+            "not": [],
+            "varp": null
+          }
+        ],
+        "flags": [],
+        "monotonic": false
+      },
+      "prelude": [],
+      "sequences": [
+        {
+          "stage": "grail:0",
+          "required": [],
+          "terminal": false,
+          "recovery_entry": null,
+          "steps": [
+            {
+              "id": "start-arthur",
+              "kind": "talk",
+              "version": 1,
+              "args": {
+                "npc": "king_arthur",
+                "anchor": {
+                  "tile": [
+                    2764,
+                    3515,
+                    0
+                  ],
+                  "source": "maps/m43_54.jm2:8273"
+                },
+                "leash": 8,
+                "prefer": [
+                  "Tell me of this quest.",
+                  "I'd enjoy trying that."
+                ]
+              },
+              "skip_if": {
+                "Any": []
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "stage_in",
+                  "version": 1,
+                  "args": {
+                    "quest": "grail",
+                    "any": [
+                      "grail:2"
+                    ]
+                  }
+                }
+              },
+              "comment": "scripts/areas/area_camelot/scripts/king_arthur.rs2:40-45,53-67",
+              "advances": true
+            }
+          ]
+        },
+        {
+          "stage": "grail:2",
+          "required": [],
+          "terminal": false,
+          "recovery_entry": null,
+          "steps": [
+            {
+              "id": "open-merlin-workshop",
+              "kind": "interact",
+              "version": 1,
+              "args": {
+                "target": {
+                  "loc": "merlinworkshop",
+                  "tile": [
+                    2764,
+                    3503,
+                    1
+                  ],
+                  "source": "maps/m43_54.jm2:7472"
+                },
+                "op": "Open",
+                "anchor": {
+                  "tile": [
+                    2764,
+                    3503,
+                    1
+                  ],
+                  "source": "maps/m43_54.jm2:7472"
+                }
+              },
+              "skip_if": {
+                "Fact": {
+                  "kind": "npc_present",
+                  "version": 1,
+                  "args": {
+                    "npc": "merlin2"
+                  }
+                }
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "npc_present",
+                  "version": 1,
+                  "args": {
+                    "npc": "merlin2"
+                  }
+                }
+              },
+              "comment": "scripts/quests/quest_grail/scripts/quest_grail.rs2:1-14",
+              "advances": false
+            },
+            {
+              "id": "merlin",
+              "kind": "talk",
+              "version": 1,
+              "args": {
+                "npc": "merlin2",
+                "anchor": {
+                  "tile": [
+                    2767,
+                    3500,
+                    1
+                  ],
+                  "source": "scripts/quests/quest_grail/scripts/quest_grail.rs2:3-10"
+                },
+                "leash": 8,
+                "prefer": [
+                  "Thank you for the advice."
+                ]
+              },
+              "skip_if": {
+                "Any": []
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "stage_in",
+                  "version": 1,
+                  "args": {
+                    "quest": "grail",
+                    "any": [
+                      "grail:3"
+                    ]
+                  }
+                }
+              },
+              "comment": "scripts/areas/area_camelot/scripts/merlin.rs2:6-29",
+              "advances": true
+            }
+          ]
+        },
+        {
+          "stage": "grail:3",
+          "required": [],
+          "terminal": false,
+          "recovery_entry": null,
+          "steps": [
+            {
+              "id": "strip-for-entrana",
+              "kind": "unequip",
+              "version": 1,
+              "args": {
+                "all": true
+              },
+              "skip_if": {
+                "Fact": {
+                  "kind": "equipment_only",
+                  "version": 1,
+                  "args": {
+                    "objs": []
+                  }
+                }
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "equipment_only",
+                  "version": 1,
+                  "args": {
+                    "objs": []
+                  }
+                }
+              },
+              "comment": "scripts/areas/area_port_sarim/scripts/monk_of_entrana.rs2:26-50"
+            },
+            {
+              "id": "bank-entrana-gear",
+              "kind": "bank",
+              "version": 1,
+              "args": {
+                "op": "deposit_all",
+                "at": "nearest",
+                "keep": [
+                  "coins",
+                  "lobster"
+                ]
+              },
+              "skip_if": {
+                "Fact": {
+                  "kind": "pack_only",
+                  "version": 1,
+                  "args": {
+                    "objs": [
+                      "coins",
+                      "lobster"
+                    ]
+                  }
+                }
+              },
+              "settle": {
+                "All": []
+              },
+              "comment": "scripts/areas/area_port_sarim/scripts/monk_of_entrana.rs2:26-50"
+            },
+            {
+              "id": "sail-to-entrana",
+              "kind": "talk",
+              "version": 1,
+              "args": {
+                "npc": "shipmonk",
+                "anchor": {
+                  "tile": [
+                    3045,
+                    3236,
+                    0
+                  ],
+                  "source": "maps/m47_50.jm2:10013"
+                },
+                "leash": 8,
+                "prefer": [
+                  "Yes, okay, I'm ready to go."
+                ]
+              },
+              "skip_if": {
+                "Fact": {
+                  "kind": "in_area",
+                  "version": 1,
+                  "args": {
+                    "area": "entrana"
+                  }
+                }
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "in_area",
+                  "version": 1,
+                  "args": {
+                    "area": "entrana"
+                  }
+                }
+              },
+              "comment": "scripts/areas/area_port_sarim/scripts/monk_of_entrana.rs2:1-23",
+              "advances": false
+            },
+            {
+              "id": "priest-and-crone",
+              "kind": "talk",
+              "version": 1,
+              "args": {
+                "npc": "high_priest_of_entrana",
+                "anchor": {
+                  "tile": [
+                    2851,
+                    3349,
+                    0
+                  ],
+                  "source": "maps/m44_52.jm2:8070"
+                },
+                "leash": 8,
+                "prefer": [
+                  "Ok, I will go searching."
+                ]
+              },
+              "skip_if": {
+                "Any": []
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "stage_in",
+                  "version": 1,
+                  "args": {
+                    "quest": "grail",
+                    "any": [
+                      "grail:4"
+                    ]
+                  }
+                }
+              },
+              "comment": "scripts/areas/area_entrana/scripts/high_priest_of_entrana.rs2:1-12; scripts/quests/quest_grail/scripts/grail_crone.rs2:5-12,31-33",
+              "advances": true
+            }
+          ],
+          "order": "ordered"
+        },
+        {
+          "stage": "grail:4",
+          "required": [],
+          "terminal": false,
+          "recovery_entry": null,
+          "steps": [
+            {
+              "id": "return-from-entrana",
+              "kind": "talk",
+              "version": 1,
+              "args": {
+                "npc": "shipmonk2",
+                "anchor": {
+                  "tile": [
+                    2835,
+                    3336,
+                    0
+                  ],
+                  "source": "maps/m44_52.jm2:8055"
+                },
+                "leash": 8,
+                "prefer": [
+                  "Yes, I'm ready to go."
+                ]
+              },
+              "skip_if": {
+                "Not": {
+                  "Fact": {
+                    "kind": "in_area",
+                    "version": 1,
+                    "args": {
+                      "area": "entrana"
+                    }
+                  }
+                }
+              },
+              "settle": {
+                "Not": {
+                  "Fact": {
+                    "kind": "in_area",
+                    "version": 1,
+                    "args": {
+                      "area": "entrana"
+                    }
+                  }
+                }
+              },
+              "comment": "scripts/areas/area_entrana/scripts/monk_of_entrana.rs2:1-7",
+              "advances": false
+            },
+            {
+              "id": "take-napkin",
+              "kind": "talk",
+              "version": 1,
+              "args": {
+                "npc": "brother_galahad",
+                "anchor": {
+                  "tile": [
+                    2612,
+                    3474,
+                    0
+                  ],
+                  "source": "maps/m40_54.jm2:5932"
+                },
+                "leash": 8,
+                "prefer": [
+                  "I seek an item from the realm of the Fisher King."
+                ]
+              },
+              "skip_if": {
+                "Any": [
+                  {
+                    "Fact": {
+                      "kind": "has_item",
+                      "version": 1,
+                      "args": {
+                        "obj": "holy_table_napkin"
+                      }
+                    }
+                  },
+                  {
+                    "Fact": {
+                      "kind": "item_count_at_least",
+                      "version": 1,
+                      "args": {
+                        "obj": "magic_whistle",
+                        "qty": 2
+                      }
+                    }
+                  },
+                  {
+                    "Fact": {
+                      "kind": "in_area",
+                      "version": 1,
+                      "args": {
+                        "area": "fisher_old"
+                      }
+                    }
+                  },
+                  {
+                    "Fact": {
+                      "kind": "in_area",
+                      "version": 1,
+                      "args": {
+                        "area": "west_of_titan"
+                      }
+                    }
+                  }
+                ]
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "has_item",
+                  "version": 1,
+                  "args": {
+                    "obj": "holy_table_napkin"
+                  }
+                }
+              },
+              "comment": "scripts/areas/area_seers/scripts/brother_galahad.rs2:30-36,52-55,95-98",
+              "advances": false
+            },
+            {
+              "id": "open-whistle-room",
+              "kind": "interact",
+              "version": 1,
+              "args": {
+                "target": {
+                  "loc": "whistledoor",
+                  "tile": [
+                    3106,
+                    3361,
+                    2
+                  ],
+                  "source": "maps/m48_52.jm2:8893"
+                },
+                "op": "Open",
+                "anchor": {
+                  "tile": [
+                    3106,
+                    3361,
+                    2
+                  ],
+                  "source": "maps/m48_52.jm2:8893"
+                }
+              },
+              "skip_if": {
+                "Any": [
+                  {
+                    "Fact": {
+                      "kind": "item_count_at_least",
+                      "version": 1,
+                      "args": {
+                        "obj": "magic_whistle",
+                        "qty": 2
+                      }
+                    }
+                  },
+                  {
+                    "Fact": {
+                      "kind": "in_area",
+                      "version": 1,
+                      "args": {
+                        "area": "fisher_old"
+                      }
+                    }
+                  },
+                  {
+                    "Fact": {
+                      "kind": "in_area",
+                      "version": 1,
+                      "args": {
+                        "area": "west_of_titan"
+                      }
+                    }
+                  }
+                ]
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "ground_item_near",
+                  "version": 1,
+                  "args": {
+                    "obj": "magic_whistle",
+                    "radius": 5
+                  }
+                }
+              },
+              "comment": "scripts/quests/quest_grail/scripts/quest_grail.rs2:30-35",
+              "advances": false
+            },
+            {
+              "id": "take-two-whistles",
+              "kind": "interact",
+              "version": 1,
+              "args": {
+                "target": {
+                  "ground": "magic_whistle"
+                },
+                "op": "Take",
+                "anchor": {
+                  "tile": [
+                    3107,
+                    3359,
+                    2
+                  ],
+                  "source": "scripts/quests/quest_grail/scripts/quest_grail.rs2:30-33"
+                },
+                "radius": 5,
+                "until": {
+                  "obj": "magic_whistle",
+                  "qty": 2
+                }
+              },
+              "skip_if": {
+                "Any": [
+                  {
+                    "Fact": {
+                      "kind": "item_count_at_least",
+                      "version": 1,
+                      "args": {
+                        "obj": "magic_whistle",
+                        "qty": 2
+                      }
+                    }
+                  },
+                  {
+                    "Fact": {
+                      "kind": "in_area",
+                      "version": 1,
+                      "args": {
+                        "area": "fisher_old"
+                      }
+                    }
+                  },
+                  {
+                    "Fact": {
+                      "kind": "in_area",
+                      "version": 1,
+                      "args": {
+                        "area": "west_of_titan"
+                      }
+                    }
+                  }
+                ]
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "item_count_at_least",
+                  "version": 1,
+                  "args": {
+                    "obj": "magic_whistle",
+                    "qty": 2
+                  }
+                }
+              },
+              "comment": "scripts/quests/quest_grail/scripts/quest_grail.rs2:30-35",
+              "advances": false
+            },
+            {
+              "id": "reissue-excalibur",
+              "kind": "talk",
+              "version": 1,
+              "advances": false,
+              "args": {
+                "npc": "ladyofthelake",
+                "anchor": {"tile": [2924, 3405, 0], "source": "content/maps/m45_53.jm2:7656; content/pack/npc.pack:250"},
+                "leash": 8,
+                "prefer": ["I seek the sword Excalibur."],
+                "strict": true
+              },
+              "skip_if": {"Any": [
+                {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "excalibur"}}},
+                {"Fact": {"kind": "worn", "version": 1, "args": {"obj": "excalibur"}}}
+              ]},
+              "settle": {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "excalibur"}}},
+              "comment": "After Merlin's Crystal, the Lady reissues a missing Excalibur for 500 coins: content/scripts/areas/area_taverly/scripts/lady_of_the_lake.rs2:4-5,20-34."
+            },
+            {
+              "id": "reach-whistle-zone",
+              "kind": "walk",
+              "version": 1,
+              "args": {
+                "tile": [
+                  2741,
+                  3235,
+                  0
+                ],
+                "radius": 0,
+                "source": "scripts/quests/quest_grail/scripts/quest_grail.rs2:37-47"
+              },
+              "skip_if": {
+                "Any": [
+                  {
+                    "Fact": {
+                      "kind": "in_area",
+                      "version": 1,
+                      "args": {
+                        "area": "fisher_old"
+                      }
+                    }
+                  },
+                  {
+                    "Fact": {
+                      "kind": "in_area",
+                      "version": 1,
+                      "args": {
+                        "area": "fisher_new"
+                      }
+                    }
+                  }
+                ]
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "near",
+                  "version": 1,
+                  "args": {
+                    "tile": [
+                      2741,
+                      3235,
+                      0
+                    ],
+                    "radius": 0
+                  }
+                }
+              },
+              "comment": "scripts/quests/quest_grail/scripts/quest_grail.rs2:37-47"
+            },
+            {
+              "id": "first-realm-crossing",
+              "kind": "interact",
+              "version": 1,
+              "args": {
+                "target": {
+                  "held": "magic_whistle"
+                },
+                "op": "Blow"
+              },
+              "skip_if": {
+                "Any": [
+                  {
+                    "Fact": {
+                      "kind": "in_area",
+                      "version": 1,
+                      "args": {
+                        "area": "fisher_old"
+                      }
+                    }
+                  },
+                  {
+                    "Fact": {
+                      "kind": "in_area",
+                      "version": 1,
+                      "args": {
+                        "area": "fisher_new"
+                      }
+                    }
+                  }
+                ]
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "in_area",
+                  "version": 1,
+                  "args": {
+                    "area": "fisher_old"
+                  }
+                }
+              },
+              "comment": "scripts/quests/quest_grail/scripts/quest_grail.rs2:37-47",
+              "advances": false
+            },
+            {
+              "id": "fisherman-bell",
+              "kind": "talk",
+              "version": 1,
+              "args": {
+                "npc": "grail_fisherman",
+                "anchor": {
+                  "tile": [
+                    2802,
+                    4706,
+                    0
+                  ],
+                  "source": "maps/m43_73.jm2:6156"
+                },
+                "leash": 8,
+                "prefer": [
+                  "Any idea how to get into the castle?"
+                ]
+              },
+              "skip_if": {
+                "Any": [
+                  {
+                    "Fact": {
+                      "kind": "has_item",
+                      "version": 1,
+                      "args": {
+                        "obj": "grail_bell"
+                      }
+                    }
+                  },
+                  {
+                    "Fact": {
+                      "kind": "in_area",
+                      "version": 1,
+                      "args": {
+                        "area": "west_of_titan"
+                      }
+                    }
+                  }
+                ]
+              },
+              "settle": {
+                "All": []
+              },
+              "comment": "scripts/quests/quest_grail/scripts/grail_fisherman.rs2:1-13",
+              "advances": false
+            },
+            {
+              "id": "wield-excalibur",
+              "kind": "equip",
+              "version": 1,
+              "args": {
+                "obj": "excalibur"
+              },
+              "skip_if": {
+                "Any": [
+                  {
+                    "Fact": {
+                      "kind": "worn",
+                      "version": 1,
+                      "args": {
+                        "obj": "excalibur"
+                      }
+                    }
+                  },
+                  {
+                    "Fact": {
+                      "kind": "in_area",
+                      "version": 1,
+                      "args": {
+                        "area": "west_of_titan"
+                      }
+                    }
+                  }
+                ]
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "worn",
+                  "version": 1,
+                  "args": {
+                    "obj": "excalibur"
+                  }
+                }
+              },
+              "comment": "scripts/quests/quest_grail/scripts/black_knight_titan.rs2:27-45"
+            },
+            {
+              "id": "defeat-titan",
+              "kind": "combat",
+              "version": 1,
+              "args": {
+                "target": {
+                  "npc": "black_knight_titan",
+                  "pick": "nearest",
+                  "not_targeting_others": true
+                },
+                "stand": {
+                  "tile": [
+                    2791,
+                    4722,
+                    0
+                  ],
+                  "source": "maps/m43_73.jm2:6155"
+                },
+                "tactic": {
+                  "kind": "open",
+                  "style": "melee",
+                  "engage_radius": 6,
+                  "auto_retaliate": true
+                },
+                "lost_radius": 12,
+                "kill_budget_ticks": 400
+              },
+              "skip_if": {
+                "Fact": {
+                  "kind": "in_area",
+                  "version": 1,
+                  "args": {
+                    "area": "west_of_titan"
+                  }
+                }
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "in_area",
+                  "version": 1,
+                  "args": {
+                    "area": "west_of_titan"
+                  }
+                }
+              },
+              "comment": "scripts/quests/quest_grail/scripts/black_knight_titan.rs2:27-45",
+              "advances": false
+            },
+            {
+              "id": "take-grail-bell",
+              "kind": "interact",
+              "version": 1,
+              "args": {
+                "target": {
+                  "ground": "grail_bell"
+                },
+                "op": "Take",
+                "anchor": {
+                  "tile": [
+                    2762,
+                    4694,
+                    0
+                  ],
+                  "source": "scripts/quests/quest_grail/scripts/grail_fisherman.rs2:7-13"
+                },
+                "radius": 4
+              },
+              "skip_if": {
+                "Any": [
+                  {
+                    "Fact": {
+                      "kind": "has_item",
+                      "version": 1,
+                      "args": {
+                        "obj": "grail_bell"
+                      }
+                    }
+                  },
+                  {
+                    "Fact": {
+                      "kind": "near",
+                      "version": 1,
+                      "args": {
+                        "tile": [
+                          2761,
+                          4692,
+                          0
+                        ],
+                        "radius": 0
+                      }
+                    }
+                  }
+                ]
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "has_item",
+                  "version": 1,
+                  "args": {
+                    "obj": "grail_bell"
+                  }
+                }
+              },
+              "comment": "scripts/quests/quest_grail/scripts/grail_fisherman.rs2:7-13",
+              "advances": false
+            },
+            {
+              "id": "ring-grail-bell",
+              "kind": "interact",
+              "version": 1,
+              "args": {
+                "target": {
+                  "held": "grail_bell"
+                },
+                "op": "Ring",
+                "anchor": {
+                  "tile": [
+                    2762,
+                    4694,
+                    0
+                  ],
+                  "source": "scripts/quests/quest_grail/scripts/grail_fisherman.rs2:7-13"
+                }
+              },
+              "skip_if": {
+                "Fact": {
+                  "kind": "near",
+                  "version": 1,
+                  "args": {
+                    "tile": [
+                      2761,
+                      4692,
+                      0
+                    ],
+                    "radius": 0
+                  }
+                }
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "near",
+                  "version": 1,
+                  "args": {
+                    "tile": [
+                      2761,
+                      4692,
+                      0
+                    ],
+                    "radius": 0
+                  }
+                }
+              },
+              "comment": "scripts/quests/quest_grail/scripts/quest_grail.rs2:52-60; maps/m43_73.jm2:6146-6150",
+              "advances": false
+            },
+            {
+              "id": "fisher-king",
+              "kind": "talk",
+              "version": 1,
+              "args": {
+                "npc": "fisher_king",
+                "anchor": {
+                  "tile": [
+                    2762,
+                    4688,
+                    1
+                  ],
+                  "source": "maps/m43_73.jm2:6157"
+                },
+                "leash": 8,
+                "prefer": [
+                  "You don't look too well."
+                ]
+              },
+              "skip_if": {
+                "Any": []
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "stage_in",
+                  "version": 1,
+                  "args": {
+                    "quest": "grail",
+                    "any": [
+                      "grail:8"
+                    ]
+                  }
+                }
+              },
+              "comment": "scripts/quests/quest_grail/scripts/fisher_king.rs2:22-33",
+              "advances": true
+            }
+          ],
+          "order": "ordered"
+        },
+        {
+          "stage": "grail:7",
+          "required": [],
+          "terminal": false,
+          "recovery_entry": null,
+          "steps": [
+            {
+              "id": "retry-return-from-entrana",
+              "kind": "talk",
+              "version": 1,
+              "args": {
+                "npc": "shipmonk2",
+                "anchor": {
+                  "tile": [
+                    2835,
+                    3336,
+                    0
+                  ],
+                  "source": "maps/m44_52.jm2:8055"
+                },
+                "leash": 8,
+                "prefer": [
+                  "Yes, I'm ready to go."
+                ]
+              },
+              "skip_if": {
+                "Not": {
+                  "Fact": {
+                    "kind": "in_area",
+                    "version": 1,
+                    "args": {
+                      "area": "entrana"
+                    }
+                  }
+                }
+              },
+              "settle": {
+                "Not": {
+                  "Fact": {
+                    "kind": "in_area",
+                    "version": 1,
+                    "args": {
+                      "area": "entrana"
+                    }
+                  }
+                }
+              },
+              "comment": "scripts/areas/area_entrana/scripts/monk_of_entrana.rs2:1-7",
+              "advances": false
+            },
+            {
+              "id": "retry-take-napkin",
+              "kind": "talk",
+              "version": 1,
+              "args": {
+                "npc": "brother_galahad",
+                "anchor": {
+                  "tile": [
+                    2612,
+                    3474,
+                    0
+                  ],
+                  "source": "maps/m40_54.jm2:5932"
+                },
+                "leash": 8,
+                "prefer": [
+                  "I have lost the holy table napkin",
+                  "I seek an item from the realm of the Fisher King."
+                ]
+              },
+              "skip_if": {
+                "Any": [
+                  {
+                    "Fact": {
+                      "kind": "has_item",
+                      "version": 1,
+                      "args": {
+                        "obj": "holy_table_napkin"
+                      }
+                    }
+                  },
+                  {
+                    "Fact": {
+                      "kind": "item_count_at_least",
+                      "version": 1,
+                      "args": {
+                        "obj": "magic_whistle",
+                        "qty": 2
+                      }
+                    }
+                  },
+                  {
+                    "Fact": {
+                      "kind": "in_area",
+                      "version": 1,
+                      "args": {
+                        "area": "fisher_old"
+                      }
+                    }
+                  },
+                  {
+                    "Fact": {
+                      "kind": "in_area",
+                      "version": 1,
+                      "args": {
+                        "area": "west_of_titan"
+                      }
+                    }
+                  }
+                ]
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "has_item",
+                  "version": 1,
+                  "args": {
+                    "obj": "holy_table_napkin"
+                  }
+                }
+              },
+              "comment": "scripts/areas/area_seers/scripts/brother_galahad.rs2:30-36,52-55,95-98",
+              "advances": false
+            },
+            {
+              "id": "retry-open-whistle-room",
+              "kind": "interact",
+              "version": 1,
+              "args": {
+                "target": {
+                  "loc": "whistledoor",
+                  "tile": [
+                    3106,
+                    3361,
+                    2
+                  ],
+                  "source": "maps/m48_52.jm2:8893"
+                },
+                "op": "Open",
+                "anchor": {
+                  "tile": [
+                    3106,
+                    3361,
+                    2
+                  ],
+                  "source": "maps/m48_52.jm2:8893"
+                }
+              },
+              "skip_if": {
+                "Any": [
+                  {
+                    "Fact": {
+                      "kind": "item_count_at_least",
+                      "version": 1,
+                      "args": {
+                        "obj": "magic_whistle",
+                        "qty": 2
+                      }
+                    }
+                  },
+                  {
+                    "Fact": {
+                      "kind": "in_area",
+                      "version": 1,
+                      "args": {
+                        "area": "fisher_old"
+                      }
+                    }
+                  },
+                  {
+                    "Fact": {
+                      "kind": "in_area",
+                      "version": 1,
+                      "args": {
+                        "area": "west_of_titan"
+                      }
+                    }
+                  }
+                ]
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "ground_item_near",
+                  "version": 1,
+                  "args": {
+                    "obj": "magic_whistle",
+                    "radius": 5
+                  }
+                }
+              },
+              "comment": "scripts/quests/quest_grail/scripts/quest_grail.rs2:30-35",
+              "advances": false
+            },
+            {
+              "id": "retry-take-two-whistles",
+              "kind": "interact",
+              "version": 1,
+              "args": {
+                "target": {
+                  "ground": "magic_whistle"
+                },
+                "op": "Take",
+                "anchor": {
+                  "tile": [
+                    3107,
+                    3359,
+                    2
+                  ],
+                  "source": "scripts/quests/quest_grail/scripts/quest_grail.rs2:30-33"
+                },
+                "radius": 5,
+                "until": {
+                  "obj": "magic_whistle",
+                  "qty": 2
+                }
+              },
+              "skip_if": {
+                "Any": [
+                  {
+                    "Fact": {
+                      "kind": "item_count_at_least",
+                      "version": 1,
+                      "args": {
+                        "obj": "magic_whistle",
+                        "qty": 2
+                      }
+                    }
+                  },
+                  {
+                    "Fact": {
+                      "kind": "in_area",
+                      "version": 1,
+                      "args": {
+                        "area": "fisher_old"
+                      }
+                    }
+                  },
+                  {
+                    "Fact": {
+                      "kind": "in_area",
+                      "version": 1,
+                      "args": {
+                        "area": "west_of_titan"
+                      }
+                    }
+                  }
+                ]
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "item_count_at_least",
+                  "version": 1,
+                  "args": {
+                    "obj": "magic_whistle",
+                    "qty": 2
+                  }
+                }
+              },
+              "comment": "scripts/quests/quest_grail/scripts/quest_grail.rs2:30-35",
+              "advances": false
+            },
+            {
+              "id": "retry-withdraw-excalibur",
+              "kind": "bank",
+              "version": 1,
+              "args": {
+                "op": "withdraw",
+                "at": "nearest",
+                "items": [
+                  {
+                    "obj": "excalibur",
+                    "qty": 1
+                  }
+                ]
+              },
+              "skip_if": {
+                "Any": [
+                  {
+                    "Fact": {
+                      "kind": "has_item",
+                      "version": 1,
+                      "args": {
+                        "obj": "excalibur"
+                      }
+                    }
+                  },
+                  {
+                    "Fact": {
+                      "kind": "worn",
+                      "version": 1,
+                      "args": {
+                        "obj": "excalibur"
+                      }
+                    }
+                  }
+                ]
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "has_item",
+                  "version": 1,
+                  "args": {
+                    "obj": "excalibur"
+                  }
+                }
+              },
+              "comment": "scripts/quests/quest_grail/scripts/black_knight_titan.rs2:27-45"
+            },
+            {
+              "id": "retry-reach-whistle-zone",
+              "kind": "walk",
+              "version": 1,
+              "args": {
+                "tile": [
+                  2741,
+                  3235,
+                  0
+                ],
+                "radius": 0,
+                "source": "scripts/quests/quest_grail/scripts/quest_grail.rs2:37-47"
+              },
+              "skip_if": {
+                "Any": [
+                  {
+                    "Fact": {
+                      "kind": "in_area",
+                      "version": 1,
+                      "args": {
+                        "area": "fisher_old"
+                      }
+                    }
+                  },
+                  {
+                    "Fact": {
+                      "kind": "in_area",
+                      "version": 1,
+                      "args": {
+                        "area": "fisher_new"
+                      }
+                    }
+                  }
+                ]
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "near",
+                  "version": 1,
+                  "args": {
+                    "tile": [
+                      2741,
+                      3235,
+                      0
+                    ],
+                    "radius": 0
+                  }
+                }
+              },
+              "comment": "scripts/quests/quest_grail/scripts/quest_grail.rs2:37-47"
+            },
+            {
+              "id": "retry-first-realm-crossing",
+              "kind": "interact",
+              "version": 1,
+              "args": {
+                "target": {
+                  "held": "magic_whistle"
+                },
+                "op": "Blow"
+              },
+              "skip_if": {
+                "Any": [
+                  {
+                    "Fact": {
+                      "kind": "in_area",
+                      "version": 1,
+                      "args": {
+                        "area": "fisher_old"
+                      }
+                    }
+                  },
+                  {
+                    "Fact": {
+                      "kind": "in_area",
+                      "version": 1,
+                      "args": {
+                        "area": "fisher_new"
+                      }
+                    }
+                  }
+                ]
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "in_area",
+                  "version": 1,
+                  "args": {
+                    "area": "fisher_old"
+                  }
+                }
+              },
+              "comment": "scripts/quests/quest_grail/scripts/quest_grail.rs2:37-47",
+              "advances": false
+            },
+            {
+              "id": "retry-fisherman-bell",
+              "kind": "talk",
+              "version": 1,
+              "args": {
+                "npc": "grail_fisherman",
+                "anchor": {
+                  "tile": [
+                    2802,
+                    4706,
+                    0
+                  ],
+                  "source": "maps/m43_73.jm2:6156"
+                },
+                "leash": 8,
+                "prefer": [
+                  "Any idea how to get into the castle?"
+                ]
+              },
+              "skip_if": {
+                "Any": [
+                  {
+                    "Fact": {
+                      "kind": "has_item",
+                      "version": 1,
+                      "args": {
+                        "obj": "grail_bell"
+                      }
+                    }
+                  },
+                  {
+                    "Fact": {
+                      "kind": "in_area",
+                      "version": 1,
+                      "args": {
+                        "area": "west_of_titan"
+                      }
+                    }
+                  }
+                ]
+              },
+              "settle": {
+                "All": []
+              },
+              "comment": "scripts/quests/quest_grail/scripts/grail_fisherman.rs2:1-13",
+              "advances": false
+            },
+            {
+              "id": "retry-wield-excalibur",
+              "kind": "equip",
+              "version": 1,
+              "args": {
+                "obj": "excalibur"
+              },
+              "skip_if": {
+                "Any": [
+                  {
+                    "Fact": {
+                      "kind": "worn",
+                      "version": 1,
+                      "args": {
+                        "obj": "excalibur"
+                      }
+                    }
+                  },
+                  {
+                    "Fact": {
+                      "kind": "in_area",
+                      "version": 1,
+                      "args": {
+                        "area": "west_of_titan"
+                      }
+                    }
+                  }
+                ]
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "worn",
+                  "version": 1,
+                  "args": {
+                    "obj": "excalibur"
+                  }
+                }
+              },
+              "comment": "scripts/quests/quest_grail/scripts/black_knight_titan.rs2:27-45"
+            },
+            {
+              "id": "retry-defeat-titan",
+              "kind": "combat",
+              "version": 1,
+              "args": {
+                "target": {
+                  "npc": "black_knight_titan",
+                  "pick": "nearest",
+                  "not_targeting_others": true
+                },
+                "stand": {
+                  "tile": [
+                    2791,
+                    4722,
+                    0
+                  ],
+                  "source": "maps/m43_73.jm2:6155"
+                },
+                "tactic": {
+                  "kind": "open",
+                  "style": "melee",
+                  "engage_radius": 6,
+                  "auto_retaliate": true
+                },
+                "lost_radius": 12,
+                "kill_budget_ticks": 400
+              },
+              "skip_if": {
+                "Fact": {
+                  "kind": "in_area",
+                  "version": 1,
+                  "args": {
+                    "area": "west_of_titan"
+                  }
+                }
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "in_area",
+                  "version": 1,
+                  "args": {
+                    "area": "west_of_titan"
+                  }
+                }
+              },
+              "comment": "scripts/quests/quest_grail/scripts/black_knight_titan.rs2:27-45",
+              "advances": false
+            },
+            {
+              "id": "retry-take-grail-bell",
+              "kind": "interact",
+              "version": 1,
+              "args": {
+                "target": {
+                  "ground": "grail_bell"
+                },
+                "op": "Take",
+                "anchor": {
+                  "tile": [
+                    2762,
+                    4694,
+                    0
+                  ],
+                  "source": "scripts/quests/quest_grail/scripts/grail_fisherman.rs2:7-13"
+                },
+                "radius": 4
+              },
+              "skip_if": {
+                "Any": [
+                  {
+                    "Fact": {
+                      "kind": "has_item",
+                      "version": 1,
+                      "args": {
+                        "obj": "grail_bell"
+                      }
+                    }
+                  },
+                  {
+                    "Fact": {
+                      "kind": "near",
+                      "version": 1,
+                      "args": {
+                        "tile": [
+                          2761,
+                          4692,
+                          0
+                        ],
+                        "radius": 0
+                      }
+                    }
+                  }
+                ]
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "has_item",
+                  "version": 1,
+                  "args": {
+                    "obj": "grail_bell"
+                  }
+                }
+              },
+              "comment": "scripts/quests/quest_grail/scripts/grail_fisherman.rs2:7-13",
+              "advances": false
+            },
+            {
+              "id": "retry-ring-grail-bell",
+              "kind": "interact",
+              "version": 1,
+              "args": {
+                "target": {
+                  "held": "grail_bell"
+                },
+                "op": "Ring",
+                "anchor": {
+                  "tile": [
+                    2762,
+                    4694,
+                    0
+                  ],
+                  "source": "scripts/quests/quest_grail/scripts/grail_fisherman.rs2:7-13"
+                }
+              },
+              "skip_if": {
+                "Fact": {
+                  "kind": "near",
+                  "version": 1,
+                  "args": {
+                    "tile": [
+                      2761,
+                      4692,
+                      0
+                    ],
+                    "radius": 0
+                  }
+                }
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "near",
+                  "version": 1,
+                  "args": {
+                    "tile": [
+                      2761,
+                      4692,
+                      0
+                    ],
+                    "radius": 0
+                  }
+                }
+              },
+              "comment": "scripts/quests/quest_grail/scripts/quest_grail.rs2:52-60; maps/m43_73.jm2:6146-6150",
+              "advances": false
+            },
+            {
+              "id": "retry-fisher-king",
+              "kind": "talk",
+              "version": 1,
+              "args": {
+                "npc": "fisher_king",
+                "anchor": {
+                  "tile": [
+                    2762,
+                    4688,
+                    1
+                  ],
+                  "source": "maps/m43_73.jm2:6157"
+                },
+                "leash": 8,
+                "prefer": [
+                  "You don't look too well."
+                ]
+              },
+              "skip_if": {
+                "Any": []
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "stage_in",
+                  "version": 1,
+                  "args": {
+                    "quest": "grail",
+                    "any": [
+                      "grail:8"
+                    ]
+                  }
+                }
+              },
+              "comment": "scripts/quests/quest_grail/scripts/fisher_king.rs2:22-33",
+              "advances": true
+            }
+          ],
+          "order": "ordered"
+        },
+        {
+          "stage": "grail:8",
+          "required": [],
+          "terminal": false,
+          "recovery_entry": null,
+          "steps": [
+            {
+              "id": "leave-fisher-realm",
+              "kind": "interact",
+              "version": 1,
+              "args": {
+                "target": {
+                  "held": "magic_whistle"
+                },
+                "op": "Blow"
+              },
+              "skip_if": {
+                "Not": {
+                  "Any": [
+                    {
+                      "Fact": {
+                        "kind": "in_area",
+                        "version": 1,
+                        "args": {
+                          "area": "fisher_old"
+                        }
+                      }
+                    },
+                    {
+                      "Fact": {
+                        "kind": "in_area",
+                        "version": 1,
+                        "args": {
+                          "area": "fisher_new"
+                        }
+                      }
+                    }
+                  ]
+                }
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "near",
+                  "version": 1,
+                  "args": {
+                    "tile": [
+                      2741,
+                      3235,
+                      0
+                    ],
+                    "radius": 1
+                  }
+                }
+              },
+              "comment": "scripts/quests/quest_grail/scripts/quest_grail.rs2:37-47",
+              "advances": false
+            },
+            {
+              "id": "arthur-feather",
+              "kind": "talk",
+              "version": 1,
+              "args": {
+                "npc": "king_arthur",
+                "anchor": {
+                  "tile": [
+                    2764,
+                    3515,
+                    0
+                  ],
+                  "source": "maps/m43_54.jm2:8273"
+                },
+                "leash": 8,
+                "prefer": []
+              },
+              "skip_if": {
+                "Fact": {
+                  "kind": "has_item",
+                  "version": 1,
+                  "args": {
+                    "obj": "magic_golden_feather"
+                  }
+                }
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "has_item",
+                  "version": 1,
+                  "args": {
+                    "obj": "magic_golden_feather"
+                  }
+                }
+              },
+              "comment": "scripts/areas/area_camelot/scripts/king_arthur.rs2:6-25",
+              "advances": false
+            },
+            {
+              "id": "rescue-percival",
+              "kind": "interact",
+              "version": 1,
+              "args": {
+                "target": {
+                  "loc": "percy_sacks",
+                  "tile": [
+                    2960,
+                    3507,
+                    0
+                  ],
+                  "source": "maps/m46_54.jm2:4734"
+                },
+                "op": "Open",
+                "anchor": {
+                  "tile": [
+                    2960,
+                    3507,
+                    0
+                  ],
+                  "source": "maps/m46_54.jm2:4734"
+                },
+                "dialogue": {
+                  "prefer": [
+                    "Your father wishes to speak to you."
+                  ]
+                }
+              },
+              "skip_if": {
+                "Any": []
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "stage_in",
+                  "version": 1,
+                  "args": {
+                    "quest": "grail",
+                    "any": [
+                      "grail:9"
+                    ]
+                  }
+                }
+              },
+              "comment": "scripts/quests/quest_grail/scripts/quest_grail.rs2:16-27; scripts/quests/quest_grail/scripts/sir_percival.rs2:13-16,33-47",
+              "advances": true
+            }
+          ],
+          "order": "ordered"
+        },
+        {
+          "stage": "grail:9",
+          "required": [],
+          "terminal": false,
+          "recovery_entry": null,
+          "steps": [
+            {
+              "id": "reach-second-crossing",
+              "kind": "walk",
+              "version": 1,
+              "args": {
+                "tile": [
+                  2741,
+                  3235,
+                  0
+                ],
+                "radius": 0,
+                "source": "scripts/quests/quest_grail/scripts/quest_grail.rs2:37-47"
+              },
+              "skip_if": {
+                "Any": [
+                  {
+                    "Fact": {
+                      "kind": "in_area",
+                      "version": 1,
+                      "args": {
+                        "area": "fisher_new"
+                      }
+                    }
+                  },
+                  {
+                    "Fact": {
+                      "kind": "has_item",
+                      "version": 1,
+                      "args": {
+                        "obj": "holy_grail"
+                      }
+                    }
+                  }
+                ]
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "near",
+                  "version": 1,
+                  "args": {
+                    "tile": [
+                      2741,
+                      3235,
+                      0
+                    ],
+                    "radius": 0
+                  }
+                }
+              },
+              "comment": "scripts/quests/quest_grail/scripts/quest_grail.rs2:37-47"
+            },
+            {
+              "id": "second-realm-crossing",
+              "kind": "interact",
+              "version": 1,
+              "args": {
+                "target": {
+                  "held": "magic_whistle"
+                },
+                "op": "Blow"
+              },
+              "skip_if": {
+                "Any": [
+                  {
+                    "Fact": {
+                      "kind": "in_area",
+                      "version": 1,
+                      "args": {
+                        "area": "fisher_new"
+                      }
+                    }
+                  },
+                  {
+                    "Fact": {
+                      "kind": "has_item",
+                      "version": 1,
+                      "args": {
+                        "obj": "holy_grail"
+                      }
+                    }
+                  }
+                ]
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "in_area",
+                  "version": 1,
+                  "args": {
+                    "area": "fisher_new"
+                  }
+                }
+              },
+              "comment": "scripts/quests/quest_grail/scripts/quest_grail.rs2:37-47",
+              "advances": false
+            },
+            {
+              "id": "take-holy-grail",
+              "kind": "interact",
+              "version": 1,
+              "args": {
+                "target": {
+                  "ground": "holy_grail"
+                },
+                "op": "Take",
+                "anchor": {
+                  "tile": [
+                    2649,
+                    4684,
+                    2
+                  ],
+                  "source": "maps/m41_73.jm2:6946"
+                },
+                "radius": 4
+              },
+              "skip_if": {
+                "Fact": {
+                  "kind": "has_item",
+                  "version": 1,
+                  "args": {
+                    "obj": "holy_grail"
+                  }
+                }
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "has_item",
+                  "version": 1,
+                  "args": {
+                    "obj": "holy_grail"
+                  }
+                }
+              },
+              "comment": "scripts/quests/quest_grail/scripts/quest_grail.rs2:64-73; maps/m41_73.jm2:6946",
+              "advances": false
+            },
+            {
+              "id": "leave-restored-realm",
+              "kind": "interact",
+              "version": 1,
+              "args": {
+                "target": {
+                  "held": "magic_whistle"
+                },
+                "op": "Blow"
+              },
+              "skip_if": {
+                "Not": {
+                  "Any": [
+                    {
+                      "Fact": {
+                        "kind": "in_area",
+                        "version": 1,
+                        "args": {
+                          "area": "fisher_old"
+                        }
+                      }
+                    },
+                    {
+                      "Fact": {
+                        "kind": "in_area",
+                        "version": 1,
+                        "args": {
+                          "area": "fisher_new"
+                        }
+                      }
+                    }
+                  ]
+                }
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "near",
+                  "version": 1,
+                  "args": {
+                    "tile": [
+                      2741,
+                      3235,
+                      0
+                    ],
+                    "radius": 1
+                  }
+                }
+              },
+              "comment": "scripts/quests/quest_grail/scripts/quest_grail.rs2:37-47",
+              "advances": false
+            },
+            {
+              "id": "return-grail",
+              "kind": "talk",
+              "version": 1,
+              "args": {
+                "npc": "king_arthur",
+                "anchor": {
+                  "tile": [
+                    2764,
+                    3515,
+                    0
+                  ],
+                  "source": "maps/m43_54.jm2:8273"
+                },
+                "leash": 8,
+                "prefer": []
+              },
+              "skip_if": {
+                "Any": []
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "quest_colour",
+                  "version": 1,
+                  "args": {
+                    "quest": "grail",
+                    "is": "complete"
+                  }
+                }
+              },
+              "comment": "scripts/areas/area_camelot/scripts/king_arthur.rs2:26-32; scripts/quests/quest_grail/scripts/quest_grail.rs2:113-119",
+              "advances": true
+            }
+          ],
+          "order": "ordered"
+        },
+        {
+          "stage": "grail:done",
+          "required": [],
+          "terminal": true,
+          "recovery_entry": null,
+          "steps": []
+        }
+      ]
+    }
+  ]
+}

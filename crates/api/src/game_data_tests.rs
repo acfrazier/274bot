@@ -1408,6 +1408,7 @@ fn dialogue_ui_controls_are_optional_and_refuse_invalid_identities() {
     let valid = serde_json::json!({
         "scroll_root": 1136,
         "quest_scroll_root": 297,
+        "chapter_root": 11104,
         "book_root": 837,
         "book_forward": 841,
         "book_close": 10162,
@@ -1428,13 +1429,24 @@ fn dialogue_ui_controls_are_optional_and_refuse_invalid_identities() {
         decode(&incomplete).is_err(),
         "the new generated identity is required on present data"
     );
+    let mut missing_chapter = valid.clone();
+    missing_chapter
+        .as_object_mut()
+        .unwrap()
+        .remove("chapter_root");
+    assert!(
+        decode(&missing_chapter).is_err(),
+        "the chapter root identity is required on present data"
+    );
     let data = decode(&valid).unwrap();
     assert_eq!(data.dialogue_ui().unwrap().quest_scroll_root, 297);
     assert_eq!(data.dialogue_ui().unwrap().book_forward, 841);
     assert_eq!(data.dialogue_ui().unwrap().book_forward_marker, 842);
+    assert_eq!(data.dialogue_ui().unwrap().chapter_root, 11104);
     for field in [
         "scroll_root",
         "quest_scroll_root",
+        "chapter_root",
         "book_root",
         "book_forward",
         "book_close",
@@ -1450,6 +1462,9 @@ fn dialogue_ui_controls_are_optional_and_refuse_invalid_identities() {
         .unwrap()
         .dialogue_ui()
         .is_none());
+    let mut duplicate_chapter = valid.clone();
+    duplicate_chapter["chapter_root"] = duplicate_chapter["scroll_root"].clone();
+    assert!(decode(&duplicate_chapter).unwrap().dialogue_ui().is_none());
     let mut duplicate = valid.clone();
     duplicate["book_forward"] = duplicate["book_close"].clone();
     assert!(decode(&duplicate).unwrap().dialogue_ui().is_none());
@@ -1467,6 +1482,7 @@ fn generated_dialogue_ui_roles_match_both_pinned_sources() {
             Some(&DialogueUiIds {
                 scroll_root: 1136,
                 quest_scroll_root: 297,
+                chapter_root: 11104,
                 book_root: 837,
                 book_forward: 841,
                 book_close: 10162,

@@ -21,12 +21,43 @@ A guide is one JSON file with schema 3. It names the quest, the checks the Quest
 
   The compiler requires this header. A guide with `members: true` blocks Start on a free-to-play world with `quest requires a members world`.
 - `roles[]`: `role` (`null` for solo), `progress_binding`, `progress`, an optional owned `progress_reader` step (required for `Miniquest`; invoked initially and after every advancing step), guarded `prelude[]`, and `sequences[]`. `progress` declares quest colours, journal stage rules, flags, and monotonicity. Keep the prelude short.
-- `sequences[]`: `stage`, `required`, `terminal`, `recovery_entry`, optional `order` (`"authored"` default, `"nearest"`, or `"ordered"`; see How a run reads a guide), and `steps[]`.
+- `sequences[]`: `stage`, `required`, `terminal`, `recovery_entry`, optional `cross` declarations, optional `order` (`"authored"` default, `"nearest"`, or `"ordered"`), and `steps[]`.
 - `steps[]`: `id`, `kind`, `version`, `args`, `skip_if`, and `settle` are required. `comment` is optional. `advances` is required for Explicit handler kinds (`talk`, `interact`, `use_on`, `make`, `combat`, `gather`, `thieve`, and `x:*`); Default kinds compile as `false` when it is omitted.
+  Optional `max_attempts` sets a per-step limit from 1 to 32. Pair it with a nonblank `stop` name. Choose and justify the limit from quest content. Use this pair only in `prelude[]` and `sequences[].steps[]`. The compiler rejects the pair on `quest.acquire` recipe steps and `progress_reader` steps.
+  The runner counts failed begins, soft poll failures, and settle timeouts. It also parks after 32 consecutive counted failures across budgeted steps, even if another step runs after a failure. A successful settle resets this run-wide count.
+  Hard poll failures (`Blocked`, `CombatInterrupted`, or `NeedsEvidence`) and user input still stop the guide at once. User input does not spend an attempt. If the per-step limit is spent, the runner reports its named stop. Without the pair, the existing five-failure park limit applies.
+  After a settle timeout, an advancing step rereads progress before it retries.
 
 `skip_if` and `settle` use externally tagged predicate documents: `{"All":[...]}`, `{"Any":[...]}`, `{"Not":...}`, and `{"Fact":{"kind":"...","version":1,"args":{...}}}`. Keep this envelope as written.
 
 Step ids must stay unique across recipes and the selected role's prelude, sequences, and `progress_reader`. A solo guide declares exactly one role. Paired guides declare one role per gang.
+
+## Required danger zones
+
+Declare each unavoidable danger zone where the guide must enter or cross it.
+A sequence's `cross` grants its zones to every route in that stage.
+The sequence field uses stable navigation zone ids, with a `name` and `reason` for each zone.
+
+```json
+"cross": [{
+  "id": "renegade_knight@2773,3399,0",
+  "name": "Keep Le Faye Renegade Knight",
+  "reason": "Cross the ground floor to reach Sir Mordred."
+}]
+```
+
+Walk and combat steps can also declare an `args.cross` array of stable zone ids.
+Those grants apply only to that step's routes, including a combat step's first approach.
+A prelude step keeps its own grants.
+Each route accepts the union of its step and current stage declarations, without duplicates.
+The compiler rejects unknown ids and a route whose combined set exceeds eight zones.
+Stage declarations also require unique ids and nonempty names and reasons.
+A navigation pack must be available when a guide declares zones.
+Panel and TUI list stage and step declarations before Start, with their scopes.
+The next stage does not retain the previous stage's declarations.
+Other zones remain avoided, even when a global or card danger setting permits them.
+Protection, food, and escape logic remain active.
+
 
 
 ## Steps
@@ -93,7 +124,7 @@ Shield of Arrav and Hero's Quest declare `partner` in guide authoring: a two-rol
 2. **Resolve the stage.** Journal rules and declared flags resolve progress to a symbolic stage, which must name a sequence. If a completed journal read does not match a sequence, the runner parks with the journal evidence rather than guessing stage zero.
 3. **Select a step.** At each boundary, the runner checks `prelude` before the current stage sequence. `True` skips a step, and `Unknown` blocks lower-priority steps until evidence becomes available. An attempted step is not automatically done: `skip_if` must describe an already-achieved condition. The sequence's `order` decides which proven-`False` step starts; see Step order within a stage.
 4. **Run the step.** A family plan may drive one or several actions; its run is polled over ticks. Provisioning recipes run their own sequence of steps. Temporary blocking or missing evidence can wait; repeated failures can park the guide.
-5. **Read and settle.** When a successful step has `advances: true`, the runner requests a progress read and then evaluates `settle` against current evidence inside the family's settle window. The read's latency does not consume that window. A true settle resets the failure streak and selects from the newly resolved stage. A timeout is recorded as a step failure; it is not treated as a skip.
+5. **Read and settle.** When a successful step has `advances: true`, the runner requests a progress read and then evaluates `settle` against current evidence inside the family's settle window. The read's latency does not consume that window. A true settle resets the failure streak and selects from the newly resolved stage. A timeout is recorded as a step failure, not treated as a skip; an advancing step requests a fresh progress read before another attempt.
 
 ## Step order within a stage
 
@@ -179,6 +210,17 @@ Provisioner's bank scan, capacity deposit and withdrawal boundaries are included
 
   Use `"continue"` when content requires a page. Use the object form with `prefer`/`choose`/`line_rules` when content can open a menu. `"none"` never touches dialogue. A `talk` step that adopts an already-open page (no Talk-to sent) answers only through its own `prefer`/`choose`/`line_rules`, never the default last option.
 - **Chat-to-scroll transitions.** An owned conversation can finish on the selected scroll (including the source-proven quest-completion scroll) or book interface after its chat closes. The shared dialogue driver requires a witnessed owned page or an accepted, fresh Continue/Answer receipt; an in-flight advance waits within the existing page bound. An unrelated interface, a refused answer, or a scroll without an owned conversation does not prove dialogue success.
+- **A repeated menu (`answer_once`).** Some NPCs reopen the identical menu after every question. By default `prefer` checks the same entries on every page, so the first matching entry answers the reopened menu again and again. Set `answer_once: true` to skip a `prefer` entry that already answered a page in that conversation and fall through to the next entry in order. It is accepted on `talk` args, in an `interact`/`use_on` `dialogue` object, and on a combat `finish`. `line_rules` and `choose` work as before and do not use up a `prefer` entry. If every `prefer` entry that matches the page has already answered, `strict` fails as it does for a missing answer; without `strict` the usual fallback applies. Author at most 32 entries when `answer_once` is set; more fails to compile with `invalid-dialogue-options`.
+
+  Filliman Tarlock reopens the same four-option menu after each of his three questions, and "Ok, thanks." ends the conversation (`filliman.rs2:14,255-269,233-234`); the next step, using the mirror on him, needs stage `spoken_filliman` (`:276-279`). Answer the repeated menu once and leave:
+
+  ```jsonc
+  "args": {
+    "npc": "filliman_tarlock_spirit",
+    "prefer": ["How long have you been a ghost?", "Ok, thanks."],
+    "answer_once": true
+  }
+  ```
 
 ## Gaps, waits, and combat finish
 
@@ -189,7 +231,7 @@ Provisioner's bank scan, capacity deposit and withdrawal boundaries are included
   During the hole, an inventory change, a player move, a new game chat line, or an active player animation re-arms the gap, adding `gap_ticks` again. Size it from the longest quiet stretch, not one quiet moment.
 
   Each page is answered on the tick it is first observed; a choice page whose text changed on the same chat root waits one tick for its option rows.
-- **Combat `finish`.** Flat `prefer`/`choose`/`strict`/`line_rules` fields use the shared dialogue selector, and `max_ticks` measures observed game ticks, not host polls.
+- **Combat `finish`.** Flat `prefer`/`choose`/`strict`/`line_rules`/`answer_once` fields use the shared dialogue selector, and `max_ticks` measures observed game ticks, not host polls.
 
 `interact.wait_until` optionally gates each new operation round with a predicate.
 False or unknown evidence waits without clicking; the fixed `settle_ms` deadline

@@ -1,0 +1,122 @@
+{
+  "$schema": "../path.schema.json",
+  "schema": 3,
+  "id": "fishingcompo",
+  "display_name": "Fishing Contest",
+  "required": ["fishing-10"],
+  "tested_stats": null,
+  "partner": null,
+  "quest": {
+    "members": true,
+    "quest_points": 1,
+    "requirements": [{"id":"fishing-10", "kind":{"Skill":{"skill":"fishing","level":10}}, "at":"start", "source":"content/scripts/quests/quest_fishingcompo/scripts/hemenster_fishing.rs2:69-75"}],
+    "items": [],
+    "acquire": {},
+    "bank": "nearest",
+    "coin_float": 65,
+    "loadouts": {},
+    "areas": {"contest": {"boxes": [[2627,3425,2642,3448,0]], "source":"content/maps/m41_53.jm2:5083-5084,7624-7633; gate lies on east edge"}, "wood": {"boxes": [[2590,3470,2661,3507,0]], "source":"content/maps/m41_54.jm2:4334-4338,4852-4872,5278-5289; interior west of loose railing"}},
+    "tools": ["obj:fishing_rod", "obj:spade", "obj:red_vine_worm", "obj:garlic", "obj:fishing_competition_pass", "obj:hemenster_fishing_trophy"],
+    "owns_inventory": true
+  },
+  "roles": [{
+    "role": null,
+    "progress_binding": "journal:fishingcompo",
+    "progress": {
+      "colour": {"not_started":"fishingcompo:0", "in_progress":"fishingcompo:1", "complete":"fishingcompo:5"},
+      "rules": [
+        {"stage":"fishingcompo:5", "all":["quest complete!"], "any":[], "not":[], "varp":5},
+        {"stage":"fishingcompo:4", "all":["i should take the", "back to the"], "any":[], "not":[], "varp":4},
+        {"stage":"fishingcompo:3", "all":["next to the pipes"], "any":[], "not":[], "varp":3},
+        {"stage":"fishingcompo:2", "all":["next to the willow tree"], "any":[], "not":[], "varp":2},
+        {"stage":"fishingcompo:1", "all":["they gave me a"], "any":[], "not":[], "varp":1}
+      ],
+      "flags": [],
+      "monotonic": false
+    },
+    "prelude": [],
+    "sequences": [
+      {"stage":"fishingcompo:0", "required":[], "terminal":false, "recovery_entry":null, "steps":[
+        {"id":"open-garlic-before-start","kind":"interact","version":1,"advances":false,
+         "args":{"target":{"loc":"garliccupboardshut"},"op":"Open","anchor":{"tile":[3096,3268,1],"source":"content/maps/m48_51.jm2:6349"},"radius":4,"wait_if_missing":true},
+         "comment":"content/scripts/general_use/scripts/cupboards.rs2:1-3,41-47; acquire garlic before travelling west by boat.",
+         "skip_if":{"Any":[{"Fact":{"kind":"has_item","version":1,"args":{"obj":"garlic"}}},{"Fact":{"kind":"loc_present","version":1,"args":{"loc":"garliccupboardopen"}}}]},
+         "settle":{"Fact":{"kind":"loc_present","version":1,"args":{"loc":"garliccupboardopen"}}}},
+        {"id":"search-garlic-before-start","kind":"interact","version":1,"advances":false,
+         "args":{"target":{"loc":"garliccupboardopen"},"op":"Search","anchor":{"tile":[3096,3268,1],"source":"content/maps/m48_51.jm2:6349"},"radius":4,"wait_if_missing":true},
+         "comment":"content/scripts/general_use/scripts/cupboards.rs2:18-34,69-79 supplies garlic without a purchase.",
+         "skip_if":{"Fact":{"kind":"has_item","version":1,"args":{"obj":"garlic"}}},"settle":{"Fact":{"kind":"has_item","version":1,"args":{"obj":"garlic"}}}},
+        {"id":"start", "kind":"talk", "version":1, "advances":true,
+         "comment":"content/scripts/areas/area_white_wolf_mountain/scripts/mountain_dwarf.rs2:8-14,33-46,52-71; content/maps/m44_54.jm2:5693-5696.",
+         "args":{"npc":"tunnel_dwarf", "anchor":{"tile":[2820,3487,0], "source":"content/maps/m44_54.jm2:5693-5696"}, "leash":8, "prefer":["what was down those stairs", "Why not?", "If you were my friend", "let's be friends", "how am I meant", "Fortunately I'm alright"]},
+         "skip_if":{"Any":[]}, "settle":{"Fact":{"kind":"stage_in","version":1,"args":{"quest":"fishingcompo","any":["fishingcompo:1"]}}}}
+      ]},
+      {"stage":"fishingcompo:1", "required":[], "terminal":false, "recovery_entry":null, "order":"ordered", "steps":[
+        {"id":"replace-pass", "kind":"talk", "version":1, "advances":false,
+         "comment":"content/scripts/areas/area_white_wolf_mountain/scripts/mountain_dwarf.rs2:81-85,112-120. Pass replacement requires none in bank.",
+         "args":{"npc":"tunnel_dwarf","anchor":{"tile":[2820,3487,0],"source":"content/maps/m44_54.jm2:5693-5696"},"leash":8,"prefer":["I need another competition pass"]},
+         "skip_if":{"Fact":{"kind":"has_item","version":1,"args":{"obj":"fishing_competition_pass"}}}, "settle":{"Fact":{"kind":"has_item","version":1,"args":{"obj":"fishing_competition_pass"}}}},
+        {"id":"open-garlic-cupboard","kind":"interact","version":1,"advances":false,
+         "args":{"target":{"loc":"garliccupboardshut"},"op":"Open","anchor":{"tile":[3096,3268,1],"source":"content/maps/m48_51.jm2:6349"},"radius":4,"wait_if_missing":true},
+         "comment":"content/scripts/general_use/scripts/cupboards.rs2:1-3,41-47; content/scripts/general_use/configs/cupboards.loc:87-106.",
+         "skip_if":{"Any":[{"Fact":{"kind":"has_item","version":1,"args":{"obj":"garlic"}}},{"Fact":{"kind":"loc_present","version":1,"args":{"loc":"garliccupboardopen"}}}]},
+         "settle":{"Fact":{"kind":"loc_present","version":1,"args":{"loc":"garliccupboardopen"}}}},
+        {"id":"search-garlic-cupboard","kind":"interact","version":1,"advances":false,
+         "args":{"target":{"loc":"garliccupboardopen"},"op":"Search","anchor":{"tile":[3096,3268,1],"source":"content/maps/m48_51.jm2:6349"},"radius":4,"wait_if_missing":true},
+         "comment":"content/scripts/general_use/scripts/cupboards.rs2:18-34,69-79 supplies garlic without a purchase.",
+         "skip_if":{"Fact":{"kind":"has_item","version":1,"args":{"obj":"garlic"}}},"settle":{"Fact":{"kind":"has_item","version":1,"args":{"obj":"garlic"}}}},
+        {"id":"enter-wood", "kind":"interact", "version":1, "advances":false,
+         "comment":"content/scripts/areas/area_seers/configs/mcgrubors_wood.loc:1-7; content/scripts/areas/area_seers/scripts/mcgrubors_wood.rs2:1-8,12-23; content/maps/m41_54.jm2:5287. The gate is blocked; the loose railing crosses the east fence.",
+         "args":{"target":{"loc":"mcgruborlooserailing"},"op":"Squeeze-through","anchor":{"tile":[2662,3500,0],"source":"content/maps/m41_54.jm2:5287"},"radius":2},
+         "skip_if":{"Any":[{"Fact":{"kind":"has_item","version":1,"args":{"obj":"red_vine_worm"}}},{"Fact":{"kind":"in_area","version":1,"args":{"area":"wood"}}}]}, "settle":{"Fact":{"kind":"in_area","version":1,"args":{"area":"wood"}}}},
+        {"id":"dig-red-vine", "kind":"interact", "version":1, "advances":false,
+         "comment":"content/scripts/areas/area_seers/configs/mcgrubors_wood.loc:24-37; content/scripts/areas/area_seers/scripts/mcgrubors_wood.rs2:25-48; content/maps/m41_54.jm2:4337. Check requires a spade and gives one worm.",
+         "args":{"target":{"loc":"red_worm_vine"},"op":"Check","anchor":{"tile":[2631,3498,0],"source":"content/maps/m41_54.jm2:4337"},"radius":2},
+         "skip_if":{"Fact":{"kind":"has_item","version":1,"args":{"obj":"red_vine_worm"}}}, "settle":{"Fact":{"kind":"has_item","version":1,"args":{"obj":"red_vine_worm"}}}},
+        {"id":"leave-wood", "kind":"interact", "version":1, "advances":false,
+         "comment":"content/scripts/areas/area_seers/configs/mcgrubors_wood.loc:1-7; content/scripts/areas/area_seers/scripts/mcgrubors_wood.rs2:12-23; content/maps/m41_54.jm2:5287. The same railing works in both directions.",
+         "args":{"target":{"loc":"mcgruborlooserailing"},"op":"Squeeze-through","anchor":{"tile":[2662,3500,0],"source":"content/maps/m41_54.jm2:5287"},"radius":2},
+         "skip_if":{"Not":{"Fact":{"kind":"in_area","version":1,"args":{"area":"wood"}}}}, "settle":{"Not":{"Fact":{"kind":"in_area","version":1,"args":{"area":"wood"}}}}},
+        {"id":"enter-contest", "kind":"interact", "version":1, "advances":false,
+         "comment":"content/scripts/quests/quest_fishingcompo/scripts/quest_fishingcompo.rs2:22-43; content/maps/m41_53.jm2:5083-5084.",
+         "args":{"target":{"loc":"fishinggateclosedr"},"op":"Open","anchor":{"tile":[2642,3441,0],"source":"content/maps/m41_53.jm2:5083"},"radius":4},
+         "skip_if":{"Fact":{"kind":"in_area","version":1,"args":{"area":"contest"}}}, "settle":{"Fact":{"kind":"in_area","version":1,"args":{"area":"contest"}}}},
+        {"id":"pay-bonzo", "kind":"talk", "version":1, "advances":true,
+         "comment":"content/scripts/areas/area_seers/scripts/hemenster/bonzo.rs2:16-45; content/maps/m41_53.jm2:7632.",
+         "args":{"npc":"bonzo","anchor":{"tile":[2641,3439,0],"source":"content/maps/m41_53.jm2:7632"},"leash":8,"prefer":["I'll enter the competition please"]},
+         "skip_if":{"Any":[]}, "settle":{"Fact":{"kind":"stage_in","version":1,"args":{"quest":"fishingcompo","any":["fishingcompo:2","fishingcompo:3"]}}}}
+      ]},
+      {"stage":"fishingcompo:2", "required":[], "terminal":false, "recovery_entry":null, "steps":[
+        {"id":"stash-garlic", "kind":"use_on", "version":1, "advances":true,
+         "comment":"content/scripts/quests/quest_fishingcompo/scripts/quest_fishingcompo.rs2:75-104; pipe placement content/maps/m41_53.jm2:4750,4815,4865.",
+         "args":{"item":"garlic","target":{"loc":"garlicpipe"},"anchor":{"tile":[2637,3446,0],"source":"content/maps/m41_53.jm2:4815"},"radius":5,"dialogue":"continue"},
+         "skip_if":{"Any":[]}, "settle":{"Fact":{"kind":"stage_in","version":1,"args":{"quest":"fishingcompo","any":["fishingcompo:3"]}}}}
+      ]},
+      {"stage":"fishingcompo:3", "required":[], "terminal":false, "recovery_entry":null, "steps":[
+        {"id":"catch-carp", "kind":"interact", "version":1, "advances":false,
+         "comment":"content/scripts/quests/quest_fishingcompo/scripts/hemenster_fishing.rs2:20-32,55-101; content/scripts/skill_fishing/configs/fishing.npc:17-30; content/maps/m41_53.jm2:7631. One carp suffices for Bonzo's early hand-in.",
+         "args":{"target":{"npc":"0_41_53_sinisterfishspot"},"op":"Fish","anchor":{"tile":[2637,3444,0],"source":"content/maps/m41_53.jm2:7631"},"radius":4,"until":{"obj":"raw_giant_carp","qty":1}},
+         "skip_if":{"Fact":{"kind":"has_item","version":1,"args":{"obj":"raw_giant_carp"}}}, "settle":{"Fact":{"kind":"has_item","version":1,"args":{"obj":"raw_giant_carp"}}}},
+        {"id":"hand-carp-to-bonzo", "kind":"talk", "version":1, "advances":true,
+         "comment":"content/scripts/areas/area_seers/scripts/hemenster/bonzo.rs2:47-64 accepts a catch after one fish and awards the trophy when a carp is held.",
+         "args":{"npc":"bonzo","anchor":{"tile":[2641,3439,0],"source":"content/maps/m41_53.jm2:7632"},"leash":8,"prefer":[]},
+         "skip_if":{"Any":[]}, "settle":{"Fact":{"kind":"stage_in","version":1,"args":{"quest":"fishingcompo","any":["fishingcompo:4"]}}}}
+      ]},
+      {"stage":"fishingcompo:4", "required":[], "terminal":false, "recovery_entry":null, "steps":[
+        {"id":"replace-trophy", "kind":"talk", "version":1, "advances":false,
+         "comment":"content/scripts/areas/area_seers/scripts/hemenster/bonzo.rs2:87-95 gives a replacement trophy.",
+         "args":{"npc":"bonzo","anchor":{"tile":[2641,3439,0],"source":"content/maps/m41_53.jm2:7632"},"leash":8,"prefer":[]},
+         "skip_if":{"Fact":{"kind":"has_item","version":1,"args":{"obj":"hemenster_fishing_trophy"}}}, "settle":{"Fact":{"kind":"has_item","version":1,"args":{"obj":"hemenster_fishing_trophy"}}}},
+        {"id":"leave-contest", "kind":"interact", "version":1, "advances":false,
+         "comment":"content/scripts/quests/quest_fishingcompo/scripts/quest_fishingcompo.rs2:22-34; content/maps/m41_53.jm2:5083-5084.",
+         "args":{"target":{"loc":"fishinggateclosedr"},"op":"Open","anchor":{"tile":[2642,3441,0],"source":"content/maps/m41_53.jm2:5083"},"radius":4},
+         "skip_if":{"Not":{"Fact":{"kind":"in_area","version":1,"args":{"area":"contest"}}}}, "settle":{"Not":{"Fact":{"kind":"in_area","version":1,"args":{"area":"contest"}}}}},
+        {"id":"finish", "kind":"talk", "version":1, "advances":true,
+         "comment":"content/scripts/areas/area_white_wolf_mountain/scripts/mountain_dwarf.rs2:91-102; content/scripts/quests/quest_fishingcompo/scripts/quest_fishingcompo.rs2:108-112.",
+         "args":{"npc":"tunnel_dwarf","anchor":{"tile":[2820,3487,0],"source":"content/maps/m44_54.jm2:5693-5696"},"leash":8,"prefer":[]},
+         "skip_if":{"Any":[]}, "settle":{"Fact":{"kind":"quest_colour","version":1,"args":{"quest":"fishingcompo","is":"complete"}}}}
+      ]},
+      {"stage":"fishingcompo:5", "required":[], "terminal":true, "recovery_entry":null, "steps":[]}
+    ]
+  }]
+}

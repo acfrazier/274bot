@@ -5211,7 +5211,7 @@ fn tui_quester_paths_failed_save_keeps_source_and_error_without_reloading() {
 }
 
 #[test]
-fn tui_restored_enabled_folder_loads_when_game_data_becomes_ready() {
+fn tui_restored_enabled_folder_loads_when_game_data_and_navigation_are_ready() {
     let iso = IsolatedStores::enter("tui-quester-paths-startup");
     let _quester_paths_guard = crate::bin::seam::lock_quester_paths_test_state();
 
@@ -5260,6 +5260,28 @@ fn tui_restored_enabled_folder_loads_when_game_data_becomes_ready() {
     .expect("selected data worker");
 
     session.project_quester_paths_with_game_data(&mut app, Some(Arc::clone(&selected)));
+    assert!(
+        !app.quester_paths_controller.is_running(),
+        "saved folder waits for its actual navigation catalog"
+    );
+    let Some(world) = nav_planner::world::NavWorld::load_default_pack_or_skip() else {
+        return;
+    };
+    let fixture = map_fixture::MapFixture::new(&world, "local-289");
+    session.core.set_play(Some(fixture.play(Tile {
+        x: 2778,
+        z: 3401,
+        level: 0,
+    })));
+    let start_deadline = Instant::now() + Duration::from_secs(60);
+    while !app.quester_paths_controller.is_running() {
+        assert!(
+            Instant::now() < start_deadline,
+            "startup Path reload did not start after navigation became ready"
+        );
+        session.project_quester_paths_with_game_data(&mut app, Some(Arc::clone(&selected)));
+        std::thread::yield_now();
+    }
     let deadline = Instant::now() + Duration::from_secs(10);
     while app.quester_paths_controller.is_running() {
         assert!(
@@ -6801,6 +6823,7 @@ fn screen_text(app: &mut TuiApp, w: u16, h: u16) -> String {
         .join("\n")
 }
 
+#[cfg(feature = "js")]
 /// The screen's words at `w`x`h`: borders and padding collapse to single
 /// spaces, so a prompt that wraps across rows still reads as one line.
 fn screen_words(app: &mut TuiApp, w: u16, h: u16) -> String {

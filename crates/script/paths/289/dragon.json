@@ -1,0 +1,979 @@
+{
+  "$schema": "../path.schema.json",
+  "schema": 3,
+  "id": "dragon",
+  "display_name": "Dragon Slayer",
+  "required": [
+    "quest-points-32"
+  ],
+  "tested_stats": null,
+  "partner": null,
+  "quest": {
+    "members": false,
+    "quest_points": 2,
+    "requirements": [
+      {
+        "id": "quest-points-32",
+        "kind": {
+          "QuestPoints": 32
+        },
+        "at": "start",
+        "source": "content/scripts/areas/area_varrock/scripts/champions_guild.rs2:1-5"
+      }
+    ],
+    "items": [],
+    "acquire": {},
+    "bank": "nearest",
+    "coin_float": 12000,
+    "loadouts": {},
+    "areas": {
+      "oracle_chamber": {
+        "boxes": [
+          [
+            3051,
+            9834,
+            3064,
+            9847,
+            0
+          ]
+        ],
+        "source": "content/maps/m47_153.jm2:6459,6757; scripts/quests/quest_dragon/scripts/magic_door.rs2:8-26"
+      },
+      "maze_upstairs": {
+        "boxes": [
+          [
+            2920,
+            3236,
+            2940,
+            3262,
+            0
+          ],
+          [
+            2920,
+            3236,
+            2940,
+            3262,
+            1
+          ],
+          [
+            2920,
+            3236,
+            2940,
+            3262,
+            2
+          ]
+        ],
+        "source": "content/maps/m45_50.jm2:5702-7414"
+      },
+      "maze_basement": {
+        "boxes": [
+          [
+            2915,
+            9630,
+            2943,
+            9665,
+            0
+          ]
+        ],
+        "source": "content/maps/m45_150.jm2:2027-2586"
+      }
+    },
+    "tools": [
+      "obj:melzarkey",
+      "obj:redkey",
+      "obj:mappart2",
+      "obj:mappart3",
+      "obj:dragonmap",
+      "obj:antidragonbreathshield",
+      "obj:wizards_mind_bomb",
+      "obj:bowl_unfired",
+      "obj:lobster_pot",
+      "obj:silk"
+    ],
+    "owns_inventory": true
+  },
+  "roles": [
+    {
+      "role": null,
+      "progress_binding": "journal:dragon",
+      "progress": {
+        "colour": {
+          "not_started": "dragon:0",
+          "in_progress": "dragon:1",
+          "complete": "dragon:10"
+        },
+        "rules": [
+          {
+            "stage": "dragon:2",
+            "all": [
+              "oziach",
+              "will sell me"
+            ],
+            "any": [],
+            "not": [],
+            "varp": 2
+          },
+          {
+            "stage": "dragon:1",
+            "all": [
+              "i should speak to",
+              "oziach"
+            ],
+            "any": [],
+            "not": [],
+            "varp": 1
+          }
+        ],
+        "flags": [
+          {
+            "flag": "oracle-rhyme",
+            "all": [
+              "i asked the",
+              "oracle",
+              "about the lost map piece"
+            ],
+            "any": [],
+            "count": null
+          }
+        ],
+        "monotonic": false
+      },
+      "prelude": [],
+      "sequences": [
+        {
+          "stage": "dragon:0",
+          "required": [],
+          "terminal": false,
+          "recovery_entry": null,
+          "steps": [
+            {
+              "id": "start",
+              "kind": "talk",
+              "version": 1,
+              "args": {
+                "npc": "guildmaster",
+                "anchor": {
+                  "tile": [
+                    3191,
+                    3362,
+                    0
+                  ],
+                  "source": "content/scripts/areas/area_varrock/scripts/guild_master.rs2:1-28; maps/m49_52.jm2:8862"
+                },
+                "leash": 10,
+                "prefer": [
+                  "Do you know where I could get a Rune Plate mail body"
+                ]
+              },
+              "skip_if": {
+                "Any": []
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "stage_in",
+                  "version": 1,
+                  "args": {
+                    "quest": "dragon",
+                    "any": [
+                      "dragon:1"
+                    ]
+                  }
+                }
+              },
+              "comment": "content/scripts/areas/area_varrock/scripts/guild_master.rs2:1-28; maps/m49_52.jm2:8862",
+              "advances": true
+            }
+          ]
+        },
+        {
+          "stage": "dragon:1",
+          "required": [],
+          "terminal": false,
+          "recovery_entry": null,
+          "steps": [
+            {
+              "id": "meet-oziach",
+              "kind": "talk",
+              "version": 1,
+              "args": {
+                "npc": "oziach",
+                "anchor": {
+                  "tile": [
+                    3069,
+                    3517,
+                    0
+                  ],
+                  "source": "content/scripts/areas/area_edgeville/scripts/oziach.rs2:8-16,46-101,110-143; maps/m47_54.jm2:7551"
+                },
+                "leash": 10,
+                "prefer": [
+                  "Ok I'll try and get everything together",
+                  "Where is the first piece of the map",
+                  "So where can I find this dragon",
+                  "Can you sell me some Rune plate mail",
+                  "The guildmaster of the Champions",
+                  "So how am I meant to prove that",
+                  "A dragon, that sounds like fun"
+                ]
+              },
+              "skip_if": {
+                "Any": []
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "stage_in",
+                  "version": 1,
+                  "args": {
+                    "quest": "dragon",
+                    "any": [
+                      "dragon:2"
+                    ]
+                  }
+                }
+              },
+              "comment": "content/scripts/areas/area_edgeville/scripts/oziach.rs2:8-16,46-101,110-143; maps/m47_54.jm2:7551",
+              "advances": true
+            }
+          ]
+        },
+        {
+          "stage": "dragon:2",
+          "required": [],
+          "terminal": false,
+          "recovery_entry": null,
+          "steps": [
+            {
+              "id": "recover-maze-key",
+              "kind": "talk",
+              "version": 1,
+              "args": {
+                "npc": "oziach",
+                "anchor": {
+                  "tile": [
+                    3069,
+                    3517,
+                    0
+                  ],
+                  "source": "content/scripts/areas/area_edgeville/scripts/oziach.rs2:8-16,46-101,110-143; maps/m47_54.jm2:7551"
+                },
+                "leash": 10,
+                "prefer": [
+                  "Ok I'll try and get everything together",
+                  "Where is the first piece of the map",
+                  "So where can I find this dragon"
+                ]
+              },
+              "skip_if": {
+                "Any": [
+                  {
+                    "Fact": {
+                      "kind": "has_item",
+                      "version": 1,
+                      "args": {
+                        "obj": "melzarkey"
+                      }
+                    }
+                  },
+                  {
+                    "Fact": {
+                      "kind": "has_item",
+                      "version": 1,
+                      "args": {
+                        "obj": "mappart1"
+                      }
+                    }
+                  },
+                  {
+                    "Fact": {
+                      "kind": "has_item",
+                      "version": 1,
+                      "args": {
+                        "obj": "dragonmap"
+                      }
+                    }
+                  }
+                ]
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "has_item",
+                  "version": 1,
+                  "args": {
+                    "obj": "melzarkey"
+                  }
+                }
+              },
+              "comment": "content/scripts/areas/area_edgeville/scripts/oziach.rs2:8-16,46-101,110-143; maps/m47_54.jm2:7551",
+              "advances": false
+            },
+            {
+              "id": "ask-oziach-about-oracle",
+              "kind": "talk",
+              "version": 1,
+              "args": {
+                "npc": "oziach",
+                "anchor": {
+                  "tile": [
+                    3069,
+                    3517,
+                    0
+                  ],
+                  "source": "content/scripts/areas/area_edgeville/scripts/oziach.rs2:8-16,46-101,110-143; maps/m47_54.jm2:7551"
+                },
+                "leash": 10,
+                "prefer": [
+                  "Ok I'll try and get everything together",
+                  "Where is the second piece of the map",
+                  "So where can I find this dragon"
+                ]
+              },
+              "skip_if": {
+                "Any": []
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "stage_in",
+                  "version": 1,
+                  "args": {
+                    "quest": "dragon",
+                    "any": [
+                      "dragon:2"
+                    ]
+                  }
+                }
+              },
+              "comment": "content/scripts/areas/area_edgeville/scripts/oziach.rs2:8-16,46-101,110-143; maps/m47_54.jm2:7551",
+              "advances": true
+            },
+            {
+              "id": "ask-goblin",
+              "kind": "talk",
+              "version": 1,
+              "args": {
+                "npc": "oziach",
+                "anchor": {
+                  "tile": [
+                    3069,
+                    3517,
+                    0
+                  ],
+                  "source": "content/scripts/areas/area_edgeville/scripts/oziach.rs2:8-16,46-101,110-143; maps/m47_54.jm2:7551"
+                },
+                "leash": 10,
+                "prefer": [
+                  "Ok I'll try and get everything together",
+                  "Where is the third piece of the map",
+                  "So where can I find this dragon"
+                ]
+              },
+              "skip_if": {
+                "Any": []
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "stage_in",
+                  "version": 1,
+                  "args": {
+                    "quest": "dragon",
+                    "any": [
+                      "dragon:2"
+                    ]
+                  }
+                }
+              },
+              "comment": "content/scripts/areas/area_edgeville/scripts/oziach.rs2:8-16,46-101,110-143; maps/m47_54.jm2:7551",
+              "advances": true
+            },
+            {
+              "id": "ask-shield",
+              "kind": "talk",
+              "version": 1,
+              "args": {
+                "npc": "oziach",
+                "anchor": {
+                  "tile": [
+                    3069,
+                    3517,
+                    0
+                  ],
+                  "source": "content/scripts/areas/area_edgeville/scripts/oziach.rs2:8-16,46-101,110-143; maps/m47_54.jm2:7551"
+                },
+                "leash": 10,
+                "prefer": [
+                  "Ok I'll try and get everything together",
+                  "Where can I get an antidragon shield",
+                  "So where can I find this dragon"
+                ]
+              },
+              "skip_if": {
+                "Any": []
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "stage_in",
+                  "version": 1,
+                  "args": {
+                    "quest": "dragon",
+                    "any": [
+                      "dragon:2"
+                    ]
+                  }
+                }
+              },
+              "comment": "content/scripts/areas/area_edgeville/scripts/oziach.rs2:8-16,46-101,110-143; maps/m47_54.jm2:7551",
+              "advances": true
+            },
+            {
+              "id": "obtain-shield",
+              "kind": "talk",
+              "version": 1,
+              "args": {
+                "npc": "duke_of_lumbridge",
+                "anchor": {
+                  "tile": [
+                    3212,
+                    3220,
+                    1
+                  ],
+                  "source": "content/scripts/areas/area_lumbridge/scripts/duke_horacio.rs2:1-7,58-64; maps/m50_50.jm2:9742"
+                },
+                "leash": 10,
+                "prefer": [
+                  "I seek a shield that will protect me"
+                ]
+              },
+              "skip_if": {
+                "Any": [
+                  {
+                    "Fact": {
+                      "kind": "has_item",
+                      "version": 1,
+                      "args": {
+                        "obj": "antidragonbreathshield"
+                      }
+                    }
+                  },
+                  {
+                    "Fact": {
+                      "kind": "worn",
+                      "version": 1,
+                      "args": {
+                        "obj": "antidragonbreathshield"
+                      }
+                    }
+                  }
+                ]
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "has_item",
+                  "version": 1,
+                  "args": {
+                    "obj": "antidragonbreathshield"
+                  }
+                }
+              },
+              "comment": "content/scripts/areas/area_lumbridge/scripts/duke_horacio.rs2:1-7,58-64; maps/m50_50.jm2:9742",
+              "advances": false
+            },
+            {
+              "id": "buy-wormbrain-map",
+              "kind": "talk",
+              "version": 1,
+              "args": {
+                "npc": "wormbrain",
+                "anchor": {
+                  "tile": [
+                    3014,
+                    3186,
+                    0
+                  ],
+                  "source": "content/scripts/quests/quest_dragon/scripts/wormbrain.rs2:13-26,39-71; maps/m47_49.jm2:5195"
+                },
+                "leash": 10,
+                "prefer": [
+                  "I believe you've got a piece of map",
+                  "I suppose I could pay you",
+                  "Alright then, 10,000 it is"
+                ]
+              },
+              "skip_if": {
+                "Any": [
+                  {
+                    "Fact": {
+                      "kind": "has_item",
+                      "version": 1,
+                      "args": {
+                        "obj": "mappart2"
+                      }
+                    }
+                  },
+                  {
+                    "Fact": {
+                      "kind": "has_item",
+                      "version": 1,
+                      "args": {
+                        "obj": "dragonmap"
+                      }
+                    }
+                  }
+                ]
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "has_item",
+                  "version": 1,
+                  "args": {
+                    "obj": "mappart2"
+                  }
+                }
+              },
+              "comment": "content/scripts/quests/quest_dragon/scripts/wormbrain.rs2:13-26,39-71; maps/m47_49.jm2:5195",
+              "advances": false
+            },
+            {
+              "id": "ask-oracle",
+              "kind": "talk",
+              "version": 1,
+              "args": {
+                "npc": "oracle",
+                "anchor": {
+                  "tile": [
+                    3015,
+                    3504,
+                    0
+                  ],
+                  "source": "content/scripts/areas/area_edgeville/scripts/oracle.rs2:4-19; maps/m47_54.jm2:7525"
+                },
+                "leash": 10,
+                "prefer": [
+                  "I seek a piece of the map"
+                ]
+              },
+              "skip_if": {
+                "Any": [
+                  {
+                    "Fact": {
+                      "kind": "flag",
+                      "version": 1,
+                      "args": {
+                        "quest": "dragon",
+                        "flag": "oracle-rhyme"
+                      }
+                    }
+                  },
+                  {
+                    "Fact": {
+                      "kind": "has_item",
+                      "version": 1,
+                      "args": {
+                        "obj": "mappart3"
+                      }
+                    }
+                  },
+                  {
+                    "Fact": {
+                      "kind": "has_item",
+                      "version": 1,
+                      "args": {
+                        "obj": "dragonmap"
+                      }
+                    }
+                  }
+                ]
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "flag",
+                  "version": 1,
+                  "args": {
+                    "quest": "dragon",
+                    "flag": "oracle-rhyme"
+                  }
+                }
+              },
+              "comment": "content/scripts/areas/area_edgeville/scripts/oracle.rs2:4-19; maps/m47_54.jm2:7525",
+              "advances": true
+            },
+            {
+              "id": "open-oracle-door",
+              "kind": "interact",
+              "version": 1,
+              "args": {
+                "target": {
+                  "loc": "dragon_slayer_magic_door",
+                  "tile": [
+                    3051,
+                    9840,
+                    0
+                  ],
+                  "source": "content/maps/m47_153.jm2:6459"
+                },
+                "op": "Open",
+                "anchor": {
+                  "tile": [
+                    3050,
+                    9840,
+                    0
+                  ],
+                  "source": "content/maps/m47_153.jm2:6459"
+                },
+                "radius": 5
+              },
+              "skip_if": {
+                "Any": [
+                  {
+                    "Fact": {
+                      "kind": "in_area",
+                      "version": 1,
+                      "args": {
+                        "area": "oracle_chamber"
+                      }
+                    }
+                  },
+                  {
+                    "Fact": {
+                      "kind": "has_item",
+                      "version": 1,
+                      "args": {
+                        "obj": "mappart3"
+                      }
+                    }
+                  },
+                  {
+                    "Fact": {
+                      "kind": "has_item",
+                      "version": 1,
+                      "args": {
+                        "obj": "dragonmap"
+                      }
+                    }
+                  }
+                ]
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "in_area",
+                  "version": 1,
+                  "args": {
+                    "area": "oracle_chamber"
+                  }
+                }
+              },
+              "comment": "content/scripts/quests/quest_dragon/scripts/magic_door.rs2:1-26; maps/m47_153.jm2:6459.",
+              "advances": false
+            },
+            {
+              "id": "open-oracle-chest",
+              "kind": "interact",
+              "version": 1,
+              "args": {
+                "target": {
+                  "loc": "oraclechestshut"
+                },
+                "op": "Open",
+                "anchor": {
+                  "tile": [
+                    3057,
+                    9841,
+                    0
+                  ],
+                  "source": "content/maps/m47_153.jm2:6757"
+                },
+                "radius": 5
+              },
+              "skip_if": {
+                "Any": [
+                  {
+                    "Fact": {
+                      "kind": "loc_present",
+                      "version": 1,
+                      "args": {
+                        "loc": "oraclechestopen"
+                      }
+                    }
+                  },
+                  {
+                    "Fact": {
+                      "kind": "has_item",
+                      "version": 1,
+                      "args": {
+                        "obj": "mappart3"
+                      }
+                    }
+                  },
+                  {
+                    "Fact": {
+                      "kind": "has_item",
+                      "version": 1,
+                      "args": {
+                        "obj": "dragonmap"
+                      }
+                    }
+                  }
+                ]
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "loc_present",
+                  "version": 1,
+                  "args": {
+                    "loc": "oraclechestopen"
+                  }
+                }
+              },
+              "comment": "content/scripts/quests/quest_dragon/scripts/magic_door.rs2:30-38; maps/m47_153.jm2:6757.",
+              "advances": false
+            },
+            {
+              "id": "search-oracle-chest",
+              "kind": "interact",
+              "version": 1,
+              "args": {
+                "target": {
+                  "loc": "oraclechestopen"
+                },
+                "op": "Search",
+                "anchor": {
+                  "tile": [
+                    3057,
+                    9841,
+                    0
+                  ],
+                  "source": "content/maps/m47_153.jm2:6757"
+                },
+                "radius": 5
+              },
+              "skip_if": {
+                "Any": [
+                  {
+                    "Fact": {
+                      "kind": "has_item",
+                      "version": 1,
+                      "args": {
+                        "obj": "mappart3"
+                      }
+                    }
+                  },
+                  {
+                    "Fact": {
+                      "kind": "has_item",
+                      "version": 1,
+                      "args": {
+                        "obj": "dragonmap"
+                      }
+                    }
+                  }
+                ]
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "has_item",
+                  "version": 1,
+                  "args": {
+                    "obj": "mappart3"
+                  }
+                }
+              },
+              "comment": "content/scripts/quests/quest_dragon/scripts/magic_door.rs2:49-61.",
+              "advances": false
+            },
+            {
+              "id": "maze-melzardoor",
+              "kind": "use_on",
+              "version": 1,
+              "args": {
+                "item": "melzarkey",
+                "target": {
+                  "loc": "melzardoor"
+                },
+                "anchor": {
+                  "tile": [
+                    2941,
+                    3248,
+                    0
+                  ],
+                  "source": "content/maps/m45_50.jm2:6415"
+                },
+                "radius": 4
+              },
+              "skip_if": {
+                "Any": [
+                  {
+                    "Fact": {
+                      "kind": "in_area",
+                      "version": 1,
+                      "args": {
+                        "area": "maze_upstairs"
+                      }
+                    }
+                  },
+                  {
+                    "Fact": {
+                      "kind": "in_area",
+                      "version": 1,
+                      "args": {
+                        "area": "maze_basement"
+                      }
+                    }
+                  },
+                  {
+                    "Fact": {
+                      "kind": "has_item",
+                      "version": 1,
+                      "args": {
+                        "obj": "mappart1"
+                      }
+                    }
+                  },
+                  {
+                    "Fact": {
+                      "kind": "has_item",
+                      "version": 1,
+                      "args": {
+                        "obj": "dragonmap"
+                      }
+                    }
+                  }
+                ]
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "near",
+                  "version": 1,
+                  "args": {
+                    "tile": [
+                      2940,
+                      3248,
+                      0
+                    ],
+                    "radius": 0
+                  }
+                }
+              },
+              "comment": "content/scripts/quests/quest_dragon/scripts/melzars_maze.rs2:13-18,37-64; content/maps/m45_50.jm2:6415",
+              "advances": false
+            },
+            {
+              "id": "maze-fight-rat",
+              "kind": "combat",
+              "version": 1,
+              "args": {
+                "target": {
+                  "npc": "dragonslayer_giantrat",
+                  "not_targeting_others": true,
+                  "pick": "nearest"
+                },
+                "stand": {
+                  "tile": [
+                    2930,
+                    3252,
+                    0
+                  ],
+                  "source": "content/maps/m45_50.jm2:7916"
+                },
+                "lost_radius": 12,
+                "kill_budget_ticks": 350,
+                "tactic": {
+                  "kind": "open",
+                  "style": "melee",
+                  "engage_radius": 8,
+                  "auto_retaliate": true
+                },
+                "loot": [
+                  "redkey"
+                ],
+                "until": {
+                  "Fact": {
+                    "kind": "has_item",
+                    "version": 1,
+                    "args": {
+                      "obj": "redkey"
+                    }
+                  }
+                }
+              },
+              "skip_if": {
+                "Any": [
+                  {
+                    "Fact": {
+                      "kind": "has_item",
+                      "version": 1,
+                      "args": {
+                        "obj": "redkey"
+                      }
+                    }
+                  },
+                  {
+                    "Fact": {
+                      "kind": "has_item",
+                      "version": 1,
+                      "args": {
+                        "obj": "mappart1"
+                      }
+                    }
+                  },
+                  {
+                    "Fact": {
+                      "kind": "has_item",
+                      "version": 1,
+                      "args": {
+                        "obj": "dragonmap"
+                      }
+                    }
+                  },
+                  {
+                    "Fact": {
+                      "kind": "on_level",
+                      "version": 1,
+                      "args": {
+                        "level": 1
+                      }
+                    }
+                  },
+                  {
+                    "Fact": {
+                      "kind": "on_level",
+                      "version": 1,
+                      "args": {
+                        "level": 2
+                      }
+                    }
+                  },
+                  {
+                    "Fact": {
+                      "kind": "in_area",
+                      "version": 1,
+                      "args": {
+                        "area": "maze_basement"
+                      }
+                    }
+                  }
+                ]
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "has_item",
+                  "version": 1,
+                  "args": {
+                    "obj": "redkey"
+                  }
+                }
+              },
+              "comment": "content/scripts/quests/quest_dragon/scripts/melzars_maze.rs2:68-136; content/maps/m45_50.jm2:7916",
+              "advances": false
+            }
+          ],
+          "order": "ordered"
+        },
+        {
+          "stage": "dragon:10",
+          "required": [],
+          "terminal": true,
+          "recovery_entry": null,
+          "steps": []
+        }
+      ]
+    }
+  ]
+}

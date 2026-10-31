@@ -1,0 +1,512 @@
+{
+  "$schema": "../path.schema.json",
+  "schema": 3,
+  "id": "crest",
+  "display_name": "Family Crest",
+  "required": [],
+  "tested_stats": null,
+  "partner": null,
+  "quest": {
+    "members": true,
+    "quest_points": 1,
+    "requirements": [],
+    "items": [],
+    "acquire": {},
+    "bank": "nearest",
+    "coin_float": 0,
+    "loadouts": {},
+    "areas": {
+      "karamja-route": {
+        "boxes": [[2752, 3000, 2999, 3249, 0], [2752, 3000, 2999, 3249, 1]],
+        "source": "content/scripts/areas/area_port_sarim/scripts/sailors.rs2:10,31; content/scripts/areas/area_ardougne_east/scripts/captain_barnaby.rs2:1-2; content/maps/m43_50.jm2:4911-4913"
+      },
+      "ardougne-route": {
+        "boxes": [[2450, 3250, 2850, 3550, 0], [2450, 3250, 2850, 3550, 1]],
+        "source": "content/scripts/areas/area_karamja/scripts/customs_officer.rs2:81-82; content/maps/m44_53.jm2:5562"
+      }
+    },
+    "tools": [
+      "obj:swordfish",
+      "obj:bass",
+      "obj:tuna",
+      "obj:salmon",
+      "obj:shrimp",
+      "obj:avan_crest",
+      "obj:perfect_gold_bar",
+      "obj:ruby",
+      "obj:ring_mould",
+      "obj:necklace_mould"
+    ],
+    "owns_inventory": true
+  },
+  "roles": [
+    {
+      "role": null,
+      "progress_binding": "journal:crest",
+      "progress": {
+        "colour": {
+          "not_started": "crest:0",
+          "in_progress": "crest:1",
+          "complete": "crest:11"
+        },
+        "rules": [
+          {"stage":"crest:7","all":["boot told me"],"any":[],"not":[],"varp":7},
+          {
+            "stage": "crest:6",
+            "all": [
+              "i should find a dwarf named"
+            ],
+            "any": [],
+            "not": [],
+            "varp": 6
+          },
+          {
+            "stage": "crest:5",
+            "all": [
+              "the al-kharid gem trader told me"
+            ],
+            "any": [],
+            "not": [],
+            "varp": 5
+          },
+          {
+            "stage": "crest:4",
+            "all": [
+              "caleb told me his brother"
+            ],
+            "any": [],
+            "not": [],
+            "varp": 4
+          },
+          {
+            "stage": "crest:3",
+            "all": [
+              "i have one crest piece"
+            ],
+            "any": [],
+            "not": [],
+            "varp": 3
+          },
+          {
+            "stage": "crest:2",
+            "all": [
+              "will let me have his piece in return for"
+            ],
+            "any": [],
+            "not": [],
+            "varp": 2
+          },
+          {
+            "stage": "crest:1",
+            "all": [
+              "i need to find his son"
+            ],
+            "any": [],
+            "not": [],
+            "varp": 1
+          }
+        ],
+        "flags": [],
+        "monotonic": false
+      },
+      "prelude": [],
+      "sequences": [
+        {
+          "stage": "crest:0",
+          "required": [],
+          "terminal": false,
+          "recovery_entry": null,
+          "steps": [
+            {
+              "id": "start-dimintheis",
+              "kind": "talk",
+              "version": 1,
+              "advances": true,
+              "comment": "content/scripts/quests/quest_crest/scripts/crest_dimintheis.rs2:29-32,51-62,72-75; content/maps/m51_53.jm2:6738",
+              "args": {
+                "npc": "dimintheis",
+                "anchor": {
+                  "tile": [
+                    3279,
+                    3404,
+                    0
+                  ],
+                  "source": "content/maps/m51_53.jm2:6738"
+                },
+                "leash": 8,
+                "prefer": [
+                  "Hi, I am a bold adventurer.",
+                  "So where is this crest?",
+                  "Ok, I will help you."
+                ]
+              },
+              "skip_if": {
+                "Any": []
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "stage_in",
+                  "version": 1,
+                  "args": {
+                    "quest": "crest",
+                    "any": [
+                      "crest:1"
+                    ]
+                  }
+                }
+              }
+            }
+          ]
+        },
+        {
+          "stage": "crest:1",
+          "required": [],
+          "terminal": false,
+          "recovery_entry": null,
+          "order": "ordered",
+          "cross": [
+            {"id":"scorpion@2865,3156,0","name":"Karamja scorpion","reason":"Cross Karamja from Musa Point to Brimhaven."},
+            {"id":"scorpion@2870,3159,0","name":"Karamja scorpion","reason":"Cross Karamja from Musa Point to Brimhaven."},
+            {"id":"snake@2875,3164,0","name":"Karamja snake","reason":"Cross Karamja from Musa Point to Brimhaven."},
+            {"id":"scorpion@2861,3165,0","name":"Karamja scorpion","reason":"Cross Karamja from Musa Point to Brimhaven."},
+            {"id":"scorpion@2863,3169,0","name":"Karamja scorpion","reason":"Cross Karamja from Musa Point to Brimhaven."},
+            {"id":"scorpion@2862,3180,0","name":"Karamja scorpion","reason":"Cross Karamja from Musa Point to Brimhaven."}
+          ],
+          "steps": [
+            {
+              "id":"sail-sarim-to-musa","kind":"talk","version":1,"advances":false,
+              "args":{"npc":"seaman_thresnor","anchor":{"tile":[3026,3217,0],"source":"content/maps/m47_50.jm2:10009; content/pack/npc.pack:379"},"leash":8,"prefer":["Yes please."],"strict":true,"gap_ticks":8},
+              "comment":"The 30-coin voyage lands on the Musa ship: content/scripts/areas/area_port_sarim/scripts/sailors.rs2:10-31; content/scripts/interface_boat/scripts/sail.rs2:21-29. The seven-tick delay makes an eight-tick dialogue gap.",
+              "skip_if":{"Any":[{"Fact":{"kind":"in_area","version":1,"args":{"area":"karamja-route"}}},{"Fact":{"kind":"in_area","version":1,"args":{"area":"ardougne-route"}}}]},
+              "settle":{"Fact":{"kind":"in_area","version":1,"args":{"area":"karamja-route"}}}
+            },
+            {
+              "id":"sail-brimhaven-to-caleb","kind":"talk","version":1,"advances":false,
+              "args":{"npc":"customs_officer","anchor":{"tile":[2772,3225,0],"source":"content/maps/m43_50.jm2:4911-4913; content/pack/npc.pack:381"},"leash":8,"prefer":["Can I journey on this ship?","Search away, I have nothing to hide.","Ok."],"strict":true,"gap_ticks":8},
+              "comment":"The Brimhaven officer charges 30 coins and sails to Ardougne after the search: content/scripts/areas/area_karamja/scripts/customs_officer.rs2:1-3,23-24,45-84; content/scripts/interface_boat/scripts/sail.rs2:21-29.",
+              "skip_if":{"Fact":{"kind":"in_area","version":1,"args":{"area":"ardougne-route"}}},
+              "settle":{"Fact":{"kind":"in_area","version":1,"args":{"area":"ardougne-route"}}}
+            },
+            {
+              "id": "ask-caleb",
+              "kind": "talk",
+              "version": 1,
+              "advances": true,
+              "comment": "content/scripts/quests/quest_crest/scripts/crest_caleb.rs2:16-27,44-56; content/maps/m44_53.jm2:5562",
+              "args": {
+                "npc": "caleb_fitzharmon",
+                "anchor": {
+                  "tile": [
+                    2819,
+                    3451,
+                    0
+                  ],
+                  "source": "content/maps/m44_53.jm2:5562"
+                },
+                "leash": 8,
+                "prefer": [
+                  "Are you Caleb Fitzharmon?",
+                  "So can I have your bit?",
+                  "Ok, I will get those."
+                ]
+              },
+              "skip_if": {
+                "Any": []
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "stage_in",
+                  "version": 1,
+                  "args": {
+                    "quest": "crest",
+                    "any": [
+                      "crest:2"
+                    ]
+                  }
+                }
+              }
+            }
+          ]
+        },
+        {
+          "stage": "crest:2",
+          "required": [],
+          "terminal": false,
+          "recovery_entry": null,
+          "order": "ordered",
+          "steps": [
+            {
+              "id":"sail-ardougne-to-alfonse","kind":"talk","version":1,"advances":false,
+              "args":{"npc":"captain_barnaby","anchor":{"tile":[2679,3275,0],"source":"content/maps/m41_51.jm2:11011; content/pack/npc.pack:382"},"leash":8,"prefer":["Yes please."],"strict":true,"gap_ticks":8},
+              "comment":"Barnaby uses the same 30-coin sailor dialogue: content/scripts/areas/area_ardougne_east/scripts/captain_barnaby.rs2:1-2; content/scripts/areas/area_port_sarim/scripts/sailors.rs2:12-31; content/scripts/interface_boat/scripts/sail.rs2:21-29.",
+              "skip_if":{"Any":[{"Fact":{"kind":"in_area","version":1,"args":{"area":"karamja-route"}}},{"All":[{"Fact":{"kind":"has_item","version":1,"args":{"obj":"tuna"}}},{"Fact":{"kind":"has_item","version":1,"args":{"obj":"swordfish"}}}]},{"Fact":{"kind":"has_item","version":1,"args":{"obj":"ruby"}}}]},
+              "settle":{"Fact":{"kind":"in_area","version":1,"args":{"area":"karamja-route"}}}
+            },
+            {"id":"buy-tuna","kind":"buy","version":1,
+             "args":{"shop":{"npc":"alfonse_the_waiter","anchor":{"tile":[2793,3188,0],"source":"content/maps/m43_49.jm2:9202; content/pack/npc.pack:794"}},"obj":"tuna","qty":1,"est_gp":130},
+             "comment":"Full-stock tuna costs 130 coins: content/scripts/areas/area_brimhaven/configs/brimhaven.inv:31-44; content/scripts/areas/area_brimhaven/configs/brimhaven.npc:26-57; content/scripts/skill_fishing/configs/fishing.obj:572-584; content/scripts/shop/scripts/shop.rs2:131-147,182-187.",
+             "skip_if":{"Fact":{"kind":"has_item","version":1,"args":{"obj":"tuna"}}},
+             "settle":{"Fact":{"kind":"has_item","version":1,"args":{"obj":"tuna"}}}},
+            {"id":"buy-swordfish","kind":"buy","version":1,
+             "args":{"shop":{"npc":"alfonse_the_waiter","anchor":{"tile":[2793,3188,0],"source":"content/maps/m43_49.jm2:9202; content/pack/npc.pack:794"}},"obj":"swordfish","qty":1,"est_gp":260},
+             "comment":"Full-stock swordfish costs 260 coins: content/scripts/areas/area_brimhaven/configs/brimhaven.inv:31-44; content/scripts/areas/area_brimhaven/configs/brimhaven.npc:26-57; content/scripts/skill_fishing/configs/fishing.obj:675-687; content/scripts/shop/scripts/shop.rs2:131-147,182-187.",
+             "skip_if":{"Fact":{"kind":"has_item","version":1,"args":{"obj":"swordfish"}}},
+             "settle":{"Fact":{"kind":"has_item","version":1,"args":{"obj":"swordfish"}}}},
+            {
+              "id":"sail-brimhaven-to-ruby","kind":"talk","version":1,"advances":false,
+              "args":{"npc":"customs_officer","anchor":{"tile":[2772,3225,0],"source":"content/maps/m43_50.jm2:4911-4913; content/pack/npc.pack:381"},"leash":8,"prefer":["Can I journey on this ship?","Search away, I have nothing to hide.","Ok."],"strict":true,"gap_ticks":8},
+              "comment":"The return costs 30 coins: content/scripts/areas/area_karamja/scripts/customs_officer.rs2:1-3,23-24,45-84; content/scripts/interface_boat/scripts/sail.rs2:21-29.",
+              "skip_if":{"Any":[{"Fact":{"kind":"has_item","version":1,"args":{"obj":"ruby"}}},{"Fact":{"kind":"in_area","version":1,"args":{"area":"ardougne-route"}}}]},
+              "settle":{"Fact":{"kind":"in_area","version":1,"args":{"area":"ardougne-route"}}}
+            },
+            {"id":"buy-ruby-before-fish-gap","kind":"buy","version":1,
+             "args":{"shop":{"npc":"gem_merchant","anchor":{"tile":[2669,3303,0],"source":"content/maps/m41_51.jm2:11008; content/pack/npc.pack:571"}},"obj":"ruby","qty":1,"est_gp":1500},
+             "comment":"At full stock one ruby costs 1500 coins: content/scripts/areas/area_ardougne_east/configs/ardougne_east.inv:111-122; content/scripts/areas/area_ardougne_east/configs/ardougne_east.npc:344-379; content/scripts/skill_crafting/configs/jewellery/cut_gems.obj:23-25; content/scripts/shop/scripts/shop.rs2:131-147,182-187.",
+             "skip_if":{"Fact":{"kind":"has_item","version":1,"args":{"obj":"ruby"}}},
+             "settle":{"Fact":{"kind":"has_item","version":1,"args":{"obj":"ruby"}}}},
+            {"id":"GAP-crest-fish-acquisition","kind":"wait","version":1,
+             "args":{"until":{"All":[{"Fact":{"kind":"has_item","version":1,"args":{"obj":"bass"}}},{"Fact":{"kind":"has_item","version":1,"args":{"obj":"salmon"}}},{"Fact":{"kind":"has_item","version":1,"args":{"obj":"shrimp"}}}]},"max_ticks":20,"park_on_timeout":true},
+             "skip_if":{"All":[{"Fact":{"kind":"has_item","version":1,"args":{"obj":"bass"}}},{"Fact":{"kind":"has_item","version":1,"args":{"obj":"salmon"}}},{"Fact":{"kind":"has_item","version":1,"args":{"obj":"shrimp"}}}]},
+             "settle":{"All":[{"Fact":{"kind":"has_item","version":1,"args":{"obj":"bass"}}},{"Fact":{"kind":"has_item","version":1,"args":{"obj":"salmon"}}},{"Fact":{"kind":"has_item","version":1,"args":{"obj":"shrimp"}}}]},
+             "comment":"GAP: fish acquisition and cooking recipes are not authored. Bass uses the big net and may fill inventory with other catches: content/scripts/skill_fishing/scripts/fishing_spots/memberfish.rs2:150-214. Caleb requires all five fish: content/scripts/quests/quest_crest/scripts/crest_caleb.rs2:64-79. This wait does not acquire fish."},
+            {
+              "id": "give-fish",
+              "kind": "talk",
+              "version": 1,
+              "advances": true,
+              "comment": "content/scripts/quests/quest_crest/scripts/crest_caleb.rs2:29-41,64-80",
+              "args": {
+                "npc": "caleb_fitzharmon",
+                "anchor": {
+                  "tile": [
+                    2819,
+                    3451,
+                    0
+                  ],
+                  "source": "content/maps/m44_53.jm2:5562"
+                },
+                "leash": 8,
+                "prefer": [
+                  "Uh... what happened to the rest of it?"
+                ]
+              },
+              "skip_if": {
+                "Any": []
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "stage_in",
+                  "version": 1,
+                  "args": {
+                    "quest": "crest",
+                    "any": [
+                      "crest:4"
+                    ]
+                  }
+                }
+              }
+            }
+          ]
+        },
+        {
+          "stage": "crest:3",
+          "required": [],
+          "terminal": false,
+          "recovery_entry": null,
+          "steps": [
+            {
+              "id": "ask-about-avan",
+              "kind": "talk",
+              "version": 1,
+              "advances": true,
+              "comment": "content/scripts/quests/quest_crest/scripts/crest_caleb.rs2:29-41,91-93",
+              "args": {
+                "npc": "caleb_fitzharmon",
+                "anchor": {
+                  "tile": [
+                    2819,
+                    3451,
+                    0
+                  ],
+                  "source": "content/maps/m44_53.jm2:5562"
+                },
+                "leash": 8,
+                "prefer": [
+                  "Uh... what happened to the rest of it?"
+                ]
+              },
+              "skip_if": {
+                "Any": []
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "stage_in",
+                  "version": 1,
+                  "args": {
+                    "quest": "crest",
+                    "any": [
+                      "crest:4"
+                    ]
+                  }
+                }
+              }
+            }
+          ]
+        },
+        {
+          "stage": "crest:4",
+          "required": [],
+          "terminal": false,
+          "recovery_entry": null,
+          "steps": [
+            {
+              "id": "ask-gem-trader",
+              "kind": "talk",
+              "version": 1,
+              "advances": true,
+              "comment": "content/scripts/areas/area_alkharid/scripts/gem_trader.rs2:1-4,18-25; content/maps/m51_50.jm2:5594",
+              "args": {
+                "npc": "gem_trader",
+                "anchor": {
+                  "tile": [
+                    3288,
+                    3212,
+                    0
+                  ],
+                  "source": "content/maps/m51_50.jm2:5594"
+                },
+                "leash": 8,
+                "prefer": [
+                  "I'm in search of a man named Avan Fitzharmon."
+                ]
+              },
+              "skip_if": {
+                "Any": []
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "stage_in",
+                  "version": 1,
+                  "args": {
+                    "quest": "crest",
+                    "any": [
+                      "crest:5"
+                    ]
+                  }
+                }
+              }
+            }
+          ]
+        },
+        {
+          "stage": "crest:5",
+          "required": [],
+          "terminal": false,
+          "recovery_entry": null,
+          "steps": [
+            {
+              "id": "ask-avan",
+              "kind": "talk",
+              "version": 1,
+              "advances": true,
+              "comment": "content/scripts/quests/quest_crest/scripts/crest_man.rs2:1-9,17-42; content/maps/m51_51.jm2:4759",
+              "args": {
+                "npc": "avan",
+                "anchor": {
+                  "tile": [
+                    3295,
+                    3285,
+                    0
+                  ],
+                  "source": "content/maps/m51_51.jm2:4759"
+                },
+                "leash": 8,
+                "prefer": [
+                  "I'm looking for a man named Avan Fitzharmon."
+                ]
+              },
+              "skip_if": {
+                "Any": []
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "stage_in",
+                  "version": 1,
+                  "args": {
+                    "quest": "crest",
+                    "any": [
+                      "crest:6"
+                    ]
+                  }
+                }
+              }
+            }
+          ]
+        },
+        {
+          "stage": "crest:6",
+          "required": [],
+          "terminal": false,
+          "recovery_entry": null,
+          "steps": [
+            {
+              "id": "ask-boot",
+              "kind": "talk",
+              "version": 1,
+              "advances": true,
+              "comment": "content/scripts/quests/quest_crest/scripts/crest_boot.rs2:1-20; content/maps/m46_153.jm2:8525",
+              "args": {
+                "npc": "boot_the_dwarf",
+                "anchor": {
+                  "tile": [
+                    2965,
+                    9811,
+                    0
+                  ],
+                  "source": "content/maps/m46_153.jm2:8525"
+                },
+                "leash": 8,
+                "prefer": [
+                  "Hello. I'm in search of very high quality gold."
+                ]
+              },
+              "skip_if": {
+                "Any": []
+              },
+              "settle": {"Fact":{"kind":"stage_in","version":1,"args":{"quest":"crest","any":["crest:7"]}}}
+            }
+          ]
+        },
+        {"stage":"crest:7","required":[],"terminal":false,"recovery_entry":null,"steps":[
+          {"id":"buy-ruby","kind":"buy","version":1,
+           "args":{"shop":{"npc":"gem_merchant","anchor":{"tile":[2669,3303,0],"source":"content/maps/m41_51.jm2:11008; content/pack/npc.pack:571"}},"obj":"ruby","qty":1,"est_gp":1500},
+           "comment":"At full stock one ruby costs 1500 coins: content/scripts/areas/area_ardougne_east/configs/ardougne_east.inv:111-122; content/scripts/areas/area_ardougne_east/configs/ardougne_east.npc:344-379; content/scripts/skill_crafting/configs/jewellery/cut_gems.obj:23-25; content/scripts/shop/scripts/shop.rs2:131-147,182-187.",
+           "skip_if":{"Any":[{"Fact":{"kind":"has_item","version":1,"args":{"obj":"ruby"}}},{"Fact":{"kind":"has_item","version":1,"args":{"obj":"perfect_ruby_ring"}}}]},
+           "settle":{"Fact":{"kind":"has_item","version":1,"args":{"obj":"ruby"}}}},
+          {"id":"GAP-crest-perfect-ore-and-levers","kind":"wait","version":1,
+           "args":{"until":{"Fact":{"kind":"has_item","version":1,"args":{"obj":"perfect_gold_bar"}}},"max_ticks":20,"park_on_timeout":true},
+           "skip_if":{"Fact":{"kind":"has_item","version":1,"args":{"obj":"perfect_gold_bar"}}},
+           "settle":{"Fact":{"kind":"has_item","version":1,"args":{"obj":"perfect_gold_bar"}}},
+           "comment":"GAP: perfect-ore gathering and the unauthored lever route. The mine substitutes perfect ore only within its zone: content/scripts/skill_mining/scripts/mining.rs2:145-153; content/scripts/quests/quest_crest/configs/quest_crest.constant:26-27. Three lever bits govern its doors: content/scripts/quests/quest_crest/scripts/quest_crest.rs2:13-86. The current gather catalog does not expose perfect ore. This wait does not mine or solve the route."},
+          {"id":"open-jewellery-interface","kind":"use_on","version":1,"advances":false,
+           "comment":"content/scripts/skill_smithing/scripts/smelting/smelting.rs2:1-14; content/scripts/skill_crafting/scripts/jewellery/jewellery.rs2:16-29,174-175; content/maps/m50_50.jm2:7131. The perfect bar must be obtained from the mine before this step.",
+           "args":{"item":"perfect_gold_bar","target":{"loc":"furnace1"},"anchor":{"tile":[3226,3255,0],"source":"content/maps/m50_50.jm2:7131"},"radius":5},
+           "skip_if":{"Fact":{"kind":"modal_open","version":1,"args":{}}},
+           "settle":{"Fact":{"kind":"modal_open","version":1,"args":{}}}},
+          {"id":"GAP-crest-jewellery-widget","kind":"wait","version":1,
+           "args":{"until":{"Fact":{"kind":"has_item","version":1,"args":{"obj":"perfect_ruby_ring"}}},"max_ticks":20,"park_on_timeout":true},
+           "skip_if":{"Fact":{"kind":"has_item","version":1,"args":{"obj":"perfect_ruby_ring"}}},
+           "settle":{"Fact":{"kind":"has_item","version":1,"args":{"obj":"perfect_ruby_ring"}}},
+           "comment":"GAP: jewellery crafting through the inventory widget with invisible rows. The ring and necklace use separate inventory widgets with invis_ring3 and invis_necklace3: content/scripts/skill_crafting/scripts/jewellery/jewellery.rs2:1-9,48-50,96-98,225-246. The MakeProducts selector cannot select these widgets. This wait does not craft jewellery."}
+        ]},
+        {
+          "stage": "crest:11",
+          "required": [],
+          "terminal": true,
+          "recovery_entry": null,
+          "steps": []
+        }
+      ]
+    }
+  ]
+}

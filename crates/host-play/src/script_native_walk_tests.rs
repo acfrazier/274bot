@@ -3547,6 +3547,7 @@ fn sherlock_bool_walk_inherits_committed_bits_while_isolate_wiring_stays_frozen(
         ),
         api::game_data::for_revision(api::selected::ClientRevision::R289).unwrap(),
         Arc::default(),
+        None,
     )
     .unwrap();
     assert!(wait_until(5_000, || {
@@ -5562,6 +5563,7 @@ fn lifecycle_followups_stop_clears_combat_raise_but_preserves_user_prayer() {
                 &quests,
                 cap,
                 &script::local_state::OperatorLoadouts::absent(),
+                None,
             )
         }
     })
@@ -5895,6 +5897,7 @@ fn s2b_admission_per_bot_layouts() {
     // S0c moves the platform-specific isolate mutexes into the surface run.
     // The shared 64-bit slot layout no longer contains those mutexes.
     // S0d adds a 16 B per-slot generation cache for lock-free compiled-card reads.
+    // QUEST-DANGER-CONSENT boxes pending Start: SlotScript shrinks 1624 B to 1544 B.
     // NAV-BUSY-TRANSPORT adds 32 B to Traveller (busy-refusal retry state and
     // the distinct-tick transport clock): NavBot is 3816 B. Lab memory A/B on
     // the branch head passed (NAV-BUSY-TRANSPORT/mem-ab-r3).
@@ -5910,7 +5913,7 @@ fn s2b_admission_per_bot_layouts() {
             std::mem::size_of::<script::combat::Combat>(),
             std::mem::size_of::<script::combat::WalkGuard>()
         ),
-        (3816, 1624, 512, 264)
+        (3816, 1544, 512, 264)
     );
     #[cfg(all(
         target_os = "linux",
@@ -5925,7 +5928,7 @@ fn s2b_admission_per_bot_layouts() {
             std::mem::size_of::<script::combat::Combat>(),
             std::mem::size_of::<script::combat::WalkGuard>()
         ),
-        (3816, 1624, 512, 264)
+        (3816, 1544, 512, 264)
     );
     assert!(std::mem::size_of::<script::combat::Combat>() <= 512);
     assert!(std::mem::size_of::<script::combat::WalkGuard>() <= 264);

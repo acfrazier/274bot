@@ -1,0 +1,1513 @@
+{
+  "$schema": "../path.schema.json",
+  "schema": 3,
+  "id": "scorpcatcher",
+  "display_name": "Scorpion Catcher",
+  "required": [
+    "prayer:31"
+  ],
+  "tested_stats": null,
+  "partner": null,
+  "quest": {
+    "members": true,
+    "quest_points": 1,
+    "requirements": [
+      {
+        "id": "prayer:31",
+        "kind": {
+          "Skill": {
+            "skill": "prayer",
+            "level": 31
+          }
+        },
+        "at": "Start",
+        "source": "289 scripts/areas/monastery/scripts/prayer_guild.rs2:21-33; scripts/quests/quest_scorpcatcher/scripts/scorpcatcher_journal.rs2:5-13"
+      }
+    ],
+    "items": [],
+    "acquire": {},
+    "bank": "nearest",
+    "coin_float": 394,
+    "loadouts": {},
+    "areas": {
+      "velrak_cell": { "boxes": [[2928, 9683, 2935, 9689, 0]], "source": "C:maps/m45_151.jm2:6711-6715,6741-6743,6766-6771,6793-6798" },
+      "deep_gate_landing": { "boxes": [[2923, 9803, 2923, 9803, 0]], "source": "C:maps/m45_153.jm2:6707; C:scripts/areas/area_taverly/dungeon/scripts/jail_doors.rs2:8-12,21-35; C:scripts/doors/scripts/door_procs.rs2:68-74" },
+      "outpost": {
+        "boxes": [
+          [
+            2546,
+            3556,
+            2560,
+            3582,
+            0
+          ]
+        ],
+        "source": "289 maps/m39_55.jm2:5393-5395,6159: gate at x=2545 and scorpion B at x=2552."
+      }
+    },
+    "tools": [
+      "obj:scorpioncageempty",
+      "obj:scorpioncagea",
+      "obj:scorpioncageab",
+      "obj:scorpioncagefull",
+      "obj:barcrawl_card",
+      "obj:jail_key",
+      "obj:dusty_key",
+      "obj:bread",
+      "obj:mithril_scimitar",
+      "obj:coins"
+    ],
+    "owns_inventory": true
+  },
+  "roles": [
+    {
+      "role": null,
+      "progress_binding": "journal:scorpcatcher",
+      "progress": {
+        "colour": {
+          "not_started": "scorpcatcher:0",
+          "in_progress": "scorpcatcher:1",
+          "complete": "scorpcatcher:6"
+        },
+        "rules": [
+          {
+            "stage": "scorpcatcher:3",
+            "all": [
+              "the second kharid scorpion"
+            ]
+          },
+          {
+            "stage": "scorpcatcher:2",
+            "all": [
+              "the first kharid scorpion"
+            ]
+          },
+          {
+            "stage": "scorpcatcher:1",
+            "all": [
+              "i need to go to the",
+              "seers"
+            ]
+          }
+        ],
+        "flags": [],
+        "monotonic": false
+      },
+      "prelude": [],
+      "sequences": [
+        {
+          "stage": "scorpcatcher:0",
+          "required": [],
+          "terminal": false,
+          "recovery_entry": null,
+          "steps": [
+            {
+              "id": "start-thormac",
+              "kind": "talk",
+              "version": 1,
+              "advances": true,
+              "comment": "scripts/areas/area_seers/scripts/thormac.rs2:18-26,43-46,52-61: ask about the reward and accept. The acceptance branch gives the cage and starts the quest.",
+              "args": {
+                "npc": "thormac",
+                "anchor": {
+                  "tile": [
+                    2702,
+                    3405,
+                    3
+                  ],
+                  "source": "289 maps/m42_53.jm2:6244; pack/npc.pack:390"
+                },
+                "leash": 8,
+                "prefer": [
+                  "What do you need assistance with?",
+                  "What's in it for me?",
+                  "Ok, I will do it then."
+                ]
+              },
+              "skip_if": {
+                "Any": []
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "stage_in",
+                  "version": 1,
+                  "args": {
+                    "quest": "scorpcatcher",
+                    "any": [
+                      "scorpcatcher:1",
+                      "scorpcatcher:2",
+                      "scorpcatcher:3"
+                    ]
+                  }
+                }
+              }
+            }
+          ]
+        },
+        {
+          "stage": "scorpcatcher:1",
+          "required": [],
+          "terminal": false,
+          "recovery_entry": null,
+          "steps": [
+            {
+              "id": "first-seer-hint",
+              "kind": "talk",
+              "version": 1,
+              "advances": true,
+              "comment": "scripts/areas/area_seers/scripts/seer.rs2:1-5,42-47,56-68: three p_delay(3) gaps precede the first hint.",
+              "args": {
+                "npc": "seer",
+                "anchor": {
+                  "tile": [
+                    2702,
+                    3475,
+                    0
+                  ],
+                  "source": "289 maps/m42_54.jm2:11152; pack/npc.pack:389"
+                },
+                "leash": 10,
+                "prefer": [
+                  "I need to locate some scorpions."
+                ],
+                "gap_ticks": 4
+              },
+              "skip_if": {
+                "Any": []
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "stage_in",
+                  "version": 1,
+                  "args": {
+                    "quest": "scorpcatcher",
+                    "any": [
+                      "scorpcatcher:2",
+                      "scorpcatcher:3"
+                    ]
+                  }
+                }
+              }
+            }
+          ]
+        },
+        {
+          "stage": "scorpcatcher:2",
+          "required": [],
+          "terminal": false,
+          "recovery_entry": null,
+          "steps": [
+            {
+              "id": "buy-jailer-food", "kind": "buy", "version": 1, "advances": false,
+              "args": { "shop": { "npc": "baker_merchant", "anchor": { "tile": [2654, 3311, 0], "source": "C:maps/m41_51.jm2:10991; C:pack/npc.pack:572" } }, "obj": "bread", "qty": 10, "est_gp": 126 },
+              "comment": "C:scripts/areas/area_ardougne_east/configs/ardougne_east.inv:15-25; C:scripts/areas/area_ardougne_east/configs/ardougne_east.npc:410-414; C:scripts/shop/scripts/shop.rs2:58-68,131-147,182-187; C:scripts/skill_cooking/configs/cooking_inv/configs/dough/dough.obj:39-51. Ten bread costs 126 at full stock.",
+              "skip_if": { "Any": [{ "Fact": { "kind": "item_count_at_least", "version": 1, "args": { "obj": "bread", "qty": 10 } } }, { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "dusty_key" } } }] },
+              "settle": { "Fact": { "kind": "item_count_at_least", "version": 1, "args": { "obj": "bread", "qty": 10 } } }
+            },
+            {
+              "id": "get-jail-key", "kind": "combat", "version": 1, "advances": false,
+              "args": { "target": { "npc": "jailer", "not_targeting_others": true, "pick": "nearest" }, "stand": { "tile": [2933, 9693, 0], "source": "C:maps/m45_151.jm2:8528; C:pack/npc.pack:202" }, "lost_radius": 20, "kill_budget_ticks": 500, "tactic": { "kind": "open", "style": "melee", "engage_radius": 12, "auto_retaliate": true }, "loot": ["jail_key"], "until": { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "jail_key" } } } },
+              "comment": "C:scripts/drop tables/scripts/jailer.rs2:1-10: the Jailer drops the key for 100 ticks. C:scripts/areas/area_taverly/dungeon/configs/taverly_dungeon.npc:30-60 defines the fight.",
+              "skip_if": { "Any": [{ "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "jail_key" } } }, { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "dusty_key" } } }] },
+              "settle": { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "jail_key" } } }
+            },
+            {
+              "id": "unlock-velrak-cell", "kind": "use_on", "version": 1, "advances": false,
+              "args": { "item": "jail_key", "target": { "loc": "dungeonjail" }, "anchor": { "tile": [2931, 9690, 0], "source": "C:maps/m45_151.jm2:6770; C:pack/loc.pack:2632" }, "radius": 2 },
+              "comment": "C:scripts/areas/area_taverly/dungeon/scripts/jail_doors.rs2:1-5,21-35 uses the key to cross into the cell.",
+              "skip_if": { "Any": [{ "Fact": { "kind": "in_area", "version": 1, "args": { "area": "velrak_cell" } } }, { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "dusty_key" } } }] },
+              "settle": { "Fact": { "kind": "in_area", "version": 1, "args": { "area": "velrak_cell" } } }
+            },
+            {
+              "id": "get-dusty-key", "kind": "talk", "version": 1, "advances": false,
+              "args": { "npc": "velrak_the_explorer", "anchor": { "tile": [2931, 9685, 0], "source": "C:maps/m45_151.jm2:8523; C:pack/npc.pack:799" }, "leash": 8, "prefer": ["So... do you know anywhere good to explore?", "Yes please!"], "strict": true },
+              "comment": "C:scripts/areas/area_taverly/dungeon/scripts/velrak_the_explorer.rs2:1-17 gives the dusty key after both choices.",
+              "skip_if": { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "dusty_key" } } },
+              "settle": { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "dusty_key" } } }
+            },
+            {
+              "id": "unlock-deep-dungeon", "kind": "use_on", "version": 1, "advances": false,
+              "args": { "item": "dusty_key", "target": { "loc": "deepdungeondoor" }, "anchor": { "tile": [2924, 9803, 0], "source": "C:maps/m45_153.jm2:6707; C:pack/loc.pack:2624" }, "radius": 2 },
+              "comment": "C:scripts/areas/area_taverly/dungeon/scripts/jail_doors.rs2:8-12,21-35 opens the gate with the dusty key.",
+              "skip_if": { "Fact": { "kind": "in_area", "version": 1, "args": { "area": "deep_gate_landing" } } },
+              "settle": { "Fact": { "kind": "in_area", "version": 1, "args": { "area": "deep_gate_landing" } } }
+            },
+            {
+              "id": "search-secret-wall",
+              "kind": "interact",
+              "version": 1,
+              "advances": false,
+              "comment": "scripts/quests/quest_scorpcatcher/scripts/quest_scorpcatcher.rs2:45-53; scripts/_unpack/225/all.loc:11453-11460: Search exposes the door.",
+              "args": {
+                "target": {
+                  "loc": "scorpionwall"
+                },
+                "op": "Search",
+                "anchor": {
+                  "tile": [
+                    2875,
+                    9799,
+                    0
+                  ],
+                  "source": "289 maps/m44_153.jm2:7603; pack/loc.pack:2118"
+                },
+                "radius": 5
+              },
+              "skip_if": {
+                "Any": [
+                  {
+                    "Fact": {
+                      "kind": "has_item",
+                      "version": 1,
+                      "args": {
+                        "obj": "scorpioncagea"
+                      }
+                    }
+                  },
+                  {
+                    "Fact": {
+                      "kind": "has_item",
+                      "version": 1,
+                      "args": {
+                        "obj": "scorpioncageab"
+                      }
+                    }
+                  },
+                  {
+                    "Fact": {
+                      "kind": "has_item",
+                      "version": 1,
+                      "args": {
+                        "obj": "scorpioncageac"
+                      }
+                    }
+                  },
+                  {
+                    "Fact": {
+                      "kind": "has_item",
+                      "version": 1,
+                      "args": {
+                        "obj": "scorpioncagefull"
+                      }
+                    }
+                  }
+                ]
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "message",
+                  "version": 1,
+                  "args": {
+                    "any": [
+                      "You've found a secret door"
+                    ]
+                  }
+                }
+              }
+            },
+            {
+              "id": "catch-first-scorpion",
+              "kind": "use_on",
+              "version": 1,
+              "advances": false,
+              "comment": "scripts/quests/quest_scorpcatcher/scripts/quest_scorpcatcher.rs2:8-20: use the empty cage on scorpion A, never Pick-up.",
+              "args": {
+                "item": "scorpioncageempty",
+                "target": {
+                  "npc": "questscorpiona"
+                },
+                "anchor": {
+                  "tile": [
+                    2877,
+                    9796,
+                    0
+                  ],
+                  "source": "289 maps/m44_153.jm2:9375; pack/npc.pack:386"
+                },
+                "radius": 6,
+                "product": "scorpioncagea"
+              },
+              "skip_if": {
+                "Any": [
+                  {
+                    "Fact": {
+                      "kind": "has_item",
+                      "version": 1,
+                      "args": {
+                        "obj": "scorpioncagea"
+                      }
+                    }
+                  },
+                  {
+                    "Fact": {
+                      "kind": "has_item",
+                      "version": 1,
+                      "args": {
+                        "obj": "scorpioncageab"
+                      }
+                    }
+                  },
+                  {
+                    "Fact": {
+                      "kind": "has_item",
+                      "version": 1,
+                      "args": {
+                        "obj": "scorpioncageac"
+                      }
+                    }
+                  },
+                  {
+                    "Fact": {
+                      "kind": "has_item",
+                      "version": 1,
+                      "args": {
+                        "obj": "scorpioncagefull"
+                      }
+                    }
+                  }
+                ]
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "has_item",
+                  "version": 1,
+                  "args": {
+                    "obj": "scorpioncagea"
+                  }
+                }
+              }
+            },
+            {
+              "id": "second-seer-hint",
+              "kind": "talk",
+              "version": 1,
+              "advances": true,
+              "comment": "scripts/areas/area_seers/scripts/seer.rs2:6-13,74-81: cage A makes the Seer give the remaining clues.",
+              "args": {
+                "npc": "seer",
+                "anchor": {
+                  "tile": [
+                    2702,
+                    3475,
+                    0
+                  ],
+                  "source": "289 maps/m42_54.jm2:11152; pack/npc.pack:389"
+                },
+                "leash": 10,
+                "prefer": []
+              },
+              "skip_if": {
+                "Any": []
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "stage_in",
+                  "version": 1,
+                  "args": {
+                    "quest": "scorpcatcher",
+                    "any": [
+                      "scorpcatcher:3"
+                    ]
+                  }
+                }
+              }
+            }
+          ],
+          "order": "ordered"
+        },
+        {
+          "stage": "scorpcatcher:3",
+          "required": [],
+          "terminal": false,
+          "recovery_entry": null,
+          "steps": [
+            {
+              "id": "request-barcrawl-card",
+              "kind": "talk",
+              "version": 1,
+              "advances": false,
+              "comment": "scripts/areas/area_barbarian_outpost/scripts/barbarian_outpost_guard.rs2:1-28,35-63: request the card. The guide intentionally stops before the first bar because safe replay cannot observe its signed bit.",
+              "args": {
+                "npc": "barbguard1",
+                "anchor": {
+                  "tile": [
+                    2544,
+                    3567,
+                    0
+                  ],
+                  "source": "289 maps/m39_55.jm2:6150; pack/npc.pack:385"
+                },
+                "leash": 8,
+                "prefer": [
+                  "I want to come through this gate.",
+                  "Looks can be deceiving, I am in fact a barbarian."
+                ]
+              },
+              "skip_if": {
+                "Any": [
+                  {
+                    "Fact": {
+                      "kind": "has_item",
+                      "version": 1,
+                      "args": {
+                        "obj": "barcrawl_card"
+                      }
+                    }
+                  },
+                  {
+                    "Any": [
+                      {
+                        "Fact": {
+                          "kind": "has_item",
+                          "version": 1,
+                          "args": {
+                            "obj": "scorpioncageab"
+                          }
+                        }
+                      },
+                      {
+                        "Fact": {
+                          "kind": "has_item",
+                          "version": 1,
+                          "args": {
+                            "obj": "scorpioncagefull"
+                          }
+                        }
+                      }
+                    ]
+                  }
+                ]
+              },
+              "settle": {
+                "All": []
+              }
+            },
+            {
+              "id": "rusty-anchor-card",
+              "kind": "use_on",
+              "version": 1,
+              "advances": false,
+              "comment": "scripts/areas/area_port_sarim/scripts/bartender.rs2:25-29,43-61; scripts/general/configs/displaymessage.enum:2-5: signed cards produce the default message. An unsigned card produces the signature after p_delay; settlement waits for either fresh message.",
+              "args": {
+                "item": "barcrawl_card",
+                "target": {
+                  "npc": "rustyanchor_bartender"
+                },
+                "anchor": {
+                  "tile": [
+                    3045,
+                    3257,
+                    0
+                  ],
+                  "source": "289 maps/m47_50.jm2:10014; pack/npc.pack:735"
+                },
+                "radius": 8
+              },
+              "skip_if": {
+                "Any": [
+                  {
+                    "Not": {
+                      "Fact": {
+                        "kind": "has_item",
+                        "version": 1,
+                        "args": {
+                          "obj": "barcrawl_card"
+                        }
+                      }
+                    }
+                  },
+                  {
+                    "Any": [
+                      {
+                        "Fact": {
+                          "kind": "has_item",
+                          "version": 1,
+                          "args": {
+                            "obj": "scorpioncageab"
+                          }
+                        }
+                      },
+                      {
+                        "Fact": {
+                          "kind": "has_item",
+                          "version": 1,
+                          "args": {
+                            "obj": "scorpioncagefull"
+                          }
+                        }
+                      }
+                    ]
+                  }
+                ]
+              },
+              "settle": {
+                "Any": [
+                  {
+                    "Fact": {
+                      "kind": "message",
+                      "version": 1,
+                      "args": {
+                        "any": [
+                          "The bartender signs your card.",
+                          "Nothing interesting happens."
+                        ]
+                      }
+                    }
+                  }
+                ]
+              }
+            },
+            {
+              "id": "bar-rising-sun",
+              "kind": "talk",
+              "version": 1,
+              "advances": false,
+              "comment": "scripts/areas/area_falador/scripts/barmaid.rs2:1-46: the barcrawl choice signs once. The fallback choice is replay-safe for the fresh account. The longest quiet p_delay(3) costs four ticks.",
+              "args": {
+                "npc": "risingsun_barmaid",
+                "anchor": {
+                  "tile": [
+                    2957,
+                    3370,
+                    0
+                  ],
+                  "source": "289 maps/m46_52.jm2:11959; pack/npc.pack:737"
+                },
+                "leash": 8,
+                "prefer": [
+                  "I'm doing Alfred Grimhand's Barcrawl.",
+                  "Hi, what ales are you serving?",
+                  "I don't feel like any of those."
+                ],
+                "gap_ticks": 4
+              },
+              "skip_if": {
+                "Any": [
+                  {
+                    "Not": {
+                      "Fact": {
+                        "kind": "has_item",
+                        "version": 1,
+                        "args": {
+                          "obj": "barcrawl_card"
+                        }
+                      }
+                    }
+                  },
+                  {
+                    "Any": [
+                      {
+                        "Fact": {
+                          "kind": "has_item",
+                          "version": 1,
+                          "args": {
+                            "obj": "scorpioncageab"
+                          }
+                        }
+                      },
+                      {
+                        "Fact": {
+                          "kind": "has_item",
+                          "version": 1,
+                          "args": {
+                            "obj": "scorpioncagefull"
+                          }
+                        }
+                      }
+                    ]
+                  }
+                ]
+              },
+              "settle": {
+                "All": []
+              }
+            },
+            {
+              "id": "bar-jolly-boar",
+              "kind": "talk",
+              "version": 1,
+              "advances": false,
+              "comment": "scripts/areas/area_varrock/scripts/bartender.rs2:1-7,20-30,39-62: the barcrawl choice signs once. The fallback choice is replay-safe for the fresh account. The longest quiet p_delay(3) costs four ticks.",
+              "args": {
+                "npc": "jollyboar_bartender",
+                "anchor": {
+                  "tile": [
+                    3277,
+                    3488,
+                    0
+                  ],
+                  "source": "289 maps/m51_54.jm2:7744; pack/npc.pack:732"
+                },
+                "leash": 8,
+                "prefer": [
+                  "I'm doing Alfred Grimhands Barcrawl.",
+                  "Heard any good gossip?"
+                ],
+                "gap_ticks": 4
+              },
+              "skip_if": {
+                "Any": [
+                  {
+                    "Not": {
+                      "Fact": {
+                        "kind": "has_item",
+                        "version": 1,
+                        "args": {
+                          "obj": "barcrawl_card"
+                        }
+                      }
+                    }
+                  },
+                  {
+                    "Any": [
+                      {
+                        "Fact": {
+                          "kind": "has_item",
+                          "version": 1,
+                          "args": {
+                            "obj": "scorpioncageab"
+                          }
+                        }
+                      },
+                      {
+                        "Fact": {
+                          "kind": "has_item",
+                          "version": 1,
+                          "args": {
+                            "obj": "scorpioncagefull"
+                          }
+                        }
+                      }
+                    ]
+                  }
+                ]
+              },
+              "settle": {
+                "All": []
+              }
+            },
+            {
+              "id": "bar-blue-moon",
+              "kind": "talk",
+              "version": 1,
+              "advances": false,
+              "comment": "scripts/areas/area_varrock/scripts/bartender.rs2:65-75,103-107,115-139: the barcrawl choice signs once. The fallback choice is replay-safe for the fresh account. The longest quiet p_delay(3) costs four ticks.",
+              "args": {
+                "npc": "bluemoon_bartender",
+                "anchor": {
+                  "tile": [
+                    3226,
+                    3399,
+                    0
+                  ],
+                  "source": "289 maps/m50_53.jm2:12909; pack/npc.pack:734"
+                },
+                "leash": 8,
+                "prefer": [
+                  "I'm doing Alfred Grimhand's Barcrawl.",
+                  "Do you know where I can get some good equipment?"
+                ],
+                "gap_ticks": 4
+              },
+              "skip_if": {
+                "Any": [
+                  {
+                    "Not": {
+                      "Fact": {
+                        "kind": "has_item",
+                        "version": 1,
+                        "args": {
+                          "obj": "barcrawl_card"
+                        }
+                      }
+                    }
+                  },
+                  {
+                    "Any": [
+                      {
+                        "Fact": {
+                          "kind": "has_item",
+                          "version": 1,
+                          "args": {
+                            "obj": "scorpioncageab"
+                          }
+                        }
+                      },
+                      {
+                        "Fact": {
+                          "kind": "has_item",
+                          "version": 1,
+                          "args": {
+                            "obj": "scorpioncagefull"
+                          }
+                        }
+                      }
+                    ]
+                  }
+                ]
+              },
+              "settle": {
+                "All": []
+              }
+            },
+            {
+              "id": "bar-foresters",
+              "kind": "talk",
+              "version": 1,
+              "advances": false,
+              "comment": "scripts/areas/area_seers/scripts/bartender.rs2:1-7,46-70: the barcrawl choice signs once. The fallback choice is replay-safe for the fresh account. The longest quiet p_delay(3) costs four ticks.",
+              "args": {
+                "npc": "foresters_bartender",
+                "anchor": {
+                  "tile": [
+                    2690,
+                    3493,
+                    0
+                  ],
+                  "source": "289 maps/m42_54.jm2:11143; pack/npc.pack:738"
+                },
+                "leash": 8,
+                "prefer": [
+                  "I'm doing Alfred Grimhand's Barcrawl.",
+                  "I don't really want anything thanks."
+                ],
+                "gap_ticks": 4
+              },
+              "skip_if": {
+                "Any": [
+                  {
+                    "Not": {
+                      "Fact": {
+                        "kind": "has_item",
+                        "version": 1,
+                        "args": {
+                          "obj": "barcrawl_card"
+                        }
+                      }
+                    }
+                  },
+                  {
+                    "Any": [
+                      {
+                        "Fact": {
+                          "kind": "has_item",
+                          "version": 1,
+                          "args": {
+                            "obj": "scorpioncageab"
+                          }
+                        }
+                      },
+                      {
+                        "Fact": {
+                          "kind": "has_item",
+                          "version": 1,
+                          "args": {
+                            "obj": "scorpioncagefull"
+                          }
+                        }
+                      }
+                    ]
+                  }
+                ]
+              },
+              "settle": {
+                "All": []
+              }
+            },
+            {
+              "id": "bar-blurberry",
+              "kind": "talk",
+              "version": 1,
+              "advances": false,
+              "comment": "scripts/areas/area_gnome/scripts/blurberry.rs2:1-6,51-69; scripts/areas/area_gnome/scripts/gnome_bar.rs2:2-10: the barcrawl choice signs once. The fallback choice is replay-safe for the fresh account. The longest quiet p_delay(3) costs four ticks.",
+              "args": {
+                "npc": "blurberry",
+                "anchor": {
+                  "tile": [
+                    2480,
+                    3490,
+                    1
+                  ],
+                  "source": "289 maps/m38_54.jm2:8879; pack/npc.pack:849"
+                },
+                "leash": 8,
+                "prefer": [
+                  "No thanks, I prefer to stay this side of the bar."
+                ],
+                "gap_ticks": 4
+              },
+              "skip_if": {
+                "Any": [
+                  {
+                    "Not": {
+                      "Fact": {
+                        "kind": "has_item",
+                        "version": 1,
+                        "args": {
+                          "obj": "barcrawl_card"
+                        }
+                      }
+                    }
+                  },
+                  {
+                    "Any": [
+                      {
+                        "Fact": {
+                          "kind": "has_item",
+                          "version": 1,
+                          "args": {
+                            "obj": "scorpioncageab"
+                          }
+                        }
+                      },
+                      {
+                        "Fact": {
+                          "kind": "has_item",
+                          "version": 1,
+                          "args": {
+                            "obj": "scorpioncagefull"
+                          }
+                        }
+                      }
+                    ]
+                  }
+                ]
+              },
+              "settle": {
+                "All": []
+              }
+            },
+            {
+              "id": "bar-flying-horse",
+              "kind": "talk",
+              "version": 1,
+              "advances": false,
+              "comment": "scripts/areas/area_ardougne_east/scripts/bartender.rs2:1-10,22-25,33-51: the barcrawl choice signs once. The fallback choice is replay-safe for the fresh account. The longest quiet p_delay(3) costs four ticks.",
+              "args": {
+                "npc": "flyinghorse_bartender",
+                "anchor": {
+                  "tile": [
+                    2575,
+                    3320,
+                    0
+                  ],
+                  "source": "289 maps/m40_51.jm2:10762; pack/npc.pack:739"
+                },
+                "leash": 8,
+                "prefer": [
+                  "I'm doing Alfred Grimhand's Barcrawl.",
+                  "I'll not have anything then."
+                ],
+                "gap_ticks": 4
+              },
+              "skip_if": {
+                "Any": [
+                  {
+                    "Not": {
+                      "Fact": {
+                        "kind": "has_item",
+                        "version": 1,
+                        "args": {
+                          "obj": "barcrawl_card"
+                        }
+                      }
+                    }
+                  },
+                  {
+                    "Any": [
+                      {
+                        "Fact": {
+                          "kind": "has_item",
+                          "version": 1,
+                          "args": {
+                            "obj": "scorpioncageab"
+                          }
+                        }
+                      },
+                      {
+                        "Fact": {
+                          "kind": "has_item",
+                          "version": 1,
+                          "args": {
+                            "obj": "scorpioncagefull"
+                          }
+                        }
+                      }
+                    ]
+                  }
+                ]
+              },
+              "settle": {
+                "All": []
+              }
+            },
+            {
+              "id": "bar-dragon-inn",
+              "kind": "talk",
+              "version": 1,
+              "advances": false,
+              "comment": "scripts/areas/area_yanille/scripts/bartender.rs2:1-17,46-64: the barcrawl choice signs once. The fallback choice is replay-safe for the fresh account. The longest quiet p_delay(3) costs four ticks.",
+              "args": {
+                "npc": "dragon_bartender",
+                "anchor": {
+                  "tile": [
+                    2556,
+                    3078,
+                    0
+                  ],
+                  "source": "289 maps/m39_48.jm2:7350; pack/npc.pack:740"
+                },
+                "leash": 8,
+                "prefer": [
+                  "I'm doing Alfred Grimhand's Barcrawl.",
+                  "I'll give it a miss I think."
+                ],
+                "gap_ticks": 4
+              },
+              "skip_if": {
+                "Any": [
+                  {
+                    "Not": {
+                      "Fact": {
+                        "kind": "has_item",
+                        "version": 1,
+                        "args": {
+                          "obj": "barcrawl_card"
+                        }
+                      }
+                    }
+                  },
+                  {
+                    "Any": [
+                      {
+                        "Fact": {
+                          "kind": "has_item",
+                          "version": 1,
+                          "args": {
+                            "obj": "scorpioncageab"
+                          }
+                        }
+                      },
+                      {
+                        "Fact": {
+                          "kind": "has_item",
+                          "version": 1,
+                          "args": {
+                            "obj": "scorpioncagefull"
+                          }
+                        }
+                      }
+                    ]
+                  }
+                ]
+              },
+              "settle": {
+                "All": []
+              }
+            },
+            {
+              "id": "bar-dead-mans",
+              "kind": "talk",
+              "version": 1,
+              "advances": false,
+              "comment": "scripts/areas/area_brimhaven/scripts/bartender.rs2:1-10,39-61: the barcrawl choice signs once. The fallback choice is replay-safe for the fresh account. The longest quiet p_delay(3) costs four ticks.",
+              "args": {
+                "npc": "deadmans_bartender",
+                "anchor": {
+                  "tile": [
+                    2797,
+                    3155,
+                    0
+                  ],
+                  "source": "289 maps/m43_49.jm2:9209; pack/npc.pack:736"
+                },
+                "leash": 8,
+                "prefer": [
+                  "I'm doing Alfred Grimhand's barcrawl.",
+                  "Nothing, thank you."
+                ],
+                "gap_ticks": 4
+              },
+              "skip_if": {
+                "Any": [
+                  {
+                    "Not": {
+                      "Fact": {
+                        "kind": "has_item",
+                        "version": 1,
+                        "args": {
+                          "obj": "barcrawl_card"
+                        }
+                      }
+                    }
+                  },
+                  {
+                    "Any": [
+                      {
+                        "Fact": {
+                          "kind": "has_item",
+                          "version": 1,
+                          "args": {
+                            "obj": "scorpioncageab"
+                          }
+                        }
+                      },
+                      {
+                        "Fact": {
+                          "kind": "has_item",
+                          "version": 1,
+                          "args": {
+                            "obj": "scorpioncagefull"
+                          }
+                        }
+                      }
+                    ]
+                  }
+                ]
+              },
+              "settle": {
+                "All": []
+              }
+            },
+            {
+              "id": "bar-karamja-spirits",
+              "kind": "talk",
+              "version": 1,
+              "advances": false,
+              "comment": "scripts/areas/area_karamja/scripts/zambo.rs2:1-8,10-13,21-37: the barcrawl choice signs once. The fallback choice is replay-safe for the fresh account. The longest quiet p_delay(3) costs four ticks.",
+              "args": {
+                "npc": "zambo",
+                "anchor": {
+                  "tile": [
+                    2925,
+                    3143,
+                    0
+                  ],
+                  "source": "289 maps/m45_49.jm2:6498; pack/npc.pack:569"
+                },
+                "leash": 8,
+                "prefer": [
+                  "I'm doing Alfred Grimhand's barcrawl.",
+                  "No, thank you."
+                ],
+                "gap_ticks": 4
+              },
+              "skip_if": {
+                "Any": [
+                  {
+                    "Not": {
+                      "Fact": {
+                        "kind": "has_item",
+                        "version": 1,
+                        "args": {
+                          "obj": "barcrawl_card"
+                        }
+                      }
+                    }
+                  },
+                  {
+                    "Any": [
+                      {
+                        "Fact": {
+                          "kind": "has_item",
+                          "version": 1,
+                          "args": {
+                            "obj": "scorpioncageab"
+                          }
+                        }
+                      },
+                      {
+                        "Fact": {
+                          "kind": "has_item",
+                          "version": 1,
+                          "args": {
+                            "obj": "scorpioncagefull"
+                          }
+                        }
+                      }
+                    ]
+                  }
+                ]
+              },
+              "settle": {
+                "All": []
+              }
+            },
+            {
+              "id": "complete-barcrawl",
+              "kind": "talk",
+              "version": 1,
+              "advances": false,
+              "comment": "scripts/areas/area_barbarian_outpost/scripts/barbarian_outpost_guard.rs2:35-63; scripts/quests/quest_barcrawl/scripts/quest_barcrawl.rs2:12-16: the guard consumes the card only after all ten bars.",
+              "args": {
+                "npc": "barbguard1",
+                "anchor": {
+                  "tile": [
+                    2544,
+                    3567,
+                    0
+                  ],
+                  "source": "289 maps/m39_55.jm2:6150; pack/npc.pack:385"
+                },
+                "leash": 8,
+                "prefer": []
+              },
+              "skip_if": {
+                "Any": [
+                  {
+                    "Not": {
+                      "Fact": {
+                        "kind": "has_item",
+                        "version": 1,
+                        "args": {
+                          "obj": "barcrawl_card"
+                        }
+                      }
+                    }
+                  },
+                  {
+                    "Any": [
+                      {
+                        "Fact": {
+                          "kind": "has_item",
+                          "version": 1,
+                          "args": {
+                            "obj": "scorpioncageab"
+                          }
+                        }
+                      },
+                      {
+                        "Fact": {
+                          "kind": "has_item",
+                          "version": 1,
+                          "args": {
+                            "obj": "scorpioncagefull"
+                          }
+                        }
+                      }
+                    ]
+                  }
+                ]
+              },
+              "settle": {
+                "Not": {
+                  "Fact": {
+                    "kind": "has_item",
+                    "version": 1,
+                    "args": {
+                      "obj": "barcrawl_card"
+                    }
+                  }
+                }
+              }
+            },
+            {
+              "id": "open-outpost-gate",
+              "kind": "interact",
+              "version": 1,
+              "advances": false,
+              "comment": "scripts/areas/area_barbarian_outpost/configs/barbarian_outpost.loc:8-14; scripts/areas/area_barbarian_outpost/scripts/outpost_gate.rs2:1-12: open the gate and cross it.",
+              "args": {
+                "target": {
+                  "loc": "barbariangater"
+                },
+                "op": "Open",
+                "anchor": {
+                  "tile": [
+                    2545,
+                    3569,
+                    0
+                  ],
+                  "source": "289 maps/m39_55.jm2:5393; pack/loc.pack:2117"
+                },
+                "radius": 5
+              },
+              "skip_if": {
+                "Any": [
+                  {
+                    "Any": [
+                      {
+                        "Fact": {
+                          "kind": "has_item",
+                          "version": 1,
+                          "args": {
+                            "obj": "scorpioncageab"
+                          }
+                        }
+                      },
+                      {
+                        "Fact": {
+                          "kind": "has_item",
+                          "version": 1,
+                          "args": {
+                            "obj": "scorpioncagefull"
+                          }
+                        }
+                      }
+                    ]
+                  },
+                  {
+                    "Fact": {
+                      "kind": "in_area",
+                      "version": 1,
+                      "args": {
+                        "area": "outpost"
+                      }
+                    }
+                  }
+                ]
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "in_area",
+                  "version": 1,
+                  "args": {
+                    "area": "outpost"
+                  }
+                }
+              }
+            },
+            {
+              "id": "catch-outpost-scorpion",
+              "kind": "use_on",
+              "version": 1,
+              "advances": false,
+              "comment": "scripts/quests/quest_scorpcatcher/scripts/quest_scorpcatcher.rs2:23-29: cage A becomes cage AB.",
+              "args": {
+                "item": "scorpioncagea",
+                "target": {
+                  "npc": "questscorpionb"
+                },
+                "anchor": {
+                  "tile": [
+                    2552,
+                    3570,
+                    0
+                  ],
+                  "source": "289 maps/m39_55.jm2:6159; pack/npc.pack:387"
+                },
+                "radius": 8,
+                "product": "scorpioncageab"
+              },
+              "skip_if": {
+                "Any": [
+                  {
+                    "Fact": {
+                      "kind": "has_item",
+                      "version": 1,
+                      "args": {
+                        "obj": "scorpioncageab"
+                      }
+                    }
+                  },
+                  {
+                    "Fact": {
+                      "kind": "has_item",
+                      "version": 1,
+                      "args": {
+                        "obj": "scorpioncagefull"
+                      }
+                    }
+                  }
+                ]
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "has_item",
+                  "version": 1,
+                  "args": {
+                    "obj": "scorpioncageab"
+                  }
+                }
+              }
+            },
+            {
+              "id": "join-monastery-order",
+              "kind": "talk",
+              "version": 1,
+              "advances": false,
+              "comment": "scripts/areas/monastery/scripts/abbot_langley.rs2:8-23; scripts/areas/monastery/scripts/prayer_guild.rs2:21-33: join at Prayer 31. Healing is the safe already-joined branch.",
+              "args": {
+                "npc": "abbot_langley",
+                "anchor": {
+                  "tile": [
+                    3058,
+                    3484,
+                    0
+                  ],
+                  "source": "289 maps/m47_54.jm2:7550; pack/npc.pack:802"
+                },
+                "leash": 8,
+                "prefer": [
+                  "How do I get further into the monastery?",
+                  "Well can I join your order?",
+                  "Can you heal me?"
+                ]
+              },
+              "skip_if": {
+                "Any": [
+                  {
+                    "Fact": {
+                      "kind": "has_item",
+                      "version": 1,
+                      "args": {
+                        "obj": "scorpioncagefull"
+                      }
+                    }
+                  },
+                  {
+                    "Fact": {
+                      "kind": "on_level",
+                      "version": 1,
+                      "args": {
+                        "level": 1
+                      }
+                    }
+                  }
+                ]
+              },
+              "settle": {
+                "All": []
+              }
+            },
+            {
+              "id": "climb-monastery",
+              "kind": "interact",
+              "version": 1,
+              "advances": false,
+              "comment": "scripts/areas/monastery/scripts/prayer_guild.rs2:5-19: the order members can climb.",
+              "args": {
+                "target": {
+                  "loc": "monasteryladder"
+                },
+                "op": "Climb-up",
+                "anchor": {
+                  "tile": [
+                    3057,
+                    3483,
+                    0
+                  ],
+                  "source": "289 maps/m47_54.jm2:6060; pack/loc.pack:2642"
+                },
+                "radius": 6
+              },
+              "skip_if": {
+                "Any": [
+                  {
+                    "Fact": {
+                      "kind": "has_item",
+                      "version": 1,
+                      "args": {
+                        "obj": "scorpioncagefull"
+                      }
+                    }
+                  },
+                  {
+                    "Fact": {
+                      "kind": "on_level",
+                      "version": 1,
+                      "args": {
+                        "level": 1
+                      }
+                    }
+                  }
+                ]
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "on_level",
+                  "version": 1,
+                  "args": {
+                    "level": 1
+                  }
+                }
+              }
+            },
+            {
+              "id": "catch-monastery-scorpion",
+              "kind": "use_on",
+              "version": 1,
+              "advances": false,
+              "comment": "scripts/quests/quest_scorpcatcher/scripts/quest_scorpcatcher.rs2:32-38: cage AB becomes the full cage.",
+              "args": {
+                "item": "scorpioncageab",
+                "target": {
+                  "npc": "questscorpionc"
+                },
+                "anchor": {
+                  "tile": [
+                    3058,
+                    3488,
+                    1
+                  ],
+                  "source": "289 maps/m47_54.jm2:7559; pack/npc.pack:388"
+                },
+                "radius": 8,
+                "product": "scorpioncagefull"
+              },
+              "skip_if": {
+                "Fact": {
+                  "kind": "has_item",
+                  "version": 1,
+                  "args": {
+                    "obj": "scorpioncagefull"
+                  }
+                }
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "has_item",
+                  "version": 1,
+                  "args": {
+                    "obj": "scorpioncagefull"
+                  }
+                }
+              }
+            },
+            {
+              "id": "return-to-thormac",
+              "kind": "talk",
+              "version": 1,
+              "advances": true,
+              "comment": "scripts/areas/area_seers/scripts/thormac.rs2:63-69 and scripts/quests/quest_scorpcatcher/scripts/quest_scorpcatcher.rs2:55-60: the full cage completes the quest.",
+              "args": {
+                "npc": "thormac",
+                "anchor": {
+                  "tile": [
+                    2702,
+                    3405,
+                    3
+                  ],
+                  "source": "289 maps/m42_53.jm2:6244; pack/npc.pack:390"
+                },
+                "leash": 8,
+                "prefer": []
+              },
+              "skip_if": {
+                "Any": []
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "quest_colour",
+                  "version": 1,
+                  "args": {
+                    "quest": "scorpcatcher",
+                    "is": "complete"
+                  }
+                }
+              }
+            }
+          ],
+          "order": "ordered"
+        },
+        {
+          "stage": "scorpcatcher:6",
+          "required": [],
+          "terminal": true,
+          "recovery_entry": null,
+          "steps": []
+        }
+      ]
+    }
+  ]
+}

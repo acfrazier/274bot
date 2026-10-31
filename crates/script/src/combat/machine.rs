@@ -3063,7 +3063,7 @@ impl Combat {
             options: Default::default(),
             required_after: cx.evidence(),
             evidence: None,
-            cross: Vec::new().into_boxed_slice(),
+            cross: self.request.cross.as_deref().unwrap_or_default().into(),
             protect: false,
             food_guard: false,
             allow: Default::default(),

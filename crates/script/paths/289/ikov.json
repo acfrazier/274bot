@@ -1,0 +1,2259 @@
+{
+  "$schema": "../path.schema.json",
+  "schema": 3,
+  "id": "ikov",
+  "display_name": "Temple of Ikov",
+  "required": [
+    "ranged-40",
+    "thieving-42"
+  ],
+  "tested_stats": null,
+  "partner": null,
+  "quest": {
+    "members": true,
+    "quest_points": 1,
+    "requirements": [
+      {
+        "id": "ranged-40",
+        "kind": {
+          "Skill": {
+            "skill": "ranged",
+            "level": 40
+          }
+        },
+        "at": "start",
+        "source": "scripts/quests/quest_ikov/configs/quest_ikov.obj:1-3,31-35; scripts/skill_combat/configs/ranged/bows.obj:256-277"
+      },
+      {
+        "id": "thieving-42",
+        "kind": {
+          "Skill": {
+            "skill": "thieving",
+            "level": 42
+          }
+        },
+        "at": "start",
+        "source": "scripts/quests/quest_ikov/scripts/ikov_dungeon.rs2:155-165"
+      }
+    ],
+    "items": [],
+    "acquire": {
+      "ice-arrow-search": [
+        {
+          "id": "chest-1-open",
+          "kind": "interact",
+          "version": 1,
+          "args": {
+            "target": {
+              "loc": "ikov_chestclosed",
+              "tile": [
+                2710,
+                9850,
+                0
+              ],
+              "source": "maps/m42_153.jm2:5454; scripts/quests/quest_ikov/scripts/quest_ikov.rs2:9-16"
+            },
+            "op": "Open",
+            "anchor": {
+              "tile": [
+                2710,
+                9850,
+                0
+              ],
+              "source": "maps/m42_153.jm2:5454; scripts/quests/quest_ikov/scripts/quest_ikov.rs2:9-16"
+            }
+          },
+          "skip_if": {
+            "Any": [
+              {
+                "Fact": {
+                  "kind": "item_count_at_least",
+                  "version": 1,
+                  "args": {
+                    "obj": "ice_arrow",
+                    "qty": 40
+                  }
+                }
+              },
+              {
+                "Fact": {
+                  "kind": "loc_present",
+                  "version": 1,
+                  "args": {
+                    "loc": "ikov_chestopen"
+                  }
+                }
+              }
+            ]
+          },
+          "settle": {
+            "Fact": {
+              "kind": "loc_present",
+              "version": 1,
+              "args": {
+                "loc": "ikov_chestopen"
+              }
+            }
+          },
+          "comment": "scripts/quests/quest_ikov/scripts/ikov_dungeon.rs2:112-113; maps/m42_153.jm2:5454; scripts/quests/quest_ikov/scripts/quest_ikov.rs2:9-16",
+          "advances": false
+        },
+        {
+          "id": "chest-1-search",
+          "kind": "interact",
+          "version": 1,
+          "args": {
+            "target": {
+              "loc": "ikov_chestopen",
+              "tile": [
+                2710,
+                9850,
+                0
+              ],
+              "source": "maps/m42_153.jm2:5454; scripts/quests/quest_ikov/scripts/quest_ikov.rs2:9-16"
+            },
+            "op": "Search",
+            "anchor": {
+              "tile": [
+                2710,
+                9850,
+                0
+              ],
+              "source": "maps/m42_153.jm2:5454; scripts/quests/quest_ikov/scripts/quest_ikov.rs2:9-16"
+            }
+          },
+          "skip_if": {
+            "Fact": {
+              "kind": "item_count_at_least",
+              "version": 1,
+              "args": {
+                "obj": "ice_arrow",
+                "qty": 40
+              }
+            }
+          },
+          "settle": {
+            "All": []
+          },
+          "comment": "scripts/quests/quest_ikov/scripts/ikov_dungeon.rs2:115-131; maps/m42_153.jm2:5454; scripts/quests/quest_ikov/scripts/quest_ikov.rs2:9-16",
+          "advances": false
+        },
+        {
+          "id": "chest-1-shut",
+          "kind": "interact",
+          "version": 1,
+          "args": {
+            "target": {
+              "loc": "ikov_chestopen",
+              "tile": [
+                2710,
+                9850,
+                0
+              ],
+              "source": "maps/m42_153.jm2:5454; scripts/quests/quest_ikov/scripts/quest_ikov.rs2:9-16"
+            },
+            "op": "Shut",
+            "anchor": {
+              "tile": [
+                2710,
+                9850,
+                0
+              ],
+              "source": "maps/m42_153.jm2:5454; scripts/quests/quest_ikov/scripts/quest_ikov.rs2:9-16"
+            }
+          },
+          "skip_if": {
+            "Not": {
+              "Fact": {
+                "kind": "loc_present",
+                "version": 1,
+                "args": {
+                  "loc": "ikov_chestopen"
+                }
+              }
+            }
+          },
+          "settle": {
+            "All": []
+          },
+          "comment": "scripts/quests/quest_ikov/scripts/ikov_dungeon.rs2:112-113; maps/m42_153.jm2:5454; scripts/quests/quest_ikov/scripts/quest_ikov.rs2:9-16",
+          "advances": false
+        },
+        {
+          "id": "chest-2-open",
+          "kind": "interact",
+          "version": 1,
+          "args": {
+            "target": {
+              "loc": "ikov_chestclosed",
+              "tile": [
+                2719,
+                9838,
+                0
+              ],
+              "source": "maps/m42_153.jm2:5776; scripts/quests/quest_ikov/scripts/quest_ikov.rs2:9-16"
+            },
+            "op": "Open",
+            "anchor": {
+              "tile": [
+                2719,
+                9838,
+                0
+              ],
+              "source": "maps/m42_153.jm2:5776; scripts/quests/quest_ikov/scripts/quest_ikov.rs2:9-16"
+            }
+          },
+          "skip_if": {
+            "Any": [
+              {
+                "Fact": {
+                  "kind": "item_count_at_least",
+                  "version": 1,
+                  "args": {
+                    "obj": "ice_arrow",
+                    "qty": 40
+                  }
+                }
+              },
+              {
+                "Fact": {
+                  "kind": "loc_present",
+                  "version": 1,
+                  "args": {
+                    "loc": "ikov_chestopen"
+                  }
+                }
+              }
+            ]
+          },
+          "settle": {
+            "Fact": {
+              "kind": "loc_present",
+              "version": 1,
+              "args": {
+                "loc": "ikov_chestopen"
+              }
+            }
+          },
+          "comment": "scripts/quests/quest_ikov/scripts/ikov_dungeon.rs2:112-113; maps/m42_153.jm2:5776; scripts/quests/quest_ikov/scripts/quest_ikov.rs2:9-16",
+          "advances": false
+        },
+        {
+          "id": "chest-2-search",
+          "kind": "interact",
+          "version": 1,
+          "args": {
+            "target": {
+              "loc": "ikov_chestopen",
+              "tile": [
+                2719,
+                9838,
+                0
+              ],
+              "source": "maps/m42_153.jm2:5776; scripts/quests/quest_ikov/scripts/quest_ikov.rs2:9-16"
+            },
+            "op": "Search",
+            "anchor": {
+              "tile": [
+                2719,
+                9838,
+                0
+              ],
+              "source": "maps/m42_153.jm2:5776; scripts/quests/quest_ikov/scripts/quest_ikov.rs2:9-16"
+            }
+          },
+          "skip_if": {
+            "Fact": {
+              "kind": "item_count_at_least",
+              "version": 1,
+              "args": {
+                "obj": "ice_arrow",
+                "qty": 40
+              }
+            }
+          },
+          "settle": {
+            "All": []
+          },
+          "comment": "scripts/quests/quest_ikov/scripts/ikov_dungeon.rs2:115-131; maps/m42_153.jm2:5776; scripts/quests/quest_ikov/scripts/quest_ikov.rs2:9-16",
+          "advances": false
+        },
+        {
+          "id": "chest-2-shut",
+          "kind": "interact",
+          "version": 1,
+          "args": {
+            "target": {
+              "loc": "ikov_chestopen",
+              "tile": [
+                2719,
+                9838,
+                0
+              ],
+              "source": "maps/m42_153.jm2:5776; scripts/quests/quest_ikov/scripts/quest_ikov.rs2:9-16"
+            },
+            "op": "Shut",
+            "anchor": {
+              "tile": [
+                2719,
+                9838,
+                0
+              ],
+              "source": "maps/m42_153.jm2:5776; scripts/quests/quest_ikov/scripts/quest_ikov.rs2:9-16"
+            }
+          },
+          "skip_if": {
+            "Not": {
+              "Fact": {
+                "kind": "loc_present",
+                "version": 1,
+                "args": {
+                  "loc": "ikov_chestopen"
+                }
+              }
+            }
+          },
+          "settle": {
+            "All": []
+          },
+          "comment": "scripts/quests/quest_ikov/scripts/ikov_dungeon.rs2:112-113; maps/m42_153.jm2:5776; scripts/quests/quest_ikov/scripts/quest_ikov.rs2:9-16",
+          "advances": false
+        },
+        {
+          "id": "chest-3-open",
+          "kind": "interact",
+          "version": 1,
+          "args": {
+            "target": {
+              "loc": "ikov_chestclosed",
+              "tile": [
+                2729,
+                9850,
+                0
+              ],
+              "source": "maps/m42_153.jm2:6199; scripts/quests/quest_ikov/scripts/quest_ikov.rs2:9-16"
+            },
+            "op": "Open",
+            "anchor": {
+              "tile": [
+                2729,
+                9850,
+                0
+              ],
+              "source": "maps/m42_153.jm2:6199; scripts/quests/quest_ikov/scripts/quest_ikov.rs2:9-16"
+            }
+          },
+          "skip_if": {
+            "Any": [
+              {
+                "Fact": {
+                  "kind": "item_count_at_least",
+                  "version": 1,
+                  "args": {
+                    "obj": "ice_arrow",
+                    "qty": 40
+                  }
+                }
+              },
+              {
+                "Fact": {
+                  "kind": "loc_present",
+                  "version": 1,
+                  "args": {
+                    "loc": "ikov_chestopen"
+                  }
+                }
+              }
+            ]
+          },
+          "settle": {
+            "Fact": {
+              "kind": "loc_present",
+              "version": 1,
+              "args": {
+                "loc": "ikov_chestopen"
+              }
+            }
+          },
+          "comment": "scripts/quests/quest_ikov/scripts/ikov_dungeon.rs2:112-113; maps/m42_153.jm2:6199; scripts/quests/quest_ikov/scripts/quest_ikov.rs2:9-16",
+          "advances": false
+        },
+        {
+          "id": "chest-3-search",
+          "kind": "interact",
+          "version": 1,
+          "args": {
+            "target": {
+              "loc": "ikov_chestopen",
+              "tile": [
+                2729,
+                9850,
+                0
+              ],
+              "source": "maps/m42_153.jm2:6199; scripts/quests/quest_ikov/scripts/quest_ikov.rs2:9-16"
+            },
+            "op": "Search",
+            "anchor": {
+              "tile": [
+                2729,
+                9850,
+                0
+              ],
+              "source": "maps/m42_153.jm2:6199; scripts/quests/quest_ikov/scripts/quest_ikov.rs2:9-16"
+            }
+          },
+          "skip_if": {
+            "Fact": {
+              "kind": "item_count_at_least",
+              "version": 1,
+              "args": {
+                "obj": "ice_arrow",
+                "qty": 40
+              }
+            }
+          },
+          "settle": {
+            "All": []
+          },
+          "comment": "scripts/quests/quest_ikov/scripts/ikov_dungeon.rs2:115-131; maps/m42_153.jm2:6199; scripts/quests/quest_ikov/scripts/quest_ikov.rs2:9-16",
+          "advances": false
+        },
+        {
+          "id": "chest-3-shut",
+          "kind": "interact",
+          "version": 1,
+          "args": {
+            "target": {
+              "loc": "ikov_chestopen",
+              "tile": [
+                2729,
+                9850,
+                0
+              ],
+              "source": "maps/m42_153.jm2:6199; scripts/quests/quest_ikov/scripts/quest_ikov.rs2:9-16"
+            },
+            "op": "Shut",
+            "anchor": {
+              "tile": [
+                2729,
+                9850,
+                0
+              ],
+              "source": "maps/m42_153.jm2:6199; scripts/quests/quest_ikov/scripts/quest_ikov.rs2:9-16"
+            }
+          },
+          "skip_if": {
+            "Not": {
+              "Fact": {
+                "kind": "loc_present",
+                "version": 1,
+                "args": {
+                  "loc": "ikov_chestopen"
+                }
+              }
+            }
+          },
+          "settle": {
+            "All": []
+          },
+          "comment": "scripts/quests/quest_ikov/scripts/ikov_dungeon.rs2:112-113; maps/m42_153.jm2:6199; scripts/quests/quest_ikov/scripts/quest_ikov.rs2:9-16",
+          "advances": false
+        },
+        {
+          "id": "chest-4-open",
+          "kind": "interact",
+          "version": 1,
+          "args": {
+            "target": {
+              "loc": "ikov_chestclosed",
+              "tile": [
+                2747,
+                9848,
+                0
+              ],
+              "source": "maps/m42_153.jm2:7182; scripts/quests/quest_ikov/scripts/quest_ikov.rs2:9-16"
+            },
+            "op": "Open",
+            "anchor": {
+              "tile": [
+                2747,
+                9848,
+                0
+              ],
+              "source": "maps/m42_153.jm2:7182; scripts/quests/quest_ikov/scripts/quest_ikov.rs2:9-16"
+            }
+          },
+          "skip_if": {
+            "Any": [
+              {
+                "Fact": {
+                  "kind": "item_count_at_least",
+                  "version": 1,
+                  "args": {
+                    "obj": "ice_arrow",
+                    "qty": 40
+                  }
+                }
+              },
+              {
+                "Fact": {
+                  "kind": "loc_present",
+                  "version": 1,
+                  "args": {
+                    "loc": "ikov_chestopen"
+                  }
+                }
+              }
+            ]
+          },
+          "settle": {
+            "Fact": {
+              "kind": "loc_present",
+              "version": 1,
+              "args": {
+                "loc": "ikov_chestopen"
+              }
+            }
+          },
+          "comment": "scripts/quests/quest_ikov/scripts/ikov_dungeon.rs2:112-113; maps/m42_153.jm2:7182; scripts/quests/quest_ikov/scripts/quest_ikov.rs2:9-16",
+          "advances": false
+        },
+        {
+          "id": "chest-4-search",
+          "kind": "interact",
+          "version": 1,
+          "args": {
+            "target": {
+              "loc": "ikov_chestopen",
+              "tile": [
+                2747,
+                9848,
+                0
+              ],
+              "source": "maps/m42_153.jm2:7182; scripts/quests/quest_ikov/scripts/quest_ikov.rs2:9-16"
+            },
+            "op": "Search",
+            "anchor": {
+              "tile": [
+                2747,
+                9848,
+                0
+              ],
+              "source": "maps/m42_153.jm2:7182; scripts/quests/quest_ikov/scripts/quest_ikov.rs2:9-16"
+            }
+          },
+          "skip_if": {
+            "Fact": {
+              "kind": "item_count_at_least",
+              "version": 1,
+              "args": {
+                "obj": "ice_arrow",
+                "qty": 40
+              }
+            }
+          },
+          "settle": {
+            "All": []
+          },
+          "comment": "scripts/quests/quest_ikov/scripts/ikov_dungeon.rs2:115-131; maps/m42_153.jm2:7182; scripts/quests/quest_ikov/scripts/quest_ikov.rs2:9-16",
+          "advances": false
+        },
+        {
+          "id": "chest-4-shut",
+          "kind": "interact",
+          "version": 1,
+          "args": {
+            "target": {
+              "loc": "ikov_chestopen",
+              "tile": [
+                2747,
+                9848,
+                0
+              ],
+              "source": "maps/m42_153.jm2:7182; scripts/quests/quest_ikov/scripts/quest_ikov.rs2:9-16"
+            },
+            "op": "Shut",
+            "anchor": {
+              "tile": [
+                2747,
+                9848,
+                0
+              ],
+              "source": "maps/m42_153.jm2:7182; scripts/quests/quest_ikov/scripts/quest_ikov.rs2:9-16"
+            }
+          },
+          "skip_if": {
+            "Not": {
+              "Fact": {
+                "kind": "loc_present",
+                "version": 1,
+                "args": {
+                  "loc": "ikov_chestopen"
+                }
+              }
+            }
+          },
+          "settle": {
+            "All": []
+          },
+          "comment": "scripts/quests/quest_ikov/scripts/ikov_dungeon.rs2:112-113; maps/m42_153.jm2:7182; scripts/quests/quest_ikov/scripts/quest_ikov.rs2:9-16",
+          "advances": false
+        },
+        {
+          "id": "chest-5-open",
+          "kind": "interact",
+          "version": 1,
+          "args": {
+            "target": {
+              "loc": "ikov_chestclosed",
+              "tile": [
+                2738,
+                9835,
+                0
+              ],
+              "source": "maps/m42_153.jm2:6707; scripts/quests/quest_ikov/scripts/quest_ikov.rs2:9-16"
+            },
+            "op": "Open",
+            "anchor": {
+              "tile": [
+                2738,
+                9835,
+                0
+              ],
+              "source": "maps/m42_153.jm2:6707; scripts/quests/quest_ikov/scripts/quest_ikov.rs2:9-16"
+            }
+          },
+          "skip_if": {
+            "Any": [
+              {
+                "Fact": {
+                  "kind": "item_count_at_least",
+                  "version": 1,
+                  "args": {
+                    "obj": "ice_arrow",
+                    "qty": 40
+                  }
+                }
+              },
+              {
+                "Fact": {
+                  "kind": "loc_present",
+                  "version": 1,
+                  "args": {
+                    "loc": "ikov_chestopen"
+                  }
+                }
+              }
+            ]
+          },
+          "settle": {
+            "Fact": {
+              "kind": "loc_present",
+              "version": 1,
+              "args": {
+                "loc": "ikov_chestopen"
+              }
+            }
+          },
+          "comment": "scripts/quests/quest_ikov/scripts/ikov_dungeon.rs2:112-113; maps/m42_153.jm2:6707; scripts/quests/quest_ikov/scripts/quest_ikov.rs2:9-16",
+          "advances": false
+        },
+        {
+          "id": "chest-5-search",
+          "kind": "interact",
+          "version": 1,
+          "args": {
+            "target": {
+              "loc": "ikov_chestopen",
+              "tile": [
+                2738,
+                9835,
+                0
+              ],
+              "source": "maps/m42_153.jm2:6707; scripts/quests/quest_ikov/scripts/quest_ikov.rs2:9-16"
+            },
+            "op": "Search",
+            "anchor": {
+              "tile": [
+                2738,
+                9835,
+                0
+              ],
+              "source": "maps/m42_153.jm2:6707; scripts/quests/quest_ikov/scripts/quest_ikov.rs2:9-16"
+            }
+          },
+          "skip_if": {
+            "Fact": {
+              "kind": "item_count_at_least",
+              "version": 1,
+              "args": {
+                "obj": "ice_arrow",
+                "qty": 40
+              }
+            }
+          },
+          "settle": {
+            "All": []
+          },
+          "comment": "scripts/quests/quest_ikov/scripts/ikov_dungeon.rs2:115-131; maps/m42_153.jm2:6707; scripts/quests/quest_ikov/scripts/quest_ikov.rs2:9-16",
+          "advances": false
+        },
+        {
+          "id": "chest-5-shut",
+          "kind": "interact",
+          "version": 1,
+          "args": {
+            "target": {
+              "loc": "ikov_chestopen",
+              "tile": [
+                2738,
+                9835,
+                0
+              ],
+              "source": "maps/m42_153.jm2:6707; scripts/quests/quest_ikov/scripts/quest_ikov.rs2:9-16"
+            },
+            "op": "Shut",
+            "anchor": {
+              "tile": [
+                2738,
+                9835,
+                0
+              ],
+              "source": "maps/m42_153.jm2:6707; scripts/quests/quest_ikov/scripts/quest_ikov.rs2:9-16"
+            }
+          },
+          "skip_if": {
+            "Not": {
+              "Fact": {
+                "kind": "loc_present",
+                "version": 1,
+                "args": {
+                  "loc": "ikov_chestopen"
+                }
+              }
+            }
+          },
+          "settle": {
+            "All": []
+          },
+          "comment": "scripts/quests/quest_ikov/scripts/ikov_dungeon.rs2:112-113; maps/m42_153.jm2:6707; scripts/quests/quest_ikov/scripts/quest_ikov.rs2:9-16",
+          "advances": false
+        },
+        {
+          "id": "chest-6-open",
+          "kind": "interact",
+          "version": 1,
+          "args": {
+            "target": {
+              "loc": "ikov_chestclosed",
+              "tile": [
+                2745,
+                9821,
+                0
+              ],
+              "source": "maps/m42_153.jm2:7067; scripts/quests/quest_ikov/scripts/quest_ikov.rs2:9-16"
+            },
+            "op": "Open",
+            "anchor": {
+              "tile": [
+                2745,
+                9821,
+                0
+              ],
+              "source": "maps/m42_153.jm2:7067; scripts/quests/quest_ikov/scripts/quest_ikov.rs2:9-16"
+            }
+          },
+          "skip_if": {
+            "Any": [
+              {
+                "Fact": {
+                  "kind": "item_count_at_least",
+                  "version": 1,
+                  "args": {
+                    "obj": "ice_arrow",
+                    "qty": 40
+                  }
+                }
+              },
+              {
+                "Fact": {
+                  "kind": "loc_present",
+                  "version": 1,
+                  "args": {
+                    "loc": "ikov_chestopen"
+                  }
+                }
+              }
+            ]
+          },
+          "settle": {
+            "Fact": {
+              "kind": "loc_present",
+              "version": 1,
+              "args": {
+                "loc": "ikov_chestopen"
+              }
+            }
+          },
+          "comment": "scripts/quests/quest_ikov/scripts/ikov_dungeon.rs2:112-113; maps/m42_153.jm2:7067; scripts/quests/quest_ikov/scripts/quest_ikov.rs2:9-16",
+          "advances": false
+        },
+        {
+          "id": "chest-6-search",
+          "kind": "interact",
+          "version": 1,
+          "args": {
+            "target": {
+              "loc": "ikov_chestopen",
+              "tile": [
+                2745,
+                9821,
+                0
+              ],
+              "source": "maps/m42_153.jm2:7067; scripts/quests/quest_ikov/scripts/quest_ikov.rs2:9-16"
+            },
+            "op": "Search",
+            "anchor": {
+              "tile": [
+                2745,
+                9821,
+                0
+              ],
+              "source": "maps/m42_153.jm2:7067; scripts/quests/quest_ikov/scripts/quest_ikov.rs2:9-16"
+            }
+          },
+          "skip_if": {
+            "Fact": {
+              "kind": "item_count_at_least",
+              "version": 1,
+              "args": {
+                "obj": "ice_arrow",
+                "qty": 40
+              }
+            }
+          },
+          "settle": {
+            "All": []
+          },
+          "comment": "scripts/quests/quest_ikov/scripts/ikov_dungeon.rs2:115-131; maps/m42_153.jm2:7067; scripts/quests/quest_ikov/scripts/quest_ikov.rs2:9-16",
+          "advances": false
+        },
+        {
+          "id": "chest-6-shut",
+          "kind": "interact",
+          "version": 1,
+          "args": {
+            "target": {
+              "loc": "ikov_chestopen",
+              "tile": [
+                2745,
+                9821,
+                0
+              ],
+              "source": "maps/m42_153.jm2:7067; scripts/quests/quest_ikov/scripts/quest_ikov.rs2:9-16"
+            },
+            "op": "Shut",
+            "anchor": {
+              "tile": [
+                2745,
+                9821,
+                0
+              ],
+              "source": "maps/m42_153.jm2:7067; scripts/quests/quest_ikov/scripts/quest_ikov.rs2:9-16"
+            }
+          },
+          "skip_if": {
+            "Not": {
+              "Fact": {
+                "kind": "loc_present",
+                "version": 1,
+                "args": {
+                  "loc": "ikov_chestopen"
+                }
+              }
+            }
+          },
+          "settle": {
+            "All": []
+          },
+          "comment": "scripts/quests/quest_ikov/scripts/ikov_dungeon.rs2:112-113; maps/m42_153.jm2:7067; scripts/quests/quest_ikov/scripts/quest_ikov.rs2:9-16",
+          "advances": false
+        }
+      ]
+    },
+    "bank": "nearest",
+    "coin_float": 0,
+    "loadouts": {},
+    "areas": {
+      "bridge_west": {
+        "boxes": [
+          [
+            2630,
+            9810,
+            2647,
+            9840,
+            0
+          ]
+        ],
+        "source": "scripts/quests/quest_ikov/configs/quest_ikov.constant:13-14; maps/m41_153.jm2:8472"
+      },
+      "fear_north": {
+        "boxes": [
+          [
+            2650,
+            9815,
+            2675,
+            9858,
+            0
+          ]
+        ],
+        "source": "maps/m41_153.jm2:6828,6975; scripts/doors/scripts/open_and_close_double_doors.rs2:91-108"
+      }
+    },
+    "tools": [
+      "obj:ikov_bootsoflightness",
+      "obj:ikov_bootsoflightnessworn"
+    ],
+    "owns_inventory": true
+  },
+  "roles": [
+    {
+      "role": null,
+      "progress_binding": "journal:ikov",
+      "progress": {
+        "colour": {
+          "not_started": "ikov:0",
+          "in_progress": "ikov:10",
+          "complete": "ikov:done"
+        },
+        "rules": [
+          {
+            "stage": "ikov:70",
+            "all": [
+              "i agreed to help the guardians of armadyl"
+            ],
+            "any": [],
+            "not": [],
+            "varp": null
+          },
+          {
+            "stage": "ikov:60",
+            "all": [
+              "my path was blocked by lava",
+              "after i got her twenty limpwurt roots"
+            ],
+            "any": [],
+            "not": [],
+            "varp": null
+          },
+          {
+            "stage": "ikov:50",
+            "all": [
+              "my path is blocked by lava"
+            ],
+            "any": [],
+            "not": [],
+            "varp": null
+          },
+          {
+            "stage": "ikov:40",
+            "all": [
+              "i killed it using arrows made of ice"
+            ],
+            "any": [],
+            "not": [],
+            "varp": null
+          },
+          {
+            "stage": "ikov:trap",
+            "all": [
+              "i have entered the chamber of fear",
+              "i pulled the lever"
+            ],
+            "any": [],
+            "not": [],
+            "varp": null
+          },
+          {
+            "stage": "ikov:10",
+            "all": [
+              "lucien has asked me to retrieve the staff of armadyl"
+            ],
+            "any": [],
+            "not": [],
+            "varp": null
+          }
+        ],
+        "flags": [],
+        "monotonic": false
+      },
+      "prelude": [],
+      "sequences": [
+        {
+          "stage": "ikov:0",
+          "required": [],
+          "terminal": false,
+          "recovery_entry": null,
+          "steps": [
+            {
+              "id": "gather-limpwurt-roots", "kind": "combat", "version": 1, "advances": false,
+              "args": {
+                "target": {"npc": "hobgoblin_unarmed", "not_targeting_others": true, "pick": "nearest"},
+                "tactic": {"kind": "open", "style": "melee", "engage_radius": 18, "auto_retaliate": true},
+                "stand": {"tile": [2905, 3295, 0], "source": "content/maps/m45_51.jm2:6200-6204; content/pack/npc.pack:122"},
+                "lost_radius": 18, "kill_budget_ticks": 6000, "loadout": null, "loot": [{"obj": "limpwurt_root", "qty": 20}],
+                "until": {"Fact": {"kind": "item_count_at_least", "version": 1, "args": {"obj": "limpwurt_root", "qty": 20}}}
+              },
+              "skip_if": {"Fact": {"kind": "item_count_at_least", "version": 1, "args": {"obj": "limpwurt_root", "qty": 20}}},
+              "settle": {"Fact": {"kind": "item_count_at_least", "version": 1, "args": {"obj": "limpwurt_root", "qty": 20}}},
+              "comment": "Winelda takes 20: content/scripts/quests/quest_ikov/scripts/winelda.rs2:1-11. Hobgoblins drop roots: content/scripts/drop tables/scripts/hobgoblin.rs2:1-9,61-64."
+            },
+            {
+              "id": "start-lucien",
+              "kind": "talk",
+              "version": 1,
+              "args": {
+                "npc": "ikov_lucien1",
+                "anchor": {
+                  "tile": [
+                    2573,
+                    3321,
+                    0
+                  ],
+                  "source": "maps/m40_51.jm2:10760"
+                },
+                "leash": 8,
+                "prefer": [
+                  "I'm a mighty hero!",
+                  "That sounds like a laugh!"
+                ]
+              },
+              "skip_if": {
+                "Any": []
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "stage_in",
+                  "version": 1,
+                  "args": {
+                    "quest": "ikov",
+                    "any": [
+                      "ikov:10"
+                    ]
+                  }
+                }
+              },
+              "comment": "scripts/quests/quest_ikov/scripts/lucien.rs2:14-17,49-70",
+              "advances": true
+            }
+          ]
+        },
+        {
+          "stage": "ikov:10",
+          "required": [],
+          "terminal": false,
+          "recovery_entry": null,
+          "steps": [
+            {
+              "id": "descend-dark-stairs",
+              "kind": "interact",
+              "version": 1,
+              "args": {
+                "target": {
+                  "loc": "ikov_darkstairsdown",
+                  "tile": [
+                    2651,
+                    9808,
+                    0
+                  ],
+                  "source": "maps/m41_153.jm2:6336"
+                },
+                "op": "Climb-down",
+                "anchor": {
+                  "tile": [
+                    2651,
+                    9808,
+                    0
+                  ],
+                  "source": "maps/m41_153.jm2:6336"
+                }
+              },
+              "skip_if": {
+                "Any": [
+                  {
+                    "Fact": {
+                      "kind": "has_item",
+                      "version": 1,
+                      "args": {
+                        "obj": "ikov_bootsoflightness"
+                      }
+                    }
+                  },
+                  {
+                    "Fact": {
+                      "kind": "worn",
+                      "version": 1,
+                      "args": {
+                        "obj": "ikov_bootsoflightnessworn"
+                      }
+                    }
+                  }
+                ]
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "near",
+                  "version": 1,
+                  "args": {
+                    "tile": [
+                      2641,
+                      9764,
+                      0
+                    ],
+                    "radius": 3
+                  }
+                }
+              },
+              "comment": "scripts/quests/quest_ikov/scripts/ikov_dungeon.rs2:3-10",
+              "advances": false
+            },
+            {
+              "id": "slash-boot-web",
+              "kind": "interact",
+              "version": 1,
+              "args": {
+                "target": {
+                  "loc": "bigweb_slashable",
+                  "tile": [
+                    2654,
+                    9766,
+                    0
+                  ],
+                  "source": "maps/m41_152.jm2:4911"
+                },
+                "op": "Slash",
+                "anchor": {
+                  "tile": [
+                    2654,
+                    9766,
+                    0
+                  ],
+                  "source": "maps/m41_152.jm2:4911"
+                }
+              },
+              "skip_if": {
+                "Any": [
+                  {
+                    "Any": [
+                      {
+                        "Fact": {
+                          "kind": "has_item",
+                          "version": 1,
+                          "args": {
+                            "obj": "ikov_bootsoflightness"
+                          }
+                        }
+                      },
+                      {
+                        "Fact": {
+                          "kind": "worn",
+                          "version": 1,
+                          "args": {
+                            "obj": "ikov_bootsoflightnessworn"
+                          }
+                        }
+                      }
+                    ]
+                  },
+                  {
+                    "Fact": {
+                      "kind": "loc_present",
+                      "version": 1,
+                      "args": {
+                        "loc": "bigweb_slashed"
+                      }
+                    }
+                  }
+                ]
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "loc_present",
+                  "version": 1,
+                  "args": {
+                    "loc": "bigweb_slashed"
+                  }
+                }
+              },
+              "comment": "scripts/general_use/scripts/web.rs2:1-8,18-33; maps/m41_152.jm2:4911",
+              "advances": false
+            },
+            {
+              "id": "take-boots",
+              "kind": "interact",
+              "version": 1,
+              "args": {
+                "target": {
+                  "ground": "ikov_bootsoflightness"
+                },
+                "op": "Take",
+                "anchor": {
+                  "tile": [
+                    2654,
+                    9767,
+                    0
+                  ],
+                  "source": "maps/m41_152.jm2:6358"
+                },
+                "radius": 3
+              },
+              "skip_if": {
+                "Any": [
+                  {
+                    "Fact": {
+                      "kind": "has_item",
+                      "version": 1,
+                      "args": {
+                        "obj": "ikov_bootsoflightness"
+                      }
+                    }
+                  },
+                  {
+                    "Fact": {
+                      "kind": "worn",
+                      "version": 1,
+                      "args": {
+                        "obj": "ikov_bootsoflightnessworn"
+                      }
+                    }
+                  }
+                ]
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "has_item",
+                  "version": 1,
+                  "args": {
+                    "obj": "ikov_bootsoflightness"
+                  }
+                }
+              },
+              "comment": "maps/m41_152.jm2:6358; scripts/quests/quest_ikov/configs/quest_ikov.obj:200-221",
+              "advances": false
+            },
+            {
+              "id": "strip-before-bridge",
+              "kind": "unequip",
+              "version": 1,
+              "args": {
+                "all": true
+              },
+              "skip_if": {
+                "Any": [
+                  {
+                    "Fact": {
+                      "kind": "equipment_only",
+                      "version": 1,
+                      "args": {
+                        "objs": []
+                      }
+                    }
+                  },
+                  {
+                    "Fact": {
+                      "kind": "equipment_only",
+                      "version": 1,
+                      "args": {
+                        "objs": [
+                          "ikov_bootsoflightnessworn"
+                        ]
+                      }
+                    }
+                  }
+                ]
+              },
+              "settle": {
+                "Any": [
+                  {
+                    "Fact": {
+                      "kind": "equipment_only",
+                      "version": 1,
+                      "args": {
+                        "objs": []
+                      }
+                    }
+                  },
+                  {
+                    "Fact": {
+                      "kind": "equipment_only",
+                      "version": 1,
+                      "args": {
+                        "objs": [
+                          "ikov_bootsoflightnessworn"
+                        ]
+                      }
+                    }
+                  }
+                ]
+              },
+              "comment": "scripts/quests/quest_ikov/scripts/ikov_dungeon.rs2:52-78; scripts/player/scripts/equip.rs2:452-458"
+            },
+            {
+              "id": "limit-bridge-pack",
+              "kind": "bank",
+              "version": 1,
+              "args": {
+                "op": "deposit_all",
+                "at": "nearest",
+                "keep": [
+                  "lit_candle",
+                  "knife",
+                  "limpwurt_root",
+                  "yew_shortbow",
+                  "ice_arrow",
+                  "lobster",
+                  "ikov_pendantoflucien",
+                  "ikov_bootsoflightness",
+                  "ikov_lever"
+                ]
+              },
+              "skip_if": {
+                "All": [
+                  {
+                    "Fact": {
+                      "kind": "pack_only",
+                      "version": 1,
+                      "args": {
+                        "objs": [
+                          "lit_candle",
+                          "knife",
+                          "limpwurt_root",
+                          "yew_shortbow",
+                          "ice_arrow",
+                          "lobster",
+                          "ikov_pendantoflucien",
+                          "ikov_bootsoflightness",
+                          "ikov_lever"
+                        ]
+                      }
+                    }
+                  },
+                  {
+                    "Not": {
+                      "Fact": {
+                        "kind": "item_count_at_least",
+                        "version": 1,
+                        "args": {
+                          "obj": "ice_arrow",
+                          "qty": 81
+                        }
+                      }
+                    }
+                  },
+                  {
+                    "Not": {
+                      "Fact": {
+                        "kind": "item_count_at_least",
+                        "version": 1,
+                        "args": {
+                          "obj": "limpwurt_root",
+                          "qty": 21
+                        }
+                      }
+                    }
+                  },
+                  {
+                    "Not": {
+                      "Fact": {
+                        "kind": "item_count_at_least",
+                        "version": 1,
+                        "args": {
+                          "obj": "lobster",
+                          "qty": 3
+                        }
+                      }
+                    }
+                  },
+                  {
+                    "Not": {
+                      "Fact": {
+                        "kind": "item_count_at_least",
+                        "version": 1,
+                        "args": {
+                          "obj": "knife",
+                          "qty": 2
+                        }
+                      }
+                    }
+                  },
+                  {
+                    "Not": {
+                      "Fact": {
+                        "kind": "item_count_at_least",
+                        "version": 1,
+                        "args": {
+                          "obj": "lit_candle",
+                          "qty": 2
+                        }
+                      }
+                    }
+                  },
+                  {
+                    "Not": {
+                      "Fact": {
+                        "kind": "item_count_at_least",
+                        "version": 1,
+                        "args": {
+                          "obj": "yew_shortbow",
+                          "qty": 2
+                        }
+                      }
+                    }
+                  },
+                  {
+                    "Not": {
+                      "Fact": {
+                        "kind": "item_count_at_least",
+                        "version": 1,
+                        "args": {
+                          "obj": "ikov_pendantoflucien",
+                          "qty": 2
+                        }
+                      }
+                    }
+                  }
+                ]
+              },
+              "settle": {
+                "All": []
+              },
+              "comment": "scripts/quests/quest_ikov/scripts/ikov_dungeon.rs2:52-78; configs/quest_ikov.obj:1-35,117-128,160-178,223-240; scripts/skill_herblore/configs/brewing/potions_additives.obj:28-38"
+            },
+            {
+              "id": "wear-light-boots",
+              "kind": "interact",
+              "version": 1,
+              "args": {
+                "target": {
+                  "held": "ikov_bootsoflightness"
+                },
+                "op": "Wear"
+              },
+              "skip_if": {
+                "Fact": {
+                  "kind": "worn",
+                  "version": 1,
+                  "args": {
+                    "obj": "ikov_bootsoflightnessworn"
+                  }
+                }
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "worn",
+                  "version": 1,
+                  "args": {
+                    "obj": "ikov_bootsoflightnessworn"
+                  }
+                }
+              },
+              "comment": "scripts/player/scripts/equip.rs2:452-458; scripts/quests/quest_ikov/configs/quest_ikov.obj:200-240",
+              "advances": false
+            },
+            {
+              "id": "bridge-west",
+              "kind": "walk",
+              "version": 1,
+              "args": {
+                "tile": [
+                  2647,
+                  9828,
+                  0
+                ],
+                "radius": 0,
+                "source": "scripts/quests/quest_ikov/configs/quest_ikov.constant:13-14; scripts/quests/quest_ikov/scripts/ikov_dungeon.rs2:52-69"
+              },
+              "skip_if": {
+                "Any": [
+                  {
+                    "Any": [
+                      {
+                        "Fact": {
+                          "kind": "has_item",
+                          "version": 1,
+                          "args": {
+                            "obj": "ikov_lever"
+                          }
+                        }
+                      },
+                      {
+                        "Fact": {
+                          "kind": "loc_present",
+                          "version": 1,
+                          "args": {
+                            "loc": "ikov_mendedlever"
+                          }
+                        }
+                      }
+                    ]
+                  },
+                  {
+                    "Fact": {
+                      "kind": "in_area",
+                      "version": 1,
+                      "args": {
+                        "area": "bridge_west"
+                      }
+                    }
+                  }
+                ]
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "in_area",
+                  "version": 1,
+                  "args": {
+                    "area": "bridge_west"
+                  }
+                }
+              },
+              "comment": "scripts/quests/quest_ikov/scripts/ikov_dungeon.rs2:52-78"
+            },
+            {
+              "id": "take-lever",
+              "kind": "interact",
+              "version": 1,
+              "args": {
+                "target": {
+                  "ground": "ikov_lever"
+                },
+                "op": "Take",
+                "anchor": {
+                  "tile": [
+                    2637,
+                    9819,
+                    0
+                  ],
+                  "source": "maps/m41_153.jm2:8472"
+                },
+                "radius": 3
+              },
+              "skip_if": {
+                "Any": [
+                  {
+                    "Fact": {
+                      "kind": "has_item",
+                      "version": 1,
+                      "args": {
+                        "obj": "ikov_lever"
+                      }
+                    }
+                  },
+                  {
+                    "Fact": {
+                      "kind": "loc_present",
+                      "version": 1,
+                      "args": {
+                        "loc": "ikov_mendedlever"
+                      }
+                    }
+                  }
+                ]
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "has_item",
+                  "version": 1,
+                  "args": {
+                    "obj": "ikov_lever"
+                  }
+                }
+              },
+              "comment": "maps/m41_153.jm2:8472; scripts/quests/quest_ikov/scripts/ikov_dungeon.rs2:87-93",
+              "advances": false
+            },
+            {
+              "id": "repair-lever",
+              "kind": "use_on",
+              "version": 1,
+              "args": {
+                "item": "ikov_lever",
+                "target": {
+                  "loc": "ikov_leverbracket"
+                },
+                "anchor": {
+                  "tile": [
+                    2671,
+                    9804,
+                    0
+                  ],
+                  "source": "maps/m41_153.jm2:7237"
+                }
+              },
+              "skip_if": {
+                "Fact": {
+                  "kind": "loc_present",
+                  "version": 1,
+                  "args": {
+                    "loc": "ikov_mendedlever"
+                  }
+                }
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "loc_present",
+                  "version": 1,
+                  "args": {
+                    "loc": "ikov_mendedlever"
+                  }
+                }
+              },
+              "comment": "scripts/quests/quest_ikov/scripts/ikov_dungeon.rs2:87-93; maps/m41_153.jm2:7237",
+              "advances": false
+            },
+            {
+              "id": "pull-mended-lever",
+              "kind": "interact",
+              "version": 1,
+              "args": {
+                "target": {
+                  "loc": "ikov_mendedlever"
+                },
+                "op": "Pull",
+                "anchor": {
+                  "tile": [
+                    2671,
+                    9804,
+                    0
+                  ],
+                  "source": "maps/m41_153.jm2:7237"
+                }
+              },
+              "skip_if": {
+                "Any": []
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "loc_present",
+                  "version": 1,
+                  "args": {
+                    "loc": "ikov_leverdown"
+                  }
+                }
+              },
+              "comment": "scripts/quests/quest_ikov/scripts/ikov_dungeon.rs2:96-110",
+              "advances": false
+            },
+            {
+              "id": "wear-lucien-pendant",
+              "kind": "equip",
+              "version": 1,
+              "args": {
+                "obj": "ikov_pendantoflucien"
+              },
+              "skip_if": {
+                "Fact": {
+                  "kind": "worn",
+                  "version": 1,
+                  "args": {
+                    "obj": "ikov_pendantoflucien"
+                  }
+                }
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "worn",
+                  "version": 1,
+                  "args": {
+                    "obj": "ikov_pendantoflucien"
+                  }
+                }
+              },
+              "comment": "scripts/quests/quest_ikov/scripts/ikov_dungeon.rs2:12-23"
+            },
+            {
+              "id": "open-fear-gate",
+              "kind": "interact",
+              "version": 1,
+              "args": {
+                "target": {
+                  "loc": "ikov_dooroffearl",
+                  "tile": [
+                    2662,
+                    9815,
+                    0
+                  ],
+                  "source": "maps/m41_153.jm2:6828"
+                },
+                "op": "Open",
+                "anchor": {
+                  "tile": [
+                    2662,
+                    9814,
+                    0
+                  ],
+                  "source": "maps/m41_153.jm2:6828"
+                }
+              },
+              "skip_if": {
+                "Fact": {
+                  "kind": "in_area",
+                  "version": 1,
+                  "args": {
+                    "area": "fear_north"
+                  }
+                }
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "in_area",
+                  "version": 1,
+                  "args": {
+                    "area": "fear_north"
+                  }
+                }
+              },
+              "comment": "scripts/quests/quest_ikov/scripts/ikov_dungeon.rs2:12-23; scripts/doors/scripts/open_and_close_double_doors.rs2:91-108; maps/m41_153.jm2:6828",
+              "advances": false
+            },
+            {
+              "id": "search-trap",
+              "kind": "interact",
+              "version": 1,
+              "args": {
+                "target": {
+                  "loc": "ikov_traplever",
+                  "tile": [
+                    2665,
+                    9855,
+                    0
+                  ],
+                  "source": "maps/m41_153.jm2:6975"
+                },
+                "op": "Search for traps",
+                "anchor": {
+                  "tile": [
+                    2665,
+                    9855,
+                    0
+                  ],
+                  "source": "maps/m41_153.jm2:6975"
+                }
+              },
+              "skip_if": {
+                "Any": []
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "stage_in",
+                  "version": 1,
+                  "args": {
+                    "quest": "ikov",
+                    "any": [
+                      "ikov:trap"
+                    ]
+                  }
+                }
+              },
+              "comment": "scripts/quests/quest_ikov/scripts/ikov_dungeon.rs2:155-165",
+              "advances": true
+            }
+          ],
+          "order": "ordered"
+        },
+        {
+          "stage": "ikov:trap",
+          "required": [],
+          "terminal": false,
+          "recovery_entry": null,
+          "steps": [
+            {
+              "id": "pull-trap-lever",
+              "kind": "interact",
+              "version": 1,
+              "args": {
+                "target": {
+                  "loc": "ikov_traplever",
+                  "tile": [
+                    2665,
+                    9855,
+                    0
+                  ],
+                  "source": "maps/m41_153.jm2:6975"
+                },
+                "op": "Pull",
+                "anchor": {
+                  "tile": [
+                    2665,
+                    9855,
+                    0
+                  ],
+                  "source": "maps/m41_153.jm2:6975"
+                }
+              },
+              "skip_if": {
+                "Any": []
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "stage_in",
+                  "version": 1,
+                  "args": {
+                    "quest": "ikov",
+                    "any": [
+                      "ikov:trap"
+                    ]
+                  }
+                }
+              },
+              "comment": "scripts/quests/quest_ikov/scripts/ikov_dungeon.rs2:133-143; journal.rs2:29-35",
+              "advances": true
+            },
+            {
+              "id": "acquire-ice-arrows",
+              "kind": "acquire",
+              "version": 1,
+              "args": {
+                "recipe": "ice-arrow-search",
+                "max_restarts": 39
+              },
+              "skip_if": {
+                "Any": [
+                  {
+                    "Fact": {
+                      "kind": "item_count_at_least",
+                      "version": 1,
+                      "args": {
+                        "obj": "ice_arrow",
+                        "qty": 40
+                      }
+                    }
+                  },
+                  {
+                    "Fact": {
+                      "kind": "worn",
+                      "version": 1,
+                      "args": {
+                        "obj": "ice_arrow"
+                      }
+                    }
+                  }
+                ]
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "item_count_at_least",
+                  "version": 1,
+                  "args": {
+                    "obj": "ice_arrow",
+                    "qty": 40
+                  }
+                }
+              },
+              "comment": "scripts/quests/quest_ikov/scripts/ikov_dungeon.rs2:115-131; quest_ikov.rs2:9-16"
+            },
+            {
+              "id": "wear-yew-bow",
+              "kind": "equip",
+              "version": 1,
+              "args": {
+                "obj": "yew_shortbow"
+              },
+              "skip_if": {
+                "Fact": {
+                  "kind": "worn",
+                  "version": 1,
+                  "args": {
+                    "obj": "yew_shortbow"
+                  }
+                }
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "worn",
+                  "version": 1,
+                  "args": {
+                    "obj": "yew_shortbow"
+                  }
+                }
+              },
+              "comment": "scripts/quests/quest_ikov/configs/quest_ikov.obj:1-3,31-35; scripts/skill_combat/configs/ranged/bows.obj:256-282"
+            },
+            {
+              "id": "wear-ice-arrows",
+              "kind": "equip",
+              "version": 1,
+              "args": {
+                "obj": "ice_arrow"
+              },
+              "skip_if": {
+                "Fact": {
+                  "kind": "worn",
+                  "version": 1,
+                  "args": {
+                    "obj": "ice_arrow"
+                  }
+                }
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "worn",
+                  "version": 1,
+                  "args": {
+                    "obj": "ice_arrow"
+                  }
+                }
+              },
+              "comment": "scripts/skill_combat/scripts/npc/npc_combat.rs2:169-171; scripts/quests/quest_ikov/configs/quest_ikov.obj:1-35"
+            },
+            {
+              "id": "summon-fire-warrior",
+              "kind": "interact",
+              "version": 1,
+              "args": {
+                "target": {
+                  "loc": "ikov_firewarriordoor",
+                  "tile": [
+                    2646,
+                    9870,
+                    0
+                  ],
+                  "source": "maps/m41_154.jm2:5834"
+                },
+                "op": "Open",
+                "anchor": {
+                  "tile": [
+                    2646,
+                    9870,
+                    0
+                  ],
+                  "source": "maps/m41_154.jm2:5834"
+                },
+                "radius": 6
+              },
+              "skip_if": {
+                "Fact": {
+                  "kind": "npc_present",
+                  "version": 1,
+                  "args": {
+                    "npc": "ikov_firewarrior"
+                  }
+                }
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "npc_present",
+                  "version": 1,
+                  "args": {
+                    "npc": "ikov_firewarrior"
+                  }
+                }
+              },
+              "comment": "scripts/quests/quest_ikov/scripts/ikov_dungeon.rs2:177-219",
+              "advances": false
+            },
+            {
+              "id": "defeat-fire-warrior",
+              "kind": "combat",
+              "version": 1,
+              "args": {
+                "target": {
+                  "npc": "ikov_firewarrior",
+                  "pick": "nearest",
+                  "not_targeting_others": true
+                },
+                "stand": {
+                  "tile": [
+                    2646,
+                    9870,
+                    0
+                  ],
+                  "source": "maps/m41_154.jm2:5834"
+                },
+                "tactic": {
+                  "kind": "open",
+                  "style": "ranged",
+                  "engage_radius": 8,
+                  "auto_retaliate": true
+                },
+                "lost_radius": 12,
+                "kill_budget_ticks": 400
+              },
+              "skip_if": {
+                "Any": []
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "stage_in",
+                  "version": 1,
+                  "args": {
+                    "quest": "ikov",
+                    "any": [
+                      "ikov:40"
+                    ]
+                  }
+                }
+              },
+              "comment": "scripts/skill_combat/scripts/npc/npc_combat.rs2:169-171; scripts/quests/quest_ikov/scripts/fire_warrior_of_leskarus.rs2:14-32",
+              "advances": true
+            }
+          ],
+          "order": "ordered"
+        },
+        {
+          "stage": "ikov:40",
+          "required": [],
+          "terminal": false,
+          "recovery_entry": null,
+          "steps": [
+            {
+              "id": "winelda-ask",
+              "kind": "talk",
+              "version": 1,
+              "args": {
+                "npc": "ikov_winelda",
+                "anchor": {
+                  "tile": [
+                    2656,
+                    9875,
+                    0
+                  ],
+                  "source": "maps/m41_154.jm2:8682"
+                },
+                "leash": 8,
+                "prefer": [
+                  "Yes I do!"
+                ]
+              },
+              "skip_if": {
+                "Any": []
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "stage_in",
+                  "version": 1,
+                  "args": {
+                    "quest": "ikov",
+                    "any": [
+                      "ikov:50"
+                    ]
+                  }
+                }
+              },
+              "comment": "scripts/quests/quest_ikov/scripts/winelda.rs2:21-34,62-71",
+              "advances": true
+            }
+          ]
+        },
+        {
+          "stage": "ikov:50",
+          "required": [],
+          "terminal": false,
+          "recovery_entry": null,
+          "steps": [
+            {
+              "id": "winelda-pay",
+              "kind": "talk",
+              "version": 1,
+              "args": {
+                "npc": "ikov_winelda",
+                "anchor": {
+                  "tile": [
+                    2656,
+                    9875,
+                    0
+                  ],
+                  "source": "maps/m41_154.jm2:8682"
+                },
+                "leash": 8,
+                "prefer": []
+              },
+              "skip_if": {
+                "Any": []
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "stage_in",
+                  "version": 1,
+                  "args": {
+                    "quest": "ikov",
+                    "any": [
+                      "ikov:60"
+                    ]
+                  }
+                }
+              },
+              "comment": "scripts/quests/quest_ikov/scripts/winelda.rs2:1-11,42-60",
+              "advances": true
+            }
+          ]
+        },
+        {
+          "stage": "ikov:60",
+          "required": [],
+          "terminal": false,
+          "recovery_entry": null,
+          "steps": [
+            {
+              "id": "remove-lucien-pendant",
+              "kind": "unequip",
+              "version": 1,
+              "args": {
+                "obj": "ikov_pendantoflucien"
+              },
+              "skip_if": {
+                "Not": {
+                  "Fact": {
+                    "kind": "worn",
+                    "version": 1,
+                    "args": {
+                      "obj": "ikov_pendantoflucien"
+                    }
+                  }
+                }
+              },
+              "settle": {
+                "Not": {
+                  "Fact": {
+                    "kind": "worn",
+                    "version": 1,
+                    "args": {
+                      "obj": "ikov_pendantoflucien"
+                    }
+                  }
+                }
+              },
+              "comment": "scripts/quests/quest_ikov/scripts/guardian_of_armadyl.rs2:15-25"
+            },
+            {
+              "id": "guardian",
+              "kind": "talk",
+              "version": 1,
+              "args": {
+                "npc": "ikov_guardianmale",
+                "anchor": {
+                  "tile": [
+                    2638,
+                    9899,
+                    0
+                  ],
+                  "source": "maps/m41_154.jm2:8674"
+                },
+                "leash": 8,
+                "prefer": [
+                  "What are your kind and what are you doing here?",
+                  "Who are the Mahjarrat?",
+                  "Did you say Lucien?",
+                  "You're right, it's time for my yearly bath.",
+                  "Ok! I'll help!"
+                ]
+              },
+              "skip_if": {
+                "Any": []
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "stage_in",
+                  "version": 1,
+                  "args": {
+                    "quest": "ikov",
+                    "any": [
+                      "ikov:70"
+                    ]
+                  }
+                }
+              },
+              "comment": "scripts/quests/quest_ikov/scripts/guardian_of_armadyl.rs2:25-27,61-85,105-119",
+              "advances": true
+            }
+          ]
+        },
+        {
+          "stage": "ikov:70",
+          "required": [],
+          "terminal": false,
+          "recovery_entry": null,
+          "steps": [
+            {
+              "id": "wear-armadyl-pendant",
+              "kind": "equip",
+              "version": 1,
+              "args": {
+                "obj": "ikov_pendantofarmardyl"
+              },
+              "skip_if": {
+                "Fact": {
+                  "kind": "worn",
+                  "version": 1,
+                  "args": {
+                    "obj": "ikov_pendantofarmardyl"
+                  }
+                }
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "worn",
+                  "version": 1,
+                  "args": {
+                    "obj": "ikov_pendantofarmardyl"
+                  }
+                }
+              },
+              "comment": "scripts/quests/quest_ikov/scripts/quest_ikov.rs2:19-28; scripts/quests/quest_ikov/scripts/guardian_of_armadyl.rs2:105-119"
+            },
+            {
+              "id": "defeat-lucien",
+              "kind": "combat",
+              "version": 1,
+              "args": {
+                "target": {
+                  "npc": "ikov_lucien2",
+                  "pick": "nearest",
+                  "not_targeting_others": true
+                },
+                "stand": {
+                  "tile": [
+                    3176,
+                    3476,
+                    0
+                  ],
+                  "source": "maps/m49_54.jm2:6372"
+                },
+                "tactic": {
+                  "kind": "open",
+                  "style": "ranged",
+                  "engage_radius": 8,
+                  "auto_retaliate": true
+                },
+                "lost_radius": 12,
+                "kill_budget_ticks": 400
+              },
+              "skip_if": {
+                "Any": []
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "quest_colour",
+                  "version": 1,
+                  "args": {
+                    "quest": "ikov",
+                    "is": "complete"
+                  }
+                }
+              },
+              "comment": "scripts/quests/quest_ikov/scripts/quest_ikov.rs2:19-35,60-68; scripts/quests/quest_ikov/scripts/lucien.rs2:108-122",
+              "advances": true
+            }
+          ]
+        },
+        {
+          "stage": "ikov:done",
+          "required": [],
+          "terminal": true,
+          "recovery_entry": null,
+          "steps": []
+        }
+      ]
+    }
+  ]
+}

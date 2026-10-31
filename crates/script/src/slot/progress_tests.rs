@@ -380,6 +380,7 @@ fn reading_progress_refuses_gather_and_drops_only_game_rows() {
         },
         0,
         &[],
+        None,
     );
     assert_eq!(
         slot.seat.as_ref().unwrap().session(),
@@ -396,7 +397,7 @@ fn reading_progress_refuses_gather_and_drops_only_game_rows() {
     assert!(
         matches!(&slot.api.as_ref().unwrap().terminal, Some(GatherEnd::Refused { token: 10, reason }) if reason.as_ref() == "busy")
     );
-    let (_, rows, owned) = slot.drain_host_interacts();
+    let (_, rows, owned) = slot.drain_host_interacts(None);
     assert!(owned);
     assert_eq!(
         rows.into_iter()

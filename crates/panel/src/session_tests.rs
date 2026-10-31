@@ -3560,7 +3560,7 @@ fn manual_walk_options_refresh_durable_peer_changes_and_clear_one_shot() {
 }
 
 #[test]
-fn restored_enabled_folder_loads_when_game_data_becomes_ready() {
+fn restored_enabled_folder_loads_when_game_data_and_navigation_are_ready() {
     let iso = IsolatedStores::enter("panel-quester-paths-startup");
     let folder = iso.dir().join("paths");
     std::fs::create_dir_all(&folder).unwrap();
@@ -3602,6 +3602,28 @@ fn restored_enabled_folder_loads_when_game_data_becomes_ready() {
     .expect("selected data worker");
 
     session.advance_quester_paths_reload(Some(Arc::clone(&selected)));
+    assert!(
+        !session.quester_paths.is_running(),
+        "saved folder waits for its actual navigation catalog"
+    );
+    let Some(world) = NavWorld::load_default_pack_or_skip() else {
+        return;
+    };
+    let fixture = MapFixture::new(&world, "public-289");
+    session.core.set_play(Some(fixture.play(Tile {
+        x: 2778,
+        z: 3401,
+        level: 0,
+    })));
+    let deadline = Instant::now() + Duration::from_secs(60);
+    while !session.quester_paths.is_running() {
+        assert!(
+            Instant::now() < deadline,
+            "startup Path reload did not receive its navigation catalog"
+        );
+        session.advance_quester_paths_reload(Some(Arc::clone(&selected)));
+        thread::yield_now();
+    }
     assert!(
         session.quester_paths.is_running(),
         "saved folder starts a reload without a user action"

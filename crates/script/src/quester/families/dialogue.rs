@@ -14,11 +14,30 @@ use std::task::Poll;
 /// as over, unless the step authors `gap_ticks`. The engine closes chat with
 /// the same `IfClose` at script end (`Player.ts:2223-2229`) and at a script's
 /// own `if_close` before a `p_delay` and a later page, so the client cannot
-/// tell them apart; script end is the normal case, and a Path step whose NPC
-/// closes and reopens the chat authors its engine hole (`gap_ticks`).
+/// know whether a conversation is finished until its close gap settles. A
+/// later script that deliberately closes and reopens the chat authors its
+/// engine hole (`gap_ticks`).
 pub const DIALOG_GAP_TICKS: u64 = 1;
-pub const DIALOGUE_OPEN_MS: u64 = 8_000;
-pub const DIALOGUE_APPROACH_MS: u64 = 20_000;
+/// The observed-tick budget for the first chat page. For NPC Talk, only
+/// content paths that reach a chat page count toward the bound. A scan covered
+/// 797 `[opnpc1,...]` handlers; the largest pre-page delay on those paths is
+/// `p_delay(2)` in Captain Siad (`quest_desertrescue/scripts/captain_siad.rs2:1-11`)
+/// and the seven Underground Pass slaves
+/// (`quest_upass/scripts/upass_slave.rs2:1-56`).
+/// The engine resumes `P_DELAY` at `currentTick + 1 + N`
+/// (`PlayerOps.ts:376-379`, `World.ts:692-696`), so this is two content ticks
+/// plus one scheduling tick. One observed game tick is one `PLAYER_INFO`
+/// (`host/src/slot.rs:22-25`); allow one more tick for a packet miss, consistent
+/// with the client's five-packet read limit (`client.rs:12798-12803`).
+/// NPC-script messages are progress signals, not dialogue-open failures.
+pub const DIALOGUE_OPEN_TICKS: u64 = 4;
+/// The NPC's content `wanderrange` determines the number of allowed replans.
+/// Brundt has `wanderrange=2` (`viking.npc:769-803`). Each route gets four
+/// observed ticks: the Viking gap-2 run took four ticks for its eight-tile
+/// route (`gap-2/debug.log:211-221`); the engine advances one tile walking or
+/// two running per world cycle (`PathingEntity.ts:135-149`), and each observed
+/// tick is one `PLAYER_INFO` (`host/src/slot.rs:22-25`).
+pub(super) const DIALOGUE_APPROACH_WALK_TICKS: u16 = 4;
 pub const DRIVE_STEPS: u32 = 120;
 pub const PAGE_ACK_MS: u64 = 3_000;
 /// Ticks before acting on a page that changed text on the same root (a same-
@@ -73,12 +92,21 @@ pub struct LineRule {
     pub choose: Arc<str>,
 }
 
+/// `prefer` entries one conversation can remember when `answer_once` is set:
+/// one bit per entry in the driver's fixed-size mask.
+pub const ANSWER_ONCE_PREFER_MAX: usize = u32::BITS as usize;
+
 #[derive(Clone)]
 pub struct DialogueOptions {
     pub prefer: Arc<[Arc<str>]>,
     pub choose: Option<i32>,
     pub line_rules: Arc<[LineRule]>,
     pub strict: bool,
+    /// Skip a `prefer` entry that already answered a page in this
+    /// conversation, falling through to the next entry in order. A repeated
+    /// menu can then be answered once and left. `line_rules` and `choose` are
+    /// unaffected. Compilation caps `prefer` at [`ANSWER_ONCE_PREFER_MAX`].
+    pub answer_once: bool,
     /// Chat continue clicks only: a Main document or modal ends the driver
     /// without a click, so it is left to its owner.
     pub chat_only: bool,
@@ -98,6 +126,7 @@ impl Default for DialogueOptions {
             choose: None,
             line_rules: Arc::clone(&RULES),
             strict: false,
+            answer_once: false,
             chat_only: false,
             gap_ticks: None,
         }
@@ -123,38 +152,95 @@ impl DialogueOptions {
         }
     }
 
-    fn select(&self, obs: &ChatObs<'_>) -> Option<i32> {
+    /// Select the answer for one page. `used` is the conversation's mask of
+    /// `prefer` entries that already answered an accepted page; a selection
+    /// names the entry it used so the caller marks it only once the answer's
+    /// receipt is accepted and the page advances.
+    fn select(&self, obs: &ChatObs<'_>, used: u32) -> Option<Selection> {
         if let Some(rule) = self.line_rules.iter().find(|rule| {
             obs.texts
                 .iter()
                 .any(|text| text_matches(text, &rule.when_line))
         }) {
             match matching_option(obs.options, &rule.choose, self.strict) {
-                Ok(Some(index)) => return Some((index + 1) as i32),
+                Ok(Some(index)) => return Some(Selection::option(index)),
                 Err(()) => return None,
                 Ok(None) if self.strict => return None,
                 Ok(None) => {}
             }
         }
         if let Some(option) = self.choose {
-            return (option > 0 && option as usize <= obs.options.len()).then_some(option);
+            return (option > 0 && option as usize <= obs.options.len())
+                .then(|| Selection::option_fixed(option));
         }
         if self.strict {
-            for fragment in self.prefer.iter() {
+            for (index, fragment) in self.prefer.iter().enumerate() {
+                if self.answer_once && prefer_used(used, index) {
+                    continue;
+                }
                 match matching_option(obs.options, fragment, true) {
-                    Ok(Some(index)) => return Some((index + 1) as i32),
+                    Ok(Some(option)) => {
+                        return Some(Selection {
+                            option: (option + 1) as i32,
+                            prefer: self.answer_once.then_some(index),
+                        })
+                    }
                     Err(()) => return None,
                     Ok(None) => {}
                 }
             }
             None
         } else {
-            Some(
-                pick_preferred(obs.options, &self.prefer)
-                    .map_or(obs.options.len() as i32, |index| (index + 1) as i32),
-            )
+            match self
+                .prefer
+                .iter()
+                .enumerate()
+                .find_map(|(index, fragment)| {
+                    if self.answer_once && prefer_used(used, index) {
+                        return None;
+                    }
+                    matching_option(obs.options, fragment, false)
+                        .ok()
+                        .flatten()
+                        .map(|option| (index, option))
+                }) {
+                Some((index, option)) => Some(Selection {
+                    option: (option + 1) as i32,
+                    prefer: self.answer_once.then_some(index),
+                }),
+                None => Some(Selection::option_fixed(obs.options.len() as i32)),
+            }
         }
     }
+}
+
+/// One chosen answer and the `prefer` entry that chose it, if any.
+#[derive(Debug, Clone, Copy)]
+struct Selection {
+    option: i32,
+    prefer: Option<usize>,
+}
+
+impl Selection {
+    fn option(index: usize) -> Self {
+        Self {
+            option: (index + 1) as i32,
+            prefer: None,
+        }
+    }
+
+    fn option_fixed(option: i32) -> Self {
+        Self {
+            option,
+            prefer: None,
+        }
+    }
+}
+
+/// Whether `prefer[index]` already answered a page in this conversation.
+/// An index outside the mask width is never used; compilation rejects it.
+fn prefer_used(used: u32, index: usize) -> bool {
+    used & 1u32.checked_shl(index as u32).unwrap_or(0) != 0
 }
 
 #[derive(Clone)]
@@ -199,6 +285,17 @@ pub struct Dialogue {
     surface: Surface,
     main_ui: Option<api::game_data::DialogueUiIds>,
     steps: u32,
+    /// `prefer` entries whose answer was accepted in this conversation, one
+    /// bit each. Only read when `answer_once` is set; marked by
+    /// [`Self::mark_answer_once`] once the answer's receipt is accepted and
+    /// the page acknowledgement shows the page advanced.
+    answers_used: u32,
+    /// The `prefer` entry that chose the answer awaiting acknowledgement and
+    /// the request id of that answer. Queueing the interaction does not
+    /// accept it, so the entry stays unmarked until both the receipt is
+    /// accepted and the page advances; a refused answer, a lost receipt or a
+    /// page that did not advance leaves it unused.
+    pending_prefer: Option<(usize, u64)>,
     due_tick: u64,
     gap_inventory: Option<u64>,
     gap_position: Option<api::WorldTile>,
@@ -209,24 +306,37 @@ pub struct Dialogue {
     npc_index: i32,
     npc_action: Arc<str>,
     deadline_ms: u64,
+    /// Deadline for content-timed opening and approach phases.
+    content_deadline_tick: u64,
     walk_request_id: u64,
+    /// Additional approach routes allowed by the target NPC's wander range.
+    approach_replans_left: u16,
     talk_request_id: Option<u64>,
     talk_baseline: Option<PageAcknowledgement>,
+    talk_chat_mark: Option<i32>,
     chat_advanced: bool,
     chat_page_owned: bool,
     chat_advance_request_id: Option<u64>,
 }
+// Keep retained per-action dialogue state within its reviewed size budget.
+const _: () = assert!(std::mem::size_of::<Dialogue>() <= 384);
 
 impl NativeMachine for Dialogue {
     type Args = DialogueArgs;
     type Output = DialogueOutcome;
 
     fn begin(args: Self::Args, cx: &mut ActionContext<'_>) -> Result<Self, ActionError> {
+        let approach_replans_left = match &args.target {
+            DialogueTarget::Npc { id, .. } => dialogue_approach_replan_budget(cx, *id),
+            DialogueTarget::Continuation => 0,
+        };
         let mut dialogue = Self {
             args,
             phase: Phase::Open,
             main_ui: selected_dialogue_ui(cx),
             steps: 0,
+            answers_used: 0,
+            pending_prefer: None,
             due_tick: 0,
             gap_inventory: None,
             gap_position: None,
@@ -248,11 +358,14 @@ impl NativeMachine for Dialogue {
             ack_page: PageAcknowledgement::default(),
             npc_index: -1,
             npc_action: Arc::from("Talk-to"),
-            deadline_ms: cx.active_now().as_millis() as u64 + DIALOGUE_OPEN_MS,
+            deadline_ms: 0,
+            content_deadline_tick: 0,
             walk_request_id: 0,
+            approach_replans_left,
             surface: Surface::Unselected,
             talk_request_id: None,
             talk_baseline: None,
+            talk_chat_mark: None,
             chat_advanced: false,
             chat_page_owned: false,
             chat_advance_request_id: None,
@@ -362,37 +475,97 @@ impl NativeMachine for Dialogue {
                 }
             }
         }
-        // NPC melee closes interfaces even when it deals zero damage. A
-        // witnessed combat close is not the quiet end of a conversation.
+        // The local hit window also covers self-damage. Require visible or
+        // slot-owned attacker evidence before treating a closed chat as combat.
         // A visible Continue component is an active page even without a root.
-        if DialogueOutcome::combat_interrupted(obs.ready, obs.in_combat) {
+        if DialogueOutcome::combat_interrupted(obs.ready, obs.in_combat, obs.attacker_evidence) {
             return Poll::Ready(Err(ActionError::CombatInterrupted));
         }
         match self.phase {
             Phase::Approach => {
-                if let Some(target) = self.npc_id().and_then(|id| nearest_talk(cx, id)) {
-                    if target.distance <= 2 && talk_reachable(cx, target.tile) {
-                        std::task::ready!(crate::native::defer_budget(self.open(cx)))?;
-                        cx.cancel_request(self.walk_request_id);
-                        self.walk_request_id = 0;
-                        return Poll::Pending;
-                    }
+                let target = self.npc_id().and_then(|id| nearest_talk(cx, id));
+                let Some(target) = target else {
+                    cx.cancel_request(self.walk_request_id);
+                    self.walk_request_id = 0;
+                    return Poll::Ready(Ok(DialogueOutcome::Failed));
+                };
+                if target.distance <= 2 && talk_reachable(cx, target.tile) {
+                    std::task::ready!(crate::native::defer_budget(self.open(cx)))?;
+                    cx.cancel_request(self.walk_request_id);
+                    self.walk_request_id = 0;
+                    return Poll::Pending;
                 }
-                if now >= self.deadline_ms
-                    || (self.walk_request_id != 0
-                        && cx.walk_receipt(self.walk_request_id).is_some())
+                let route_finished =
+                    self.walk_request_id != 0 && cx.walk_receipt(self.walk_request_id).is_some();
+                if obs.tick >= self.content_deadline_tick
+                    || (route_finished && self.approach_replans_left == 0)
                 {
                     cx.cancel_request(self.walk_request_id);
                     self.walk_request_id = 0;
                     return Poll::Ready(Ok(DialogueOutcome::Failed));
                 }
+                if route_finished {
+                    let reachable = talk_reachable(cx, target.tile);
+                    let request = reach::walk_request(
+                        target.tile,
+                        if reachable { 1 } else { 0 },
+                        None,
+                        cx.evidence(),
+                    );
+                    let request_id =
+                        std::task::ready!(crate::native::defer_budget(cx.walk(request)))?;
+                    self.approach_replans_left -= 1;
+                    self.walk_request_id = request_id;
+                }
                 Poll::Pending
             }
             Phase::Open => {
                 if obs.ready {
+                    self.talk_chat_mark = None;
                     return self.drive(cx, &obs);
                 }
-                if now >= self.deadline_ms {
+                // NPC content can send a game message before its first chat page.
+                // Keep waiting for the page; only the engine's explicit reach
+                // refusal takes the recovery branch below.
+                if self
+                    .talk_chat_mark
+                    .is_some_and(|since| reach::saw_game_message(cx, since, reach::CANT_REACH))
+                {
+                    let Some(npc_id) = self.npc_id() else {
+                        self.cancel_talk_request(cx);
+                        return Poll::Ready(Err(dialogue_refusal_error()));
+                    };
+                    let Some(target) = (self.approach_replans_left > 0)
+                        .then(|| nearest_talk(cx, npc_id))
+                        .flatten()
+                    else {
+                        self.cancel_talk_request(cx);
+                        return Poll::Ready(Err(dialogue_refusal_error()));
+                    };
+                    let reachable = talk_reachable(cx, target.tile);
+                    let walk_request_id = std::task::ready!(crate::native::defer_budget(cx.walk(
+                        reach::walk_request(
+                            target.tile,
+                            if reachable { 1 } else { 0 },
+                            None,
+                            cx.evidence(),
+                        )
+                    )))?;
+                    self.cancel_talk_request(cx);
+                    self.approach_replans_left -= 1;
+                    self.walk_request_id = walk_request_id;
+                    self.content_deadline_tick = cx
+                        .evidence()
+                        .tick
+                        .saturating_add(dialogue_approach_tick_budget(self.approach_replans_left));
+                    self.surface = Surface::Unselected;
+                    self.phase = Phase::Approach;
+                    self.chat_advanced = false;
+                    self.chat_page_owned = false;
+                    self.chat_advance_request_id = None;
+                    return Poll::Pending;
+                }
+                if obs.tick >= self.content_deadline_tick {
                     static REASON: std::sync::LazyLock<Arc<str>> =
                         std::sync::LazyLock::new(|| Arc::from("expected dialogue did not open"));
                     return Poll::Ready(Err(ActionError::Failed(Arc::clone(&REASON))));
@@ -424,6 +597,12 @@ impl NativeMachine for Dialogue {
                     .ack_page
                     .acknowledged(obs.modal, obs.r#continue, obs.page_fingerprint())
                 {
+                    // The page advanced. Mark the `prefer` entry that chose
+                    // this answer only when the answer's own receipt says it
+                    // was accepted, before the follow-up `drive` can select
+                    // the next page; a refused or lost receipt leaves the
+                    // entry unused so the next menu picks it again.
+                    self.mark_answer_once(cx);
                     // The choice resumes the same paused script in the ack
                     // packet's cycle (`IfButtonHandler.ts:26-29`). A new chat
                     // root means the page's `if_openchat` has been applied, and
@@ -560,6 +739,36 @@ impl Dialogue {
         }
     }
 
+    /// Mark the pending `prefer` entry now that the page has advanced, but
+    /// only when the answer's own receipt is accepted. Queueing the answer is
+    /// not acceptance: a refused answer and a lost receipt both leave the
+    /// entry unused, so the next menu selects it again instead of falling
+    /// through to a later entry.
+    fn mark_answer_once(&mut self, cx: &ActionContext<'_>) {
+        let Some((index, request_id)) = self.pending_prefer.take() else {
+            return;
+        };
+        let accepted = cx
+            .interaction_receipt(request_id)
+            .is_some_and(|receipt| receipt.accepted);
+        if accepted {
+            self.answers_used |= 1u32.checked_shl(index as u32).unwrap_or(0);
+        }
+    }
+    fn cancel_talk_request(&mut self, cx: &mut ActionContext<'_>) {
+        if let Some(request_id) = self.talk_request_id.take() {
+            cx.cancel_request(request_id);
+        }
+        self.talk_baseline = None;
+        self.talk_chat_mark = None;
+    }
+
+    /// The conversation's used-`prefer` mask, for the acceptance tests.
+    #[cfg(test)]
+    pub(super) fn answers_used(&self) -> u32 {
+        self.answers_used
+    }
+
     fn open(&mut self, cx: &mut ActionContext<'_>) -> Result<(), ActionError> {
         let chat = observe(cx);
         let main = observe_main(cx, self.main_ui);
@@ -588,7 +797,8 @@ impl Dialogue {
             }
             return Ok(());
         }
-        if let Some(target) = self.npc_id().and_then(|id| nearest_talk(cx, id)) {
+        let npc_id = self.npc_id();
+        if let Some(target) = npc_id.and_then(|id| nearest_talk(cx, id)) {
             let reachable = talk_reachable(cx, target.tile);
             if target.distance > 2 || !reachable {
                 // A nearby NPC across a closed wall/door is not ready to
@@ -601,7 +811,10 @@ impl Dialogue {
                     cx.evidence(),
                 ))?;
                 self.phase = Phase::Approach;
-                self.deadline_ms = cx.active_now().as_millis() as u64 + DIALOGUE_APPROACH_MS;
+                self.content_deadline_tick = cx
+                    .evidence()
+                    .tick
+                    .saturating_add(dialogue_approach_tick_budget(self.approach_replans_left));
                 return Ok(());
             }
             self.npc_index = target.index;
@@ -610,7 +823,7 @@ impl Dialogue {
         let DialogueTarget::Npc { name, .. } = &self.args.target else {
             self.surface = Surface::Unselected;
             self.phase = Phase::Open;
-            self.deadline_ms = cx.active_now().as_millis() as u64 + DIALOGUE_OPEN_MS;
+            self.content_deadline_tick = cx.evidence().tick.saturating_add(DIALOGUE_OPEN_TICKS);
             return Ok(());
         };
         let talk_baseline = chat.as_ref().map(|obs| {
@@ -623,9 +836,10 @@ impl Dialogue {
         })?;
         self.talk_baseline = talk_baseline;
         self.talk_request_id = Some(talk_request_id);
+        self.talk_chat_mark = Some(reach::last_chat_seq(cx));
         self.surface = Surface::Chat;
         self.phase = Phase::Open;
-        self.deadline_ms = cx.active_now().as_millis() as u64 + DIALOGUE_OPEN_MS;
+        self.content_deadline_tick = cx.evidence().tick.saturating_add(DIALOGUE_OPEN_TICKS);
         Ok(())
     }
 
@@ -669,7 +883,7 @@ impl Dialogue {
         obs: &MainObs<'_>,
         now: u64,
     ) -> Poll<Result<DialogueOutcome, ActionError>> {
-        if DialogueOutcome::combat_interrupted(obs.open(), obs.in_combat) {
+        if DialogueOutcome::combat_interrupted(obs.open(), obs.in_combat, obs.attacker_evidence) {
             return Poll::Ready(Err(ActionError::CombatInterrupted));
         }
         match self.phase {
@@ -838,7 +1052,7 @@ impl Dialogue {
             return Poll::Pending;
         }
         if !obs.options.is_empty() {
-            let Some(option) = self.args.options.select(obs) else {
+            let Some(selection) = self.args.options.select(obs, self.answers_used) else {
                 if self.args.options.strict
                     && self.args.options.prefer.is_empty()
                     && self.args.options.choose.is_none()
@@ -853,9 +1067,11 @@ impl Dialogue {
             };
             let ack_page =
                 PageAcknowledgement::capture(obs.modal, obs.r#continue, obs.page_fingerprint());
-            let request_id = std::task::ready!(crate::native::defer_budget(
-                cx.emit(InteractReq::Answer { option })
-            ))?;
+            let request_id =
+                std::task::ready!(crate::native::defer_budget(cx.emit(InteractReq::Answer {
+                    option: selection.option
+                })))?;
+            self.pending_prefer = selection.prefer.map(|index| (index, request_id));
             self.steps += 1;
             self.ack_page = ack_page;
             self.phase = Phase::WaitChoiceAck;
@@ -903,7 +1119,10 @@ struct ChatObs<'a> {
     options: &'a [api::snapshot::ChatOptionView],
     texts: &'a [String],
     in_combat: bool,
+    attacker_evidence: bool,
 }
+// Poll observations remain borrowed stack values, not per-bot retained state.
+const _: () = assert!(std::mem::size_of::<ChatObs<'static>>() <= 64);
 
 impl ChatObs<'_> {
     // The server reuses a chat root and Continue component across successive
@@ -935,7 +1154,9 @@ struct MainObs<'a> {
     texts: &'a [String],
     tick: u64,
     in_combat: bool,
+    attacker_evidence: bool,
 }
+const _: () = assert!(std::mem::size_of::<MainObs<'static>>() <= 96);
 
 impl MainObs<'_> {
     fn open(&self) -> bool {
@@ -999,13 +1220,50 @@ pub(super) fn chat_page_open(root: i32, continue_component_id: i32) -> bool {
     root != -1 || continue_component_id >= 0
 }
 
-/// Operation adoption covers chat and selected documents, not unrelated interfaces.
+/// Operation adoption covers dialogue chat and selected documents, not production menus.
 pub(super) fn page_open(cx: &ActionContext<'_>) -> bool {
-    cx.snapshot()
-        .chat_modal()
-        .is_some_and(|chat| chat_page_open(chat.value.root, chat.value.continue_component_id))
+    let snapshot = cx.snapshot();
+    let production_menu = snapshot
+        .make_products()
+        .is_some_and(|products| !products.value.is_empty());
+    (!production_menu
+        && snapshot
+            .chat_modal()
+            .is_some_and(|chat| chat_page_open(chat.value.root, chat.value.continue_component_id)))
         || observe_main(cx, selected_dialogue_ui(cx))
             .is_some_and(|main| matches!(main.kind, MainKind::Scroll | MainKind::Book))
+}
+
+fn combat_attacker_evidence(cx: &ActionContext<'_>) -> bool {
+    let snapshot = cx.snapshot();
+    // The local combat target is slot-owned state, but only a face entity, not
+    // a hit source, and it may be stale. An attacker outside the rebuilt scene
+    // is not seen; visible actors targeting this local player are separate
+    // evidence.
+    let slot_target = snapshot
+        .in_combat()
+        .is_some_and(|combat| combat.value.target.is_some());
+    let Some(local_index) = snapshot
+        .local_player()
+        .map(|player| player.value.player.index)
+    else {
+        return slot_target;
+    };
+    let local_target = api::snapshot::ActorTargetView {
+        kind: api::snapshot::ActorKind::Player,
+        index: local_index,
+    };
+    slot_target
+        || snapshot.npcs().is_some_and(|npcs| {
+            npcs.value
+                .iter()
+                .any(|npc| npc.target == Some(local_target))
+        })
+        || snapshot.players().is_some_and(|players| {
+            players.value.iter().any(|player| {
+                player.index != local_index && player.actor.target == Some(local_target)
+            })
+        })
 }
 
 fn observe<'a>(cx: &ActionContext<'a>) -> Option<ChatObs<'a>> {
@@ -1027,6 +1285,7 @@ fn observe<'a>(cx: &ActionContext<'a>) -> Option<ChatObs<'a>> {
             .snapshot()
             .in_combat()
             .is_some_and(|combat| combat.value.in_combat),
+        attacker_evidence: combat_attacker_evidence(cx),
     })
 }
 
@@ -1040,7 +1299,7 @@ fn observe_main<'a>(
     let kind = if root == -1 {
         MainKind::Closed
     } else if let Some(ids) = ids {
-        if root == ids.scroll_root || root == ids.quest_scroll_root {
+        if root == ids.scroll_root || root == ids.quest_scroll_root || root == ids.chapter_root {
             MainKind::Scroll
         } else if root == ids.book_root {
             MainKind::Book
@@ -1061,6 +1320,7 @@ fn observe_main<'a>(
             .snapshot()
             .in_combat()
             .is_some_and(|combat| combat.value.in_combat),
+        attacker_evidence: combat_attacker_evidence(cx),
     })
 }
 
@@ -1083,6 +1343,31 @@ fn talk_reachable(cx: &ActionContext<'_>, tile: api::WorldTile) -> bool {
     })
 }
 
+fn dialogue_approach_replan_budget(cx: &ActionContext<'_>, npc_id: i32) -> u16 {
+    let Ok(data) = api::game_data::for_revision(cx.pin().revision) else {
+        return 0;
+    };
+    let Some(npc) = data.npc_name(npc_id) else {
+        return 0;
+    };
+    u16::try_from(npc.wanderrange.max(0))
+        .unwrap_or(u16::MAX)
+        .saturating_mul(DIALOGUE_APPROACH_WALK_TICKS)
+}
+
+fn dialogue_approach_tick_budget(replans_left: u16) -> u64 {
+    // The content replan budget allows this many routes, plus the initial one.
+    u64::from(replans_left)
+        .saturating_add(1)
+        .saturating_mul(u64::from(DIALOGUE_APPROACH_WALK_TICKS))
+}
+
+fn dialogue_refusal_error() -> ActionError {
+    static REASON: std::sync::LazyLock<Arc<str>> =
+        std::sync::LazyLock::new(|| Arc::from("server refused Talk-to: I can't reach that!"));
+    ActionError::Failed(Arc::clone(&REASON))
+}
+
 fn nearest_talk<'a>(cx: &'a ActionContext<'_>, wanted: i32) -> Option<TalkTarget<'a>> {
     let npcs = cx.snapshot().npcs()?.value;
     npcs.iter()
@@ -1103,15 +1388,6 @@ fn nearest_talk<'a>(cx: &'a ActionContext<'_>, wanted: i32) -> Option<TalkTarget
             })
         })
         .min_by_key(|target| target.distance)
-}
-
-pub fn pick_preferred(
-    options: &[api::snapshot::ChatOptionView],
-    prefer: &[Arc<str>],
-) -> Option<usize> {
-    prefer
-        .iter()
-        .find_map(|fragment| matching_option(options, fragment, false).ok().flatten())
 }
 
 fn text_matches(text: &str, fragment: &str) -> bool {

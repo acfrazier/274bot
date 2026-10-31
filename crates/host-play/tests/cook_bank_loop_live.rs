@@ -506,6 +506,7 @@ fn production_start(selected: Arc<SelectedGameData>, quests: Arc<QuestCatalog>) 
                     &quests,
                     cap,
                     &script::local_state::OperatorLoadouts::absent(),
+                    None,
                 )
             }
         })

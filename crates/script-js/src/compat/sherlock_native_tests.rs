@@ -394,6 +394,7 @@ fn with_tick<R>(
             reach_flood: None,
             bank_memory: None,
             collision: None,
+            nav: None,
             hold: world.held,
             world_members: api::selected::Truth::Unknown,
             interacts: Some(Vec::new()),
@@ -1224,6 +1225,7 @@ fn start_sherlock_slot(world: &World) -> script::slot::SlotScript {
         Arc::new(SettingsBag::new()),
         Arc::clone(&world.data),
         Arc::new(api::named_banks::NamedBankFacts::empty()),
+        None,
     )
     .expect("start Sherlock through its compiled-card slot path");
     let deadline = Instant::now() + Duration::from_secs(10);
@@ -1261,6 +1263,7 @@ fn tick_sherlock_slot(slot: &mut script::slot::SlotScript, world: &World, tick: 
             reach_flood: None,
             bank_memory: None,
             collision: None,
+            nav: None,
             hold: world.held,
             world_members: api::selected::Truth::Unknown,
             interacts: None,

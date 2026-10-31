@@ -115,6 +115,7 @@ impl Delegation {
                 level: self.stand.level,
             }),
             search_bounds: None,
+            cross: None,
             engage_radius,
             lost_radius,
             budget_ticks: 500,

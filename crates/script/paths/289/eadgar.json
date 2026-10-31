@@ -1,0 +1,1693 @@
+{
+  "$schema": "../path.schema.json",
+  "schema": 3,
+  "id": "eadgar",
+  "display_name": "Eadgar's Ruse",
+  "required": [
+    "death-plateau",
+    "troll-stronghold",
+    "druidic-ritual",
+    "herblore-31",
+    "thieving-30",
+    "agility-67"
+  ],
+  "tested_stats": null,
+  "partner": null,
+  "quest": {
+    "members": true,
+    "quest_points": 1,
+    "requirements": [
+      {
+        "id": "death-plateau",
+        "kind": {
+          "Quest": "death"
+        },
+        "at": "start",
+        "source": "content/scripts/areas/area_taverly/scripts/sanfew.rs2:96-111,130-136; content/maps/m45_53.jm2:7657; content/pack/npc.pack:455"
+      },
+      {
+        "id": "troll-stronghold",
+        "kind": {
+          "Quest": "troll"
+        },
+        "at": "start",
+        "source": "content/scripts/areas/area_taverly/scripts/sanfew.rs2:96-111,130-136; content/maps/m45_53.jm2:7657; content/pack/npc.pack:455"
+      },
+      {
+        "id": "druidic-ritual",
+        "kind": {
+          "Quest": "druid"
+        },
+        "at": "start",
+        "source": "content/scripts/quests/quest_eadgar/scripts/eadgar_journal.rs2:6-9"
+      },
+      {
+        "id": "herblore-31",
+        "kind": {
+          "Skill": {
+            "skill": "herblore",
+            "level": 31
+          }
+        },
+        "at": "start",
+        "source": "content/scripts/areas/area_taverly/scripts/sanfew.rs2:96-111,130-136; content/maps/m45_53.jm2:7657; content/pack/npc.pack:455"
+      },
+      {
+        "id": "thieving-30",
+        "kind": {"Skill": {"skill": "thieving", "level": 30}},
+        "at": "start",
+        "source": "content/scripts/quests/quest_troll/scripts/troll_stronghold_camp_guard.rs2:38-49"
+      }
+      ,
+      {
+        "id": "agility-67",
+        "kind": {"Skill": {"skill": "agility", "level": 67}},
+        "at": "start",
+        "source": "content/scripts/areas/area_yanille/scripts/agility_dungeon.rs2:1-5,30-34,85-90"
+      }
+    ],
+    "items": [],
+    "acquire": {},
+    "bank": "nearest",
+    "coin_float": 41631,
+    "loadouts": {},
+    "areas": {
+      "salarin-chamber": {"boxes": [[2610,9502,2618,9527,0]], "source": "content/maps/m40_148.jm2:8207,9083"},
+      "sinister-chest-room": {"boxes": [[2560,9499,2572,9512,0]], "source": "content/maps/m40_148.jm2:4888,5613,5789"}
+    },
+    "tools": [
+      "obj:death_climbingboots",
+      "obj:vodka",
+      "obj:pineapple_chunks",
+      "obj:logs",
+      "obj:raw_chicken",
+      "obj:grain",
+      "obj:tinderbox",
+      "obj:pestle_and_mortar",
+      "obj:ranarrvial",
+      "obj:eadgar_drunk_parrot",
+      "obj:eadgar_dirty_druid_robe",
+      "obj:eadgar_troll_thistle",
+      "obj:eadgar_dried_troll_thistle",
+      "obj:eadgar_ground_troll_thistle",
+      "obj:eadgar_ground_troll_thistle_potion",
+      "obj:eadgar_fake_man",
+      "obj:eadgar_troll_storeroom_key",
+      "obj:eadgar_goutweed_herb"
+    ],
+    "owns_inventory": true
+  },
+  "roles": [
+    {
+      "role": null,
+      "progress_binding": "journal:eadgar",
+      "progress": {
+        "colour": {
+          "not_started": "eadgar:0",
+          "in_progress": "eadgar:10",
+          "complete": "eadgar:complete"
+        },
+        "rules": [
+          {
+            "stage": "eadgar:100",
+            "all": [
+              "i've unlocked the storeroom"
+            ],
+            "any": [],
+            "not": [],
+            "varp": 100
+          },
+          {
+            "stage": "eadgar:90",
+            "all": [
+              "i should get the key to the storeroom"
+            ],
+            "any": [],
+            "not": [],
+            "varp": 90
+          },
+          {
+            "stage": "eadgar:87",
+            "all": [
+              "i should give the fake man"
+            ],
+            "any": [],
+            "not": [],
+            "varp": 87
+          },
+          {
+            "stage": "eadgar:86",
+            "all": [
+              "i should go tell eadgar"
+            ],
+            "any": [],
+            "not": [],
+            "varp": 86
+          },
+          {
+            "stage": "eadgar:85",
+            "all": [
+              "i need to fetch the parrot back"
+            ],
+            "any": [],
+            "not": [],
+            "varp": 85
+          },
+          {
+            "stage": "eadgar:80",
+            "all": [
+              "gave eadgar everything he needed"
+            ],
+            "any": [],
+            "not": [],
+            "varp": 80
+          },
+          {
+            "stage": "eadgar:70",
+            "all": [
+              "i still need to bring him"
+            ],
+            "any": [],
+            "not": [],
+            "varp": 70
+          },
+          {
+            "stage": "eadgar:60",
+            "all": [
+              "i should go and find out the rest"
+            ],
+            "any": [],
+            "not": [],
+            "varp": 60
+          },
+          {
+            "stage": "eadgar:50",
+            "all": [
+              "i need to hide the parrot"
+            ],
+            "any": [],
+            "not": [],
+            "varp": 50
+          },
+          {
+            "stage": "eadgar:30",
+            "all": [
+              "i need to bring eadgar a parrot"
+            ],
+            "any": [],
+            "not": [],
+            "varp": 30
+          },
+          {
+            "stage": "eadgar:25",
+            "all": [
+              "i need to get a tasty human"
+            ],
+            "any": [],
+            "not": [],
+            "varp": 25
+          },
+          {
+            "stage": "eadgar:15",
+            "all": [
+              "i should ask the troll cook"
+            ],
+            "any": [],
+            "not": [],
+            "varp": 15
+          },
+          {
+            "stage": "eadgar:10",
+            "all": [
+              "mad eadgar may"
+            ],
+            "any": [],
+            "not": [],
+            "varp": 10
+          }
+        ],
+        "flags": [],
+        "monotonic": false
+      },
+      "prelude": [],
+      "sequences": [
+        {
+          "stage": "eadgar:0",
+          "required": [],
+          "terminal": false,
+          "recovery_entry": null,
+          "order": "ordered",
+          "steps": [
+            {
+              "id": "buy-climbing-boots", "kind": "talk", "version": 1, "advances": false,
+              "args": {"npc": "death_sherpa", "anchor": {"tile": [2820,3556,0], "source": "content/maps/m44_55.jm2:6372; content/pack/npc.pack:1072"}, "leash": 8, "prefer": ["Can I buy some Climbing boots?", "OK, sounds good.", "Nothing, thanks!"], "strict": true, "answer_once": true},
+              "comment": "content/scripts/quests/quest_death/scripts/death_sherpa.rs2:2-24 charges 12 coins.",
+              "skip_if": {"Any": [{"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "death_climbingboots"}}}, {"Fact": {"kind": "worn", "version": 1, "args": {"obj": "death_climbingboots"}}}]},
+              "settle": {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "death_climbingboots"}}}
+            },
+            {
+              "id": "wear-climbing-boots", "kind": "equip", "version": 1,
+              "args": {"obj": "death_climbingboots"},
+              "comment": "content/scripts/quests/quest_troll/scripts/quest_troll.rs2:1-14 requires worn boots and Agility 15.",
+              "skip_if": {"Fact": {"kind": "worn", "version": 1, "args": {"obj": "death_climbingboots"}}},
+              "settle": {"Fact": {"kind": "worn", "version": 1, "args": {"obj": "death_climbingboots"}}}
+            },
+            {
+              "id": "pickpocket-eadgar-key", "kind": "thieve", "version": 1, "advances": false,
+              "args": {"target": {"npc": "troll_prison_guard2"}, "until": {"obj": "troll_key_eadgar", "qty": 1}, "anchor": {"tile": [2832,10083,0], "source": "content/maps/m44_157.jm2:15956; content/pack/npc.pack:1130"}, "radius": 5, "settle_ms": 300000},
+              "comment": "content/scripts/quests/quest_troll/scripts/troll_stronghold_camp_guard.rs2:38-75. A failed attempt wakes the guard; success gives the key.",
+              "skip_if": {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "troll_key_eadgar"}}},
+              "settle": {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "troll_key_eadgar"}}}
+            },
+            {
+              "id": "free-eadgar", "kind": "use_on", "version": 1, "advances": false,
+              "args": {"item": "troll_key_eadgar", "target": {"loc": "troll_celldoor_eadgar"}, "anchor": {"tile": [2832,10082,0], "source": "content/maps/m44_157.jm2:11116; content/pack/loc.pack:3766"}, "radius": 3},
+              "comment": "content/scripts/quests/quest_troll/scripts/quest_troll.rs2:251-256,282-301,332-338 consumes the key and sets the rescue bit.",
+              "skip_if": {"Not": {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "troll_key_eadgar"}}}},
+              "settle": {"Not": {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "troll_key_eadgar"}}}}
+            },
+            {
+              "id": "buy-vodka", "kind": "buy", "version": 1,
+              "args": {"shop": {"npc": "gnome_heckelfunch", "anchor": {"tile": [2493,3488,1], "source": "content/maps/m38_54.jm2:8892; content/pack/npc.pack:604"}}, "obj": "vodka", "qty": 1, "est_gp": 5},
+              "comment": "content/scripts/areas/area_gnome/configs/gnome.inv:82-94; gnome.npc:735-739; content/scripts/skill_cooking/configs/gnome_cooking/cocktails.obj:1-4; content/scripts/shop/scripts/shop.rs2:131-147,183-192. Five coins at full stock.",
+              "skip_if": {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "vodka"}}},
+              "settle": {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "vodka"}}}
+            },
+            {
+              "id": "buy-pineapple", "kind": "buy", "version": 1,
+              "args": {"shop": {"npc": "gnome_heckelfunch", "anchor": {"tile": [2493,3488,1], "source": "content/maps/m38_54.jm2:8892; content/pack/npc.pack:604"}}, "obj": "pineapple", "qty": 1, "est_gp": 1},
+              "comment": "content/scripts/areas/area_gnome/configs/gnome.inv:82-94; gnome.npc:735-739; content/scripts/skill_cooking/configs/gnome_cooking/cocktails.obj:868-871; content/scripts/shop/scripts/shop.rs2:131-147,183-192. One coin at full stock.",
+              "skip_if": {"Any": [{"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "pineapple"}}}, {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "pineapple_chunks"}}}]},
+              "settle": {"Any": [{"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "pineapple"}}}, {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "pineapple_chunks"}}}]}
+            },
+            {
+              "id": "dice-pineapple", "kind": "use_on", "version": 1, "advances": false,
+              "args": {"item": "knife", "target": {"item": "pineapple"}, "product": "pineapple_chunks"},
+              "comment": "content/scripts/skill_cooking/scripts/gnome_cooking/cutting_fruit.rs2:38-85 selects diced pineapple.",
+              "skip_if": {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "pineapple_chunks"}}},
+              "settle": {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "pineapple_chunks"}}}
+            },
+            {
+              "id": "buy-five-chickens", "kind": "buy", "version": 1,
+              "args": {"shop": {"npc": "werewolfshopkeeper1", "anchor": {"tile": [3507,3496,0], "source": "content/maps/m54_54.jm2:7628; content/pack/npc.pack:1039"}}, "obj": "raw_chicken", "qty": 5, "est_gp": 5},
+              "comment": "content/scripts/areas/area_canifis/configs/canifis.inv:2-10; canifis.npc:519-525; content/scripts/skill_cooking/configs/cooking_generic/food_uncooked.obj:54-65; content/scripts/shop/scripts/shop.rs2:58-68,131-147,183-192. Five coins at full stock.",
+              "skip_if": {"Fact": {"kind": "item_count_at_least", "version": 1, "args": {"obj": "raw_chicken", "qty": 5}}},
+              "settle": {"Fact": {"kind": "item_count_at_least", "version": 1, "args": {"obj": "raw_chicken", "qty": 5}}}
+            },
+            {
+              "id": "chop-two-logs", "kind": "gather", "version": 1, "advances": false,
+              "args": {"skill": "woodcutting", "resource": "normal", "until": {"obj": "logs", "qty": 2}, "anchor": {"tile": [2613,3252,0], "source": "content/maps/m40_50.jm2:5891; content/scripts/skill_woodcutting/configs/trees.dbrow:1-16"}},
+              "comment": "content/scripts/quests/quest_eadgar/scripts/quest_eadgar.rs2:78-88,221-250 and content/scripts/skill_firemaking/scripts/firemaking.rs2:79-128 need two logs.",
+              "skip_if": {"Fact": {"kind": "item_count_at_least", "version": 1, "args": {"obj": "logs", "qty": 2}}},
+              "settle": {"Fact": {"kind": "item_count_at_least", "version": 1, "args": {"obj": "logs", "qty": 2}}}
+            },
+            {"id":"pick-grain-1","kind":"interact","version":1,"advances":false,"args":{"target":{"loc":"wheat"},"op":"Pick","anchor":{"tile":[2642,3341,0],"source":"content/maps/m41_52.jm2:5120-5134; content/pack/loc.pack:314"},"radius":12},"comment":"content/scripts/general_use/scripts/pickables.rs2:13-22; content/scripts/player/scripts/pickup.rs2:28-40.","skip_if":{"Fact":{"kind":"item_count_at_least","version":1,"args":{"obj":"grain","qty":1}}},"settle":{"Fact":{"kind":"item_count_at_least","version":1,"args":{"obj":"grain","qty":1}}}},
+            {"id":"pick-grain-2","kind":"interact","version":1,"advances":false,"args":{"target":{"loc":"wheat"},"op":"Pick","anchor":{"tile":[2642,3341,0],"source":"content/maps/m41_52.jm2:5120-5134"},"radius":12},"skip_if":{"Fact":{"kind":"item_count_at_least","version":1,"args":{"obj":"grain","qty":2}}},"settle":{"Fact":{"kind":"item_count_at_least","version":1,"args":{"obj":"grain","qty":2}}}},
+            {"id":"pick-grain-3","kind":"interact","version":1,"advances":false,"args":{"target":{"loc":"wheat"},"op":"Pick","anchor":{"tile":[2642,3341,0],"source":"content/maps/m41_52.jm2:5120-5134"},"radius":12},"skip_if":{"Fact":{"kind":"item_count_at_least","version":1,"args":{"obj":"grain","qty":3}}},"settle":{"Fact":{"kind":"item_count_at_least","version":1,"args":{"obj":"grain","qty":3}}}},
+            {"id":"pick-grain-4","kind":"interact","version":1,"advances":false,"args":{"target":{"loc":"wheat"},"op":"Pick","anchor":{"tile":[2642,3341,0],"source":"content/maps/m41_52.jm2:5120-5134"},"radius":12},"skip_if":{"Fact":{"kind":"item_count_at_least","version":1,"args":{"obj":"grain","qty":4}}},"settle":{"Fact":{"kind":"item_count_at_least","version":1,"args":{"obj":"grain","qty":4}}}},
+            {"id":"pick-grain-5","kind":"interact","version":1,"advances":false,"args":{"target":{"loc":"wheat"},"op":"Pick","anchor":{"tile":[2642,3341,0],"source":"content/maps/m41_52.jm2:5120-5134"},"radius":12},"skip_if":{"Fact":{"kind":"item_count_at_least","version":1,"args":{"obj":"grain","qty":5}}},"settle":{"Fact":{"kind":"item_count_at_least","version":1,"args":{"obj":"grain","qty":5}}}},
+            {"id":"pick-grain-6","kind":"interact","version":1,"advances":false,"args":{"target":{"loc":"wheat"},"op":"Pick","anchor":{"tile":[2642,3341,0],"source":"content/maps/m41_52.jm2:5120-5134"},"radius":12},"skip_if":{"Fact":{"kind":"item_count_at_least","version":1,"args":{"obj":"grain","qty":6}}},"settle":{"Fact":{"kind":"item_count_at_least","version":1,"args":{"obj":"grain","qty":6}}}},
+            {"id":"pick-grain-7","kind":"interact","version":1,"advances":false,"args":{"target":{"loc":"wheat"},"op":"Pick","anchor":{"tile":[2642,3341,0],"source":"content/maps/m41_52.jm2:5120-5134"},"radius":12},"skip_if":{"Fact":{"kind":"item_count_at_least","version":1,"args":{"obj":"grain","qty":7}}},"settle":{"Fact":{"kind":"item_count_at_least","version":1,"args":{"obj":"grain","qty":7}}}},
+            {"id":"pick-grain-8","kind":"interact","version":1,"advances":false,"args":{"target":{"loc":"wheat"},"op":"Pick","anchor":{"tile":[2642,3341,0],"source":"content/maps/m41_52.jm2:5120-5134"},"radius":12},"skip_if":{"Fact":{"kind":"item_count_at_least","version":1,"args":{"obj":"grain","qty":8}}},"settle":{"Fact":{"kind":"item_count_at_least","version":1,"args":{"obj":"grain","qty":8}}}},
+            {"id":"pick-grain-9","kind":"interact","version":1,"advances":false,"args":{"target":{"loc":"wheat"},"op":"Pick","anchor":{"tile":[2642,3341,0],"source":"content/maps/m41_52.jm2:5120-5134"},"radius":12},"skip_if":{"Fact":{"kind":"item_count_at_least","version":1,"args":{"obj":"grain","qty":9}}},"settle":{"Fact":{"kind":"item_count_at_least","version":1,"args":{"obj":"grain","qty":9}}}},
+            {"id":"pick-grain-10","kind":"interact","version":1,"advances":false,"args":{"target":{"loc":"wheat"},"op":"Pick","anchor":{"tile":[2642,3341,0],"source":"content/maps/m41_52.jm2:5120-5134"},"radius":12},"skip_if":{"Fact":{"kind":"item_count_at_least","version":1,"args":{"obj":"grain","qty":10}}},"settle":{"Fact":{"kind":"item_count_at_least","version":1,"args":{"obj":"grain","qty":10}}}},
+            {
+              "id": "fill-vial", "kind": "use_on", "version": 1, "advances": false,
+              "args": {"item": "vial_empty", "target": {"loc": "fountain"}, "anchor": {"tile": [2891,3438,0], "source": "content/maps/m45_53.jm2:5390; content/pack/loc.pack:880"}, "radius": 3, "product": "vial_water"},
+              "comment": "content/scripts/general_use/scripts/water_sources.rs2:63-65,75-82 fills a vial at a water source.",
+              "skip_if": {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "vial_water"}}},
+              "settle": {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "vial_water"}}}
+            },
+            {
+              "id": "start",
+              "kind": "talk",
+              "version": 1,
+              "args": {
+                "npc": "sanfew",
+                "anchor": {
+                  "tile": [
+                    2897,
+                    3426,
+                    1
+                  ],
+                  "source": "content/scripts/areas/area_taverly/scripts/sanfew.rs2:96-111,130-136; content/maps/m45_53.jm2:7657; content/pack/npc.pack:455"
+                },
+                "leash": 10,
+                "prefer": [
+                  "Have you any more work for me",
+                  "I'll do it."
+                ],
+                "strict": true
+              },
+              "comment": "content/scripts/areas/area_taverly/scripts/sanfew.rs2:96-111,130-136; content/maps/m45_53.jm2:7657; content/pack/npc.pack:455",
+              "skip_if": {
+                "Any": []
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "stage_in",
+                  "version": 1,
+                  "args": {
+                    "quest": "eadgar",
+                    "any": [
+                      "eadgar:10"
+                    ]
+                  }
+                }
+              },
+              "advances": true
+            }
+          ]
+        },
+        {
+          "stage": "eadgar:10",
+          "required": [],
+          "terminal": false,
+          "recovery_entry": null,
+          "steps": [
+            {
+              "id": "ask-eadgar",
+              "kind": "talk",
+              "version": 1,
+              "args": {
+                "npc": "troll_eadgar",
+                "anchor": {
+                  "tile": [
+                    2890,
+                    10086,
+                    2
+                  ],
+                  "source": "content/scripts/quests/quest_troll/scripts/troll_eadgar.rs2:17-37; content/maps/m45_157.jm2:9962; content/pack/npc.pack:1114; content/scripts/quests/quest_eadgar/scripts/quest_eadgar.rs2:18-45"
+                },
+                "leash": 10,
+                "prefer": [
+                  "I need to find some goutweed."
+                ],
+                "strict": true
+              },
+              "comment": "content/scripts/quests/quest_troll/scripts/troll_eadgar.rs2:17-37; content/maps/m45_157.jm2:9962; content/pack/npc.pack:1114; content/scripts/quests/quest_eadgar/scripts/quest_eadgar.rs2:18-45",
+              "skip_if": {
+                "Any": []
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "stage_in",
+                  "version": 1,
+                  "args": {
+                    "quest": "eadgar",
+                    "any": [
+                      "eadgar:15"
+                    ]
+                  }
+                }
+              },
+              "advances": true
+            }
+          ]
+        },
+        {
+          "stage": "eadgar:15",
+          "required": [],
+          "terminal": false,
+          "recovery_entry": null,
+          "steps": [
+            {
+              "id": "ask-burntmeat",
+              "kind": "talk",
+              "version": 1,
+              "args": {
+                "npc": "eadgar_troll_chief_cook",
+                "anchor": {
+                  "tile": [
+                    2844,
+                    10057,
+                    1
+                  ],
+                  "source": "content/scripts/quests/quest_eadgar/scripts/eadgar_troll_chief_cook.rs2:12-59; content/maps/m44_157.jm2:15979; content/pack/npc.pack:1152"
+                },
+                "leash": 10,
+                "prefer": [],
+                "strict": true
+              },
+              "comment": "content/scripts/quests/quest_eadgar/scripts/eadgar_troll_chief_cook.rs2:12-59; content/maps/m44_157.jm2:15979; content/pack/npc.pack:1152",
+              "skip_if": {
+                "Any": []
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "stage_in",
+                  "version": 1,
+                  "args": {
+                    "quest": "eadgar",
+                    "any": [
+                      "eadgar:25"
+                    ]
+                  }
+                }
+              },
+              "advances": true
+            }
+          ]
+        },
+        {
+          "stage": "eadgar:25",
+          "required": [],
+          "terminal": false,
+          "recovery_entry": null,
+          "steps": [
+            {
+              "id": "hear-plan",
+              "kind": "talk",
+              "version": 1,
+              "args": {
+                "npc": "troll_eadgar",
+                "anchor": {
+                  "tile": [
+                    2890,
+                    10086,
+                    2
+                  ],
+                  "source": "content/scripts/quests/quest_troll/scripts/troll_eadgar.rs2:17-37; content/maps/m45_157.jm2:9962; content/pack/npc.pack:1114; content/scripts/quests/quest_eadgar/scripts/quest_eadgar.rs2:47-67"
+                },
+                "leash": 10,
+                "prefer": [
+                  "No thanks, Eadgar."
+                ],
+                "strict": true
+              },
+              "comment": "content/scripts/quests/quest_troll/scripts/troll_eadgar.rs2:17-37; content/maps/m45_157.jm2:9962; content/pack/npc.pack:1114; content/scripts/quests/quest_eadgar/scripts/quest_eadgar.rs2:47-67",
+              "skip_if": {
+                "Any": []
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "stage_in",
+                  "version": 1,
+                  "args": {
+                    "quest": "eadgar",
+                    "any": [
+                      "eadgar:30"
+                    ]
+                  }
+                }
+              },
+              "advances": true
+            }
+          ]
+        },
+        {
+          "stage": "eadgar:30",
+          "required": [],
+          "terminal": false,
+          "recovery_entry": null,
+          "steps": [
+            {
+              "id": "pete-vodka",
+              "kind": "talk",
+              "version": 1,
+              "args": {
+                "npc": "eadgar_zoo_keeper_aviary",
+                "anchor": {
+                  "tile": [
+                    2611,
+                    3285,
+                    0
+                  ],
+                  "source": "content/scripts/quests/quest_eadgar/scripts/eadgar_zoo_keeper_aviary.rs2:2-28; content/maps/m40_51.jm2:10804; content/pack/npc.pack:1217"
+                },
+                "leash": 8,
+                "prefer": [
+                  "When did you add it?"
+                ],
+                "strict": true
+              },
+              "comment": "content/scripts/quests/quest_eadgar/scripts/eadgar_zoo_keeper_aviary.rs2:2-28; content/maps/m40_51.jm2:10804; content/pack/npc.pack:1217",
+              "skip_if": {
+                "Any": [
+                  {
+                    "Fact": {
+                      "kind": "has_item",
+                      "version": 1,
+                      "args": {
+                        "obj": "eadgar_alco_chunks"
+                      }
+                    }
+                  },
+                  {
+                    "Fact": {
+                      "kind": "has_item",
+                      "version": 1,
+                      "args": {
+                        "obj": "eadgar_drunk_parrot"
+                      }
+                    }
+                  }
+                ]
+              },
+              "settle": {
+                "All": []
+              },
+              "advances": false
+            },
+            {
+              "id": "pete-food",
+              "kind": "talk",
+              "version": 1,
+              "args": {
+                "npc": "eadgar_zoo_keeper_aviary",
+                "anchor": {
+                  "tile": [
+                    2611,
+                    3285,
+                    0
+                  ],
+                  "source": "content/scripts/quests/quest_eadgar/scripts/eadgar_zoo_keeper_aviary.rs2:2-28; content/maps/m40_51.jm2:10804; content/pack/npc.pack:1217"
+                },
+                "leash": 8,
+                "prefer": [
+                  "What do you feed them?"
+                ],
+                "strict": true
+              },
+              "comment": "content/scripts/quests/quest_eadgar/scripts/eadgar_zoo_keeper_aviary.rs2:2-28; content/maps/m40_51.jm2:10804; content/pack/npc.pack:1217",
+              "skip_if": {
+                "Any": [
+                  {
+                    "Fact": {
+                      "kind": "has_item",
+                      "version": 1,
+                      "args": {
+                        "obj": "eadgar_alco_chunks"
+                      }
+                    }
+                  },
+                  {
+                    "Fact": {
+                      "kind": "has_item",
+                      "version": 1,
+                      "args": {
+                        "obj": "eadgar_drunk_parrot"
+                      }
+                    }
+                  }
+                ]
+              },
+              "settle": {
+                "All": []
+              },
+              "advances": false
+            },
+            {
+              "id": "mix-alcoholic-chunks",
+              "kind": "use_on",
+              "version": 1,
+              "args": {
+                "item": "vodka",
+                "target": {
+                  "item": "pineapple_chunks"
+                },
+                "product": "eadgar_alco_chunks"
+              },
+              "comment": "content/scripts/quests/quest_eadgar/scripts/eadgar_zoo_keeper_aviary.rs2:30-60",
+              "skip_if": {
+                "Any": [
+                  {
+                    "Fact": {
+                      "kind": "has_item",
+                      "version": 1,
+                      "args": {
+                        "obj": "eadgar_alco_chunks"
+                      }
+                    }
+                  },
+                  {
+                    "Fact": {
+                      "kind": "has_item",
+                      "version": 1,
+                      "args": {
+                        "obj": "eadgar_drunk_parrot"
+                      }
+                    }
+                  }
+                ]
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "has_item",
+                  "version": 1,
+                  "args": {
+                    "obj": "eadgar_alco_chunks"
+                  }
+                }
+              },
+              "advances": false
+            },
+            {
+              "id": "catch-parrot",
+              "kind": "use_on",
+              "version": 1,
+              "args": {
+                "item": "eadgar_alco_chunks",
+                "target": {
+                  "loc": "eadgar_aviary_wall_hatch"
+                },
+                "anchor": {
+                  "tile": [
+                    2611,
+                    3287,
+                    0
+                  ],
+                  "source": "content/maps/m40_51.jm2:7644; content/pack/loc.pack:4044"
+                },
+                "radius": 4,
+                "product": "eadgar_drunk_parrot"
+              },
+              "comment": "content/scripts/quests/quest_eadgar/scripts/eadgar_zoo_keeper_aviary.rs2:62-102",
+              "skip_if": {
+                "Fact": {
+                  "kind": "has_item",
+                  "version": 1,
+                  "args": {
+                    "obj": "eadgar_drunk_parrot"
+                  }
+                }
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "has_item",
+                  "version": 1,
+                  "args": {
+                    "obj": "eadgar_drunk_parrot"
+                  }
+                }
+              },
+              "advances": false
+            },
+            {
+              "id": "show-parrot",
+              "kind": "talk",
+              "version": 1,
+              "args": {
+                "npc": "troll_eadgar",
+                "anchor": {
+                  "tile": [
+                    2890,
+                    10086,
+                    2
+                  ],
+                  "source": "content/scripts/quests/quest_troll/scripts/troll_eadgar.rs2:17-37; content/maps/m45_157.jm2:9962; content/pack/npc.pack:1114; content/scripts/quests/quest_eadgar/scripts/quest_eadgar.rs2:69-91"
+                },
+                "leash": 10,
+                "prefer": [
+                  "No thanks, Eadgar."
+                ],
+                "strict": true
+              },
+              "comment": "content/scripts/quests/quest_troll/scripts/troll_eadgar.rs2:17-37; content/maps/m45_157.jm2:9962; content/pack/npc.pack:1114; content/scripts/quests/quest_eadgar/scripts/quest_eadgar.rs2:69-91",
+              "skip_if": {
+                "Any": []
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "stage_in",
+                  "version": 1,
+                  "args": {
+                    "quest": "eadgar",
+                    "any": [
+                      "eadgar:50"
+                    ]
+                  }
+                }
+              },
+              "advances": true
+            }
+          ],
+          "order": "ordered"
+        },
+        {
+          "stage": "eadgar:50",
+          "required": [],
+          "terminal": false,
+          "recovery_entry": null,
+          "steps": [
+            {
+              "id": "hide-parrot",
+              "kind": "use_on",
+              "version": 1,
+              "args": {
+                "item": "eadgar_drunk_parrot",
+                "target": {
+                  "loc": "eadgar_rack"
+                },
+                "anchor": {
+                  "tile": [
+                    2828,
+                    10096,
+                    0
+                  ],
+                  "source": "content/scripts/quests/quest_eadgar/scripts/quest_eadgar.rs2:147-185; content/maps/m44_157.jm2:10875; content/pack/loc.pack:3822"
+                },
+                "radius": 5
+              },
+              "comment": "content/scripts/quests/quest_eadgar/scripts/quest_eadgar.rs2:147-185; content/maps/m44_157.jm2:10875; content/pack/loc.pack:3822",
+              "skip_if": {
+                "Any": []
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "stage_in",
+                  "version": 1,
+                  "args": {
+                    "quest": "eadgar",
+                    "any": [
+                      "eadgar:60"
+                    ]
+                  }
+                }
+              },
+              "advances": true
+            }
+          ]
+        },
+        {
+          "stage": "eadgar:60",
+          "required": [],
+          "terminal": false,
+          "recovery_entry": null,
+          "steps": [
+            {
+              "id": "report-hidden-parrot",
+              "kind": "talk",
+              "version": 1,
+              "args": {
+                "npc": "troll_eadgar",
+                "anchor": {
+                  "tile": [
+                    2890,
+                    10086,
+                    2
+                  ],
+                  "source": "content/scripts/quests/quest_troll/scripts/troll_eadgar.rs2:17-37; content/maps/m45_157.jm2:9962; content/pack/npc.pack:1114; content/scripts/quests/quest_eadgar/scripts/quest_eadgar.rs2:181-186,221-315,369-386"
+                },
+                "leash": 10,
+                "prefer": [
+                  "No thanks, Eadgar."
+                ],
+                "strict": true
+              },
+              "comment": "content/scripts/quests/quest_troll/scripts/troll_eadgar.rs2:17-37; content/maps/m45_157.jm2:9962; content/pack/npc.pack:1114; content/scripts/quests/quest_eadgar/scripts/quest_eadgar.rs2:181-186,221-315,369-386",
+              "skip_if": {
+                "Any": []
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "stage_in",
+                  "version": 1,
+                  "args": {
+                    "quest": "eadgar",
+                    "any": [
+                      "eadgar:70"
+                    ]
+                  }
+                }
+              },
+              "advances": true
+            }
+          ]
+        },
+        {
+          "stage": "eadgar:70",
+          "required": [],
+          "terminal": false,
+          "recovery_entry": null,
+          "steps": [
+            {
+              "id": "obtain-dirty-robe",
+              "kind": "talk",
+              "version": 1,
+              "args": {
+                "npc": "eadgar_druid_washing",
+                "anchor": {
+                  "tile": [
+                    2913,
+                    3417,
+                    0
+                  ],
+                  "source": "content/maps/m45_53.jm2:7653; content/pack/npc.pack:1214"
+                },
+                "leash": 8,
+                "prefer": [
+                  "Sanfew won't be happy"
+                ],
+                "strict": true
+              },
+              "comment": "content/scripts/quests/quest_eadgar/scripts/eadgar_druid_washing.rs2:1-15,23-28,39-40",
+              "skip_if": {
+                "Fact": {
+                  "kind": "has_item",
+                  "version": 1,
+                  "args": {
+                    "obj": "eadgar_dirty_druid_robe"
+                  }
+                }
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "has_item",
+                  "version": 1,
+                  "args": {
+                    "obj": "eadgar_dirty_druid_robe"
+                  }
+                }
+              },
+              "advances": false
+            },
+            {
+              "id": "give-scarecrow-materials",
+              "kind": "talk",
+              "version": 1,
+              "args": {
+                "npc": "troll_eadgar",
+                "anchor": {
+                  "tile": [
+                    2890,
+                    10086,
+                    2
+                  ],
+                  "source": "content/scripts/quests/quest_troll/scripts/troll_eadgar.rs2:17-37; content/maps/m45_157.jm2:9962; content/pack/npc.pack:1114; content/scripts/quests/quest_eadgar/scripts/quest_eadgar.rs2:221-315,334-386"
+                },
+                "leash": 10,
+                "prefer": [
+                  "No thanks, Eadgar."
+                ],
+                "strict": true
+              },
+              "comment": "content/scripts/quests/quest_troll/scripts/troll_eadgar.rs2:17-37; content/maps/m45_157.jm2:9962; content/pack/npc.pack:1114; content/scripts/quests/quest_eadgar/scripts/quest_eadgar.rs2:221-315,334-386",
+              "skip_if": {
+                "Any": []
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "stage_in",
+                  "version": 1,
+                  "args": {
+                    "quest": "eadgar",
+                    "any": [
+                      "eadgar:80"
+                    ]
+                  }
+                }
+              },
+              "advances": true
+            }
+          ]
+        },
+        {
+          "stage": "eadgar:80",
+          "required": [],
+          "terminal": false,
+          "recovery_entry": null,
+          "order": "ordered",
+          "steps": [
+            {
+              "id": "buy-salarin-food", "kind": "buy", "version": 1, "advances": false,
+              "args": {"shop": {"npc": "baker_merchant", "anchor": {"tile": [2654,3311,0], "source": "content/maps/m41_51.jm2:10991"}}, "obj": "bread", "qty": 10, "est_gp": 126},
+              "comment": "content/scripts/areas/area_ardougne_east/configs/ardougne_east.inv:15-24; content/scripts/areas/area_ardougne_east/configs/ardougne_east.npc:383-413; content/scripts/skill_cooking/configs/cooking_inv/configs/dough/dough.obj:39-50; content/scripts/shop/scripts/shop.rs2:59-68,131-147,182-187.",
+              "skip_if": {"Any": [{"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "ranarr_weed"}}}, {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "unidentified_ranarr"}}}, {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "ranarrvial"}}}, {"Fact": {"kind": "item_count_at_least", "version": 1, "args": {"obj": "bread", "qty": 10}}}]},
+              "settle": {"Fact": {"kind": "item_count_at_least", "version": 1, "args": {"obj": "bread", "qty": 10}}}
+            },
+            {
+              "id": "buy-chest-antipoison", "kind": "buy", "version": 1, "advances": false,
+              "args": {"shop": {"npc": "jiminua", "anchor": {"tile": [2767,3122,0], "source": "content/maps/m43_48.jm2:7119; content/pack/npc.pack:561"}}, "obj": "3doseantipoison", "qty": 1, "est_gp": 432},
+              "comment": "content/scripts/areas/area_karamja/configs/karamja.inv:29-50; content/scripts/areas/area_karamja/configs/karamja.npc:168-201; content/scripts/skill_herblore/configs/brewing/potions.obj:617-634; content/scripts/shop/scripts/shop.rs2:131-147,182-187.",
+              "skip_if": {"Any": [{"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "3doseantipoison"}}}, {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "unidentified_ranarr"}}}, {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "ranarr_weed"}}}, {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "ranarrvial"}}}]},
+              "settle": {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "3doseantipoison"}}}
+            },
+            {
+              "id": "buy-wind-strike-air", "kind": "buy", "version": 1, "advances": false,
+              "args": {"shop": {"npc": "betty", "anchor": {"tile": [3012,3259,0], "source": "content/maps/m47_50.jm2:10002; content/pack/npc.pack:584"}}, "obj": "airrune", "qty": 1000, "est_gp": 23500},
+              "comment": "Full-stock charge: content/scripts/areas/area_port_sarim/configs/port_sarim.inv:35-46; content/scripts/areas/area_port_sarim/configs/port_sarim.npc:187-222; content/scripts/skill_magic/configs/runes.obj:26-30; content/scripts/shop/scripts/shop.rs2:59-68,131-147,182-187.",
+              "skip_if": {"Any": [{"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "sinister_key"}}}, {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "unidentified_ranarr"}}}, {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "ranarr_weed"}}}, {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "ranarrvial"}}}, {"Fact": {"kind": "item_count_at_least", "version": 1, "args": {"obj": "airrune", "qty": 1000}}}]},
+              "settle": {"Fact": {"kind": "item_count_at_least", "version": 1, "args": {"obj": "airrune", "qty": 1000}}}
+            },
+            {
+              "id": "buy-wind-strike-mind", "kind": "buy", "version": 1, "advances": false,
+              "args": {"shop": {"npc": "betty", "anchor": {"tile": [3012,3259,0], "source": "content/maps/m47_50.jm2:10002; content/pack/npc.pack:584"}}, "obj": "mindrune", "qty": 1000, "est_gp": 17490},
+              "comment": "Full-stock charge: content/scripts/areas/area_port_sarim/configs/port_sarim.inv:35-46; content/scripts/areas/area_port_sarim/configs/port_sarim.npc:187-222; content/scripts/skill_magic/configs/runes.obj:50-54; content/scripts/shop/scripts/shop.rs2:59-68,131-147,182-187.",
+              "skip_if": {"Any": [{"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "sinister_key"}}}, {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "unidentified_ranarr"}}}, {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "ranarr_weed"}}}, {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "ranarrvial"}}}, {"Fact": {"kind": "item_count_at_least", "version": 1, "args": {"obj": "mindrune", "qty": 1000}}}]},
+              "settle": {"Fact": {"kind": "item_count_at_least", "version": 1, "args": {"obj": "mindrune", "qty": 1000}}}
+            },
+            {
+              "id": "climb-to-salarin", "kind": "interact", "version": 1, "advances": false,
+              "args": {"target": {"loc": "climbingcaverocks1"}, "op": "Climb-up", "anchor": {"tile": [2616,9572,0], "source": "content/maps/m40_149.jm2:5928; content/pack/loc.pack:2318"}, "radius": 3},
+              "comment": "The town cellar and Yanille stairs reach the lower floor; the rubble requires Agility 67 and lands in Salarin's chamber. content/scripts/ladders+stairs/scripts/stairs.rs2:90-95,127-134; content/scripts/areas/area_yanille/scripts/agility_dungeon.rs2:85-90.",
+              "skip_if": {"Any": [{"Fact": {"kind": "in_area", "version": 1, "args": {"area": "salarin-chamber"}}}, {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "sinister_key"}}}, {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "unidentified_ranarr"}}}, {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "ranarr_weed"}}}, {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "ranarrvial"}}}]},
+              "settle": {"Fact": {"kind": "in_area", "version": 1, "args": {"area": "salarin-chamber"}}}
+            },
+            {
+              "id": "salarin-sinister-key", "kind": "combat", "version": 1, "advances": false,
+              "args": {"target": {"npc": "salarin_the_twisted", "not_targeting_others": true, "pick": "nearest"}, "tactic": {"kind": "open", "style": "mage", "engage_radius": 8, "auto_retaliate": false}, "spells": ["wind_strike"], "fallback_spells": false, "stand": {"tile": [2613,9523,0], "source": "content/maps/m40_148.jm2:9083; content/pack/npc.pack:206"}, "lost_radius": 20, "kill_budget_ticks": 500, "until_drop": {"obj": "sinister_key", "max_kills": 114, "stop": "GAP-salarin-sinister-key-budget"}},
+              "comment": "content/scripts/drop tables/scripts/salarin_the_twisted.rs2:17,43-46 gives the key at 10/128. content/scripts/skill_combat/scripts/player/player_magic.rs2:203-220 sets successful Wind Strike damage to 9.",
+              "skip_if": {"Any": [{"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "sinister_key"}}}, {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "unidentified_ranarr"}}}, {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "ranarr_weed"}}}, {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "ranarrvial"}}}]},
+              "settle": {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "sinister_key"}}}
+            },
+            {
+              "id": "leave-salarin-chamber", "kind": "interact", "version": 1, "advances": false,
+              "args": {"target": {"loc": "climbingcaverocks2"}, "op": "Climb-down", "anchor": {"tile": [2615,9504,0], "source": "content/maps/m40_148.jm2:8207; content/pack/loc.pack:2319"}, "radius": 3},
+              "comment": "content/scripts/areas/area_yanille/scripts/agility_dungeon.rs2:93-95 returns to the lower floor.",
+              "skip_if": {"Not": {"Fact": {"kind": "in_area", "version": 1, "args": {"area": "salarin-chamber"}}}},
+              "settle": {"Fact": {"kind": "near", "version": 1, "args": {"tile": [2616,9571,0], "radius": 3}}}
+            },
+            {
+              "id": "squeeze-to-sinister-chest", "kind": "interact", "version": 1, "advances": false,
+              "args": {"target": {"loc": "obstical_pipe4"}, "op": "Squeeze-through", "anchor": {"tile": [2576,9506,0], "source": "content/maps/m40_148.jm2:5789; content/pack/loc.pack:2291"}, "radius": 2},
+              "comment": "The outside cellar and ledge lead to the eastern pipe. The pipe requires Agility 49. content/scripts/ladders+stairs/scripts/stairs.rs2:127-134; content/scripts/areas/area_yanille/scripts/agility_dungeon.rs2:1-28,30-45.",
+              "skip_if": {"Any": [{"Fact": {"kind": "in_area", "version": 1, "args": {"area": "sinister-chest-room"}}}, {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "unidentified_ranarr"}}}, {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "ranarr_weed"}}}, {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "ranarrvial"}}}]},
+              "settle": {"Fact": {"kind": "in_area", "version": 1, "args": {"area": "sinister-chest-room"}}}
+            },
+            {
+              "id": "approach-sinister-chest", "kind": "walk", "version": 1, "advances": false,
+              "args": {"tile": [2561,9508,0], "radius": 1, "source": "content/maps/m40_148.jm2:4888; content/scripts/areas/area_yanille/configs/agility_dungeon.loc:56-61"},
+              "skip_if": {"Any": [{"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "unidentified_ranarr"}}}, {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "ranarr_weed"}}}, {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "ranarrvial"}}}, {"Fact": {"kind": "near", "version": 1, "args": {"tile": [2561,9508,0], "radius": 1}}}]},
+              "settle": {"Fact": {"kind": "near", "version": 1, "args": {"tile": [2561,9508,0], "radius": 1}}}
+            },
+            {
+              "id": "drink-chest-antipoison", "kind": "interact", "version": 1, "advances": false,
+              "args": {"target": {"held": "3doseantipoison"}, "op": "Drink"},
+              "comment": "content/scripts/player/scripts/consumption/effects/scripts/anti_poison.rs2:1-8; content/scripts/areas/area_yanille/scripts/agility_dungeon.rs2:103-112.",
+              "skip_if": {"Any": [{"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "unidentified_ranarr"}}}, {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "ranarr_weed"}}}, {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "ranarrvial"}}}, {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "2doseantipoison"}}}]},
+              "settle": {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "2doseantipoison"}}}
+            },
+            {
+              "id": "unlock-sinister-chest", "kind": "use_on", "version": 1, "advances": false,
+              "args": {"item": "sinister_key", "target": {"loc": "shuttwistedchest"}, "anchor": {"tile": [2561,9507,0], "source": "content/maps/m40_148.jm2:4888; content/pack/loc.pack:378"}, "radius": 3},
+              "comment": "content/scripts/areas/area_yanille/scripts/agility_dungeon.rs2:101-120 consumes the key, poisons the player and gives three unidentified Ranarr.",
+              "skip_if": {"Any": [{"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "unidentified_ranarr"}}}, {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "ranarr_weed"}}}, {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "ranarrvial"}}}]},
+              "settle": {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "unidentified_ranarr"}}}
+            },
+            {
+              "id": "identify-ranarr", "kind": "interact", "version": 1, "advances": false,
+              "args": {"target": {"held": "unidentified_ranarr"}, "op": "Identify"},
+              "comment": "content/scripts/skill_herblore/scripts/identifying/identify.rs2:13-14,58-73; content/scripts/skill_herblore/configs/herbs.obj:89-105 requires Herblore 25.",
+              "skip_if": {"Any": [{"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "ranarr_weed"}}}, {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "ranarrvial"}}}]},
+              "settle": {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "ranarr_weed"}}}
+            },
+            {
+              "id": "leave-sinister-chest-room", "kind": "interact", "version": 1, "advances": false,
+              "args": {"target": {"loc": "obstical_pipe4"}, "op": "Squeeze-through", "anchor": {"tile": [2573,9506,0], "source": "content/maps/m40_148.jm2:5613; content/pack/loc.pack:2291"}, "radius": 2},
+              "comment": "content/scripts/areas/area_yanille/scripts/agility_dungeon.rs2:1-28 moves east through the pipe.",
+              "skip_if": {"Not": {"Fact": {"kind": "in_area", "version": 1, "args": {"area": "sinister-chest-room"}}}},
+              "settle": {"Fact": {"kind": "near", "version": 1, "args": {"tile": [2578,9506,0], "radius": 2}}}
+            },
+            {
+              "id": "brew-ranarr-potion", "kind": "use_on", "version": 1, "advances": false,
+              "args": {"item": "ranarr_weed", "target": {"item": "vial_water"}, "product": "ranarrvial"},
+              "comment": "content/scripts/skill_herblore/configs/brewing/brew_potion.struct:28-33 requires Herblore 30.",
+              "skip_if": {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "ranarrvial"}}},
+              "settle": {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "ranarrvial"}}}
+            },
+            {
+              "id": "pick-thistle",
+              "kind": "interact",
+              "version": 1,
+              "args": {
+                "target": {
+                  "npc": "eadgar_troll_thistle"
+                },
+                "op": "Pick",
+                "anchor": {
+                  "tile": [
+                    2891,
+                    3676,
+                    0
+                  ],
+                  "source": "content/scripts/quests/quest_eadgar/scripts/eadgar_troll_thistle.rs2:9-18"
+                },
+                "radius": 18
+              },
+              "comment": "content/scripts/quests/quest_eadgar/scripts/eadgar_troll_thistle.rs2:1-23",
+              "skip_if": {
+                "Any": [
+                  {
+                    "Fact": {
+                      "kind": "has_item",
+                      "version": 1,
+                      "args": {
+                        "obj": "eadgar_troll_thistle"
+                      }
+                    }
+                  },
+                  {
+                    "Fact": {
+                      "kind": "has_item",
+                      "version": 1,
+                      "args": {
+                        "obj": "eadgar_dried_troll_thistle"
+                      }
+                    }
+                  },
+                  {
+                    "Fact": {
+                      "kind": "has_item",
+                      "version": 1,
+                      "args": {
+                        "obj": "eadgar_ground_troll_thistle"
+                      }
+                    }
+                  },
+                  {
+                    "Fact": {
+                      "kind": "has_item",
+                      "version": 1,
+                      "args": {
+                        "obj": "eadgar_ground_troll_thistle_potion"
+                      }
+                    }
+                  }
+                ]
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "has_item",
+                  "version": 1,
+                  "args": {
+                    "obj": "eadgar_troll_thistle"
+                  }
+                }
+              },
+              "advances": false
+            },
+            {
+              "id": "light-fire",
+              "kind": "use_on",
+              "version": 1,
+              "args": {
+                "item": "tinderbox",
+                "target": {
+                  "item": "logs"
+                },
+                "settle_ms": 120000
+              },
+              "comment": "content/scripts/skill_firemaking/scripts/firemaking.rs2:13-20,79-132",
+              "skip_if": {
+                "Any": [
+                  {
+                    "Fact": {
+                      "kind": "loc_present",
+                      "version": 1,
+                      "args": {
+                        "loc": "fire"
+                      }
+                    }
+                  },
+                  {
+                    "Any": [
+                      {
+                        "Fact": {
+                          "kind": "has_item",
+                          "version": 1,
+                          "args": {
+                            "obj": "eadgar_dried_troll_thistle"
+                          }
+                        }
+                      },
+                      {
+                        "Fact": {
+                          "kind": "has_item",
+                          "version": 1,
+                          "args": {
+                            "obj": "eadgar_ground_troll_thistle"
+                          }
+                        }
+                      },
+                      {
+                        "Fact": {
+                          "kind": "has_item",
+                          "version": 1,
+                          "args": {
+                            "obj": "eadgar_ground_troll_thistle_potion"
+                          }
+                        }
+                      }
+                    ]
+                  }
+                ]
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "loc_present",
+                  "version": 1,
+                  "args": {
+                    "loc": "fire"
+                  }
+                }
+              },
+              "advances": false
+            },
+            {
+              "id": "dry-thistle",
+              "kind": "use_on",
+              "version": 1,
+              "args": {
+                "item": "eadgar_troll_thistle",
+                "target": {
+                  "loc": "fire"
+                },
+                "radius": 8,
+                "product": "eadgar_dried_troll_thistle"
+              },
+              "comment": "content/scripts/skill_cooking/configs/cooking_source/cooking_generic.dbrow:679-688",
+              "skip_if": {
+                "Any": [
+                  {
+                    "Fact": {
+                      "kind": "has_item",
+                      "version": 1,
+                      "args": {
+                        "obj": "eadgar_dried_troll_thistle"
+                      }
+                    }
+                  },
+                  {
+                    "Fact": {
+                      "kind": "has_item",
+                      "version": 1,
+                      "args": {
+                        "obj": "eadgar_ground_troll_thistle"
+                      }
+                    }
+                  },
+                  {
+                    "Fact": {
+                      "kind": "has_item",
+                      "version": 1,
+                      "args": {
+                        "obj": "eadgar_ground_troll_thistle_potion"
+                      }
+                    }
+                  }
+                ]
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "has_item",
+                  "version": 1,
+                  "args": {
+                    "obj": "eadgar_dried_troll_thistle"
+                  }
+                }
+              },
+              "advances": false
+            },
+            {
+              "id": "grind-thistle",
+              "kind": "use_on",
+              "version": 1,
+              "args": {
+                "item": "pestle_and_mortar",
+                "target": {
+                  "item": "eadgar_dried_troll_thistle"
+                },
+                "product": "eadgar_ground_troll_thistle"
+              },
+              "comment": "content/scripts/quests/quest_eadgar/scripts/eadgar_troll_thistle.rs2:32-38",
+              "skip_if": {
+                "Any": [
+                  {
+                    "Fact": {
+                      "kind": "has_item",
+                      "version": 1,
+                      "args": {
+                        "obj": "eadgar_ground_troll_thistle"
+                      }
+                    }
+                  },
+                  {
+                    "Fact": {
+                      "kind": "has_item",
+                      "version": 1,
+                      "args": {
+                        "obj": "eadgar_ground_troll_thistle_potion"
+                      }
+                    }
+                  }
+                ]
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "has_item",
+                  "version": 1,
+                  "args": {
+                    "obj": "eadgar_ground_troll_thistle"
+                  }
+                }
+              },
+              "advances": false
+            },
+            {
+              "id": "mix-potion",
+              "kind": "use_on",
+              "version": 1,
+              "args": {
+                "item": "eadgar_ground_troll_thistle",
+                "target": {
+                  "item": "ranarrvial"
+                },
+                "product": "eadgar_ground_troll_thistle_potion"
+              },
+              "comment": "content/scripts/quests/quest_eadgar/scripts/eadgar_troll_thistle.rs2:40-44",
+              "skip_if": {
+                "Fact": {
+                  "kind": "has_item",
+                  "version": 1,
+                  "args": {
+                    "obj": "eadgar_ground_troll_thistle_potion"
+                  }
+                }
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "has_item",
+                  "version": 1,
+                  "args": {
+                    "obj": "eadgar_ground_troll_thistle_potion"
+                  }
+                }
+              },
+              "advances": false
+            },
+            {
+              "id": "give-potion",
+              "kind": "talk",
+              "version": 1,
+              "args": {
+                "npc": "troll_eadgar",
+                "anchor": {
+                  "tile": [
+                    2890,
+                    10086,
+                    2
+                  ],
+                  "source": "content/scripts/quests/quest_troll/scripts/troll_eadgar.rs2:17-37; content/maps/m45_157.jm2:9962; content/pack/npc.pack:1114; content/scripts/quests/quest_eadgar/scripts/quest_eadgar.rs2:388-405"
+                },
+                "leash": 10,
+                "prefer": [],
+                "strict": true
+              },
+              "comment": "content/scripts/quests/quest_troll/scripts/troll_eadgar.rs2:17-37; content/maps/m45_157.jm2:9962; content/pack/npc.pack:1114; content/scripts/quests/quest_eadgar/scripts/quest_eadgar.rs2:388-405",
+              "skip_if": {
+                "Any": []
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "stage_in",
+                  "version": 1,
+                  "args": {
+                    "quest": "eadgar",
+                    "any": [
+                      "eadgar:85"
+                    ]
+                  }
+                }
+              },
+              "advances": true
+            }
+          ]
+        },
+        {
+          "stage": "eadgar:85",
+          "required": [],
+          "terminal": false,
+          "recovery_entry": null,
+          "steps": [
+            {
+              "id": "retrieve-parrot",
+              "kind": "interact",
+              "version": 1,
+              "args": {
+                "target": {
+                  "loc": "eadgar_rack"
+                },
+                "op": "Search",
+                "anchor": {
+                  "tile": [
+                    2828,
+                    10096,
+                    0
+                  ],
+                  "source": "content/scripts/quests/quest_eadgar/scripts/quest_eadgar.rs2:147-185; content/maps/m44_157.jm2:10875; content/pack/loc.pack:3822"
+                },
+                "radius": 5
+              },
+              "comment": "content/scripts/quests/quest_eadgar/scripts/quest_eadgar.rs2:147-164",
+              "skip_if": {
+                "Any": []
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "stage_in",
+                  "version": 1,
+                  "args": {
+                    "quest": "eadgar",
+                    "any": [
+                      "eadgar:86"
+                    ]
+                  }
+                }
+              },
+              "advances": true
+            }
+          ]
+        },
+        {
+          "stage": "eadgar:86",
+          "required": [],
+          "terminal": false,
+          "recovery_entry": null,
+          "steps": [
+            {
+              "id": "receive-fake-man",
+              "kind": "talk",
+              "version": 1,
+              "args": {
+                "npc": "troll_eadgar",
+                "anchor": {
+                  "tile": [
+                    2890,
+                    10086,
+                    2
+                  ],
+                  "source": "content/scripts/quests/quest_troll/scripts/troll_eadgar.rs2:17-37; content/maps/m45_157.jm2:9962; content/pack/npc.pack:1114; content/scripts/quests/quest_eadgar/scripts/quest_eadgar.rs2:413-436"
+                },
+                "leash": 10,
+                "prefer": [
+                  "No thanks, Eadgar."
+                ],
+                "strict": true
+              },
+              "comment": "content/scripts/quests/quest_troll/scripts/troll_eadgar.rs2:17-37; content/maps/m45_157.jm2:9962; content/pack/npc.pack:1114; content/scripts/quests/quest_eadgar/scripts/quest_eadgar.rs2:413-436",
+              "skip_if": {
+                "Any": []
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "stage_in",
+                  "version": 1,
+                  "args": {
+                    "quest": "eadgar",
+                    "any": [
+                      "eadgar:87"
+                    ]
+                  }
+                }
+              },
+              "advances": true
+            }
+          ]
+        },
+        {
+          "stage": "eadgar:87",
+          "required": [],
+          "terminal": false,
+          "recovery_entry": null,
+          "steps": [
+            {
+              "id": "give-fake-man",
+              "kind": "talk",
+              "version": 1,
+              "args": {
+                "npc": "eadgar_troll_chief_cook",
+                "anchor": {
+                  "tile": [
+                    2844,
+                    10057,
+                    1
+                  ],
+                  "source": "content/scripts/quests/quest_eadgar/scripts/eadgar_troll_chief_cook.rs2:12-59; content/maps/m44_157.jm2:15979; content/pack/npc.pack:1152; content/scripts/quests/quest_eadgar/scripts/eadgar_troll_chief_cook.rs2:24-39,64-77"
+                },
+                "leash": 10,
+                "prefer": [
+                  "So, where can I get some goutweed?"
+                ],
+                "strict": true
+              },
+              "comment": "content/scripts/quests/quest_eadgar/scripts/eadgar_troll_chief_cook.rs2:12-59; content/maps/m44_157.jm2:15979; content/pack/npc.pack:1152; content/scripts/quests/quest_eadgar/scripts/eadgar_troll_chief_cook.rs2:24-39,64-77",
+              "skip_if": {
+                "Any": []
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "stage_in",
+                  "version": 1,
+                  "args": {
+                    "quest": "eadgar",
+                    "any": [
+                      "eadgar:90"
+                    ]
+                  }
+                }
+              },
+              "advances": true
+            }
+          ]
+        },
+        {
+          "stage": "eadgar:90",
+          "required": [],
+          "terminal": false,
+          "recovery_entry": null,
+          "steps": [
+            {
+              "id": "open-drawers",
+              "kind": "interact",
+              "version": 1,
+              "args": {
+                "target": {
+                  "loc": "eadgar_kitchen_drawers"
+                },
+                "op": "Open",
+                "anchor": {
+                  "tile": [
+                    2852,
+                    10049,
+                    1
+                  ],
+                  "source": "content/maps/m44_157.jm2:14611; content/pack/loc.pack:3817"
+                },
+                "radius": 3
+              },
+              "comment": "content/scripts/quests/quest_eadgar/scripts/quest_eadgar.rs2:459-465",
+              "skip_if": {
+                "Any": [
+                  {
+                    "Fact": {
+                      "kind": "has_item",
+                      "version": 1,
+                      "args": {
+                        "obj": "eadgar_troll_storeroom_key"
+                      }
+                    }
+                  },
+                  {
+                    "Fact": {
+                      "kind": "loc_present",
+                      "version": 1,
+                      "args": {
+                        "loc": "eadgar_kitchen_drawers_open"
+                      }
+                    }
+                  }
+                ]
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "loc_present",
+                  "version": 1,
+                  "args": {
+                    "loc": "eadgar_kitchen_drawers_open"
+                  }
+                }
+              },
+              "advances": false
+            },
+            {
+              "id": "search-drawers",
+              "kind": "interact",
+              "version": 1,
+              "args": {
+                "target": {
+                  "loc": "eadgar_kitchen_drawers_open"
+                },
+                "op": "Search",
+                "anchor": {
+                  "tile": [
+                    2852,
+                    10049,
+                    1
+                  ],
+                  "source": "content/maps/m44_157.jm2:14611; content/pack/loc.pack:3818"
+                },
+                "radius": 3
+              },
+              "comment": "content/scripts/quests/quest_eadgar/scripts/quest_eadgar.rs2:473-486",
+              "skip_if": {
+                "Fact": {
+                  "kind": "has_item",
+                  "version": 1,
+                  "args": {
+                    "obj": "eadgar_troll_storeroom_key"
+                  }
+                }
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "has_item",
+                  "version": 1,
+                  "args": {
+                    "obj": "eadgar_troll_storeroom_key"
+                  }
+                }
+              },
+              "advances": false
+            },
+            {
+              "id": "unlock-storeroom",
+              "kind": "interact",
+              "version": 1,
+              "args": {
+                "target": {
+                  "loc": "eadgar_storeroomdoor"
+                },
+                "op": "Open",
+                "anchor": {
+                  "tile": [
+                    2869,
+                    10084,
+                    0
+                  ],
+                  "source": "content/maps/m44_157.jm2:13122; content/pack/loc.pack:3811"
+                },
+                "radius": 4
+              },
+              "comment": "content/scripts/quests/quest_eadgar/scripts/quest_eadgar.rs2:488-505",
+              "skip_if": {
+                "Any": []
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "stage_in",
+                  "version": 1,
+                  "args": {
+                    "quest": "eadgar",
+                    "any": [
+                      "eadgar:100"
+                    ]
+                  }
+                }
+              },
+              "advances": true
+            }
+          ]
+        },
+        {
+          "stage": "eadgar:100",
+          "required": [],
+          "terminal": false,
+          "recovery_entry": null,
+          "steps": [
+            {
+              "id": "search-goutweed",
+              "kind": "interact",
+              "version": 1,
+              "args": {
+                "target": {
+                  "loc": "eadgar_crate_goutweed"
+                },
+                "op": "Search",
+                "anchor": {
+                  "tile": [
+                    2856,
+                    10074,
+                    0
+                  ],
+                  "source": "content/maps/m44_157.jm2:12419; content/pack/loc.pack:3823"
+                },
+                "radius": 5,
+                "wait_until": { "All": [
+                  { "Not": { "Fact": { "kind": "npc_near", "version": 1, "args": { "npc": "troll_sguard1", "radius": 3 } } } },
+                  { "Not": { "Fact": { "kind": "npc_near", "version": 1, "args": { "npc": "troll_sguard2", "radius": 3 } } } },
+                  { "Not": { "Fact": { "kind": "npc_near", "version": 1, "args": { "npc": "troll_sguard3", "radius": 3 } } } },
+                  { "Not": { "Fact": { "kind": "npc_near", "version": 1, "args": { "npc": "troll_sguard4", "radius": 3 } } } },
+                  { "Not": { "Fact": { "kind": "npc_near", "version": 1, "args": { "npc": "troll_sguard5", "radius": 3 } } } },
+                  { "Not": { "Fact": { "kind": "npc_near", "version": 1, "args": { "npc": "troll_sguard6", "radius": 3 } } } },
+                  { "Not": { "Fact": { "kind": "npc_near", "version": 1, "args": { "npc": "troll_sguard7", "radius": 3 } } } },
+                  { "Not": { "Fact": { "kind": "npc_near", "version": 1, "args": { "npc": "troll_sguard8", "radius": 3 } } } }
+                ] }
+              },
+              "comment": "content/scripts/quests/quest_eadgar/scripts/quest_eadgar.rs2:510-568",
+              "skip_if": {
+                "Fact": {
+                  "kind": "has_item",
+                  "version": 1,
+                  "args": {
+                    "obj": "eadgar_goutweed_herb"
+                  }
+                }
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "has_item",
+                  "version": 1,
+                  "args": {
+                    "obj": "eadgar_goutweed_herb"
+                  }
+                }
+              },
+              "advances": false
+            },
+            {
+              "id": "finish",
+              "kind": "talk",
+              "version": 1,
+              "args": {
+                "npc": "sanfew",
+                "anchor": {
+                  "tile": [
+                    2897,
+                    3426,
+                    1
+                  ],
+                  "source": "content/scripts/areas/area_taverly/scripts/sanfew.rs2:96-111,130-136; content/maps/m45_53.jm2:7657; content/pack/npc.pack:455"
+                },
+                "leash": 8,
+                "prefer": []
+              },
+              "comment": "content/scripts/areas/area_taverly/scripts/sanfew.rs2:5-7,150-181; content/scripts/quests/quest_eadgar/scripts/quest_eadgar.rs2:592-598",
+              "skip_if": {
+                "Any": []
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "quest_colour",
+                  "version": 1,
+                  "args": {
+                    "quest": "eadgar",
+                    "is": "complete"
+                  }
+                }
+              },
+              "advances": true
+            }
+          ]
+        },
+        {
+          "stage": "eadgar:complete",
+          "required": [],
+          "terminal": true,
+          "recovery_entry": null,
+          "steps": []
+        }
+      ]
+    }
+  ]
+}

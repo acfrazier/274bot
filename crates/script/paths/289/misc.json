@@ -1,0 +1,1279 @@
+{
+  "$schema": "../path.schema.json",
+  "schema": 3,
+  "id": "misc",
+  "display_name": "Throne of Miscellania",
+  "required": [
+    "hero",
+    "viking"
+  ],
+  "tested_stats": null,
+  "partner": null,
+  "quest": {
+    "members": true,
+    "quest_points": 1,
+    "requirements": [
+      {
+        "id": "hero",
+        "kind": {
+          "Quest": "hero"
+        },
+        "at": "start",
+        "source": "content/scripts/quests/quest_misc/scripts/misc_journal.rs2:6-13; content/scripts/quests/quest_misc/scripts/misc_door_guard.rs2:9-18"
+      },
+      {
+        "id": "viking",
+        "kind": {
+          "Quest": "viking"
+        },
+        "at": "start",
+        "source": "content/scripts/quests/quest_misc/scripts/misc_journal.rs2:14-18; content/scripts/quests/quest_viking/scripts/viking_sailor.rs2:14-17"
+      }
+    ],
+    "items": [],
+    "acquire": {"STOP-iron-smelting-20-failures":[{"id":"mine-one-iron-ore","kind":"gather","version":1,"advances":false,"args":{"skill":"mining","resource":"iron","until":{"obj":"iron_ore","qty":1},"anchor":{"tile":[2602,3233,0],"source":"/Users/acfrazier/experiments/lostcity-289/content/maps/m40_50.jm2:5587; /Users/acfrazier/experiments/lostcity-289/content/pack/loc.pack:2093; /Users/acfrazier/experiments/lostcity-289/content/scripts/skill_mining/configs/mine.dbrow:49-60"},"radius":3,"settle_ms":300000},"comment":"Mining 15 yields iron ore: /Users/acfrazier/experiments/lostcity-289/content/scripts/skill_mining/configs/mine.dbrow:49-60.","skip_if":{"Any":[{"Fact":{"kind":"has_item","version":1,"args":{"obj":"iron_bar"}}},{"Fact":{"kind":"has_item","version":1,"args":{"obj":"iron_ore"}}}]},"settle":{"Fact":{"kind":"has_item","version":1,"args":{"obj":"iron_ore"}}}},{"id":"smelt-one-iron-ore","kind":"use_on","version":1,"advances":false,"args":{"item":"iron_ore","target":{"loc":"furnace1"},"anchor":{"tile":[2601,3310,0],"source":"/Users/acfrazier/experiments/lostcity-289/content/maps/m40_51.jm2:7239; /Users/acfrazier/experiments/lostcity-289/content/scripts/skill_smithing/scripts/smelting/smelting.rs2:1-29,100-115"},"radius":3,"settle_ms":15000},"comment":"One ore is consumed per attempt. Without a forging ring, each attempt fails with probability 1/2. /Users/acfrazier/experiments/lostcity-289/content/scripts/skill_smithing/scripts/smelting/smelting.rs2:190-208.","skip_if":{"Fact":{"kind":"has_item","version":1,"args":{"obj":"iron_bar"}}},"settle":{"Any":[{"Fact":{"kind":"has_item","version":1,"args":{"obj":"iron_bar"}}},{"Not":{"Fact":{"kind":"has_item","version":1,"args":{"obj":"iron_ore"}}}}]}}]},
+    "bank": "nearest",
+    "coin_float": 0,
+    "loadouts": {},
+    "areas": {
+      "islands": {
+        "boxes": [
+          [
+            2496,
+            3840,
+            2623,
+            3903,
+            0
+          ],
+          [
+            2496,
+            3840,
+            2623,
+            3903,
+            1
+          ],
+          [
+            2496,
+            3840,
+            2623,
+            3903,
+            2
+          ]
+        ],
+        "source": "content/scripts/areas/area_miscellania/configs/miscellania.constant:1; content/maps/m39_60.jm2:8762-8769; content/maps/m40_60.jm2:7468"
+      },
+      "throne": {
+        "boxes": [
+          [
+            2496,
+            3854,
+            2505,
+            3865,
+            1
+          ]
+        ],
+        "source": "content/maps/m39_60.jm2:7804,7810,8765-8769"
+      }
+    },
+    "tools": [
+      "obj:iron_bar",
+      "obj:logs",
+      "obj:flowers_waterfall_quest_mixed",
+      "obj:misc_awful_anthem",
+      "obj:misc_good_anthem",
+      "obj:misc_treaty",
+      "obj:misc_giant_nib",
+      "obj:misc_giant_pen"
+    ],
+    "owns_inventory": true
+  },
+  "roles": [
+    {
+      "role": null,
+      "progress_binding": "journal:misc",
+      "progress": {
+        "colour": {
+          "not_started": "misc:0",
+          "in_progress": "misc:10",
+          "complete": "misc:complete"
+        },
+        "rules": [
+          {
+            "stage": "misc:90",
+            "all": [
+              "i gave the king the giant pen"
+            ],
+            "any": [],
+            "not": [],
+            "varp": 90
+          },
+          {
+            "stage": "misc:80",
+            "all": [
+              "the king needs a",
+              "large pen"
+            ],
+            "any": [],
+            "not": [],
+            "varp": 80
+          },
+          {
+            "stage": "misc:70",
+            "all": [
+              "i should show this to",
+              "king vargas"
+            ],
+            "any": [],
+            "not": [],
+            "varp": 70
+          },
+          {
+            "stage": "misc:60",
+            "all": [
+              "i should show the anthem to"
+            ],
+            "any": [],
+            "not": [],
+            "varp": 60
+          },
+          {
+            "stage": "misc:50",
+            "all": [
+              "maybe i should find someone to correct it"
+            ],
+            "any": [],
+            "not": [],
+            "varp": 50
+          },
+          {
+            "stage": "misc:40",
+            "all": [
+              "i need to find a",
+              "to compose the anthem"
+            ],
+            "any": [],
+            "not": [],
+            "varp": 40
+          },
+          {
+            "stage": "misc:30",
+            "all": [
+              "king vargas will recognise etceteria if it changes its"
+            ],
+            "any": [],
+            "not": [],
+            "varp": 30
+          },
+          {
+            "stage": "misc:20",
+            "all": [
+              "she wants",
+              "sovereign nation"
+            ],
+            "any": [],
+            "not": [],
+            "varp": 20
+          },
+          {
+            "stage": "misc:10",
+            "all": [
+              "i need to negotiate peace"
+            ],
+            "any": [],
+            "not": [],
+            "varp": 10
+          }
+        ],
+        "flags": [],
+        "monotonic": true
+      },
+      "prelude": [],
+      "sequences": [
+        {
+          "stage": "misc:0",
+          "required": [],
+          "terminal": false,
+          "recovery_entry": null,
+          "cross": [
+            {"id":"highwayman@2735,3521,0","name":"Highwayman (2735,3521,0)","reason":"The route between Rellekka and Ardougne crosses this zone. content/maps/m42_55.jm2:6594; QUEST-CAMPAIGN/triage/review-batch-5.md:242-256."},
+            {"id":"wolf@2647,3584,0","name":"Wolf (2647,3584,0)","reason":"The route between Rellekka and Ardougne crosses this zone. content/maps/m41_56.jm2:5700; QUEST-CAMPAIGN/triage/review-batch-5.md:242-260."}
+          ],
+          "steps": [
+            {"id":"acquire-iron-bar","kind":"acquire","version":1,"advances":false,"args":{"recipe":"STOP-iron-smelting-20-failures","max_restarts":19},"comment":"At most 20 smelts. All 20 fail with probability 1/1048576 without a forging ring: /Users/acfrazier/experiments/lostcity-289/content/scripts/skill_smithing/scripts/smelting/smelting.rs2:190-208.","skip_if":{"Fact":{"kind":"has_item","version":1,"args":{"obj":"iron_bar"}}},"settle":{"Fact":{"kind":"has_item","version":1,"args":{"obj":"iron_bar"}}}},
+            {"id":"chop-pen-log","kind":"gather","version":1,"advances":false,"args":{"skill":"woodcutting","resource":"normal","until":{"obj":"logs","qty":1},"anchor":{"tile":[2613,3252,0],"source":"content/maps/m40_50.jm2:5891; content/scripts/skill_woodcutting/configs/trees.dbrow:1-7"}},"comment":"content/scripts/skill_woodcutting/scripts/woodcut.rs2:5-9,79-108 cuts a normal log with an axe.","skip_if":{"Fact":{"kind":"has_item","version":1,"args":{"obj":"logs"}}},"settle":{"Fact":{"kind":"has_item","version":1,"args":{"obj":"logs"}}}},
+            {
+              "id": "sail-to-miscellania",
+              "kind": "talk",
+              "version": 1,
+              "args": {
+                "npc": "viking_sailor",
+                "anchor": {
+                  "tile": [
+                    2629,
+                    3693,
+                    0
+                  ],
+                  "source": "content/scripts/quests/quest_viking/scripts/viking_sailor.rs2:14-44; content/scripts/areas/area_miscellania/configs/miscellania.constant:1-2; content/maps/m41_57.jm2:10530; content/pack/npc.pack:1305"
+                },
+                "leash": 8,
+                "prefer": [
+                  "Let's go!"
+                ],
+                "strict": true,
+                "gap_ticks": 7
+              },
+              "comment": "content/scripts/quests/quest_viking/scripts/viking_sailor.rs2:14-44; content/scripts/areas/area_miscellania/configs/miscellania.constant:1-2; content/maps/m41_57.jm2:10530; content/pack/npc.pack:1305",
+              "skip_if": {
+                "Fact": {
+                  "kind": "in_area",
+                  "version": 1,
+                  "args": {
+                    "area": "islands"
+                  }
+                }
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "in_area",
+                  "version": 1,
+                  "args": {
+                    "area": "islands"
+                  }
+                }
+              },
+              "advances": false
+            },
+            {"id":"buy-royal-flower","kind":"talk","version":1,"advances":false,"args":{"npc":"misc_flowergirl","anchor":{"tile":[2514,3866,0],"source":"content/maps/m39_60.jm2:8743; content/pack/npc.pack:1379"},"leash":8,"prefer":["Yes, please."],"strict":true},"comment":"content/scripts/areas/area_miscellania/scripts/flower_girl.rs2:1-25 sells one flower item for 15 coins.","skip_if":{"Fact":{"kind":"has_item","version":1,"args":{"obj":"flowers_waterfall_quest_mixed"}}},"settle":{"Fact":{"kind":"has_item","version":1,"args":{"obj":"flowers_waterfall_quest_mixed"}}}},
+            {
+              "id": "request-audience",
+              "kind": "talk",
+              "version": 1,
+              "args": {
+                "npc": "misc_ulby_doorguard",
+                "anchor": {
+                  "tile": [
+                    2505,
+                    3856,
+                    1
+                  ],
+                  "source": "content/scripts/quests/quest_misc/scripts/misc_door_guard.rs2:9-32; content/maps/m39_60.jm2:8769; content/pack/npc.pack:1375"
+                },
+                "leash": 6,
+                "prefer": []
+              },
+              "comment": "content/scripts/quests/quest_misc/scripts/misc_door_guard.rs2:9-32; content/maps/m39_60.jm2:8769; content/pack/npc.pack:1375",
+              "skip_if": {
+                "Fact": {
+                  "kind": "in_area",
+                  "version": 1,
+                  "args": {
+                    "area": "throne"
+                  }
+                }
+              },
+              "settle": {
+                "All": []
+              },
+              "advances": false
+            },
+            {
+              "id": "offer-to-rule",
+              "kind": "talk",
+              "version": 1,
+              "args": {
+                "npc": "misc_king_vargas",
+                "anchor": {
+                  "tile": [
+                    2501,
+                    3859,
+                    1
+                  ],
+                  "source": "content/scripts/quests/quest_misc/scripts/king_vargas.rs2:5-23,32-70; content/maps/m39_60.jm2:8766; content/pack/npc.pack:1374"
+                },
+                "leash": 8,
+                "prefer": [
+                  "If I may be so bold"
+                ],
+                "strict": true
+              },
+              "comment": "content/scripts/quests/quest_misc/scripts/king_vargas.rs2:5-23,32-70; content/maps/m39_60.jm2:8766; content/pack/npc.pack:1374",
+              "skip_if": {
+                "Any": []
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "stage_in",
+                  "version": 1,
+                  "args": {
+                    "quest": "misc",
+                    "any": [
+                      "misc:10"
+                    ]
+                  }
+                }
+              },
+              "advances": true
+            }
+          ],
+          "order": "ordered"
+        },
+        {
+          "stage": "misc:10",
+          "required": [],
+          "terminal": false,
+          "recovery_entry": null,
+          "steps": [
+            {
+              "id": "negotiate-with-queen",
+              "kind": "talk",
+              "version": 1,
+              "args": {
+                "npc": "misc_queen_sigrid",
+                "anchor": {
+                  "tile": [
+                    2612,
+                    3877,
+                    1
+                  ],
+                  "source": "content/scripts/quests/quest_misc/scripts/queen_sigrid.rs2:1-21; content/maps/m40_60.jm2:7468; content/pack/npc.pack:1360; content/scripts/quests/quest_misc/scripts/queen_sigrid.rs2:48-71"
+                },
+                "leash": 8,
+                "prefer": [],
+                "strict": true
+              },
+              "comment": "content/scripts/quests/quest_misc/scripts/queen_sigrid.rs2:1-21; content/maps/m40_60.jm2:7468; content/pack/npc.pack:1360; content/scripts/quests/quest_misc/scripts/queen_sigrid.rs2:48-71",
+              "skip_if": {
+                "Any": []
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "stage_in",
+                  "version": 1,
+                  "args": {
+                    "quest": "misc",
+                    "any": [
+                      "misc:20"
+                    ]
+                  }
+                }
+              },
+              "advances": true
+            }
+          ]
+        },
+        {
+          "stage": "misc:20",
+          "required": [],
+          "terminal": false,
+          "recovery_entry": null,
+          "steps": [
+            {
+              "id": "report-to-king",
+              "kind": "talk",
+              "version": 1,
+              "args": {
+                "npc": "misc_king_vargas",
+                "anchor": {
+                  "tile": [
+                    2501,
+                    3859,
+                    1
+                  ],
+                  "source": "content/scripts/quests/quest_misc/scripts/king_vargas.rs2:5-23,32-70; content/maps/m39_60.jm2:8766; content/pack/npc.pack:1374; content/scripts/quests/quest_misc/scripts/king_vargas.rs2:76-86"
+                },
+                "leash": 8,
+                "prefer": [],
+                "strict": true
+              },
+              "comment": "content/scripts/quests/quest_misc/scripts/king_vargas.rs2:5-23,32-70; content/maps/m39_60.jm2:8766; content/pack/npc.pack:1374; content/scripts/quests/quest_misc/scripts/king_vargas.rs2:76-86",
+              "skip_if": {
+                "Any": []
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "stage_in",
+                  "version": 1,
+                  "args": {
+                    "quest": "misc",
+                    "any": [
+                      "misc:30"
+                    ]
+                  }
+                }
+              },
+              "advances": true
+            }
+          ]
+        },
+        {
+          "stage": "misc:30",
+          "required": [],
+          "terminal": false,
+          "recovery_entry": null,
+          "steps": [
+            {
+              "id": "tell-queen-anthem",
+              "kind": "talk",
+              "version": 1,
+              "args": {
+                "npc": "misc_queen_sigrid",
+                "anchor": {
+                  "tile": [
+                    2612,
+                    3877,
+                    1
+                  ],
+                  "source": "content/scripts/quests/quest_misc/scripts/queen_sigrid.rs2:1-21; content/maps/m40_60.jm2:7468; content/pack/npc.pack:1360; content/scripts/quests/quest_misc/scripts/queen_sigrid.rs2:77-88"
+                },
+                "leash": 8,
+                "prefer": [],
+                "strict": true
+              },
+              "comment": "content/scripts/quests/quest_misc/scripts/queen_sigrid.rs2:1-21; content/maps/m40_60.jm2:7468; content/pack/npc.pack:1360; content/scripts/quests/quest_misc/scripts/queen_sigrid.rs2:77-88",
+              "skip_if": {
+                "Any": []
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "stage_in",
+                  "version": 1,
+                  "args": {
+                    "quest": "misc",
+                    "any": [
+                      "misc:40"
+                    ]
+                  }
+                }
+              },
+              "advances": true
+            }
+          ]
+        },
+        {
+          "stage": "misc:40",
+          "required": [],
+          "terminal": false,
+          "recovery_entry": null,
+          "steps": [
+            {
+              "id": "request-anthem",
+              "kind": "talk",
+              "version": 1,
+              "args": {
+                "npc": "misc_prince_brand",
+                "anchor": {
+                  "tile": [
+                    2502,
+                    3852,
+                    1
+                  ],
+                  "source": "content/scripts/quests/quest_misc/scripts/prince_brand.rs2:1-34; content/maps/m39_60.jm2:8767; content/pack/npc.pack:1372; content/scripts/quests/quest_misc/scripts/prince_brand.rs2:22-35"
+                },
+                "leash": 8,
+                "prefer": [],
+                "strict": true
+              },
+              "comment": "content/scripts/quests/quest_misc/scripts/prince_brand.rs2:1-34; content/maps/m39_60.jm2:8767; content/pack/npc.pack:1372; content/scripts/quests/quest_misc/scripts/prince_brand.rs2:22-35",
+              "skip_if": {
+                "Any": []
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "stage_in",
+                  "version": 1,
+                  "args": {
+                    "quest": "misc",
+                    "any": [
+                      "misc:50"
+                    ]
+                  }
+                }
+              },
+              "advances": true
+            }
+          ]
+        },
+        {
+          "stage": "misc:50",
+          "required": [],
+          "terminal": false,
+          "recovery_entry": null,
+          "steps": [
+            {
+              "id": "recover-anthem",
+              "kind": "talk",
+              "version": 1,
+              "args": {
+                "npc": "misc_prince_brand",
+                "anchor": {
+                  "tile": [
+                    2502,
+                    3852,
+                    1
+                  ],
+                  "source": "content/scripts/quests/quest_misc/scripts/prince_brand.rs2:1-34; content/maps/m39_60.jm2:8767; content/pack/npc.pack:1372"
+                },
+                "leash": 8,
+                "prefer": []
+              },
+              "comment": "content/scripts/quests/quest_misc/scripts/prince_brand.rs2:38-44",
+              "skip_if": {
+                "Fact": {
+                  "kind": "has_item",
+                  "version": 1,
+                  "args": {
+                    "obj": "misc_awful_anthem"
+                  }
+                }
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "has_item",
+                  "version": 1,
+                  "args": {
+                    "obj": "misc_awful_anthem"
+                  }
+                }
+              },
+              "advances": false
+            },
+            {
+              "id": "correct-anthem",
+              "kind": "talk",
+              "version": 1,
+              "args": {
+                "npc": "misc_advisor_ghrim",
+                "anchor": {
+                  "tile": [
+                    2499,
+                    3857,
+                    1
+                  ],
+                  "source": "content/scripts/quests/quest_misc/scripts/advisor_ghrim.rs2:7-30,61-79; content/maps/m39_60.jm2:8765; content/pack/npc.pack:1376"
+                },
+                "leash": 8,
+                "prefer": [
+                  "How do I make peace with Etceteria?"
+                ],
+                "strict": true
+              },
+              "comment": "content/scripts/quests/quest_misc/scripts/advisor_ghrim.rs2:7-30,61-79; content/maps/m39_60.jm2:8765; content/pack/npc.pack:1376",
+              "skip_if": {
+                "Any": []
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "stage_in",
+                  "version": 1,
+                  "args": {
+                    "quest": "misc",
+                    "any": [
+                      "misc:60"
+                    ]
+                  }
+                }
+              },
+              "advances": true
+            }
+          ]
+        },
+        {
+          "stage": "misc:60",
+          "required": [],
+          "terminal": false,
+          "recovery_entry": null,
+          "steps": [
+            {
+              "id": "recover-awful-anthem",
+              "kind": "talk",
+              "version": 1,
+              "args": {
+                "npc": "misc_prince_brand",
+                "anchor": {
+                  "tile": [
+                    2502,
+                    3852,
+                    1
+                  ],
+                  "source": "content/scripts/quests/quest_misc/scripts/prince_brand.rs2:1-34; content/maps/m39_60.jm2:8767; content/pack/npc.pack:1372"
+                },
+                "leash": 8,
+                "prefer": []
+              },
+              "comment": "content/scripts/quests/quest_misc/scripts/prince_brand.rs2:6-11,38-44",
+              "skip_if": {
+                "Any": [
+                  {
+                    "Fact": {
+                      "kind": "has_item",
+                      "version": 1,
+                      "args": {
+                        "obj": "misc_awful_anthem"
+                      }
+                    }
+                  },
+                  {
+                    "Fact": {
+                      "kind": "has_item",
+                      "version": 1,
+                      "args": {
+                        "obj": "misc_good_anthem"
+                      }
+                    }
+                  }
+                ]
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "has_item",
+                  "version": 1,
+                  "args": {
+                    "obj": "misc_awful_anthem"
+                  }
+                }
+              },
+              "advances": false
+            },
+            {
+              "id": "recover-corrected-anthem",
+              "kind": "talk",
+              "version": 1,
+              "args": {
+                "npc": "misc_advisor_ghrim",
+                "anchor": {
+                  "tile": [
+                    2499,
+                    3857,
+                    1
+                  ],
+                  "source": "content/scripts/quests/quest_misc/scripts/advisor_ghrim.rs2:7-30,61-79; content/maps/m39_60.jm2:8765; content/pack/npc.pack:1376"
+                },
+                "leash": 8,
+                "prefer": [
+                  "How do I make peace with Etceteria?"
+                ],
+                "strict": true
+              },
+              "comment": "content/scripts/quests/quest_misc/scripts/advisor_ghrim.rs2:81-103,122-153",
+              "skip_if": {
+                "Fact": {
+                  "kind": "has_item",
+                  "version": 1,
+                  "args": {
+                    "obj": "misc_good_anthem"
+                  }
+                }
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "has_item",
+                  "version": 1,
+                  "args": {
+                    "obj": "misc_good_anthem"
+                  }
+                }
+              },
+              "advances": false
+            },
+            {
+              "id": "show-anthem",
+              "kind": "talk",
+              "version": 1,
+              "args": {
+                "npc": "misc_queen_sigrid",
+                "anchor": {
+                  "tile": [
+                    2612,
+                    3877,
+                    1
+                  ],
+                  "source": "content/scripts/quests/quest_misc/scripts/queen_sigrid.rs2:1-21; content/maps/m40_60.jm2:7468; content/pack/npc.pack:1360; content/scripts/quests/quest_misc/scripts/queen_sigrid.rs2:110-131"
+                },
+                "leash": 8,
+                "prefer": [],
+                "strict": true
+              },
+              "comment": "content/scripts/quests/quest_misc/scripts/queen_sigrid.rs2:1-21; content/maps/m40_60.jm2:7468; content/pack/npc.pack:1360; content/scripts/quests/quest_misc/scripts/queen_sigrid.rs2:110-131",
+              "skip_if": {
+                "Any": []
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "stage_in",
+                  "version": 1,
+                  "args": {
+                    "quest": "misc",
+                    "any": [
+                      "misc:70"
+                    ]
+                  }
+                }
+              },
+              "advances": true
+            }
+          ]
+        },
+        {
+          "stage": "misc:70",
+          "required": [],
+          "terminal": false,
+          "recovery_entry": null,
+          "steps": [
+            {
+              "id": "recover-treaty",
+              "kind": "talk",
+              "version": 1,
+              "args": {
+                "npc": "misc_queen_sigrid",
+                "anchor": {
+                  "tile": [
+                    2612,
+                    3877,
+                    1
+                  ],
+                  "source": "content/scripts/quests/quest_misc/scripts/queen_sigrid.rs2:1-21; content/maps/m40_60.jm2:7468; content/pack/npc.pack:1360"
+                },
+                "leash": 8,
+                "prefer": []
+              },
+              "comment": "content/scripts/quests/quest_misc/scripts/queen_sigrid.rs2:136-146",
+              "skip_if": {
+                "Fact": {
+                  "kind": "has_item",
+                  "version": 1,
+                  "args": {
+                    "obj": "misc_treaty"
+                  }
+                }
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "has_item",
+                  "version": 1,
+                  "args": {
+                    "obj": "misc_treaty"
+                  }
+                }
+              },
+              "advances": false
+            },
+            {
+              "id": "deliver-treaty",
+              "kind": "talk",
+              "version": 1,
+              "args": {
+                "npc": "misc_king_vargas",
+                "anchor": {
+                  "tile": [
+                    2501,
+                    3859,
+                    1
+                  ],
+                  "source": "content/scripts/quests/quest_misc/scripts/king_vargas.rs2:5-23,32-70; content/maps/m39_60.jm2:8766; content/pack/npc.pack:1374; content/scripts/quests/quest_misc/scripts/king_vargas.rs2:93-108"
+                },
+                "leash": 8,
+                "prefer": [],
+                "strict": true
+              },
+              "comment": "content/scripts/quests/quest_misc/scripts/king_vargas.rs2:5-23,32-70; content/maps/m39_60.jm2:8766; content/pack/npc.pack:1374; content/scripts/quests/quest_misc/scripts/king_vargas.rs2:93-108",
+              "skip_if": {
+                "Any": []
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "stage_in",
+                  "version": 1,
+                  "args": {
+                    "quest": "misc",
+                    "any": [
+                      "misc:80"
+                    ]
+                  }
+                }
+              },
+              "advances": true
+            }
+          ]
+        },
+        {
+          "stage": "misc:80",
+          "required": [],
+          "terminal": false,
+          "recovery_entry": null,
+          "steps": [
+            {
+              "id": "request-giant-nib",
+              "kind": "talk",
+              "version": 1,
+              "args": {
+                "npc": "misc_smithy",
+                "anchor": {
+                  "tile": [
+                    2551,
+                    3897,
+                    0
+                  ],
+                  "source": "content/scripts/quests/quest_misc/scripts/derrik.rs2:1-15,30-44; content/maps/m39_60.jm2:8762; content/pack/npc.pack:1377"
+                },
+                "leash": 8,
+                "prefer": [
+                  "I have a slightly strange request"
+                ],
+                "strict": true
+              },
+              "comment": "content/scripts/quests/quest_misc/scripts/derrik.rs2:1-15,30-44; content/maps/m39_60.jm2:8762; content/pack/npc.pack:1377",
+              "skip_if": {
+                "Any": [
+                  {
+                    "Fact": {
+                      "kind": "has_item",
+                      "version": 1,
+                      "args": {
+                        "obj": "misc_giant_nib"
+                      }
+                    }
+                  },
+                  {
+                    "Fact": {
+                      "kind": "has_item",
+                      "version": 1,
+                      "args": {
+                        "obj": "misc_giant_pen"
+                      }
+                    }
+                  }
+                ]
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "has_item",
+                  "version": 1,
+                  "args": {
+                    "obj": "misc_giant_nib"
+                  }
+                }
+              },
+              "advances": false
+            },
+            {
+              "id": "make-giant-pen",
+              "kind": "use_on",
+              "version": 1,
+              "args": {
+                "item": "logs",
+                "target": {
+                  "item": "misc_giant_nib"
+                },
+                "product": "misc_giant_pen"
+              },
+              "comment": "content/scripts/quests/quest_misc/scripts/misc_quest.rs2:7-15",
+              "skip_if": {
+                "Fact": {
+                  "kind": "has_item",
+                  "version": 1,
+                  "args": {
+                    "obj": "misc_giant_pen"
+                  }
+                }
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "has_item",
+                  "version": 1,
+                  "args": {
+                    "obj": "misc_giant_pen"
+                  }
+                }
+              },
+              "advances": false
+            },
+            {
+              "id": "king-signs-treaty",
+              "kind": "talk",
+              "version": 1,
+              "args": {
+                "npc": "misc_king_vargas",
+                "anchor": {
+                  "tile": [
+                    2501,
+                    3859,
+                    1
+                  ],
+                  "source": "content/scripts/quests/quest_misc/scripts/king_vargas.rs2:5-23,32-70; content/maps/m39_60.jm2:8766; content/pack/npc.pack:1374; content/scripts/quests/quest_misc/scripts/king_vargas.rs2:110-145"
+                },
+                "leash": 8,
+                "prefer": [],
+                "strict": true
+              },
+              "comment": "content/scripts/quests/quest_misc/scripts/king_vargas.rs2:5-23,32-70; content/maps/m39_60.jm2:8766; content/pack/npc.pack:1374; content/scripts/quests/quest_misc/scripts/king_vargas.rs2:110-145",
+              "skip_if": {
+                "Any": []
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "stage_in",
+                  "version": 1,
+                  "args": {
+                    "quest": "misc",
+                    "any": [
+                      "misc:90"
+                    ]
+                  }
+                }
+              },
+              "advances": true
+            }
+          ]
+        },
+        {
+          "stage": "misc:90",
+          "required": [],
+          "terminal": false,
+          "recovery_entry": null,
+          "steps": [
+            {
+              "id": "court-brand-1",
+              "kind": "talk",
+              "version": 1,
+              "args": {
+                "npc": "misc_prince_brand",
+                "anchor": {
+                  "tile": [
+                    2502,
+                    3852,
+                    1
+                  ],
+                  "source": "content/scripts/quests/quest_misc/scripts/prince_brand.rs2:46-83,85-150; content/maps/m39_60.jm2:8767; content/pack/npc.pack:1372"
+                },
+                "leash": 8,
+                "prefer": [
+                  "Be still, my heart.",
+                  "They don't understand your poetry as I do.",
+                  "You will be the greatest bard!"
+                ],
+                "strict": true
+              },
+              "comment": "content/scripts/quests/quest_misc/scripts/prince_brand.rs2:46-83,85-150; content/maps/m39_60.jm2:8767; content/pack/npc.pack:1372",
+              "skip_if": {
+                "Any": []
+              },
+              "settle": {
+                "All": []
+              },
+              "advances": false
+            },
+            {
+              "id": "court-brand-2",
+              "kind": "talk",
+              "version": 1,
+              "args": {
+                "npc": "misc_prince_brand",
+                "anchor": {
+                  "tile": [
+                    2502,
+                    3852,
+                    1
+                  ],
+                  "source": "content/scripts/quests/quest_misc/scripts/prince_brand.rs2:46-83,85-150; content/maps/m39_60.jm2:8767; content/pack/npc.pack:1372"
+                },
+                "leash": 8,
+                "prefer": [
+                  "Be still, my heart.",
+                  "They don't understand your poetry as I do.",
+                  "You will be the greatest bard!"
+                ],
+                "strict": true
+              },
+              "comment": "content/scripts/quests/quest_misc/scripts/prince_brand.rs2:46-83,85-150; content/maps/m39_60.jm2:8767; content/pack/npc.pack:1372",
+              "skip_if": {
+                "Any": []
+              },
+              "settle": {
+                "All": []
+              },
+              "advances": false
+            },
+            {
+              "id": "court-brand-3",
+              "kind": "talk",
+              "version": 1,
+              "args": {
+                "npc": "misc_prince_brand",
+                "anchor": {
+                  "tile": [
+                    2502,
+                    3852,
+                    1
+                  ],
+                  "source": "content/scripts/quests/quest_misc/scripts/prince_brand.rs2:46-83,85-150; content/maps/m39_60.jm2:8767; content/pack/npc.pack:1372"
+                },
+                "leash": 8,
+                "prefer": [
+                  "Be still, my heart.",
+                  "They don't understand your poetry as I do.",
+                  "You will be the greatest bard!"
+                ],
+                "strict": true
+              },
+              "comment": "content/scripts/quests/quest_misc/scripts/prince_brand.rs2:46-83,85-150; content/maps/m39_60.jm2:8767; content/pack/npc.pack:1372",
+              "skip_if": {
+                "Any": []
+              },
+              "settle": {
+                "All": []
+              },
+              "advances": false
+            },
+            {
+              "id": "court-brand-4",
+              "kind": "talk",
+              "version": 1,
+              "args": {
+                "npc": "misc_prince_brand",
+                "anchor": {
+                  "tile": [
+                    2502,
+                    3852,
+                    1
+                  ],
+                  "source": "content/scripts/quests/quest_misc/scripts/prince_brand.rs2:46-83,85-150; content/maps/m39_60.jm2:8767; content/pack/npc.pack:1372"
+                },
+                "leash": 8,
+                "prefer": [
+                  "Be still, my heart.",
+                  "They don't understand your poetry as I do.",
+                  "You will be the greatest bard!"
+                ],
+                "strict": true
+              },
+              "comment": "content/scripts/quests/quest_misc/scripts/prince_brand.rs2:46-83,85-150; content/maps/m39_60.jm2:8767; content/pack/npc.pack:1372",
+              "skip_if": {
+                "Any": []
+              },
+              "settle": {
+                "All": []
+              },
+              "advances": false
+            },
+            {
+              "id": "court-astrid-1",
+              "kind": "talk",
+              "version": 1,
+              "args": {
+                "npc": "misc_princess_astrid",
+                "anchor": {
+                  "tile": [
+                    2502,
+                    3868,
+                    1
+                  ],
+                  "source": "content/scripts/quests/quest_misc/scripts/princess_astrid.rs2:15-50,53-119; content/maps/m39_60.jm2:8768; content/pack/npc.pack:1373"
+                },
+                "leash": 8,
+                "prefer": [
+                  "Archery is a noble art!",
+                  "Hahahaha!",
+                  "He's been very helpful."
+                ],
+                "strict": true
+              },
+              "comment": "content/scripts/quests/quest_misc/scripts/princess_astrid.rs2:15-50,53-119; content/maps/m39_60.jm2:8768; content/pack/npc.pack:1373",
+              "skip_if": {
+                "Any": []
+              },
+              "settle": {
+                "All": []
+              },
+              "advances": false
+            },
+            {
+              "id": "court-astrid-2",
+              "kind": "talk",
+              "version": 1,
+              "args": {
+                "npc": "misc_princess_astrid",
+                "anchor": {
+                  "tile": [
+                    2502,
+                    3868,
+                    1
+                  ],
+                  "source": "content/scripts/quests/quest_misc/scripts/princess_astrid.rs2:15-50,53-119; content/maps/m39_60.jm2:8768; content/pack/npc.pack:1373"
+                },
+                "leash": 8,
+                "prefer": [
+                  "Archery is a noble art!",
+                  "Hahahaha!",
+                  "He's been very helpful."
+                ],
+                "strict": true
+              },
+              "comment": "content/scripts/quests/quest_misc/scripts/princess_astrid.rs2:15-50,53-119; content/maps/m39_60.jm2:8768; content/pack/npc.pack:1373",
+              "skip_if": {
+                "Any": []
+              },
+              "settle": {
+                "All": []
+              },
+              "advances": false
+            },
+            {
+              "id": "court-astrid-3",
+              "kind": "talk",
+              "version": 1,
+              "args": {
+                "npc": "misc_princess_astrid",
+                "anchor": {
+                  "tile": [
+                    2502,
+                    3868,
+                    1
+                  ],
+                  "source": "content/scripts/quests/quest_misc/scripts/princess_astrid.rs2:15-50,53-119; content/maps/m39_60.jm2:8768; content/pack/npc.pack:1373"
+                },
+                "leash": 8,
+                "prefer": [
+                  "Archery is a noble art!",
+                  "Hahahaha!",
+                  "He's been very helpful."
+                ],
+                "strict": true
+              },
+              "comment": "content/scripts/quests/quest_misc/scripts/princess_astrid.rs2:15-50,53-119; content/maps/m39_60.jm2:8768; content/pack/npc.pack:1373",
+              "skip_if": {
+                "Any": []
+              },
+              "settle": {
+                "All": []
+              },
+              "advances": false
+            },
+            {
+              "id": "court-astrid-4",
+              "kind": "talk",
+              "version": 1,
+              "args": {
+                "npc": "misc_princess_astrid",
+                "anchor": {
+                  "tile": [
+                    2502,
+                    3868,
+                    1
+                  ],
+                  "source": "content/scripts/quests/quest_misc/scripts/princess_astrid.rs2:15-50,53-119; content/maps/m39_60.jm2:8768; content/pack/npc.pack:1373"
+                },
+                "leash": 8,
+                "prefer": [
+                  "Archery is a noble art!",
+                  "Hahahaha!",
+                  "He's been very helpful."
+                ],
+                "strict": true
+              },
+              "comment": "content/scripts/quests/quest_misc/scripts/princess_astrid.rs2:15-50,53-119; content/maps/m39_60.jm2:8768; content/pack/npc.pack:1373",
+              "skip_if": {
+                "Any": []
+              },
+              "settle": {
+                "All": []
+              },
+              "advances": false
+            },
+            {
+              "id": "give-flowers-brand",
+              "kind": "use_on",
+              "version": 1,
+              "args": {
+                "item": "flowers_waterfall_quest_mixed",
+                "target": {
+                  "npc": "misc_prince_brand"
+                },
+                "anchor": {
+                  "tile": [
+                    2502,
+                    3852,
+                    1
+                  ],
+                  "source": "content/scripts/quests/quest_misc/scripts/prince_brand.rs2:46-83,85-150; content/maps/m39_60.jm2:8767; content/pack/npc.pack:1372"
+                },
+                "radius": 8,
+                "dialogue": {
+                  "prefer": [
+                    "Yes"
+                  ],
+                  "strict": true
+                }
+              },
+              "comment": "content/scripts/quests/quest_misc/scripts/prince_brand.rs2:46-83,85-150; content/maps/m39_60.jm2:8767; content/pack/npc.pack:1372; content/scripts/quests/quest_misc/scripts/prince_brand.rs2:365-398",
+              "skip_if": {
+                "Not": {
+                  "Fact": {
+                    "kind": "has_item",
+                    "version": 1,
+                    "args": {
+                      "obj": "flowers_waterfall_quest_mixed"
+                    }
+                  }
+                }
+              },
+              "settle": {
+                "All": []
+              },
+              "advances": false
+            },
+            {
+              "id": "give-flowers-astrid",
+              "kind": "use_on",
+              "version": 1,
+              "args": {
+                "item": "flowers_waterfall_quest_mixed",
+                "target": {
+                  "npc": "misc_princess_astrid"
+                },
+                "anchor": {
+                  "tile": [
+                    2502,
+                    3868,
+                    1
+                  ],
+                  "source": "content/scripts/quests/quest_misc/scripts/princess_astrid.rs2:15-50,53-119; content/maps/m39_60.jm2:8768; content/pack/npc.pack:1373"
+                },
+                "radius": 8,
+                "dialogue": {
+                  "prefer": [
+                    "Yes"
+                  ],
+                  "strict": true
+                }
+              },
+              "comment": "content/scripts/quests/quest_misc/scripts/princess_astrid.rs2:15-50,53-119; content/maps/m39_60.jm2:8768; content/pack/npc.pack:1373; content/scripts/quests/quest_misc/scripts/princess_astrid.rs2:340-368",
+              "skip_if": {
+                "Not": {
+                  "Fact": {
+                    "kind": "has_item",
+                    "version": 1,
+                    "args": {
+                      "obj": "flowers_waterfall_quest_mixed"
+                    }
+                  }
+                }
+              },
+              "settle": {
+                "All": []
+              },
+              "advances": false
+            }
+          ],
+          "order": "ordered"
+        },
+        {
+          "stage": "misc:complete",
+          "required": [],
+          "terminal": true,
+          "recovery_entry": null,
+          "steps": []
+        }
+      ]
+    }
+  ]
+}

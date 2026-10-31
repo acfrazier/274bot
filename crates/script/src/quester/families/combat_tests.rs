@@ -9,10 +9,7 @@ use api::game_data::SelectedGameData;
 use api::quest_facts::QuestCatalog;
 use api::quest_progress::EvidenceStamp;
 use api::selected::{ClientRevision, FactKey, RunKey, Truth};
-use api::snapshot::{
-    ChatLineView, GameSnapshot, GroundItemView, LocLayer, LocView, QuestListStatus,
-    QuestStatusView, SnapshotView,
-};
+use api::snapshot::{GameSnapshot, GroundItemView, QuestListStatus, QuestStatusView, SnapshotView};
 use std::collections::HashMap;
 use std::sync::Arc;
 
@@ -195,7 +192,7 @@ fn mage_family_maps_selected_spell_order_and_explicit_fallback() {
 }
 
 #[test]
-fn authored_combat_walk_permissions_reach_return_and_abort_requests() {
+fn authored_combat_walk_permissions_reach_initial_return_and_abort_requests() {
     let data = api::game_data::for_revision(ClientRevision::R289).unwrap();
     let quests = QuestCatalog::from_identity(data.quest_identity()).unwrap();
     let progress = CompiledProgress {
@@ -263,14 +260,26 @@ fn authored_combat_walk_permissions_reach_return_and_abort_requests() {
             } else {
                 input.as_object_mut().unwrap().remove("guard");
             }
-            let plan = compile(decode_args::<CombatArgs>(&input).unwrap(), &cx).unwrap();
-            for aborted in [false, true] {
+            let plan = compile_plan(decode_args::<CombatArgs>(&input).unwrap(), &cx).unwrap();
+            assert!(Arc::ptr_eq(
+                plan.request.cross.as_ref().unwrap(),
+                &plan.cross
+            ));
+            for (initial_approach, aborted) in [(true, false), (false, false), (false, true)] {
                 // Drive the real compiled plan and native combat machine, not
                 // a CombatRun with its permission fields assigned by the test.
                 let mut snapshot = GameSnapshot::new();
                 snapshot.seed_ingame(2);
                 snapshot.seed_world(api::snapshot::WorldStateView::default());
-                snapshot.seed_local_player(super::super::tests::local_player(stand));
+                let here = if initial_approach {
+                    api::WorldTile {
+                        x: stand.x - 20,
+                        ..stand
+                    }
+                } else {
+                    stand
+                };
+                snapshot.seed_local_player(super::super::tests::local_player(here));
                 snapshot.seed_inventory(vec![], 28);
                 snapshot.seed_equipment(vec![]);
                 snapshot.seed_players(vec![]);
@@ -351,9 +360,33 @@ fn authored_combat_walk_permissions_reach_return_and_abort_requests() {
                     z: 0,
                     yaw: 0,
                 }]);
+                if initial_approach {
+                    snapshot.seed_npcs(vec![]);
+                }
                 let mut ledger = None;
                 let mut run =
                     with_step_context(&snapshot, &mut ledger, 1, |cx| plan.begin(cx).unwrap());
+                if initial_approach {
+                    assert!(
+                        with_step_context(&snapshot, &mut ledger, 2, |cx| run.poll(cx))
+                            .is_pending()
+                    );
+                    let outbox = &ledger.as_ref().unwrap().outbox;
+                    assert_eq!(outbox.len(), 1, "initial approach: cross={cross}");
+                    let crate::native::HostEffect::Walk(request) = &outbox[0].effect else {
+                        panic!("the compiled combat initial approach must submit a native walk");
+                    };
+                    assert_eq!(request.target, stand);
+                    if cross {
+                        assert_eq!(request.cross.as_ref(), &[Arc::from("draynor-jail-guards")]);
+                    } else {
+                        assert!(
+                            request.cross.is_empty(),
+                            "initial approach has no authored cross"
+                        );
+                    }
+                    continue;
+                }
                 if !aborted {
                     snapshot.seed_npcs(vec![]);
                 }
@@ -522,6 +555,91 @@ fn combat_finish_and_mixed_loot_compile_selected_configs_and_quantities() {
     invalid["finish"]["max_ticks"] = serde_json::json!(0);
     assert!(compile_json(&invalid, &cx).is_err());
 }
+#[test]
+fn combat_until_drop_compiles_selected_item_and_rejects_invalid_forms() {
+    let data = api::game_data::for_revision(ClientRevision::R289).unwrap();
+    let quests = QuestCatalog::from_identity(data.quest_identity()).unwrap();
+    let progress = CompiledProgress {
+        binding: FactKey::new("journal:combat_until_drop"),
+        role: None,
+        colour_not_started: FactKey::new("combat_until_drop:0"),
+        colour_in_progress: FactKey::new("combat_until_drop:1"),
+        colour_complete: FactKey::new("combat_until_drop:2"),
+        stage_keys: Arc::from([]),
+        rules: Arc::from([]),
+        flags: Arc::from([]),
+        monotonic: false,
+    };
+    let areas = HashMap::new();
+    let loadouts = LoadoutOverlay::new(Arc::from([]), Arc::from([]));
+    let recipes = HashMap::new();
+    let path = FactKey::new("combat_until_drop");
+    let cx = fixture_compile_context(
+        &data, &quests, &progress, &areas, &loadouts, &recipes, &path,
+    );
+    let args = serde_json::json!({
+        "target": {"npc": "delrith", "pick": "nearest", "not_targeting_others": true},
+        "tactic": {"kind": "open", "style": "melee", "engage_radius": 6},
+        "lost_radius": 12,
+        "kill_budget_ticks": 100,
+        "until_drop": {
+            "obj": "bones",
+            "max_kills": 2,
+            "stop": "bones_not_found"
+        }
+    });
+    let plan = compile_plan(decode_args(&args).unwrap(), &cx).unwrap();
+    let bones = data.item_by_alias("bones").unwrap();
+    assert_eq!(plan.loot.len(), 1);
+    assert_eq!(plan.loot[0].id, bones.id);
+    assert_eq!(plan.loot[0].name.as_ref(), bones.name.as_deref().unwrap());
+
+    for (until_drop, code) in [
+        (
+            serde_json::json!({
+                "obj": "not_a_selected_item",
+                "max_kills": 2,
+                "stop": "bones_not_found"
+            }),
+            "unresolved-loadout-item",
+        ),
+        (
+            serde_json::json!({"obj": "bones", "max_kills": 0, "stop": "bones_not_found"}),
+            "invalid-combat-until-drop-kill-budget",
+        ),
+        (
+            serde_json::json!({"obj": "bones", "max_kills": 2, "stop": ""}),
+            "invalid-combat-until-drop-stop",
+        ),
+        (
+            serde_json::json!({"obj": "bones", "max_kills": 2, "stop": "   "}),
+            "invalid-combat-until-drop-stop",
+        ),
+    ] {
+        let mut invalid = args.clone();
+        invalid["until_drop"] = until_drop;
+        assert_eq!(
+            compile_json(&invalid, &cx).err().unwrap().code.as_ref(),
+            code
+        );
+    }
+    for (field, value) in [
+        (
+            "finish",
+            serde_json::json!({"npc": "delrith_weakened", "max_ticks": 100}),
+        ),
+        ("until", serde_json::json!({"Any": []})),
+        ("win", serde_json::json!({"All": []})),
+    ] {
+        let mut invalid = args.clone();
+        invalid[field] = value;
+        assert_eq!(
+            compile_json(&invalid, &cx).err().unwrap().code.as_ref(),
+            "conflicting-combat-until-drop"
+        );
+    }
+}
+
 fn fixture_compile_context<'a>(
     data: &'a SelectedGameData,
     quests: &'a QuestCatalog,
@@ -636,6 +754,7 @@ fn combat_end_predicate_distinguishes_unattackable_report() {
         receipt: Some(Arc::new(CombatReceipt {
             report: aborted,
             target_gone_restarts: 0,
+            kills: 0,
         })),
     };
     super::super::tests::with_tick(&snapshot, &mut ledger, 12, |tick| {
@@ -657,6 +776,7 @@ fn combat_end_predicate_distinguishes_unattackable_report() {
             receipt: Some(Arc::new(CombatReceipt {
                 report: killed,
                 target_gone_restarts: 0,
+                kills: 1,
             })),
         };
         let context = PredicateContext {
@@ -761,6 +881,7 @@ fn unattackable_walk_out_is_selected_after_aborted_unattackable() {
         receipt: Some(Arc::new(CombatReceipt {
             report: aborted,
             target_gone_restarts: 0,
+            kills: 0,
         })),
     };
     let mut ledger = None;
@@ -795,6 +916,7 @@ fn unattackable_outcome() -> StepOutcome {
         receipt: Some(Arc::new(CombatReceipt {
             report: aborted,
             target_gone_restarts: 0,
+            kills: 0,
         })),
     }
 }
@@ -903,6 +1025,21 @@ impl PredicatePlan for NeverStop {
         Truth::False
     }
 }
+struct HasItem(i32);
+
+impl PredicatePlan for HasItem {
+    fn evaluate(&self, context: &PredicateContext<'_, '_>) -> Truth {
+        if context.cx.snapshot().inventory().is_some_and(|rows| {
+            rows.value
+                .iter()
+                .any(|row| row.def.id == self.0 && row.count > 0)
+        }) {
+            Truth::True
+        } else {
+            Truth::False
+        }
+    }
+}
 
 fn combat_test_run(
     target: Target,
@@ -910,12 +1047,22 @@ fn combat_test_run(
     until: Option<Arc<dyn PredicatePlan>>,
     loot: Vec<LootItem>,
 ) -> CombatRun {
+    combat_test_run_with_radius(target, stand, until, loot, 12)
+}
+
+fn combat_test_run_with_radius(
+    target: Target,
+    stand: Option<api::WorldTile>,
+    until: Option<Arc<dyn PredicatePlan>>,
+    loot: Vec<LootItem>,
+    lost_radius: u8,
+) -> CombatRun {
     let selected = api::game_data::for_revision(ClientRevision::R289).unwrap();
     let tables = CombatTables::build(selected).unwrap();
     let request = CombatRequest {
         target,
         stand,
-        lost_radius: 12,
+        lost_radius,
         ..CombatRequest::default()
     };
     CombatRun {
@@ -926,10 +1073,14 @@ fn combat_test_run(
         until,
         win: None,
         loot: Arc::from(loot),
+        until_drop: None,
         action: None,
         phase: Phase::Combat,
         loot_index: 0,
+        loot_wait_deadline: None,
+        loot_missing_this_kill: false,
         last_report: None,
+        kills: 0,
         last_outcome: None,
         target_gone_restarts: 0,
         manual_takeover_watch: crate::native::ManualTakeoverWatch::default(),
@@ -942,6 +1093,22 @@ fn combat_test_run(
         abort_escape: AbortEscape::new(),
     }
 }
+
+#[test]
+fn combat_run_size_stays_within_retained_budget() {
+    let size = std::mem::size_of::<CombatRun>();
+    println!(
+        "combat state sizes: CombatRun={size} Action={} UntilDropConfig={} CombatReceipt={} bytes",
+        std::mem::size_of::<Action>(),
+        std::mem::size_of::<UntilDropConfig>(),
+        std::mem::size_of::<CombatReceipt>(),
+    );
+    assert!(
+        size <= 1_280,
+        "CombatRun is {size} bytes. The source Elemental R1 head measured 1,192 bytes, including the 16-byte Option<u64> loot deadline. This integration also retains the bounded UntilDropConfig and confirmed-kill count. The one-byte miss flag records a missing drop until the until predicate check. The nested Action stayed 680 bytes in the source measurements. The integrated retained-state limit is 1,280 bytes."
+    );
+}
+
 pub(crate) fn policy_s2_run_for_runner(cx: &mut StepContext<'_, '_>) -> Box<dyn StepRun> {
     let data = api::game_data::for_revision(ClientRevision::R289).unwrap();
     let mut run = combat_test_run(imp_target(&data), None, None, Vec::new());
@@ -963,6 +1130,7 @@ pub(crate) fn imp_plan_run_for_runner(cx: &mut StepContext<'_, '_>) -> Box<dyn S
         win: None,
         loot: run.loot,
         finish: None,
+        until_drop: None,
     }
     .begin(cx)
     .unwrap()
@@ -3428,6 +3596,24 @@ fn open_flood(here: api::WorldTile, radius: i32) -> api::query::ReachQueryView {
     }
 }
 
+fn seed_loot_world(snapshot: &mut GameSnapshot, here: api::WorldTile) {
+    snapshot.seed_local_player(super::super::tests::local_player(here));
+    snapshot.seed_world(api::snapshot::WorldStateView {
+        map_base_x: (here.x.div_euclid(8) - 6) * 8,
+        map_base_z: (here.z.div_euclid(8) - 6) * 8,
+        ..Default::default()
+    });
+}
+
+fn seed_loot_route(
+    snapshot: &mut GameSnapshot,
+    here: api::WorldTile,
+    radius: i32,
+) -> api::query::ReachQueryView {
+    seed_loot_world(snapshot, here);
+    open_flood(here, radius)
+}
+
 fn with_step_context_reach<R>(
     snapshot: &GameSnapshot,
     reach: &api::query::ReachQueryView,
@@ -3447,6 +3633,21 @@ fn with_step_context_reach<R>(
             banks: &banks,
             choices: &crate::quester::choices::QuestChoices::default(),
         })
+    })
+}
+
+fn with_step_context_reach_at_walk_outcome<R>(
+    snapshot: &GameSnapshot,
+    reach: &api::query::ReachQueryView,
+    ledger: &mut TestLedger,
+    tick: u64,
+    outcome: WalkOutcomeFact,
+    f: impl FnOnce(&mut StepContext<'_, '_>) -> R,
+) -> R {
+    with_step_context_reach(snapshot, reach, ledger, tick, |cx| {
+        cx.tick.cx.observed_walk_outcome_seq = outcome.seq;
+        cx.tick.cx.observed_walk_cancel_reason = outcome.cancel_reason;
+        f(cx)
     })
 }
 
@@ -4338,6 +4539,8 @@ fn manual_takeover_watch_covers_return_and_loot_sublegs() {
     let mut snapshot = GameSnapshot::new();
     snapshot.seed_ingame(2);
     snapshot.seed_inventory(Vec::new(), 28);
+    snapshot.seed_ground_items(vec![ground_item(1, "First drop", stand, 0)]);
+    let reach = seed_loot_route(&mut snapshot, stand, 12);
     let mut ledger = None;
     with_step_context_at_walk_outcome(&snapshot, &mut ledger, 11, outcome, |cx| {
         run.manual_takeover_watch = crate::native::ManualTakeoverWatch::begin(&cx.tick.cx);
@@ -4377,30 +4580,49 @@ fn manual_takeover_watch_covers_return_and_loot_sublegs() {
         })
         .is_pending()
     );
-    assert!(
-        with_step_context_at_walk_outcome(&snapshot, &mut ledger, 15, outcome, |cx| {
-            run.poll(cx)
-        })
-        .is_pending()
-    );
-    assert_eq!(run.loot_index, 1);
+    assert!(with_step_context_reach_at_walk_outcome(
+        &snapshot,
+        &reach,
+        &mut ledger,
+        15,
+        outcome,
+        |cx| run.poll(cx),
+    )
+    .is_pending());
+    assert_eq!(run.loot_index, 0);
     assert!(matches!(run.action.as_ref(), Some(Action::Loot(_))));
+    let interactions_before_takeover = ledger
+        .as_ref()
+        .unwrap()
+        .outbox
+        .iter()
+        .filter(|action| matches!(&action.effect, crate::native::HostEffect::Interaction(_)))
+        .count();
+    assert_eq!(
+        interactions_before_takeover, 1,
+        "the visible drop should start one take before manual input"
+    );
 
     let outcome = publish_walk_outcome(42, WalkCancelReason::UserInput);
     let result =
         with_step_context_at_walk_outcome(&snapshot, &mut ledger, 16, outcome, |cx| run.poll(cx));
     assert!(matches!(result, Poll::Ready(Err(ActionError::UserInput))));
     assert_eq!(
-        run.loot_index, 1,
-        "manual movement must not start the next loot leg"
+        run.loot_index, 0,
+        "manual movement must not advance the active loot row"
     );
     assert!(run.action.is_none());
-    assert!(ledger
+    let interactions_after_takeover = ledger
         .as_ref()
         .unwrap()
         .outbox
         .iter()
-        .all(|action| { !matches!(&action.effect, crate::native::HostEffect::Interaction(_)) }));
+        .filter(|action| matches!(&action.effect, crate::native::HostEffect::Interaction(_)))
+        .count();
+    assert_eq!(
+        interactions_after_takeover, interactions_before_takeover,
+        "manual movement must not emit another interaction"
+    );
 }
 
 #[test]
@@ -4444,13 +4666,18 @@ fn killed_report_enters_loot_and_takes_the_observed_drop() {
         tile: stand,
         distance: 0,
     }]);
+    let reach = seed_loot_route(&mut snapshot, stand, 12);
     let mut ledger = None;
-    assert!(with_step_context(&snapshot, &mut ledger, 12, |cx| {
-        run.on_combat_report(report(CombatEnd::Killed), cx)
-    })
-    .is_pending());
+    assert!(
+        with_step_context_reach(&snapshot, &reach, &mut ledger, 12, |cx| {
+            run.on_combat_report(report(CombatEnd::Killed), cx)
+        })
+        .is_pending()
+    );
     assert!(matches!(&run.phase, Phase::Loot));
-    assert!(with_step_context(&snapshot, &mut ledger, 13, |cx| run.poll(cx)).is_pending());
+    assert!(
+        with_step_context_reach(&snapshot, &reach, &mut ledger, 13, |cx| run.poll(cx)).is_pending()
+    );
     assert!(matches!(run.action.as_ref(), Some(Action::Loot(_))));
     assert!(matches!(
         &ledger.as_ref().unwrap().outbox.last().unwrap().effect,
@@ -4462,6 +4689,655 @@ fn killed_report_enters_loot_and_takes_the_observed_drop() {
             ..
         }) if *x == stand.x && *z == stand.z && *id == item_id && action == "Take"
     ));
+}
+
+#[test]
+fn killed_report_waits_for_a_late_drop_before_reengaging() {
+    let selected = api::game_data::for_revision(ClientRevision::R289).unwrap();
+    let item = selected.item_by_alias("elemental_workshop_ore").unwrap();
+    let item_id = item.id;
+    let item_name = item.name.as_deref().unwrap();
+    let stand = api::WorldTile {
+        x: 2693,
+        z: 9906,
+        level: 0,
+    };
+    let mut absent = GameSnapshot::new();
+    absent.seed_ingame(2);
+    absent.seed_inventory(Vec::new(), 28);
+    super::super::tests::seed_dialogue_combat(&mut absent, false);
+    absent.seed_ground_items(Vec::new());
+    let mut appeared = GameSnapshot::new();
+    appeared.seed_ingame(2);
+    appeared.seed_inventory(Vec::new(), 28);
+    super::super::tests::seed_dialogue_combat(&mut appeared, false);
+    appeared.seed_ground_items(vec![ground_item(item_id, item_name, stand, 0)]);
+    let reach = seed_loot_route(&mut appeared, stand, 12);
+    let mut run = combat_test_run(
+        imp_target(&selected),
+        Some(stand),
+        Some(Arc::new(NeverStop)),
+        vec![LootItem {
+            id: item_id,
+            name: Arc::from(item_name),
+            qty: 1,
+        }],
+    );
+    let mut ledger = None;
+    assert!(with_step_context(&absent, &mut ledger, 12, |cx| {
+        run.on_combat_report(report(CombatEnd::Killed), cx)
+    })
+    .is_pending());
+    let deadline = 12 + LOOT_ITEM_WAIT_TICKS;
+    assert!(with_step_context(&absent, &mut ledger, 13, |cx| run.poll(cx)).is_pending());
+    assert!(run.action.is_none());
+    assert_eq!(run.loot_wait_deadline, Some(deadline));
+    assert!(with_step_context(&absent, &mut ledger, 14, |cx| run.poll(cx)).is_pending());
+    assert!(run.action.is_none());
+    assert!(
+        with_step_context_reach(&appeared, &reach, &mut ledger, 15, |cx| run.poll(cx)).is_pending()
+    );
+    assert!(matches!(run.action.as_ref(), Some(Action::Loot(_))));
+    assert!(
+        ledger.as_ref().unwrap().outbox.iter().any(|entry| matches!(
+            &entry.effect,
+            crate::native::HostEffect::Interaction(crate::shim::InteractReq::Obj {
+                id: Some(id),
+                action,
+                ..
+            }) if *id == item_id && action == "Take"
+        )),
+        "the delayed ore should be taken before the combat step re-engages"
+    );
+}
+
+#[test]
+fn combat_loot_take_settles_after_the_appearance_deadline() {
+    let selected = api::game_data::for_revision(ClientRevision::R289).unwrap();
+    let item = selected.item_by_alias("elemental_workshop_ore").unwrap();
+    let stand = api::WorldTile {
+        x: 2693,
+        z: 9906,
+        level: 0,
+    };
+    let mut absent = GameSnapshot::new();
+    absent.seed_ingame(2);
+    absent.seed_inventory(Vec::new(), 28);
+    super::super::tests::seed_dialogue_combat(&mut absent, false);
+    absent.seed_ground_items(Vec::new());
+    let mut appeared = GameSnapshot::new();
+    appeared.seed_ingame(2);
+    appeared.seed_inventory(Vec::new(), 28);
+    super::super::tests::seed_dialogue_combat(&mut appeared, false);
+    appeared.seed_ground_items(vec![ground_item(
+        item.id,
+        item.name.as_deref().unwrap(),
+        stand,
+        0,
+    )]);
+    let reach = seed_loot_route(&mut appeared, stand, 12);
+    let mut collected = GameSnapshot::new();
+    collected.seed_ingame(2);
+    collected.seed_inventory(
+        vec![inventory_item(item.id, item.name.as_deref().unwrap(), 1)],
+        28,
+    );
+    super::super::tests::seed_dialogue_combat(&mut collected, false);
+    collected.seed_ground_items(Vec::new());
+    seed_loot_world(&mut collected, stand);
+    let mut run = combat_test_run(
+        imp_target(&selected),
+        Some(stand),
+        Some(Arc::new(HasItem(item.id))),
+        vec![LootItem {
+            id: item.id,
+            name: Arc::from(item.name.as_deref().unwrap()),
+            qty: 1,
+        }],
+    );
+    let mut ledger = None;
+    assert!(with_step_context(&absent, &mut ledger, 12, |cx| {
+        run.on_combat_report(report(CombatEnd::Killed), cx)
+    })
+    .is_pending());
+    let deadline = 12 + LOOT_ITEM_WAIT_TICKS;
+    for tick in 13..deadline {
+        assert!(with_step_context(&absent, &mut ledger, tick, |cx| { run.poll(cx) }).is_pending());
+        assert!(run.action.is_none());
+    }
+    assert!(
+        with_step_context_reach(&appeared, &reach, &mut ledger, deadline, |cx| run.poll(cx))
+            .is_pending()
+    );
+    assert!(matches!(run.action.as_ref(), Some(Action::Loot(_))));
+    assert!(
+        with_step_context_reach(&appeared, &reach, &mut ledger, deadline + 1, |cx| run
+            .poll(cx))
+        .is_pending(),
+        "an in-flight Take must remain pending after the appearance deadline"
+    );
+    assert!(matches!(run.action.as_ref(), Some(Action::Loot(_))));
+    assert_eq!(run.loot_index, 0, "do not advance before the Take settles");
+    let authority = ledger.as_ref().unwrap().outbox.last().unwrap().authority();
+    ledger.as_mut().unwrap().complete_interaction(
+        &authority,
+        crate::native::InteractionReceipt {
+            request_id: authority.request_id().get(),
+            evidence: EvidenceStamp {
+                run: authority.run(),
+                tick: deadline,
+                sequence: deadline,
+            },
+            accepted: true,
+            chat_since: 0,
+        },
+    );
+    assert!(matches!(
+        with_step_context_reach(&collected, &reach, &mut ledger, deadline + 2, |cx| run
+            .poll(cx)),
+        Poll::Ready(Ok(_))
+    ));
+    assert_eq!(run.loot_index, 1);
+}
+
+#[test]
+fn missing_combat_loot_wait_is_one_window_for_all_configured_items() {
+    let selected = api::game_data::for_revision(ClientRevision::R289).unwrap();
+    let loot: Vec<_> = ["red_bead", "yellow_bead", "black_bead", "white_bead"]
+        .into_iter()
+        .map(|alias| {
+            let item = selected.item_by_alias(alias).unwrap();
+            LootItem {
+                id: item.id,
+                name: Arc::from(item.name.as_deref().unwrap()),
+                qty: 1,
+            }
+        })
+        .collect();
+    let stand = api::WorldTile {
+        x: 3253,
+        z: 3401,
+        level: 0,
+    };
+    let mut snapshot = GameSnapshot::new();
+    snapshot.seed_ingame(2);
+    snapshot.seed_inventory(Vec::new(), 28);
+    super::super::tests::seed_dialogue_combat(&mut snapshot, false);
+    snapshot.seed_ground_items(Vec::new());
+    let mut run = combat_test_run(imp_target(&selected), Some(stand), None, loot);
+    let mut ledger = None;
+
+    assert_eq!(LOOT_ITEM_WAIT_TICKS, 5 + 1);
+    assert!(with_step_context(&snapshot, &mut ledger, 1, |cx| {
+        run.on_combat_report(report(CombatEnd::Killed), cx)
+    })
+    .is_pending());
+
+    let deadline = 1 + LOOT_ITEM_WAIT_TICKS;
+    for tick in 2..=deadline {
+        assert!(with_step_context(&snapshot, &mut ledger, tick, |cx| run.poll(cx)).is_pending());
+        assert!(matches!(&run.phase, Phase::Loot));
+        assert!(run.action.is_none(), "no item means no per-item Reach wait");
+        assert_eq!(run.loot_wait_deadline, Some(deadline));
+    }
+    assert!(matches!(
+        with_step_context(&snapshot, &mut ledger, deadline + 1, |cx| run.poll(cx)),
+        Poll::Ready(Ok(_))
+    ));
+    assert_eq!(run.loot_index, 4);
+}
+
+#[test]
+fn combat_loot_uses_the_steps_lost_radius() {
+    let selected = api::game_data::for_revision(ClientRevision::R289).unwrap();
+    let item = selected.item_by_alias("goblin_armour").unwrap();
+    let stand = api::WorldTile {
+        x: 3253,
+        z: 3401,
+        level: 0,
+    };
+    let drop = api::WorldTile {
+        x: stand.x + 18,
+        z: stand.z,
+        level: stand.level,
+    };
+    let mut snapshot = GameSnapshot::new();
+    snapshot.seed_ingame(2);
+    snapshot.seed_inventory(Vec::new(), 28);
+    super::super::tests::seed_dialogue_combat(&mut snapshot, false);
+    snapshot.seed_ground_items(vec![ground_item(
+        item.id,
+        item.name.as_deref().unwrap(),
+        drop,
+        18,
+    )]);
+    let reach = seed_loot_route(&mut snapshot, drop, 1);
+    let mut run = combat_test_run_with_radius(
+        imp_target(&selected),
+        Some(stand),
+        None,
+        vec![LootItem {
+            id: item.id,
+            name: Arc::from(item.name.as_deref().unwrap()),
+            qty: 1,
+        }],
+        18,
+    );
+    let mut ledger = None;
+
+    assert!(
+        with_step_context_reach(&snapshot, &reach, &mut ledger, 1, |cx| {
+            run.on_combat_report(report(CombatEnd::Killed), cx)
+        })
+        .is_pending()
+    );
+    assert!(
+        with_step_context_reach(&snapshot, &reach, &mut ledger, 2, |cx| run.poll(cx)).is_pending()
+    );
+    assert!(
+        ledger.as_ref().unwrap().outbox.iter().any(|entry| matches!(
+            &entry.effect,
+            crate::native::HostEffect::Interaction(crate::shim::InteractReq::Obj {
+                x,
+                z,
+                id: Some(id),
+                action,
+                ..
+            }) if *x == drop.x && *z == drop.z && *id == item.id && action == "Take"
+        )),
+        "a drop at the step's radius must be selected"
+    );
+}
+
+#[test]
+fn missing_required_combat_loot_counts_as_failure_and_a_later_drop_settles() {
+    let selected = api::game_data::for_revision(ClientRevision::R289).unwrap();
+    let item = selected.item_by_alias("elemental_workshop_ore").unwrap();
+    let stand = api::WorldTile {
+        x: 3253,
+        z: 3401,
+        level: 0,
+    };
+    let loot = vec![LootItem {
+        id: item.id,
+        name: Arc::from(item.name.as_deref().unwrap()),
+        qty: 1,
+    }];
+    let mut absent = GameSnapshot::new();
+    absent.seed_ingame(2);
+    absent.seed_inventory(Vec::new(), 28);
+    super::super::tests::seed_dialogue_combat(&mut absent, false);
+    absent.seed_ground_items(Vec::new());
+    let mut missing_run = combat_test_run(
+        imp_target(&selected),
+        Some(stand),
+        Some(Arc::new(HasItem(item.id))),
+        loot.clone(),
+    );
+    let mut ledger = None;
+
+    assert!(with_step_context(&absent, &mut ledger, 1, |cx| {
+        missing_run.on_combat_report(report(CombatEnd::Killed), cx)
+    })
+    .is_pending());
+    let deadline = 1 + LOOT_ITEM_WAIT_TICKS;
+    for tick in 2..=deadline {
+        assert!(
+            with_step_context(&absent, &mut ledger, tick, |cx| missing_run.poll(cx)).is_pending()
+        );
+    }
+    let failure = with_step_context(&absent, &mut ledger, deadline + 1, |cx| {
+        missing_run.poll(cx)
+    });
+    assert!(
+        matches!(failure, Poll::Ready(Err(ActionError::Failed(_)))),
+        "a missing required drop must use the retryable step-failure path"
+    );
+
+    let mut appeared = GameSnapshot::new();
+    appeared.seed_ingame(2);
+    appeared.seed_inventory(Vec::new(), 28);
+    super::super::tests::seed_dialogue_combat(&mut appeared, false);
+    appeared.seed_ground_items(vec![ground_item(
+        item.id,
+        item.name.as_deref().unwrap(),
+        stand,
+        0,
+    )]);
+    let reach = seed_loot_route(&mut appeared, stand, 12);
+    let mut successful_run = combat_test_run(
+        imp_target(&selected),
+        Some(stand),
+        Some(Arc::new(HasItem(item.id))),
+        loot,
+    );
+    assert!(
+        with_step_context_reach(&appeared, &reach, &mut ledger, 20, |cx| {
+            successful_run.on_combat_report(report(CombatEnd::Killed), cx)
+        })
+        .is_pending()
+    );
+    assert!(
+        with_step_context_reach(&appeared, &reach, &mut ledger, 21, |cx| successful_run
+            .poll(cx))
+        .is_pending()
+    );
+    let authority = ledger.as_ref().unwrap().outbox.last().unwrap().authority();
+    ledger.as_mut().unwrap().complete_interaction(
+        &authority,
+        crate::native::InteractionReceipt {
+            request_id: authority.request_id().get(),
+            evidence: EvidenceStamp {
+                run: authority.run(),
+                tick: 21,
+                sequence: 21,
+            },
+            accepted: true,
+            chat_since: 0,
+        },
+    );
+
+    let mut collected = GameSnapshot::new();
+    collected.seed_ingame(2);
+    collected.seed_inventory(
+        vec![inventory_item(item.id, item.name.as_deref().unwrap(), 1)],
+        28,
+    );
+    super::super::tests::seed_dialogue_combat(&mut collected, false);
+    collected.seed_ground_items(Vec::new());
+    seed_loot_world(&mut collected, stand);
+    assert!(matches!(
+        with_step_context_reach(&collected, &reach, &mut ledger, 22, |cx| successful_run
+            .poll(cx)),
+        Poll::Ready(Ok(_))
+    ));
+}
+
+fn until_drop_test_run(
+    target: Target,
+    stand: Option<api::WorldTile>,
+    item_id: i32,
+    item_name: Arc<str>,
+    max_kills: u32,
+) -> CombatRun {
+    let mut run = combat_test_run(
+        target,
+        stand,
+        None,
+        vec![LootItem {
+            id: item_id,
+            name: Arc::clone(&item_name),
+            qty: 1,
+        }],
+    );
+    run.until_drop = Some(UntilDropConfig {
+        item_id,
+        max_kills,
+        stop: Arc::from("bones_not_found"),
+    });
+    run
+}
+
+fn last_test_combat_receipt(run: &CombatRun) -> &CombatReceipt {
+    run.last_outcome
+        .as_ref()
+        .and_then(|outcome| outcome.receipt.as_ref())
+        .and_then(|receipt| receipt.as_any().downcast_ref::<CombatReceipt>())
+        .expect("the combat run has a receipt")
+}
+
+#[test]
+fn until_drop_stops_after_held_item_on_last_permitted_kill() {
+    let selected = api::game_data::for_revision(ClientRevision::R289).unwrap();
+    let item = selected.item_by_alias("bones").unwrap();
+    let item_name: Arc<str> = Arc::from(item.name.as_deref().unwrap_or("Bones"));
+    let mut run = until_drop_test_run(imp_target(&selected), None, item.id, item_name.clone(), 1);
+    let mut snapshot = GameSnapshot::new();
+    snapshot.seed_ingame(2);
+    snapshot.seed_inventory(vec![inventory_item(item.id, &item_name, 1)], 28);
+    super::super::tests::seed_dialogue_combat(&mut snapshot, false);
+    let mut ledger = None;
+
+    assert!(with_step_context(&snapshot, &mut ledger, 12, |cx| {
+        run.on_combat_report(report(CombatEnd::Killed), cx)
+    })
+    .is_pending());
+    assert_eq!(run.kills, 1);
+    let outcome = match with_step_context(&snapshot, &mut ledger, 13, |cx| run.poll(cx)) {
+        Poll::Ready(Ok(outcome)) => outcome,
+        _ => panic!("expected the held drop to complete the combat run"),
+    };
+    let receipt = outcome
+        .receipt
+        .as_ref()
+        .and_then(|receipt| receipt.as_any().downcast_ref::<CombatReceipt>())
+        .expect("completed run preserves its combat receipt");
+    assert_eq!(receipt.kills, 1);
+    assert!(matches!(receipt.report.end, CombatEnd::Killed));
+}
+
+#[test]
+fn until_drop_missing_loot_waits_without_failing_or_resetting_total_kills() {
+    let selected = api::game_data::for_revision(ClientRevision::R289).unwrap();
+    let item = selected.item_by_alias("bones").unwrap();
+    let item_name: Arc<str> = Arc::from(item.name.as_deref().unwrap_or("Bones"));
+    let mut run = until_drop_test_run(imp_target(&selected), None, item.id, item_name, 2);
+    let mut snapshot = GameSnapshot::new();
+    snapshot.seed_ingame(2);
+    snapshot.seed_inventory(Vec::new(), 28);
+    snapshot.seed_ground_items(Vec::new());
+    super::super::tests::seed_dialogue_combat(&mut snapshot, false);
+    let mut ledger = None;
+    let mut kill_tick = 12;
+
+    for kills in 1..=2 {
+        let mut killed = report(CombatEnd::Killed);
+        killed.evidence.tick = kill_tick;
+        assert!(with_step_context(&snapshot, &mut ledger, kill_tick, |cx| {
+            run.on_combat_report(killed, cx)
+        })
+        .is_pending());
+        for _ in 0..100 {
+            assert!(
+                with_step_context(&snapshot, &mut ledger, kill_tick, |cx| run.poll(cx))
+                    .is_pending()
+            );
+            assert!(matches!(run.phase, Phase::Loot));
+            assert_eq!(run.kills, kills);
+        }
+
+        let mut finished_tick = None;
+        for tick in kill_tick + 1..=kill_tick + 20 {
+            match with_step_context(&snapshot, &mut ledger, tick, |cx| run.poll(cx)) {
+                Poll::Pending if matches!(run.action.as_ref(), Some(Action::Combat(_))) => {
+                    assert_eq!(kills, 1, "the final kill must not re-engage");
+                    finished_tick = Some(tick);
+                    break;
+                }
+                Poll::Pending => {
+                    assert!(matches!(run.phase, Phase::Loot));
+                }
+                Poll::Ready(Err(ActionError::Blocked(reason))) => {
+                    assert_eq!(kills, 2, "missing loot must not fail the first kill");
+                    assert_eq!(reason.as_ref(), "bones_not_found");
+                    assert!(run.action.is_none());
+                    finished_tick = Some(tick);
+                    break;
+                }
+                _ => panic!("missing loot must be owned only by the total-kill budget"),
+            }
+            assert_eq!(run.kills, kills);
+        }
+        let finished_tick = finished_tick.expect("the absent-drop wait must be bounded");
+        assert!(
+            finished_tick >= kill_tick + 5,
+            "the full five-tick drop-appearance window precedes re-engagement or stop"
+        );
+        assert_eq!(run.kills, kills);
+        assert_eq!(last_test_combat_receipt(&run).kills, kills);
+        kill_tick = finished_tick + 1;
+    }
+}
+
+#[test]
+fn until_drop_takes_a_late_drop_on_the_final_permitted_kill() {
+    let selected = api::game_data::for_revision(ClientRevision::R289).unwrap();
+    let item = selected.item_by_alias("bones").unwrap();
+    let item_name: Arc<str> = Arc::from(item.name.as_deref().unwrap_or("Bones"));
+    let stand = api::WorldTile {
+        x: 3253,
+        z: 3401,
+        level: 0,
+    };
+    let mut run = until_drop_test_run(
+        imp_target(&selected),
+        Some(stand),
+        item.id,
+        Arc::clone(&item_name),
+        1,
+    );
+    let mut snapshot = GameSnapshot::new();
+    snapshot.seed_ingame(2);
+    snapshot.seed_inventory(Vec::new(), 28);
+    snapshot.seed_ground_items(Vec::new());
+    super::super::tests::seed_dialogue_combat(&mut snapshot, false);
+    let reach = seed_loot_route(&mut snapshot, stand, 12);
+    let mut ledger = None;
+    assert!(with_step_context(&snapshot, &mut ledger, 12, |cx| {
+        run.on_combat_report(report(CombatEnd::Killed), cx)
+    })
+    .is_pending());
+    let deadline = 12 + LOOT_ITEM_WAIT_TICKS;
+    for tick in 13..deadline {
+        assert!(with_step_context(&snapshot, &mut ledger, tick, |cx| run.poll(cx)).is_pending());
+        assert!(matches!(run.phase, Phase::Loot));
+        assert_eq!(run.kills, 1);
+    }
+    snapshot.seed_ground_items(vec![GroundItemView {
+        def: inventory_item(item.id, &item_name, 1).def,
+        count: 1,
+        actions: vec![Some("Take".into())],
+        tile: stand,
+        distance: 0,
+    }]);
+    for _ in 0..2 {
+        assert!(
+            with_step_context_reach(&snapshot, &reach, &mut ledger, deadline, |cx| run.poll(cx))
+                .is_pending()
+        );
+    }
+    assert!(ledger.as_ref().unwrap().outbox.iter().any(|action| {
+        matches!(
+            &action.effect,
+            crate::native::HostEffect::Interaction(crate::shim::InteractReq::Obj {
+                id: Some(id),
+                action,
+                ..
+            }) if *id == item.id && action == "Take"
+        )
+    }));
+    let authority = ledger.as_ref().unwrap().outbox.last().unwrap().authority();
+    ledger.as_mut().unwrap().complete_interaction(
+        &authority,
+        crate::native::InteractionReceipt {
+            request_id: authority.request_id().get(),
+            evidence: EvidenceStamp {
+                run: authority.run(),
+                tick: deadline,
+                sequence: deadline,
+            },
+            accepted: true,
+            chat_since: 0,
+        },
+    );
+    assert!(
+        with_step_context_reach(&snapshot, &reach, &mut ledger, deadline + 1, |cx| run
+            .poll(cx))
+        .is_pending()
+    );
+    assert!(matches!(run.action.as_ref(), Some(Action::Loot(_))));
+    assert_eq!(
+        run.loot_index, 0,
+        "the final permitted kill must wait for its Take"
+    );
+    assert_eq!(run.kills, 1);
+    snapshot.seed_inventory(vec![inventory_item(item.id, &item_name, 1)], 28);
+    snapshot.seed_ground_items(Vec::new());
+    let mut completed = None;
+    for tick in deadline + 2..=deadline + 5 {
+        match with_step_context_reach(&snapshot, &reach, &mut ledger, tick, |cx| run.poll(cx)) {
+            Poll::Pending => {}
+            Poll::Ready(Ok(outcome)) => {
+                completed = Some(outcome);
+                break;
+            }
+            Poll::Ready(Err(_)) => panic!("the final late drop must beat the named stop"),
+        }
+    }
+    let completed = completed.expect("the observed inventory pickup completes the step");
+    let receipt = completed
+        .receipt
+        .as_ref()
+        .and_then(|receipt| receipt.as_any().downcast_ref::<CombatReceipt>())
+        .expect("the final permitted kill remains in the receipt");
+    assert_eq!(receipt.kills, 1);
+    assert!(matches!(receipt.report.end, CombatEnd::Killed));
+    assert!(run.action.is_none());
+}
+
+#[test]
+fn until_drop_no_kill_outcomes_do_not_spend_the_kill_budget() {
+    let selected = api::game_data::for_revision(ClientRevision::R289).unwrap();
+    let item = selected.item_by_alias("bones").unwrap();
+    let item_name: Arc<str> = Arc::from(item.name.as_deref().unwrap_or("Bones"));
+    let mut run = until_drop_test_run(imp_target(&selected), None, item.id, item_name, 2);
+    let mut snapshot = GameSnapshot::new();
+    snapshot.seed_ingame(2);
+    snapshot.seed_inventory(Vec::new(), 28);
+    super::super::tests::seed_dialogue_combat(&mut snapshot, false);
+    let mut ledger = None;
+
+    for (offset, end) in [
+        CombatEnd::NoTarget,
+        CombatEnd::Budget,
+        CombatEnd::TargetGone,
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        assert!(
+            with_step_context(&snapshot, &mut ledger, 12 + offset as u64, |cx| {
+                run.on_combat_report(report(end), cx)
+            })
+            .is_pending()
+        );
+        assert_eq!(run.kills, 0);
+        assert_eq!(last_test_combat_receipt(&run).kills, 0);
+    }
+
+    assert!(with_step_context(&snapshot, &mut ledger, 15, |cx| {
+        run.on_combat_report(report(CombatEnd::Killed), cx)
+    })
+    .is_pending());
+    assert_eq!(run.kills, 1);
+    run.loot_index = run.loot.len();
+    assert!(with_step_context(&snapshot, &mut ledger, 16, |cx| {
+        run.next_loot_or_reengage(cx)
+    })
+    .is_pending());
+    assert!(matches!(run.action.as_ref(), Some(Action::Combat(_))));
+}
+
+#[test]
+fn combat_state_size_tripwire_reports_config_run_and_receipt_sizes() {
+    println!(
+        "CombatPlan={} CombatRun={} CombatReceipt={}",
+        std::mem::size_of::<CombatPlan>(),
+        std::mem::size_of::<CombatRun>(),
+        std::mem::size_of::<CombatReceipt>(),
+    );
+    assert!(std::mem::size_of::<Option<UntilDropConfig>>() <= 32);
+    assert!(std::mem::size_of::<CombatReceipt>() <= 256);
 }
 
 #[test]
@@ -4484,6 +5360,7 @@ fn same_tick_loot_settle_defers_next_item_without_skipping_it() {
         .collect();
     let mut run = combat_test_run(imp_target(&selected), Some(stand), None, loot);
     run.phase = Phase::Loot;
+    let reach = open_flood(stand, 12);
     let snapshot = || {
         let mut snapshot = GameSnapshot::new();
         snapshot.seed_ingame(2);
@@ -4500,6 +5377,7 @@ fn same_tick_loot_settle_defers_next_item_without_skipping_it() {
                 })
                 .collect(),
         );
+        seed_loot_world(&mut snapshot, stand);
         snapshot
     };
     let initial = snapshot();
@@ -4509,34 +5387,69 @@ fn same_tick_loot_settle_defers_next_item_without_skipping_it() {
         28,
     );
     let mut ledger = None;
-    super::super::tests::with_tick_snapshots(&initial, &later, &mut ledger, 1, |native, later| {
-        let quests = QuestCatalog::empty();
-        let banks = Arc::new(api::named_banks::NamedBankFacts::empty());
-        let choices = crate::quester::choices::QuestChoices::default();
-        let required_after = native.cx.evidence();
-        let mut cx = StepContext {
-            tick: native,
-            quests: &quests,
-            progress: &[],
-            required_after,
-            banks: &banks,
-            choices: &choices,
-        };
-        assert!(run.poll(&mut cx).is_pending());
-        assert_eq!(run.loot_index, 1);
-        assert_eq!(cx.tick.cx.ledger.as_ref().unwrap().outbox.len(), 1);
-        cx.tick.cx.snapshot = api::snapshot::SnapshotView::new(Some(later), required_after);
-        for _ in 0..3 {
+    super::super::tests::with_tick_reach_snapshots(
+        &initial,
+        &later,
+        &reach,
+        &mut ledger,
+        1,
+        |native, later| {
+            let quests = QuestCatalog::empty();
+            let banks = Arc::new(api::named_banks::NamedBankFacts::empty());
+            let choices = crate::quester::choices::QuestChoices::default();
+            let required_after = native.cx.evidence();
+            let mut cx = StepContext {
+                tick: native,
+                quests: &quests,
+                progress: &[],
+                required_after,
+                banks: &banks,
+                choices: &choices,
+            };
             assert!(run.poll(&mut cx).is_pending());
             assert_eq!(
-                run.loot_index, 1,
-                "denied loot admission must retain the second item"
+                run.loot_index, 0,
+                "the active Take keeps its row until settlement"
             );
-        }
-        assert!(cx.tick.cx.ledger.as_ref().unwrap().outbox.is_empty());
-    });
-    assert!(with_step_context(&later, &mut ledger, 2, |cx| run.poll(cx)).is_pending());
-    assert_eq!(run.loot_index, 2);
+            assert_eq!(cx.tick.cx.ledger.as_ref().unwrap().outbox.len(), 1);
+            let authority = cx
+                .tick
+                .cx
+                .ledger
+                .as_ref()
+                .unwrap()
+                .outbox
+                .last()
+                .unwrap()
+                .authority();
+            cx.tick.cx.ledger.as_mut().unwrap().complete_interaction(
+                &authority,
+                crate::native::InteractionReceipt {
+                    request_id: authority.request_id().get(),
+                    evidence: EvidenceStamp {
+                        run: authority.run(),
+                        tick: 1,
+                        sequence: 1,
+                    },
+                    accepted: true,
+                    chat_since: 0,
+                },
+            );
+            cx.tick.cx.snapshot = later;
+            for _ in 0..3 {
+                assert!(run.poll(&mut cx).is_pending());
+                assert_eq!(
+                    run.loot_index, 1,
+                    "denied loot admission must retain the second item"
+                );
+            }
+            assert!(cx.tick.cx.ledger.as_ref().unwrap().outbox.is_empty());
+        },
+    );
+    assert!(
+        with_step_context_reach(&later, &reach, &mut ledger, 2, |cx| run.poll(cx)).is_pending()
+    );
+    assert_eq!(run.loot_index, 1);
     assert!(matches!(
         &ledger.as_ref().unwrap().outbox.last().unwrap().effect,
         crate::native::HostEffect::Interaction(crate::shim::InteractReq::Obj {
@@ -4566,7 +5479,7 @@ fn combat_loot_reaches_below_quantity_and_skips_at_the_requested_count() {
     };
 
     for (held_bones, expected_index, expected_tile, expected_id) in
-        [(1, 1, bones_tile, bones.id), (25, 2, bead_tile, bead.id)]
+        [(1, 0, bones_tile, bones.id), (25, 1, bead_tile, bead.id)]
     {
         let mut run = combat_test_run(
             imp_target(&data),
@@ -4594,9 +5507,13 @@ fn combat_loot_reaches_below_quantity_and_skips_at_the_requested_count() {
             ground_item(bones.id, bones_name, bones_tile, 0),
             ground_item(bead.id, bead_name, bead_tile, 1),
         ]);
+        let reach = seed_loot_route(&mut snapshot, bones_tile, 12);
         let mut ledger = None;
 
-        assert!(with_step_context(&snapshot, &mut ledger, 1, |cx| run.poll(cx)).is_pending());
+        assert!(
+            with_step_context_reach(&snapshot, &reach, &mut ledger, 1, |cx| run.poll(cx))
+                .is_pending()
+        );
         assert_eq!(run.loot_index, expected_index);
         assert!(matches!(run.action.as_ref(), Some(Action::Loot(_))));
         assert!(matches!(
@@ -4609,23 +5526,14 @@ fn combat_loot_reaches_below_quantity_and_skips_at_the_requested_count() {
 }
 
 #[test]
-fn lifecycle_followups_unreachable_loot_walk_skips_to_the_next_item() {
+fn lifecycle_followups_unsettled_loot_take_skips_to_the_next_item() {
     let data = api::game_data::for_revision(ClientRevision::R289).unwrap();
     let here = api::WorldTile {
         x: 3200,
         z: 3200,
         level: 0,
     };
-    let door = api::WorldTile {
-        x: 3203,
-        z: 3200,
-        level: 0,
-    };
-    let first_tile = api::WorldTile {
-        x: 3205,
-        z: 3200,
-        level: 0,
-    };
+    let first_tile = here;
     let second_tile = api::WorldTile {
         x: 3201,
         z: 3201,
@@ -4667,42 +5575,22 @@ fn lifecycle_followups_unreachable_loot_walk_skips_to_the_next_item() {
     let mut snapshot = GameSnapshot::new();
     snapshot.seed_ingame(2);
     snapshot.seed_inventory(Vec::new(), 28);
-    snapshot.seed_local_player(super::super::tests::local_player(here));
     snapshot.seed_ground_items(vec![
-        ground(1, "First drop", first_tile, 5),
-        ground(2, "Second drop", second_tile, 2),
+        ground(1, "First drop", first_tile, 0),
+        ground(2, "Second drop", second_tile, 1),
     ]);
-    snapshot.seed_locs(vec![LocView {
-        id: 7,
-        name: Some("Door".into()),
-        actions: vec![Some("Open".into())],
-        tile: door,
-        distance: 3,
-        typecode: 0,
-        info: 0,
-        description: None,
-        layer: LocLayer::GroundDecoration,
-        shape: -1,
-        angle: 0,
-        width: 1,
-        length: 1,
-        footprint_width: 1,
-        footprint_length: 1,
-        block_walk: false,
-        block_range: false,
-        active: true,
-        animation: -1,
-        map_function: -1,
-        map_scene: -1,
-        force_approach: 0,
-    }]);
+    let reach = seed_loot_route(&mut snapshot, here, 12);
     snapshot.seed_chat_lines(vec![]);
     let mut ledger = None;
-    assert!(with_step_context(&snapshot, &mut ledger, 12, |cx| {
-        run.on_combat_report(report(CombatEnd::Killed), cx)
-    })
-    .is_pending());
-    assert!(with_step_context(&snapshot, &mut ledger, 13, |cx| run.poll(cx)).is_pending());
+    assert!(
+        with_step_context_reach(&snapshot, &reach, &mut ledger, 12, |cx| {
+            run.on_combat_report(report(CombatEnd::Killed), cx)
+        })
+        .is_pending()
+    );
+    assert!(
+        with_step_context_reach(&snapshot, &reach, &mut ledger, 13, |cx| run.poll(cx)).is_pending()
+    );
     assert!(matches!(
         &ledger.as_ref().unwrap().outbox.last().unwrap().effect,
         crate::native::HostEffect::Interaction(crate::shim::InteractReq::Obj {
@@ -4713,54 +5601,43 @@ fn lifecycle_followups_unreachable_loot_walk_skips_to_the_next_item() {
             ..
         }) if *x == first_tile.x && *z == first_tile.z && *id == 1 && action == "Take"
     ));
-
-    // The failed item click identifies the closed door; Reach's real recovery
-    // path emits a walk to that door before this terminal route receipt.
-    ledger.as_mut().unwrap().outbox.clear();
-    snapshot.seed_chat_lines(vec![ChatLineView {
-        type_: 0,
-        username: None,
-        text: "I can't reach that".into(),
-        sequence: 1,
-    }]);
-    assert!(with_step_context(&snapshot, &mut ledger, 14, |cx| run.poll(cx)).is_pending());
-    let request_id = match &ledger.as_ref().unwrap().outbox.last().unwrap().effect {
-        crate::native::HostEffect::Walk(request) => {
-            assert_eq!(request.target, door);
-            ledger
-                .as_ref()
-                .unwrap()
-                .outbox
-                .last()
-                .unwrap()
-                .request_id
-                .get()
-        }
-        _ => panic!("Reach must walk to the closed door to recover the loot path"),
-    };
-    ledger.as_mut().unwrap().outbox.clear();
-    ledger.as_mut().unwrap().walk = Some(crate::native::WalkReceipt {
-        goal: None,
-        request_id,
-        evidence: EvidenceStamp {
-            run: RunKey {
-                slot: 1,
-                run: 1,
-                session: 1,
+    let authority = ledger.as_ref().unwrap().outbox.last().unwrap().authority();
+    ledger.as_mut().unwrap().complete_interaction(
+        &authority,
+        crate::native::InteractionReceipt {
+            request_id: authority.request_id().get(),
+            evidence: EvidenceStamp {
+                run: authority.run(),
+                tick: 13,
+                sequence: 13,
             },
-            tick: 15,
-            sequence: 15,
+            accepted: true,
+            chat_since: 0,
         },
-        end: WalkEnd::Failed,
-        blocked: None,
-        detail: Some(Arc::from("door recovery route unreachable")),
-        refusal: None,
-        assessment: None,
-        escape: None,
-    });
+    );
+    ledger.as_mut().unwrap().outbox.clear();
 
-    assert!(with_step_context(&snapshot, &mut ledger, 15, |cx| run.poll(cx)).is_pending());
-    assert_eq!(run.loot_index, 2, "the unreachable item is skipped");
+    let settlement_deadline = 13 + api::ground_take::SETTLEMENT_TICKS;
+    for tick in 14..settlement_deadline {
+        assert!(
+            with_step_context_reach(&snapshot, &reach, &mut ledger, tick, |cx| run.poll(cx))
+                .is_pending()
+        );
+        assert_eq!(run.loot_index, 0);
+        assert!(matches!(run.action.as_ref(), Some(Action::Loot(_))));
+        assert!(ledger.as_ref().unwrap().outbox.is_empty());
+    }
+
+    assert!(
+        with_step_context_reach(&snapshot, &reach, &mut ledger, settlement_deadline, |cx| {
+            run.poll(cx)
+        })
+        .is_pending()
+    );
+    assert_eq!(
+        run.loot_index, 1,
+        "the next loot item becomes active after the first Take misses"
+    );
     assert!(matches!(run.action.as_ref(), Some(Action::Loot(_))));
     assert!(matches!(
         &ledger.as_ref().unwrap().outbox.last().unwrap().effect,
@@ -5088,6 +5965,7 @@ fn combat_finish_tick_budget_covers_the_dialogue_and_interruption_blocks() {
     snapshot.seed_chat_modal(-1, vec![]);
     snapshot.seed_chat_options(vec![], -1);
     super::super::tests::seed_dialogue_combat(&mut snapshot, true);
+    super::super::tests::seed_dialogue_attacker(&mut snapshot, api::snapshot::ActorKind::Npc);
     let result = with_step_context(&snapshot, &mut interrupted_ledger, 2, |cx| {
         interrupted.poll(cx)
     });
@@ -5109,6 +5987,7 @@ fn combat_finish_uses_strict_current_page_line_rules() {
                 choose: "Rule answer".into(),
             }],
             strict: true,
+            answer_once: false,
             gap_ticks: None,
         })
         .unwrap()
@@ -5528,4 +6407,100 @@ mod abort_hold_cure_policy_tests {
             HostEffect::Interaction(InteractReq::Held { action, .. }) if action == "Drink"
         )));
     }
+}
+
+#[test]
+fn combat_loot_take_without_held_count_fails_after_settlement_bound() {
+    let selected = api::game_data::for_revision(ClientRevision::R289).unwrap();
+    let item = selected.item_by_alias("elemental_workshop_ore").unwrap();
+    let item_name = item.name.as_deref().unwrap();
+    let stand = api::WorldTile {
+        x: 3253,
+        z: 3401,
+        level: 0,
+    };
+    let mut absent = GameSnapshot::new();
+    absent.seed_ingame(2);
+    absent.seed_inventory(Vec::new(), 28);
+    super::super::tests::seed_dialogue_combat(&mut absent, false);
+    absent.seed_world(api::snapshot::WorldStateView {
+        map_base_x: 3200,
+        map_base_z: 3352,
+        ..Default::default()
+    });
+    absent.seed_ground_items(Vec::new());
+    let mut appeared = GameSnapshot::new();
+    appeared.seed_ingame(2);
+    appeared.seed_inventory(Vec::new(), 28);
+    super::super::tests::seed_dialogue_combat(&mut appeared, false);
+    appeared.seed_world(api::snapshot::WorldStateView {
+        map_base_x: 3200,
+        map_base_z: 3352,
+        ..Default::default()
+    });
+    appeared.seed_ground_items(vec![ground_item(item.id, item_name, stand, 0)]);
+    let reach = open_flood(stand, 12);
+    let mut run = combat_test_run(
+        imp_target(&selected),
+        Some(stand),
+        Some(Arc::new(HasItem(item.id))),
+        vec![LootItem {
+            id: item.id,
+            name: Arc::from(item_name),
+            qty: 1,
+        }],
+    );
+    let mut ledger = None;
+
+    assert!(
+        with_step_context_reach(&absent, &reach, &mut ledger, 12, |cx| {
+            run.on_combat_report(report(CombatEnd::Killed), cx)
+        })
+        .is_pending()
+    );
+    let deadline = 12 + LOOT_ITEM_WAIT_TICKS;
+    for tick in 13..deadline {
+        assert!(
+            with_step_context_reach(&absent, &reach, &mut ledger, tick, |cx| run.poll(cx))
+                .is_pending()
+        );
+        assert!(run.action.is_none());
+    }
+    assert!(
+        with_step_context_reach(&appeared, &reach, &mut ledger, deadline, |cx| run.poll(cx))
+            .is_pending()
+    );
+    assert!(matches!(run.action.as_ref(), Some(Action::Loot(_))));
+
+    let authority = ledger.as_ref().unwrap().outbox.last().unwrap().authority();
+    ledger.as_mut().unwrap().complete_interaction(
+        &authority,
+        crate::native::InteractionReceipt {
+            request_id: authority.request_id().get(),
+            evidence: EvidenceStamp {
+                run: authority.run(),
+                tick: deadline,
+                sequence: deadline,
+            },
+            accepted: true,
+            chat_since: 0,
+        },
+    );
+    for tick in deadline + 1..deadline + api::ground_take::SETTLEMENT_TICKS {
+        assert!(
+            with_step_context_reach(&appeared, &reach, &mut ledger, tick, |cx| run.poll(cx))
+                .is_pending()
+        );
+    }
+    assert!(matches!(
+        with_step_context_reach(
+            &appeared,
+            &reach,
+            &mut ledger,
+            deadline + api::ground_take::SETTLEMENT_TICKS,
+            |cx| run.poll(cx)
+        ),
+        Poll::Ready(Err(ActionError::Failed(_)))
+    ));
+    assert_eq!(run.loot_index, 1);
 }

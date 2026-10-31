@@ -311,6 +311,7 @@ pub struct PrepareContext<'a> {
     pub pin: Arc<SelectedPin>,
     pub banks: Arc<api::named_banks::NamedBankFacts>,
     pub families: &'a mut FamilyPreparation,
+    pub zones: Option<nav_planner::contract::ZoneTableView<'a>>,
 }
 
 pub type PrepareCard =
@@ -687,6 +688,7 @@ pub fn with_test_tick<R>(
         prompt_port: None,
         actions: &mut actions,
         cx: ActionContext {
+            stage_cross: None,
             condition: None,
             poison_unknown_pulse: u8::MAX,
             cure_poison: crate::survival::CurePoison::WhenNeeded,
@@ -774,6 +776,8 @@ pub struct ActionContext<'a> {
     pub(crate) evidence: EvidenceStamp,
     pub(crate) pin: &'a SelectedPin,
     pub(crate) snapshot: SnapshotView<'a>,
+    /// Frame-local stage consent. Every route keeps the existing named `cross` path.
+    pub(crate) stage_cross: Option<Arc<[Arc<str>]>>,
     pub(crate) condition: Option<api::condition::BotCondition>,
     pub(crate) poison_unknown_pulse: u8,
     pub(crate) cure_poison: crate::survival::CurePoison,
@@ -1118,8 +1122,8 @@ pub struct WalkReceipt {
     pub escape: Option<crate::combat::guard::Escape>,
 }
 impl WalkReceipt {
-    /// Prefer host detail and a typed stall over an advisory's model reason,
-    /// then a typed refusal. Callers use this before generic fallbacks.
+    /// Prefer host detail and a typed stall over an applicable model reason,
+    /// then a typed refusal. A route assessment is not a reason for early end.
     pub fn failure_detail(&self) -> Option<Arc<str>> {
         self.detail
             .as_ref()
@@ -1132,9 +1136,13 @@ impl WalkReceipt {
                 _ => None,
             })
             .or_else(|| {
-                self.assessment
-                    .as_ref()
-                    .map(|assessment| Arc::clone(&assessment.reason))
+                if matches!(&self.end, WalkEnd::RouteEnded) {
+                    None
+                } else {
+                    self.assessment
+                        .as_ref()
+                        .map(|assessment| Arc::clone(&assessment.reason))
+                }
             })
             .or_else(|| {
                 self.refusal
@@ -1171,6 +1179,60 @@ impl WalkReceipt {
                 Arc::clone(&REASON)
             }))),
         }
+    }
+}
+#[cfg(test)]
+mod walk_receipt_tests {
+    use super::*;
+
+    #[test]
+    fn route_ended_walk_uses_arrival_failure_instead_of_risk_reason() {
+        let risk_reason: Arc<str> = Arc::from("survivable route assessment");
+        let assessment = Arc::new(crate::combat::risk::RouteAssessment {
+            verdict: crate::combat::risk::Verdict::Survivable,
+            plan: crate::combat::risk::RoutePlan::default(),
+            crossings: Box::new([]),
+            more: 0,
+            supplies: Box::new([]),
+            hp_after: 10,
+            volley: 0,
+            input: crate::combat::risk::RiskInput::default(),
+            generation: 1,
+            reason: Arc::clone(&risk_reason),
+        });
+        let receipt = WalkReceipt {
+            request_id: 7,
+            evidence: EvidenceStamp {
+                run: RunKey {
+                    slot: 1,
+                    run: 1,
+                    session: 1,
+                },
+                tick: 1,
+                sequence: 1,
+            },
+            goal: None,
+            end: WalkEnd::RouteEnded,
+            blocked: None,
+            detail: None,
+            refusal: None,
+            assessment: Some(assessment),
+            escape: None,
+        };
+        assert_eq!(
+            receipt
+                .assessment
+                .as_ref()
+                .map(|assessment| assessment.reason.as_ref()),
+            Some(risk_reason.as_ref())
+        );
+        assert_eq!(receipt.failure_detail(), None);
+        assert_eq!(
+            receipt.into_arrival(),
+            Err(ActionError::Blocked(Arc::from(
+                "walk route ended before arrival"
+            )))
+        );
     }
 }
 

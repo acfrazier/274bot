@@ -1,0 +1,925 @@
+{
+  "$schema": "../path.schema.json",
+  "schema": 3,
+  "id": "murder",
+  "display_name": "Murder Mystery",
+  "required": [],
+  "tested_stats": null,
+  "partner": null,
+  "quest": {
+    "members": true,
+    "quest_points": 3,
+    "requirements": [],
+    "items": [],
+    "acquire": {},
+    "bank": "nearest",
+    "coin_float": 0,
+    "loadouts": {},
+    "areas": {},
+    "tools": [
+      "obj:pot_empty",
+      "obj:pot_flour",
+      "obj:murderthreadg",
+      "obj:murderthreadr",
+      "obj:murderthreadb",
+      "obj:murderpot2",
+      "obj:murderweapon",
+      "obj:murderweapondust",
+      "obj:murderpaper"
+    ],
+    "owns_inventory": true
+  },
+  "roles": [
+    {
+      "role": null,
+      "progress_binding": "journal:murder",
+      "progress": {
+        "colour": {
+          "not_started": "murder:0",
+          "in_progress": "murder:1",
+          "complete": "murder:done"
+        },
+        "rules": [
+          {
+            "stage": "murder:proof",
+            "all": [
+              "i have indisputable evidence of who the murderer must be"
+            ],
+            "any": [],
+            "not": [],
+            "varp": null
+          },
+          {
+            "stage": "murder:1",
+            "all": [
+              "examine the crime scene very closely for evidence"
+            ],
+            "any": [],
+            "not": [],
+            "varp": 1
+          }
+        ],
+        "flags": [],
+        "monotonic": false
+      },
+      "prelude": [],
+      "sequences": [
+        {
+          "stage": "murder:0",
+          "required": [],
+          "terminal": false,
+          "recovery_entry": null,
+          "order": "authored",
+          "steps": [
+            {
+              "id": "offer-help",
+              "kind": "talk",
+              "version": 1,
+              "args": {
+                "npc": "murderguard",
+                "anchor": {
+                  "tile": [
+                    2739,
+                    3577,
+                    0
+                  ],
+                  "source": "content/maps/m42_55.jm2:6600; pack/npc.pack:813"
+                },
+                "leash": 10,
+                "prefer": [
+                  "Sure, I'll help."
+                ],
+                "strict": true
+              },
+              "skip_if": {
+                "Any": []
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "quest_colour",
+                  "version": 1,
+                  "args": {
+                    "quest": "murder",
+                    "is": "in_progress"
+                  }
+                }
+              },
+              "comment": "content/scripts/quests/quest_murder/scripts/murder_guard.rs2:3-15",
+              "advances": true
+            }
+          ]
+        },
+        {
+          "stage": "murder:1",
+          "required": [],
+          "terminal": false,
+          "recovery_entry": null,
+          "order": "ordered",
+          "cross": [
+            {
+              "id": "highwayman@2749,3521,0",
+              "name": "Highwayman, Seers road east",
+              "reason": "Walk to the poison salesman in Seers (maps/m42_54.jm2:11147). The road from the manor passes this spawn (maps/m42_55.jm2:6606)."
+            },
+            {
+              "id": "highwayman@2735,3521,0",
+              "name": "Highwayman, Seers road west",
+              "reason": "Walk back to the Sinclair family. The return road passes this spawn (maps/m42_55.jm2:6594)."
+            }
+          ],
+          "steps": [
+            {
+              "id": "collect-thread",
+              "kind": "interact",
+              "version": 1,
+              "args": {
+                "target": {
+                  "loc": "loc_2666"
+                },
+                "op": "Investigate",
+                "anchor": {
+                  "tile": [
+                    2747,
+                    3577,
+                    0
+                  ],
+                  "source": "content/maps/m42_55.jm2:6028; pack/loc.pack:2667"
+                },
+                "radius": 12
+              },
+              "skip_if": {
+                "Any": [
+                  {
+                    "Fact": {
+                      "kind": "has_item",
+                      "version": 1,
+                      "args": {
+                        "obj": "murderthreadg"
+                      }
+                    }
+                  },
+                  {
+                    "Fact": {
+                      "kind": "has_item",
+                      "version": 1,
+                      "args": {
+                        "obj": "murderthreadr"
+                      }
+                    }
+                  },
+                  {
+                    "Fact": {
+                      "kind": "has_item",
+                      "version": 1,
+                      "args": {
+                        "obj": "murderthreadb"
+                      }
+                    }
+                  }
+                ]
+              },
+              "settle": {
+                "Any": [
+                  {
+                    "Fact": {
+                      "kind": "has_item",
+                      "version": 1,
+                      "args": {
+                        "obj": "murderthreadg"
+                      }
+                    }
+                  },
+                  {
+                    "Fact": {
+                      "kind": "has_item",
+                      "version": 1,
+                      "args": {
+                        "obj": "murderthreadr"
+                      }
+                    }
+                  },
+                  {
+                    "Fact": {
+                      "kind": "has_item",
+                      "version": 1,
+                      "args": {
+                        "obj": "murderthreadb"
+                      }
+                    }
+                  }
+                ]
+              },
+              "comment": "content/scripts/quests/quest_murder/scripts/quest_murder.rs2:228-255",
+              "advances": true
+            },
+            {
+              "id": "take-dagger",
+              "kind": "interact",
+              "version": 1,
+              "args": {
+                "target": {
+                  "ground": "murderweapon"
+                },
+                "op": "Take",
+                "anchor": {
+                  "tile": [
+                    2746,
+                    3578,
+                    0
+                  ],
+                  "source": "content/maps/m42_55.jm2:6615; pack/obj.pack:1814"
+                },
+                "radius": 8,
+                "wait_if_missing": true
+              },
+              "skip_if": {
+                "Any": [
+                  {
+                    "Fact": {
+                      "kind": "has_item",
+                      "version": 1,
+                      "args": {
+                        "obj": "murderweapon"
+                      }
+                    }
+                  },
+                  {
+                    "Fact": {
+                      "kind": "has_item",
+                      "version": 1,
+                      "args": {
+                        "obj": "murderweapondust"
+                      }
+                    }
+                  },
+                  {
+                    "Fact": {
+                      "kind": "has_item",
+                      "version": 1,
+                      "args": {
+                        "obj": "murderfingerprint1"
+                      }
+                    }
+                  },
+                  {
+                    "Fact": {
+                      "kind": "has_item",
+                      "version": 1,
+                      "args": {
+                        "obj": "murderfingerprint"
+                      }
+                    }
+                  }
+                ]
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "has_item",
+                  "version": 1,
+                  "args": {
+                    "obj": "murderweapon"
+                  }
+                }
+              },
+              "comment": "content/scripts/quests/quest_murder/scripts/quest_murder.rs2:258-273",
+              "advances": false
+            },
+            {
+              "id": "take-poison-pot",
+              "kind": "interact",
+              "version": 1,
+              "args": {
+                "target": {
+                  "ground": "murderpot2"
+                },
+                "op": "Take",
+                "anchor": {
+                  "tile": [
+                    2747,
+                    3579,
+                    0
+                  ],
+                  "source": "content/maps/m42_55.jm2:6616; pack/obj.pack:1813"
+                },
+                "radius": 8,
+                "wait_if_missing": true
+              },
+              "skip_if": {
+                "Fact": {
+                  "kind": "has_item",
+                  "version": 1,
+                  "args": {
+                    "obj": "murderpot2"
+                  }
+                }
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "has_item",
+                  "version": 1,
+                  "args": {
+                    "obj": "murderpot2"
+                  }
+                }
+              },
+              "comment": "content/scripts/quests/quest_murder/scripts/quest_murder.rs2:275-290",
+              "advances": false
+            },
+            {
+              "id": "ask-poison-salesman",
+              "kind": "talk",
+              "version": 1,
+              "args": {
+                "npc": "poison_salesman",
+                "anchor": {
+                  "tile": [
+                    2695,
+                    3495,
+                    0
+                  ],
+                  "source": "content/maps/m42_54.jm2:11147; pack/npc.pack:821"
+                },
+                "leash": 10,
+                "prefer": [
+                  "Talk about the Murder Mystery Quest",
+                  "Who did you sell Poison to at the house?"
+                ],
+                "strict": true
+              },
+              "skip_if": {
+                "Any": []
+              },
+              "settle": {
+                "All": []
+              },
+              "comment": "content/scripts/areas/area_seers/scripts/poison_salesman.rs2:1-5,10-17,32-38",
+              "advances": true
+            },
+            {
+              "id": "question-anna",
+              "kind": "talk",
+              "version": 1,
+              "args": {
+                "npc": "anna_sinclair",
+                "anchor": {
+                  "tile": [
+                    2734,
+                    3575,
+                    0
+                  ],
+                  "source": "content/maps/m42_55.jm2:6592; pack/npc.pack:815"
+                },
+                "leash": 10,
+                "prefer": [
+                  "Why'd you buy poison the other day?"
+                ],
+                "strict": true
+              },
+              "skip_if": {
+                "Any": []
+              },
+              "settle": {
+                "All": []
+              },
+              "comment": "content/scripts/quests/quest_murder/scripts/anna.rs2:1-40",
+              "advances": true
+            },
+            {
+              "id": "question-bob",
+              "kind": "talk",
+              "version": 1,
+              "args": {
+                "npc": "bob_sinclair",
+                "anchor": {
+                  "tile": [
+                    2748,
+                    3559,
+                    0
+                  ],
+                  "source": "content/maps/m42_55.jm2:6605; pack/npc.pack:816"
+                },
+                "leash": 10,
+                "prefer": [
+                  "Why'd you buy poison the other day?"
+                ],
+                "strict": true
+              },
+              "skip_if": {
+                "Any": []
+              },
+              "settle": {
+                "All": []
+              },
+              "comment": "content/scripts/quests/quest_murder/scripts/bob.rs2:1-40",
+              "advances": true
+            },
+            {
+              "id": "question-carol",
+              "kind": "talk",
+              "version": 1,
+              "args": {
+                "npc": "carol_sinclair",
+                "anchor": {
+                  "tile": [
+                    2734,
+                    3581,
+                    1
+                  ],
+                  "source": "content/maps/m42_55.jm2:6609; pack/npc.pack:817"
+                },
+                "leash": 10,
+                "prefer": [
+                  "Why'd you buy poison the other day?"
+                ],
+                "strict": true
+              },
+              "skip_if": {
+                "Any": []
+              },
+              "settle": {
+                "All": []
+              },
+              "comment": "content/scripts/quests/quest_murder/scripts/carol.rs2:1-40",
+              "advances": true
+            },
+            {
+              "id": "question-david",
+              "kind": "talk",
+              "version": 1,
+              "args": {
+                "npc": "david_sinclair",
+                "anchor": {
+                  "tile": [
+                    2739,
+                    3581,
+                    0
+                  ],
+                  "source": "content/maps/m42_55.jm2:6601; pack/npc.pack:818"
+                },
+                "leash": 10,
+                "prefer": [
+                  "Why'd you buy poison the other day?"
+                ],
+                "strict": true
+              },
+              "skip_if": {
+                "Any": []
+              },
+              "settle": {
+                "All": []
+              },
+              "comment": "content/scripts/quests/quest_murder/scripts/david.rs2:1-40",
+              "advances": true
+            },
+            {
+              "id": "question-elizabeth",
+              "kind": "talk",
+              "version": 1,
+              "args": {
+                "npc": "elizabeth_sinclair",
+                "anchor": {
+                  "tile": [
+                    2746,
+                    3581,
+                    1
+                  ],
+                  "source": "content/maps/m42_55.jm2:6612; pack/npc.pack:819"
+                },
+                "leash": 10,
+                "prefer": [
+                  "Why'd you buy poison the other day?"
+                ],
+                "strict": true
+              },
+              "skip_if": {
+                "Any": []
+              },
+              "settle": {
+                "All": []
+              },
+              "comment": "content/scripts/quests/quest_murder/scripts/elizabeth.rs2:1-40",
+              "advances": true
+            },
+            {
+              "id": "question-frank",
+              "kind": "talk",
+              "version": 1,
+              "args": {
+                "npc": "frank_sinclair",
+                "anchor": {
+                  "tile": [
+                    2742,
+                    3577,
+                    0
+                  ],
+                  "source": "content/maps/m42_55.jm2:6604; pack/npc.pack:820"
+                },
+                "leash": 10,
+                "prefer": [
+                  "Why'd you buy poison the other day?"
+                ],
+                "strict": true
+              },
+              "skip_if": {
+                "Any": []
+              },
+              "settle": {
+                "All": []
+              },
+              "comment": "content/scripts/quests/quest_murder/scripts/frank.rs2:1-40",
+              "advances": true
+            },
+            {
+              "id": "investigate-loc_2650",
+              "kind": "interact",
+              "version": 1,
+              "args": {
+                "target": {
+                  "loc": "loc_2650"
+                },
+                "op": "Investigate",
+                "anchor": {
+                  "tile": [
+                    2730,
+                    3572,
+                    0
+                  ],
+                  "source": "content/maps/m42_55.jm2:5249; pack/loc.pack"
+                },
+                "radius": 12
+              },
+              "skip_if": {
+                "Any": []
+              },
+              "settle": {
+                "All": []
+              },
+              "comment": "content/scripts/quests/quest_murder/scripts/quest_murder.rs2:1-16",
+              "advances": true
+            },
+            {
+              "id": "investigate-quest_murder_beehive",
+              "kind": "interact",
+              "version": 1,
+              "args": {
+                "target": {
+                  "loc": "quest_murder_beehive"
+                },
+                "op": "Investigate",
+                "anchor": {
+                  "tile": [
+                    2730,
+                    3559,
+                    0
+                  ],
+                  "source": "content/maps/m42_55.jm2:5242; pack/loc.pack"
+                },
+                "radius": 12
+              },
+              "skip_if": {
+                "Any": []
+              },
+              "settle": {
+                "All": []
+              },
+              "comment": "content/scripts/quests/quest_murder/scripts/quest_murder.rs2:18-33",
+              "advances": true
+            },
+            {
+              "id": "investigate-murderdrain",
+              "kind": "interact",
+              "version": 1,
+              "args": {
+                "target": {
+                  "loc": "murderdrain"
+                },
+                "op": "Investigate",
+                "anchor": {
+                  "tile": [
+                    2736,
+                    3573,
+                    0
+                  ],
+                  "source": "content/maps/m42_55.jm2:5505; pack/loc.pack"
+                },
+                "radius": 12
+              },
+              "skip_if": {
+                "Any": []
+              },
+              "settle": {
+                "All": []
+              },
+              "comment": "content/scripts/quests/quest_murder/scripts/quest_murder.rs2:35-50",
+              "advances": true
+            },
+            {
+              "id": "investigate-loc_2653",
+              "kind": "interact",
+              "version": 1,
+              "args": {
+                "target": {
+                  "loc": "loc_2653"
+                },
+                "op": "Investigate",
+                "anchor": {
+                  "tile": [
+                    2740,
+                    3574,
+                    1
+                  ],
+                  "source": "content/maps/m42_55.jm2:6295; pack/loc.pack"
+                },
+                "radius": 12
+              },
+              "skip_if": {
+                "Any": []
+              },
+              "settle": {
+                "All": []
+              },
+              "comment": "content/scripts/quests/quest_murder/scripts/quest_murder.rs2:52-67",
+              "advances": true
+            },
+            {
+              "id": "investigate-murderfountain",
+              "kind": "interact",
+              "version": 1,
+              "args": {
+                "target": {
+                  "loc": "murderfountain"
+                },
+                "op": "Investigate",
+                "anchor": {
+                  "tile": [
+                    2747,
+                    3563,
+                    0
+                  ],
+                  "source": "content/maps/m42_55.jm2:6015; pack/loc.pack"
+                },
+                "radius": 12
+              },
+              "skip_if": {
+                "Any": []
+              },
+              "settle": {
+                "All": []
+              },
+              "comment": "content/scripts/quests/quest_murder/scripts/quest_murder.rs2:69-87",
+              "advances": true
+            },
+            {
+              "id": "investigate-murdersign",
+              "kind": "interact",
+              "version": 1,
+              "args": {
+                "target": {
+                  "loc": "murdersign"
+                },
+                "op": "Investigate",
+                "anchor": {
+                  "tile": [
+                    2746,
+                    3573,
+                    0
+                  ],
+                  "source": "content/maps/m42_55.jm2:5968; pack/loc.pack"
+                },
+                "radius": 12
+              },
+              "skip_if": {
+                "Any": []
+              },
+              "settle": {
+                "All": []
+              },
+              "comment": "content/scripts/quests/quest_murder/scripts/quest_murder.rs2:89-103",
+              "advances": true
+            }
+          ]
+        },
+        {
+          "stage": "murder:proof",
+          "required": [],
+          "terminal": false,
+          "recovery_entry": null,
+          "order": "ordered",
+          "steps": [
+            {
+              "id": "recover-dagger",
+              "kind": "interact",
+              "version": 1,
+              "args": {
+                "target": {
+                  "ground": "murderweapon"
+                },
+                "op": "Take",
+                "anchor": {
+                  "tile": [
+                    2746,
+                    3578,
+                    0
+                  ],
+                  "source": "content/maps/m42_55.jm2:6615; pack/obj.pack:1814"
+                },
+                "radius": 8,
+                "wait_if_missing": true
+              },
+              "skip_if": {
+                "Any": [
+                  {
+                    "Fact": {
+                      "kind": "has_item",
+                      "version": 1,
+                      "args": {
+                        "obj": "murderweapon"
+                      }
+                    }
+                  },
+                  {
+                    "Fact": {
+                      "kind": "has_item",
+                      "version": 1,
+                      "args": {
+                        "obj": "murderweapondust"
+                      }
+                    }
+                  },
+                  {
+                    "Fact": {
+                      "kind": "has_item",
+                      "version": 1,
+                      "args": {
+                        "obj": "murderfingerprint1"
+                      }
+                    }
+                  },
+                  {
+                    "Fact": {
+                      "kind": "has_item",
+                      "version": 1,
+                      "args": {
+                        "obj": "murderfingerprint"
+                      }
+                    }
+                  }
+                ]
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "has_item",
+                  "version": 1,
+                  "args": {
+                    "obj": "murderweapon"
+                  }
+                }
+              },
+              "comment": "content/scripts/quests/quest_murder/scripts/quest_murder.rs2:258-273",
+              "advances": false
+            },
+            {
+              "id": "fill-flour-pot",
+              "kind": "interact",
+              "version": 1,
+              "args": {
+                "target": {
+                  "loc": "flourbarrel"
+                },
+                "op": "Take From",
+                "anchor": {
+                  "tile": [
+                    2735,
+                    3582,
+                    0
+                  ],
+                  "source": "content/maps/m42_55.jm2:5471; pack/loc.pack:2663"
+                },
+                "radius": 12
+              },
+              "skip_if": {
+                "Any": [
+                  {
+                    "Fact": {
+                      "kind": "has_item",
+                      "version": 1,
+                      "args": {
+                        "obj": "pot_flour"
+                      }
+                    }
+                  },
+                  {
+                    "Fact": {
+                      "kind": "has_item",
+                      "version": 1,
+                      "args": {
+                        "obj": "murderweapondust"
+                      }
+                    }
+                  }
+                ]
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "has_item",
+                  "version": 1,
+                  "args": {
+                    "obj": "pot_flour"
+                  }
+                }
+              },
+              "comment": "content/scripts/quests/quest_murder/scripts/quest_murder.rs2:177-200",
+              "advances": false
+            },
+            {
+              "id": "take-flypaper",
+              "kind": "interact",
+              "version": 1,
+              "args": {
+                "target": {
+                  "loc": "murdersacks"
+                },
+                "op": "Investigate",
+                "anchor": {
+                  "tile": [
+                    2731,
+                    3582,
+                    0
+                  ],
+                  "source": "content/maps/m42_55.jm2:5290; pack/loc.pack:2664"
+                },
+                "radius": 12,
+                "dialogue": {
+                  "prefer": [
+                    "Yes, it might be useful."
+                  ],
+                  "strict": true
+                }
+              },
+              "skip_if": {
+                "Fact": {
+                  "kind": "has_item",
+                  "version": 1,
+                  "args": {
+                    "obj": "murderpaper"
+                  }
+                }
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "has_item",
+                  "version": 1,
+                  "args": {
+                    "obj": "murderpaper"
+                  }
+                }
+              },
+              "comment": "content/scripts/quests/quest_murder/scripts/quest_murder.rs2:204-215",
+              "advances": false
+            },
+            {
+              "id": "dust-murder-weapon",
+              "kind": "use_on",
+              "version": 1,
+              "args": {
+                "item": "pot_flour",
+                "target": {
+                  "item": "murderweapon"
+                },
+                "product": "murderweapondust"
+              },
+              "skip_if": {
+                "Fact": {
+                  "kind": "has_item",
+                  "version": 1,
+                  "args": {
+                    "obj": "murderweapondust"
+                  }
+                }
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "has_item",
+                  "version": 1,
+                  "args": {
+                    "obj": "murderweapondust"
+                  }
+                }
+              },
+              "comment": "content/scripts/skill_cooking/scripts/cooking_inv/scripts/dough/dough.rs2:1-4; scripts/quests/quest_murder/scripts/quest_murder.rs2:310-316",
+              "advances": false
+            }
+          ]
+        },
+        {
+          "stage": "murder:done",
+          "required": [],
+          "terminal": true,
+          "recovery_entry": null,
+          "order": "authored",
+          "steps": []
+        }
+      ]
+    }
+  ]
+}
