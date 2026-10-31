@@ -1374,7 +1374,7 @@ fn emit_knife_click(
         movement.angle,
         movement.shape,
         movement.force_approach,
-        0,
+        2,
     );
     let after = driver.packet_commit_count().ok_or(EmitFailure {
         reason: ServerOrderedError::TransportUnavailable,

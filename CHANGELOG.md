@@ -23,6 +23,9 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.8` 
   guards. The session-relative snapshot tick and native completion tick stay
   separate after relog. Stale generations and earlier-session owners are still
   refused; no owner or event-budget check is bypassed.
+- A continuing KnifeArm routes its exact resource click as `MOVE_OPCLICK`,
+  not a ground-walk `MOVE_GAMECLICK`. Its packet count and owner checks stay
+  unchanged.
 
 ### Not in this release
 

@@ -95,6 +95,11 @@ selected content extractor, not item names or a hand-written id table.
 Generic NPC requests require complete transform-closure proof. The built-in
 Gatherer's fishing arm admits only the current ordinary type and its own
 selected static-operation proof; Whirlpool and Big fish stay unarmed.
+
+The continuing knife click uses the Client's operation-routing mode, `2`.
+Its packets are `OPHELDU`, `IF_BUTTON`, `MOVE_OPCLICK`, then the exact loc or
+NPC operation. The ending shape sends only `OPHELDU` and `IF_BUTTON`.
+
 The native request surface cannot construct an advanced envelope or its permit.
 The private advanced surface uses the same dispatcher, packet validation and
 cheat authorization as the named content path.
