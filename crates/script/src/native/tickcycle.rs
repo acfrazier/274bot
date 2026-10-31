@@ -1273,12 +1273,6 @@ impl TickCycle {
         policy: &mut TickPolicy,
     ) -> CycleStep {
         let tick = signals.tick;
-        // An outstanding continuing Act already means the original terminal
-        // row was not proved. Its receipt can arrive after a success/null roll;
-        // that ordering must not let the cycle enter the verified fraction.
-        let late = late
-            || self.spec.shape == Shape::Continuing
-                && matches!(act, ActState::Owed(obligation) if obligation.kind == ObligationKind::Act);
 
         // A continuing act first observed after its landing edge is ambiguous.
         // If a recovered Act receipt already resolved the one click obligation,
@@ -1642,6 +1636,18 @@ impl TickCycle {
         reason: CycleReason,
         tick: u64,
     ) {
+        // The roll can arrive before a recovery Act's receipt. Keep the
+        // existing pending-owner and emission rules, but never certify that
+        // continuing cycle as if its original terminal row had been proved.
+        let (verdict, reason) = if matches!(verdict, Verdict::Verified | Verdict::Unobserved)
+            && self.spec.shape == Shape::Continuing
+            && matches!(self.phase, Phase::Armed { act: ActState::Owed(obligation), .. }
+                if obligation.kind == ObligationKind::Act)
+        {
+            (Verdict::Slip, CycleReason::LateAct)
+        } else {
+            (verdict, reason)
+        };
         let cycle_ticks = if matches!(verdict, Verdict::Verified | Verdict::Unobserved) {
             self.cycle_started_tick
                 .and_then(|started| tick.checked_sub(started))
