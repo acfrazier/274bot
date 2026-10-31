@@ -4334,6 +4334,7 @@ fn live_logout_waits_for_running_and_queued_scripts_to_stop() {
     let iso = IsolatedStores::enter("tui-live-logout-stop");
     let names = ["alice", "bob", "carol", "dave", "erin"];
     let (mut session, mut app) = tui_with_profiles(&iso, &names);
+    session.names = names.iter().map(|name| (*name).to_string()).collect();
     let path = iso.dir().join("loop.ts");
     std::fs::write(&path, LOOPING_TS).unwrap();
     let card = session.scripts.load_card(&path).unwrap();
