@@ -216,8 +216,8 @@ impl OutputProbe {
         }
     }
 
-    fn observe(&self, mailbox: &FrameBuf, output: FrameOutput) {
-        let (kind, width, height, pixels) = match &output {
+    fn observe(&self, mailbox: &FrameBuf, output: &FrameOutput) {
+        let (kind, width, height, pixels) = match output {
             FrameOutput::PixMap(pixmap) => (
                 "pixmap",
                 Some(pixmap.width),
@@ -264,7 +264,7 @@ impl OutputProbe {
             return;
         }
         let (pixel_hash_fnv1a64, splash_band_hash_fnv1a64, minimap_band_hash_fnv1a64) =
-            match &output {
+            match output {
                 FrameOutput::PixMap(pixmap) => {
                     let width = pixmap.width.max(0) as usize;
                     let height = pixmap.height.max(0) as usize;
@@ -549,6 +549,218 @@ impl DrawingHeadObservation {
 }
 
 const RETAINED_PRESENT_GPU_BYTES_PER_RESOURCE: usize = 1_539_180;
+
+/// A phase records product counters, never counts inferred from registrations.
+#[derive(Clone, Debug, serde::Serialize)]
+struct GpuRetainedReceipt {
+    phase: GpuRetainedPhase,
+    expected_resources: usize,
+    cap: usize,
+    live_resources: usize,
+    logical_bytes: usize,
+    allocations_before: u64,
+    allocations_after: u64,
+    copies_before: u64,
+    copies_after: u64,
+    copied_bytes_before: u64,
+    copied_bytes_after: u64,
+    copy_encode_ns: u128,
+    present_submit_ns: u128,
+    heads: Vec<GpuRetainedHead>,
+    overflow_refused: bool,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, serde::Serialize)]
+enum GpuRetainedPhase {
+    Off,
+    Registered,
+    Held,
+    Draining,
+    Drained,
+}
+
+#[derive(Clone, Debug, serde::Serialize)]
+struct GpuRetainedHead {
+    slot: u64,
+    generation: u64,
+    connected: bool,
+    gpu: bool,
+    valid_scene: bool,
+    fault: bool,
+    cpu_clean_bytes: usize,
+    paints_before: u64,
+    paints_after: u64,
+    scenes_before: u64,
+    scenes_after: u64,
+    held_token_before: Option<u64>,
+    held_token_after: Option<u64>,
+}
+
+fn gpu_retained_verdict(receipt: &GpuRetainedReceipt) -> Result<(), String> {
+    let active = matches!(
+        receipt.phase,
+        GpuRetainedPhase::Registered | GpuRetainedPhase::Held | GpuRetainedPhase::Draining
+    );
+    if receipt.cap == 0
+        || receipt.expected_resources == 0
+        || receipt.expected_resources > receipt.cap
+        || receipt.heads.len() != receipt.expected_resources
+    {
+        return Err("missing heads or invalid retained resource cap".into());
+    }
+    let expected_live = if active { receipt.expected_resources } else { 0 };
+    if receipt.live_resources != expected_live
+        || receipt.logical_bytes != expected_live * RETAINED_PRESENT_GPU_BYTES_PER_RESOURCE
+    {
+        return Err("retained resource count or logical byte charge is incorrect".into());
+    }
+    let allocations = receipt
+        .allocations_after
+        .checked_sub(receipt.allocations_before)
+        .ok_or("allocation counter regressed")?;
+    let expected_allocations = if receipt.phase == GpuRetainedPhase::Registered {
+        receipt.expected_resources as u64
+    } else {
+        0
+    };
+    if allocations != expected_allocations {
+        return Err("retained allocation was leaked, repeated, or omitted".into());
+    }
+    let copies = receipt
+        .copies_after
+        .checked_sub(receipt.copies_before)
+        .ok_or("copy counter regressed")?;
+    let copied_bytes = receipt
+        .copied_bytes_after
+        .checked_sub(receipt.copied_bytes_before)
+        .ok_or("copied-byte counter regressed")?;
+    if copies.checked_mul(RETAINED_PRESENT_GPU_BYTES_PER_RESOURCE as u64) != Some(copied_bytes) {
+        return Err("retained copy byte count is incorrect".into());
+    }
+    if receipt.phase == GpuRetainedPhase::Registered {
+        if copies < receipt.expected_resources as u64 {
+            return Err("a registered head did not produce a retained copy".into());
+        }
+    } else if copies != 0 {
+        return Err("unregistered or held resource received a retained copy".into());
+    }
+    if active && receipt.expected_resources == receipt.cap && !receipt.overflow_refused {
+        return Err("resource q+1 was not refused".into());
+    }
+    for (index, head) in receipt.heads.iter().enumerate() {
+        if head.slot == 0
+            || head.generation == 0
+            || receipt.heads[..index].iter().any(|other| other.slot == head.slot)
+        {
+            return Err("missing or duplicate head identity".into());
+        }
+        if !head.connected || !head.gpu || !head.valid_scene || head.fault {
+            return Err("stopped head, wrong backend, invalid scene, or device fault".into());
+        }
+        if head.cpu_clean_bytes != 0 {
+            return Err("embedded GPU CPU helper owns a clean-scene copy".into());
+        }
+        if head.paints_after <= head.paints_before || head.scenes_after <= head.scenes_before {
+            return Err("ordinary display or scene progress stopped".into());
+        }
+        if matches!(receipt.phase, GpuRetainedPhase::Held | GpuRetainedPhase::Draining)
+            && (head.held_token_before.is_none()
+                || head.held_token_before != head.held_token_after)
+        {
+            return Err("held frame identity changed or disappeared".into());
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn gpu_retained_oracle_accepts_each_correct_phase() {
+    for phase in [
+        GpuRetainedPhase::Off,
+        GpuRetainedPhase::Registered,
+        GpuRetainedPhase::Held,
+        GpuRetainedPhase::Draining,
+        GpuRetainedPhase::Drained,
+    ] {
+        assert!(gpu_retained_verdict(&gpu_retained_fixture(phase)).is_ok());
+    }
+}
+
+fn gpu_retained_fixture(phase: GpuRetainedPhase) -> GpuRetainedReceipt {
+    let active = matches!(
+        phase,
+        GpuRetainedPhase::Registered | GpuRetainedPhase::Held | GpuRetainedPhase::Draining
+    );
+    let registered = phase == GpuRetainedPhase::Registered;
+    GpuRetainedReceipt {
+        phase,
+        expected_resources: 1,
+        cap: 1,
+        live_resources: usize::from(active),
+        logical_bytes: usize::from(active) * RETAINED_PRESENT_GPU_BYTES_PER_RESOURCE,
+        allocations_before: 0,
+        allocations_after: u64::from(registered),
+        copies_before: 0,
+        copies_after: u64::from(registered),
+        copied_bytes_before: 0,
+        copied_bytes_after: u64::from(registered) * RETAINED_PRESENT_GPU_BYTES_PER_RESOURCE as u64,
+        copy_encode_ns: 1,
+        present_submit_ns: 1,
+        heads: vec![GpuRetainedHead {
+            slot: 1,
+            generation: 1,
+            connected: true,
+            gpu: true,
+            valid_scene: true,
+            fault: false,
+            cpu_clean_bytes: 0,
+            paints_before: 1,
+            paints_after: 2,
+            scenes_before: 1,
+            scenes_after: 2,
+            held_token_before: Some(1),
+            held_token_after: Some(1),
+        }],
+        overflow_refused: true,
+    }
+}
+
+#[test]
+fn gpu_retained_oracle_rejects_each_named_failure() {
+    type Mutation = fn(&mut GpuRetainedReceipt);
+    let cases: &[(GpuRetainedPhase, Mutation, &str)] = &[
+        (GpuRetainedPhase::Off, |r| r.live_resources = 1, "resource count"),
+        (GpuRetainedPhase::Registered, |r| r.logical_bytes -= 1, "logical byte"),
+        (GpuRetainedPhase::Registered, |r| r.allocations_after = 2, "allocation"),
+        (GpuRetainedPhase::Registered, |r| r.copies_after = 0, "byte count"),
+        (GpuRetainedPhase::Registered, |r| {
+            r.copies_after = 0;
+            r.copied_bytes_after = 0;
+        }, "did not produce"),
+        (GpuRetainedPhase::Off, |r| {
+            r.copies_after = 1;
+            r.copied_bytes_after = RETAINED_PRESENT_GPU_BYTES_PER_RESOURCE as u64;
+        }, "received a retained copy"),
+        (GpuRetainedPhase::Held, |r| r.heads[0].held_token_after = Some(2), "identity changed"),
+        (GpuRetainedPhase::Draining, |r| r.live_resources = 0, "resource count"),
+        (GpuRetainedPhase::Drained, |r| r.live_resources = 1, "resource count"),
+        (GpuRetainedPhase::Held, |r| r.overflow_refused = false, "q+1"),
+        (GpuRetainedPhase::Held, |r| r.heads[0].cpu_clean_bytes = 684_032, "CPU helper"),
+        (GpuRetainedPhase::Held, |r| r.heads[0].paints_after = 1, "progress stopped"),
+        (GpuRetainedPhase::Held, |r| r.heads[0].scenes_after = 1, "progress stopped"),
+        (GpuRetainedPhase::Held, |r| r.heads[0].connected = false, "stopped head"),
+        (GpuRetainedPhase::Held, |r| r.heads[0].fault = true, "device fault"),
+        (GpuRetainedPhase::Held, |r| r.heads[0].gpu = false, "wrong backend"),
+        (GpuRetainedPhase::Held, |r| r.heads.clear(), "missing heads"),
+        (GpuRetainedPhase::Held, |r| r.allocations_before = 1, "counter regressed"),
+    ];
+    for (phase, mutate, expected) in cases {
+        let mut receipt = gpu_retained_fixture(*phase);
+        mutate(&mut receipt);
+        let error = gpu_retained_verdict(&receipt).unwrap_err();
+        assert!(error.contains(expected), "{phase:?}: {error}, expected {expected}");
+    }
+}
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 struct ProcessRenderCensus {
@@ -1678,7 +1890,7 @@ fn t44_cpu_draw_memory_ab() {
             while !thread_stop.load(Ordering::Relaxed) {
                 for (mailbox, output) in &mailboxes {
                     if let Some(frame) = mailbox.take() {
-                        output.observe(mailbox, frame);
+                        output.observe(mailbox, &frame);
                     }
                 }
                 render_head::pump(Instant::now());
@@ -1894,6 +2106,262 @@ fn t44_cpu_draw_memory_ab() {
         !play.statuses().iter().any(|status| status.ingame),
         "every drawing-memory slot logged out"
     );
+}
+
+/// Rendering qualification: run separately for A=1 and A=q with an explicit cap.
+#[test]
+#[ignore = "requires live Engine A, GPU, explicit retained cap, and measurement directory"]
+fn t44_gpu_retained_live() {
+    use client::render::backend::{
+        TextureHandle,
+        capture::CaptureGeometry,
+        present::{self, ConsumerFrame, ReadbackKind},
+        readback::{ReadbackBudget, ReadbackError},
+    };
+    assert_eq!(std::env::var("LIVE").as_deref(), Ok("1"));
+    assert_ne!(std::env::var("BOT_CPU").as_deref(), Ok("1"));
+    let n: usize = required("M3_N").parse().unwrap();
+    let cap: usize = required("T44_RETAINED_CAP").parse().unwrap();
+    assert!(n > 0 && (n == 1 || n == cap));
+    present::configure_retained_present_budget(std::num::NonZeroUsize::new(cap).unwrap())
+        .expect("configure explicit retained cap");
+    let output = PathBuf::from(required("M3_OUT"));
+    std::fs::create_dir_all(&output).unwrap();
+    configure_drawing_fixture();
+    client::profiling::enable();
+    let bound = ProfileOptions {
+        profile: Some("local-289".into()),
+        revision: Some("289".into()),
+        host: Some("127.0.0.1".into()),
+        asset_host: Some("127.0.0.1".into()),
+        port: Some(env_or("M3_PORT", 44594u16)),
+        http_port: Some(env_or("M3_HTTP_PORT", 1080u16)),
+        engine_dir: Some(required("ENGINE_DIR").into()),
+        nav_pack: Some(required("NAV_PACK").into()),
+        ..ProfileOptions::default()
+    }.resolve(None).unwrap().bind_runtime().unwrap();
+    let names = mint_live_names(n);
+    let probes: Vec<_> = names.iter().map(|name| {
+        let input = SlotInput::new();
+        input.set_prefer_cpu(false);
+        HeadProbe {
+            name: name.clone(), input, mailbox: FrameBuf::new(),
+            control: PaintControl {
+                loading: Arc::new(AtomicBool::new(false)),
+                loading_paints: Arc::new(AtomicU64::new(0)),
+            },
+            output: Arc::new(OutputProbe::default()),
+        }
+    }).collect();
+    let textures: Vec<Arc<Mutex<Option<TextureHandle>>>> =
+        (0..n).map(|_| Arc::new(Mutex::new(None))).collect();
+    let draw = Arc::new(AtomicBool::new(true));
+    let frame_draw = Arc::clone(&draw);
+    let mut play = run_with_template(
+        SharedClientTemplate::load(bound).unwrap(), false, Vec::new(),
+        |_| (None, None),
+        move |client, _, _| client.set_draw(frame_draw.load(Ordering::Relaxed)),
+    ).unwrap();
+    set_policy(&probes, "full", 0);
+    for (profile, head) in live_profiles(&names).into_iter().zip(&probes) {
+        play.try_spawn_slot(profile, Some(Arc::clone(&head.input)),
+            Some(Arc::clone(&head.mailbox)), None).unwrap();
+    }
+    let stop = Arc::new(AtomicBool::new(false));
+    let thread_stop = Arc::clone(&stop);
+    let mailboxes: Vec<_> = probes.iter().zip(&textures).map(|(h, texture)| (
+        Arc::clone(&h.mailbox), Arc::clone(&h.output), Arc::clone(texture),
+    )).collect();
+    let consumer = ConsumerGuard {
+        stop,
+        join: Some(thread::spawn(move || {
+            while !thread_stop.load(Ordering::Relaxed) {
+                for (mailbox, output, texture) in &mailboxes {
+                    if let Some(frame) = mailbox.take() {
+                        output.observe(mailbox, &frame);
+                        if let FrameOutput::Texture(frame) = frame {
+                            *texture.lock().unwrap() = Some(frame);
+                        }
+                    }
+                }
+                render_head::pump(Instant::now());
+                thread::sleep(CONSUMER_PERIOD);
+            }
+        })),
+    };
+    wait_ingame(&play, n, Duration::from_secs(60 + 30 * n as u64));
+    let wait_gpu = || {
+        let deadline = Instant::now() + Duration::from_secs(60);
+        while !probes.iter().all(|head| head.mailbox.fair_stats().is_some_and(|s|
+            s.backend() == BackendKind::Gpu && s.has_valid_scene()
+            && head.mailbox.head().map(head_key) == Some(head_key(s.identity()))))
+        {
+            assert!(Instant::now() < deadline, "GPU scene deadline");
+            thread::sleep(Duration::from_millis(50));
+        }
+    };
+    wait_gpu();
+    thread::sleep(Duration::from_secs(10));
+    let register = |texture: &Mutex<Option<TextureHandle>>| {
+        let deadline = Instant::now() + Duration::from_secs(10);
+        loop {
+            if let Some(frame) = texture.lock().unwrap().as_ref() {
+                match frame.try_register_consumer() {
+                    Ok(registration) => return registration,
+                    Err(ReadbackError::Busy) => {}
+                    Err(error) => panic!("register GPU retained consumer: {error:?}"),
+                }
+            }
+            assert!(Instant::now() < deadline, "retained registration deadline");
+            thread::sleep(Duration::from_millis(10));
+        }
+    };
+    let mut receipts = Vec::new();
+    let mut samples = Vec::new();
+    let mut registrations: Vec<present::ConsumerRegistration> = Vec::new();
+    let mut held: Vec<ConsumerFrame> = Vec::new();
+    let mut readbacks = Vec::new();
+    let mut overflow_refused = n != cap;
+    for phase in [GpuRetainedPhase::Off, GpuRetainedPhase::Registered,
+        GpuRetainedPhase::Held, GpuRetainedPhase::Draining, GpuRetainedPhase::Drained]
+    {
+        if phase == GpuRetainedPhase::Held {
+            for registration in &registrations {
+                let deadline = Instant::now() + Duration::from_secs(10);
+                loop {
+                    match registration.try_take_frame() {
+                        Ok(Some(frame)) => { assert!(frame.has_valid_scene()); held.push(frame); break; }
+                        Ok(None) | Err(ReadbackError::Busy) => {}
+                        Err(error) => panic!("take retained frame: {error:?}"),
+                    }
+                    assert!(Instant::now() < deadline, "retained frame deadline");
+                    thread::sleep(Duration::from_millis(10));
+                }
+            }
+        }
+        if phase == GpuRetainedPhase::Draining {
+            registrations.clear();
+        }
+        if phase == GpuRetainedPhase::Drained {
+            // Retire the old gates without ever admitting more than q drawing heads.
+            draw.store(false, Ordering::Relaxed);
+            wake_slots(&play, &probes);
+            let deadline = Instant::now() + Duration::from_secs(60);
+            while probes.iter().any(|h| h.mailbox.head().is_some()) {
+                assert!(Instant::now() < deadline, "GPU detach deadline");
+                thread::sleep(Duration::from_millis(50));
+            }
+            for texture in &textures { *texture.lock().unwrap() = None; }
+            draw.store(true, Ordering::Relaxed);
+            wake_slots(&play, &probes);
+            wait_gpu();
+            let deadline = Instant::now() + Duration::from_secs(10);
+            loop {
+                let texture = textures[0].lock().unwrap();
+                if let Some(texture) = texture.as_ref() {
+                    match texture.try_register_consumer() {
+                        Err(ReadbackError::Limit) if n == cap => { overflow_refused = true; break; }
+                        Err(ReadbackError::Busy) => {}
+                        Ok(registration) if n < cap => { drop(registration); break; }
+                        _ => panic!("q+1 retained registration did not fail closed"),
+                    }
+                }
+                drop(texture);
+                assert!(Instant::now() < deadline, "new GPU gate registration deadline");
+                thread::sleep(Duration::from_millis(10));
+            }
+            for frame in held.drain(..) {
+                let token = frame.present_token().get();
+                let deadline = Instant::now() + Duration::from_secs(10);
+                let permit = ReadbackBudget::process()
+                    .try_acquire(CaptureGeometry::new(765, 503), deadline).unwrap();
+                let mut pending = match frame.try_begin_readback(ReadbackKind::ValidScene, permit) {
+                    Ok(pending) => pending,
+                    Err((error, _, _)) => panic!("held readback: {error:?}"),
+                };
+                loop {
+                    if let Some(done) = pending.poll(Instant::now()).unwrap() {
+                        let (bytes, actual_token, valid, geometry, permit) = done.into_parts();
+                        assert_eq!(actual_token.get(), token);
+                        assert!(valid);
+                        assert_eq!(bytes.len(), 765 * 503 * 4);
+                        let hash = bytes.iter().fold(0xcbf29ce484222325u64,
+                            |h, b| (h ^ u64::from(*b)).wrapping_mul(0x100000001b3));
+                        readbacks.push(json!({"token":token,"valid_scene":valid,
+                            "rgba_bytes":bytes.len(),"hash_fnv1a64":hash,
+                            "width":geometry.width(),"height":geometry.height()}));
+                        drop(permit);
+                        break;
+                    }
+                    assert!(Instant::now() < deadline, "held readback deadline");
+                    thread::sleep(Duration::from_millis(10));
+                }
+            }
+            drop(register(&textures[0]));
+        }
+        let started = Instant::now();
+        let (before, _, first) = capture_sample("gpu-retained", 0, started, &play, &probes, None);
+        let counters_before = present::retained_present_stats();
+        if phase == GpuRetainedPhase::Registered {
+            for texture in &textures {
+                registrations.push(register(texture));
+            }
+        }
+        let tokens: Vec<_> = held.iter().map(|f| f.present_token().get()).collect();
+        thread::sleep(Duration::from_secs(30));
+        let (after, _, last) = capture_sample("gpu-retained", 1, started, &play, &probes, Some(&before));
+        let counters_after = present::retained_present_stats();
+        receipts.push(GpuRetainedReceipt {
+            phase, expected_resources:n, cap,
+            live_resources:counters_after.live_resources(),
+            logical_bytes:counters_after.logical_bytes(),
+            allocations_before:counters_before.allocations(),
+            allocations_after:counters_after.allocations(),
+            copies_before:counters_before.copies(),
+            copies_after:counters_after.copies(),
+            copied_bytes_before:counters_before.copied_bytes(),
+            copied_bytes_after:counters_after.copied_bytes(),
+            copy_encode_ns:(counters_after.copy_encode_time()-counters_before.copy_encode_time()).as_nanos(),
+            present_submit_ns:(counters_after.present_submit_time()-counters_before.present_submit_time()).as_nanos(),
+            overflow_refused:false,
+            heads:before.iter().zip(&after).enumerate().map(|(index,(before,after))| {
+                let identity = after.head_identity.expect("live GPU identity");
+                GpuRetainedHead {
+                    slot:identity.slot, generation:identity.generation,
+                    connected:after.connected && after.ingame,
+                    gpu:after.backend == Some(BackendKind::Gpu),
+                    valid_scene:after.has_valid_scene,
+                    fault:after.refusal.is_some() || after.output.is_none_or(|o| o.fault.is_some() || o.kind != "texture"),
+                    cpu_clean_bytes:after.owner_cpu_retained_bytes.expect("GPU CPU helper census"),
+                    paints_before:before.frame_generation, paints_after:after.frame_generation,
+                    scenes_before:before.scene_consumes, scenes_after:after.scene_consumes,
+                    held_token_before:tokens.get(index).copied(),
+                    held_token_after:held.get(index).map(|f| f.present_token().get()),
+                }
+            }).collect(),
+        });
+        samples.push(json!({"phase":phase,"before":first,"after":last}));
+    }
+    for receipt in &mut receipts { receipt.overflow_refused = overflow_refused; }
+    let failures: Vec<_> = receipts.iter().filter_map(|r|
+        gpu_retained_verdict(r).err().map(|error| format!("{:?}: {error}",r.phase))).collect();
+    std::fs::write(output.join(format!("gpu-n{n}-retained.json")),
+        serde_json::to_vec_pretty(&json!({
+            "schema":"t44-gpu-retained/v1","host":required("T44_LAB_HOST"),
+            "gpu":required("T44_GPU_IDENTITY"),"git_rev":required("M3_GIT_REV"),
+            "receipts":receipts,"samples":samples,"readbacks":readbacks,"failures":failures,
+            "timing_scope":"CPU copy encoding and queue submission; not GPU execution",
+            "readback_scope":"separate staging allocation after held/draining measurements"
+        })).unwrap()).unwrap();
+    for head in &probes { if let Some(arm) = play.arm(&head.name) { arm.request_logout(); } }
+    let deadline = Instant::now() + Duration::from_secs(60);
+    while play.statuses().iter().any(|s| s.ingame) {
+        assert!(Instant::now() < deadline, "GPU logout deadline");
+        thread::sleep(Duration::from_millis(50));
+    }
+    consumer.stop_and_join();
+    assert!(failures.is_empty(), "{failures:?}");
+    assert_eq!(present::retained_present_stats().live_resources(),0);
 }
 
 const REGION_ORIGIN: Tile = Tile {
@@ -2678,7 +3146,7 @@ fn real_region_crossing_draws_loading_splash_and_current_overlays() {
         let join = thread::spawn(move || {
             while !thread_stop.load(Ordering::Relaxed) {
                 if let Some(frame) = consumer_mailbox.take() {
-                    consumer_output.observe(&consumer_mailbox, frame);
+                    consumer_output.observe(&consumer_mailbox, &frame);
                 }
                 render_head::pump(Instant::now());
                 thread::sleep(CONSUMER_PERIOD);
