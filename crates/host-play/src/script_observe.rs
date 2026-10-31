@@ -1591,6 +1591,13 @@ pub(crate) fn script_observe_cached_with_channels(
                                         [request],
                                     )
                                 };
+                                // Native ledger interactions bypass `interact`, but can open a
+                                // modal before the host sees it; apply the same observed-tick fence.
+                                if accepted {
+                                    if let Some(run_policy) = run_policy.as_deref_mut() {
+                                        run_policy.note_script_interaction(tick);
+                                    }
+                                }
                                 let mut emitted_packets = 0;
                                 let mut opcode = None;
                                 if let Some(checkpoint) = packet_trace {

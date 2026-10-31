@@ -156,3 +156,104 @@ fn script_button_action_defers_auto_run_until_the_next_observed_tick() {
         "the host can act after the next observed game tick"
     );
 }
+
+struct QueueNativeButton {
+    handle: Option<script::native::ActionHandle<NativeButtonMachine>>,
+}
+
+struct NativeButtonMachine;
+
+impl script::native::NativeMachine for NativeButtonMachine {
+    type Args = ();
+    type Output = ();
+
+    fn begin(
+        _args: Self::Args,
+        cx: &mut script::native::ActionContext<'_>,
+    ) -> Result<Self, script::native::ActionError> {
+        cx.emit(script::shim::InteractReq::IfButton { component_id: 601 })?;
+        Ok(Self)
+    }
+
+    fn poll(
+        &mut self,
+        _cx: &mut script::native::ActionContext<'_>,
+    ) -> std::task::Poll<Result<Self::Output, script::native::ActionError>> {
+        std::task::Poll::Pending
+    }
+}
+
+impl script::native::Script for QueueNativeButton {
+    fn tick(
+        &mut self,
+        ctx: &mut script::native::NativeTick<'_>,
+    ) -> Result<script::native::ScriptFlow, script::native::ScriptFailure> {
+        if self.handle.is_none() {
+            self.handle = Some(
+                ctx.actions
+                    .begin::<NativeButtonMachine>((), &mut ctx.cx)
+                    .expect("native action starts"),
+            );
+        }
+        Ok(script::native::ScriptFlow::Continue)
+    }
+}
+
+#[test]
+fn native_script_button_action_defers_auto_run_until_the_next_observed_tick() {
+    let scripts: ScriptWall = Arc::new(Mutex::new(HashMap::new()));
+    let cheats: Arc<Mutex<HashMap<String, VecDeque<String>>>> =
+        Arc::new(Mutex::new(HashMap::new()));
+    let (navs, world) = empty_nav();
+    let mut client = bank_fetch_client();
+    let mut snapshot = GameSnapshot::new();
+    snapshot.rebuild(&client);
+    let names = Arc::new(api::obj_names::ObjNames::from_objs(&client.cache.objs));
+    script_slot_or_insert(&scripts, "alice")
+        .lock()
+        .unwrap()
+        .start_test_script(
+            Box::new(QueueNativeButton { handle: None }),
+            None,
+        )
+        .expect("native script starts");
+
+    let cache = Arc::clone(&client.cache);
+    let inv: [(i32, i32); 0] = [];
+    let mut run_policy = host::ScriptRunPolicy::default();
+    script_observe_cached(
+        &mut client,
+        "alice",
+        true,
+        true,
+        1,
+        Some((3205, 3205, 0)),
+        Some(&inv),
+        None,
+        Some(&snapshot),
+        None,
+        Some(names.as_ref()),
+        &scripts,
+        &cheats,
+        &navs,
+        &world,
+        false,
+        false,
+        None,
+        None,
+        Some(cache),
+        Some(Arc::clone(&names)),
+        Some(&mut run_policy),
+    );
+
+    assert!(client.out.pos > 0, "the native script sends its interface action");
+    assert_eq!(
+        client.out.data()[0],
+        client::io::ClientProt::IF_BUTTON.id as u8
+    );
+    assert!(run_policy.should_defer_auto_run(1));
+    assert!(
+        !run_policy.should_defer_auto_run(2),
+        "the host can act after the next observed game tick"
+    );
+}

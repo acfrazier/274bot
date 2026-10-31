@@ -1454,7 +1454,8 @@ impl SlotLoop {
             self.run_on = false;
         }
         let policy = self.run_policy.resolved();
-        let defer_auto_run = self.run_policy.should_defer_auto_run(self.snapshot.tick());
+        let defer_auto_run =
+            self.run_policy.should_defer_auto_run(u64::from(self.snapshot.tick()));
         if self.snapshot.local_player().is_some()
             && auto_run_ready(client.ingame, client.scene_state)
             && auto_run::modal_free(
