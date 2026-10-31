@@ -3377,6 +3377,77 @@ mod packet_oracle_tests {
         }
     }
 
+    fn prefix_evidence() -> RunEvidence {
+        let mut evidence = evidence(vec![wire(ClientProt289::OPHELDU.id as u8, 1, 13)], vec![], vec![]);
+        evidence.baseline = Some(observed_frame(6, true, 1));
+        evidence.trace.dispatches.push(DispatchObservation {
+            game_tick: 7,
+            receipt: interact::server_ordered::ServerOrderedDispatch::refused(
+                1,
+                7,
+                3,
+                0,
+                interact::server_ordered::ServerOrderedError::Cancelled,
+            ),
+            request_debug: Some("KnifeArm".into()),
+            mutation_applied: false,
+        });
+        evidence.trace.frames = vec![observed_frame(7, true, 1), observed_frame(7, false, 1)];
+        evidence.statuses.push(StatusObservation {
+            host_frame: 70,
+            game_tick: 7,
+            phase: "Working".into(),
+            method: Some("loc_2027".into()),
+            tick_method: Some("Knife".into()),
+            target: Some("loc_2027".into()),
+            last_event: Some("gathering".into()),
+            tick_cycle: Some(-1),
+            tick_verified: Some(0),
+            tick_unobserved: Some(0),
+            tick_slips: Some(0),
+            tick_lost: Some(0),
+            tick_delayed: Some(0),
+            tick_paused: Some(0),
+            tick_fallbacks: Some(0),
+            tick_fallback_failed: Some(0),
+            tick_events: Some(0),
+        });
+        evidence
+    }
+
+    #[test]
+    fn normalized_prefix_ignores_only_unchanged_duplicate_polls() {
+        let original = prefix_evidence();
+        let mut repeated = original.clone();
+        repeated.trace.frames.push(repeated.trace.frames[1].clone());
+        repeated.trace.frames.last_mut().unwrap().host_frame += 1;
+        repeated.statuses.push(repeated.statuses[0].clone());
+        repeated.statuses.last_mut().unwrap().host_frame += 1;
+        assert_eq!(normalized_prefix(&original, 2), normalized_prefix(&repeated, 2));
+    }
+
+    #[test]
+    fn normalized_prefix_preserves_edges_state_changes_and_every_emission() {
+        let original = prefix_evidence();
+        let reference = normalized_prefix(&original, 2);
+        let mut changed = original.clone();
+        changed.trace.frames[0].tick_edge = false;
+        assert_ne!(reference, normalized_prefix(&changed, 2), "edge disappeared");
+        let mut changed = original.clone();
+        let mut frame = changed.trace.frames[1].clone();
+        frame.server_if_close_packets += 1;
+        changed.trace.frames.push(frame);
+        assert_ne!(reference, normalized_prefix(&changed, 2), "IF_CLOSE disappeared");
+        let mut changed = original.clone();
+        let mut status = changed.statuses[0].clone();
+        status.tick_slips = Some(1);
+        changed.statuses.push(status);
+        assert_ne!(reference, normalized_prefix(&changed, 2), "verdict disappeared");
+        let mut changed = original;
+        changed.trace.wire.push(changed.trace.wire[0]);
+        assert_ne!(reference, normalized_prefix(&changed, 2), "duplicate packet disappeared");
+    }
+
     #[test]
     fn chat_attribution_uses_first_seen_poll_position() {
         for poll in [PollKind::Wake, PollKind::Edge] {
