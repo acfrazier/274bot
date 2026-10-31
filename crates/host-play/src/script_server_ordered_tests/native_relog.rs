@@ -5,6 +5,7 @@ use std::sync::Arc;
 #[test]
 fn ordered_real_native_dispatch_uses_packet_clock_after_session_reset() {
     let mut rig = Rig::new();
+    let _hook_reset = TickHookReset;
     let hook = crate::tick_engine_test_support::TickEngineTestHook::new("so3-wire");
     hook.bind_client(&mut rig.client, "so3-wire", Arc::clone(&rig.input));
 
@@ -62,7 +63,10 @@ fn ordered_real_native_dispatch_uses_packet_clock_after_session_reset() {
     let after_content = rig
         .input
         .with_server_ordered_input(|state| state.snapshot());
-    assert_eq!(after_content.session_generation(), relog_input.session_generation());
+    assert_eq!(
+        after_content.session_generation(),
+        relog_input.session_generation()
+    );
     assert_eq!(after_content.observed_tick(), Some(CONTENT_PACKET_TICK));
     assert_eq!(after_content.packet_count(), 1);
 
@@ -78,10 +82,22 @@ fn ordered_real_native_dispatch_uses_packet_clock_after_session_reset() {
     );
 
     let trace = hook.trace();
-    assert_eq!(trace.dispatches.len(), 2, "real host dispatch trace: {trace:?}");
+    assert_eq!(
+        trace.dispatches.len(),
+        2,
+        "real host dispatch trace: {trace:?}"
+    );
     for (dispatch, native_tick, packet_tick) in [
-        (&trace.dispatches[0], CONTENT_NATIVE_TICK, CONTENT_PACKET_TICK),
-        (&trace.dispatches[1], ADVANCED_NATIVE_TICK, ADVANCED_PACKET_TICK),
+        (
+            &trace.dispatches[0],
+            CONTENT_NATIVE_TICK,
+            CONTENT_PACKET_TICK,
+        ),
+        (
+            &trace.dispatches[1],
+            ADVANCED_NATIVE_TICK,
+            ADVANCED_PACKET_TICK,
+        ),
     ] {
         let receipt = dispatch.receipt;
         assert_eq!(
@@ -102,7 +118,11 @@ fn ordered_real_native_dispatch_uses_packet_clock_after_session_reset() {
     assert_eq!(rig.decoded().len(), 2);
 
     let results = rig.results.lock().unwrap();
-    assert!(results.errors.is_empty(), "script errors: {:?}", results.errors);
+    assert!(
+        results.errors.is_empty(),
+        "script errors: {:?}",
+        results.errors
+    );
     assert_eq!(
         results.receipts,
         trace

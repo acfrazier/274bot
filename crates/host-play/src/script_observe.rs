@@ -1541,6 +1541,7 @@ where
                                 if let Some((hook, guard)) = test_dispatch.as_ref() {
                                     hook.record_dispatch(
                                         dispatch,
+                                        tick,
                                         guard.request_debug(),
                                         guard.mutation_applied(),
                                     );

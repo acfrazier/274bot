@@ -139,6 +139,8 @@ pub struct FrameObservation {
 /// A dispatch result captured from the real ServerOrderedInputs dispatcher.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DispatchObservation {
+    /// Native Play/completion tick captured at this real dispatch.
+    pub game_tick: u64,
     /// Receipt returned by the real API planner and encrypted Client driver.
     pub receipt: ServerOrderedDispatch,
     /// Debug rendering of the real typed request at dispatch time.
@@ -355,6 +357,23 @@ impl TickEngineTestHook {
             .map(|frame| (frame.client_tick, frame.animation))
     }
 
+    /// Return the last observed XP value, keeping it through the logout frame.
+    pub fn observed_skill_xp(&self, skill: i32) -> Option<i32> {
+        self.state
+            .lock()
+            .expect("tick-engine hook poisoned")
+            .trace
+            .frames
+            .iter()
+            .rev()
+            .find_map(|frame| {
+                frame
+                    .skill_xp
+                    .iter()
+                    .find_map(|(index, xp)| (*index == skill).then_some(*xp))
+            })
+    }
+
     /// Start evidence capture after per-account setup. Existing chat sequences
     /// remain the watermark, so setup messages are never reported as proof.
     pub fn arm_measurement(&self, log_id: i32, inventory_ids: &[i32]) {
@@ -394,10 +413,14 @@ impl TickEngineTestHook {
         snapshot: &mut GameSnapshot,
         game_tick: u32,
     ) -> bool {
-        if account != self.account || snapshot.modals().chat != 8880 {
+        if account != self.account {
             return false;
         }
         let mut state = self.state.lock().expect("tick-engine hook poisoned");
+        state.last_game_tick = game_tick;
+        if snapshot.modals().chat != 8880 {
+            return false;
+        }
         let Some(through) = state.suppress_openchat_through_tick else {
             return false;
         };
@@ -510,12 +533,11 @@ impl TickEngineTestHook {
         authority: &HostAuthority,
         envelope: &ServerOrderedEnvelope,
     ) -> DispatchGuard {
-        let mutation = self
-            .state
-            .lock()
-            .expect("tick-engine hook poisoned")
-            .pending_mutations
-            .pop_front();
+        let mutation = {
+            let mut state = self.state.lock().expect("tick-engine hook poisoned");
+            state.last_game_tick = game_tick;
+            state.pending_mutations.pop_front()
+        };
         let mut mutation_applied = false;
         let request_id = authority.request_id().get();
         let request_debug = match envelope.payload() {
@@ -595,19 +617,17 @@ impl TickEngineTestHook {
     pub(crate) fn record_dispatch(
         &self,
         receipt: ServerOrderedDispatch,
+        game_tick: u64,
         request_debug: Option<&str>,
         mutation_applied: bool,
     ) {
-        self.state
-            .lock()
-            .expect("tick-engine hook poisoned")
-            .trace
-            .dispatches
-            .push(DispatchObservation {
-                receipt,
-                request_debug: request_debug.map(str::to_owned),
-                mutation_applied,
-            });
+        let mut state = self.state.lock().expect("tick-engine hook poisoned");
+        state.trace.dispatches.push(DispatchObservation {
+            game_tick,
+            receipt,
+            request_debug: request_debug.map(str::to_owned),
+            mutation_applied,
+        });
     }
 
     fn packet_committed(&self, opcode: u8, encoded_length: usize) {
@@ -756,6 +776,37 @@ mod tests {
         assert_eq!(trace.frames[0].client_tick, snapshot.tick());
         assert_ne!(trace.frames[0].game_tick, trace.frames[0].client_tick);
         assert_eq!(hook.observed_client_frame(), Some((snapshot.tick(), None)));
+    }
+
+    #[test]
+    fn logout_without_stats_does_not_erase_the_measured_xp() {
+        let hook = TickEngineTestHook::new("xp");
+        let client = client();
+        let mut snapshot = GameSnapshot::new();
+        hook.arm_measurement(1511, &[]);
+        for (tick, xp) in [(1, 100), (2, 140)] {
+            snapshot.seed_stats(vec![api::snapshot::StatView {
+                index: 10,
+                name: "Fishing".into(),
+                effective: 1,
+                base: 1,
+                xp,
+                used: true,
+            }]);
+            hook.after_frame(&client, "xp", &snapshot, tick, true, false);
+        }
+        hook.after_frame(&client, "xp", &GameSnapshot::new(), 2, false, false);
+        assert_eq!(hook.observed_skill_xp(10).map(|xp| xp - 100), Some(40));
+        assert_eq!(hook.observed_skill_xp(14), None);
+    }
+
+    #[test]
+    fn pre_observation_clock_advances_even_without_a_make_modal() {
+        let hook = TickEngineTestHook::new("clock");
+        let mut snapshot = GameSnapshot::new();
+        assert!(!hook.before_snapshot_observe("clock", &mut snapshot, 42));
+        assert_eq!(hook.observed_game_tick(), 42);
+        assert_ne!(snapshot.tick(), 42);
     }
 
     #[test]

@@ -171,7 +171,7 @@ impl GatherRun {
         let receipt = timing
             .cycle
             .batch_request_id()
-            .and_then(|id| cx.server_ordered_receipt(id));
+            .and_then(|id| cx.server_ordered_completion(id));
         let checked_receipt = timing.cycle.checked_request_id().and_then(|id| {
             cx.interaction_receipt(id)
                 .map(|receipt| (id, receipt.accepted))
@@ -191,7 +191,7 @@ impl GatherRun {
             batch_permitted: request.is_some()
                 && cx.server_ordered_available()
                 && OneOpArgs::stray_modal(snapshot).is_none(),
-            receipt,
+            receipt: receipt.map(|completion| (completion.evidence.tick, &completion.dispatch)),
             checked_receipt,
         };
         let window = signals.tick;
@@ -202,7 +202,7 @@ impl GatherRun {
         }
         let diagnostic = timing.policy.diagnostic();
         if diagnostic != before
-            || receipt.is_some_and(|receipt| receipt.terminal.is_some())
+            || receipt.is_some_and(|completion| completion.dispatch.terminal.is_some())
             || matches!(step, CycleStep::Batch | CycleStep::Click)
             || checked_receipt.is_some()
         {
@@ -212,8 +212,8 @@ impl GatherRun {
                 "gatherer tick: verdict={:?} reason={:?} sequence={} window={} step={:?} click_kind={:?} request={:?} prefix={:?} terminal={:?} checked={:?} anim={:?} target_npc={:?} target_ready={} cycle={:?}",
                 diagnostic.verdict, diagnostic.reason, diagnostic.sequence, window, step,
                 timing.cycle.click_kind().or(prior_click_kind),
-                receipt.map(|receipt| receipt.request_id), receipt.map(|receipt| receipt.dispatched_prefix),
-                receipt.and_then(|receipt| receipt.terminal), checked_receipt, anim,
+                receipt.map(|completion| completion.dispatch.request_id), receipt.map(|completion| completion.dispatch.dispatched_prefix),
+                receipt.and_then(|completion| completion.dispatch.terminal), checked_receipt, anim,
                 snapshot.npcs().and_then(|rows| rows.value.iter().find(|npc| npc.index == self.args.target.npc_index as usize))
                     .map(|npc| (npc.index, npc.r#type, snapshot.npc_info_generation())),
                 target_ready, timing.cycle,

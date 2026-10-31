@@ -65,12 +65,12 @@ const RIVER_START_TILE: WorldTile = WorldTile {
 };
 const NET_TILE: WorldTile = WorldTile {
     x: 3_267,
-    z: 3_148,
+    z: 3_149,
     level: 0,
 };
 const IRON_TILE: WorldTile = WorldTile {
-    x: 3_253,
-    z: 3_420,
+    x: 3_284,
+    z: 3_368,
     level: 0,
 };
 const MINING_IRON_ROCKS: &[i32] = &[2_092, 2_093];
@@ -946,10 +946,8 @@ impl LiveRun {
         };
         let baseline_xp = skill_xp(baseline, self.case.skill_index()).unwrap_or(0);
         self.hook
-            .trace()
-            .frames
-            .last()
-            .and_then(|frame| skill_xp(frame, self.case.skill_index()))
+            .observed_skill_xp(self.case.skill_index())
+            .map(i64::from)
             .unwrap_or(baseline_xp)
             - baseline_xp
     }
@@ -1163,6 +1161,7 @@ fn chat_json(chat: &ChatObservation) -> Value {
 fn dispatch_json(dispatch: &DispatchObservation) -> Value {
     let receipt = &dispatch.receipt;
     json!({
+        "native_dispatch_tick": dispatch.game_tick,
         "request_id": receipt.request_id,
         "dispatch_tick": receipt.dispatch_tick,
         "row_count": receipt.row_count,

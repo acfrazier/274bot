@@ -13,6 +13,18 @@ use std::task::Poll;
 
 const CIPHER_SEED: [i32; 4] = [17, 29, 41, 53];
 
+#[cfg(feature = "test-support")]
+struct TickHookReset;
+
+#[cfg(feature = "test-support")]
+impl Drop for TickHookReset {
+    fn drop(&mut self) {
+        let _ = crate::tick_engine_test_support::TickEngineTestHook::bind_current_for_account(
+            "so3-wire",
+        );
+    }
+}
+
 enum Emission {
     Content(ServerOrderedRequest),
     ContentThenDrop(ServerOrderedRequest),
@@ -229,9 +241,20 @@ impl Rig {
     }
 
     fn pump(&mut self, tick: u64) -> crate::script_runtime::ScriptObservation {
-        self.snapshot.seed_tick(u32::try_from(tick).unwrap());
-        self.input
-            .observe_input_tick(self.client.revision(), tick, self.client.gens.session);
+        self.pump_clocks(tick, tick)
+    }
+
+    fn pump_clocks(
+        &mut self,
+        tick: u64,
+        packet_tick: u64,
+    ) -> crate::script_runtime::ScriptObservation {
+        self.snapshot.seed_tick(u32::try_from(packet_tick).unwrap());
+        self.input.observe_input_tick(
+            self.client.revision(),
+            packet_tick,
+            self.client.gens.session,
+        );
         let cache = Arc::clone(&self.client.cache);
         crate::script_runtime::script_observe_cached_with_channels(
             &mut self.client,
@@ -2501,3 +2524,8 @@ fn ordered_unbound_selected_pin_refuses_start_before_any_encrypted_input() {
     assert!(results.errors.is_empty());
     assert_no_cipher_movement(&rig);
 }
+
+#[cfg(feature = "test-support")]
+mod gatherer_relog;
+#[cfg(feature = "test-support")]
+mod native_relog;

@@ -313,7 +313,8 @@ pub(crate) struct CycleSignals<'a> {
     pub(crate) target_ready: bool,
     /// The consumer can admit a complete batch now, without spending its budget first.
     pub(crate) batch_permitted: bool,
-    pub(crate) receipt: Option<&'a ServerOrderedDispatch>,
+    /// Native completion tick and the unchanged API packet-clock receipt.
+    pub(crate) receipt: Option<(u64, &'a ServerOrderedDispatch)>,
     pub(crate) checked_receipt: Option<(u64, bool)>,
 }
 
@@ -807,10 +808,10 @@ impl TickCycle {
 
     fn consume_dispatch_receipt(
         &mut self,
-        receipt: Option<&ServerOrderedDispatch>,
+        receipt: Option<(u64, &ServerOrderedDispatch)>,
         policy: &mut TickPolicy,
     ) -> Option<CycleStep> {
-        let receipt = receipt?;
+        let (dispatch_tick, receipt) = receipt?;
         if self.pending_batch_id != NonZeroU64::new(receipt.request_id) {
             return None;
         }
@@ -822,7 +823,7 @@ impl TickCycle {
             } else {
                 CycleReason::LoneOpener
             };
-            self.end_cycle(Verdict::Lost, reason, receipt.dispatch_tick, policy);
+            self.end_cycle(Verdict::Lost, reason, dispatch_tick, policy);
             self.start_fallback(self.last_tick);
             return Some(self.fallback_step(self.last_tick));
         }
@@ -1780,7 +1781,7 @@ mod tests {
                 product_rose,
                 target_ready,
                 batch_permitted: true,
-                receipt,
+                receipt: receipt.map(|receipt| (receipt.dispatch_tick, receipt)),
                 checked_receipt,
             };
             let step = self.cycle.drive(&signals, &mut self.policy);
@@ -2128,6 +2129,25 @@ mod tests {
         assert_eq!(baseline.drive(&retained, &mut policy), CycleStep::Wait);
         assert!(matches!(baseline.phase(), Phase::Native { .. }));
         assert_eq!(policy.verdict_count(), 0);
+    }
+
+    #[test]
+    fn refused_packet_clock_receipt_uses_native_completion_for_cooldown() {
+        let mut run = replay(continuing());
+        let batch = run.batch(101, AnimClass::Skill);
+        run.policy
+            .record(Verdict::Lost, CycleReason::HostRefused, 100, None);
+        let receipt = dispatch_receipt(batch, 7, Shape::Continuing, 0);
+        run.cycle
+            .consume_dispatch_receipt(Some((101, &receipt)), &mut run.policy);
+        assert_eq!(run.policy.stats().lost, 2);
+        assert_eq!(
+            run.policy.off_until,
+            Some(OffUntil {
+                reason: OffReason::UnstableTiming,
+                tick: 181,
+            })
+        );
     }
 
     #[test]

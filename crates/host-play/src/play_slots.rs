@@ -1617,11 +1617,6 @@ fn spawn_slot_thread(
                                 last_nav_step = None;
                             }
                             host::publish_snapshot(&mut nav_snapshot, c, drain);
-                            #[cfg(feature = "test-support")]
-                            if let Some(test_hook) = TickEngineTestHook::current() {
-                                tick_engine_suppressed_openchat =
-                                    test_hook.before_snapshot_observe(name, &mut nav_snapshot, *script_tick as u32);
-                            }
                             if session_boundary && c.ingame {
                                 slot_navs.lock().unwrap().entry(name.to_owned()).or_default()
                                     .condition.session_started(nav_snapshot.tick(), c.chat_seq as i32, slot_world.as_deref().and_then(crate::admission::condition_tables));
@@ -1821,6 +1816,11 @@ fn spawn_slot_thread(
                             let tick_edge = should_emit_tick(drain.player_info);
                             if tick_edge {
                                 *script_tick = script_tick.wrapping_add(1);
+                            }
+                            #[cfg(feature = "test-support")]
+                            if let Some(test_hook) = TickEngineTestHook::current() {
+                                tick_engine_suppressed_openchat =
+                                    test_hook.before_snapshot_observe(name, &mut nav_snapshot, *script_tick as u32);
                             }
                             // The slot's paint frame is read before the
                             // status lock (scripts -> statuses is the only

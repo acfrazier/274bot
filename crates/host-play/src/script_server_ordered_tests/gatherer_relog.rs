@@ -46,7 +46,10 @@ fn ordered_real_gatherer_knife_arm_uses_packet_clock_after_relog() {
             match slot.poll_start() {
                 script::StartPoll::Settled(script::StartOutcome::Ready) => break,
                 script::StartPoll::Pending => {
-                    assert!(std::time::Instant::now() < deadline, "Gatherer preparation timed out");
+                    assert!(
+                        std::time::Instant::now() < deadline,
+                        "Gatherer preparation timed out"
+                    );
                     std::thread::yield_now();
                 }
                 other => panic!("Gatherer start failed: {other:?}"),
@@ -67,7 +70,10 @@ fn ordered_real_gatherer_knife_arm_uses_packet_clock_after_relog() {
         .find(|target| target.class == TargetClass::Resource)
         .expect("selected iron method has a real resource target");
     let EntityId::Loc(loc_id) = resource.entity else {
-        panic!("selected iron resource target must be a loc: {:?}", resource.entity);
+        panic!(
+            "selected iron resource target must be a loc: {:?}",
+            resource.entity
+        );
     };
     let (loc_op, action) = gathering
         .op(method)
@@ -236,7 +242,11 @@ fn ordered_real_gatherer_knife_arm_uses_packet_clock_after_relog() {
     let (native_tick, packet_tick) = observed_dispatch
         .expect("real compiled Gatherer must emit and dispatch KnifeArm after relog");
     let trace = hook.trace();
-    assert_eq!(trace.dispatches.len(), 1, "real Gatherer dispatches: {trace:?}");
+    assert_eq!(
+        trace.dispatches.len(),
+        1,
+        "real Gatherer dispatches: {trace:?}"
+    );
     let dispatch = &trace.dispatches[0];
     let receipt = dispatch.receipt;
     assert!(
@@ -246,21 +256,36 @@ fn ordered_real_gatherer_knife_arm_uses_packet_clock_after_relog() {
             .is_some_and(|request| request.contains("KnifeArm")),
         "captured request must be the Gatherer's real typed KnifeArm: {dispatch:?}"
     );
-    assert_eq!(receipt.row_count, 3, "continuing KnifeArm rows: {receipt:?}");
+    assert_eq!(
+        receipt.row_count, 3,
+        "continuing KnifeArm rows: {receipt:?}"
+    );
     assert!(receipt.terminal.is_none(), "KnifeArm dispatch: {receipt:?}");
-    assert!(receipt.dispatched_prefix > 0, "KnifeArm prefix: {receipt:?}");
+    assert!(
+        receipt.dispatched_prefix > 0,
+        "KnifeArm prefix: {receipt:?}"
+    );
     assert_eq!(
         receipt.dispatched_prefix, receipt.row_count,
         "the complete KnifeArm prefix must reach the encrypted driver: {receipt:?}"
     );
-    assert_eq!(receipt.dispatch_tick, packet_tick, "packet-clock receipt: {receipt:?}");
-    assert_eq!(dispatch.game_tick, native_tick, "native completion clock: {dispatch:?}");
+    assert_eq!(
+        receipt.dispatch_tick, packet_tick,
+        "packet-clock receipt: {receipt:?}"
+    );
+    assert_eq!(
+        dispatch.game_tick, native_tick,
+        "native completion clock: {dispatch:?}"
+    );
     assert_eq!(rig.snapshot.tick(), packet_tick as u32);
     let input_observation = rig
         .input
         .with_server_ordered_input(|state| state.snapshot());
     assert_eq!(input_observation.observed_tick(), Some(packet_tick as u32));
-    assert_eq!(input_observation.session_generation(), rig.client.gens.session);
+    assert_eq!(
+        input_observation.session_generation(),
+        rig.client.gens.session
+    );
     assert_eq!(
         trace
             .wire

@@ -145,7 +145,7 @@ impl Scenario {
             skill_index: 10,
             level: 15,
             resource: ResourceKind::Net,
-            target: tile(3_267, 3_148, 0),
+            target: tile(3_267, 3_149, 0),
             tool: item("net", NET_ID, 1),
             extra_items: Vec::new(),
             products: vec![SHRIMP_ID, ANCHOVY_ID],
@@ -1593,6 +1593,7 @@ fn evidence_json(evidence: &RunEvidence) -> Value {
         .map(|dispatch| {
             let receipt = dispatch.receipt;
             json!({
+                "native_dispatch_tick": dispatch.game_tick,
                 "request_id": receipt.request_id,
                 "dispatch_tick": receipt.dispatch_tick,
                 "row_count": receipt.row_count,
@@ -1790,7 +1791,7 @@ fn required_path(name: &str) -> Result<PathBuf, String> {
 }
 
 fn mining_start() -> Result<WorldTile, String> {
-    let default = tile(3_253, 3_420, 0);
+    let default = tile(3_284, 3_368, 0);
     match std::env::var("GATHERER_MINE_TILE") {
         Ok(raw) => parse_tile("GATHERER_MINE_TILE", &raw),
         Err(std::env::VarError::NotPresent) => Ok(default),
@@ -1903,7 +1904,7 @@ fn click_dispatches_at(trace: &TickEngineTrace, tick: u64) -> Vec<DispatchObserv
         .dispatches
         .iter()
         .filter(|dispatch| {
-            dispatch.receipt.dispatch_tick == tick
+            dispatch.game_tick == tick
                 && !is_knife_arm(dispatch)
                 && dispatch.receipt.wire_events == 2
                 && dispatch.receipt.terminal.is_none()
@@ -2386,7 +2387,7 @@ fn normalized_prefix(evidence: &RunEvidence, end_offset: u32) -> PrefixTrace {
         .dispatches
         .iter()
         .find(|dispatch| is_knife_arm(dispatch))
-        .map(|dispatch| dispatch.receipt.dispatch_tick as u32)
+        .map(|dispatch| dispatch.game_tick as u32)
     else {
         return PrefixTrace::default();
     };
@@ -2437,7 +2438,7 @@ fn normalized_prefix(evidence: &RunEvidence, end_offset: u32) -> PrefixTrace {
         .dispatches
         .iter()
         .filter_map(|dispatch| {
-            let offset = (dispatch.receipt.dispatch_tick as u32).wrapping_sub(origin);
+            let offset = (dispatch.game_tick as u32).wrapping_sub(origin);
             (offset < end_offset).then(|| PrefixDispatch {
                 offset,
                 request: dispatch.request_debug.as_deref().map(|request| {
@@ -2505,7 +2506,7 @@ fn tick_engine_clean_continuing_river() {
     run_case(Scenario::river("tick-clean-river"), |run| {
         let trace = run.hook.trace();
         let dispatch = first_knife(&trace).map_err(|error| run.failure(error))?;
-        let origin = dispatch.receipt.dispatch_tick;
+        let origin = dispatch.game_tick;
         assert_batch(run, &dispatch, 3, 4)?;
         assert_knife_wire_order(
             run,
@@ -2569,7 +2570,7 @@ fn tick_engine_clean_ending_net_twenty_cycles() {
     run_case(Scenario::net("tick-clean-net"), |run| {
         let trace = run.hook.trace();
         let dispatch = first_knife(&trace).map_err(|error| run.failure(error))?;
-        let origin = dispatch.receipt.dispatch_tick;
+        let origin = dispatch.game_tick;
         assert_batch(run, &dispatch, 2, 2)?;
         assert_knife_wire_order(
             run,
@@ -2620,7 +2621,7 @@ fn tick_engine_stale_menu_guard_late_case_two() {
     run_case(scenario, |run| {
         let trace = run.hook.trace();
         let first = first_knife(&trace).map_err(|error| run.failure(error))?;
-        let origin = first.receipt.dispatch_tick;
+        let origin = first.game_tick;
         assert_batch(run, &first, 1, 1)?;
         assert_knife_wire_order(run, &trace, &first, &[ClientProt289::OPHELDU.id as u8])?;
         let baseline = run
@@ -2631,7 +2632,7 @@ fn tick_engine_stale_menu_guard_late_case_two() {
         run.wait_until(origin as u32, STALE_MENU_BUDGET, |trace, statuses| {
             let batches = knife_dispatches(trace);
             batches.len() >= 2
-                && batches[1].receipt.dispatch_tick == origin + 1
+                && batches[1].game_tick == origin + 1
                 && batches[1].receipt.dispatched_prefix == 3
                 && batches[1].receipt.wire_events == 4
                 && close_packet_seen(trace, origin + 1, &baseline)
@@ -2687,7 +2688,7 @@ fn tick_engine_split_opener_late_case_one() {
     run_case(scenario, |run| {
         let trace = run.hook.trace();
         let first = first_knife(&trace).map_err(|error| run.failure(error))?;
-        let origin = first.receipt.dispatch_tick;
+        let origin = first.game_tick;
         assert_batch(run, &first, 3, 4)?;
         run.wait_until(origin as u32, SPLIT_OPENER_BUDGET, |trace, statuses| {
             edge_has_openchat(trace, origin + 1)
@@ -2737,7 +2738,7 @@ fn tick_engine_plain_late_river_and_mithril_iron() {
     ));
     run_case(river, |run| {
         let first = first_knife(&run.hook.trace()).map_err(|error| run.failure(error))?;
-        let origin = first.receipt.dispatch_tick;
+        let origin = first.game_tick;
         assert_batch(run, &first, 3, 4)?;
         // The first window may include interface packets before PLAYER_INFO.
         run.wait_until(origin as u32, LATE_RIVER_BUDGET, |trace, statuses| {
@@ -2748,7 +2749,7 @@ fn tick_engine_plain_late_river_and_mithril_iron() {
                     .is_some_and(|(sequence, _)| sequence == ROLL_ANIMATION)
                 && knife_dispatches(trace)
                     .iter()
-                    .any(|dispatch| dispatch.receipt.dispatch_tick == origin + 5)
+                    .any(|dispatch| dispatch.game_tick == origin + 5)
                 && statuses
                     .last()
                     .is_some_and(|status| status.tick_slips.unwrap_or(0) >= 1)
@@ -2759,7 +2760,7 @@ fn tick_engine_plain_late_river_and_mithril_iron() {
         require_verdict_duration(run, "tick_slips", 5)?;
         if knife_dispatches(&trace)
             .iter()
-            .filter(|dispatch| dispatch.receipt.dispatch_tick < origin + 5)
+            .filter(|dispatch| dispatch.game_tick < origin + 5)
             .count()
             != 1
         {
@@ -2788,7 +2789,7 @@ fn tick_engine_plain_late_river_and_mithril_iron() {
         ));
     run_case(iron, |run| {
         let first = first_knife(&run.hook.trace()).map_err(|error| run.failure(error))?;
-        let origin = first.receipt.dispatch_tick;
+        let origin = first.game_tick;
         assert_batch(run, &first, 3, 4)?;
         run.wait_until(origin as u32, LATE_IRON_BUDGET, |trace, statuses| {
             fresh_animation_on_edge(trace, origin + 2).is_some_and(|(sequence, _)| {
@@ -2807,9 +2808,10 @@ fn tick_engine_plain_late_river_and_mithril_iron() {
         assert_click(run, &trace, origin + 2)?;
         assert_roll(run, origin + 5)?;
         require_verdict_duration(run, "tick_slips", 5)?;
-        if knife_dispatches(&trace).iter().any(|dispatch| {
-            dispatch.receipt.dispatch_tick < origin + 5 && dispatch.receipt.dispatch_tick != origin
-        }) {
+        if knife_dispatches(&trace)
+            .iter()
+            .any(|dispatch| dispatch.game_tick < origin + 5 && dispatch.game_tick != origin)
+        {
             return Err(run.failure("iron/mithril branch emitted a second batch before R+1+4"));
         }
         assert_held_batch(
@@ -2833,7 +2835,7 @@ fn copper_history(scenario: Scenario, expect_held_join: bool) -> Result<RunEvide
     run_case(scenario, |run| {
         let initial_trace = run.hook.trace();
         let first = first_knife(&initial_trace).map_err(|error| run.failure(error))?;
-        let origin = first.receipt.dispatch_tick;
+        let origin = first.game_tick;
         assert_batch(run, &first, 3, 4)?;
         assert_knife_wire_order(
             run,
@@ -2850,7 +2852,7 @@ fn copper_history(scenario: Scenario, expect_held_join: bool) -> Result<RunEvide
             fresh_animation_on_edge(trace, origin + 1).is_some_and(|(sequence, _)| sequence == -1)
                 && has_copper_success(trace, origin, origin + 1)
                 && knife_dispatches(trace).iter().any(|dispatch| {
-                    dispatch.receipt.dispatch_tick == origin + 4
+                    dispatch.game_tick == origin + 4
                         && dispatch.request_debug != first.request_debug
                 })
                 && fresh_animation_on_edge(trace, origin + 4)
@@ -2861,7 +2863,7 @@ fn copper_history(scenario: Scenario, expect_held_join: bool) -> Result<RunEvide
         })?;
         let trace = run.hook.trace();
         let batches = knife_dispatches(&trace);
-        if batches.len() < 2 || batches[1].receipt.dispatch_tick != origin + 4 {
+        if batches.len() < 2 || batches[1].game_tick != origin + 4 {
             return Err(
                 run.failure("copper delayed cycle did not emit its second-rock batch at R+4")
             );
@@ -2950,11 +2952,11 @@ fn tick_engine_removed_target_refuses_prefix_zero_and_continues() {
     let scenario = scenario.with_mutation(DispatchMutation::RemoveLoc { id, tile: target });
     run_case(scenario, |run| {
         let first = first_knife(&run.hook.trace()).map_err(|error| run.failure(error))?;
-        let origin = first.receipt.dispatch_tick;
+        let origin = first.game_tick;
         run.wait_until(origin as u32, HOST_REFUSAL_BUDGET, |trace, statuses| {
             trace.dispatches.iter().any(|dispatch| {
                 is_knife_arm(dispatch)
-                    && dispatch.receipt.dispatch_tick == origin
+                    && dispatch.game_tick == origin
                     && dispatch.mutation_applied
                     && dispatch.receipt.dispatched_prefix == 0
                     && dispatch.receipt.wire_events == 0
@@ -2968,7 +2970,7 @@ fn tick_engine_removed_target_refuses_prefix_zero_and_continues() {
         let refused = trace
             .dispatches
             .iter()
-            .find(|dispatch| is_knife_arm(dispatch) && dispatch.receipt.dispatch_tick == origin)
+            .find(|dispatch| is_knife_arm(dispatch) && dispatch.game_tick == origin)
             .ok_or_else(|| run.failure("removed target receipt disappeared"))?;
         if refused.receipt.dispatched_prefix != 0
             || refused.receipt.wire_events != 0
@@ -2997,7 +2999,7 @@ fn tick_engine_accepted_make_without_click() {
         .with_mutation(DispatchMutation::CancelAfterPackets(2));
     run_case(scenario, |run| {
         let first = first_knife(&run.hook.trace()).map_err(|error| run.failure(error))?;
-        let origin = first.receipt.dispatch_tick;
+        let origin = first.game_tick;
         assert_batch(run, &first, 2, 2)?;
         assert_knife_wire_order(
             run,
@@ -3019,7 +3021,7 @@ fn tick_engine_deferred_terminal_row_is_a_slip_after_three_foreign_events() {
     let scenario = Scenario::river("tick-deferred-terminal-row").with_pre_batch_user_events(3);
     run_case(scenario, |run| {
         let first = first_knife(&run.hook.trace()).map_err(|error| run.failure(error))?;
-        let origin = first.receipt.dispatch_tick;
+        let origin = first.game_tick;
         assert_batch(run, &first, 3, 4)?;
         assert_knife_wire_order(
             run,
@@ -3096,7 +3098,7 @@ fn tick_engine_proxy_drop_after_make_keeps_full_host_receipt() {
     );
     run_case(scenario, |run| {
         let first = first_knife(&run.hook.trace()).map_err(|error| run.failure(error))?;
-        let origin = first.receipt.dispatch_tick;
+        let origin = first.game_tick;
         assert_batch(run, &first, 3, 4)?;
         assert_knife_wire_order(
             run,
@@ -3122,7 +3124,7 @@ fn lone_opener_history(name: &'static str, suppress: bool) -> Result<RunEvidence
     }
     run_case(scenario, |run| {
         let first = first_knife(&run.hook.trace()).map_err(|error| run.failure(error))?;
-        let origin = first.receipt.dispatch_tick;
+        let origin = first.game_tick;
         assert_batch(run, &first, 1, 1)?;
         assert_knife_wire_order(
             run,

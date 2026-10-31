@@ -269,7 +269,7 @@ fn eating_after_an_ended_idle_cycle_adds_no_verdict_and_the_next_gather_restarts
         }),
         success_line: true,
         target_ready: false,
-        receipt: Some(&dispatch),
+        receipt: Some((101, &dispatch)),
         ..first
     };
     assert_eq!(cycle.drive(&delayed, &mut policy), CycleStep::Wait);

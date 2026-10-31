@@ -730,6 +730,12 @@ polls, inventory counts, host dispatch receipts and actual encoded packets.
 It does not impose a verified-fraction gate. The external verdict script
 derives that fraction from the probe before qualification starts.
 
+Frame windows and `native_dispatch_tick` use Play's native completion clock.
+`client_snapshot_tick` and each API receipt's `dispatch_tick` retain the
+Client packet clock, which can reset on a relog. The API validates that packet
+clock against the snapshot and input lineage. Do not compare it directly
+with native frame windows or replace it with a calculated offset.
+
 Then run `gatherer_fly_tick`, `gatherer_net_tick`, `gatherer_mine_iron_tick`,
 `gatherer_oak_tick` and `gatherer_tick_refused_rune` in the same module.
 Use a new evidence filename for each cell. The first four require at least
@@ -750,6 +756,9 @@ Player stands differ from fixed resource tiles. The river fixture starts at
 3016,3170 beside the tree at 3017,3170. Offline checks require standable tiles
 in the reviewed navigation pack. Setup uses `interact::tele_args` and then
 checks the actual tile, stats, items and loaded resource before Start.
+The net player starts at 3267,3149, north of the authored NPC 330 spawn at
+3267,3148. Mining starts at 3284,3368 beside the authored eastern iron rocks,
+with nearby copper rocks for the separate engine cases.
 
 ### Knife-arm engine cases
 
