@@ -545,12 +545,16 @@ globalThis.__stop = () => ScriptRunner.stop('frame census stop');
 
     iso.probe("__stop()").unwrap();
     iso.on_game_tick(2);
-    iso.join();
-    assert!(iso.script_stop_receipt().is_some());
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while iso.script_stop_receipt().is_none() && Instant::now() < deadline {
+        std::thread::yield_now();
+    }
     assert!(
-        !iso.test_client_frame(),
-        "stopped isolates receive no frames"
+        iso.script_stop_receipt().is_some(),
+        "stop receipt arrives before joining"
     );
+    assert!(!iso.test_client_frame(), "stopped isolates receive no frames");
+    iso.join();
 }
 #[test]
 #[expect(non_snake_case, reason = "the runtime census names this contract test")]
