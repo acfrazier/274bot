@@ -13361,7 +13361,7 @@
       "module": "runtime/Settings.js",
       "selector": "SettingsBag.values",
       "reason": "Host settings bag exposes the posted value map.",
-      "runtime": "crates/script-js/src/shim/settings.js:7",
+      "runtime": "crates/script-js/src/shim/settings.js:6",
       "declaration": "values: Record<string, unknown>;",
       "family_id": "runtime",
       "nav_consuming": true
