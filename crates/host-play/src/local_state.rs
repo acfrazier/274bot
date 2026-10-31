@@ -293,6 +293,25 @@ impl StateComposition {
             )),
         }
     }
+
+    /// Ready the box-scoped settings file before a synchronous JS Start.
+    /// An absent file is ready; read failures and timeouts refuse the Start.
+    pub(crate) fn prepare_script_runtime_settings(&self, username: &str) -> Result<(), String> {
+        let identity = self
+            .identity(LocalStateDomain::ScriptRuntimeSettings, username)
+            .map_err(|error| format!("script runtime settings: {error}"))?;
+        let path = self.service.root().script_runtime_settings_file(
+            identity.account().profile(),
+            identity.account().account(),
+            identity.scope().revision().as_i32(),
+            identity.scope().content(),
+        );
+        self.service
+            .readback_lease(&identity, START_LEASE_TIMEOUT)
+            .map(|_| ())
+            .map_err(|code| format!("script runtime settings: {code} ({})", path.display()))
+    }
+
 }
 
 /// Where an accepted request stands, for host-side observers that must

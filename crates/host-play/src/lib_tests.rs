@@ -8188,6 +8188,113 @@ fn a_compiled_start_without_a_loadout_setting_refreshes_the_operator_loadouts() 
 
 #[cfg(feature = "js")]
 #[test]
+fn a_js_start_hydrates_cold_script_runtime_settings_before_first_resolve() {
+    let scratch = script::IsolatedEnv::enter("script-settings-start-readback");
+    let mut play = run_with_io(
+        &PlayOptions {
+            host: "127.0.0.1".into(),
+            transport: client::Transport::Tcp,
+            port: 43594,
+            cache_dir: "/tmp".into(),
+            lowmem: true,
+            mainland: false,
+        },
+        vec![],
+        |_| (None, None),
+        |_, _, _| {},
+    );
+    let profile = "local-289";
+    let content = "test-content";
+    let root = local_state::StateRoot::new(scratch.home.join(".274bot"));
+    std::fs::create_dir_all(root.path()).unwrap();
+    let path = root.script_runtime_settings_file(profile, "alice", 289, content);
+    std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+    let document = serde_json::json!({
+        "schema_version": 1,
+        "profile": profile,
+        "account": "alice",
+        "revision": 289,
+        "content": content,
+        "rows": [{
+            "namespace": "WalkTo",
+            "key": "destination",
+            "raw": "Varrock"
+        }]
+    });
+    vault::write_private_file(
+        &path,
+        serde_json::to_vec_pretty(&document).unwrap().as_bytes(),
+    )
+    .unwrap();
+    let service = local_state::LocalStateService::open(
+        root,
+        &[
+            api::local_state::LocalStateDomain::LoadoutsReferences,
+            api::local_state::LocalStateDomain::BankHints,
+            api::local_state::LocalStateDomain::ScriptRuntimeSettings,
+        ],
+        Arc::new(api::identity::RequestIdMinter::new()),
+    );
+    let composition = Arc::new(local_state::StateComposition::new(
+        Arc::clone(&service),
+        profile,
+        api::local_state::ContentScope::try_new(
+            client::io::ClientRevision::R289,
+            content,
+        )
+        .unwrap(),
+    ));
+    play.local_state = Some(Arc::clone(&composition));
+    play.attach_arm("alice", SlotArm::new(7, false));
+
+    let source = r#"
+import { SettingsStore } from '../../runtime/Settings.js';
+const first = SettingsStore.resolve('WalkTo', {
+    destination: { type: 'string', default: 'Draynor' },
+});
+export function tick(api) {
+    if (globalThis.__firstResolveLogged) return;
+    globalThis.__firstResolveLogged = true;
+    api.log(`first-resolve:${first.destination}`);
+}
+"#;
+    play.script_start_load(
+        "alice",
+        source.into(),
+        script_js::LoadShape::NativeTick,
+        None,
+        vec![],
+    )
+    .unwrap();
+
+    let mut logs = Vec::new();
+    let settled = wait_until(5_000, || {
+        play.pump_script_lifecycle("alice");
+        logs.extend(play.script_take_pending_logs("alice"));
+        logs.iter()
+            .any(|line| line.contains("first-resolve:Varrock"))
+            || play.script_last_error("alice").is_some()
+    });
+    assert!(
+        settled,
+        "the first SettingsStore.resolve did not settle: state={:?}, error={:?}, logs={logs:?}",
+        play.script_state("alice"),
+        play.script_last_error("alice"),
+    );
+    assert!(
+        logs.iter()
+            .any(|line| line.contains("first-resolve:Varrock")),
+        "the first SettingsStore.resolve did not see persisted data: state={:?}, error={:?}, logs={logs:?}",
+        play.script_state("alice"),
+        play.script_last_error("alice"),
+    );
+    assert_eq!(play.script_state("alice"), script::RunState::Running);
+    play.script_stop("alice");
+    wait_script_state(&play, "alice", script::RunState::Idle);
+}
+
+#[cfg(feature = "js")]
+#[test]
 fn live_start_retains_the_card_for_a_second_start() {
     let _env = script::IsolatedEnv::enter("quester-stop-restart");
     let mut play = run_with_io(

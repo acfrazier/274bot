@@ -381,11 +381,19 @@ impl ScriptStartHandle {
             } => {
                 // Caller-owned rows (a harness scenario's fixtures) or the
                 // operator's current rows from the state service.
-                let loadouts: Result<Arc<[api::loadout::Loadout]>, String> = match loadouts {
-                    Some(loadouts) => Ok(Arc::from(loadouts.to_vec())),
-                    None => self.operator_loadouts(name).map(Arc::from),
-                };
-                match loadouts {
+                // The compatibility SettingsStore is synchronous. Read its
+                // account/content store before V8 starts.
+                let resolved_loadouts: Result<Arc<[api::loadout::Loadout]>, String> = self
+                    .state
+                    .as_ref()
+                    .map_or(Ok(()), |state| {
+                        state.prepare_script_runtime_settings(name)
+                    })
+                    .and_then(|()| match loadouts {
+                        Some(loadouts) => Ok(Arc::from(loadouts.to_vec())),
+                        None => self.operator_loadouts(name).map(Arc::from),
+                    });
+                match resolved_loadouts {
                     Ok(loadouts) => {
                         slot.start_surface_with_settings(script_runtime::js_surface_start(
                             script_runtime::js_start_card(source, shape, siblings),
