@@ -414,6 +414,11 @@ Transient world sprites are removed on success, resource refusal and unwind.
 Render-backed ground and dynamic sprite storage is released on draw-off;
 simulation ground stamps and persistent placements remain.
 
+The content census hashes its own harness and the concrete-crowd fixture.
+Each resource row records its compiled element alignment and numeric byte ceiling.
+The scene vertex row separates the 128 MiB retained cap from the 192 MiB
+replacement charge. These derivations do not substitute for live allocation peaks.
+
 `Renderer::render_bytes` traverses actual capacities only on request. It does
 not substitute budget counters for retained allocations. The identity- and
 sequence-checked mailbox adds its output pixels, nav inputs and render-backed

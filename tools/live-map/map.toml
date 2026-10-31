@@ -275,6 +275,32 @@ globs = [
   "vendor/fr-client-rust/crates/client/src/render/budget.rs",
   "vendor/fr-client-rust/crates/client/src/render/backend/mod.rs",
   "vendor/fr-client-rust/crates/client/src/render/backend/present.rs",
+  "vendor/fr-client-rust/crates/client/src/client/present.rs",
+  "vendor/fr-client-rust/crates/client/src/client/title_flames.rs",
+  "vendor/fr-client-rust/crates/client/src/config/idk_type.rs",
+  "vendor/fr-client-rust/crates/client/src/config/if_type.rs",
+  "vendor/fr-client-rust/crates/client/src/config/loc_type.rs",
+  "vendor/fr-client-rust/crates/client/src/config/mod.rs",
+  "vendor/fr-client-rust/crates/client/src/config/npc_type.rs",
+  "vendor/fr-client-rust/crates/client/src/config/obj_type.rs",
+  "vendor/fr-client-rust/crates/client/src/config/spot_type.rs",
+  "vendor/fr-client-rust/crates/client/src/core/world.rs",
+  "vendor/fr-client-rust/crates/client/src/dash3d/anim_frame.rs",
+  "vendor/fr-client-rust/crates/client/src/dash3d/client_loc_anim.rs",
+  "vendor/fr-client-rust/crates/client/src/dash3d/client_npc.rs",
+  "vendor/fr-client-rust/crates/client/src/dash3d/client_obj.rs",
+  "vendor/fr-client-rust/crates/client/src/dash3d/client_player.rs",
+  "vendor/fr-client-rust/crates/client/src/dash3d/client_proj.rs",
+  "vendor/fr-client-rust/crates/client/src/dash3d/ground.rs",
+  "vendor/fr-client-rust/crates/client/src/dash3d/map_spot_anim.rs",
+  "vendor/fr-client-rust/crates/client/src/dash3d/model.rs",
+  "vendor/fr-client-rust/crates/client/src/dash3d/model_source.rs",
+  "vendor/fr-client-rust/crates/client/src/dash3d/store.rs",
+  "vendor/fr-client-rust/crates/client/src/datastruct/hash_table.rs",
+  "vendor/fr-client-rust/crates/client/src/datastruct/linkable.rs",
+  "vendor/fr-client-rust/crates/client/src/datastruct/lru_cache.rs",
+  "vendor/fr-client-rust/crates/client/src/graphics/pix32.rs",
+  "vendor/fr-client-rust/crates/client/src/graphics/pix3d.rs",
 ]
 cells = [
   "host.render-fair-progress-cpu|LIVE=1 BOT_CPU=1 BOT_LIVE_NAME_PREFIX=${BOT_LIVE_NAME_PREFIX:?} BOT_NAV_BUILD=skip M3_FAIR_PROBE=1 M3_N=10 M3_BACKEND=cpu M3_POLICIES=full,focus1,focus-churn,sidecar50,sidecar-churn M3_WARMUP_S=10 M3_OBSERVE_S=30 M3_OUT=${LIVE_EVIDENCE_DIR:?}/fair-cpu M3_PORT=${RENDER_GAME_PORT:?} M3_HTTP_PORT=${RENDER_HTTP_PORT:?} M3_GRANT_TTL_MS=${M3_GRANT_TTL_MS:?} M3_SCENE_QUANTUM_MS=${M3_SCENE_QUANTUM_MS:?} T44_RETAINED_PRESENT_CAP=${T44_RETAINED_PRESENT_CAP:?} T44_RENDER_BUDGET_LIMITS_JSON=\"${T44_RENDER_BUDGET_LIMITS_JSON:?}\" ENGINE_DIR=${ENGINE_A_DIR:?} NAV_PACK=${NAV_PACK_289:?} ${ISOHOME:?} nice -n 10 ${M3_TIMING_EXE:?} m3_fair_head_progress --ignored --exact --nocapture --test-threads=1|--locked -p host-play --features memory-profile,render-diagnostics --test m3_render_contention m3_fair_head_progress -- --ignored --exact",
@@ -283,6 +309,32 @@ cells = [
   "panel.render-focus-wake-live|LIVE=1 BOT_CPU=1 BOT_LIVE_NAME_PREFIX=${BOT_LIVE_NAME_PREFIX:?} BOT_NAV_BUILD=skip M3_OUT=${LIVE_EVIDENCE_DIR:?}/focus-wake M3_GRANT_TTL_MS=${M3_GRANT_TTL_MS:?} M3_SCENE_QUANTUM_MS=${M3_SCENE_QUANTUM_MS:?} T44_RENDER_BUDGET_LIMITS_JSON=\"${T44_RENDER_BUDGET_LIMITS_JSON:?}\" M3_PORT=${RENDER_GAME_PORT:?} M3_HTTP_PORT=${RENDER_HTTP_PORT:?} ENGINE_DIR=${ENGINE_A_DIR:?} NAV_PACK=${NAV_PACK_289:?} ${ISOHOME:?} nice -n 10 cargo test --release --locked -p panel --features render-test-hooks,render-diagnostics --test t44_focus_wake t44_panel_focus_wake_live -- --ignored --exact --nocapture --test-threads=1",
 ]
 
+[[cover]]
+globs = ["crates/host-play/src/bank_npc_live.rs", "crates/host-play/src/evidence_writer.rs"]
+cells = [
+  "host.bank-npc-mage-teller|LIVE=1 GATHERER_NAV_PACK=${NAV_PACK_289:?} GATHERER_ENGINE_DIR=${ENGINE_A_DIR:?} GATHERER_CATALOG_ROOT=${CATALOG_ROOT:?} GATHERER_GAME_PORT=${RENDER_GAME_PORT:?} GATHERER_HTTP_PORT=${RENDER_HTTP_PORT:?} LIVE_EVIDENCE_DIR=${LIVE_EVIDENCE_DIR:?} ${ISOHOME:?} nice -n 10 cargo test --locked -p host-play --lib live_mage_teller_native_real_play_receipt -- --ignored --nocapture --test-threads=1|--locked -p host-play --lib live_mage_teller_native_real_play_receipt -- --ignored --exact",
+]
+
+
+[[cover]]
+globs = ["Cargo.lock", "crates/frontend-core/Cargo.toml", "crates/host/Cargo.toml", "crates/host-play/Cargo.toml"]
+cells = [
+  "host.render-fair-progress-cpu|LIVE=1 BOT_CPU=1 BOT_LIVE_NAME_PREFIX=${BOT_LIVE_NAME_PREFIX:?} BOT_NAV_BUILD=skip M3_FAIR_PROBE=1 M3_N=10 M3_BACKEND=cpu M3_POLICIES=full,focus1,focus-churn,sidecar50,sidecar-churn M3_WARMUP_S=10 M3_OBSERVE_S=30 M3_OUT=${LIVE_EVIDENCE_DIR:?}/fair-cpu M3_PORT=${RENDER_GAME_PORT:?} M3_HTTP_PORT=${RENDER_HTTP_PORT:?} M3_GRANT_TTL_MS=${M3_GRANT_TTL_MS:?} M3_SCENE_QUANTUM_MS=${M3_SCENE_QUANTUM_MS:?} T44_RETAINED_PRESENT_CAP=${T44_RETAINED_PRESENT_CAP:?} T44_RENDER_BUDGET_LIMITS_JSON=\"${T44_RENDER_BUDGET_LIMITS_JSON:?}\" ENGINE_DIR=${ENGINE_A_DIR:?} NAV_PACK=${NAV_PACK_289:?} ${ISOHOME:?} nice -n 10 ${M3_TIMING_EXE:?} m3_fair_head_progress --ignored --exact --nocapture --test-threads=1|--locked -p host-play --features memory-profile,render-diagnostics --test m3_render_contention m3_fair_head_progress -- --ignored --exact",
+  "host.render-fair-progress-gpu|env -u BOT_CPU LIVE=1 BOT_LIVE_NAME_PREFIX=${BOT_LIVE_NAME_PREFIX:?} BOT_NAV_BUILD=skip M3_FAIR_PROBE=1 M3_N=10 M3_BACKEND=gpu M3_POLICIES=full,focus1,focus-churn,sidecar50,sidecar-churn M3_WARMUP_S=10 M3_OBSERVE_S=30 M3_OUT=${LIVE_EVIDENCE_DIR:?}/fair-gpu M3_PORT=${RENDER_GAME_PORT:?} M3_HTTP_PORT=${RENDER_HTTP_PORT:?} M3_GRANT_TTL_MS=${M3_GRANT_TTL_MS:?} M3_SCENE_QUANTUM_MS=${M3_SCENE_QUANTUM_MS:?} T44_RETAINED_PRESENT_CAP=${T44_RETAINED_PRESENT_CAP:?} T44_RENDER_BUDGET_LIMITS_JSON=\"${T44_RENDER_BUDGET_LIMITS_JSON:?}\" ENGINE_DIR=${ENGINE_A_DIR:?} NAV_PACK=${NAV_PACK_289:?} ${ISOHOME:?} nice -n 10 ${M3_TIMING_EXE:?} m3_fair_head_progress --ignored --exact --nocapture --test-threads=1|--locked -p host-play --features memory-profile,render-diagnostics --test m3_render_contention m3_fair_head_progress -- --ignored --exact",
+]
+
+[[cover]]
+globs = ["crates/host-play/src/play_bootstrap.rs"]
+cells = [
+  "host.render-fair-progress-cpu|LIVE=1 BOT_CPU=1 BOT_LIVE_NAME_PREFIX=${BOT_LIVE_NAME_PREFIX:?} BOT_NAV_BUILD=skip M3_FAIR_PROBE=1 M3_N=10 M3_BACKEND=cpu M3_POLICIES=full,focus1,focus-churn,sidecar50,sidecar-churn M3_WARMUP_S=10 M3_OBSERVE_S=30 M3_OUT=${LIVE_EVIDENCE_DIR:?}/fair-cpu M3_PORT=${RENDER_GAME_PORT:?} M3_HTTP_PORT=${RENDER_HTTP_PORT:?} M3_GRANT_TTL_MS=${M3_GRANT_TTL_MS:?} M3_SCENE_QUANTUM_MS=${M3_SCENE_QUANTUM_MS:?} T44_RETAINED_PRESENT_CAP=${T44_RETAINED_PRESENT_CAP:?} T44_RENDER_BUDGET_LIMITS_JSON=\"${T44_RENDER_BUDGET_LIMITS_JSON:?}\" ENGINE_DIR=${ENGINE_A_DIR:?} NAV_PACK=${NAV_PACK_289:?} ${ISOHOME:?} nice -n 10 ${M3_TIMING_EXE:?} m3_fair_head_progress --ignored --exact --nocapture --test-threads=1|--locked -p host-play --features memory-profile,render-diagnostics --test m3_render_contention m3_fair_head_progress -- --ignored --exact",
+  "host.render-fair-progress-gpu|env -u BOT_CPU LIVE=1 BOT_LIVE_NAME_PREFIX=${BOT_LIVE_NAME_PREFIX:?} BOT_NAV_BUILD=skip M3_FAIR_PROBE=1 M3_N=10 M3_BACKEND=gpu M3_POLICIES=full,focus1,focus-churn,sidecar50,sidecar-churn M3_WARMUP_S=10 M3_OBSERVE_S=30 M3_OUT=${LIVE_EVIDENCE_DIR:?}/fair-gpu M3_PORT=${RENDER_GAME_PORT:?} M3_HTTP_PORT=${RENDER_HTTP_PORT:?} M3_GRANT_TTL_MS=${M3_GRANT_TTL_MS:?} M3_SCENE_QUANTUM_MS=${M3_SCENE_QUANTUM_MS:?} T44_RETAINED_PRESENT_CAP=${T44_RETAINED_PRESENT_CAP:?} T44_RENDER_BUDGET_LIMITS_JSON=\"${T44_RENDER_BUDGET_LIMITS_JSON:?}\" ENGINE_DIR=${ENGINE_A_DIR:?} NAV_PACK=${NAV_PACK_289:?} ${ISOHOME:?} nice -n 10 ${M3_TIMING_EXE:?} m3_fair_head_progress --ignored --exact --nocapture --test-threads=1|--locked -p host-play --features memory-profile,render-diagnostics --test m3_render_contention m3_fair_head_progress -- --ignored --exact",
+]
+
+[[cover]]
+globs = ["crates/panel/Cargo.toml", "crates/panel/src/focus.rs", "crates/panel/src/live_harness.rs"]
+cells = [
+  "panel.render-focus-wake-live|LIVE=1 BOT_CPU=1 BOT_LIVE_NAME_PREFIX=${BOT_LIVE_NAME_PREFIX:?} BOT_NAV_BUILD=skip M3_OUT=${LIVE_EVIDENCE_DIR:?}/focus-wake M3_GRANT_TTL_MS=${M3_GRANT_TTL_MS:?} M3_SCENE_QUANTUM_MS=${M3_SCENE_QUANTUM_MS:?} T44_RENDER_BUDGET_LIMITS_JSON=\"${T44_RENDER_BUDGET_LIMITS_JSON:?}\" M3_PORT=${RENDER_GAME_PORT:?} M3_HTTP_PORT=${RENDER_HTTP_PORT:?} ENGINE_DIR=${ENGINE_A_DIR:?} NAV_PACK=${NAV_PACK_289:?} ${ISOHOME:?} nice -n 10 cargo test --release --locked -p panel --features render-test-hooks,render-diagnostics --test t44_focus_wake t44_panel_focus_wake_live -- --ignored --exact --nocapture --test-threads=1|--locked -p panel --features render-test-hooks,render-diagnostics --test t44_focus_wake t44_panel_focus_wake_live -- --ignored --exact",
+]
 [[cover]]
 globs = ["crates/tui/src/app.rs"]
 cells = [

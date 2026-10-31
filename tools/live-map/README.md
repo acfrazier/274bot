@@ -12,10 +12,12 @@ The tool reads paths with `git diff --name-only` and expands changes to the
 `vendor/fr-client-rust` gitlink into paths changed between its old and new
 commits. If either commit is missing locally, the tool prints a fetch command
 and exits with an error. It lists covering cells and their exact commands.
-Run each listed cell three times on the changed code. The tool also lists
-uncovered live paths and unclassified paths. Exit code 0 means no gaps. Exit
-code 1 means a live path has no cell or a path is unclassified. Exit code 2
-means the input or Git diff is invalid.
+For the RELEASE-029 diff, run each selected cell once on the changed code.
+Repeat final extrema and the natural region-crossing proof three times as
+separate qualification work. The tool also lists uncovered live paths and
+unclassified paths. Exit code 0 means no gaps. Exit code 1 means a live path
+has no cell or a path is unclassified. Exit code 2 means the input or Git diff
+is invalid.
 Do not use a broad live glob to hide an uncovered path.
 
 Run the self-tests with temporary Git repositories. The real-submodule test
@@ -130,12 +132,14 @@ thirteen byte ceilings are required. Calibration inputs are provisional
 until the complete qualification matrix passes.
 
 `panel.render-calibration-live` uses the real panel executable, not a test
-executable. Run both `T44_HEADED_REDRAW=normal` and `wait`, with recording
+executable. For this diff, run its mapped cell once with `HEADED_RECORD=1`
+and perform the actual capture action in the headed panel. The full calibration
+matrix separately covers `T44_HEADED_REDRAW=normal` and `wait`, with recording
 off and on. Set the capture metadata ceiling and readback and recorder-finish
 deadlines explicitly. The receipt contains actual per-head render samples
 and applied calibration inputs. The cell requires an allowed interactive
-display window. Build on aubaine; use the quiet P2000 on claimed pinot for
-the headless GPU timing cells. Main schedules protected Mac measurements.
+display window. Build on Aubaine. Use the quiet P2000 on claimed Pinot for
+headless GPU timing. Main schedules protected Mac measurements.
 Enable `session_log_file` in the isolated `panel-ui.json` for capture timing.
 Retain that session log through recorder finalization. Successful shutdown
 emits `record_disconnect_to_completion_ns` after writer completion and child
@@ -146,6 +150,31 @@ readback submissions, successful completions and their process maximum.
 real Session, Play workers, and control streams. It checks requested and
 applied focus, wake writes and drains, scene progress, and unchanged passes.
 Its test controls must not supply timing observations.
+
+### RELEASE-029 changed-path coverage
+
+The added rows map changed paths to existing real-content commands:
+
+| Changed paths | Cell and reason |
+|---|---|
+| `Cargo.lock`, `crates/{frontend-core,host,host-play}/Cargo.toml` | `host.render-fair-progress-cpu` and `host.render-fair-progress-gpu` build and run real Play workers and their consumer pump. |
+| `crates/panel/Cargo.toml` | `panel.render-focus-wake-live` builds and runs the live panel focus pipeline. |
+| `crates/host-play/src/play_bootstrap.rs` | Both progress cells start real Play workers before measuring their scene-consume progress. |
+| `crates/host-play/src/{bank_npc_live,evidence_writer}.rs` | `host.bank-npc-mage-teller` runs the existing ignored Mage Teller proof through real Play and writes its PNG and JSON evidence. The changed error conversion is covered as part of that path. |
+| `crates/panel/src/{focus,live_harness}.rs` | `panel.render-focus-wake-live` checks focus requests, wake writes and drains, and scene progress in a real Session with Play workers. |
+| Listed `vendor/fr-client-rust/crates/client/src/{client,config,core,dash3d,datastruct,graphics}` files | `host.render-fair-drawing-n1`, `host.render-fair-drawing-n10`, `host.render-fair-progress-gpu`, and `panel.render-calibration-live` compile and exercise the client drawing, scene and presentation paths. The n1 and n10 cells use CPU drawing; GPU progress uses the hook-free timing executable. |
+
+The drawing rows do not measure GPU timing. The progress GPU row does not
+exercise panel capture. The panel calibration row uses the hook-free panel
+executable. For capture-on coverage, set `HEADED_RECORD=1` and perform the
+actual capture action in the headed panel during that run. Setting the
+environment variable alone does not prove that capture started. The
+`t44_headed_live` cell uses test hooks and is functional evidence, not timing.
+
+`crates/scenario/src/shot.rs` has no mapped real-content caller. Its current
+`write_shot_at` use is in a unit-test sink. Do not map a live scenario cell to
+it or claim that an idle scenario captures a shot. This path remains an
+explicit coverage gap until a real-content command invokes its shot sink.
 
 ## State-gap and refusal paths
 

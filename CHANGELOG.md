@@ -35,6 +35,8 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.8` 
   command submission timings.
   Explicit byte-budget owners use the same real, thread-bound scope in all
   builds; only their process configuration is still opt-in.
+  The content census records source hashes, compiled alignments and byte ceilings.
+  It separates the shared vertex cap from its replacement charge.
   These calibration paths do not activate fairness in normal builds.
 
 ## [0.2.8] — 2026-10-29 — Beta 2

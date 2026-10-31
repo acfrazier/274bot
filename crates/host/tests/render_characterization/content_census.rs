@@ -1,6 +1,6 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
-use std::mem::size_of;
+use std::mem::{align_of, size_of};
 use std::path::{Path, PathBuf};
 
 use client::config::Cache;
@@ -1730,6 +1730,8 @@ fn source_root() -> PathBuf {
 
 fn add_source_hashes(ledger: &mut InputLedger) -> BTreeMap<&'static str, Vec<u8>> {
     const SOURCES: &[&str] = &[
+        "crates/host/tests/render_characterization/content_census.rs",
+        "crates/host/tests/render_characterization/concrete_crowd.rs",
         "vendor/fr-client-rust/crates/client/src/render/budget.rs",
         "vendor/fr-client-rust/crates/client/src/render/nav_debug.rs",
         "vendor/fr-client-rust/crates/client/src/render/backend/gpu_atlas.rs",
@@ -3033,6 +3035,30 @@ fn content_owner_bounds(
         },
     })
 }
+
+fn resource_alignment(resource: RenderResource) -> usize {
+    let nav = render_test_nav_layout();
+    match resource {
+        RenderResource::Capture => align_of::<client::render::world::GpuVertex>(),
+        RenderResource::NavVertices => nav.vertex_alignment,
+        RenderResource::NavQuads => nav.quad_alignment,
+        RenderResource::NavEdges => nav.edge_alignment,
+        RenderResource::NavInput => nav.input_alignment,
+        RenderResource::HeadModels | RenderResource::TempModels | RenderResource::SharedModels => {
+            align_of::<Model>().max(align_of::<usize>())
+        }
+        RenderResource::HeadMisc => align_of::<client::render::Renderer>(),
+        RenderResource::SharedSprites => align_of::<usize>(),
+        RenderResource::ContextCpu => align_of::<GpuAssets>(),
+        // Logical GPU bytes use four-byte buffer/texel units. Driver allocation
+        // alignment belongs to native memory, not this logical byte ceiling.
+        RenderResource::Vertex | RenderResource::ContextGpu => align_of::<u32>(),
+        RenderResource::VertexCoordinates => {
+            unreachable!("fixed coordinate range has no byte alignment")
+        }
+    }
+}
+
 #[expect(
     clippy::too_many_arguments,
     reason = "Each resource row preserves independently available census inputs and their blockers"
@@ -3327,7 +3353,7 @@ fn resource_rows(
         ),
         (
             RenderResource::Vertex,
-            "Source-derived face/count upper times two CPU-clipped triangles, three lossless 16-byte vertices. The operator's revised ruling caps retained per-head storage at 128 MiB; old-plus-new power-of-two replacement peaks at 192 MiB and is charged separately. The theoretical content upper can exceed the cap and is not an initialization requirement.",
+            "Source-derived face/count upper times two CPU-clipped triangles, three lossless 16-byte vertices. The revised operator ruling retains at most one process-wide 128 MiB scene buffer. Its old-plus-new replacement charge is at most 192 MiB. The theoretical content upper can exceed the retained cap and is not an initialization requirement.",
             capture_trigger.clone(),
             "The submitted static geometry, capture vertex layout, or requested device storage limit is unavailable.",
         ),
@@ -3434,11 +3460,33 @@ fn resource_rows(
                     atlas_layout.is_some(),
                 ),
             };
+            let alignment = resource_alignment(resource);
+            let budget_bytes = if resource == RenderResource::Vertex {
+                Some(128_u64 * 1024 * 1024)
+            } else {
+                content_upper
+                    .as_u64()
+                    .and_then(|bytes| bytes.checked_next_multiple_of(alignment as u64))
+            };
+            let charge_limit_bytes = if resource == RenderResource::Vertex {
+                Some((64_u64 + 128) * 1024 * 1024)
+            } else {
+                budget_bytes
+            };
+            let complete = complete && budget_bytes.is_some();
             json!({
                 "resource": format!("{resource:?}"),
                 "display": resource.to_string(),
                 "formula": formula,
                 "content_upper_bytes": content_upper,
+                "allocation_or_device_alignment_bytes": alignment,
+                "B_bytes": budget_bytes,
+                "charge_limit_bytes": charge_limit_bytes,
+                "budget_derivation": if resource == RenderResource::Vertex {
+                    "operator-fixed 128 MiB retained cap, plus 64 MiB old storage during replacement"
+                } else {
+                    "align_up(content_upper_bytes, allocation_or_device_alignment_bytes)"
+                },
                 "known_measurements": measured,
                 "largest_triggering_content_id": trigger,
                 "status": if complete { "complete" } else { "incomplete" },
@@ -5109,4 +5157,47 @@ fn admitted_geometry_rejects_face_overflow() {
         24,
     )
     .is_err());
+}
+
+#[test]
+fn census_reports_exact_nav_alignment_and_separate_vertex_replacement_charge() {
+    let nav = render_test_nav_layout();
+    assert_eq!(resource_alignment(RenderResource::NavVertices), nav.vertex_alignment);
+    assert_eq!(resource_alignment(RenderResource::NavQuads), nav.quad_alignment);
+    assert_eq!(resource_alignment(RenderResource::NavEdges), nav.edge_alignment);
+    assert_eq!(resource_alignment(RenderResource::NavInput), nav.input_alignment);
+    for resource in [
+        RenderResource::Capture,
+        RenderResource::NavVertices,
+        RenderResource::NavQuads,
+        RenderResource::NavEdges,
+        RenderResource::NavInput,
+        RenderResource::HeadModels,
+        RenderResource::HeadMisc,
+        RenderResource::TempModels,
+        RenderResource::SharedModels,
+        RenderResource::SharedSprites,
+        RenderResource::Vertex,
+        RenderResource::ContextCpu,
+        RenderResource::ContextGpu,
+    ] {
+        assert!(resource_alignment(resource).is_power_of_two());
+    }
+    let resources = resource_rows(
+        &BTreeMap::new(),
+        &BTreeMap::new(),
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+    );
+    let vertex = resources.iter().find(|row| row["resource"] == "Vertex").unwrap();
+    assert_eq!(vertex["B_bytes"], 128_u64 * 1024 * 1024);
+    assert_eq!(vertex["charge_limit_bytes"], (64_u64 + 128) * 1024 * 1024);
+    assert_eq!(vertex["status"], "incomplete");
 }
