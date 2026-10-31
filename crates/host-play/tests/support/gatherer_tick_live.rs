@@ -138,7 +138,8 @@ impl Case {
         match self {
             Self::Probe | Self::Fly => 20,
             Self::Net => 1,
-            Self::Iron => 15,
+            // Accepted S6b correction: the real mithril tool requires Mining 21.
+            Self::Iron => 21,
             Self::Oak => 15,
             // The rune pickaxe's own level gate is 41; this is a real usable
             // iron-rock action whose catalogue row is specifically no-gain.
@@ -1227,6 +1228,39 @@ fn opcode_name(opcode: u8) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn iron_cell_seeds_the_selected_mithril_tool_minimum() {
+        let selected = api::game_data::for_revision(api::selected::ClientRevision::R289).unwrap();
+        let catalog =
+            api::selected::FamilyPreparation::run(move |worker| selected.prepare_gathering(worker))
+                .unwrap()
+                .join()
+                .unwrap()
+                .unwrap();
+        let method = catalog
+            .methods()
+            .iter()
+            .find(|method| method.id.0.as_ref() == "mining.iron")
+            .unwrap();
+        let tool = api::gather_methods::known_rows(&method.tools)
+            .iter()
+            .find(|tool| tool.item == Case::Iron.tool().1)
+            .unwrap();
+        let gate = tool.use_gate.as_ref().unwrap();
+        let setup = SetupState::new("iron-minimum".into(), Case::Iron);
+        let seeded_level = setup
+            .commands
+            .iter()
+            .find_map(|command| command.strip_prefix("setstat mining "))
+            .unwrap()
+            .parse::<u16>()
+            .unwrap();
+        assert!(
+            seeded_level >= gate.level,
+            "the generated account setup cannot use its selected mithril tool"
+        );
+    }
 
     #[test]
     fn fixed_loc_setups_start_on_real_standable_tiles() {

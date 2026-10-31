@@ -739,6 +739,12 @@ the observed opener/click cadence, not an invented roll animation. Its allowed
 Fletching-loss count and verified-fraction threshold must be fixed from the
 probe before the net cell runs.
 
+The iron cell seeds Mining 21, the selected mithril pickaxe's use minimum
+(`gathering.json:21132-21135`), rather than the design's Mining 15. This is an
+approved acceptance correction. It keeps the real iron rocks, mithril tool,
+60-cycle gate and replacement-rock handoff. Its oracle uses no Mining-15
+success probability; it checks measured cycles, XP and actual target changes.
+
 Player stands differ from fixed resource tiles. The river fixture starts at
 2503,3498 beside the real `loc_2027` at 2504,3498. The oak fixture starts at
 3016,3170 beside the tree at 3017,3170. Offline checks require standable tiles
