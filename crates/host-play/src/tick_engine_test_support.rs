@@ -262,20 +262,27 @@ struct ActiveDispatch {
 /// A prior native start Act proves Mining is already running. A fresh
 /// non-null instruction excludes success/Idle (mining.rs2:109-111,183-192).
 pub fn fresh_mining_roll(trace: &TickEngineTrace, tick: u32, sequence: i32) -> bool {
-    let Some(frame) = trace.frames.last() else {
+    let Some(edge_index) = trace
+        .frames
+        .iter()
+        .rposition(|frame| frame.game_tick == tick && frame.tick_edge)
+    else {
         return false;
     };
+    let frame = &trace.frames[edge_index];
     let Some(animation) = frame.animation else {
         return false;
     };
-    frame.game_tick == tick
-        && frame.tick_edge
+    // Dispatch can follow unchanged wake polls in this same PLAYER_INFO window.
+    // The fresh edge instruction stays valid only while its serial is retained.
+    trace
+        .frames
+        .last()
+        .is_some_and(|latest| latest.game_tick == tick && latest.animation == Some(animation))
         && animation.sequence == sequence
-        && trace
-            .frames
+        && trace.frames[..edge_index]
             .iter()
             .rev()
-            .skip(1)
             .find_map(|frame| frame.animation)
             .is_none_or(|previous| previous.serial != animation.serial)
         && trace

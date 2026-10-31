@@ -1524,8 +1524,7 @@ where
                                             )
                                         };
                                     #[cfg(feature = "test-support")]
-                                    let dispatch = if let Some(hook) =
-                                        TickEngineTestHook::current()
+                                    let dispatch = if let Some(hook) = TickEngineTestHook::current()
                                     {
                                         match &mut snapshot {
                                             SnapshotArgument::Mutable(snapshot) => {

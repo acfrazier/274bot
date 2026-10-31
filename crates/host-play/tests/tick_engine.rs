@@ -4537,6 +4537,21 @@ mod packet_oracle_tests {
             11,
             MITHRIL_PICK_ANIMATION
         ));
+        let mut retained = evidence.trace.clone();
+        let mut wake = retained.frames.last().unwrap().clone();
+        wake.host_frame += 1;
+        wake.tick_edge = false;
+        retained.frames.push(wake);
+        assert!(fresh_mining_roll(&retained, 11, MITHRIL_PICK_ANIMATION));
+        retained
+            .frames
+            .last_mut()
+            .unwrap()
+            .animation
+            .as_mut()
+            .unwrap()
+            .serial += 1;
+        assert!(!fresh_mining_roll(&retained, 11, MITHRIL_PICK_ANIMATION));
         let mut start_act = evidence.trace.clone();
         start_act.frames[4].chat.push(ChatObservation {
             game_tick: 11,
