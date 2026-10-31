@@ -20,7 +20,7 @@ use serde_json::{json, Value};
 use vault::{Profile, ProfileSettings};
 
 thread_local! {
-    static CLIENT_ADAPTER_RENDERER: RefCell<Option<Renderer>> = RefCell::new(None);
+    static CLIENT_ADAPTER_RENDERER: RefCell<Option<Renderer>> = const { RefCell::new(None) };
 }
 
 const TEST_NAME: &str = "reader_bank_count_stats_bounds_and_stale_guards";
