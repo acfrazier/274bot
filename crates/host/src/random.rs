@@ -252,15 +252,24 @@ fn no_npc_event(kind: RandomKind, name: &str) -> DetectedRandom {
 /// The event literals are ASCII; the Unicode path preserves lowercase
 /// mappings that can produce ASCII, such as the Kelvin sign's `k`.
 fn matches_lower_name(name: &str, lowercase: &str) -> bool {
-    if !lowercase.is_ascii() {
-        return name.to_lowercase() == lowercase;
-    }
+    matches_any_lower_name(name, std::slice::from_ref(&lowercase))
+}
+
+fn matches_any_lower_name(name: &str, lowercase: &[&str]) -> bool {
     if name.is_ascii() {
-        name.eq_ignore_ascii_case(lowercase)
+        lowercase
+            .iter()
+            .any(|&expected| name.eq_ignore_ascii_case(expected))
     } else {
-        name.chars()
-            .flat_map(char::to_lowercase)
-            .eq(lowercase.chars())
+        lowercase.iter().any(|&expected| {
+            if expected.is_ascii() {
+                name.chars()
+                    .flat_map(char::to_lowercase)
+                    .eq(expected.chars())
+            } else {
+                name.to_lowercase() == expected
+            }
+        })
     }
 }
 
@@ -305,9 +314,7 @@ fn detect_scene(
         // A talking random following another player is foreign even if
         // stale overhead text mentions us (`RandomEvents.ts:39-44`).
         if ours
-            && DIALOG_NAMES
-                .iter()
-                .any(|&expected| matches_lower_name(raw, expected))
+            && matches_any_lower_name(raw, DIALOG_NAMES)
             && !event_npc_targets_another_player(npc, self_slot)
         {
             return Some(DetectedRandom {
