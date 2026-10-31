@@ -1624,6 +1624,7 @@ fn correlate_dropped_cipher_suffix(
         "TICK-MANIP Engine T accepted the opener and Make, then closed the dropped-cipher stream at unknown-opcode sequence={}",
         unknown.sequence
     );
+    validate_drop_relogin_evidence(evidence, observation.request_id)?;
     Ok(())
 }
 
@@ -1632,6 +1633,35 @@ fn validate_proxy_drop_after_make(
     observations: &[ProxyObservation],
     request_id: u64,
 ) -> Result<(), String> {
+    let Some(receipt) = trace
+        .dispatches
+        .iter()
+        .find(|dispatch| dispatch.receipt.request_id == request_id)
+        .map(|dispatch| dispatch.receipt)
+    else {
+        return Err("Make suffix drop has no full native host receipt".into());
+    };
+    if receipt.row_count != 3
+        || receipt.dispatched_prefix != 3
+        || receipt.wire_events != 4
+        || receipt.terminal.is_some()
+        || !matches!(
+            receipt.rows[0],
+            interact::server_ordered::RowDispatch::HostQueued { wire_events: 1 }
+        )
+        || !matches!(
+            receipt.rows[1],
+            interact::server_ordered::RowDispatch::HostQueued { wire_events: 1 }
+        )
+        || !matches!(
+            receipt.rows[2],
+            interact::server_ordered::RowDispatch::HostQueued { wire_events: 2 }
+        )
+    {
+        return Err(format!(
+            "Make suffix drop requires the full native prefix=3/wire=4 host receipt: {receipt:?}"
+        ));
+    }
     let Some(observation) = observations.first() else {
         return Err("Make suffix drop has no completed proxy observation".into());
     };
@@ -2481,71 +2511,289 @@ fn assert_proxy_drop_after_make(
     request_id: u64,
     origin: u64,
 ) -> Result<(), String> {
-    let observations = run
+    let proxy = run
         .proxy
         .as_ref()
-        .map_or_else(Vec::new, |proxy| proxy.observations());
-    validate_proxy_drop_after_make(&run.hook.trace(), &observations, request_id)
-        .map_err(|error| run.failure(error))?;
-    assert_drop_relogin(run, request_id, origin)
+        .map(Arc::clone)
+        .ok_or_else(|| run.failure("suffix-drop case has no loopback proxy"))?;
+    let deadline = Instant::now() + LOGOUT_DEADLINE;
+    let mut after_host_frame = run.hook.observed_host_frame();
+    loop {
+        let trace = run.hook.trace();
+        run.capture_status(&trace);
+        proxy
+            .ensure_healthy()
+            .map_err(|error| run.failure(format!("suffix-drop proxy failed: {error}")))?;
+        let observations = proxy.observations();
+        if observations
+            .iter()
+            .any(|observation| observation.request_id == request_id)
+        {
+            validate_proxy_drop_after_make(&trace, &observations, request_id)
+                .map_err(|error| run.failure(error))?;
+            return assert_drop_relogin(run, request_id, origin, deadline);
+        }
+        let remaining = deadline.saturating_duration_since(Instant::now());
+        if remaining.is_zero() {
+            return Err(run.failure(format!(
+                "Make suffix drop had no completed proxy observation within {LOGOUT_DEADLINE:?}: trace={trace:?}"
+            )));
+        }
+        after_host_frame = run
+            .hook
+            .wait_for_frame(after_host_frame, remaining.min(FRAME_HANG_GUARD))
+            .ok_or_else(|| {
+                run.failure(format!(
+                    "host-frame hang guard expired while awaiting the Make suffix-drop proxy observation within {LOGOUT_DEADLINE:?}"
+                ))
+            })?;
+    }
 }
 
-fn assert_drop_relogin(run: &mut LiveRun, request_id: u64, origin: u64) -> Result<(), String> {
-    let trace = run.hook.trace();
-    run.capture_status(&trace);
+#[derive(Debug, Clone)]
+struct DropReloginBaseline {
+    batch_host_frame: u64,
+    initial_session: u64,
+    initial_slot: drop_history::SlotObservation,
+    initial_verified: i64,
+    baseline_host_frame: u64,
+}
+
+fn drop_relogin_baseline(
+    history: &drop_history::DropHistory,
+    trace: &TickEngineTrace,
+    statuses: &[StatusObservation],
+    request_id: u64,
+    baseline_host_frame: u64,
+) -> Result<DropReloginBaseline, String> {
+    let batch_host_frame = wires_for_request(trace, request_id)
+        .first()
+        .map(|wire| wire.host_frame)
+        .ok_or("suffix-drop request has no encrypted wire frames")?;
+    let initial_session = history
+        .client_sessions
+        .iter()
+        .filter(|observation| {
+            observation.host_frame <= batch_host_frame
+                && observation.ingame
+                && observation.scene_state == 2
+        })
+        .max_by_key(|observation| observation.host_frame)
+        .map(|observation| observation.session)
+        .ok_or("suffix-drop request has no ready client-session baseline")?;
+    let initial_slot = history
+        .slot_status
+        .iter()
+        .filter(|observation| {
+            observation.host_frame <= batch_host_frame
+                && observation.connected
+                && observation.ingame
+                && observation.scene_state == 2
+        })
+        .max_by_key(|observation| observation.host_frame)
+        .cloned()
+        .ok_or("suffix-drop request has no ready slot-status baseline")?;
+    let initial_verified = statuses
+        .iter()
+        .filter(|status| status.host_frame <= batch_host_frame)
+        .max_by_key(|status| status.host_frame)
+        .and_then(|status| status.tick_verified)
+        .ok_or("suffix-drop request has no tick_verified baseline")?;
+    Ok(DropReloginBaseline {
+        batch_host_frame,
+        initial_session,
+        initial_slot,
+        initial_verified,
+        baseline_host_frame,
+    })
+}
+
+fn suffix_drop_relogin_ready(
+    history: &drop_history::DropHistory,
+    trace: &TickEngineTrace,
+    statuses: &[StatusObservation],
+    baseline: &DropReloginBaseline,
+    origin: u64,
+) -> Result<Option<u64>, String> {
+    let first_new_session_frame = history
+        .client_sessions
+        .iter()
+        .filter(|observation| {
+            observation.host_frame > baseline.batch_host_frame
+                && observation.session != baseline.initial_session
+        })
+        .map(|observation| observation.host_frame)
+        .min();
+    let session_ready = history.client_sessions.iter().find(|observation| {
+        observation.host_frame > baseline.batch_host_frame
+            && observation.session != baseline.initial_session
+            && observation.ingame
+            && observation.scene_state == 2
+    });
+    let disconnect_boundary = history.slot_status.iter().any(|observation| {
+        observation.host_frame > baseline.batch_host_frame && !observation.connected
+    });
+    let ready_slot = history.slot_status.iter().any(|observation| {
+        observation.host_frame > baseline.batch_host_frame
+            && observation.stream_epoch != baseline.initial_slot.stream_epoch
+            && observation.connected
+            && observation.ingame
+            && observation.scene_state == 2
+            && observation.startup_phase == host_play::StartupPhase::Ready
+    });
+    let read_eof = history
+        .host_log
+        .iter()
+        .position(|observation| observation.message.starts_with("session exit reason=read_eof"));
+    let reconnect_attempt = read_eof.and_then(|exit_index| {
+        history
+            .host_log
+            .iter()
+            .enumerate()
+            .find(|(index, observation)| {
+                *index > exit_index
+                    && observation
+                        .message
+                        .starts_with("relog decision attempt reconnect=true")
+            })
+            .map(|(index, _)| index)
+    });
+    let handshake_after_reconnect = reconnect_attempt.is_some_and(|attempt_index| {
+        history
+            .host_log
+            .iter()
+            .enumerate()
+            .any(|(index, observation)| {
+                index > attempt_index && observation.message.starts_with("handshake ok")
+            })
+    });
+    let old_session_verified_increment = statuses.iter().any(|status| {
+        status.host_frame >= baseline.baseline_host_frame
+            && first_new_session_frame.is_none_or(|new_session_frame| {
+                status.host_frame < new_session_frame
+            })
+            && status.tick_verified != Some(baseline.initial_verified)
+    });
+    let roll_tick = origin.wrapping_add(3) as u32;
+    let old_session_roll = trace.frames.iter().any(|edge| {
+        if edge.host_frame < baseline.baseline_host_frame
+            || first_new_session_frame
+                .is_some_and(|new_session_frame| edge.host_frame >= new_session_frame)
+            || edge.game_tick != roll_tick
+            || !edge.tick_edge
+        {
+            return false;
+        }
+        let Some(current) = edge.animation else {
+            return false;
+        };
+        current.sequence == ROLL_ANIMATION
+            && trace
+                .frames
+                .iter()
+                .filter(|frame| frame.host_frame < edge.host_frame)
+                .max_by_key(|frame| frame.host_frame)
+                .and_then(|frame| frame.animation)
+                .is_none_or(|previous| previous.serial != current.serial)
+    });
+    if old_session_verified_increment || old_session_roll {
+        return Err(format!(
+            "dropped suffix produced an old-session R+3 success: verified_increment={old_session_verified_increment} fresh_roll={old_session_roll} roll_tick={roll_tick}"
+        ));
+    }
+    if read_eof.is_some()
+        && reconnect_attempt.is_some()
+        && handshake_after_reconnect
+        && disconnect_boundary
+        && ready_slot
+    {
+        return Ok(session_ready.map(|observation| observation.session));
+    }
+    Ok(None)
+}
+
+fn validate_drop_relogin_evidence(
+    evidence: &RunEvidence,
+    request_id: u64,
+) -> Result<(), String> {
+    let history = evidence
+        .drop_history
+        .as_ref()
+        .ok_or("suffix-drop evidence has no lifecycle history")?;
+    let wires = wires_for_request(&evidence.trace, request_id);
+    let origin = wires
+        .first()
+        .map(|wire| u64::from(wire.game_tick))
+        .ok_or("suffix-drop evidence has no encrypted wire frames")?;
+    let batch_host_frame = wires[0].host_frame;
+    let baseline_host_frame = evidence
+        .baseline
+        .as_ref()
+        .map_or(batch_host_frame, |baseline| baseline.host_frame);
+    let baseline = drop_relogin_baseline(
+        history,
+        &evidence.trace,
+        &evidence.statuses,
+        request_id,
+        baseline_host_frame,
+    )?;
+    if baseline.initial_verified != 0 {
+        return Err(format!(
+            "first dropped Make request began after an unexpected verified cycle: tick_verified={}",
+            baseline.initial_verified
+        ));
+    }
+    if suffix_drop_relogin_ready(
+        history,
+        &evidence.trace,
+        &evidence.statuses,
+        &baseline,
+        origin,
+    )?
+    .is_none()
+    {
+        return Err(format!(
+            "suffix-drop evidence did not observe read_eof, disconnect, reconnect, handshake, a new ready session, and a Ready slot: history={history:?}"
+        ));
+    }
+    Ok(())
+}
+
+fn assert_drop_relogin(
+    run: &mut LiveRun,
+    request_id: u64,
+    origin: u64,
+    deadline: Instant,
+) -> Result<(), String> {
     let history = run
         .drop_history
         .as_ref()
         .map(Arc::clone)
         .ok_or("suffix-drop case has no lifecycle recorder")?;
-    let batch_host_frame = wires_for_request(&trace, request_id)
-        .first()
-        .map(|wire| wire.host_frame)
-        .ok_or("suffix-drop request has no encrypted wire frames")?;
-    let (initial_session, initial_slot, initial_verified) = {
-        let history = history.lock().expect("tick-engine drop history poisoned");
-        let initial_session = history
-            .client_sessions
-            .iter()
-            .filter(|observation| {
-                observation.host_frame <= batch_host_frame
-                    && observation.ingame
-                    && observation.scene_state == 2
-            })
-            .max_by_key(|observation| observation.host_frame)
-            .map(|observation| observation.session)
-            .ok_or("suffix-drop request has no ready client-session baseline")?;
-        let initial_slot = history
-            .slot_status
-            .iter()
-            .filter(|observation| {
-                observation.host_frame <= batch_host_frame
-                    && observation.connected
-                    && observation.ingame
-                    && observation.scene_state == 2
-            })
-            .max_by_key(|observation| observation.host_frame)
-            .cloned()
-            .ok_or("suffix-drop request has no ready slot-status baseline")?;
-        let initial_verified = run
-            .statuses
-            .iter()
-            .filter(|status| status.host_frame <= batch_host_frame)
-            .max_by_key(|status| status.host_frame)
-            .and_then(|status| status.tick_verified)
-            .ok_or("suffix-drop request has no tick_verified baseline")?;
-        (initial_session, initial_slot, initial_verified)
-    };
-    if initial_verified != 0 {
-        return Err(run.failure(format!(
-            "first dropped Make request began after an unexpected verified cycle: tick_verified={initial_verified}"
-        )));
-    }
     let baseline_host_frame = run
         .baseline
         .as_ref()
-        .map_or(batch_host_frame, |baseline| baseline.host_frame);
-    let deadline = Instant::now() + LOGOUT_DEADLINE;
+        .map_or_else(|| run.hook.observed_host_frame(), |baseline| baseline.host_frame);
+    let trace = run.hook.trace();
+    run.capture_status(&trace);
+    let history_snapshot = history
+        .lock()
+        .expect("tick-engine drop history poisoned")
+        .clone();
+    let baseline = drop_relogin_baseline(
+        &history_snapshot,
+        &trace,
+        &run.statuses,
+        request_id,
+        baseline_host_frame,
+    )
+    .map_err(|error| run.failure(error))?;
+    if baseline.initial_verified != 0 {
+        return Err(run.failure(format!(
+            "first dropped Make request began after an unexpected verified cycle: tick_verified={}",
+            baseline.initial_verified
+        )));
+    }
     let mut after_host_frame = run.hook.observed_host_frame();
     loop {
         let trace = run.hook.trace();
@@ -2554,123 +2802,29 @@ fn assert_drop_relogin(run: &mut LiveRun, request_id: u64, origin: u64) -> Resul
             .lock()
             .expect("tick-engine drop history poisoned")
             .clone();
-        let first_new_session_frame = history_snapshot
-            .client_sessions
-            .iter()
-            .filter(|observation| {
-                observation.host_frame > batch_host_frame && observation.session != initial_session
-            })
-            .map(|observation| observation.host_frame)
-            .min();
-        let session_ready = history_snapshot.client_sessions.iter().any(|observation| {
-            observation.host_frame > batch_host_frame
-                && observation.session != initial_session
-                && observation.ingame
-                && observation.scene_state == 2
-        });
-        let disconnect_boundary = history_snapshot.slot_status.iter().any(|observation| {
-            observation.host_frame > batch_host_frame
-                && (!observation.connected || observation.stream_epoch != initial_slot.stream_epoch)
-        });
-        let ready_slot = history_snapshot.slot_status.iter().any(|observation| {
-            observation.host_frame > batch_host_frame
-                && observation.stream_epoch != initial_slot.stream_epoch
-                && observation.connected
-                && observation.ingame
-                && observation.scene_state == 2
-                && observation.startup_phase == host_play::StartupPhase::Ready
-        });
-        let read_eof = history_snapshot.host_log.iter().position(|observation| {
-            observation
-                .message
-                .starts_with("session exit reason=read_eof")
-        });
-        let reconnect_attempt = read_eof.and_then(|exit_index| {
-            history_snapshot
-                .host_log
-                .iter()
-                .enumerate()
-                .find(|(index, observation)| {
-                    *index > exit_index
-                        && observation
-                            .message
-                            .starts_with("relog decision attempt reconnect=true")
-                })
-                .map(|(index, _)| index)
-        });
-        let handshake_after_reconnect = reconnect_attempt.is_some_and(|attempt_index| {
-            history_snapshot
-                .host_log
-                .iter()
-                .enumerate()
-                .any(|(index, observation)| {
-                    index > attempt_index && observation.message.starts_with("handshake ok")
-                })
-        });
-        let old_session_verified_increment = run.statuses.iter().any(|status| {
-            status.host_frame >= baseline_host_frame
-                && first_new_session_frame
-                    .is_none_or(|new_session_frame| status.host_frame < new_session_frame)
-                && status.tick_verified != Some(initial_verified)
-        });
-        let roll_tick = origin.wrapping_add(3) as u32;
-        let old_session_frames: Vec<_> = trace
-            .frames
-            .iter()
-            .filter(|frame| {
-                frame.host_frame >= baseline_host_frame
-                    && first_new_session_frame
-                        .is_none_or(|new_session_frame| frame.host_frame < new_session_frame)
-            })
-            .collect();
-        let old_session_roll = old_session_frames.iter().any(|edge| {
-            if edge.game_tick != roll_tick || !edge.tick_edge {
-                return false;
-            }
-            let Some(current) = edge.animation else {
-                return false;
-            };
-            current.sequence == ROLL_ANIMATION
-                && old_session_frames
-                    .iter()
-                    .filter(|frame| frame.host_frame < edge.host_frame)
-                    .max_by_key(|frame| frame.host_frame)
-                    .and_then(|frame| frame.animation)
-                    .is_none_or(|previous| previous.serial != current.serial)
-        });
-        if old_session_verified_increment || old_session_roll {
-            return Err(run.failure(format!(
-                "dropped suffix produced an old-session R+3 success: verified_increment={old_session_verified_increment} fresh_roll={old_session_roll} roll_tick={roll_tick}"
-            )));
-        }
-        if read_eof.is_some()
-            && reconnect_attempt.is_some()
-            && handshake_after_reconnect
-            && disconnect_boundary
-            && session_ready
-            && ready_slot
-        {
-            println!(
-                "TICK-MANIP dropped suffix closed session={} at read_eof, then session={} reached Ready within {LOGOUT_DEADLINE:?}; tick_verified stayed {initial_verified} with no old-session R+3 roll",
-                initial_session,
-                history_snapshot
-                    .client_sessions
-                    .iter()
-                    .find(|observation| {
-                        observation.host_frame > batch_host_frame
-                            && observation.session != initial_session
-                            && observation.ingame
-                            && observation.scene_state == 2
-                    })
-                    .map_or(initial_session, |observation| observation.session)
-            );
-            return Ok(());
-        }
         let remaining = deadline.saturating_duration_since(Instant::now());
         if remaining.is_zero() {
             return Err(run.failure(format!(
-                "suffix-drop session did not observe read_eof, reconnect, handshake and Ready within {LOGOUT_DEADLINE:?}: initial_session={initial_session} initial_slot={initial_slot:?} history={history_snapshot:?}"
+                "suffix-drop session did not observe read_eof, reconnect, handshake and Ready within {LOGOUT_DEADLINE:?}: initial_session={} initial_slot={:?} history={history_snapshot:?}",
+                baseline.initial_session,
+                baseline.initial_slot
             )));
+        }
+        if let Some(new_session) = suffix_drop_relogin_ready(
+            &history_snapshot,
+            &trace,
+            &run.statuses,
+            &baseline,
+            origin,
+        )
+        .map_err(|error| run.failure(error))?
+        {
+            println!(
+                "TICK-MANIP dropped suffix closed session={} at read_eof, then session={new_session} reached Ready within {LOGOUT_DEADLINE:?}; tick_verified stayed {} with no old-session R+3 roll",
+                baseline.initial_session,
+                baseline.initial_verified
+            );
+            return Ok(());
         }
         after_host_frame = run
             .hook
