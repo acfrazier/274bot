@@ -626,9 +626,10 @@ fn insert_attempt_drain_and_anchors(
                         .iter()
                         .any(|line| line.sequence >= baseline && line.text.contains(CLIMB_LINE))
                 {
+                    let poll = witness.polls.saturating_add(1);
                     witness.receipt.l0.get_or_insert(Mark {
                         tick: snapshot.tick(),
-                        poll: witness.polls.saturating_add(1),
+                        poll,
                     });
                 }
                 witness.receipt.l0.is_some()
@@ -684,7 +685,7 @@ fn live_callbacks(
         let mut witness = tick_witness.lock().ok()?;
         let emit = record_frame(&mut witness, snapshot, status);
         emit.then(|| {
-            let frame = witness.receipt.frames.last().cloned();
+            let frame = witness.receipt.frames.last();
             json!({"c0": frame.map(frame_json)})
         })
     });
@@ -1980,7 +1981,7 @@ mod tests {
             })
             .expect("receipt has the applied phase-S end");
         s_drop_event.tick = u64::from(s_drop_tick);
-        s_drop_event.hostlog_tick = u64::from(s_drop_tick);
+        s_drop_event.hostlog_tick = Some(u64::from(s_drop_tick));
         let s_drop_frame = begun_between
             .frames
             .iter_mut()
