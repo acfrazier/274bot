@@ -166,6 +166,329 @@ pub fn rust_allocator_counts() -> (u64, u64, u64) {
     )
 }
 
+/// Process allocator attribution from the native allocator's own counters.
+///
+/// This is sampled only by memory-profile receipts, never by render callbacks.
+/// Its domains overlap Rust `System` allocations and parts of V8; it is not
+/// additive with RSS and does not cover direct VM, GPU, or driver allocations.
+pub fn native_allocator_sample() -> Option<serde_json::Value> {
+    #[cfg(all(target_os = "linux", target_env = "gnu"))]
+    {
+        glibc_native_allocator_sample()
+    }
+    #[cfg(target_os = "macos")]
+    {
+        macos_native_allocator_sample()
+    }
+    #[cfg(not(any(all(target_os = "linux", target_env = "gnu"), target_os = "macos")))]
+    {
+        None
+    }
+}
+
+#[cfg(any(test, all(target_os = "linux", target_env = "gnu")))]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+struct GlibcAllocatorStats {
+    arena_count: u64,
+    arena_in_use_bytes: u64,
+    arena_free_bytes: u64,
+    arena_system_bytes: u64,
+    arena_aspace_total_bytes: u64,
+    arena_aspace_mprotect_bytes: u64,
+    mmap_bytes: u64,
+    mmap_regions: u64,
+}
+
+#[cfg(any(test, all(target_os = "linux", target_env = "gnu")))]
+const GLIBC_ALLOCATOR_SOURCE: &str = "glibc malloc_info(3)";
+
+#[cfg(any(test, all(target_os = "linux", target_env = "gnu")))]
+const GLIBC_ALLOCATOR_COVERAGE: &str = "All glibc arenas plus direct glibc mmap allocations. Arena in-use is system-current minus fast/rest free totals and can include thread-cache-held chunks and allocator bookkeeping; it is not application-requested live bytes. Rust System and some V8 allocations overlap. Direct VM mappings outside glibc malloc and GPU/driver allocations are excluded. Do not add these values to RSS or other allocator counters.";
+
+#[cfg(any(test, all(target_os = "linux", target_env = "gnu")))]
+impl GlibcAllocatorStats {
+    fn to_json(self) -> serde_json::Value {
+        serde_json::json!({
+            "source": GLIBC_ALLOCATOR_SOURCE,
+            "coverage": GLIBC_ALLOCATOR_COVERAGE,
+            "glibc_arena_count": self.arena_count,
+            "glibc_arena_in_use_bytes": self.arena_in_use_bytes,
+            "glibc_arena_free_bytes": self.arena_free_bytes,
+            "glibc_arena_system_bytes": self.arena_system_bytes,
+            "glibc_arena_aspace_total_bytes": self.arena_aspace_total_bytes,
+            "glibc_arena_aspace_mprotect_bytes": self.arena_aspace_mprotect_bytes,
+            "glibc_mmap_bytes": self.mmap_bytes,
+            "glibc_mmap_regions": self.mmap_regions,
+        })
+    }
+}
+
+#[cfg(any(test, all(target_os = "linux", target_env = "gnu")))]
+#[derive(Default)]
+struct GlibcHeapFields {
+    fast: bool,
+    rest: bool,
+    system_current: bool,
+    aspace_total: bool,
+    aspace_mprotect: bool,
+}
+
+#[cfg(any(test, all(target_os = "linux", target_env = "gnu")))]
+impl GlibcHeapFields {
+    fn complete(&self) -> bool {
+        self.fast
+            && self.rest
+            && self.system_current
+            && self.aspace_total
+            && self.aspace_mprotect
+    }
+}
+
+#[cfg(any(test, all(target_os = "linux", target_env = "gnu")))]
+fn xml_attribute<'a>(element: &'a str, name: &str) -> Option<&'a str> {
+    for attribute in element.strip_prefix('<')?.split_ascii_whitespace().skip(1) {
+        let attribute = attribute.trim_end_matches('>').trim_end_matches('/');
+        let (key, value) = attribute.split_once('=')?;
+        if key == name {
+            return value.strip_prefix('"')?.strip_suffix('"');
+        }
+    }
+    None
+}
+
+#[cfg(any(test, all(target_os = "linux", target_env = "gnu")))]
+fn set_once(slot: &mut Option<u64>, value: u64) -> Option<()> {
+    if slot.replace(value).is_some() {
+        None
+    } else {
+        Some(())
+    }
+}
+
+/// Parse the version-1 XML emitted by glibc `malloc_info`. Root totals cover
+/// every emitted heap; accepting only complete, consistent summaries keeps a
+/// changed/unsupported XML schema from becoming a plausible-looking zero.
+#[cfg(any(test, all(target_os = "linux", target_env = "gnu")))]
+fn parse_glibc_malloc_info(xml: &str) -> Option<GlibcAllocatorStats> {
+    let mut root_started = false;
+    let mut root_closed = false;
+    let mut in_heap = false;
+    let mut heap_fields = GlibcHeapFields::default();
+    let mut arena_count = 0_u64;
+    let mut fast_free = None;
+    let mut rest_free = None;
+    let mut arena_system_bytes = None;
+    let mut arena_aspace_total_bytes = None;
+    let mut arena_aspace_mprotect_bytes = None;
+    let mut mmap_bytes = None;
+    let mut mmap_regions = None;
+
+    for raw_line in xml.lines() {
+        let line = raw_line.trim();
+        if line.is_empty() {
+            continue;
+        }
+        if !root_started {
+            if !line.starts_with("<malloc ")
+                || xml_attribute(line, "version") != Some("1")
+            {
+                return None;
+            }
+            root_started = true;
+            continue;
+        }
+        if root_closed {
+            return None;
+        }
+        if line == "</malloc>" {
+            if in_heap {
+                return None;
+            }
+            root_closed = true;
+            continue;
+        }
+        if line.starts_with("<heap ") {
+            if in_heap || xml_attribute(line, "nr")?.parse::<u64>().is_err() {
+                return None;
+            }
+            in_heap = true;
+            heap_fields = GlibcHeapFields::default();
+            continue;
+        }
+        if line == "</heap>" {
+            if !in_heap || !heap_fields.complete() {
+                return None;
+            }
+            in_heap = false;
+            arena_count = arena_count.checked_add(1)?;
+            continue;
+        }
+
+        if in_heap {
+            if line.starts_with("<total ") {
+                let kind = xml_attribute(line, "type")?;
+                let _count = xml_attribute(line, "count")?.parse::<u64>().ok()?;
+                let _size = xml_attribute(line, "size")?.parse::<u64>().ok()?;
+                let seen = match kind {
+                    "fast" => &mut heap_fields.fast,
+                    "rest" => &mut heap_fields.rest,
+                    _ => continue,
+                };
+                if std::mem::replace(seen, true) {
+                    return None;
+                }
+            } else if line.starts_with("<system ") {
+                if xml_attribute(line, "type")? == "current" {
+                    let _size = xml_attribute(line, "size")?.parse::<u64>().ok()?;
+                    if std::mem::replace(&mut heap_fields.system_current, true) {
+                        return None;
+                    }
+                }
+            } else if line.starts_with("<aspace ") {
+                let kind = xml_attribute(line, "type")?;
+                let _size = xml_attribute(line, "size")?.parse::<u64>().ok()?;
+                let seen = match kind {
+                    "total" => &mut heap_fields.aspace_total,
+                    "mprotect" => &mut heap_fields.aspace_mprotect,
+                    _ => continue,
+                };
+                if std::mem::replace(seen, true) {
+                    return None;
+                }
+            }
+            continue;
+        }
+
+        if line.starts_with("<total ") {
+            let kind = xml_attribute(line, "type")?;
+            let count = xml_attribute(line, "count")?.parse::<u64>().ok()?;
+            let size = xml_attribute(line, "size")?.parse::<u64>().ok()?;
+            match kind {
+                "fast" => set_once(&mut fast_free, size)?,
+                "rest" => set_once(&mut rest_free, size)?,
+                "mmap" => {
+                    set_once(&mut mmap_regions, count)?;
+                    set_once(&mut mmap_bytes, size)?;
+                }
+                _ => return None,
+            }
+        } else if line.starts_with("<system ") {
+            if xml_attribute(line, "type")? == "current" {
+                let size = xml_attribute(line, "size")?.parse::<u64>().ok()?;
+                set_once(&mut arena_system_bytes, size)?;
+            }
+        } else if line.starts_with("<aspace ") {
+            let kind = xml_attribute(line, "type")?;
+            let size = xml_attribute(line, "size")?.parse::<u64>().ok()?;
+            match kind {
+                "total" => set_once(&mut arena_aspace_total_bytes, size)?,
+                "mprotect" => set_once(&mut arena_aspace_mprotect_bytes, size)?,
+                "subheaps" => {}
+                _ => return None,
+            }
+        }
+    }
+
+    if !root_started || !root_closed || in_heap || arena_count == 0 {
+        return None;
+    }
+    let fast_free = fast_free?;
+    let rest_free = rest_free?;
+    let arena_free_bytes = fast_free.checked_add(rest_free)?;
+    let arena_system_bytes = arena_system_bytes?;
+    let arena_in_use_bytes = arena_system_bytes.checked_sub(arena_free_bytes)?;
+
+    Some(GlibcAllocatorStats {
+        arena_count,
+        arena_in_use_bytes,
+        arena_free_bytes,
+        arena_system_bytes,
+        arena_aspace_total_bytes: arena_aspace_total_bytes?,
+        arena_aspace_mprotect_bytes: arena_aspace_mprotect_bytes?,
+        mmap_bytes: mmap_bytes?,
+        mmap_regions: mmap_regions?,
+    })
+}
+
+#[cfg(all(target_os = "linux", target_env = "gnu"))]
+fn glibc_native_allocator_sample() -> Option<serde_json::Value> {
+    // malloc_info is available since glibc 2.10; the project's Linux release
+    // runtime floor is glibc 2.39. Unlike mallinfo2, it reports every arena.
+    let mut buffer = std::ptr::null_mut();
+    let mut length = 0;
+    // SAFETY: open_memstream initializes the output pointer/length and returns
+    // an owned FILE stream whose buffer is finalized by fclose.
+    let stream = unsafe { libc::open_memstream(&mut buffer, &mut length) };
+    if stream.is_null() {
+        return None;
+    }
+    // SAFETY: stream is an open writable stream owned by this function.
+    let info_result = unsafe { libc::malloc_info(0, stream) };
+    // SAFETY: closes the stream returned above and finalizes its buffer.
+    let close_result = unsafe { libc::fclose(stream) };
+    if info_result != 0
+        || close_result != 0
+        || buffer.is_null()
+        || length > isize::MAX as usize
+    {
+        if !buffer.is_null() {
+            // SAFETY: open_memstream returned this buffer for libc to free.
+            unsafe { libc::free(buffer.cast()) };
+        }
+        return None;
+    }
+    // SAFETY: fclose finalized a readable buffer of `length` bytes.
+    let xml = unsafe { std::slice::from_raw_parts(buffer.cast::<u8>(), length) };
+    let parsed = std::str::from_utf8(xml)
+        .ok()
+        .and_then(parse_glibc_malloc_info)
+        .map(GlibcAllocatorStats::to_json);
+    // SAFETY: open_memstream allocated the returned buffer with libc malloc.
+    unsafe { libc::free(buffer.cast()) };
+    parsed
+}
+
+#[cfg(any(test, target_os = "macos"))]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+struct MacosAllocatorStats {
+    in_use_bytes: u64,
+    allocated_bytes: u64,
+}
+
+#[cfg(any(test, target_os = "macos"))]
+const MACOS_ALLOCATOR_SOURCE: &str = "macOS malloc_zone_statistics";
+
+#[cfg(any(test, target_os = "macos"))]
+const MACOS_ALLOCATOR_COVERAGE: &str = "malloc_zone_statistics with a null zone reports all registered malloc zones. Rust System and some V8 allocations can overlap. Allocations outside malloc zones, including direct VM and GPU/driver allocations, are excluded. Do not add these values to RSS or other allocator counters.";
+
+#[cfg(any(test, target_os = "macos"))]
+impl MacosAllocatorStats {
+    fn to_json(self) -> serde_json::Value {
+        serde_json::json!({
+            "source": MACOS_ALLOCATOR_SOURCE,
+            "coverage": MACOS_ALLOCATOR_COVERAGE,
+            "malloc_zone_in_use_bytes": self.in_use_bytes,
+            "malloc_zone_allocated_bytes": self.allocated_bytes,
+        })
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn macos_native_allocator_sample() -> Option<serde_json::Value> {
+    // SAFETY: malloc_statistics_t is a plain C output struct and a null zone
+    // requests the supported aggregate across all registered malloc zones.
+    let mut stats: libc::malloc_statistics_t = unsafe { std::mem::zeroed() };
+    unsafe { libc::malloc_zone_statistics(std::ptr::null_mut(), &mut stats) };
+    Some(
+        MacosAllocatorStats {
+            in_use_bytes: stats.size_in_use as u64,
+            allocated_bytes: stats.size_allocated as u64,
+        }
+        .to_json(),
+    )
+}
+
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Workload {
     Idle,
@@ -329,6 +652,8 @@ pub struct Sample {
     pub v8_used_bytes: Option<u64>,
     pub v8_total_bytes: Option<u64>,
     pub gpu_tracked_bytes: Option<u64>,
+    /// Native allocator counters; null when the platform has no supported sampler.
+    pub native_allocator: Option<serde_json::Value>,
 }
 
 impl Sample {
@@ -352,6 +677,7 @@ impl Sample {
             "v8_used_bytes": self.v8_used_bytes,
             "v8_total_bytes": self.v8_total_bytes,
             "gpu_tracked_bytes": self.gpu_tracked_bytes,
+            "native_allocator": self.native_allocator,
         })
     }
 }
@@ -2309,6 +2635,7 @@ impl Run {
                 v8_used_bytes: (live == sampled).then(|| sum("v8_used_bytes")),
                 v8_total_bytes: (live == sampled).then(|| sum("v8_total_bytes")),
                 gpu_tracked_bytes: Some(gpu.buffers + gpu.textures),
+                native_allocator: native_allocator_sample(),
             };
             let mut value = sample.to_json();
             let cpu = process_cpu_seconds();
@@ -2982,6 +3309,142 @@ mod tests {
         assert_eq!(cfg.teardown.as_secs(), 60);
     }
 
+    const GLIBC_MALLOC_INFO_TWO_ARENAS: &str = r#"
+<malloc version="1">
+<heap nr="0">
+<sizes>
+</sizes>
+<total type="fast" count="2" size="32"/>
+<total type="rest" count="1" size="68"/>
+<system type="current" size="256"/>
+<system type="max" size="256"/>
+<aspace type="total" size="4096"/>
+<aspace type="mprotect" size="256"/>
+</heap>
+<heap nr="1">
+<sizes>
+</sizes>
+<total type="fast" count="3" size="48"/>
+<total type="rest" count="1" size="80"/>
+<system type="current" size="512"/>
+<system type="max" size="512"/>
+<aspace type="total" size="8192"/>
+<aspace type="mprotect" size="512"/>
+</heap>
+<total type="fast" count="5" size="80"/>
+<total type="rest" count="2" size="148"/>
+<total type="mmap" count="7" size="700"/>
+<system type="current" size="768"/>
+<system type="max" size="768"/>
+<aspace type="total" size="12288"/>
+<aspace type="mprotect" size="768"/>
+</malloc>
+"#;
+
+    #[test]
+    fn glibc_malloc_info_sums_every_arena_and_keeps_mmap_separate() {
+        let stats =
+            parse_glibc_malloc_info(GLIBC_MALLOC_INFO_TWO_ARENAS).expect("valid malloc_info");
+        assert_eq!(
+            stats,
+            GlibcAllocatorStats {
+                arena_count: 2,
+                arena_in_use_bytes: 540,
+                arena_free_bytes: 228,
+                arena_system_bytes: 768,
+                arena_aspace_total_bytes: 12_288,
+                arena_aspace_mprotect_bytes: 768,
+                mmap_bytes: 700,
+                mmap_regions: 7,
+            }
+        );
+
+        let receipt = stats.to_json();
+        assert_eq!(receipt["source"], GLIBC_ALLOCATOR_SOURCE);
+        assert!(
+            receipt["coverage"]
+                .as_str()
+                .expect("coverage text")
+                .contains("All glibc arenas")
+        );
+        assert_eq!(receipt["glibc_arena_in_use_bytes"], 540);
+        assert_eq!(receipt["glibc_arena_free_bytes"], 228);
+        assert_eq!(receipt["glibc_arena_system_bytes"], 768);
+        assert_eq!(receipt["glibc_arena_aspace_total_bytes"], 12_288);
+        assert_eq!(receipt["glibc_mmap_bytes"], 700);
+        assert_eq!(receipt["glibc_mmap_regions"], 7);
+        assert!(receipt.get("rss_bytes").is_none());
+        assert!(receipt.get("rust_allocated_bytes").is_none());
+        assert!(receipt.get("total_bytes").is_none());
+    }
+
+    #[test]
+    fn glibc_malloc_info_rejects_missing_or_inconsistent_totals() {
+        let missing_mmap = GLIBC_MALLOC_INFO_TWO_ARENAS.replace(
+            "<total type=\"mmap\" count=\"7\" size=\"700\"/>",
+            "",
+        );
+        assert!(parse_glibc_malloc_info(&missing_mmap).is_none());
+
+        let free_exceeds_system = GLIBC_MALLOC_INFO_TWO_ARENAS.replace(
+            "<system type=\"current\" size=\"768\"/>",
+            "<system type=\"current\" size=\"100\"/>",
+        );
+        assert!(parse_glibc_malloc_info(&free_exceeds_system).is_none());
+    }
+
+    #[test]
+    fn macos_allocator_serialization_labels_zone_scope() {
+        let receipt = MacosAllocatorStats {
+            in_use_bytes: 123,
+            allocated_bytes: 456,
+        }
+        .to_json();
+        assert_eq!(receipt["source"], MACOS_ALLOCATOR_SOURCE);
+        assert!(
+            receipt["coverage"]
+                .as_str()
+                .expect("coverage text")
+                .contains("all registered malloc zones")
+        );
+        assert_eq!(receipt["malloc_zone_in_use_bytes"], 123);
+        assert_eq!(receipt["malloc_zone_allocated_bytes"], 456);
+        assert!(receipt.get("glibc_mmap_bytes").is_none());
+    }
+
+    #[cfg(all(target_os = "linux", target_env = "gnu"))]
+    #[test]
+    fn glibc_sampler_observes_a_retained_native_allocation() {
+        const REQUEST_BYTES: usize = 1024 * 1024;
+        // SAFETY: malloc returns storage suitable for arbitrary byte writes;
+        // it is freed exactly once after the sample.
+        let allocation = unsafe { libc::malloc(REQUEST_BYTES) };
+        assert!(!allocation.is_null(), "native allocation failed");
+        // SAFETY: the retained block is REQUEST_BYTES long.
+        unsafe { std::ptr::write_bytes(allocation.cast::<u8>(), 0xa5, REQUEST_BYTES) };
+
+        let receipt = native_allocator_sample().expect("glibc allocator sample");
+        assert_eq!(receipt["source"], GLIBC_ALLOCATOR_SOURCE);
+        let arena_in_use = receipt["glibc_arena_in_use_bytes"]
+            .as_u64()
+            .expect("arena-in-use value");
+        let mmap_bytes = receipt["glibc_mmap_bytes"]
+            .as_u64()
+            .expect("mmap value");
+        assert!(
+            arena_in_use + mmap_bytes >= REQUEST_BYTES as u64,
+            "retained allocation should be represented in arena or mmap bytes"
+        );
+        assert!(receipt["glibc_arena_count"].as_u64().unwrap() > 0);
+        assert!(
+            receipt["glibc_arena_system_bytes"].as_u64().unwrap()
+                >= receipt["glibc_arena_free_bytes"].as_u64().unwrap()
+        );
+
+        // SAFETY: allocation is the live pointer returned by malloc above.
+        unsafe { libc::free(allocation) };
+    }
+
     #[test]
     fn sample_json_has_sibling_metric_fields_not_one_sum() {
         let sample = Sample {
@@ -3002,6 +3465,19 @@ mod tests {
             v8_used_bytes: Some(50),
             v8_total_bytes: Some(60),
             gpu_tracked_bytes: Some(70),
+            native_allocator: Some(
+                GlibcAllocatorStats {
+                    arena_count: 2,
+                    arena_in_use_bytes: 540,
+                    arena_free_bytes: 228,
+                    arena_system_bytes: 768,
+                    arena_aspace_total_bytes: 12_288,
+                    arena_aspace_mprotect_bytes: 768,
+                    mmap_bytes: 700,
+                    mmap_regions: 7,
+                }
+                .to_json(),
+            ),
         };
         let v = sample.to_json();
         let obj = v.as_object().expect("object");
@@ -3023,9 +3499,14 @@ mod tests {
             "v8_used_bytes",
             "v8_total_bytes",
             "gpu_tracked_bytes",
+            "native_allocator",
         ] {
             assert!(obj.contains_key(key), "missing sibling field {key}");
         }
+        assert_eq!(
+            obj["native_allocator"]["glibc_arena_in_use_bytes"],
+            540
+        );
         // Not one summed byte count: the distinct metric keys stay separate.
         assert!(obj.get("total_bytes").is_none());
         assert!(obj.get("bytes").is_none());
@@ -3059,6 +3540,7 @@ mod tests {
             v8_used_bytes: None,
             v8_total_bytes: None,
             gpu_tracked_bytes: None,
+            native_allocator: None,
         };
         let v = sample.to_json();
         let obj = v.as_object().expect("object");
@@ -3073,6 +3555,7 @@ mod tests {
             "v8_used_bytes",
             "v8_total_bytes",
             "gpu_tracked_bytes",
+            "native_allocator",
         ] {
             assert!(obj.get(key).unwrap().is_null(), "{key} should be null");
         }

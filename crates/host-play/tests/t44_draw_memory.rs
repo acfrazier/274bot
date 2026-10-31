@@ -2,7 +2,7 @@
 #![cfg(feature = "draw-memory-profile")]
 
 use client::render::backend::{cpu::CpuBackend, RenderBackend};
-use host_play::memory::{rust_allocator_counts, CountingAllocator};
+use host_play::memory::{native_allocator_sample, rust_allocator_counts, CountingAllocator};
 
 #[global_allocator]
 static ALLOCATOR: CountingAllocator = CountingAllocator;
@@ -1361,6 +1361,7 @@ fn capture_sample(
         "phase_elapsed_s": phase_started.elapsed().as_secs_f64(),
         "process": {
             "rss_bytes": current_resident_bytes(),
+            "native_allocator": native_allocator_sample(),
             "rust_allocator": {
                 "allocation_calls": allocation_calls,
                 "allocated_bytes": allocated_bytes,
