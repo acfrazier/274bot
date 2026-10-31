@@ -3476,6 +3476,15 @@ fn park_no_dose_receipt(
     _status: Option<&ScriptStatus>,
     witness: &Witness,
 ) -> Result<Option<Value>, String> {
+    park_no_dose_oracle(snapshot, witness, &survival_log())
+}
+
+/// The oracle over an explicit hostlog, so unit tests can feed its lines.
+fn park_no_dose_oracle(
+    snapshot: &GameSnapshot,
+    witness: &Witness,
+    log: &[Value],
+) -> Result<Option<Value>, String> {
     check_track_common(snapshot, witness, 150)?;
     let Some(poison) = witness.poison_tick else {
         return Ok(None);
@@ -3576,7 +3585,7 @@ fn park_no_dose_receipt(
     let Some(resumed) = resumed_work(track, unpark, unpark_xp, xp_now) else {
         return Ok(None);
     };
-    check_survival_log(&survival_log(), 1, 1)?;
+    check_survival_log(log, 1, 1)?;
     Ok(Some(json!({
         "resumed_work": resumed,
         "cell": "L-PARK-NO-DOSE",
@@ -3606,6 +3615,15 @@ fn park_false_release_receipt(
     snapshot: &GameSnapshot,
     _status: Option<&ScriptStatus>,
     witness: &Witness,
+) -> Result<Option<Value>, String> {
+    park_false_release_oracle(snapshot, witness, &survival_log())
+}
+
+/// The oracle over an explicit hostlog, so unit tests can feed its lines.
+fn park_false_release_oracle(
+    snapshot: &GameSnapshot,
+    witness: &Witness,
+    log: &[Value],
 ) -> Result<Option<Value>, String> {
     check_track_common(snapshot, witness, 150)?;
     let Some(poison) = witness.poison_tick else {
@@ -3666,7 +3684,7 @@ fn park_false_release_receipt(
     let Some(resumed) = resumed_work(track, unpark, unpark_xp, xp_now) else {
         return Ok(None);
     };
-    check_survival_log(&survival_log(), 1, 1)?;
+    check_survival_log(log, 1, 1)?;
     Ok(Some(json!({
         "resumed_work": resumed,
         "cell": "L-PARK-FALSE-RELEASE",
@@ -3692,6 +3710,15 @@ fn park_food_release_receipt(
     snapshot: &GameSnapshot,
     _status: Option<&ScriptStatus>,
     witness: &Witness,
+) -> Result<Option<Value>, String> {
+    park_food_release_oracle(snapshot, witness, &survival_log())
+}
+
+/// The oracle over an explicit hostlog, so unit tests can feed its lines.
+fn park_food_release_oracle(
+    snapshot: &GameSnapshot,
+    witness: &Witness,
+    log: &[Value],
 ) -> Result<Option<Value>, String> {
     check_track_common(snapshot, witness, 300)?;
     let Some(poison) = witness.poison_tick else {
@@ -3752,7 +3779,7 @@ fn park_food_release_receipt(
     let Some(resumed) = resumed_work(track, unpark, unpark_frame.xp, xp_now) else {
         return Ok(None);
     };
-    check_survival_log(&survival_log(), 1, 1)?;
+    check_survival_log(log, 1, 1)?;
     Ok(Some(json!({
         "resumed_work": resumed,
         "cell": "L-PARK-FOOD-RELEASE",
@@ -4792,5 +4819,1319 @@ mod oracle_tests {
         assert!(check_survival_log(std::slice::from_ref(&park), 1, 1).is_err());
         assert!(check_survival_log(&[park.clone(), park.clone(), unpark.clone()], 1, 1).is_err());
         assert!(check_survival_log(&[park, unpark, stop], 1, 1).is_err());
+    }
+
+    // ---- Complete-cell oracle fixtures ----
+    //
+    // Each complete oracle has one valid fixture, shaped like its passing live
+    // receipt (`SURVIVAL-NATIVE-CURE/fix-r2/live-final5`), and one fixture per
+    // defining failure condition: the valid fixture with that one condition
+    // broken. A mutation names the error text it must produce, so it cannot
+    // pass on an unrelated failure. A fixture that stops short of the cell's
+    // end must give no verdict, never a pass.
+
+    struct Case {
+        snapshot: GameSnapshot,
+        witness: Witness,
+        log: Vec<Value>,
+    }
+
+    type Oracle = fn(&Case) -> Result<Option<Value>, String>;
+    /// A name, the error text it must produce, and the one change it makes.
+    type Mutation = (&'static str, &'static str, fn(&mut Case));
+    /// A name and a change that leaves the cell unfinished.
+    type Unfinished = (&'static str, fn(&mut Case));
+
+    fn gatherer_witness() -> Witness {
+        let witness = new_witness(
+            Activity::Woodcutting,
+            "Woodcutting",
+            WOODCUTTING_STAT,
+            Some(WILLOW_LOG_ID),
+            Some(RUNE_AXE_ALIAS),
+            PoisonSource::AccountStateDebugProc,
+            GATHERER_STAND,
+        );
+        Arc::try_unwrap(witness)
+            .ok()
+            .expect("one owner")
+            .into_inner()
+            .expect("witness")
+    }
+
+    fn skill_stats(xp: i32) -> Vec<api::snapshot::StatView> {
+        vec![api::snapshot::StatView {
+            index: WOODCUTTING_STAT,
+            name: "woodcutting".into(),
+            effective: 41,
+            base: 41,
+            xp,
+            used: true,
+        }]
+    }
+
+    fn snapshot_at(tick: u32, xp: i32) -> GameSnapshot {
+        let mut snapshot = GameSnapshot::new();
+        snapshot.seed_tick(tick);
+        snapshot.seed_stats(skill_stats(xp));
+        snapshot
+    }
+
+    fn tracked_frame(
+        tick: u32,
+        hp: i32,
+        food: i32,
+        antipoison: i32,
+        xp: i32,
+        decision: Option<Decision>,
+    ) -> TrackFrame {
+        TrackFrame {
+            tick,
+            hp,
+            food,
+            antipoison,
+            xp,
+            decision,
+            why: Some(CureWhy::Lethal),
+            need: None,
+            owner: Some(Owner::Step),
+            survival: None,
+            phase_label: Some("gathering".to_owned()),
+            native_phase: Some(NativePhase::Working),
+            run: Some("run".to_owned()),
+            failure: None,
+        }
+    }
+
+    fn poison_marks(rows: &[(u32, i32)]) -> Vec<PoisonMark> {
+        rows.iter()
+            .enumerate()
+            .map(|(slot, &(tick, value))| PoisonMark {
+                tick,
+                slot: slot % 4,
+                cycle: i32::try_from(tick).unwrap() * 30,
+                value,
+            })
+            .collect()
+    }
+
+    fn mark_row(tick: u32, value: i32, hp: i32, food: i32, xp: i32) -> MarkRow {
+        MarkRow {
+            tick,
+            value,
+            hp,
+            food,
+            xp,
+            decision: Some(Decision::Needed),
+            survival: None,
+        }
+    }
+
+    fn park_text(total: i32, hp: i32) -> String {
+        format!(
+            "Parked: poisoned: would die; needs antipoison or {} food",
+            park_food_alternative(total, hp)
+        )
+    }
+
+    /// The park report at `hp` for the outlook `total`, as the oracles want it.
+    fn parked_at(tick: u32, hp: i32, total: i32) -> TrackFrame {
+        let or_food = u8::try_from(park_food_alternative(total, hp)).unwrap();
+        let mut frame = parked_frame(or_food, &park_text(total, hp));
+        frame.tick = tick;
+        frame.hp = hp;
+        frame
+    }
+
+    fn park_log() -> Vec<Value> {
+        vec![
+            json!({"message": "survival park need=x hp=60 R=330 q=11 widened=true"}),
+            json!({"message": "survival unpark hp=73 R=70"}),
+        ]
+    }
+
+    fn at_tick(case: &mut Case, tick: u32) {
+        case.snapshot.seed_tick(tick);
+    }
+
+    fn at_xp(case: &mut Case, xp: i32) {
+        case.snapshot.seed_stats(skill_stats(xp));
+    }
+
+    /// The facts every never, park and food cell checks on every frame
+    /// (`check_track_common`), applied through each complete oracle.
+    const COMMON: [Mutation; 6] = [
+        ("a Blocked phase", "Blocked phase", |case| {
+            case.witness.track.blocked_tick = Some(50);
+        }),
+        ("a published failure", "published a failure", |case| {
+            case.witness.track.failure_tick = Some(50);
+        }),
+        ("a second run key", "run key changed", |case| {
+            case.witness.track.runs.push("other".to_owned());
+        }),
+        ("a lifecycle receipt", "lifecycle receipt", |case| {
+            case.witness.lifecycle_seen = Some("stopped".to_owned());
+        }),
+        ("a death", "the account died", |case| {
+            case.witness.track.min_hp = Some(0);
+        }),
+        ("an outcome past the deadline", "exceeded", |case| {
+            at_tick(case, 1000);
+        }),
+    ];
+
+    /// The valid fixture passes with a receipt; each mutation fails with its
+    /// error text; each unfinished fixture gives no verdict.
+    fn run_cell(
+        valid: fn() -> Case,
+        oracle: Oracle,
+        mutations: &[Mutation],
+        unfinished: &[Unfinished],
+    ) {
+        let case = valid();
+        let receipt = oracle(&case)
+            .expect("the valid fixture passes")
+            .expect("the valid fixture is complete");
+        assert!(receipt["cell"].is_string() || receipt["family"].is_string());
+        for (name, needle, mutate) in COMMON.iter().chain(mutations) {
+            let mut case = valid();
+            mutate(&mut case);
+            match oracle(&case) {
+                Err(error) => assert!(
+                    error.contains(needle),
+                    "{name}: wanted `{needle}`, got `{error}`"
+                ),
+                other => panic!("{name} must fail, got {other:?}"),
+            }
+        }
+        for (name, mutate) in unfinished {
+            let mut case = valid();
+            mutate(&mut case);
+            assert_eq!(
+                oracle(&case),
+                Ok(None),
+                "{name} must give no verdict, not a pass"
+            );
+        }
+    }
+
+    // -- L-CURE-NEVER --
+
+    fn never_case() -> Case {
+        let mut witness = gatherer_witness();
+        witness.poison_tick = Some(41);
+        witness.poison_marks = poison_marks(&[(72, 6), (102, 6), (132, 5)]);
+        let track = &mut witness.track;
+        track.runs = vec!["run".to_owned()];
+        track.min_hp = Some(44);
+        track.needed_lethal_tick = Some(41);
+        track.frames = vec![
+            tracked_frame(41, 60, 0, 1, 41238, Some(Decision::Needed)),
+            tracked_frame(72, 54, 0, 1, 41306, Some(Decision::Needed)),
+            tracked_frame(102, 49, 0, 1, 41373, Some(Decision::Needed)),
+            tracked_frame(132, 44, 0, 1, 41576, Some(Decision::Needed)),
+        ];
+        track.mark_rows = vec![
+            mark_row(72, 6, 54, 0, 41306),
+            mark_row(102, 6, 49, 0, 41373),
+            mark_row(132, 5, 44, 0, 41576),
+        ];
+        Case {
+            snapshot: snapshot_at(134, 41576),
+            witness,
+            log: Vec::new(),
+        }
+    }
+
+    fn never_oracle(case: &Case) -> Result<Option<Value>, String> {
+        never_receipt(&case.snapshot, None, &case.witness)
+    }
+
+    #[test]
+    fn never_oracle_passes_the_receipt_shape_and_fails_each_defining_condition() {
+        run_cell(
+            never_case,
+            never_oracle,
+            &[
+                ("a drink decided", "a drink was decided", |case| {
+                    case.witness.track.drinking_tick = Some(50);
+                }),
+                ("a drink line", "antipoison drink line came", |case| {
+                    case.witness.cure_tick = Some(50);
+                }),
+                ("a dose drunk", "held dose changed", |case| {
+                    case.witness.track.frames[2].antipoison = 0;
+                }),
+                ("a dose added", "held dose changed", |case| {
+                    case.witness.track.frames[2].antipoison = 2;
+                }),
+                ("a park", "parked under Never", |case| {
+                    case.witness.track.park_frame = Some(parked_at(45, 60, 330));
+                }),
+                ("no lethal report", "no lethal Needed report", |case| {
+                    case.witness.track.needed_lethal_tick = None;
+                }),
+                (
+                    "a lethal report after 3 ticks",
+                    "not within 3 ticks",
+                    |case| {
+                        case.witness.track.needed_lethal_tick = Some(46);
+                    },
+                ),
+                (
+                    "a lethal report before the line",
+                    "not within 3 ticks",
+                    |case| {
+                        case.witness.track.needed_lethal_tick = Some(40);
+                    },
+                ),
+                ("the row leaving Needed", "left Needed", |case| {
+                    case.witness.track.frames[1].decision = Some(Decision::Drinking);
+                }),
+                (
+                    "marks that are not 6, 6, 5",
+                    "not the content's 6, 6, 5",
+                    |case| {
+                        case.witness.poison_marks = poison_marks(&[(72, 6), (102, 5), (132, 5)]);
+                    },
+                ),
+                ("a fourth mark", "fourth mark", |case| {
+                    case.witness.poison_marks =
+                        poison_marks(&[(72, 6), (102, 6), (132, 5), (162, 5)]);
+                }),
+                (
+                    "no XP after the first mark",
+                    "did not keep gathering",
+                    |case| {
+                        at_xp(case, 41306);
+                    },
+                ),
+                ("no XP after the need", "did not keep gathering", |case| {
+                    case.witness.track.mark_rows[0].xp = 41000;
+                    case.witness.track.frames[0].xp = 41500;
+                    at_xp(case, 41400);
+                }),
+            ],
+            &[
+                ("two marks", |case| {
+                    case.witness.poison_marks = poison_marks(&[(72, 6), (102, 6)]);
+                    at_tick(case, 110);
+                }),
+                ("the third mark just seen", |case| at_tick(case, 133)),
+                ("no mark yet", |case| {
+                    case.witness.poison_marks.clear();
+                    at_tick(case, 50);
+                }),
+                ("the report still due", |case| {
+                    case.witness.track.needed_lethal_tick = None;
+                    at_tick(case, 43);
+                }),
+            ],
+        );
+    }
+
+    // -- L-PARK-NO-DOSE --
+
+    fn park_no_dose_case() -> Case {
+        let mut witness = gatherer_witness();
+        witness.poison_tick = Some(32);
+        witness.poison_marks = poison_marks(&[(63, 6)]);
+        witness.cure_tick = Some(65);
+        witness.immune_tick = Some(65);
+        let track = &mut witness.track;
+        track.runs = vec!["run".to_owned()];
+        track.min_hp = Some(54);
+        track.park_frame = Some(parked_at(32, 60, 330));
+        track.park_texts = vec![
+            (32, 60, park_text(330, 60)),
+            (63, 54, park_text(OUTLOOK_AFTER_MARK_6, 54)),
+        ];
+        track.give_tick = Some(63);
+        track.dose_seen_tick = Some(64);
+        track.unpark_frame = Some(tracked_frame(67, 54, 0, 0, 41508, None));
+        track.work_animation_ticks = vec![69];
+        track.work_sequences = vec![867];
+        Case {
+            snapshot: snapshot_at(69, 41508),
+            witness,
+            log: park_log(),
+        }
+    }
+
+    fn park_no_dose_oracle_of(case: &Case) -> Result<Option<Value>, String> {
+        park_no_dose_oracle(&case.snapshot, &case.witness, &case.log)
+    }
+
+    #[test]
+    fn park_no_dose_oracle_passes_the_receipt_shape_and_fails_each_defining_condition() {
+        run_cell(
+            park_no_dose_case,
+            park_no_dose_oracle_of,
+            &[
+                ("no park", "no park within 3 ticks", |case| {
+                    case.witness.track.park_frame = None;
+                    at_tick(case, 50);
+                }),
+                ("a late park", "not within 3 ticks of the line", |case| {
+                    case.witness.track.park_frame = Some(parked_at(36, 60, 330));
+                }),
+                (
+                    "a wrong food alternative",
+                    "park frame does not show",
+                    |case| {
+                        let mut frame = parked_at(32, 60, 330);
+                        frame.need = Some(SurvivalNeed::Cure {
+                            or_food: 22,
+                            ref_heal: 12,
+                            why: NeedWhy::Lethal,
+                        });
+                        case.witness.track.park_frame = Some(frame);
+                    },
+                ),
+                ("a Blocked park frame", "park frame does not show", |case| {
+                    let mut frame = parked_at(32, 60, 330);
+                    frame.native_phase = Some(NativePhase::Blocked);
+                    case.witness.track.park_frame = Some(frame);
+                }),
+                ("a second park", "a second park", |case| {
+                    case.witness.track.repark_tick = Some(50);
+                }),
+                (
+                    "a first mark that is not 6",
+                    "first mark is not 6",
+                    |case| {
+                        case.witness.poison_marks = poison_marks(&[(63, 5)]);
+                    },
+                ),
+                (
+                    "an unchanged park text",
+                    "park text did not change",
+                    |case| {
+                        case.witness.track.park_texts.truncate(1);
+                        case.witness.track.give_tick = None;
+                    },
+                ),
+                ("a late park text", "the park text is", |case| {
+                    case.witness.track.park_texts[1].0 = 70;
+                }),
+                ("the wrong park text", "the park text is", |case| {
+                    case.witness.track.park_texts[1].2 = park_text(330, 54);
+                }),
+                (
+                    "a hold ended before the dose",
+                    "hold ended before the dose arrived",
+                    |case| {
+                        case.witness.track.unpark_frame =
+                            Some(tracked_frame(60, 54, 0, 0, 41508, None));
+                    },
+                ),
+                (
+                    "a hold ended with no dose seen",
+                    "hold ended before the dose arrived",
+                    |case| {
+                        case.witness.track.dose_seen_tick = None;
+                    },
+                ),
+                (
+                    "a dose given before the text change",
+                    "not given after the changed park text",
+                    |case| {
+                        case.witness.track.give_tick = Some(60);
+                    },
+                ),
+                (
+                    "a dose seen before it was given",
+                    "not given after the changed park text",
+                    |case| {
+                        case.witness.track.dose_seen_tick = Some(62);
+                        case.witness.track.unpark_frame =
+                            Some(tracked_frame(67, 54, 0, 0, 41508, None));
+                    },
+                ),
+                (
+                    "a late drink line",
+                    "not within 3 ticks of the dose",
+                    |case| {
+                        case.witness.cure_tick = Some(70);
+                    },
+                ),
+                (
+                    "a drink line before the dose",
+                    "not within 3 ticks of the dose",
+                    |case| {
+                        case.witness.cure_tick = Some(63);
+                    },
+                ),
+                ("no drink line", "no drink line within 3 ticks", |case| {
+                    case.witness.cure_tick = None;
+                }),
+                ("a late unpark", "more than 10 ticks after", |case| {
+                    case.witness.track.unpark_frame =
+                        Some(tracked_frame(80, 54, 0, 0, 41508, None));
+                    at_tick(case, 80);
+                }),
+                ("no unpark", "no unpark within 10 ticks", |case| {
+                    case.witness.track.unpark_frame = None;
+                    at_tick(case, 80);
+                }),
+                ("no park line in the log", "hostlog wants", |case| {
+                    case.log.remove(0);
+                }),
+                ("no unpark line in the log", "hostlog wants", |case| {
+                    case.log.remove(1);
+                }),
+                ("a second park line", "hostlog wants", |case| {
+                    let park = case.log[0].clone();
+                    case.log.push(park);
+                }),
+                ("a stop line", "hostlog wants", |case| {
+                    case.log
+                        .push(json!({"message": "script blocked: operator stop"}));
+                }),
+            ],
+            &[
+                ("no mark yet", |case| {
+                    case.witness.poison_marks.clear();
+                    at_tick(case, 50);
+                }),
+                ("the dose not yet given", |case| {
+                    case.witness.track.give_tick = None;
+                    case.witness.track.dose_seen_tick = None;
+                    case.witness.track.unpark_frame = None;
+                    case.witness.cure_tick = None;
+                    at_tick(case, 66);
+                }),
+                ("no immunity seen", |case| case.witness.immune_tick = None),
+                ("no work after the unpark", |case| {
+                    case.witness.track.work_animation_ticks.clear();
+                }),
+            ],
+        );
+    }
+
+    // -- L-PARK-FALSE-RELEASE --
+
+    fn park_false_release_case() -> Case {
+        let mut witness = gatherer_witness();
+        witness.poison_tick = Some(33);
+        witness.poison_marks = poison_marks(&[(64, 6), (94, 6), (124, 5)]);
+        let track = &mut witness.track;
+        track.runs = vec!["run".to_owned()];
+        track.min_hp = Some(74);
+        track.park_frame = Some(parked_at(33, 90, 330));
+        track.frames = vec![
+            tracked_frame(33, 90, 0, 0, 41238, Some(Decision::Parked)),
+            tracked_frame(64, 84, 0, 0, 41306, Some(Decision::Parked)),
+            tracked_frame(94, 79, 0, 0, 41306, Some(Decision::Parked)),
+        ];
+        track.mark_rows = vec![
+            mark_row(64, 6, 84, 0, 41306),
+            mark_row(94, 6, 79, 0, 41306),
+            mark_row(124, 5, 74, 0, 41306),
+        ];
+        track.unpark_frame = Some(tracked_frame(124, 74, 0, 0, 41306, None));
+        track.work_animation_ticks = vec![126];
+        track.work_sequences = vec![867];
+        Case {
+            snapshot: snapshot_at(126, 41306),
+            witness,
+            log: park_log(),
+        }
+    }
+
+    fn park_false_release_oracle_of(case: &Case) -> Result<Option<Value>, String> {
+        park_false_release_oracle(&case.snapshot, &case.witness, &case.log)
+    }
+
+    #[test]
+    fn park_false_release_oracle_passes_the_receipt_shape_and_fails_each_defining_condition() {
+        run_cell(
+            park_false_release_case,
+            park_false_release_oracle_of,
+            &[
+                ("no park", "no park within 3 ticks", |case| {
+                    case.witness.track.park_frame = None;
+                    at_tick(case, 50);
+                }),
+                ("a late park", "not within 3 ticks of the line", |case| {
+                    case.witness.track.park_frame = Some(parked_at(40, 90, 330));
+                }),
+                (
+                    "a wrong food alternative",
+                    "park frame does not show",
+                    |case| {
+                        let mut frame = parked_at(33, 90, 330);
+                        frame.need = Some(SurvivalNeed::Cure {
+                            or_food: 20,
+                            ref_heal: 12,
+                            why: NeedWhy::Lethal,
+                        });
+                        case.witness.track.park_frame = Some(frame);
+                    },
+                ),
+                ("a second park", "a second park", |case| {
+                    case.witness.track.repark_tick = Some(100);
+                }),
+                ("a dose appearing", "a rescue item appeared", |case| {
+                    case.witness.track.frames[1].antipoison = 1;
+                }),
+                ("food appearing", "a rescue item appeared", |case| {
+                    case.witness.track.frames[1].food = 1;
+                }),
+                ("a fourth mark", "a fourth mark came", |case| {
+                    case.witness.poison_marks =
+                        poison_marks(&[(64, 6), (94, 6), (124, 5), (154, 5)]);
+                }),
+                (
+                    "marks that are not 6, 6, 5",
+                    "not the content's 6, 6, 5",
+                    |case| {
+                        case.witness.poison_marks = poison_marks(&[(64, 6), (94, 5), (124, 5)]);
+                    },
+                ),
+                (
+                    "a hold ended before the third mark",
+                    "before the third mark",
+                    |case| {
+                        case.witness.poison_marks = poison_marks(&[(64, 6), (94, 6)]);
+                    },
+                ),
+                (
+                    "an unpark before the mark",
+                    "before the release mark",
+                    |case| {
+                        case.witness.track.unpark_frame =
+                            Some(tracked_frame(120, 74, 0, 0, 41306, None));
+                    },
+                ),
+                ("a late unpark", "more than 3 ticks after", |case| {
+                    case.witness.track.unpark_frame =
+                        Some(tracked_frame(130, 74, 0, 0, 41306, None));
+                    at_tick(case, 130);
+                }),
+                ("no unpark", "no unpark within 3 ticks", |case| {
+                    case.witness.track.unpark_frame = None;
+                    at_tick(case, 130);
+                }),
+                ("no unpark line in the log", "hostlog wants", |case| {
+                    case.log.remove(1);
+                }),
+                ("a stop line", "hostlog wants", |case| {
+                    case.log
+                        .push(json!({"message": "script blocked: operator stop"}));
+                }),
+            ],
+            &[
+                ("two marks and no unpark", |case| {
+                    case.witness.poison_marks = poison_marks(&[(64, 6), (94, 6)]);
+                    case.witness.track.unpark_frame = None;
+                    at_tick(case, 100);
+                }),
+                ("no work after the unpark", |case| {
+                    case.witness.track.work_animation_ticks.clear();
+                }),
+            ],
+        );
+    }
+
+    // -- L-PARK-FOOD-RELEASE --
+
+    fn park_food_release_case() -> Case {
+        let mut witness = gatherer_witness();
+        witness.poison_tick = Some(32);
+        witness.poison_marks = poison_marks(&[
+            (63, 5),
+            (93, 5),
+            (123, 4),
+            (153, 4),
+            (183, 4),
+            (213, 4),
+            (243, 4),
+            (273, 3),
+        ]);
+        let track = &mut witness.track;
+        track.runs = vec!["run".to_owned()];
+        track.min_hp = Some(2);
+        track.park_frame = Some(parked_at(32, 10, 330));
+        track.frames = vec![
+            tracked_frame(32, 10, 9, 0, 41238, Some(Decision::Parked)),
+            tracked_frame(120, 12, 6, 0, 41238, Some(Decision::Parked)),
+            tracked_frame(250, 11, 4, 0, 41441, Some(Decision::Parked)),
+        ];
+        track.food_drops = vec![
+            drop_at(63, 9),
+            drop_at(93, 8),
+            drop_at(153, 7),
+            drop_at(183, 6),
+            drop_at(243, 5),
+        ];
+        track.unpark_frame = Some(tracked_frame(274, 12, 4, 0, 41441, None));
+        track.work_animation_ticks = vec![276];
+        track.work_sequences = vec![867];
+        Case {
+            snapshot: snapshot_at(276, 41441),
+            witness,
+            log: park_log(),
+        }
+    }
+
+    fn park_food_release_oracle_of(case: &Case) -> Result<Option<Value>, String> {
+        park_food_release_oracle(&case.snapshot, &case.witness, &case.log)
+    }
+
+    #[test]
+    fn park_food_release_oracle_passes_the_receipt_shape_and_fails_each_defining_condition() {
+        run_cell(
+            park_food_release_case,
+            park_food_release_oracle_of,
+            &[
+                ("no park", "no park within 3 ticks", |case| {
+                    case.witness.track.park_frame = None;
+                    at_tick(case, 50);
+                }),
+                ("a late park", "not within 3 ticks of the line", |case| {
+                    case.witness.track.park_frame = Some(parked_at(40, 10, 330));
+                }),
+                (
+                    "a park that is not the hold",
+                    "not within 3 ticks of the line",
+                    |case| {
+                        case.witness.track.park_frame.as_mut().unwrap().decision =
+                            Some(Decision::Eating);
+                    },
+                ),
+                ("a second park", "a second park", |case| {
+                    case.witness.track.repark_tick = Some(100);
+                }),
+                ("a ninth mark", "a ninth mark", |case| {
+                    case.witness.poison_marks.push(PoisonMark {
+                        tick: 303,
+                        slot: 0,
+                        cycle: 9090,
+                        value: 3,
+                    });
+                }),
+                (
+                    "marks off the content's",
+                    "not the content's 5, 5, 4",
+                    |case| {
+                        case.witness.poison_marks[4].value = 5;
+                    },
+                ),
+                (
+                    "a hold ended before the eighth mark",
+                    "before the eighth mark",
+                    |case| {
+                        case.witness.poison_marks.truncate(7);
+                    },
+                ),
+                (
+                    "an unpark before the mark",
+                    "before the release mark",
+                    |case| {
+                        case.witness.track.unpark_frame =
+                            Some(tracked_frame(270, 12, 4, 0, 41441, None));
+                    },
+                ),
+                ("a late unpark", "more than 6 ticks after", |case| {
+                    case.witness.track.unpark_frame =
+                        Some(tracked_frame(281, 12, 4, 0, 41441, None));
+                    at_tick(case, 281);
+                }),
+                ("no unpark", "no unpark within 6 ticks", |case| {
+                    case.witness.track.unpark_frame = None;
+                    at_tick(case, 281);
+                }),
+                (
+                    "more food left",
+                    "lobsters left at the unpark, not 4",
+                    |case| {
+                        case.witness.track.frames[2].food = 5;
+                    },
+                ),
+                (
+                    "less food left",
+                    "lobsters left at the unpark, not 4",
+                    |case| {
+                        case.witness.track.frames[2].food = 3;
+                    },
+                ),
+                ("no park line in the log", "hostlog wants", |case| {
+                    case.log.remove(0);
+                }),
+                ("a stop line", "hostlog wants", |case| {
+                    case.log
+                        .push(json!({"message": "script blocked: operator stop"}));
+                }),
+            ],
+            &[
+                ("seven marks and no unpark", |case| {
+                    case.witness.poison_marks.truncate(7);
+                    case.witness.track.unpark_frame = None;
+                    at_tick(case, 250);
+                }),
+                ("no work after the unpark", |case| {
+                    case.witness.track.work_animation_ticks.clear();
+                }),
+            ],
+        );
+    }
+
+    // -- L-CURE-BITE-AFTER-DRINK --
+
+    fn bite_after_drink_case() -> Case {
+        let mut witness = gatherer_witness();
+        witness.poison_tick = Some(32);
+        witness.cure_tick = Some(33);
+        witness.dose_drop_tick = Some(33);
+        witness.immune_tick = Some(33);
+        let track = &mut witness.track;
+        track.runs = vec!["run".to_owned()];
+        track.min_hp = Some(10);
+        track.frames = vec![
+            tracked_frame(32, 10, 5, 1, 41238, None),
+            tracked_frame(36, 13, 4, 0, 41238, None),
+            tracked_frame(39, 16, 3, 0, 41238, None),
+            tracked_frame(40, 16, 3, 0, 41306, None),
+        ];
+        track.food_drops = vec![drop_at(36, 5), drop_at(39, 4)];
+        track.work_animation_ticks = vec![40];
+        track.work_sequences = vec![867];
+        Case {
+            snapshot: snapshot_at(45, 41306),
+            witness,
+            log: Vec::new(),
+        }
+    }
+
+    fn bite_after_drink_oracle(case: &Case) -> Result<Option<Value>, String> {
+        bite_after_drink_receipt(&case.snapshot, None, &case.witness)
+    }
+
+    #[test]
+    fn bite_after_drink_oracle_passes_the_receipt_shape_and_fails_each_defining_condition() {
+        run_cell(
+            bite_after_drink_case,
+            bite_after_drink_oracle,
+            &[
+                ("no drink line", "no drink line within", |case| {
+                    case.witness.cure_tick = None;
+                    at_tick(case, 50);
+                }),
+                ("no dose drop", "no dose drop within one tick", |case| {
+                    case.witness.dose_drop_tick = None;
+                }),
+                (
+                    "a late dose drop",
+                    "not within one tick of the drink line",
+                    |case| {
+                        case.witness.dose_drop_tick = Some(35);
+                    },
+                ),
+                (
+                    "a bite before the drink",
+                    "a bite came before the drink's dose drop",
+                    |case| {
+                        case.witness.track.food_drops = vec![drop_at(32, 5), drop_at(39, 4)];
+                    },
+                ),
+                (
+                    "a bite inside the drink lock",
+                    "content and runner window",
+                    |case| {
+                        case.witness.track.food_drops = vec![drop_at(35, 5), drop_at(39, 4)];
+                    },
+                ),
+                (
+                    "a bite inside the next-food clock",
+                    "content and runner window",
+                    |case| {
+                        case.witness.track.food_drops = vec![drop_at(36, 5), drop_at(38, 4)];
+                    },
+                ),
+                (
+                    "a dropped bite resent late",
+                    "content and runner window",
+                    |case| {
+                        case.witness.track.food_drops = vec![drop_at(36, 5), drop_at(50, 4)];
+                    },
+                ),
+                (
+                    "a first bite resent late",
+                    "content and runner window",
+                    |case| {
+                        case.witness.track.food_drops = vec![drop_at(40, 5), drop_at(43, 4)];
+                    },
+                ),
+                (
+                    "a count drop with no heal",
+                    "did not eat one item and heal",
+                    |case| {
+                        case.witness.track.food_drops[1].hp_after =
+                            case.witness.track.food_drops[1].hp_before;
+                    },
+                ),
+                (
+                    "a bite of two items",
+                    "did not eat one item and heal",
+                    |case| {
+                        case.witness.track.food_drops[1].to = 2;
+                    },
+                ),
+                ("only one bite", "fewer than two bites", |case| {
+                    case.witness.track.food_drops.truncate(1);
+                    at_tick(case, 60);
+                }),
+                (
+                    "a hit before the drink line",
+                    "poison damage before the antipoison drink line",
+                    |case| {
+                        case.witness.poison_marks = poison_marks(&[(31, 6)]);
+                    },
+                ),
+                (
+                    "poison damage after the cure",
+                    "continued past the content bound",
+                    |case| {
+                        case.witness.poison_marks = poison_marks(&[(40, 6)]);
+                    },
+                ),
+            ],
+            &[
+                ("no drink line yet", |case| {
+                    case.witness.cure_tick = None;
+                    at_tick(case, 36);
+                }),
+                ("one bite so far", |case| {
+                    case.witness.track.food_drops.truncate(1);
+                    at_tick(case, 40);
+                }),
+                ("the last bite just seen", |case| at_tick(case, 44)),
+                ("no work after the last bite", |case| {
+                    case.witness.track.work_animation_ticks.clear();
+                    at_xp(case, 41238);
+                }),
+            ],
+        );
+    }
+
+    // -- L-CURE-QUESTER-DIALOGUE --
+
+    fn dialogue_case() -> Case {
+        let witness = new_witness(
+            Activity::Dialogue,
+            "Mining",
+            MINING_STAT,
+            None,
+            None,
+            PoisonSource::TwistedChest,
+            DESERT_CAPTAIN_STAND,
+        );
+        let mut witness = Arc::try_unwrap(witness)
+            .ok()
+            .expect("one owner")
+            .into_inner()
+            .expect("witness");
+        let options = || {
+            DESERT_CAPTAIN_OPENING_OPTIONS
+                .iter()
+                .map(|option| (*option).to_owned())
+                .collect::<Vec<_>>()
+        };
+        witness.baseline_antipoison = 1;
+        witness.session = SessionTicks {
+            was_ingame: true,
+            now: Some(76),
+            login: Some(0),
+            logins: 3,
+        };
+        witness.timer_phase_ready_tick = Some(31);
+        witness.poison_source_tick = Some(39);
+        witness.poison_source_modal = Some(-1);
+        witness.poison_tick = Some(45);
+        witness.need_tick = Some(53);
+        witness.need_step = Some("survival-talk".to_owned());
+        witness.need_report_decision = Some("Needed".to_owned());
+        witness.need_report_why = Some("Some(Lethal)".to_owned());
+        witness.need_report =
+            Some("Some(Cure { or_food: 26, ref_heal: 12, why: Lethal })".to_owned());
+        witness.need_report_owner = Some("Step".to_owned());
+        witness.need_condition_poison =
+            Some("Onset { since: 45, q: Some(11), hit_since_line: false }".to_owned());
+        witness.need_unlatched_poison = Some(false);
+        witness.need_outlook_total = Some(LETHAL_OUTLOOK);
+        witness.need_outlook_per_fire = Some(Q_UNKNOWN);
+        witness.need_outlook_pending = Some(false);
+        witness.need_hp = Some(30);
+        witness.need_hp_max = Some(30);
+        witness.need_food = Some(0);
+        witness.need_antipoison = Some(1);
+        witness.need_in_combat = Some(false);
+        witness.need_no_hit_at_edge = Some(true);
+        witness.need_page_open_tick = Some(55);
+        witness.need_page_options = options();
+        witness.desert_stage_reply = Some(DESERT_STAGE_REPLY.to_owned());
+        witness.dialogue_page_tick = Some(55);
+        witness.profile_change_tick = Some(55);
+        witness.profile_change_modal = Some(2469);
+        witness.profile_change_options = options();
+        witness.dialogue_closed_tick = Some(56);
+        witness.drink_decision_tick = Some(55);
+        witness.drink_decision_modal = Some(2469);
+        witness.cure_tick = Some(57);
+        witness.dose_drop_tick = Some(58);
+        witness.immune_tick = Some(58);
+        witness.settled_tick = Some(60);
+        witness.dialogue_reopened_tick = Some(62);
+        witness.dialogue_reopened_options = options();
+        witness.dialogue_reopened_step = Some("survival-talk".to_owned());
+        // The nine herbs of the chest and the empty vial the last dose leaves.
+        let mut snapshot = snapshot_at(76, 0);
+        snapshot.seed_inv(vec![(199, TWISTED_CHEST_REWARD_COUNT), (VIAL_EMPTY_ID, 1)]);
+        Case {
+            snapshot,
+            witness,
+            log: Vec::new(),
+        }
+    }
+
+    fn dialogue_oracle(case: &Case) -> Result<Option<Value>, String> {
+        dialogue_receipt(&case.snapshot, None, &case.witness)
+    }
+
+    const DIALOGUE_ORDER: &str = "dialogue cure/resume order failed";
+    const NEED_EDGE: &str = "lethal poison need did not match";
+    const SOURCE_BOUNDS: &str = "cure/source ticks or inventory";
+
+    #[test]
+    fn dialogue_oracle_passes_the_receipt_shape_and_fails_each_defining_condition() {
+        let case = dialogue_case();
+        let receipt = dialogue_oracle(&case)
+            .expect("the valid fixture passes")
+            .expect("the valid fixture is complete");
+        assert_eq!(receipt["family"], "Quester");
+        assert_eq!(receipt["antipoison_remaining"], 0);
+        assert_eq!(receipt["profile_change_tick"], 55);
+        let mutations: &[Mutation] = &[
+            ("another stage reply", DIALOGUE_ORDER, |case| {
+                case.witness.desert_stage_reply = Some("get desertrescue: 2".to_owned());
+            }),
+            (
+                "no chat modal at the policy change",
+                DIALOGUE_ORDER,
+                |case| {
+                    case.witness.profile_change_modal = Some(-1);
+                },
+            ),
+            (
+                "other options at the policy change",
+                DIALOGUE_ORDER,
+                |case| {
+                    case.witness.profile_change_options.pop();
+                },
+            ),
+            ("a page opened at another tick", DIALOGUE_ORDER, |case| {
+                case.witness.need_page_open_tick = Some(54);
+            }),
+            ("other options on the need page", DIALOGUE_ORDER, |case| {
+                case.witness.need_page_options.clear();
+            }),
+            (
+                "a page tick that is not the change",
+                DIALOGUE_ORDER,
+                |case| {
+                    case.witness.dialogue_page_tick = Some(54);
+                },
+            ),
+            ("a poison source after the page", DIALOGUE_ORDER, |case| {
+                case.witness.poison_source_tick = Some(55);
+            }),
+            ("another step at the need", DIALOGUE_ORDER, |case| {
+                case.witness.need_step = Some("other".to_owned());
+            }),
+            ("a page closed late", DIALOGUE_ORDER, |case| {
+                case.witness.dialogue_closed_tick = Some(58);
+            }),
+            (
+                "a drink decided before the change",
+                DIALOGUE_ORDER,
+                |case| {
+                    case.witness.drink_decision_tick = Some(54);
+                },
+            ),
+            ("a drink decided late", DIALOGUE_ORDER, |case| {
+                case.witness.drink_decision_tick = Some(58);
+            }),
+            (
+                "a drink line before the page closed",
+                DIALOGUE_ORDER,
+                |case| {
+                    case.witness.cure_tick = Some(55);
+                },
+            ),
+            (
+                "a drink line after a refused click",
+                DIALOGUE_ORDER,
+                |case| {
+                    case.witness.cure_tick = Some(59);
+                },
+            ),
+            ("a dose drop before the change", DIALOGUE_ORDER, |case| {
+                case.witness.dose_drop_tick = Some(54);
+            }),
+            (
+                "a dose drop long after the change",
+                DIALOGUE_ORDER,
+                |case| {
+                    case.witness.dose_drop_tick = Some(66);
+                },
+            ),
+            ("immunity before the drink line", DIALOGUE_ORDER, |case| {
+                case.witness.immune_tick = Some(56);
+            }),
+            ("a settle before immunity", DIALOGUE_ORDER, |case| {
+                case.witness.settled_tick = Some(57);
+            }),
+            (
+                "the page reopened before the settle",
+                DIALOGUE_ORDER,
+                |case| {
+                    case.witness.dialogue_reopened_tick = Some(60);
+                },
+            ),
+            ("another step after the resume", DIALOGUE_ORDER, |case| {
+                case.witness.dialogue_reopened_step = Some("other".to_owned());
+            }),
+            ("other options after the resume", DIALOGUE_ORDER, |case| {
+                case.witness.dialogue_reopened_options.pop();
+            }),
+            ("a report that is not lethal", NEED_EDGE, |case| {
+                case.witness.need_report_why = None;
+            }),
+            ("a report of another decision", NEED_EDGE, |case| {
+                case.witness.need_report_decision = Some("Eating".to_owned());
+            }),
+            ("a poison that is not the line's onset", NEED_EDGE, |case| {
+                case.witness.need_condition_poison = Some("Clear".to_owned());
+            }),
+            ("another owner", NEED_EDGE, |case| {
+                case.witness.need_report_owner = Some("Guard".to_owned());
+            }),
+            ("a hurt account at the need", NEED_EDGE, |case| {
+                case.witness.need_hp = Some(24);
+            }),
+            (
+                "a poison mark before the drink line",
+                "poison damage before the antipoison drink line",
+                |case| {
+                    case.witness.poison_marks = poison_marks(&[(50, 6)]);
+                },
+            ),
+            ("an outcome past the deadline", "exceeded 150", |case| {
+                at_tick(case, 300);
+            }),
+            (
+                "a chest poison later than its signal bound",
+                SOURCE_BOUNDS,
+                |case| {
+                    case.witness.poison_tick = Some(50);
+                    at_tick(case, 100);
+                },
+            ),
+            ("a timer phase before its clear", SOURCE_BOUNDS, |case| {
+                case.witness.timer_phase_ready_tick = Some(20);
+            }),
+            ("a source modal still open", SOURCE_BOUNDS, |case| {
+                case.witness.poison_source_modal = Some(2469);
+            }),
+            ("no empty vial", SOURCE_BOUNDS, |case| {
+                case.snapshot
+                    .seed_inv(vec![(199, TWISTED_CHEST_REWARD_COUNT)]);
+            }),
+            ("a key left in the pack", SOURCE_BOUNDS, |case| {
+                let key = case.witness.key_id;
+                case.snapshot.seed_inv(vec![
+                    (199, TWISTED_CHEST_REWARD_COUNT),
+                    (VIAL_EMPTY_ID, 1),
+                    (key, 1),
+                ]);
+            }),
+            ("an item lost from the pack", SOURCE_BOUNDS, |case| {
+                case.snapshot.seed_inv(vec![
+                    (199, TWISTED_CHEST_REWARD_COUNT - 1),
+                    (VIAL_EMPTY_ID, 1),
+                ]);
+            }),
+        ];
+        for (name, needle, mutate) in mutations {
+            let mut case = dialogue_case();
+            mutate(&mut case);
+            match dialogue_oracle(&case) {
+                Err(error) => assert!(
+                    error.contains(needle),
+                    "{name}: wanted `{needle}`, got `{error}`"
+                ),
+                other => panic!("{name} must fail, got {other:?}"),
+            }
+        }
+        // A cell that is not finished gives no verdict.
+        let unfinished: &[Unfinished] = &[
+            ("no policy change", |case| {
+                case.witness.profile_change_tick = None
+            }),
+            ("no page close", |case| {
+                case.witness.dialogue_closed_tick = None
+            }),
+            ("no reopened page", |case| {
+                case.witness.dialogue_reopened_tick = None
+            }),
+            ("no drink decision", |case| {
+                case.witness.drink_decision_tick = None
+            }),
+            ("no drink modal reading", |case| {
+                case.witness.drink_decision_modal = None
+            }),
+            ("no drink line", |case| case.witness.cure_tick = None),
+            ("no dose drop", |case| case.witness.dose_drop_tick = None),
+            ("no immunity", |case| case.witness.immune_tick = None),
+            ("no settle", |case| case.witness.settled_tick = None),
+            ("no poison source", |case| {
+                case.witness.poison_source_tick = None
+            }),
+            ("no dialogue page", |case| {
+                case.witness.dialogue_page_tick = None
+            }),
+            ("the first fire not yet covered", |case| at_tick(case, 60)),
+        ];
+        for (name, mutate) in unfinished {
+            let mut case = dialogue_case();
+            mutate(&mut case);
+            assert_eq!(
+                dialogue_oracle(&case),
+                Ok(None),
+                "{name} must give no verdict, not a pass"
+            );
+        }
+    }
+
+    // -- check_need: the chest and provisioning rules --
+
+    fn need_witness(
+        source: PoisonSource,
+        during_provisioning: bool,
+        decision: Decision,
+        latched: bool,
+    ) -> Witness {
+        let mut witness = cured_witness(&lethal_report(decision), latched);
+        witness.poison_source = source;
+        witness.poison_during_provisioning = during_provisioning;
+        witness
+    }
+
+    #[test]
+    fn check_need_accepts_a_chest_or_provisioning_needed_report_only_with_a_latched_onset() {
+        // The chest cell seeds its poison before Start, so its first `Needed`
+        // report is the latched onset of the line, not the open latch.
+        let chest = need_witness(PoisonSource::TwistedChest, false, Decision::Needed, true);
+        assert_eq!(check_need(&chest), Ok(()));
+        // The provisioning cell's poison lands during a bank transfer.
+        let provisioning = need_witness(
+            PoisonSource::AccountStateDebugProc,
+            true,
+            Decision::Needed,
+            true,
+        );
+        assert_eq!(check_need(&provisioning), Ok(()));
+        // Neither accepts a `Needed` report whose poison is not the line's onset.
+        for mut witness in [chest, provisioning] {
+            witness.need_condition_poison = Some(format!("{:?}", PoisonState::Clear));
+            assert!(check_need(&witness).is_err());
+        }
+        // A plain debugproc cell that is not in provisioning keeps the strict
+        // rule: `Needed` is the open latch, never a latched onset.
+        let plain = need_witness(
+            PoisonSource::AccountStateDebugProc,
+            false,
+            Decision::Needed,
+            true,
+        );
+        assert!(check_need(&plain).is_err());
+        // The open latch needs both an unlatched poison and a pending outlook
+        // in that plain cell.
+        let open = need_witness(
+            PoisonSource::AccountStateDebugProc,
+            false,
+            Decision::Needed,
+            false,
+        );
+        assert_eq!(check_need(&open), Ok(()));
+        let mut latched_open = need_witness(
+            PoisonSource::AccountStateDebugProc,
+            false,
+            Decision::Needed,
+            false,
+        );
+        latched_open.need_unlatched_poison = Some(false);
+        assert!(check_need(&latched_open).is_err());
+        let mut settled_outlook = need_witness(
+            PoisonSource::AccountStateDebugProc,
+            false,
+            Decision::Needed,
+            false,
+        );
+        settled_outlook.need_outlook_pending = Some(false);
+        assert!(check_need(&settled_outlook).is_err());
+        // Decisions other than `Needed` and `Drinking` are never a lethal need.
+        for decision in [Decision::None, Decision::Eating, Decision::Parked] {
+            let witness = need_witness(PoisonSource::TwistedChest, false, decision, true);
+            assert!(check_need(&witness).is_err(), "{decision:?}");
+        }
+        // `Drinking` accepts a chest poison's onset, latched or not.
+        for latched in [false, true] {
+            let witness = need_witness(
+                PoisonSource::TwistedChest,
+                false,
+                Decision::Drinking,
+                latched,
+            );
+            assert_eq!(check_need(&witness), Ok(()));
+        }
+    }
+
+    #[test]
+    fn check_need_fails_each_controlled_edge_fact_of_a_chest_report() {
+        let base = || need_witness(PoisonSource::TwistedChest, false, Decision::Needed, true);
+        assert_eq!(check_need(&base()), Ok(()));
+        type Edit = fn(&mut Witness);
+        let edits: &[(&str, Edit)] = &[
+            ("a report with no why", |w| w.need_report_why = None),
+            ("a why that is not lethal", |w| {
+                w.need_report_why = Some("Some(BelowLine)".to_owned());
+            }),
+            ("a need that is not lethal", |w| {
+                w.need_report = Some("Some(Food { count: 2, ref_heal: 3 })".to_owned());
+            }),
+            ("another owner", |w| {
+                w.need_report_owner = Some("Guard".to_owned())
+            }),
+            ("another outlook total", |w| {
+                w.need_outlook_total = Some(331)
+            }),
+            ("another per-fire damage", |w| {
+                w.need_outlook_per_fire = Some(10)
+            }),
+            ("a hurt account", |w| w.need_hp = Some(24)),
+            ("another hitpoints maximum", |w| w.need_hp_max = Some(29)),
+            ("food held", |w| w.need_food = Some(1)),
+            ("no dose", |w| w.need_antipoison = Some(0)),
+            ("a fight", |w| w.need_in_combat = Some(true)),
+            ("a hit at the edge", |w| w.need_no_hit_at_edge = Some(false)),
+        ];
+        for (name, edit) in edits {
+            let mut witness = base();
+            edit(&mut witness);
+            assert!(check_need(&witness).is_err(), "{name} must fail");
+        }
     }
 }
