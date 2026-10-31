@@ -1521,7 +1521,10 @@ fn focus_churn_covers_every_head_and_sidecar_population() {
                 }
                 let (focused, full) = policy_masks("sidecar-churn", n, first_focus, step);
                 assert_eq!(full.iter().filter(|&&selected| selected).count(), step + 1);
-                assert!(focused.iter().zip(&full).all(|(&focus, &full)| !focus || full));
+                assert!(focused
+                    .iter()
+                    .zip(&full)
+                    .all(|(&focus, &full)| !focus || full));
                 let (focused, full) = policy_masks("sidecar50", n, first_focus, step);
                 assert!(focused[first_focus], "cadence alone must not move focus");
                 assert!(full.into_iter().all(|selected| selected));
