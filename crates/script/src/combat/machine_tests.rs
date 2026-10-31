@@ -3900,11 +3900,14 @@ fn default_combat_stand_approach_bounds_each_retryable_class_and_keeps_last_deta
         ] {
             post_walk_receipt(&mut harness, failure_tick, end.clone(), Some(detail));
             if attempt == 3 {
-                assert!(matches!(
-                    harness.poll(&scene.snapshot, failure_tick),
-                    Poll::Ready(Err(ActionError::Blocked(reason)))
-                        if reason.as_ref() == "last route failed"
-                ), "{end:?}");
+                assert!(
+                    matches!(
+                        harness.poll(&scene.snapshot, failure_tick),
+                        Poll::Ready(Err(ActionError::Blocked(reason)))
+                            if reason.as_ref() == "last route failed"
+                    ),
+                    "{end:?}"
+                );
                 assert_eq!(harness.machine.stand_walk_failures, 3, "{end:?}");
                 break;
             }
@@ -3950,7 +3953,10 @@ fn default_combat_stand_approach_stops_for_each_terminal_class() {
         ),
     ];
     for refusal in [
-        WalkRefusal::NoRouteWithinBounds { tried: 3, last: None },
+        WalkRefusal::NoRouteWithinBounds {
+            tried: 3,
+            last: None,
+        },
         WalkRefusal::RouteTooLarge {
             required_bytes: 2,
             maximum_bytes: 1,
@@ -3974,9 +3980,19 @@ fn default_combat_stand_approach_stops_for_each_terminal_class() {
         request.stand = Some(stand);
         request.engage_radius = 1;
         let mut harness = Harness::new(&scene, request);
-        assert!(matches!(harness.pending(&scene, 1), Some(HostEffect::Walk(_))));
+        assert!(matches!(
+            harness.pending(&scene, 1),
+            Some(HostEffect::Walk(_))
+        ));
         post_walk_receipt(&mut harness, 2, end, Some("terminal stand failure"));
-        let receipt = harness.runtime.ledger.as_mut().unwrap().walk.as_mut().unwrap();
+        let receipt = harness
+            .runtime
+            .ledger
+            .as_mut()
+            .unwrap()
+            .walk
+            .as_mut()
+            .unwrap();
         receipt.refusal = refusal;
         receipt.blocked = blocked;
         let expected = receipt.clone().into_arrival().unwrap_err();
@@ -4049,7 +4065,12 @@ fn configured_stand_walk_failure_returns_its_detail() {
         (4, "second stand route failure"),
         (6, "last stand route failure"),
     ] {
-        post_walk_receipt(&mut harness, tick, crate::native::WalkEnd::NoPath, Some(detail));
+        post_walk_receipt(
+            &mut harness,
+            tick,
+            crate::native::WalkEnd::NoPath,
+            Some(detail),
+        );
         let result = harness.poll(&scene.snapshot, tick);
         if tick == 6 {
             assert!(matches!(

@@ -1397,7 +1397,11 @@ fn sherlock_native_pass(
             _ => pass.other_native_effects += 1,
         }
     }
-    pass.attacks += slot.drain_interacts().iter().filter(|request| is_attack(request)).count();
+    pass.attacks += slot
+        .drain_interacts()
+        .iter()
+        .filter(|request| is_attack(request))
+        .count();
     pass
 }
 
@@ -1424,9 +1428,7 @@ fn post_stand_walk_failure(
         assessment: None,
         escape: None,
     };
-    let failure_detail = receipt
-        .failure_detail()
-        .map(|detail| detail.to_string());
+    let failure_detail = receipt.failure_detail().map(|detail| detail.to_string());
     if let Some(detail) = detail {
         assert_eq!(failure_detail.as_deref(), Some(detail));
     }
@@ -1459,12 +1461,14 @@ fn begin_clue_stand_walk(
         }
         let pass = sherlock_native_pass(&mut slot, &world, tick);
         assert_eq!(
-            pass.other_native_effects, 0,
+            pass.other_native_effects,
+            0,
             "{} emitted an unexpected native effect before the stand walk",
             caller.label()
         );
         assert_eq!(
-            pass.attacks, 0,
+            pass.attacks,
+            0,
             "{} attacked before reaching the native stand",
             caller.label()
         );
@@ -1486,7 +1490,8 @@ fn begin_clue_stand_walk(
         )
     });
     assert_eq!(
-        first_walk.target, world.stand,
+        first_walk.target,
+        world.stand,
         "{} walks to its Delegation::request stand",
         caller.label()
     );
@@ -1534,7 +1539,8 @@ fn clue_guardian_and_keeper_stand_walks_retry_three_times_and_stop_on_refusal() 
                     caller.label()
                 );
                 assert_eq!(
-                    terminal.attacks, 0,
+                    terminal.attacks,
+                    0,
                     "{} attacked after the third failure",
                     caller.label()
                 );
@@ -1569,14 +1575,16 @@ fn clue_guardian_and_keeper_stand_walks_retry_three_times_and_stop_on_refusal() 
             );
             assert_eq!(retry.other_native_effects, 0);
             assert_eq!(
-                retry.attacks, 0,
+                retry.attacks,
+                0,
                 "{} attacked while retrying",
                 caller.label()
             );
             let next = retry.walks.into_iter().next().expect("one retry walk");
             assert_eq!(next.target, world.stand);
             assert_eq!(
-                next.required_after_tick, retry_tick,
+                next.required_after_tick,
+                retry_tick,
                 "{} retry is scheduled from the later observed tick",
                 caller.label()
             );
@@ -1619,7 +1627,8 @@ fn clue_guardian_and_keeper_stand_walks_retry_three_times_and_stop_on_refusal() 
             caller.label()
         );
         assert_eq!(
-            terminal.attacks, 0,
+            terminal.attacks,
+            0,
             "{} attacked after a typed hard refusal",
             caller.label()
         );
@@ -1645,7 +1654,6 @@ fn clue_guardian_and_keeper_stand_walks_retry_three_times_and_stop_on_refusal() 
     }
     crate::clue::on_reset();
 }
-
 
 fn settle_sherlock_restart(slot: &mut script::slot::SlotScript) {
     let deadline = Instant::now() + Duration::from_secs(10);

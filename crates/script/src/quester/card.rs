@@ -362,7 +362,10 @@ mod released_path_stage_order_tests {
                 .collect(),
         };
         assert_eq!(
-            ordered_stages(&[role]).iter().map(AsRef::as_ref).collect::<Vec<&str>>(),
+            ordered_stages(&[role])
+                .iter()
+                .map(AsRef::as_ref)
+                .collect::<Vec<&str>>(),
             ["q:10", "q:20", "q:named_b", "q:named_a"]
         );
     }

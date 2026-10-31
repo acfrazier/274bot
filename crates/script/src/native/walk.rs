@@ -197,7 +197,10 @@ impl Walk {
     /// the host follow, so an owner that abandons it passes this ID to
     /// [`ActionContext::cancel_request`] before it cancels the machine.
     pub(crate) fn request_id(&self) -> u64 {
-        self.wait.request().expect("walk correlation remains active").0
+        self.wait
+            .request()
+            .expect("walk correlation remains active")
+            .0
     }
 
     fn replan_after_quest_list_wait(

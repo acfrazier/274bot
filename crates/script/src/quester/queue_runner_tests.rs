@@ -252,19 +252,30 @@ fn a_queued_no_step_park_publishes_and_reuses_the_empty_step_id() {
                 break;
             }
         }
-        let parked = queued.queue.parked(index).expect("the no-step run must park");
+        let parked = queued
+            .queue
+            .parked(index)
+            .expect("the no-step run must park");
         assert_eq!(parked.step.as_ref(), "");
         if let Some(previous) = &previous_empty_step {
             assert!(Arc::ptr_eq(previous, &parked.step));
         }
         previous_empty_step = Some(Arc::clone(&parked.step));
-        let status = output.0.last().expect("the queued Blocked status is published");
+        let status = output
+            .0
+            .last()
+            .expect("the queued Blocked status is published");
         assert_eq!(status.phase, NativePhase::Blocked);
         assert!(status.fields.iter().any(|field| {
             field.key == "step_id"
                 && matches!(&field.value, StatusValue::Text(step) if step.is_empty())
         }));
-        assert!(status.failure.as_ref().unwrap().message.contains("no step for stage"));
+        assert!(status
+            .failure
+            .as_ref()
+            .unwrap()
+            .message
+            .contains("no step for stage"));
     }
 }
 

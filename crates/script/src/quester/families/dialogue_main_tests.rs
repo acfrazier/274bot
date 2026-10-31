@@ -1040,10 +1040,10 @@ fn pending_first_continuation_requires_a_real_attacker_for_combat_interruption()
             tick.actions.poll(&handle, &mut tick.cx)
         });
         if attacker.is_some() {
-            assert!(matches!(
-                result,
-                Poll::Ready(Err(ActionError::CombatInterrupted))
-            ), "{attacker:?}");
+            assert!(
+                matches!(result, Poll::Ready(Err(ActionError::CombatInterrupted))),
+                "{attacker:?}"
+            );
         } else {
             assert!(result.is_pending(), "a stale flag is not an attacker");
         }

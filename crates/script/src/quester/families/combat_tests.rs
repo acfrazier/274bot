@@ -391,9 +391,8 @@ fn authored_combat_walk_permissions_reach_initial_return_and_abort_requests() {
                         (3, 7, "last compiled approach failure"),
                     ] {
                         post_walk_end(&mut ledger, tick, WalkEnd::NoPath, Some(detail));
-                        let result = with_step_context(&snapshot, &mut ledger, tick, |cx| {
-                            run.poll(cx)
-                        });
+                        let result =
+                            with_step_context(&snapshot, &mut ledger, tick, |cx| run.poll(cx));
                         if attempt == 3 {
                             assert!(matches!(
                                 result,
@@ -405,11 +404,13 @@ fn authored_combat_walk_permissions_reach_initial_return_and_abort_requests() {
                         assert!(result.is_pending());
                         assert!(with_step_context(&snapshot, &mut ledger, tick, |cx| {
                             run.poll(cx)
-                        }).is_pending());
+                        })
+                        .is_pending());
                         assert!(ledger.as_ref().unwrap().outbox.is_empty());
                         assert!(with_step_context(&snapshot, &mut ledger, tick + 1, |cx| {
                             run.poll(cx)
-                        }).is_pending());
+                        })
+                        .is_pending());
                         let retry = last_walk(&ledger);
                         assert_eq!(retry.target, stand);
                         assert_ne!(retry.request_id, previous_request);
@@ -422,7 +423,8 @@ fn authored_combat_walk_permissions_reach_initial_return_and_abort_requests() {
                         with_step_context(&snapshot, &mut ledger, 20, |cx| plan.begin(cx).unwrap());
                     assert!(with_step_context(&snapshot, &mut ledger, 21, |cx| {
                         refused_run.poll(cx)
-                    }).is_pending());
+                    })
+                    .is_pending());
                     post_walk_end(
                         &mut ledger,
                         22,
@@ -4362,7 +4364,10 @@ fn return_to_stand_bounds_each_retryable_class_and_retains_last_failure() {
     };
     let stalled = |why| {
         WalkEnd::Stalled(Arc::new(WalkStall {
-            at: api::WorldTile { x: stand.x - 4, ..stand },
+            at: api::WorldTile {
+                x: stand.x - 4,
+                ..stand
+            },
             aiming: stand,
             why,
             tries: 1,
@@ -4387,7 +4392,8 @@ fn return_to_stand_bounds_each_retryable_class_and_retains_last_failure() {
         );
         assert!(with_step_context(&snapshot, &mut ledger, 12, |cx| {
             run.on_combat_report(report(CombatEnd::TargetGone), cx)
-        }).is_pending());
+        })
+        .is_pending());
         let mut request_id = last_walk(&ledger).request_id;
         for (attempt, tick, detail) in [
             (1, 13, "first return failure"),
@@ -4412,25 +4418,29 @@ fn return_to_stand_bounds_each_retryable_class_and_retains_last_failure() {
             });
             assert!(run.action.is_none(), "{end:?}");
             if attempt == 3 {
-                assert!(matches!(
-                    result,
-                    Poll::Ready(Err(ActionError::Blocked(reason)))
-                        if reason.as_ref() == "last return failure"
-                ), "{end:?}");
+                assert!(
+                    matches!(
+                        result,
+                        Poll::Ready(Err(ActionError::Blocked(reason)))
+                            if reason.as_ref() == "last return failure"
+                    ),
+                    "{end:?}"
+                );
                 break;
             }
             assert!(result.is_pending(), "{end:?}");
             assert!(run.return_retry.pending(), "{end:?}");
             assert!(matches!(&run.phase, Phase::ReturningToStand));
             let before = ledger.as_ref().unwrap().outbox.len();
-            assert!(with_step_context(&snapshot, &mut ledger, tick, |cx| {
-                run.poll(cx)
-            }).is_pending());
+            assert!(
+                with_step_context(&snapshot, &mut ledger, tick, |cx| { run.poll(cx) }).is_pending()
+            );
             assert_eq!(ledger.as_ref().unwrap().outbox.len(), before);
             assert!(run.action.is_none(), "{end:?}");
-            assert!(with_step_context(&snapshot, &mut ledger, tick + 1, |cx| {
-                run.poll(cx)
-            }).is_pending());
+            assert!(
+                with_step_context(&snapshot, &mut ledger, tick + 1, |cx| { run.poll(cx) })
+                    .is_pending()
+            );
             let retry = last_walk(&ledger);
             assert_eq!(retry.target, stand);
             assert_ne!(retry.request_id, request_id);
@@ -4447,10 +4457,14 @@ fn return_to_stand_stops_for_each_terminal_class() {
     use crate::native::WalkRefusal;
 
     let data = api::game_data::for_revision(ClientRevision::R289).unwrap();
-    let stand = api::WorldTile { x: 2632, z: 3222, level: 0 };
-    let gates = Arc::from([api::selected::QuestGate::Complete(
-        FactKey::new("return-walk-gate"),
-    )]);
+    let stand = api::WorldTile {
+        x: 2632,
+        z: 3222,
+        level: 0,
+    };
+    let gates = Arc::from([api::selected::QuestGate::Complete(FactKey::new(
+        "return-walk-gate",
+    ))]);
     let mut cases = vec![
         (WalkEnd::Refused, None, None),
         (WalkEnd::Blocked, None, None),
@@ -4465,8 +4479,14 @@ fn return_to_stand_stops_for_each_terminal_class() {
         ),
     ];
     for refusal in [
-        WalkRefusal::NoRouteWithinBounds { tried: 3, last: None },
-        WalkRefusal::RouteTooLarge { required_bytes: 2, maximum_bytes: 1 },
+        WalkRefusal::NoRouteWithinBounds {
+            tried: 3,
+            last: None,
+        },
+        WalkRefusal::RouteTooLarge {
+            required_bytes: 2,
+            maximum_bytes: 1,
+        },
         WalkRefusal::Unsurvivable,
         WalkRefusal::FixableWith,
         WalkRefusal::Unknown(crate::combat::risk::UnknownWhy::AlreadyEngaged),
@@ -4486,7 +4506,8 @@ fn return_to_stand_stops_for_each_terminal_class() {
         );
         assert!(with_step_context(&snapshot, &mut ledger, 12, |cx| {
             run.on_combat_report(report(CombatEnd::TargetGone), cx)
-        }).is_pending());
+        })
+        .is_pending());
         let request_id = last_walk(&ledger).request_id;
         with_step_context(&snapshot, &mut ledger, 13, |cx| {
             let receipt = WalkReceipt {
@@ -4702,9 +4723,10 @@ fn unreachable_stand_ends_quester_step_with_the_last_walk_failure() {
         walks += 1;
         post_walk_end(&mut ledger, tick, WalkEnd::NoPath, Some(detail));
         if tick < 6 {
-            assert!(with_step_context(&snapshot, &mut ledger, tick + 1, |cx| {
-                run.poll(cx)
-            }).is_pending());
+            assert!(
+                with_step_context(&snapshot, &mut ledger, tick + 1, |cx| { run.poll(cx) })
+                    .is_pending()
+            );
         }
     }
 
@@ -4764,9 +4786,9 @@ fn stand_walk_bound_spans_the_kill_budget_attempt_boundary() {
         );
         assert_eq!(last_walk(&ledger).target, stand);
         post_walk_end(&mut ledger, tick, WalkEnd::NoPath, Some(detail));
-        assert!(with_step_context(&snapshot, &mut ledger, tick + 1, |cx| {
-            run.poll(cx)
-        }).is_pending());
+        assert!(
+            with_step_context(&snapshot, &mut ledger, tick + 1, |cx| { run.poll(cx) }).is_pending()
+        );
     }
     // The third walk is still in flight when the 50-tick budget ends.
     assert!(with_step_context(&snapshot, &mut ledger, 6, |cx| run.poll(cx)).is_pending());
@@ -6340,7 +6362,11 @@ fn a_rebuilt_scene_retakes_the_same_loot_item_on_the_next_observed_tick() {
     let bead = data.item_by_alias("white_bead").unwrap();
     let bones = data.item_by_alias("bones").unwrap();
     let bead_name: Arc<str> = Arc::from(bead.name.as_deref().unwrap());
-    let here = api::WorldTile { x: 3216, z: 3216, level: 0 };
+    let here = api::WorldTile {
+        x: 3216,
+        z: 3216,
+        level: 0,
+    };
     for first_index in [0, 1] {
         let mut loot = vec![LootItem {
             id: bead.id,
@@ -6349,11 +6375,14 @@ fn a_rebuilt_scene_retakes_the_same_loot_item_on_the_next_observed_tick() {
         }];
         let mut inventory = Vec::new();
         if first_index == 1 {
-            loot.insert(0, LootItem {
-                id: bones.id,
-                name: Arc::from(bones.name.as_deref().unwrap()),
-                qty: 1,
-            });
+            loot.insert(
+                0,
+                LootItem {
+                    id: bones.id,
+                    name: Arc::from(bones.name.as_deref().unwrap()),
+                    qty: 1,
+                },
+            );
             inventory.push(inventory_item(bones.id, bones.name.as_deref().unwrap(), 1));
         }
         let mut run = combat_test_run(imp_target(&data), Some(here), None, loot);
@@ -6390,9 +6419,16 @@ fn a_rebuilt_scene_retakes_the_same_loot_item_on_the_next_observed_tick() {
         let stale = poll_at(&mut run, &rebuilt, &mut ledger, 31, 31);
         assert!(stale.is_pending(), "{}", describe_poll(&stale));
         assert!(run.action.is_none(), "the cancelled Take is cleared");
-        assert_eq!(run.loot_index, first_index, "the same row is addressed again");
+        assert_eq!(
+            run.loot_index, first_index,
+            "the same row is addressed again"
+        );
         assert_eq!(run.loot_retake_tick, Some(31));
-        assert_eq!(loot_takes(&ledger, bead.id), 1, "no Take on the cancelled tick");
+        assert_eq!(
+            loot_takes(&ledger, bead.id),
+            1,
+            "no Take on the cancelled tick"
+        );
 
         ledger.as_mut().unwrap().outbox.clear();
         // Fresh evidence sequences wake the script without a PLAYER_INFO tick.
@@ -6401,20 +6437,43 @@ fn a_rebuilt_scene_retakes_the_same_loot_item_on_the_next_observed_tick() {
             let wake = poll_at(&mut run, &rebuilt, &mut ledger, 31, sequence);
             assert!(wake.is_pending(), "{}", describe_poll(&wake));
             assert!(run.action.is_none());
-            assert_eq!(loot_takes(&ledger, bead.id), 0, "same-tick wakes do not retake");
+            assert_eq!(
+                loot_takes(&ledger, bead.id),
+                0,
+                "same-tick wakes do not retake"
+            );
             assert_eq!(run.loot_retake_tick, Some(31));
         }
         let retake = poll_at(&mut run, &rebuilt, &mut ledger, 32, 34);
         assert!(retake.is_pending(), "{}", describe_poll(&retake));
-        assert_eq!(run.loot_index, first_index, "submission does not advance the row");
-        assert_eq!(loot_takes(&ledger, bead.id), 1, "one retake for the same item");
-        assert_eq!(loot_takes(&ledger, bones.id), 0, "an earlier row is not retaken");
+        assert_eq!(
+            run.loot_index, first_index,
+            "submission does not advance the row"
+        );
+        assert_eq!(
+            loot_takes(&ledger, bead.id),
+            1,
+            "one retake for the same item"
+        );
+        assert_eq!(
+            loot_takes(&ledger, bones.id),
+            0,
+            "an earlier row is not retaken"
+        );
 
         inventory.push(inventory_item(bead.id, bead.name.as_deref().unwrap(), 1));
         let gained = loot_scene(here, Vec::new(), (3176, 3168), inventory);
         let done = poll_at(&mut run, &gained, &mut ledger, 33, 35);
-        assert!(matches!(&done, Poll::Ready(Ok(_))), "{}", describe_poll(&done));
-        assert_eq!(run.loot_index, first_index + 1, "only settlement advances the row");
+        assert!(
+            matches!(&done, Poll::Ready(Ok(_))),
+            "{}",
+            describe_poll(&done)
+        );
+        assert_eq!(
+            run.loot_index,
+            first_index + 1,
+            "only settlement advances the row"
+        );
         assert!(run.loot_retake_tick.is_none());
     }
 }
@@ -6428,14 +6487,26 @@ fn a_second_rebuilt_scene_cancel_on_the_retaken_item_is_missed_loot() {
     let bead = data.item_by_alias("white_bead").unwrap();
     let bones = data.item_by_alias("bones").unwrap();
     let bead_name: Arc<str> = Arc::from(bead.name.as_deref().unwrap());
-    let here = api::WorldTile { x: 3216, z: 3216, level: 0 };
+    let here = api::WorldTile {
+        x: 3216,
+        z: 3216,
+        level: 0,
+    };
     for required in [false, true] {
         let mut run = combat_test_run(
             imp_target(&data),
             Some(here),
-            if required { Some(Arc::new(NeverStop)) } else { None },
+            if required {
+                Some(Arc::new(NeverStop))
+            } else {
+                None
+            },
             vec![
-                LootItem { id: bead.id, name: Arc::clone(&bead_name), qty: 1 },
+                LootItem {
+                    id: bead.id,
+                    name: Arc::clone(&bead_name),
+                    qty: 1,
+                },
                 LootItem {
                     id: bones.id,
                     name: Arc::from(bones.name.as_deref().unwrap()),
@@ -6450,13 +6521,19 @@ fn a_second_rebuilt_scene_cancel_on_the_retaken_item_is_missed_loot() {
         let bead_row = ground_item(bead.id, bead.name.as_deref().unwrap(), here, 0);
         let bones_row = ground_item(bones.id, bones.name.as_deref().unwrap(), here, 0);
         let scene = loot_scene(
-            here, vec![bead_row.clone(), bones_row.clone()], (3168, 3168), Vec::new(),
+            here,
+            vec![bead_row.clone(), bones_row.clone()],
+            (3168, 3168),
+            Vec::new(),
         );
         let rebuilt = loot_scene(here, vec![bead_row, bones_row], (3176, 3168), Vec::new());
         let reach = open_flood(here, 8);
         let mut ledger = None;
         run.action = Some(Action::Loot(begin_exact_loot_take(
-            &scene, &reach, &mut ledger, 30,
+            &scene,
+            &reach,
+            &mut ledger,
+            30,
             exact_loot_take_args(bead.id, &bead_name, here, here),
         )));
         assert_eq!(loot_takes(&ledger, bead.id), 1);
@@ -6468,22 +6545,36 @@ fn a_second_rebuilt_scene_cancel_on_the_retaken_item_is_missed_loot() {
         assert_eq!(run.loot_index, 1, "the next item owns the unsettled Take");
         assert!(run.loot_missing_this_kill);
         assert_eq!(loot_takes(&ledger, bead.id), 0, "no third Take");
-        assert_eq!(loot_takes(&ledger, bones.id), 1, "the next loot item starts");
+        assert_eq!(
+            loot_takes(&ledger, bones.id),
+            1,
+            "the next loot item starts"
+        );
         assert!(matches!(run.action.as_ref(), Some(Action::Loot(_))));
 
         let gained = loot_scene(
-            here, Vec::new(), (3176, 3168),
+            here,
+            Vec::new(),
+            (3176, 3168),
             vec![inventory_item(bones.id, bones.name.as_deref().unwrap(), 1)],
         );
         let done = with_step_context_reach(&gained, &reach, &mut ledger, 32, |cx| run.poll(cx));
         if required {
-            assert!(matches!(
-                &done,
-                Poll::Ready(Err(ActionError::Failed(reason)))
-                    if reason.contains("required combat loot was not acquired")
-            ), "{}", describe_poll(&done));
+            assert!(
+                matches!(
+                    &done,
+                    Poll::Ready(Err(ActionError::Failed(reason)))
+                        if reason.contains("required combat loot was not acquired")
+                ),
+                "{}",
+                describe_poll(&done)
+            );
         } else {
-            assert!(matches!(&done, Poll::Ready(Ok(_))), "{}", describe_poll(&done));
+            assert!(
+                matches!(&done, Poll::Ready(Ok(_))),
+                "{}",
+                describe_poll(&done)
+            );
         }
     }
 }

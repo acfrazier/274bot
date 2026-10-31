@@ -482,8 +482,7 @@ impl NativeMachine for Combat {
                         }
                         let stand_exhausted =
                             stand_walk && self.stand_walk_failures >= MAX_STAND_WALK_FAILURES;
-                        if !stand_exhausted
-                            && self.observe_approach_failure(receipt, evidence.tick)
+                        if !stand_exhausted && self.observe_approach_failure(receipt, evidence.tick)
                         {
                             // The observation guard above prevents another
                             // plan until a later game tick. Keep the count so

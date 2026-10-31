@@ -185,10 +185,9 @@ impl StepRun for Run {
                 // The gate above is the authored anchor radius; any
                 // standable tile inside it is close enough to open the door.
                 request.arrival = nav_planner::contract::ArrivalKind::Area;
-                match crate::native::defer_budget(cx.tick.actions.begin::<Walk>(
-                    request,
-                    &mut cx.tick.cx,
-                )) {
+                match crate::native::defer_budget(
+                    cx.tick.actions.begin::<Walk>(request, &mut cx.tick.cx),
+                ) {
                     Poll::Pending => {
                         self.walk_retry.defer_until_next_tick(tick);
                         return Poll::Pending;

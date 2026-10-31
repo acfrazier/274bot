@@ -1427,7 +1427,11 @@ mod tests {
             tick.actions.poll(&run, &mut tick.cx)
         })
         .is_pending());
-        assert_eq!(walk_request_count(&ledger), 2, "the retry walk is submitted");
+        assert_eq!(
+            walk_request_count(&ledger),
+            2,
+            "the retry walk is submitted"
+        );
 
         // Request 132: the host stops on a standable tile at the radius.
         post_walk_end(&mut ledger, 4, WalkEnd::RouteEnded, None);
@@ -1516,10 +1520,12 @@ mod tests {
             1,
             "the retry waits until the next observed tick"
         );
-        assert!(with_tick_reach(&stopped_short, &view, &mut ledger, 3, |tick| {
-            tick.actions.poll(&run, &mut tick.cx)
-        })
-        .is_pending());
+        assert!(
+            with_tick_reach(&stopped_short, &view, &mut ledger, 3, |tick| {
+                tick.actions.poll(&run, &mut tick.cx)
+            })
+            .is_pending()
+        );
         assert_eq!(
             walk_request_count(&ledger),
             2,
@@ -1565,12 +1571,20 @@ mod tests {
             tick.actions.poll(&run, &mut tick.cx)
         })
         .is_pending());
-        assert_eq!(walk_request_count(&ledger), 1, "retry waits for the next tick");
+        assert_eq!(
+            walk_request_count(&ledger),
+            1,
+            "retry waits for the next tick"
+        );
         assert!(with_tick(&outside, &mut ledger, 3, |tick| {
             tick.actions.poll(&run, &mut tick.cx)
         })
         .is_pending());
-        assert_eq!(walk_request_count(&ledger), 2, "one fresh plan is submitted");
+        assert_eq!(
+            walk_request_count(&ledger),
+            2,
+            "one fresh plan is submitted"
+        );
 
         post_walk_end(&mut ledger, 4, WalkEnd::Arrived, None);
         assert!(with_tick(&inside, &mut ledger, 4, |tick| {
@@ -1616,7 +1630,11 @@ mod tests {
             tick.actions.poll(&run, &mut tick.cx)
         })
         .is_pending());
-        assert_eq!(walk_request_count(&ledger), 1, "retry waits for the next tick");
+        assert_eq!(
+            walk_request_count(&ledger),
+            1,
+            "retry waits for the next tick"
+        );
         assert!(with_tick(&outside, &mut ledger, 3, |tick| {
             tick.actions.poll(&run, &mut tick.cx)
         })
@@ -1633,7 +1651,11 @@ mod tests {
             tick.actions.poll(&run, &mut tick.cx)
         })
         .is_pending());
-        assert_eq!(walk_request_count(&ledger), 2, "second retry waits for the next tick");
+        assert_eq!(
+            walk_request_count(&ledger),
+            2,
+            "second retry waits for the next tick"
+        );
         assert!(with_tick(&outside, &mut ledger, 5, |tick| {
             tick.actions.poll(&run, &mut tick.cx)
         })
@@ -2022,7 +2044,11 @@ mod tests {
             tick.actions.poll(&run, &mut tick.cx)
         })
         .is_pending());
-        assert_eq!(walk_request_count(&ledger), 2, "the first retry is submitted");
+        assert_eq!(
+            walk_request_count(&ledger),
+            2,
+            "the first retry is submitted"
+        );
         post_walk_receipt(&mut ledger, 5, WalkEnd::NoPath, Some("first retry failed"));
         assert!(with_tick(&outside, &mut ledger, 5, |tick| {
             tick.actions.poll(&run, &mut tick.cx)
@@ -2060,7 +2086,6 @@ mod tests {
         );
         assert_eq!(walk_request_count(&ledger), 3);
     }
-
 
     #[test]
     fn effective_level_not_base_controls_the_selected_requirement() {
@@ -2843,12 +2868,22 @@ mod tests {
 
     #[test]
     fn an_inline_anchor_walk_dropped_unsent_resumes_once_without_spending_a_retry() {
-        let anchor = WorldTile { x: 3, z: 4, level: 0 };
-        let here = WorldTile { x: 30, z: 40, level: 0 };
+        let anchor = WorldTile {
+            x: 3,
+            z: 4,
+            level: 0,
+        };
+        let here = WorldTile {
+            x: 30,
+            z: 40,
+            level: 0,
+        };
         let snapshot = game_snapshot(here, Vec::new(), Vec::new());
         let (mut ledger, mut budget) = (None, TickBudget::default());
         let handle = with_tick_budget(&snapshot, &mut ledger, &mut budget, 1, |tick| {
-            tick.actions.begin::<Thieve>(args(anchor, 12), &mut tick.cx).unwrap()
+            tick.actions
+                .begin::<Thieve>(args(anchor, 12), &mut tick.cx)
+                .unwrap()
         });
         assert!(poll_thieve(&handle, &snapshot, &mut ledger, &mut budget, 2).is_pending());
         assert_eq!(walk_request_count(&ledger), 1);
@@ -2859,7 +2894,11 @@ mod tests {
         budget.hold_end();
 
         assert!(poll_thieve(&handle, &snapshot, &mut ledger, &mut budget, 9).is_pending());
-        assert_eq!(walk_request_count(&ledger), 0, "the settle tick sends nothing");
+        assert_eq!(
+            walk_request_count(&ledger),
+            0,
+            "the settle tick sends nothing"
+        );
         assert!(poll_thieve(&handle, &snapshot, &mut ledger, &mut budget, 10).is_pending());
         assert_eq!(walk_request_count(&ledger), 1);
         assert_eq!(npc_click_count(&ledger), 0);
@@ -2870,10 +2909,15 @@ mod tests {
             "a dropped request is not a failed approach"
         );
         assert!(poll_thieve(&handle, &snapshot, &mut ledger, &mut budget, 11).is_pending());
-        assert_eq!(walk_request_count(&ledger), 1, "the walk is reissued only once");
+        assert_eq!(
+            walk_request_count(&ledger),
+            1,
+            "the walk is reissued only once"
+        );
         let log = crate::native::take_resume_log();
         assert!(
-            log.iter().any(|line| line.contains("re-issued its request once: walk request")),
+            log.iter()
+                .any(|line| line.contains("re-issued its request once: walk request")),
             "{log:?}"
         );
     }

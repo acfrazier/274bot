@@ -491,7 +491,10 @@ fn default_fight_card_uses_the_shared_stand_retry_cap_and_classifier() {
 
     for refusal in [None, Some(WalkRefusal::Unsurvivable)] {
         let mut harness = Harness::npc(World::new("imp"));
-        let stand = WorldTile { x: STAND.x + 20, ..STAND };
+        let stand = WorldTile {
+            x: STAND.x + 20,
+            ..STAND
+        };
         Arc::make_mut(&mut harness.card.request).stand = Some(stand);
         assert_eq!(harness.tick(1), ScriptFlow::Continue);
         let mut previous_request = None;
@@ -502,7 +505,10 @@ fn default_fight_card_uses_the_shared_stand_retry_cap_and_classifier() {
         ] {
             assert_eq!(harness.tick(tick), ScriptFlow::Continue);
             let ledger = harness.ledger.as_mut().unwrap();
-            let action = ledger.outbox.last().expect("the card must request its stand walk");
+            let action = ledger
+                .outbox
+                .last()
+                .expect("the card must request its stand walk");
             let HostEffect::Walk(request) = &action.effect else {
                 panic!("a default fight must approach its stand before attacking");
             };
