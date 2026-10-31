@@ -11,6 +11,7 @@ use crate::callback_v8;
 use crate::lineage_v8;
 
 const INVOKE_LISTENER: &str = "__rs2b0t_invoke_native_event_listener";
+pub(crate) const BOT_TICK_EVENT: &str = "__rs2b0t_internal_tick__";
 
 struct Listener {
     id: u32,

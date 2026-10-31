@@ -1022,11 +1022,11 @@ fn report_interrupted_execution(
 
 fn fire_tick_listeners(runtime: &mut Runtime, teardown: &Mutex<TeardownState>) {
     let _ = call_interruptible(runtime, teardown, |runtime| {
-        runtime.call_function_immediate::<()>(
-            None,
-            "__rs2b0t_fire_tick_listeners",
-            json_args!(),
-        )?;
+        crate::bindings::event_callbacks::emit_no_args(
+            runtime,
+            crate::bindings::event_callbacks::BOT_TICK_EVENT,
+        )
+        .map_err(rustyscript::Error::Runtime)?;
         runtime.advance_event_loop(rustyscript::deno_core::PollEventLoopOptions::default())
     });
 }

@@ -584,6 +584,7 @@ fn dispatch_settings<'s>(
     let state = settings_state_for_scope(scope)
         .ok_or_else(|| cb::type_error(scope, "SettingsStore native state is not installed"))?;
     match operation.as_str() {
+        "resolve" => resolve_settings(scope, args.get(1)),
         "saved" => {
             let name = settings_string_arg(scope, args.get(1), "SettingsStore name")?;
             let key = settings_string_arg(scope, args.get(2), "SettingsStore key")?;
@@ -694,6 +695,54 @@ fn dispatch_settings<'s>(
         }
         _ => Err(cb::type_error(scope, "unknown SettingsStore operation")),
     }
+}
+
+fn resolve_settings<'s>(
+    scope: &mut v8::HandleScope<'s>,
+    schema: v8::Local<'s, v8::Value>,
+) -> JsResult<'s, v8::Local<'s, v8::Value>> {
+    let global = scope.get_current_context().global(scope);
+    let object_ctor = cb::get(scope, global.into(), "Object")?;
+    let schema = if schema.is_null_or_undefined() {
+        v8::Object::new(scope).into()
+    } else {
+        schema
+    };
+    let keys = cb::call_method(scope, object_ctor, "keys", &[schema], "Object.keys")?;
+    let keys = v8::Local::<v8::Array>::try_from(keys)
+        .map_err(|_| cb::type_error(scope, "SettingsStore schema keys are not an array"))?;
+    let host = cb::get(scope, global.into(), "__rs2b0t_host")?;
+    let host = if cb::truthy(scope, host) {
+        host
+    } else {
+        v8::Object::new(scope).into()
+    };
+    let bag = cb::get(scope, host, "settingsBag")?;
+    let bag = if cb::truthy(scope, bag) {
+        bag
+    } else {
+        v8::Object::new(scope).into()
+    };
+    let bag = bag
+        .to_object(scope)
+        .ok_or_else(|| cb::type_error(scope, "SettingsStore settings bag is not an object"))?;
+    let result = v8::Object::new(scope);
+    for index in 0..keys.length() {
+        let key = keys
+            .get_index(scope, index)
+            .ok_or_else(|| cb::type_error(scope, "SettingsStore schema key is unavailable"))?;
+        let key = v8::Local::<v8::String>::try_from(key)
+            .map_err(|_| cb::type_error(scope, "SettingsStore schema key is not a string"))?;
+        let key_value: v8::Local<v8::Value> = key.into();
+        let present = cb::catching(scope, |scope| bag.has_own_property(scope, key_value))?;
+        let value = if present {
+            cb::catching(scope, |scope| bag.get(scope, key_value))?
+        } else {
+            v8::null(scope).into()
+        };
+        cb::assign(scope, result.into(), key, value)?;
+    }
+    Ok(result.into())
 }
 
 fn settings_string_arg<'s>(
@@ -834,6 +883,48 @@ mod tests {
     }
 
     #[test]
+    fn native_settings_resolver_projects_only_present_own_values() {
+        let mut runtime = runtime();
+        let result: serde_json::Value = runtime
+            .eval(
+                r#"(() => {
+                    const inherited = { inherited: 'parent' };
+                    const bag = Object.create(inherited);
+                    bag.food = 'Shark';
+                    bag.enabled = false;
+                    globalThis.__rs2b0t_host = { settingsBag: bag };
+                    const schema = {
+                        food: { default: 'Lobster' },
+                        enabled: { default: true },
+                        missing: { default: 'none' },
+                        inherited: { default: 'not copied' },
+                    };
+                    const resolved = __rs2b0t_settings_store('resolve', schema);
+                    return {
+                        food: resolved.food,
+                        enabled: resolved.enabled,
+                        missing: resolved.missing,
+                        inherited: resolved.inherited,
+                        keys: Object.keys(resolved),
+                        empty: Object.keys(__rs2b0t_settings_store('resolve', null)).length === 0,
+                    };
+                })()"#,
+            )
+            .unwrap();
+        assert_eq!(
+            result,
+            serde_json::json!({
+                "food": "Shark",
+                "enabled": false,
+                "missing": null,
+                "inherited": null,
+                "keys": ["food", "enabled", "missing", "inherited"],
+                "empty": true,
+            })
+        );
+    }
+
+    #[test]
     fn native_settings_listener_storage_is_bounded_after_unsubscribe() {
         let mut runtime = runtime();
         runtime
@@ -850,5 +941,128 @@ mod tests {
         let listeners = state.listeners.borrow();
         assert_eq!(listeners.len(), 1);
         assert!(listeners.iter().all(|listener| listener.callback.is_none()));
+    }
+}
+
+#[cfg(all(test, feature = "memory-profile"))]
+mod settings_resolve_v8_tests {
+    use std::process::Command;
+
+    use rustyscript::deno_core::v8;
+    use rustyscript::{Runtime, RuntimeOptions};
+    use serde_json::json;
+
+    const FAST_CHILD: &str = "SCRIPT_SETTINGS_RESOLVE_FAST_TEST_CHILD";
+    const FAST_TEST: &str =
+        "lifecycle_v8::settings_resolve_v8_tests::settings_resolve_objects_have_fast_properties";
+    const HEAP_CHILD: &str = "SCRIPT_SETTINGS_RESOLVE_HEAP_TEST_CHILD";
+    const HEAP_TEST: &str =
+        "lifecycle_v8::settings_resolve_v8_tests::settings_resolve_objects_have_bounded_heap";
+    const SETUP: &str = r#"
+globalThis.__rs2b0t_host = { settingsBag: { food: 'Shark', enabled: false } };
+globalThis.__resolveSchema = {
+    food: { default: 'Lobster' },
+    enabled: { default: true },
+    missing: { default: 'none' },
+};
+"#;
+
+    fn setup() -> Runtime {
+        crate::platform::bootstrap_test_v8_platform();
+        let mut runtime = Runtime::new(RuntimeOptions::default()).unwrap();
+        super::install(&mut runtime, None).unwrap();
+        runtime.eval::<()>(SETUP).unwrap();
+        runtime
+    }
+
+    fn in_child(marker: &str, test_name: &str) -> bool {
+        if std::env::var_os(marker).is_some() {
+            return true;
+        }
+        let output = Command::new(std::env::current_exe().expect("test executable"))
+            .args(["--exact", test_name, "--nocapture"])
+            .env(marker, "1")
+            .output()
+            .expect("run isolated SettingsStore V8 test");
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(
+            output.status.success() && stdout.contains("1 passed"),
+            "isolated SettingsStore V8 test failed\nstdout: {stdout}\nstderr: {stderr}"
+        );
+        false
+    }
+
+    fn collected_used_heap(runtime: &mut Runtime) -> usize {
+        let isolate = runtime.deno_runtime().v8_isolate();
+        isolate.low_memory_notification();
+        isolate.get_heap_statistics().used_heap_size()
+    }
+
+    #[test]
+    fn settings_resolve_objects_have_fast_properties() {
+        if !in_child(FAST_CHILD, FAST_TEST) {
+            return;
+        }
+        v8::V8::set_flags_from_string("--allow-natives-syntax");
+        let mut runtime = setup();
+        let facts: serde_json::Value = runtime
+            .eval(
+                r#"
+(() => {
+    const hasFast = new Function('value', 'return %HasFastProperties(value)');
+    const haveSameMap = new Function('left', 'right', 'return %HaveSameMap(left, right)');
+    const first = __rs2b0t_settings_store('resolve', __resolveSchema);
+    const second = __rs2b0t_settings_store('resolve', __resolveSchema);
+    return {
+        fast: hasFast(first) && hasFast(second),
+        sameMap: haveSameMap(first, second),
+        keys: Object.keys(first),
+        values: [first.food, first.enabled, first.missing],
+        plain: Object.getPrototypeOf(first) === Object.prototype,
+    };
+})()
+"#,
+            )
+            .unwrap();
+        assert_eq!(
+            facts,
+            json!({
+                "fast": true,
+                "sameMap": true,
+                "keys": ["food", "enabled", "missing"],
+                "values": ["Shark", false, null],
+                "plain": true,
+            })
+        );
+    }
+
+    #[test]
+    fn settings_resolve_objects_have_bounded_heap() {
+        if !in_child(HEAP_CHILD, HEAP_TEST) {
+            return;
+        }
+        let mut runtime = setup();
+        runtime
+            .eval::<()>(
+                "for (let index = 0; index < 1000; index++) globalThis.__lastResolved = __rs2b0t_settings_store('resolve', __resolveSchema); globalThis.__lastResolved = null;",
+            )
+            .unwrap();
+        let baseline = collected_used_heap(&mut runtime);
+        runtime
+            .eval::<()>(
+                "for (let index = 0; index < 25000; index++) globalThis.__lastResolved = __rs2b0t_settings_store('resolve', __resolveSchema); globalThis.__lastResolved = null;",
+            )
+            .unwrap();
+        let after = collected_used_heap(&mut runtime);
+        let growth = after.saturating_sub(baseline);
+        const LIMIT: usize = 64 * 1024;
+        println!(
+            "SettingsStore resolve post-GC V8 heap baseline={baseline} after={after} growth={growth} limit={LIMIT}"
+        );
+        assert!(
+            growth <= LIMIT,
+            "repeated SettingsStore resolver calls grew post-GC V8 used heap by {growth} bytes; limit {LIMIT}"
+        );
     }
 }

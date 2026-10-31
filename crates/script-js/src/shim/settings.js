@@ -33,12 +33,11 @@ export class SettingsBag {
 
 class SettingsStoreImpl {
     resolve(_name, schema) {
-        const bag = (globalThis.__rs2b0t_host || {}).settingsBag || {};
-        const out = {};
-        for (const key of Object.keys(schema || {})) {
-            out[key] = Object.prototype.hasOwnProperty.call(bag, key) ? bag[key] : null;
+        const dispatch = globalThis.__rs2b0t_settings_store;
+        if (typeof dispatch !== 'function') {
+            throw new Error('SettingsStore native service is unavailable');
         }
-        return out;
+        return dispatch('resolve', schema);
     }
 
     displayString(_name, key, def) {
