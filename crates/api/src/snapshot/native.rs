@@ -1259,6 +1259,7 @@ mod tests {
             width: 0,
             height: 0,
             scroll_height: 0,
+            inventory_ready: false,
             scroll_position: 0,
             hidden: false,
             text: Some(text.into()),

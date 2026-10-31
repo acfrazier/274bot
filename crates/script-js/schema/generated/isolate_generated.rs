@@ -4430,6 +4430,476 @@ impl ::core::fmt::Debug for WidgetText<'_> {
       ds.finish()
   }
 }
+pub enum WidgetFactOffset {}
+#[derive(Copy, Clone, PartialEq)]
+
+pub struct WidgetFact<'a> {
+  pub _tab: ::flatbuffers::Table<'a>,
+}
+
+impl<'a> ::flatbuffers::Follow<'a> for WidgetFact<'a> {
+  type Inner = WidgetFact<'a>;
+  #[inline]
+  unsafe fn follow(buf: &'a [u8], loc: usize) -> Self::Inner {
+    Self { _tab: unsafe { ::flatbuffers::Table::new(buf, loc) } }
+  }
+}
+
+impl<'a> WidgetFact<'a> {
+  pub const VT_COMPONENT_ID: ::flatbuffers::VOffsetT = 4;
+  pub const VT_ROOT_COMPONENT_ID: ::flatbuffers::VOffsetT = 6;
+  pub const VT_PARENT_ID: ::flatbuffers::VOffsetT = 8;
+  pub const VT_COMPONENT_TYPE: ::flatbuffers::VOffsetT = 10;
+  pub const VT_BUTTON_TYPE: ::flatbuffers::VOffsetT = 12;
+  pub const VT_CLIENT_CODE: ::flatbuffers::VOffsetT = 14;
+  pub const VT_X: ::flatbuffers::VOffsetT = 16;
+  pub const VT_Y: ::flatbuffers::VOffsetT = 18;
+  pub const VT_WIDTH: ::flatbuffers::VOffsetT = 20;
+  pub const VT_HEIGHT: ::flatbuffers::VOffsetT = 22;
+  pub const VT_HIDDEN: ::flatbuffers::VOffsetT = 24;
+  pub const VT_TEXT: ::flatbuffers::VOffsetT = 26;
+  pub const VT_ALTERNATE_TEXT: ::flatbuffers::VOffsetT = 28;
+  pub const VT_BUTTON_TEXT: ::flatbuffers::VOffsetT = 30;
+  pub const VT_TARGET_BASE: ::flatbuffers::VOffsetT = 32;
+  pub const VT_MODEL_TYPE: ::flatbuffers::VOffsetT = 34;
+  pub const VT_MODEL_ID: ::flatbuffers::VOffsetT = 36;
+  pub const VT_SCRIPT_OPCODE: ::flatbuffers::VOffsetT = 38;
+  pub const VT_SCRIPT_VARP: ::flatbuffers::VOffsetT = 40;
+  pub const VT_SCRIPT_VALUE: ::flatbuffers::VOffsetT = 42;
+  pub const VT_COLOUR: ::flatbuffers::VOffsetT = 44;
+  pub const VT_INVENTORY_READY: ::flatbuffers::VOffsetT = 46;
+  pub const VT_ITEMS: ::flatbuffers::VOffsetT = 48;
+
+  #[inline]
+  pub unsafe fn init_from_table(table: ::flatbuffers::Table<'a>) -> Self {
+    WidgetFact { _tab: table }
+  }
+  #[allow(unused_mut)]
+  pub fn create<'bldr: 'args, 'args: 'mut_bldr, 'mut_bldr, A: ::flatbuffers::Allocator + 'bldr>(
+    _fbb: &'mut_bldr mut ::flatbuffers::FlatBufferBuilder<'bldr, A>,
+    args: &'args WidgetFactArgs<'args>
+  ) -> ::flatbuffers::WIPOffset<WidgetFact<'bldr>> {
+    let mut builder = WidgetFactBuilder::new(_fbb);
+    if let Some(x) = args.items { builder.add_items(x); }
+    builder.add_colour(args.colour);
+    builder.add_script_value(args.script_value);
+    builder.add_script_varp(args.script_varp);
+    builder.add_script_opcode(args.script_opcode);
+    builder.add_model_id(args.model_id);
+    builder.add_model_type(args.model_type);
+    if let Some(x) = args.target_base { builder.add_target_base(x); }
+    if let Some(x) = args.button_text { builder.add_button_text(x); }
+    if let Some(x) = args.alternate_text { builder.add_alternate_text(x); }
+    if let Some(x) = args.text { builder.add_text(x); }
+    builder.add_height(args.height);
+    builder.add_width(args.width);
+    builder.add_y(args.y);
+    builder.add_x(args.x);
+    builder.add_client_code(args.client_code);
+    builder.add_button_type(args.button_type);
+    builder.add_component_type(args.component_type);
+    builder.add_parent_id(args.parent_id);
+    builder.add_root_component_id(args.root_component_id);
+    builder.add_component_id(args.component_id);
+    builder.add_inventory_ready(args.inventory_ready);
+    builder.add_hidden(args.hidden);
+    builder.finish()
+  }
+
+
+  #[inline]
+  pub fn component_id(&self) -> i32 {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<i32>(WidgetFact::VT_COMPONENT_ID, Some(0)).unwrap()}
+  }
+  #[inline]
+  pub fn root_component_id(&self) -> i32 {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<i32>(WidgetFact::VT_ROOT_COMPONENT_ID, Some(0)).unwrap()}
+  }
+  #[inline]
+  pub fn parent_id(&self) -> i32 {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<i32>(WidgetFact::VT_PARENT_ID, Some(-1)).unwrap()}
+  }
+  #[inline]
+  pub fn component_type(&self) -> i32 {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<i32>(WidgetFact::VT_COMPONENT_TYPE, Some(0)).unwrap()}
+  }
+  #[inline]
+  pub fn button_type(&self) -> i32 {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<i32>(WidgetFact::VT_BUTTON_TYPE, Some(0)).unwrap()}
+  }
+  #[inline]
+  pub fn client_code(&self) -> i32 {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<i32>(WidgetFact::VT_CLIENT_CODE, Some(0)).unwrap()}
+  }
+  #[inline]
+  pub fn x(&self) -> i32 {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<i32>(WidgetFact::VT_X, Some(0)).unwrap()}
+  }
+  #[inline]
+  pub fn y(&self) -> i32 {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<i32>(WidgetFact::VT_Y, Some(0)).unwrap()}
+  }
+  #[inline]
+  pub fn width(&self) -> i32 {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<i32>(WidgetFact::VT_WIDTH, Some(0)).unwrap()}
+  }
+  #[inline]
+  pub fn height(&self) -> i32 {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<i32>(WidgetFact::VT_HEIGHT, Some(0)).unwrap()}
+  }
+  #[inline]
+  pub fn hidden(&self) -> bool {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<bool>(WidgetFact::VT_HIDDEN, Some(false)).unwrap()}
+  }
+  #[inline]
+  pub fn text(&self) -> Option<&'a str> {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<::flatbuffers::ForwardsUOffset<&str>>(WidgetFact::VT_TEXT, None)}
+  }
+  #[inline]
+  pub fn alternate_text(&self) -> Option<&'a str> {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<::flatbuffers::ForwardsUOffset<&str>>(WidgetFact::VT_ALTERNATE_TEXT, None)}
+  }
+  #[inline]
+  pub fn button_text(&self) -> Option<&'a str> {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<::flatbuffers::ForwardsUOffset<&str>>(WidgetFact::VT_BUTTON_TEXT, None)}
+  }
+  #[inline]
+  pub fn target_base(&self) -> Option<&'a str> {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<::flatbuffers::ForwardsUOffset<&str>>(WidgetFact::VT_TARGET_BASE, None)}
+  }
+  #[inline]
+  pub fn model_type(&self) -> i32 {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<i32>(WidgetFact::VT_MODEL_TYPE, Some(0)).unwrap()}
+  }
+  #[inline]
+  pub fn model_id(&self) -> i32 {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<i32>(WidgetFact::VT_MODEL_ID, Some(0)).unwrap()}
+  }
+  #[inline]
+  pub fn script_opcode(&self) -> i32 {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<i32>(WidgetFact::VT_SCRIPT_OPCODE, Some(-1)).unwrap()}
+  }
+  #[inline]
+  pub fn script_varp(&self) -> i32 {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<i32>(WidgetFact::VT_SCRIPT_VARP, Some(-1)).unwrap()}
+  }
+  #[inline]
+  pub fn script_value(&self) -> i32 {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<i32>(WidgetFact::VT_SCRIPT_VALUE, Some(-1)).unwrap()}
+  }
+  #[inline]
+  pub fn colour(&self) -> i32 {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<i32>(WidgetFact::VT_COLOUR, Some(0)).unwrap()}
+  }
+  #[inline]
+  pub fn inventory_ready(&self) -> bool {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<bool>(WidgetFact::VT_INVENTORY_READY, Some(false)).unwrap()}
+  }
+  #[inline]
+  pub fn items(&self) -> Option<::flatbuffers::Vector<'a, ::flatbuffers::ForwardsUOffset<Row<'a>>>> {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<::flatbuffers::ForwardsUOffset<::flatbuffers::Vector<'a, ::flatbuffers::ForwardsUOffset<Row>>>>(WidgetFact::VT_ITEMS, None)}
+  }
+}
+
+impl ::flatbuffers::Verifiable for WidgetFact<'_> {
+  #[inline]
+  fn run_verifier(
+    v: &mut ::flatbuffers::Verifier, pos: usize
+  ) -> Result<(), ::flatbuffers::InvalidFlatbuffer> {
+    v.visit_table(pos)?
+     .visit_field::<i32>("component_id", Self::VT_COMPONENT_ID, false)?
+     .visit_field::<i32>("root_component_id", Self::VT_ROOT_COMPONENT_ID, false)?
+     .visit_field::<i32>("parent_id", Self::VT_PARENT_ID, false)?
+     .visit_field::<i32>("component_type", Self::VT_COMPONENT_TYPE, false)?
+     .visit_field::<i32>("button_type", Self::VT_BUTTON_TYPE, false)?
+     .visit_field::<i32>("client_code", Self::VT_CLIENT_CODE, false)?
+     .visit_field::<i32>("x", Self::VT_X, false)?
+     .visit_field::<i32>("y", Self::VT_Y, false)?
+     .visit_field::<i32>("width", Self::VT_WIDTH, false)?
+     .visit_field::<i32>("height", Self::VT_HEIGHT, false)?
+     .visit_field::<bool>("hidden", Self::VT_HIDDEN, false)?
+     .visit_field::<::flatbuffers::ForwardsUOffset<&str>>("text", Self::VT_TEXT, false)?
+     .visit_field::<::flatbuffers::ForwardsUOffset<&str>>("alternate_text", Self::VT_ALTERNATE_TEXT, false)?
+     .visit_field::<::flatbuffers::ForwardsUOffset<&str>>("button_text", Self::VT_BUTTON_TEXT, false)?
+     .visit_field::<::flatbuffers::ForwardsUOffset<&str>>("target_base", Self::VT_TARGET_BASE, false)?
+     .visit_field::<i32>("model_type", Self::VT_MODEL_TYPE, false)?
+     .visit_field::<i32>("model_id", Self::VT_MODEL_ID, false)?
+     .visit_field::<i32>("script_opcode", Self::VT_SCRIPT_OPCODE, false)?
+     .visit_field::<i32>("script_varp", Self::VT_SCRIPT_VARP, false)?
+     .visit_field::<i32>("script_value", Self::VT_SCRIPT_VALUE, false)?
+     .visit_field::<i32>("colour", Self::VT_COLOUR, false)?
+     .visit_field::<bool>("inventory_ready", Self::VT_INVENTORY_READY, false)?
+     .visit_field::<::flatbuffers::ForwardsUOffset<::flatbuffers::Vector<'_, ::flatbuffers::ForwardsUOffset<Row>>>>("items", Self::VT_ITEMS, false)?
+     .finish();
+    Ok(())
+  }
+}
+pub struct WidgetFactArgs<'a> {
+    pub component_id: i32,
+    pub root_component_id: i32,
+    pub parent_id: i32,
+    pub component_type: i32,
+    pub button_type: i32,
+    pub client_code: i32,
+    pub x: i32,
+    pub y: i32,
+    pub width: i32,
+    pub height: i32,
+    pub hidden: bool,
+    pub text: Option<::flatbuffers::WIPOffset<&'a str>>,
+    pub alternate_text: Option<::flatbuffers::WIPOffset<&'a str>>,
+    pub button_text: Option<::flatbuffers::WIPOffset<&'a str>>,
+    pub target_base: Option<::flatbuffers::WIPOffset<&'a str>>,
+    pub model_type: i32,
+    pub model_id: i32,
+    pub script_opcode: i32,
+    pub script_varp: i32,
+    pub script_value: i32,
+    pub colour: i32,
+    pub inventory_ready: bool,
+    pub items: Option<::flatbuffers::WIPOffset<::flatbuffers::Vector<'a, ::flatbuffers::ForwardsUOffset<Row<'a>>>>>,
+}
+impl<'a> Default for WidgetFactArgs<'a> {
+  #[inline]
+  fn default() -> Self {
+    WidgetFactArgs {
+      component_id: 0,
+      root_component_id: 0,
+      parent_id: -1,
+      component_type: 0,
+      button_type: 0,
+      client_code: 0,
+      x: 0,
+      y: 0,
+      width: 0,
+      height: 0,
+      hidden: false,
+      text: None,
+      alternate_text: None,
+      button_text: None,
+      target_base: None,
+      model_type: 0,
+      model_id: 0,
+      script_opcode: -1,
+      script_varp: -1,
+      script_value: -1,
+      colour: 0,
+      inventory_ready: false,
+      items: None,
+    }
+  }
+}
+
+pub struct WidgetFactBuilder<'a: 'b, 'b, A: ::flatbuffers::Allocator + 'a> {
+  fbb_: &'b mut ::flatbuffers::FlatBufferBuilder<'a, A>,
+  start_: ::flatbuffers::WIPOffset<::flatbuffers::TableUnfinishedWIPOffset>,
+}
+impl<'a: 'b, 'b, A: ::flatbuffers::Allocator + 'a> WidgetFactBuilder<'a, 'b, A> {
+  #[inline]
+  pub fn add_component_id(&mut self, component_id: i32) {
+    self.fbb_.push_slot::<i32>(WidgetFact::VT_COMPONENT_ID, component_id, 0);
+  }
+  #[inline]
+  pub fn add_root_component_id(&mut self, root_component_id: i32) {
+    self.fbb_.push_slot::<i32>(WidgetFact::VT_ROOT_COMPONENT_ID, root_component_id, 0);
+  }
+  #[inline]
+  pub fn add_parent_id(&mut self, parent_id: i32) {
+    self.fbb_.push_slot::<i32>(WidgetFact::VT_PARENT_ID, parent_id, -1);
+  }
+  #[inline]
+  pub fn add_component_type(&mut self, component_type: i32) {
+    self.fbb_.push_slot::<i32>(WidgetFact::VT_COMPONENT_TYPE, component_type, 0);
+  }
+  #[inline]
+  pub fn add_button_type(&mut self, button_type: i32) {
+    self.fbb_.push_slot::<i32>(WidgetFact::VT_BUTTON_TYPE, button_type, 0);
+  }
+  #[inline]
+  pub fn add_client_code(&mut self, client_code: i32) {
+    self.fbb_.push_slot::<i32>(WidgetFact::VT_CLIENT_CODE, client_code, 0);
+  }
+  #[inline]
+  pub fn add_x(&mut self, x: i32) {
+    self.fbb_.push_slot::<i32>(WidgetFact::VT_X, x, 0);
+  }
+  #[inline]
+  pub fn add_y(&mut self, y: i32) {
+    self.fbb_.push_slot::<i32>(WidgetFact::VT_Y, y, 0);
+  }
+  #[inline]
+  pub fn add_width(&mut self, width: i32) {
+    self.fbb_.push_slot::<i32>(WidgetFact::VT_WIDTH, width, 0);
+  }
+  #[inline]
+  pub fn add_height(&mut self, height: i32) {
+    self.fbb_.push_slot::<i32>(WidgetFact::VT_HEIGHT, height, 0);
+  }
+  #[inline]
+  pub fn add_hidden(&mut self, hidden: bool) {
+    self.fbb_.push_slot::<bool>(WidgetFact::VT_HIDDEN, hidden, false);
+  }
+  #[inline]
+  pub fn add_text(&mut self, text: ::flatbuffers::WIPOffset<&'b  str>) {
+    self.fbb_.push_slot_always::<::flatbuffers::WIPOffset<_>>(WidgetFact::VT_TEXT, text);
+  }
+  #[inline]
+  pub fn add_alternate_text(&mut self, alternate_text: ::flatbuffers::WIPOffset<&'b  str>) {
+    self.fbb_.push_slot_always::<::flatbuffers::WIPOffset<_>>(WidgetFact::VT_ALTERNATE_TEXT, alternate_text);
+  }
+  #[inline]
+  pub fn add_button_text(&mut self, button_text: ::flatbuffers::WIPOffset<&'b  str>) {
+    self.fbb_.push_slot_always::<::flatbuffers::WIPOffset<_>>(WidgetFact::VT_BUTTON_TEXT, button_text);
+  }
+  #[inline]
+  pub fn add_target_base(&mut self, target_base: ::flatbuffers::WIPOffset<&'b  str>) {
+    self.fbb_.push_slot_always::<::flatbuffers::WIPOffset<_>>(WidgetFact::VT_TARGET_BASE, target_base);
+  }
+  #[inline]
+  pub fn add_model_type(&mut self, model_type: i32) {
+    self.fbb_.push_slot::<i32>(WidgetFact::VT_MODEL_TYPE, model_type, 0);
+  }
+  #[inline]
+  pub fn add_model_id(&mut self, model_id: i32) {
+    self.fbb_.push_slot::<i32>(WidgetFact::VT_MODEL_ID, model_id, 0);
+  }
+  #[inline]
+  pub fn add_script_opcode(&mut self, script_opcode: i32) {
+    self.fbb_.push_slot::<i32>(WidgetFact::VT_SCRIPT_OPCODE, script_opcode, -1);
+  }
+  #[inline]
+  pub fn add_script_varp(&mut self, script_varp: i32) {
+    self.fbb_.push_slot::<i32>(WidgetFact::VT_SCRIPT_VARP, script_varp, -1);
+  }
+  #[inline]
+  pub fn add_script_value(&mut self, script_value: i32) {
+    self.fbb_.push_slot::<i32>(WidgetFact::VT_SCRIPT_VALUE, script_value, -1);
+  }
+  #[inline]
+  pub fn add_colour(&mut self, colour: i32) {
+    self.fbb_.push_slot::<i32>(WidgetFact::VT_COLOUR, colour, 0);
+  }
+  #[inline]
+  pub fn add_inventory_ready(&mut self, inventory_ready: bool) {
+    self.fbb_.push_slot::<bool>(WidgetFact::VT_INVENTORY_READY, inventory_ready, false);
+  }
+  #[inline]
+  pub fn add_items(&mut self, items: ::flatbuffers::WIPOffset<::flatbuffers::Vector<'b , ::flatbuffers::ForwardsUOffset<Row<'b >>>>) {
+    self.fbb_.push_slot_always::<::flatbuffers::WIPOffset<_>>(WidgetFact::VT_ITEMS, items);
+  }
+  #[inline]
+  pub fn new(_fbb: &'b mut ::flatbuffers::FlatBufferBuilder<'a, A>) -> WidgetFactBuilder<'a, 'b, A> {
+    let start = _fbb.start_table();
+    WidgetFactBuilder {
+      fbb_: _fbb,
+      start_: start,
+    }
+  }
+  #[inline]
+  pub fn finish(self) -> ::flatbuffers::WIPOffset<WidgetFact<'a>> {
+    let o = self.fbb_.end_table(self.start_);
+    ::flatbuffers::WIPOffset::new(o.value())
+  }
+}
+
+impl ::core::fmt::Debug for WidgetFact<'_> {
+  fn fmt(&self, f: &mut ::core::fmt::Formatter<'_>) -> ::core::fmt::Result {
+    let mut ds = f.debug_struct("WidgetFact");
+      ds.field("component_id", &self.component_id());
+      ds.field("root_component_id", &self.root_component_id());
+      ds.field("parent_id", &self.parent_id());
+      ds.field("component_type", &self.component_type());
+      ds.field("button_type", &self.button_type());
+      ds.field("client_code", &self.client_code());
+      ds.field("x", &self.x());
+      ds.field("y", &self.y());
+      ds.field("width", &self.width());
+      ds.field("height", &self.height());
+      ds.field("hidden", &self.hidden());
+      ds.field("text", &self.text());
+      ds.field("alternate_text", &self.alternate_text());
+      ds.field("button_text", &self.button_text());
+      ds.field("target_base", &self.target_base());
+      ds.field("model_type", &self.model_type());
+      ds.field("model_id", &self.model_id());
+      ds.field("script_opcode", &self.script_opcode());
+      ds.field("script_varp", &self.script_varp());
+      ds.field("script_value", &self.script_value());
+      ds.field("colour", &self.colour());
+      ds.field("inventory_ready", &self.inventory_ready());
+      ds.field("items", &self.items());
+      ds.finish()
+  }
+}
 pub enum QuestStatusOffset {}
 #[derive(Copy, Clone, PartialEq)]
 
@@ -4670,6 +5140,1104 @@ impl ::core::fmt::Debug for MainModalTexts<'_> {
     let mut ds = f.debug_struct("MainModalTexts");
       ds.field("root", &self.root());
       ds.field("texts", &self.texts());
+      ds.finish()
+  }
+}
+pub enum ChatModalTextsOffset {}
+#[derive(Copy, Clone, PartialEq)]
+
+pub struct ChatModalTexts<'a> {
+  pub _tab: ::flatbuffers::Table<'a>,
+}
+
+impl<'a> ::flatbuffers::Follow<'a> for ChatModalTexts<'a> {
+  type Inner = ChatModalTexts<'a>;
+  #[inline]
+  unsafe fn follow(buf: &'a [u8], loc: usize) -> Self::Inner {
+    Self { _tab: unsafe { ::flatbuffers::Table::new(buf, loc) } }
+  }
+}
+
+impl<'a> ChatModalTexts<'a> {
+  pub const VT_ROOT: ::flatbuffers::VOffsetT = 4;
+  pub const VT_TEXTS: ::flatbuffers::VOffsetT = 6;
+
+  #[inline]
+  pub unsafe fn init_from_table(table: ::flatbuffers::Table<'a>) -> Self {
+    ChatModalTexts { _tab: table }
+  }
+  #[allow(unused_mut)]
+  pub fn create<'bldr: 'args, 'args: 'mut_bldr, 'mut_bldr, A: ::flatbuffers::Allocator + 'bldr>(
+    _fbb: &'mut_bldr mut ::flatbuffers::FlatBufferBuilder<'bldr, A>,
+    args: &'args ChatModalTextsArgs<'args>
+  ) -> ::flatbuffers::WIPOffset<ChatModalTexts<'bldr>> {
+    let mut builder = ChatModalTextsBuilder::new(_fbb);
+    if let Some(x) = args.texts { builder.add_texts(x); }
+    builder.add_root(args.root);
+    builder.finish()
+  }
+
+
+  #[inline]
+  pub fn root(&self) -> i32 {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<i32>(ChatModalTexts::VT_ROOT, Some(-1)).unwrap()}
+  }
+  #[inline]
+  pub fn texts(&self) -> Option<::flatbuffers::Vector<'a, ::flatbuffers::ForwardsUOffset<&'a str>>> {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<::flatbuffers::ForwardsUOffset<::flatbuffers::Vector<'a, ::flatbuffers::ForwardsUOffset<&'a str>>>>(ChatModalTexts::VT_TEXTS, None)}
+  }
+}
+
+impl ::flatbuffers::Verifiable for ChatModalTexts<'_> {
+  #[inline]
+  fn run_verifier(
+    v: &mut ::flatbuffers::Verifier, pos: usize
+  ) -> Result<(), ::flatbuffers::InvalidFlatbuffer> {
+    v.visit_table(pos)?
+     .visit_field::<i32>("root", Self::VT_ROOT, false)?
+     .visit_field::<::flatbuffers::ForwardsUOffset<::flatbuffers::Vector<'_, ::flatbuffers::ForwardsUOffset<&'_ str>>>>("texts", Self::VT_TEXTS, false)?
+     .finish();
+    Ok(())
+  }
+}
+pub struct ChatModalTextsArgs<'a> {
+    pub root: i32,
+    pub texts: Option<::flatbuffers::WIPOffset<::flatbuffers::Vector<'a, ::flatbuffers::ForwardsUOffset<&'a str>>>>,
+}
+impl<'a> Default for ChatModalTextsArgs<'a> {
+  #[inline]
+  fn default() -> Self {
+    ChatModalTextsArgs {
+      root: -1,
+      texts: None,
+    }
+  }
+}
+
+pub struct ChatModalTextsBuilder<'a: 'b, 'b, A: ::flatbuffers::Allocator + 'a> {
+  fbb_: &'b mut ::flatbuffers::FlatBufferBuilder<'a, A>,
+  start_: ::flatbuffers::WIPOffset<::flatbuffers::TableUnfinishedWIPOffset>,
+}
+impl<'a: 'b, 'b, A: ::flatbuffers::Allocator + 'a> ChatModalTextsBuilder<'a, 'b, A> {
+  #[inline]
+  pub fn add_root(&mut self, root: i32) {
+    self.fbb_.push_slot::<i32>(ChatModalTexts::VT_ROOT, root, -1);
+  }
+  #[inline]
+  pub fn add_texts(&mut self, texts: ::flatbuffers::WIPOffset<::flatbuffers::Vector<'b , ::flatbuffers::ForwardsUOffset<&'b  str>>>) {
+    self.fbb_.push_slot_always::<::flatbuffers::WIPOffset<_>>(ChatModalTexts::VT_TEXTS, texts);
+  }
+  #[inline]
+  pub fn new(_fbb: &'b mut ::flatbuffers::FlatBufferBuilder<'a, A>) -> ChatModalTextsBuilder<'a, 'b, A> {
+    let start = _fbb.start_table();
+    ChatModalTextsBuilder {
+      fbb_: _fbb,
+      start_: start,
+    }
+  }
+  #[inline]
+  pub fn finish(self) -> ::flatbuffers::WIPOffset<ChatModalTexts<'a>> {
+    let o = self.fbb_.end_table(self.start_);
+    ::flatbuffers::WIPOffset::new(o.value())
+  }
+}
+
+impl ::core::fmt::Debug for ChatModalTexts<'_> {
+  fn fmt(&self, f: &mut ::core::fmt::Formatter<'_>) -> ::core::fmt::Result {
+    let mut ds = f.debug_struct("ChatModalTexts");
+      ds.field("root", &self.root());
+      ds.field("texts", &self.texts());
+      ds.finish()
+  }
+}
+pub enum ProjectionLocOffset {}
+#[derive(Copy, Clone, PartialEq)]
+
+pub struct ProjectionLoc<'a> {
+  pub _tab: ::flatbuffers::Table<'a>,
+}
+
+impl<'a> ::flatbuffers::Follow<'a> for ProjectionLoc<'a> {
+  type Inner = ProjectionLoc<'a>;
+  #[inline]
+  unsafe fn follow(buf: &'a [u8], loc: usize) -> Self::Inner {
+    Self { _tab: unsafe { ::flatbuffers::Table::new(buf, loc) } }
+  }
+}
+
+impl<'a> ProjectionLoc<'a> {
+  pub const VT_ID: ::flatbuffers::VOffsetT = 4;
+  pub const VT_NAME: ::flatbuffers::VOffsetT = 6;
+  pub const VT_RANK: ::flatbuffers::VOffsetT = 8;
+  pub const VT_LEVEL: ::flatbuffers::VOffsetT = 10;
+  pub const VT_MIN_TILE_X: ::flatbuffers::VOffsetT = 12;
+  pub const VT_MAX_TILE_X: ::flatbuffers::VOffsetT = 14;
+  pub const VT_MIN_TILE_Z: ::flatbuffers::VOffsetT = 16;
+  pub const VT_MAX_TILE_Z: ::flatbuffers::VOffsetT = 18;
+  pub const VT_SCENE_X: ::flatbuffers::VOffsetT = 20;
+  pub const VT_SCENE_Z: ::flatbuffers::VOffsetT = 22;
+  pub const VT_HALF_WIDTH: ::flatbuffers::VOffsetT = 24;
+  pub const VT_HALF_LENGTH: ::flatbuffers::VOffsetT = 26;
+  pub const VT_TOP_HEIGHT: ::flatbuffers::VOffsetT = 28;
+
+  #[inline]
+  pub unsafe fn init_from_table(table: ::flatbuffers::Table<'a>) -> Self {
+    ProjectionLoc { _tab: table }
+  }
+  #[allow(unused_mut)]
+  pub fn create<'bldr: 'args, 'args: 'mut_bldr, 'mut_bldr, A: ::flatbuffers::Allocator + 'bldr>(
+    _fbb: &'mut_bldr mut ::flatbuffers::FlatBufferBuilder<'bldr, A>,
+    args: &'args ProjectionLocArgs<'args>
+  ) -> ::flatbuffers::WIPOffset<ProjectionLoc<'bldr>> {
+    let mut builder = ProjectionLocBuilder::new(_fbb);
+    builder.add_top_height(args.top_height);
+    builder.add_half_length(args.half_length);
+    builder.add_half_width(args.half_width);
+    builder.add_scene_z(args.scene_z);
+    builder.add_scene_x(args.scene_x);
+    builder.add_max_tile_z(args.max_tile_z);
+    builder.add_min_tile_z(args.min_tile_z);
+    builder.add_max_tile_x(args.max_tile_x);
+    builder.add_min_tile_x(args.min_tile_x);
+    builder.add_level(args.level);
+    builder.add_rank(args.rank);
+    if let Some(x) = args.name { builder.add_name(x); }
+    builder.add_id(args.id);
+    builder.finish()
+  }
+
+
+  #[inline]
+  pub fn id(&self) -> i32 {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<i32>(ProjectionLoc::VT_ID, Some(0)).unwrap()}
+  }
+  #[inline]
+  pub fn name(&self) -> Option<&'a str> {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<::flatbuffers::ForwardsUOffset<&str>>(ProjectionLoc::VT_NAME, None)}
+  }
+  #[inline]
+  pub fn rank(&self) -> i32 {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<i32>(ProjectionLoc::VT_RANK, Some(0)).unwrap()}
+  }
+  #[inline]
+  pub fn level(&self) -> i32 {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<i32>(ProjectionLoc::VT_LEVEL, Some(0)).unwrap()}
+  }
+  #[inline]
+  pub fn min_tile_x(&self) -> i32 {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<i32>(ProjectionLoc::VT_MIN_TILE_X, Some(0)).unwrap()}
+  }
+  #[inline]
+  pub fn max_tile_x(&self) -> i32 {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<i32>(ProjectionLoc::VT_MAX_TILE_X, Some(0)).unwrap()}
+  }
+  #[inline]
+  pub fn min_tile_z(&self) -> i32 {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<i32>(ProjectionLoc::VT_MIN_TILE_Z, Some(0)).unwrap()}
+  }
+  #[inline]
+  pub fn max_tile_z(&self) -> i32 {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<i32>(ProjectionLoc::VT_MAX_TILE_Z, Some(0)).unwrap()}
+  }
+  #[inline]
+  pub fn scene_x(&self) -> i32 {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<i32>(ProjectionLoc::VT_SCENE_X, Some(0)).unwrap()}
+  }
+  #[inline]
+  pub fn scene_z(&self) -> i32 {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<i32>(ProjectionLoc::VT_SCENE_Z, Some(0)).unwrap()}
+  }
+  #[inline]
+  pub fn half_width(&self) -> i32 {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<i32>(ProjectionLoc::VT_HALF_WIDTH, Some(0)).unwrap()}
+  }
+  #[inline]
+  pub fn half_length(&self) -> i32 {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<i32>(ProjectionLoc::VT_HALF_LENGTH, Some(0)).unwrap()}
+  }
+  #[inline]
+  pub fn top_height(&self) -> i32 {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<i32>(ProjectionLoc::VT_TOP_HEIGHT, Some(0)).unwrap()}
+  }
+}
+
+impl ::flatbuffers::Verifiable for ProjectionLoc<'_> {
+  #[inline]
+  fn run_verifier(
+    v: &mut ::flatbuffers::Verifier, pos: usize
+  ) -> Result<(), ::flatbuffers::InvalidFlatbuffer> {
+    v.visit_table(pos)?
+     .visit_field::<i32>("id", Self::VT_ID, false)?
+     .visit_field::<::flatbuffers::ForwardsUOffset<&str>>("name", Self::VT_NAME, false)?
+     .visit_field::<i32>("rank", Self::VT_RANK, false)?
+     .visit_field::<i32>("level", Self::VT_LEVEL, false)?
+     .visit_field::<i32>("min_tile_x", Self::VT_MIN_TILE_X, false)?
+     .visit_field::<i32>("max_tile_x", Self::VT_MAX_TILE_X, false)?
+     .visit_field::<i32>("min_tile_z", Self::VT_MIN_TILE_Z, false)?
+     .visit_field::<i32>("max_tile_z", Self::VT_MAX_TILE_Z, false)?
+     .visit_field::<i32>("scene_x", Self::VT_SCENE_X, false)?
+     .visit_field::<i32>("scene_z", Self::VT_SCENE_Z, false)?
+     .visit_field::<i32>("half_width", Self::VT_HALF_WIDTH, false)?
+     .visit_field::<i32>("half_length", Self::VT_HALF_LENGTH, false)?
+     .visit_field::<i32>("top_height", Self::VT_TOP_HEIGHT, false)?
+     .finish();
+    Ok(())
+  }
+}
+pub struct ProjectionLocArgs<'a> {
+    pub id: i32,
+    pub name: Option<::flatbuffers::WIPOffset<&'a str>>,
+    pub rank: i32,
+    pub level: i32,
+    pub min_tile_x: i32,
+    pub max_tile_x: i32,
+    pub min_tile_z: i32,
+    pub max_tile_z: i32,
+    pub scene_x: i32,
+    pub scene_z: i32,
+    pub half_width: i32,
+    pub half_length: i32,
+    pub top_height: i32,
+}
+impl<'a> Default for ProjectionLocArgs<'a> {
+  #[inline]
+  fn default() -> Self {
+    ProjectionLocArgs {
+      id: 0,
+      name: None,
+      rank: 0,
+      level: 0,
+      min_tile_x: 0,
+      max_tile_x: 0,
+      min_tile_z: 0,
+      max_tile_z: 0,
+      scene_x: 0,
+      scene_z: 0,
+      half_width: 0,
+      half_length: 0,
+      top_height: 0,
+    }
+  }
+}
+
+pub struct ProjectionLocBuilder<'a: 'b, 'b, A: ::flatbuffers::Allocator + 'a> {
+  fbb_: &'b mut ::flatbuffers::FlatBufferBuilder<'a, A>,
+  start_: ::flatbuffers::WIPOffset<::flatbuffers::TableUnfinishedWIPOffset>,
+}
+impl<'a: 'b, 'b, A: ::flatbuffers::Allocator + 'a> ProjectionLocBuilder<'a, 'b, A> {
+  #[inline]
+  pub fn add_id(&mut self, id: i32) {
+    self.fbb_.push_slot::<i32>(ProjectionLoc::VT_ID, id, 0);
+  }
+  #[inline]
+  pub fn add_name(&mut self, name: ::flatbuffers::WIPOffset<&'b  str>) {
+    self.fbb_.push_slot_always::<::flatbuffers::WIPOffset<_>>(ProjectionLoc::VT_NAME, name);
+  }
+  #[inline]
+  pub fn add_rank(&mut self, rank: i32) {
+    self.fbb_.push_slot::<i32>(ProjectionLoc::VT_RANK, rank, 0);
+  }
+  #[inline]
+  pub fn add_level(&mut self, level: i32) {
+    self.fbb_.push_slot::<i32>(ProjectionLoc::VT_LEVEL, level, 0);
+  }
+  #[inline]
+  pub fn add_min_tile_x(&mut self, min_tile_x: i32) {
+    self.fbb_.push_slot::<i32>(ProjectionLoc::VT_MIN_TILE_X, min_tile_x, 0);
+  }
+  #[inline]
+  pub fn add_max_tile_x(&mut self, max_tile_x: i32) {
+    self.fbb_.push_slot::<i32>(ProjectionLoc::VT_MAX_TILE_X, max_tile_x, 0);
+  }
+  #[inline]
+  pub fn add_min_tile_z(&mut self, min_tile_z: i32) {
+    self.fbb_.push_slot::<i32>(ProjectionLoc::VT_MIN_TILE_Z, min_tile_z, 0);
+  }
+  #[inline]
+  pub fn add_max_tile_z(&mut self, max_tile_z: i32) {
+    self.fbb_.push_slot::<i32>(ProjectionLoc::VT_MAX_TILE_Z, max_tile_z, 0);
+  }
+  #[inline]
+  pub fn add_scene_x(&mut self, scene_x: i32) {
+    self.fbb_.push_slot::<i32>(ProjectionLoc::VT_SCENE_X, scene_x, 0);
+  }
+  #[inline]
+  pub fn add_scene_z(&mut self, scene_z: i32) {
+    self.fbb_.push_slot::<i32>(ProjectionLoc::VT_SCENE_Z, scene_z, 0);
+  }
+  #[inline]
+  pub fn add_half_width(&mut self, half_width: i32) {
+    self.fbb_.push_slot::<i32>(ProjectionLoc::VT_HALF_WIDTH, half_width, 0);
+  }
+  #[inline]
+  pub fn add_half_length(&mut self, half_length: i32) {
+    self.fbb_.push_slot::<i32>(ProjectionLoc::VT_HALF_LENGTH, half_length, 0);
+  }
+  #[inline]
+  pub fn add_top_height(&mut self, top_height: i32) {
+    self.fbb_.push_slot::<i32>(ProjectionLoc::VT_TOP_HEIGHT, top_height, 0);
+  }
+  #[inline]
+  pub fn new(_fbb: &'b mut ::flatbuffers::FlatBufferBuilder<'a, A>) -> ProjectionLocBuilder<'a, 'b, A> {
+    let start = _fbb.start_table();
+    ProjectionLocBuilder {
+      fbb_: _fbb,
+      start_: start,
+    }
+  }
+  #[inline]
+  pub fn finish(self) -> ::flatbuffers::WIPOffset<ProjectionLoc<'a>> {
+    let o = self.fbb_.end_table(self.start_);
+    ::flatbuffers::WIPOffset::new(o.value())
+  }
+}
+
+impl ::core::fmt::Debug for ProjectionLoc<'_> {
+  fn fmt(&self, f: &mut ::core::fmt::Formatter<'_>) -> ::core::fmt::Result {
+    let mut ds = f.debug_struct("ProjectionLoc");
+      ds.field("id", &self.id());
+      ds.field("name", &self.name());
+      ds.field("rank", &self.rank());
+      ds.field("level", &self.level());
+      ds.field("min_tile_x", &self.min_tile_x());
+      ds.field("max_tile_x", &self.max_tile_x());
+      ds.field("min_tile_z", &self.min_tile_z());
+      ds.field("max_tile_z", &self.max_tile_z());
+      ds.field("scene_x", &self.scene_x());
+      ds.field("scene_z", &self.scene_z());
+      ds.field("half_width", &self.half_width());
+      ds.field("half_length", &self.half_length());
+      ds.field("top_height", &self.top_height());
+      ds.finish()
+  }
+}
+pub enum ProjectionSceneOffset {}
+#[derive(Copy, Clone, PartialEq)]
+
+pub struct ProjectionScene<'a> {
+  pub _tab: ::flatbuffers::Table<'a>,
+}
+
+impl<'a> ::flatbuffers::Follow<'a> for ProjectionScene<'a> {
+  type Inner = ProjectionScene<'a>;
+  #[inline]
+  unsafe fn follow(buf: &'a [u8], loc: usize) -> Self::Inner {
+    Self { _tab: unsafe { ::flatbuffers::Table::new(buf, loc) } }
+  }
+}
+
+impl<'a> ProjectionScene<'a> {
+  pub const VT_LEVEL: ::flatbuffers::VOffsetT = 4;
+  pub const VT_CAMERA_X: ::flatbuffers::VOffsetT = 6;
+  pub const VT_CAMERA_Y: ::flatbuffers::VOffsetT = 8;
+  pub const VT_CAMERA_Z: ::flatbuffers::VOffsetT = 10;
+  pub const VT_SIN_PITCH: ::flatbuffers::VOffsetT = 12;
+  pub const VT_COS_PITCH: ::flatbuffers::VOffsetT = 14;
+  pub const VT_SIN_YAW: ::flatbuffers::VOffsetT = 16;
+  pub const VT_COS_YAW: ::flatbuffers::VOffsetT = 18;
+  pub const VT_HEIGHTS: ::flatbuffers::VOffsetT = 20;
+  pub const VT_HEIGHTS_ABOVE: ::flatbuffers::VOffsetT = 22;
+  pub const VT_LINK_BELOW: ::flatbuffers::VOffsetT = 24;
+  pub const VT_LOCS: ::flatbuffers::VOffsetT = 26;
+
+  #[inline]
+  pub unsafe fn init_from_table(table: ::flatbuffers::Table<'a>) -> Self {
+    ProjectionScene { _tab: table }
+  }
+  #[allow(unused_mut)]
+  pub fn create<'bldr: 'args, 'args: 'mut_bldr, 'mut_bldr, A: ::flatbuffers::Allocator + 'bldr>(
+    _fbb: &'mut_bldr mut ::flatbuffers::FlatBufferBuilder<'bldr, A>,
+    args: &'args ProjectionSceneArgs<'args>
+  ) -> ::flatbuffers::WIPOffset<ProjectionScene<'bldr>> {
+    let mut builder = ProjectionSceneBuilder::new(_fbb);
+    if let Some(x) = args.locs { builder.add_locs(x); }
+    if let Some(x) = args.link_below { builder.add_link_below(x); }
+    if let Some(x) = args.heights_above { builder.add_heights_above(x); }
+    if let Some(x) = args.heights { builder.add_heights(x); }
+    builder.add_cos_yaw(args.cos_yaw);
+    builder.add_sin_yaw(args.sin_yaw);
+    builder.add_cos_pitch(args.cos_pitch);
+    builder.add_sin_pitch(args.sin_pitch);
+    builder.add_camera_z(args.camera_z);
+    builder.add_camera_y(args.camera_y);
+    builder.add_camera_x(args.camera_x);
+    builder.add_level(args.level);
+    builder.finish()
+  }
+
+
+  #[inline]
+  pub fn level(&self) -> i32 {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<i32>(ProjectionScene::VT_LEVEL, Some(0)).unwrap()}
+  }
+  #[inline]
+  pub fn camera_x(&self) -> i32 {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<i32>(ProjectionScene::VT_CAMERA_X, Some(0)).unwrap()}
+  }
+  #[inline]
+  pub fn camera_y(&self) -> i32 {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<i32>(ProjectionScene::VT_CAMERA_Y, Some(0)).unwrap()}
+  }
+  #[inline]
+  pub fn camera_z(&self) -> i32 {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<i32>(ProjectionScene::VT_CAMERA_Z, Some(0)).unwrap()}
+  }
+  #[inline]
+  pub fn sin_pitch(&self) -> i32 {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<i32>(ProjectionScene::VT_SIN_PITCH, Some(0)).unwrap()}
+  }
+  #[inline]
+  pub fn cos_pitch(&self) -> i32 {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<i32>(ProjectionScene::VT_COS_PITCH, Some(0)).unwrap()}
+  }
+  #[inline]
+  pub fn sin_yaw(&self) -> i32 {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<i32>(ProjectionScene::VT_SIN_YAW, Some(0)).unwrap()}
+  }
+  #[inline]
+  pub fn cos_yaw(&self) -> i32 {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<i32>(ProjectionScene::VT_COS_YAW, Some(0)).unwrap()}
+  }
+  #[inline]
+  pub fn heights(&self) -> Option<::flatbuffers::Vector<'a, i32>> {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<::flatbuffers::ForwardsUOffset<::flatbuffers::Vector<'a, i32>>>(ProjectionScene::VT_HEIGHTS, None)}
+  }
+  #[inline]
+  pub fn heights_above(&self) -> Option<::flatbuffers::Vector<'a, i32>> {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<::flatbuffers::ForwardsUOffset<::flatbuffers::Vector<'a, i32>>>(ProjectionScene::VT_HEIGHTS_ABOVE, None)}
+  }
+  #[inline]
+  pub fn link_below(&self) -> Option<::flatbuffers::Vector<'a, u8>> {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<::flatbuffers::ForwardsUOffset<::flatbuffers::Vector<'a, u8>>>(ProjectionScene::VT_LINK_BELOW, None)}
+  }
+  #[inline]
+  pub fn locs(&self) -> Option<::flatbuffers::Vector<'a, ::flatbuffers::ForwardsUOffset<ProjectionLoc<'a>>>> {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<::flatbuffers::ForwardsUOffset<::flatbuffers::Vector<'a, ::flatbuffers::ForwardsUOffset<ProjectionLoc>>>>(ProjectionScene::VT_LOCS, None)}
+  }
+}
+
+impl ::flatbuffers::Verifiable for ProjectionScene<'_> {
+  #[inline]
+  fn run_verifier(
+    v: &mut ::flatbuffers::Verifier, pos: usize
+  ) -> Result<(), ::flatbuffers::InvalidFlatbuffer> {
+    v.visit_table(pos)?
+     .visit_field::<i32>("level", Self::VT_LEVEL, false)?
+     .visit_field::<i32>("camera_x", Self::VT_CAMERA_X, false)?
+     .visit_field::<i32>("camera_y", Self::VT_CAMERA_Y, false)?
+     .visit_field::<i32>("camera_z", Self::VT_CAMERA_Z, false)?
+     .visit_field::<i32>("sin_pitch", Self::VT_SIN_PITCH, false)?
+     .visit_field::<i32>("cos_pitch", Self::VT_COS_PITCH, false)?
+     .visit_field::<i32>("sin_yaw", Self::VT_SIN_YAW, false)?
+     .visit_field::<i32>("cos_yaw", Self::VT_COS_YAW, false)?
+     .visit_field::<::flatbuffers::ForwardsUOffset<::flatbuffers::Vector<'_, i32>>>("heights", Self::VT_HEIGHTS, false)?
+     .visit_field::<::flatbuffers::ForwardsUOffset<::flatbuffers::Vector<'_, i32>>>("heights_above", Self::VT_HEIGHTS_ABOVE, false)?
+     .visit_field::<::flatbuffers::ForwardsUOffset<::flatbuffers::Vector<'_, u8>>>("link_below", Self::VT_LINK_BELOW, false)?
+     .visit_field::<::flatbuffers::ForwardsUOffset<::flatbuffers::Vector<'_, ::flatbuffers::ForwardsUOffset<ProjectionLoc>>>>("locs", Self::VT_LOCS, false)?
+     .finish();
+    Ok(())
+  }
+}
+pub struct ProjectionSceneArgs<'a> {
+    pub level: i32,
+    pub camera_x: i32,
+    pub camera_y: i32,
+    pub camera_z: i32,
+    pub sin_pitch: i32,
+    pub cos_pitch: i32,
+    pub sin_yaw: i32,
+    pub cos_yaw: i32,
+    pub heights: Option<::flatbuffers::WIPOffset<::flatbuffers::Vector<'a, i32>>>,
+    pub heights_above: Option<::flatbuffers::WIPOffset<::flatbuffers::Vector<'a, i32>>>,
+    pub link_below: Option<::flatbuffers::WIPOffset<::flatbuffers::Vector<'a, u8>>>,
+    pub locs: Option<::flatbuffers::WIPOffset<::flatbuffers::Vector<'a, ::flatbuffers::ForwardsUOffset<ProjectionLoc<'a>>>>>,
+}
+impl<'a> Default for ProjectionSceneArgs<'a> {
+  #[inline]
+  fn default() -> Self {
+    ProjectionSceneArgs {
+      level: 0,
+      camera_x: 0,
+      camera_y: 0,
+      camera_z: 0,
+      sin_pitch: 0,
+      cos_pitch: 0,
+      sin_yaw: 0,
+      cos_yaw: 0,
+      heights: None,
+      heights_above: None,
+      link_below: None,
+      locs: None,
+    }
+  }
+}
+
+pub struct ProjectionSceneBuilder<'a: 'b, 'b, A: ::flatbuffers::Allocator + 'a> {
+  fbb_: &'b mut ::flatbuffers::FlatBufferBuilder<'a, A>,
+  start_: ::flatbuffers::WIPOffset<::flatbuffers::TableUnfinishedWIPOffset>,
+}
+impl<'a: 'b, 'b, A: ::flatbuffers::Allocator + 'a> ProjectionSceneBuilder<'a, 'b, A> {
+  #[inline]
+  pub fn add_level(&mut self, level: i32) {
+    self.fbb_.push_slot::<i32>(ProjectionScene::VT_LEVEL, level, 0);
+  }
+  #[inline]
+  pub fn add_camera_x(&mut self, camera_x: i32) {
+    self.fbb_.push_slot::<i32>(ProjectionScene::VT_CAMERA_X, camera_x, 0);
+  }
+  #[inline]
+  pub fn add_camera_y(&mut self, camera_y: i32) {
+    self.fbb_.push_slot::<i32>(ProjectionScene::VT_CAMERA_Y, camera_y, 0);
+  }
+  #[inline]
+  pub fn add_camera_z(&mut self, camera_z: i32) {
+    self.fbb_.push_slot::<i32>(ProjectionScene::VT_CAMERA_Z, camera_z, 0);
+  }
+  #[inline]
+  pub fn add_sin_pitch(&mut self, sin_pitch: i32) {
+    self.fbb_.push_slot::<i32>(ProjectionScene::VT_SIN_PITCH, sin_pitch, 0);
+  }
+  #[inline]
+  pub fn add_cos_pitch(&mut self, cos_pitch: i32) {
+    self.fbb_.push_slot::<i32>(ProjectionScene::VT_COS_PITCH, cos_pitch, 0);
+  }
+  #[inline]
+  pub fn add_sin_yaw(&mut self, sin_yaw: i32) {
+    self.fbb_.push_slot::<i32>(ProjectionScene::VT_SIN_YAW, sin_yaw, 0);
+  }
+  #[inline]
+  pub fn add_cos_yaw(&mut self, cos_yaw: i32) {
+    self.fbb_.push_slot::<i32>(ProjectionScene::VT_COS_YAW, cos_yaw, 0);
+  }
+  #[inline]
+  pub fn add_heights(&mut self, heights: ::flatbuffers::WIPOffset<::flatbuffers::Vector<'b , i32>>) {
+    self.fbb_.push_slot_always::<::flatbuffers::WIPOffset<_>>(ProjectionScene::VT_HEIGHTS, heights);
+  }
+  #[inline]
+  pub fn add_heights_above(&mut self, heights_above: ::flatbuffers::WIPOffset<::flatbuffers::Vector<'b , i32>>) {
+    self.fbb_.push_slot_always::<::flatbuffers::WIPOffset<_>>(ProjectionScene::VT_HEIGHTS_ABOVE, heights_above);
+  }
+  #[inline]
+  pub fn add_link_below(&mut self, link_below: ::flatbuffers::WIPOffset<::flatbuffers::Vector<'b , u8>>) {
+    self.fbb_.push_slot_always::<::flatbuffers::WIPOffset<_>>(ProjectionScene::VT_LINK_BELOW, link_below);
+  }
+  #[inline]
+  pub fn add_locs(&mut self, locs: ::flatbuffers::WIPOffset<::flatbuffers::Vector<'b , ::flatbuffers::ForwardsUOffset<ProjectionLoc<'b >>>>) {
+    self.fbb_.push_slot_always::<::flatbuffers::WIPOffset<_>>(ProjectionScene::VT_LOCS, locs);
+  }
+  #[inline]
+  pub fn new(_fbb: &'b mut ::flatbuffers::FlatBufferBuilder<'a, A>) -> ProjectionSceneBuilder<'a, 'b, A> {
+    let start = _fbb.start_table();
+    ProjectionSceneBuilder {
+      fbb_: _fbb,
+      start_: start,
+    }
+  }
+  #[inline]
+  pub fn finish(self) -> ::flatbuffers::WIPOffset<ProjectionScene<'a>> {
+    let o = self.fbb_.end_table(self.start_);
+    ::flatbuffers::WIPOffset::new(o.value())
+  }
+}
+
+impl ::core::fmt::Debug for ProjectionScene<'_> {
+  fn fmt(&self, f: &mut ::core::fmt::Formatter<'_>) -> ::core::fmt::Result {
+    let mut ds = f.debug_struct("ProjectionScene");
+      ds.field("level", &self.level());
+      ds.field("camera_x", &self.camera_x());
+      ds.field("camera_y", &self.camera_y());
+      ds.field("camera_z", &self.camera_z());
+      ds.field("sin_pitch", &self.sin_pitch());
+      ds.field("cos_pitch", &self.cos_pitch());
+      ds.field("sin_yaw", &self.sin_yaw());
+      ds.field("cos_yaw", &self.cos_yaw());
+      ds.field("heights", &self.heights());
+      ds.field("heights_above", &self.heights_above());
+      ds.field("link_below", &self.link_below());
+      ds.field("locs", &self.locs());
+      ds.finish()
+  }
+}
+pub enum ClientAdapterFactsOffset {}
+#[derive(Copy, Clone, PartialEq)]
+
+pub struct ClientAdapterFacts<'a> {
+  pub _tab: ::flatbuffers::Table<'a>,
+}
+
+impl<'a> ::flatbuffers::Follow<'a> for ClientAdapterFacts<'a> {
+  type Inner = ClientAdapterFacts<'a>;
+  #[inline]
+  unsafe fn follow(buf: &'a [u8], loc: usize) -> Self::Inner {
+    Self { _tab: unsafe { ::flatbuffers::Table::new(buf, loc) } }
+  }
+}
+
+impl<'a> ClientAdapterFacts<'a> {
+  pub const VT_ATTACHED: ::flatbuffers::VOffsetT = 4;
+  pub const VT_MAP_BUILD_BASE_X: ::flatbuffers::VOffsetT = 6;
+  pub const VT_MAP_BUILD_BASE_Z: ::flatbuffers::VOffsetT = 8;
+  pub const VT_SERVER_TILE: ::flatbuffers::VOffsetT = 10;
+  pub const VT_HINT_TILE_LEVEL: ::flatbuffers::VOffsetT = 12;
+  pub const VT_BANK_COM_ID: ::flatbuffers::VOffsetT = 14;
+  pub const VT_CHAT_CONTINUE_COMPONENT_ID: ::flatbuffers::VOffsetT = 16;
+  pub const VT_CHAT_MODAL_TEXTS: ::flatbuffers::VOffsetT = 18;
+  pub const VT_WIDGETS: ::flatbuffers::VOffsetT = 20;
+  pub const VT_PLAYER_COUNT: ::flatbuffers::VOffsetT = 22;
+  pub const VT_NPC_COUNT: ::flatbuffers::VOffsetT = 24;
+  pub const VT_RUN_ON_COM_ID: ::flatbuffers::VOffsetT = 26;
+  pub const VT_RUN_OFF_COM_ID: ::flatbuffers::VOffsetT = 28;
+  pub const VT_LOGIN_MESSAGE: ::flatbuffers::VOffsetT = 30;
+  pub const VT_MENU_ENTRIES: ::flatbuffers::VOffsetT = 32;
+  pub const VT_LAST_WALK_PATH_LOCAL: ::flatbuffers::VOffsetT = 34;
+  pub const VT_SESSION_GENERATION: ::flatbuffers::VOffsetT = 36;
+  pub const VT_MODAL_CLOSE_GENERATION: ::flatbuffers::VOffsetT = 38;
+  pub const VT_PROJECTION_SCENE: ::flatbuffers::VOffsetT = 40;
+
+  #[inline]
+  pub unsafe fn init_from_table(table: ::flatbuffers::Table<'a>) -> Self {
+    ClientAdapterFacts { _tab: table }
+  }
+  #[allow(unused_mut)]
+  pub fn create<'bldr: 'args, 'args: 'mut_bldr, 'mut_bldr, A: ::flatbuffers::Allocator + 'bldr>(
+    _fbb: &'mut_bldr mut ::flatbuffers::FlatBufferBuilder<'bldr, A>,
+    args: &'args ClientAdapterFactsArgs<'args>
+  ) -> ::flatbuffers::WIPOffset<ClientAdapterFacts<'bldr>> {
+    let mut builder = ClientAdapterFactsBuilder::new(_fbb);
+    builder.add_modal_close_generation(args.modal_close_generation);
+    builder.add_session_generation(args.session_generation);
+    if let Some(x) = args.projection_scene { builder.add_projection_scene(x); }
+    if let Some(x) = args.last_walk_path_local { builder.add_last_walk_path_local(x); }
+    if let Some(x) = args.menu_entries { builder.add_menu_entries(x); }
+    if let Some(x) = args.login_message { builder.add_login_message(x); }
+    builder.add_run_off_com_id(args.run_off_com_id);
+    builder.add_run_on_com_id(args.run_on_com_id);
+    builder.add_npc_count(args.npc_count);
+    builder.add_player_count(args.player_count);
+    if let Some(x) = args.widgets { builder.add_widgets(x); }
+    if let Some(x) = args.chat_modal_texts { builder.add_chat_modal_texts(x); }
+    builder.add_chat_continue_component_id(args.chat_continue_component_id);
+    builder.add_bank_com_id(args.bank_com_id);
+    builder.add_hint_tile_level(args.hint_tile_level);
+    if let Some(x) = args.server_tile { builder.add_server_tile(x); }
+    builder.add_map_build_base_z(args.map_build_base_z);
+    builder.add_map_build_base_x(args.map_build_base_x);
+    builder.add_attached(args.attached);
+    builder.finish()
+  }
+
+
+  #[inline]
+  pub fn attached(&self) -> bool {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<bool>(ClientAdapterFacts::VT_ATTACHED, Some(false)).unwrap()}
+  }
+  #[inline]
+  pub fn map_build_base_x(&self) -> i32 {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<i32>(ClientAdapterFacts::VT_MAP_BUILD_BASE_X, Some(0)).unwrap()}
+  }
+  #[inline]
+  pub fn map_build_base_z(&self) -> i32 {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<i32>(ClientAdapterFacts::VT_MAP_BUILD_BASE_Z, Some(0)).unwrap()}
+  }
+  #[inline]
+  pub fn server_tile(&self) -> Option<Tile<'a>> {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<::flatbuffers::ForwardsUOffset<Tile>>(ClientAdapterFacts::VT_SERVER_TILE, None)}
+  }
+  #[inline]
+  pub fn hint_tile_level(&self) -> i32 {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<i32>(ClientAdapterFacts::VT_HINT_TILE_LEVEL, Some(-1)).unwrap()}
+  }
+  #[inline]
+  pub fn bank_com_id(&self) -> i32 {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<i32>(ClientAdapterFacts::VT_BANK_COM_ID, Some(-1)).unwrap()}
+  }
+  #[inline]
+  pub fn chat_continue_component_id(&self) -> i32 {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<i32>(ClientAdapterFacts::VT_CHAT_CONTINUE_COMPONENT_ID, Some(-1)).unwrap()}
+  }
+  #[inline]
+  pub fn chat_modal_texts(&self) -> Option<ChatModalTexts<'a>> {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<::flatbuffers::ForwardsUOffset<ChatModalTexts>>(ClientAdapterFacts::VT_CHAT_MODAL_TEXTS, None)}
+  }
+  #[inline]
+  pub fn widgets(&self) -> Option<::flatbuffers::Vector<'a, ::flatbuffers::ForwardsUOffset<WidgetFact<'a>>>> {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<::flatbuffers::ForwardsUOffset<::flatbuffers::Vector<'a, ::flatbuffers::ForwardsUOffset<WidgetFact>>>>(ClientAdapterFacts::VT_WIDGETS, None)}
+  }
+  #[inline]
+  pub fn player_count(&self) -> i32 {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<i32>(ClientAdapterFacts::VT_PLAYER_COUNT, Some(0)).unwrap()}
+  }
+  #[inline]
+  pub fn npc_count(&self) -> i32 {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<i32>(ClientAdapterFacts::VT_NPC_COUNT, Some(0)).unwrap()}
+  }
+  #[inline]
+  pub fn run_on_com_id(&self) -> i32 {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<i32>(ClientAdapterFacts::VT_RUN_ON_COM_ID, Some(-1)).unwrap()}
+  }
+  #[inline]
+  pub fn run_off_com_id(&self) -> i32 {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<i32>(ClientAdapterFacts::VT_RUN_OFF_COM_ID, Some(-1)).unwrap()}
+  }
+  #[inline]
+  pub fn login_message(&self) -> Option<&'a str> {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<::flatbuffers::ForwardsUOffset<&str>>(ClientAdapterFacts::VT_LOGIN_MESSAGE, None)}
+  }
+  #[inline]
+  pub fn menu_entries(&self) -> Option<::flatbuffers::Vector<'a, ::flatbuffers::ForwardsUOffset<&'a str>>> {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<::flatbuffers::ForwardsUOffset<::flatbuffers::Vector<'a, ::flatbuffers::ForwardsUOffset<&'a str>>>>(ClientAdapterFacts::VT_MENU_ENTRIES, None)}
+  }
+  #[inline]
+  pub fn last_walk_path_local(&self) -> Option<::flatbuffers::Vector<'a, i32>> {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<::flatbuffers::ForwardsUOffset<::flatbuffers::Vector<'a, i32>>>(ClientAdapterFacts::VT_LAST_WALK_PATH_LOCAL, None)}
+  }
+  #[inline]
+  pub fn session_generation(&self) -> u64 {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<u64>(ClientAdapterFacts::VT_SESSION_GENERATION, Some(0)).unwrap()}
+  }
+  #[inline]
+  pub fn modal_close_generation(&self) -> u64 {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<u64>(ClientAdapterFacts::VT_MODAL_CLOSE_GENERATION, Some(0)).unwrap()}
+  }
+  #[inline]
+  pub fn projection_scene(&self) -> Option<ProjectionScene<'a>> {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<::flatbuffers::ForwardsUOffset<ProjectionScene>>(ClientAdapterFacts::VT_PROJECTION_SCENE, None)}
+  }
+}
+
+impl ::flatbuffers::Verifiable for ClientAdapterFacts<'_> {
+  #[inline]
+  fn run_verifier(
+    v: &mut ::flatbuffers::Verifier, pos: usize
+  ) -> Result<(), ::flatbuffers::InvalidFlatbuffer> {
+    v.visit_table(pos)?
+     .visit_field::<bool>("attached", Self::VT_ATTACHED, false)?
+     .visit_field::<i32>("map_build_base_x", Self::VT_MAP_BUILD_BASE_X, false)?
+     .visit_field::<i32>("map_build_base_z", Self::VT_MAP_BUILD_BASE_Z, false)?
+     .visit_field::<::flatbuffers::ForwardsUOffset<Tile>>("server_tile", Self::VT_SERVER_TILE, false)?
+     .visit_field::<i32>("hint_tile_level", Self::VT_HINT_TILE_LEVEL, false)?
+     .visit_field::<i32>("bank_com_id", Self::VT_BANK_COM_ID, false)?
+     .visit_field::<i32>("chat_continue_component_id", Self::VT_CHAT_CONTINUE_COMPONENT_ID, false)?
+     .visit_field::<::flatbuffers::ForwardsUOffset<ChatModalTexts>>("chat_modal_texts", Self::VT_CHAT_MODAL_TEXTS, false)?
+     .visit_field::<::flatbuffers::ForwardsUOffset<::flatbuffers::Vector<'_, ::flatbuffers::ForwardsUOffset<WidgetFact>>>>("widgets", Self::VT_WIDGETS, false)?
+     .visit_field::<i32>("player_count", Self::VT_PLAYER_COUNT, false)?
+     .visit_field::<i32>("npc_count", Self::VT_NPC_COUNT, false)?
+     .visit_field::<i32>("run_on_com_id", Self::VT_RUN_ON_COM_ID, false)?
+     .visit_field::<i32>("run_off_com_id", Self::VT_RUN_OFF_COM_ID, false)?
+     .visit_field::<::flatbuffers::ForwardsUOffset<&str>>("login_message", Self::VT_LOGIN_MESSAGE, false)?
+     .visit_field::<::flatbuffers::ForwardsUOffset<::flatbuffers::Vector<'_, ::flatbuffers::ForwardsUOffset<&'_ str>>>>("menu_entries", Self::VT_MENU_ENTRIES, false)?
+     .visit_field::<::flatbuffers::ForwardsUOffset<::flatbuffers::Vector<'_, i32>>>("last_walk_path_local", Self::VT_LAST_WALK_PATH_LOCAL, false)?
+     .visit_field::<u64>("session_generation", Self::VT_SESSION_GENERATION, false)?
+     .visit_field::<u64>("modal_close_generation", Self::VT_MODAL_CLOSE_GENERATION, false)?
+     .visit_field::<::flatbuffers::ForwardsUOffset<ProjectionScene>>("projection_scene", Self::VT_PROJECTION_SCENE, false)?
+     .finish();
+    Ok(())
+  }
+}
+pub struct ClientAdapterFactsArgs<'a> {
+    pub attached: bool,
+    pub map_build_base_x: i32,
+    pub map_build_base_z: i32,
+    pub server_tile: Option<::flatbuffers::WIPOffset<Tile<'a>>>,
+    pub hint_tile_level: i32,
+    pub bank_com_id: i32,
+    pub chat_continue_component_id: i32,
+    pub chat_modal_texts: Option<::flatbuffers::WIPOffset<ChatModalTexts<'a>>>,
+    pub widgets: Option<::flatbuffers::WIPOffset<::flatbuffers::Vector<'a, ::flatbuffers::ForwardsUOffset<WidgetFact<'a>>>>>,
+    pub player_count: i32,
+    pub npc_count: i32,
+    pub run_on_com_id: i32,
+    pub run_off_com_id: i32,
+    pub login_message: Option<::flatbuffers::WIPOffset<&'a str>>,
+    pub menu_entries: Option<::flatbuffers::WIPOffset<::flatbuffers::Vector<'a, ::flatbuffers::ForwardsUOffset<&'a str>>>>,
+    pub last_walk_path_local: Option<::flatbuffers::WIPOffset<::flatbuffers::Vector<'a, i32>>>,
+    pub session_generation: u64,
+    pub modal_close_generation: u64,
+    pub projection_scene: Option<::flatbuffers::WIPOffset<ProjectionScene<'a>>>,
+}
+impl<'a> Default for ClientAdapterFactsArgs<'a> {
+  #[inline]
+  fn default() -> Self {
+    ClientAdapterFactsArgs {
+      attached: false,
+      map_build_base_x: 0,
+      map_build_base_z: 0,
+      server_tile: None,
+      hint_tile_level: -1,
+      bank_com_id: -1,
+      chat_continue_component_id: -1,
+      chat_modal_texts: None,
+      widgets: None,
+      player_count: 0,
+      npc_count: 0,
+      run_on_com_id: -1,
+      run_off_com_id: -1,
+      login_message: None,
+      menu_entries: None,
+      last_walk_path_local: None,
+      session_generation: 0,
+      modal_close_generation: 0,
+      projection_scene: None,
+    }
+  }
+}
+
+pub struct ClientAdapterFactsBuilder<'a: 'b, 'b, A: ::flatbuffers::Allocator + 'a> {
+  fbb_: &'b mut ::flatbuffers::FlatBufferBuilder<'a, A>,
+  start_: ::flatbuffers::WIPOffset<::flatbuffers::TableUnfinishedWIPOffset>,
+}
+impl<'a: 'b, 'b, A: ::flatbuffers::Allocator + 'a> ClientAdapterFactsBuilder<'a, 'b, A> {
+  #[inline]
+  pub fn add_attached(&mut self, attached: bool) {
+    self.fbb_.push_slot::<bool>(ClientAdapterFacts::VT_ATTACHED, attached, false);
+  }
+  #[inline]
+  pub fn add_map_build_base_x(&mut self, map_build_base_x: i32) {
+    self.fbb_.push_slot::<i32>(ClientAdapterFacts::VT_MAP_BUILD_BASE_X, map_build_base_x, 0);
+  }
+  #[inline]
+  pub fn add_map_build_base_z(&mut self, map_build_base_z: i32) {
+    self.fbb_.push_slot::<i32>(ClientAdapterFacts::VT_MAP_BUILD_BASE_Z, map_build_base_z, 0);
+  }
+  #[inline]
+  pub fn add_server_tile(&mut self, server_tile: ::flatbuffers::WIPOffset<Tile<'b >>) {
+    self.fbb_.push_slot_always::<::flatbuffers::WIPOffset<Tile>>(ClientAdapterFacts::VT_SERVER_TILE, server_tile);
+  }
+  #[inline]
+  pub fn add_hint_tile_level(&mut self, hint_tile_level: i32) {
+    self.fbb_.push_slot::<i32>(ClientAdapterFacts::VT_HINT_TILE_LEVEL, hint_tile_level, -1);
+  }
+  #[inline]
+  pub fn add_bank_com_id(&mut self, bank_com_id: i32) {
+    self.fbb_.push_slot::<i32>(ClientAdapterFacts::VT_BANK_COM_ID, bank_com_id, -1);
+  }
+  #[inline]
+  pub fn add_chat_continue_component_id(&mut self, chat_continue_component_id: i32) {
+    self.fbb_.push_slot::<i32>(ClientAdapterFacts::VT_CHAT_CONTINUE_COMPONENT_ID, chat_continue_component_id, -1);
+  }
+  #[inline]
+  pub fn add_chat_modal_texts(&mut self, chat_modal_texts: ::flatbuffers::WIPOffset<ChatModalTexts<'b >>) {
+    self.fbb_.push_slot_always::<::flatbuffers::WIPOffset<ChatModalTexts>>(ClientAdapterFacts::VT_CHAT_MODAL_TEXTS, chat_modal_texts);
+  }
+  #[inline]
+  pub fn add_widgets(&mut self, widgets: ::flatbuffers::WIPOffset<::flatbuffers::Vector<'b , ::flatbuffers::ForwardsUOffset<WidgetFact<'b >>>>) {
+    self.fbb_.push_slot_always::<::flatbuffers::WIPOffset<_>>(ClientAdapterFacts::VT_WIDGETS, widgets);
+  }
+  #[inline]
+  pub fn add_player_count(&mut self, player_count: i32) {
+    self.fbb_.push_slot::<i32>(ClientAdapterFacts::VT_PLAYER_COUNT, player_count, 0);
+  }
+  #[inline]
+  pub fn add_npc_count(&mut self, npc_count: i32) {
+    self.fbb_.push_slot::<i32>(ClientAdapterFacts::VT_NPC_COUNT, npc_count, 0);
+  }
+  #[inline]
+  pub fn add_run_on_com_id(&mut self, run_on_com_id: i32) {
+    self.fbb_.push_slot::<i32>(ClientAdapterFacts::VT_RUN_ON_COM_ID, run_on_com_id, -1);
+  }
+  #[inline]
+  pub fn add_run_off_com_id(&mut self, run_off_com_id: i32) {
+    self.fbb_.push_slot::<i32>(ClientAdapterFacts::VT_RUN_OFF_COM_ID, run_off_com_id, -1);
+  }
+  #[inline]
+  pub fn add_login_message(&mut self, login_message: ::flatbuffers::WIPOffset<&'b  str>) {
+    self.fbb_.push_slot_always::<::flatbuffers::WIPOffset<_>>(ClientAdapterFacts::VT_LOGIN_MESSAGE, login_message);
+  }
+  #[inline]
+  pub fn add_menu_entries(&mut self, menu_entries: ::flatbuffers::WIPOffset<::flatbuffers::Vector<'b , ::flatbuffers::ForwardsUOffset<&'b  str>>>) {
+    self.fbb_.push_slot_always::<::flatbuffers::WIPOffset<_>>(ClientAdapterFacts::VT_MENU_ENTRIES, menu_entries);
+  }
+  #[inline]
+  pub fn add_last_walk_path_local(&mut self, last_walk_path_local: ::flatbuffers::WIPOffset<::flatbuffers::Vector<'b , i32>>) {
+    self.fbb_.push_slot_always::<::flatbuffers::WIPOffset<_>>(ClientAdapterFacts::VT_LAST_WALK_PATH_LOCAL, last_walk_path_local);
+  }
+  #[inline]
+  pub fn add_session_generation(&mut self, session_generation: u64) {
+    self.fbb_.push_slot::<u64>(ClientAdapterFacts::VT_SESSION_GENERATION, session_generation, 0);
+  }
+  #[inline]
+  pub fn add_modal_close_generation(&mut self, modal_close_generation: u64) {
+    self.fbb_.push_slot::<u64>(ClientAdapterFacts::VT_MODAL_CLOSE_GENERATION, modal_close_generation, 0);
+  }
+  #[inline]
+  pub fn add_projection_scene(&mut self, projection_scene: ::flatbuffers::WIPOffset<ProjectionScene<'b >>) {
+    self.fbb_.push_slot_always::<::flatbuffers::WIPOffset<ProjectionScene>>(ClientAdapterFacts::VT_PROJECTION_SCENE, projection_scene);
+  }
+  #[inline]
+  pub fn new(_fbb: &'b mut ::flatbuffers::FlatBufferBuilder<'a, A>) -> ClientAdapterFactsBuilder<'a, 'b, A> {
+    let start = _fbb.start_table();
+    ClientAdapterFactsBuilder {
+      fbb_: _fbb,
+      start_: start,
+    }
+  }
+  #[inline]
+  pub fn finish(self) -> ::flatbuffers::WIPOffset<ClientAdapterFacts<'a>> {
+    let o = self.fbb_.end_table(self.start_);
+    ::flatbuffers::WIPOffset::new(o.value())
+  }
+}
+
+impl ::core::fmt::Debug for ClientAdapterFacts<'_> {
+  fn fmt(&self, f: &mut ::core::fmt::Formatter<'_>) -> ::core::fmt::Result {
+    let mut ds = f.debug_struct("ClientAdapterFacts");
+      ds.field("attached", &self.attached());
+      ds.field("map_build_base_x", &self.map_build_base_x());
+      ds.field("map_build_base_z", &self.map_build_base_z());
+      ds.field("server_tile", &self.server_tile());
+      ds.field("hint_tile_level", &self.hint_tile_level());
+      ds.field("bank_com_id", &self.bank_com_id());
+      ds.field("chat_continue_component_id", &self.chat_continue_component_id());
+      ds.field("chat_modal_texts", &self.chat_modal_texts());
+      ds.field("widgets", &self.widgets());
+      ds.field("player_count", &self.player_count());
+      ds.field("npc_count", &self.npc_count());
+      ds.field("run_on_com_id", &self.run_on_com_id());
+      ds.field("run_off_com_id", &self.run_off_com_id());
+      ds.field("login_message", &self.login_message());
+      ds.field("menu_entries", &self.menu_entries());
+      ds.field("last_walk_path_local", &self.last_walk_path_local());
+      ds.field("session_generation", &self.session_generation());
+      ds.field("modal_close_generation", &self.modal_close_generation());
+      ds.field("projection_scene", &self.projection_scene());
       ds.finish()
   }
 }
@@ -7178,6 +8746,9 @@ impl<'a> Snapshot<'a> {
   pub const VT_MIRROR_REVOKES_CONSUMED: ::flatbuffers::VOffsetT = 296;
   pub const VT_INV_READY: ::flatbuffers::VOffsetT = 298;
   pub const VT_BANK_SIDE_READY: ::flatbuffers::VOffsetT = 300;
+  pub const VT_STATS_READY: ::flatbuffers::VOffsetT = 302;
+  pub const VT_CLIENT_ADAPTER: ::flatbuffers::VOffsetT = 304;
+  pub const VT_TAKING_DAMAGE: ::flatbuffers::VOffsetT = 306;
 
   #[inline]
   pub unsafe fn init_from_table(table: ::flatbuffers::Table<'a>) -> Self {
@@ -7220,11 +8791,12 @@ impl<'a> Snapshot<'a> {
     builder.add_withdraw_x_result_seq(args.withdraw_x_result_seq);
     builder.add_bank_generation(args.bank_generation);
     builder.add_tick(args.tick);
+    if let Some(x) = args.client_adapter { builder.add_client_adapter(x); }
     if let Some(x) = args.seat_results { builder.add_seat_results(x); }
     if let Some(x) = args.seat_live { builder.add_seat_live(x); }
     if let Some(x) = args.api_combat_outcome { builder.add_api_combat_outcome(x); }
     if let Some(x) = args.api_combat { builder.add_api_combat(x); }
-    builder.add_side_modal_id(args.side_modal_id);
+    if let Some(x) = args.side_modal_id { builder.add_side_modal_id(x); }
     if let Some(x) = args.projectiles { builder.add_projectiles(x); }
     if let Some(x) = args.api_progress { builder.add_api_progress(x); }
     if let Some(x) = args.api_gather_outcome { builder.add_api_gather_outcome(x); }
@@ -7301,6 +8873,8 @@ impl<'a> Snapshot<'a> {
     builder.add_inv_size(args.inv_size);
     if let Some(x) = args.inv { builder.add_inv(x); }
     if let Some(x) = args.here { builder.add_here(x); }
+    if let Some(x) = args.taking_damage { builder.add_taking_damage(x); }
+    builder.add_stats_ready(args.stats_ready);
     builder.add_bank_side_ready(args.bank_side_ready);
     builder.add_inv_ready(args.inv_ready);
     builder.add_local_player_motion(args.local_player_motion);
@@ -8308,11 +9882,11 @@ impl<'a> Snapshot<'a> {
     unsafe { self._tab.get::<u64>(Snapshot::VT_CHAT_PAGE_FINGERPRINT, Some(0)).unwrap()}
   }
   #[inline]
-  pub fn side_modal_id(&self) -> i32 {
+  pub fn side_modal_id(&self) -> Option<i32> {
     // Safety:
     // Created from valid Table for this object
     // which contains a valid value in this slot
-    unsafe { self._tab.get::<i32>(Snapshot::VT_SIDE_MODAL_ID, Some(-1)).unwrap()}
+    unsafe { self._tab.get::<i32>(Snapshot::VT_SIDE_MODAL_ID, None)}
   }
   #[inline]
   pub fn local_player_motion(&self) -> u8 {
@@ -8369,6 +9943,27 @@ impl<'a> Snapshot<'a> {
     // Created from valid Table for this object
     // which contains a valid value in this slot
     unsafe { self._tab.get::<bool>(Snapshot::VT_BANK_SIDE_READY, Some(false)).unwrap()}
+  }
+  #[inline]
+  pub fn stats_ready(&self) -> bool {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<bool>(Snapshot::VT_STATS_READY, Some(false)).unwrap()}
+  }
+  #[inline]
+  pub fn client_adapter(&self) -> Option<ClientAdapterFacts<'a>> {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<::flatbuffers::ForwardsUOffset<ClientAdapterFacts>>(Snapshot::VT_CLIENT_ADAPTER, None)}
+  }
+  #[inline]
+  pub fn taking_damage(&self) -> Option<bool> {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<bool>(Snapshot::VT_TAKING_DAMAGE, None)}
   }
 }
 
@@ -8525,6 +10120,9 @@ impl ::flatbuffers::Verifiable for Snapshot<'_> {
      .visit_field::<u64>("mirror_revokes_consumed", Self::VT_MIRROR_REVOKES_CONSUMED, false)?
      .visit_field::<bool>("inv_ready", Self::VT_INV_READY, false)?
      .visit_field::<bool>("bank_side_ready", Self::VT_BANK_SIDE_READY, false)?
+     .visit_field::<bool>("stats_ready", Self::VT_STATS_READY, false)?
+     .visit_field::<::flatbuffers::ForwardsUOffset<ClientAdapterFacts>>("client_adapter", Self::VT_CLIENT_ADAPTER, false)?
+     .visit_field::<bool>("taking_damage", Self::VT_TAKING_DAMAGE, false)?
      .finish();
     Ok(())
   }
@@ -8668,7 +10266,7 @@ pub struct SnapshotArgs<'a> {
     pub walk_outcome_cancel_reason: WalkCancelReason,
     pub projectiles: Option<::flatbuffers::WIPOffset<::flatbuffers::Vector<'a, ::flatbuffers::ForwardsUOffset<CombatProjectile<'a>>>>>,
     pub chat_page_fingerprint: u64,
-    pub side_modal_id: i32,
+    pub side_modal_id: Option<i32>,
     pub local_player_motion: u8,
     pub api_combat: Option<::flatbuffers::WIPOffset<ApiGather<'a>>>,
     pub api_combat_outcome: Option<::flatbuffers::WIPOffset<ApiCombatOutcome<'a>>>,
@@ -8677,6 +10275,9 @@ pub struct SnapshotArgs<'a> {
     pub mirror_revokes_consumed: Option<u64>,
     pub inv_ready: bool,
     pub bank_side_ready: bool,
+    pub stats_ready: bool,
+    pub client_adapter: Option<::flatbuffers::WIPOffset<ClientAdapterFacts<'a>>>,
+    pub taking_damage: Option<bool>,
 }
 impl<'a> Default for SnapshotArgs<'a> {
   #[inline]
@@ -8820,7 +10421,7 @@ impl<'a> Default for SnapshotArgs<'a> {
       walk_outcome_cancel_reason: WalkCancelReason::None,
       projectiles: None,
       chat_page_fingerprint: 0,
-      side_modal_id: -1,
+      side_modal_id: None,
       local_player_motion: 0,
       api_combat: None,
       api_combat_outcome: None,
@@ -8829,6 +10430,9 @@ impl<'a> Default for SnapshotArgs<'a> {
       mirror_revokes_consumed: None,
       inv_ready: false,
       bank_side_ready: false,
+      stats_ready: false,
+      client_adapter: None,
+      taking_damage: None,
     }
   }
 }
@@ -9392,7 +10996,7 @@ impl<'a: 'b, 'b, A: ::flatbuffers::Allocator + 'a> SnapshotBuilder<'a, 'b, A> {
   }
   #[inline]
   pub fn add_side_modal_id(&mut self, side_modal_id: i32) {
-    self.fbb_.push_slot::<i32>(Snapshot::VT_SIDE_MODAL_ID, side_modal_id, -1);
+    self.fbb_.push_slot_always::<i32>(Snapshot::VT_SIDE_MODAL_ID, side_modal_id);
   }
   #[inline]
   pub fn add_local_player_motion(&mut self, local_player_motion: u8) {
@@ -9425,6 +11029,18 @@ impl<'a: 'b, 'b, A: ::flatbuffers::Allocator + 'a> SnapshotBuilder<'a, 'b, A> {
   #[inline]
   pub fn add_bank_side_ready(&mut self, bank_side_ready: bool) {
     self.fbb_.push_slot::<bool>(Snapshot::VT_BANK_SIDE_READY, bank_side_ready, false);
+  }
+  #[inline]
+  pub fn add_stats_ready(&mut self, stats_ready: bool) {
+    self.fbb_.push_slot::<bool>(Snapshot::VT_STATS_READY, stats_ready, false);
+  }
+  #[inline]
+  pub fn add_client_adapter(&mut self, client_adapter: ::flatbuffers::WIPOffset<ClientAdapterFacts<'b >>) {
+    self.fbb_.push_slot_always::<::flatbuffers::WIPOffset<ClientAdapterFacts>>(Snapshot::VT_CLIENT_ADAPTER, client_adapter);
+  }
+  #[inline]
+  pub fn add_taking_damage(&mut self, taking_damage: bool) {
+    self.fbb_.push_slot_always::<bool>(Snapshot::VT_TAKING_DAMAGE, taking_damage);
   }
   #[inline]
   pub fn new(_fbb: &'b mut ::flatbuffers::FlatBufferBuilder<'a, A>) -> SnapshotBuilder<'a, 'b, A> {
@@ -9591,6 +11207,9 @@ impl ::core::fmt::Debug for Snapshot<'_> {
       ds.field("mirror_revokes_consumed", &self.mirror_revokes_consumed());
       ds.field("inv_ready", &self.inv_ready());
       ds.field("bank_side_ready", &self.bank_side_ready());
+      ds.field("stats_ready", &self.stats_ready());
+      ds.field("client_adapter", &self.client_adapter());
+      ds.field("taking_damage", &self.taking_damage());
       ds.finish()
   }
 }

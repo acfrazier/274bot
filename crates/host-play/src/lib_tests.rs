@@ -16,6 +16,11 @@ use std::time::{Duration, Instant};
 fn no_frames() -> impl FnMut() -> Duration {
     || Duration::MAX
 }
+fn test_cache_mut(client: &mut Client) -> &mut client::config::Cache {
+    api::snapshot::clear_client_adapter_cache_for_tests(&client.cache);
+    Arc::get_mut(&mut client.cache)
+        .expect("test cache is unique after clearing its adapter weak ref")
+}
 
 fn wait_for_permit(
     queue: &SharedLoginQueue,
@@ -9810,10 +9815,7 @@ fn dispatch_script_interact_sends_open_deposit_withdraw() {
     let mut c = bank_client();
     let mut snap = GameSnapshot::new();
     snap.rebuild(&c);
-    let names = api::obj_names::ObjNames::from_objs(&{
-        let cache = Arc::get_mut(&mut c.cache).expect("sole cache owner");
-        cache.objs.clone()
-    });
+    let names = api::obj_names::ObjNames::from_objs(&c.cache.objs);
     let (navs, world) = empty_nav();
     assert_eq!(
         snap.locs()
@@ -13131,15 +13133,12 @@ fn dispatch_script_interact_sends_held_item_bury() {
     let mut c = bank_fetch_client();
     // Bones (obj 1) has the `Bury` held op (`[opheld1,_bones]`).
     {
-        let cache = Arc::get_mut(&mut c.cache).expect("sole cache owner");
+        let cache = test_cache_mut(&mut c);
         cache.objs[1].iop = [Some("Bury".into()), None, None, None, None];
     }
     let mut snap = GameSnapshot::new();
     snap.rebuild(&c);
-    let names = api::obj_names::ObjNames::from_objs(&{
-        let cache = Arc::get_mut(&mut c.cache).expect("sole cache owner");
-        cache.objs.clone()
-    });
+    let names = api::obj_names::ObjNames::from_objs(&c.cache.objs);
     let (navs, world) = empty_nav();
     assert_eq!(
         snap.inventory()
@@ -13448,10 +13447,7 @@ fn dispatch_script_interact_unequip_removes_the_worn_row() {
     c.bump_gens(ServerProt::UPDATE_INV_FULL);
     let mut snap = GameSnapshot::new();
     snap.rebuild(&c);
-    let names = api::obj_names::ObjNames::from_objs(&{
-        let cache = Arc::get_mut(&mut c.cache).expect("sole cache owner");
-        cache.objs.clone()
-    });
+    let names = api::obj_names::ObjNames::from_objs(&c.cache.objs);
     let (navs, world) = empty_nav();
     assert_eq!(
         snap.equipment()
@@ -13716,7 +13712,7 @@ fn colocated_loc_use_fixture(wall_first: bool) -> (GameSnapshot, api::obj_names:
 
     let (mut client, mut snapshot) = colocated_wall_flax(wall_first);
     {
-        let cache = Arc::get_mut(&mut client.cache).expect("sole cache owner");
+        let cache = test_cache_mut(&mut client);
         cache.objs.resize(433, ObjType::default());
         cache.objs[432].id = 432;
         cache.objs[432].name = "Chest key".into();
@@ -15174,15 +15170,12 @@ fn dispatch_v2_walk_near_forwards_plane_radius_and_request_id() {
 fn dispatch_script_interact_held_first_match_only() {
     let mut one = bank_fetch_client();
     {
-        let cache = Arc::get_mut(&mut one.cache).expect("sole cache owner");
+        let cache = test_cache_mut(&mut one);
         cache.objs[1].iop = [Some("Bury".into()), None, None, None, None];
     }
     let mut snap_one = GameSnapshot::new();
     snap_one.rebuild(&one);
-    let names = api::obj_names::ObjNames::from_objs(&{
-        let cache = Arc::get_mut(&mut one.cache).expect("sole cache owner");
-        cache.objs.clone()
-    });
+    let names = api::obj_names::ObjNames::from_objs(&one.cache.objs);
     let (navs, world) = empty_nav();
     let before_one = one.out.pos;
     assert!(dispatch_script_interact(
@@ -28222,7 +28215,7 @@ pub(super) fn plant_nav_footprint_loc(
 ) {
     use client::config::LocType;
 
-    let cache = Arc::get_mut(&mut client.cache).expect("nav test owns its cache");
+    let cache = test_cache_mut(client);
     let id = cache.locs.len() as i32;
     cache.locs.push(LocType {
         id,
@@ -29717,7 +29710,7 @@ fn glory_edge() -> TransportEdge {
 /// shape `teleport_send` reads the rub's held item from.
 fn plant_inv_item(c: &mut Client, obj_id: i32) {
     {
-        let cache = Arc::get_mut(&mut c.cache).expect("sole cache owner");
+        let cache = test_cache_mut(c);
         while cache.objs.len() <= obj_id as usize {
             cache.objs.push(client::config::ObjType::default());
         }

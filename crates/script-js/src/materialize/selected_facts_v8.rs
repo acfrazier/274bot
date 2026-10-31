@@ -7,6 +7,8 @@ use api::snapshot::WorldTile;
 use rustyscript::Runtime;
 use std::cell::RefCell;
 use std::sync::{Arc, Weak};
+#[path = "client_adapter_v8.rs"]
+mod client_adapter_v8;
 
 const PENDING: &str = "__pending__";
 
@@ -89,8 +91,38 @@ fn run_selected_facts<'s>(
         "rock-tier-by-id" => selected_rock_tier_by_id(scope, args.get(1)),
         "resolve-rock-ids" => selected_resolve_rock_ids(scope, args.get(1)),
         "worth-stocking" => worth_stocking(scope, args.get(1)),
-        _ => Err("invalid selected facts op".into()),
+        "world-number" => world_number(scope, args.get(1), args.get(2), args.get(3)),
+        "client-adapter-reader" => client_adapter_v8::read(
+            scope,
+            args.get(1),
+            args.get(2),
+            args.get(3),
+            args.get(4),
+            args.get(5),
+            args.get(6),
+        ),
+        _ => Err(format!("unsupported selected facts operation: {op}")),
     }
+}
+fn world_number<'s>(
+    scope: &mut v8::HandleScope<'s>,
+    hostname: v8::Local<'s, v8::Value>,
+    value_count: v8::Local<'s, v8::Value>,
+    value: v8::Local<'s, v8::Value>,
+) -> Result<v8::Local<'s, v8::Value>, String> {
+    let hostname = js_to_string(scope, hostname)?;
+    let value_count =
+        js_i32(scope, value_count)?.ok_or_else(|| "world must be 1, 2 or 3".to_string())?;
+    let value_count =
+        usize::try_from(value_count).map_err(|_| "world must be 1, 2 or 3".to_string())?;
+    let value = if value_count == 1 {
+        Some(js_to_string(scope, value)?)
+    } else {
+        None
+    };
+    let selected = script::registry::resolve_world_number(&hostname, value_count, value.as_deref())
+        .map_err(str::to_owned)?;
+    Ok(v8::Integer::new(scope, selected).into())
 }
 
 fn random_event_casket<'s>(

@@ -1287,6 +1287,9 @@ where
                     }
                 }
             }
+            InteractReq::SayPublic { text } => {
+                wrote |= matches!(ix.say_public(&text), SendResult::Sent { .. });
+            }
             InteractReq::ContinueDialog { component_id } => {
                 wrote |= matches!(ix.continue_dialog(component_id), SendResult::Sent { .. });
             }

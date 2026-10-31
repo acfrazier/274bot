@@ -200,6 +200,41 @@ pub fn is_whale(name: &str) -> bool {
     WHALE_IDS.contains(&name)
 }
 
+/// Resolve the selected public world from a normalized URL hostname and the
+/// count/first value returned by `URLSearchParams.getAll("world")`.
+///
+/// An explicit query parameter takes precedence over the host. Duplicates
+/// and values outside 1–3 are rejected exactly as the web compatibility
+/// module does.
+pub fn resolve_world_number(
+    hostname: &str,
+    value_count: usize,
+    value: Option<&str>,
+) -> Result<i32, &'static str> {
+    match value_count {
+        0 => {}
+        1 => {
+            return match value {
+                Some("1") => Ok(1),
+                Some("2") => Ok(2),
+                Some("3") => Ok(3),
+                _ => Err("world must be 1, 2 or 3"),
+            };
+        }
+        _ => return Err("world must be 1, 2 or 3"),
+    }
+
+    Ok(if hostname.eq_ignore_ascii_case("w1.rs2b2t.com") {
+        1
+    } else if hostname.eq_ignore_ascii_case("w2.rs2b2t.com") {
+        2
+    } else if hostname.eq_ignore_ascii_case("w3.rs2b2t.com") {
+        3
+    } else {
+        1
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -216,6 +216,7 @@ fn fixture_widget(component_id: i32, button_type: i32, text: Option<&str>, y: i3
         width: 0,
         height: 0,
         scroll_height: 0,
+        inventory_ready: false,
         scroll_position: 0,
         hidden: false,
         text: text.map(String::from),

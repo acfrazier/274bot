@@ -122,14 +122,6 @@
     "declaration": "/** Construction is refused; the mutable paint-state family remains unavailable. */\nexport class PaintState {\n    constructor();\n    publishRegions(regions: Region[]): void;\n    pointerDown(x: number, y: number): boolean;\n    pointerMove(x: number, y: number): boolean;\n    pointerIsInside(x: number, y: number): boolean;\n    consumeClick(id: string): boolean;\n    wheel(x: number, y: number, delta: number): boolean;\n    consumeWheel(id: string): number;\n    isHovered(rect: Rect): boolean;\n    get(key: string, fallback: string): string;\n    set(key: string, value: string): void;\n    reset(): void;\n}"
   },
   {
-    "id": "not-impl-value:adapter/ClientAdapter.js:WELCOME_SCREEN",
-    "module": "adapter/ClientAdapter.js",
-    "selector": "WELCOME_SCREEN",
-    "reason": "The frozen login-screen constant is unavailable from selected host state.",
-    "runtime": "crates/script-js/src/shim/client_adapter.js:18",
-    "declaration": "export const WELCOME_SCREEN: never;"
-  },
-  {
     "id": "not-impl-value:api/ai/clues/data/toolAcquire.js:SPADE_SPAWNS",
     "module": "api/ai/clues/data/toolAcquire.js",
     "selector": "SPADE_SPAWNS",
@@ -312,6 +304,22 @@
     "reason": "The price-book settings namespace has no native storage implementation.",
     "runtime": "crates/script-js/src/shim/settings.js:88",
     "declaration": "export const PRICE_BOOK_SETTINGS_NS: never;"
+  },
+  {
+    "id": "client-skill-catalog",
+    "module": "client/shell/Skill.js",
+    "selector": "$module",
+    "reason": "The default Skill class exposes only the shared native skill names and used mask.",
+    "runtime": "crates/script-js/src/shim/client_skill.js:7",
+    "declaration": "export default class Skill { static readonly names: string[]; static readonly used: boolean[]; }"
+  },
+  {
+    "id": "client-world-number",
+    "module": "client/config/worlds.js",
+    "selector": "$module",
+    "reason": "The compatibility route exposes the bounded world-number resolver only.",
+    "runtime": "crates/script-js/src/shim/worlds.js:3",
+    "declaration": "export function resolveWorldNumber(host: string, params: URLSearchParams): 1 | 2 | 3;"
   },
   {
     "id": "not-impl-value:runtime/Settings.js:PRICE_BOOK_SETTINGS",

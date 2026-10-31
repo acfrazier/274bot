@@ -304,11 +304,12 @@ pub(crate) fn with_script_snapshot_input_shorts<R>(
     ) -> R,
 ) -> R {
     use script::native::snapshot_source::{
-        BankApproachInput, BankStandInput, ChatLineInput, ChatOptionInput, CollisionViewInput,
-        CombatStyleInput, ItemRowInput, MainModalTextsInput, MakeButtonInput, MakeProductInput,
-        NativeFactsInput, NearestBoothInput, PuzzleBoardInput, QuestStatusInput, ReachViewInput,
-        SceneEntityInput, SideTabIfaceInput, SnapshotInput, StatInput, TileInput, VarpInput,
-        WidgetTextInput,
+        BankApproachInput, BankStandInput, ChatLineInput, ChatModalTextsInput, ChatOptionInput,
+        ClientAdapterFactsInput, CollisionViewInput, CombatStyleInput, ItemRowInput,
+        MainModalTextsInput, MakeButtonInput, MakeProductInput, NativeFactsInput,
+        NearestBoothInput, ProjectionSceneInput, PuzzleBoardInput, QuestStatusInput,
+        ReachViewInput, SceneEntityInput, SideTabIfaceInput, SnapshotInput, StatInput, TileInput,
+        VarpInput, WidgetFactInput, WidgetTextInput,
     };
 
     let owned_flood: Option<api::query::ReachFlood>;
@@ -1225,6 +1226,103 @@ pub(crate) fn with_script_snapshot_input_shorts<R>(
             item_count: *item_count,
         })
         .collect();
+    let widget_views = snapshot.map(|s| s.widgets()).unwrap_or_default();
+    let widget_items_relevant = snapshot.is_some_and(|s| {
+        s.shop().open
+            || s.trade().offer_open
+            || s.trade().confirm_open
+            || matches!(s.modals().main, 6575 | 6412)
+    });
+    let widget_item_ops_store: Vec<Vec<Vec<String>>> = widget_views
+        .iter()
+        .map(|w| {
+            if widget_items_relevant && w.type_ == 2 {
+                w.items
+                    .iter()
+                    .map(|it| {
+                        it.actions
+                            .iter()
+                            .filter_map(|op| op.as_deref().map(str::to_owned))
+                            .collect()
+                    })
+                    .collect()
+            } else {
+                Vec::new()
+            }
+        })
+        .collect();
+    let widget_items_store: Vec<Vec<ItemRowInput<'_>>> = widget_views
+        .iter()
+        .enumerate()
+        .map(|(wi, w)| {
+            if !widget_items_relevant || w.type_ != 2 {
+                return Vec::new();
+            }
+            w.items
+                .iter()
+                .enumerate()
+                .map(|(ii, item)| ItemRowInput {
+                    name: obj_names
+                        .and_then(|names| names.name(item.def.id))
+                        .or(item.def.name.as_deref()),
+                    count: item.count,
+                    id: item.def.id,
+                    ops: &widget_item_ops_store[wi][ii],
+                    noted: item.def.noted,
+                    cert: item.def.certificate_link,
+                    component_id: item.component_id,
+                    slot: item.slot,
+                })
+                .collect()
+        })
+        .collect();
+    let widget_facts: Vec<WidgetFactInput<'_>> = widget_views
+        .iter()
+        .enumerate()
+        .map(|(index, w)| {
+            let script = w
+                .scripts
+                .as_ref()
+                .and_then(|scripts| scripts.first())
+                .and_then(Option::as_ref);
+            WidgetFactInput {
+                component_id: w.component_id,
+                root_component_id: w.root_component_id,
+                parent_id: w.parent_id,
+                type_: w.type_,
+                button_type: w.button_type,
+                client_code: w.client_code,
+                x: w.x,
+                y: w.y,
+                width: w.width,
+                height: w.height,
+                hidden: w.hidden,
+                text: w.text.as_deref(),
+                alternate_text: w.alternate_text.as_deref(),
+                button_text: w.button_text.as_deref(),
+                target_base: w.target_base.as_deref(),
+                model_type: w.model_type,
+                model_id: w.model_id,
+                script_opcode: script
+                    .and_then(|script| script.first())
+                    .copied()
+                    .unwrap_or(-1),
+                script_varp: script
+                    .and_then(|script| script.get(1))
+                    .copied()
+                    .unwrap_or(-1),
+                script_value: w
+                    .script_operands
+                    .as_ref()
+                    .and_then(|operands| operands.first())
+                    .copied()
+                    .unwrap_or(-1),
+                colour: w.colour,
+                inventory_ready: w.inventory_ready,
+                items: &widget_items_store[index],
+            }
+        })
+        .collect();
     // The open puzzle board, posted next to the widget-text map: the
     // identified component, its observed slot count, its rows mapped from
     // that widget's own `ItemView`s (bounded — one row per stored slot) and
@@ -1298,6 +1396,43 @@ pub(crate) fn with_script_snapshot_input_shorts<R>(
     let main_modal_texts = modals.map(|m| MainModalTextsInput {
         root: m.main,
         texts: snapshot.map(|s| s.main_modal_texts()).unwrap_or(&[]),
+    });
+    let menu_entries: Vec<&str> = snapshot
+        .map(|s| s.menu_entries().iter().map(String::as_str).collect())
+        .unwrap_or_default();
+    let client_adapter = snapshot.map(|s| {
+        let world = s.world();
+        ClientAdapterFactsInput {
+            attached: s.attached(),
+            map_build_base: (world.map_base_x, world.map_base_z),
+            server_tile: s.local_player().map(|player| TileInput {
+                x: player.player.network.x,
+                z: player.player.network.z,
+                level: player.player.network.level,
+            }),
+            hint_tile_level: s.hint_tile().map(|tile| tile.level),
+            bank_com_id: s.bank_component_id(),
+            chat_continue_component_id: s.chat_continue_component_id(),
+            chat_modal_texts: ChatModalTextsInput {
+                root: s.modals().chat,
+                texts: s.chat_modal_texts(),
+            },
+            widget_facts: &widget_facts,
+            player_count: world.player_count,
+            npc_count: world.npc_count,
+            run_controls: s
+                .run_controls()
+                .map(|controls| (controls.on_component_id, controls.off_component_id)),
+            login_message: s.login_message(),
+            menu_entries: &menu_entries,
+            last_walk_path_local: s.last_walk_path_local(),
+            session_generation: s.trade().session_generation,
+            modal_close_generation: s.shop().server_closes,
+            projection_scene: {
+                let view = s.projection_scene();
+                view.available.then_some(ProjectionSceneInput { view })
+            },
+        }
     });
     let input = SnapshotInput {
         tick,
@@ -1466,6 +1601,7 @@ pub(crate) fn with_script_snapshot_input_shorts<R>(
         _ => CollisionViewInput::UNAVAILABLE,
     });
     let native = NativeFactsInput {
+        stats_ready: snapshot.is_some_and(GameSnapshot::stats_ready),
         inv_ready: snapshot.is_some_and(GameSnapshot::inventory_ready),
         bank_side_ready: snapshot.is_some_and(|s| {
             s.bank_component_id() != -1 && s.modals().side >= 0 && s.bank_side_ready()
@@ -1478,6 +1614,8 @@ pub(crate) fn with_script_snapshot_input_shorts<R>(
                     .map(|option| (option.component_id, option.text.as_str())),
             )
         }),
+        side_modal_id: Some(modals.map_or(-1, |m| m.side)),
+        taking_damage: snapshot.map(GameSnapshot::taking_damage),
         self_chat: snapshot.and_then(GameSnapshot::local_overhead_text),
         hint_tile: snapshot
             .and_then(GameSnapshot::hint_tile)
@@ -1531,7 +1669,7 @@ pub(crate) fn with_script_snapshot_input_shorts<R>(
         api_combat_outcome: None,
         api_progress: None,
         seat_page: None,
-        side_modal_id: Some(modals.map_or(-1, |m| m.side)),
+        client_adapter,
         projectiles: snapshot.map(|snapshot| snapshot.projectiles()),
     };
     f(&input, native)

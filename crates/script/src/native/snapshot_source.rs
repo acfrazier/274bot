@@ -3,7 +3,7 @@ use crate::native::WalkCancelReason;
 use api::snapshot::ProjectileView;
 
 /// A game tile `{x, z, level}`.
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub struct TileInput {
     pub x: i32,
     pub z: i32,
@@ -127,7 +127,7 @@ pub struct ChatOptionInput<'a> {
 }
 
 /// One inv/bank/equipment row posted from the live snapshot.
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, PartialEq, Eq)]
 pub struct ItemRowInput<'a> {
     pub name: Option<&'a str>,
     pub count: i32,
@@ -326,6 +326,8 @@ pub struct SnapshotInput<'a> {
 /// from [`SnapshotInput`] so callers can omit these facts when unused.
 #[derive(Clone, Copy, Default)]
 pub struct NativeFactsInput<'a> {
+    /// Whether every used skill slot has a positive level from this session.
+    pub stats_ready: bool,
     /// The m8aq `inventorySnapshotReady`: the inv tab is transmitting and has
     /// a full update (`login_logout/login.rs2:98`).
     pub inv_ready: bool,
@@ -417,9 +419,15 @@ pub struct NativeFactsInput<'a> {
     /// fact for `bank_side`. `None` omits the slot; the isolate keeps its
     /// last root.
     pub side_modal_id: Option<i32>,
+    /// Coherent current-generation facts for the synchronous ClientAdapter
+    /// readers. None means this post did not carry the adapter projection.
+    pub client_adapter: Option<ClientAdapterFactsInput<'a>>,
     /// The complete forest/result status page. `None` omits it; `Some` with
     /// empty slices explicitly clears both wire vectors.
     pub seat_page: Option<SeatPageInput<'a>>,
+    /// Optional observation that a positive type-1 hitmark is active.
+    /// `None` means this post did not observe hitmarks.
+    pub taking_damage: Option<bool>,
 }
 
 /// A terminal select-only result. Its ordinal is resolved against Start's
@@ -533,6 +541,40 @@ pub struct MainModalTextsInput<'a> {
     /// (a closed modal, or an open one whose tree has no text).
     pub texts: &'a [String],
 }
+pub type ChatModalTextsInput<'a> = MainModalTextsInput<'a>;
+
+/// Selected scene planes and placed-loc geometry for ClientAdapter projection.
+#[derive(Clone, Copy)]
+pub struct ProjectionSceneInput<'a> {
+    pub view: &'a api::snapshot::ProjectionSceneView,
+}
+
+/// Bounded native projection for synchronous ClientAdapter reads. One
+/// optional value keeps all facts on the same posted snapshot generation.
+#[derive(Clone, Copy)]
+pub struct ClientAdapterFactsInput<'a> {
+    pub attached: bool,
+    pub map_build_base: (i32, i32),
+    pub server_tile: Option<TileInput>,
+    pub hint_tile_level: Option<i32>,
+    pub bank_com_id: i32,
+    pub chat_continue_component_id: i32,
+    pub chat_modal_texts: ChatModalTextsInput<'a>,
+    pub widget_facts: &'a [WidgetFactInput<'a>],
+    pub player_count: i32,
+    pub npc_count: i32,
+    pub run_controls: Option<(i32, i32)>,
+    pub login_message: &'a str,
+    pub menu_entries: &'a [&'a str],
+    /// Retained local path from the last observed successful tryMove.
+    pub last_walk_path_local: &'a [(i32, i32)],
+    /// Client session identity for modal-close observations.
+    pub session_generation: u64,
+    /// Server IF_CLOSE packet count in this client session.
+    pub modal_close_generation: u64,
+    /// Camera, terrain and location geometry from one selected scene.
+    pub projection_scene: Option<ProjectionSceneInput<'a>>,
+}
 
 /// The open puzzle board's piece container, the rows it stores and its
 /// session generation. ONE value: a present board always writes
@@ -577,4 +619,32 @@ pub struct WidgetTextInput<'a> {
     pub text: &'a str,
     /// Number of observed TYPE_INV rows; `-1` for non-inventory widgets.
     pub item_count: i32,
+}
+
+/// One selected widget row for the synchronous ClientAdapter projections.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub struct WidgetFactInput<'a> {
+    pub component_id: i32,
+    pub root_component_id: i32,
+    pub parent_id: i32,
+    pub type_: i32,
+    pub button_type: i32,
+    pub client_code: i32,
+    pub x: i32,
+    pub y: i32,
+    pub width: i32,
+    pub height: i32,
+    pub hidden: bool,
+    pub text: Option<&'a str>,
+    pub alternate_text: Option<&'a str>,
+    pub button_text: Option<&'a str>,
+    pub target_base: Option<&'a str>,
+    pub model_type: i32,
+    pub model_id: i32,
+    pub script_opcode: i32,
+    pub script_varp: i32,
+    pub script_value: i32,
+    pub colour: i32,
+    pub inventory_ready: bool,
+    pub items: &'a [ItemRowInput<'a>],
 }

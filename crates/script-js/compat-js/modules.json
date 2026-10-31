@@ -24,6 +24,14 @@
     "shim": "event_signal.js"
   },
   {
+    "module": "client/shell/Skill.js",
+    "shim": "client_skill.js"
+  },
+  {
+    "module": "client/config/worlds.js",
+    "shim": "worlds.js"
+  },
+  {
     "module": "adapter/ClientAdapter.js",
     "shim": "client_adapter.js"
   },

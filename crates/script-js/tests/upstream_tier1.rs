@@ -595,20 +595,33 @@ await refuses('PROFESSOR', () => PROFESSOR.npc);
 await refuses('MURPHY', () => MURPHY.npc);
 await refuses('KOJO', () => KOJO.npc);
 await refuses('KOJO_EXIT', () => KOJO_EXIT.x);
-await refuses('invalidateLocSnapshots', () => clientAdapterExports.invalidateLocSnapshots());
-await refuses('detach', () => clientAdapterExports.detach());
-await refuses('activeStatsReady', () => clientAdapterExports.activeStatsReady());
-await refuses('currentLoginStatsReady', () => clientAdapterExports.currentLoginStatsReady());
-await refuses('locHullHeight', () => clientAdapterExports.locHullHeight());
-await refuses('resolveLocModelExtents', () => clientAdapterExports.resolveLocModelExtents());
-await refuses('attach', () => clientAdapterExports.attach());
-await refuses('setPacketListener', () => clientAdapterExports.setPacketListener());
-await refuses('resetObjCatalog', () => clientAdapterExports.resetObjCatalog());
-await refuses('readRetaliateControls', () => clientAdapterExports.readRetaliateControls());
-await refuses('readModalButtons', () => clientAdapterExports.readModalButtons());
-await refuses('readSelectButtonLabelsByVarp', () => clientAdapterExports.readSelectButtonLabelsByVarp());
-await refuses('combatShowingThreshold', () => clientAdapterExports.combatShowingThreshold());
-await refuses('WELCOME_SCREEN', () => Number(clientAdapterExports.WELCOME_SCREEN));
+const removedClientAdapterMembers = [
+    'invalidateLocSnapshots',
+    'detach',
+    'activeStatsReady',
+    'currentLoginStatsReady',
+    'locHullHeight',
+    'resolveLocModelExtents',
+    'attach',
+    'setPacketListener',
+    'resetObjCatalog',
+    'readRetaliateControls',
+    'readModalButtons',
+    'readSelectButtonLabelsByVarp',
+    'combatShowingThreshold',
+    'WELCOME_SCREEN',
+];
+check(
+    removedClientAdapterMembers.every((member) => !(member in clientAdapterExports)),
+    'removed private ClientAdapter refusals remain exported',
+);
+check(
+    typeof reader.retaliateControls === 'function' &&
+        typeof reader.modals === 'function' &&
+        typeof reader.selectButtonLabelsByVarp === 'function' &&
+        typeof reader.objCatalog === 'function',
+    'supported ClientAdapter reader siblings are missing',
+);
 check(
     woodcuttingExports.WOODCUTTING_LOCATIONS.length === 14 &&
         woodcuttingExports.WOODCUTTING_LOCATION_OPTIONS[5] === woodcuttingExports.WOODCUTTING_LOCATIONS[0].name &&

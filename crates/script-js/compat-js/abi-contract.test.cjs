@@ -556,7 +556,7 @@ test('types follow the family their ABI describes', () => {
 });
 
 test('refusal debt is unique and names each missing notImplValue export', () => {
-    assert.equal(contract.not_impl_debt.length, 150);
+    assert.equal(contract.not_impl_debt.length, 134);
     const selectors = contract.not_impl_debt.map(row => row.selector);
     assert.equal(new Set(selectors).size, selectors.length);
     for (const selector of [
@@ -573,7 +573,6 @@ test('refusal debt is unique and names each missing notImplValue export', () => 
         ['api/ai/clues/data/toolAcquire.js', ['SPADE_SPAWNS', 'PROFESSOR', 'MURPHY', 'KOJO', 'KOJO_EXIT']],
         ['api/ai/quests/engine/QuestEngine.js', ['COIN_FLOAT', 'PROVISION_BANK', 'QuestEngine']],
         ['paint/paintLogic.js', ['paintState', 'WHEEL_ROWS']],
-        ['adapter/ClientAdapter.js', ['WELCOME_SCREEN']],
     ];
     for (const [module, members] of newRefusals) {
         for (const member of members) {
@@ -582,8 +581,8 @@ test('refusal debt is unique and names each missing notImplValue export', () => 
             assert.ok(row.source.includes('crates/script-js/src/shim/'), `${member} names its source file`);
         }
     }
-    assert.equal(newRefusals.reduce((count, [, members]) => count + members.length, 0), 26);
-    assert.equal(collectModuleNotImplValueExports(registry, shimSources, navFamilies).length, 26);
+    assert.equal(newRefusals.reduce((count, [, members]) => count + members.length, 0), 25);
+    assert.equal(collectModuleNotImplValueExports(registry, shimSources, navFamilies).length, 25);
 });
 
 test('an unclassified source module fails closed', () => {

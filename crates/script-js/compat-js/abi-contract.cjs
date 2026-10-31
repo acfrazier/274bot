@@ -105,6 +105,8 @@ const MODULE_RULES = [
     ['api/chatbox/', { id: 'chatbox', nav: false }],
     ['api/market/', { id: 'market', nav: false }],
     ['api/loadout/', { id: 'loadouts', nav: false }],
+    ['client/shell/Skill.js', { id: 'client-adapter', nav: false }],
+    ['client/config/worlds.js', { id: 'client-adapter', nav: false }],
     ['adapter/', { id: 'client-adapter', nav: false }],
     ['geometry/', { id: 'world-primitives', nav: false }],
     ['data/cowKillerLocations.js', { id: 'cow', nav: false }],
