@@ -46,6 +46,8 @@ struct Receipt {
     ports: Option<(u16, u16)>,
     commands: Vec<String>,
     logs: Vec<String>,
+    coverage_notes: Vec<String>,
+    probe_source: Option<String>,
 }
 
 struct LiveSession<'a> {
@@ -56,7 +58,7 @@ struct LiveSession<'a> {
     state: Arc<Mutex<FrameState>>,
     receipt: &'a mut Receipt,
 }
-struct PreparedCatalogTask {
+struct PreparedScriptTask {
     js: String,
     shape: LoadShape,
     settings: Map<String, Value>,
@@ -843,7 +845,7 @@ fn replace_once(source: &mut String, needle: &str, replacement: &str) -> Result<
     Ok(())
 }
 
-fn start_catalog_task(session: &LiveSession<'_>, card: PreparedCatalogTask) -> Result<(), String> {
+fn start_prepared_task(session: &LiveSession<'_>, card: PreparedScriptTask) -> Result<(), String> {
     session.play.script_start_handle().start_load(
         &session.account,
         card.js,
@@ -885,7 +887,7 @@ fn prepare_catalog_task(
     temp: &Path,
     card_name: &str,
     source_relative_path: &str,
-) -> Result<PreparedCatalogTask, String> {
+) -> Result<PreparedScriptTask, String> {
     let catalog_commit = git_output(root, &["rev-parse", "--short=10", "HEAD"])?;
     if !catalog_commit.starts_with(CATALOG_SHORT) {
         return Err(format!(
@@ -951,7 +953,85 @@ fn prepare_catalog_task(
             api_family: Some(card.api_family.as_str().into()),
         },
     )?;
-    Ok(PreparedCatalogTask {
+    Ok(PreparedScriptTask {
+        js: card.js,
+        shape: card.shape,
+        settings,
+        siblings,
+    })
+}
+
+fn prepare_file_task(
+    root: &Path,
+    temp: &Path,
+    card_name: &str,
+    source_relative_path: &str,
+) -> Result<PreparedScriptTask, String> {
+    let catalog_commit = git_output(root, &["rev-parse", "--short=10", "HEAD"])?;
+    if !catalog_commit.starts_with(CATALOG_SHORT) {
+        return Err(format!(
+            "expected rs2b0t catalog {CATALOG_SHORT}, found {catalog_commit}"
+        ));
+    }
+    let source_path = root.join(source_relative_path);
+    if !source_path.is_file() {
+        return Err(format!(
+            "pinned source file is missing: {}",
+            source_path.display()
+        ));
+    }
+    let source_bytes = std::fs::read(&source_path)
+        .map_err(|error| format!("read {}: {error}", source_path.display()))?;
+    let source_sha = script_js::JsCache::origin_sha(&source_bytes);
+    let mut library =
+        script_js::JsLibrary::with_cache(temp.join("js-scripts.json"), temp.join("js-cache"));
+    let card = library
+        .load(&source_path)
+        .map_err(|error| format!("load File card {card_name}: {error}"))?;
+    let expected_source = source_path
+        .canonicalize()
+        .map_err(|error| format!("canonicalize pinned source: {error}"))?;
+    let loaded_source = card
+        .path
+        .canonicalize()
+        .map_err(|error| format!("canonicalize loaded File card: {error}"))?;
+    if card.name != card_name
+        || card.source != script::ScriptSource::File
+        || loaded_source != expected_source
+        || card.sha256 != source_sha
+    {
+        return Err(format!(
+            "File card identity mismatch for {card_name}: name={}, source={:?}, loaded={}, expected={}, expected_sha={}, loaded_sha={}",
+            card.name,
+            card.source,
+            loaded_source.display(),
+            expected_source.display(),
+            source_sha,
+            card.sha256
+        ));
+    }
+    if let Some(import) = &card.unloadable {
+        return Err(format!("{card_name} is unloadable: {import}"));
+    }
+    if card.shape != LoadShape::CompatClass {
+        return Err(format!(
+            "{card_name} has unexpected Load shape {:?}",
+            card.shape
+        ));
+    }
+    let settings = script::merge_bag(&card.settings_schema, &Map::new(), Some(&Map::new()));
+    let siblings = script_js::resolve_sibling_modules(
+        &card.path,
+        &card.origin,
+        library.cache(),
+        script_js::CacheMeta {
+            kind: card.kind,
+            source: card.source,
+            shape: None,
+            api_family: Some(card.api_family.as_str().into()),
+        },
+    )?;
+    Ok(PreparedScriptTask {
         js: card.js,
         shape: card.shape,
         settings,
@@ -1401,6 +1481,63 @@ export default class CompatRuntimeFrameProbe extends LoopingBot {
 }
 "#;
 
+const RUNTIME_ACCOUNT_LEVELER_FRAME_SOURCE: &str = r#"
+import { LoopingBot } from '@rs2b0t/api';
+import { Bank } from '../../api/bank/Bank.js';
+import { Game } from '../../api/game/Game.js';
+import { BotHost } from '../../runtime/BotHost.js';
+import { ScriptRunner } from '../../runtime/ScriptRunner.js';
+
+export default class CompatAccountLevelerFrameProbe extends LoopingBot {
+    phase = 'train';
+    status = 'RUNTIME:ACCOUNT_LEVELER_FRAME';
+    detail = '';
+    lastLoggedAt = Date.now();
+    stopObserving = null;
+    stock = {
+        observe: (items, ready) => {
+            this.detail = `bankItems=${items.length}, bankReady=${ready}`;
+        },
+    };
+    session = {
+        sampleWork: (now, active) => {
+            this.detail += `; sampleAtValid=${Number.isFinite(now)}, workActive=${active}`;
+        },
+    };
+
+    async onStart() {
+        if (!(await Bank.openNearest('Bank booth', 'Bank'))) {
+            throw new Error('AccountLeveler frame probe could not open a bank');
+        }
+        if (!(await Bank.waitReady(5000))) {
+            throw new Error('AccountLeveler frame probe has no ready bank snapshot');
+        }
+        this.log(`RUNTIME:ACCOUNT_LEVELER_BANK:items=${Bank.items().length}:ready=${Bank.ready()}`);
+        this.lastLoggedAt = Date.now() - 30000;
+        this.stopObserving = BotHost.addFrameListener(() => {
+            this.stock.observe(Bank.items(), Bank.ready());
+            this.session.sampleWork(Date.now(), this.phase === 'train' && ScriptRunner.state === 'running' && !Bank.isOpen() && (Game.animating() || Game.inCombat()));
+            if (ScriptRunner.state === 'running' && Date.now() - this.lastLoggedAt >= 30000) {
+                const tile = Game.tile();
+                this.log(`Still ${this.status}${this.detail ? `; ${this.detail}` : ''}; position ${tile ? `(${tile.x},${tile.z},${tile.level})` : 'unknown'}`);
+            }
+        });
+    }
+
+    loop() {}
+
+    onStop() {
+        this.stopObserving?.();
+        this.log('RUNTIME:ACCOUNT_LEVELER_STOP');
+    }
+
+    log(message) {
+        this.lastLoggedAt = Date.now();
+        super.log(message);
+    }
+}
+"#;
+
 fn wait_for_game_tick(session: &mut LiveSession<'_>, target: u32) -> Result<(), String> {
     let deadline = Instant::now() + ACTION_DEADLINE;
     loop {
@@ -1470,17 +1607,68 @@ fn compat_v1_runtime_frame_live() {
     run_and_record("compat_v1_runtime_frame", run_runtime_frame_cell)
         .unwrap_or_else(|error| panic!("{error}"));
 }
-fn instrument_account_leveler_frames(js: &mut String) -> Result<(), String> {
-    replace_once(
-        js,
-        "BotHost.addFrameListener(() => {",
-        "BotHost.addFrameListener(() => {\n            const frameCount = (globalThis.__compatV1AccountLevelerFrames = (globalThis.__compatV1AccountLevelerFrames || 0) + 1);\n            if (frameCount <= 4) this.log('RUNTIME:ACCOUNT_LEVELER_FRAME:' + frameCount + ':' + ScriptRunner.state);",
+
+fn run_runtime_account_leveler_frame_probe_cell(receipt: &mut Receipt) -> Result<(), String> {
+    receipt.probe_source = Some(RUNTIME_ACCOUNT_LEVELER_FRAME_SOURCE.to_owned());
+    receipt.coverage_notes.push(
+        "The listener body copies pinned AccountLeveler.ts:96-103. This normal-Load probe is not AccountLeveler Catalog-card coverage. The catalog card is wave-4-blocked by its private journal.js import at line 17.".into(),
+    );
+    let mut session = session("compat-v1-runtime-accountleveler-frame", receipt)?;
+    start_script(
+        &session,
+        RUNTIME_ACCOUNT_LEVELER_FRAME_SOURCE.to_owned(),
     )?;
-    replace_once(
-        js,
-        "this.activity.stop();",
-        "this.log('RUNTIME:ACCOUNT_LEVELER_STOP');\n        this.activity.stop();",
+    wait_for_logs(&mut session, ACTION_DEADLINE, |logs| {
+        logs.iter()
+            .any(|line| line.starts_with("Still RUNTIME:ACCOUNT_LEVELER_FRAME;"))
+    })?;
+    if session.play.script_state(&session.account) != script::RunState::Running {
+        return Err(format!(
+            "AccountLeveler frame probe did not reach Running: {:?}",
+            session.play.script_state(&session.account)
+        ));
+    }
+    let frame_log = session
+        .receipt
+        .logs
+        .iter()
+        .find(|line| line.starts_with("Still RUNTIME:ACCOUNT_LEVELER_FRAME;"))
+        .ok_or_else(|| "AccountLeveler frame probe did not log its frame sample".to_string())?;
+    if !frame_log.contains("bankReady=true")
+        || !frame_log.contains("sampleAtValid=true, workActive=false")
+        || !frame_log.contains("position (")
+    {
+        return Err(format!(
+            "AccountLeveler frame sample did not include the ready bank, state and tile: {frame_log}"
+        ));
+    }
+    if !session
+        .receipt
+        .logs
+        .iter()
+        .any(|line| line.starts_with("RUNTIME:ACCOUNT_LEVELER_BANK:items=") && line.ends_with(":ready=true"))
+    {
+        return Err(format!(
+            "AccountLeveler frame probe did not record a ready bank: {:?}",
+            session.receipt.logs
+        ));
+    }
+    stop_script(
+        &mut session,
+        "RUNTIME:ACCOUNT_LEVELER_STOP",
+        false,
+    )?;
+    Ok(())
+}
+
+#[test]
+#[ignore = "requires LIVE=1, throwaway HOME, pinned source, and real 289 Engine L"]
+fn compat_v1_runtime_account_leveler_frame_live() {
+    run_and_record(
+        "compat_v1_runtime_account_leveler_frame",
+        run_runtime_account_leveler_frame_probe_cell,
     )
+    .unwrap_or_else(|error| panic!("{error}"));
 }
 
 fn instrument_alcher_active_event(js: &mut String) -> Result<(), String> {
@@ -1513,6 +1701,9 @@ export default class CompatAlcherActiveEventProbe extends Alcher {
 }
 
 fn run_runtime_catalog_cell(receipt: &mut Receipt) -> Result<(), String> {
+    receipt.coverage_notes.push(
+        "AccountLeveler Catalog-card coverage is blocked by AccountLeveler.ts:17 importing private api/ai/quests/defs/dragonslayer/journal.js. Its lines 96-103 run in the separate normal-Load frame probe.".into(),
+    );
     let mut session = session("compat-v1-runtime-catalog", receipt)?;
     let catalog_root = required_path("RS2B0T")?;
     let temp = session
@@ -1520,48 +1711,6 @@ fn run_runtime_catalog_cell(receipt: &mut Receipt) -> Result<(), String> {
         .home
         .join("compat-v1-live")
         .join(&session.account);
-    let mut account_leveler = prepare_catalog_task(
-        &catalog_root,
-        &temp,
-        "AccountLeveler",
-        "src/bot/scripts/AccountLeveler/AccountLeveler.ts",
-    )?;
-    instrument_account_leveler_frames(&mut account_leveler.js)?;
-    start_catalog_task(&session, account_leveler)?;
-    wait_for_logs(&mut session, ACTION_DEADLINE, |logs| {
-        logs.iter()
-            .any(|line| line.starts_with("RUNTIME:ACCOUNT_LEVELER_FRAME:2:"))
-    })?;
-    if session.play.script_state(&session.account) != script::RunState::Running {
-        return Err(format!(
-            "AccountLeveler did not reach Running: {:?}",
-            session.play.script_state(&session.account)
-        ));
-    }
-    if !session.receipt.logs.iter().any(|line| {
-        line.starts_with("RUNTIME:ACCOUNT_LEVELER_FRAME:2:") && line.ends_with(":running")
-    }) {
-        return Err(format!(
-            "AccountLeveler frame observer did not read Running: {:?}",
-            session.receipt.logs
-        ));
-    }
-    stop_script(&mut session, "RUNTIME:ACCOUNT_LEVELER_STOP", false)?;
-    let account_stop_index = session
-        .receipt
-        .logs
-        .iter()
-        .position(|line| line == "RUNTIME:ACCOUNT_LEVELER_STOP")
-        .ok_or_else(|| "AccountLeveler did not log its stop hook".to_string())?;
-    let stopped_tick = lock_state(&session.state).tick;
-    wait_for_game_tick(&mut session, stopped_tick.saturating_add(2))?;
-    drain_logs(&mut session);
-    if session.receipt.logs[account_stop_index + 1..]
-        .iter()
-        .any(|line| line.starts_with("RUNTIME:ACCOUNT_LEVELER_FRAME:"))
-    {
-        return Err("AccountLeveler frame observer ran after stop".into());
-    }
 
     let mut alcher = prepare_catalog_task(
         &catalog_root,
@@ -1571,7 +1720,7 @@ fn run_runtime_catalog_cell(receipt: &mut Receipt) -> Result<(), String> {
     )?;
     instrument_alcher_active_event(&mut alcher.js)?;
     let alcher_start = session.receipt.logs.len();
-    start_catalog_task(&session, alcher)?;
+    start_prepared_task(&session, alcher)?;
     wait_for_logs(&mut session, ACTION_DEADLINE, |logs| {
         logs.get(alcher_start..).is_some_and(|recent| {
             recent
@@ -1716,6 +1865,9 @@ fn validate_walk_map_pick(logs: &[String], start: usize) -> Result<String, Strin
 }
 
 fn run_runtime_settings_walk_cell(receipt: &mut Receipt) -> Result<(), String> {
+    receipt.coverage_notes.push(
+        "Loaded pinned WalkToBot.ts as a ScriptSource::File card named WalkToBot. WalkTo is reserved by the runtime registry, so this proves File-card, not Catalog-card, coverage.".into(),
+    );
     let mut session = session("compat-v1-runtime-settings-walk", receipt)?;
     let catalog_root = required_path("RS2B0T")?;
     let temp = session
@@ -1723,14 +1875,14 @@ fn run_runtime_settings_walk_cell(receipt: &mut Receipt) -> Result<(), String> {
         .home
         .join("compat-v1-live")
         .join(&session.account);
-    let mut card = prepare_catalog_task(
+    let mut card = prepare_file_task(
         &catalog_root,
         &temp,
-        "WalkTo",
+        "WalkToBot",
         "src/bot/scripts/WalkToBot/WalkToBot.ts",
     )?;
     instrument_walk_to_settings(&mut card.js)?;
-    start_catalog_task(&session, card)?;
+    start_prepared_task(&session, card)?;
     wait_for_logs(&mut session, ACTION_DEADLINE, |logs| {
         logs.iter()
             .any(|line| line.starts_with("RUNTIME:WALK_WRITE:"))
@@ -1828,14 +1980,14 @@ fn run_runtime_settings_walk_cell(receipt: &mut Receipt) -> Result<(), String> {
     stop_script(&mut session, "RUNTIME:WALK_STOP", false)?;
 
     let restart_start = session.receipt.logs.len();
-    let mut restart = prepare_catalog_task(
+    let mut restart = prepare_file_task(
         &catalog_root,
         &temp,
-        "WalkTo",
+        "WalkToBot",
         "src/bot/scripts/WalkToBot/WalkToBot.ts",
     )?;
     instrument_walk_to_settings(&mut restart.js)?;
-    start_catalog_task(&session, restart)?;
+    start_prepared_task(&session, restart)?;
     wait_for_logs(&mut session, ACTION_DEADLINE, |logs| {
         logs.get(restart_start..).is_some_and(|recent| {
             recent

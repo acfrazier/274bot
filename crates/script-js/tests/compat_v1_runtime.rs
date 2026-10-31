@@ -1226,19 +1226,24 @@ import { resolveWorldNumber } from '../../../client/config/worlds.js';
 import Skill from '../../../client/shell/Skill.js';
 "#,
         r#"
-const invalidWorld = query => {
+const params = values => ({
+    getAll(key) {
+        return key === 'world' ? values : [];
+    },
+});
+const invalidWorld = values => {
     try {
-        return resolveWorldNumber('w2.rs2b2t.com', new URLSearchParams(query));
+        return resolveWorldNumber('w2.rs2b2t.com', params(values));
     } catch (error) {
         return String(error?.message ?? error);
     }
 };
 globalThis.__clientHelperFacts = {
-    hosted: resolveWorldNumber('w2.rs2b2t.com:443', new URLSearchParams()),
-    fallback: resolveWorldNumber('localhost:8081', new URLSearchParams()),
-    explicit: resolveWorldNumber('w1.rs2b2t.com', new URLSearchParams('world=3')),
-    invalid: invalidWorld('world=4'),
-    duplicate: invalidWorld('world=1&world=2'),
+    hosted: resolveWorldNumber('w2.rs2b2t.com:443', params([])),
+    fallback: resolveWorldNumber('localhost:8081', params([])),
+    explicit: resolveWorldNumber('w1.rs2b2t.com', params(['3'])),
+    invalid: invalidWorld(['4']),
+    duplicate: invalidWorld(['1', '2']),
     skillNames: Skill.names,
     skillUsed: Skill.used,
 };
