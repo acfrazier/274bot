@@ -284,6 +284,8 @@ The authored approach targets `3108,3346,0` with radius one. Its stage declares
 `nasty_tree@3108,3346,0` in `cross`, because this test deliberately enters the
 tree's hunt range. Quester forbids undeclared danger crossings. The declared
 zone permits this route without changing admission policy or poison facts.
+The harness compiles the Path against the selected navigation world's zone
+catalog, so the compiler validates that declaration before account creation.
 The bot must perform the approach after Start, observe the unattackable
 attacker, abort combat and walk out.
 

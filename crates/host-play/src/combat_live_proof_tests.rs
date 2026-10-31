@@ -8251,14 +8251,17 @@ fn run_case(case: Case) {
     let path = script::quester::compile::prepare_for_test({
         let selected = Arc::clone(&selected);
         let quests = Arc::clone(&quests);
+        let world = Arc::clone(world.as_ref().expect("selected navigation world"));
         move |cap| {
+            let navigation =
+                nav_planner::producer::lease(&world).expect("selected navigation zone catalog");
             compile_path(
                 &compile_source,
                 &selected,
                 &quests,
                 cap,
                 &script::local_state::OperatorLoadouts::absent(),
-                None,
+                navigation.zones(),
             )
         }
     })
