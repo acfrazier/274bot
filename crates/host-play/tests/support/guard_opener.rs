@@ -221,6 +221,7 @@ fn record_error(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use api::interact::Driver;
     use client::io::{ClientStream, Isaac};
     use std::net::{TcpListener, TcpStream};
 
