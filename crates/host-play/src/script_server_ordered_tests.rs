@@ -2436,9 +2436,9 @@ fn ordered_builtin_gatherer_knife_npc_fishing_uses_operation_click_then_exact_np
 
 #[test]
 fn ordered_builtin_gatherer_knife_npc_packet_between_capture_and_dispatch_is_stale() {
-    for intervening_packet in [false, true] {
+    for (intervening_packet, recapture) in [(false, false), (true, false), (true, true)] {
         let mut rig = Rig::new();
-        let request = knife_npc_request(&mut rig, 309, 1);
+        let mut request = knife_npc_request(&mut rig, 309, 1);
         let captured = rig.snapshot.gens().npc_info;
         if intervening_packet {
             // Retain slot, type and tile so only the packet watermark can
@@ -2446,10 +2446,8 @@ fn ordered_builtin_gatherer_knife_npc_packet_between_capture_and_dispatch_is_sta
             let mut packet = client::io::Packet::new(vec![1, 0]);
             rig.client.psize = 2;
             packet.set_frame_end(2);
-            rig.client.handle_packet(
-                client::io::ServerProt289::NPC_INFO,
-                &mut packet,
-            );
+            rig.client
+                .handle_packet(client::io::ServerProt289::NPC_INFO, &mut packet);
             assert!(rig.client.ingame);
             assert_eq!(packet.pos, 2);
             assert_eq!(rig.client.gens.npc_info, captured + 1);
@@ -2460,8 +2458,11 @@ fn ordered_builtin_gatherer_knife_npc_packet_between_capture_and_dispatch_is_sta
                 pump.drain_client(&rig.client),
             );
         }
+        if recapture {
+            request = knife_npc_request(&mut rig, 309, 1);
+        }
         let receipt = dispatch_with_builtin_gatherer_context(&mut rig, request);
-        if intervening_packet {
+        if intervening_packet && !recapture {
             assert_eq!(receipt.terminal, Some(ServerOrderedError::StaleTarget));
             assert_eq!((receipt.dispatched_prefix, receipt.wire_events), (0, 0));
             assert_no_cipher_movement(&rig);

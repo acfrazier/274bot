@@ -6154,6 +6154,7 @@ mod packet_oracle_tests {
         watermark.npc = 0;
         setup.npc_snapshot.reset_session(watermark);
         setup.observe_npc(&client);
+        assert_eq!(setup.npc_snapshot.gens().npc_info, client.gens.npc_info);
         assert_eq!(setup.npc_snapshot.npcs()[0].tile, tile(2382, 3414, 0));
         let first =
             interact::server_ordered::ExactNpcReference::new(3712, 309, tile(2382, 3415, 0), 3, 1)
@@ -6174,7 +6175,7 @@ mod packet_oracle_tests {
             3712,
             309,
             tile(2382, 3416, 0),
-            setup.npc_snapshot.gens().npc_info,
+            client.gens.npc_info,
             1,
         )
         .unwrap();

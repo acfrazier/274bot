@@ -43,6 +43,12 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.8` 
   not a ground-walk `MOVE_GAMECLICK`. Its packet count and owner checks stay
   unchanged.
 
+### Fixed during development
+
+- Gatherer Knife requests now refuse NPC references captured before a later
+  `NPC_INFO` packet. Published snapshots carry the current packet generation,
+  including updates that leave the NPC's index, type and tile unchanged.
+
 ### Not in this release
 
 - Native bank sorting (`sortBank`), quest-junk discovery (`findQuestJunk`), pack
