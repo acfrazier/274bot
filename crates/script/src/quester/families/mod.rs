@@ -3912,7 +3912,7 @@ pub(super) struct UseOnAction {
 
 /// What became of one use-on request.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum UseOnDispatch {
+pub(super) enum UseOnDispatch {
     /// The host sent it and the server accepted it; the chat lines from
     /// `chat_since` on can belong to it.
     Accepted { chat_since: i32 },
