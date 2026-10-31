@@ -36,6 +36,10 @@ const DIRS: [(i32, i32); 8] = [
     (-1, -1),
 ];
 
+type ClosureTables = (Box<[u32]>, Box<[ClosureRun]>);
+type LabelTables = (Box<[Chunk]>, Box<[u32]>, Box<[u8]>);
+type PlacementTables = (Box<[PlacementRow]>, Box<[StandRow]>);
+
 /// Bake the complete v18 atlas for `collision` and `graph`.
 pub fn bake_atlas(
     collision: &WorldCollision,
@@ -87,9 +91,9 @@ fn bake_atlas_inner(
 
     let mut dense = vec![u32::MAX; n];
     let mut cells = Vec::new();
-    for i in 0..n {
+    for (i, slot) in dense.iter_mut().enumerate() {
         if collision.standable(at(i)) {
-            dense[i] = cells.len() as u32;
+            *slot = cells.len() as u32;
             cells.push(i);
         }
     }
@@ -505,7 +509,7 @@ fn scc_ids(adj: &[BTreeSet<u32>]) -> Vec<u32> {
     scc
 }
 
-fn closures_from_adj(adj: &[BTreeSet<u32>]) -> Result<(Box<[u32]>, Box<[ClosureRun]>), PackError> {
+fn closures_from_adj(adj: &[BTreeSet<u32>]) -> Result<ClosureTables, PackError> {
     let n = adj.len() as u32;
     let mut offsets = vec![0u32];
     let mut runs = Vec::new();
@@ -555,10 +559,7 @@ fn closures_from_adj(adj: &[BTreeSet<u32>]) -> Result<(Box<[u32]>, Box<[ClosureR
     Ok((offsets.into_boxed_slice(), runs.into_boxed_slice()))
 }
 
-fn encode_labels(
-    collision: &WorldCollision,
-    labels: &[u32],
-) -> Result<(Box<[Chunk]>, Box<[u32]>, Box<[u8]>), PackError> {
+fn encode_labels(collision: &WorldCollision, labels: &[u32]) -> Result<LabelTables, PackError> {
     let side = chunk_side() as usize;
     let chunk_cols = collision.width.div_ceil(side);
     let chunk_rows = collision.height.div_ceil(side);
@@ -623,7 +624,7 @@ fn bake_placements(
     loc_defs: &LocDefs,
     labels: &[u32],
     idx: impl Fn(WorldTile) -> Option<usize>,
-) -> Result<(Box<[PlacementRow]>, Box<[StandRow]>), PackError> {
+) -> Result<PlacementTables, PackError> {
     let mut files: Vec<_> = std::fs::read_dir(maps_dir)
         .map_err(PackError::Io)?
         .filter_map(|entry| entry.ok())
@@ -808,7 +809,7 @@ fn scatter_runs(
 ) -> Vec<CellRun> {
     let plane = collision.width * collision.height;
     let mut marked = vec![false; n];
-    for i in 0..plane.min(n) {
+    for (i, slot) in marked.iter_mut().enumerate().take(plane.min(n)) {
         let tile = at(i);
         if !collision.standable(tile) {
             continue;
@@ -818,7 +819,7 @@ fn scatter_runs(
             continue;
         }
         if can_step_off(collision, tile) {
-            marked[i] = true;
+            *slot = true;
         }
     }
     let words: Vec<u64> = marked
