@@ -1025,6 +1025,68 @@ fn run_tree_cell(receipt: &mut Receipt) -> Result<(), String> {
     Ok(())
 }
 
+const INPUT_SURFACE_SOURCE: &str = r#"
+import { Input } from '../../input/Input.js';
+
+const removedMembers = [
+    'useItemOnLoc',
+    'useItemOnNpc',
+    'useItemOnObj',
+    'useItemOnItem',
+    'castOnNpc',
+    'castOnLoc',
+    'castOnItem',
+    'continueDialog',
+];
+const read = (target, name) => {
+    try { return { ok: true, value: target[name] }; }
+    catch (error) { return { ok: false, message: error.message }; }
+};
+
+export default class CompatInputSurfaceProbe extends LoopingBot {
+    onStart() {
+        for (const member of removedMembers) {
+            if (Object.hasOwn(Input, member)
+                || Object.getOwnPropertyDescriptor(Input, member) !== undefined
+                || Object.keys(Input).includes(member)) {
+                throw new Error(`removed Input member remains: ${member}`);
+            }
+        }
+        const unknown = read(Input, '__compat_census_unknown');
+        if (unknown.ok || unknown.message !== 'not impl: Input.__compat_census_unknown') {
+            throw new Error('unknown Input reads must retain the generic refusal');
+        }
+        if (typeof Input.walk !== 'function' || Input.walk(NaN, 0) !== false) {
+            throw new Error('Input.walk sibling contract changed');
+        }
+        if (typeof Input.invButton !== 'function' || Input.invButton(NaN, 0, 0, 1) !== false) {
+            throw new Error('Input.invButton sibling contract changed');
+        }
+        this.log('INPUT:READY');
+    }
+    loop() {}
+    onStop() { this.log('INPUT:STOP'); }
+}
+"#;
+
+fn run_input_surface_cell(receipt: &mut Receipt) -> Result<(), String> {
+    let mut session = session("compat-v1-input-removal", receipt)?;
+    start_script(&session, INPUT_SURFACE_SOURCE.to_owned())?;
+    wait_for_logs(&mut session, ACTION_DEADLINE, |logs| {
+        logs.iter().any(|line| line == "INPUT:READY")
+    })?;
+    stop_script(&mut session, "INPUT:STOP", true)?;
+    if count_prefix(&session.receipt.logs, "INPUT:READY") != 1
+        || count_prefix(&session.receipt.logs, "INPUT:STOP") != 1
+    {
+        return Err(format!(
+            "input surface cell did not complete exactly once: {:?}",
+            session.receipt.logs
+        ));
+    }
+    Ok(())
+}
+
 fn wait_for_next_tick_without_restart_event(session: &mut LiveSession<'_>) -> Result<(), String> {
     let before = lock_state(&session.state).tick;
     let deadline = Instant::now() + ACTION_DEADLINE;
@@ -1288,6 +1350,13 @@ fn compat_v1_bot_tree_live() {
 #[ignore = "requires LIVE=1, throwaway HOME, pinned catalog, and real 289 Engine L"]
 fn compat_v1_events_live() {
     run_and_record("compat_v1_events", run_events_cell).unwrap_or_else(|error| panic!("{error}"));
+}
+
+#[test]
+#[ignore = "requires LIVE=1, throwaway HOME, pinned catalog, and real 289 Engine L"]
+fn compat_v1_input_removal_live() {
+    run_and_record("compat_v1_input_removal", run_input_surface_cell)
+        .unwrap_or_else(|error| panic!("{error}"));
 }
 
 const RUNTIME_FRAME_SOURCE: &str = r#"
