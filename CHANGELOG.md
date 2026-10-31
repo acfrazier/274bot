@@ -30,6 +30,9 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.7` 
   Fresh supply evidence, Resume or a relevant setting change can start one
   new plan. A saved bank hint alone cannot. Pause, Stop, relog handling and
   connection checks remain active.
+- The park/relog live check now allows a temporary scene-loading hold.
+  It still requires the same blocked run, retained run intent and restored
+  Running readiness before the new-session clock can complete the check.
 - Bank-only navigation no longer loads the shop catalog. Shop users still
   prepare the shared catalog before the first purchase.
 - A fresh "can't reach" reply now lets a shop purchase retry its rejected

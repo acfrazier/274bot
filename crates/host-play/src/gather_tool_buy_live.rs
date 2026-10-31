@@ -471,7 +471,7 @@ impl ParkTransition {
     }
 }
 
-#[derive(Debug, Clone, Default, serde::Serialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize)]
 struct ParkObservation {
     run_slot: Option<u64>,
     run_generation: Option<u64>,
@@ -480,6 +480,8 @@ struct ParkObservation {
     phase_label: Option<String>,
     slot_state: Option<String>,
     slot_running: Option<bool>,
+    want_run: Option<bool>,
+    host_up: Option<bool>,
     failure: Option<String>,
     block_reason: Option<String>,
     bank_seen: Option<String>,
@@ -507,6 +509,7 @@ struct ParkLifecycleTrace {
     relog_requested: bool,
     relog_observed: bool,
     after_relog: Option<ParkObservation>,
+    relog_observations: Vec<ParkObservation>,
 }
 
 #[derive(Debug, Clone, Default, serde::Serialize)]
@@ -1429,6 +1432,8 @@ fn park_observation_collects_play_facts_before_locking_trace() {
         );
         ParkPlaySnapshot {
             slot_state: script::RunState::Running,
+            want_run: true,
+            host_up: true,
             bank_origin: "Session".into(),
             bank_rows: Vec::new(),
         }
@@ -1603,8 +1608,29 @@ fn status_value(status: &ScriptStatus) -> Value {
 
 struct ParkPlaySnapshot {
     slot_state: script::RunState,
+    want_run: bool,
+    host_up: bool,
     bank_origin: String,
     bank_rows: Vec<(i32, i32)>,
+}
+
+fn read_park_play_snapshot(play: &super::Play, account: &str) -> ParkPlaySnapshot {
+    let (slot_state, want_run) = super::script_runtime::script_slot(&play.scripts, account)
+        .and_then(|slot| slot.lock().ok().map(|slot| (slot.state(), slot.want_run)))
+        .unwrap_or((script::RunState::Idle, false));
+    let host_up = play
+        .statuses()
+        .iter()
+        .find(|status| status.username == account)
+        .is_some_and(super::SlotStatus::is_up);
+    let bank = play.bank_rows(account);
+    ParkPlaySnapshot {
+        slot_state,
+        want_run,
+        host_up,
+        bank_origin: origin_name(bank.origin),
+        bank_rows: bank.rows,
+    }
 }
 
 fn park_observation(
@@ -1626,6 +1652,8 @@ fn park_observation(
         phase_label: field_text(status, "phase").map(str::to_owned),
         slot_state: Some(format!("{:?}", play.slot_state)),
         slot_running: Some(play.slot_state == script::RunState::Running),
+        want_run: Some(play.want_run),
+        host_up: Some(play.host_up),
         failure: status
             .failure
             .as_ref()
@@ -1653,7 +1681,12 @@ fn park_observation(
 fn relog_park_preserved(initial: &ParkObservation, observation: &ParkObservation) -> bool {
     observation.phase.as_deref() == Some("Blocked")
         && observation.phase_label.as_deref() == Some("blocked")
-        && observation.slot_running == Some(true)
+        && observation.want_run == Some(true)
+        && observation.host_up.is_some()
+        && matches!(
+            (observation.slot_state.as_deref(), observation.slot_running),
+            (Some("Running"), Some(true)) | (Some("Paused"), Some(false))
+        )
         && observation.failure.is_none()
         && observation.block_reason == initial.block_reason
         && observation.run_slot == initial.run_slot
@@ -1661,7 +1694,10 @@ fn relog_park_preserved(initial: &ParkObservation, observation: &ParkObservation
         && observation.run_session != initial.run_session
         && observation.session_generation != initial.session_generation
         && observation.bank_origin.as_deref() == Some("Hint")
-        && observation.bank_rows.as_ref().is_some_and(|rows| rows.is_empty())
+        && observation
+            .bank_rows
+            .as_ref()
+            .is_some_and(|rows| rows.is_empty())
         && observation.bank_open == Some(false)
         && observation.tool_in_pack == Some(0)
         && observation.coins_in_pack == Some(0)
@@ -1669,8 +1705,24 @@ fn relog_park_preserved(initial: &ParkObservation, observation: &ParkObservation
         && observation.no_bank_trip == Some(true)
 }
 
-#[test]
-fn relog_park_oracle_preserves_a_readiness_pause_until_the_scene_returns() {
+fn relog_park_settled(
+    observation: &ParkObservation,
+    clock_accepted: bool,
+    elapsed: Duration,
+) -> Result<bool, &'static str> {
+    // A published ready row and the slot gate can straddle a pump turn.
+    // Neither a loading scene nor its retained Paused state is a final pass.
+    if observation.host_up == Some(true) && observation.slot_running == Some(true) && clock_accepted
+    {
+        Ok(true)
+    } else if elapsed > Duration::from_secs(30) {
+        Err("Running readiness and the 600 ms clock did not stabilize after relog")
+    } else {
+        Ok(false)
+    }
+}
+
+fn relog_park_oracle_fixture() -> (ParkObservation, ParkObservation) {
     let initial = ParkObservation {
         run_slot: Some(1),
         run_generation: Some(3),
@@ -1688,6 +1740,8 @@ fn relog_park_oracle_preserves_a_readiness_pause_until_the_scene_returns() {
         phase_label: Some("blocked".into()),
         slot_state: Some("Paused".into()),
         slot_running: Some(false),
+        want_run: Some(true),
+        host_up: Some(false),
         block_reason: initial.block_reason.clone(),
         bank_origin: Some("Hint".into()),
         bank_rows: Some(Vec::new()),
@@ -1698,7 +1752,98 @@ fn relog_park_oracle_preserves_a_readiness_pause_until_the_scene_returns() {
         no_bank_trip: Some(true),
         ..ParkObservation::default()
     };
-    assert!(relog_park_preserved(&initial, &loading));
+    (initial, loading)
+}
+
+#[test]
+fn relog_park_oracle_preserves_a_readiness_pause_until_the_scene_returns() {
+    let (initial, mut observation) = relog_park_oracle_fixture();
+    assert!(relog_park_preserved(&initial, &observation));
+    assert_eq!(
+        relog_park_settled(&observation, true, Duration::ZERO),
+        Ok(false)
+    );
+    observation.host_up = Some(true);
+    assert!(relog_park_preserved(&initial, &observation));
+    assert_eq!(
+        relog_park_settled(&observation, true, Duration::ZERO),
+        Ok(false)
+    );
+    observation.slot_state = Some("Running".into());
+    observation.slot_running = Some(true);
+    assert!(relog_park_preserved(&initial, &observation));
+    assert_eq!(
+        relog_park_settled(&observation, false, Duration::ZERO),
+        Ok(false)
+    );
+    assert_eq!(
+        relog_park_settled(&observation, true, Duration::ZERO),
+        Ok(true)
+    );
+}
+
+#[test]
+fn relog_park_oracle_rejects_changed_park_or_operator_pause() {
+    let (initial, observation) = relog_park_oracle_fixture();
+    let bad_samples: &[(&str, fn(&mut ParkObservation))] = &[
+        ("operator Pause", |sample| sample.want_run = Some(false)),
+        ("missing intent", |sample| sample.want_run = None),
+        ("missing readiness", |sample| sample.host_up = None),
+        ("Idle", |sample| sample.slot_state = Some("Idle".into())),
+        ("inconsistent gate", |sample| {
+            sample.slot_running = Some(true)
+        }),
+        ("woken phase", |sample| {
+            sample.phase = Some("Working".into())
+        }),
+        ("woken label", |sample| {
+            sample.phase_label = Some("gathering".into())
+        }),
+        ("terminal failure", |sample| {
+            sample.failure = Some("failed".into())
+        }),
+        ("different block reason", |sample| {
+            sample.block_reason = Some("changed".into())
+        }),
+        ("different slot", |sample| sample.run_slot = Some(2)),
+        ("different run", |sample| sample.run_generation = Some(4)),
+        ("old native session", |sample| sample.run_session = Some(1)),
+        ("old client session", |sample| {
+            sample.session_generation = Some(2)
+        }),
+        ("fresh bank evidence", |sample| {
+            sample.bank_origin = Some("Session".into())
+        }),
+        ("changed bank rows", |sample| {
+            sample.bank_rows = Some(vec![(995, 1)])
+        }),
+        ("missing bank rows", |sample| sample.bank_rows = None),
+        ("open bank", |sample| sample.bank_open = Some(true)),
+        ("tool arrived", |sample| sample.tool_in_pack = Some(1)),
+        ("coins arrived", |sample| sample.coins_in_pack = Some(1)),
+        ("walk", |sample| sample.no_walk = Some(false)),
+        ("bank trip", |sample| sample.no_bank_trip = Some(false)),
+    ];
+    for (name, change) in bad_samples {
+        let mut bad = observation.clone();
+        change(&mut bad);
+        assert!(!relog_park_preserved(&initial, &bad), "{name}");
+    }
+}
+
+#[test]
+fn relog_park_oracle_rejects_a_pause_or_load_that_never_settles() {
+    let (_, mut observation) = relog_park_oracle_fixture();
+    let deadline = Duration::from_secs(30) + Duration::from_millis(1);
+    assert!(relog_park_settled(&observation, true, deadline).is_err());
+    observation.host_up = Some(true);
+    assert!(relog_park_settled(&observation, true, deadline).is_err());
+    observation.slot_state = Some("Running".into());
+    observation.slot_running = Some(true);
+    observation.host_up = Some(false);
+    assert!(relog_park_settled(&observation, true, deadline).is_err());
+    observation.host_up = Some(true);
+    assert!(relog_park_settled(&observation, false, deadline).is_err());
 }
 
 fn record_final_status(
@@ -2164,13 +2309,7 @@ fn run_cell_with_transition(case: Case, transition: ParkTransition) {
                             .collect::<Vec<_>>();
                         let observation =
                             park_observation(status, &trace, &actions, &fixture, || {
-                                let slot_state = play.script_state(&account);
-                                let bank = play.bank_rows(&account);
-                                ParkPlaySnapshot {
-                                    slot_state,
-                                    bank_origin: origin_name(bank.origin),
-                                    bank_rows: bank.rows,
-                                }
+                                read_park_play_snapshot(&play, &account)
                             });
                         trace.lock().park_no_walk = observation.no_walk;
                         trace.lock().park_lifecycle.initial = Some(observation.clone());
@@ -2449,13 +2588,7 @@ fn run_cell_with_transition(case: Case, transition: ParkTransition) {
                         .cloned()
                         .collect::<Vec<_>>();
                     let observation = park_observation(status, &trace, &actions, &fixture, || {
-                        let slot_state = play.script_state(&account);
-                        let bank = play.bank_rows(&account);
-                        ParkPlaySnapshot {
-                            slot_state,
-                            bank_origin: origin_name(bank.origin),
-                            bank_rows: bank.rows,
-                        }
+                        read_park_play_snapshot(&play, &account)
                     });
                     let initial = trace
                         .lock()
@@ -2498,13 +2631,7 @@ fn run_cell_with_transition(case: Case, transition: ParkTransition) {
                         .cloned()
                         .collect::<Vec<_>>();
                     let observation = park_observation(status, &trace, &actions, &fixture, || {
-                        let slot_state = play.script_state(&account);
-                        let bank = play.bank_rows(&account);
-                        ParkPlaySnapshot {
-                            slot_state,
-                            bank_origin: origin_name(bank.origin),
-                            bank_rows: bank.rows,
-                        }
+                        read_park_play_snapshot(&play, &account)
                     });
                     let initial = trace
                         .lock()
@@ -2518,13 +2645,32 @@ fn run_cell_with_transition(case: Case, transition: ParkTransition) {
                         ));
                         break;
                     }
-                    trace.lock().park_lifecycle.after_relog = Some(observation);
-                    if trace.lock().clock.accepted() {
-                        stage = RunStage::Done;
-                    } else if since.elapsed() > Duration::from_secs(30) {
-                        cell_failure = Some("600 ms clock did not stabilize after relog".into());
-                        break;
+                    let settled = relog_park_settled(
+                        &observation,
+                        trace.lock().clock.accepted(),
+                        since.elapsed(),
+                    );
+                    {
+                        let mut guard = trace.lock();
+                        if guard.park_lifecycle.relog_observations.last() != Some(&observation) {
+                            guard
+                                .park_lifecycle
+                                .relog_observations
+                                .push(observation.clone());
+                        }
+                        guard.park_lifecycle.after_relog = Some(observation);
                     }
+                    match settled {
+                        Ok(true) => stage = RunStage::Done,
+                        Ok(false) => {}
+                        Err(reason) => {
+                            cell_failure = Some(reason.into());
+                            break;
+                        }
+                    }
+                } else if since.elapsed() > Duration::from_secs(30) {
+                    cell_failure = Some("native status disappeared after relog".into());
+                    break;
                 }
             }
             RunStage::Done => {
