@@ -1334,6 +1334,7 @@ fn admit(frame: &mut GpuFrame, service: &RenderService, now: Instant) -> SceneAd
                 RESERVATION.set(Some(identity));
                 event(test_hooks::RenderTestPoint::AfterConsume);
             }
+            SceneAdmission::Rebuild
         }
         Err(error) => {
             fair.head.refresh(frame.lease.snapshot().1, now);

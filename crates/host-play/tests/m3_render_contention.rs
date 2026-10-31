@@ -1476,7 +1476,7 @@ fn mixed_probe_keeps_both_backend_populations() {
 }
 
 fn policy_masks(policy: &str, n: usize, first_focus: usize, step: usize) -> (Vec<bool>, Vec<bool>) {
-    let churn = matches!(policy, "focus-churn" | "sidecar50" | "sidecar-churn");
+    let churn = matches!(policy, "focus-churn" | "sidecar-churn");
     let focus = if churn {
         (first_focus + step) % n
     } else {
@@ -1484,14 +1484,11 @@ fn policy_masks(policy: &str, n: usize, first_focus: usize, step: usize) -> (Vec
     };
     let focused: Vec<bool> = (0..n).map(|index| index == focus).collect();
     let full_rate = match policy {
-        "full" => vec![true; n],
+        // "sidecar 50" names the 50 fps setting, not a head population.
+        "full" | "sidecar50" => vec![true; n],
         "focus1" | "focus-churn" => focused.clone(),
-        "sidecar50" => {
-            assert_eq!(n, 50, "sidecar50 requires fifty admitted heads");
-            vec![true; n]
-        }
         "sidecar-churn" => (0..n)
-            .map(|index| index == focus || index < step % n)
+            .map(|index| (index + n - focus) % n < step % n + 1)
             .collect(),
         other => panic!("unknown M3 policy {other}"),
     };
@@ -1513,21 +1510,24 @@ fn apply_policy(heads: &[HeadProbe], focused: &[bool], full_rate: &[bool], fair:
 #[test]
 fn focus_churn_covers_every_head_and_sidecar_population() {
     for n in [1, 10, 16, 32, 50] {
-        let mut seen = vec![false; n];
-        for step in 0..n {
-            let (focused, full) = policy_masks("focus-churn", n, 0, step);
-            assert_eq!(focused.iter().filter(|&&selected| selected).count(), 1);
-            assert_eq!(focused, full);
-            for (seen, focused) in seen.iter_mut().zip(focused) {
-                *seen |= focused;
+        for first_focus in 0..n {
+            let mut seen = vec![false; n];
+            for step in 0..n {
+                let (focused, full) = policy_masks("focus-churn", n, first_focus, step);
+                assert_eq!(focused.iter().filter(|&&selected| selected).count(), 1);
+                assert_eq!(focused, full);
+                for (seen, focused) in seen.iter_mut().zip(focused) {
+                    *seen |= focused;
+                }
+                let (focused, full) = policy_masks("sidecar-churn", n, first_focus, step);
+                assert_eq!(full.iter().filter(|&&selected| selected).count(), step + 1);
+                assert!(focused.iter().zip(&full).all(|(&focus, &full)| !focus || full));
+                let (focused, full) = policy_masks("sidecar50", n, first_focus, step);
+                assert!(focused[first_focus], "cadence alone must not move focus");
+                assert!(full.into_iter().all(|selected| selected));
             }
-            let (_, full) = policy_masks("sidecar-churn", n, 0, step);
-            assert_eq!(full.iter().filter(|&&selected| selected).count(), step + 1);
+            assert!(seen.into_iter().all(|seen| seen));
         }
-        assert!(seen.into_iter().all(|seen| seen));
-    }
-    let (_, full) = policy_masks("sidecar50", 50, 0, 17);
-    assert!(full.into_iter().all(|selected| selected));
 }
 
 #[test]
@@ -1805,10 +1805,7 @@ fn run_m3_render_contention() {
     .unwrap();
 
     for policy in &policies {
-        let churn = matches!(
-            policy.as_str(),
-            "focus-churn" | "sidecar50" | "sidecar-churn"
-        );
+        let churn = matches!(policy.as_str(), "focus-churn" | "sidecar-churn");
         let (mut focused, mut full_rate) = policy_masks(policy, n, focus_index, 0);
         if probe.is_none() {
             focused.clone_from(&full_rate);

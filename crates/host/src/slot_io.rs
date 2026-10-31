@@ -294,7 +294,7 @@ struct Mailbox {
     render_bytes_request: Option<u64>,
     #[cfg(feature = "draw-memory-profile")]
     render_bytes_sample: Option<client::render::budget::RenderBytes>,
-    #[cfg(feature = "render-test-hooks")]
+    #[cfg(any(feature = "render-diagnostics", feature = "render-test-hooks"))]
     fair_stats: Option<crate::render_head::HeadFairStats>,
 }
 
@@ -352,7 +352,7 @@ impl FrameBuf {
                 render_bytes_request: None,
                 #[cfg(feature = "draw-memory-profile")]
                 render_bytes_sample: None,
-                #[cfg(feature = "render-test-hooks")]
+                #[cfg(any(feature = "render-diagnostics", feature = "render-test-hooks"))]
                 fair_stats: None,
             }),
             frame_generation: AtomicU64::new(0),
@@ -1225,7 +1225,7 @@ impl FrameBuf {
             inner.render_bytes_request = None;
             inner.render_bytes_sample = None;
         }
-        #[cfg(feature = "render-test-hooks")]
+        #[cfg(any(feature = "render-diagnostics", feature = "render-test-hooks"))]
         {
             inner.fair_stats = None;
         }
@@ -1349,13 +1349,13 @@ impl FrameBuf {
     }
 
     /// The latest fixed-size sample for this mailbox's render generation.
-    #[cfg(feature = "render-test-hooks")]
+    #[cfg(any(feature = "render-diagnostics", feature = "render-test-hooks"))]
     pub fn fair_stats(&self) -> Option<crate::render_head::HeadFairStats> {
         self.inner.lock().unwrap().fair_stats
     }
 
     /// Start diagnostic gap accounting without changing the actual consume timestamp.
-    #[cfg(feature = "render-test-hooks")]
+    #[cfg(any(feature = "render-diagnostics", feature = "render-test-hooks"))]
     pub fn begin_scene_gap_window(&self, start: std::time::Instant) -> bool {
         let mut inner = self.inner.lock().unwrap();
         let Some(sample) = inner.fair_stats.as_mut() else {
@@ -1365,7 +1365,7 @@ impl FrameBuf {
         true
     }
 
-    #[cfg(feature = "render-test-hooks")]
+    #[cfg(any(feature = "render-diagnostics", feature = "render-test-hooks"))]
     pub(crate) fn publish_fair_stats(&self, mut sample: crate::render_head::HeadFairStats) {
         let mut inner = self.inner.lock().unwrap();
         if inner.head == Some(sample.identity()) {
