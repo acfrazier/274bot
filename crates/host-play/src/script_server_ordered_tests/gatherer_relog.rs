@@ -17,8 +17,8 @@ fn ordered_real_gatherer_knife_arm_uses_packet_clock_after_relog() {
     const RAW_GENERATION_BEFORE_RELOG: u64 = 700_000;
 
     rig.client.map_build_base_x = 3200;
-    rig.client.map_build_base_z = 3200;
-    rig.client.local_player = Some(client::dash3d::ClientPlayer::at(7, 5));
+    rig.client.map_build_base_z = 3328;
+    rig.client.local_player = Some(client::dash3d::ClientPlayer::at(84, 40));
     rig.client.gens.player_info = RAW_GENERATION_BEFORE_RELOG;
     rig.client.gens.player += 1;
     rig.snapshot.rebuild(&rig.client);
@@ -103,11 +103,11 @@ fn ordered_real_gatherer_knife_arm_uses_packet_clock_after_relog() {
     let knife_id = ordered.knife().knife().id();
     let logs_id = ordered.knife().logs()[0].id();
 
-    let local_x = 8;
-    let local_z = 5;
+    let local_x = 85;
+    let local_z = 40;
     let target_tile = WorldTile {
         x: 3200 + local_x,
-        z: 3200 + local_z,
+        z: 3328 + local_z,
         level: 0,
     };
     {
@@ -171,7 +171,7 @@ fn ordered_real_gatherer_knife_arm_uses_packet_clock_after_relog() {
         snapshot.seed_ingame(2);
         snapshot.seed_world(WorldStateView {
             map_base_x: 3200,
-            map_base_z: 3200,
+            map_base_z: 3328,
             level: 0,
             members: true,
             multi_combat: false,
@@ -182,7 +182,7 @@ fn ordered_real_gatherer_knife_arm_uses_packet_clock_after_relog() {
         snapshot.seed_scene(SceneView {
             available: true,
             base_x: 3200,
-            base_z: 3200,
+            base_z: 3328,
             level: 0,
             width: 104,
             height: 104,

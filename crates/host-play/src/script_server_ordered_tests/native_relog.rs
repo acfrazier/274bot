@@ -179,10 +179,12 @@ fn ordered_packet_clock_older_raw_generation_is_stale_before_and_after_relog() {
         rig.client.gens.player_info = 41;
         rig.snapshot.seed_player_info_generation(41);
         rig.input
-            .observe_input_tick(rig.client.revision(), 41, rig.client.gens.session);
+            .observe_input_tick(rig.client.revision(), 40, rig.client.gens.session);
         let observed = rig
             .input
             .with_server_ordered_input(|state| state.snapshot());
+        // The old input agrees with the old stamp: only the snapshot-generation
+        // guard can reject this dispatch before or after the session boundary.
         let mut authority = || Ok(());
         let receipt = ServerOrderedInputs::dispatch_advanced(
             &rig.snapshot,
