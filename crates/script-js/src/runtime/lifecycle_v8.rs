@@ -971,6 +971,7 @@ globalThis.__resolveSchema = {
     fn setup() -> Runtime {
         crate::platform::bootstrap_test_v8_platform();
         let mut runtime = Runtime::new(RuntimeOptions::default()).unwrap();
+        crate::callback_v8::install_ops(&mut runtime).unwrap();
         super::install(&mut runtime, None).unwrap();
         runtime.eval::<()>(SETUP).unwrap();
         runtime

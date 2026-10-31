@@ -2808,12 +2808,6 @@ fn compare_export(
             },
         )
         | (
-            CompatExport::Class { name, members, .. },
-            CompatExport::Class {
-                members: dmembers, ..
-            },
-        )
-        | (
             CompatExport::Object { name, members },
             CompatExport::Class {
                 members: dmembers, ..
@@ -2825,7 +2819,33 @@ fn compare_export(
                 members: dmembers, ..
             },
         ) => {
-            compare_members(label, name, members, dmembers, preserved_members, drifts);
+            compare_members(
+                label,
+                name,
+                members,
+                dmembers,
+                false,
+                preserved_members,
+                drifts,
+            );
+        }
+        (
+            CompatExport::Class { name, members, .. },
+            CompatExport::Class {
+                members: dmembers,
+                super_name: dts_super_name,
+                ..
+            },
+        ) => {
+            compare_members(
+                label,
+                name,
+                members,
+                dmembers,
+                dts_super_name.as_deref() == Some("Error"),
+                preserved_members,
+                drifts,
+            );
         }
         (CompatExport::Value { name }, _) => {
             if export_ident(dts) != name.as_str() {
@@ -2878,6 +2898,7 @@ fn compare_members(
     owner: &str,
     shim: &[Member],
     dts: &[Member],
+    dts_extends_error: bool,
     preserved_members: &[(String, String)],
     drifts: &mut Vec<String>,
 ) {
@@ -2886,6 +2907,10 @@ fn compare_members(
             // A JS class has an implicit zero-argument constructor when its
             // declaration omits one; only explicit constructor parameters drift.
             if m.kind == MemberKind::Constructor && m.params.is_empty() {
+                continue;
+            }
+            // Error subclasses inherit `name` without redeclaring it.
+            if dts_extends_error && m.kind == MemberKind::Field && m.name == "name" {
                 continue;
             }
             drifts.push(format!("{label} {owner} missing member {}", m.name));

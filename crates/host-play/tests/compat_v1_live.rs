@@ -29,6 +29,7 @@ const HTTP_PORT: u16 = 3080;
 const POLL_INTERVAL: Duration = Duration::from_millis(20);
 const PREPARATION_DEADLINE: Duration = Duration::from_secs(240);
 const ACTION_DEADLINE: Duration = Duration::from_secs(60);
+const EVENTS_SEED_TILE: (i32, i32, i32) = (2663, 3302, 0);
 const STOP_DEADLINE: Duration = Duration::from_secs(20);
 
 #[derive(Default, Serialize)]
@@ -65,6 +66,7 @@ struct FrameState {
     ready: bool,
     tick: u32,
     next_command: Option<String>,
+    next_seed_at: Option<(i32, i32, i32)>,
     commands: Vec<String>,
     error: Option<String>,
 }
@@ -76,6 +78,7 @@ impl FrameState {
             ready: false,
             tick: 0,
             next_command: None,
+            next_seed_at: None,
             commands: Vec::new(),
             error: None,
         }
@@ -90,6 +93,9 @@ impl FrameState {
         self.tick = self.snapshot.tick();
         if held {
             return;
+        }
+        if let Some((level, x, z)) = self.next_seed_at.take() {
+            interact::seed_at(client, level, x, z);
         }
         let Some(command) = self.next_command.take() else {
             return;
@@ -341,6 +347,33 @@ fn wait_ready(state: &Arc<Mutex<FrameState>>) -> Result<(), String> {
         drop(frame);
         if Instant::now() >= deadline {
             return Err("timed out waiting for the generated account to enter the game".into());
+        }
+        thread::sleep(POLL_INTERVAL);
+    }
+}
+fn request_seed_at(state: &Arc<Mutex<FrameState>>, level: i32, x: i32, z: i32) {
+    lock_state(state).next_seed_at = Some((level, x, z));
+}
+
+fn wait_for_tile(
+    state: &Arc<Mutex<FrameState>>,
+    expected: (i32, i32, i32),
+) -> Result<(), String> {
+    let deadline = Instant::now() + ACTION_DEADLINE;
+    loop {
+        let frame = lock_state(state);
+        let ready = frame.snapshot.ingame()
+            && frame.snapshot.attached()
+            && frame.snapshot.scene_state() == 2;
+        let tile = frame.snapshot.tile();
+        drop(frame);
+        if ready && tile == Some(expected) {
+            return Ok(());
+        }
+        if Instant::now() >= deadline {
+            return Err(format!(
+                "timed out waiting for seed tile {expected:?}; snapshot ready={ready}, tile={tile:?}"
+            ));
         }
         thread::sleep(POLL_INTERVAL);
     }
@@ -862,8 +895,21 @@ fn wait_for_next_tick_without_restart_event(session: &mut LiveSession<'_>) -> Re
 
 fn run_events_cell(receipt: &mut Receipt) -> Result<(), String> {
     let mut session = session("compat-v1-events", receipt)?;
-    // Seed a fresh account before listeners start; it has no inventory slots yet.
-    // This keeps the two observed inventory changes distinct.
+    // Seed the fresh account into the game at a stable tile.
+    request_seed_at(
+        &session.state,
+        EVENTS_SEED_TILE.2,
+        EVENTS_SEED_TILE.0,
+        EVENTS_SEED_TILE.1,
+    );
+    wait_for_tile(&session.state, EVENTS_SEED_TILE)?;
+    session
+        .receipt
+        .logs
+        .push(format!(
+            "EVENTS:SEED:{},{},{}",
+            EVENTS_SEED_TILE.0, EVENTS_SEED_TILE.1, EVENTS_SEED_TILE.2
+        ));
     request_command(&session, "give coins 1")?;
     wait_command(&mut session, "give coins 1")?;
     wait_for_inventory_count(&session.state, 995, 1)?;
