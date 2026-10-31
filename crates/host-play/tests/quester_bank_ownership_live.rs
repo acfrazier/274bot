@@ -588,9 +588,10 @@ fn manual_continue_page(name: &'static str, arm: Proof) -> Step {
         name,
         kind: StepKind::Perform {
             send: Box::new(|client, snapshot| {
-                api::interact::Interactions::new(snapshot, client)
-                    .continue_dialog(None)
-                    .is_sent()
+                matches!(
+                    api::interact::Interactions::new(snapshot, client).continue_dialog(None),
+                    api::interact::SendResult::Sent { .. }
+                )
             }),
         },
         wait: Wait {
