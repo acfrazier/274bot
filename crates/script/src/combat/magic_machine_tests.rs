@@ -1063,6 +1063,28 @@ fn npc_cast_dispatch_requires_later_rune_or_exact_target_evidence() {
 }
 
 #[test]
+fn npc_cast_reports_consumed_runes_after_target_despawns() {
+    let mut scene = npc_cast_scene(true);
+    let (mut runtime, handle) = begin_npc_cast(&scene);
+    assert!(matches!(
+        poll_npc_cast(&mut runtime, &scene, &handle, 2),
+        Poll::Pending
+    ));
+    settle_npc_cast(&mut runtime, true);
+    assert!(matches!(
+        poll_npc_cast(&mut runtime, &scene, &handle, 3),
+        Poll::Pending
+    ));
+
+    scene.npcs.clear();
+    spend_npc_cast_runes(&mut scene);
+    assert_eq!(
+        poll_npc_cast(&mut runtime, &scene, &handle, 4),
+        Poll::Ready(Ok(true))
+    );
+}
+
+#[test]
 fn npc_cast_uses_target_impact_and_rejection_before_rune_success() {
     let mut impact_scene = npc_cast_scene(true);
     let (mut impact_runtime, impact_handle) = begin_npc_cast(&impact_scene);

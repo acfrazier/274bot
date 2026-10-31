@@ -113,12 +113,13 @@ impl NativeMachine for CastNpc {
         let Some(frame) = Frame::borrow(snapshot) else {
             return Poll::Pending;
         };
-        let Some(npc) = self.target(&frame) else {
-            return Poll::Ready(Ok(false));
-        };
+        let npc = self.target(&frame);
         let spell = self.spell();
         match self.phase {
             Phase::Dispatch => {
+                let Some(npc) = npc else {
+                    return Poll::Ready(Ok(false));
+                };
                 if !magic::castable_npc(spell, &frame, &self.selected, self.npc_type) {
                     return Poll::Ready(Ok(false));
                 }
@@ -181,20 +182,23 @@ impl NativeMachine for CastNpc {
                         awaiting.chat_since = sequence;
                     }
                 }
-                let new_spot_animation = npc.spot_animation_stamp != awaiting.spot_animation_stamp;
-                if new_spot_animation
-                    && self
-                        .selected
-                        .failed_spell_impact()
-                        .is_some_and(|failed| npc.spot_animation == failed)
-                {
-                    return Poll::Ready(Ok(false));
-                }
-                if new_spot_animation
-                    && spell.impact_spotanim >= 0
-                    && npc.spot_animation == spell.impact_spotanim
-                {
-                    return Poll::Ready(Ok(true));
+                if let Some(npc) = npc {
+                    let new_spot_animation =
+                        npc.spot_animation_stamp != awaiting.spot_animation_stamp;
+                    if new_spot_animation
+                        && self
+                            .selected
+                            .failed_spell_impact()
+                            .is_some_and(|failed| npc.spot_animation == failed)
+                    {
+                        return Poll::Ready(Ok(false));
+                    }
+                    if new_spot_animation
+                        && spell.impact_spotanim >= 0
+                        && npc.spot_animation == spell.impact_spotanim
+                    {
+                        return Poll::Ready(Ok(true));
+                    }
                 }
                 if awaiting.rune_baseline.is_some_and(|(before, required)| {
                     magic::rune_count_npc(spell, &frame, &self.selected)
