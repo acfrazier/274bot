@@ -172,7 +172,7 @@ try {
 globalThis.__facts = {
     candidates,
     error,
-    callbackType: typeof globalThis.__rs2b0t_step_off_candidates,
+    callbackType: typeof globalThis.rustyscript.functions.__rs2b0t_step_off_candidates,
     inputUnchanged: JSON.stringify(from) === before,
 };
 "#,
@@ -545,6 +545,11 @@ globalThis.__stop = () => ScriptRunner.stop('frame census stop');
 
     iso.probe("__stop()").unwrap();
     iso.on_game_tick(2);
+    assert_eq!(
+        iso.probe("__frames").unwrap(),
+        4,
+        "probe waits for the queued stop tick before reading its receipt"
+    );
     assert!(iso.script_stop_receipt().is_some());
     assert!(
         !iso.test_client_frame(),
