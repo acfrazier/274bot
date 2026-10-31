@@ -110,18 +110,18 @@ fn recorder_deadline_wakes_wait_without_capture_or_render_work() {
 #[test]
 fn legacy_recording_does_not_add_a_window_deadline() {
     let mut shots = ShotState::default();
-    shots.set_record_ui_deadline(Some(Instant::now()));
-    assert_eq!(shots.record_ui_deadline, None);
+    shots.set_ui_work_deadline(Some(Instant::now()));
+    assert_eq!(shots.ui_work_deadline, None);
     assert!(!shots.capture_pending());
 }
 
 #[cfg(feature = "render-test-hooks")]
 #[test]
-fn gated_record_ui_deadline_is_scalar_and_does_not_arm_readback() {
+fn gated_ui_work_deadline_is_scalar_and_does_not_arm_readback() {
     const CHILD: &str = "PANEL_CAPTURE_FIXTURE_CHILD";
     if std::env::var_os(CHILD).is_none() {
         run_capture_fixture_child(
-            "window::tests::gated_record_ui_deadline_is_scalar_and_does_not_arm_readback",
+            "window::tests::gated_ui_work_deadline_is_scalar_and_does_not_arm_readback",
             false,
         );
         return;
@@ -130,13 +130,13 @@ fn gated_record_ui_deadline_is_scalar_and_does_not_arm_readback() {
     let mut shots = ShotState::default();
     let now = Instant::now();
     let bytes = shots.metadata_bytes();
-    shots.set_record_ui_deadline(Some(now));
-    assert_eq!(shots.record_ui_deadline, Some(now));
+    shots.set_ui_work_deadline(Some(now));
+    assert_eq!(shots.ui_work_deadline, Some(now));
     assert!(!shots.capture_pending());
     assert_eq!(shots.metadata_bytes(), bytes);
     assert_eq!(std::mem::size_of::<Option<Instant>>(), 16);
-    shots.set_record_ui_deadline(None);
-    assert_eq!(shots.record_ui_deadline, None);
+    shots.set_ui_work_deadline(None);
+    assert_eq!(shots.ui_work_deadline, None);
     println!("render fixture child completed");
 }
 

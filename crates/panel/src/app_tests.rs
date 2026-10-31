@@ -1029,6 +1029,68 @@ fn boot_is_deferred_and_maps_live_smoke_and_vault_pass() {
 }
 
 #[test]
+fn deferred_startup_requests_a_second_frame_before_any_job_exists() {
+    let startup = StartupPreparation::new(Some(Boot::Live(LiveBoot::Smoke)));
+    assert!(!startup.in_flight(), "the first frame intentionally starts no work");
+    assert!(startup.needs_redraw(true), "Wait must reach deferred startup");
+    assert!(!StartupPreparation::new(None).needs_redraw(false));
+}
+
+#[cfg(feature = "render-test-hooks")]
+#[test]
+#[ignore = "requires a real GPU"]
+fn injected_client_gpu_uses_the_process_render_budget() {
+    const CHILD: &str = "PANEL_GPU_BUDGET_FIXTURE_CHILD";
+    if std::env::var_os(CHILD).is_none() {
+        let output = std::process::Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "app::tests::injected_client_gpu_uses_the_process_render_budget",
+                "--ignored",
+                "--nocapture",
+            ])
+            .env(CHILD, "1")
+            .output()
+            .expect("run isolated shared-device budget proof");
+        assert!(
+            output.status.success(),
+            "shared-device budget fixture failed:\n{}\n{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr),
+        );
+        assert!(
+            String::from_utf8_lossy(&output.stdout)
+                .contains("injected client GPU charged to process budget"),
+            "the exact filter must execute the real GPU proof",
+        );
+        return;
+    }
+    host::render_head::test_hooks::configure_process(
+        host::render_head::test_hooks::ProcessFixture {
+            grant_ttl: Duration::from_millis(100),
+            quantum: Duration::from_secs(1),
+        },
+    )
+    .expect("configure the process before GPU injection");
+    let limit = 1024 * 1024 * 1024;
+    host::render_head::test_hooks::configure_render_budgets(
+        client::render::budget::RenderBudgetLimits::new(
+            limit, limit, limit, limit, limit, limit, limit, limit, limit, limit, limit, limit, limit,
+        ),
+    )
+    .expect("configure explicit finite byte ceilings before context creation");
+    let (device, queue) =
+        crate::test_support::headless_gpu().expect("this proof requires a real GPU");
+    super::inject_client_gpu(&device, &queue);
+    frontend_core::surface::with_process_render_budget(|| {
+        assert!(client::render::budget::RenderBudget::current().is_some());
+        client::render::backend::gpu::GpuBackend::try_new()
+            .expect("the injected context must share its head's process budget");
+    });
+    println!("injected client GPU charged to process budget");
+}
+
+#[test]
 fn the_passphrase_is_only_ever_read_from_stdin_never_an_argument() {
     assert!(!parse_args(["--smoke"], None).unwrap().vault_pass_stdin);
     assert!(
@@ -1186,6 +1248,7 @@ fn profile_selection_retries_after_work_admission_is_full() {
     );
     assert!(state.session.profile_preparing());
     assert!(state.session.error.is_none());
+    assert!(startup.needs_redraw(false), "pending admission must keep startup live");
     assert!(startup_progress(&startup, generation).is_some());
 
     drop(full);

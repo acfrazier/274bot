@@ -319,6 +319,10 @@ impl StartupPreparation {
             || self.validate.is_some()
             || self.validate_pending.is_some()
     }
+
+    fn needs_redraw(&self, first_frame: bool) -> bool {
+        first_frame || self.in_flight()
+    }
 }
 
 fn startup_progress(startup: &StartupPreparation, generation: u64) -> Option<StartupProgressView> {
@@ -8125,6 +8129,12 @@ pub fn run_panel_calibrated(args: PanelArgs, redraw: RedrawMode) -> Result<(), w
     run_panel_inner(args, Some(redraw))
 }
 
+fn inject_client_gpu(device: &wgpu::Device, queue: &wgpu::Queue) {
+    frontend_core::surface::with_process_render_budget(|| {
+        client::render::backend::inject_device(device.clone(), queue.clone());
+    });
+}
+
 fn run_panel_inner(
     args: PanelArgs,
     redraw_override: Option<RedrawMode>,
@@ -8179,7 +8189,7 @@ fn run_panel_inner(
         cfg,
         amber_style,
         move |window, device, queue, _| {
-            client::render::backend::inject_device(device.clone(), queue.clone());
+            inject_client_gpu(device, queue);
             *os_window_init.lock().unwrap() = Some(Arc::clone(window));
         },
         panel_gpu_shutdown(Rc::clone(&running)),
@@ -8210,7 +8220,8 @@ fn run_panel_inner(
             let Some((state, startup)) = running.as_mut() else {
                 return false;
             };
-            if presented {
+            let first_frame = !presented;
+            if !first_frame {
                 if let Some(error) = drive_startup(state, startup) {
                     *terminal_failure_frame.lock().unwrap() = Some(error);
                     return true;
@@ -8230,7 +8241,7 @@ fn run_panel_inner(
                     window_title = title;
                 }
             }
-            if startup.in_flight() {
+            if startup.needs_redraw(first_frame) {
                 if let Some(w) = state.os_window.as_ref() {
                     w.request_redraw();
                 }
@@ -8847,12 +8858,18 @@ fn frame_pumps(
 ) -> bool {
     let exit = frame_pumps_inner(state, terminal_failure);
     if crate::window::render_fair_capture_enabled() {
-        let deadline = state.record.next_ui_deadline(Instant::now());
+        let now = Instant::now();
+        let deadline = state.record.next_ui_deadline(now);
+        #[cfg(feature = "memory-profile")]
+        let deadline = state.memory.as_ref().map_or(deadline, |run| {
+            let benchmark_due = run.next_poll_deadline(now);
+            Some(deadline.map_or(benchmark_due, |due| due.min(benchmark_due)))
+        });
         state
             .shot_state
             .lock()
             .unwrap()
-            .set_record_ui_deadline(deadline);
+            .set_ui_work_deadline(deadline);
     }
     exit
 }

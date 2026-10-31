@@ -43,6 +43,7 @@ static PANEL_FRAME_MS: [AtomicU64; PANEL_FRAME_BUCKETS] =
 static PANEL_FRAME_INTERVAL_MAX_NS: AtomicU64 = AtomicU64::new(0);
 
 const READY_SETTLE: Duration = Duration::from_secs(2);
+const SAMPLE_INTERVAL: Duration = Duration::from_secs(1);
 
 /// Whole-panel frame timer installed only by a memory-profile panel build.
 ///
@@ -2276,6 +2277,12 @@ impl Run {
         );
     }
 
+    /// Next benchmark poll for a frontend without a continuous redraw loop.
+    /// Reuse the sampling cadence, and never return an already-past deadline.
+    pub fn next_poll_deadline(&self, now: Instant) -> Instant {
+        (self.last_sample.unwrap_or(now) + SAMPLE_INTERVAL).max(now)
+    }
+
     /// Drive warmup/observe/lifecycle. `Ok(true)` when teardown finished. A
     /// failure is recorded per slot before it is returned, because both
     /// frontends exit on it.
@@ -2569,7 +2576,7 @@ impl Run {
 
         if self
             .last_sample
-            .is_none_or(|t| t.elapsed() >= Duration::from_secs(1))
+            .is_none_or(|t| t.elapsed() >= SAMPLE_INTERVAL)
         {
             let (allocs, alloc_bytes, live_bytes) = rust_allocator_counts();
             let metrics = script_js::memory_profile::snapshots();
@@ -2978,6 +2985,20 @@ mod tests {
                 std::env::remove_var(k);
             }
         }
+    }
+
+    #[test]
+    fn benchmark_poll_deadline_advances_without_continuous_ui_frames() {
+        let mut run = Run::prepare_unseeded(unit_config(1, Workload::Idle), "unit").unwrap();
+        let now = Instant::now();
+        assert_eq!(run.next_poll_deadline(now), now + SAMPLE_INTERVAL);
+        run.last_sample = Some(now - Duration::from_millis(100));
+        assert_eq!(
+            run.next_poll_deadline(now),
+            now + Duration::from_millis(900)
+        );
+        run.last_sample = Some(now - Duration::from_secs(2));
+        assert_eq!(run.next_poll_deadline(now), now);
     }
 
     #[test]

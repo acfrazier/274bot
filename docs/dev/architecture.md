@@ -366,6 +366,14 @@ The panel binary requires `memory-profile,render-diagnostics` and
 `T44_HEADED_REDRAW=normal` or `wait`. Its calibration rejects compiled test
 controls before any worker starts. The existing capture and recorder paths
 keep their explicit metadata and completion-deadline inputs.
+The panel initializes its injected client GPU context under that process
+budget before any head attaches. Otherwise the head correctly refuses the
+uncharged context and falls back to CPU, even if the window adapter is a GPU.
+The first shell frame requests the deferred startup frame in every redraw
+mode. In Wait mode, an active memory benchmark adds its existing one-second
+poll deadline to the recorder deadline. These share the existing scalar UI
+work deadline; neither changes the independent render-pump cadence nor adds
+a capture job.
 Headed benchmark rows sample real mailboxes, applied focus and Play wake
 channels once per second. They retain Busy, Granted and scene-consume counts
 as separate values. Per-head counters cover the head lifetime, not just the

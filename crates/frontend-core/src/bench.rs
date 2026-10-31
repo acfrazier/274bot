@@ -182,6 +182,11 @@ impl BenchRun {
             .map_err(|error| BenchError(BenchStep::SeedNav(error)))
     }
 
+    /// Next benchmark poll when the frontend otherwise waits for input.
+    pub fn next_poll_deadline(&self, now: std::time::Instant) -> std::time::Instant {
+        self.0.next_poll_deadline(now)
+    }
+
     /// Advance the run against `core`'s play session: `Ok(true)` once the
     /// observation completed; without a play session nothing happens.
     pub fn poll<Io>(&mut self, core: &OperatorSession<Io>) -> Result<bool, BenchError> {

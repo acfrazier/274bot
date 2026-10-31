@@ -252,6 +252,19 @@ pub fn map_image_to_applet(
     host::map_image_to_applet(local_x, local_y, image_w, image_h)
 }
 
+/// Initialize shared client resources under the process render budget.
+/// Ordinary, unconfigured rendering runs the same action without a scope.
+pub fn with_process_render_budget<T>(action: impl FnOnce() -> T) -> T {
+    #[cfg(any(feature = "render-diagnostics", feature = "render-test-hooks"))]
+    {
+        host::render_head::with_process_render_budget(action)
+    }
+    #[cfg(not(any(feature = "render-diagnostics", feature = "render-test-hooks")))]
+    {
+        action()
+    }
+}
+
 /// Run the process render pump at `now` and return when it next needs to
 /// run. The headed front end calls it on every loop turn and wakes by the
 /// returned instant, so a render grant whose head stopped consuming expires

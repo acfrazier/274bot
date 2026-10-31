@@ -383,8 +383,8 @@ pub struct ShotState {
     actor_display_confirmed: bool,
     actor_display_error: Option<CaptureError>,
     record_deadline: Option<Instant>,
-    /// Next recorder UI poll, distinct from an accepted readback's deadline.
-    record_ui_deadline: Option<Instant>,
+    /// Next recorder or benchmark UI poll, distinct from readback completion.
+    ui_work_deadline: Option<Instant>,
     record_drops: u64,
     /// Requests pushed by the scenario sink / pair terminal path, drained
     /// by the UI body.
@@ -879,8 +879,8 @@ impl ShotState {
             || self.write_pending_label.is_some()
     }
 
-    pub fn set_record_ui_deadline(&mut self, deadline: Option<Instant>) {
-        self.record_ui_deadline = if render_fair_capture_enabled() {
+    pub fn set_ui_work_deadline(&mut self, deadline: Option<Instant>) {
+        self.ui_work_deadline = if render_fair_capture_enabled() {
             deadline
         } else {
             None
@@ -3573,7 +3573,7 @@ where
         }
         let mut readback_pending = false;
         let mut capture_queued = false;
-        let mut record_due = None;
+        let mut ui_due = None;
         if render_fair_capture_enabled() {
             if let Some(window) = self.window.as_mut() {
                 if window.poll_pending_capture(self.shots.as_ref()) {
@@ -3583,9 +3583,9 @@ where
             }
             let shots = self.shots.lock().unwrap();
             capture_queued = shots.capture_pending();
-            record_due = shots.record_ui_deadline;
+            ui_due = shots.ui_work_deadline;
             drop(shots);
-            if record_due.is_some_and(|due| due <= pump_now) {
+            if ui_due.is_some_and(|due| due <= pump_now) {
                 if let Some(window) = &self.window {
                     window.window.request_redraw();
                 }
@@ -3597,7 +3597,7 @@ where
                     self.cfg.redraw,
                     pump_now,
                     render_due,
-                    record_due,
+                    ui_due,
                 ));
                 if let Some(window) = &self.window {
                     window.window.request_redraw();
@@ -3612,7 +3612,7 @@ where
                 event_loop.set_control_flow(if capture_queued || readback_pending {
                     ControlFlow::Poll
                 } else {
-                    render_deadline_control_flow(self.cfg.redraw, pump_now, render_due, record_due)
+                    render_deadline_control_flow(self.cfg.redraw, pump_now, render_due, ui_due)
                 });
             }
             RedrawMode::WaitUntil { fps } => {
@@ -3629,7 +3629,7 @@ where
                 event_loop.set_control_flow(if readback_pending {
                     ControlFlow::Poll
                 } else {
-                    render_deadline_control_flow(self.cfg.redraw, next_wake, render_due, record_due)
+                    render_deadline_control_flow(self.cfg.redraw, next_wake, render_due, ui_due)
                 });
             }
         }
@@ -3647,11 +3647,11 @@ fn render_deadline_control_flow(
     redraw: RedrawMode,
     panel_due: Instant,
     render_due: Option<Instant>,
-    record_due: Option<Instant>,
+    ui_due: Option<Instant>,
 ) -> ControlFlow {
-    let next_due = match (render_due, record_due) {
-        (Some(render), Some(record)) => Some(render.min(record)),
-        (render, record) => render.or(record),
+    let next_due = match (render_due, ui_due) {
+        (Some(render), Some(ui)) => Some(render.min(ui)),
+        (render, ui) => render.or(ui),
     };
     match redraw {
         RedrawMode::Poll => ControlFlow::Poll,
