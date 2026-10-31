@@ -213,9 +213,13 @@ impl Rig {
             let dispatched_prefix = prefix.unwrap_or(row_count).min(row_count);
             let mut rows = [RowDispatch::NotAttempted; 5];
             let mut wire_events = 0;
-            for index in 0..usize::from(dispatched_prefix) {
+            for (index, row) in rows
+                .iter_mut()
+                .take(usize::from(dispatched_prefix))
+                .enumerate()
+            {
                 let cost = if index == 2 { 2 } else { 1 };
-                rows[index] = RowDispatch::HostQueued { wire_events: cost };
+                *row = RowDispatch::HostQueued { wire_events: cost };
                 wire_events += cost;
             }
             let terminal =

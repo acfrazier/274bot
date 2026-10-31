@@ -544,7 +544,7 @@ impl TickEngineTestHook {
                 .as_deref()
                 .is_some_and(|request| request.contains("KnifeArm"));
             let active_transport = if content_request {
-                controller.as_ref().and_then(|_| match transport {
+                controller.as_ref().and(match transport {
                     Some(TransportMutation::JoinActiveGate) if !is_knife_arm => None,
                     Some(mutation) => Some(mutation),
                     None if is_knife_arm => Some(TransportMutation::JoinActiveGate),
