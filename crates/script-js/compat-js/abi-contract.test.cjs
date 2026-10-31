@@ -162,6 +162,11 @@ test('the entity family is completely activated with both query refusal debts re
 });
 
 test('inventory root and public module declarations expose exact consumer types', () => {
+    assert.match(
+        currentIndex,
+        /export function registerScript\(manifest: import\('\*\/runtime\/defineBot\.js'\)\.BotManifestInput, origin\?: string\): void;/,
+        'the generated root declaration keeps registerScript tied to BotManifestInput',
+    );
     const scratch = fs.mkdtempSync(path.join(os.tmpdir(), 't2-inventory-consumer-'));
     try {
         const consumer = path.join(scratch, 'consumer.ts');
