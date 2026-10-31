@@ -2219,7 +2219,7 @@ fn dts_type_lit_members(elements: &[TsTypeElement]) -> Vec<Member> {
                     is_async: return_type.is_some_and(type_ann_is_promise),
                     allows_non_promise: return_type.is_none_or(type_ann_allows_non_promise),
                     is_static: false,
-                    is_abstract: m.is_abstract,
+                    is_abstract: false,
                 });
             }
             TsTypeElement::TsGetterSignature(g) => {
