@@ -4356,7 +4356,7 @@ mod packet_oracle_tests {
             let mut frame = observed_frame(tick, true, 1);
             frame.animation = Some(client::client::client::LocalAnimationUpdate {
                 sequence: -1,
-                serial: u64::from(index + 1),
+                serial: index + 1,
             });
             frame.chat.push(ChatObservation {
                 game_tick: tick,
