@@ -49,6 +49,8 @@ const COPPER_ORE_ID: i32 = 436;
 const IRON_ORE_ID: i32 = 440;
 const SHRIMP_ID: i32 = 317;
 const ANCHOVY_ID: i32 = 321;
+const TROUT_ID: i32 = 335;
+const SALMON_ID: i32 = 331;
 const FRESHFISH_NPC_ID: i32 = 309;
 const FRESHFISH_NPC_TILE: (i32, i32, i32) = (2_382, 3_414, 0);
 // This KnifeClick uses movement mode 2 for MOVE_OPCLICK, then sends OPNPC1.
@@ -87,6 +89,10 @@ const MAKE_WITHOUT_CLICK_BUDGET: u32 = 3;
 const LONE_OPENER_BUDGET: u32 = 4;
 const FREE_WORLD_BUDGET: u32 = 2;
 const NET_REQUIRED_CYCLES: i64 = 20;
+// Ending-family net cycles have no roll signal and count as unobserved; six
+// edges per cycle bound the arm, checked click and next-cycle observation.
+const NET_EDGES_PER_CYCLE: u32 = 6;
+const NET_TICK_BUDGET: u32 = NET_REQUIRED_CYCLES as u32 * NET_EDGES_PER_CYCLE;
 // freshfish.rs2's first roll is four ticks after the NPC click. After each
 // roll, the expired-delay branch rearms for +4 on the next tick, so later
 // rolls are five ticks apart. Twenty Fishing-20 trout rolls fit in 99 ticks;
@@ -119,6 +125,7 @@ enum ResourceKind {
     Oak,
 }
 
+#[derive(Debug, Clone)]
 struct Scenario {
     name: &'static str,
     skill: &'static str,
@@ -635,7 +642,7 @@ impl SetupState {
                     snapshot.tile().is_some_and(|(x, z, level)| {
                         level == target.level
                             && snapshot.npcs().iter().any(|npc| {
-                                npc.r#type == Some(type_id)
+                                npc.r#type.and_then(|id| i32::try_from(id).ok()) == Some(type_id)
                                     && npc.tile == target
                                     && (x - target.x).abs() + (z - target.z).abs() == 1
                                     && npc.actions.get(0).is_some_and(Option::is_some)
