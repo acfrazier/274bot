@@ -4319,7 +4319,7 @@ impl GatherSlot {
         if let Some(bank) = self.witness.last_status_bank.as_deref() {
             if let Some((_, step)) = bank.rsplit_once("; ") {
                 self.witness.bank_loaded_observed |= self.snapshot.bank_loaded();
-                self.witness.bank_return_step_seen |= step == "Return";
+                record_bank_return_step(&mut self.witness, step);
                 if step == "Return" {
                     self.witness.bank_return_after_pause |= self.case
                         == LiveCase::PauseResumeOtherPlane
@@ -4422,9 +4422,6 @@ impl GatherSlot {
             }
             if event == "withdrawal confirmed" {
                 self.witness.bank_withdrawal_confirmed = true;
-            }
-            if event == "bank closed; validating equipment" {
-                self.witness.bank_closed_observed = true;
             }
             if self.case == LiveCase::FishBait
                 && event == "withdrawal confirmed"
@@ -9056,6 +9053,14 @@ fn is_mining_gem(id: i32) -> bool {
     MINE_PRODUCTS.contains(&id) && ![COPPER_ID, TIN_ID, IRON_ID, COAL_ID].contains(&id)
 }
 
+fn record_bank_return_step(witness: &mut Witness, step: &str) {
+    if step == "Return" {
+        // Return is persistent runner evidence that Close completed.
+        witness.bank_return_step_seen = true;
+        witness.bank_closed_observed = true;
+    }
+}
+
 fn real_content_bank_lifecycle_complete(
     case: LiveCase,
     witness: &Witness,
@@ -9382,7 +9387,7 @@ fn seers_maple_lifecycle_requires_the_named_bank_and_a_returned_yield() {
 }
 
 #[test]
-fn draynor_oak_lifecycle_requires_a_fresh_post_bank_yield() {
+fn draynor_oak_lifecycle_requires_bank_close_and_fresh_post_bank_yield() {
     let mut witness = Witness {
         status_trips: 2,
         bank_arrivals: 2,
@@ -9390,11 +9395,11 @@ fn draynor_oak_lifecycle_requires_a_fresh_post_bank_yield() {
         bank_nonzero_roundtrips: 1,
         post_bank_yields: 2,
         bank_loaded_observed: true,
-        bank_closed_observed: true,
         bank_withdrawal_confirmed: true,
         last_status_yielded: 29,
         last_xp: 3498,
-        last_status_bank: Some("Draynor; Reachable; access:3092,3243,0; Idle".into()),
+        last_status_bank: Some("Draynor; Reachable; access:3092,3243,0; Return".into()),
+        last_event: Some("returning to work area".into()),
         ..Witness::default()
     };
     witness.products_seen.insert(1521);
@@ -9403,6 +9408,8 @@ fn draynor_oak_lifecycle_requires_a_fresh_post_bank_yield() {
     let target = world_tile(3106, 3247);
     let baseline_xp = 2411;
 
+    record_bank_return_step(&mut witness, "Return");
+    assert!(witness.bank_closed_observed);
     assert!(real_content_bank_lifecycle_complete(
         LiveCase::BankCostFirstGoal,
         &witness,
@@ -9423,6 +9430,26 @@ fn draynor_oak_lifecycle_requires_a_fresh_post_bank_yield() {
             baseline_xp,
         ),
         "a bank return without a fresh gather must not pass"
+    );
+
+    witness.post_bank_yields = 2;
+    witness.last_status_yielded = 29;
+    witness.last_xp = 3498;
+    witness.bank_return_step_seen = false;
+    witness.bank_closed_observed = false;
+    witness.last_status_bank = Some("Draynor; Reachable; access:3092,3243,0; Close".into());
+    witness.last_event = Some("withdrawal confirmed".into());
+    record_bank_return_step(&mut witness, "Close");
+    assert!(!witness.bank_closed_observed);
+    assert!(
+        !real_content_bank_lifecycle_complete(
+            LiveCase::BankCostFirstGoal,
+            &witness,
+            &plan,
+            target,
+            baseline_xp,
+        ),
+        "a run that did not leave the open-bank Close step must not pass"
     );
 }
 
