@@ -4914,6 +4914,23 @@ fn stand_walk_count_survives_a_failure_on_the_budget_tick() {
 #[test]
 fn combat_run_layout_stays_compact() {
     println!("CombatRun={}", std::mem::size_of::<CombatRun>());
+    println!(
+        "Action={} Dialogue={} DialogueHandle={} Combat={} CombatHandle={}",
+        std::mem::size_of::<Action>(),
+        std::mem::size_of::<Dialogue>(),
+        std::mem::size_of::<ActionHandle<Dialogue>>(),
+        std::mem::size_of::<Combat>(),
+        std::mem::size_of::<ActionHandle<Combat>>(),
+    );
+    println!(
+        "FinishConfig={} AbortEscape={} WalkRetryState={} StepOutcome={} CombatReport={} StepTraceEvent={}",
+        std::mem::size_of::<FinishConfig>(),
+        std::mem::size_of::<AbortEscape>(),
+        std::mem::size_of::<crate::native::WalkRetryState>(),
+        std::mem::size_of::<StepOutcome>(),
+        std::mem::size_of::<CombatReport>(),
+        std::mem::size_of::<StepTraceEvent>(),
+    );
     assert!(std::mem::size_of::<CombatRun>() <= 1176);
 }
 
@@ -6332,8 +6349,8 @@ fn loot_takes(ledger: &TestLedger, id: i32) -> usize {
     })
 }
 
-/// The host refusing a dispatch the loot action sent, as a rejection receipt.
-fn reject_last_interaction(ledger: &mut TestLedger, tick: u64) {
+/// Post the host's dispatch receipt for the latest loot Take.
+fn complete_last_loot_dispatch(ledger: &mut TestLedger, tick: u64, sequence: u64, accepted: bool) {
     let authority = ledger.as_ref().unwrap().outbox.last().unwrap().authority();
     ledger.as_mut().unwrap().complete_interaction(
         &authority,
@@ -6342,9 +6359,9 @@ fn reject_last_interaction(ledger: &mut TestLedger, tick: u64) {
             evidence: EvidenceStamp {
                 run: authority.run(),
                 tick,
-                sequence: tick,
+                sequence,
             },
-            accepted: false,
+            accepted,
             chat_since: 0,
         },
     );
@@ -6398,10 +6415,12 @@ fn a_rebuilt_scene_retakes_the_same_loot_item_on_the_next_observed_tick() {
                        tick: u64,
                        sequence: u64| {
             with_step_context_reach(snapshot, &reach, ledger, tick, |cx| {
+                let observed_reach = cx.tick.cx.snapshot().reach().map(|reach| reach.value);
                 let mut evidence = cx.tick.cx.evidence();
                 evidence.sequence = sequence;
                 cx.tick.cx.evidence = evidence;
-                cx.tick.cx.snapshot = SnapshotView::new(cx.tick.frame.snapshot, evidence);
+                cx.tick.cx.snapshot =
+                    SnapshotView::new(cx.tick.frame.snapshot, evidence).with_reach(observed_reach);
                 cx.required_after = evidence;
                 run.poll(cx)
             })
@@ -6460,6 +6479,7 @@ fn a_rebuilt_scene_retakes_the_same_loot_item_on_the_next_observed_tick() {
             0,
             "an earlier row is not retaken"
         );
+        complete_last_loot_dispatch(&mut ledger, 32, 34, true);
 
         inventory.push(inventory_item(bead.id, bead.name.as_deref().unwrap(), 1));
         let gained = loot_scene(here, Vec::new(), (3176, 3168), inventory);
@@ -6551,6 +6571,7 @@ fn a_second_rebuilt_scene_cancel_on_the_retaken_item_is_missed_loot() {
             "the next loot item starts"
         );
         assert!(matches!(run.action.as_ref(), Some(Action::Loot(_))));
+        complete_last_loot_dispatch(&mut ledger, 31, 31, true);
 
         let gained = loot_scene(
             here,
@@ -6630,7 +6651,7 @@ fn other_loot_phase_errors_still_fail_the_combat_step() {
                 .expect("the held Take is admitted")
         },
     )));
-    reject_last_interaction(&mut ledger, 30);
+    complete_last_loot_dispatch(&mut ledger, 30, 30, false);
     let failed = with_step_context(&snapshot, &mut ledger, 31, |cx| run.poll(cx));
     assert!(
         matches!(&failed, Poll::Ready(Err(ActionError::Failed(_)))),

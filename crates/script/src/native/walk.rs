@@ -513,7 +513,8 @@ mod tests {
         );
         assert_eq!(request.cross.as_ref(), [Arc::<str>::from("test-zone")]);
         assert!(request.protect);
-        assert!(!request.allow.food);
+        assert!(request.food_guard, "named consent retains its food guard");
+        assert!(request.allow.food);
     }
 
     #[test]
@@ -916,7 +917,8 @@ mod tests {
             );
             assert_eq!(request.cross.as_ref(), [Arc::<str>::from("test-zone")]);
             assert!(request.protect);
-            assert!(!request.allow.food);
+            assert!(request.food_guard, "named consent retains its food guard");
+            assert!(request.allow.food);
             assert!(!request.allow.escape);
             queued.request_id.get()
         };

@@ -202,7 +202,7 @@ fn a_parked_queue_row_publishes_its_stage_step_and_failure() {
     let failure = status.failure.as_ref().expect("terminal failure retained");
     assert!(
         failure.message.contains("step settle timeout")
-            && failure.message.contains("Stop/Start Quester"),
+            && failure.message.contains("then start the Quester again"),
         "{failure:?}"
     );
 }

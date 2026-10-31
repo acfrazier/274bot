@@ -1028,16 +1028,9 @@ fn quest_walk_aborted_receipt_stops_without_retry() {
 }
 
 #[test]
-fn quest_walk_user_input_needs_evidence_and_cancelled_stop_without_retry() {
-    let gates: Arc<[api::selected::QuestGate]> = Arc::from([api::selected::QuestGate::Complete(
-        FactKey::new("walk-gate"),
-    )]);
+fn quest_walk_user_input_and_cancelled_stop_without_retry() {
     let failures = [
         (WalkEnd::UserInput, ActionError::UserInput),
-        (
-            WalkEnd::NeedsEvidence(Arc::clone(&gates)),
-            ActionError::NeedsEvidence(Arc::clone(&gates)),
-        ),
         (WalkEnd::Cancelled, ActionError::Cancelled),
     ];
 
@@ -1061,6 +1054,46 @@ fn quest_walk_user_input_needs_evidence_and_cancelled_stop_without_retry() {
         assert_eq!(latest_walk_request(&ledger).0, first_request);
         assert!(run.take_trace_event().is_none());
     }
+}
+
+#[test]
+fn quest_walk_missing_quest_evidence_waits_one_observed_tick_without_retry() {
+    let gates: Arc<[api::selected::QuestGate]> = Arc::from([api::selected::QuestGate::Complete(
+        FactKey::new("walk-gate"),
+    )]);
+    let plan = walk_retry_plan(tile(3200, 3200));
+    let snapshot = ready();
+    let mut ledger = None;
+    let mut run = with_tick(&snapshot, &mut ledger, 1, |tick| {
+        with_step(tick, |cx| plan.begin(cx).unwrap())
+    });
+    let first_request = latest_walk_request(&ledger).0;
+    assert_eq!(
+        post_walk_receipt(
+            &mut ledger,
+            2,
+            WalkEnd::NeedsEvidence(Arc::clone(&gates)),
+            None,
+        ),
+        first_request
+    );
+    for _ in 0..2 {
+        assert!(with_tick(&snapshot, &mut ledger, 2, |tick| {
+            with_step(tick, |cx| run.poll(cx))
+        })
+        .is_pending());
+        assert_eq!(walk_request_count(&ledger), 1);
+    }
+    let result = with_tick(&snapshot, &mut ledger, 3, |tick| {
+        with_step(tick, |cx| run.poll(cx))
+    });
+    assert!(
+        matches!(&result, Poll::Ready(Err(ActionError::NeedsEvidence(actual))) if actual == &gates),
+        "the same typed refusal ends the step after one observed evidence tick"
+    );
+    assert_eq!(walk_request_count(&ledger), 1);
+    assert_eq!(latest_walk_request(&ledger).0, first_request);
+    assert!(run.take_trace_event().is_none());
 }
 
 #[test]
