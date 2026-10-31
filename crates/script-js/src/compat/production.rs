@@ -83,7 +83,7 @@ mod compat {
         Continue,
     }
 
-    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    #[derive(Debug, PartialEq, Eq)]
     #[allow(clippy::enum_variant_names)] // Wait* names encode the phase predicate
     enum Phase {
         MakeX,
@@ -459,17 +459,17 @@ mod compat {
     impl ChatDialog {
         fn step_on(&mut self, probe: &Probe<'_>, cx: &mut Cx<'_>) -> Step<bool> {
             let timed_out =
-                !matches!(self.phase, Phase::WaitMakeOne { .. }) && cx.clock().bound_reached();
-            match self.phase {
+                !matches!(&self.phase, Phase::WaitMakeOne { .. }) && cx.clock().bound_reached();
+            match &self.phase {
                 // The frozen modal waits read the modal ids only: a logout that
                 // clears them ends the wait as a change.
                 Phase::WaitModal { chat, before } => {
-                    let now = if chat {
+                    let now = if *chat {
                         probe.chat_modal()
                     } else {
                         probe.main_modal_id
                     };
-                    done_or_wait(now != before, timed_out)
+                    done_or_wait(now != *before, timed_out)
                 }
                 Phase::WaitMakeOne {
                     chat,
@@ -480,22 +480,22 @@ mod compat {
                     login_mark,
                     deadline_tick,
                 } => {
-                    if !probe.ingame || probe.login_mark != login_mark {
+                    if !probe.ingame || probe.login_mark != *login_mark {
                         return Step::Done(false);
                     }
-                    let now = if chat {
+                    let now = if *chat {
                         probe.chat_modal()
                     } else {
                         probe.main_modal_id
                     };
                     let receipt = probe
-                        .inventory_count(product_id, &product_name)
-                        .is_some_and(|count| count.checked_sub(before_count) == Some(1));
-                    let timed_out = probe.tick.is_some_and(|tick| tick >= deadline_tick);
-                    done_or_wait(now != before && receipt, timed_out)
+                        .inventory_count(*product_id, product_name)
+                        .is_some_and(|count| count.checked_sub(*before_count) == Some(1));
+                    let timed_out = probe.tick.is_some_and(|tick| tick >= *deadline_tick);
+                    done_or_wait(now != *before && receipt, timed_out)
                 }
                 Phase::WaitChoice { before } => done_or_wait(
-                    probe.chat_modal_id != before || probe.chat_continue,
+                    probe.chat_modal_id != *before || probe.chat_continue,
                     timed_out,
                 ),
                 _ if !probe.ingame => Step::Done(false),
@@ -518,7 +518,7 @@ mod compat {
                     MakeXStep::TimedOut(_) => Step::Done(false),
                 },
                 Phase::WaitPanel { before } => {
-                    done_or_wait(probe.main_modal_id != before, timed_out)
+                    done_or_wait(probe.main_modal_id != *before, timed_out)
                 }
             }
         }
