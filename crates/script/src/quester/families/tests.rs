@@ -8926,6 +8926,40 @@ fn members_world_rejects_arguments() {
     });
 }
 
+// Exercise the compiled fixture through its host action boundary.
+#[test]
+fn unattackable_fixture_walk_emits_safe_hunt_stand() {
+    let data = api::game_data::for_revision(ClientRevision::R289).unwrap();
+    let quests = api::quest_facts::QuestCatalog::from_identity(data.quest_identity()).unwrap();
+    let document: crate::quester::path::PathDocument = serde_json::from_slice(include_bytes!(
+        "../../../paths/289/fixtures/combat_unattackable.json"
+    ))
+    .unwrap();
+    let path =
+        crate::quester::compile::compile_uncached_for_test(&document, &data, &quests).unwrap();
+    let step = &path.sequences[0].steps[0];
+    let mut snapshot = ready();
+    snapshot.seed_local_player(local_player(tile(3110, 3346)));
+    let mut ledger = None;
+    let mut run = with_tick(&snapshot, &mut ledger, 1, |tick| {
+        with_step(tick, |cx| {
+            crate::quester::compile::StepPlan::begin(step.plan.as_ref(), cx).unwrap()
+        })
+    });
+
+    assert!(with_tick(&snapshot, &mut ledger, 2, |tick| {
+        with_step(tick, |cx| {
+            crate::quester::compile::StepRun::poll(run.as_mut(), cx)
+        })
+    })
+    .is_pending());
+    let HostEffect::Walk(request) = &ledger.as_ref().unwrap().outbox[0].effect else {
+        panic!("M4's pre-combat step must submit a walk");
+    };
+    assert_eq!(request.target, tile(3109, 3346));
+    assert_eq!(request.radius, 0);
+}
+
 #[test]
 fn unseen_anchored_loc_prewalk_uses_area_arrival() {
     compile_context_test(|cx| {
