@@ -342,6 +342,13 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.8` 
   example the coins it keeps for buying things), the log now has one line that
   names the item and how many are missing. The bot does the same as before.
 
+- When a fight has a stand that is far away, the bot now walks to the stand
+  before it looks for a target. It starts the 15-tick no-target search when it
+  is within one tile of the stand. Before, a quest fight could stop with "no
+  target" while the bot was still walking. If the walk fails, the fight stops
+  with the walk's own failure detail. The fight's budget still limits the walk
+  and the fight together.
+
 ### Survival
 
 - After a bot eats a Strange fruit, it now counts its poison as cured even

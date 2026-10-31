@@ -1314,14 +1314,11 @@ impl Combat {
             self.flags &= !(LOST | LEASH_WALKED);
         }
         if self.engaged.is_none() {
-            if select::stand_pending(&self.request, frame) {
-                // Walking to the stand is the approach, not lost time:
-                // the no-target clock starts only after arrival, and the
-                // bounded stand-walk failures and the request deadline
-                // remain the approach's own limits. The failure count is
-                // spent only by failed walks, so it survives this refresh.
-                self.lost_since = tick;
-                self.flags |= LOST;
+            if self.phase != Phase::Escape && select::stand_pending(&self.request, frame) {
+                // Walking to the stand is not lost-target time. Leave the
+                // clock unarmed until arrival, even if polls skip ticks.
+                // Only failed walks spend the step's approach counter.
+                self.flags &= !LOST;
             } else {
                 self.stand_walk_failures = 0;
                 if self.flags & LOST == 0 {
