@@ -2744,6 +2744,13 @@ impl Run {
                         if !self.q4_scripts_are(play, script::RunState::Paused) {
                             return Err("q4_script_left_paused_state_before_resume".into());
                         }
+                        // Operator pause parks ScriptRunner work, not BotHost
+                        // client frames: upstream `BotHost.onFrame` fires every
+                        // client loop (`BotHost.ts:48-55`), AccountLeveler's
+                        // listener checks `ScriptRunner.state` itself, and the
+                        // runtime contract test says so (`compat_v1_runtime.rs`
+                        // "operator pause parks ScriptRunner work, not BotHost
+                        // client frames"). Every bot keeps receiving frames.
                         let before = self
                             .q4_pause_counts
                             .as_ref()
@@ -2753,9 +2760,9 @@ impl Run {
                         if before.iter().any(|(name, observation)| {
                             during
                                 .get(name)
-                                .is_none_or(|current| current.delivered != observation.delivered)
+                                .is_none_or(|current| current.delivered <= observation.delivered)
                         }) {
-                            return Err("q4_listener_delivered_while_script_paused".into());
+                            return Err("q4_listener_not_delivered_while_script_paused".into());
                         }
                         self.record_q4_lifecycle_event(play, now, "resume_requested");
                         for name in &self.names {
