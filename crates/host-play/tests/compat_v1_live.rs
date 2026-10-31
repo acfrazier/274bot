@@ -121,8 +121,7 @@ impl FrameState {
             return;
         }
         if let Some(tab) = self.next_side_tab.take() {
-            let result =
-                interact::Interactions::new(&self.snapshot, client).click_side_tab(tab);
+            let result = interact::Interactions::new(&self.snapshot, client).click_side_tab(tab);
             if let interact::SendResult::Refused { reason, .. } = result {
                 self.error = Some(format!("Engine L refused side tab {tab}: {reason:?}"));
                 return;
@@ -413,10 +412,7 @@ fn wait_for_tile(state: &Arc<Mutex<FrameState>>, expected: (i32, i32, i32)) -> R
         thread::sleep(POLL_INTERVAL);
     }
 }
-fn wait_for_side_tab_available(
-    state: &Arc<Mutex<FrameState>>,
-    index: i32,
-) -> Result<(), String> {
+fn wait_for_side_tab_available(state: &Arc<Mutex<FrameState>>, index: i32) -> Result<(), String> {
     let deadline = Instant::now() + ACTION_DEADLINE;
     loop {
         let frame = lock_state(state);
@@ -1070,10 +1066,7 @@ fn run_events_cell(receipt: &mut Receipt) -> Result<(), String> {
     wait_for_logged_out(&session.state)?;
     request_login(&session)?;
     wait_ready(&session.state)?;
-    session
-        .receipt
-        .logs
-        .push("EVENTS:RELOGIN:READY".into());
+    session.receipt.logs.push("EVENTS:RELOGIN:READY".into());
 
     // Load the inventory component before the first pack read or change.
     wait_for_side_tab_available(&session.state, INVENTORY_SIDE_TAB)?;
