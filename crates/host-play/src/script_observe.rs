@@ -453,14 +453,6 @@ impl SnapshotArgument<'_> {
             Self::Mutable(snapshot) => Some(snapshot),
         }
     }
-
-    #[cfg(feature = "test-support")]
-    fn write(&mut self) -> Option<&mut GameSnapshot> {
-        match self {
-            Self::Mutable(snapshot) => Some(*snapshot),
-            Self::ReadOnly(_) => None,
-        }
-    }
 }
 
 impl Deref for SnapshotArgument<'_> {
