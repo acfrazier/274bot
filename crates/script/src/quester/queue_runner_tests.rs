@@ -224,10 +224,20 @@ fn a_queued_no_step_park_publishes_and_reuses_the_empty_step_id() {
         );
         let mut document = crate::quester::compile::decode_cook().unwrap();
         document.quest.as_mut().unwrap().owns_inventory = true;
+        // A real observed-stage predicate skips the steps. A constant true
+        // predicate would fail compilation before the no-step park is reached.
+        let observed_stage_skip: PredicateDocument = serde_json::from_value(serde_json::json!({
+            "Fact": {
+                "kind": "stage_in",
+                "version": 1,
+                "args": {"quest": "cook", "any": ["cook:0"]}
+            }
+        }))
+        .unwrap();
         for role in &mut document.roles {
             for sequence in &mut role.sequences {
                 for step in &mut sequence.steps {
-                    step.skip_if = PredicateDocument::All(Vec::new());
+                    step.skip_if = observed_stage_skip.clone();
                 }
             }
         }

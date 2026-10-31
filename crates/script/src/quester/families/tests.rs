@@ -9292,14 +9292,14 @@ fn unseen_anchored_loc_prewalk_uses_area_arrival() {
 #[test]
 fn unseen_anchored_npc_prewalk_keeps_reach_arrival() {
     compile_context_test(|cx| {
-        let anchor = tile(2642, 3441);
+        let anchor = tile(3209, 3215);
         let plan = compile_interact(
             test_args::<InteractArgs>(serde_json::json!({
-                "target": {"npc": "sheepunsheered"},
-                "op": "Shear",
+                "target": {"npc": "cook"},
+                "op": "Talk-to",
                 "anchor": {
-                    "tile": [2642, 3441, 0],
-                    "source": "U2 non-loc anchored prewalk regression"
+                    "tile": [3209, 3215, 0],
+                    "source": "Existing bundled Cook's Assistant anchor; U2 NPC prewalk regression"
                 },
                 "radius": 4
             })),
