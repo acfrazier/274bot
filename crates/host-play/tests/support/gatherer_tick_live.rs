@@ -262,8 +262,9 @@ enum SetupPhase {
     TutorialGetvar,
     WaitTutorial,
     LogoutTutorial,
-    WaitLogout,
     WaitRelogin,
+    ReseedTutorial,
+    WaitReseedTutorial,
     Seed,
     Verify,
     Ready,
@@ -276,6 +277,8 @@ struct SetupState {
     commands: Vec<String>,
     next_command: usize,
     error: Option<String>,
+    logout_session: Option<u64>,
+    tutorial_reseed: Option<scenario::tutorial::PostRelogTutorial>,
 }
 
 impl SetupState {
@@ -301,6 +304,8 @@ impl SetupState {
             commands,
             next_command: 0,
             error: None,
+            logout_session: None,
+            tutorial_reseed: None,
         }
     }
 
@@ -342,19 +347,43 @@ impl SetupState {
             SetupPhase::LogoutTutorial => {
                 let ifaces = Arc::clone(&client.ifaces);
                 if interact::logout(client, &ifaces) {
-                    self.phase = SetupPhase::WaitLogout;
+                    self.logout_session = Some(client.gens.session);
+                    self.phase = SetupPhase::WaitRelogin;
                 } else {
                     self.error = Some("tutorial completion logout was refused".into());
                 }
             }
-            SetupPhase::WaitLogout => {
-                if !client.ingame {
-                    self.phase = SetupPhase::WaitRelogin;
+            SetupPhase::WaitRelogin => {
+                if client.ingame
+                    && client.scene_state == 2
+                    && self
+                        .logout_session
+                        .is_some_and(|session| session != client.gens.session)
+                {
+                    self.phase = SetupPhase::ReseedTutorial;
                 }
             }
-            SetupPhase::WaitRelogin => {
-                if client.ingame && client.scene_state == 2 {
-                    self.phase = SetupPhase::Seed;
+            SetupPhase::ReseedTutorial => {
+                let reseed = scenario::tutorial::PostRelogTutorial::new(
+                    scenario::tutorial::chat_baseline(&snapshot),
+                );
+                reseed.send_reseed(client);
+                self.tutorial_reseed = Some(reseed);
+                self.phase = SetupPhase::WaitReseedTutorial;
+            }
+            SetupPhase::WaitReseedTutorial => {
+                match self
+                    .tutorial_reseed
+                    .as_ref()
+                    .expect("tutorial reseed armed")
+                    .check(&snapshot)
+                {
+                    Ok(true) => {
+                        println!("{}", scenario::tutorial::confirmation_log());
+                        self.phase = SetupPhase::Seed;
+                    }
+                    Ok(false) => {}
+                    Err(error) => self.error = Some(error),
                 }
             }
             SetupPhase::Seed => {
@@ -1255,4 +1284,33 @@ fn gatherer_oak_tick() {
 #[ignore = "requires LIVE=1, BOT_CPU=1, BOT_LIVE_NAME_PREFIX, Engine L at 127.0.0.1:47594/3080, and absolute Gatherer data paths; rune-pick iron no-gain guard"]
 fn gatherer_tick_refused_rune() {
     run_live(Case::Rune).unwrap();
+}
+
+#[test]
+fn setup_observes_relogin_without_requiring_an_offline_callback() {
+    let account = "tick-setup";
+    let mut setup = SetupState::new(account.into(), Case::Probe);
+    setup.phase = SetupPhase::WaitRelogin;
+    setup.logout_session = Some(10);
+    let mut client = Client::new_with_revision(
+        client::client::ClientConfig {
+            host: "127.0.0.1".into(),
+            port: 1,
+            cache_dir: String::new(),
+            members: true,
+            lowmem: true,
+        },
+        client::client::ClientRevision::R289,
+    );
+    client.ingame = true;
+    client.scene_state = 2;
+    client.gens.session = 10;
+    setup.frame(&mut client, account, false);
+    assert_eq!(setup.phase, SetupPhase::WaitRelogin);
+    client.gens.session = 11;
+    setup.frame(&mut client, account, true);
+    assert_eq!(setup.phase, SetupPhase::WaitRelogin);
+    setup.frame(&mut client, account, false);
+    assert_eq!(setup.phase, SetupPhase::ReseedTutorial);
+    assert!(setup.tutorial_reseed.is_none());
 }
