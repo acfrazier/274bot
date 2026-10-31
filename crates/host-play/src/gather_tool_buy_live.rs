@@ -1784,8 +1784,9 @@ fn relog_park_oracle_preserves_a_readiness_pause_until_the_scene_returns() {
 
 #[test]
 fn relog_park_oracle_rejects_changed_park_or_operator_pause() {
+    type Change = fn(&mut ParkObservation);
     let (initial, observation) = relog_park_oracle_fixture();
-    let bad_samples: &[(&str, fn(&mut ParkObservation))] = &[
+    let bad_samples: &[(&str, Change)] = &[
         ("operator Pause", |sample| sample.want_run = Some(false)),
         ("missing intent", |sample| sample.want_run = None),
         ("missing readiness", |sample| sample.host_up = None),
