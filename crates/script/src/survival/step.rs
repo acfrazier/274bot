@@ -1087,7 +1087,7 @@ mod tests {
 
     fn hazard_frame(inventory: Vec<ItemView>, hp: u8, tick: u64) -> GameSnapshot {
         let mut snapshot = snapshot(inventory);
-        snapshot.seed_tick(tick);
+        snapshot.seed_tick(tick as u32);
         snapshot.seed_stats(vec![StatView {
             index: 3,
             name: "hitpoints".into(),
@@ -1141,7 +1141,7 @@ mod tests {
     }
 
     fn seed_scorpions(snapshot: &mut GameSnapshot, count: usize) {
-        let world = crate::combat_session_tests::World::new("scorpion");
+        let world = crate::combat_session::tests::World::new("scorpion");
         let template = world.snapshot.npcs()[0].clone();
         let at = WorldTile {
             x: 3201,
@@ -1340,7 +1340,7 @@ mod tests {
                         7,
                         PoisonState::Clear,
                         Some(hazard_constant(3)),
-                        tick
+                        u64::from(tick)
                     ),
                     SurvivalWant::Hold
                 ),

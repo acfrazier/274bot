@@ -1,9 +1,9 @@
 //! Lazy per-activation Path compiler and the `(pin, digest, ABI)` weak cache.
 use super::families::{self, CompiledAcquireStep};
 #[cfg(test)]
-use super::path::SequenceOrder;
+use super::path::{HazardDocument, SequenceOrder};
 use super::path::{
-    HazardDocument, PathDocument, PredicateDocument, QuestItemDocument, QuestRequirementDocument,
+    PathDocument, PredicateDocument, QuestItemDocument, QuestRequirementDocument,
     QuestRequirementKindDocument, StepDocument,
 };
 pub use super::progress::CompiledProgress;
@@ -2156,7 +2156,10 @@ mod tests {
         }
     }
 
-    fn find_step_mut(document: &mut PathDocument, kind: &str) -> Option<&mut StepDocument> {
+    fn find_step_mut<'a>(
+        document: &'a mut PathDocument,
+        kind: &str,
+    ) -> Option<&'a mut StepDocument> {
         for role in &mut document.roles {
             if let Some(step) = role.prelude.iter_mut().find(|step| step.kind == kind) {
                 return Some(step);

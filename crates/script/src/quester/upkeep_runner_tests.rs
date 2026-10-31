@@ -3,12 +3,13 @@ use super::*;
 use crate::combat::{ClearPrayers, ClearPrayersArgs, RaisedPrayers};
 use crate::native::{
     ledger, ActionHandle, HostEffect, InteractionReceipt, NativeOutput, NativeTick, Script,
-    ScriptFlow, ScriptPaint, ScriptStatus,
+    ScriptFlow, ScriptStatus,
 };
 use crate::quester::compile::{CompiledStep, PredicatePlan, StepPlan};
 use crate::quester::path::{
     HazardDocument, PathDocument, PredicateDocument, SequenceOrder, StepDocument,
 };
+use crate::shim::ScriptPaint;
 use crate::survival::{CurePoison, HazardStat, StepHazard};
 use api::condition::PoisonState;
 use api::hostlog::Level;
@@ -261,7 +262,7 @@ fn with_frame_tick<R>(
     api::hostlog::set_tick(tick as u32);
     super::super::families::tests::with_tick_output(snapshot, ledger, tick, output, |native| {
         let mut condition = survival_condition(poison, hp);
-        condition.tick = tick as u16;
+        condition.tick = tick as u32;
         condition.hp_max = hp_max;
         native.cx.condition = Some(condition);
         native.cx.cure_poison = cure;
@@ -2611,7 +2612,10 @@ fn hit_bound_run(unpark_tick: u64) -> (bool, Vec<String>, Quester) {
     assert!(script.survival.parked().is_some());
     assert_eq!(
         script.survival.report().need,
-        Some(crate::survival::math::SurvivalNeed::Food { count: 1 })
+        Some(crate::survival::math::SurvivalNeed::Food {
+            count: 1,
+            ref_heal: 12,
+        })
     );
     for (tick, hp) in [(25, 5), (26, 6), (27, 7)] {
         drive(
@@ -2844,7 +2848,7 @@ fn food_park_release_uses_the_line_of_the_current_hitpoints() {
 #[test]
 fn food_park_bound_does_not_apply_with_a_live_row() {
     let (mut script, mut snapshot, _) = fixture("interact", Some(RAILING_HAZARD));
-    let world = crate::combat_session_tests::World::new("scorpion");
+    let world = crate::combat_session::tests::World::new("scorpion");
     let template = world.snapshot.npcs()[0].clone();
     let at = WorldTile {
         x: 3201,
