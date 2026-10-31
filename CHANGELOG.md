@@ -61,6 +61,12 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.7` 
   of polls inside one tick no longer ends a crossing early, and a slow
   poll that misses several ticks no longer extends it.
 
+### Quester
+
+- The Quester now eats during quest steps with declared damage, including
+  the Tourist Trap cell climb and mine cart, not only in fights and on walks.
+  Each guide cites the game's own script for its damage bound.
+
 ### Survival
 
 - Gatherer and Quester check for a needed poison cure while they work. They can

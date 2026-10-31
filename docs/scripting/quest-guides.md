@@ -157,6 +157,53 @@ Provisioner's bank scan, capacity deposit and withdrawal boundaries are included
 - **Recipes vs sequences.** Put item acquisition in `quest.acquire` recipes referenced by `acquire` steps. Keep stage sequences focused on that stage's actions.
 - **Ordered sequences.** Reach for `"order": "ordered"` only when consecutive steps have no observable "done" evidence. Where evidence exists (an item held, an area reached, a journal flag), prefer `authored` order with a real `skip_if`, because that also recovers correctly after a restart instead of replaying.
 
+## Damage from a step
+
+A step whose own operation calls `damage_self` or queues `damage_player`,
+directly or through a procedure, declares `hazard` beside `args`:
+
+```json
+"hazard": {
+  "of": "none",
+  "plus": 7,
+  "source": "content/scripts/quests/quest_desertrescue/scripts/quest_desertrescue.rs2:266-271"
+}
+```
+
+The formula is `max(0, min(cap, floor(stat * mul / div) + plus))`.
+`of` selects `none`, `current`, or `base` Hitpoints. `none` means a constant.
+`mul` defaults to 0, `div` to 1, and `plus` to 0. The optional cap applies
+after the addition. The source must cite the content that deals the damage.
+A random range declares its maximum, not its average.
+
+The compiler refuses an empty source, a zero divisor, a zero cap, and a
+declaration that cannot deal positive damage at any Hitpoints from 1 to 99.
+It also refuses a scaled formula without a multiplier and an invalid constant.
+Do not put a hazard on a `walk` or `combat` step. Their own guards handle food.
+
+The Quester prices the hazard from step selection until selection chooses
+another step. A new hazard step waits one tick before it begins, so survival
+can decide first. Known incoming damage and the hazard add together.
+A bite cancels the current step and closes a game page before eating.
+The restarted step keeps its hazard and the family's original quantity target.
+
+Without food, the Quester holds until its current Hitpoints clear the dynamic
+eat line. It closes pages while it holds. A page still open on the 25th parked
+tick causes a typed stop. The recovery log records the bound at the park,
+after a committed hit, and after a page closes. That bound applies only without
+live attackers or poison. A hazard that cannot clear its eat line at full
+Hitpoints stops with `hazard-unsurvivable` before the first operation.
+
+A step without a declaration retains the half-Hitpoints fallback on an
+unattributed damage tick. A supply need on that tick is reported, not parked.
+The next tick can park if the need remains. The first undeclared hit can kill
+the bot before this fallback acts. One warning per selected step names that hit.
+
+A multi-hit loop is not one step event. Mark it as uncovered in the guide's
+comment rather than declaring only one hit. Damage from an area or map timer
+is also not a step hazard. Cancelling a step does not stop that damage.
+Survival phase 2 owns those hazards. Underground Pass remains uncovered.
+
 ## The members world fact
 
 - **Members world.** `{"Fact":{"kind":"members_world","version":1,"args":{}}}` is `True` on a members world, `False` on a free-to-play world and `Unknown` only when the profile has no bound server (for example a Direct connection).
