@@ -814,6 +814,14 @@ at an edge it is bounded to `[t, t + 1]`. A fresh inbound `IF_CLOSE` count is
 exact at a wake and bounded to `[t - 1, t]` at an edge. Retained counts prove no
 new close. A chat-only close does not require a main-modal transition stamp.
 
+Ordinary checked Interact clicks do not have ordered-dispatch receipts. Their
+actual `MOVE_OPCLICK`/resource-op pair must come from one Client frame; the
+independent engine stream still proves server handling. Three foreign events
+use the real Client's same-tile walk encoder, not paths into neighboring water.
+The net fixture finishes a real path to the currently observed ordinary spot
+before Start. The copper stand is adjacent to its authored rock. Case budgets,
+including the free-world refusal window, start at the actual Knife dispatch.
+
 All fixtures seed only the tested account before Start. Shared spots, rocks and
 trees remain real content. Each case stops the script and logs out its account,
 including on assertion failure.

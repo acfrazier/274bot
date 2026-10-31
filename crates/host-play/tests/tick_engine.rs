@@ -166,11 +166,11 @@ impl Scenario {
             skill_index: 14,
             level: 99,
             resource: ResourceKind::Copper,
-            target: mining_start()?,
+            target: tile(3_283, 3_367, 0),
             tool: item("bronze_pickaxe", BRONZE_PICKAXE_ID, 1),
             extra_items: Vec::new(),
             products: vec![COPPER_ORE_ID],
-            required_loc: None,
+            required_loc: Some((2_090, tile(3_282, 3_367, 0))),
             require_free_world: false,
             require_knife_arm: true,
             mutations: Vec::new(),
@@ -214,7 +214,7 @@ impl Scenario {
             products: vec![OAK_LOG_ID],
             required_loc: Some((OAK_LOC_ID, tile(3_017, 3_170, 0))),
             require_free_world: true,
-            require_knife_arm: false,
+            require_knife_arm: true,
             mutations: Vec::new(),
             use_proxy: false,
             suppress_openchat_span: None,
@@ -311,6 +311,7 @@ enum SetupPhase {
     WaitReseedTutorial,
     Seed,
     Verify,
+    WaitNetPosition,
     Ready,
 }
 
@@ -462,11 +463,57 @@ impl SetupState {
             }
             SetupPhase::Verify => {
                 if self.ready_in_snapshot(&snapshot) {
+                    if self.scenario.resource == ResourceKind::Net {
+                        if let Err(error) = self.approach_net(client, &snapshot) {
+                            self.error = Some(error);
+                        }
+                    } else {
+                        self.phase = SetupPhase::Ready;
+                    }
+                }
+            }
+            SetupPhase::WaitNetPosition => {
+                if self.ready_in_snapshot(&snapshot) {
                     self.phase = SetupPhase::Ready;
                 }
             }
             SetupPhase::Ready => {}
         }
+    }
+
+    fn approach_net(&mut self, client: &mut Client, snapshot: &GameSnapshot) -> Result<(), String> {
+        let npc = snapshot
+            .npcs()
+            .iter()
+            .filter(|npc| npc.r#type == Some(330))
+            .min_by_key(|npc| npc.distance)
+            .ok_or("Net setup has no ordinary small-net spot")?;
+        let (x, z, level) = snapshot.tile().ok_or("Net setup has no player tile")?;
+        let (base_x, base_z) = snapshot.base().ok_or("Net setup has no scene base")?;
+        // Spots move during normal content. Complete a real path to the
+        // currently observed ordinary spot before the measured Start window.
+        if !client.tryMove(
+            x - base_x,
+            z - base_z,
+            npc.tile.x - base_x,
+            npc.tile.z - base_z,
+            false,
+            npc.size,
+            npc.size,
+            0,
+            0,
+            0,
+            0,
+        ) {
+            return Err("Net setup could not path to the observed ordinary spot".into());
+        }
+        self.scenario.target = tile(
+            client.minimap_flag_x + base_x,
+            client.minimap_flag_z + base_z,
+            level,
+        );
+        self.phase = SetupPhase::WaitNetPosition;
+        Ok(())
     }
 
     fn ready_in_snapshot(&self, snapshot: &GameSnapshot) -> bool {
@@ -494,7 +541,16 @@ impl SetupState {
                 .iter()
                 .any(|loc| loc.id == id && loc.tile == target)
         });
-        at_target && level_ready && items_ready && loc_ready
+        let npc_ready = self.scenario.resource != ResourceKind::Net
+            || snapshot.npcs().iter().any(|npc| {
+                npc.r#type == Some(330)
+                    && (self.phase != SetupPhase::WaitNetPosition
+                        || (npc.tile.level == self.scenario.target.level
+                            && (npc.tile.x - self.scenario.target.x).abs()
+                                + (npc.tile.z - self.scenario.target.z).abs()
+                                == 1))
+            });
+        at_target && level_ready && items_ready && loc_ready && npc_ready
     }
 }
 
@@ -644,12 +700,12 @@ fn send_pre_batch_user_events(
         state.error = Some("real edge had no local-player tile or scene base".into());
         return;
     };
-    let direction = if source_x <= 100 { 1 } else { -1 };
     let mut returned_moves = 0;
-    for offset in 1..=requested {
-        let target_x = source_x + direction * offset as i32;
+    for _ in 0..requested {
+        // Real same-tile walks charge user events without moving the actor
+        // into the river or depending on neighboring terrain being passable.
         if !client.tryMove(
-            source_x, source_z, target_x, source_z, true, 0, 0, 0, 0, 0, 0,
+            source_x, source_z, source_x, source_z, false, 0, 0, 0, 0, 0, 0,
         ) {
             break;
         }
@@ -923,6 +979,12 @@ impl LiveRun {
             .expect("live Play exists until shutdown")
             .focus(&self.account);
         self.wait_setup_ready()?;
+        self.scenario.target = self
+            .setup
+            .lock()
+            .map_err(|_| "tick-engine setup poisoned")?
+            .scenario
+            .target;
         self.engine_log = Some(EnginePacketLog::capture(required_file(
             "TICK_ENGINE_PACKET_LOG",
         )?)?);
@@ -1869,20 +1931,16 @@ fn wires_for_request(trace: &TickEngineTrace, request_id: u64) -> Vec<WireObserv
 }
 
 fn checked_click_pairs(trace: &TickEngineTrace, tick: u64) -> usize {
-    let knife_ids: HashSet<u64> = trace
-        .dispatches
+    // Ordinary Interact completions are not ServerOrderedDispatch receipts.
+    // Keep their real Client packets together by the frame that emitted them;
+    // the independent Engine T correlation below establishes acceptance.
+    let mut groups: BTreeMap<u64, Vec<u8>> = BTreeMap::new();
+    for wire in trace
+        .wire
         .iter()
-        .filter(|dispatch| is_knife_arm(dispatch))
-        .map(|dispatch| dispatch.receipt.request_id)
-        .collect();
-    let mut groups: BTreeMap<Option<u64>, Vec<u8>> = BTreeMap::new();
-    for wire in trace.wire.iter().filter(|wire| {
-        u64::from(wire.game_tick) == tick
-            && !wire
-                .request_id
-                .is_some_and(|request_id| knife_ids.contains(&request_id))
-    }) {
-        groups.entry(wire.request_id).or_default().push(wire.opcode);
+        .filter(|wire| u64::from(wire.game_tick) == tick && wire.request_id.is_none())
+    {
+        groups.entry(wire.host_frame).or_default().push(wire.opcode);
     }
     groups
         .values()
@@ -1897,20 +1955,6 @@ fn checked_click_pairs(trace: &TickEngineTrace, tick: u64) -> usize {
                 .count()
         })
         .sum()
-}
-
-fn click_dispatches_at(trace: &TickEngineTrace, tick: u64) -> Vec<DispatchObservation> {
-    trace
-        .dispatches
-        .iter()
-        .filter(|dispatch| {
-            dispatch.game_tick == tick
-                && !is_knife_arm(dispatch)
-                && dispatch.receipt.wire_events == 2
-                && dispatch.receipt.terminal.is_none()
-        })
-        .cloned()
-        .collect()
 }
 
 fn frames_in_tick(trace: &TickEngineTrace, tick: u64) -> Vec<&FrameObservation> {
@@ -2139,7 +2183,7 @@ fn assert_make_without_click_outcome(run: &mut LiveRun, origin: u64) -> Result<(
             fresh_animation_on_edge(trace, origin + 1)
                 .is_some_and(|(sequence, _)| sequence == FLETCHING_ANIMATION)
                 && !has_act_line(trace, origin + 1)
-                && click_dispatches_at(trace, origin + 1).len() == 1
+                && checked_click_pairs(trace, origin + 1) == 1
                 && fresh_animation_on_edge(trace, origin + 3)
                     .is_some_and(|(sequence, _)| sequence == ROLL_ANIMATION)
                 && statuses
@@ -2214,11 +2258,9 @@ fn assert_pre_batch_user_events(
 
 fn assert_click(run: &LiveRun, trace: &TickEngineTrace, tick: u64) -> Result<(), String> {
     let count = checked_click_pairs(trace, tick);
-    let receipts = click_dispatches_at(trace, tick);
-    if count != 1 || receipts.len() != 1 {
+    if count != 1 {
         return Err(run.failure(format!(
-            "expected one checked click at tick {tick}, observed {count} encoded packet pairs and {} receipts",
-            receipts.len()
+            "expected one ordinary checked click at tick {tick}, observed {count} encoded packet pairs"
         )));
     }
     Ok(())
@@ -2231,12 +2273,19 @@ fn assert_click_target(
     target_opcode: u8,
 ) -> Result<(), String> {
     assert_click(run, trace, tick)?;
-    let dispatch = click_dispatches_at(trace, tick)
-        .into_iter()
-        .next()
-        .ok_or_else(|| run.failure(format!("checked click receipt disappeared at tick {tick}")))?;
-    let observed: Vec<u8> = wires_for_request(trace, dispatch.receipt.request_id)
-        .into_iter()
+    let observed: Vec<u8> = trace
+        .wire
+        .iter()
+        .filter(|wire| {
+            u64::from(wire.game_tick) == tick
+                && wire.request_id.is_none()
+                && [
+                    ClientProt289::MOVE_OPCLICK.id as u8,
+                    ClientProt289::OPLOC1.id as u8,
+                    ClientProt289::OPNPC1.id as u8,
+                ]
+                .contains(&wire.opcode)
+        })
         .map(|wire| wire.opcode)
         .collect();
     let expected = [ClientProt289::MOVE_OPCLICK.id as u8, target_opcode];
@@ -2698,7 +2747,7 @@ fn tick_engine_split_opener_late_case_one() {
                 && fresh_animation_on_edge(trace, origin + 2)
                     .is_some_and(|(sequence, _)| sequence == FLETCHING_ANIMATION)
                 && has_act_line(trace, origin + 2)
-                && click_dispatches_at(trace, origin + 2).len() == 1
+                && checked_click_pairs(trace, origin + 2) == 1
                 && fresh_animation_on_edge(trace, origin + 4)
                     .is_some_and(|(sequence, _)| sequence == ROLL_ANIMATION)
                 && statuses
@@ -2747,7 +2796,7 @@ fn tick_engine_plain_late_river_and_mithril_iron() {
         run.wait_until(origin as u32, LATE_RIVER_BUDGET, |trace, statuses| {
             fresh_animation_on_edge(trace, origin + 2).is_some_and(|(sequence, _)| {
                 sequence == FLETCHING_ANIMATION || sequence == CAST_ANIMATION
-            }) && click_dispatches_at(trace, origin + 2).len() == 1
+            }) && checked_click_pairs(trace, origin + 2) == 1
                 && fresh_animation_on_edge(trace, origin + 5)
                     .is_some_and(|(sequence, _)| sequence == ROLL_ANIMATION)
                 && knife_dispatches(trace)
@@ -2800,7 +2849,7 @@ fn tick_engine_plain_late_river_and_mithril_iron() {
             }) && has_chat_in_tick(trace, origin + 2, |line| {
                 line.to_ascii_lowercase()
                     .contains("swing your pick at the rock")
-            }) && click_dispatches_at(trace, origin + 2).len() == 1
+            }) && checked_click_pairs(trace, origin + 2) == 1
                 && fresh_animation_on_edge(trace, origin + 5)
                     .is_some_and(|(sequence, _)| sequence == ROLL_ANIMATION)
                 && statuses
@@ -2964,7 +3013,7 @@ fn tick_engine_removed_target_refuses_prefix_zero_and_continues() {
                     && dispatch.receipt.dispatched_prefix == 0
                     && dispatch.receipt.wire_events == 0
                     && format!("{:?}", dispatch.receipt.terminal).contains("StaleTarget")
-            }) && click_dispatches_at(trace, origin + 1).len() == 1
+            }) && checked_click_pairs(trace, origin + 1) == 1
                 && statuses
                     .last()
                     .is_some_and(|status| status.tick_lost.unwrap_or(0) >= 1)
@@ -3055,7 +3104,7 @@ fn tick_engine_deferred_terminal_row_is_a_slip_after_three_foreign_events() {
             fresh_animation_on_edge(trace, origin + 1)
                 .is_some_and(|(sequence, _)| sequence == FLETCHING_ANIMATION)
                 && !has_act_line(trace, origin + 1)
-                && click_dispatches_at(trace, origin + 1).len() == 1
+                && checked_click_pairs(trace, origin + 1) == 1
                 && fresh_animation_on_edge(trace, origin + 3)
                     .is_some_and(|(sequence, _)| sequence == ROLL_ANIMATION)
                 && statuses.last().is_some_and(|status| {
@@ -3141,7 +3190,7 @@ fn lone_opener_history(name: &'static str, suppress: bool) -> Result<RunEvidence
             .expect("started run has baseline")
             .clone();
         run.wait_until(origin as u32, LONE_OPENER_BUDGET, |trace, statuses| {
-            click_dispatches_at(trace, origin + 1).len() == 1
+            checked_click_pairs(trace, origin + 1) == 1
                 && close_packet_seen(trace, origin + 1, &baseline)
                 && has_act_line(trace, origin + 1)
                 && statuses
@@ -3193,7 +3242,9 @@ fn tick_engine_lone_opener_with_and_without_snapshot_suppression() {
 #[ignore = "requires LIVE=1, GATHERER_ENGINE_DIR/NAV_PACK/CATALOG_ROOT, LIVE_EVIDENCE_DIR, selected local free-world world.json, and Engine T node.members=false phase"]
 fn tick_engine_free_world_disables_members_only_knife_arm() {
     run_case(Scenario::oak("tick-free-world-oak"), |run| {
-        let start = run.start_tick.ok_or_else(|| run.failure("missing pre-Start tick"))?;
+        let start = first_knife(&run.hook.trace())
+            .map_err(|error| run.failure(error))?
+            .game_tick as u32;
         run.wait_until(start, FREE_WORLD_BUDGET, |trace, statuses| {
             has_fletching_members_line(
                 trace,
@@ -3465,6 +3516,42 @@ mod packet_oracle_tests {
             0,
             "an ordered packet cannot complete an ordinary click"
         );
+    }
+
+    #[test]
+    fn three_stationary_walks_use_the_real_encrypted_client_encoder() {
+        let mut client = Client::new_with_revision(
+            client::client::ClientConfig {
+                host: "127.0.0.1".into(),
+                port: 1,
+                cache_dir: String::new(),
+                members: true,
+                lowmem: true,
+            },
+            client::client::ClientRevision::R289,
+        );
+        let seed = [1, 2, 3, 4];
+        client.out.random = Some(client::io::Isaac::new(&seed));
+        client.map_build_base_x = 3_200;
+        client.map_build_base_z = 3_200;
+        for _ in 0..3 {
+            assert!(client.tryMove(5, 5, 5, 5, false, 0, 0, 0, 0, 0, 0));
+        }
+        let expected = api::prot::Send::move_gameclick(false, 3_205, 3_205, &[]).unwrap();
+        let bytes = &client.out.data()[..client.out.pos];
+        let mut cipher = client::io::Isaac::new(&seed);
+        let mut packets = bytes.chunks_exact(expected.body().len() + 2);
+        for _ in 0..3 {
+            let packet = packets.next().expect("three real movement packets");
+            assert_eq!(
+                packet[0].wrapping_sub(cipher.next_int() as u8),
+                ClientProt289::MOVE_GAMECLICK.id as u8
+            );
+            assert_eq!(usize::from(packet[1]), expected.body().len());
+            assert_eq!(&packet[2..], expected.body());
+        }
+        assert!(packets.next().is_none());
+        assert!(packets.remainder().is_empty());
     }
 
     fn wire(opcode: u8, request_id: u64, length: usize) -> WireObservation {

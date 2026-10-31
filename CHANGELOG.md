@@ -19,6 +19,9 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.8` 
 - Knife engine tests attribute chat and fresh `IF_CLOSE` packets by their
   position against `PLAYER_INFO`. A chat-only close no longer requires a
   main-modal transition, and a retained close count cannot stand for a new one.
+- Knife engine tests use actual ordinary-click packet pairs, keep foreign
+  event walks on the same tile, and prepare adjacent resource positions before
+  the measured Start. The free-world refusal window starts at its real arm.
 
 ### API and native dispatch
 
