@@ -6,9 +6,9 @@ use api::snapshot::WorldTile;
 
 use crate::collision::{WorldCollision, WALL_EAST, WALL_NORTH, WALL_SOUTH, WALL_WEST};
 use crate::named_banks::{AccessReach, Footprint};
-use crate::router::{AvoidRect, FindOptions};
 #[cfg(test)]
 use crate::router::{find_first_with_avoid_budgets, FirstRouteSearch};
+use crate::router::{AvoidRect, FindOptions};
 #[cfg(test)]
 use crate::transport::TransportGraph;
 #[cfg(test)]
