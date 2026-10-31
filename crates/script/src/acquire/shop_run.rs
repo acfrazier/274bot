@@ -337,11 +337,14 @@ impl ShopRun {
                                 )));
                             }
                             TierAdvance::Exhausted => {
-                                return Poll::Ready(Ok(self.block(
-                                    request,
-                                    BlockReason::NoVendor,
-                                    tick,
-                                )));
+                                // A walk that failed proves reachability, not
+                                // supply: the content still lists these vendors.
+                                let reason = if self.excluded_shops.is_empty() {
+                                    BlockReason::NoVendor
+                                } else {
+                                    BlockReason::VendorUnreachable
+                                };
+                                return Poll::Ready(Ok(self.block(request, reason, tick)));
                             }
                         }
                     }
@@ -548,7 +551,7 @@ impl ShopRun {
             vendor::record_vendor(
                 &mut self.looked,
                 row.keeper.keeper_id,
-                VendorOutcome::Undecided,
+                VendorOutcome::NoPath,
             );
         }
         self.keeper = None;
