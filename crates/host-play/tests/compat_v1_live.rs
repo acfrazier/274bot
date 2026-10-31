@@ -30,6 +30,7 @@ const POLL_INTERVAL: Duration = Duration::from_millis(20);
 const PREPARATION_DEADLINE: Duration = Duration::from_secs(240);
 const ACTION_DEADLINE: Duration = Duration::from_secs(60);
 const EVENTS_SEED_TILE: (i32, i32, i32) = (2663, 3302, 0);
+const INVENTORY_SIDE_TAB: i32 = 3;
 const STOP_DEADLINE: Duration = Duration::from_secs(20);
 
 #[derive(Default, Serialize)]
@@ -67,6 +68,7 @@ struct FrameState {
     tick: u32,
     next_command: Option<String>,
     next_seed_at: Option<(i32, i32, i32)>,
+    next_side_tab: Option<i32>,
     commands: Vec<String>,
     error: Option<String>,
 }
@@ -79,6 +81,7 @@ impl FrameState {
             tick: 0,
             next_command: None,
             next_seed_at: None,
+            next_side_tab: None,
             commands: Vec::new(),
             error: None,
         }
@@ -93,6 +96,16 @@ impl FrameState {
         self.tick = self.snapshot.tick();
         if held {
             return;
+        }
+        if let Some(tab) = self.next_side_tab.take() {
+            let result =
+                interact::Interactions::new(&self.snapshot, client).click_side_tab(tab);
+            if let interact::SendResult::Refused { reason, .. } = result {
+                self.error = Some(format!(
+                    "Engine L refused side tab {tab}: {reason:?}"
+                ));
+                return;
+            }
         }
         if let Some((level, x, z)) = self.next_seed_at.take() {
             interact::seed_at(client, level, x, z);
@@ -374,6 +387,45 @@ fn wait_for_tile(state: &Arc<Mutex<FrameState>>, expected: (i32, i32, i32)) -> R
         }
         thread::sleep(POLL_INTERVAL);
     }
+}
+fn wait_for_side_tab_available(
+    state: &Arc<Mutex<FrameState>>,
+    index: i32,
+) -> Result<(), String> {
+    let deadline = Instant::now() + ACTION_DEADLINE;
+    loop {
+        let frame = lock_state(state);
+        if let Some(error) = &frame.error {
+            return Err(error.clone());
+        }
+        let available = frame
+            .snapshot
+            .side_tabs()
+            .iter()
+            .any(|tab| tab.index == index && tab.available);
+        drop(frame);
+        if available {
+            return Ok(());
+        }
+        if Instant::now() >= deadline {
+            return Err(format!(
+                "timed out waiting for side tab {index} to become available"
+            ));
+        }
+        thread::sleep(POLL_INTERVAL);
+    }
+}
+
+fn request_side_tab(state: &Arc<Mutex<FrameState>>, tab: i32) -> Result<(), String> {
+    let mut frame = lock_state(state);
+    if let Some(error) = &frame.error {
+        return Err(error.clone());
+    }
+    if frame.next_side_tab.is_some() {
+        return Err("a live side-tab request is already pending".into());
+    }
+    frame.next_side_tab = Some(tab);
+    Ok(())
 }
 
 fn request_command(session: &LiveSession<'_>, command: &str) -> Result<(), String> {
@@ -893,6 +945,10 @@ fn wait_for_next_tick_without_restart_event(session: &mut LiveSession<'_>) -> Re
 fn run_events_cell(receipt: &mut Receipt) -> Result<(), String> {
     let mut session = session("compat-v1-events", receipt)?;
     // Give the fresh account one item before its position seed.
+    // Load the inventory component before the first pack read or change.
+    wait_for_side_tab_available(&session.state, INVENTORY_SIDE_TAB)?;
+    request_side_tab(&session.state, INVENTORY_SIDE_TAB)?;
+    wait_for_inventory_count(&session.state, 995, 0)?;
     request_command(&session, "give coins 1")?;
     wait_command(&mut session, "give coins 1")?;
     request_seed_at(
