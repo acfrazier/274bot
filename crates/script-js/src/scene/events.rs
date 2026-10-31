@@ -119,8 +119,11 @@ impl NativeEventProducer {
     pub fn observe(&mut self, snap: &Snapshot<'_>) -> ObserveResult {
         if snap.has_ingame() && !snap.ingame() {
             self.offline = true;
+            let last_chat_seq = self.last_chat_seq;
             self.reset_baselines();
-            // Seed the first online chat sample as the reconnect baseline.
+            self.chat_seeded = true;
+            self.last_chat_seq = last_chat_seq;
+            // Compare the first online line with the last delivered sequence.
             return ObserveResult::default();
         }
         if self.offline {
