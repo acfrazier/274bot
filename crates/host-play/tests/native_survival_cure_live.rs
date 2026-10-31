@@ -1544,12 +1544,18 @@ fn common_receipt(
 ) -> Result<Value, String> {
     check_mark(witness)?;
     let elapsed = check_deadline(witness, snapshot.tick(), deadline)?;
-    check_cure_outcome(
-        witness.poison_tick,
-        witness.cure_tick,
-        &witness.poison_marks,
-        snapshot.tick(),
-    )?;
+    // The dialogue cell's drink follows its policy change, not the poison
+    // line (design-final.md:946); its cure bounds count from that change.
+    if witness.activity == Activity::Dialogue {
+        check_poison_marks(&witness.poison_marks, witness.cure_tick)?;
+    } else {
+        check_cure_outcome(
+            witness.poison_tick,
+            witness.cure_tick,
+            &witness.poison_marks,
+            snapshot.tick(),
+        )?;
+    }
     let login_tick = witness
         .session
         .login
@@ -1605,19 +1611,29 @@ fn common_receipt(
     } else {
         inventory_after >= expected_inventory_after
     };
+    let (edge, need_bound) = if witness.activity == Activity::Dialogue {
+        (
+            witness
+                .profile_change_tick
+                .ok_or("the policy change was not observed")?,
+            u32::MAX,
+        )
+    } else {
+        (poison_tick, 3)
+    };
     if phase_tick.saturating_sub(login_tick) < TIMER_CLEAR_TICKS
         || source_tick.saturating_sub(login_tick) < TIMER_CLEAR_TICKS
         || source_tick < phase_tick
         || poison_tick < source_tick
         || poison_tick.saturating_sub(source_tick) > source_signal_budget
         || need_tick < poison_tick
-        || need_tick.saturating_sub(poison_tick) > 3
-        || drink_tick < poison_tick
-        || drink_tick.saturating_sub(poison_tick) > 3
-        || cure_tick < poison_tick
-        || cure_tick.saturating_sub(poison_tick) > CURE_LINE_BOUND_TICKS
-        || dose_drop_tick < poison_tick
-        || dose_drop_tick.saturating_sub(poison_tick) > CURE_LINE_BOUND_TICKS
+        || need_tick.saturating_sub(poison_tick) > need_bound
+        || drink_tick < edge
+        || drink_tick.saturating_sub(edge) > 3
+        || cure_tick < edge
+        || cure_tick.saturating_sub(edge) > CURE_LINE_BOUND_TICKS
+        || dose_drop_tick < edge
+        || dose_drop_tick.saturating_sub(edge) > CURE_LINE_BOUND_TICKS
         || settled_tick < cure_tick
         || snapshot.tick().saturating_sub(poison_tick) < TIMER_CLEAR_TICKS
         || witness.poison_source_modal != Some(-1)
@@ -2292,12 +2308,29 @@ fn assert_common_cure(receipt: &Value, resumed_ticks: u64) {
     assert_eq!(receipt["condition_at_need"]["antipoison"], 1);
     assert_eq!(receipt["condition_at_need"]["in_combat"], false);
     assert_eq!(receipt["condition_at_need"]["no_hitmark_at_edge"], true);
-    assert_eq!(receipt["drink_decision_chat_modal"], -1);
+    // The dialogue cell's drink follows its policy change (design-final.md:946):
+    // its click must not meet the options page open at that change, and the
+    // settle counts from the change.
+    let dialogue = receipt["poison_source"] == "yanille-twisted-chest";
+    if dialogue {
+        assert_ne!(
+            receipt["drink_decision_chat_modal"],
+            receipt["profile_change_chat_modal"]
+        );
+    } else {
+        assert_eq!(receipt["drink_decision_chat_modal"], -1);
+    }
     // `check_cure_outcome` already applied the content rule; restate its cap.
     assert!(receipt["poison_marks"].as_array().unwrap().len() <= 1);
     assert!(receipt["first_scheduled_fire_covered"].as_bool().unwrap());
     assert!(receipt["observed_poison_ticks"].as_u64().unwrap() >= u64::from(TIMER_CLEAR_TICKS));
-    assert!(receipt["ticks_from_poison_to_settled"].as_u64().unwrap() <= 10);
+    if dialogue {
+        let change = receipt["profile_change_tick"].as_u64().unwrap();
+        let settled = receipt["antipoison_settled_tick"].as_u64().unwrap();
+        assert!(settled >= change && settled - change <= 10);
+    } else {
+        assert!(receipt["ticks_from_poison_to_settled"].as_u64().unwrap() <= 10);
+    }
     assert!(
         receipt["resumed_work_ticks"]
             .as_u64()
