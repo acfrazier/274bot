@@ -931,8 +931,20 @@ fn run_make_one_cell() {
     wait_for(&play, &account, &fixture, CELL_DEADLINE, |_, state| {
         state.make_menu_ready
     });
+    let (cancel_logs_remaining, cancel_knives_remaining) = {
+        let state = fixture.lock().unwrap_or_else(|error| error.into_inner());
+        (
+            inventory_count(&state.snapshot, "Logs"),
+            inventory_count(&state.snapshot, "Knife"),
+        )
+    };
+    assert!(
+        cancel_logs_remaining >= 1 && cancel_knives_remaining >= 1,
+        "cancel probe has enough ingredients for another product: logs={cancel_logs_remaining}, knives={cancel_knives_remaining}"
+    );
     let cancel_start_tick = fixture.lock().unwrap().snapshot.tick();
     let mut cancel_logs = Vec::new();
+    start_script(&play, &account, MAKE_CANCEL_SOURCE);
     let click_seen_tick = wait_for_log(
         &play,
         &account,
@@ -956,6 +968,12 @@ fn run_make_one_cell() {
         "Stop follows the click on its first game tick"
     );
     stop_script(&play, &account, &fixture);
+    let cancel_stopped_tick = fixture.lock().unwrap().snapshot.tick();
+    assert_eq!(
+        cancel_stopped_tick,
+        cancel_stop_tick,
+        "Stop completed on the click's first following tick"
+    );
     wait_for(&play, &account, &fixture, CELL_DEADLINE, |_, state| {
         state.snapshot.tick() >= cancel_start_tick.saturating_add(5)
     });
@@ -1047,6 +1065,10 @@ fn run_make_one_cell() {
         "account": account,
         "engine": {"host": "127.0.0.1", "game_port": GAME_PORT, "http_port": HTTP_PORT},
         "real_inputs": {"logs": 3, "knife": 1},
+        "cancel_inputs": {
+            "logs": cancel_logs_remaining,
+            "knives": cancel_knives_remaining
+        },
         "product": {"name": "Shortbow", "id": 50, "before": before, "after_success": 1},
         "make_page_roots": {
             "before": {"main": make_page_root.0, "chat": make_page_root.1},
@@ -1064,6 +1086,7 @@ fn run_make_one_cell() {
             "cancel_start": cancel_start_tick,
             "cancel_click_seen": click_seen_tick,
             "cancel_stop": cancel_stop_tick,
+            "cancel_stop_completed": cancel_stopped_tick,
             "cancel_end": cancel_end_tick,
             "replacement_start": replacement_start_tick,
             "replacement_end": replacement_end_tick
