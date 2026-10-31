@@ -6,6 +6,8 @@
 //!
 //! - [`Mode::Stage`]/[`PairMode::Stage`]: seeded stage(s) settle into expected
 //!   next stage keys (PASS criterion 1);
+//! - [`Mode::PathTerminal`]: the authored Path ends without requiring quest
+//!   completion; this mode is for focused Path probes.
 //! - [`Mode::Clean`]/[`PairMode::Clean`]: clean completion with no cheat after
 //!   Start, no park, zero deaths and one Start per account (criterion 2);
 //! - [`Mode::Restart`]/[`PairMode::Restart`]: Stop mid-step at two stage points
@@ -89,6 +91,8 @@ pub enum Mode {
     Stage { expect: Vec<String> },
     /// The family observer must prove completion or this exact named stop.
     ExpectedNamedStop { reason: String },
+    /// Pass when the Path script completes without quest completion.
+    PathTerminal,
     /// Pass on quest complete with one Start, zero deaths and no park.
     Clean,
     /// Stop mid-step once at each stage key (in order), Start again, complete.
@@ -103,6 +107,7 @@ impl Mode {
         match self {
             Mode::Stage { .. } => "stage",
             Mode::ExpectedNamedStop { .. } => "expected-named-stop",
+            Mode::PathTerminal => "path_terminal",
             Mode::Clean => "clean",
             Mode::Restart { .. } => "restart",
             Mode::Death { .. } => "death",
@@ -836,13 +841,17 @@ fn stage_or_terminal(
         || (transitioned && current.is_some_and(|stage| expected.iter().any(|key| key == stage)))
 }
 
+fn path_terminal_proven(idle: bool, lifecycle_completed: bool) -> bool {
+    idle && lifecycle_completed
+}
+
 fn completion_proven(
     runner_passed: bool,
     progress_complete: bool,
     idle: bool,
     lifecycle_completed: bool,
 ) -> bool {
-    runner_passed && progress_complete && idle && lifecycle_completed
+    runner_passed && progress_complete && path_terminal_proven(idle, lifecycle_completed)
 }
 
 fn step_matches(status: &ScriptStatus, step: &str) -> bool {
@@ -1115,6 +1124,9 @@ fn run_cells(
     };
     if quester_path && (mode.is_pair() || cells.len() != 1) {
         return Err("QUESTER_TICK_MS requires a single-account quester_path cell".into());
+    }
+    if matches!(&mode, RunPlan::Single(Mode::PathTerminal)) && !quester_path {
+        return Err("PathTerminal requires a quester_path cell".into());
     }
     if std::env::var("LIVE").as_deref() != Ok("1") {
         return Err("Quester live cells require LIVE=1".into());
@@ -2342,6 +2354,17 @@ fn run_cells(
                     break Ok(());
                 }
             }
+            RunPlan::Single(Mode::PathTerminal) => {
+                let script_terminal = path_terminal_proven(
+                    observations[0].run_state == script::RunState::Idle,
+                    observations[0].lifecycle.as_ref().is_some_and(|receipt| {
+                        receipt.state == script::ScriptTerminalState::Completed
+                    }),
+                );
+                if starts[0] == 1 && stops[0] == 0 && deaths[0] == 0 && script_terminal {
+                    break Ok(());
+                }
+            }
             RunPlan::Single(Mode::Clean) if terminal[0] => {
                 if starts[0] == 1 && deaths[0] == 0 {
                     break Ok(());
@@ -3045,5 +3068,12 @@ mod tests {
         assert!(!completion_proven(true, false, true, true));
         assert!(!completion_proven(true, true, false, true));
         assert!(!completion_proven(true, true, true, false));
+    }
+
+    #[test]
+    fn path_terminal_proof_needs_idle_and_completed_lifecycle() {
+        assert!(path_terminal_proven(true, true));
+        assert!(!path_terminal_proven(false, true));
+        assert!(!path_terminal_proven(true, false));
     }
 }

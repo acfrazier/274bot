@@ -19,6 +19,16 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.8` 
   step stops with the last route failure. The walk back to the fight spot
   also retries blocked walks, up to three failures. If all three return walks
   fail, the quest step stops with the last route failure.
+- Quest combat now waits up to six observed game ticks once per kill for
+  configured ground drops. The limit follows the engine's five-tick death
+  sequence plus one observation tick, and searches use each quest step's
+  configured loot radius. If a missing drop still leaves the step's `until`
+  condition false, the attempt now counts as a step failure instead of
+  restarting combat without limit.
+- Once a visible drop starts a Take, quest combat now waits for that pickup
+  to settle even if it finishes after the six-tick appearance window. The loot
+  row advances only after the pickup settles, so a slow successful pickup is
+  not reported as a missing drop.
 
 ### Scripting
 
@@ -535,6 +545,13 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.8` 
 - A terminal-app preference error now clears after 15 seconds without returning
   on the next refresh. Recovery clears that error without erasing a newer
   message.
+
+#### Combat
+
+- A visible quest drop that does not reach the held count now ends at the
+  ground Take's existing four-game-tick settlement bound and is recorded as
+  missed. Required loot then follows the existing step-failure path, while a
+  successful pickup may still settle after the six-tick appearance window.
 
 #### Survival
 

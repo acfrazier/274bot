@@ -1,4 +1,4 @@
-//! Generic Path live smoke: one Base40 cell for a content quest id.
+//! Generic Path live smoke: one qualification-profile cell for a content quest id.
 //!
 //! This is the permanent form of the PATHS-OVERNIGHT throwaway runner. It
 //! runs the Path id in `QUESTER_PATH` from the embedded release index, or
@@ -6,6 +6,8 @@
 //! Optional account seeds come from the `QUESTER_SEEDS` JSON file.
 //! Stage mode checks the expected stage after Start. Clean mode checks terminal
 //! completion without seeding the target Path's stage.
+//! Path-terminal mode checks that the runner completes without completing the
+//! quest.
 //! The cell runs under a fixed deadline.
 //!
 //! Run from the repository root against an explicitly selected local 289
@@ -45,8 +47,11 @@
 //! ```
 //!
 //! For clean completion, set `mode` to `clean` and `expect` to `[]`.
-//! The `stage` field stays required by the shared schema, but the fixture does
-//! not apply it to the account.
+//! The required `stage` field seeds the account in `stage` and `path_terminal`
+//! modes. Clean mode ignores it and starts from clean quest state.
+//!
+//! For a focused terminal Path probe, set `mode` to `path_terminal`. The live
+//! cell passes when the script ends, even if the quest remains in progress.
 //!
 //! `seed_vars` names the stage varp for Paths with no progress varp hint
 //! (released Cook); `before_relog` holds raw fixture cheats such as
@@ -70,15 +75,10 @@ use std::time::Duration;
 /// ran about 31 minutes overnight).
 const DEADLINE: Duration = Duration::from_secs(2700);
 
-/// The harness row for an env-driven quest: static id, display and profile,
-/// so the cell needs no allocation to satisfy fixture lifetimes. Refuses
-/// quests the profile table moved off Base40.
+/// Resolve the harness row and use the qualification profile it declares.
+/// This also allows Base60 Paths such as Elemental Workshop.
 fn smoke_row(quest: &str) -> Result<QuestFixtureProfile, String> {
-    let row = scenario::quester::fixture_row(quest)?;
-    if row.profile != TestProfile::Base40 {
-        return Err(format!("{quest} is not a Base40 smoke quest"));
-    }
-    Ok(row)
+    scenario::quester::fixture_row(quest)
 }
 
 /// Select the same embedded or folder-backed source the headed entry uses.
@@ -101,6 +101,7 @@ fn smoke_cell(
             },
             Some(seeds.stage.as_str()),
         ),
+        "path_terminal" => (Mode::PathTerminal, Some(seeds.stage.as_str())),
         "clean" => (Mode::Clean, None),
         other => return Err(format!("unknown smoke mode {other:?}")),
     };
@@ -239,6 +240,21 @@ mod smoke_tests {
     }
 
     #[test]
+    fn path_terminal_smoke_uses_the_seeded_stage() {
+        let _registry_guard = PATH_REGISTRY_LOCK.lock().unwrap();
+        let mut seeds = parse_seeds(COOK_SEEDS).unwrap();
+        seeds.mode = Some("path_terminal".into());
+        let cell = cook_cell(&seeds);
+        assert!(matches!(cell.mode, Mode::PathTerminal));
+        assert!(cell.start_settings.contains_key("quests"));
+        assert!(cell
+            .scenario
+            .steps
+            .iter()
+            .any(|step| step.name == "reset authored content stage"));
+    }
+
+    #[test]
     fn production_path_smoke_seed_fixtures_build_embedded_stages() {
         let _registry_guard = PATH_REGISTRY_LOCK.lock().unwrap();
         for (quest, stage, text) in [
@@ -267,9 +283,13 @@ mod smoke_tests {
     }
 
     #[test]
-    fn smoke_row_rejects_unknown_quests_and_non_base40_profiles() {
+    fn smoke_row_uses_each_quest_profile() {
         assert!(smoke_row("not-a-quest").is_err());
-        assert!(smoke_row("dragon").is_err());
+        assert_eq!(smoke_row("dragon").unwrap().profile, TestProfile::Base60);
+        assert_eq!(
+            smoke_row("elemental_workshop").unwrap().profile,
+            TestProfile::Base60
+        );
         assert_eq!(smoke_row("cog").unwrap().profile, TestProfile::Base40);
         assert_eq!(smoke_row("cook").unwrap().display, "Cook's Assistant");
     }

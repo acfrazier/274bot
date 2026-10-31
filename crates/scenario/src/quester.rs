@@ -700,19 +700,13 @@ pub fn quester_stage_with_seeds(
     build_quest_fixture(request, role, stage_varp, seed_vars)
 }
 
-/// Build the same single-account Base40 fixture for headed and headless
-/// Path runs. `stage: None` starts from a clean quest account; an explicit
-/// stage uses the shared stage-seeding builder.
+/// Build a single-account fixture using the quest's declared qualification
+/// profile for headed and headless Path runs. `stage: None` starts from a clean
+/// quest account; an explicit stage uses the shared stage-seeding builder.
 pub fn build_quester_path_fixture(
     request: QuesterPathFixture<'_>,
 ) -> Result<QuesterFixture, String> {
     let row = fixture_row(request.path.id.0.as_ref())?;
-    if row.profile != TestProfile::Base40 {
-        return Err(format!(
-            "{} does not have a Base40 qualification profile",
-            request.path.id.0
-        ));
-    }
     if row.display != request.quest_display {
         return Err(format!(
             "{} fixture display {:?} differs from requested {:?}",
@@ -1481,7 +1475,7 @@ pub fn quester_path_scenario_from_env() -> Result<Scenario, String> {
         })
         .transpose()?;
     if let Some(mode) = seeds.as_ref().and_then(|seeds| seeds.mode.as_deref()) {
-        if !matches!(mode, "stage" | "clean") {
+        if !matches!(mode, "stage" | "clean" | "path_terminal") {
             return Err(format!("unknown smoke mode {mode:?}"));
         }
     }
