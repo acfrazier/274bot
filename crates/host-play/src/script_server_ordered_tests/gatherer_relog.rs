@@ -19,6 +19,9 @@ fn ordered_real_gatherer_knife_arm_uses_packet_clock_after_relog() {
     rig.client.map_build_base_x = 3200;
     rig.client.map_build_base_z = 3328;
     rig.client.local_player = Some(client::dash3d::ClientPlayer::at(84, 40));
+    let player = rig.client.local_player.as_mut().unwrap();
+    player.entity.x = 84 * 128 + 64;
+    player.entity.z = 40 * 128 + 64;
     rig.client.gens.player_info = RAW_GENERATION_BEFORE_RELOG;
     rig.client.gens.player += 1;
     rig.snapshot.rebuild(&rig.client);
