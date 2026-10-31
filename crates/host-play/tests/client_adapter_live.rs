@@ -11,6 +11,7 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use api::interact;
 use api::snapshot::GameSnapshot;
 use client::client::Client;
+use client::render::Renderer;
 use host_play::{
     mint_live_entries, mint_live_names, run_with_template, ProfileOptions, SharedClientTemplate,
 };
@@ -199,6 +200,33 @@ struct SeedPrep {
     error: Option<String>,
     tutorial_reseed: Option<scenario::tutorial::PostRelogTutorial>,
     evidence: Option<Value>,
+    renderer: Option<Renderer>,
+    rendered_yaw: Option<i32>,
+}
+
+/// `npc_overlay_box` needs the model height populated by rendering. The live
+/// adapter harness is headless by default, so render at each camera yaw that
+/// the probe inspects.
+fn render_ready_frame(client: &mut Client, prep: &mut SeedPrep) -> Result<(), String> {
+    if prep.rendered_yaw == Some(client.orbit_camera_yaw) {
+        return Ok(());
+    }
+    if prep.renderer.is_none() {
+        prep.renderer = Some(Renderer::new_prefer(client.config.lowmem, false));
+    }
+    let is_cpu_frame = {
+        let renderer = prep.renderer.as_mut().expect("renderer initialized");
+        let was_draw = client.draw;
+        client.set_draw(true);
+        let frame = renderer.mainredraw(client);
+        client.set_draw(was_draw);
+        matches!(frame, client::render::backend::FrameOutput::PixMap(_))
+    };
+    if !is_cpu_frame {
+        return Err("ClientAdapter live scene render did not produce a CPU PixMap".into());
+    }
+    prep.rendered_yaw = Some(client.orbit_camera_yaw);
+    Ok(())
 }
 
 fn send_cheat(client: &mut Client, command: &str) -> Result<(), String> {
@@ -250,7 +278,13 @@ fn nearby_bank_loc(snapshot: &GameSnapshot) -> Option<Value> {
 
 fn seed_frame(client: &mut Client, held: bool, shared: &Mutex<SeedPrep>) {
     let mut prep = shared.lock().unwrap_or_else(|error| error.into_inner());
-    if prep.error.is_some() || prep.phase == Some(PrepPhase::Ready) {
+    if prep.error.is_some() {
+        return;
+    }
+    if prep.phase == Some(PrepPhase::Ready) {
+        if let Err(error) = render_ready_frame(client, &mut prep) {
+            prep.error = Some(error);
+        }
         return;
     }
     let mut snapshot = GameSnapshot::new();
@@ -344,6 +378,7 @@ fn seed_frame(client: &mut Client, held: bool, shared: &Mutex<SeedPrep>) {
                         "scene_state": client.scene_state,
                         "bank_loc": bank_loc,
                     }));
+                    render_ready_frame(client, &mut prep)?;
                     prep.phase = Some(PrepPhase::Ready);
                 }
             }
