@@ -8116,10 +8116,7 @@ pub fn run_panel(args: PanelArgs) -> Result<(), window::PanelError> {
 
 /// Run an explicitly configured renderer with the selected UI pump.
 #[cfg(any(feature = "render-diagnostics", feature = "render-test-hooks"))]
-pub fn run_panel_calibrated(
-    args: PanelArgs,
-    redraw: RedrawMode,
-) -> Result<(), window::PanelError> {
+pub fn run_panel_calibrated(args: PanelArgs, redraw: RedrawMode) -> Result<(), window::PanelError> {
     if !frontend_core::surface::render_fair_enabled() {
         return Err(window::PanelError::LiveHarnessFailure(
             "render calibration process is not configured".into(),

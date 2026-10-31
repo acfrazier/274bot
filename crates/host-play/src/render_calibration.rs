@@ -95,7 +95,8 @@ impl Inputs {
                 .ok_or(CalibrationError::InvalidPositive(key))
         };
         let grant_ttl_ms = positive_ms("M3_GRANT_TTL_MS", required("M3_GRANT_TTL_MS")?)?;
-        let scene_quantum_ms = positive_ms("M3_SCENE_QUANTUM_MS", required("M3_SCENE_QUANTUM_MS")?)?;
+        let scene_quantum_ms =
+            positive_ms("M3_SCENE_QUANTUM_MS", required("M3_SCENE_QUANTUM_MS")?)?;
         let retained_present_cap = required("T44_RETAINED_PRESENT_CAP")?
             .parse::<NonZeroUsize>()
             .map_err(|_| CalibrationError::InvalidPositive("T44_RETAINED_PRESENT_CAP"))?;
