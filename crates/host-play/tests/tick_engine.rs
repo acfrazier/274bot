@@ -115,18 +115,18 @@ struct Scenario {
 
 impl Scenario {
     fn river(name: &'static str) -> Self {
-        let start = tile(2_501, 3_506, 0);
+        let spot = tile(2_504, 3_498, 0);
         Self {
             name,
             skill: "Fishing",
             skill_index: 10,
             level: 20,
             resource: ResourceKind::River,
-            target: start,
+            target: tile(2_503, 3_498, 0),
             tool: item("fly_fishing_rod", FLY_ROD_ID, 1),
             extra_items: vec![item("feather", FEATHER_ID, 200)],
             products: vec![TROUT_ID, SALMON_ID],
-            required_loc: Some((RIVER_LOC_ID, start)),
+            required_loc: Some((RIVER_LOC_ID, spot)),
             require_free_world: false,
             require_knife_arm: true,
             mutations: Vec::new(),
@@ -206,7 +206,7 @@ impl Scenario {
             skill_index: 8,
             level: 15,
             resource: ResourceKind::Oak,
-            target: tile(3_017, 3_170, 0),
+            target: tile(3_016, 3_170, 0),
             tool: item("bronze_axe", BRONZE_AXE_ID, 1),
             extra_items: Vec::new(),
             products: vec![OAK_LOG_ID],
@@ -2914,11 +2914,9 @@ fn tick_engine_copper_success_and_delayed_first_batch_history() {
 #[test]
 #[ignore = "requires LIVE=1, GATHERER_ENGINE_DIR/NAV_PACK/CATALOG_ROOT, LIVE_EVIDENCE_DIR and Engine T 127.0.0.1:48594/4080"]
 fn tick_engine_removed_target_refuses_prefix_zero_and_continues() {
-    let scenario =
-        Scenario::river("tick-target-removed").with_mutation(DispatchMutation::RemoveLoc {
-            id: RIVER_LOC_ID,
-            tile: tile(2_501, 3_506, 0),
-        });
+    let scenario = Scenario::river("tick-target-removed");
+    let (id, target) = scenario.required_loc.expect("river has a fixed loc");
+    let scenario = scenario.with_mutation(DispatchMutation::RemoveLoc { id, tile: target });
     run_case(scenario, |run| {
         let first = first_knife(&run.hook.trace()).map_err(|error| run.failure(error))?;
         let origin = first.receipt.dispatch_tick;
@@ -3237,10 +3235,7 @@ mod packet_oracle_tests {
         let pack = PathBuf::from(std::env::var_os("NAV_PACK").expect("NAV_PACK is required"));
         let world = nav_planner::world::NavWorld::load_pack(&pack).unwrap();
         let scenario = Scenario::river("tick-setup");
-        let neighbours = [(-1, 0), (1, 0), (0, -1), (0, 1)].map(|(dx, dz)| {
-            let candidate = tile(scenario.target.x + dx, scenario.target.z + dz, 0);
-            (candidate, world.collision.standable(candidate))
-        });
+        let (_, target) = scenario.required_loc.expect("river has a fixed loc");
         let data = api::game_data::for_revision(client::io::ClientRevision::R289).unwrap();
         let catalog =
             api::selected::FamilyPreparation::run(move |worker| data.prepare_gathering(worker))
@@ -3253,23 +3248,34 @@ mod packet_oracle_tests {
         else {
             panic!("river fixture needs complete fishing placement data");
         };
-        let mut accessible = Vec::new();
-        for spot in spots.iter() {
-            for (dx, dz) in [(-1, 0), (1, 0), (0, -1), (0, 1)] {
-                let stand = tile(spot.origin.x + dx, spot.origin.z + dz, spot.origin.level);
-                if world.collision.standable(stand) {
-                    accessible.push((spot.origin, stand));
-                }
-            }
-        }
-        assert!(
-            world.collision.standable(scenario.target),
-            "river player start {:?} is not standable; neighbours={neighbours:?}; accessible fixed spots={accessible:?}",
-            scenario.target
+        assert!(spots.iter().any(|spot| {
+            spot.entity == api::selected::EntityId::Loc(RIVER_LOC_ID) && spot.origin == target
+        }));
+        assert!(world.collision.standable(scenario.target));
+        assert_ne!(scenario.target, target);
+        assert_eq!(scenario.target.level, target.level);
+        assert_eq!(
+            (scenario.target.x - target.x)
+                .abs()
+                .max((scenario.target.z - target.z).abs()),
+            1
         );
-        assert_ne!(
-            scenario.target,
-            scenario.required_loc.expect("river has a fixed loc").1
+    }
+
+    #[test]
+    fn oak_setup_starts_on_a_real_standable_tile() {
+        let pack = PathBuf::from(std::env::var_os("NAV_PACK").expect("NAV_PACK is required"));
+        let world = nav_planner::world::NavWorld::load_pack(&pack).unwrap();
+        let scenario = Scenario::oak("tick-setup");
+        let (_, target) = scenario.required_loc.expect("oak has a fixed loc");
+        assert!(world.collision.standable(scenario.target));
+        assert_ne!(scenario.target, target);
+        assert_eq!(scenario.target.level, target.level);
+        assert_eq!(
+            (scenario.target.x - target.x)
+                .abs()
+                .max((scenario.target.z - target.z).abs()),
+            1
         );
     }
 

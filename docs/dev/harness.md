@@ -707,6 +707,44 @@ Gatherer cells live in `crates/host-play/tests/gatherer_live.rs`. Each uses an
 isolated `HOME` plus absolute `GATHERER_ENGINE_DIR`, `GATHERER_NAV_PACK` and
 `GATHERER_CATALOG_ROOT`, and the `BOT_LIVE_NAME_PREFIX` namespace.
 
+### Knife-arm latency and qualification cells
+
+The ignored `gatherer_tick_live` tests in `gatherer_live.rs` use Engine L,
+game `127.0.0.1:47594` and assets `127.0.0.1:3080`. Set `LIVE=1`, `BOT_CPU=1`,
+`GATHERER_GAME_PORT=47594`, `GATHERER_HTTP_PORT=3080`, and a
+`BOT_LIVE_NAME_PREFIX` of one to four characters. The selected local profile
+must observe a members world. Do not change the engine tick or shared resources.
+
+Set the absolute engine, navigation and catalog paths above. Set
+`GATHERER_TICK_EVIDENCE` to a new absolute JSON filename, not a directory.
+Each cell refuses to overwrite evidence and logs out its account on failure.
+
+```sh
+cargo test -p host-play --no-default-features --features live-harness,test-support \
+  --test gatherer_live -- --ignored --exact gatherer_tick_live::probe_tick_landing --nocapture
+```
+
+The probe requires at least 300 completed cycles and real Fishing XP.
+It records all six verdict families, fresh animation serials, first-seen chat
+polls, inventory counts, host dispatch receipts and actual encoded packets.
+It does not impose a verified-fraction gate. The external verdict script
+derives that fraction from the probe before qualification starts.
+
+Then run `gatherer_fly_tick`, `gatherer_net_tick`, `gatherer_mine_iron_tick`,
+`gatherer_oak_tick` and `gatherer_tick_refused_rune` in the same module.
+Use a new evidence filename for each cell. The first four require at least
+60 completed cycles and real skill XP. The rune-pickaxe cell requires
+`Knife (off: no-gain)` and continued native Mining XP. Net qualification counts
+the observed opener/click cadence, not an invented roll animation. Its allowed
+Fletching-loss count and verified-fraction threshold must be fixed from the
+probe before the net cell runs.
+
+Player stands differ from fixed resource tiles. The river fixture starts at
+2503,3498 beside the real `loc_2027` at 2504,3498. The oak fixture starts at
+3016,3170 beside the tree at 3017,3170. Offline checks require standable tiles
+in the reviewed navigation pack. Setup uses `interact::tele_args` and then
+checks the actual tile, stats, items and loaded resource before Start.
+
 ### Knife-arm engine cases
 
 `crates/host-play/tests/tick_engine.rs` runs the native Gatherer through Play's

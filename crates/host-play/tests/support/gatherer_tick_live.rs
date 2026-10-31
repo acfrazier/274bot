@@ -47,10 +47,18 @@ const OAK_TILE: WorldTile = WorldTile {
     z: 3_170,
     level: 0,
 };
+const OAK_START_TILE: WorldTile = WorldTile {
+    x: 3_016,
+    ..OAK_TILE
+};
 const RIVER_TILE: WorldTile = WorldTile {
-    x: 2_501,
-    z: 3_506,
+    x: 2_504,
+    z: 3_498,
     level: 0,
+};
+const RIVER_START_TILE: WorldTile = WorldTile {
+    x: 2_503,
+    ..RIVER_TILE
 };
 const NET_TILE: WorldTile = WorldTile {
     x: 3_267,
@@ -137,10 +145,10 @@ impl Case {
 
     fn target(self) -> WorldTile {
         match self {
-            Self::Probe | Self::Fly => RIVER_TILE,
+            Self::Probe | Self::Fly => RIVER_START_TILE,
             Self::Net => NET_TILE,
             Self::Iron | Self::Rune => IRON_TILE,
-            Self::Oak => OAK_TILE,
+            Self::Oak => OAK_START_TILE,
         }
     }
 
@@ -1191,6 +1199,20 @@ fn opcode_name(opcode: u8) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn fixed_loc_setups_start_on_real_standable_tiles() {
+        let pack = PathBuf::from(std::env::var_os("NAV_PACK").expect("NAV_PACK is required"));
+        let world = nav_planner::world::NavWorld::load_pack(&pack).unwrap();
+        for case in [Case::Probe, Case::Fly, Case::Oak] {
+            let start = case.target();
+            let (_, loc) = case.target_loc().expect("fixed resource loc");
+            assert!(world.collision.standable(start), "{case:?}: {start:?}");
+            assert_ne!(start, loc);
+            assert_eq!(start.level, loc.level);
+            assert_eq!((start.x - loc.x).abs().max((start.z - loc.z).abs()), 1);
+        }
+    }
 
     #[test]
     fn setup_uses_the_engine_teleport_coordinate_format() {
