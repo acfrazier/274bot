@@ -1239,6 +1239,50 @@ fn no_path_receipt(evidence: api::quest_progress::EvidenceStamp, detail: &str) -
         escape: None,
     }
 }
+fn refused_walk_receipt(
+    evidence: api::quest_progress::EvidenceStamp,
+    refusal: crate::native::WalkRefusal,
+    escape: Option<crate::combat::guard::Escape>,
+) -> WalkReceipt {
+    WalkReceipt {
+        goal: None,
+        request_id: 23,
+        evidence,
+        end: WalkEnd::Refused,
+        blocked: None,
+        detail: None,
+        refusal: Some(refusal),
+        assessment: None,
+        escape,
+    }
+}
+
+fn live_escape(tick: u32) -> crate::combat::guard::Escape {
+    crate::combat::guard::Escape {
+        action: crate::combat::guard::EscapeAction::Retreat,
+        state: crate::combat::guard::EscapeState::Running,
+        owner: crate::combat::guard::EscapeOwner::Host,
+        allow: crate::native::WalkAllow::default(),
+        from: WorldTile {
+            x: 0,
+            z: 0,
+            level: 0,
+        },
+        to: WorldTile {
+            x: 1,
+            z: 0,
+            level: 0,
+        },
+        hp: 1,
+        floor: 2,
+        volley: 1,
+        tick,
+        generation: 1,
+        switches: 0,
+        last_hit: 0,
+        retired: None,
+    }
+}
 
 #[test]
 fn resource_approach_retries_then_shuns_and_fails_with_last_detail() {
@@ -1887,7 +1931,142 @@ fn return_failures_across_alternating_stands_stop_within_phase_budget() {
     assert!(failed_walks <= 4);
 }
 #[test]
-fn temporary_typed_return_refusals_have_a_finite_shun() {
+fn escape_refusals_wait_for_escape_end_without_shunning_or_spending_budget() {
+    let (mut gatherer, mut snapshot) = fixture();
+    let mut ledger = None;
+    with_tick(&snapshot, &mut ledger, 1, |tick| {
+        gatherer.tick(tick).unwrap()
+    });
+    assert_eq!(gatherer.trip, TripStep::Idle);
+    let initial = gatherer.target.clone().expect("initial tree target");
+    let area = gatherer.area.expect("the fixture has a work area");
+    gatherer.area = Some(WorkArea { radius: 50, ..area });
+    let method = &gatherer.prepared.catalog.methods()[usize::from(initial.method_index)];
+    let mut candidate_tiles = {
+        let world = snapshot.world();
+        gatherer
+            .prepared
+            .catalog
+            .spots(method, &gatherer.area.unwrap().region())
+            .unwrap()
+            .filter(|spot| spot.entity == initial.entity && tile_loaded(spot.origin, world))
+            .map(|spot| spot.origin)
+            .collect::<Vec<_>>()
+    };
+    candidate_tiles.push(initial.tile);
+    candidate_tiles.sort_unstable_by_key(|tile| (tile.x, tile.z, tile.level));
+    candidate_tiles.dedup();
+    assert!(
+        candidate_tiles.len() >= 4,
+        "the loaded content area has at least four tree targets"
+    );
+    candidate_tiles.retain(|tile| *tile != initial.tile);
+    candidate_tiles.truncate(3);
+    candidate_tiles.push(initial.tile);
+
+    let EntityId::Loc(resource_id) = initial.entity else {
+        panic!("the fixture target is a location");
+    };
+    let base_loc = snapshot.locs()[0].clone();
+    snapshot.seed_locs(
+        candidate_tiles
+            .iter()
+            .map(|tile| {
+                let mut loc = base_loc.clone();
+                loc.id = resource_id;
+                loc.tile = *tile;
+                loc.distance = 0;
+                loc
+            })
+            .collect(),
+    );
+    move_actor_to(
+        &mut snapshot,
+        WorldTile {
+            x: initial.tile.x.saturating_add(3),
+            ..initial.tile
+        },
+    );
+    gatherer.cancel_active();
+
+    for now in 2..=5 {
+        with_tick(&snapshot, &mut ledger, now, |tick| {
+            if now == 2 {
+                gatherer.start_target(
+                    SelectedTarget {
+                        plan: initial.clone(),
+                        class: PlacementClass::Live,
+                        observation_goals: None,
+                    },
+                    tick,
+                );
+            } else {
+                let target = gatherer.target.as_ref().unwrap();
+                assert_eq!(
+                    observe_target(tick.cx.snapshot(), &gatherer.prepared.catalog, target),
+                    Some(TargetObservation::Active),
+                    "the original resource stays observable"
+                );
+                assert_eq!(
+                    gatherer.scratch.walk_retry_target,
+                    Some(WalkRetryTarget::EscapeResource(
+                        initial.entity,
+                        initial.tile
+                    ))
+                );
+                gatherer.begin_idle(tick, false);
+            }
+            assert!(matches!(gatherer.active, Active::Walk(_)));
+            assert_eq!(
+                gatherer.target.as_ref().map(|target| target.tile),
+                Some(initial.tile),
+                "a live escape must not switch to another target at tick {now}"
+            );
+            let evidence = tick.cx.evidence();
+            gatherer.active = Active::None;
+            gatherer.handle_walk(
+                refused_walk_receipt(
+                    evidence,
+                    crate::native::WalkRefusal::EscapeInProgress,
+                    Some(live_escape(u32::try_from(now).unwrap())),
+                ),
+                tick,
+            );
+            assert!(gatherer.failure.is_none());
+            assert_eq!(gatherer.scratch.phase_walk_failures, 0);
+            assert!(gatherer.scratch.avoid.is_empty());
+            assert_eq!(
+                gatherer.scratch.walk_retry_target,
+                Some(WalkRetryTarget::EscapeResource(
+                    initial.entity,
+                    initial.tile
+                )),
+                "the resource identity stays pending until the escape ends"
+            );
+            assert_eq!(
+                gatherer.target.as_ref().map(|target| target.tile),
+                Some(initial.tile)
+            );
+            assert_eq!(gatherer.scratch.retry_after_tick, Some(now));
+        });
+        ledger.as_mut().unwrap().outbox.clear();
+    }
+
+    with_tick(&snapshot, &mut ledger, 6, |tick| {
+        gatherer.begin_idle(tick, false);
+    });
+    assert!(gatherer.failure.is_none());
+    assert_eq!(gatherer.scratch.phase_walk_failures, 0);
+    assert!(gatherer.scratch.avoid.is_empty());
+    assert_eq!(
+        gatherer.target.as_ref().map(|target| target.tile),
+        Some(initial.tile)
+    );
+    assert!(matches!(gatherer.active, Active::Walk(_)));
+}
+
+#[test]
+fn poison_refusal_shuns_return_target_for_the_session() {
     let position_a = WorldTile {
         x: 3057,
         z: 3205,
@@ -1898,57 +2077,93 @@ fn temporary_typed_return_refusals_have_a_finite_shun() {
         z: 3210,
         level: 0,
     };
-    for refusal in [
-        crate::native::WalkRefusal::EscapeInProgress,
-        crate::native::WalkRefusal::Unknown(crate::combat::risk::UnknownWhy::Poison),
-    ] {
-        let (mut gatherer, mut snapshot) = draynor_willow_fixture();
-        move_actor_to(&mut snapshot, position_a);
-        let initial = resource_return_plan(&gatherer, &snapshot, position_a);
-        gatherer.trip = TripStep::Return;
-        gatherer.target = Some(initial.clone());
-        gatherer.begin_walk_retry(WalkRetryTarget::Return(initial.tile));
-        let now = 740;
-        let mut ledger = None;
-        with_tick(&snapshot, &mut ledger, now, |tick| {
-            gatherer.active = Active::None;
-            gatherer.handle_walk(
-                WalkReceipt {
-                    goal: None,
-                    request_id: 23,
-                    evidence: tick.cx.evidence(),
-                    end: WalkEnd::Refused,
-                    blocked: None,
-                    detail: None,
-                    refusal: Some(refusal),
-                    assessment: None,
-                    escape: None,
-                },
-                tick,
-            );
-        });
-        assert!(!gatherer.scratch.return_stall_recovery.pending());
-        assert!(ledger
-            .as_ref()
-            .is_none_or(|ledger| ledger.outbox.is_empty()));
-        assert!(gatherer.failure.is_none());
-        assert!(gatherer
-            .scratch
-            .avoid
-            .iter()
-            .any(|entry| entry.tile == initial.tile
-                && u64::from(entry.until) == now + IDLE_AVOID_TICKS));
-        move_actor_to(&mut snapshot, position_b);
-        with_tick(&snapshot, &mut ledger, now + 1, |tick| {
-            gatherer.return_to_resources(tick);
-        });
-        assert_ne!(
-            gatherer.target.as_ref().map(|target| target.tile),
-            Some(initial.tile),
-            "the refusal must choose another stand, not retry the failed plan"
+    let (mut gatherer, mut snapshot) = draynor_willow_fixture();
+    move_actor_to(&mut snapshot, position_a);
+    let initial = resource_return_plan(&gatherer, &snapshot, position_a);
+    gatherer.trip = TripStep::Return;
+    gatherer.target = Some(initial.clone());
+    gatherer.begin_walk_retry(WalkRetryTarget::Return(initial.tile));
+    let now = 740;
+    let mut ledger = None;
+    with_tick(&snapshot, &mut ledger, now, |tick| {
+        gatherer.active = Active::None;
+        gatherer.handle_walk(
+            refused_walk_receipt(
+                tick.cx.evidence(),
+                crate::native::WalkRefusal::Unknown(crate::combat::risk::UnknownWhy::Poison),
+                None,
+            ),
+            tick,
         );
-        assert!(matches!(gatherer.active, Active::Walk(_)));
-    }
+    });
+    assert!(!gatherer.scratch.return_stall_recovery.pending());
+    assert!(ledger
+        .as_ref()
+        .is_none_or(|ledger| ledger.outbox.is_empty()));
+    assert!(gatherer.failure.is_none());
+    assert!(gatherer
+        .scratch
+        .avoid
+        .iter()
+        .any(|entry| entry.tile == initial.tile && entry.until == u32::MAX));
+    move_actor_to(&mut snapshot, position_b);
+    with_tick(&snapshot, &mut ledger, now + 1, |tick| {
+        gatherer.return_to_resources(tick);
+    });
+    assert_ne!(
+        gatherer.target.as_ref().map(|target| target.tile),
+        Some(initial.tile),
+        "the poison refusal must select another stand"
+    );
+    assert!(matches!(gatherer.active, Active::Walk(_)));
+}
+
+#[test]
+fn idle_exhaustion_reports_the_last_walk_failure() {
+    let (mut gatherer, mut snapshot) = fixture();
+    let mut ledger = None;
+    with_tick(&snapshot, &mut ledger, 1, |tick| {
+        gatherer.tick(tick).unwrap()
+    });
+    let initial = gatherer.target.clone().expect("initial tree target");
+    move_actor_to(
+        &mut snapshot,
+        WorldTile {
+            x: initial.tile.x.saturating_add(3),
+            ..initial.tile
+        },
+    );
+    gatherer.cancel_active();
+    with_tick(&snapshot, &mut ledger, 2, |tick| {
+        gatherer.start_target(
+            SelectedTarget {
+                plan: initial.clone(),
+                class: PlacementClass::Live,
+                observation_goals: None,
+            },
+            tick,
+        );
+        let evidence = tick.cx.evidence();
+        gatherer.active = Active::None;
+        gatherer.handle_walk(
+            refused_walk_receipt(evidence, crate::native::WalkRefusal::Unsurvivable, None),
+            tick,
+        );
+    });
+    assert!(gatherer.failure.is_none());
+    assert_eq!(gatherer.scratch.phase_walk_failures, 1);
+    with_tick(&snapshot, &mut ledger, 3, |tick| {
+        gatherer.begin_idle(tick, false);
+    });
+    let failure = gatherer
+        .failure
+        .as_ref()
+        .expect("Idle exhaustion must end after all targets are excluded");
+    assert_eq!(failure.code.as_ref(), "walk-failed");
+    assert!(failure
+        .message
+        .contains("no alternate resource target remains"));
+    assert!(failure.message.contains("route is unsurvivable"));
 }
 #[test]
 fn blocked_return_walk_selects_another_stand_without_retrying_the_failed_plan() {

@@ -8,8 +8,10 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.8` 
 - Gatherer retries eligible walk failures from the observed position. Return and
   resource-approach failures share a four-failure budget across targets. A
   successful arrival or gather resets the budget. Gatherer fails with the last
-  walk detail when the budget ends. Escape-in-progress and poison refusals
-  exclude a target for 60 observed game ticks.
+  walk detail when the budget ends. A live host escape makes Gatherer wait for
+  a newer observed game tick before it resumes walking, without shunning any
+  target or spending the phase budget. A poison refusal shuns its target for
+  the session.
 
 ## [0.2.8] — 2026-10-29 — Beta 2
 

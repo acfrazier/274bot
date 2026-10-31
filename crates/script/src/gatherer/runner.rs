@@ -235,11 +235,13 @@ fn hazard_retreat_stand(
     best.map(|(tile, _)| tile)
 }
 
-/// The identity of the current walk plan, so its bounded retry cannot leak to
-/// a different resource, return stand, bank, or hazard.
+/// The identity of the current walk plan, so retry state cannot leak to a
+/// different resource, return stand, bank, or hazard.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum WalkRetryTarget {
     Resource(EntityId, WorldTile),
+    /// A resource target held for another attempt after a host escape.
+    EscapeResource(EntityId, WorldTile),
     Return(WorldTile),
     Bank(u16),
     Hazard(WorldTile),
@@ -1680,6 +1682,23 @@ impl Gatherer {
                 self.target.as_ref().map(|target| (target.entity, target.tile)),
             );
         }
+        if matches!(
+            result.refusal,
+            Some(crate::native::WalkRefusal::EscapeInProgress)
+        ) {
+            // Host admission refuses every walk while its escape is live
+            // (host-play/src/script_nav.rs:4599-4611). Recheck on the next
+            // observed game tick; another refusal means the escape is live.
+            if self.trip == TripStep::Idle {
+                if let Some(target) = self.target.as_ref() {
+                    self.scratch.walk_retry_target =
+                        Some(WalkRetryTarget::EscapeResource(target.entity, target.tile));
+                }
+            }
+            self.scratch.retry_after_tick = Some(tick.cx.evidence().tick);
+            self.set_event("waiting for the active escape to end");
+            return;
+        }
         if self.retained.recovery == (RecoveryState::Pending { step: 5 }) {
             self.finish_recovery_return(result, tick);
             return;
@@ -1757,19 +1776,7 @@ impl Gatherer {
                     return;
                 }
             }
-            let avoid_until = if matches!(
-                result.refusal,
-                Some(
-                    crate::native::WalkRefusal::EscapeInProgress
-                        | crate::native::WalkRefusal::Unknown(
-                            crate::combat::risk::UnknownWhy::Poison
-                        )
-                )
-            ) {
-                now.saturating_add(IDLE_AVOID_TICKS)
-            } else {
-                u64::from(u32::MAX)
-            };
+            let avoid_until = u64::from(u32::MAX);
             if self.scratch.return_stall_recovery.observe_receipt(&result) {
                 self.scratch.retry_after_tick = Some(now);
                 match self.trip {
@@ -2196,10 +2203,12 @@ impl Gatherer {
             return;
         };
         if let Some(plan) = self.target.take() {
-            // Replan this identity before ranking can reset its retry budget.
-            let retrying = self.scratch.return_stall_recovery.pending()
-                && self.scratch.walk_retry_target
-                    == Some(WalkRetryTarget::Resource(plan.entity, plan.tile));
+            // Hold this identity after an escape or bounded retry, before ranking.
+            let retrying = self.scratch.walk_retry_target
+                == Some(WalkRetryTarget::EscapeResource(plan.entity, plan.tile))
+                || (self.scratch.return_stall_recovery.pending()
+                    && self.scratch.walk_retry_target
+                        == Some(WalkRetryTarget::Resource(plan.entity, plan.tile)));
             let observation = observe_target(snapshot, &self.prepared.catalog, &plan);
             let enabled = self
                 .prepared

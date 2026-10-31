@@ -1056,7 +1056,7 @@ pub enum WalkEnd {
     NeedsEvidence(Arc<[QuestGate]>),
 }
 // USER-0.2.3-GATHERER §4 supports one recovery for a transient stalled return.
-// AGENTS.md §131 also covers NoPath, RouteEnded, Failed, untyped Refused, and
+// AGENTS.md:131 also covers NoPath, RouteEnded, Failed, untyped Refused, and
 // Stalled(EndBlocked): make one fresh observed-position plan before failure.
 const MAX_RETURN_RECOVERY_ATTEMPTS: u8 = 2;
 
