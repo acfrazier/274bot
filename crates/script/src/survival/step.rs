@@ -195,7 +195,7 @@ impl SurvivalStep {
                     tick,
                     eat_floor,
                 )
-                .and_then(|choice| eat_args(choice, frame.inventory, hp))
+                .and_then(|choice| eat_args(choice, frame.inventory))
             };
             let timed = bite(&schedule);
             // A bite that only the next-food clock of the last survival click
@@ -352,14 +352,17 @@ impl SurvivalStep {
 
     /// The runner's op for the last survival click has ended. `applied` is
     /// true when it settled on the content's own signal: the dose, fruit or
-    /// food count drop, or a food's hitpoints rise, which the consume script
-    /// makes in the server tick that runs the click (`consume.rs2:122-127`
-    /// sets `%eat_delay` there; `consume_effects.rs2:113-126` deletes the dose
-    /// and calls `p_delay(1)` there). The first frame that shows the signal is
-    /// the update of that server tick, and a click sent after frame `F` runs
-    /// in tick `F + 1` at the earliest. So the click's delays are replayed as
-    /// if it was sent after the frame before the signal: a drink run in tick
-    /// `E` delays the player until `E + 2` (`PlayerOps.ts:376-379`), and the
+    /// food count drop. The consume script makes that change in the server
+    /// tick that runs the click (`consume.rs2:122-127` sets `%eat_delay`
+    /// there; `consume_effects.rs2:113-126` deletes the dose and calls
+    /// `p_delay(1)` there). A Hitpoints rise is never that signal: natural
+    /// regeneration also raises Hitpoints (`stat.rs2:58-60`), so `OneOp`
+    /// settles a bite on the count drop alone. The first frame that shows
+    /// the signal is the update of that server tick, and a click sent after
+    /// frame `F` runs in tick `F + 1` at the earliest. So the click's delays
+    /// are replayed as if it was sent after the frame before the signal: a
+    /// drink run in tick `E` delays the player until `E + 2`
+    /// (`PlayerOps.ts:376-379`), and the
     /// engine drops a held click run in `E + 1` or `E + 2`
     /// (`OpHeldHandler.ts:16-19`), so the first click it runs is sent after
     /// frame `E + 2`, which is the replayed lock's end. A signal that arrives
@@ -526,14 +529,10 @@ fn click(
     }
 }
 
-fn eat_args(
-    choice: EatChoice,
-    inventory: &[api::snapshot::ItemView],
-    hp: i32,
-) -> Option<OneOpArgs> {
+fn eat_args(choice: EatChoice, inventory: &[api::snapshot::ItemView]) -> Option<OneOpArgs> {
     let item = choice.ordinary.or(choice.combo)?;
     let (name, count) = held_item(inventory, item)?;
-    Some(OneOpArgs::eat(name, item, count, hp))
+    Some(OneOpArgs::eat(name, item, count))
 }
 
 /// The low 16 bits of an observed tick count.
@@ -873,7 +872,6 @@ mod tests {
             OneOpKind::Eat {
                 item_id: food.def.id,
                 before_count: 3,
-                before_hp: 5,
             },
             20,
         );

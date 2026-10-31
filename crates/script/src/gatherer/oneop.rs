@@ -21,10 +21,16 @@ pub enum OneOpKind {
     Wear {
         item_id: i32,
     },
+    /// A bite settles on the held food's count drop alone. A multi-bite food
+    /// changes item id, which also lowers the count of the id that was eaten.
+    /// A Hitpoints rise is not a signal: natural regeneration restores one
+    /// point on its own timer (`stat.rs2:58-60`), so a rise in the frame after
+    /// the click can precede the bite's own count drop. The consume script
+    /// deletes or replaces the item in the server tick that runs the click
+    /// (`consume.rs2:122-127`), so the count drop is the click's tick.
     Eat {
         item_id: i32,
         before_count: i32,
-        before_hp: i32,
     },
     Drink {
         item_id: i32,
@@ -103,7 +109,7 @@ impl OneOpArgs {
         }
     }
 
-    pub fn eat(name: &str, item_id: i32, before_count: i32, before_hp: i32) -> Self {
+    pub fn eat(name: &str, item_id: i32, before_count: i32) -> Self {
         Self {
             request: InteractReq::Held {
                 name: name.into(),
@@ -114,7 +120,6 @@ impl OneOpArgs {
             kind: OneOpKind::Eat {
                 item_id,
                 before_count,
-                before_hp,
             },
             bound_ticks: 8,
         }
@@ -206,24 +211,8 @@ impl NativeMachine for OneOp {
             OneOpKind::Eat {
                 item_id,
                 before_count,
-                before_hp,
-            } => {
-                let snapshot = cx.snapshot();
-                snapshot.inventory().is_some_and(|rows| {
-                    rows.value
-                        .iter()
-                        .filter(|row| row.def.id == item_id)
-                        .map(|row| row.count)
-                        .sum::<i32>()
-                        < before_count
-                }) || snapshot.stats().is_some_and(|stats| {
-                    stats
-                        .value
-                        .iter()
-                        .any(|stat| stat.index == 3 && stat.effective > before_hp)
-                })
             }
-            OneOpKind::Drink {
+            | OneOpKind::Drink {
                 item_id,
                 before_doses: before_count,
             }

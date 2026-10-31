@@ -74,7 +74,7 @@ impl Gatherer {
         if hp.effective > below || held == 0 || !self.fence.reserve(1) {
             return false;
         }
-        let args = OneOpArgs::eat(&food.name, food.id, held, hp.effective);
+        let args = OneOpArgs::eat(&food.name, food.id, held);
         match tick.actions.begin::<OneOp>(args, &mut tick.cx) {
             Ok(handle) => {
                 self.active = Active::Tend(handle);
