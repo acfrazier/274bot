@@ -488,6 +488,7 @@ impl Play {
                 &[
                     api::local_state::LocalStateDomain::LoadoutsReferences,
                     api::local_state::LocalStateDomain::BankHints,
+                    api::local_state::LocalStateDomain::ScriptRuntimeSettings,
                 ],
                 Arc::new(api::identity::RequestIdMinter::new()),
             );
