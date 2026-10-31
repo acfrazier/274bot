@@ -1351,6 +1351,10 @@ fallback click; the host's packet receipts are not server acknowledgements.
 A normal-rock success can delay the player through the next tick. The server
 refuses a batch it handles during that delay; `tick_delayed` counts the
 observed delayed cycles, not refused packets.
+A confirmed depleting cycle keeps its idle timing while changing targets.
+A live replacement can arm before its ordinary walk only when the posted
+scene and flood prove a legal loc approach within two actual steps. Longer
+or unproven approaches keep the ordinary walk.
 
 A built-in fishing arm requires a generator-proven ordinary spot type on
 its click tick. Whirlpool, Big fish and unknown types are not armed. The

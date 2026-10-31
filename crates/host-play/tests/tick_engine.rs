@@ -66,7 +66,10 @@ const LATE_IRON_BUDGET: u32 = 5;
 const COPPER_BUDGET: u32 = 4;
 const HOST_REFUSAL_BUDGET: u32 = 1;
 const MAKE_WITHOUT_CLICK_BUDGET: u32 = 3;
-const LONE_OPENER_BUDGET: u32 = 2;
+// After the first-budget click, freshfish's expired-delay branch rearms, then
+// casts at d=3 and writes its act line at d=2 (freshfish.rs2:37-50). The last
+// before-PLAYER_INFO line can first appear in the preceding wake.
+const LONE_OPENER_BUDGET: u32 = 4;
 const FREE_WORLD_BUDGET: u32 = 2;
 const NET_REQUIRED_CYCLES: i64 = 20;
 // Ending-family net cycles have no roll signal and count as unobserved; six
@@ -1002,8 +1005,14 @@ impl LiveRun {
         self.start_tick = Some(baseline.game_tick);
         self.baseline = Some(baseline.clone());
         if let Some(span) = self.scenario.suppress_openchat_span {
-            self.hook
-                .suppress_openchat_through_tick(baseline.game_tick.wrapping_add(span));
+            // Setup/Start precedes the first native roll. Keep the bounded
+            // filter alive through the first-arm deadline and the case span.
+            self.hook.suppress_openchat_through_tick(
+                baseline
+                    .game_tick
+                    .wrapping_add(self.first_arm_budget)
+                    .wrapping_add(span),
+            );
         }
         for mutation in self.scenario.mutations.iter().cloned() {
             self.hook.queue_dispatch_mutation(mutation);
@@ -2910,20 +2919,25 @@ fn copper_history(scenario: Scenario, expect_held_join: bool) -> Result<RunEvide
             fresh_animation_on_edge(trace, origin + 1).is_some_and(|(sequence, _)| sequence == -1)
                 && has_copper_success(trace, origin, origin + 1)
                 && knife_dispatches(trace).iter().any(|dispatch| {
-                    dispatch.game_tick == origin + 4
+                    dispatch.game_tick == origin + 1
                         && dispatch.request_debug != first.request_debug
                 })
-                && fresh_animation_on_edge(trace, origin + 4)
-                    .is_some_and(|(sequence, _)| sequence == ROLL_ANIMATION)
-                && statuses.last().is_some_and(|status| {
-                    status.tick_delayed.unwrap_or(0) >= 1 && status.tick_cycle == Some(4)
-                })
+                && statuses
+                    .last()
+                    .is_some_and(|status| status.tick_delayed.unwrap_or(0) >= 1)
+                && if expect_held_join {
+                    edge_frame(trace, origin + 2).is_some()
+                } else {
+                    fresh_animation_on_edge(trace, origin + 4)
+                        .is_some_and(|(sequence, _)| sequence == ROLL_ANIMATION)
+                        && statuses.last().is_some_and(|status| status.tick_cycle == Some(3))
+                }
         })?;
         let trace = run.hook.trace();
         let batches = knife_dispatches(&trace);
-        if batches.len() < 2 || batches[1].game_tick != origin + 4 {
+        if batches.len() < 2 || batches[1].game_tick != origin + 1 {
             return Err(
-                run.failure("copper delayed cycle did not emit its second-rock batch at R+4")
+                run.failure("copper delayed cycle did not emit its second-rock batch at R+1")
             );
         }
         assert_batch(run, &batches[1], 3, 4)?;
@@ -2964,7 +2978,7 @@ fn copper_history(scenario: Scenario, expect_held_join: bool) -> Result<RunEvide
                     == vec![batches[0].receipt.request_id, batches[1].receipt.request_id]
                     && observation.packet_opcodes == expected_opcodes.repeat(2)
                     && observation.release_edge_tick.is_none()
-                    && observation.release_trigger_tick == Some(origin as u32 + 4)
+                    && observation.release_trigger_tick == Some(origin as u32 + 1)
                     && observation.released_host_frame.is_some()
                     && observation.dropped_bytes == 0
                     && observation.forwarded_bytes == expected_bytes
@@ -3182,7 +3196,8 @@ fn lone_opener_continues(
 ) -> bool {
     checked_click_pairs(trace, origin + 1) == 1
         && close_packet_seen(trace, origin + 1, baseline)
-        && has_act_line(trace, origin + 1)
+        && (origin + 1..=origin + u64::from(LONE_OPENER_BUDGET))
+            .any(|tick| has_act_line(trace, tick))
 }
 
 fn lone_opener_history(name: &'static str, suppress: bool) -> Result<RunEvidence, String> {
