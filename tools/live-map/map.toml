@@ -268,6 +268,7 @@ globs = [
   "crates/host-play/src/render_calibration.rs",
   "crates/frontend-core/src/bench.rs",
   "crates/frontend-core/src/surface.rs",
+  "crates/scenario/src/shot.rs",
   "crates/panel/src/main.rs",
   "crates/panel/src/app.rs",
   "crates/panel/src/window.rs",

@@ -162,6 +162,7 @@ The added rows map changed paths to existing real-content commands:
 | `crates/host-play/src/play_bootstrap.rs` | Both progress cells start real Play workers before measuring their scene-consume progress. |
 | `crates/host-play/src/{bank_npc_live,evidence_writer}.rs` | `host.bank-npc-mage-teller` runs the existing ignored Mage Teller proof through real Play and writes its PNG and JSON evidence. The changed error conversion is covered as part of that path. |
 | `crates/panel/src/{focus,live_harness}.rs` | `panel.render-focus-wake-live` checks focus requests, wake writes and drains, and scene progress in a real Session with Play workers. |
+| `crates/scenario/src/shot.rs` | `panel.render-calibration-live`, with recording and an actual capture, exercises `run_dir_path_with_limit`, `shot_paths_at_with_limit`, and `bounded_child_path` through the `frontend-core::live` shot and recording facades. |
 | Listed `vendor/fr-client-rust/crates/client/src/{client,config,core,dash3d,datastruct,graphics}` files | `host.render-fair-drawing-n1`, `host.render-fair-drawing-n10`, `host.render-fair-progress-gpu`, and `panel.render-calibration-live` compile and exercise the client drawing, scene and presentation paths. The n1 and n10 cells use CPU drawing; GPU progress uses the hook-free timing executable. |
 
 The drawing rows do not measure GPU timing. The progress GPU row does not
@@ -171,10 +172,12 @@ actual capture action in the headed panel during that run. Setting the
 environment variable alone does not prove that capture started. The
 `t44_headed_live` cell uses test hooks and is functional evidence, not timing.
 
-`crates/scenario/src/shot.rs` has no mapped real-content caller. Its current
-`write_shot_at` use is in a unit-test sink. Do not map a live scenario cell to
-it or claim that an idle scenario captures a shot. This path remains an
-explicit coverage gap until a real-content command invokes its shot sink.
+The changed bounded path helpers in `crates/scenario/src/shot.rs` have real
+panel callers. `app.rs` uses the shot-directory and shot-path facades in
+`frontend-core::live`; `headed_record.rs` uses its recording-path facade.
+The capture-on calibration cell must write its PNG, JSON sidecar, and recording
+before it counts as coverage. The separate `write_shot_at` sink still has only
+a unit-test caller. An idle scenario does not prove that sink was called.
 
 ## State-gap and refusal paths
 
