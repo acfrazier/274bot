@@ -3465,9 +3465,14 @@ mod tests {
             assert_eq!(gatherer.survival_eat_floor(tick), 1);
             assert!(!gatherer.poll_survival(tick));
         });
-        assert_eq!(gatherer.survival.report().decision, crate::survival::Decision::None);
+        assert_eq!(
+            gatherer.survival.report().decision,
+            crate::survival::Decision::None
+        );
         assert!(gatherer.survival.parked().is_none());
-        assert!(ledger.as_ref().is_none_or(|ledger| ledger.outbox.is_empty()));
+        assert!(ledger
+            .as_ref()
+            .is_none_or(|ledger| ledger.outbox.is_empty()));
     }
 
     #[test]
@@ -3488,7 +3493,11 @@ mod tests {
             xp: 0,
             used: true,
         }]);
-        let bank_tile = WorldTile { x: 3245, z: 3423, level: 0 };
+        let bank_tile = WorldTile {
+            x: 3245,
+            z: 3423,
+            level: 0,
+        };
         gatherer.trip = TripStep::Open;
         gatherer.selected_bank = Some(SelectedBank {
             bank_index: 0,
@@ -3508,18 +3517,35 @@ mod tests {
             gatherer.begin_trip(tick);
         });
         assert!(matches!(gatherer.active, Active::Open(_)));
-        let mut marks = [HitmarkView { value: 0, kind: 0, cycle: 0 }; 4];
-        marks[0] = HitmarkView { value: 3, kind: 1, cycle: 630 };
-        snapshot.seed_hitmarks(HitmarksView { marks, loop_cycle: 600 });
+        let mut marks = [HitmarkView {
+            value: 0,
+            kind: 0,
+            cycle: 0,
+        }; 4];
+        marks[0] = HitmarkView {
+            value: 3,
+            kind: 1,
+            cycle: 630,
+        };
+        snapshot.seed_hitmarks(HitmarksView {
+            marks,
+            loop_cycle: 600,
+        });
         let mut condition = survival_condition(PoisonState::Clear, 19, FoodSummary::default());
         condition.hp_max = 40;
         with_tick(&snapshot, &mut ledger, 20, |tick| {
             tick.cx.condition = Some(condition);
             assert!(!gatherer.poll_survival(tick));
         });
-        assert_eq!(gatherer.survival.report().decision, crate::survival::Decision::Needed);
+        assert_eq!(
+            gatherer.survival.report().decision,
+            crate::survival::Decision::Needed
+        );
         assert!(gatherer.survival.parked().is_none());
-        assert!(matches!(gatherer.active, Active::Open(_)), "the one-window need must not cancel the live machine");
+        assert!(
+            matches!(gatherer.active, Active::Open(_)),
+            "the one-window need must not cancel the live machine"
+        );
         assert!(!gatherer.needs_validate);
 
         snapshot.seed_tick(21);

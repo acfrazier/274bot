@@ -1668,6 +1668,16 @@ impl Quester {
         let kind = args.kind;
         match tick.actions.begin::<OneOp>(args, &mut tick.cx) {
             Ok(handle) => {
+                if api::hostlog::enabled(api::hostlog::Category::ScriptTrace) {
+                    if let Some((kind, deadline)) = handle.inspect(OneOp::trace_state) {
+                        api::host_log!(
+                            api::hostlog::Category::ScriptTrace,
+                            api::hostlog::Level::Debug,
+                            "quester survival op event=begin tick={} kind={kind:?} applied=pending deadline={deadline}",
+                            tick.cx.evidence().tick
+                        );
+                    }
+                }
                 self.survival_action = Some(handle);
                 self.survival_deferred = false;
                 self.survival.record_sent(kind, &tick.cx);
@@ -1755,7 +1765,10 @@ impl Quester {
                         self.survival.park(need, &tick.cx);
                         self.park_page_ticks = 0;
                         self.park_page_seen = false;
-                        self.park_bound_hp = tick.cx.condition().map_or(0, |condition| i32::from(condition.hp));
+                        self.park_bound_hp = tick
+                            .cx
+                            .condition()
+                            .map_or(0, |condition| i32::from(condition.hp));
                         self.log_hazard_park_bound("edge", tick);
                     }
                 }
@@ -1794,8 +1807,10 @@ impl Quester {
         let Some(hazard) = self.selected_hazard.hazard else {
             return;
         };
-        if !matches!(self.survival.parked(), Some(crate::survival::math::SurvivalNeed::Food { .. }))
-            || !self.survival.quiet_hazard_recovery(&tick.cx)
+        if !matches!(
+            self.survival.parked(),
+            Some(crate::survival::math::SurvivalNeed::Food { .. })
+        ) || !self.survival.quiet_hazard_recovery(&tick.cx)
         {
             return;
         }
@@ -1862,7 +1877,20 @@ impl Quester {
         let Some(handle) = self.survival_action.as_ref() else {
             return false;
         };
-        let applied = match tick.actions.poll(handle, &mut tick.cx) {
+        let trace = api::hostlog::enabled(api::hostlog::Category::ScriptTrace)
+            .then(|| handle.inspect(OneOp::trace_state))
+            .flatten();
+        let result = tick.actions.poll(handle, &mut tick.cx);
+        if let (Some((kind, deadline)), Poll::Ready(result)) = (trace, &result) {
+            api::host_log!(
+                api::hostlog::Category::ScriptTrace,
+                api::hostlog::Level::Debug,
+                "quester survival op event=end tick={} kind={kind:?} applied={} deadline={deadline}",
+                tick.cx.evidence().tick,
+                matches!(result, Ok(true))
+            );
+        }
+        let applied = match result {
             Poll::Pending => {
                 self.publish(tick.output);
                 return true;
@@ -3096,7 +3124,10 @@ impl Quester {
                 step.hazard,
             );
             if let Some(hazard) = step.hazard.filter(|_| changed) {
-                let hp_max = tick.cx.snapshot().stats()
+                let hp_max = tick
+                    .cx
+                    .snapshot()
+                    .stats()
                     .and_then(|stats| stats.value.iter().find(|stat| stat.index == 3))
                     .map_or(0, |stat| stat.base);
                 let max = hazard.max_damage(hp_max, hp_max);
@@ -6240,6 +6271,103 @@ mod tests {
             script.survival_action.is_none(),
             "the count drop settles the bite"
         );
+    }
+
+    #[test]
+    fn quester_survival_trace_pairs_a_retried_bite() {
+        use api::condition::PoisonState;
+        use api::snapshot::{ItemActionFamily, ItemContainer, ItemView, StatView};
+
+        const CHILD: &str = "QUESTER_SURVIVAL_TRACE_TEST_CHILD";
+        const TEST: &str = "quester::runner::tests::quester_survival_trace_pairs_a_retried_bite";
+        let item_id = api::game_data::for_revision(api::selected::ClientRevision::R289)
+            .unwrap()
+            .item_by_alias("lobster")
+            .unwrap()
+            .id;
+        if std::env::var_os(CHILD).is_none() {
+            let output = std::process::Command::new(std::env::current_exe().unwrap())
+                .args(["--exact", TEST, "--nocapture"])
+                .env(CHILD, "1")
+                .env("BOT_DEBUG", "1")
+                .output()
+                .unwrap();
+            assert!(
+                output.status.success(),
+                "trace child failed:\n{}\n{}",
+                String::from_utf8_lossy(&output.stdout),
+                String::from_utf8_lossy(&output.stderr),
+            );
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            let lines: Vec<_> = stderr
+                .lines()
+                .filter_map(|line| {
+                    line.split_once("quester survival op ")
+                        .map(|(_, event)| event)
+                })
+                .collect();
+            assert_eq!(
+                lines,
+                [
+                    format!("event=begin tick=2 kind=Eat {{ item_id: {item_id}, before_count: 2 }} applied=pending deadline=10"),
+                    format!("event=end tick=10 kind=Eat {{ item_id: {item_id}, before_count: 2 }} applied=false deadline=10"),
+                    format!("event=begin tick=10 kind=Eat {{ item_id: {item_id}, before_count: 2 }} applied=pending deadline=18"),
+                    format!("event=end tick=11 kind=Eat {{ item_id: {item_id}, before_count: 2 }} applied=true deadline=18"),
+                ],
+                "the first bite must end unapplied before its same-tick retry begins"
+            );
+            return;
+        }
+
+        let (mut script, mut snapshot, _) = survival_step_fixture("gather");
+        let food = |count| {
+            vec![ItemView {
+                def: super::super::families::tests::def(item_id, "Lobster"),
+                container: ItemContainer::Inventory,
+                action_family: ItemActionFamily::Held,
+                slot: 0,
+                count,
+                actions: vec![Some("Eat".into())],
+                component_id: 0,
+            }]
+        };
+        let set_hp = |snapshot: &mut api::snapshot::GameSnapshot, effective| {
+            snapshot.seed_stats(vec![StatView {
+                index: 3,
+                name: "hitpoints".into(),
+                base: 99,
+                effective,
+                xp: 0,
+                used: true,
+            }]);
+        };
+        snapshot.seed_inventory(food(2), 28);
+        set_hp(&mut snapshot, 60);
+        let mut ledger = None;
+        super::super::families::tests::with_tick(&snapshot, &mut ledger, 1, |tick| {
+            tick.cx.condition = Some(survival_condition(PoisonState::Clear, 60));
+            script.tick(tick).unwrap();
+        });
+        let poison = PoisonState::Poisoned {
+            per_tick: 3,
+            last_mark: 20,
+            hit_since_mark: false,
+        };
+        set_hp(&mut snapshot, 4);
+        for observed in 2..=10 {
+            super::super::families::tests::with_tick(&snapshot, &mut ledger, observed, |tick| {
+                tick.cx.condition = Some(survival_condition(poison, 4));
+                script.tick(tick).unwrap();
+            });
+            assert!(script.survival_action.is_some());
+        }
+        snapshot.seed_inventory(food(1), 28);
+        set_hp(&mut snapshot, 16);
+        super::super::families::tests::with_tick(&snapshot, &mut ledger, 11, |tick| {
+            tick.cx.condition = Some(survival_condition(poison, 16));
+            script.tick(tick).unwrap();
+        });
+        assert!(script.survival_action.is_none());
     }
 
     #[test]

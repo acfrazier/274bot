@@ -329,7 +329,10 @@ impl SurvivalStep {
         !self.threats.has_overflow(frame.tick)
             && self.threats.iter(frame.tick).next().is_none()
             && cx.condition().is_some_and(|condition| {
-                matches!(condition.poison, PoisonState::Clear | PoisonState::Immune { .. })
+                matches!(
+                    condition.poison,
+                    PoisonState::Clear | PoisonState::Immune { .. }
+                )
             })
     }
 
@@ -1110,7 +1113,13 @@ mod tests {
         with_tick(snapshot, &mut ledger, tick, |native| {
             native.cx.condition = Some(condition);
             native.cx.cure_poison = CurePoison::WhenNeeded;
-            step.want(&native.cx, Upkeep { eat_floor: 0, hazard })
+            step.want(
+                &native.cx,
+                Upkeep {
+                    eat_floor: 0,
+                    hazard,
+                },
+            )
         })
     }
 
@@ -1120,25 +1129,40 @@ mod tests {
             kind: 0,
             cycle: 0,
         }; 4];
-        marks[0] = HitmarkView { value: damage, kind: 1, cycle: 630 };
-        snapshot.seed_hitmarks(HitmarksView { marks, loop_cycle: 600 });
+        marks[0] = HitmarkView {
+            value: damage,
+            kind: 1,
+            cycle: 630,
+        };
+        snapshot.seed_hitmarks(HitmarksView {
+            marks,
+            loop_cycle: 600,
+        });
     }
 
     fn seed_scorpions(snapshot: &mut GameSnapshot, count: usize) {
         let world = crate::combat_session_tests::World::new("scorpion");
         let template = world.snapshot.npcs()[0].clone();
-        let at = WorldTile { x: 3201, z: 3200, level: 0 };
-        snapshot.seed_npcs((0..count).map(|index| api::snapshot::NpcView {
-            index: index + 1,
-            tile: at,
-            network: at,
-            target: Some(api::snapshot::ActorTargetView {
-                kind: api::snapshot::ActorKind::Player,
-                index: 0,
-            }),
-            in_combat: true,
-            ..template.clone()
-        }).collect());
+        let at = WorldTile {
+            x: 3201,
+            z: 3200,
+            level: 0,
+        };
+        snapshot.seed_npcs(
+            (0..count)
+                .map(|index| api::snapshot::NpcView {
+                    index: index + 1,
+                    tile: at,
+                    network: at,
+                    target: Some(api::snapshot::ActorTargetView {
+                        kind: api::snapshot::ActorKind::Player,
+                        index: 0,
+                    }),
+                    in_combat: true,
+                    ..template.clone()
+                })
+                .collect(),
+        );
     }
 
     #[test]
@@ -1147,12 +1171,38 @@ mod tests {
             let mut snapshot = hazard_frame(vec![lobster()], hp, 20);
             seed_scorpions(&mut snapshot, rows);
             let mut step = SurvivalStep::default();
-            let outcome = hazard_want(&mut step, &snapshot, hp, PoisonState::Clear, Some(hazard_constant(3)), 20);
-            assert_eq!(matches!(outcome, SurvivalWant::Click(OneOpArgs { kind: OneOpKind::Eat { .. }, .. })), bites, "{rows} scorpions, HP {hp}");
+            let outcome = hazard_want(
+                &mut step,
+                &snapshot,
+                hp,
+                PoisonState::Clear,
+                Some(hazard_constant(3)),
+                20,
+            );
+            assert_eq!(
+                matches!(
+                    outcome,
+                    SurvivalWant::Click(OneOpArgs {
+                        kind: OneOpKind::Eat { .. },
+                        ..
+                    })
+                ),
+                bites,
+                "{rows} scorpions, HP {hp}"
+            );
             let mut ledger = None;
             with_tick(&snapshot, &mut ledger, 20, |native| {
                 let frame = Frame::borrow(native.cx.snapshot()).unwrap();
-                assert_eq!(step.threats.danger(&frame, crate::combat::guard::shared_tables_ref().unwrap(), 20, false, false), Some(if rows == 0 { 0 } else { 2 }));
+                assert_eq!(
+                    step.threats.danger(
+                        &frame,
+                        crate::combat::guard::shared_tables_ref().unwrap(),
+                        20,
+                        false,
+                        false
+                    ),
+                    Some(if rows == 0 { 0 } else { 2 })
+                );
             });
             if !bites {
                 assert!(matches!(outcome, SurvivalWant::Nothing));
@@ -1170,8 +1220,24 @@ mod tests {
                 seed_hazard_hit(&mut snapshot, 15);
             }
             let mut step = SurvivalStep::default();
-            let outcome = hazard_want(&mut step, &snapshot, hp, PoisonState::Clear, Some(hazard_constant(15)), 20);
-            assert_eq!(matches!(outcome, SurvivalWant::Click(OneOpArgs { kind: OneOpKind::Eat { .. }, .. })), bites);
+            let outcome = hazard_want(
+                &mut step,
+                &snapshot,
+                hp,
+                PoisonState::Clear,
+                Some(hazard_constant(15)),
+                20,
+            );
+            assert_eq!(
+                matches!(
+                    outcome,
+                    SurvivalWant::Click(OneOpArgs {
+                        kind: OneOpKind::Eat { .. },
+                        ..
+                    })
+                ),
+                bites
+            );
             assert_eq!(step.threats.has_overflow(20), overflow);
             if !bites {
                 assert!(matches!(outcome, SurvivalWant::Nothing));
@@ -1185,12 +1251,21 @@ mod tests {
             let mut snapshot = hazard_frame(vec![], hp, 20);
             seed_hazard_hit(&mut snapshot, 3);
             let mut step = SurvivalStep::default();
-            assert!(matches!(hazard_want(&mut step, &snapshot, hp, PoisonState::Clear, hazard, 20), SurvivalWant::Nothing));
+            assert!(matches!(
+                hazard_want(&mut step, &snapshot, hp, PoisonState::Clear, hazard, 20),
+                SurvivalWant::Nothing
+            ));
             assert_eq!(step.report().decision, Decision::Needed);
             assert!(step.parked().is_none());
             snapshot.seed_tick(21);
             let next = hazard_want(&mut step, &snapshot, hp, PoisonState::Clear, hazard, 21);
-            assert_eq!(matches!(next, SurvivalWant::Need(SurvivalNeed::Food { count: 1, .. })), parks);
+            assert_eq!(
+                matches!(
+                    next,
+                    SurvivalWant::Need(SurvivalNeed::Food { count: 1, .. })
+                ),
+                parks
+            );
             if !parks {
                 assert!(matches!(next, SurvivalWant::Nothing));
                 assert_eq!(step.report().decision, Decision::None);
@@ -1203,8 +1278,24 @@ mod tests {
         for (hp, bites) in [(19, true), (21, false)] {
             let mut snapshot = hazard_frame(vec![lobster()], hp, 20);
             seed_hazard_hit(&mut snapshot, 3);
-            let outcome = hazard_want(&mut SurvivalStep::default(), &snapshot, hp, PoisonState::Clear, None, 20);
-            assert_eq!(matches!(outcome, SurvivalWant::Click(OneOpArgs { kind: OneOpKind::Eat { .. }, .. })), bites);
+            let outcome = hazard_want(
+                &mut SurvivalStep::default(),
+                &snapshot,
+                hp,
+                PoisonState::Clear,
+                None,
+                20,
+            );
+            assert_eq!(
+                matches!(
+                    outcome,
+                    SurvivalWant::Click(OneOpArgs {
+                        kind: OneOpKind::Eat { .. },
+                        ..
+                    })
+                ),
+                bites
+            );
             if !bites {
                 assert!(matches!(outcome, SurvivalWant::Nothing));
             }
@@ -1216,8 +1307,19 @@ mod tests {
         let id = dose_id();
         let mut snapshot = hazard_frame(vec![held(id, "Antipoison"), lobster()], 7, 20);
         let mut step = SurvivalStep::default();
-        let poison = PoisonState::Poisoned { per_tick: 6, last_mark: 20, hit_since_mark: false };
-        let SurvivalWant::Click(drink) = hazard_want(&mut step, &snapshot, 7, poison, Some(hazard_constant(3)), 20) else {
+        let poison = PoisonState::Poisoned {
+            per_tick: 6,
+            last_mark: 20,
+            hit_since_mark: false,
+        };
+        let SurvivalWant::Click(drink) = hazard_want(
+            &mut step,
+            &snapshot,
+            7,
+            poison,
+            Some(hazard_constant(3)),
+            20,
+        ) else {
             panic!("the held cure precedes the bite");
         };
         assert!(matches!(drink.kind, OneOpKind::Drink { .. }));
@@ -1225,12 +1327,40 @@ mod tests {
         snapshot.seed_inventory(vec![lobster()], 28);
         snapshot.seed_tick(21);
         let mut ledger = None;
-        with_tick(&snapshot, &mut ledger, 21, |native| step.record_settled(true, &native.cx));
+        with_tick(&snapshot, &mut ledger, 21, |native| {
+            step.record_settled(true, &native.cx)
+        });
         for tick in 21..=22 {
             snapshot.seed_tick(tick);
-            assert!(matches!(hazard_want(&mut step, &snapshot, 7, PoisonState::Clear, Some(hazard_constant(3)), tick), SurvivalWant::Hold), "tick {tick}");
+            assert!(
+                matches!(
+                    hazard_want(
+                        &mut step,
+                        &snapshot,
+                        7,
+                        PoisonState::Clear,
+                        Some(hazard_constant(3)),
+                        tick
+                    ),
+                    SurvivalWant::Hold
+                ),
+                "tick {tick}"
+            );
         }
         snapshot.seed_tick(23);
-        assert!(matches!(hazard_want(&mut step, &snapshot, 7, PoisonState::Clear, Some(hazard_constant(3)), 23), SurvivalWant::Click(OneOpArgs { kind: OneOpKind::Eat { .. }, .. })));
+        assert!(matches!(
+            hazard_want(
+                &mut step,
+                &snapshot,
+                7,
+                PoisonState::Clear,
+                Some(hazard_constant(3)),
+                23
+            ),
+            SurvivalWant::Click(OneOpArgs {
+                kind: OneOpKind::Eat { .. },
+                ..
+            })
+        ));
     }
 }
