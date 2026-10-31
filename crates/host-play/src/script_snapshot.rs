@@ -261,6 +261,7 @@ pub(crate) fn with_script_snapshot_input<R>(
         None,
         None,
         0,
+        None,
         f,
     )
 }
@@ -297,6 +298,7 @@ pub(crate) fn with_script_snapshot_input_shorts<R>(
     precomputed_reach: Option<&api::query::ReachQueryView>,
     precomputed_flood: Option<&api::query::ReachFlood>,
     reach_stamp: u64,
+    guardian_active_event: Option<&str>,
 
     f: impl FnOnce(
         &script::native::snapshot_source::SnapshotInput<'_>,
@@ -1671,6 +1673,7 @@ pub(crate) fn with_script_snapshot_input_shorts<R>(
         seat_page: None,
         client_adapter,
         projectiles: snapshot.map(|snapshot| snapshot.projectiles()),
+        guardian_active_event,
     };
     f(&input, native)
 }

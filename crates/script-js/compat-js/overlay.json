@@ -28,15 +28,15 @@
     "module": "api/bot/Bot.js",
     "selector": "AbstractBot",
     "reason": "AbstractBot aliases the concrete prelude LoopingBot with settings views, default lifecycle hooks, posted recovery tiles and string subscriptions. Posted event payloads match EventMap except absent chat usernames are undefined; settings tile fallbacks are returned unchanged.",
-    "runtime": "crates/script-js/src/shim/bot.js:8",
-    "declaration": "export interface SettingsView { str(name: string, fallback?: string): string; num(name: string, fallback?: number): number; bool(name: string, fallback?: boolean): boolean; tile(name: string, fallback?: undefined): import('../../geometry/Tile.js').default | null; tile<F extends import('../../adapter/ClientAdapter.js').WorldTile | null>(name: string, fallback: F): import('../../geometry/Tile.js').default | F; list(name: string, fallback?: string[]): string[] }\nexport interface PostedEventMap extends Omit<import('../events/EventBus.js').EventMap, 'chat.message'> { 'chat.message': Omit<import('../events/EventBus.js').EventMap['chat.message'], 'username'> & { username: string | undefined }; }\nexport class AbstractBot { loopDelay: number; loopCadence: LoopCadence | null; onStart(): void | Promise<void>; onStop(): void | Promise<void>; onPause(): void; onResume(): void; onPaint(ctx?: CanvasRenderingContext2D): void; loop(): number | void | Promise<number | void>; recoveryAnchor(): import('../../adapter/ClientAdapter.js').WorldTile | null; grindTargets(): string[]; ignoredRandoms(): string[]; on<K extends keyof PostedEventMap>(event: K, cb: (payload: PostedEventMap[K]) => unknown): void; on(event: string, cb: (payload: unknown) => unknown): void; log(message: string): void; get settings(): SettingsView; get delegated(): boolean; requestFinish(reason: string): void; bindFinish(sink: (reason: string) => void): void; }"
+    "runtime": "crates/script-js/src/shim/bot.js:7",
+    "declaration": "export interface SettingsView { str(name: string, fallback?: string): string; num(name: string, fallback?: number): number; bool(name: string, fallback?: boolean): boolean; tile(name: string, fallback?: undefined): import('../../geometry/Tile.js').default | null; tile<F extends import('../../adapter/ClientAdapter.js').WorldTile | null>(name: string, fallback: F): import('../../geometry/Tile.js').default | F; list(name: string, fallback?: string[]): string[] }\nexport interface PostedEventMap extends Omit<import('../events/EventBus.js').EventMap, 'chat.message'> { 'chat.message': Omit<import('../events/EventBus.js').EventMap['chat.message'], 'username'> & { username: string | undefined }; }\nexport class AbstractBot { loopDelay: number; loopCadence: LoopCadence | null; onStart(): void | Promise<void>; onStop(): void | Promise<void>; onPause(): void; onResume(): void; onPaint(ctx?: CanvasRenderingContext2D): void; loop(): number | void | Promise<number | void>; recoveryAnchor(): import('../../adapter/ClientAdapter.js').WorldTile | null; grindTargets(): string[]; ignoredRandoms(): string[]; on<K extends keyof PostedEventMap>(event: K, cb: (payload: PostedEventMap[K]) => unknown): void; on(event: string, cb: (payload: unknown) => unknown): void; log(message: string): void; get settings(): SettingsView; get delegated(): boolean; requestFinish(reason: string): void; bindFinish(sink: (reason: string) => void): void; bindLog(sink: unknown): void; disposeSubscriptions(): void; subscriptions: Array<() => boolean>; }"
   },
   {
     "id": "prelude-looping-concrete",
     "module": "api/bot/Bot.js",
     "selector": "LoopingBot",
     "reason": "Prelude loop is a concrete synchronous no-op and subclasses can return synchronous values or promises, as frozen types already admit.",
-    "runtime": "crates/script-js/src/shim/bot.js:5",
+    "runtime": "crates/script-js/src/shim/bot.js:4",
     "declaration": "export class LoopingBot extends AbstractBot { loop(): number | void | Promise<number | void>; }"
   },
   {
@@ -84,24 +84,25 @@
     "module": "api/bot/Bot.js",
     "selector": "TaskBot",
     "reason": "The prelude's existing task loop publishes the validated task label while it executes and clears it after the turn.",
-    "runtime": "crates/script-js/src/shim/modules.rs:201",
+    "runtime": "crates/script-js/src/shim/modules.rs:206",
     "declaration": "export class TaskBot extends LoopingBot { activeTaskName: string | null; constructor(); add(...tasks: Task[]): void; loop(): Promise<number | void>; }"
   },
   {
     "id": "prelude-treebot",
     "module": "api/bot/Bot.js",
     "selector": "TreeBot",
-    "reason": "Prelude TreeBot inherits LoopingBot.loop unchanged; its concrete root throws unless overridden.",
-    "runtime": "crates/script-js/src/shim/modules.rs:222",
-    "declaration": "export class TreeBot extends LoopingBot { root(): TreeNode; }"
+    "preserveMembers": true,
+    "reason": "Native TreeBot.loop traverses BranchTask decisions and awaits the selected LeafTask. Subclasses implement abstract root.",
+    "runtime": "crates/script-js/src/runtime/bindings/tree_bot.rs:30",
+    "declaration": "export abstract class TreeBot extends LoopingBot { lastSceneWaitLogAt: number; abstract root(): TreeNode; }"
   },
   {
     "id": "runtime-bot-host-refusal",
     "module": "runtime/BotHost.js",
     "selector": "$module",
-    "reason": "The host keeps its two BotHost snapshot members and exposes BotHostImpl only as a named constructor refusal.",
-    "runtime": "crates/script-js/src/shim/bot_host.js:36",
-    "declaration": "export const BotHost: { tickCount: number; addTickListener(cb: () => void): () => boolean; };\nexport class BotHostImpl { constructor(); }"
+    "reason": "BotHost exposes its tick count and tick/frame listeners. BotHostImpl remains a named constructor refusal.",
+    "runtime": "crates/script-js/src/shim/bot_host.js:15",
+    "declaration": "export const BotHost: { tickCount: number; addTickListener(cb: () => void): () => boolean; addFrameListener(cb: () => void): () => boolean; };\nexport class BotHostImpl { constructor(); }"
   },
   {
     "id": "paint-frame-public-api",
@@ -242,70 +243,6 @@
     "declaration": "export const PROVISION_BANK: never;"
   },
   {
-    "id": "not-impl-value:runtime/Settings.js:GLOBAL_SETTINGS_CORE",
-    "module": "runtime/Settings.js",
-    "selector": "GLOBAL_SETTINGS_CORE",
-    "reason": "The settings schema has no native settings-state implementation.",
-    "runtime": "crates/script-js/src/shim/settings.js:81",
-    "declaration": "export const GLOBAL_SETTINGS_CORE: never;"
-  },
-  {
-    "id": "not-impl-value:runtime/Settings.js:NAV_SETTINGS",
-    "module": "runtime/Settings.js",
-    "selector": "NAV_SETTINGS",
-    "reason": "The navigation settings schema has no native settings-state implementation.",
-    "runtime": "crates/script-js/src/shim/settings.js:82",
-    "declaration": "export const NAV_SETTINGS: never;"
-  },
-  {
-    "id": "not-impl-value:runtime/Settings.js:GLOBAL_SETTINGS",
-    "module": "runtime/Settings.js",
-    "selector": "GLOBAL_SETTINGS",
-    "reason": "The settings schema has no native settings-state implementation.",
-    "runtime": "crates/script-js/src/shim/settings.js:83",
-    "declaration": "export const GLOBAL_SETTINGS: never;"
-  },
-  {
-    "id": "not-impl-value:runtime/Settings.js:MAP_PICKER_SETTINGS_NS",
-    "module": "runtime/Settings.js",
-    "selector": "MAP_PICKER_SETTINGS_NS",
-    "reason": "The map-picker settings namespace has no native storage implementation.",
-    "runtime": "crates/script-js/src/shim/settings.js:84",
-    "declaration": "export const MAP_PICKER_SETTINGS_NS: never;"
-  },
-  {
-    "id": "not-impl-value:runtime/Settings.js:MAP_PICKER_SETTINGS",
-    "module": "runtime/Settings.js",
-    "selector": "MAP_PICKER_SETTINGS",
-    "reason": "The map-picker settings schema has no native settings-state implementation.",
-    "runtime": "crates/script-js/src/shim/settings.js:85",
-    "declaration": "export const MAP_PICKER_SETTINGS: never;"
-  },
-  {
-    "id": "not-impl-value:runtime/Settings.js:LOADOUT_SETTINGS_NS",
-    "module": "runtime/Settings.js",
-    "selector": "LOADOUT_SETTINGS_NS",
-    "reason": "The loadout settings namespace has no native storage implementation.",
-    "runtime": "crates/script-js/src/shim/settings.js:86",
-    "declaration": "export const LOADOUT_SETTINGS_NS: never;"
-  },
-  {
-    "id": "not-impl-value:runtime/Settings.js:LOADOUT_SETTINGS",
-    "module": "runtime/Settings.js",
-    "selector": "LOADOUT_SETTINGS",
-    "reason": "The loadout settings schema has no native settings-state implementation.",
-    "runtime": "crates/script-js/src/shim/settings.js:87",
-    "declaration": "export const LOADOUT_SETTINGS: never;"
-  },
-  {
-    "id": "not-impl-value:runtime/Settings.js:PRICE_BOOK_SETTINGS_NS",
-    "module": "runtime/Settings.js",
-    "selector": "PRICE_BOOK_SETTINGS_NS",
-    "reason": "The price-book settings namespace has no native storage implementation.",
-    "runtime": "crates/script-js/src/shim/settings.js:88",
-    "declaration": "export const PRICE_BOOK_SETTINGS_NS: never;"
-  },
-  {
     "id": "client-skill-catalog",
     "module": "client/shell/Skill.js",
     "selector": "$module",
@@ -322,19 +259,53 @@
     "declaration": "export function resolveWorldNumber(host: string, params: URLSearchParams): 1 | 2 | 3;"
   },
   {
-    "id": "not-impl-value:runtime/Settings.js:PRICE_BOOK_SETTINGS",
-    "module": "runtime/Settings.js",
-    "selector": "PRICE_BOOK_SETTINGS",
-    "reason": "The price-book settings schema has no native settings-state implementation.",
-    "runtime": "crates/script-js/src/shim/settings.js:89",
-    "declaration": "export const PRICE_BOOK_SETTINGS: never;"
-  },
-  {
     "id": "bank-withdraw-load-numeric-id",
     "module": "api/bank/Bank.js",
     "selector": "Bank.withdrawLoad",
     "reason": "rs2b0t 90a69240 accepts a numeric item ID; the host adapter forwards the ID to the bank seat.",
     "runtime": "crates/script-js/src/shim/bank.js:165",
     "declaration": "/** Fill the pack: Withdraw-All when present, otherwise Withdraw-X for free slots. */\nwithdrawLoad(name: string | number): Promise<boolean>;"
+  },
+  {
+    "id": "bot-manifest-module",
+    "module": "runtime/defineBot.js",
+    "selector": "$module",
+    "reason": "The host facade validates and marks manifests; this module publishes its ScriptMeta-based input and branded manifest types.",
+    "runtime": "crates/script-js/src/shim/define_bot.js:2",
+    "declaration": "import type { ScriptMeta } from './ScriptRegistry.js';\nexport interface BotManifestInput extends ScriptMeta {}\nexport interface BotManifest extends BotManifestInput { __rs2b0tManifest: 1; }\nexport function defineBot<T extends { name: string; create: () => unknown }>(manifest: T): T;\nexport function isBotManifest(value: unknown): value is BotManifest;"
+  },
+  {
+    "id": "execution-script-aborted",
+    "module": "api/execution/Execution.js",
+    "selector": "$add",
+    "reason": "ScriptAborted marks host script cancellation and lets scripts identify a caught stop error.",
+    "runtime": "crates/script-js/src/shim/execution.js:12",
+    "declaration": "export class ScriptAborted extends Error { constructor(); }"
+  },
+  {
+    "id": "abstract-branch-task-contract",
+    "module": "api/bot/Bot.js",
+    "selector": "BranchTask",
+    "preserveMembers": true,
+    "reason": "Native BranchTask bases intentionally omit abstract hooks; retain their published subclass contract.",
+    "runtime": "crates/script-js/src/shim/bot.js:9",
+    "declaration": "export abstract class BranchTask { abstract validate(): boolean; abstract success(): TreeNode; abstract failure(): TreeNode; }"
+  },
+  {
+    "id": "abstract-leaf-task-contract",
+    "module": "api/bot/Bot.js",
+    "selector": "LeafTask",
+    "preserveMembers": true,
+    "reason": "Native LeafTask bases intentionally omit abstract hooks; retain their published subclass contract.",
+    "runtime": "crates/script-js/src/shim/bot.js:12",
+    "declaration": "export abstract class LeafTask { abstract execute(): void | Promise<void>; }"
+  },
+  {
+    "id": "runtime-script-registry-register-script",
+    "module": "runtime/ScriptRegistry.js",
+    "selector": "$add",
+    "reason": "The runtime registry shim exposes the upstream manifest registration helper at this module path.",
+    "runtime": "crates/script-js/src/shim/script_registry.js:17",
+    "declaration": "import type { BotManifestInput } from './defineBot.js';\nexport function registerScript(manifest: BotManifestInput, origin?: string): ScriptMeta;"
   }
 ]

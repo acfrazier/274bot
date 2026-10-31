@@ -27,8 +27,9 @@ use crate::ctx::ScriptCtx;
 use crate::native::recovery_hints::RecoveryHintsCell;
 use crate::native::seat_rows::{DecodedSeatBatch, SeatStartArgs};
 use crate::surface::{
-    PostedSnapshotFacts, SurfaceError, SurfaceFactory, SurfaceFamily, SurfaceKind, SurfaceReady,
-    SurfaceRun, SurfaceStart,
+    PostedSnapshotFacts, RuntimeControlRequest, RuntimeRunState, ScriptRuntimeContext,
+    SurfaceError, SurfaceFactory, SurfaceFamily, SurfaceKind, SurfaceReady, SurfaceRun,
+    SurfaceStart,
 };
 use crate::watchdog::{ProgressWatchdog, Tile as WatchdogTile, WatchdogAction};
 use api::native_input::NativeInputAuthority;
@@ -571,7 +572,8 @@ pub struct SlotScript {
     /// Bumped on each successful Start and watchdog isolate replacement.
     runtime_generation: u64,
     last_settings_fp: Option<String>,
-    native_input: Arc<NativeInputAuthority>,
+    /// Isolate-facing projection for the current Load run; replaced at spawn.
+    runtime_context: Arc<ScriptRuntimeContext>,
     /// Recovery hints retained across surface run restarts.
     recovery_hints: Arc<RecoveryHintsCell>,
 }
@@ -672,7 +674,7 @@ impl SlotScript {
             source_identity: None,
             runtime_generation: 0,
             last_settings_fp: None,
-            native_input: NativeInputAuthority::new(),
+            runtime_context: Arc::new(ScriptRuntimeContext::new(0)),
             recovery_hints: Arc::new(RecoveryHintsCell::new()),
         }
     }
@@ -1139,6 +1141,33 @@ impl SlotScript {
         }
     }
 
+    fn sync_runtime_state(&self) {
+        let state = match self.state {
+            RunState::Idle => match self.lifecycle_receipt.as_ref().map(|receipt| receipt.state) {
+                Some(ScriptTerminalState::Failed) => RuntimeRunState::Crashed,
+                Some(
+                    ScriptTerminalState::Stopped
+                    | ScriptTerminalState::Completed
+                    | ScriptTerminalState::Cancelled,
+                ) => RuntimeRunState::Stopped,
+                None => {
+                    let current = self.runtime_context.state();
+                    if current.aborted() {
+                        current
+                    } else {
+                        RuntimeRunState::Idle
+                    }
+                }
+            },
+            RunState::Starting | RunState::Running => RuntimeRunState::Running,
+            RunState::Paused if !self.want_run => RuntimeRunState::Paused,
+            RunState::Paused => RuntimeRunState::Running,
+            RunState::Stopping => RuntimeRunState::Stopping,
+            RunState::Error => RuntimeRunState::Crashed,
+        };
+        self.runtime_context.set_state(state);
+    }
+
     /// Spawn the surface and enter Starting. A queued Start already moved
     /// the runtime generation, so its respawn does not bump it again.
     fn spawn_surface(&mut self, start: SurfaceStart, bump: bool) -> Result<(), StartLoadError> {
@@ -1156,7 +1185,21 @@ impl SlotScript {
         let factory = self.factories[kind.index()]
             .as_ref()
             .ok_or(SurfaceError::NoFactory(kind))?;
-        let run = factory.spawn(&start, execution, Arc::clone(&self.recovery_hints))?;
+        let native_input = Arc::clone(self.runtime_context.native_input());
+        let runtime_context = Arc::new(ScriptRuntimeContext::with_native_input(
+            run_generation,
+            native_input,
+        ));
+        runtime_context.set_source_identity(self.source_identity.clone());
+        let mut run = factory.spawn_with_state(
+            &start,
+            execution,
+            Arc::clone(&self.recovery_hints),
+            self.local_state.clone(),
+        )?;
+        runtime_context.set_state(RuntimeRunState::Running);
+        run.bind_runtime_context(Arc::clone(&runtime_context));
+        self.runtime_context = runtime_context;
         self.surface = Some(run);
         self.surface_ready = false;
         self.surface_start = Some(start);
@@ -1165,6 +1208,7 @@ impl SlotScript {
         self.last_error = None;
         self.active_tick_error_generation = None;
         self.lifecycle_receipt = None;
+        self.runtime_context.set_stop_reason(None);
         self.ticks = 0;
         self.state = RunState::Starting;
         if bump {
@@ -1186,6 +1230,7 @@ impl SlotScript {
         self.surface_ready = false;
         self.setup_generation_base = None;
         self.state = RunState::Stopping;
+        self.sync_runtime_state();
         self.after_stop = after.clone();
         if matches!(after, AfterStop::Idle) {
             self.surface_start = None;
@@ -1222,6 +1267,7 @@ impl SlotScript {
         self.source_identity = None;
         self.runtime_generation = self.runtime_generation.wrapping_add(1);
         self.last_settings_fp = None;
+        self.runtime_context.set_state(RuntimeRunState::Stopped);
     }
 
     /// Resolve Start/Stop without blocking. The slot thread and UI pump
@@ -1237,7 +1283,7 @@ impl SlotScript {
                         if self.state == RunState::Starting {
                             if self.want_run {
                                 self.state = RunState::Running;
-                                self.native_input.publish_live();
+                                self.runtime_context.native_input().publish_live();
                             } else {
                                 isolate.pause();
                                 self.state = RunState::Paused;
@@ -1269,6 +1315,7 @@ impl SlotScript {
                 }
             }
         }
+        self.sync_runtime_state();
         let script_cut = self
             .surface
             .as_ref()
@@ -1330,6 +1377,7 @@ impl SlotScript {
         self.last_error = Some(error);
         self.want_run = false;
         self.state = RunState::Error;
+        self.sync_runtime_state();
         self.runtime_generation = self.runtime_generation.wrapping_add(1);
         self.last_settings_fp = None;
     }
@@ -1348,6 +1396,7 @@ impl SlotScript {
                 self.watchdog.cancel_clear();
                 self.want_run = false;
                 self.state = RunState::Idle;
+                self.runtime_context.set_state(RuntimeRunState::Stopped);
             }
             AfterStop::Fail(e) => self.fail_setup(e),
             AfterStop::CutLimit(error) => self.finish_cut_limit(error),
@@ -1369,6 +1418,7 @@ impl SlotScript {
                 None => self.fail_setup("start: no retained identity".into()),
             },
         }
+        self.sync_runtime_state();
     }
 
     /// A setup that never reached Ready: no runtime ran, so the slot goes
@@ -1387,6 +1437,7 @@ impl SlotScript {
         self.last_settings_fp = None;
         self.want_run = false;
         self.state = RunState::Idle;
+        self.runtime_context.set_state(RuntimeRunState::Idle);
         self.settle_start(StartOutcome::Failed(e));
     }
 
@@ -1419,6 +1470,7 @@ impl SlotScript {
                 let _ = self.watchdog.set_frozen(true, Instant::now());
             }
             self.state = RunState::Paused;
+            self.sync_runtime_state();
         }
     }
 
@@ -1456,7 +1508,21 @@ impl SlotScript {
             } else {
                 RunState::Running
             };
-            self.native_input.resume();
+            self.runtime_context.native_input().resume();
+        }
+        self.sync_runtime_state();
+    }
+    /// Deliver one client-loop frame to a live surface. This is independent
+    /// of game ticks and remains gated by the slot-owned lifecycle.
+    pub fn on_client_frame(&mut self) {
+        if !matches!(
+            self.state,
+            RunState::Starting | RunState::Running | RunState::Paused
+        ) {
+            return;
+        }
+        if let Some(surface) = self.surface.as_deref_mut() {
+            surface.on_client_frame();
         }
     }
 
@@ -1577,7 +1643,7 @@ impl SlotScript {
         if !up {
             self.evidence_wait_run = None;
             self.native_runtime.clear_note_progress();
-            self.native_input.sync_live(false);
+            self.runtime_context.native_input().sync_live(false);
 
             self.discard_mouse_interacts();
             if self.pending_withdraw_x.is_some() {
@@ -1599,6 +1665,7 @@ impl SlotScript {
         } else {
             RunState::Paused
         };
+        self.sync_runtime_state();
     }
 
     /// Re-gate a started script and invalidate deferred actions and snapshot
@@ -1786,6 +1853,8 @@ impl SlotScript {
 
     pub fn attach_source_identity(&mut self, key: impl Into<String>) {
         self.source_identity = Some(key.into());
+        self.runtime_context
+            .set_source_identity(self.source_identity.clone());
     }
 
     pub fn source_identity(&self) -> Option<&str> {
@@ -1797,7 +1866,7 @@ impl SlotScript {
     }
 
     pub fn native_input(&self) -> Arc<NativeInputAuthority> {
-        Arc::clone(&self.native_input)
+        Arc::clone(self.runtime_context.native_input())
     }
 
     /// Selected-revision facts pinned by a compiled run or a live Load seat.
@@ -1851,7 +1920,15 @@ impl SlotScript {
 
     /// Share the host SlotInput authority. Call on spawn before Start.
     pub fn bind_native_input(&mut self, authority: Arc<NativeInputAuthority>) {
-        self.native_input = authority;
+        if let Err(authority) = self.runtime_context.bind_native_input(authority) {
+            if Arc::ptr_eq(self.runtime_context.native_input(), &authority) {
+                return;
+            }
+            let snapshot = self.runtime_context.snapshot();
+            self.runtime_context = Arc::new(ScriptRuntimeContext::with_snapshot_and_native_input(
+                snapshot, authority,
+            ));
+        }
     }
 
     /// Bind the server profile's world type (members or free-to-play). Call on
@@ -1866,7 +1943,7 @@ impl SlotScript {
     }
 
     fn revoke_native_input(&mut self) {
-        self.native_input.revoke();
+        self.runtime_context.native_input().revoke();
 
         self.discard_mouse_interacts();
     }
@@ -1910,7 +1987,7 @@ impl SlotScript {
 
     pub fn sync_native_input_gate(&self) {
         let live = self.dispatch_open();
-        self.native_input.sync_live(live);
+        self.runtime_context.native_input().sync_live(live);
         if !live {
             self.discard_mouse_interacts();
         }
@@ -1951,6 +2028,7 @@ impl SlotScript {
         native: crate::native::snapshot_source::NativeFactsInput<'_>,
         force_banks: bool,
     ) -> bool {
+        self.sync_runtime_state();
         let Some(surface) = self.surface.as_mut() else {
             return false;
         };
@@ -3824,7 +3902,7 @@ impl SlotScript {
                 self.stop_blocked(failure, ctx.tick);
                 return;
             }
-            let input_identity = self.native_input.lock().identity();
+            let input_identity = self.runtime_context.native_input().lock().identity();
             isolate.on_snapshot_change_at(ctx.tick, input_identity);
             self.tick_api(ctx);
             self.tick_bank(ctx);
@@ -3861,7 +3939,10 @@ impl SlotScript {
         }
 
         if let Some(isolate) = &self.surface {
-            isolate.on_game_tick_at(ctx.tick, self.native_input.lock().identity());
+            isolate.on_game_tick_at(
+                ctx.tick,
+                self.runtime_context.native_input().lock().identity(),
+            );
             if ctx.compiled.hold {
                 self.seat_held_tick();
                 return;
@@ -4243,9 +4324,15 @@ impl SlotScript {
                     tick: receipt.tick,
                     reason: receipt.reason,
                 });
+                self.runtime_context.set_stop_reason(
+                    self.lifecycle_receipt
+                        .as_ref()
+                        .map(|receipt| receipt.reason.clone()),
+                );
             }
             self.observe_lifecycle();
         }
+        self.sync_runtime_state();
         logs
     }
 

@@ -1,5 +1,7 @@
 #![cfg(feature = "test-hooks")]
 
+use api::native_input::NativeInputAuthority;
+
 use script::{
     native::recovery_hints::{HintTile, RecoveryHintsCell},
     native::snapshot_source::{
@@ -321,6 +323,19 @@ fn session_boundaries_clear_posted_facts_without_replacing_the_run() {
             .count();
         assert_eq!(calls, 1, "one run receives one session boundary");
     }
+}
+
+#[test]
+fn slot_native_input_authority_survives_run_context_replacement() {
+    let mut slot = SlotScript::new();
+    drop(slot.native_input());
+    let authority = NativeInputAuthority::new();
+    slot.bind_native_input(Arc::clone(&authority));
+    assert!(Arc::ptr_eq(&authority, &slot.native_input()));
+
+    let factory = Arc::new(StubSurfaceFactory::new());
+    start_slot(&mut slot, &factory);
+    assert!(Arc::ptr_eq(&authority, &slot.native_input()));
 }
 
 #[test]

@@ -1,5 +1,12 @@
 {
   "revision": "2de6bb2397ceb9ffd05f2354f67dde328e324531",
+  "expected_failure_notes": [
+    {
+      "file": "api/input/input.test.ts",
+      "case": " > Input > exposes every driver operation",
+      "why": "Approved cut plan-r3.md:762-776; operator scope call 2026-10-29; the test checks that driver operations exist; no catalog script or upstream Load path calls them."
+    }
+  ],
   "files": [
     {
       "file": "api/acquisition/Tools.test.ts",
@@ -1463,7 +1470,8 @@
       "cases": [
         {
           "name": " > Input > exposes every driver operation",
-          "status": "pass"
+          "status": "fail",
+          "reason": "Error: not impl: Input.useItemOnLoc"
         }
       ]
     },

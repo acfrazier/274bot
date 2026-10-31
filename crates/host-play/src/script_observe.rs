@@ -354,6 +354,7 @@ pub(crate) fn script_observe_cached(
         // The test wrappers model the guardian's hold.
         hold,
         ours,
+        None,
         canlight,
         slot_input,
         cache,
@@ -443,6 +444,7 @@ pub(crate) fn script_observe_cached_with_channels(
     hold: bool,
     guardian_hold: bool,
     ours: bool,
+    guardian_active_event: Option<&str>,
     canlight: Option<&[u64]>,
     slot_input: Option<&SlotInput>,
     cache: Option<Arc<Cache>>,
@@ -943,6 +945,7 @@ pub(crate) fn script_observe_cached_with_channels(
                     Some(packed.view.as_ref()),
                     packed.flood.as_deref(),
                     packed.stamp,
+                    Some(guardian_active_event.unwrap_or("")),
                     |input, native| {
                         post_script_snapshot(&mut slot, navs, name, walk_seq, |slot| {
                             if wake_waits {

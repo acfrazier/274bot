@@ -715,6 +715,9 @@ table Snapshot {
   // Whether the local player has a current positive type-1 hitmark. An
   // omitted delta retains the last observation.
   taking_damage: bool = null;
+  // Slot 308: the guardian-owned or currently handled event. Empty clears it;
+  // an unowned detection is never posted as active.
+  guardian_active_event: string;
 }
 
 table Collision {

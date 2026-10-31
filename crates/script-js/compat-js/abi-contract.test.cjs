@@ -162,6 +162,11 @@ test('the entity family is completely activated with both query refusal debts re
 });
 
 test('inventory root and public module declarations expose exact consumer types', () => {
+    assert.match(
+        currentIndex,
+        /export function registerScript\(manifest: import\('\*runtime\/defineBot\.js'\)\.BotManifestInput, origin\?: string\): void;/,
+        'the generated root declaration keeps registerScript tied to BotManifestInput',
+    );
     const scratch = fs.mkdtempSync(path.join(os.tmpdir(), 't2-inventory-consumer-'));
     try {
         const consumer = path.join(scratch, 'consumer.ts');
@@ -170,6 +175,7 @@ import {
     Inventory as RootInventory,
     InvItem as RootInvItem,
     Equipment as RootEquipment,
+    registerScript,
 } from '@rs2b0t/api';
 import * as RootInventoryModule from '@rs2b0t/api';
 import {
@@ -194,12 +200,16 @@ import type { Loc } from '#/bot/api/model/Loc.js';
 import type { Npc } from '#/bot/api/model/Npc.js';
 import type { Player } from '#/bot/api/model/Player.js';
 import type { GroundItem } from '#/bot/api/grounditems/GroundItems.js';
+import type { BotManifestInput } from '#/bot/runtime/defineBot.js';
 
 declare const row: InvItemSnapshot;
 declare const loc: Loc;
 declare const npc: Npc;
 declare const player: Player;
 declare const groundItem: GroundItem;
+declare const manifest: BotManifestInput;
+
+registerScript(manifest);
 
 const moduleRows: InvItemSnapshot[] = backpackSnapshots();
 const moduleCapacity: number = backpackCapacity();
@@ -556,7 +566,7 @@ test('types follow the family their ABI describes', () => {
 });
 
 test('refusal debt is unique and names each missing notImplValue export', () => {
-    assert.equal(contract.not_impl_debt.length, 134);
+    assert.equal(contract.not_impl_debt.length, 104);
     const selectors = contract.not_impl_debt.map(row => row.selector);
     assert.equal(new Set(selectors).size, selectors.length);
     for (const selector of [
@@ -564,11 +574,13 @@ test('refusal debt is unique and names each missing notImplValue export', () => 
         'BranchTask.success',
         'BranchTask.failure',
         'LeafTask.execute',
+        'events.on',
+        'events.off',
+        'registerScript',
     ]) {
-        assert.equal(selectors.filter(value => value === selector).length, 1, selector);
+        assert.equal(selectors.includes(selector), false, selector);
     }
     const newRefusals = [
-        ['runtime/Settings.js', ['GLOBAL_SETTINGS_CORE', 'NAV_SETTINGS', 'GLOBAL_SETTINGS', 'MAP_PICKER_SETTINGS_NS', 'MAP_PICKER_SETTINGS', 'LOADOUT_SETTINGS_NS', 'LOADOUT_SETTINGS', 'PRICE_BOOK_SETTINGS_NS', 'PRICE_BOOK_SETTINGS']],
         ['api/ai/quests/defs/murder/areas.js', ['ARHEIN', 'GUARD_START', 'GUARD_HANDIN', 'SALESMAN', 'SUSPECTS', 'MURDER_EVIDENCE']],
         ['api/ai/clues/data/toolAcquire.js', ['SPADE_SPAWNS', 'PROFESSOR', 'MURPHY', 'KOJO', 'KOJO_EXIT']],
         ['api/ai/quests/engine/QuestEngine.js', ['COIN_FLOAT', 'PROVISION_BANK', 'QuestEngine']],
@@ -581,8 +593,8 @@ test('refusal debt is unique and names each missing notImplValue export', () => 
             assert.ok(row.source.includes('crates/script-js/src/shim/'), `${member} names its source file`);
         }
     }
-    assert.equal(newRefusals.reduce((count, [, members]) => count + members.length, 0), 25);
-    assert.equal(collectModuleNotImplValueExports(registry, shimSources, navFamilies).length, 25);
+    assert.equal(newRefusals.reduce((count, [, members]) => count + members.length, 0), 16);
+    assert.equal(collectModuleNotImplValueExports(registry, shimSources, navFamilies).length, 16);
 });
 
 test('an unclassified source module fails closed', () => {

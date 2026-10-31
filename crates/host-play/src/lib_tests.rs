@@ -8193,6 +8193,111 @@ fn a_compiled_start_without_a_loadout_setting_refreshes_the_operator_loadouts() 
 
 #[cfg(feature = "js")]
 #[test]
+fn a_js_start_hydrates_cold_script_runtime_settings_before_first_resolve() {
+    let scratch = script::IsolatedEnv::enter("script-settings-start-readback");
+    let mut play = run_with_io(
+        &PlayOptions {
+            host: "127.0.0.1".into(),
+            transport: client::Transport::Tcp,
+            port: 43594,
+            cache_dir: "/tmp".into(),
+            lowmem: true,
+            mainland: false,
+        },
+        vec![],
+        |_| (None, None),
+        |_, _, _| {},
+    );
+    let profile = "local-289";
+    let content = "test-content";
+    let root = local_state::StateRoot::new(scratch.home.join(".274bot"));
+    std::fs::create_dir_all(root.path()).unwrap();
+    let path = root.script_runtime_settings_file(profile, "alice", 289, content);
+    std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+    let document = serde_json::json!({
+        "schema_version": 1,
+        "profile": profile,
+        "account": "alice",
+        "revision": 289,
+        "content": content,
+        "rows": [{
+            "namespace": "WalkTo",
+            "key": "destination",
+            "raw": "Varrock"
+        }]
+    });
+    vault::write_private_file(
+        &path,
+        serde_json::to_vec_pretty(&document).unwrap().as_slice(),
+    )
+    .unwrap();
+    let service = local_state::LocalStateService::open(
+        root,
+        &[
+            api::local_state::LocalStateDomain::LoadoutsReferences,
+            api::local_state::LocalStateDomain::BankHints,
+            api::local_state::LocalStateDomain::ScriptRuntimeSettings,
+        ],
+        Arc::new(api::identity::RequestIdMinter::new()),
+    );
+    let composition = Arc::new(local_state::StateComposition::new(
+        Arc::clone(&service),
+        profile,
+        api::local_state::ContentScope::try_new(client::io::ClientRevision::R289, content).unwrap(),
+    ));
+    play.local_state = Some(Arc::clone(&composition));
+    play.attach_arm("alice", SlotArm::new(7, false));
+    // Slot spawn binds the account's state capability (`play_slots.rs`);
+    // this offline Play spawns no slot, so bind it the same way here.
+    script_slot_or_insert(&play.scripts, "alice")
+        .lock()
+        .unwrap()
+        .bind_local_state(
+            composition
+                .slot_state("alice")
+                .expect("alice is a login identity"),
+        );
+
+    // The resolve runs at module evaluation, before the first tick. Read its
+    // result straight from the isolate: script log rows reach the panel only
+    // through the bot thread's observe drain, which this offline Play has not.
+    let source = r#"
+import { SettingsStore } from '../../runtime/Settings.js';
+const first = SettingsStore.resolve('WalkTo', {
+    destination: { type: 'string', default: 'Draynor' },
+});
+globalThis.__firstResolve = first.destination;
+export function tick(api) {}
+"#;
+    play.script_start_load(
+        "alice",
+        source.into(),
+        script_js::LoadShape::NativeTick,
+        None,
+        vec![],
+    )
+    .unwrap();
+    wait_script_state(&play, "alice", script::RunState::Running);
+    let first = {
+        let slot = script_slot(&play.scripts, "alice").expect("started slot exists");
+        let slot = slot.lock().unwrap();
+        slot.probe("globalThis.__firstResolve ?? null")
+            .expect("the started isolate answers a probe")
+    };
+    assert_eq!(
+        first,
+        serde_json::json!("Varrock"),
+        "the first SettingsStore.resolve did not see persisted data: state={:?}, error={:?}",
+        play.script_state("alice"),
+        play.script_last_error("alice"),
+    );
+    assert_eq!(play.script_state("alice"), script::RunState::Running);
+    play.script_stop("alice");
+    wait_script_state(&play, "alice", script::RunState::Idle);
+}
+
+#[cfg(feature = "js")]
+#[test]
 fn live_start_retains_the_card_for_a_second_start() {
     let _env = script::IsolatedEnv::enter("quester-stop-restart");
     let mut play = run_with_io(
@@ -8693,6 +8798,7 @@ fn host_internal_tutorial_probe_is_not_tracked_as_debug_reply() {
         false,
         false,
         false,
+        None,
         None,
         None,
         None,
@@ -9448,6 +9554,7 @@ fn t23_bank_observe(
             hold,
             false,
             ours,
+            None,
             None,
             None,
             None,
@@ -19382,12 +19489,14 @@ fn native_chat_producer_reaches_isolate_with_request_identity() {
     .unwrap();
     let mut snapshot = GameSnapshot::new();
     let mut fingerprint = None;
+    // The first observed chat line seeds this generation; later sequences are
+    // delivered in order, with duplicate sequences suppressed.
     for (tick, seq, kind, sender, events, requests) in [
-        (1, 11, 0, "Partner", 1, 0),
-        (2, 12, 4, "Stranger", 2, 0),
-        (3, 13, 4, "Partner", 3, 1),
-        (4, 13, 4, "Partner", 3, 1),
-        (5, 14, 4, "Partner", 4, 2),
+        (1, 11, 0, "Partner", 0, 0),
+        (2, 12, 4, "Stranger", 1, 0),
+        (3, 13, 4, "Partner", 2, 1),
+        (4, 13, 4, "Partner", 2, 1),
+        (5, 14, 4, "Partner", 3, 2),
     ] {
         c.chat_text[0] = "wishes to trade with you.".into();
         c.chat_type[0] = kind;
@@ -22451,6 +22560,7 @@ fn dirty_snapshot_pumps_compiled_without_replenishing_events() {
             None,
             None,
             None,
+            None,
             #[cfg(feature = "js")]
             None,
             #[cfg(feature = "js")]
@@ -22703,6 +22813,7 @@ impl ReconnectRig {
             hold,
             guardian,
             false,
+            None,
             None,
             None,
             None,
@@ -31138,6 +31249,7 @@ mod host_batch_tests {
                 hold,
                 hold,
                 false,
+                None,
                 None,
                 None,
                 None,

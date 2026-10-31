@@ -46,15 +46,37 @@ fn parse_index_dts_names_only_skips_types_and_internal() {
     let fun = got.iter().find(|e| e.name == "withdrawOp").unwrap();
     assert_eq!(fun.kind, DeclaredKind::Function);
 }
+fn abstract_declared_members() -> std::collections::HashSet<(String, String)> {
+    use script_js::compat_dts::CompatExport;
 
-/// Every fixture export is on `@rs2b0t/api` and every listed member is
-/// present (`in` / typeof function). Missing members that throw `not impl`
-/// from the Proxy get-trap fail this test; calling a stub is not required.
+    let authored =
+        script_js::compat_dts::load_authored_dts().expect("generated compat declarations");
+    let mut abstract_members = std::collections::HashSet::new();
+    for module in authored.modules {
+        for export in module.exports {
+            let CompatExport::Class { name, members, .. } = export else {
+                continue;
+            };
+            for member in members {
+                if member.is_abstract {
+                    abstract_members.insert((name.clone(), member.name));
+                }
+            }
+        }
+    }
+    abstract_members
+}
+
+/// Every fixture export is on `@rs2b0t/api` and every concrete member is
+/// loadable. Abstract subclass hooks are type-only on their base classes.
+/// Missing members that throw `not impl` from the Proxy get trap fail here.
+/// Calling a stub is not required.
 #[test]
 fn declared_abi_members_are_loadable() {
     use script_js::{LoadIsolate, LoadShape};
 
     let fixture = load_fixture().expect("js_declared_abi.json");
+    let abstract_members = abstract_declared_members();
     let mut body = String::from(
         r#"
 import * as api from '@rs2b0t/api';
@@ -110,6 +132,9 @@ export default class T extends LoopingBot {
             }
             DeclaredKind::Object | DeclaredKind::Class => {
                 for m in &exp.members {
+                    if abstract_members.contains(&(name.to_owned(), m.to_owned())) {
+                        continue;
+                    }
                     body.push_str(&format!("        checkMember({name:?}, _{name}, {m:?});\n"));
                 }
             }
@@ -667,6 +692,9 @@ fn t2_1_abi_contract_covers_exports_families_and_visible_debt() {
         .as_array()
         .expect("compatibility name maps")
     {
+        if row["mapping_kind"] == "type-re-export" {
+            continue;
+        }
         let name = row["public_name"].as_str().expect("public name");
         assert!(
             export_names.insert(name),

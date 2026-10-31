@@ -3082,10 +3082,112 @@ export function tick() {{}}
             &[],
             None,
             std::sync::Arc::new(api::named_banks::NamedBankFacts::empty()),
+            None,
+            std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0)),
         )
     })
     .unwrap();
     runtime
+}
+fn script_activity_runtime() -> Runtime {
+    crate::platform::bootstrap_test_v8_platform();
+    let mut runtime = Runtime::new(RuntimeOptions::default()).unwrap();
+    super::super::lineage_v8::install(&mut runtime, false).unwrap();
+    let source = r#"
+import { ScriptActivity } from '../../runtime/ScriptActivity.js';
+import { ScriptRunner } from '../../runtime/ScriptRunner.js';
+import { Scheduler } from '../../runtime/Scheduler.js';
+
+globalThis.__checkRuntimeShapes = () => {
+    const hasFast = new Function('value', 'return %HasFastProperties(value)');
+    const activity = new ScriptActivity(() => {});
+    const context = ScriptRunner.ctx;
+    const active = Scheduler.active;
+    const keys = Object.keys(context);
+    const descriptors = Object.getOwnPropertyDescriptors(context);
+    return {
+        activityFast: hasFast(activity),
+        contextFast: hasFast(context),
+        sameRunView: context === active && active === Scheduler.active,
+        activityKeys: Object.keys(activity),
+        contextKeys: keys,
+        accessors: keys.slice(0, 5).every((key) => typeof descriptors[key].get === 'function')
+            && typeof descriptors.abortWaiters.value === 'function',
+    };
+};
+globalThis.__repeatRuntimeHandles = (count) => {
+    for (let index = 0; index < count; index++) {
+        globalThis.__lastActivity = new ScriptActivity(() => {});
+        globalThis.__lastContext = Scheduler.active;
+    }
+    globalThis.__lastActivity = null;
+    globalThis.__lastContext = null;
+};
+export default class RuntimeShapeProbe extends LoopingBot {}
+"#;
+    super::super::lineage_v8::enter_root(&mut runtime, |runtime| {
+        wire_runtime(
+            runtime,
+            source,
+            LoadShape::CompatClass,
+            &[],
+            None,
+            std::sync::Arc::new(api::named_banks::NamedBankFacts::empty()),
+            None,
+            std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0)),
+        )
+    })
+    .unwrap();
+    let context = std::sync::Arc::new(script::surface::ScriptRuntimeContext::new(71));
+    context.set_state(script::surface::RuntimeRunState::Running);
+    super::super::lifecycle_v8::bind_runtime_context(&mut runtime, std::sync::Arc::clone(&context))
+        .unwrap();
+    super::super::activity_v8::bind_runtime_context(&mut runtime, context).unwrap();
+    runtime
+}
+
+#[test]
+fn script_activity_context_views_and_handles_have_fast_properties() {
+    const CHILD_ENV: &str = "SCRIPT_ACTIVITY_FAST_PROPERTIES_CHILD";
+    const TEST_NAME: &str =
+        "isolate::tests::script_activity_context_views_and_handles_have_fast_properties";
+    if std::env::var_os(CHILD_ENV).is_none() {
+        run_exact_child(TEST_NAME, CHILD_ENV);
+        return;
+    }
+    rustyscript::deno_core::v8::V8::set_flags_from_string("--allow-natives-syntax");
+    let mut runtime = script_activity_runtime();
+    let facts: serde_json::Value = runtime.eval("__checkRuntimeShapes()").unwrap();
+    assert_eq!(
+        facts,
+        serde_json::json!({
+            "activityFast": true,
+            "contextFast": true,
+            "sameRunView": true,
+            "activityKeys": [],
+            "contextKeys": ["state", "aborted", "stopReason", "activeEvent", "watchdogHold", "abortWaiters"],
+            "accessors": true,
+        }),
+        "ScriptActivity handles and the generation-cached run facade retain stable V8 shapes"
+    );
+}
+
+#[test]
+fn repeated_script_activity_handles_have_bounded_post_gc_heap() {
+    let mut runtime = script_activity_runtime();
+    runtime.eval::<()>("__repeatRuntimeHandles(1000)").unwrap();
+    let baseline = collected_heap(&mut runtime).0;
+    runtime.eval::<()>("__repeatRuntimeHandles(25000)").unwrap();
+    let after = collected_heap(&mut runtime).0;
+    let growth = after.saturating_sub(baseline);
+    const LIMIT: usize = 64 * 1024;
+    println!(
+        "ScriptActivity post-GC V8 heap baseline={baseline} after={after} growth={growth} limit={LIMIT}"
+    );
+    assert!(
+        growth <= LIMIT,
+        "transient ScriptActivity/context handle reads grew post-GC V8 heap by {growth} bytes; limit {LIMIT}"
+    );
 }
 
 /// V8 used and total heap after a full collection.

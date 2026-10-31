@@ -142,6 +142,7 @@ fn preserve_members_rejects_an_unbacked_extra_member() {
         is_async: false,
         allows_non_promise: true,
         is_static: false,
+        is_abstract: false,
     });
     let drifts = drift_against_shim(&authored, &script_js::compat_dts::collect_compat_surface());
     assert!(
@@ -197,6 +198,7 @@ fn preserve_members_rejects_an_uninitialized_inventory_field() {
         is_async: false,
         allows_non_promise: true,
         is_static: false,
+        is_abstract: false,
     });
     let drifts = drift_against_shim(&authored, &script_js::compat_dts::collect_compat_surface());
     assert!(

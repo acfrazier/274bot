@@ -428,6 +428,9 @@ pub struct NativeFactsInput<'a> {
     /// Optional observation that a positive type-1 hitmark is active.
     /// `None` means this post did not observe hitmarks.
     pub taking_damage: Option<bool>,
+    /// Guardian-owned or currently handled random event. `Some("")` explicitly
+    /// clears the last event; `None` leaves this delta field omitted.
+    pub guardian_active_event: Option<&'a str>,
 }
 
 /// A terminal select-only result. Its ordinal is resolved against Start's

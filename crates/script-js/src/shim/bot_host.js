@@ -1,37 +1,23 @@
 // Posted tick only. No attach, no packet listener.
 import { snap, proxy, notImpl } from '../shim/_kernel.js';
 
-const tickListeners = new Set();
+const TICK_EVENT = '__rs2b0t_internal_tick__';
 
 function addTickListener(cb) {
-    tickListeners.add(cb);
-    return () => tickListeners.delete(cb);
+    const id = globalThis.__rs2b0t_native_event_on(TICK_EVENT, cb);
+    return () => globalThis.__rs2b0t_native_event_off(id);
 }
-
-globalThis.__rs2b0t_fire_tick_listeners = () => {
-    for (const cb of tickListeners) {
-        try {
-            cb();
-        } catch (err) {
-            try {
-                const h = globalThis.__rs2b0t_host;
-                if (h) {
-                    h.log = h.log || [];
-                    h.log.push('[rs2b0t] listener error ' + String((err && err.message) || err));
-                }
-            } catch (_) {}
-            try {
-                console.error('[rs2b0t] listener error', err);
-            } catch (_) {}
-        }
-    }
-};
+function addFrameListener(cb) {
+    const id = globalThis.__rs2b0t_native_event_on('frame', cb);
+    return () => globalThis.__rs2b0t_native_event_off(id);
+}
 
 export const BotHost = proxy('BotHost', {
     get tickCount() {
         return snap().tick ?? 0;
     },
     addTickListener,
+    addFrameListener,
 });
 export class BotHostImpl {
     constructor() {

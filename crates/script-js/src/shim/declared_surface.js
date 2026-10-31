@@ -4,6 +4,8 @@ import { notImpl, notImplValue, proxy } from '../../shim/_kernel.js';
 
 export const defineBot = globalThis.defineBot;
 
+export { registerScript } from '../../runtime/ScriptRegistry.js';
+
 export { Game } from '../../api/game/Game.js';
 export { Inventory, InvItem } from '../../api/inventory/Inventory.js';
 export { Skills } from '../../api/skills/Skills.js';
@@ -14,7 +16,7 @@ export { reader } from '../../adapter/ClientAdapter.js';
 export { DEFAULT_BOOTH_NAME, DEFAULT_BOOTH_OP, MAP_SQUARE, sameMapSquare, locationOptions, boothFields, resolveGatheringLocation } from '../../shim/gathering_locations.js';
 export { AXES, PICKAXES, TINDERBOX, HAMMER, KNIFE, CHISEL, NEEDLE, exactTool, tinderboxReq, axeReq, pickaxeReq, toolKeepNames, hasToolReq, hasAllTools, bestAxe, bestPickaxe, bestFromTiers, canWieldTool, toolAttackLevel, toolsNeedingEquip, toolRestockPlan, missingToolLabels, toolKitLabel, bankHasBetterGatherTool, bestHeldToolNames, surplusHeldToolNames } from '../../api/acquisition/Tools.js';
 export { Execution } from '../../api/execution/Execution.js';
-export { LoopingBot, TaskBot, TreeBot, AbstractBot } from '../../api/bot/Bot.js';
+export { LoopingBot, TaskBot, TreeBot, AbstractBot, BranchTask, LeafTask } from '../../api/bot/Bot.js';
 export { Special } from '../../api/combat/Special.js';
 export { ChatDialog } from '../../api/ui/dialogue/ChatDialog.js';
 export { Quests } from '../../api/ui/questlog/Quests.js';
@@ -52,21 +54,11 @@ export class AcquireTask {
 }
 export const BOB_VENDOR = notImplValue('BOB_VENDOR');
 export const BROKEN_AXE = notImplValue('BROKEN_AXE');
-export class BranchTask {
-    failure() { throw notImpl('BranchTask.failure'); }
-    success() { throw notImpl('BranchTask.success'); }
-    validate() { throw notImpl('BranchTask.validate'); }
-    constructor() {}
-}
 export const COINS = notImplValue('COINS');
 export const FORGETFUL_BANK_ODDS = notImplValue('FORGETFUL_BANK_ODDS');
 export const FORGETFUL_BANK_SETTING = notImplValue('FORGETFUL_BANK_SETTING');
 export const GERRANT_VENDOR = notImplValue('GERRANT_VENDOR');
 export const HARRY_VENDOR = notImplValue('HARRY_VENDOR');
-export class LeafTask {
-    execute() { throw notImpl('LeafTask.execute'); }
-    constructor() {}
-}
 export const NURMOF_VENDOR = notImplValue('NURMOF_VENDOR');
 export const PICKAXE_SHOP_COSTS = notImplValue('PICKAXE_SHOP_COSTS');
 export const TOOL_ACQUIRE_OPTIONS = notImplValue('TOOL_ACQUIRE_OPTIONS');
@@ -84,8 +76,8 @@ export function bestSmithableAxe() { throw notImpl('bestSmithableAxe'); }
 export function canFundPlan() { throw notImpl('canFundPlan'); }
 export function coinsToWithdraw() { throw notImpl('coinsToWithdraw'); }
 export const events = proxy('events', {
-    off() { throw notImpl('events.off'); },
-    on() { throw notImpl('events.on'); },
+    off(event, cb) { globalThis.__rs2b0t_native_event_off(event, cb); },
+    on(event, cb) { const id = globalThis.__rs2b0t_native_event_on(event, cb); return () => globalThis.__rs2b0t_native_event_off(id); },
 });
 export function hasAll() { throw notImpl('hasAll'); }
 export function held() { throw notImpl('held'); }
@@ -95,5 +87,4 @@ export function planAxeAcquire() { throw notImpl('planAxeAcquire'); }
 export function planBrokenToolRepair() { throw notImpl('planBrokenToolRepair'); }
 export function planGatherToolAcquire() { throw notImpl('planGatherToolAcquire'); }
 export function planPickaxeAcquire() { throw notImpl('planPickaxeAcquire'); }
-export function registerScript() { throw notImpl('registerScript'); }
 export function resolveDestination() { throw notImpl('resolveDestination'); }

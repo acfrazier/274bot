@@ -27,7 +27,7 @@ use rustyscript::{json_args, Runtime, RuntimeOptions};
 use std::collections::{HashMap, VecDeque};
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize};
 use std::sync::mpsc::{self, Receiver, Sender};
-use std::sync::{Mutex, OnceLock};
+use std::sync::{Arc, Mutex, OnceLock};
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
@@ -89,6 +89,8 @@ const EXECUTION_WATCHDOG_HORIZON: Duration = Duration::from_millis(600);
 const ON_STOP_DEADLINE: Duration = Duration::from_millis(50);
 /// `in_flight` tick id for a live `recoveryAnchor` eval (not a game tick).
 const RECOVERY_ANCHOR_TICK: u64 = u64::MAX;
+/// Reserved execution id for synchronous client-frame listener dispatch.
+pub(super) const FRAME_CALLBACK_TICK: u64 = u64::MAX - 1;
 /// Hard stop for yielding JS (rustyscript `RuntimeOptions.timeout`).
 const RUNTIME_TIMEOUT: Duration = Duration::from_millis(50);
 /// How long setup waits for V8 creation and startup evaluation before the
@@ -133,6 +135,8 @@ enum IsolateCmd {
         evidence_sequence: u64,
         wait_only: bool,
     },
+    /// One host-owned client main-loop frame; acknowledged after callback dispatch.
+    ClientFrame,
     /// A session boundary. `keep_work`: hold the script's work for the next
     /// logged-in session instead of ending it.
     ResetSession {
@@ -169,6 +173,8 @@ enum IsolateCmd {
     Loadouts(Vec<api::loadout::Loadout>),
     /// The slot's recovery hints, which outlive this isolate.
     RecoveryHints(std::sync::Arc<super::RecoveryHintsCell>),
+    /// The owning slot's run-fenced compatibility context.
+    RuntimeContext(Arc<script::surface::ScriptRuntimeContext>),
     Pause,
     Resume,
     /// One-shot script-local paint button, tagged with the isolate
@@ -305,6 +311,14 @@ pub struct LoadIsolate {
     /// match a later isolate that advertises the same button id. Shared
     /// with the isolate thread, which stamps the frame it forwards.
     paint_generation: std::sync::Arc<std::sync::atomic::AtomicU64>,
+    /// Number of native frame listeners in this isolate. The host frame
+    /// producer reads this before sending a synchronous client-frame command.
+    frame_interest: std::sync::Arc<AtomicUsize>,
+    /// Reused zero-capacity receipt channel: at most one client frame can
+    /// be pending while the host client thread waits for V8 dispatch. The
+    /// mutex keeps the isolate handle `Sync`; the frame path takes it with
+    /// `get_mut`, so it never locks.
+    frame_ack_rx: Mutex<Receiver<()>>,
     stopped: std::sync::atomic::AtomicBool,
     /// One bounded, non-consuming terminal receipt for ScriptRunner.stop.
     script_stop: Mutex<Option<ScriptStopReceipt>>,
@@ -407,6 +421,7 @@ enum SetupState {
 pub(crate) struct GameplayFactory;
 
 impl GameplayFactory {
+    #[cfg(test)]
     pub(crate) fn spawn_with_content(
         &self,
         js: String,
@@ -416,7 +431,37 @@ impl GameplayFactory {
         named_banks: std::sync::Arc<api::named_banks::NamedBankFacts>,
         execution: Option<api::identity::ExecutionId>,
     ) -> Result<LoadIsolate, LoadIsolateError> {
-        LoadIsolate::spawn_inner(js, shape, siblings, game_data, named_banks, execution)
+        self.spawn_with_content_and_state(
+            js,
+            shape,
+            siblings,
+            game_data,
+            named_banks,
+            execution,
+            None,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)] // the slot's per-run inputs plus its local state
+    pub(crate) fn spawn_with_content_and_state(
+        &self,
+        js: String,
+        shape: LoadShape,
+        siblings: Vec<(String, String)>,
+        game_data: Option<std::sync::Arc<api::game_data::SelectedGameData>>,
+        named_banks: std::sync::Arc<api::named_banks::NamedBankFacts>,
+        execution: Option<api::identity::ExecutionId>,
+        local_state: Option<std::sync::Arc<script::local_state::SlotState>>,
+    ) -> Result<LoadIsolate, LoadIsolateError> {
+        LoadIsolate::spawn_inner(
+            js,
+            shape,
+            siblings,
+            game_data,
+            named_banks,
+            execution,
+            local_state,
+        )
     }
 }
 
@@ -439,6 +484,7 @@ impl LoadIsolate {
             None,
             std::sync::Arc::new(api::named_banks::NamedBankFacts::empty()),
             None,
+            None,
         )
     }
 
@@ -457,6 +503,7 @@ impl LoadIsolate {
             None,
             std::sync::Arc::new(api::named_banks::NamedBankFacts::empty()),
             Some(execution),
+            None,
         )
     }
     /// Spawn with immutable selected-revision facts. The Arc is shared
@@ -475,6 +522,7 @@ impl LoadIsolate {
             Some(game_data),
             std::sync::Arc::new(api::named_banks::NamedBankFacts::empty()),
             None,
+            None,
         )
     }
 
@@ -487,7 +535,27 @@ impl LoadIsolate {
         game_data: Option<std::sync::Arc<api::game_data::SelectedGameData>>,
         named_banks: std::sync::Arc<api::named_banks::NamedBankFacts>,
     ) -> Result<Self, LoadIsolateError> {
-        Self::spawn_inner(js, shape, siblings, game_data, named_banks, None)
+        Self::spawn_inner(js, shape, siblings, game_data, named_banks, None, None)
+    }
+
+    /// Spawn a test isolate with the same slot-owned local-state capability
+    /// used by production runtime settings.
+    #[cfg(any(test, feature = "test-hooks"))]
+    pub fn spawn_with_local_state(
+        js: String,
+        shape: LoadShape,
+        siblings: Vec<(String, String)>,
+        local_state: std::sync::Arc<script::local_state::SlotState>,
+    ) -> Result<Self, LoadIsolateError> {
+        Self::spawn_inner(
+            js,
+            shape,
+            siblings,
+            None,
+            std::sync::Arc::new(api::named_banks::NamedBankFacts::empty()),
+            None,
+            Some(local_state),
+        )
     }
 
     /// Queue a whole refresh on the single process ValidationSeat. The
@@ -505,6 +573,7 @@ impl LoadIsolate {
         game_data: Option<std::sync::Arc<api::game_data::SelectedGameData>>,
         named_banks: std::sync::Arc<api::named_banks::NamedBankFacts>,
         execution: Option<api::identity::ExecutionId>,
+        local_state: Option<std::sync::Arc<script::local_state::SlotState>>,
     ) -> Result<Self, LoadIsolateError> {
         super::platform::require_v8_platform()?;
         let supervisor = supervisor::get()?;
@@ -530,6 +599,9 @@ impl LoadIsolate {
             NEXT_PAINT_GENERATION.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
         ));
         let thread_paint_generation = paint_generation.clone();
+        let frame_interest = std::sync::Arc::new(AtomicUsize::new(0));
+        let thread_frame_interest = std::sync::Arc::clone(&frame_interest);
+        let (frame_ack_tx, frame_ack_rx) = mpsc::sync_channel(0);
         let queued = std::sync::Arc::new(AtomicUsize::new(0));
         let thread_queued = queued.clone();
         let walking_ownership = std::sync::Arc::new(crate::machine::WalkingOwnership::default());
@@ -557,8 +629,11 @@ impl LoadIsolate {
                     thread_compat_journal,
                     thread_paint_generation,
                     thread_teardown,
+                    thread_frame_interest,
+                    frame_ack_tx,
                     thread_proof,
                     execution,
+                    local_state,
                     #[cfg(feature = "memory-profile")]
                     thread_counters,
                 )
@@ -575,6 +650,8 @@ impl LoadIsolate {
             walking_ownership,
             compat_journal,
             paint_generation,
+            frame_interest,
+            frame_ack_rx: Mutex::new(frame_ack_rx),
             stopped: std::sync::atomic::AtomicBool::new(false),
             script_stop: Mutex::new(None),
             tx,
@@ -656,6 +733,44 @@ impl LoadIsolate {
         self.queued
             .fetch_sub(1, std::sync::atomic::Ordering::AcqRel);
         false
+    }
+    /// Deliver one host-owned client-loop frame without queueing another
+    /// frame while the isolate is still handling this one.
+    pub(crate) fn on_client_frame(&mut self) -> bool {
+        if self
+            .frame_interest
+            .load(std::sync::atomic::Ordering::Acquire)
+            == 0
+            || self.stopped.load(std::sync::atomic::Ordering::Acquire)
+            || self.teardown_blocks_dispatch()
+        {
+            return false;
+        }
+        if !self.send(IsolateCmd::ClientFrame) {
+            return false;
+        }
+        loop {
+            let receipts = self
+                .frame_ack_rx
+                .get_mut()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            match receipts.recv_timeout(Duration::from_millis(100)) {
+                Ok(()) => return true,
+                Err(mpsc::RecvTimeoutError::Disconnected) => return false,
+                Err(mpsc::RecvTimeoutError::Timeout) => {
+                    let ready = self.poll_ready() == Ready::Ready;
+                    self.interrupt_slow_execution(ready);
+                    self.pump_logs();
+                }
+            }
+        }
+    }
+
+    /// Deliver a client-loop frame through the real BotHost producer in tests.
+    #[cfg(feature = "test-hooks")]
+    #[doc(hidden)]
+    pub fn test_client_frame(&mut self) -> bool {
+        self.on_client_frame()
     }
 
     /// Post available loadouts before subsequent tick commands.
@@ -825,6 +940,8 @@ impl LoadIsolate {
         if self.fire_execution_interrupt(execution_id, teardown::ExecutionInterrupt::Watchdog) {
             let line = if tick == RECOVERY_ANCHOR_TICK {
                 format!("interrupted slow recoveryAnchor ({elapsed:?})")
+            } else if tick == FRAME_CALLBACK_TICK {
+                format!("interrupted slow client-frame callback ({elapsed:?})")
             } else {
                 format!("interrupted slow tick {tick} ({elapsed:?})")
             };
@@ -908,6 +1025,11 @@ impl LoadIsolate {
             "last_completed_tick":self.last_completed.load(Relaxed),
             "paint":self.paint.lock().unwrap().as_ref().map(|p|serde_json::json!({"title":p.title,"lines":p.lines})),
             "in_flight":self.in_flight.lock().unwrap().as_ref().map(|(_,tick,t)|(*tick,t.elapsed().as_millis()))})
+    }
+
+    /// Bind the slot-owned lifecycle and activity projection to this isolate.
+    pub fn bind_runtime_context(&self, context: Arc<script::surface::ScriptRuntimeContext>) {
+        self.send(IsolateCmd::RuntimeContext(context));
     }
 
     /// Park future tick dispatch. Pause intent shares the execution lock with

@@ -1,5 +1,4 @@
 // Settings types + SettingsStore stub for gold script eval (host bag is separate).
-import { notImpl, notImplValue } from '../shim/_kernel.js';
 import { tileFromPosted } from '../geometry/Tile.js';
 
 export class SettingsBag {
@@ -33,13 +32,12 @@ export class SettingsBag {
 }
 
 class SettingsStoreImpl {
-    resolve(_name, schema) {
-        const bag = (globalThis.__rs2b0t_host || {}).settingsBag || {};
-        const out = {};
-        for (const key of Object.keys(schema || {})) {
-            out[key] = Object.prototype.hasOwnProperty.call(bag, key) ? bag[key] : null;
+    resolve(name, schema) {
+        const dispatch = globalThis.__rs2b0t_settings_store;
+        if (typeof dispatch !== 'function') {
+            throw new Error('SettingsStore native service is unavailable');
         }
-        return out;
+        return dispatch('resolve', name, schema);
     }
 
     displayString(_name, key, def) {
@@ -48,7 +46,29 @@ class SettingsStoreImpl {
         return settingToString(def?.default ?? '');
     }
 
-    saved(_name, key) {
+    save(name, key, rawString) {
+        const dispatch = globalThis.__rs2b0t_settings_store;
+        if (typeof dispatch !== 'function') {
+            throw new Error('SettingsStore native service is unavailable');
+        }
+        dispatch('save', name, key, rawString);
+    }
+
+    onChange(listener) {
+        const dispatch = globalThis.__rs2b0t_settings_store;
+        if (typeof dispatch !== 'function') {
+            throw new Error('SettingsStore native service is unavailable');
+        }
+        dispatch('subscribe', listener);
+        return () => dispatch('unsubscribe', listener);
+    }
+
+    saved(name, key) {
+        const dispatch = globalThis.__rs2b0t_settings_store;
+        if (typeof dispatch === 'function') {
+            const raw = dispatch('saved', name, key);
+            return raw === null ? undefined : raw;
+        }
         const bag = (globalThis.__rs2b0t_host || {}).settingsBag || {};
         return Object.prototype.hasOwnProperty.call(bag, key) ? settingToString(bag[key]) : undefined;
     }
@@ -74,17 +94,4 @@ function settingToString(value) {
 }
 
 export const SettingsStore = new SettingsStoreImpl();
-export function settingOptionLabel(def, value) {
-    throw notImpl('settingOptionLabel');
-}
-
-export const GLOBAL_SETTINGS_CORE = notImplValue('GLOBAL_SETTINGS_CORE');
-export const NAV_SETTINGS = notImplValue('NAV_SETTINGS');
-export const GLOBAL_SETTINGS = notImplValue('GLOBAL_SETTINGS');
-export const MAP_PICKER_SETTINGS_NS = notImplValue('MAP_PICKER_SETTINGS_NS');
-export const MAP_PICKER_SETTINGS = notImplValue('MAP_PICKER_SETTINGS');
-export const LOADOUT_SETTINGS_NS = notImplValue('LOADOUT_SETTINGS_NS');
-export const LOADOUT_SETTINGS = notImplValue('LOADOUT_SETTINGS');
-export const PRICE_BOOK_SETTINGS_NS = notImplValue('PRICE_BOOK_SETTINGS_NS');
-export const PRICE_BOOK_SETTINGS = notImplValue('PRICE_BOOK_SETTINGS');
 

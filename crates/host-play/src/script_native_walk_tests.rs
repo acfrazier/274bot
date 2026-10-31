@@ -6610,6 +6610,7 @@ fn observe_full(rig: &mut Rig, tick: u64) -> crate::script_runtime::ScriptObserv
         None,
         None,
         None,
+        None,
         #[cfg(feature = "js")]
         None,
         #[cfg(feature = "js")]

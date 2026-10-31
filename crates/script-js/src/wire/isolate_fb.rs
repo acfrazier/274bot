@@ -563,6 +563,7 @@ impl<'a> Snapshot<'a> {
         has_chat_page_fingerprint => VT_CHAT_PAGE_FINGERPRINT,
         has_side_modal_id => VT_SIDE_MODAL_ID,
         has_local_player_motion => VT_LOCAL_PLAYER_MOTION,
+        has_guardian_active_event => VT_GUARDIAN_ACTIVE_EVENT,
     }
 
     pub fn bank_selection(&self) -> Option<BankSelectionInput> {
@@ -1144,6 +1145,8 @@ pub struct SnapshotFingerprint {
     pub side_modal_id: Option<i32>,
     seat_page: Option<SeatPageFingerprint>,
     pub taking_damage: Option<bool>,
+    /// Current guardian-owned or handled event; an empty string clears it.
+    pub guardian_active_event: Option<String>,
 }
 
 #[derive(Clone, PartialEq, Eq, Debug, Default)]
@@ -1502,6 +1505,7 @@ impl SnapshotFingerprint {
             side_modal_id: native.side_modal_id,
             seat_page: native.seat_page.map(SeatPageFingerprint::from),
             taking_damage: native.taking_damage,
+            guardian_active_event: native.guardian_active_event.map(str::to_string),
         }
     }
 }
@@ -1674,6 +1678,8 @@ pub struct DeltaMask {
     /// One bit for the seat live and retained-result pages, posted together.
     pub seat_page: bool,
     pub taking_damage: bool,
+    /// The guardian-owned or currently handled event. Empty clears it.
+    pub guardian_active_event: bool,
 }
 
 impl DeltaMask {
@@ -1779,6 +1785,7 @@ impl DeltaMask {
             side_modal_id: true,
             seat_page: true,
             taking_damage: true,
+            guardian_active_event: true,
         }
     }
 
@@ -1910,6 +1917,7 @@ impl DeltaMask {
             side_modal_id: next.side_modal_id != last.side_modal_id,
             seat_page: next.seat_page != last.seat_page,
             taking_damage: next.taking_damage != last.taking_damage,
+            guardian_active_event: next.guardian_active_event != last.guardian_active_event,
         }
     }
     /// Whether this delta carries an actual evidence change. The tick and
@@ -2009,6 +2017,7 @@ impl DeltaMask {
             || self.chat_page_fingerprint
             || self.side_modal_id
             || self.seat_page
+            || self.guardian_active_event
             || (self.banks && next.banks != last.banks)
             || (self.hold && next.hold != last.hold)
             || self.taking_damage
@@ -2434,6 +2443,13 @@ fn encode_snapshot_masked_into(
     };
     let trade_partner_off = if mask.trade_partner {
         Some(b.create_string(input.trade_partner.unwrap_or("")))
+    } else {
+        None
+    };
+    let guardian_active_event_off = if mask.guardian_active_event {
+        native
+            .guardian_active_event
+            .map(|event| b.create_string(event))
     } else {
         None
     };
@@ -3086,6 +3102,9 @@ fn encode_snapshot_masked_into(
         if let Some(taking_damage) = native.taking_damage {
             table.add_taking_damage(taking_damage);
         }
+    }
+    if let Some(off) = guardian_active_event_off {
+        table.add_guardian_active_event(off);
     }
     table.add_canvas_width(SNAPSHOT_CANVAS_W);
     table.add_canvas_height(SNAPSHOT_CANVAS_H);

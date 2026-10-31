@@ -1932,16 +1932,23 @@ export default class T extends LoopingBot {
 }
 "#;
     let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![]).unwrap();
+    // Establish the initial producer baseline before posting a new line.
+    let mut snap = base_snapshot();
+    post_snapshot_input(&iso, &snap);
+    iso.on_game_tick(1);
+    let _ = iso.probe("1 + 1");
+    assert_eq!(iso.probe("__chat.length").unwrap().as_i64(), Some(0));
+
     let lines = [script_js::wire::ChatLineInput {
         seq: 11,
         text: "wishes to trade with you.",
         type_: 4,
         username: Some("Partner"),
     }];
-    let mut snap = base_snapshot();
     snap.chat_lines = &lines;
+    snap.tick = 2;
     post_snapshot_input(&iso, &snap);
-    iso.on_game_tick(1);
+    iso.on_game_tick(2);
     let _ = iso.probe("1 + 1");
     assert_eq!(iso.probe("__chat.length").unwrap().as_i64(), Some(1));
     assert_eq!(iso.probe("__chat[0]").unwrap()["type"], 4);
@@ -1959,14 +1966,15 @@ export default class T extends LoopingBot {
         username: Some("Partner"),
     }];
     snap.chat_lines = &repeat;
-    snap.tick = 2;
+    snap.tick = 3;
     post_snapshot_input(&iso, &snap);
-    iso.on_game_tick(2);
+    iso.on_game_tick(3);
     let _ = iso.probe("1 + 1");
     assert_eq!(iso.probe("__chat.length").unwrap().as_i64(), Some(2));
 
+    snap.tick = 4;
     post_snapshot_input(&iso, &snap);
-    iso.on_game_tick(3);
+    iso.on_game_tick(4);
     let _ = iso.probe("1 + 1");
     assert_eq!(iso.probe("__chat.length").unwrap().as_i64(), Some(2));
     iso.join();
@@ -4157,7 +4165,6 @@ export default class T extends LoopingBot {
             bones: Inventory.count('Bones'),
             drag: Inventory.count('Dragon bones'),
             pending: EventSignal.pending(),
-            ignored: EventSignal.ignoredRandoms(),
             xp: Skills.xp('prayer'),
             idx: Skills.index('prayer'),
             tile: Game.tile(),
@@ -4198,11 +4205,6 @@ export default class T extends LoopingBot {
     assert_eq!(
         value["pending"], true,
         "EventSignal.pending() reads the posted flags"
-    );
-    assert_eq!(
-        value["ignored"],
-        serde_json::json!([]),
-        "no posted ignore list defaults to []"
     );
     assert_eq!(value["xp"], 1300, "Skills.xp reads the posted stats row");
     assert_eq!(
@@ -4305,59 +4307,6 @@ fn malformed_paint_record_keeps_the_ticks_logs() {
         logs.iter()
             .any(|line| line.starts_with("tick 1: paint eval: ")),
         "{logs:?}"
-    );
-    iso.join();
-}
-
-// Task 12 — `EventSignal.ignoredRandoms()` reads the bot instance (the
-// rs2b0t `setIgnoredRandoms` source): the class shape's `__rs_bot` and
-// the defineBot shape's created instance. The host reads the same list
-// through the knock path to skip act on those names.
-#[test]
-fn event_signal_ignored_randoms_reads_the_bot_instance() {
-    let src = r#"
-import { EventSignal } from '../../api/execution/EventSignal.js';
-export default class T extends LoopingBot {
-    ignoredRandoms() { return ['swarm', 'rock golem']; }
-    loop() {
-        globalThis.__probe = EventSignal.ignoredRandoms();
-    }
-}
-"#;
-    let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![]).unwrap();
-    iso.on_game_tick(1);
-    let value = iso
-        .probe("__probe")
-        .expect("instance ignore list reads back");
-    assert_eq!(
-        value,
-        serde_json::json!(["swarm", "rock golem"]),
-        "EventSignal.ignoredRandoms() is the bot instance's method"
-    );
-    iso.join();
-}
-
-#[test]
-fn event_signal_ignored_randoms_reads_a_definebot_instance() {
-    let src = r#"
-import { EventSignal } from '../../api/execution/EventSignal.js';
-export default defineBot({
-    name: 'ignorer',
-    create() {
-        return {
-            ignoredRandoms: () => ['maze'],
-            loop() { globalThis.__probe = EventSignal.ignoredRandoms(); },
-        };
-    },
-});
-"#;
-    let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatDefineBot, vec![]).unwrap();
-    iso.on_game_tick(1);
-    let value = iso.probe("__probe").expect("defineBot instance reads back");
-    assert_eq!(
-        value,
-        serde_json::json!(["maze"]),
-        "the defineBot-created instance is the ignoredRandoms source"
     );
     iso.join();
 }
@@ -8279,24 +8228,24 @@ export default class T extends TaskBot {
     iso.join();
 }
 
-// Task 12b — SettingsStore is the host bag, not schema defaults pretending to be set.
+// Task 12b — SettingsStore.saved exposes raw values, not the host display bag.
 #[test]
-fn isolate_settings_store_does_not_return_schema_defaults() {
+fn isolate_settings_store_saved_ignores_unpersisted_host_bag() {
     let src = r#"
 import { SettingsStore } from '../../runtime/Settings.js';
 export default class T extends LoopingBot {
     loop() {
-        const schema = { food: { type: 'string', default: 'Lobster' } };
-        globalThis.__probe = SettingsStore.resolve('T', schema).food;
+        globalThis.__rs2b0t_host.settingsBag = { food: 'Lobster' };
+        globalThis.__probe = SettingsStore.saved('T', 'food') ?? null;
     }
 }
 "#;
     let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![]).unwrap();
     iso.on_game_tick(1);
     let value = iso.probe("__probe").unwrap();
-    assert_ne!(
-        value, "Lobster",
-        "SettingsStore must not return schema defaults as if they were set: {value:?}"
+    assert!(
+        value.is_null(),
+        "SettingsStore.saved must omit unset values even if the host display bag contains food: {value:?}"
     );
     iso.join();
 }
