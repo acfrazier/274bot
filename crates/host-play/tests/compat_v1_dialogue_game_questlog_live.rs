@@ -1128,8 +1128,9 @@ fn run_make_one_cell() {
         "the make page closed while the action was pending"
     );
     let after_replacement = inventory_count(&fixture.lock().unwrap().snapshot, "Shortbow");
+    // The stopped click may have produced one item. Page replacement must not add another.
     assert_eq!(
-        after_replacement, 1,
+        after_replacement, after_cancel,
         "replacing the make page made no product"
     );
     assert_ne!(
