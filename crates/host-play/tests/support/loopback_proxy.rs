@@ -277,20 +277,63 @@ fn accept_loop(
     state: Arc<Mutex<ProxyState>>,
     stop: Arc<AtomicBool>,
 ) -> io::Result<()> {
-    while !stop.load(Ordering::Acquire) {
+    let mut relays = Vec::new();
+    let result = loop {
+        if stop.load(Ordering::Acquire) {
+            break Ok(());
+        }
         match listener.accept() {
             Ok((client, _)) => {
-                let server = TcpStream::connect_timeout(&upstream, CONNECT_TIMEOUT)?;
-                relay_connection(client, server, &state, &stop)?;
+                let relay_state = Arc::clone(&state);
+                let relay_stop = Arc::clone(&stop);
+                relays.push(thread::spawn(move || {
+                    let result = TcpStream::connect_timeout(&upstream, CONNECT_TIMEOUT)
+                        .and_then(|server| {
+                            relay_connection(client, server, &relay_state, &relay_stop)
+                        });
+                    if let Err(error) = result {
+                        set_error(&relay_state, error.to_string());
+                        relay_stop.store(true, Ordering::Release);
+                    }
+                }));
             }
             Err(error) if error.kind() == ErrorKind::WouldBlock => {
                 thread::sleep(POLL_PAUSE);
             }
             Err(error) if error.kind() == ErrorKind::Interrupted => {}
-            Err(error) => return Err(error),
+            Err(error) => break Err(error),
+        }
+        reap_finished_relays(&mut relays, &state, &stop);
+    };
+    if result.is_err() {
+        stop.store(true, Ordering::Release);
+    }
+    for relay in relays {
+        if relay.join().is_err() {
+            set_error(&state, "loopback proxy relay thread panicked".to_owned());
+            stop.store(true, Ordering::Release);
         }
     }
-    Ok(())
+    result
+}
+
+fn reap_finished_relays(
+    relays: &mut Vec<JoinHandle<()>>,
+    state: &Arc<Mutex<ProxyState>>,
+    stop: &AtomicBool,
+) {
+    let mut index = 0;
+    while index < relays.len() {
+        if relays[index].is_finished() {
+            let relay = relays.swap_remove(index);
+            if relay.join().is_err() {
+                set_error(state, "loopback proxy relay thread panicked".to_owned());
+                stop.store(true, Ordering::Release);
+            }
+        } else {
+            index += 1;
+        }
+    }
 }
 
 fn relay_connection(
@@ -306,14 +349,20 @@ fn relay_connection(
     let mut bytes = [0_u8; RELAY_BUFFER];
     let mut client_eof = false;
     let mut server_eof = false;
-    let mut client_write_shutdown = false;
-    let mut server_write_shutdown = false;
+    let mut game_stream = false;
+    let mut stream_kind_known = false;
     while !stop.load(Ordering::Acquire) {
         let mut activity = false;
         if !client_eof {
             match client.read(&mut bytes) {
                 Ok(0) => client_eof = true,
                 Ok(read) => {
+                    if !stream_kind_known {
+                        // JS5 opens with opcode 15; the game login stream's
+                        // first packet starts with opcode 14.
+                        game_stream = bytes[0] != 15;
+                        stream_kind_known = true;
+                    }
                     client_to_server.extend_from_slice(&bytes[..read]);
                     activity = true;
                 }
@@ -334,23 +383,9 @@ fn relay_connection(
                 Err(error) => return Err(error),
             }
         }
-        activity |= flush_upstream(&mut client_to_server, &mut server, state)?;
+        activity |= flush_upstream(&mut client_to_server, &mut server, game_stream, state)?;
         activity |= flush_downstream(&mut server_to_client, &mut client)?;
-        if client_eof && client_to_server.is_empty() && !server_write_shutdown {
-            server.shutdown(Shutdown::Write)?;
-            server_write_shutdown = true;
-            activity = true;
-        }
-        if server_eof && server_to_client.is_empty() && !client_write_shutdown {
-            client.shutdown(Shutdown::Write)?;
-            client_write_shutdown = true;
-            activity = true;
-        }
-        if client_eof
-            && server_eof
-            && client_to_server.is_empty()
-            && server_to_client.is_empty()
-        {
+        if client_eof || server_eof {
             break;
         }
         if !activity {
@@ -373,6 +408,7 @@ enum UpstreamAction {
 fn flush_upstream(
     buffer: &mut Vec<u8>,
     server: &mut TcpStream,
+    game_stream: bool,
     state: &Arc<Mutex<ProxyState>>,
 ) -> io::Result<bool> {
     let mut activity = false;
@@ -387,7 +423,7 @@ fn flush_upstream(
             if let Some(error) = &state.error {
                 return Err(io::Error::other(error.clone()));
             }
-            if state.gate.is_none() {
+            if !game_stream || state.gate.is_none() {
                 UpstreamAction::Pass
             } else if state.gate.as_ref().is_some_and(|gate| {
                 gate.active_requests.is_empty() && gate.processed_bytes >= gate.expected_bytes
