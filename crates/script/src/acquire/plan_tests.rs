@@ -747,7 +747,7 @@ fn saved_hint_block_text_reports_provenance_instead_of_this_session() {
     );
     let future = Looked {
         bank: Some(BankSeen {
-            observed_at_unix: observed_at_unix + 1,
+            observed_at_unix: u64::MAX,
             ..looked.bank.unwrap()
         }),
         ..Looked::default()
