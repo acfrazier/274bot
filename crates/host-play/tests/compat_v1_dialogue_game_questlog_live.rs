@@ -25,7 +25,7 @@ const CELL_DEADLINE: Duration = Duration::from_secs(240);
 const PREP_DEADLINE: Duration = Duration::from_secs(300);
 const POLL_INTERVAL: Duration = Duration::from_millis(50);
 // Match MakeOne's result wait when checking for late dispatches.
-const MAKE_ONE_CANCEL_WINDOW_TICKS: u64 = 10;
+const MAKE_ONE_CANCEL_WINDOW_TICKS: u32 = 10;
 
 const MAKE_SOURCE: &str = r#"
 import { ChatDialog } from '../../api/ui/dialogue/ChatDialog.js';
@@ -1479,7 +1479,7 @@ fn run_captured(test_name: &str, cell: Cell, body: fn()) {
         json!(cell.name()),
         "child receipt cell mismatch"
     );
-    let account = receipt["account"].as_str().expect("receipt account");
+    let account = receipt["account"].as_str().expect("receipt account").to_owned();
     let mut opcodes = Vec::new();
     let mut accepted_requests = 0usize;
     for line in text
@@ -1528,32 +1528,32 @@ fn run_captured(test_name: &str, cell: Cell, body: fn()) {
         let clicks = json!({
             "success": trace_if_button_sends_between(
                 &text,
-                account,
+                &account,
                 "COMPAT_MAKE_SUCCESS_START",
                 "COMPAT_MAKE_SUCCESS_END"
             ),
             "missing": trace_if_button_sends_between(
                 &text,
-                account,
+                &account,
                 "COMPAT_MAKE_MISSING_START",
                 "COMPAT_MAKE_MISSING_END"
             ),
             "cancel": trace_if_button_sends_between(
                 &text,
-                account,
+                &account,
                 "COMPAT_MAKE_CANCEL_START",
                 "COMPAT_MAKE_CANCEL_WINDOW_END"
             ),
             "replacement": trace_if_button_sends_between(
                 &text,
-                account,
+                &account,
                 "COMPAT_MAKE_REPLACEMENT_START",
                 "COMPAT_MAKE_REPLACEMENT_END"
             )
         });
         let cancel_dispatches = trace_dispatch_lines_between(
             &text,
-            account,
+            &account,
             "COMPAT_MAKE_CANCEL_STOP",
             "COMPAT_MAKE_CANCEL_WINDOW_END",
         );
