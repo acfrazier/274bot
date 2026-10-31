@@ -5945,10 +5945,17 @@ mod oracle_tests {
             ("a source modal still open", SOURCE_BOUNDS, |case| {
                 case.witness.poison_source_modal = Some(2469);
             }),
-            ("no empty vial", SOURCE_BOUNDS, |case| {
-                case.snapshot
-                    .seed_inv(vec![(199, TWISTED_CHEST_REWARD_COUNT)]);
-            }),
+            (
+                "an item gained that the cell does not explain",
+                SOURCE_BOUNDS,
+                |case| {
+                    case.snapshot.seed_inv(vec![
+                        (199, TWISTED_CHEST_REWARD_COUNT),
+                        (VIAL_EMPTY_ID, 1),
+                        (200, 1),
+                    ]);
+                },
+            ),
             ("a key left in the pack", SOURCE_BOUNDS, |case| {
                 let key = case.witness.key_id;
                 case.snapshot.seed_inv(vec![
