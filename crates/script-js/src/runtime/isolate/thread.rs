@@ -2512,6 +2512,9 @@ fn tick_loop(
                             let _ = out.send(ThreadMsg::Log(format!("onPause failed: {error}")));
                         }
                     }
+                    // Ticks are parked while paused, so the hook's `this.log`
+                    // rows go out now, as upstream's log writes at once.
+                    drain_bot_log(&mut runtime, &out);
                 }
             }
             IsolateCmd::ManualWalkTakeover(seq) => {
@@ -2536,6 +2539,7 @@ fn tick_loop(
                             let _ = out.send(ThreadMsg::Log(format!("onResume failed: {error}")));
                         }
                     }
+                    drain_bot_log(&mut runtime, &out);
                 }
             }
             IsolateCmd::PaintClick { id, generation } => {
