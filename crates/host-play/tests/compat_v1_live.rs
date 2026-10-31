@@ -862,6 +862,11 @@ fn wait_for_next_tick_without_restart_event(session: &mut LiveSession<'_>) -> Re
 
 fn run_events_cell(receipt: &mut Receipt) -> Result<(), String> {
     let mut session = session("compat-v1-events", receipt)?;
+    // Seed a fresh account before listeners start; it has no inventory slots yet.
+    // This keeps the two observed inventory changes distinct.
+    request_command(&session, "give coins 1")?;
+    wait_command(&mut session, "give coins 1")?;
+    wait_for_inventory_count(&session.state, 995, 1)?;
     start_script(&session, events_source(1))?;
     wait_for_logs(&mut session, ACTION_DEADLINE, |logs| {
         logs.iter().any(|line| line == "EVENTS:READY:1")
