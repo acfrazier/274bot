@@ -251,6 +251,29 @@ pub(super) fn wire_runtime(
             },
         )
         .map_err(|e| format!("register range supply empty: {e}"))?;
+    // `client/config/worlds.ts` is the one pure cross-root resolver needed by
+    // AccountLeveler. The JS projection only extracts URLSearchParams values.
+    runtime
+        .register_function(
+            "__rs2b0t_resolve_world_number",
+            |args: &[serde_json::Value]| {
+                let host = args
+                    .first()
+                    .and_then(serde_json::Value::as_str)
+                    .unwrap_or("");
+                let values = args
+                    .get(1)
+                    .and_then(serde_json::Value::as_array);
+                let explicit = values
+                    .and_then(|values| values.first())
+                    .and_then(serde_json::Value::as_str);
+                let repeated = values.is_some_and(|values| values.len() > 1);
+                let world = script::world_number::resolve_world_number(host, explicit, repeated)
+                    .map_err(|reason| rustyscript::Error::Runtime(reason.to_owned()))?;
+                Ok(serde_json::Value::from(world))
+            },
+        )
+        .map_err(|e| format!("register world-number resolver: {e}"))?;
     runtime
         .register_function(
             "__rs2b0t_matches_common_bank_loot",

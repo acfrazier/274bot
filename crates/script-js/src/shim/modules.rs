@@ -509,14 +509,23 @@ globalThis.document = {
 };
 "#;
 
-/// The extra modules that make rs2b0t imports hit our shim, in load order
+/// The extra modules that make catalog imports hit our shim, in load order
 /// (a module must be registered before anything imports it; the bot's own
-/// module is appended by the caller, after these). The paths mirror the
-/// real rs2b0t tree under `src/bot/` (scripts live at
-/// `src/bot/scripts/<N>/`, so `../../api/...` from a script resolves to
-/// `src/bot/api/...`, and the adapter lives at `src/bot/adapter/`).
+/// module is appended by the caller, after these). Most paths mirror `src/bot/`;
+/// the only cross-root projections are `src/client/config/worlds.ts` and
+/// `src/client/shell/Skill.ts`, which AccountLeveler imports. No other client
+/// modules are served.
 pub fn shim_modules() -> Vec<Module> {
     vec![
+        // Exact cross-root client projections required by AccountLeveler.
+        Module::new(
+            "/rs2b0t/client/config/worlds.js",
+            include_str!("client_worlds.js"),
+        ),
+        Module::new(
+            "/rs2b0t/client/shell/Skill.js",
+            include_str!("client_skill.js"),
+        ),
         // `_kernel.js` imports the Execution park for `runMachine`.
         Module::new(
             "/rs2b0t/bot/api/execution/Execution.js",
