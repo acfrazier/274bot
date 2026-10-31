@@ -1795,8 +1795,8 @@ fn no_selected_step_clears_the_old_hazard_before_the_next_eat_line() {
         },
         &mut output,
     );
-    assert_eq!(script.selected_hazard.hazard, None);
     assert_no_stale_hazard_eat(&mut script, &mut snapshot, &mut ledger, &mut output, 22);
+    assert_eq!(script.selected_hazard.hazard, None);
 }
 
 #[test]
@@ -1835,8 +1835,8 @@ fn run_change_clears_the_old_hazard_before_the_next_eat_line() {
         },
         &mut output,
     );
-    assert_eq!(script.selected_hazard.hazard, None);
     assert_no_stale_hazard_eat(&mut script, &mut snapshot, &mut ledger, &mut output, 22);
+    assert_eq!(script.selected_hazard.hazard, None);
 }
 
 #[test]
@@ -1882,8 +1882,8 @@ fn death_clears_the_old_hazard_before_the_next_eat_line() {
         &mut output,
     );
     assert_eq!(script.deaths, 1);
-    assert_eq!(script.selected_hazard.hazard, None);
     assert_no_stale_hazard_eat(&mut script, &mut snapshot, &mut ledger, &mut output, 22);
+    assert_eq!(script.selected_hazard.hazard, None);
 }
 
 #[test]
@@ -1909,8 +1909,8 @@ fn session_ended_clears_the_old_hazard_before_the_next_eat_line() {
 
     remove_first_step_hazard(&mut script);
     script.interrupt(crate::native::Interrupt::SessionEnded);
-    assert_eq!(script.selected_hazard.hazard, None);
     assert_no_stale_hazard_eat(&mut script, &mut snapshot, &mut ledger, &mut output, 21);
+    assert_eq!(script.selected_hazard.hazard, None);
 }
 
 #[test]
