@@ -2205,7 +2205,7 @@ fn food_park_closes_the_page_on_the_next_tick_when_the_event_is_spent() {
     assert!(script.survival_deferred);
     assert_eq!(script.park_page_ticks, 1);
     assert_eq!(
-        interaction_count(&ledger, |request| matches!(
+        interaction_count(&ledger, &output, |request| matches!(
             request,
             crate::shim::InteractReq::IfButton { .. }
         )),
