@@ -4652,6 +4652,7 @@ mod tests {
     #[test]
     fn quester_struct_fits_the_per_bot_budget() {
         let bytes = std::mem::size_of::<Quester>();
+        assert_eq!(bytes, 3264, "Quester changed its measured per-bot layout");
         assert!(
             std::mem::size_of::<crate::survival::SurvivalStep>() <= 192,
             "SurvivalStep={} exceeds its 192 B bound",

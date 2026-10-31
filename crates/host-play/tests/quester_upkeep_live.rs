@@ -183,7 +183,7 @@ impl C0Receipt {
             .filter(|line| is_journal_retry(&line.message))
             .map(HostLog::json)
             .collect::<Vec<_>>();
-        json!({
+        let mut receipt = json!({
             "run_purpose": purpose.as_str(),
             "quest": QUEST,
             "display": DISPLAY,
@@ -207,32 +207,41 @@ impl C0Receipt {
             "s_gap_ticks": self.s_drop.as_ref().zip(self.s1).map(|(drop, s1)| drop.at.gap(s1)),
             "r_gap_ticks": self.s_drop.as_ref().zip(phase_r).map(|(drop, (r, _))| r.gap(drop.at)),
             "s1_after_l0_ticks": self.s1.zip(self.l0).map(|(s1, l0)| s1.gap(l0)),
-            "survival_op_events": self.survival_op_events.iter().map(SurvivalOpEvent::json).collect::<Vec<_>>(),
-            "survival_op_parse_errors": self.survival_op_parse_errors,
-            "first_prompt_or_climb": first_trigger.map(mark_json),
-            "death": self.death,
-            "failure": self.failure,
-            "food_drops": self.drops.iter().map(drop_json).collect::<Vec<_>>(),
-            "chat_events": self.chat_events.iter().map(chat_event_json).collect::<Vec<_>>(),
-            "frames": self.frames.iter().map(frame_json).collect::<Vec<_>>(),
-            "hostlog": logs.iter().map(HostLog::json).collect::<Vec<_>>(),
-            "selected_hazard_logs": selected_hazard,
-            "undeclared_damage_logs": undeclared_damage,
-            "journal_retry_logs": journal_retries,
-            "source_refs": {
-                "path_step": "crates/script/paths/289/desertrescue.json:2747-2785",
-                "hazard": HAZARD_SOURCE,
-                "climb_start": "content/scripts/quests/quest_desertrescue/scripts/quest_desertrescue.rs2:262-266",
-                "climb_slip": "content/scripts/quests/quest_desertrescue/scripts/quest_desertrescue.rs2:267-271",
-                "restart_prompt": "content/scripts/quests/quest_desertrescue/scripts/quest_desertrescue.rs2:231-237",
-                "journal_root": "crates/script/src/quest_journal/native.rs:11",
-            },
-            "observability_limits": [
-                "ScriptStatus has no observed game tick; this receipt pairs its status with the same polling GameSnapshot tick.",
-                "Quest-step begin lines can be folded; survival OneOp begin/end events retain their own ticks.",
-                "The engine does not publish a separate click-lock bit; applied=true/false is the observed OneOp outcome.",
-            ],
-        })
+        });
+        receipt["survival_op_events"] = json!(self
+            .survival_op_events
+            .iter()
+            .map(SurvivalOpEvent::json)
+            .collect::<Vec<_>>());
+        receipt["survival_op_parse_errors"] = json!(self.survival_op_parse_errors);
+        receipt["first_prompt_or_climb"] = json!(first_trigger.map(mark_json));
+        receipt["death"] = json!(self.death);
+        receipt["failure"] = json!(self.failure);
+        receipt["food_drops"] = json!(self.drops.iter().map(drop_json).collect::<Vec<_>>());
+        receipt["chat_events"] = json!(self
+            .chat_events
+            .iter()
+            .map(chat_event_json)
+            .collect::<Vec<_>>());
+        receipt["frames"] = json!(self.frames.iter().map(frame_json).collect::<Vec<_>>());
+        receipt["hostlog"] = json!(logs.iter().map(HostLog::json).collect::<Vec<_>>());
+        receipt["selected_hazard_logs"] = json!(selected_hazard);
+        receipt["undeclared_damage_logs"] = json!(undeclared_damage);
+        receipt["journal_retry_logs"] = json!(journal_retries);
+        receipt["source_refs"] = json!({
+            "path_step": "crates/script/paths/289/desertrescue.json:2747-2785",
+            "hazard": HAZARD_SOURCE,
+            "climb_start": "content/scripts/quests/quest_desertrescue/scripts/quest_desertrescue.rs2:262-266",
+            "climb_slip": "content/scripts/quests/quest_desertrescue/scripts/quest_desertrescue.rs2:267-271",
+            "restart_prompt": "content/scripts/quests/quest_desertrescue/scripts/quest_desertrescue.rs2:231-237",
+            "journal_root": "crates/script/src/quest_journal/native.rs:11",
+        });
+        receipt["observability_limits"] = json!([
+            "ScriptStatus has no observed game tick; this receipt pairs its status with the same polling GameSnapshot tick.",
+            "Quest-step begin lines can be folded; survival OneOp begin/end events retain their own ticks.",
+            "The engine does not publish a separate click-lock bit; applied=true/false is the observed OneOp outcome.",
+        ]);
+        receipt
     }
 }
 

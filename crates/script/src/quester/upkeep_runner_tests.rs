@@ -247,18 +247,30 @@ fn seed_hit(snapshot: &mut GameSnapshot, damage: i32, loop_cycle: i32) {
     snapshot.seed_hitmarks(HitmarksView { marks, loop_cycle });
 }
 
+#[derive(Clone, Copy)]
+struct TestFrame {
+    tick: u64,
+    hp: u8,
+    hp_max: u8,
+    poison: PoisonState,
+    cure: CurePoison,
+}
+
 fn with_frame_tick<R>(
     script: &mut Quester,
     snapshot: &GameSnapshot,
     ledger: &mut Option<Box<ledger::Ledger>>,
-    tick: u64,
-    poison: PoisonState,
-    hp: u8,
-    hp_max: u8,
-    cure: CurePoison,
+    frame: TestFrame,
     output: &mut CapturedOutput,
     f: impl FnOnce(&mut Quester, &mut NativeTick<'_>) -> R,
 ) -> R {
+    let TestFrame {
+        tick,
+        hp,
+        hp_max,
+        poison,
+        cure,
+    } = frame;
     api::hostlog::set_tick(tick as u32);
     super::super::families::tests::with_tick_output(snapshot, ledger, tick, output, |native| {
         let mut condition = survival_condition(poison, hp);
@@ -275,74 +287,45 @@ fn with_runner_tick<R>(
     script: &mut Quester,
     snapshot: &mut GameSnapshot,
     ledger: &mut Option<Box<ledger::Ledger>>,
-    tick: u64,
-    hp: u8,
-    hp_max: u8,
-    poison: PoisonState,
-    cure: CurePoison,
+    frame: TestFrame,
     output: &mut CapturedOutput,
     f: impl FnOnce(&mut Quester, &mut NativeTick<'_>) -> R,
 ) -> R {
-    seed_frame(snapshot, tick, hp, hp_max);
-    with_frame_tick(
-        script, snapshot, ledger, tick, poison, hp, hp_max, cure, output, f,
-    )
+    seed_frame(snapshot, frame.tick, frame.hp, frame.hp_max);
+    with_frame_tick(script, snapshot, ledger, frame, output, f)
 }
 
 fn with_runner_hit<R>(
     script: &mut Quester,
     snapshot: &mut GameSnapshot,
     ledger: &mut Option<Box<ledger::Ledger>>,
-    tick: u64,
-    hp: u8,
-    hp_max: u8,
-    poison: PoisonState,
-    cure: CurePoison,
+    frame: TestFrame,
     damage: i32,
     output: &mut CapturedOutput,
     f: impl FnOnce(&mut Quester, &mut NativeTick<'_>) -> R,
 ) -> R {
-    seed_frame(snapshot, tick, hp, hp_max);
-    seed_hit(snapshot, damage, 600 + (tick as i32 * 30));
-    with_frame_tick(
-        script, snapshot, ledger, tick, poison, hp, hp_max, cure, output, f,
-    )
+    seed_frame(snapshot, frame.tick, frame.hp, frame.hp_max);
+    seed_hit(snapshot, damage, 600 + (frame.tick as i32 * 30));
+    with_frame_tick(script, snapshot, ledger, frame, output, f)
 }
 
 fn drive(
     script: &mut Quester,
     snapshot: &mut GameSnapshot,
     ledger: &mut Option<Box<ledger::Ledger>>,
-    tick: u64,
-    hp: u8,
-    hp_max: u8,
-    poison: PoisonState,
-    cure: CurePoison,
+    frame: TestFrame,
     output: &mut CapturedOutput,
 ) -> ScriptFlow {
-    with_runner_tick(
-        script,
-        snapshot,
-        ledger,
-        tick,
-        hp,
-        hp_max,
-        poison,
-        cure,
-        output,
-        |script, native| script.tick(native).expect("Quester tick"),
-    )
+    with_runner_tick(script, snapshot, ledger, frame, output, |script, native| {
+        script.tick(native).expect("Quester tick")
+    })
 }
 
 fn drive_with_hit(
     script: &mut Quester,
     snapshot: &mut GameSnapshot,
     ledger: &mut Option<Box<ledger::Ledger>>,
-    tick: u64,
-    hp: u8,
-    hp_max: u8,
-    poison: PoisonState,
-    cure: CurePoison,
+    frame: TestFrame,
     damage: i32,
     output: &mut CapturedOutput,
 ) -> ScriptFlow {
@@ -350,11 +333,7 @@ fn drive_with_hit(
         script,
         snapshot,
         ledger,
-        tick,
-        hp,
-        hp_max,
-        poison,
-        cure,
+        frame,
         damage,
         output,
         |script, native| script.tick(native).expect("Quester tick"),
@@ -764,11 +743,13 @@ fn quester_prices_the_hazard_from_selection_until_another_step_is_selected() {
         &mut script,
         &mut snapshot,
         &mut ledger,
-        20,
-        40,
-        40,
-        PoisonState::Clear,
-        CurePoison::Never,
+        TestFrame {
+            tick: 20,
+            hp: 40,
+            hp_max: 40,
+            poison: PoisonState::Clear,
+            cure: CurePoison::Never,
+        },
         &mut output,
     );
     assert_eq!(
@@ -782,11 +763,13 @@ fn quester_prices_the_hazard_from_selection_until_another_step_is_selected() {
         &mut script,
         &mut snapshot,
         &mut ledger,
-        21,
-        40,
-        40,
-        PoisonState::Clear,
-        CurePoison::Never,
+        TestFrame {
+            tick: 21,
+            hp: 40,
+            hp_max: 40,
+            poison: PoisonState::Clear,
+            cure: CurePoison::Never,
+        },
         &mut output,
     );
     assert_eq!(began.load(Ordering::Relaxed), 1);
@@ -795,11 +778,13 @@ fn quester_prices_the_hazard_from_selection_until_another_step_is_selected() {
         &mut script,
         &mut snapshot,
         &mut ledger,
-        22,
-        7,
-        40,
-        PoisonState::Clear,
-        CurePoison::Never,
+        TestFrame {
+            tick: 22,
+            hp: 7,
+            hp_max: 40,
+            poison: PoisonState::Clear,
+            cure: CurePoison::Never,
+        },
         &mut output,
     );
     assert_eq!(
@@ -816,11 +801,13 @@ fn quester_prices_the_hazard_from_selection_until_another_step_is_selected() {
         &mut script,
         &mut snapshot,
         &mut ledger,
-        23,
-        40,
-        40,
-        PoisonState::Clear,
-        CurePoison::Never,
+        TestFrame {
+            tick: 23,
+            hp: 40,
+            hp_max: 40,
+            poison: PoisonState::Clear,
+            cure: CurePoison::Never,
+        },
         &mut output,
     );
     assert_eq!(
@@ -834,11 +821,13 @@ fn quester_prices_the_hazard_from_selection_until_another_step_is_selected() {
         &mut script,
         &mut snapshot,
         &mut ledger,
-        24,
-        40,
-        40,
-        PoisonState::Clear,
-        CurePoison::Never,
+        TestFrame {
+            tick: 24,
+            hp: 40,
+            hp_max: 40,
+            poison: PoisonState::Clear,
+            cure: CurePoison::Never,
+        },
         &mut output,
     );
     assert!(
@@ -850,11 +839,13 @@ fn quester_prices_the_hazard_from_selection_until_another_step_is_selected() {
             &mut script,
             &mut snapshot,
             &mut ledger,
-            tick,
-            40,
-            40,
-            PoisonState::Clear,
-            CurePoison::Never,
+            TestFrame {
+                tick,
+                hp: 40,
+                hp_max: 40,
+                poison: PoisonState::Clear,
+                cure: CurePoison::Never,
+            },
             &mut output,
         );
         assert!(
@@ -868,11 +859,13 @@ fn quester_prices_the_hazard_from_selection_until_another_step_is_selected() {
         &mut script,
         &mut snapshot,
         &mut ledger,
-        50,
-        7,
-        40,
-        PoisonState::Clear,
-        CurePoison::Never,
+        TestFrame {
+            tick: 50,
+            hp: 7,
+            hp_max: 40,
+            poison: PoisonState::Clear,
+            cure: CurePoison::Never,
+        },
         &mut output,
     );
     assert_eq!(
@@ -888,33 +881,39 @@ fn quester_prices_the_hazard_from_selection_until_another_step_is_selected() {
         &mut script,
         &mut snapshot,
         &mut ledger,
-        51,
-        40,
-        40,
-        PoisonState::Clear,
-        CurePoison::Never,
+        TestFrame {
+            tick: 51,
+            hp: 40,
+            hp_max: 40,
+            poison: PoisonState::Clear,
+            cure: CurePoison::Never,
+        },
         &mut output,
     );
     drive(
         &mut script,
         &mut snapshot,
         &mut ledger,
-        52,
-        40,
-        40,
-        PoisonState::Clear,
-        CurePoison::Never,
+        TestFrame {
+            tick: 52,
+            hp: 40,
+            hp_max: 40,
+            poison: PoisonState::Clear,
+            cure: CurePoison::Never,
+        },
         &mut output,
     );
     drive(
         &mut script,
         &mut snapshot,
         &mut ledger,
-        53,
-        40,
-        40,
-        PoisonState::Clear,
-        CurePoison::Never,
+        TestFrame {
+            tick: 53,
+            hp: 40,
+            hp_max: 40,
+            poison: PoisonState::Clear,
+            cure: CurePoison::Never,
+        },
         &mut output,
     );
     assert_eq!(
@@ -931,11 +930,13 @@ fn quester_prices_the_hazard_from_selection_until_another_step_is_selected() {
         &mut script,
         &mut snapshot,
         &mut ledger,
-        54,
-        7,
-        40,
-        PoisonState::Clear,
-        CurePoison::Never,
+        TestFrame {
+            tick: 54,
+            hp: 7,
+            hp_max: 40,
+            poison: PoisonState::Clear,
+            cure: CurePoison::Never,
+        },
         &mut output,
     );
     assert!(script.survival_action.is_none());
@@ -957,11 +958,13 @@ fn food_park_on_a_hazard_step_holds_across_ticks() {
         &mut script,
         &mut snapshot,
         &mut ledger,
-        20,
-        40,
-        40,
-        PoisonState::Clear,
-        CurePoison::Never,
+        TestFrame {
+            tick: 20,
+            hp: 40,
+            hp_max: 40,
+            poison: PoisonState::Clear,
+            cure: CurePoison::Never,
+        },
         &mut output,
     );
     assert_eq!(
@@ -973,11 +976,13 @@ fn food_park_on_a_hazard_step_holds_across_ticks() {
         &mut script,
         &mut snapshot,
         &mut ledger,
-        21,
-        7,
-        40,
-        PoisonState::Clear,
-        CurePoison::Never,
+        TestFrame {
+            tick: 21,
+            hp: 7,
+            hp_max: 40,
+            poison: PoisonState::Clear,
+            cure: CurePoison::Never,
+        },
         &mut output,
     );
     assert!(script.survival.parked().is_some());
@@ -991,11 +996,13 @@ fn food_park_on_a_hazard_step_holds_across_ticks() {
             &mut script,
             &mut snapshot,
             &mut ledger,
-            tick,
-            7,
-            40,
-            PoisonState::Clear,
-            CurePoison::Never,
+            TestFrame {
+                tick,
+                hp: 7,
+                hp_max: 40,
+                poison: PoisonState::Clear,
+                cure: CurePoison::Never,
+            },
             &mut output,
         );
         assert!(
@@ -1023,22 +1030,26 @@ fn regeneration_to_the_line_plus_one_releases_the_park_once() {
         &mut script,
         &mut snapshot,
         &mut ledger,
-        20,
-        40,
-        40,
-        PoisonState::Clear,
-        CurePoison::Never,
+        TestFrame {
+            tick: 20,
+            hp: 40,
+            hp_max: 40,
+            poison: PoisonState::Clear,
+            cure: CurePoison::Never,
+        },
         &mut output,
     );
     drive(
         &mut script,
         &mut snapshot,
         &mut ledger,
-        21,
-        7,
-        40,
-        PoisonState::Clear,
-        CurePoison::Never,
+        TestFrame {
+            tick: 21,
+            hp: 7,
+            hp_max: 40,
+            poison: PoisonState::Clear,
+            cure: CurePoison::Never,
+        },
         &mut output,
     );
     assert!(script.survival.parked().is_some());
@@ -1051,11 +1062,13 @@ fn regeneration_to_the_line_plus_one_releases_the_park_once() {
         &mut script,
         &mut snapshot,
         &mut ledger,
-        121,
-        8,
-        40,
-        PoisonState::Clear,
-        CurePoison::Never,
+        TestFrame {
+            tick: 121,
+            hp: 8,
+            hp_max: 40,
+            poison: PoisonState::Clear,
+            cure: CurePoison::Never,
+        },
         &mut output,
     );
     assert!(script.survival.parked().is_none());
@@ -1065,11 +1078,13 @@ fn regeneration_to_the_line_plus_one_releases_the_park_once() {
         &mut script,
         &mut snapshot,
         &mut ledger,
-        122,
-        8,
-        40,
-        PoisonState::Clear,
-        CurePoison::Never,
+        TestFrame {
+            tick: 122,
+            hp: 8,
+            hp_max: 40,
+            poison: PoisonState::Clear,
+            cure: CurePoison::Never,
+        },
         &mut output,
     );
     assert_eq!(survival_unpark_count(HOSTLOG_SLOT), 1);
@@ -1085,22 +1100,26 @@ fn food_that_appears_while_parked_is_eaten() {
         &mut script,
         &mut snapshot,
         &mut ledger,
-        20,
-        40,
-        40,
-        PoisonState::Clear,
-        CurePoison::Never,
+        TestFrame {
+            tick: 20,
+            hp: 40,
+            hp_max: 40,
+            poison: PoisonState::Clear,
+            cure: CurePoison::Never,
+        },
         &mut output,
     );
     drive(
         &mut script,
         &mut snapshot,
         &mut ledger,
-        21,
-        7,
-        40,
-        PoisonState::Clear,
-        CurePoison::Never,
+        TestFrame {
+            tick: 21,
+            hp: 7,
+            hp_max: 40,
+            poison: PoisonState::Clear,
+            cure: CurePoison::Never,
+        },
         &mut output,
     );
     assert!(script.survival.parked().is_some());
@@ -1109,11 +1128,13 @@ fn food_that_appears_while_parked_is_eaten() {
         &mut script,
         &mut snapshot,
         &mut ledger,
-        22,
-        7,
-        40,
-        PoisonState::Clear,
-        CurePoison::Never,
+        TestFrame {
+            tick: 22,
+            hp: 7,
+            hp_max: 40,
+            poison: PoisonState::Clear,
+            cure: CurePoison::Never,
+        },
         &mut output,
     );
     assert!(script.survival_action.is_some());
@@ -1134,33 +1155,39 @@ fn a_dropped_bite_keeps_its_hazard_until_the_retry_settles() {
         &mut script,
         &mut snapshot,
         &mut ledger,
-        0,
-        40,
-        40,
-        PoisonState::Clear,
-        CurePoison::Never,
+        TestFrame {
+            tick: 0,
+            hp: 40,
+            hp_max: 40,
+            poison: PoisonState::Clear,
+            cure: CurePoison::Never,
+        },
         &mut output,
     );
     drive(
         &mut script,
         &mut snapshot,
         &mut ledger,
-        1,
-        40,
-        40,
-        PoisonState::Clear,
-        CurePoison::Never,
+        TestFrame {
+            tick: 1,
+            hp: 40,
+            hp_max: 40,
+            poison: PoisonState::Clear,
+            cure: CurePoison::Never,
+        },
         &mut output,
     );
     drive(
         &mut script,
         &mut snapshot,
         &mut ledger,
-        2,
-        7,
-        40,
-        PoisonState::Clear,
-        CurePoison::Never,
+        TestFrame {
+            tick: 2,
+            hp: 7,
+            hp_max: 40,
+            poison: PoisonState::Clear,
+            cure: CurePoison::Never,
+        },
         &mut output,
     );
     assert_eq!(eat_count(&ledger), 1);
@@ -1169,11 +1196,13 @@ fn a_dropped_bite_keeps_its_hazard_until_the_retry_settles() {
             &mut script,
             &mut snapshot,
             &mut ledger,
-            tick,
-            7,
-            40,
-            PoisonState::Clear,
-            CurePoison::Never,
+            TestFrame {
+                tick,
+                hp: 7,
+                hp_max: 40,
+                poison: PoisonState::Clear,
+                cure: CurePoison::Never,
+            },
             &mut output,
         );
         assert_eq!(eat_count(&ledger), 1);
@@ -1182,11 +1211,13 @@ fn a_dropped_bite_keeps_its_hazard_until_the_retry_settles() {
         &mut script,
         &mut snapshot,
         &mut ledger,
-        10,
-        7,
-        40,
-        PoisonState::Clear,
-        CurePoison::Never,
+        TestFrame {
+            tick: 10,
+            hp: 7,
+            hp_max: 40,
+            poison: PoisonState::Clear,
+            cure: CurePoison::Never,
+        },
         &mut output,
     );
     assert_eq!(
@@ -1209,11 +1240,13 @@ fn a_dropped_bite_keeps_its_hazard_until_the_retry_settles() {
         &mut script,
         &mut snapshot,
         &mut ledger,
-        11,
-        7,
-        40,
-        PoisonState::Clear,
-        CurePoison::Never,
+        TestFrame {
+            tick: 11,
+            hp: 7,
+            hp_max: 40,
+            poison: PoisonState::Clear,
+            cure: CurePoison::Never,
+        },
         &mut output,
     );
     assert!(
@@ -1250,11 +1283,13 @@ fn a_real_step_transition_removes_the_old_hazard() {
         &mut script,
         &mut snapshot,
         &mut ledger,
-        20,
-        40,
-        40,
-        PoisonState::Clear,
-        CurePoison::Never,
+        TestFrame {
+            tick: 20,
+            hp: 40,
+            hp_max: 40,
+            poison: PoisonState::Clear,
+            cure: CurePoison::Never,
+        },
         &mut output,
     );
     assert_eq!(script.selected_hazard.hazard, Some(RAILING_HAZARD));
@@ -1267,11 +1302,13 @@ fn a_real_step_transition_removes_the_old_hazard() {
         &mut script,
         &mut snapshot,
         &mut ledger,
-        21,
-        40,
-        40,
-        PoisonState::Clear,
-        CurePoison::Never,
+        TestFrame {
+            tick: 21,
+            hp: 40,
+            hp_max: 40,
+            poison: PoisonState::Clear,
+            cure: CurePoison::Never,
+        },
         &mut output,
     );
     assert_eq!(first_begins.load(Ordering::Relaxed), 1);
@@ -1293,11 +1330,13 @@ fn a_real_step_transition_removes_the_old_hazard() {
         &mut script,
         &mut snapshot,
         &mut ledger,
-        22,
-        7,
-        40,
-        PoisonState::Clear,
-        CurePoison::Never,
+        TestFrame {
+            tick: 22,
+            hp: 7,
+            hp_max: 40,
+            poison: PoisonState::Clear,
+            cure: CurePoison::Never,
+        },
         &mut output,
     );
     assert_eq!(
@@ -1318,11 +1357,13 @@ fn quester_defers_the_begin_of_a_newly_selected_hazard_step_one_tick() {
         &mut script,
         &mut snapshot,
         &mut ledger,
-        20,
-        40,
-        40,
-        PoisonState::Clear,
-        CurePoison::Never,
+        TestFrame {
+            tick: 20,
+            hp: 40,
+            hp_max: 40,
+            poison: PoisonState::Clear,
+            cure: CurePoison::Never,
+        },
         &mut output,
     );
     assert_eq!(
@@ -1341,11 +1382,13 @@ fn quester_defers_the_begin_of_a_newly_selected_hazard_step_one_tick() {
         &mut script,
         &mut snapshot,
         &mut ledger,
-        21,
-        2,
-        40,
-        PoisonState::Clear,
-        CurePoison::Never,
+        TestFrame {
+            tick: 21,
+            hp: 2,
+            hp_max: 40,
+            poison: PoisonState::Clear,
+            cure: CurePoison::Never,
+        },
         &mut output,
     );
     assert_eq!(counts.began.load(Ordering::Relaxed), 0);
@@ -1364,11 +1407,13 @@ fn quester_defers_the_begin_of_a_newly_selected_hazard_step_one_tick() {
         &mut script,
         &mut snapshot,
         &mut ledger,
-        22,
-        40,
-        40,
-        PoisonState::Clear,
-        CurePoison::Never,
+        TestFrame {
+            tick: 22,
+            hp: 40,
+            hp_max: 40,
+            poison: PoisonState::Clear,
+            cure: CurePoison::Never,
+        },
         &mut output,
     );
     assert_eq!(
@@ -1383,11 +1428,13 @@ fn quester_defers_the_begin_of_a_newly_selected_hazard_step_one_tick() {
         &mut script,
         &mut snapshot,
         &mut ledger,
-        23,
-        40,
-        40,
-        PoisonState::Clear,
-        CurePoison::Never,
+        TestFrame {
+            tick: 23,
+            hp: 40,
+            hp_max: 40,
+            poison: PoisonState::Clear,
+            cure: CurePoison::Never,
+        },
         &mut output,
     );
     assert_eq!(counts.began.load(Ordering::Relaxed), 1);
@@ -1404,11 +1451,13 @@ fn quester_defers_the_begin_of_a_newly_selected_hazard_step_one_tick() {
         &mut held,
         &mut held_snapshot,
         &mut held_ledger,
-        30,
-        40,
-        40,
-        PoisonState::Clear,
-        CurePoison::WhenNeeded,
+        TestFrame {
+            tick: 30,
+            hp: 40,
+            hp_max: 40,
+            poison: PoisonState::Clear,
+            cure: CurePoison::WhenNeeded,
+        },
         &mut held_output,
     );
     assert_eq!(held_counts.began.load(Ordering::Relaxed), 0);
@@ -1417,15 +1466,17 @@ fn quester_defers_the_begin_of_a_newly_selected_hazard_step_one_tick() {
         &mut held,
         &mut held_snapshot,
         &mut held_ledger,
-        31,
-        2,
-        40,
-        PoisonState::Onset {
-            since: 31,
-            q: Some(11),
-            hit_since_line: false,
+        TestFrame {
+            tick: 31,
+            hp: 2,
+            hp_max: 40,
+            poison: PoisonState::Onset {
+                since: 31,
+                q: Some(11),
+                hit_since_line: false,
+            },
+            cure: CurePoison::WhenNeeded,
         },
-        CurePoison::WhenNeeded,
         &mut held_output,
     );
     assert!(
@@ -1442,11 +1493,13 @@ fn quester_defers_the_begin_of_a_newly_selected_hazard_step_one_tick() {
             &mut held,
             &mut held_snapshot,
             &mut held_ledger,
-            tick,
-            40,
-            40,
-            PoisonState::Immune { until_lower: 80 },
-            CurePoison::WhenNeeded,
+            TestFrame {
+                tick,
+                hp: 40,
+                hp_max: 40,
+                poison: PoisonState::Immune { until_lower: 80 },
+                cure: CurePoison::WhenNeeded,
+            },
             &mut held_output,
         );
         assert!(
@@ -1467,11 +1520,13 @@ fn quester_defers_the_begin_of_a_newly_selected_hazard_step_one_tick() {
         &mut held,
         &mut held_snapshot,
         &mut held_ledger,
-        34,
-        40,
-        40,
-        PoisonState::Immune { until_lower: 80 },
-        CurePoison::WhenNeeded,
+        TestFrame {
+            tick: 34,
+            hp: 40,
+            hp_max: 40,
+            poison: PoisonState::Immune { until_lower: 80 },
+            cure: CurePoison::WhenNeeded,
+        },
         &mut held_output,
     );
     assert_eq!(
@@ -1499,11 +1554,13 @@ fn quester_refuses_a_hazard_the_account_cannot_clear_at_full_hitpoints() {
         &mut script,
         &mut snapshot,
         &mut ledger,
-        20,
-        10,
-        10,
-        PoisonState::Clear,
-        CurePoison::Never,
+        TestFrame {
+            tick: 20,
+            hp: 10,
+            hp_max: 10,
+            poison: PoisonState::Clear,
+            cure: CurePoison::Never,
+        },
         &mut output,
     );
     assert!(
@@ -1524,11 +1581,13 @@ fn quester_refuses_a_hazard_the_account_cannot_clear_at_full_hitpoints() {
         &mut safe,
         &mut safe_snapshot,
         &mut safe_ledger,
-        20,
-        40,
-        40,
-        PoisonState::Clear,
-        CurePoison::Never,
+        TestFrame {
+            tick: 20,
+            hp: 40,
+            hp_max: 40,
+            poison: PoisonState::Clear,
+            cure: CurePoison::Never,
+        },
         &mut safe_output,
     );
     assert_eq!(
@@ -1540,11 +1599,13 @@ fn quester_refuses_a_hazard_the_account_cannot_clear_at_full_hitpoints() {
         &mut safe,
         &mut safe_snapshot,
         &mut safe_ledger,
-        21,
-        40,
-        40,
-        PoisonState::Clear,
-        CurePoison::Never,
+        TestFrame {
+            tick: 21,
+            hp: 40,
+            hp_max: 40,
+            poison: PoisonState::Clear,
+            cure: CurePoison::Never,
+        },
         &mut safe_output,
     );
     assert_eq!(safe_counts.began.load(Ordering::Relaxed), 1);
@@ -1560,11 +1621,13 @@ fn quester_eats_inside_a_hazard_step_and_restarts_it() {
         &mut script,
         &mut snapshot,
         &mut ledger,
-        20,
-        40,
-        40,
-        PoisonState::Clear,
-        CurePoison::Never,
+        TestFrame {
+            tick: 20,
+            hp: 40,
+            hp_max: 40,
+            poison: PoisonState::Clear,
+            cure: CurePoison::Never,
+        },
         &mut output,
     );
     assert_eq!(
@@ -1576,11 +1639,13 @@ fn quester_eats_inside_a_hazard_step_and_restarts_it() {
         &mut script,
         &mut snapshot,
         &mut ledger,
-        21,
-        40,
-        40,
-        PoisonState::Clear,
-        CurePoison::Never,
+        TestFrame {
+            tick: 21,
+            hp: 40,
+            hp_max: 40,
+            poison: PoisonState::Clear,
+            cure: CurePoison::Never,
+        },
         &mut output,
     );
     assert_eq!(counts.began.load(Ordering::Relaxed), 1);
@@ -1588,11 +1653,13 @@ fn quester_eats_inside_a_hazard_step_and_restarts_it() {
         &mut script,
         &mut snapshot,
         &mut ledger,
-        22,
-        7,
-        40,
-        PoisonState::Clear,
-        CurePoison::Never,
+        TestFrame {
+            tick: 22,
+            hp: 7,
+            hp_max: 40,
+            poison: PoisonState::Clear,
+            cure: CurePoison::Never,
+        },
         &mut output,
     );
     assert!(
@@ -1612,11 +1679,13 @@ fn quester_eats_inside_a_hazard_step_and_restarts_it() {
         &mut script,
         &mut snapshot,
         &mut ledger,
-        23,
-        40,
-        40,
-        PoisonState::Clear,
-        CurePoison::Never,
+        TestFrame {
+            tick: 23,
+            hp: 40,
+            hp_max: 40,
+            poison: PoisonState::Clear,
+            cure: CurePoison::Never,
+        },
         &mut output,
     );
     assert_eq!(
@@ -1644,22 +1713,26 @@ fn quester_closes_dialogue_page_before_bite_on_a_hazard_step() {
         &mut script,
         &mut snapshot,
         &mut ledger,
-        20,
-        40,
-        40,
-        PoisonState::Clear,
-        CurePoison::Never,
+        TestFrame {
+            tick: 20,
+            hp: 40,
+            hp_max: 40,
+            poison: PoisonState::Clear,
+            cure: CurePoison::Never,
+        },
         &mut output,
     );
     drive(
         &mut script,
         &mut snapshot,
         &mut ledger,
-        21,
-        40,
-        40,
-        PoisonState::Clear,
-        CurePoison::Never,
+        TestFrame {
+            tick: 21,
+            hp: 40,
+            hp_max: 40,
+            poison: PoisonState::Clear,
+            cure: CurePoison::Never,
+        },
         &mut output,
     );
     assert_eq!(counts.began.load(Ordering::Relaxed), 1);
@@ -1668,11 +1741,13 @@ fn quester_closes_dialogue_page_before_bite_on_a_hazard_step() {
         &mut script,
         &mut snapshot,
         &mut ledger,
-        22,
-        7,
-        40,
-        PoisonState::Clear,
-        CurePoison::Never,
+        TestFrame {
+            tick: 22,
+            hp: 7,
+            hp_max: 40,
+            poison: PoisonState::Clear,
+            cure: CurePoison::Never,
+        },
         &mut output,
     );
     assert!(script.step.is_none());
@@ -1689,11 +1764,13 @@ fn quester_closes_dialogue_page_before_bite_on_a_hazard_step() {
         &mut script,
         &mut snapshot,
         &mut ledger,
-        23,
-        7,
-        40,
-        PoisonState::Clear,
-        CurePoison::Never,
+        TestFrame {
+            tick: 23,
+            hp: 7,
+            hp_max: 40,
+            poison: PoisonState::Clear,
+            cure: CurePoison::Never,
+        },
         &mut output,
     );
     assert_eq!(close_count(&ledger), 1);
@@ -1707,11 +1784,13 @@ fn quester_closes_dialogue_page_before_bite_on_a_hazard_step() {
         &mut script,
         &mut snapshot,
         &mut ledger,
-        24,
-        40,
-        40,
-        PoisonState::Clear,
-        CurePoison::Never,
+        TestFrame {
+            tick: 24,
+            hp: 40,
+            hp_max: 40,
+            poison: PoisonState::Clear,
+            cure: CurePoison::Never,
+        },
         &mut output,
     );
     assert!(script.survival_action.is_none());
@@ -1751,22 +1830,26 @@ fn quester_logs_an_undeclared_damage_source_once_per_step_identity() {
         &mut script,
         &mut snapshot,
         &mut ledger,
-        20,
-        40,
-        40,
-        PoisonState::Clear,
-        CurePoison::Never,
+        TestFrame {
+            tick: 20,
+            hp: 40,
+            hp_max: 40,
+            poison: PoisonState::Clear,
+            cure: CurePoison::Never,
+        },
         &mut output,
     );
     drive_with_hit(
         &mut script,
         &mut snapshot,
         &mut ledger,
-        21,
-        19,
-        40,
-        PoisonState::Clear,
-        CurePoison::Never,
+        TestFrame {
+            tick: 21,
+            hp: 19,
+            hp_max: 40,
+            poison: PoisonState::Clear,
+            cure: CurePoison::Never,
+        },
         3,
         &mut output,
     );
@@ -1776,22 +1859,26 @@ fn quester_logs_an_undeclared_damage_source_once_per_step_identity() {
         &mut script,
         &mut snapshot,
         &mut ledger,
-        22,
-        19,
-        40,
-        PoisonState::Clear,
-        CurePoison::Never,
+        TestFrame {
+            tick: 22,
+            hp: 19,
+            hp_max: 40,
+            poison: PoisonState::Clear,
+            cure: CurePoison::Never,
+        },
         &mut output,
     );
     drive_with_hit(
         &mut script,
         &mut snapshot,
         &mut ledger,
-        23,
-        19,
-        40,
-        PoisonState::Clear,
-        CurePoison::Never,
+        TestFrame {
+            tick: 23,
+            hp: 19,
+            hp_max: 40,
+            poison: PoisonState::Clear,
+            cure: CurePoison::Never,
+        },
         5,
         &mut output,
     );
@@ -1806,11 +1893,13 @@ fn quester_logs_an_undeclared_damage_source_once_per_step_identity() {
         &mut script,
         &mut snapshot,
         &mut ledger,
-        24,
-        1,
-        40,
-        PoisonState::Clear,
-        CurePoison::Never,
+        TestFrame {
+            tick: 24,
+            hp: 1,
+            hp_max: 40,
+            poison: PoisonState::Clear,
+            cure: CurePoison::Never,
+        },
         &mut output,
     );
     assert!(
@@ -1822,11 +1911,13 @@ fn quester_logs_an_undeclared_damage_source_once_per_step_identity() {
         &mut script,
         &mut snapshot,
         &mut ledger,
-        25,
-        40,
-        40,
-        PoisonState::Clear,
-        CurePoison::Never,
+        TestFrame {
+            tick: 25,
+            hp: 40,
+            hp_max: 40,
+            poison: PoisonState::Clear,
+            cure: CurePoison::Never,
+        },
         &mut output,
     );
     assert_eq!(
@@ -1838,11 +1929,13 @@ fn quester_logs_an_undeclared_damage_source_once_per_step_identity() {
         &mut script,
         &mut snapshot,
         &mut ledger,
-        26,
-        19,
-        40,
-        PoisonState::Clear,
-        CurePoison::Never,
+        TestFrame {
+            tick: 26,
+            hp: 19,
+            hp_max: 40,
+            poison: PoisonState::Clear,
+            cure: CurePoison::Never,
+        },
         7,
         &mut output,
     );
@@ -1857,22 +1950,26 @@ fn quester_logs_an_undeclared_damage_source_once_per_step_identity() {
         &mut script,
         &mut snapshot,
         &mut ledger,
-        27,
-        40,
-        40,
-        PoisonState::Clear,
-        CurePoison::Never,
+        TestFrame {
+            tick: 27,
+            hp: 40,
+            hp_max: 40,
+            poison: PoisonState::Clear,
+            cure: CurePoison::Never,
+        },
         &mut output,
     );
     drive(
         &mut script,
         &mut snapshot,
         &mut ledger,
-        28,
-        40,
-        40,
-        PoisonState::Clear,
-        CurePoison::Never,
+        TestFrame {
+            tick: 28,
+            hp: 40,
+            hp_max: 40,
+            poison: PoisonState::Clear,
+            cure: CurePoison::Never,
+        },
         &mut output,
     );
     assert_eq!(
@@ -1887,11 +1984,13 @@ fn quester_logs_an_undeclared_damage_source_once_per_step_identity() {
         &mut script,
         &mut snapshot,
         &mut ledger,
-        29,
-        19,
-        40,
-        PoisonState::Clear,
-        CurePoison::Never,
+        TestFrame {
+            tick: 29,
+            hp: 19,
+            hp_max: 40,
+            poison: PoisonState::Clear,
+            cure: CurePoison::Never,
+        },
         9,
         &mut output,
     );
@@ -1913,22 +2012,26 @@ fn quester_unattributed_hit_bites_at_half_max_on_its_window() {
         &mut script,
         &mut snapshot,
         &mut ledger,
-        20,
-        40,
-        40,
-        PoisonState::Clear,
-        CurePoison::Never,
+        TestFrame {
+            tick: 20,
+            hp: 40,
+            hp_max: 40,
+            poison: PoisonState::Clear,
+            cure: CurePoison::Never,
+        },
         &mut output,
     );
     drive_with_hit(
         &mut script,
         &mut snapshot,
         &mut ledger,
-        21,
-        19,
-        40,
-        PoisonState::Clear,
-        CurePoison::Never,
+        TestFrame {
+            tick: 21,
+            hp: 19,
+            hp_max: 40,
+            poison: PoisonState::Clear,
+            cure: CurePoison::Never,
+        },
         3,
         &mut output,
     );
@@ -1939,11 +2042,13 @@ fn quester_unattributed_hit_bites_at_half_max_on_its_window() {
         &mut script,
         &mut snapshot,
         &mut ledger,
-        22,
-        19,
-        40,
-        PoisonState::Clear,
-        CurePoison::Never,
+        TestFrame {
+            tick: 22,
+            hp: 19,
+            hp_max: 40,
+            poison: PoisonState::Clear,
+            cure: CurePoison::Never,
+        },
         &mut output,
     );
     assert!(script.survival_action.is_none());
@@ -1964,11 +2069,13 @@ fn food_park_closes_an_open_dialogue_page_on_the_need_tick() {
         &mut script,
         &mut snapshot,
         &mut ledger,
-        20,
-        40,
-        40,
-        PoisonState::Clear,
-        CurePoison::Never,
+        TestFrame {
+            tick: 20,
+            hp: 40,
+            hp_max: 40,
+            poison: PoisonState::Clear,
+            cure: CurePoison::Never,
+        },
         &mut output,
     );
     chat_page(&mut snapshot, 2100);
@@ -1976,11 +2083,13 @@ fn food_park_closes_an_open_dialogue_page_on_the_need_tick() {
         &mut script,
         &mut snapshot,
         &mut ledger,
-        21,
-        7,
-        40,
-        PoisonState::Clear,
-        CurePoison::Never,
+        TestFrame {
+            tick: 21,
+            hp: 7,
+            hp_max: 40,
+            poison: PoisonState::Clear,
+            cure: CurePoison::Never,
+        },
         &mut output,
     );
     assert!(script.survival.parked().is_some());
@@ -1992,11 +2101,13 @@ fn food_park_closes_an_open_dialogue_page_on_the_need_tick() {
         &mut script,
         &mut snapshot,
         &mut ledger,
-        22,
-        7,
-        40,
-        PoisonState::Clear,
-        CurePoison::Never,
+        TestFrame {
+            tick: 22,
+            hp: 7,
+            hp_max: 40,
+            poison: PoisonState::Clear,
+            cure: CurePoison::Never,
+        },
         &mut output,
     );
     assert!(script.survival.parked().is_some());
@@ -2019,11 +2130,13 @@ fn food_park_closes_the_page_on_the_next_tick_when_the_event_is_spent() {
         &mut script,
         &mut snapshot,
         &mut ledger,
-        20,
-        40,
-        40,
-        PoisonState::Clear,
-        CurePoison::Never,
+        TestFrame {
+            tick: 20,
+            hp: 40,
+            hp_max: 40,
+            poison: PoisonState::Clear,
+            cure: CurePoison::Never,
+        },
         &mut output,
     );
     chat_page(&mut snapshot, 2100);
@@ -2032,11 +2145,13 @@ fn food_park_closes_the_page_on_the_next_tick_when_the_event_is_spent() {
         &mut script,
         &mut snapshot,
         &mut ledger,
-        21,
-        7,
-        40,
-        PoisonState::Clear,
-        CurePoison::Never,
+        TestFrame {
+            tick: 21,
+            hp: 7,
+            hp_max: 40,
+            poison: PoisonState::Clear,
+            cure: CurePoison::Never,
+        },
         &mut output,
         |script, native| {
             let spent = begin_clear_owner(script, native, owned_prayer(script));
@@ -2066,11 +2181,13 @@ fn food_park_closes_the_page_on_the_next_tick_when_the_event_is_spent() {
         &mut script,
         &mut snapshot,
         &mut ledger,
-        22,
-        7,
-        40,
-        PoisonState::Clear,
-        CurePoison::Never,
+        TestFrame {
+            tick: 22,
+            hp: 7,
+            hp_max: 40,
+            poison: PoisonState::Clear,
+            cure: CurePoison::Never,
+        },
         &mut output,
     );
     assert_eq!(script.park_page_ticks, 2);
@@ -2092,11 +2209,13 @@ fn food_park_revokes_a_retained_prayer_clear_and_closes_the_page() {
         &mut script,
         &mut snapshot,
         &mut ledger,
-        20,
-        40,
-        40,
-        PoisonState::Clear,
-        CurePoison::Never,
+        TestFrame {
+            tick: 20,
+            hp: 40,
+            hp_max: 40,
+            poison: PoisonState::Clear,
+            cure: CurePoison::Never,
+        },
         &mut output,
     );
     chat_page(&mut snapshot, 2100);
@@ -2104,11 +2223,13 @@ fn food_park_revokes_a_retained_prayer_clear_and_closes_the_page() {
         &mut script,
         &mut snapshot,
         &mut ledger,
-        21,
-        7,
-        40,
-        PoisonState::Clear,
-        CurePoison::Never,
+        TestFrame {
+            tick: 21,
+            hp: 7,
+            hp_max: 40,
+            poison: PoisonState::Clear,
+            cure: CurePoison::Never,
+        },
         &mut output,
         |script, native| {
             let clear = begin_clear_owner(script, native, owned);
@@ -2133,22 +2254,26 @@ fn food_park_revokes_a_retained_prayer_clear_and_closes_the_page() {
         &mut script,
         &mut snapshot,
         &mut ledger,
-        22,
-        7,
-        40,
-        PoisonState::Clear,
-        CurePoison::Never,
+        TestFrame {
+            tick: 22,
+            hp: 7,
+            hp_max: 40,
+            poison: PoisonState::Clear,
+            cure: CurePoison::Never,
+        },
         &mut output,
     );
     drive(
         &mut script,
         &mut snapshot,
         &mut ledger,
-        23,
-        8,
-        40,
-        PoisonState::Clear,
-        CurePoison::Never,
+        TestFrame {
+            tick: 23,
+            hp: 8,
+            hp_max: 40,
+            poison: PoisonState::Clear,
+            cure: CurePoison::Never,
+        },
         &mut output,
     );
     assert!(script.survival.parked().is_none());
@@ -2175,11 +2300,13 @@ fn food_park_retries_a_refused_close() {
         &mut script,
         &mut snapshot,
         &mut ledger,
-        20,
-        40,
-        40,
-        PoisonState::Clear,
-        CurePoison::Never,
+        TestFrame {
+            tick: 20,
+            hp: 40,
+            hp_max: 40,
+            poison: PoisonState::Clear,
+            cure: CurePoison::Never,
+        },
         &mut output,
         |script, native| {
             let owner = begin_clear_owner(script, native, owned);
@@ -2194,11 +2321,13 @@ fn food_park_retries_a_refused_close() {
         &mut script,
         &mut snapshot,
         &mut ledger,
-        21,
-        7,
-        40,
-        PoisonState::Clear,
-        CurePoison::Never,
+        TestFrame {
+            tick: 21,
+            hp: 7,
+            hp_max: 40,
+            poison: PoisonState::Clear,
+            cure: CurePoison::Never,
+        },
         &mut output,
     );
     assert!(script.survival.parked().is_some());
@@ -2212,11 +2341,13 @@ fn food_park_retries_a_refused_close() {
         &mut script,
         &mut snapshot,
         &mut ledger,
-        22,
-        7,
-        40,
-        PoisonState::Clear,
-        CurePoison::Never,
+        TestFrame {
+            tick: 22,
+            hp: 7,
+            hp_max: 40,
+            poison: PoisonState::Clear,
+            cure: CurePoison::Never,
+        },
         &mut output,
         |script, native| {
             native.actions.cancel(owner);
@@ -2244,11 +2375,13 @@ fn food_park_retries_an_unapplied_close_on_the_same_tick_and_stops_on_tick_24() 
         &mut script,
         &mut snapshot,
         &mut ledger,
-        0,
-        40,
-        40,
-        PoisonState::Clear,
-        CurePoison::Never,
+        TestFrame {
+            tick: 0,
+            hp: 40,
+            hp_max: 40,
+            poison: PoisonState::Clear,
+            cure: CurePoison::Never,
+        },
         &mut output,
     );
     chat_page(&mut snapshot, 2100);
@@ -2256,11 +2389,13 @@ fn food_park_retries_an_unapplied_close_on_the_same_tick_and_stops_on_tick_24() 
         &mut script,
         &mut snapshot,
         &mut ledger,
-        1,
-        7,
-        40,
-        PoisonState::Clear,
-        CurePoison::Never,
+        TestFrame {
+            tick: 1,
+            hp: 7,
+            hp_max: 40,
+            poison: PoisonState::Clear,
+            cure: CurePoison::Never,
+        },
         &mut output,
     );
     assert_eq!(script.park_page_ticks, 1);
@@ -2271,11 +2406,13 @@ fn food_park_retries_an_unapplied_close_on_the_same_tick_and_stops_on_tick_24() 
             &mut script,
             &mut snapshot,
             &mut ledger,
-            tick,
-            7,
-            40,
-            PoisonState::Clear,
-            CurePoison::Never,
+            TestFrame {
+                tick,
+                hp: 7,
+                hp_max: 40,
+                poison: PoisonState::Clear,
+                cure: CurePoison::Never,
+            },
             &mut output,
         );
         assert_eq!(close_count(&ledger), 1);
@@ -2284,11 +2421,13 @@ fn food_park_retries_an_unapplied_close_on_the_same_tick_and_stops_on_tick_24() 
         &mut script,
         &mut snapshot,
         &mut ledger,
-        9,
-        7,
-        40,
-        PoisonState::Clear,
-        CurePoison::Never,
+        TestFrame {
+            tick: 9,
+            hp: 7,
+            hp_max: 40,
+            poison: PoisonState::Clear,
+            cure: CurePoison::Never,
+        },
         &mut output,
     );
     assert_eq!(script.park_page_ticks, 9);
@@ -2298,11 +2437,13 @@ fn food_park_retries_an_unapplied_close_on_the_same_tick_and_stops_on_tick_24() 
             &mut script,
             &mut snapshot,
             &mut ledger,
-            tick,
-            7,
-            40,
-            PoisonState::Clear,
-            CurePoison::Never,
+            TestFrame {
+                tick,
+                hp: 7,
+                hp_max: 40,
+                poison: PoisonState::Clear,
+                cure: CurePoison::Never,
+            },
             &mut output,
         );
         assert_eq!(close_count(&ledger), 2);
@@ -2311,11 +2452,13 @@ fn food_park_retries_an_unapplied_close_on_the_same_tick_and_stops_on_tick_24() 
         &mut script,
         &mut snapshot,
         &mut ledger,
-        17,
-        7,
-        40,
-        PoisonState::Clear,
-        CurePoison::Never,
+        TestFrame {
+            tick: 17,
+            hp: 7,
+            hp_max: 40,
+            poison: PoisonState::Clear,
+            cure: CurePoison::Never,
+        },
         &mut output,
     );
     assert_eq!(script.park_page_ticks, 17);
@@ -2325,11 +2468,13 @@ fn food_park_retries_an_unapplied_close_on_the_same_tick_and_stops_on_tick_24() 
             &mut script,
             &mut snapshot,
             &mut ledger,
-            tick,
-            7,
-            40,
-            PoisonState::Clear,
-            CurePoison::Never,
+            TestFrame {
+                tick,
+                hp: 7,
+                hp_max: 40,
+                poison: PoisonState::Clear,
+                cure: CurePoison::Never,
+            },
             &mut output,
         );
         assert_eq!(close_count(&ledger), 3);
@@ -2338,11 +2483,13 @@ fn food_park_retries_an_unapplied_close_on_the_same_tick_and_stops_on_tick_24() 
         &mut script,
         &mut snapshot,
         &mut ledger,
-        25,
-        7,
-        40,
-        PoisonState::Clear,
-        CurePoison::Never,
+        TestFrame {
+            tick: 25,
+            hp: 7,
+            hp_max: 40,
+            poison: PoisonState::Clear,
+            cure: CurePoison::Never,
+        },
         &mut output,
     );
     assert!(
@@ -2370,11 +2517,13 @@ fn food_park_stops_on_tick_24_under_permanent_refusal() {
         &mut script,
         &mut snapshot,
         &mut ledger,
-        20,
-        40,
-        40,
-        PoisonState::Clear,
-        CurePoison::Never,
+        TestFrame {
+            tick: 20,
+            hp: 40,
+            hp_max: 40,
+            poison: PoisonState::Clear,
+            cure: CurePoison::Never,
+        },
         &mut output,
         |script, native| {
             let owner = begin_clear_owner(script, native, owned);
@@ -2390,11 +2539,13 @@ fn food_park_stops_on_tick_24_under_permanent_refusal() {
             &mut script,
             &mut snapshot,
             &mut ledger,
-            tick,
-            7,
-            40,
-            PoisonState::Clear,
-            CurePoison::Never,
+            TestFrame {
+                tick,
+                hp: 7,
+                hp_max: 40,
+                poison: PoisonState::Clear,
+                cure: CurePoison::Never,
+            },
             &mut output,
         );
         if tick == 45 {
@@ -2425,22 +2576,26 @@ fn food_park_closes_a_page_that_opens_after_the_park_began() {
         &mut script,
         &mut snapshot,
         &mut ledger,
-        20,
-        40,
-        40,
-        PoisonState::Clear,
-        CurePoison::Never,
+        TestFrame {
+            tick: 20,
+            hp: 40,
+            hp_max: 40,
+            poison: PoisonState::Clear,
+            cure: CurePoison::Never,
+        },
         &mut output,
     );
     drive(
         &mut script,
         &mut snapshot,
         &mut ledger,
-        21,
-        7,
-        40,
-        PoisonState::Clear,
-        CurePoison::Never,
+        TestFrame {
+            tick: 21,
+            hp: 7,
+            hp_max: 40,
+            poison: PoisonState::Clear,
+            cure: CurePoison::Never,
+        },
         &mut output,
     );
     assert!(script.survival.parked().is_some());
@@ -2450,11 +2605,13 @@ fn food_park_closes_a_page_that_opens_after_the_park_began() {
             &mut script,
             &mut snapshot,
             &mut ledger,
-            tick,
-            7,
-            40,
-            PoisonState::Clear,
-            CurePoison::Never,
+            TestFrame {
+                tick,
+                hp: 7,
+                hp_max: 40,
+                poison: PoisonState::Clear,
+                cure: CurePoison::Never,
+            },
             &mut output,
         );
         assert_eq!(script.park_page_ticks, 0);
@@ -2465,11 +2622,13 @@ fn food_park_closes_a_page_that_opens_after_the_park_began() {
         &mut script,
         &mut snapshot,
         &mut ledger,
-        27,
-        7,
-        40,
-        PoisonState::Clear,
-        CurePoison::Never,
+        TestFrame {
+            tick: 27,
+            hp: 7,
+            hp_max: 40,
+            poison: PoisonState::Clear,
+            cure: CurePoison::Never,
+        },
         &mut output,
     );
     assert_eq!(script.park_page_ticks, 1);
@@ -2479,11 +2638,13 @@ fn food_park_closes_a_page_that_opens_after_the_park_began() {
         &mut script,
         &mut snapshot,
         &mut ledger,
-        28,
-        7,
-        40,
-        PoisonState::Clear,
-        CurePoison::Never,
+        TestFrame {
+            tick: 28,
+            hp: 7,
+            hp_max: 40,
+            poison: PoisonState::Clear,
+            cure: CurePoison::Never,
+        },
         &mut output,
     );
     assert!(hazard_bound_lines(&output)
@@ -2508,11 +2669,13 @@ fn food_park_closes_an_open_interface() {
         &mut script,
         &mut snapshot,
         &mut ledger,
-        20,
-        40,
-        40,
-        PoisonState::Clear,
-        CurePoison::Never,
+        TestFrame {
+            tick: 20,
+            hp: 40,
+            hp_max: 40,
+            poison: PoisonState::Clear,
+            cure: CurePoison::Never,
+        },
         &mut output,
     );
     main_page(&mut snapshot, &mut client, 600);
@@ -2520,11 +2683,13 @@ fn food_park_closes_an_open_interface() {
         &mut script,
         &mut snapshot,
         &mut ledger,
-        21,
-        7,
-        40,
-        PoisonState::Clear,
-        CurePoison::Never,
+        TestFrame {
+            tick: 21,
+            hp: 7,
+            hp_max: 40,
+            poison: PoisonState::Clear,
+            cure: CurePoison::Never,
+        },
         &mut output,
     );
     assert!(script.survival.parked().is_some());
@@ -2535,11 +2700,13 @@ fn food_park_closes_an_open_interface() {
         &mut script,
         &mut snapshot,
         &mut ledger,
-        22,
-        7,
-        40,
-        PoisonState::Clear,
-        CurePoison::Never,
+        TestFrame {
+            tick: 22,
+            hp: 7,
+            hp_max: 40,
+            poison: PoisonState::Clear,
+            cure: CurePoison::Never,
+        },
         &mut output,
     );
     assert!(hazard_bound_lines(&output)
@@ -2556,22 +2723,26 @@ fn hit_bound_run(unpark_tick: u64) -> (bool, Vec<String>, Quester) {
         &mut script,
         &mut snapshot,
         &mut ledger,
-        20,
-        40,
-        40,
-        PoisonState::Clear,
-        CurePoison::Never,
+        TestFrame {
+            tick: 20,
+            hp: 40,
+            hp_max: 40,
+            poison: PoisonState::Clear,
+            cure: CurePoison::Never,
+        },
         &mut output,
     );
     drive(
         &mut script,
         &mut snapshot,
         &mut ledger,
-        21,
-        7,
-        40,
-        PoisonState::Clear,
-        CurePoison::Never,
+        TestFrame {
+            tick: 21,
+            hp: 7,
+            hp_max: 40,
+            poison: PoisonState::Clear,
+            cure: CurePoison::Never,
+        },
         &mut output,
     );
     assert!(script.survival.parked().is_some());
@@ -2579,33 +2750,39 @@ fn hit_bound_run(unpark_tick: u64) -> (bool, Vec<String>, Quester) {
         &mut script,
         &mut snapshot,
         &mut ledger,
-        22,
-        7,
-        40,
-        PoisonState::Clear,
-        CurePoison::Never,
+        TestFrame {
+            tick: 22,
+            hp: 7,
+            hp_max: 40,
+            poison: PoisonState::Clear,
+            cure: CurePoison::Never,
+        },
         &mut output,
     );
     drive(
         &mut script,
         &mut snapshot,
         &mut ledger,
-        23,
-        7,
-        40,
-        PoisonState::Clear,
-        CurePoison::Never,
+        TestFrame {
+            tick: 23,
+            hp: 7,
+            hp_max: 40,
+            poison: PoisonState::Clear,
+            cure: CurePoison::Never,
+        },
         &mut output,
     );
     drive_with_hit(
         &mut script,
         &mut snapshot,
         &mut ledger,
-        24,
-        4,
-        40,
-        PoisonState::Clear,
-        CurePoison::Never,
+        TestFrame {
+            tick: 24,
+            hp: 4,
+            hp_max: 40,
+            poison: PoisonState::Clear,
+            cure: CurePoison::Never,
+        },
         3,
         &mut output,
     );
@@ -2622,11 +2799,13 @@ fn hit_bound_run(unpark_tick: u64) -> (bool, Vec<String>, Quester) {
             &mut script,
             &mut snapshot,
             &mut ledger,
-            tick,
-            hp,
-            40,
-            PoisonState::Clear,
-            CurePoison::Never,
+            TestFrame {
+                tick,
+                hp,
+                hp_max: 40,
+                poison: PoisonState::Clear,
+                cure: CurePoison::Never,
+            },
             &mut output,
         );
         assert!(script.survival.parked().is_some());
@@ -2640,11 +2819,13 @@ fn hit_bound_run(unpark_tick: u64) -> (bool, Vec<String>, Quester) {
             &mut script,
             &mut snapshot,
             &mut ledger,
-            unpark_tick,
-            8,
-            40,
-            PoisonState::Clear,
-            CurePoison::Never,
+            TestFrame {
+                tick: unpark_tick,
+                hp: 8,
+                hp_max: 40,
+                poison: PoisonState::Clear,
+                cure: CurePoison::Never,
+            },
             &mut output,
         );
         script.survival.parked().is_none()
@@ -2685,22 +2866,26 @@ fn food_park_before_any_attempt_ends_only_by_regeneration() {
         &mut script,
         &mut snapshot,
         &mut ledger,
-        20,
-        40,
-        40,
-        PoisonState::Clear,
-        CurePoison::Never,
+        TestFrame {
+            tick: 20,
+            hp: 40,
+            hp_max: 40,
+            poison: PoisonState::Clear,
+            cure: CurePoison::Never,
+        },
         &mut output,
     );
     drive(
         &mut script,
         &mut snapshot,
         &mut ledger,
-        21,
-        7,
-        40,
-        PoisonState::Clear,
-        CurePoison::Never,
+        TestFrame {
+            tick: 21,
+            hp: 7,
+            hp_max: 40,
+            poison: PoisonState::Clear,
+            cure: CurePoison::Never,
+        },
         &mut output,
     );
     assert!(script.survival.parked().is_some());
@@ -2715,11 +2900,13 @@ fn food_park_before_any_attempt_ends_only_by_regeneration() {
             &mut script,
             &mut snapshot,
             &mut ledger,
-            tick,
-            7,
-            40,
-            PoisonState::Clear,
-            CurePoison::Never,
+            TestFrame {
+                tick,
+                hp: 7,
+                hp_max: 40,
+                poison: PoisonState::Clear,
+                cure: CurePoison::Never,
+            },
             &mut output,
         );
         assert!(
@@ -2736,11 +2923,13 @@ fn food_park_before_any_attempt_ends_only_by_regeneration() {
         &mut script,
         &mut snapshot,
         &mut ledger,
-        121,
-        8,
-        40,
-        PoisonState::Clear,
-        CurePoison::Never,
+        TestFrame {
+            tick: 121,
+            hp: 8,
+            hp_max: 40,
+            poison: PoisonState::Clear,
+            cure: CurePoison::Never,
+        },
         &mut output,
     );
     assert!(script.survival.parked().is_none());
@@ -2748,11 +2937,13 @@ fn food_park_before_any_attempt_ends_only_by_regeneration() {
         &mut script,
         &mut snapshot,
         &mut ledger,
-        122,
-        8,
-        40,
-        PoisonState::Clear,
-        CurePoison::Never,
+        TestFrame {
+            tick: 122,
+            hp: 8,
+            hp_max: 40,
+            poison: PoisonState::Clear,
+            cure: CurePoison::Never,
+        },
         &mut output,
     );
     assert_eq!(
@@ -2779,22 +2970,26 @@ fn food_park_release_uses_the_line_of_the_current_hitpoints() {
         &mut script,
         &mut snapshot,
         &mut ledger,
-        20,
-        40,
-        40,
-        PoisonState::Clear,
-        CurePoison::Never,
+        TestFrame {
+            tick: 20,
+            hp: 40,
+            hp_max: 40,
+            poison: PoisonState::Clear,
+            cure: CurePoison::Never,
+        },
         &mut output,
     );
     drive(
         &mut script,
         &mut snapshot,
         &mut ledger,
-        21,
-        10,
-        40,
-        PoisonState::Clear,
-        CurePoison::Never,
+        TestFrame {
+            tick: 21,
+            hp: 10,
+            hp_max: 40,
+            poison: PoisonState::Clear,
+            cure: CurePoison::Never,
+        },
         &mut output,
     );
     assert!(script.survival.parked().is_some());
@@ -2805,11 +3000,13 @@ fn food_park_release_uses_the_line_of_the_current_hitpoints() {
         &mut script,
         &mut snapshot,
         &mut ledger,
-        22,
-        14,
-        40,
-        PoisonState::Clear,
-        CurePoison::Never,
+        TestFrame {
+            tick: 22,
+            hp: 14,
+            hp_max: 40,
+            poison: PoisonState::Clear,
+            cure: CurePoison::Never,
+        },
         &mut output,
     );
     assert!(
@@ -2820,11 +3017,13 @@ fn food_park_release_uses_the_line_of_the_current_hitpoints() {
         &mut script,
         &mut snapshot,
         &mut ledger,
-        23,
-        17,
-        40,
-        PoisonState::Clear,
-        CurePoison::Never,
+        TestFrame {
+            tick: 23,
+            hp: 17,
+            hp_max: 40,
+            poison: PoisonState::Clear,
+            cure: CurePoison::Never,
+        },
         &mut output,
     );
     assert!(
@@ -2835,11 +3034,13 @@ fn food_park_release_uses_the_line_of_the_current_hitpoints() {
         &mut script,
         &mut snapshot,
         &mut ledger,
-        24,
-        18,
-        40,
-        PoisonState::Clear,
-        CurePoison::Never,
+        TestFrame {
+            tick: 24,
+            hp: 18,
+            hp_max: 40,
+            poison: PoisonState::Clear,
+            cure: CurePoison::Never,
+        },
         &mut output,
     );
     assert!(script.survival.parked().is_none());
@@ -2873,22 +3074,26 @@ fn food_park_bound_does_not_apply_with_a_live_row() {
         &mut script,
         &mut snapshot,
         &mut ledger,
-        20,
-        40,
-        40,
-        PoisonState::Clear,
-        CurePoison::Never,
+        TestFrame {
+            tick: 20,
+            hp: 40,
+            hp_max: 40,
+            poison: PoisonState::Clear,
+            cure: CurePoison::Never,
+        },
         &mut output,
     );
     drive(
         &mut script,
         &mut snapshot,
         &mut ledger,
-        21,
-        7,
-        40,
-        PoisonState::Clear,
-        CurePoison::Never,
+        TestFrame {
+            tick: 21,
+            hp: 7,
+            hp_max: 40,
+            poison: PoisonState::Clear,
+            cure: CurePoison::Never,
+        },
         &mut output,
     );
     assert!(script.survival.parked().is_some());
@@ -2900,11 +3105,13 @@ fn food_park_bound_does_not_apply_with_a_live_row() {
         &mut script,
         &mut snapshot,
         &mut ledger,
-        22,
-        8,
-        40,
-        PoisonState::Clear,
-        CurePoison::Never,
+        TestFrame {
+            tick: 22,
+            hp: 8,
+            hp_max: 40,
+            poison: PoisonState::Clear,
+            cure: CurePoison::Never,
+        },
         &mut output,
     );
     assert!(
@@ -2924,33 +3131,39 @@ fn pause_and_resume_keep_a_pending_bite_and_a_hazard_park_safe() {
         &mut script,
         &mut snapshot,
         &mut ledger,
-        20,
-        40,
-        40,
-        PoisonState::Clear,
-        CurePoison::Never,
+        TestFrame {
+            tick: 20,
+            hp: 40,
+            hp_max: 40,
+            poison: PoisonState::Clear,
+            cure: CurePoison::Never,
+        },
         &mut output,
     );
     drive(
         &mut script,
         &mut snapshot,
         &mut ledger,
-        21,
-        40,
-        40,
-        PoisonState::Clear,
-        CurePoison::Never,
+        TestFrame {
+            tick: 21,
+            hp: 40,
+            hp_max: 40,
+            poison: PoisonState::Clear,
+            cure: CurePoison::Never,
+        },
         &mut output,
     );
     drive(
         &mut script,
         &mut snapshot,
         &mut ledger,
-        22,
-        7,
-        40,
-        PoisonState::Clear,
-        CurePoison::Never,
+        TestFrame {
+            tick: 22,
+            hp: 7,
+            hp_max: 40,
+            poison: PoisonState::Clear,
+            cure: CurePoison::Never,
+        },
         &mut output,
     );
     assert!(script.survival_action.is_some());
@@ -2966,11 +3179,13 @@ fn pause_and_resume_keep_a_pending_bite_and_a_hazard_park_safe() {
         &mut script,
         &mut snapshot,
         &mut ledger,
-        23,
-        7,
-        40,
-        PoisonState::Clear,
-        CurePoison::Never,
+        TestFrame {
+            tick: 23,
+            hp: 7,
+            hp_max: 40,
+            poison: PoisonState::Clear,
+            cure: CurePoison::Never,
+        },
         &mut output,
     );
     assert!(script.survival_action.is_some());
@@ -2988,22 +3203,26 @@ fn pause_and_resume_keep_a_pending_bite_and_a_hazard_park_safe() {
         &mut parked,
         &mut parked_snapshot,
         &mut parked_ledger,
-        30,
-        40,
-        40,
-        PoisonState::Clear,
-        CurePoison::Never,
+        TestFrame {
+            tick: 30,
+            hp: 40,
+            hp_max: 40,
+            poison: PoisonState::Clear,
+            cure: CurePoison::Never,
+        },
         &mut parked_output,
     );
     drive(
         &mut parked,
         &mut parked_snapshot,
         &mut parked_ledger,
-        31,
-        7,
-        40,
-        PoisonState::Clear,
-        CurePoison::Never,
+        TestFrame {
+            tick: 31,
+            hp: 7,
+            hp_max: 40,
+            poison: PoisonState::Clear,
+            cure: CurePoison::Never,
+        },
         &mut parked_output,
     );
     chat_page(&mut parked_snapshot, 2100);
@@ -3011,11 +3230,13 @@ fn pause_and_resume_keep_a_pending_bite_and_a_hazard_park_safe() {
         &mut parked,
         &mut parked_snapshot,
         &mut parked_ledger,
-        32,
-        7,
-        40,
-        PoisonState::Clear,
-        CurePoison::Never,
+        TestFrame {
+            tick: 32,
+            hp: 7,
+            hp_max: 40,
+            poison: PoisonState::Clear,
+            cure: CurePoison::Never,
+        },
         &mut parked_output,
     );
     let page_ticks = parked.park_page_ticks;
@@ -3030,11 +3251,13 @@ fn pause_and_resume_keep_a_pending_bite_and_a_hazard_park_safe() {
         &mut parked,
         &mut parked_snapshot,
         &mut parked_ledger,
-        33,
-        8,
-        40,
-        PoisonState::Clear,
-        CurePoison::Never,
+        TestFrame {
+            tick: 33,
+            hp: 8,
+            hp_max: 40,
+            poison: PoisonState::Clear,
+            cure: CurePoison::Never,
+        },
         &mut parked_output,
     );
     assert!(parked.survival.parked().is_none());
@@ -3058,11 +3281,13 @@ fn make_step_restarts_with_the_remaining_quantity_after_a_survival_cancel() {
         &mut script,
         &mut snapshot,
         &mut ledger,
-        20,
-        40,
-        40,
-        PoisonState::Clear,
-        CurePoison::Never,
+        TestFrame {
+            tick: 20,
+            hp: 40,
+            hp_max: 40,
+            poison: PoisonState::Clear,
+            cure: CurePoison::Never,
+        },
         &mut output,
     );
     assert!(
@@ -3077,11 +3302,13 @@ fn make_step_restarts_with_the_remaining_quantity_after_a_survival_cancel() {
         &mut script,
         &mut snapshot,
         &mut ledger,
-        21,
-        40,
-        40,
-        PoisonState::Clear,
-        CurePoison::Never,
+        TestFrame {
+            tick: 21,
+            hp: 40,
+            hp_max: 40,
+            poison: PoisonState::Clear,
+            cure: CurePoison::Never,
+        },
         &mut output,
         |script, native| {
             accept_latest_interaction(native);
@@ -3105,11 +3332,13 @@ fn make_step_restarts_with_the_remaining_quantity_after_a_survival_cancel() {
         &mut script,
         &mut snapshot,
         &mut ledger,
-        22,
-        40,
-        40,
-        PoisonState::Clear,
-        CurePoison::Never,
+        TestFrame {
+            tick: 22,
+            hp: 40,
+            hp_max: 40,
+            poison: PoisonState::Clear,
+            cure: CurePoison::Never,
+        },
         &mut output,
         |script, native| {
             accept_latest_interaction(native);
@@ -3126,11 +3355,13 @@ fn make_step_restarts_with_the_remaining_quantity_after_a_survival_cancel() {
         &mut script,
         &mut snapshot,
         &mut ledger,
-        23,
-        40,
-        40,
-        PoisonState::Clear,
-        CurePoison::Never,
+        TestFrame {
+            tick: 23,
+            hp: 40,
+            hp_max: 40,
+            poison: PoisonState::Clear,
+            cure: CurePoison::Never,
+        },
         &mut output,
         |script, native| {
             accept_latest_interaction(native);
@@ -3145,11 +3376,13 @@ fn make_step_restarts_with_the_remaining_quantity_after_a_survival_cancel() {
         &mut script,
         &mut snapshot,
         &mut ledger,
-        24,
-        40,
-        40,
-        PoisonState::Clear,
-        CurePoison::Never,
+        TestFrame {
+            tick: 24,
+            hp: 40,
+            hp_max: 40,
+            poison: PoisonState::Clear,
+            cure: CurePoison::Never,
+        },
         &mut output,
     );
     assert!(
@@ -3162,11 +3395,13 @@ fn make_step_restarts_with_the_remaining_quantity_after_a_survival_cancel() {
         &mut script,
         &mut snapshot,
         &mut ledger,
-        25,
-        19,
-        40,
-        PoisonState::Clear,
-        CurePoison::Never,
+        TestFrame {
+            tick: 25,
+            hp: 19,
+            hp_max: 40,
+            poison: PoisonState::Clear,
+            cure: CurePoison::Never,
+        },
         3,
         &mut output,
     );
@@ -3186,11 +3421,13 @@ fn make_step_restarts_with_the_remaining_quantity_after_a_survival_cancel() {
         &mut script,
         &mut snapshot,
         &mut ledger,
-        26,
-        40,
-        40,
-        PoisonState::Clear,
-        CurePoison::Never,
+        TestFrame {
+            tick: 26,
+            hp: 40,
+            hp_max: 40,
+            poison: PoisonState::Clear,
+            cure: CurePoison::Never,
+        },
         &mut output,
     );
     assert!(
@@ -3205,11 +3442,13 @@ fn make_step_restarts_with_the_remaining_quantity_after_a_survival_cancel() {
         &mut script,
         &mut snapshot,
         &mut ledger,
-        27,
-        40,
-        40,
-        PoisonState::Clear,
-        CurePoison::Never,
+        TestFrame {
+            tick: 27,
+            hp: 40,
+            hp_max: 40,
+            poison: PoisonState::Clear,
+            cure: CurePoison::Never,
+        },
         &mut output,
         |script, native| {
             accept_latest_interaction(native);
@@ -3234,11 +3473,13 @@ fn make_step_restarts_with_the_remaining_quantity_after_a_survival_cancel() {
         &mut script,
         &mut snapshot,
         &mut ledger,
-        28,
-        40,
-        40,
-        PoisonState::Clear,
-        CurePoison::Never,
+        TestFrame {
+            tick: 28,
+            hp: 40,
+            hp_max: 40,
+            poison: PoisonState::Clear,
+            cure: CurePoison::Never,
+        },
         &mut output,
         |script, native| {
             accept_latest_interaction(native);
@@ -3255,11 +3496,13 @@ fn make_step_restarts_with_the_remaining_quantity_after_a_survival_cancel() {
         &mut script,
         &mut snapshot,
         &mut ledger,
-        29,
-        40,
-        40,
-        PoisonState::Clear,
-        CurePoison::Never,
+        TestFrame {
+            tick: 29,
+            hp: 40,
+            hp_max: 40,
+            poison: PoisonState::Clear,
+            cure: CurePoison::Never,
+        },
         &mut output,
         |script, native| {
             accept_latest_interaction(native);
@@ -3274,11 +3517,13 @@ fn make_step_restarts_with_the_remaining_quantity_after_a_survival_cancel() {
         &mut script,
         &mut snapshot,
         &mut ledger,
-        30,
-        40,
-        40,
-        PoisonState::Clear,
-        CurePoison::Never,
+        TestFrame {
+            tick: 30,
+            hp: 40,
+            hp_max: 40,
+            poison: PoisonState::Clear,
+            cure: CurePoison::Never,
+        },
         &mut output,
     );
     assert!(
@@ -3290,11 +3535,13 @@ fn make_step_restarts_with_the_remaining_quantity_after_a_survival_cancel() {
         &mut script,
         &mut snapshot,
         &mut ledger,
-        31,
-        40,
-        40,
-        PoisonState::Clear,
-        CurePoison::Never,
+        TestFrame {
+            tick: 31,
+            hp: 40,
+            hp_max: 40,
+            poison: PoisonState::Clear,
+            cure: CurePoison::Never,
+        },
         &mut output,
     );
     assert!(script.settling, "the real MakeMachine completed a partial production receipt while the authored total remains unmet");
@@ -3303,11 +3550,13 @@ fn make_step_restarts_with_the_remaining_quantity_after_a_survival_cancel() {
         &mut script,
         &mut snapshot,
         &mut ledger,
-        32,
-        40,
-        40,
-        PoisonState::Clear,
-        CurePoison::Never,
+        TestFrame {
+            tick: 32,
+            hp: 40,
+            hp_max: 40,
+            poison: PoisonState::Clear,
+            cure: CurePoison::Never,
+        },
         &mut output,
     );
     assert_eq!(count_item(&snapshot, product_id), 5);
