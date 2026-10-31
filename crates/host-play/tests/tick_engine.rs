@@ -3175,6 +3175,16 @@ fn tick_engine_proxy_drop_after_make_keeps_full_host_receipt() {
     .unwrap_or_else(|error| panic!("{error}"));
 }
 
+fn lone_opener_continues(
+    trace: &TickEngineTrace,
+    origin: u64,
+    baseline: &FrameObservation,
+) -> bool {
+    checked_click_pairs(trace, origin + 1) == 1
+        && close_packet_seen(trace, origin + 1, baseline)
+        && has_act_line(trace, origin + 1)
+}
+
 fn lone_opener_history(name: &'static str, suppress: bool) -> Result<RunEvidence, String> {
     let mut scenario = Scenario::river(name).with_mutation(DispatchMutation::CancelAfterPackets(1));
     if suppress {
@@ -3196,9 +3206,7 @@ fn lone_opener_history(name: &'static str, suppress: bool) -> Result<RunEvidence
             .expect("started run has baseline")
             .clone();
         run.wait_until(origin as u32, LONE_OPENER_BUDGET, |trace, statuses| {
-            checked_click_pairs(trace, origin + 1) == 1
-                && close_packet_seen(trace, origin + 1, &baseline)
-                && has_act_line(trace, origin + 1)
+            lone_opener_continues(trace, origin, &baseline)
                 && statuses
                     .last()
                     .is_some_and(|status| status.tick_method.is_some())
@@ -3494,6 +3502,39 @@ mod packet_oracle_tests {
             charged_user_event: false,
             scripts: Vec::new(),
         }
+    }
+
+    #[test]
+    fn lone_opener_restart_follows_the_expired_native_delay_after_its_close() {
+        let baseline = observed_frame(15, true, 1);
+        let close = observed_frame(16, false, 2);
+        let mut restart = observed_frame(18, false, 2);
+        restart.chat.push(ChatObservation {
+            game_tick: 18,
+            sequence: 12,
+            text: "You attempt to catch a fish.".into(),
+            poll: PollKind::Wake,
+        });
+        let mut movement = wire(ClientProt289::MOVE_OPCLICK.id as u8, 1, 7);
+        movement.request_id = None;
+        movement.game_tick = 16;
+        let mut target = wire(ClientProt289::OPLOC1.id as u8, 1, 7);
+        target.request_id = None;
+        target.game_tick = 16;
+        let mut trace = TickEngineTrace {
+            frames: vec![close, restart],
+            wire: vec![movement, target],
+            ..TickEngineTrace::default()
+        };
+        assert!(
+            lone_opener_continues(&trace, 15, &baseline),
+            "IF_CLOSE belongs to the first-budget click; the native act follows its own delay"
+        );
+        trace.frames[1].chat[0].game_tick = 19;
+        assert!(!lone_opener_continues(&trace, 15, &baseline));
+        trace.frames[1].chat[0].game_tick = 18;
+        trace.frames[0].game_tick = 17;
+        assert!(!lone_opener_continues(&trace, 15, &baseline));
     }
 
     #[test]
