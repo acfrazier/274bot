@@ -669,6 +669,7 @@ impl TickEngineTestHook {
                 state.pending_mutations.pop_front()
             }
         };
+        let mut remove_loc = None;
         let mut cancel_after = None;
         let mut transport = None;
         match mutation {

@@ -1006,8 +1006,8 @@ fn depleting_idle_handoff_survives_two_tick_replacement_approach_with_real_recei
     });
     assert_eq!(*loc, expected);
     assert_eq!(
-        (rig.stats().delayed, rig.stats().slipped),
-        (0, 1),
+        (rig.stats().verified, rig.stats().delayed, rig.stats().slipped),
+        (0, 0, 1),
         "a recovered late cycle stays a slip while preserving the proven Idle handoff"
     );
 }

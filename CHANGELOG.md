@@ -21,6 +21,9 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.8` 
   exact current stand. For a remote loc, Gatherer keeps the cycle parked while
   it completes the ordinary approach walk, then re-adopts the cycle after
   arrival.
+- A continuing Knife cycle that needs a recovery Act cannot count as verified,
+  even when the native success roll arrives before the Act receipt. It remains
+  a slip and keeps the pending receipt's owner through depletion handoff.
 - Knife engine tests attribute chat and fresh `IF_CLOSE` packets by their
   position against `PLAYER_INFO`. A chat-only close no longer requires a
   main-modal transition, and a retained close count cannot stand for a new one.
