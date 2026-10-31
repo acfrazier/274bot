@@ -16,6 +16,10 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.8` 
 - Fishing at a fixed loc spot now selects the observed loc, approaches it when
   unloaded, and returns to it after banking. Moving NPC spots keep their own
   observation and return paths.
+- A successful depleting Knife cycle survives a skipped edge while a live
+  replacement is selected. It can arm before the usual walk only when a
+  walkable loc-approach tile is within two steps in the current posted reach
+  flood; long, blocked and unknown routes keep the ordinary approach.
 - Knife engine tests attribute chat and fresh `IF_CLOSE` packets by their
   position against `PLAYER_INFO`. A chat-only close no longer requires a
   main-modal transition, and a retained close count cannot stand for a new one.

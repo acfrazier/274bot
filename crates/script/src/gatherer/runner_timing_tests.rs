@@ -1,8 +1,12 @@
 use super::*;
 use crate::native::tickcycle::{AnimClass, AnimInstruction, CycleSignals, CycleStep, TickPolicy};
-use crate::quester::families::tests::{def, with_tick, with_tick_bank};
+use crate::quester::families::tests::{
+    def, local_player, with_tick, with_tick_bank, with_tick_reach,
+};
+use api::interact::server_ordered::{RowDispatch, ServerOrderedDispatch};
 use api::snapshot::{
-    GameSnapshot, ItemActionFamily, ItemContainer, ItemView, LocLayer, LocView, StatView,
+    GameSnapshot, ItemActionFamily, ItemContainer, ItemView, LocLayer, LocView, SceneView,
+    StatView, WorldStateView, WorldTile,
 };
 
 fn fixture() -> (Gatherer, GameSnapshot, TargetPlan) {
@@ -88,6 +92,338 @@ fn fixture() -> (Gatherer, GameSnapshot, TargetPlan) {
         used: true,
     }]);
     (gatherer, snapshot, target)
+}
+
+fn seed_access_scene(
+    snapshot: &mut GameSnapshot,
+    target: &TargetPlan,
+    here: WorldTile,
+    wall_x: Option<i32>,
+) -> api::query::ReachQueryView {
+    let api::selected::EntityId::Loc(id) = target.entity else {
+        panic!("copper replacement is a loc")
+    };
+    const SIDE: i32 = 41;
+    let base_x = here.x - SIDE / 2;
+    let base_z = here.z - SIDE / 2;
+    let mut scene = SceneView {
+        available: true,
+        base_x,
+        base_z,
+        level: here.level,
+        width: SIDE,
+        height: SIDE,
+        collision_flags: vec![0; (SIDE * SIDE) as usize],
+    };
+    let index = |tile: WorldTile| {
+        ((tile.x - base_x) * SIDE + tile.z - base_z) as usize
+    };
+    let blocked = client::dash3d::CollisionFlag::SQ_BLOCKED;
+    scene.collision_flags[index(target.tile)] |= blocked;
+    if let Some(x) = wall_x {
+        for z in base_z..base_z + SIDE {
+            scene.collision_flags[index(WorldTile { x, z, level: here.level })] |= blocked;
+        }
+    }
+    snapshot.seed_ingame(2);
+    snapshot.seed_world(WorldStateView {
+        map_base_x: base_x,
+        map_base_z: base_z,
+        level: here.level,
+        members: true,
+        ..WorldStateView::default()
+    });
+    snapshot.seed_scene(scene);
+    snapshot.seed_local_player(local_player(here));
+    snapshot.seed_locs(vec![LocView {
+        typecode: 0,
+        info: 0,
+        id,
+        name: Some(target.alias.to_string()),
+        description: None,
+        actions: vec![Some(target.op.to_string())],
+        tile: target.tile,
+        distance: 0,
+        layer: LocLayer::Ground,
+        shape: 10,
+        angle: 0,
+        width: 1,
+        length: 1,
+        footprint_width: 1,
+        footprint_length: 1,
+        block_walk: true,
+        block_range: true,
+        active: true,
+        animation: -1,
+        map_function: -1,
+        map_scene: -1,
+        force_approach: 0,
+    }]);
+    snapshot.seed_npcs(vec![]);
+    let scene = snapshot.scene();
+    let flood = api::query::SceneQuery::new(scene, Some(here))
+        .flood_reach()
+        .expect("live collision makes a posted reach flood");
+    api::query::pack_reach_query(scene, Some(&flood))
+}
+
+fn seed_timing_stock(gatherer: &Gatherer, snapshot: &mut GameSnapshot) {
+    let kit = gatherer.prepared.supply.tick_kit.as_ref().unwrap();
+    snapshot.seed_inventory(
+        [gatherer.tool.id, kit.knife.id, kit.logs.id]
+            .into_iter()
+            .enumerate()
+            .map(|(slot, id)| ItemView {
+                def: def(id, "Fixture item"),
+                container: ItemContainer::Inventory,
+                action_family: ItemActionFamily::Held,
+                slot: slot as i32,
+                count: 1,
+                actions: vec![],
+                component_id: 3214,
+            })
+            .collect(),
+        28,
+    );
+}
+
+fn proven_idle_cycle(gatherer: &Gatherer, target: &TargetPlan) -> (TickCycle, TickPolicy) {
+    let method = &gatherer.prepared.catalog.methods()[usize::from(target.method_index)];
+    let spec = GatherTiming::spec(method, gatherer.tool.id).unwrap();
+    let mut cycle = TickCycle::new(spec, 100, 7, 0);
+    let mut policy = TickPolicy::default();
+    let first = CycleSignals {
+        tick: 101,
+        anim: Some(AnimInstruction {
+            serial: 8,
+            class: AnimClass::Skill,
+        }),
+        act_line: false,
+        success_line: false,
+        fletch: false,
+        content_refusal: false,
+        menu_open: false,
+        product_rose: false,
+        target_ready: true,
+        batch_permitted: true,
+        receipt: None,
+        checked_receipt: None,
+    };
+    assert_eq!(cycle.drive(&first, &mut policy), CycleStep::Batch);
+    cycle.note_emit(101, CycleStep::Batch, 1);
+    let dispatch = ServerOrderedDispatch {
+        request_id: 1,
+        dispatch_tick: 101,
+        row_count: 3,
+        dispatched_prefix: 3,
+        rows: [
+            RowDispatch::HostQueued { wire_events: 1 },
+            RowDispatch::HostQueued { wire_events: 1 },
+            RowDispatch::HostQueued { wire_events: 2 },
+            RowDispatch::NotAttempted,
+            RowDispatch::NotAttempted,
+        ],
+        wire_events: 4,
+        terminal: None,
+    };
+    let success = CycleSignals {
+        tick: 102,
+        anim: Some(AnimInstruction {
+            serial: 9,
+            class: AnimClass::Null,
+        }),
+        success_line: true,
+        target_ready: false,
+        receipt: Some((101, &dispatch)),
+        ..first
+    };
+    assert_eq!(cycle.drive(&success, &mut policy), CycleStep::Wait);
+    assert!(cycle.permits_short_depleting_handoff());
+    (cycle, policy)
+}
+
+#[test]
+fn parked_depleting_idle_cycle_arms_a_live_replacement_within_two_posted_steps() {
+    use crate::native::HostEffect;
+    use crate::surface::ServerOrderedPayload;
+    use api::interact::server_ordered::{
+        ExactLocOrNpcRef, ExactLocReference, KnifeArmShape, ServerOrderedRequest,
+    };
+
+    for (here, target_tile, steps) in [
+        (
+            WorldTile {
+                x: 3200,
+                z: 3201,
+                level: 0,
+            },
+            WorldTile {
+                x: 3201,
+                z: 3202,
+                level: 0,
+            },
+            1,
+        ),
+        (
+            WorldTile {
+                x: 3200,
+                z: 3200,
+                level: 0,
+            },
+            WorldTile {
+                x: 3201,
+                z: 3203,
+                level: 0,
+            },
+            2,
+        ),
+    ] {
+        let (mut gatherer, mut snapshot, mut target) = fixture();
+        target.tile = target_tile;
+        seed_timing_stock(&gatherer, &mut snapshot);
+        let reach = seed_access_scene(&mut snapshot, &target, here, None);
+        let goal = WorldTile {
+            z: target_tile.z - 1,
+            ..target_tile
+        };
+        assert_eq!(crate::reach_route::exact_depth(&reach, goal), Some(steps));
+        let (cycle, policy) = proven_idle_cycle(&gatherer, &target);
+        gatherer.tick_policy = policy;
+        gatherer.parked_cycle = Some(cycle);
+        let selected = SelectedTarget {
+            plan: target.clone(),
+            class: PlacementClass::Live,
+            observation_goals: None,
+        };
+        let mut ledger = None;
+        with_tick_reach(&snapshot, &reach, &mut ledger, 103, |tick| {
+            let request = selected
+                .approach(tick.cx.snapshot(), tick.cx.evidence(), tick.walk_danger)
+                .unwrap()
+                .expect("ordinary runner approach requires a walk");
+            assert!(short_loc_replacement_access(&selected, &request, tick));
+            gatherer.start_target(selected, tick);
+        });
+        assert!(
+            matches!(gatherer.active, Active::Gather(_)),
+            "a one/two-step live access should start the replacement gatherer"
+        );
+        let action = ledger
+            .as_ref()
+            .unwrap()
+            .outbox
+            .last()
+            .expect("replacement batch emitted immediately");
+        let HostEffect::ServerOrdered(envelope) = &action.effect else {
+            panic!("replacement uses its checked server-ordered batch")
+        };
+        let ServerOrderedPayload::Content(ServerOrderedRequest::KnifeArm {
+            shape:
+                KnifeArmShape::Continuing {
+                    click: ExactLocOrNpcRef::Loc(loc),
+                },
+            ..
+        }) = envelope.payload()
+        else {
+            panic!("replacement batch clicks the selected loc")
+        };
+        let operation = api::gather_methods::known_rows(
+            &gatherer.prepared.catalog.methods()[usize::from(target.method_index)].targets,
+        )
+        .iter()
+        .find(|row| row.entity == target.entity)
+        .unwrap()
+        .op;
+        let expected = with_tick_reach(&snapshot, &reach, &mut None, 103, |tick| {
+            let snapshot = tick.cx.snapshot();
+            let row = snapshot
+                .locs()
+                .unwrap()
+                .value
+                .iter()
+                .find(|row| row.tile == target.tile)
+                .unwrap();
+            let (scene, static_locs, _) = snapshot.ground_collision_generations().unwrap();
+            ExactLocReference::new(
+                row.id,
+                row.typecode,
+                row.tile,
+                scene,
+                static_locs,
+                operation,
+            )
+            .unwrap()
+        });
+        assert_eq!(*loc, expected);
+    }
+}
+
+#[test]
+fn parked_depleting_idle_cycle_keeps_walk_for_long_or_unreachable_access() {
+    use crate::native::HostEffect;
+
+    for (here, target_tile, wall_x) in [
+        (
+            WorldTile {
+                x: 3200,
+                z: 3200,
+                level: 0,
+            },
+            WorldTile {
+                x: 3201,
+                z: 3205,
+                level: 0,
+            },
+            None,
+        ),
+        (
+            WorldTile {
+                x: 3200,
+                z: 3200,
+                level: 0,
+            },
+            WorldTile {
+                x: 3203,
+                z: 3200,
+                level: 0,
+            },
+            Some(3201),
+        ),
+    ] {
+        let (mut gatherer, mut snapshot, mut target) = fixture();
+        target.tile = target_tile;
+        seed_timing_stock(&gatherer, &mut snapshot);
+        let reach = seed_access_scene(&mut snapshot, &target, here, wall_x);
+        let (cycle, policy) = proven_idle_cycle(&gatherer, &target);
+        gatherer.tick_policy = policy;
+        gatherer.parked_cycle = Some(cycle);
+        let selected = SelectedTarget {
+            plan: target,
+            class: PlacementClass::Live,
+            observation_goals: None,
+        };
+        let mut ledger = None;
+        with_tick_reach(&snapshot, &reach, &mut ledger, 103, |tick| {
+            gatherer.start_target(selected, tick);
+        });
+        assert!(
+            matches!(gatherer.active, Active::Walk(_)),
+            "a long or flood-unreachable loc must retain the normal walk"
+        );
+        assert!(
+            ledger.as_ref().unwrap().outbox.iter().all(|action| {
+                !matches!(action.effect, HostEffect::ServerOrdered(_))
+            }),
+            "no replacement batch is emitted without short exact access"
+        );
+        assert!(
+            gatherer
+                .parked_cycle
+                .as_ref()
+                .is_some_and(|cycle| cycle.permits_short_depleting_handoff()),
+            "the normal walk keeps ownership of the still-parked cycle"
+        );
+    }
 }
 
 #[test]
