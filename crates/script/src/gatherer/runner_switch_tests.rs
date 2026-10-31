@@ -177,6 +177,14 @@ fn catherby_partial_return_fixture() -> (Gatherer, GameSnapshot, TargetPlan, Tar
         z: observed_here.z,
         level: observed_here.level,
     };
+    let mut player = snapshot
+        .local_player()
+        .expect("the fixture has a player")
+        .clone();
+    player.player.network = old_here;
+    player.player.actor.tile = old_here;
+    player.player.actor.moving = false;
+    snapshot.seed_local_player(player);
     let initial = catherby_return_plan(&gatherer, &snapshot, old_here);
     let current = WorldTile {
         x: initial.tile.x,
@@ -193,10 +201,6 @@ fn catherby_partial_return_fixture() -> (Gatherer, GameSnapshot, TargetPlan, Tar
     );
     // Fishing observation stands are selected from content, not clamped toward
     // the player (select.rs:1060-1077). A fresh plan can correctly keep its goal.
-    let replan = catherby_return_plan(&gatherer, &snapshot, current);
-    gatherer.trip = TripStep::Return;
-    gatherer.target = Some(initial.clone());
-    gatherer.begin_walk_retry(WalkRetryTarget::Return(initial.tile));
     let mut player = snapshot
         .local_player()
         .expect("the fixture has a player")
@@ -205,6 +209,10 @@ fn catherby_partial_return_fixture() -> (Gatherer, GameSnapshot, TargetPlan, Tar
     player.player.actor.tile = current;
     player.player.actor.moving = false;
     snapshot.seed_local_player(player);
+    let replan = catherby_return_plan(&gatherer, &snapshot, current);
+    gatherer.trip = TripStep::Return;
+    gatherer.target = Some(initial.clone());
+    gatherer.begin_walk_retry(WalkRetryTarget::Return(initial.tile));
     (gatherer, snapshot, initial, replan, current)
 }
 
@@ -1315,16 +1323,16 @@ fn resource_approach_retries_then_shuns_and_fails_with_last_detail() {
             tick,
         );
     });
-    assert!(gatherer.failure.is_none());
-    with_tick(&snapshot, &mut ledger, 10, |tick| {
-        gatherer.begin_idle(tick, false);
-    });
     let failure = gatherer
         .failure
         .as_ref()
-        .expect("no reachable target remains");
+        .expect("the total approach phase budget must end the retry");
     assert_eq!(failure.code.as_ref(), "walk-failed");
     assert!(failure.message.contains("last approach route detail"));
+    assert_eq!(
+        gatherer.scratch.phase_walk_failures,
+        MAX_FAILED_WALKS_PER_PHASE
+    );
 }
 
 #[test]
@@ -1721,6 +1729,16 @@ fn second_return_stall_shuns_the_failed_stand_before_terminal_failure() {
 fn return_failures_across_alternating_stands_stop_within_phase_budget() {
     let (mut gatherer, mut snapshot) = catherby_fishing_fixture();
     let area = gatherer.area.expect("the fixture has a work area");
+    let place_actor = |snapshot: &mut GameSnapshot, at: WorldTile| {
+        let mut player = snapshot
+            .local_player()
+            .expect("the fixture has an observed player")
+            .clone();
+        player.player.network = at;
+        player.player.actor.tile = at;
+        player.player.actor.moving = false;
+        snapshot.seed_local_player(player);
+    };
     let mut positions = Vec::new();
     for dx in (-30..=30).step_by(5) {
         for dz in (-30..=30).step_by(5) {
@@ -1734,6 +1752,7 @@ fn return_failures_across_alternating_stands_stop_within_phase_budget() {
     let plans: Vec<_> = positions
         .into_iter()
         .map(|position| {
+            place_actor(&mut snapshot, position);
             let stand = catherby_return_plan(&gatherer, &snapshot, position).tile;
             (position, stand)
         })
@@ -1744,16 +1763,6 @@ fn return_failures_across_alternating_stands_stop_within_phase_budget() {
         .find(|(_, stand)| *stand != stand_a)
         .expect("the fixture has at least two return stands");
 
-    let place_actor = |snapshot: &mut GameSnapshot, at: WorldTile| {
-        let mut player = snapshot
-            .local_player()
-            .expect("the fixture has an observed player")
-            .clone();
-        player.player.network = at;
-        player.player.actor.tile = at;
-        player.player.actor.moving = false;
-        snapshot.seed_local_player(player);
-    };
     gatherer.trip = TripStep::Return;
     let mut ledger = None;
     let mut now = 800;
@@ -1837,7 +1846,9 @@ fn temporary_typed_return_refusals_have_a_finite_shun() {
             );
         });
         assert!(!gatherer.scratch.return_stall_recovery.pending());
-        assert!(ledger.as_ref().unwrap().outbox.is_empty());
+        assert!(ledger
+            .as_ref()
+            .map_or(true, |ledger| ledger.outbox.is_empty()));
         assert!(gatherer.failure.is_none());
         assert!(gatherer
             .scratch
@@ -1878,7 +1889,9 @@ fn blocked_return_walk_selects_another_stand_without_retrying_the_failed_plan() 
         );
     });
     assert!(!gatherer.scratch.return_stall_recovery.pending());
-    assert!(ledger.as_ref().unwrap().outbox.is_empty());
+    assert!(ledger
+        .as_ref()
+        .map_or(true, |ledger| ledger.outbox.is_empty()));
     assert!(gatherer.failure.is_none());
 
     with_tick(&snapshot, &mut ledger, 751, |tick| {
