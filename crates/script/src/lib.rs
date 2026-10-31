@@ -78,6 +78,8 @@ pub mod survival;
 pub mod trade_screen;
 pub mod watchdog;
 pub mod work_admission;
+/// Pure public-world selection for catalog compatibility.
+pub mod world_number;
 
 pub use card::{
     ItemOptionCandidate, ItemOptionSpec, RegistryCard, ScriptKind, ScriptSel, ScriptSource,

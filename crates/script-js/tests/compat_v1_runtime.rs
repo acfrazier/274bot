@@ -1217,3 +1217,51 @@ globalThis.__activityTaskFacts = { activeTask, idleTask };
         "currentTask reports the executing child task only during its actual execution"
     );
 }
+
+#[test]
+fn client_cross_root_helpers_match_the_catalog_contract() {
+    let src = bot(
+        r#"
+import { resolveWorldNumber } from '../../../client/config/worlds.js';
+import Skill from '../../../client/shell/Skill.js';
+"#,
+        r#"
+const invalidWorld = query => {
+    try {
+        return resolveWorldNumber('w2.rs2b2t.com', new URLSearchParams(query));
+    } catch (error) {
+        return String(error?.message ?? error);
+    }
+};
+globalThis.__clientHelperFacts = {
+    hosted: resolveWorldNumber('w2.rs2b2t.com:443', new URLSearchParams()),
+    fallback: resolveWorldNumber('localhost:8081', new URLSearchParams()),
+    explicit: resolveWorldNumber('w1.rs2b2t.com', new URLSearchParams('world=3')),
+    invalid: invalidWorld('world=4'),
+    duplicate: invalidWorld('world=1&world=2'),
+    skillNames: Skill.names,
+    skillUsed: Skill.used,
+};
+"#,
+    );
+    assert_eq!(
+        run(&src, "globalThis.__clientHelperFacts"),
+        serde_json::json!({
+            "hosted": 2,
+            "fallback": 1,
+            "explicit": 3,
+            "invalid": "world must be 1, 2 or 3",
+            "duplicate": "world must be 1, 2 or 3",
+            "skillNames": [
+                "attack", "defence", "strength", "hitpoints", "ranged", "prayer", "magic",
+                "cooking", "woodcutting", "fletching", "fishing", "firemaking", "crafting",
+                "smithing", "mining", "herblore", "agility", "thieving", "slayer", "-unused-",
+                "runecraft", "-unused-", "-unused-", "-unused-", "-unused-"
+            ],
+            "skillUsed": [
+                true, true, true, true, true, true, true, true, true, true, true, true, true,
+                true, true, true, true, true, false, false, true, false, false, false, false
+            ],
+        })
+    );
+}
