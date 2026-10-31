@@ -389,15 +389,12 @@ impl Case {
                     },
                 )
             }
-            Self::M4 => {
-                (world.collision.standable(TREE_APPROACH)
-                    && world.collision.standable(TREE_HUNT_STAND))
-                .then_some(TREE_APPROACH)
-                .ok_or_else(|| {
-                    "Draynor Manor M4 start and adjacent tree-hunt stand must be standable"
-                        .to_owned()
-                })
-            }
+            Self::M4 => (world.collision.standable(TREE_APPROACH)
+                && world.collision.standable(TREE_HUNT_STAND))
+            .then_some(TREE_APPROACH)
+            .ok_or_else(|| {
+                "Draynor Manor M4 start and adjacent tree-hunt stand must be standable".to_owned()
+            }),
             Self::R1 | Self::R2 | Self::R3 => ranged_placement(self, world).map(|p| p.spawn),
         }
     }
