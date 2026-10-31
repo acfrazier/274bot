@@ -603,7 +603,8 @@ impl LoadIsolate {
         let thread_paint_generation = paint_generation.clone();
         let frame_interest = std::sync::Arc::new(AtomicUsize::new(0));
         let thread_frame_interest = std::sync::Arc::clone(&frame_interest);
-        let loc_projection_interest = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let loc_projection_interest =
+            std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
         let thread_loc_projection_interest = std::sync::Arc::clone(&loc_projection_interest);
         let (frame_ack_tx, frame_ack_rx) = mpsc::sync_channel(0);
         let queued = std::sync::Arc::new(AtomicUsize::new(0));

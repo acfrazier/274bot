@@ -6,8 +6,8 @@ use api::game_data::SelectedGameData;
 use api::snapshot::WorldTile;
 use rustyscript::Runtime;
 use std::cell::RefCell;
-use std::sync::{Arc, Weak};
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Weak};
 #[path = "client_adapter_v8.rs"]
 mod client_adapter_v8;
 
