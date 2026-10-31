@@ -927,13 +927,13 @@ fn parse_tile_setting<'s>(
     let tile = v8::Object::new(scope);
     let x_key = cb::string(scope, "x");
     let x = v8::Number::new(scope, coordinates[0]);
-    cb::assign(scope, tile.into(), x_key.into(), x.into())?;
+    cb::assign(scope, tile.into(), x_key, x.into())?;
     let z_key = cb::string(scope, "z");
     let z = v8::Number::new(scope, coordinates[1]);
-    cb::assign(scope, tile.into(), z_key.into(), z.into())?;
+    cb::assign(scope, tile.into(), z_key, z.into())?;
     let level_key = cb::string(scope, "level");
     let level = v8::Number::new(scope, coordinates[2]);
-    cb::assign(scope, tile.into(), level_key.into(), level.into())?;
+    cb::assign(scope, tile.into(), level_key, level.into())?;
     Ok(tile.into())
 }
 

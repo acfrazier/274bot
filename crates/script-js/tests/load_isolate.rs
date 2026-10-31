@@ -8200,22 +8200,22 @@ export default class T extends TaskBot {
 
 // Task 12b — SettingsStore.saved exposes raw values, not the host display bag.
 #[test]
-fn isolate_settings_store_saved_omits_unset_values() {
+fn isolate_settings_store_saved_ignores_unpersisted_host_bag() {
     let src = r#"
 import { SettingsStore } from '../../runtime/Settings.js';
 export default class T extends LoopingBot {
     loop() {
         globalThis.__rs2b0t_host.settingsBag = { food: 'Lobster' };
-        globalThis.__probe = SettingsStore.saved('T', 'food');
+        globalThis.__probe = SettingsStore.saved('T', 'food') ?? null;
     }
 }
 "#;
     let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![]).unwrap();
     iso.on_game_tick(1);
     let value = iso.probe("__probe").unwrap();
-    assert_ne!(
-        value, "Lobster",
-        "SettingsStore.saved must not return the host display bag: {value:?}"
+    assert!(
+        value.is_null(),
+        "SettingsStore.saved must omit unset values even if the host display bag contains food: {value:?}"
     );
     iso.join();
 }
