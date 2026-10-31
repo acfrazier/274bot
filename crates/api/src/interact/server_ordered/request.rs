@@ -547,8 +547,9 @@ impl ServerOrderedDispatch {
 ///
 /// `dispatch_tick` is the raw Client `PLAYER_INFO` generation. The first clock
 /// guard requires equality with `snapshot.gens().player_info`; the second
-/// requires equality with the input observer's raw generation. Neither uses
-/// the session-relative `GameSnapshot::tick()` nor the native
+/// requires equality with the input observer's raw generation.
+/// Raw generations outside the input observer's `u32` range are refused.
+/// Neither uses the session-relative `GameSnapshot::tick()` nor the native
 /// `EvidenceStamp::tick`. The authority callback separately fences the owning
 /// run, session and request, including immediately before each packet.
 pub struct ServerOrderedDispatchContext<'a> {
@@ -1427,7 +1428,7 @@ fn validate_dispatch_context(
     input: ServerOrderedInputSnapshot,
     dispatch_tick: u64,
 ) -> Result<(), ServerOrderedError> {
-    if snapshot.gens().player_info != dispatch_tick {
+    if snapshot.gens().player_info != dispatch_tick || u32::try_from(dispatch_tick).is_err() {
         return Err(ServerOrderedError::StaleOwner);
     }
     if input.observed_tick() != u32::try_from(dispatch_tick).ok() {
