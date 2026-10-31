@@ -172,10 +172,10 @@ fn catherby_partial_return_fixture() -> (Gatherer, GameSnapshot, TargetPlan, Tar
         .actor
         .tile;
     let old_here = WorldTile {
-        x: observed_plan.tile.x
+        x: observed_here.x
             - i32::from(gatherer.area.expect("the fixture has a work area").radius),
-        z: observed_plan.tile.z,
-        level: observed_plan.tile.level,
+        z: observed_here.z,
+        level: observed_here.level,
     };
     let initial = catherby_return_plan(&gatherer, &snapshot, old_here);
     let current = WorldTile {
@@ -2046,7 +2046,7 @@ fn bank_access_retries_then_excludes_the_failed_nearest_bank() {
     });
     assert!(gatherer.failure.is_none());
     assert_eq!(gatherer.trip, TripStep::Select);
-    assert_eq!(gatherer.scratch.excluded_banks.as_ref(), &[1]);
+    assert_eq!(gatherer.scratch.excluded_banks.as_deref(), Some(&[1][..]));
     assert_eq!(
         gatherer.scratch.last_walk_failure.as_deref(),
         Some("last bank access route detail")

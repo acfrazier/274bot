@@ -40,6 +40,7 @@ globs = [
   "crates/e2e/**",
   "crates/script-js/src/tooling/compat_dts.rs",
   "crates/host-play/src/bank_core_live.rs",
+  "crates/host-play/src/clean_logout_guard.inc.rs",
   "crates/host-play/src/bank_fetch_closed_live.rs",
   "crates/host-play/src/bank_memory_live.rs",
   "crates/host-play/src/gather_bait_live.rs",
