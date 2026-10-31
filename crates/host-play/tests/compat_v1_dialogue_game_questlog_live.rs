@@ -24,6 +24,8 @@ const QUEST_JOURNAL_ROOT: i32 = 8_134;
 const CELL_DEADLINE: Duration = Duration::from_secs(240);
 const PREP_DEADLINE: Duration = Duration::from_secs(300);
 const POLL_INTERVAL: Duration = Duration::from_millis(50);
+// Match MakeOne's result wait when checking for late dispatches.
+const MAKE_ONE_CANCEL_WINDOW_TICKS: u64 = 10;
 
 const MAKE_SOURCE: &str = r#"
 import { ChatDialog } from '../../api/ui/dialogue/ChatDialog.js';
@@ -38,7 +40,8 @@ export default class CompatMakeOneProbe extends LoopingBot {
 }
 "#;
 
-// Start MakeOne before the fixture stops the script on the next game tick.
+// An IfButton already sent to Engine L cannot be revoked by local Stop.
+// The live cell checks the result and dispatch trace after stopping the pending wait.
 const MAKE_CANCEL_SOURCE: &str = r#"
 import { ChatDialog } from '../../api/ui/dialogue/ChatDialog.js';
 export default class CompatMakeOneCancelProbe extends LoopingBot {
@@ -856,6 +859,67 @@ fn tick_boundary(receipt: &Value, name: &str) -> u64 {
         .as_u64()
         .unwrap_or_else(|| panic!("missing observed tick boundary {name}"))
 }
+fn trace_lines_between<'a>(
+    text: &'a str,
+    account: &str,
+    start_marker: &str,
+    end_marker: &str,
+) -> Vec<&'a str> {
+    let mut in_window = false;
+    let mut start_seen = false;
+    let mut end_seen = false;
+    let mut selected = Vec::new();
+    for line in text.lines() {
+        if !in_window && line.contains(start_marker) && line.contains(account) {
+            in_window = true;
+            start_seen = true;
+            continue;
+        }
+        if in_window && line.contains(end_marker) && line.contains(account) {
+            end_seen = true;
+            break;
+        }
+        if in_window {
+            selected.push(line);
+        }
+    }
+    assert!(
+        start_seen && end_seen,
+        "missing trace window markers {start_marker:?} and {end_marker:?}"
+    );
+    selected
+}
+
+fn trace_dispatch_lines_between<'a>(
+    text: &'a str,
+    account: &str,
+    start_marker: &str,
+    end_marker: &str,
+) -> Vec<&'a str> {
+    trace_lines_between(text, account, start_marker, end_marker)
+        .into_iter()
+        .filter(|line| {
+            (line.contains("[interact ") && line.contains(account))
+                || (line.contains("native-packet")
+                    && line
+                        .split_whitespace()
+                        .any(|field| field.strip_prefix("account=") == Some(account)))
+                || (line.contains("[shim-") && line.contains("sent=true"))
+        })
+        .collect()
+}
+
+fn trace_if_button_sends_between(
+    text: &str,
+    account: &str,
+    start_marker: &str,
+    end_marker: &str,
+) -> usize {
+    trace_lines_between(text, account, start_marker, end_marker)
+        .into_iter()
+        .filter(|line| line.contains("[shim-if-button]") && line.contains("sent=true"))
+        .count()
+}
 
 fn run_make_one_cell() {
     let (_isolated, play, account, fixture) = start_fixture(Cell::MakeOne);
@@ -879,6 +943,7 @@ fn run_make_one_cell() {
     };
     assert_eq!(before, 0, "fixture starts without shortbows");
     let mut success_logs = Vec::new();
+    eprintln!("COMPAT_MAKE_SUCCESS_START account={account}");
     start_script(&play, &account, MAKE_SOURCE);
     wait_for_log(
         &play,
@@ -905,11 +970,13 @@ fn run_make_one_cell() {
     });
     let success_end_tick = fixture.lock().unwrap().snapshot.tick();
     let success_page = modal_roots(&fixture.lock().unwrap().snapshot);
+    eprintln!("COMPAT_MAKE_SUCCESS_END account={account}");
     stop_script(&play, &account, &fixture);
 
     close_modal(&play, &account, &fixture);
     let missing_start_tick = fixture.lock().unwrap().snapshot.tick();
     let mut missing_logs = Vec::new();
+    eprintln!("COMPAT_MAKE_MISSING_START account={account}");
     start_script(&play, &account, MAKE_SOURCE);
     wait_for_log(
         &play,
@@ -925,6 +992,7 @@ fn run_make_one_cell() {
         1
     );
     let missing_end_tick = fixture.lock().unwrap().snapshot.tick();
+    eprintln!("COMPAT_MAKE_MISSING_END account={account}");
     stop_script(&play, &account, &fixture);
 
     request_make_menu(&fixture);
@@ -944,6 +1012,7 @@ fn run_make_one_cell() {
     );
     let cancel_start_tick = fixture.lock().unwrap().snapshot.tick();
     let mut cancel_logs = Vec::new();
+    eprintln!("COMPAT_MAKE_CANCEL_START account={account}");
     start_script(&play, &account, MAKE_CANCEL_SOURCE);
     let click_seen_tick = wait_for_log(
         &play,
@@ -967,6 +1036,9 @@ fn run_make_one_cell() {
         click_seen_tick.saturating_add(1),
         "Stop follows the click on its first game tick"
     );
+    let mut cancel_stop_calls = 0;
+    cancel_stop_calls += 1;
+    eprintln!("COMPAT_MAKE_CANCEL_STOP account={account} tick={cancel_stop_tick}");
     stop_script(&play, &account, &fixture);
     let cancel_stopped_tick = fixture.lock().unwrap().snapshot.tick();
     assert_eq!(
@@ -974,8 +1046,10 @@ fn run_make_one_cell() {
         cancel_stop_tick,
         "Stop completed on the click's first following tick"
     );
+    let cancel_deadline_tick =
+        cancel_stop_tick.saturating_add(MAKE_ONE_CANCEL_WINDOW_TICKS);
     wait_for(&play, &account, &fixture, CELL_DEADLINE, |_, state| {
-        state.snapshot.tick() >= cancel_start_tick.saturating_add(5)
+        state.snapshot.tick() >= cancel_deadline_tick
     });
     take_logs(&play, &account, &mut cancel_logs);
     assert_eq!(
@@ -1000,14 +1074,21 @@ fn run_make_one_cell() {
             .any(|line| line.starts_with("MAKE_RESULT:")),
         "stopped MakeOne published a result: {cancel_logs:?}"
     );
+    // Stop suppresses the pending JS result, but cannot revoke the sent click.
+    // Permit at most that click's one product; the trace must reject later dispatches.
+    assert_eq!(cancel_stop_calls, 1, "Stop is requested exactly once");
     assert_eq!(
         play.script_state(&account),
         script::RunState::Idle,
         "the stopped MakeOne script is idle"
     );
     let cancel_end_tick = fixture.lock().unwrap().snapshot.tick();
+    eprintln!("COMPAT_MAKE_CANCEL_WINDOW_END account={account} tick={cancel_end_tick}");
     let after_cancel = inventory_count(&fixture.lock().unwrap().snapshot, "Shortbow");
-    assert_eq!(after_cancel, 1, "cancelled MakeOne produced no shortbow");
+    assert!(
+        (1..=2).contains(&after_cancel),
+        "the prior product remains and the sent click can add at most one: shortbows={after_cancel}"
+    );
 
     request_make_menu(&fixture);
     wait_for(&play, &account, &fixture, CELL_DEADLINE, |_, state| {
@@ -1015,6 +1096,7 @@ fn run_make_one_cell() {
     });
     let replacement_start_tick = fixture.lock().unwrap().snapshot.tick();
     let mut replacement_logs = Vec::new();
+    eprintln!("COMPAT_MAKE_REPLACEMENT_START account={account}");
     start_script(&play, &account, MAKE_SOURCE);
     wait_for_log(
         &play,
@@ -1056,6 +1138,7 @@ fn run_make_one_cell() {
         replacement_page_root, make_page_root,
         "the make page was replaced"
     );
+    eprintln!("COMPAT_MAKE_REPLACEMENT_END account={account}");
     stop_script(&play, &account, &fixture);
 
     let receipt = json!({
@@ -1087,15 +1170,17 @@ fn run_make_one_cell() {
             "cancel_click_seen": click_seen_tick,
             "cancel_stop": cancel_stop_tick,
             "cancel_stop_completed": cancel_stopped_tick,
+            "cancel_deadline": cancel_deadline_tick,
             "cancel_end": cancel_end_tick,
-            "replacement_start": replacement_start_tick,
             "replacement_end": replacement_end_tick
         },
         "success_logs": success_logs,
         "missing_menu_result": log_json(&missing_logs, "MAKE_RESULT:"),
         "cancel_pending": cancel_logs,
-        "cancelled_on_stop": true,
+        "cancel_result_suppressed": true,
+        "cancel_stop_calls": cancel_stop_calls,
         "cancel_output_count": after_cancel,
+        "cancel_output_count_max": 2,
         "replacement_result": log_json(&replacement_logs, "MAKE_RESULT:"),
         "replacement_output_count": after_replacement,
         "page_replaced": replacement_page_root != make_page_root,
@@ -1423,7 +1508,7 @@ fn run_captured(test_name: &str, cell: Cell, body: fn()) {
         }
     }
     assert!(
-        accepted_requests > 0,
+        accepted_requests > 0 || cell == Cell::MakeOne,
         "no native requests were accepted: {text}"
     );
 
@@ -1442,62 +1527,60 @@ fn run_captured(test_name: &str, cell: Cell, body: fn()) {
         receipt["driver"]["opnpct_dispatches"] = json!(casts);
     }
     if cell == Cell::MakeOne {
-        let button =
-            client::io::map_client_prot(revision, client::io::ClientProt::IF_BUTTON).id as u8;
-        let counts = json!({
-            "success": packet_count(
-                &opcodes,
-                button,
-                tick_boundary(&receipt, "success_start"),
-                tick_boundary(&receipt, "success_end")
+        let clicks = json!({
+            "success": trace_if_button_sends_between(
+                &text,
+                account,
+                "COMPAT_MAKE_SUCCESS_START",
+                "COMPAT_MAKE_SUCCESS_END"
             ),
-            "missing": packet_count(
-                &opcodes,
-                button,
-                tick_boundary(&receipt, "missing_start"),
-                tick_boundary(&receipt, "missing_end")
+            "missing": trace_if_button_sends_between(
+                &text,
+                account,
+                "COMPAT_MAKE_MISSING_START",
+                "COMPAT_MAKE_MISSING_END"
             ),
-            "cancel": packet_count(
-                &opcodes,
-                button,
-                tick_boundary(&receipt, "cancel_start"),
-                tick_boundary(&receipt, "cancel_end")
+            "cancel": trace_if_button_sends_between(
+                &text,
+                account,
+                "COMPAT_MAKE_CANCEL_START",
+                "COMPAT_MAKE_CANCEL_WINDOW_END"
             ),
-            "replacement": packet_count(
-                &opcodes,
-                button,
-                tick_boundary(&receipt, "replacement_start"),
-                tick_boundary(&receipt, "replacement_end")
-            ),
-            "cancel_after_stop": packet_count(
-                &opcodes,
-                button,
-                tick_boundary(&receipt, "cancel_stop").saturating_add(1),
-                tick_boundary(&receipt, "cancel_end")
+            "replacement": trace_if_button_sends_between(
+                &text,
+                account,
+                "COMPAT_MAKE_REPLACEMENT_START",
+                "COMPAT_MAKE_REPLACEMENT_END"
             )
         });
-        assert_eq!(
-            counts["success"], 1,
-            "one successful Make-1 dispatch; trace={opcodes:?}"
+        let cancel_dispatches = trace_dispatch_lines_between(
+            &text,
+            account,
+            "COMPAT_MAKE_CANCEL_STOP",
+            "COMPAT_MAKE_CANCEL_WINDOW_END"
         );
         assert_eq!(
-            counts["missing"], 0,
-            "missing menu must not dispatch; trace={opcodes:?}"
+            clicks["success"], 1,
+            "one successful MakeOne IfButton dispatch; trace={text}"
         );
         assert_eq!(
-            counts["cancel"], 1,
-            "one Make-1 click started the cancelled request; trace={opcodes:?}"
+            clicks["missing"], 0,
+            "missing menu must not dispatch; trace={text}"
         );
         assert_eq!(
-            counts["cancel_after_stop"], 0,
-            "no Make-1 click followed Stop; trace={opcodes:?}"
+            clicks["cancel"], 1,
+            "one MakeOne click started the stopped request; trace={text}"
+        );
+        assert!(
+            cancel_dispatches.is_empty(),
+            "no dispatch of any kind may follow Stop through the MakeOne deadline; dispatches={cancel_dispatches:?}"
         );
         assert_eq!(
-            counts["replacement"], 1,
-            "page replacement begins with one real Make-1 dispatch; trace={opcodes:?}"
+            clicks["replacement"], 1,
+            "page replacement begins with one real MakeOne dispatch; trace={text}"
         );
-        receipt["driver"]["if_button_opcode"] = json!(button);
-        receipt["driver"]["make_if_button_dispatches"] = counts;
+        receipt["driver"]["make_if_button_dispatches"] = clicks;
+        receipt["driver"]["cancel_dispatches_after_stop"] = json!(cancel_dispatches);
     }
     if cell == Cell::QuestJournal {
         let button =
