@@ -3,6 +3,7 @@
 
 #![cfg(feature = "live-harness")]
 
+use std::cell::RefCell;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::{Arc, Mutex};
@@ -17,6 +18,10 @@ use host_play::{
 };
 use serde_json::{json, Value};
 use vault::{Profile, ProfileSettings};
+
+thread_local! {
+    static CLIENT_ADAPTER_RENDERER: RefCell<Option<Renderer>> = RefCell::new(None);
+}
 
 const TEST_NAME: &str = "reader_bank_count_stats_bounds_and_stale_guards";
 const POLL: Duration = Duration::from_millis(50);
@@ -200,7 +205,6 @@ struct SeedPrep {
     error: Option<String>,
     tutorial_reseed: Option<scenario::tutorial::PostRelogTutorial>,
     evidence: Option<Value>,
-    renderer: Option<Renderer>,
     rendered_yaw: Option<i32>,
 }
 
@@ -211,17 +215,16 @@ fn render_ready_frame(client: &mut Client, prep: &mut SeedPrep) -> Result<(), St
     if prep.rendered_yaw == Some(client.orbit_camera_yaw) {
         return Ok(());
     }
-    if prep.renderer.is_none() {
-        prep.renderer = Some(Renderer::new_prefer(client.config.lowmem, false));
-    }
-    let is_cpu_frame = {
-        let renderer = prep.renderer.as_mut().expect("renderer initialized");
+    let is_cpu_frame = CLIENT_ADAPTER_RENDERER.with(|cell| {
+        let mut renderer = cell.borrow_mut();
+        let renderer =
+            renderer.get_or_insert_with(|| Renderer::new_prefer(client.config.lowmem, false));
         let was_draw = client.draw;
         client.set_draw(true);
         let frame = renderer.mainredraw(client);
         client.set_draw(was_draw);
         matches!(frame, client::render::backend::FrameOutput::PixMap(_))
-    };
+    });
     if !is_cpu_frame {
         return Err("ClientAdapter live scene render did not produce a CPU PixMap".into());
     }
