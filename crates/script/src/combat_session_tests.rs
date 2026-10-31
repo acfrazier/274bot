@@ -486,6 +486,67 @@ impl Harness {
 }
 
 #[test]
+fn default_fight_card_uses_the_shared_stand_retry_cap_and_classifier() {
+    use crate::native::{WalkEnd, WalkReceipt, WalkRefusal};
+
+    for refusal in [None, Some(WalkRefusal::Unsurvivable)] {
+        let mut harness = Harness::npc(World::new("imp"));
+        let stand = WorldTile { x: STAND.x + 20, ..STAND };
+        Arc::make_mut(&mut harness.card.request).stand = Some(stand);
+        assert_eq!(harness.tick(1), ScriptFlow::Continue);
+        let mut previous_request = None;
+        for (attempt, tick, detail) in [
+            (1, 2, "first default fight route failure"),
+            (2, 4, "second default fight route failure"),
+            (3, 6, "last default fight route failure"),
+        ] {
+            assert_eq!(harness.tick(tick), ScriptFlow::Continue);
+            let ledger = harness.ledger.as_mut().unwrap();
+            let action = ledger.outbox.last().expect("the card must request its stand walk");
+            let HostEffect::Walk(request) = &action.effect else {
+                panic!("a default fight must approach its stand before attacking");
+            };
+            assert_eq!(request.target, stand);
+            assert_eq!(request.required_after.tick, tick);
+            let request_id = action.request_id.get();
+            assert_ne!(Some(request_id), previous_request);
+            previous_request = Some(request_id);
+            let evidence = EvidenceStamp {
+                run: action.run(),
+                tick,
+                sequence: tick,
+            };
+            ledger.outbox.clear();
+            ledger.walk = Some(WalkReceipt {
+                request_id,
+                evidence,
+                goal: None,
+                end: WalkEnd::NoPath,
+                blocked: None,
+                detail: Some(Arc::from(detail)),
+                refusal,
+                assessment: None,
+                escape: None,
+            });
+            let flow = harness.tick(tick + 1);
+            assert!(harness.outbox().is_empty(), "a failed walk never attacks");
+            assert!(harness.ledger.as_ref().unwrap().outbox.is_empty());
+            if refusal.is_some() || attempt == 3 {
+                assert_eq!(flow, ScriptFlow::Complete);
+                assert_eq!(
+                    harness.settled(),
+                    Some(Settle::Failed(Arc::from(format!("blocked:{detail}"))))
+                );
+                break;
+            }
+            assert_eq!(flow, ScriptFlow::Continue);
+            assert_eq!(harness.tick(tick + 1), ScriptFlow::Continue);
+            assert!(harness.ledger.as_ref().unwrap().outbox.is_empty());
+        }
+    }
+}
+
+#[test]
 fn pause_clears_only_the_bot_raised_prayer_and_settles_interrupted() {
     let mut world = World::new("imp");
     let skin = world.prayer("Thick Skin");

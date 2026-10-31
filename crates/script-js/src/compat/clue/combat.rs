@@ -114,7 +114,6 @@ impl Delegation {
                 z: self.stand.z,
                 level: self.stand.level,
             }),
-            retry_approach_walks: false,
             search_bounds: None,
             cross: None,
             engage_radius,

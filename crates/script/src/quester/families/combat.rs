@@ -51,10 +51,6 @@ pub const ABORT_ESCAPE_UNSAFE_REASON: &str =
 pub const ABORT_ESCAPE_STALLED_REASON: &str =
     "combat abort escape walk made no settled progress within its tick budget";
 
-/// Failed return-to-stand walks in one return before the last failure
-/// ends the step. Each retry is a fresh walk request, so the router
-/// plans again from the observed tile.
-const MAX_RETURN_WALK_FAILURES: u8 = 3;
 static ABORTED_COMBAT_STEP: std::sync::LazyLock<Arc<str>> =
     std::sync::LazyLock::new(|| Arc::from(ABORTED_COMBAT_STEP_REASON));
 static ABORT_WALK_FAILED: std::sync::LazyLock<Arc<str>> =
@@ -547,7 +543,6 @@ fn compile_plan(args: CombatArgs, cx: &CompileContext<'_>) -> Result<CombatPlan,
         spells,
         fallback_spells: args.fallback_spells,
         stand,
-        retry_approach_walks: true,
         search_bounds,
         cross: Some(Arc::clone(&cross)),
         engage_radius: args.tactic.engage_radius,
@@ -924,7 +919,6 @@ impl StepPlan for CombatPlan {
             nonkill_reengagements: 0,
             last_outcome: None,
             target_gone_restarts: 0,
-            return_walk_failures: 0,
             stand_walk_failures: 0,
             raised_prayers: RaisedPrayers::empty(),
             manual_takeover_watch: crate::native::ManualTakeoverWatch::default(),
@@ -1274,7 +1268,6 @@ struct CombatRun {
     reengage_budget: u32,
     /// Non-kill re-engagements used by this step; successful kills do not reset the bound.
     nonkill_reengagements: u32,
-    return_walk_failures: u8,
     /// Stand-approach walk failures every fight attempt of this step spent. A
     /// kill-budget end rebegins the fight inside the same step, so the bound
     /// of three spans attempts; the field starts at zero and only the step's
@@ -1721,40 +1714,25 @@ impl CombatRun {
         self.action = None;
         let route_ended_at_stand =
             matches!(&receipt.end, crate::native::WalkEnd::RouteEnded)
+                && crate::native::WalkRetryState::retryable_receipt(&receipt)
                 && self.request.stand.is_some_and(|stand| {
                     cx.tick.cx.snapshot().local_player().is_some_and(|local| {
                         crate::combat::select::stand_reached(stand, local.value)
                     })
                 });
-        let arrival = if route_ended_at_stand {
-            Ok(receipt.evidence)
-        } else {
-            receipt.into_arrival()
-        };
-        match arrival {
-            Ok(_) => {
-                self.return_walk_failures = 0;
-                self.rebegin_combat(cx, true)
-            }
-            // A blocked walk is information first: walk again, replanned
-            // from the observed tile, within the bounded count. Typed
-            // evidence failures (user input, cancellation, missing quest
-            // evidence) are not retryable and keep their exact error.
-            Err(error) if matches!(error, ActionError::Blocked(_)) => {
-                self.return_walk_failures = self.return_walk_failures.saturating_add(1);
-                if self.return_walk_failures >= MAX_RETURN_WALK_FAILURES {
-                    return Poll::Ready(Err(error));
-                }
-                match self.request.stand {
-                    Some(stand) => match self.begin_return_to_stand(stand, cx) {
-                        Ok(()) => Poll::Pending,
-                        Err(begin_error) => Poll::Ready(Err(begin_error)),
-                    },
-                    None => Poll::Ready(Err(error)),
-                }
-            }
-            Err(error) => Poll::Ready(Err(error)),
+        if route_ended_at_stand {
+            self.return_retry.reset();
+            return self.rebegin_combat(cx, true);
         }
+        if self
+            .return_retry
+            .observe_approach_failure(&receipt, cx.tick.cx.evidence().tick)
+        {
+            return Poll::Pending;
+        }
+        receipt.into_arrival()?;
+        self.return_retry.reset();
+        self.rebegin_combat(cx, true)
     }
 
     /// Ends an escape walk that stays unsettled past its observed-tick
@@ -1911,7 +1889,7 @@ impl CombatRun {
                     return self.reengagement_budget_failure();
                 }
                 if let Some(stand) = self.request.stand {
-                    self.return_walk_failures = 0;
+                    self.return_retry.reset();
                     match self.begin_return_to_stand(stand, cx) {
                         Ok(()) => Poll::Pending,
                         Err(error) => Poll::Ready(Err(error)),

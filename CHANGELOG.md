@@ -17,8 +17,11 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.8` 
   failed walks. The count spans the fight attempts a kill budget ends, so a
   short budget cannot buy a fresh three walks. If all three fail, the quest
   step stops with the last route failure. The walk back to the fight spot
-  also retries blocked walks, up to three failures. If all three return walks
-  fail, the quest step stops with the last route failure.
+  also makes up to three attempts. Both paths retry only route-planning or
+  route-execution failures, wait for a later game tick, and stop at once for
+  policy or quest refusals. If all three return walks fail, the step stops with
+  the last route failure. This shared policy applies to Quester, native fights,
+  and clue guardian and keeper fights.
 - Quest combat now waits up to six observed game ticks once per kill for
   configured ground drops. The limit follows the engine's five-tick death
   sequence plus one observation tick, and searches use each quest step's

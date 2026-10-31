@@ -50,7 +50,7 @@ const PREP_READINESS_TICKS: u16 = 8;
 /// the recovery for a transient stall or a route that ended short.
 /// Three failures return the last walk detail instead of re-walking
 /// until the kill budget expires.
-const MAX_STAND_WALK_FAILURES: u8 = 3;
+const MAX_STAND_WALK_FAILURES: u8 = QUEST_WALK_MAX_ATTEMPTS;
 #[derive(Default)]
 struct Counters {
     ticks: u16,
@@ -452,62 +452,56 @@ impl NativeMachine for Combat {
         let stand_failures_before_receipt = self.stand_walk_failures;
         if self.phase != Phase::Escape {
             if let Some(receipt) = self.pending_walk.and_then(|id| cx.walk_receipt(id.get())) {
-                // A stand-approach walk is identified by its context, as
-                // `pending_walk` also carries leash and escape walks:
-                // no engaged target yet, still in Prep/Engage, and the
-                // stand still ahead. Its failure is information first:
-                // the plan below walks again from the observed tile.
-                // Only the bounded count is terminal. Arrival is read
-                // from the network tile: at route end the rendered tile
-                // can lag one tile behind it, and the host then reports
-                // `RouteEnded` for a walk that did reach its aim. That
-                // receipt is arrival, not a failure.
+                let approach_walk = self.approach_walk_pending();
+                let stand_walk = approach_walk
+                    && self.engaged.is_none()
+                    && matches!(self.phase, Phase::Prep | Phase::Engage)
+                    && self.request.stand.is_some();
                 let stand_arrived = self
                     .request
                     .stand
                     .is_some_and(|stand| select::stand_reached(stand, frame.local));
-                let stand_walk = self.engaged.is_none()
-                    && matches!(self.phase, Phase::Prep | Phase::Engage)
-                    && select::stand_pending(&self.request, &frame);
                 self.pending_walk = None;
-                if stand_arrived {
-                    self.stand_walk_failures = 0;
-                }
-                if stand_walk {
-                    match &receipt.end {
-                        WalkEnd::Arrived => self.stand_walk_failures = 0,
-                        WalkEnd::NeedsEvidence(gates) => {
-                            return Poll::Ready(Err(ActionError::NeedsEvidence(Arc::clone(gates))));
+                self.set_approach_walk_pending(false);
+                if approach_walk {
+                    // Route end can precede the rendered tile update. Accept
+                    // the network tile, but never turn a refusal into arrival.
+                    let retryable = crate::native::WalkRetryState::retryable_receipt(receipt);
+                    let arrived = matches!(&receipt.end, WalkEnd::Arrived)
+                        || (matches!(&receipt.end, WalkEnd::RouteEnded)
+                            && retryable
+                            && stand_arrived);
+                    if arrived {
+                        self.reset_approach_recovery();
+                        if stand_walk || stand_arrived {
+                            self.stand_walk_failures = 0;
                         }
-                        WalkEnd::Cancelled => {
-                            return Poll::Ready(Err(ActionError::Cancelled));
-                        }
-                        WalkEnd::UserInput => {
-                            return Poll::Ready(Err(ActionError::UserInput));
-                        }
-                        end => {
+                    } else {
+                        if stand_walk && retryable {
                             self.stand_walk_failures = self.stand_walk_failures.saturating_add(1);
-                            if self.stand_walk_failures >= MAX_STAND_WALK_FAILURES {
-                                let detail = receipt
-                                    .failure_detail()
-                                    .unwrap_or_else(|| Arc::from("combat stand walk failed"));
-                                if let Some(stand) = self.request.stand {
-                                    api::host_log!(
-                                        api::hostlog::Category::NavEvent,
-                                        api::hostlog::Level::Info,
-                                        "combat stand walk to ({},{},{}) failed {} times; last end {:?}; detail {}",
-                                        stand.x,
-                                        stand.z,
-                                        stand.level,
-                                        self.stand_walk_failures,
-                                        end,
-                                        detail.as_ref(),
-                                    );
-                                }
-                                return Poll::Ready(Err(ActionError::Blocked(detail)));
-                            }
                         }
+                        let stand_exhausted =
+                            stand_walk && self.stand_walk_failures >= MAX_STAND_WALK_FAILURES;
+                        if !stand_exhausted
+                            && self.observe_approach_failure(receipt, evidence.tick)
+                        {
+                            // The observation guard above prevents another
+                            // plan until a later game tick. Keep the count so
+                            // a kill-budget end cannot buy more stand walks.
+                            return Poll::Pending;
+                        }
+                        let error = match &receipt.end {
+                            WalkEnd::NeedsEvidence(gates) => {
+                                ActionError::NeedsEvidence(Arc::clone(gates))
+                            }
+                            WalkEnd::Cancelled => ActionError::Cancelled,
+                            WalkEnd::UserInput => ActionError::UserInput,
+                            _ => ActionError::Blocked(receipt.failure_detail_or_fallback()),
+                        };
+                        return Poll::Ready(Err(error));
                     }
+                } else if stand_arrived {
+                    self.stand_walk_failures = 0;
                 }
             }
         }
@@ -2445,7 +2439,7 @@ impl Combat {
                     .stand
                     .filter(|tile| !select::stand_reached(*tile, frame.local))
                 {
-                    self.walk(tile, tick, cx, self.request.retry_approach_walks)?;
+                    self.walk(tile, tick, cx, true)?;
                 }
             }
             return Ok(plan);

@@ -384,6 +384,61 @@ fn authored_combat_walk_permissions_reach_initial_return_and_abort_requests() {
                             "initial approach has no authored cross"
                         );
                     }
+                    let mut previous_request = last_walk(&ledger).request_id;
+                    for (attempt, tick, detail) in [
+                        (1, 3, "first compiled approach failure"),
+                        (2, 5, "second compiled approach failure"),
+                        (3, 7, "last compiled approach failure"),
+                    ] {
+                        post_walk_end(&mut ledger, tick, WalkEnd::NoPath, Some(detail));
+                        let result = with_step_context(&snapshot, &mut ledger, tick, |cx| {
+                            run.poll(cx)
+                        });
+                        if attempt == 3 {
+                            assert!(matches!(
+                                result,
+                                Poll::Ready(Err(ActionError::Blocked(reason)))
+                                    if reason.as_ref() == "last compiled approach failure"
+                            ));
+                            break;
+                        }
+                        assert!(result.is_pending());
+                        assert!(with_step_context(&snapshot, &mut ledger, tick, |cx| {
+                            run.poll(cx)
+                        }).is_pending());
+                        assert!(ledger.as_ref().unwrap().outbox.is_empty());
+                        assert!(with_step_context(&snapshot, &mut ledger, tick + 1, |cx| {
+                            run.poll(cx)
+                        }).is_pending());
+                        let retry = last_walk(&ledger);
+                        assert_eq!(retry.target, stand);
+                        assert_ne!(retry.request_id, previous_request);
+                        previous_request = retry.request_id;
+                    }
+                    drop(run);
+
+                    let mut ledger = None;
+                    let mut refused_run =
+                        with_step_context(&snapshot, &mut ledger, 20, |cx| plan.begin(cx).unwrap());
+                    assert!(with_step_context(&snapshot, &mut ledger, 21, |cx| {
+                        refused_run.poll(cx)
+                    }).is_pending());
+                    post_walk_end(
+                        &mut ledger,
+                        22,
+                        WalkEnd::NoPath,
+                        Some("compiled approach policy refusal"),
+                    );
+                    ledger.as_mut().unwrap().walk.as_mut().unwrap().refusal =
+                        Some(crate::native::WalkRefusal::Unsurvivable);
+                    assert!(matches!(
+                        with_step_context(&snapshot, &mut ledger, 22, |cx| {
+                            refused_run.poll(cx)
+                        }),
+                        Poll::Ready(Err(ActionError::Blocked(reason)))
+                            if reason.as_ref() == "compiled approach policy refusal"
+                    ));
+                    assert!(ledger.as_ref().unwrap().outbox.is_empty());
                     continue;
                 }
                 if !aborted {
@@ -1085,7 +1140,6 @@ fn combat_test_run_with_radius(
         last_outcome: None,
         nonkill_reengagements: 0,
         target_gone_restarts: 0,
-        return_walk_failures: 0,
         stand_walk_failures: 0,
         manual_takeover_watch: crate::native::ManualTakeoverWatch::default(),
         raised_prayers: crate::combat::RaisedPrayers::empty(),
@@ -4296,74 +4350,166 @@ fn target_gone_walks_to_stand_and_rebegins_only_after_arrival() {
 }
 
 #[test]
-fn return_to_stand_walk_retries_blocked_failures_to_a_bound() {
+fn return_to_stand_bounds_each_retryable_class_and_retains_last_failure() {
+    use crate::native::{WalkStall, WalkStallReason};
+
     let data = api::game_data::for_revision(ClientRevision::R289).unwrap();
     let stand = api::WorldTile {
         x: 2632,
         z: 3222,
         level: 0,
     };
-    let mut snapshot = GameSnapshot::new();
-    snapshot.seed_ingame(2);
-    let mut ledger = None;
-    let mut run = combat_test_run(
-        imp_target(&data),
-        Some(stand),
-        Some(Arc::new(NeverStop)),
-        Vec::new(),
-    );
-    assert!(with_step_context(&snapshot, &mut ledger, 12, |cx| {
-        run.on_combat_report(report(CombatEnd::TargetGone), cx)
-    })
-    .is_pending());
-
-    let blocked = |run: &mut CombatRun,
-                   ledger: &mut Option<Box<crate::native::ledger::Ledger>>,
-                   tick: u64,
-                   detail: &'static str| {
-        with_step_context(&snapshot, ledger, tick, |cx| {
-            run.on_return_walk(
-                WalkReceipt {
-                    goal: None,
-                    request_id: 1,
-                    evidence: cx.tick.cx.evidence(),
-                    end: WalkEnd::NoPath,
-                    blocked: None,
-                    detail: Some(Arc::from(detail)),
-                    refusal: None,
-                    assessment: None,
-                    escape: None,
-                },
-                cx,
-            )
-        })
+    let stalled = |why| {
+        WalkEnd::Stalled(Arc::new(WalkStall {
+            at: api::WorldTile { x: stand.x - 4, ..stand },
+            aiming: stand,
+            why,
+            tries: 1,
+        }))
     };
-
-    // Two blocked walks are retried with fresh walk requests.
-    for (tick, failures) in [(13, 1), (14, 2)] {
-        assert!(blocked(&mut run, &mut ledger, tick, "route stopped short").is_pending());
-        assert_eq!(run.return_walk_failures, failures);
-        assert!(matches!(&run.phase, Phase::ReturningToStand));
-        assert!(matches!(run.action.as_ref(), Some(Action::Walk(_))));
-        assert!(matches!(
-            &ledger.as_ref().unwrap().outbox.last().unwrap().effect,
-            crate::native::HostEffect::Walk(request)
-                if request.target == stand && request.radius == 1
-        ));
-    }
-    // The third blocked walk is terminal and keeps its own detail.
-    let result = blocked(&mut run, &mut ledger, 15, "the last route failure");
-    assert_eq!(run.return_walk_failures, 3);
-    match result {
-        Poll::Ready(Err(ActionError::Blocked(reason))) => {
-            assert_eq!(reason.as_ref(), "the last route failure");
+    for end in [
+        WalkEnd::NoPath,
+        WalkEnd::RouteEnded,
+        stalled(WalkStallReason::Expired),
+        stalled(WalkStallReason::Dropped),
+        stalled(WalkStallReason::EndBlocked),
+        WalkEnd::Failed,
+    ] {
+        let mut snapshot = GameSnapshot::new();
+        snapshot.seed_ingame(2);
+        let mut ledger = None;
+        let mut run = combat_test_run(
+            imp_target(&data),
+            Some(stand),
+            Some(Arc::new(NeverStop)),
+            Vec::new(),
+        );
+        assert!(with_step_context(&snapshot, &mut ledger, 12, |cx| {
+            run.on_combat_report(report(CombatEnd::TargetGone), cx)
+        }).is_pending());
+        let mut request_id = last_walk(&ledger).request_id;
+        for (attempt, tick, detail) in [
+            (1, 13, "first return failure"),
+            (2, 15, "second return failure"),
+            (3, 17, "last return failure"),
+        ] {
+            let result = with_step_context(&snapshot, &mut ledger, tick, |cx| {
+                run.on_return_walk(
+                    WalkReceipt {
+                        goal: None,
+                        request_id,
+                        evidence: cx.tick.cx.evidence(),
+                        end: end.clone(),
+                        blocked: None,
+                        detail: Some(Arc::from(detail)),
+                        refusal: None,
+                        assessment: None,
+                        escape: None,
+                    },
+                    cx,
+                )
+            });
+            assert!(run.action.is_none(), "{end:?}");
+            if attempt == 3 {
+                assert!(matches!(
+                    result,
+                    Poll::Ready(Err(ActionError::Blocked(reason)))
+                        if reason.as_ref() == "last return failure"
+                ), "{end:?}");
+                break;
+            }
+            assert!(result.is_pending(), "{end:?}");
+            assert!(run.return_retry.pending(), "{end:?}");
+            assert!(matches!(&run.phase, Phase::ReturningToStand));
+            let before = ledger.as_ref().unwrap().outbox.len();
+            assert!(with_step_context(&snapshot, &mut ledger, tick, |cx| {
+                run.poll(cx)
+            }).is_pending());
+            assert_eq!(ledger.as_ref().unwrap().outbox.len(), before);
+            assert!(run.action.is_none(), "{end:?}");
+            assert!(with_step_context(&snapshot, &mut ledger, tick + 1, |cx| {
+                run.poll(cx)
+            }).is_pending());
+            let retry = last_walk(&ledger);
+            assert_eq!(retry.target, stand);
+            assert_ne!(retry.request_id, request_id);
+            request_id = retry.request_id;
+            assert!(matches!(run.action.as_ref(), Some(Action::Walk(_))));
         }
-        Poll::Ready(Err(other)) => panic!("expected the last blocked walk error, got {other:?}"),
-        Poll::Ready(Ok(_)) => panic!("expected the last blocked walk error, got a step outcome"),
-        Poll::Pending => panic!("expected the last blocked walk error, got Pending"),
+        assert_eq!(run.target_gone_restarts, 0, "{end:?}");
+        assert!(run.action.is_none(), "{end:?}");
     }
-    assert_eq!(run.target_gone_restarts, 0);
-    assert!(run.action.is_none());
+}
+
+#[test]
+fn return_to_stand_stops_for_each_terminal_class() {
+    use crate::native::WalkRefusal;
+
+    let data = api::game_data::for_revision(ClientRevision::R289).unwrap();
+    let stand = api::WorldTile { x: 2632, z: 3222, level: 0 };
+    let gates = Arc::from([api::selected::QuestGate::Complete(
+        FactKey::new("return-walk-gate"),
+    )]);
+    let mut cases = vec![
+        (WalkEnd::Refused, None, None),
+        (WalkEnd::Blocked, None, None),
+        (WalkEnd::Aborted, None, None),
+        (WalkEnd::UserInput, None, None),
+        (WalkEnd::NeedsEvidence(gates), None, None),
+        (WalkEnd::Cancelled, None, None),
+        (
+            WalkEnd::RouteEnded,
+            None,
+            Some(Arc::from([nav_planner::contract::ZoneKey::Zone(0)])),
+        ),
+    ];
+    for refusal in [
+        WalkRefusal::NoRouteWithinBounds { tried: 3, last: None },
+        WalkRefusal::RouteTooLarge { required_bytes: 2, maximum_bytes: 1 },
+        WalkRefusal::Unsurvivable,
+        WalkRefusal::FixableWith,
+        WalkRefusal::Unknown(crate::combat::risk::UnknownWhy::AlreadyEngaged),
+        WalkRefusal::EscapeInProgress,
+    ] {
+        cases.push((WalkEnd::NoPath, Some(refusal), None));
+    }
+    for (end, refusal, blocked) in cases {
+        let mut snapshot = GameSnapshot::new();
+        snapshot.seed_ingame(2);
+        let mut ledger = None;
+        let mut run = combat_test_run(
+            imp_target(&data),
+            Some(stand),
+            Some(Arc::new(NeverStop)),
+            Vec::new(),
+        );
+        assert!(with_step_context(&snapshot, &mut ledger, 12, |cx| {
+            run.on_combat_report(report(CombatEnd::TargetGone), cx)
+        }).is_pending());
+        let request_id = last_walk(&ledger).request_id;
+        with_step_context(&snapshot, &mut ledger, 13, |cx| {
+            let receipt = WalkReceipt {
+                goal: None,
+                request_id,
+                evidence: cx.tick.cx.evidence(),
+                end,
+                blocked,
+                detail: Some(Arc::from("terminal return failure")),
+                refusal,
+                assessment: None,
+                escape: None,
+            };
+            let expected = receipt.clone().into_arrival().unwrap_err();
+            let Poll::Ready(Err(error)) = run.on_return_walk(receipt, cx) else {
+                panic!("{expected:?} must end the first return walk");
+            };
+            assert_eq!(error, expected);
+        });
+        assert_eq!(run.target_gone_restarts, 0);
+        assert!(run.action.is_none());
+        assert!(!run.return_retry.pending());
+        assert_eq!(last_walk(&ledger).request_id, request_id);
+    }
 }
 
 #[test]
@@ -4486,37 +4632,33 @@ fn target_gone_walk_replans_after_route_end_before_reengaging() {
         .request_id
         .get();
 
-    // A route that ends without observed arrival is not arrival: combat
-    // does not re-engage. The walk is planned again within the bounded
-    // count, and only the last failure blocks the step.
-    let mut route_ended = |run: &mut CombatRun, tick: u64| {
-        with_step_context(&snapshot, &mut ledger, tick, |cx| {
-            run.on_return_walk(
-                WalkReceipt {
-                    goal: None,
-                    request_id: 1,
-                    evidence: cx.tick.cx.evidence(),
-                    end: WalkEnd::RouteEnded,
-                    blocked: None,
-                    detail: None,
-                    refusal: None,
-                    assessment: None,
-                    escape: None,
-                },
-                cx,
-            )
-        })
-    };
-    for tick in [13, 14] {
-        assert!(route_ended(&mut run, tick).is_pending());
-        assert_eq!(run.target_gone_restarts, 0);
-        assert!(matches!(&run.phase, Phase::ReturningToStand));
-        assert!(matches!(run.action.as_ref(), Some(Action::Walk(_))));
-    }
-    let result = route_ended(&mut run, 15);
-    assert!(matches!(result, Poll::Ready(Err(ActionError::Blocked(_)))));
+    let result = with_step_context(&snapshot, &mut ledger, 13, |cx| {
+        run.on_return_walk(
+            WalkReceipt {
+                goal: None,
+                request_id: first_request_id,
+                evidence: cx.tick.cx.evidence(),
+                end: WalkEnd::RouteEnded,
+                blocked: None,
+                detail: Some(Arc::from("first route ended short")),
+                refusal: None,
+                assessment: None,
+                escape: None,
+            },
+            cx,
+        )
+    });
+    assert!(result.is_pending());
     assert_eq!(run.target_gone_restarts, 0);
+    assert!(matches!(&run.phase, Phase::ReturningToStand));
     assert!(run.action.is_none());
+    assert!(with_step_context(&snapshot, &mut ledger, 14, |cx| run.poll(cx)).is_pending());
+    let retry = last_walk(&ledger);
+    assert_ne!(retry.request_id, first_request_id);
+    assert_eq!(retry.target, stand);
+    assert_eq!(run.target_gone_restarts, 0);
+    assert!(matches!(&run.phase, Phase::ReturningToStand));
+    assert!(matches!(run.action.as_ref(), Some(Action::Walk(_))));
 }
 
 #[test]
@@ -4548,8 +4690,8 @@ fn unreachable_stand_ends_quester_step_with_the_last_walk_failure() {
     let mut walks = 0;
     for (tick, detail) in [
         (2, "first route failure"),
-        (3, "second route failure"),
-        (4, "last route failure"),
+        (4, "second route failure"),
+        (6, "last route failure"),
     ] {
         assert!(
             with_step_context(&snapshot, &mut ledger, tick, |cx| run.poll(cx)).is_pending(),
@@ -4558,9 +4700,14 @@ fn unreachable_stand_ends_quester_step_with_the_last_walk_failure() {
         assert_eq!(last_walk(&ledger).target, stand);
         walks += 1;
         post_walk_end(&mut ledger, tick, WalkEnd::NoPath, Some(detail));
+        if tick < 6 {
+            assert!(with_step_context(&snapshot, &mut ledger, tick + 1, |cx| {
+                run.poll(cx)
+            }).is_pending());
+        }
     }
 
-    let result = with_step_context(&snapshot, &mut ledger, 5, |cx| run.poll(cx));
+    let result = with_step_context(&snapshot, &mut ledger, 7, |cx| run.poll(cx));
     match result {
         Poll::Ready(Err(ActionError::Blocked(reason))) => {
             assert_eq!(reason.as_ref(), "last route failure");
@@ -4609,23 +4756,26 @@ fn stand_walk_bound_spans_the_kill_budget_attempt_boundary() {
     });
 
     // Two failed approaches inside the first attempt's kill budget.
-    for (tick, detail) in [(2, "first route failure"), (3, "second route failure")] {
+    for (tick, detail) in [(2, "first route failure"), (4, "second route failure")] {
         assert!(
             with_step_context(&snapshot, &mut ledger, tick, |cx| run.poll(cx)).is_pending(),
             "the walk request must remain pending"
         );
         assert_eq!(last_walk(&ledger).target, stand);
         post_walk_end(&mut ledger, tick, WalkEnd::NoPath, Some(detail));
+        assert!(with_step_context(&snapshot, &mut ledger, tick + 1, |cx| {
+            run.poll(cx)
+        }).is_pending());
     }
     // The third walk is still in flight when the 50-tick budget ends.
-    assert!(with_step_context(&snapshot, &mut ledger, 4, |cx| run.poll(cx)).is_pending());
+    assert!(with_step_context(&snapshot, &mut ledger, 6, |cx| run.poll(cx)).is_pending());
     let in_flight = last_walk(&ledger);
     assert_eq!(in_flight.target, stand);
 
     // The budget end rebegins the fight, and the new attempt revokes the old
     // outbox, so drive polls until a new walk request appears; the step must
     // still count the two walks the previous attempt spent.
-    let mut tick = 4;
+    let mut tick = 6;
     while pending_walk(&ledger).is_none_or(|walk| walk.request_id == in_flight.request_id) {
         tick += 1;
         assert!(
@@ -4692,9 +4842,10 @@ fn stand_walk_count_survives_a_failure_on_the_budget_tick() {
     assert!(with_step_context(&snapshot, &mut ledger, 2, |cx| run.poll(cx)).is_pending());
     post_walk_end(&mut ledger, 2, WalkEnd::NoPath, Some("first route failure"));
     assert!(with_step_context(&snapshot, &mut ledger, 3, |cx| run.poll(cx)).is_pending());
+    assert!(with_step_context(&snapshot, &mut ledger, 4, |cx| run.poll(cx)).is_pending());
     let in_flight = last_walk(&ledger);
     assert_eq!(in_flight.target, stand);
-    for tick in 4..51 {
+    for tick in 5..51 {
         assert!(with_step_context(&snapshot, &mut ledger, tick, |cx| run.poll(cx)).is_pending());
     }
     post_walk_end(
@@ -4798,7 +4949,8 @@ fn return_to_stand_route_ended_at_network_tile_is_arrival() {
     });
 
     assert!(result.is_pending(), "the return walk arrived at the stand");
-    assert_eq!(run.return_walk_failures, 0);
+    assert!(!run.return_retry.pending());
+    assert_eq!(run.return_retry.retry_attempt_number(), 2);
     assert_eq!(run.target_gone_restarts, 1);
     assert!(matches!(&run.phase, Phase::Combat));
     assert!(matches!(run.action.as_ref(), Some(Action::Combat(_))));

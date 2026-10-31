@@ -3764,7 +3764,6 @@ fn quester_combat_approach_replans_after_no_path() {
     let mut request = scene.request();
     request.stand = Some(stand);
     request.engage_radius = 1;
-    request.retry_approach_walks = true;
     let mut harness = Harness::new(&scene, request);
 
     assert!(matches!(
@@ -3831,56 +3830,136 @@ fn quester_combat_approach_replans_after_no_path() {
 }
 
 #[test]
-fn quester_combat_approach_exhaustion_keeps_the_last_walk_detail() {
-    let mut scene = Scene::new("imp");
-    let here = scene.local.player.actor.tile;
-    let stand = tile(here.x + 20, here.z);
-    scene.npcs[0].tile = tile(stand.x + 10, stand.z);
-    scene.npcs[0].network = scene.npcs[0].tile;
-    scene.npcs[0].distance = 30;
-    scene.refresh();
-    let mut request = scene.request();
-    request.stand = Some(stand);
-    request.engage_radius = 1;
-    request.retry_approach_walks = true;
-    let mut harness = Harness::new(&scene, request);
+fn default_combat_stand_approach_bounds_each_retryable_class_and_keeps_last_detail() {
+    use crate::native::{WalkEnd, WalkStall, WalkStallReason};
 
-    assert!(matches!(
-        harness.pending(&scene, 1),
-        Some(HostEffect::Walk(walk)) if walk.target == stand
-    ));
-    let mut previous_request = harness.machine.pending_walk.unwrap().get();
-    for (attempt, failure_tick, detail) in [
-        (1, 2, "first route failed"),
-        (2, 4, "second route failed"),
-        (3, 6, "last route failed"),
+    let stalled = |why| {
+        WalkEnd::Stalled(Arc::new(WalkStall {
+            at: tile(3200, 3200),
+            aiming: tile(3220, 3200),
+            why,
+            tries: 1,
+        }))
+    };
+    for end in [
+        WalkEnd::NoPath,
+        WalkEnd::RouteEnded,
+        stalled(WalkStallReason::Expired),
+        stalled(WalkStallReason::Dropped),
+        stalled(WalkStallReason::EndBlocked),
+        WalkEnd::Failed,
     ] {
-        post_walk_receipt(
-            &mut harness,
-            failure_tick,
-            crate::native::WalkEnd::NoPath,
-            Some(detail),
-        );
-        if attempt == 3 {
-            assert!(matches!(
-                harness.poll(&scene.snapshot, failure_tick),
-                Poll::Ready(Err(ActionError::Blocked(reason)))
-                    if reason.as_ref() == "last route failed"
-            ));
-            break;
+        let mut scene = Scene::new("imp");
+        let here = scene.local.player.actor.tile;
+        let stand = tile(here.x + 20, here.z);
+        scene.npcs[0].tile = tile(stand.x + 10, stand.z);
+        scene.npcs[0].network = scene.npcs[0].tile;
+        scene.npcs[0].distance = 30;
+        scene.refresh();
+        let mut request = scene.request();
+        request.stand = Some(stand);
+        request.engage_radius = 1;
+        let mut harness = Harness::new(&scene, request);
+
+        assert!(matches!(
+            harness.pending(&scene, 1),
+            Some(HostEffect::Walk(walk)) if walk.target == stand
+        ));
+        let mut previous_request = harness.machine.pending_walk.unwrap().get();
+        for (attempt, failure_tick, detail) in [
+            (1, 2, "first route failed"),
+            (2, 4, "second route failed"),
+            (3, 6, "last route failed"),
+        ] {
+            post_walk_receipt(&mut harness, failure_tick, end.clone(), Some(detail));
+            if attempt == 3 {
+                assert!(matches!(
+                    harness.poll(&scene.snapshot, failure_tick),
+                    Poll::Ready(Err(ActionError::Blocked(reason)))
+                        if reason.as_ref() == "last route failed"
+                ), "{end:?}");
+                assert_eq!(harness.machine.stand_walk_failures, 3, "{end:?}");
+                break;
+            }
+            assert!(harness.pending(&scene, failure_tick).is_none(), "{end:?}");
+            assert_eq!(harness.machine.stand_walk_failures, attempt, "{end:?}");
+            assert!(harness
+                .poll_stamp(&scene.snapshot, failure_tick, failure_tick + 20)
+                .is_pending());
+            assert!(harness.machine.pending_walk.is_none(), "{end:?}");
+            assert!(harness.drain(None).is_empty(), "{end:?}");
+            let retry_tick = failure_tick + 1;
+            let Some(HostEffect::Walk(walk)) = harness.pending(&scene, retry_tick) else {
+                panic!("{end:?} attempt {attempt} must submit a fresh approach walk");
+            };
+            assert_eq!(walk.target, stand);
+            assert_eq!(walk.required_after.tick, retry_tick);
+            let retry_request = harness.machine.pending_walk.unwrap().get();
+            assert_ne!(retry_request, previous_request);
+            previous_request = retry_request;
         }
-        assert!(harness.pending(&scene, failure_tick).is_none());
-        let retry_tick = failure_tick + 1;
-        let Some(HostEffect::Walk(walk)) = harness.pending(&scene, retry_tick) else {
-            panic!("attempt {attempt} must submit a fresh approach walk");
-        };
-        assert_eq!(walk.target, stand);
-        assert_eq!(walk.required_after.tick, retry_tick);
-        let retry_request = harness.machine.pending_walk.unwrap().get();
-        assert_ne!(retry_request, previous_request);
-        previous_request = retry_request;
+        assert!(harness.drain(None).is_empty(), "{end:?}");
     }
-    assert_eq!(harness.drain(None).len(), 0);
+}
+
+#[test]
+fn default_combat_stand_approach_stops_for_each_terminal_class() {
+    use crate::native::{WalkEnd, WalkRefusal};
+
+    let gates = Arc::from([api::selected::QuestGate::Complete(
+        api::selected::FactKey::new("stand-walk-gate"),
+    )]);
+    let mut cases = vec![
+        (WalkEnd::Refused, None, None),
+        (WalkEnd::Blocked, None, None),
+        (WalkEnd::Aborted, None, None),
+        (WalkEnd::UserInput, None, None),
+        (WalkEnd::NeedsEvidence(gates), None, None),
+        (WalkEnd::Cancelled, None, None),
+        (
+            WalkEnd::NoPath,
+            None,
+            Some(Arc::from([nav_planner::contract::ZoneKey::Zone(0)])),
+        ),
+    ];
+    for refusal in [
+        WalkRefusal::NoRouteWithinBounds { tried: 3, last: None },
+        WalkRefusal::RouteTooLarge {
+            required_bytes: 2,
+            maximum_bytes: 1,
+        },
+        WalkRefusal::Unsurvivable,
+        WalkRefusal::FixableWith,
+        WalkRefusal::Unknown(crate::combat::risk::UnknownWhy::AlreadyEngaged),
+        WalkRefusal::EscapeInProgress,
+    ] {
+        cases.push((WalkEnd::NoPath, Some(refusal), None));
+    }
+    for (end, refusal, blocked) in cases {
+        let mut scene = Scene::new("imp");
+        let here = scene.local.player.actor.tile;
+        let stand = tile(here.x + 20, here.z);
+        scene.npcs[0].tile = tile(stand.x + 10, stand.z);
+        scene.npcs[0].network = scene.npcs[0].tile;
+        scene.npcs[0].distance = 30;
+        scene.refresh();
+        let mut request = scene.request();
+        request.stand = Some(stand);
+        request.engage_radius = 1;
+        let mut harness = Harness::new(&scene, request);
+        assert!(matches!(harness.pending(&scene, 1), Some(HostEffect::Walk(_))));
+        post_walk_receipt(&mut harness, 2, end, Some("terminal stand failure"));
+        let receipt = harness.runtime.ledger.as_mut().unwrap().walk.as_mut().unwrap();
+        receipt.refusal = refusal;
+        receipt.blocked = blocked;
+        let expected = receipt.clone().into_arrival().unwrap_err();
+        let Poll::Ready(Err(error)) = harness.poll(&scene.snapshot, 2) else {
+            panic!("{expected:?} must stop the first stand walk");
+        };
+        assert_eq!(error, expected);
+        assert!(harness.drain(None).is_empty());
+        assert_eq!(harness.machine.stand_walk_failures, 0);
+    }
 }
 
 #[test]
@@ -3894,7 +3973,6 @@ fn user_input_ends_combat_approach_without_rewalk_or_attack() {
     let mut request = scene.request();
     request.stand = Some(stand);
     request.engage_radius = 1;
-    request.retry_approach_walks = true;
     let mut harness = Harness::new(&scene, request);
 
     assert!(matches!(
@@ -4059,7 +4137,7 @@ fn failed_stand_walks_retry_to_a_bound_then_block_with_the_last_detail() {
     request.stand = Some(stand);
     let mut harness = Harness::new(&scene, request);
 
-    for tick in 1..=3u64 {
+    for tick in [1, 3, 5] {
         assert!(matches!(
             harness.pending(&scene, tick),
             Some(HostEffect::Walk(walk)) if walk.target == stand
@@ -4070,13 +4148,14 @@ fn failed_stand_walks_retry_to_a_bound_then_block_with_the_last_detail() {
             crate::native::WalkEnd::NoPath,
             Some("no route to the stand"),
         );
-        if tick < 3 {
+        if tick < 5 {
             assert_eq!(harness.machine.end, None);
+            assert!(harness.pending(&scene, tick + 1).is_none());
         }
     }
     // The third failure ends the machine with the receipt detail.
     assert!(matches!(
-        harness.poll(&scene.snapshot, 4),
+        harness.poll(&scene.snapshot, 6),
         Poll::Ready(Err(ActionError::Blocked(detail)))
             if detail.as_ref() == "no route to the stand"
     ));
