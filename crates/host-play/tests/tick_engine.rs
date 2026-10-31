@@ -1195,10 +1195,12 @@ impl LiveRun {
     }
 
     fn failure(&self, message: impl std::fmt::Display) -> String {
+        let trace = self.hook.trace();
         format!(
-            "tick-engine case {} failed: {message}\nlast evidence: {:#?}",
+            "tick-engine case {} failed: {message}\nlast frame: {:?}\nlast status: {:?}",
             self.scenario.name,
-            self.evidence()
+            trace.frames.last(),
+            self.statuses.last()
         )
     }
 
@@ -1341,7 +1343,14 @@ fn run_case(
     evidence.trace = run.hook.trace();
     evidence.engine_packets = run.engine_log.as_ref().map(|log| log.read(&run.account));
     let correlation = correlate_engine_packets(&evidence);
-    println!("TICK-MANIP evidence {evidence:#?}");
+    println!(
+        "TICK-MANIP evidence case={} account={} frames={} dispatches={} wire_packets={}",
+        evidence.case,
+        evidence.account,
+        evidence.trace.frames.len(),
+        evidence.trace.dispatches.len(),
+        evidence.trace.wire.len()
+    );
     let persisted = persist_evidence(&evidence);
     let mut failures = Vec::new();
     if let Err(error) = result {
