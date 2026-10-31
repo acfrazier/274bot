@@ -29,7 +29,11 @@ fn ordered_real_native_dispatch_uses_packet_clock_after_session_reset() {
     assert_eq!(before_tick, Some(BEFORE_RELOG_PACKET_TICK));
 
     rig.client.gens.session += 1;
+    rig.client.gens.player_info = 0;
+    rig.snapshot.reset_session(rig.client.gens);
     rig.client.gens.player_info = 1;
+    rig.client.gens.player += 1;
+    rig.snapshot.rebuild(&rig.client);
     hook.bind_client(&mut rig.client, "so3-wire", Arc::clone(&rig.input));
     rig.pump_clocks(RESET_NATIVE_TICK, u64::from(RESET_PACKET_TICK));
     let relog_input = rig

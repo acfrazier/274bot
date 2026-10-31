@@ -19,6 +19,7 @@ fn ordered_real_gatherer_knife_arm_uses_packet_clock_after_relog() {
     rig.client.map_build_base_z = 3200;
     rig.client.local_player = Some(client::dash3d::ClientPlayer::at(7, 5));
     rig.client.gens.player_info = BEFORE_RELOG_PACKET_TICK;
+    rig.client.gens.player += 1;
     rig.snapshot.rebuild(&rig.client);
 
     let selected = api::game_data::for_revision(api::selected::ClientRevision::R289).unwrap();
@@ -218,15 +219,13 @@ fn ordered_real_gatherer_knife_arm_uses_packet_clock_after_relog() {
     rig.pump_clocks(BEFORE_RELOG_TICK, BEFORE_RELOG_PACKET_TICK);
 
     rig.client.gens.session += 1;
+    rig.client.gens.player_info = 0;
+    rig.snapshot.reset_session(rig.client.gens);
     rig.client.gens.player_info = 1;
+    rig.client.gens.player += 1;
+    rig.snapshot.rebuild(&rig.client);
+    seed_runtime_facts(&mut rig.snapshot, 2, skill_animation);
     hook.bind_client(&mut rig.client, "so3-wire", Arc::clone(&rig.input));
-    let mut player = rig.snapshot.local_player().unwrap().clone();
-    player.animation_update = Some(AnimationUpdateView {
-        serial: 2,
-        sequence: skill_animation,
-    });
-    player.player.actor.animation = skill_animation;
-    rig.snapshot.seed_local_player(player);
     hook.arm_measurement(logs_id, &[knife_id, logs_id]);
 
     let mut observed_dispatch = None;

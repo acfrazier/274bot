@@ -2526,6 +2526,8 @@ fn ordered_unbound_selected_pin_refuses_start_before_any_encrypted_input() {
 }
 
 #[cfg(feature = "test-support")]
+#[path = "script_server_ordered_tests/gatherer_relog.rs"]
 mod gatherer_relog;
 #[cfg(feature = "test-support")]
+#[path = "script_server_ordered_tests/native_relog.rs"]
 mod native_relog;
