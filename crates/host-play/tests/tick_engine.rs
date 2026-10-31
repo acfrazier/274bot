@@ -1225,6 +1225,9 @@ fn run_case(
     run.play_mut().script_stop(&account);
     let mut evidence = run.evidence();
     let cleanup = run.shutdown();
+    // The engine log below includes logout. Keep the Client's packet stream
+    // through that same boundary, rather than compare it with a pre-logout copy.
+    evidence.trace = run.hook.trace();
     evidence.engine_packets = run.engine_log.as_ref().map(|log| log.read(&run.account));
     let correlation = correlate_engine_packets(&evidence);
     println!("TICK-MANIP evidence {evidence:#?}");
