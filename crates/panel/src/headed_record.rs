@@ -1641,6 +1641,19 @@ fn set_finish_status(outcome: &Mutex<RecordFinish>, status: RecordFinish) {
     *outcome.lock().unwrap_or_else(|error| error.into_inner()) = status;
 }
 
+#[cfg(feature = "render-diagnostics")]
+fn record_finish_completion(disconnected_at: Option<Instant>) {
+    if let Some(disconnected_at) = disconnected_at {
+        log_diagnostic(
+            api::hostlog::Level::Info,
+            format_args!(
+                "render timing: record_disconnect_to_completion_ns={}",
+                disconnected_at.elapsed().as_nanos()
+            ),
+        );
+    }
+}
+
 fn close_frame_sender(sender: &Mutex<Option<SyncSender<EncoderMessage>>>) {
     sender
         .lock()
@@ -1880,6 +1893,8 @@ fn run_supervisor(
     let mut child: Option<Child> = None;
     let mut child_status: Option<ExitStatus> = None;
     let mut writer_result = None;
+    #[cfg(feature = "render-diagnostics")]
+    let mut disconnected_at = None;
 
     loop {
         if !finish_received {
@@ -1889,10 +1904,19 @@ fn run_supervisor(
                 }) => {
                     deadline = finish_deadline;
                     finish_received = true;
+                    // Include disconnect work and supervisor poll granularity.
+                    #[cfg(feature = "render-diagnostics")]
+                    {
+                        disconnected_at = Some(Instant::now());
+                    }
                     close_frame_sender(&sender);
                 }
                 Err(TryRecvError::Disconnected) => {
                     finish_received = true;
+                    #[cfg(feature = "render-diagnostics")]
+                    {
+                        disconnected_at = Some(Instant::now());
+                    }
                     close_frame_sender(&sender);
                 }
                 Err(TryRecvError::Empty) => {}
@@ -2039,6 +2063,10 @@ fn run_supervisor(
                 if !timed_out {
                     let completed =
                         writer_result.is_ok() && !failed && !forced_failure.load(Ordering::Acquire);
+                    #[cfg(feature = "render-diagnostics")]
+                    if completed {
+                        record_finish_completion(disconnected_at);
+                    }
                     set_finish_status(
                         &outcome,
                         if completed {
@@ -2056,6 +2084,10 @@ fn run_supervisor(
                         && writer_result.is_ok()
                         && !failed
                         && !forced_failure.load(Ordering::Acquire);
+                    #[cfg(feature = "render-diagnostics")]
+                    if completed {
+                        record_finish_completion(disconnected_at);
+                    }
                     set_finish_status(
                         &outcome,
                         if completed {

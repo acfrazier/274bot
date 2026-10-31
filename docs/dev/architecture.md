@@ -370,6 +370,17 @@ channels once per second. They retain Busy, Granted and scene-consume counts
 as separate values. Per-head counters cover the head lifetime, not just the
 observation window. Rows also identify the process calibration inputs and
 their static storage. Normal builds retain the unqualified wrap defaults.
+Readback diagnostics count real submissions and successful completions, with
+a process-lifetime submit-to-RGBA-handoff maximum. This includes asynchronous
+mapping, polling and row copy, not just CPU queue submission. Three atomic
+counters use 24 static bytes; an instrumented pending readback keeps one
+`Instant`. No diagnostic heap allocation is added.
+On successful recorder shutdown, diagnostic builds emit
+`record_disconnect_to_completion_ns` through the existing host log. The
+supervisor timestamps disconnect and reports only after the writer has
+finished and any encoder child has exited. This includes its poll granularity
+and does not block the UI. Capture qualification retains the session log
+through finalization; its final timing sample occurs after memory observation.
 
 The slice-4 fixture keeps one 684,032-byte clean CPU scene per drawing CPU
 head after its first successful live scene. Loading restores that storage and

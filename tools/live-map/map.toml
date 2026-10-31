@@ -252,6 +252,37 @@ cells = [
   "host.render-fair-region-cross-live|LIVE=1 BOT_CPU=1 BOT_LIVE_NAME_PREFIX=${BOT_LIVE_NAME_PREFIX:?} BOT_NAV_BUILD=skip BOT_GAME_PORT=47594 BOT_HTTP_PORT=3080 ENGINE_DIR=/Volumes/dev-scratch/engines/lostcity-289-l/engine NAV_PACK=${NAV_PACK_289:?} M3_GRANT_TTL_MS=${M3_GRANT_TTL_MS:?} M3_SCENE_QUANTUM_MS=${M3_SCENE_QUANTUM_MS:?} T44_RENDER_BUDGET_LIMITS_JSON=\"${T44_RENDER_BUDGET_LIMITS_JSON:?}\" T44_REGION_CROSS_OUT=${LIVE_EVIDENCE_DIR:?}/region-crossing.json LIVE_EVIDENCE_DIR=${LIVE_EVIDENCE_DIR:?} ${ISOHOME:?} nice -n 10 cargo test --release --locked -p host-play --features draw-memory-profile --test t44_draw_memory real_region_crossing_draws_loading_splash_and_current_overlays -- --ignored --exact --nocapture --test-threads=1",
 ]
 
+# Hook-free timing binaries are built separately on the assigned build host.
+# The supplied executable and both source heads are recorded by the lab receipt.
+# Functional focus/wake proof deliberately uses test hooks, not timing samples.
+[[cover]]
+globs = [
+  "crates/host/src/lib.rs",
+  "crates/host/src/render.rs",
+  "crates/host/src/render_head.rs",
+  "crates/host/src/render_head/fair.rs",
+  "crates/host/src/slot_io.rs",
+  "crates/host-play/src/lib.rs",
+  "crates/host-play/src/memory.rs",
+  "crates/host-play/src/play_slots.rs",
+  "crates/host-play/src/render_calibration.rs",
+  "crates/frontend-core/src/bench.rs",
+  "crates/frontend-core/src/surface.rs",
+  "crates/panel/src/main.rs",
+  "crates/panel/src/app.rs",
+  "crates/panel/src/window.rs",
+  "crates/panel/src/headed_record.rs",
+  "vendor/fr-client-rust/crates/client/src/render/budget.rs",
+  "vendor/fr-client-rust/crates/client/src/render/backend/mod.rs",
+  "vendor/fr-client-rust/crates/client/src/render/backend/present.rs",
+]
+cells = [
+  "host.render-fair-progress-cpu|LIVE=1 BOT_CPU=1 BOT_LIVE_NAME_PREFIX=${BOT_LIVE_NAME_PREFIX:?} BOT_NAV_BUILD=skip M3_FAIR_PROBE=1 M3_N=10 M3_BACKEND=cpu M3_POLICIES=full,focus1,focus-churn,sidecar50,sidecar-churn M3_WARMUP_S=10 M3_OBSERVE_S=30 M3_OUT=${LIVE_EVIDENCE_DIR:?}/fair-cpu M3_PORT=${RENDER_GAME_PORT:?} M3_HTTP_PORT=${RENDER_HTTP_PORT:?} M3_GRANT_TTL_MS=${M3_GRANT_TTL_MS:?} M3_SCENE_QUANTUM_MS=${M3_SCENE_QUANTUM_MS:?} T44_RETAINED_PRESENT_CAP=${T44_RETAINED_PRESENT_CAP:?} T44_RENDER_BUDGET_LIMITS_JSON=\"${T44_RENDER_BUDGET_LIMITS_JSON:?}\" ENGINE_DIR=${ENGINE_A_DIR:?} NAV_PACK=${NAV_PACK_289:?} ${ISOHOME:?} nice -n 10 ${M3_TIMING_EXE:?} m3_fair_head_progress --ignored --exact --nocapture --test-threads=1|--locked -p host-play --features memory-profile,render-diagnostics --test m3_render_contention m3_fair_head_progress -- --ignored --exact",
+  "host.render-fair-progress-gpu|env -u BOT_CPU LIVE=1 BOT_LIVE_NAME_PREFIX=${BOT_LIVE_NAME_PREFIX:?} BOT_NAV_BUILD=skip M3_FAIR_PROBE=1 M3_N=10 M3_BACKEND=gpu M3_POLICIES=full,focus1,focus-churn,sidecar50,sidecar-churn M3_WARMUP_S=10 M3_OBSERVE_S=30 M3_OUT=${LIVE_EVIDENCE_DIR:?}/fair-gpu M3_PORT=${RENDER_GAME_PORT:?} M3_HTTP_PORT=${RENDER_HTTP_PORT:?} M3_GRANT_TTL_MS=${M3_GRANT_TTL_MS:?} M3_SCENE_QUANTUM_MS=${M3_SCENE_QUANTUM_MS:?} T44_RETAINED_PRESENT_CAP=${T44_RETAINED_PRESENT_CAP:?} T44_RENDER_BUDGET_LIMITS_JSON=\"${T44_RENDER_BUDGET_LIMITS_JSON:?}\" ENGINE_DIR=${ENGINE_A_DIR:?} NAV_PACK=${NAV_PACK_289:?} ${ISOHOME:?} nice -n 10 ${M3_TIMING_EXE:?} m3_fair_head_progress --ignored --exact --nocapture --test-threads=1|--locked -p host-play --features memory-profile,render-diagnostics --test m3_render_contention m3_fair_head_progress -- --ignored --exact",
+  "panel.render-calibration-live|env -u BOT_CPU LIVE=1 ISOHOME_INTERACTIVE=1 BOT_LIVE_NAME_PREFIX=${BOT_LIVE_NAME_PREFIX:?} BOT_NAV_BUILD=skip M3_FAIR_PROBE=1 M3_GRANT_TTL_MS=${M3_GRANT_TTL_MS:?} M3_SCENE_QUANTUM_MS=${M3_SCENE_QUANTUM_MS:?} T44_RETAINED_PRESENT_CAP=${T44_RETAINED_PRESENT_CAP:?} T44_RENDER_BUDGET_LIMITS_JSON=\"${T44_RENDER_BUDGET_LIMITS_JSON:?}\" T44_HEADED_REDRAW=${T44_HEADED_REDRAW:?} T44_CAPTURE_METADATA_BYTES=${T44_CAPTURE_METADATA_BYTES:?} T44_CAPTURE_READBACK_TIMEOUT_MS=${T44_CAPTURE_READBACK_TIMEOUT_MS:?} T44_RECORD_FINISH_TIMEOUT_MS=${T44_RECORD_FINISH_TIMEOUT_MS:?} HEADED_RECORD=${HEADED_RECORD:?} BOT_MEMORY_N=10 BOT_MEMORY_WORKLOAD=idle BOT_MEMORY_RENDER_POLICY=stress50 BOT_MEMORY_WARMUP_S=10 BOT_MEMORY_OBSERVE_S=30 BOT_MEMORY_TEARDOWN_S=60 BOT_MEMORY_OUTPUT=${LIVE_EVIDENCE_DIR:?}/panel-calibration.jsonl LIVE_EVIDENCE_DIR=${LIVE_EVIDENCE_DIR:?} ${ISOHOME:?} nice -n 10 ${PANEL_TIMING_EXE:?} --profile local-289 --revision 289 --host 127.0.0.1 --port ${RENDER_GAME_PORT:?} --asset-host 127.0.0.1 --http-port ${RENDER_HTTP_PORT:?} --engine ${ENGINE_A_DIR:?} --nav-pack ${NAV_PACK_289:?} --nav-flags ${NAV_FLAGS_289:?} --catalog ${CATALOG_ROOT:?}|--locked -p panel --features memory-profile,render-diagnostics --lib app::frame_tests::",
+  "panel.render-focus-wake-live|LIVE=1 BOT_CPU=1 BOT_LIVE_NAME_PREFIX=${BOT_LIVE_NAME_PREFIX:?} BOT_NAV_BUILD=skip M3_OUT=${LIVE_EVIDENCE_DIR:?}/focus-wake M3_GRANT_TTL_MS=${M3_GRANT_TTL_MS:?} M3_SCENE_QUANTUM_MS=${M3_SCENE_QUANTUM_MS:?} T44_RENDER_BUDGET_LIMITS_JSON=\"${T44_RENDER_BUDGET_LIMITS_JSON:?}\" M3_PORT=${RENDER_GAME_PORT:?} M3_HTTP_PORT=${RENDER_HTTP_PORT:?} ENGINE_DIR=${ENGINE_A_DIR:?} NAV_PACK=${NAV_PACK_289:?} ${ISOHOME:?} nice -n 10 cargo test --release --locked -p panel --features render-test-hooks,render-diagnostics --test t44_focus_wake t44_panel_focus_wake_live -- --ignored --exact --nocapture --test-threads=1",
+]
+
 [[cover]]
 globs = ["crates/tui/src/app.rs"]
 cells = [

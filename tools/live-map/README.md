@@ -97,6 +97,56 @@ The four scenario cells advance routes through the live slot loop at
 `crates/host-play/src/play_slots.rs:1909-1929` and
 `crates/host-play/src/script_walk.rs:867-885`.
 
+## Render fairness timing and focus
+
+`host.render-fair-progress-cpu` and `host.render-fair-progress-gpu` run the
+real Play workers and consumer pump with ten heads. They exercise full-rate,
+focus1, focus churn, 50 FPS sidecars, and sidecar churn. A sidecar count is
+not a drawing-head cap. These cells do not replace the complete supported-cap
+matrix or its three final extrema repetitions.
+
+Build the timing executable on the assigned build host:
+
+```sh
+${ISOHOME:?} cargo test --release --locked -p host-play \
+  --features memory-profile,render-diagnostics --test m3_render_contention \
+  --no-run --message-format=json-render-diagnostics
+${ISOHOME:?} cargo build --release --locked -p panel \
+  --features memory-profile,render-diagnostics --bin panel-play \
+  --message-format=json-render-diagnostics
+```
+
+Set `M3_TIMING_EXE` and `PANEL_TIMING_EXE` to those emitted executables.
+Do not build the timing targets with other test targets: development
+dependencies can enable render test controls. Record both source heads,
+executable hashes, applied inputs, and actual compiled instrumentation flags.
+The M3 timing oracle rejects test controls and drawing allocator hooks.
+Use the existing lab measurement wrapper when executing a transferred binary.
+Do not build on a measurement guest.
+
+Supply `RENDER_GAME_PORT`, `RENDER_HTTP_PORT`, and the matching engine and
+revision-289 content paths. Explicit TTL, quantum, retained-copy cap, and all
+thirteen byte ceilings are required. Calibration inputs are provisional
+until the complete qualification matrix passes.
+
+`panel.render-calibration-live` uses the real panel executable, not a test
+executable. Run both `T44_HEADED_REDRAW=normal` and `wait`, with recording
+off and on. Set the capture metadata ceiling and readback and recorder-finish
+deadlines explicitly. The receipt contains actual per-head render samples
+and applied calibration inputs. The cell requires an allowed interactive
+display window. Build on aubaine; use the quiet P2000 on claimed pinot for
+the headless GPU timing cells. Main schedules protected Mac measurements.
+Enable `session_log_file` in the isolated `panel-ui.json` for capture timing.
+Retain that session log through recorder finalization. Successful shutdown
+emits `record_disconnect_to_completion_ns` after writer completion and child
+exit; the memory observation ends earlier. Memory rows separately report real
+readback submissions, successful completions and their process maximum.
+
+`panel.render-focus-wake-live` is a separate functional proof. It uses a
+real Session, Play workers, and control streams. It checks requested and
+applied focus, wake writes and drains, scene progress, and unchanged passes.
+Its test controls must not supply timing observations.
+
 ## State-gap and refusal paths
 
 `panel.state-gap-stop-live` runs

@@ -2369,6 +2369,14 @@ impl Run {
                     "calibration_inputs": crate::render_calibration::configured_inputs(),
                     "calibration_static_bytes": crate::render_calibration::static_storage_bytes(),
                 });
+                let readback = client::render::backend::readback::readback_stats();
+                value["render_readback"] = serde_json::json!({
+                    "submitted": readback.submitted(),
+                    "completed": readback.completed(),
+                    "max_submit_to_completion_ns": readback.max_submit_to_completion().as_nanos(),
+                    "maxima_scope": "process lifetime; successful readbacks only",
+                    "diagnostic_static_bytes": client::render::backend::readback::diagnostic_storage_bytes(),
+                });
             }
             if let Some(sample) = render_sample.as_mut() {
                 value["render_heads"] = self

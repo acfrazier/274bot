@@ -31,6 +31,8 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.8` 
   opportunities and retained GPU copies without deterministic test controls.
   The panel benchmark uses the same explicit inputs before workers start.
   Its receipts include actual mailbox, applied-focus and wake-channel samples.
+  Readback and recorder completion observations remain separate from CPU
+  command submission timings.
   These calibration paths do not activate fairness in normal builds.
 
 ## [0.2.8] — 2026-10-29 — Beta 2
