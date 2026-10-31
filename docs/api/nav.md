@@ -626,7 +626,7 @@ A `journal modal timeout` permits one retry on the first observed game tick
 after the timeout. Each read retains the journal owner's five-tick window.
 The run-on button closes modals once before enabling run
 (`player_controls.rs2:34-46`). The host keeps its run-on latch until energy
-reaches 0 or the session changes (`crates/host/src/lib.rs:1411-1439`). Energy
+reaches 0 or the session changes (`crates/host/src/lib.rs:1435-1439,1452-1471`). Energy
 recovery or a new session allows another press.
 After a script sends a game interaction, the host defers its auto-run press
 until a later observed game tick. This keeps both actions off the same tick.

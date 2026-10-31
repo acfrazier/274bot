@@ -168,7 +168,7 @@
             "boolean",
             "null"
           ],
-          "description": "None inherits grants. False forbids dialogue steps throughout the Path.",
+          "description": "None or false adds no path-level grant; true grants dialogue on every walk.",
           "default": null
         },
         "quest_start": {
@@ -176,7 +176,7 @@
             "boolean",
             "null"
           ],
-          "description": "None inherits grants. False forbids quest starts throughout the Path.",
+          "description": "None or false adds no path-level grant; true grants quest starts on every walk.",
           "default": null
         }
       }

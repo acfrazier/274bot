@@ -36,7 +36,7 @@ pub(crate) const NPC_STEP_TICKS: u16 = 2;
 // Accepted send allowance, not a content guarantee. Live cells pin observed counts.
 pub(crate) const SEND_SLACK_TICKS: u16 = 2;
 // One retry covers the host run-press race after a journal modal timeout.
-// The host can press again after energy recovery or a new session.
+// The host run-on latch remains set until energy reaches 0 or the session changes.
 // quest_journal.rs2:1-55 has no delay. Retry only on the next observed tick
 // after the reader's five-tick window, never again within that same tick.
 const JOURNAL_TIMEOUT_RETRIES: u8 = 1;
