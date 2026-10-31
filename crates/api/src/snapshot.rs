@@ -889,8 +889,9 @@ impl GameSnapshot {
         self.self_slot
     }
 
-    /// The game-tick count this snapshot reflects: one bump per
-    /// `PLAYER_INFO` (the host's `should_emit_tick` edge).
+    /// The session-relative game-tick count: one bump per observed `PLAYER_INFO`
+    /// since the session reset. This differs from the raw `gens().player_info`
+    /// generation used by ordered dispatch and the host's native evidence tick.
     pub fn tick(&self) -> u32 {
         self.tick
     }

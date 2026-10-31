@@ -499,7 +499,8 @@ impl From<PacketError> for ServerOrderedError {
 pub struct ServerOrderedDispatch {
     /// The one request identity used by the owner and completion envelope.
     pub request_id: u64,
-    /// The observed tick of this host drain frame.
+    /// Raw Client `PLAYER_INFO` generation at dispatch, not a session-relative
+    /// snapshot tick or the native completion-evidence tick.
     pub dispatch_tick: u64,
     /// Logical row results in request order; unused entries remain `NotAttempted`.
     pub rows: [RowDispatch; MAX_ROWS],
@@ -543,10 +544,17 @@ impl ServerOrderedDispatch {
 }
 
 /// Host-owned dispatch inputs. The authority predicate is checked before each packet.
+///
+/// `dispatch_tick` is the raw Client `PLAYER_INFO` generation. The first clock
+/// guard requires equality with `snapshot.gens().player_info`; the second
+/// requires equality with the input observer's raw generation. Neither uses
+/// the session-relative `GameSnapshot::tick()` nor the native
+/// `EvidenceStamp::tick`. The authority callback separately fences the owning
+/// run, session and request, including immediately before each packet.
 pub struct ServerOrderedDispatchContext<'a> {
     /// The sole request identity for this dispatch.
     pub request_id: u64,
-    /// The observed tick of the drain frame.
+    /// The snapshot's raw Client `PLAYER_INFO` generation for this drain.
     pub dispatch_tick: u64,
     /// Detached slot input accounting and expectation state.
     pub input: ServerOrderedInputSnapshot,
@@ -1410,13 +1418,16 @@ fn mark_dependencies_skipped(receipt: &mut ServerOrderedDispatch, first: usize) 
     }
 }
 
+/// Require one raw `PLAYER_INFO` generation in the snapshot, context and input
+/// observer. Session-relative snapshot time and native completion time are not
+/// dispatch authority; the separate live-owner callback enforces that fence.
 fn validate_dispatch_context(
     snapshot: &GameSnapshot,
     driver: &dyn Driver,
     input: ServerOrderedInputSnapshot,
     dispatch_tick: u64,
 ) -> Result<(), ServerOrderedError> {
-    if u64::from(snapshot.tick()) != dispatch_tick {
+    if snapshot.gens().player_info != dispatch_tick {
         return Err(ServerOrderedError::StaleOwner);
     }
     if input.observed_tick() != u32::try_from(dispatch_tick).ok() {

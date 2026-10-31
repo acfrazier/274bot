@@ -17,6 +17,13 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.8` 
   unloaded, and returns to it after banking. Moving NPC spots keep their own
   observation and return paths.
 
+### API and native dispatch
+
+- Ordered input uses the raw Client `PLAYER_INFO` generation for both clock
+  guards. The session-relative snapshot tick and native completion tick stay
+  separate after relog. Stale generations and earlier-session owners are still
+  refused; no owner or event-budget check is bypassed.
+
 ### Not in this release
 
 - Native bank sorting (`sortBank`), quest-junk discovery (`findQuestJunk`), pack

@@ -268,9 +268,10 @@ pub(crate) fn dispatch_native_server_ordered(
     };
     use script::surface::ServerOrderedPayload;
 
-    // The API validates the Client packet clock against the snapshot and input
-    // lineage. Play's native completion clock survives relogs and is separate.
-    let dispatch_tick = u64::from(context.snapshot.tick());
+    // Dispatch uses the raw Client PLAYER_INFO generation shared by the snapshot
+    // and input observer. The session-relative snapshot tick and Play's native
+    // completion tick are separate clocks, including after relogs.
+    let dispatch_tick = context.snapshot.gens().player_info;
     let request_id = authority.request_id().get();
     let row_count = match envelope.payload() {
         ServerOrderedPayload::Content(request) => request.row_count(),

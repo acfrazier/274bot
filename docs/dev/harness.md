@@ -730,11 +730,14 @@ polls, inventory counts, host dispatch receipts and actual encoded packets.
 It does not impose a verified-fraction gate. The external verdict script
 derives that fraction from the probe before qualification starts.
 
-Frame windows and `native_dispatch_tick` use Play's native completion clock.
-`client_snapshot_tick` and each API receipt's `dispatch_tick` retain the
-Client packet clock, which can reset on a relog. The API validates that packet
-clock against the snapshot and input lineage. Do not compare it directly
-with native frame windows or replace it with a calculated offset.
+Three clocks are recorded separately. Frame windows and `native_dispatch_tick`
+use Play's native completion clock. `client_snapshot_tick` is the
+session-relative `GameSnapshot::tick()`. Each API receipt's `dispatch_tick`
+is the raw Client `PLAYER_INFO` generation, `snapshot.gens().player_info`,
+which the Client input observer also publishes. The API requires that raw
+generation to match both the context stamp and input lineage. Its live-owner
+callback separately fences the run, session and request. Do not substitute
+either other clock or a calculated offset for any of these checks.
 
 Then run `gatherer_fly_tick`, `gatherer_net_tick`, `gatherer_mine_iron_tick`,
 `gatherer_oak_tick` and `gatherer_tick_refused_rune` in the same module.
