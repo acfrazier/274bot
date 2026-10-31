@@ -2927,10 +2927,10 @@ mod tests {
 
     #[test]
     fn instance_with_widening_stays_inside_the_inline_budget() {
-        // Last measured head: 1,432 B; retain the 1,440-B cap until the parent remeasures this cutover.
+        // Lazy acquisition owners shrink 1,432 B to 840 B; the restored 1,024-B cap leaves 184 B.
         assert_eq!(size_of::<Walk>(), 136, "Walk inline layout changed");
         assert!(
-            size_of::<Gatherer>() <= 1440,
+            size_of::<Gatherer>() <= 1024,
             "Gatherer={} exceeds its inline budget",
             size_of::<Gatherer>()
         );

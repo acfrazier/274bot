@@ -18,6 +18,9 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.8` 
   Retries start from the observed position. If a shop exhausts its walk budget,
   an alternate reachable shop can still be tried. Typed refusals and
   blocked-zone results remain terminal.
+- Gatherer allocates its acquisition owner only while a supply trip or park
+  close is active. Idle Gatherers stay within the existing 8 KiB heap limit
+  and the restored 1 KiB inline-size limit.
 
 ### Quester
 
