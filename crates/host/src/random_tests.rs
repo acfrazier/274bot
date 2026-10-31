@@ -94,7 +94,8 @@ fn plant_npc_typed_with_op(
     op: &str,
 ) {
     {
-        let cache = Arc::make_mut(&mut c.cache);
+        api::snapshot::clear_client_adapter_cache_for_tests();
+        let cache = Arc::get_mut(&mut c.cache).expect("sole cache owner");
         while cache.npcs.len() <= type_id {
             cache.npcs.push(NpcType::default());
         }
@@ -176,7 +177,8 @@ fn plant_npc_with_op(
         _ => 500 + slot,
     };
     {
-        let cache = Arc::make_mut(&mut c.cache);
+        api::snapshot::clear_client_adapter_cache_for_tests();
+        let cache = Arc::get_mut(&mut c.cache).expect("sole cache owner");
         while cache.npcs.len() <= type_id {
             cache.npcs.push(NpcType::default());
         }
@@ -205,7 +207,8 @@ fn plant_npc_with_op(
 /// A ground item of cache obj `name` on scene tile (x, z) (level 0).
 fn plant_ground_obj(c: &mut Client, x: i32, z: i32, obj_id: i32, name: Option<&str>) {
     {
-        let cache = Arc::make_mut(&mut c.cache);
+        api::snapshot::clear_client_adapter_cache_for_tests();
+        let cache = Arc::get_mut(&mut c.cache).expect("sole cache owner");
         while cache.objs.len() <= obj_id as usize {
             cache.objs.push(ObjType::default());
         }
@@ -1074,7 +1077,8 @@ fn plant_inv_named(c: &mut Client, obj_id: i32, name: Option<&str>) {
 /// Like [`plant_inv_obj`] with a cache name and cache held ops.
 fn plant_inv_ops(c: &mut Client, obj_id: i32, name: Option<&str>, iop: [Option<&str>; 5]) {
     {
-        let cache = Arc::make_mut(&mut c.cache);
+        api::snapshot::clear_client_adapter_cache_for_tests();
+        let cache = Arc::get_mut(&mut c.cache).expect("sole cache owner");
         while cache.objs.len() <= obj_id as usize {
             cache.objs.push(client::config::ObjType::default());
         }
@@ -1159,7 +1163,8 @@ fn plant_loc_with_op(
     op: Option<&str>,
 ) {
     {
-        let cache = Arc::make_mut(&mut c.cache);
+        api::snapshot::clear_client_adapter_cache_for_tests();
+        let cache = Arc::get_mut(&mut c.cache).expect("sole cache owner");
         while cache.locs.len() <= id as usize {
             cache.locs.push(LocType::default());
         }
@@ -4494,7 +4499,8 @@ fn solve_cube_unknown_question_or_missing_model_is_none() {
 /// inv (one stacked row).
 fn plant_inv_box(c: &mut Client, qty: i32) {
     {
-        let cache = Arc::make_mut(&mut c.cache);
+        api::snapshot::clear_client_adapter_cache_for_tests();
+        let cache = Arc::get_mut(&mut c.cache).expect("sole cache owner");
         while cache.objs.len() <= STRANGE_BOX_OBJ as usize {
             cache.objs.push(client::config::ObjType::default());
         }
