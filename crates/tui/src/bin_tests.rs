@@ -4304,6 +4304,13 @@ fn live_logout_waits_for_running_and_queued_scripts_to_stop() {
     for name in names {
         assign(&mut session, name, &card);
     }
+    start_assigned_script(&mut session, &mut app, "alice");
+    settle_starts(&mut session, &mut app);
+    wait_script_state(
+        session.core.play_for_test().unwrap(),
+        "alice",
+        ScriptRunState::Running,
+    );
     run_fleet_action(&mut session, &mut app, frontend_core::FleetAction::Start);
     let queued = names
         .iter()
