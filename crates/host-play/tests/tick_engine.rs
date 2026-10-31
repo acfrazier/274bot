@@ -4314,7 +4314,7 @@ mod packet_oracle_tests {
     }
 
     #[test]
-    fn engine_correlation_accepts_byte_preserving_make_suffix_drop() {
+    fn engine_correlation_accepts_suffix_drop_only_at_unknown_opcode_boundary() {
         let request = 11;
         let make_opcodes = vec![
             ClientProt289::OPHELDU.id as u8,
@@ -4322,38 +4322,63 @@ mod packet_oracle_tests {
             ClientProt289::MOVE_OPCLICK.id as u8,
             ClientProt289::OPLOC1.id as u8,
         ];
-        let make_lengths = vec![6, 4, 7, 5];
-        let mut wire_packets: Vec<_> = make_opcodes
+        let make_lengths = vec![13, 3, 7, 7];
+        let wire_packets: Vec<_> = make_opcodes
             .iter()
             .zip(&make_lengths)
             .map(|(opcode, length)| wire(*opcode, request, *length))
             .collect();
-        let click_opcodes = [
-            ClientProt289::MOVE_OPCLICK.id as u8,
-            ClientProt289::OPNPC1.id as u8,
-        ];
-        wire_packets.extend(
-            click_opcodes
-                .iter()
-                .map(|opcode| wire(*opcode, request + 1, 4)),
-        );
-        let mut engine_packets = vec![packet(make_opcodes[0], 1), packet(make_opcodes[1], 2)];
-        engine_packets.extend(
-            click_opcodes
-                .iter()
-                .enumerate()
-                .map(|(index, opcode)| packet(*opcode, index as u64 + 3)),
-        );
+        let mut opener = packet(make_opcodes[0], 1);
+        opener.charged_user_event = true;
+        let mut make = packet(make_opcodes[1], 2);
+        make.charged_user_event = true;
+        let mut unknown = packet(54, 3);
+        unknown.tick = 8;
+        unknown.name = "UNKNOWN".into();
+        unknown.outcome = "refused".into();
+        unknown.reason = "unknown-opcode".into();
+        unknown.handler_accepted = false;
         let transport = vec![drop_observation(
             request,
             make_opcodes,
             make_lengths,
-            10,
-            12,
+            16,
+            14,
         )];
-        assert!(
-            correlate_engine_packets(&evidence(wire_packets, transport, engine_packets,)).is_ok()
-        );
+        let mut evidence = evidence(wire_packets, transport, vec![opener, make, unknown]);
+        evidence.case = "tick-make-proxy-drop";
+        assert!(correlate_engine_packets(&evidence).is_ok());
+    }
+
+    #[test]
+    fn engine_correlation_rejects_dropped_packets_reported_by_engine() {
+        let request = 21;
+        let opcodes = vec![
+            ClientProt289::OPHELDU.id as u8,
+            ClientProt289::IF_BUTTON.id as u8,
+            ClientProt289::MOVE_OPCLICK.id as u8,
+            ClientProt289::OPLOC1.id as u8,
+        ];
+        let lengths = vec![13, 3, 7, 7];
+        let wire_packets = opcodes
+            .iter()
+            .zip(&lengths)
+            .map(|(opcode, length)| wire(*opcode, request, *length))
+            .collect();
+        let mut opener = packet(opcodes[0], 1);
+        opener.charged_user_event = true;
+        let mut make = packet(opcodes[1], 2);
+        make.charged_user_event = true;
+        let engine_packets = vec![
+            opener,
+            make,
+            packet(opcodes[2], 3),
+            packet(opcodes[3], 4),
+        ];
+        let transport = vec![drop_observation(request, opcodes, lengths, 16, 14)];
+        let mut evidence = evidence(wire_packets, transport, engine_packets);
+        evidence.case = "tick-make-proxy-drop";
+        assert!(correlate_engine_packets(&evidence).is_err());
     }
 
     #[test]
