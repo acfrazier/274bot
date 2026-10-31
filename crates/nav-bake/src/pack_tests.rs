@@ -17,8 +17,8 @@ use nav_planner::grid::StepGrid;
 use nav_planner::pack::{
     decode, decode_canlight_sidecar, decode_flags_sidecar, decode_grid, decode_reach_sidecar,
     encode_atlas_sections, encode_multiway_keys, read_canlight_sidecar, read_flags_sidecar,
-    read_reach_sidecar, read_reach_sidecar_header, sha256_hex, walkable_dots, BankAccess, BankStand,
-    PackError, MAGIC_FLAGS, MAX_GRID, VERSION, VERSION_FLAGS,
+    read_reach_sidecar, read_reach_sidecar_header, sha256_hex, walkable_dots, BankAccess,
+    BankStand, PackError, MAGIC_FLAGS, MAX_GRID, VERSION, VERSION_FLAGS,
 };
 use nav_planner::quest_gates::{QuestFamilyId, QuestGates};
 use nav_planner::reachability::ReachabilityAtlas;
@@ -52,8 +52,7 @@ fn gate_window(quest: &str, signal: &str, min: Option<i32>, max: Option<i32>) ->
 /// Bytes after the v17 trailer: empty multiway keys plus an unlabeled atlas.
 fn v18_unlabeled_tail(width: u32, height: u32) -> usize {
     let atlas = ReachabilityAtlas::unlabeled(width, height).unwrap();
-    encode_multiway_keys(&[]).unwrap().len()
-        + encode_atlas_sections(&atlas).unwrap().len()
+    encode_multiway_keys(&[]).unwrap().len() + encode_atlas_sections(&atlas).unwrap().len()
 }
 
 /// A BufRead that yields at most one byte per fill, exercising all parser
