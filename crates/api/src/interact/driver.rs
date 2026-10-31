@@ -7,6 +7,49 @@ pub const RUN_ORB_OFF: i32 = 152;
 /// Lumbridge courtyard hop (`tele` arg). Same as rs2b0t `mainlandAccount`.
 pub const OFF_ISLAND_TELE: &str = "0,50,50,20,20";
 
+#[cfg(feature = "test-support")]
+thread_local! {
+    static DRIVER_PACKET_SCOPE: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    static CLASSIFIED_DRIVER_PACKETS: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+}
+
+/// Read the current slot thread's real, host-classified Driver packet total.
+#[cfg(feature = "test-support")]
+pub fn classified_driver_packet_count_for_test() -> u64 {
+    CLASSIFIED_DRIVER_PACKETS.get()
+}
+
+/// Record a real sink commit after the host determines its request lineage.
+/// Ordinary Driver calls use a test-only scope; ordered requests retain their
+/// production lineage. Client-owned packets outside either scope do not count.
+#[cfg(feature = "test-support")]
+pub fn record_classified_driver_packet_for_test(owned_request: bool) {
+    if owned_request || DRIVER_PACKET_SCOPE.get() {
+        CLASSIFIED_DRIVER_PACKETS.set(
+            CLASSIFIED_DRIVER_PACKETS
+                .get()
+                .checked_add(1)
+                .expect("the test packet counter cannot exhaust u64"),
+        );
+    }
+}
+
+#[cfg(feature = "test-support")]
+fn driver_packet_scope_for_test<T>(client: &mut Client, write: impl FnOnce(&mut Client) -> T) -> T {
+    struct RestoreScope(bool);
+    impl Drop for RestoreScope {
+        fn drop(&mut self) {
+            DRIVER_PACKET_SCOPE.set(self.0);
+        }
+    }
+    // A deferred packet belongs to its original producer, not this call.
+    client.out.finish_packet();
+    let _scope = RestoreScope(DRIVER_PACKET_SCOPE.replace(true));
+    let result = write(client);
+    client.out.finish_packet();
+    result
+}
+
 /// Checkpoint of the actual encrypted packet sink. The checkpoint retains only
 /// its cursor and cipher, never payload bytes or per-bot state.
 pub struct PacketCheckpoint {
