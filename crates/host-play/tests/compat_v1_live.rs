@@ -1796,8 +1796,22 @@ fn instrument_walk_to_settings(js: &mut String) -> Result<(), String> {
         r#"
 export default class CompatWalkToSettingsProbe extends WalkToBot {
     __mapPickerUnsubscribe = null;
+    __savedWalk(stage) {
+        this.log(`RUNTIME:WALK_SAVED_${stage}:` + JSON.stringify({
+            destination: SettingsStore.saved('WalkTo', 'destination') ?? null,
+            customTile: SettingsStore.saved('WalkTo', 'customTile') ?? null,
+        }));
+    }
     async onStart() {
-        await super.onStart();
+        // The saved rows WalkToBot reads, so a restart that finds no
+        // destination shows which row it was missing.
+        this.__savedWalk('AT_START');
+        try {
+            await super.onStart();
+        } catch (error) {
+            this.__savedWalk('AT_FAIL');
+            throw error;
+        }
         // Mirror the map picker's listener for a display-setting change.
         this.__mapPickerUnsubscribe = SettingsStore.onChange((name, key, raw) => {
             if (name === 'MapPicker' && key === 'showBasemap') {
