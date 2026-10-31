@@ -1650,6 +1650,57 @@ fn park_observation(
     }
 }
 
+fn relog_park_preserved(initial: &ParkObservation, observation: &ParkObservation) -> bool {
+    observation.phase.as_deref() == Some("Blocked")
+        && observation.phase_label.as_deref() == Some("blocked")
+        && observation.slot_running == Some(true)
+        && observation.failure.is_none()
+        && observation.block_reason == initial.block_reason
+        && observation.run_slot == initial.run_slot
+        && observation.run_generation == initial.run_generation
+        && observation.run_session != initial.run_session
+        && observation.session_generation != initial.session_generation
+        && observation.bank_origin.as_deref() == Some("Hint")
+        && observation.bank_rows.as_ref().is_some_and(|rows| rows.is_empty())
+        && observation.bank_open == Some(false)
+        && observation.tool_in_pack == Some(0)
+        && observation.coins_in_pack == Some(0)
+        && observation.no_walk == Some(true)
+        && observation.no_bank_trip == Some(true)
+}
+
+#[test]
+fn relog_park_oracle_preserves_a_readiness_pause_until_the_scene_returns() {
+    let initial = ParkObservation {
+        run_slot: Some(1),
+        run_generation: Some(3),
+        run_session: Some(1),
+        session_generation: Some(2),
+        block_reason: Some("missing Harpoon; waiting for supply".into()),
+        ..ParkObservation::default()
+    };
+    let loading = ParkObservation {
+        run_slot: Some(1),
+        run_generation: Some(3),
+        run_session: Some(2),
+        session_generation: Some(3),
+        phase: Some("Blocked".into()),
+        phase_label: Some("blocked".into()),
+        slot_state: Some("Paused".into()),
+        slot_running: Some(false),
+        block_reason: initial.block_reason.clone(),
+        bank_origin: Some("Hint".into()),
+        bank_rows: Some(Vec::new()),
+        bank_open: Some(false),
+        tool_in_pack: Some(0),
+        coins_in_pack: Some(0),
+        no_walk: Some(true),
+        no_bank_trip: Some(true),
+        ..ParkObservation::default()
+    };
+    assert!(relog_park_preserved(&initial, &loading));
+}
+
 fn record_final_status(
     play: &super::Play,
     account: &str,
@@ -1955,14 +2006,6 @@ fn run_cell_with_transition(case: Case, transition: ParkTransition) {
         let status = play.script_native_status(&account);
         if let Some(status) = status.as_ref() {
             combat_proof::record_status(&account, status, None);
-        }
-        if transition == ParkTransition::Relog {
-            api::host_log!(
-                stderr; api::hostlog::Category::Echo, api::hostlog::Level::Info,
-                slot = account.as_str(),
-                "[DEBUG-park-relog] cell stage={stage:?} slot={:?} native={status:?}",
-                play.script_state(&account)
-            );
         }
         match stage {
             RunStage::Prepare => {
@@ -2420,25 +2463,7 @@ fn run_cell_with_transition(case: Case, transition: ParkTransition) {
                         .initial
                         .clone()
                         .expect("relog follows an observed park");
-                    let preserves_park = observation.phase.as_deref() == Some("Blocked")
-                        && observation.phase_label.as_deref() == Some("blocked")
-                        && observation.slot_running == Some(true)
-                        && observation.failure.is_none()
-                        && observation.block_reason == initial.block_reason
-                        && observation.run_slot == initial.run_slot
-                        && observation.run_generation == initial.run_generation
-                        && observation.run_session != initial.run_session
-                        && observation.session_generation != initial.session_generation
-                        && observation.bank_origin.as_deref() == Some("Hint")
-                        && observation
-                            .bank_rows
-                            .as_ref()
-                            .is_some_and(|rows| rows.is_empty())
-                        && observation.bank_open == Some(false)
-                        && observation.tool_in_pack == Some(0)
-                        && observation.coins_in_pack == Some(0)
-                        && observation.no_walk == Some(true)
-                        && observation.no_bank_trip == Some(true);
+                    let preserves_park = relog_park_preserved(&initial, &observation);
                     if !preserves_park {
                         cell_failure = Some(format!(
                             "relog did not preserve the Running/Blocked park without waking or a bank trip: initial={initial:?} after_relog={observation:?}"
@@ -2487,25 +2512,7 @@ fn run_cell_with_transition(case: Case, transition: ParkTransition) {
                         .initial
                         .clone()
                         .expect("relog observation follows the initial park");
-                    if observation.phase.as_deref() != Some("Blocked")
-                        || observation.phase_label.as_deref() != Some("blocked")
-                        || observation.slot_running != Some(true)
-                        || observation.failure.is_some()
-                        || observation.block_reason != initial.block_reason
-                        || observation.run_slot != initial.run_slot
-                        || observation.run_generation != initial.run_generation
-                        || observation.run_session == initial.run_session
-                        || observation.bank_origin.as_deref() != Some("Hint")
-                        || observation
-                            .bank_rows
-                            .as_ref()
-                            .is_none_or(|rows| !rows.is_empty())
-                        || observation.bank_open != Some(false)
-                        || observation.tool_in_pack != Some(0)
-                        || observation.coins_in_pack != Some(0)
-                        || observation.no_walk != Some(true)
-                        || observation.no_bank_trip != Some(true)
-                    {
+                    if !relog_park_preserved(&initial, &observation) {
                         cell_failure = Some(format!(
                             "park changed during relog observation: {observation:?}"
                         ));
