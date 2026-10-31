@@ -53,6 +53,10 @@ scenario = { path = "../scenario" }
 name = "t44_draw_memory"
 required-features = ["draw-memory-profile"]
 
+[[test]]
+name = "t44_memory_case"
+required-features = ["draw-memory-case"]
+
 # These harnesses use the optional scenario runner even for their offline tests.
 [[test]]
 name = "catalog_boundary_live"
@@ -118,6 +122,8 @@ debug-catalog = ["api/debug-catalog"]
 memory-profile = ["js", "script-js/memory-profile", "host/performance-profile", "dep:scenario"]
 # Drawing-owner instrumentation is isolated from the M3 timing executable.
 draw-memory-profile = ["memory-profile", "render-test-hooks", "host/draw-memory-profile"]
+# Same source and memory-only paint selector in comparator and candidate.
+draw-memory-case = ["memory-profile", "host/draw-memory-case", "client/draw-memory-case"]
 
 # CPU diagnostic: use System directly, report allocator metrics unavailable.
 memory-profile-no-alloc = ["memory-profile"]

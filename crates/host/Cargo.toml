@@ -16,6 +16,8 @@ parking_lot = { version = "0.12", optional = true }
 render-diagnostics = ["client/render-diagnostics"]
 render-test-hooks = ["client/render-test-hooks"]
 draw-memory-profile = ["render-test-hooks", "client/draw-memory-profile"]
+# Memory-only comparator selection and common owner census; never timing.
+draw-memory-case = ["client/draw-memory-case"]
 performance-profile = []
 # Lossless, immutable paint witnesses for the Windows journal fixture only.
 journal-paint-proof = ["dep:parking_lot"]

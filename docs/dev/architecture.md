@@ -321,6 +321,7 @@ unchanged manifest; compression does not change selected-content identities.
 | `render.rs` | neutral render reservation protocol (D12, §23 §2) | metadata only; no render thread; one process instance, owned by `render_head.rs` |
 | `render_head.rs` | per-slot render heads over the process `RenderService` (T4.2 wrap) | `HeadLease` per drawing slot; GPU scene submissions under a `FrameLease` through the client's scene-workspace hook, CPU heads take none; the client's `GPU_SCENE_LOCK` wait is retained until T4.4 |
 | `render_head/fair.rs` | opt-in fair-render admission and head samples | explicit calibration under `render-diagnostics`, or deterministic `render-test-hooks` fixtures; one consume per scene paint, retained Busy overlays, target slot wakes, and release before overlays |
+| `draw_memory_case.rs` | memory-only comparator paint input and observations | fixed-storage diagnostics shared by the two source revisions; never enabled in timing builds |
 | `slot.rs` | per-slot drain pump | gens diff, tick synthesis, dirty families |
 | `slot_io.rs` | frame and input channels | mailbox (accepts only its attached head's frames), input, park and wake |
 | `login_queue.rs` | login FIFO and backoff | production rate limits |
@@ -499,6 +500,30 @@ while the normal navigation scenario runs. Peer progress counts only real
 ingame clients with a complete scene. The loading clock starts after a
 complete scene exists; it is not evidence of a natural region crossing.
 The fixture reports its own control allocation separately from renderer owners.
+
+The separate `t44_memory_case` target uses `draw-memory-case`, not
+`draw-memory-profile`. Its common fixture, host input selector and client owner
+census must be identical in the comparator and candidate. The only
+source-specific attachments call those diagnostics around the existing paint
+path. Loading changes only that paint's input; the simulation state is restored
+before the slot resumes, including during unwinding. The census reads actual
+common CPU capacities and inline layouts without retaining pixels or textures.
+It does not enumerate private backend payloads or shared GPU resources. The
+candidate-specific `t44_draw_memory` assertions remain separate.
+
+The common target emits raw JSONL samples for headless, full, focus1, loading,
+detach and reattach phases. Its allocation-only test measures the diagnostic
+control with rendering disabled. Those receipts establish diagnostic overhead;
+they do not establish the comparator A/A spread or an A/B verdict.
+
+Memory samples also report native allocator observations separately from RSS,
+requested Rust live bytes, V8 and logical GPU storage. Linux GNU samples use
+`malloc_info` across all arenas and direct allocator mmap allocations. Arena
+in-use includes allocator bookkeeping and can include thread-cache chunks.
+macOS samples use the aggregate malloc-zone statistics. Unsupported samplers
+return null. These allocator domains overlap Rust `System` and some V8
+allocations; they exclude GPU/driver allocations outside that allocator and
+must not be added to RSS or the other domains.
 
 
 A refused or nonfresh output does not replace the mailbox's completed image

@@ -493,7 +493,21 @@ impl Head {
 
     /// Paint one frame. A GPU head lends its lease to this thread's scene
     /// hook for the frame, so its scene submission runs under a frame lease.
+    #[inline]
     pub(crate) fn paint(&mut self, client: &mut Client) -> FrameOutput {
+        #[cfg(feature = "draw-memory-case")]
+        {
+            crate::draw_memory_case::paint(client, self.identity, |client| {
+                let output = self.paint_without_memory_case(client);
+                let census = self.renderer.memory_case_census(&output);
+                (output, census)
+            })
+        }
+        #[cfg(not(feature = "draw-memory-case"))]
+        self.paint_without_memory_case(client)
+    }
+
+    fn paint_without_memory_case(&mut self, client: &mut Client) -> FrameOutput {
         #[cfg(any(feature = "render-diagnostics", feature = "render-test-hooks"))]
         let _budget_scope = self
             .budget

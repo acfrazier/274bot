@@ -39,6 +39,11 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.8` 
   It separates the shared vertex cap from its replacement charge.
   The diagnostic mailbox accounts for its added latency, skip and focus scalars.
   These calibration paths do not activate fairness in normal builds.
+- Memory-only render diagnostics report native allocator statistics separately
+  from requested Rust bytes, V8 heaps and logical GPU storage. Native allocator
+  values can overlap those domains and are not an RSS total. A common
+  drawing-memory case selector records the same owner fields on both comparison
+  sources without replacing either renderer or changing the timing binaries.
 
 ## [0.2.8] — 2026-10-29 — Beta 2
 

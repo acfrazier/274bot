@@ -2,6 +2,8 @@
 
 mod auto_run;
 pub mod capacity;
+#[cfg(feature = "draw-memory-case")]
+pub mod draw_memory_case;
 mod input_observation;
 pub use input_observation::InputLineageGuard;
 pub mod login_queue;
