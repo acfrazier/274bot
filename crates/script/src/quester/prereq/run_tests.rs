@@ -2252,6 +2252,142 @@ fn kitchen_journal_phoenix_completion_establishes_membership() {
 }
 
 #[test]
+fn kitchen_journal_joined_phoenix_page_without_completion_leaves_no_fact() {
+    // phoenixgang = 9, blackarmgang_journal.rs2:16,60-63,203-204.
+    // Two needles match, but this page never says QUEST COMPLETE.
+    kitchen_journal_observation(
+        &[
+            "@dbl@I searched the @dre@Phoenix Gang Headquarters@dbl@ and found",
+            "what seemed to be half of the @dre@Shield of Arrav@dbl@. A",
+            "@dre@Fellow Adventurer@dbl@ also found a @dre@Shield Half@dbl@ and gave it to",
+            "me. I took them both to the @dre@Curator@dbl@ in @dre@Varrock Museum",
+        ],
+        None,
+    );
+}
+
+fn kitchen_journal_timeout_run() -> (
+    PrereqRun,
+    GameSnapshot,
+    Option<Box<ledger::Ledger>>,
+    SlotState,
+    PrereqBudget,
+) {
+    let _ = &*CATALOG;
+    let gate = kitchen_journal_gate();
+    let mut snapshot = snapshot(gate.crossing.takeoff);
+    snapshot.seed_quest_statuses(
+        vec![api::snapshot::QuestStatusView {
+            name: "Shield of Arrav".into(),
+            component_id: 42,
+            colour: 0x00f800,
+        }],
+        true,
+    );
+    (
+        PrereqRun::begin(gate, RunEntry::NeedsStep, PrereqAllow::default()),
+        snapshot,
+        None,
+        state(),
+        PrereqBudget::default(),
+    )
+}
+
+#[test]
+fn kitchen_journal_timeout_retries_once_on_a_later_observed_tick_and_recovers() {
+    let (mut run, mut snapshot, mut ledger, state, mut budget) = kitchen_journal_timeout_run();
+    assert!(poll(&mut run, &snapshot, &mut ledger, 1, &state, &mut budget).is_pending());
+    accept_last(&mut ledger, 1, 0);
+    // Inject the lost page by leaving the modal closed for the reader's five ticks.
+    for tick in 2..=6 {
+        assert!(poll(&mut run, &snapshot, &mut ledger, tick, &state, &mut budget).is_pending());
+        assert!(state.prereq_snapshot().facts().is_empty());
+    }
+    for _ in 0..3 {
+        assert!(poll(&mut run, &snapshot, &mut ledger, 6, &state, &mut budget).is_pending());
+        assert_eq!(ledger.as_ref().unwrap().outbox.len(), 1);
+    }
+    assert!(poll(&mut run, &snapshot, &mut ledger, 7, &state, &mut budget).is_pending());
+    assert_eq!(ledger.as_ref().unwrap().outbox.len(), 2);
+    assert!(matches!(last_interaction(&ledger), InteractReq::IfButton { component_id: 42 }));
+    assert_eq!(budget.rows_run, 1, "a retry does not spend another catalog row");
+    accept_last(&mut ledger, 7, 0);
+    snapshot.seed_main_modal(
+        crate::quest_journal::ROOT_289,
+        vec![
+            crate::quest_journal::test_widget(crate::quest_journal::TITLE_289, "@dre@Shield of Arrav"),
+            crate::quest_journal::test_widget(8145, "@str@I searched the Phoenix Gang Headquarters and found"),
+            crate::quest_journal::test_widget(8146, "@str@half of the Shield of Arrav."),
+            crate::quest_journal::test_widget(8147, "@red@QUEST COMPLETE!"),
+        ],
+    );
+    assert!(poll(&mut run, &snapshot, &mut ledger, 8, &state, &mut budget).is_pending());
+    assert!(state.prereq_snapshot().facts().is_empty(), "an observed close still gates proof");
+    assert!(matches!(last_interaction(&ledger), InteractReq::CloseModal));
+    accept_last(&mut ledger, 8, 0);
+    snapshot.seed_main_modal(-1, vec![]);
+    assert!(matches!(
+        poll(&mut run, &snapshot, &mut ledger, 9, &state, &mut budget),
+        Poll::Ready(Ok(Done { crossed: false }))
+    ));
+    assert_eq!(state.prereq_snapshot().facts().len(), 1);
+    assert_eq!(ledger.as_ref().unwrap().outbox.len(), 3);
+}
+
+#[test]
+fn kitchen_journal_timeout_stops_after_two_reads_with_the_last_timeout_detail() {
+    let (mut run, snapshot, mut ledger, state, mut budget) = kitchen_journal_timeout_run();
+    assert!(poll(&mut run, &snapshot, &mut ledger, 1, &state, &mut budget).is_pending());
+    accept_last(&mut ledger, 1, 0);
+    for tick in 2..=7 {
+        assert!(poll(&mut run, &snapshot, &mut ledger, tick, &state, &mut budget).is_pending());
+        assert!(state.prereq_snapshot().facts().is_empty());
+    }
+    assert_eq!(ledger.as_ref().unwrap().outbox.len(), 2);
+    accept_last(&mut ledger, 7, 0);
+    for tick in 8..12 {
+        assert!(poll(&mut run, &snapshot, &mut ledger, tick, &state, &mut budget).is_pending());
+    }
+    assert!(matches!(
+        poll(&mut run, &snapshot, &mut ledger, 12, &state, &mut budget),
+        Poll::Ready(Err(PrereqRefusal::StepFailed {
+            why: PrereqFailure::Action(detail), ..
+        })) if detail.as_ref() == "the native action failed: journal modal timeout"
+    ));
+    assert!(state.prereq_snapshot().facts().is_empty());
+    assert_eq!(ledger.as_ref().unwrap().outbox.len(), 2, "no third read or gate probe");
+    assert!(!ledger.as_ref().unwrap().test_owner_live());
+}
+
+#[test]
+fn kitchen_journal_timeout_retry_keeps_a_different_last_failure_detail() {
+    let (mut run, snapshot, mut ledger, state, mut budget) = kitchen_journal_timeout_run();
+    assert!(poll(&mut run, &snapshot, &mut ledger, 1, &state, &mut budget).is_pending());
+    accept_last(&mut ledger, 1, 0);
+    for tick in 2..=7 {
+        assert!(poll(&mut run, &snapshot, &mut ledger, tick, &state, &mut budget).is_pending());
+    }
+    let authority = ledger.as_ref().unwrap().outbox.last().unwrap().authority();
+    ledger.as_mut().unwrap().complete_interaction(
+        &authority,
+        InteractionReceipt {
+            request_id: authority.request_id().get(),
+            evidence: EvidenceStamp { run: authority.run(), tick: 7, sequence: 7 },
+            accepted: false,
+            chat_since: 0,
+        },
+    );
+    assert!(matches!(
+        poll(&mut run, &snapshot, &mut ledger, 8, &state, &mut budget),
+        Poll::Ready(Err(PrereqRefusal::StepFailed {
+            why: PrereqFailure::Action(detail), ..
+        })) if detail.as_ref() == "the native action failed: journal click refused"
+    ));
+    assert!(state.prereq_snapshot().facts().is_empty());
+    assert_eq!(ledger.as_ref().unwrap().outbox.len(), 2);
+}
+
+#[test]
 fn kitchen_journal_black_arm_completion_refuses_phoenix_membership() {
     // blackarmgang_journal.rs2:114,186-197. Phoenix is below joined here.
     kitchen_journal_observation(
