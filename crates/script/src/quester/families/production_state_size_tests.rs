@@ -51,6 +51,12 @@ fn production_state_sizes_stay_within_explicit_bounds() {
     ];
     let plan_change = plan as isize - previous_plan as isize;
     let run_change = run as isize - previous_run as isize;
+    println!(
+        "production family state sizes: MakeTrigger={trigger}; MakePlan={plan} ({plan_change:+} from {previous_plan}); MakeRun={run} ({run_change:+} from {previous_run}) bytes"
+    );
+    println!(
+        "previous field offsets: MakePlan={previous_plan_offsets:?}; MakeRun={previous_run_offsets:?}"
+    );
     assert!(trigger <= 64, "MakeTrigger grew to {trigger} bytes");
     assert!(plan <= 192, "MakePlan grew to {plan} bytes");
     assert!(
@@ -62,11 +68,5 @@ fn production_state_sizes_stay_within_explicit_bounds() {
         run <= previous_run + 16,
         "MakeRun grew by {} bytes",
         run.saturating_sub(previous_run)
-    );
-    println!(
-        "production family state sizes: MakeTrigger={trigger}; MakePlan={plan} ({plan_change:+} from {previous_plan}); MakeRun={run} ({run_change:+} from {previous_run}) bytes"
-    );
-    println!(
-        "previous field offsets: MakePlan={previous_plan_offsets:?}; MakeRun={previous_run_offsets:?}"
     );
 }

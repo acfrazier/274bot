@@ -4913,8 +4913,8 @@ fn stand_walk_count_survives_a_failure_on_the_budget_tick() {
 /// were measured at; 1176 bytes is the size before the stand-walk count.
 #[test]
 fn combat_run_layout_stays_compact() {
-    assert!(std::mem::size_of::<CombatRun>() <= 1176);
     println!("CombatRun={}", std::mem::size_of::<CombatRun>());
+    assert!(std::mem::size_of::<CombatRun>() <= 1176);
 }
 
 #[test]
