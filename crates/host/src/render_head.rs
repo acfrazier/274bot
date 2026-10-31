@@ -46,12 +46,17 @@ use crate::render::{
 use crate::slot_io::FramePaintStatus;
 use crate::FrameBuf;
 
-#[cfg(feature = "render-test-hooks")]
+#[cfg(any(feature = "render-diagnostics", feature = "render-test-hooks"))]
 mod fair;
+#[cfg(any(feature = "render-diagnostics", feature = "render-test-hooks"))]
+pub use fair::{
+    configure_calibration, configure_calibration_limits, with_process_render_budget,
+    CalibrationConfig, DueOpportunity, GrantLatency, HeadFairStats,
+};
 #[cfg(feature = "render-test-hooks")]
-pub use fair::{test_hooks, DueOpportunity, GrantLatency, HeadFairStats};
+pub use fair::test_hooks;
 
-#[cfg(feature = "render-test-hooks")]
+#[cfg(any(feature = "render-diagnostics", feature = "render-test-hooks"))]
 pub(crate) fn slot_budget_scope(
     head: Option<&Head>,
 ) -> Option<client::render::budget::RenderBudgetScope> {
@@ -77,27 +82,26 @@ struct ProcessRender {
     counters: WorkspaceCounters,
 }
 
-/// The qualified configuration is absent until slice 5. Normal builds retain
-/// the wrap's exact admission and deadline policy.
+/// The process service, independent pump and GPU scene-submission counters.
 fn build_process_render() -> ProcessRender {
-    #[cfg(feature = "render-test-hooks")]
-    let fixture = fair::initialize();
-    #[cfg(feature = "render-test-hooks")]
-    if fixture.is_some() {
+    #[cfg(any(feature = "render-diagnostics", feature = "render-test-hooks"))]
+    let calibration = fair::initialize();
+    #[cfg(any(feature = "render-diagnostics", feature = "render-test-hooks"))]
+    if calibration.is_some() {
         client::render::backend::gpu::set_scene_admission_hook(fair::admission);
         client::render::backend::cpu::set_cpu_host_overlay_hook(fair::host_active);
     }
     client::render::backend::gpu::set_scene_workspace_hook(scene_workspace);
-    #[cfg(feature = "render-test-hooks")]
-    let ttl = fixture.map_or(WRAP_GRANT_TTL, |config| config.grant_ttl);
-    #[cfg(not(feature = "render-test-hooks"))]
+    #[cfg(any(feature = "render-diagnostics", feature = "render-test-hooks"))]
+    let ttl = calibration.map_or(WRAP_GRANT_TTL, |config| config.grant_ttl);
+    #[cfg(not(any(feature = "render-diagnostics", feature = "render-test-hooks")))]
     let ttl = WRAP_GRANT_TTL;
     let service = RenderService::new(ttl).expect("the grant lifetime is positive and finite");
-    #[cfg(feature = "render-test-hooks")]
-    if let Some(config) = fixture {
+    #[cfg(any(feature = "render-diagnostics", feature = "render-test-hooks"))]
+    if let Some(config) = calibration {
         service
-            .set_consumed_quantum(config.quantum)
-            .expect("validated fixture quantum");
+            .set_consumed_quantum(config.scene_quantum)
+            .expect("validated calibration quantum");
     }
     let pump = service
         .register_pump()
@@ -116,9 +120,14 @@ static PROCESS: LazyLock<ProcessRender> = LazyLock::new(build_process_render);
 /// grant whose head stopped consuming expires at its deadline even when no
 /// slot asks for a frame.
 pub fn pump(now: Instant) -> Option<Deadline> {
+    #[cfg(any(feature = "render-diagnostics", feature = "render-test-hooks"))]
+    {
+        let entered_at = Instant::now();
+        PROCESS.counters.record_pump(entered_at);
+    }
     match PROCESS.service.pump(&PROCESS.pump, now) {
         Ok(deadline) => {
-            #[cfg(feature = "render-test-hooks")]
+            #[cfg(any(feature = "render-diagnostics", feature = "render-test-hooks"))]
             if fair::enabled() {
                 return fair::heartbeat(now, deadline);
             }
@@ -144,8 +153,9 @@ pub fn acknowledge_fault(sequence: u64) -> Result<(), RenderError> {
     PROCESS.service.acknowledge_fault(sequence)
 }
 
-/// Query explicit fixture activation without initializing the render process.
-#[cfg(feature = "render-test-hooks")]
+/// Whether the provisional fairness calibration was explicitly configured.
+/// Querying this does not initialize the process render service.
+#[cfg(any(feature = "render-diagnostics", feature = "render-test-hooks"))]
 pub fn fair_enabled() -> bool {
     fair::enabled()
 }
@@ -159,8 +169,12 @@ pub struct WorkspaceStats {
     max_wait_ns: u64,
     unleased: u64,
     faults: crate::render::RenderFaultStats,
-    #[cfg(feature = "render-test-hooks")]
+    #[cfg(any(feature = "render-diagnostics", feature = "render-test-hooks"))]
     busy: u64,
+    #[cfg(any(feature = "render-diagnostics", feature = "render-test-hooks"))]
+    pump_calls: u64,
+    #[cfg(any(feature = "render-diagnostics", feature = "render-test-hooks"))]
+    max_pump_interval_ns: u64,
 }
 
 impl WorkspaceStats {
@@ -168,9 +182,21 @@ impl WorkspaceStats {
         self.faults
     }
 
-    #[cfg(feature = "render-test-hooks")]
+    #[cfg(any(feature = "render-diagnostics", feature = "render-test-hooks"))]
     pub const fn busy(&self) -> u64 {
         self.busy
+    }
+    /// Process-lifetime count of calls to the central render pump.
+    #[cfg(any(feature = "render-diagnostics", feature = "render-test-hooks"))]
+    pub const fn pump_calls(self) -> u64 {
+        self.pump_calls
+    }
+
+    /// Longest process-lifetime interval between central render pump entries.
+    /// Measured with actual monotonic time, independently of caller time.
+    #[cfg(any(feature = "render-diagnostics", feature = "render-test-hooks"))]
+    pub const fn max_pump_interval(self) -> Duration {
+        Duration::from_nanos(self.max_pump_interval_ns)
     }
 
     /// Scene submissions that ran under a frame lease.
@@ -208,8 +234,14 @@ struct WorkspaceCounters {
     wait_ns: AtomicU64,
     max_wait_ns: AtomicU64,
     unleased: AtomicU64,
-    #[cfg(feature = "render-test-hooks")]
+    #[cfg(any(feature = "render-diagnostics", feature = "render-test-hooks"))]
     busy: AtomicU64,
+    #[cfg(any(feature = "render-diagnostics", feature = "render-test-hooks"))]
+    pump_calls: AtomicU64,
+    #[cfg(any(feature = "render-diagnostics", feature = "render-test-hooks"))]
+    last_pump_at: Mutex<Option<Instant>>,
+    #[cfg(any(feature = "render-diagnostics", feature = "render-test-hooks"))]
+    max_pump_interval_ns: AtomicU64,
 }
 
 impl WorkspaceCounters {
@@ -220,6 +252,18 @@ impl WorkspaceCounters {
             self.waited.fetch_add(1, Ordering::Relaxed);
             self.wait_ns.fetch_add(nanos, Ordering::Relaxed);
             self.max_wait_ns.fetch_max(nanos, Ordering::Relaxed);
+        }
+    }
+
+    #[cfg(any(feature = "render-diagnostics", feature = "render-test-hooks"))]
+    fn record_pump(&self, entered_at: Instant) {
+        self.pump_calls.fetch_add(1, Ordering::Relaxed);
+        let previous = lock(&self.last_pump_at).replace(entered_at);
+        if let Some(previous) = previous {
+            let nanos = u64::try_from(entered_at.saturating_duration_since(previous).as_nanos())
+                .unwrap_or(u64::MAX);
+            self.max_pump_interval_ns
+                .fetch_max(nanos, Ordering::Relaxed);
         }
     }
 
@@ -235,8 +279,12 @@ impl WorkspaceCounters {
             max_wait_ns: self.max_wait_ns.load(Ordering::Relaxed),
             unleased: self.unleased.load(Ordering::Relaxed),
             faults: crate::render::RenderFaultStats::default(),
-            #[cfg(feature = "render-test-hooks")]
+            #[cfg(any(feature = "render-diagnostics", feature = "render-test-hooks"))]
             busy: self.busy.load(Ordering::Relaxed),
+            #[cfg(any(feature = "render-diagnostics", feature = "render-test-hooks"))]
+            pump_calls: self.pump_calls.load(Ordering::Relaxed),
+            #[cfg(any(feature = "render-diagnostics", feature = "render-test-hooks"))]
+            max_pump_interval_ns: self.max_pump_interval_ns.load(Ordering::Relaxed),
         }
     }
 }
@@ -248,7 +296,7 @@ impl WorkspaceCounters {
 pub struct SlotRender {
     slot: SlotKey,
     output: Arc<FrameBuf>,
-    #[cfg(feature = "render-test-hooks")]
+    #[cfg(any(feature = "render-diagnostics", feature = "render-test-hooks"))]
     wake: Arc<dyn Notifier>,
     #[cfg(feature = "render-test-hooks")]
     test_control: Option<Arc<dyn test_hooks::RenderTestControl>>,
@@ -260,7 +308,7 @@ impl SlotRender {
         Self {
             slot,
             output,
-            #[cfg(feature = "render-test-hooks")]
+            #[cfg(any(feature = "render-diagnostics", feature = "render-test-hooks"))]
             wake: _wake,
             #[cfg(feature = "render-test-hooks")]
             test_control: fair::configured_test_control(),
@@ -273,7 +321,7 @@ impl SlotRender {
         self
     }
 
-    #[cfg(feature = "render-test-hooks")]
+    #[cfg(any(feature = "render-diagnostics", feature = "render-test-hooks"))]
     pub fn fair_stats(&self) -> Option<HeadFairStats> {
         self.output.fair_stats()
     }
@@ -332,9 +380,9 @@ pub(crate) struct Head {
     /// is a retire and reattach, not a restart.
     prefer_cpu: bool,
     lowmem: bool,
-    #[cfg(feature = "render-test-hooks")]
+    #[cfg(any(feature = "render-diagnostics", feature = "render-test-hooks"))]
     fair: fair::FairHead,
-    #[cfg(feature = "render-test-hooks")]
+    #[cfg(any(feature = "render-diagnostics", feature = "render-test-hooks"))]
     budget: Option<client::render::budget::RenderBudget>,
 }
 
@@ -347,18 +395,18 @@ impl Head {
         prefer_cpu: bool,
         lowmem: bool,
     ) -> Result<Self, RenderError> {
-        #[cfg(feature = "render-test-hooks")]
+        #[cfg(any(feature = "render-diagnostics", feature = "render-test-hooks"))]
         let wake = Arc::new(HeadWake::new(Arc::clone(&render.wake)));
-        #[cfg(not(feature = "render-test-hooks"))]
+        #[cfg(not(any(feature = "render-diagnostics", feature = "render-test-hooks")))]
         let wake = Arc::new(HeadWake::default());
         let notifier: Arc<dyn Notifier> = wake.clone();
         let lease = PROCESS
             .service
             .attach(&PROCESS.pump, render.slot, notifier)?;
         let identity = lease.identity();
-        #[cfg(feature = "render-test-hooks")]
+        #[cfg(any(feature = "render-diagnostics", feature = "render-test-hooks"))]
         let budget = fair::head_budget();
-        #[cfg(feature = "render-test-hooks")]
+        #[cfg(any(feature = "render-diagnostics", feature = "render-test-hooks"))]
         let _budget_scope = budget
             .as_ref()
             .map(client::render::budget::RenderBudget::scope);
@@ -369,12 +417,13 @@ impl Head {
         // driver: not time the host kept us waiting.
         let renderer = crate::capacity::off_cpu_wait(|| Renderer::new_prefer(lowmem, !prefer_cpu));
         render.output.attach_head(identity);
-        #[cfg(feature = "render-test-hooks")]
-        let fair = fair::FairHead::new(
-            identity,
-            renderer.backend_kind(),
-            render.test_control.clone(),
-        );
+        #[cfg(any(feature = "render-diagnostics", feature = "render-test-hooks"))]
+        let fair = {
+            let fair = fair::FairHead::new(identity, renderer.backend_kind());
+            #[cfg(feature = "render-test-hooks")]
+            let fair = fair.with_control(render.test_control.clone());
+            fair
+        };
         Ok(Self {
             lease: Some(lease),
             identity,
@@ -384,9 +433,9 @@ impl Head {
             renderer,
             prefer_cpu,
             lowmem,
-            #[cfg(feature = "render-test-hooks")]
+            #[cfg(any(feature = "render-diagnostics", feature = "render-test-hooks"))]
             fair,
-            #[cfg(feature = "render-test-hooks")]
+            #[cfg(any(feature = "render-diagnostics", feature = "render-test-hooks"))]
             budget,
         })
     }
@@ -423,7 +472,7 @@ impl Head {
         self.renderer.release_nav_debug_overlay();
     }
 
-    #[cfg(feature = "render-test-hooks")]
+    #[cfg(any(feature = "render-diagnostics", feature = "render-test-hooks"))]
     pub(crate) fn budget_scope(&self) -> Option<client::render::budget::RenderBudgetScope> {
         self.budget
             .as_ref()
@@ -445,19 +494,19 @@ impl Head {
     /// Paint one frame. A GPU head lends its lease to this thread's scene
     /// hook for the frame, so its scene submission runs under a frame lease.
     pub(crate) fn paint(&mut self, client: &mut Client) -> FrameOutput {
-        #[cfg(feature = "render-test-hooks")]
+        #[cfg(any(feature = "render-diagnostics", feature = "render-test-hooks"))]
         let _budget_scope = self
             .budget
             .as_ref()
             .map(client::render::budget::RenderBudget::scope);
         let frame = {
-            #[cfg(feature = "render-test-hooks")]
+            #[cfg(any(feature = "render-diagnostics", feature = "render-test-hooks"))]
             if fair::enabled() {
                 fair::paint(self, client)
             } else {
                 self.paint_legacy(client)
             }
-            #[cfg(not(feature = "render-test-hooks"))]
+            #[cfg(not(any(feature = "render-diagnostics", feature = "render-test-hooks")))]
             self.paint_legacy(client)
         };
         #[cfg(feature = "draw-memory-profile")]
@@ -492,13 +541,13 @@ impl Head {
     }
 
     fn publication_status(&self) -> FramePaintStatus {
-        #[cfg(feature = "render-test-hooks")]
+        #[cfg(any(feature = "render-diagnostics", feature = "render-test-hooks"))]
         let recovered_fault = if fair::enabled() {
             self.renderer.render_fault()
         } else {
             None
         };
-        #[cfg(not(feature = "render-test-hooks"))]
+        #[cfg(not(any(feature = "render-diagnostics", feature = "render-test-hooks")))]
         let recovered_fault = None;
         FramePaintStatus::new(self.renderer.has_valid_scene(), recovered_fault)
     }
@@ -534,7 +583,7 @@ impl Head {
     }
 
     fn retire(&mut self) {
-        #[cfg(feature = "render-test-hooks")]
+        #[cfg(any(feature = "render-diagnostics", feature = "render-test-hooks"))]
         fair::retire(self);
         if let Some(mut lease) = self.lease.take() {
             if let Err(error) = PROCESS.service.retire(&mut lease, Instant::now()) {
@@ -595,7 +644,7 @@ impl<'a> LentHead<'a> {
                 lease: head,
                 wake: Arc::clone(wake),
                 scenes: *scenes,
-                #[cfg(feature = "render-test-hooks")]
+                #[cfg(any(feature = "render-diagnostics", feature = "render-test-hooks"))]
                 fair: None,
             });
         });
@@ -617,7 +666,7 @@ struct GpuFrame {
     lease: HeadLease,
     wake: Arc<HeadWake>,
     scenes: u64,
-    #[cfg(feature = "render-test-hooks")]
+    #[cfg(any(feature = "render-diagnostics", feature = "render-test-hooks"))]
     fair: Option<fair::FairFrame>,
 }
 
@@ -628,7 +677,7 @@ struct GpuFrame {
 fn scene_workspace(submit: &mut dyn FnMut()) {
     GPU_FRAME.with(|frame| match frame.borrow_mut().as_mut() {
         Some(frame) => {
-            #[cfg(feature = "render-test-hooks")]
+            #[cfg(any(feature = "render-diagnostics", feature = "render-test-hooks"))]
             if frame.fair.is_some() {
                 fair::submit(frame, submit);
                 return;
@@ -754,19 +803,22 @@ impl GpuFrame {
 
 /// A head's notification sink: the latest publication sequence the service
 /// announced for it, and the condition a waiting GPU head sleeps on.
-#[cfg_attr(not(feature = "render-test-hooks"), derive(Default))]
+#[cfg_attr(
+    not(any(feature = "render-diagnostics", feature = "render-test-hooks")),
+    derive(Default)
+)]
 struct HeadWake {
     latest: Mutex<PublishSequence>,
     published: Condvar,
-    #[cfg(feature = "render-test-hooks")]
+    #[cfg(any(feature = "render-diagnostics", feature = "render-test-hooks"))]
     owner: std::thread::ThreadId,
-    #[cfg(feature = "render-test-hooks")]
+    #[cfg(any(feature = "render-diagnostics", feature = "render-test-hooks"))]
     slot_wake: Arc<dyn Notifier>,
-    #[cfg(feature = "render-test-hooks")]
+    #[cfg(any(feature = "render-diagnostics", feature = "render-test-hooks"))]
     latest_cross_notice: Mutex<Option<(PublishSequence, Instant)>>,
 }
 
-#[cfg(all(test, feature = "render-test-hooks"))]
+#[cfg(all(test, any(feature = "render-diagnostics", feature = "render-test-hooks")))]
 impl Default for HeadWake {
     fn default() -> Self {
         let (wake, _park) = crate::wake_channel();
@@ -775,7 +827,7 @@ impl Default for HeadWake {
 }
 
 impl HeadWake {
-    #[cfg(feature = "render-test-hooks")]
+    #[cfg(any(feature = "render-diagnostics", feature = "render-test-hooks"))]
     fn new(slot_wake: Arc<dyn Notifier>) -> Self {
         Self {
             latest: Mutex::new(PublishSequence::default()),
@@ -790,7 +842,7 @@ impl HeadWake {
         *lock(&self.latest)
     }
 
-    #[cfg(feature = "render-test-hooks")]
+    #[cfg(any(feature = "render-diagnostics", feature = "render-test-hooks"))]
     fn grant_notice(&self, sequence: PublishSequence) -> Option<Instant> {
         lock(&self.latest_cross_notice)
             .filter(|(published, _)| *published == sequence)
@@ -815,7 +867,7 @@ impl Notifier for HeadWake {
         *latest = (*latest).max(notice.sequence());
         drop(latest);
         self.published.notify_all();
-        #[cfg(feature = "render-test-hooks")]
+        #[cfg(any(feature = "render-diagnostics", feature = "render-test-hooks"))]
         if fair::enabled() && std::thread::current().id() != self.owner {
             *lock(&self.latest_cross_notice) = Some((notice.sequence(), Instant::now()));
             self.slot_wake.notify(notice);

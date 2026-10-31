@@ -49,6 +49,8 @@ pub use slot_io::{
     map_image_to_applet, wake_channel, FrameBuf, FrameStamp, InputEv, ManualMoveIntent, MouseOwner,
     PresentedFrame, SlotInput, SlotPark, SlotWake,
 };
+#[cfg(any(feature = "render-diagnostics", feature = "render-test-hooks"))]
+pub use slot_io::SlotWakeSnapshot;
 #[cfg(feature = "journal-paint-proof")]
 pub use slot_io::{JournalPaintStamp, JournalProofFrame};
 
@@ -529,7 +531,7 @@ impl Host {
     where
         F: FnMut(&mut Client, &str, u32, &RandomStatus, &mut ScriptRunPolicy) -> bool,
     {
-        #[cfg(feature = "render-test-hooks")]
+        #[cfg(any(feature = "render-diagnostics", feature = "render-test-hooks"))]
         let _render_budget_scope = if client.draw || slot.head.is_some() {
             render_head::slot_budget_scope(slot.head.as_ref())
         } else {
@@ -547,7 +549,7 @@ impl Host {
         let random_events = slot.random_events.load(Ordering::Relaxed);
         slot.settings.random_events = random_events;
         let t_loop = std::time::Instant::now();
-        #[cfg(feature = "render-test-hooks")]
+        #[cfg(any(feature = "render-diagnostics", feature = "render-test-hooks"))]
         if let Some(head) = slot.head.as_mut() {
             head.slot_woke(t_loop);
         }
@@ -721,12 +723,11 @@ impl Host {
         let paced_at = slot.pacing_now(t_loop);
         #[cfg(feature = "render-test-hooks")]
         let paced_at = render.map_or(paced_at, |render| render.render_now(paced_at));
+        #[cfg(any(feature = "render-diagnostics", feature = "render-test-hooks"))]
+        let can_scene = client.draw && client.ingame && client.scene_state == 2;
         #[cfg(feature = "render-test-hooks")]
-        let can_scene = client.draw
-            && client.ingame
-            && client.scene_state == 2
-            && !render.is_some_and(SlotRender::loading_paint);
-        #[cfg(feature = "render-test-hooks")]
+        let can_scene = can_scene && !render.is_some_and(SlotRender::loading_paint);
+        #[cfg(any(feature = "render-diagnostics", feature = "render-test-hooks"))]
         if let Some(head) = slot.head.as_mut() {
             head.reconcile_scene_eligibility(
                 can_scene,
@@ -762,16 +763,15 @@ impl Host {
             )
         };
         let paint = nav_overlay_refresh || cadence_paint;
-        #[cfg(feature = "render-test-hooks")]
+        #[cfg(any(feature = "render-diagnostics", feature = "render-test-hooks"))]
         let ordinary_paint = paint;
-        #[cfg(feature = "render-test-hooks")]
+        #[cfg(any(feature = "render-diagnostics", feature = "render-test-hooks"))]
         let paint = paint
             || (can_scene
                 && slot
                     .head
                     .as_ref()
                     .is_some_and(|head| head.has_grant(paced_at)));
-        let mut frame: Option<FrameOutput> = None;
         if paint {
             let t_r = std::time::Instant::now();
             if slot.head.is_none() {
@@ -808,7 +808,7 @@ impl Host {
                 }
             }
             if let Some(head) = slot.head.as_mut() {
-                #[cfg(feature = "render-test-hooks")]
+                #[cfg(any(feature = "render-diagnostics", feature = "render-test-hooks"))]
                 {
                     head.reconcile_scene_eligibility(
                         can_scene,

@@ -1,7 +1,11 @@
-//! Feature-only fair-render activation. Production keeps the wrap until S5.
+//! Opt-in fair-render calibration and test hooks. Production keeps the wrap by default.
 use std::cell::Cell;
+#[cfg(feature = "render-test-hooks")]
+use std::cell::RefCell;
+#[cfg(feature = "render-test-hooks")]
 use std::marker::PhantomData;
 use std::num::NonZeroU64;
+#[cfg(feature = "render-test-hooks")]
 use std::rc::Rc;
 use std::sync::OnceLock;
 
@@ -11,6 +15,7 @@ use client::render::backend::SceneProgress;
 use super::*;
 use crate::render::ReservationState;
 
+#[cfg(feature = "render-test-hooks")]
 pub mod test_hooks {
     use super::*;
 
@@ -72,12 +77,18 @@ pub mod test_hooks {
 
     pub fn configure_process(fixture: ProcessFixture) -> Result<(), RenderError> {
         let mut config = lock(&CONFIG);
-        if config.started || config.fixture.is_some() {
+        if config.started || config.fixture.is_some() || CALIBRATION.get().is_some() {
             return Err(RenderError::ConfigurationLocked);
         }
         // Validate before storing the fixture, without initializing PROCESS.
-        let service = RenderService::new(fixture.grant_ttl)?;
-        service.set_consumed_quantum(fixture.quantum)?;
+        let calibration = CalibrationConfig {
+            grant_ttl: fixture.grant_ttl,
+            scene_quantum: fixture.quantum,
+        };
+        validate_calibration(calibration)?;
+        CALIBRATION
+            .set(calibration)
+            .map_err(|_| RenderError::ConfigurationLocked)?;
         config.fixture = Some(fixture);
         Ok(())
     }
@@ -98,9 +109,7 @@ pub mod test_hooks {
     /// Charge headed shared-device initialization to the configured process
     /// budget before any slot constructs its own head-local budget scope.
     pub fn with_process_render_budget<T>(action: impl FnOnce() -> T) -> T {
-        LazyLock::force(&PROCESS);
-        let _scope = process_budget_scope();
-        action()
+        super::with_process_render_budget(action)
     }
 
     /// Install a caller-owned control for real slots created by a headed
@@ -350,6 +359,7 @@ pub mod test_hooks {
 
 struct Configuration {
     started: bool,
+    #[cfg(feature = "render-test-hooks")]
     fixture: Option<test_hooks::ProcessFixture>,
     budget: Option<client::render::budget::RenderBudget>,
     #[cfg(feature = "render-test-hooks")]
@@ -357,13 +367,62 @@ struct Configuration {
 }
 static CONFIG: Mutex<Configuration> = Mutex::new(Configuration {
     started: false,
+    #[cfg(feature = "render-test-hooks")]
     fixture: None,
     budget: None,
     #[cfg(feature = "render-test-hooks")]
     control: None,
 });
-static FIXTURE: OnceLock<Option<test_hooks::ProcessFixture>> = OnceLock::new();
+static CALIBRATION: OnceLock<CalibrationConfig> = OnceLock::new();
+static INITIALIZED: OnceLock<Option<CalibrationConfig>> = OnceLock::new();
 static BUDGET: OnceLock<Option<client::render::budget::RenderBudget>> = OnceLock::new();
+
+/// Explicit provisional settings for measuring fair scene admission.
+///
+/// Calibration is opt-in and does not change the production renderer's
+/// default wrap. These values enable the real fair path only in a build with
+/// `render-diagnostics` or `render-test-hooks`; choose measured values before
+/// the process service or any render head is created.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct CalibrationConfig {
+    /// Maximum lifetime of an unconsumed GPU scene grant.
+    pub grant_ttl: Duration,
+    /// Maximum time a consumed scene lease may occupy the render workspace.
+    pub scene_quantum: Duration,
+}
+
+/// Configure the provisional fair-render measurement path once, before any
+/// process service or render head exists. Both durations use the render
+/// service's finite, positive validation. This is not production activation.
+pub fn configure_calibration(config: CalibrationConfig) -> Result<(), RenderError> {
+    let process = lock(&CONFIG);
+    if process.started || CALIBRATION.get().is_some() {
+        return Err(RenderError::ConfigurationLocked);
+    }
+    validate_calibration(config)?;
+    CALIBRATION
+        .set(config)
+        .map_err(|_| RenderError::ConfigurationLocked)
+}
+/// Configure explicit calibration memory bounds before the process service or
+/// any render head is created. The limits use the same real render budget
+/// source for diagnostics and test-hook builds.
+pub fn configure_calibration_limits(
+    limits: client::render::budget::RenderBudgetLimits,
+) -> Result<(), RenderError> {
+    let mut process = lock(&CONFIG);
+    if process.started || process.budget.is_some() {
+        return Err(RenderError::ConfigurationLocked);
+    }
+    process.budget = Some(client::render::budget::RenderBudget::fixture(limits));
+    Ok(())
+}
+
+
+fn validate_calibration(config: CalibrationConfig) -> Result<(), RenderError> {
+    let service = RenderService::new(config.grant_ttl)?;
+    service.set_consumed_quantum(config.scene_quantum)
+}
 
 #[cfg(feature = "render-test-hooks")]
 pub(super) fn configured_test_control() -> Option<Arc<dyn test_hooks::RenderTestControl>> {
@@ -385,7 +444,8 @@ fn process_budget_scalar_receipt() -> client::render::budget::RenderBudgetScalar
 #[cfg(feature = "render-test-hooks")]
 fn fair_process_static_bytes() -> usize {
     std::mem::size_of::<Mutex<Configuration>>()
-        + std::mem::size_of::<OnceLock<Option<test_hooks::ProcessFixture>>>()
+        + std::mem::size_of::<OnceLock<CalibrationConfig>>()
+        + std::mem::size_of::<OnceLock<Option<CalibrationConfig>>>()
         + std::mem::size_of::<OnceLock<Option<client::render::budget::RenderBudget>>>()
 }
 
@@ -403,12 +463,12 @@ fn head_thread_local_bytes(budgets_enabled: bool) -> usize {
         }
 }
 
-pub(super) fn initialize() -> Option<test_hooks::ProcessFixture> {
-    *FIXTURE.get_or_init(|| {
+pub(super) fn initialize() -> Option<CalibrationConfig> {
+    *INITIALIZED.get_or_init(|| {
         let mut config = lock(&CONFIG);
         config.started = true;
         assert!(BUDGET.set(config.budget.take()).is_ok());
-        config.fixture
+        CALIBRATION.get().copied()
     })
 }
 
@@ -426,15 +486,26 @@ pub(super) fn process_budget_scope() -> Option<client::render::budget::RenderBud
         .map(client::render::budget::RenderBudget::scope)
 }
 
+/// Run real shared-client work under the configured process budget.
+///
+/// The process service is initialized first so its configured budget is
+/// installed before the caller begins the bounded operation.
+pub fn with_process_render_budget<T>(action: impl FnOnce() -> T) -> T {
+    LazyLock::force(&PROCESS);
+    let _scope = process_budget_scope();
+    action()
+}
+
+
 pub(super) fn enabled() -> bool {
-    FIXTURE.get().is_some_and(Option::is_some)
+    CALIBRATION.get().is_some()
 }
 
 pub(super) fn heartbeat(now: Instant, deadline: Option<Deadline>) -> Option<Deadline> {
-    let fixture = FIXTURE.get().copied().flatten()?;
+    let config = *CALIBRATION.get()?;
     let beat = Deadline::at(
-        now.checked_add(fixture.quantum)
-            .expect("validated fixture quantum"),
+        now.checked_add(config.scene_quantum)
+            .expect("validated calibration quantum"),
     );
     Some(deadline.map_or(beat, |due| {
         if due.instant() < beat.instant() {
@@ -497,6 +568,15 @@ impl GrantLatency {
     pub fn publication_to_consume(self) -> Duration {
         self.consumed_at.duration_since(self.published_at)
     }
+    pub fn publication_to_notice(self) -> Duration {
+        self.notified_at.duration_since(self.published_at)
+    }
+    pub fn notice_to_wake(self) -> Duration {
+        self.woke_at.duration_since(self.notified_at)
+    }
+    pub fn wake_to_consume(self) -> Duration {
+        self.consumed_at.duration_since(self.woke_at)
+    }
 }
 
 /// A fixed-size identity-checked sample. No renderer container traversal occurs here.
@@ -505,6 +585,7 @@ pub struct HeadFairStats {
     identity: HeadIdentity,
     due_skips: u64,
     max_due_skips: u64,
+    skipped_due_opportunities: u64,
     expiry_streak: u64,
     max_expiry_streak: u64,
     expiry_events: u64,
@@ -519,6 +600,9 @@ pub struct HeadFairStats {
     max_window_scene_consume_gap: Duration,
     grant_delivery_samples: u64,
     max_grant_to_consume: Duration,
+    max_publication_to_notice: Duration,
+    max_notice_to_wake: Duration,
+    max_wake_to_consume: Duration,
     grant_wake_samples: u64,
     last_grant_latency: Option<GrantLatency>,
     max_grant_latency: Option<GrantLatency>,
@@ -528,6 +612,8 @@ pub struct HeadFairStats {
     last_opportunity: Option<DueOpportunity>,
     last_expired: Option<ReservationIdentity>,
     oldest_demand_age: Duration,
+    render_focused: Option<bool>,
+    focus_applications: u64,
     backend: BackendKind,
     has_valid_scene: bool,
     scene_progress: SceneProgress,
@@ -544,6 +630,9 @@ impl HeadFairStats {
     }
     pub fn max_due_skips(&self) -> u64 {
         self.max_due_skips
+    }
+    pub fn skipped_due_opportunities(&self) -> u64 {
+        self.skipped_due_opportunities
     }
     pub fn expiry_streak(&self) -> u64 {
         self.expiry_streak
@@ -610,6 +699,15 @@ impl HeadFairStats {
     pub fn max_grant_to_consume(&self) -> Duration {
         self.max_grant_to_consume
     }
+    pub fn max_publication_to_notice(&self) -> Duration {
+        self.max_publication_to_notice
+    }
+    pub fn max_notice_to_wake(&self) -> Duration {
+        self.max_notice_to_wake
+    }
+    pub fn max_wake_to_consume(&self) -> Duration {
+        self.max_wake_to_consume
+    }
     pub fn grant_wake_samples(&self) -> u64 {
         self.grant_wake_samples
     }
@@ -618,6 +716,12 @@ impl HeadFairStats {
     }
     pub fn max_grant_latency(&self) -> Option<GrantLatency> {
         self.max_grant_latency
+    }
+    pub fn render_focused(&self) -> Option<bool> {
+        self.render_focused
+    }
+    pub fn focus_applications(&self) -> u64 {
+        self.focus_applications
     }
     pub fn scene_releases(&self) -> u64 {
         self.scene_releases
@@ -660,12 +764,14 @@ pub(super) struct FairHead {
     next_opportunity: Option<NonZeroU64>,
     opportunity: Option<DueOpportunity>,
     focused: Option<bool>,
+    #[cfg(feature = "render-test-hooks")]
     control: Option<Arc<dyn test_hooks::RenderTestControl>>,
     opportunity_exhausted: bool,
     woke_at: Option<Instant>,
 }
 
 impl FairHead {
+    #[cfg(feature = "render-test-hooks")]
     pub(super) fn observe_client_cycle(
         &self,
         slot: SlotKey,
@@ -678,17 +784,14 @@ impl FairHead {
         }
     }
 
-    pub(super) fn new(
-        identity: HeadIdentity,
-        backend: BackendKind,
-        control: Option<Arc<dyn test_hooks::RenderTestControl>>,
-    ) -> Self {
+    pub(super) fn new(identity: HeadIdentity, backend: BackendKind) -> Self {
         Self {
             demand: SceneDemand::default(),
             stats: HeadFairStats {
                 identity,
                 due_skips: 0,
                 max_due_skips: 0,
+                skipped_due_opportunities: 0,
                 expiry_streak: 0,
                 max_expiry_streak: 0,
                 expiry_events: 0,
@@ -703,6 +806,9 @@ impl FairHead {
                 max_window_scene_consume_gap: Duration::ZERO,
                 grant_delivery_samples: 0,
                 max_grant_to_consume: Duration::ZERO,
+                max_publication_to_notice: Duration::ZERO,
+                max_notice_to_wake: Duration::ZERO,
+                max_wake_to_consume: Duration::ZERO,
                 grant_wake_samples: 0,
                 last_grant_latency: None,
                 max_grant_latency: None,
@@ -712,6 +818,8 @@ impl FairHead {
                 last_opportunity: None,
                 last_expired: None,
                 oldest_demand_age: Duration::ZERO,
+                render_focused: Some(false),
+                focus_applications: 0,
                 backend,
                 has_valid_scene: false,
                 scene_progress: SceneProgress::NoScene,
@@ -720,11 +828,20 @@ impl FairHead {
             },
             next_opportunity: NonZeroU64::new(1),
             opportunity: None,
-            focused: None,
-            control,
+            focused: Some(false),
+            #[cfg(feature = "render-test-hooks")]
+            control: None,
             opportunity_exhausted: false,
             woke_at: None,
         }
+    }
+    #[cfg(feature = "render-test-hooks")]
+    pub(super) fn with_control(
+        mut self,
+        control: Option<Arc<dyn test_hooks::RenderTestControl>>,
+    ) -> Self {
+        self.control = control;
+        self
     }
 
     fn refresh(&mut self, snapshot: crate::render::HeadSnapshot, now: Instant) {
@@ -791,9 +908,16 @@ impl Head {
             return;
         };
         if self.fair.focused != Some(focused) {
-            report(PROCESS.service.set_focused(lease, focused, now));
-            self.fair.focused = Some(focused);
+            match PROCESS.service.set_focused(lease, focused, now) {
+                Ok(()) => {
+                    self.fair.focused = Some(focused);
+                    self.fair.stats.focus_applications =
+                        self.fair.stats.focus_applications.saturating_add(1);
+                }
+                Err(error) => report(Err(error)),
+            }
         }
+        self.fair.stats.render_focused = self.fair.focused;
         match PROCESS.service.poll(lease, now) {
             Ok((_, snapshot)) => {
                 self.fair.refresh(snapshot, now);
@@ -846,30 +970,42 @@ pub(super) fn retire(head: &mut Head) {
 
 thread_local! {
     static HOST_ACTIVE: Cell<bool> = const { Cell::new(false) };
+    #[cfg(feature = "render-test-hooks")]
     static OWNS_LEASE: Cell<bool> = const { Cell::new(false) };
+    #[cfg(feature = "render-test-hooks")]
     static RESERVATION: Cell<Option<ReservationIdentity>> = const { Cell::new(None) };
+    #[cfg(feature = "render-test-hooks")]
     static CONTROL: RefCell<Option<(HeadIdentity, Arc<dyn test_hooks::RenderTestControl>)>> = const { RefCell::new(None) };
 }
 
 struct HostPaintScope {
     previous: bool,
+    #[cfg(feature = "render-test-hooks")]
     previous_control: Option<(HeadIdentity, Arc<dyn test_hooks::RenderTestControl>)>,
+    #[cfg(feature = "render-test-hooks")]
     previous_lease: bool,
+    #[cfg(feature = "render-test-hooks")]
     previous_reservation: Option<ReservationIdentity>,
+    #[cfg(feature = "render-test-hooks")]
     _thread_bound: PhantomData<Rc<()>>,
 }
 impl HostPaintScope {
-    fn enter(head: &Head) -> Self {
+    fn enter(_head: &Head) -> Self {
         Self {
             previous: HOST_ACTIVE.replace(true),
+            #[cfg(feature = "render-test-hooks")]
             previous_control: CONTROL.replace(
-                head.fair
+                _head
+                    .fair
                     .control
                     .as_ref()
-                    .map(|control| (head.identity, Arc::clone(control))),
+                    .map(|control| (_head.identity, Arc::clone(control))),
             ),
+            #[cfg(feature = "render-test-hooks")]
             previous_lease: OWNS_LEASE.replace(false),
+            #[cfg(feature = "render-test-hooks")]
             previous_reservation: RESERVATION.replace(None),
+            #[cfg(feature = "render-test-hooks")]
             _thread_bound: PhantomData,
         }
     }
@@ -877,9 +1013,12 @@ impl HostPaintScope {
 impl Drop for HostPaintScope {
     fn drop(&mut self) {
         HOST_ACTIVE.set(self.previous);
-        CONTROL.replace(self.previous_control.take());
-        OWNS_LEASE.set(self.previous_lease);
-        RESERVATION.set(self.previous_reservation);
+        #[cfg(feature = "render-test-hooks")]
+        {
+            CONTROL.replace(self.previous_control.take());
+            OWNS_LEASE.set(self.previous_lease);
+            RESERVATION.set(self.previous_reservation);
+        }
     }
 }
 
@@ -887,6 +1026,7 @@ pub(super) fn host_active() -> bool {
     HOST_ACTIVE.get()
 }
 
+#[cfg(feature = "render-test-hooks")]
 fn event(point: test_hooks::RenderTestPoint) {
     CONTROL.with(|cell| {
         if let Some((head, control)) = cell.borrow().as_ref() {
@@ -900,6 +1040,7 @@ fn event(point: test_hooks::RenderTestPoint) {
     });
 }
 
+#[cfg(feature = "render-test-hooks")]
 fn bridge(point: client::render::backend::gpu::test_hooks::SceneTestPoint) {
     use client::render::backend::gpu::test_hooks::SceneTestPoint;
     match point {
@@ -909,11 +1050,13 @@ fn bridge(point: client::render::backend::gpu::test_hooks::SceneTestPoint) {
     }
 }
 
+#[cfg(feature = "render-test-hooks")]
 pub(super) struct LoadingPaintScope<'a> {
     client: &'a mut Client,
     previous: Option<i32>,
     previous_cross: Option<(i32, i32, i32, i32)>,
 }
+#[cfg(feature = "render-test-hooks")]
 impl<'a> LoadingPaintScope<'a> {
     pub(super) fn enter(client: &'a mut Client, loading: bool) -> Self {
         let previous = (loading && client.ingame).then_some(client.scene_state);
@@ -950,6 +1093,7 @@ impl<'a> LoadingPaintScope<'a> {
         self.client
     }
 }
+#[cfg(feature = "render-test-hooks")]
 impl Drop for LoadingPaintScope<'_> {
     fn drop(&mut self) {
         if let Some(previous) = self.previous {
@@ -982,7 +1126,7 @@ impl<'a> FairLent<'a> {
         state: &'a mut FairHead,
         wake: &Arc<HeadWake>,
     ) -> Self {
-        let empty = FairHead::new(state.stats.identity, state.stats.backend, None);
+        let empty = FairHead::new(state.stats.identity, state.stats.backend);
         let lent_state = std::mem::replace(state, empty);
         let frame = GpuFrame {
             lease: lease.take().expect("attached head owns its lease"),
@@ -1023,25 +1167,34 @@ impl Drop for FairLent<'_> {
 
 pub(super) fn paint(head: &mut Head, client: &mut Client) -> FrameOutput {
     let _scope = HostPaintScope::enter(head);
+    #[cfg(feature = "render-test-hooks")]
     let _observer = client::render::backend::gpu::test_hooks::install_for_thread(bridge);
+    #[cfg(feature = "render-test-hooks")]
     let failure = head
         .fair
         .control
         .as_ref()
         .and_then(|control| control.resource_failure());
+    #[cfg(feature = "render-test-hooks")]
     let _failure = failure.map(client::render::backend::gpu::test_hooks::resource_failure_at);
+    #[cfg(feature = "render-test-hooks")]
     let loading = head
         .fair
         .control
         .as_ref()
         .is_some_and(|control| control.loading_paint());
+    #[cfg(feature = "render-test-hooks")]
     let mut loading_scope = LoadingPaintScope::enter(client, loading);
+    #[cfg(feature = "render-test-hooks")]
     loading_scope.cross_paint(
         head.fair
             .control
             .as_ref()
             .and_then(|control| control.cross_paint()),
     );
+    #[cfg(feature = "render-test-hooks")]
+    let client = loading_scope.client();
+
     let start = Instant::now();
     let consumes = head.fair.stats.scene_consumes;
     let output = if head.backend_kind() == BackendKind::Gpu {
@@ -1051,17 +1204,18 @@ pub(super) fn paint(head: &mut Head, client: &mut Client) -> FrameOutput {
             &mut head.fair,
             &head.wake,
         );
-        head.renderer.mainredraw(loading_scope.client())
+        head.renderer.mainredraw(&mut *client)
     } else {
-        head.renderer.mainredraw(loading_scope.client())
+        head.renderer.mainredraw(&mut *client)
     };
+    let client_scene_state = client.scene_state;
     let elapsed = start.elapsed();
     if head.backend_kind() == BackendKind::Gpu {
         if head.fair.stats.scene_consumes > consumes {
             head.fair.stats.granted_paints = head.fair.stats.granted_paints.saturating_add(1);
             head.fair.stats.granted_paint_time =
                 head.fair.stats.granted_paint_time.saturating_add(elapsed);
-        } else if loading_scope.client().scene_state == 2 {
+        } else if client_scene_state == 2 {
             head.fair.stats.busy_paints = head.fair.stats.busy_paints.saturating_add(1);
             head.fair.stats.busy_paint_time =
                 head.fair.stats.busy_paint_time.saturating_add(elapsed);
@@ -1074,6 +1228,11 @@ pub(super) fn paint(head: &mut Head, client: &mut Client) -> FrameOutput {
                     head.fair.stats.due_skips = head.fair.stats.due_skips.saturating_add(1);
                     head.fair.stats.max_due_skips =
                         head.fair.stats.max_due_skips.max(head.fair.stats.due_skips);
+                    head.fair.stats.skipped_due_opportunities = head
+                        .fair
+                        .stats
+                        .skipped_due_opportunities
+                        .saturating_add(1);
                 }
             }
         }
@@ -1092,11 +1251,14 @@ pub(super) fn admission() -> SceneAdmission {
         let Some(frame) = frame.as_mut() else {
             return SceneAdmission::Standalone;
         };
+        #[cfg(feature = "render-test-hooks")]
         let now = frame
             .fair
             .as_ref()
             .and_then(|fair| fair.head.control.as_ref())
             .map_or_else(Instant::now, |control| control.now());
+        #[cfg(not(feature = "render-test-hooks"))]
+        let now = Instant::now();
         admit(frame, &PROCESS.service, now)
     })
 }
@@ -1152,6 +1314,12 @@ fn admit(frame: &mut GpuFrame, service: &RenderService, now: Instant) -> SceneAd
                 let stats = &mut fair.head.stats;
                 stats.grant_wake_samples = stats.grant_wake_samples.saturating_add(1);
                 stats.last_grant_latency = Some(latency);
+                stats.max_publication_to_notice =
+                    stats.max_publication_to_notice.max(latency.publication_to_notice());
+                stats.max_notice_to_wake =
+                    stats.max_notice_to_wake.max(latency.notice_to_wake());
+                stats.max_wake_to_consume =
+                    stats.max_wake_to_consume.max(latency.wake_to_consume());
                 if stats.max_grant_latency.is_none_or(|previous| {
                     latency.publication_to_consume() > previous.publication_to_consume()
                 }) {
@@ -1165,10 +1333,12 @@ fn admit(frame: &mut GpuFrame, service: &RenderService, now: Instant) -> SceneAd
             fair.head.stats.expiry_streak = 0;
             fair.head.stats.scene_consumes = fair.head.stats.scene_consumes.saturating_add(1);
             fair.head.stats.oldest_demand_age = Duration::ZERO;
-            OWNS_LEASE.set(true);
-            RESERVATION.set(Some(identity));
-            event(test_hooks::RenderTestPoint::AfterConsume);
-            SceneAdmission::Rebuild
+            #[cfg(feature = "render-test-hooks")]
+            {
+                OWNS_LEASE.set(true);
+                RESERVATION.set(Some(identity));
+                event(test_hooks::RenderTestPoint::AfterConsume);
+            }
         }
         Err(error) => {
             fair.head.refresh(frame.lease.snapshot().1, now);
@@ -1190,11 +1360,14 @@ pub(super) fn submit(frame: &mut GpuFrame, submit: &mut dyn FnMut()) {
         return;
     };
     submit();
+    #[cfg(feature = "render-test-hooks")]
     let now = fair
         .head
         .control
         .as_ref()
         .map_or_else(Instant::now, |control| control.now());
+    #[cfg(not(feature = "render-test-hooks"))]
+    let now = Instant::now();
     match client::render::backend::gpu::current_scene_submit_result() {
         SceneSubmit::Submitted => {
             PROCESS.counters.leased(None);
@@ -1217,12 +1390,16 @@ pub(super) fn submit(frame: &mut GpuFrame, submit: &mut dyn FnMut()) {
             "render callback did not submit the consumed scene"
         ),
     }
+    #[cfg(feature = "render-test-hooks")]
     event(test_hooks::RenderTestPoint::BeforeLeaseRelease);
+    #[cfg(feature = "render-test-hooks")]
     let finished_at = fair
         .head
         .control
         .as_ref()
         .map_or_else(Instant::now, |control| control.now());
+    #[cfg(not(feature = "render-test-hooks"))]
+    let finished_at = Instant::now();
     report(lease.finish(finished_at));
     if let Some(consumed_at) = fair.consumed_at.take() {
         let elapsed = consumed_at.elapsed();
@@ -1231,9 +1408,12 @@ pub(super) fn submit(frame: &mut GpuFrame, submit: &mut dyn FnMut()) {
         stats.scene_lease_time = stats.scene_lease_time.saturating_add(elapsed);
         stats.max_scene_lease_time = stats.max_scene_lease_time.max(elapsed);
     }
-    OWNS_LEASE.set(false);
-    RESERVATION.set(None);
-    event(test_hooks::RenderTestPoint::AfterLeaseRelease);
+    #[cfg(feature = "render-test-hooks")]
+    {
+        OWNS_LEASE.set(false);
+        RESERVATION.set(None);
+        event(test_hooks::RenderTestPoint::AfterLeaseRelease);
+    }
 }
 
 fn report(result: Result<(), RenderError>) {
@@ -1242,7 +1422,7 @@ fn report(result: Result<(), RenderError>) {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "render-test-hooks"))]
 mod tests {
     use std::panic::{catch_unwind, AssertUnwindSafe};
 
@@ -1270,7 +1450,7 @@ mod tests {
             wake: Arc::new(HeadWake::default()),
             scenes: 0,
             fair: Some(FairFrame {
-                head: FairHead::new(identity, BackendKind::Gpu, None),
+                head: FairHead::new(identity, BackendKind::Gpu),
                 lease: None,
                 consumed_at: None,
             }),
@@ -1288,7 +1468,7 @@ mod tests {
         let (_service, _pump, lease) = local_heads();
         let output = FrameBuf::new();
         let origin = Instant::now();
-        let mut sample = FairHead::new(lease.identity(), BackendKind::Gpu, None).stats;
+        let mut sample = FairHead::new(lease.identity(), BackendKind::Gpu).stats;
         sample.scene_consumes = 1;
         sample.last_scene_consume_at = Some(origin);
         sample.max_scene_consume_gap = Duration::from_secs(5);
@@ -1331,7 +1511,7 @@ mod tests {
     fn fair_stats_follow_head_generation_not_username() {
         let (service, pump, mut old) = local_heads();
         let output = FrameBuf::new();
-        let mut previous = FairHead::new(old.identity(), BackendKind::Gpu, None).stats;
+        let mut previous = FairHead::new(old.identity(), BackendKind::Gpu).stats;
         previous.due_skips = 3;
         previous.max_due_skips = 3;
         output.attach_head(old.identity());
@@ -1354,7 +1534,7 @@ mod tests {
             output.fair_stats().is_none(),
             "the old generation cannot replace the sample"
         );
-        let fresh = FairHead::new(current.identity(), BackendKind::Gpu, None).stats;
+        let fresh = FairHead::new(current.identity(), BackendKind::Gpu).stats;
         output.publish_fair_stats(fresh);
         assert_eq!(output.fair_stats().unwrap().identity(), current.identity());
         assert_eq!(output.fair_stats().unwrap().max_due_skips(), 0);
@@ -1365,7 +1545,7 @@ mod tests {
     #[test]
     fn due_opportunity_exhaustion_never_wraps_or_reuses_an_identity() {
         let (_, _, lease) = local_heads();
-        let mut head = FairHead::new(lease.identity(), BackendKind::Gpu, None);
+        let mut head = FairHead::new(lease.identity(), BackendKind::Gpu);
         head.next_opportunity = NonZeroU64::new(u64::MAX);
         let now = Instant::now();
         head.note_due(now).unwrap();

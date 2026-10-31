@@ -4,7 +4,8 @@ use std::io::{Read, Write};
 use std::num::NonZeroUsize;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::mpsc::Receiver;
-use std::sync::{Arc, Mutex};
+#[cfg(any(feature = "render-diagnostics", feature = "render-test-hooks"))]
+use std::sync::Weak;
 use std::time::Duration;
 
 use api::native_input::{NativeInputAuthority, NativeInputPermit};
@@ -1943,23 +1944,63 @@ impl SlotInput {
     }
 }
 
+/// Cumulative slot-wake delivery counters used for real calibration captures.
+#[cfg(any(feature = "render-diagnostics", feature = "render-test-hooks"))]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct SlotWakeSnapshot {
+    successful_writes: u64,
+    drained_bytes: u64,
+}
+
+#[cfg(any(feature = "render-diagnostics", feature = "render-test-hooks"))]
+impl SlotWakeSnapshot {
+    pub const fn successful_writes(self) -> u64 {
+        self.successful_writes
+    }
+
+    pub const fn drained_bytes(self) -> u64 {
+        self.drained_bytes
+    }
+}
+
+struct WakeState {
+    tx: WakeStream,
+    #[cfg(any(feature = "render-diagnostics", feature = "render-test-hooks"))]
+    successful_writes: AtomicU64,
+    #[cfg(any(feature = "render-diagnostics", feature = "render-test-hooks"))]
+    drained_bytes: AtomicU64,
+}
+
+impl WakeState {
+    fn new(tx: WakeStream) -> Self {
+        Self {
+            tx,
+            #[cfg(any(feature = "render-diagnostics", feature = "render-test-hooks"))]
+            successful_writes: AtomicU64::new(0),
+            #[cfg(any(feature = "render-diagnostics", feature = "render-test-hooks"))]
+            drained_bytes: AtomicU64::new(0),
+        }
+    }
+}
+
 /// Per-slot control wake: the panel/host-play side holds [`SlotWake`] ends
 /// and `wake()`s a parked slot thread (focus/draw/stop/spawn); the slot
 /// thread hands the [`SlotPark`] end to [`Host::run_client`], which polls
 /// its wait handle next to the client socket inside the idle park. Unix
 /// uses a socketpair; Windows uses an owned nonblocking loopback TCP pair
 /// with peer identity checked. The payload is an empty kick — the parker
-/// re-reads the shared state (`client.draw`, capture, the probe's stop
-/// flag) after waking.
+/// re-reads shared state after waking.
 #[derive(Clone)]
 pub struct SlotWake {
-    tx: Arc<WakeStream>,
+    state: Arc<WakeState>,
 }
 
 /// The slot-thread end of the control channel. Not shared: one per parked
 /// thread, polled by [`Host::run_client`].
 pub struct SlotPark {
     rx: WakeStream,
+    #[cfg(any(feature = "render-diagnostics", feature = "render-test-hooks"))]
+    wake: Weak<WakeState>,
 }
 
 /// Create a control-wake channel pair. A [`SlotWake::wake`] writes a byte
@@ -1970,14 +2011,25 @@ pub fn wake_channel() -> (SlotWake, SlotPark) {
         let (tx, rx) = UnixStream::pair().expect("socketpair for slot wake");
         let _ = tx.set_nonblocking(true);
         let _ = rx.set_nonblocking(true);
-        (SlotWake { tx: Arc::new(tx) }, SlotPark { rx })
+        wake_pair(tx, rx)
     }
     #[cfg(windows)]
     {
         // Fail loudly: a blocking wake pair can stall kick/drain.
         let (tx, rx) = loopback_tcp_pair().expect("loopback TCP pair for slot wake");
-        (SlotWake { tx: Arc::new(tx) }, SlotPark { rx })
+        wake_pair(tx, rx)
     }
+}
+
+fn wake_pair(tx: WakeStream, rx: WakeStream) -> (SlotWake, SlotPark) {
+    let state = Arc::new(WakeState::new(tx));
+    #[cfg(any(feature = "render-diagnostics", feature = "render-test-hooks"))]
+    let wake = Arc::downgrade(&state);
+    (SlotWake { state }, SlotPark {
+        rx,
+        #[cfg(any(feature = "render-diagnostics", feature = "render-test-hooks"))]
+        wake,
+    })
 }
 
 /// Owned nonblocking loopback TCP pair. The accepted peer address must
@@ -2013,7 +2065,20 @@ impl SlotWake {
     /// and best-effort — a full wake buffer (only possible if the parker
     /// stopped draining) or a dead slot just drops the kick.
     pub fn wake(&self) {
-        let _ = (&*self.tx).write(&[1]);
+        #[cfg(any(feature = "render-diagnostics", feature = "render-test-hooks"))]
+        if matches!((&self.state.tx).write(&[1]), Ok(1)) {
+            self.state.successful_writes.fetch_add(1, Ordering::Relaxed);
+        }
+        #[cfg(not(any(feature = "render-diagnostics", feature = "render-test-hooks")))]
+        let _ = (&self.state.tx).write(&[1]);
+    }
+
+    #[cfg(any(feature = "render-diagnostics", feature = "render-test-hooks"))]
+    pub fn snapshot(&self) -> SlotWakeSnapshot {
+        SlotWakeSnapshot {
+            successful_writes: self.state.successful_writes.load(Ordering::Relaxed),
+            drained_bytes: self.state.drained_bytes.load(Ordering::Relaxed),
+        }
     }
 }
 
@@ -2059,10 +2124,20 @@ impl SlotPark {
     /// control-stream buffer.
     pub fn drain(&self) {
         let mut b = [0u8; 64];
+        #[cfg(any(feature = "render-diagnostics", feature = "render-test-hooks"))]
+        let mut drained = 0u64;
         while let Ok(n) = (&self.rx).read(&mut b) {
             if n == 0 {
                 break;
             }
+            #[cfg(any(feature = "render-diagnostics", feature = "render-test-hooks"))]
+            {
+                drained = drained.saturating_add(u64::try_from(n).unwrap_or(u64::MAX));
+            }
+        }
+        #[cfg(any(feature = "render-diagnostics", feature = "render-test-hooks"))]
+        if let Some(wake) = self.wake.upgrade() {
+            wake.drained_bytes.fetch_add(drained, Ordering::Relaxed);
         }
     }
 }
