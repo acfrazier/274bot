@@ -2213,6 +2213,10 @@ mod tests {
     #[test]
     fn step_hazard_requires_source_bounds_and_a_supported_family() {
         const SOURCE: &str = "content/scripts/quests/quest_mcannon/scripts/locs/railings.rs2:87-91";
+        let mut fixture = decode_cook().unwrap();
+        let mut interact = fixture.quest.as_ref().unwrap().acquire["acquire:egg"][0].clone();
+        interact.id = FactKey::new("hazard-interact");
+        fixture.roles[0].prelude.push(interact);
         let cases = [
             (
                 hazard_document(HazardStat::None, 0, 1, 7, None, ""),
@@ -2244,14 +2248,14 @@ mod tests {
             ),
         ];
         for (hazard, expected_code) in cases {
-            let mut document = decode_cook().unwrap();
+            let mut document = fixture.clone();
             let step_id = set_step_hazard(&mut document, "interact", hazard);
             let error = compile_document_error(&document);
             assert_eq!(error.code.as_ref(), expected_code);
             assert_eq!(error.step.as_ref(), Some(&step_id));
         }
 
-        let mut document = decode_cook().unwrap();
+        let mut document = fixture;
         let step_id = set_step_hazard(
             &mut document,
             "interact",
