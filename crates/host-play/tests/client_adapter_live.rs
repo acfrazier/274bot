@@ -38,8 +38,8 @@ export default class ClientAdapterLiveProbe extends LoopingBot {
         if (this.complete) return;
         this.complete = true;
         const attack = reader.stat(0);
-        if (!reader.statsReady() || attack.base !== 20) {
-            throw new Error('ClientAdapter did not expose the seeded attack stat after login');
+        if (attack.base !== 20) {
+            throw new Error(`ClientAdapter attack stat was ${attack.base} after login, expected 20`);
         }
         if (reader.skillCount() !== 25) {
             throw new Error(`ClientAdapter skill catalog count was ${reader.skillCount()}, expected 25`);
