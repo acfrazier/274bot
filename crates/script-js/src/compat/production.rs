@@ -26,9 +26,9 @@ mod compat {
     pub const PANEL_WAIT_MS: u64 = 5_000;
     /// Frozen `ChatDialog.make` / `chooseOption` modal-change wait.
     pub const MODAL_WAIT_MS: u64 = 3_000;
-    /// Five observed game ticks cover the production result's page and inventory
-    /// receipts without using a wall-clock timeout.
-    const MAKE_ONE_WAIT_TICKS: u64 = 5;
+    /// Ten observed ticks cover the page change and delayed product receipt
+    /// without using a wall-clock timeout.
+    const MAKE_ONE_WAIT_TICKS: u64 = 10;
 
     impl MakeXProduct for MakeProduct {
         fn object_id(&self) -> i32 {
@@ -83,7 +83,7 @@ mod compat {
         Continue,
     }
 
-    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    #[derive(Debug, PartialEq, Eq)]
     #[allow(clippy::enum_variant_names)] // Wait* names encode the phase predicate
     enum Phase {
         MakeX,
@@ -101,6 +101,7 @@ mod compat {
             chat: bool,
             before: i32,
             product_id: i32,
+            product_name: String,
             before_count: i64,
             login_mark: u64,
             deadline_tick: u64,
@@ -183,10 +184,19 @@ mod compat {
             self.chat_modal_id.unwrap_or(-1)
         }
 
-        fn inventory_count(&self, object_id: i32) -> Option<i64> {
+        /// Match posted names when available: content can create a different
+        /// inventory id than the UI product row reports.
+        fn inventory_count(&self, object_id: i32, product_name: &str) -> Option<i64> {
             self.inventory.map(|rows| {
                 rows.iter()
-                    .filter(|row| row.id == object_id)
+                    .filter(|row| {
+                        let name = row.name_or_empty();
+                        if name.is_empty() {
+                            row.id == object_id
+                        } else {
+                            name.eq_ignore_ascii_case(product_name)
+                        }
+                    })
                     .map(|row| i64::from(row.count.max(0)))
                     .sum()
             })
@@ -280,7 +290,9 @@ mod compat {
         let Some(component_id) = product.make_one_component_id() else {
             return Begin::Done(false);
         };
-        let Some(before_count) = probe.inventory_count(product.object_id()) else {
+        let product_id = product.object_id();
+        let product_name = product.name.clone();
+        let Some(before_count) = probe.inventory_count(product_id, &product_name) else {
             return Begin::Done(false);
         };
         let chat = probe.chat_modal() != -1;
@@ -294,7 +306,8 @@ mod compat {
             phase: Phase::WaitMakeOne {
                 chat,
                 before,
-                product_id: product.object_id(),
+                product_id,
+                product_name,
                 before_count,
                 login_mark: probe.login_mark,
                 deadline_tick,
@@ -446,42 +459,43 @@ mod compat {
     impl ChatDialog {
         fn step_on(&mut self, probe: &Probe<'_>, cx: &mut Cx<'_>) -> Step<bool> {
             let timed_out =
-                !matches!(self.phase, Phase::WaitMakeOne { .. }) && cx.clock().bound_reached();
-            match self.phase {
+                !matches!(&self.phase, Phase::WaitMakeOne { .. }) && cx.clock().bound_reached();
+            match &self.phase {
                 // The frozen modal waits read the modal ids only: a logout that
                 // clears them ends the wait as a change.
                 Phase::WaitModal { chat, before } => {
-                    let now = if chat {
+                    let now = if *chat {
                         probe.chat_modal()
                     } else {
                         probe.main_modal_id
                     };
-                    done_or_wait(now != before, timed_out)
+                    done_or_wait(now != *before, timed_out)
                 }
                 Phase::WaitMakeOne {
                     chat,
                     before,
                     product_id,
+                    product_name,
                     before_count,
                     login_mark,
                     deadline_tick,
                 } => {
-                    if !probe.ingame || probe.login_mark != login_mark {
+                    if !probe.ingame || probe.login_mark != *login_mark {
                         return Step::Done(false);
                     }
-                    let now = if chat {
+                    let now = if *chat {
                         probe.chat_modal()
                     } else {
                         probe.main_modal_id
                     };
                     let receipt = probe
-                        .inventory_count(product_id)
-                        .is_some_and(|count| count.checked_sub(before_count) == Some(1));
-                    let timed_out = probe.tick.is_some_and(|tick| tick >= deadline_tick);
-                    done_or_wait(now != before && receipt, timed_out)
+                        .inventory_count(*product_id, product_name)
+                        .is_some_and(|count| count.checked_sub(*before_count) == Some(1));
+                    let timed_out = probe.tick.is_some_and(|tick| tick >= *deadline_tick);
+                    done_or_wait(now != *before && receipt, timed_out)
                 }
                 Phase::WaitChoice { before } => done_or_wait(
-                    probe.chat_modal_id != before || probe.chat_continue,
+                    probe.chat_modal_id != *before || probe.chat_continue,
                     timed_out,
                 ),
                 _ if !probe.ingame => Step::Done(false),
@@ -504,7 +518,7 @@ mod compat {
                     MakeXStep::TimedOut(_) => Step::Done(false),
                 },
                 Phase::WaitPanel { before } => {
-                    done_or_wait(probe.main_modal_id != before, timed_out)
+                    done_or_wait(probe.main_modal_id != *before, timed_out)
                 }
             }
         }
@@ -755,7 +769,7 @@ mod compat {
             let mut replacement_machine = replacement_machine.expect("running");
             let replaced_without_product = Probe {
                 chat_modal_id: Some(4999),
-                tick: Some(6),
+                tick: Some(11),
                 ..at
             };
             assert_eq!(
@@ -794,6 +808,81 @@ mod compat {
             };
             let (out, ops, machine) = begin(|cx| begin_make_one(&missing_inventory, "wool", cx));
             assert_eq!((out, ops, machine.is_none()), (Some(false), vec![], true));
+        }
+
+        #[test]
+        fn make_one_waits_for_the_product_receipt_after_page_close() {
+            let products = [product_with_id(841, "Shortbow", &[(1, 881)])];
+            let before_inventory = [
+                ItemRow {
+                    id: 1511,
+                    count: 3,
+                    name: Some("Logs".into()),
+                    ..ItemRow::default()
+                },
+                ItemRow {
+                    id: 946,
+                    count: 1,
+                    name: Some("Knife".into()),
+                    ..ItemRow::default()
+                },
+            ];
+            let at = Probe {
+                inventory: Some(&before_inventory),
+                chat_modal_id: Some(4882),
+                ..probe(&products, None, false, 3000)
+            };
+            let (out, ops, machine) = begin(|cx| begin_make_one(&at, "shortbow", cx));
+            assert_eq!(out, None);
+            assert_eq!(ops, vec![InteractReq::IfButton { component_id: 881 }]);
+            let mut machine = machine.expect("running");
+            let mut clock = armed(MODAL_WAIT_MS);
+
+            let page_closed = Probe {
+                chat_modal_id: Some(-1),
+                tick: Some(3),
+                ..at
+            };
+            assert_eq!(step(&mut machine, &mut clock, &page_closed), (None, vec![]));
+            let before_product_receipt = Probe {
+                tick: Some(10),
+                ..page_closed
+            };
+            assert_eq!(
+                step(&mut machine, &mut clock, &before_product_receipt),
+                (None, vec![]),
+                "the page can close before its inventory receipt arrives"
+            );
+
+            let after_inventory = [
+                ItemRow {
+                    id: 1511,
+                    count: 2,
+                    name: Some("Logs".into()),
+                    ..ItemRow::default()
+                },
+                ItemRow {
+                    id: 946,
+                    count: 1,
+                    name: Some("Knife".into()),
+                    ..ItemRow::default()
+                },
+                ItemRow {
+                    id: 50,
+                    count: 1,
+                    name: Some("Shortbow".into()),
+                    ..ItemRow::default()
+                },
+            ];
+            let receipt = Probe {
+                inventory: Some(&after_inventory),
+                tick: Some(11),
+                ..page_closed
+            };
+            assert_eq!(
+                step(&mut machine, &mut clock, &receipt),
+                (Some(true), vec![])
+            );
         }
 
         #[test]
