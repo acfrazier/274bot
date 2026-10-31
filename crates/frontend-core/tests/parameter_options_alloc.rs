@@ -60,7 +60,7 @@ fn quest_options() -> frontend_core::scripts::ParameterOptions {
         .iter()
         .find(|field| field.id == "quests")
         .expect("Quester schema has a quest roster");
-    let bag = serde_json::Map::from_iter([("quests".into(), serde_json::json!(["cook"]))]);
+    let bag = serde_json::Map::from_iter([("quests".into(), serde_json::json!(["priest"]))]);
     let loadouts = Loadouts::default();
     resolve_parameter_options(SettingView::from_script(quests), &bag, &loadouts, None)
 }
@@ -98,7 +98,7 @@ fn repeated_unavailable_label_lookups_allocate_nothing() {
 #[test]
 fn repeated_lookup_without_a_preserved_value_allocates_nothing() {
     let options = quest_options();
-    let stored = serde_json::json!(["cook"]);
+    let stored = serde_json::json!(["priest"]);
     assert_eq!(options.preserved_stored_labels(&stored).count(), 0);
 
     assert_eq!(
