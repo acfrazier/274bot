@@ -1,9 +1,7 @@
 use super::super::tests::compile_with_tree_crossing;
 use super::*;
 use crate::native::{WalkCancelReason, WalkEnd};
-use crate::quester::compile::{
-    compile_uncached_for_test, decode_args, CompileContext, PredicateContext, StepOutcome,
-};
+use crate::quester::compile::{decode_args, CompileContext, PredicateContext, StepOutcome};
 use crate::quester::loadouts::LoadoutOverlay;
 use crate::quester::progress::CompiledProgress;
 use api::game_data::SelectedGameData;
