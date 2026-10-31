@@ -201,6 +201,8 @@ pub enum SeatStartArgsRef<'a> {
     Bank(&'a script::bank::request::BankSeatArgs),
     /// Typed cast on one selected NPC index.
     CastNpc(&'a script::combat::CastNpcRequest),
+    /// Typed Shop.buyById request.
+    Shop(&'a script::native_shop::ShopBuyByIdArgs),
 }
 
 /// One start with its push-time request stamp and typed family payload.
@@ -4296,6 +4298,7 @@ fn validate_seat_start(start: &SeatStartRef<'_>) -> Result<(), String> {
         (NativeKind::CastNpc, _) => {
             return Err("CastNpc start must use typed cast arguments".into())
         }
+        (NativeKind::Shop, SeatStartArgsRef::Shop(_)) => {}
         (NativeKind::Gather | NativeKind::Combat | NativeKind::QuestProgress, _) => {
             return Err("native start arguments do not match the family kind".into())
         }
@@ -4785,6 +4788,14 @@ fn native_request_off<'b>(
     } else {
         None
     };
+    let shop = if let SeatStartArgsRef::Shop(request) = &start.args {
+        let mut table = ShopBuyByIdArgsBuilder::new(b);
+        table.add_item_id(request.item_id);
+        table.add_quantity(request.quantity);
+        Some(table.finish())
+    } else {
+        None
+    };
     let mut args = SeatArgsBuilder::new(b);
     if let Some(settings) = gather_settings {
         args.add_gather_settings(settings);
@@ -4801,6 +4812,9 @@ fn native_request_off<'b>(
     args.add_progress_journal_only(progress_journal_only);
     if let Some(cast_npc) = cast_npc {
         args.add_cast_npc(cast_npc);
+    }
+    if let Some(shop) = shop {
+        args.add_shop(shop);
     }
     let args = args.finish();
     let run = start.stamp.run();
@@ -5925,6 +5939,7 @@ fn decode_native_request(row: NativeRequest<'_>) -> Result<SeatStartInput, Strin
     let progress_journal_only = args.progress_journal_only();
     let bank = args.bank();
     let cast_npc = args.cast_npc();
+    let shop = args.shop();
     let decoded_args = match kind {
         NativeKind::Gather => {
             let settings = gather_settings
@@ -5934,6 +5949,7 @@ fn decode_native_request(row: NativeRequest<'_>) -> Result<SeatStartInput, Strin
                 || progress_journal_only
                 || bank.is_some()
                 || cast_npc.is_some()
+                || shop.is_some()
             {
                 return Err("Gather start carries mismatched typed arguments".into());
             }
@@ -5946,6 +5962,7 @@ fn decode_native_request(row: NativeRequest<'_>) -> Result<SeatStartInput, Strin
                 || progress_journal_only
                 || bank.is_some()
                 || cast_npc.is_some()
+                || shop.is_some()
             {
                 return Err("Combat start carries mismatched typed arguments".into());
             }
@@ -5954,7 +5971,11 @@ fn decode_native_request(row: NativeRequest<'_>) -> Result<SeatStartInput, Strin
         NativeKind::QuestProgress => {
             let name =
                 progress_name.ok_or_else(|| "QuestProgress start has no typed name".to_string())?;
-            if gather_settings.is_some() || combat.is_some() || bank.is_some() || cast_npc.is_some()
+            if gather_settings.is_some()
+                || combat.is_some()
+                || bank.is_some()
+                || cast_npc.is_some()
+                || shop.is_some()
             {
                 return Err("QuestProgress start carries mismatched typed arguments".into());
             }
@@ -5977,6 +5998,7 @@ fn decode_native_request(row: NativeRequest<'_>) -> Result<SeatStartInput, Strin
                 || progress_name.is_some()
                 || progress_journal_only
                 || cast_npc.is_some()
+                || shop.is_some()
             {
                 return Err("bank start carries mismatched typed arguments".into());
             }
@@ -5990,6 +6012,7 @@ fn decode_native_request(row: NativeRequest<'_>) -> Result<SeatStartInput, Strin
                 || progress_name.is_some()
                 || progress_journal_only
                 || bank.is_some()
+                || shop.is_some()
             {
                 return Err("CastNpc start carries mismatched typed arguments".into());
             }
@@ -5998,6 +6021,34 @@ fn decode_native_request(row: NativeRequest<'_>) -> Result<SeatStartInput, Strin
                 index: cast_npc.index(),
             })
         }
+        NativeKind::Shop => {
+            if let Some(shop) = shop {
+                if gather_settings.is_some()
+                    || combat.is_some()
+                    || progress_name.is_some()
+                    || progress_journal_only
+                    || bank.is_some()
+                    || cast_npc.is_some()
+                {
+                    return Err("Shop start carries mismatched typed arguments".into());
+                }
+                SeatStartArgs::Shop(script::native_shop::ShopBuyByIdArgs {
+                    item_id: shop.item_id(),
+                    quantity: shop.quantity(),
+                })
+            } else {
+                if gather_settings.is_some()
+                    || combat.is_some()
+                    || progress_name.is_some()
+                    || progress_journal_only
+                    || bank.is_some()
+                    || cast_npc.is_some()
+                {
+                    return Err("Shop start carries mismatched typed arguments".into());
+                }
+                SeatStartArgs::Empty
+            }
+        }
         _ => {
             if gather_settings.is_some()
                 || combat.is_some()
@@ -6005,6 +6056,7 @@ fn decode_native_request(row: NativeRequest<'_>) -> Result<SeatStartInput, Strin
                 || progress_journal_only
                 || bank.is_some()
                 || cast_npc.is_some()
+                || shop.is_some()
             {
                 return Err("native start carries unsupported typed arguments".into());
             }

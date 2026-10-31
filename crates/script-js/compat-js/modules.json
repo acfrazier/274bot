@@ -486,5 +486,13 @@
   {
     "module": "runtime/BotHost.js",
     "shim": "bot_host.js"
+  },
+  {
+    "module": "api/shop/StockModel.js",
+    "shim": "stock_model.js"
+  },
+  {
+    "module": "api/shop/shopPrice.js",
+    "shim": "shop_price.js"
   }
 ]

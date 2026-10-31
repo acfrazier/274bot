@@ -938,6 +938,14 @@ pub fn shim_modules() -> Vec<Module> {
             "/rs2b0t/bot/scripts/bot/rs2b0t-api.js",
             include_str!("rs2b0t_api.js"),
         ),
+        Module::new(
+            "/rs2b0t/bot/api/shop/StockModel.js",
+            include_str!("stock_model.js"),
+        ),
+        Module::new(
+            "/rs2b0t/bot/api/shop/shopPrice.js",
+            include_str!("shop_price.js"),
+        ),
     ]
 }
 
