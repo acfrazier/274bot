@@ -1633,9 +1633,12 @@ fn run_runtime_account_leveler_frame_probe_cell(receipt: &mut Receipt) -> Result
             "AccountLeveler frame sample did not include the empty bank state, work state and tile: {frame_log}"
         ));
     }
-    if !session.receipt.logs.iter().any(|line| {
-        line == "RUNTIME:ACCOUNT_LEVELER_BANK:items=0:ready=false"
-    }) {
+    if !session
+        .receipt
+        .logs
+        .iter()
+        .any(|line| line == "RUNTIME:ACCOUNT_LEVELER_BANK:items=0:ready=false")
+    {
         return Err(format!(
             "AccountLeveler frame probe did not record the closed-bank state: {:?}",
             session.receipt.logs
