@@ -41,14 +41,13 @@ pub(crate) struct Thieve {
     core: ThieveCore,
     area_anchor: Option<WorldTile>,
     walk: Option<Walk>,
+    walk_retry: super::WalkRetryState,
     reach: Option<Reach>,
     reach_request_id: Option<u64>,
     reach_target: Option<(i32, &'static str)>,
     modal: Option<OneOp>,
     pending_action: Option<&'static str>,
     pending_target_id: Option<i32>,
-    /// Fresh approach plans spent since the last arrival.
-    walk_failures: u8,
     /// First observed tick with the player inside the anchor and no target.
     no_target_since: Option<u64>,
     /// Set when the empty-anchor wait ends by dispatching the spawn it saw.
@@ -58,13 +57,6 @@ pub(crate) struct Thieve {
     /// kill it; it still ends the approach walk and later attempts.
     anchor_spawn_attempt: bool,
 }
-
-/// Fresh plans after a failed approach walk. AGENTS.md ("A walk failure is
-/// never terminal until its bounded retries are spent", 2026-10-23) makes one
-/// replan from the observed position the supported recovery, the same single
-/// fresh plan the native return recovery spends
-/// (`MAX_RETURN_RECOVERY_ACTIONS = 1`, `native.rs:1064-1066`).
-const APPROACH_WALK_RETRIES: u8 = 1;
 
 /// Named terminal failure for the empty-anchor wait.
 const NO_TARGET_FAILURE: &str = "no thieving target appeared at the anchor";
@@ -108,13 +100,13 @@ impl NativeMachine for Thieve {
             core,
             area_anchor,
             walk: None,
+            walk_retry: super::WalkRetryState::default(),
             reach: None,
             reach_request_id: None,
             reach_target: None,
             modal: None,
             pending_action: None,
             pending_target_id: None,
-            walk_failures: 0,
             no_target_since: None,
             anchor_spawn_attempt: false,
         })
@@ -257,6 +249,13 @@ impl NativeMachine for Thieve {
         let mut core_observation = observation;
         core_observation.inventory_ready &=
             !walk_pending && self.reach.is_none() && !chat_dialog_open;
+        if !walk_pending
+            && self.area_anchor.is_some_and(|center| {
+                here.is_some_and(|here| reach::within(here, center, i32::from(self.args.radius)))
+            })
+        {
+            self.walk_retry.reset();
+        }
         let suspend_deadline =
             entered_waiting || (self.anchor_spawn_attempt && self.core.has_pending_attempt());
         let decision = if suspend_deadline {
@@ -276,11 +275,18 @@ impl NativeMachine for Thieve {
             })
         {
             let center = self.area_anchor.expect("approach anchor was checked");
-            std::task::ready!(super::defer_budget(self.begin_walk(
-                center,
-                u16::from(self.args.radius),
-                cx,
-            )))?;
+            let tick = cx.evidence().tick;
+            if self.walk_retry.waiting_for_next_tick(tick) {
+                return Poll::Pending;
+            }
+            match super::defer_budget(self.begin_walk(center, u16::from(self.args.radius), cx)) {
+                Poll::Pending => {
+                    self.walk_retry.defer_until_next_tick(tick);
+                    return Poll::Pending;
+                }
+                Poll::Ready(Err(error)) => return Poll::Ready(Err(error)),
+                Poll::Ready(Ok(())) => self.walk_retry.action_submitted(),
+            }
             return Poll::Pending;
         }
 
@@ -488,28 +494,20 @@ impl Thieve {
             }
         };
         self.walk = None;
+        // Manual takeover, revocation and pending evidence remain terminal.
+        if self
+            .walk_retry
+            .observe_approach_failure(&receipt, cx.evidence().tick)
+        {
+            return Ok(false);
+        }
         match receipt.into_arrival() {
             Ok(_) => {
-                self.walk_failures = 0;
+                self.walk_retry.reset();
                 Ok(false)
             }
-            // Manual takeover, revocation and a pending evidence gate are not
-            // walk failures to replan from.
-            Err(
-                error @ (ActionError::UserInput
-                | ActionError::Cancelled
-                | ActionError::NeedsEvidence(_)),
-            ) => Err(error),
-            // A failed walk is information: plan again from the observed
-            // position while the bounded budget lasts, then end with this
-            // last failure's detail.
-            Err(error) => {
-                self.walk_failures = self.walk_failures.saturating_add(1);
-                if self.walk_failures > APPROACH_WALK_RETRIES {
-                    return Err(error);
-                }
-                Ok(false)
-            }
+            // Non-retryable and exhausted failures retain this receipt's detail.
+            Err(error) => Err(error),
         }
     }
 
@@ -706,7 +704,8 @@ mod tests {
     use crate::native::thieving_core::DEFAULT_ACTION_DEADLINE;
     use crate::native::WalkEnd;
     use crate::quester::families::tests::{
-        def, local_player, post_user_input_walk_receipt, with_tick, with_tick_reach,
+        def, local_player, post_user_input_walk_receipt, post_walk_receipt, with_tick,
+        with_tick_reach,
     };
     use api::snapshot::{
         ChatLineView, GameSnapshot, ItemActionFamily, ItemContainer, ItemView, LocLayer, LocView,
@@ -1285,7 +1284,7 @@ mod tests {
 
     /// The live Digsite approach failed on its second route end. Request 131
     /// stopped thirteen tiles from the anchor `[3359,3401,0]`, which spent
-    /// the one retry. Request 132 stopped on `[3347,3395,0]`, exactly twelve
+    /// the first retry. Request 132 stopped on `[3347,3395,0]`, exactly twelve
     /// tiles away at radius 12. The action asks for an area arrival, so the
     /// shared walk adapter must settle that second receipt as arrival and the
     /// action must go on to look for a workman. Reading the raw receipt
@@ -1362,20 +1361,29 @@ mod tests {
         assert_eq!(walk_request_count(&ledger), 1, "one area approach walk");
 
         // Request 131: the host stops the area route outside the radius, so
-        // the action spends its one fresh plan.
+        // the action defers its fresh plan until the next observed tick.
         post_walk_end(&mut ledger, 2, WalkEnd::RouteEnded, None);
         assert!(
             with_tick_reach(&short, &view, &mut ledger, 2, |tick| {
                 tick.actions.poll(&run, &mut tick.cx)
             })
             .is_pending(),
-            "the action replans after the first route end"
+            "the action defers after the first route end"
         );
-        assert_eq!(walk_request_count(&ledger), 2, "the retry walk is owed");
+        assert_eq!(
+            walk_request_count(&ledger),
+            1,
+            "the next walk must wait for a new tick"
+        );
+        assert!(with_tick_reach(&short, &view, &mut ledger, 3, |tick| {
+            tick.actions.poll(&run, &mut tick.cx)
+        })
+        .is_pending());
+        assert_eq!(walk_request_count(&ledger), 2, "the retry walk is submitted");
 
         // Request 132: the host stops on a standable tile at the radius.
-        post_walk_end(&mut ledger, 3, WalkEnd::RouteEnded, None);
-        let outcome = with_tick_reach(&arrived, &view, &mut ledger, 3, |tick| {
+        post_walk_end(&mut ledger, 4, WalkEnd::RouteEnded, None);
+        let outcome = with_tick_reach(&arrived, &view, &mut ledger, 4, |tick| {
             tick.actions.poll(&run, &mut tick.cx)
         });
         assert!(
@@ -1395,7 +1403,7 @@ mod tests {
     }
 
     /// A route end outside the radius is still a walk failure: the shared
-    /// adapter keeps `RouteEnded`, and the action spends its one fresh plan
+    /// adapter keeps `RouteEnded`, and the action spends a bounded retry
     /// from the observed position. The live request 131 ended thirteen tiles
     /// from the anchor on `[3346,3394,0]`.
     #[test]
@@ -1457,8 +1465,17 @@ mod tests {
         );
         assert_eq!(
             walk_request_count(&ledger),
+            1,
+            "the retry waits until the next observed tick"
+        );
+        assert!(with_tick_reach(&stopped_short, &view, &mut ledger, 3, |tick| {
+            tick.actions.poll(&run, &mut tick.cx)
+        })
+        .is_pending());
+        assert_eq!(
+            walk_request_count(&ledger),
             2,
-            "a route end outside the radius is a walk failure and spends the one replan"
+            "a route end outside the radius spends one bounded retry"
         );
     }
 
@@ -1500,10 +1517,15 @@ mod tests {
             tick.actions.poll(&run, &mut tick.cx)
         })
         .is_pending());
-        assert_eq!(walk_request_count(&ledger), 2, "one fresh plan is owed");
+        assert_eq!(walk_request_count(&ledger), 1, "retry waits for the next tick");
+        assert!(with_tick(&outside, &mut ledger, 3, |tick| {
+            tick.actions.poll(&run, &mut tick.cx)
+        })
+        .is_pending());
+        assert_eq!(walk_request_count(&ledger), 2, "one fresh plan is submitted");
 
-        post_walk_end(&mut ledger, 3, WalkEnd::Arrived, None);
-        assert!(with_tick(&inside, &mut ledger, 3, |tick| {
+        post_walk_end(&mut ledger, 4, WalkEnd::Arrived, None);
+        assert!(with_tick(&inside, &mut ledger, 4, |tick| {
             tick.actions.poll(&run, &mut tick.cx)
         })
         .is_pending());
@@ -1546,25 +1568,47 @@ mod tests {
             tick.actions.poll(&run, &mut tick.cx)
         })
         .is_pending());
+        assert_eq!(walk_request_count(&ledger), 1, "retry waits for the next tick");
+        assert!(with_tick(&outside, &mut ledger, 3, |tick| {
+            tick.actions.poll(&run, &mut tick.cx)
+        })
+        .is_pending());
         assert_eq!(walk_request_count(&ledger), 2);
 
         post_walk_end(
             &mut ledger,
-            3,
+            4,
             WalkEnd::Failed,
             Some("route fixture failure 2"),
         );
+        assert!(with_tick(&outside, &mut ledger, 4, |tick| {
+            tick.actions.poll(&run, &mut tick.cx)
+        })
+        .is_pending());
+        assert_eq!(walk_request_count(&ledger), 2, "second retry waits for the next tick");
+        assert!(with_tick(&outside, &mut ledger, 5, |tick| {
+            tick.actions.poll(&run, &mut tick.cx)
+        })
+        .is_pending());
+        assert_eq!(walk_request_count(&ledger), 3);
+
+        post_walk_end(
+            &mut ledger,
+            6,
+            WalkEnd::Failed,
+            Some("route fixture failure 3"),
+        );
         assert!(matches!(
-            with_tick(&outside, &mut ledger, 3, |tick| {
+            with_tick(&outside, &mut ledger, 6, |tick| {
                 tick.actions.poll(&run, &mut tick.cx)
             }),
             Poll::Ready(Err(ActionError::Blocked(detail)))
-                if detail.as_ref() == "route fixture failure 2"
+                if detail.as_ref() == "route fixture failure 3"
         ));
         assert_eq!(
             walk_request_count(&ledger),
-            2,
-            "the retry budget is spent after one fresh plan"
+            3,
+            "the shared budget includes the initial route and two replans"
         );
     }
 
@@ -1804,6 +1848,171 @@ mod tests {
             }) if action == "Pickpocket"
         ));
     }
+
+    #[test]
+    fn thieve_anchor_walk_retries_after_failure_from_the_observed_tile() {
+        let anchor = WorldTile {
+            x: 3,
+            z: 4,
+            level: 0,
+        };
+        let start = WorldTile {
+            x: 30,
+            z: 40,
+            level: 0,
+        };
+        let snapshot = game_snapshot(start, vec![npc(19, 1, 1)], vec![]);
+        let mut ledger = None;
+        let run = with_tick(&snapshot, &mut ledger, 1, |tick| {
+            let run = tick
+                .actions
+                .begin::<Thieve>(args(anchor, 2), &mut tick.cx)
+                .unwrap();
+            tick.cx.emit(crate::shim::InteractReq::CloseModal).unwrap();
+            for _ in 0..3 {
+                assert!(tick.actions.poll(&run, &mut tick.cx).is_pending());
+            }
+            run
+        });
+        assert!(with_tick(&snapshot, &mut ledger, 2, |tick| {
+            tick.actions.poll(&run, &mut tick.cx)
+        })
+        .is_pending());
+        let first_request = post_walk_receipt(
+            &mut ledger,
+            3,
+            WalkEnd::NoPath,
+            Some("first thieving route failed"),
+        );
+        assert!(with_tick(&snapshot, &mut ledger, 3, |tick| {
+            tick.actions.poll(&run, &mut tick.cx)
+        })
+        .is_pending());
+        assert_eq!(walk_request_count(&ledger), 1);
+
+        let moved = WorldTile {
+            x: 29,
+            z: 39,
+            level: 0,
+        };
+        let moved_snapshot = game_snapshot(moved, vec![npc(19, 1, 1)], vec![]);
+        assert!(with_tick(&moved_snapshot, &mut ledger, 4, |tick| {
+            tick.actions.poll(&run, &mut tick.cx)
+        })
+        .is_pending());
+        assert_eq!(walk_request_count(&ledger), 2);
+        let retry = ledger
+            .as_ref()
+            .unwrap()
+            .outbox
+            .iter()
+            .rev()
+            .find(|action| matches!(&action.effect, crate::native::HostEffect::Walk(_)))
+            .unwrap();
+        let crate::native::HostEffect::Walk(request) = &retry.effect else {
+            unreachable!();
+        };
+        assert_eq!(request.target, anchor);
+        assert_eq!(request.required_after.tick, 4);
+
+        let second_request = post_walk_receipt(&mut ledger, 5, WalkEnd::Arrived, None);
+        assert_ne!(second_request, first_request);
+        let arrived = game_snapshot(anchor, vec![npc(19, 1, 1)], vec![]);
+        assert!(with_tick(&arrived, &mut ledger, 5, |tick| {
+            tick.actions.poll(&run, &mut tick.cx)
+        })
+        .is_pending());
+        assert_eq!(walk_request_count(&ledger), 2);
+    }
+
+    #[test]
+    fn thieve_area_entry_resets_retry_before_a_separate_approach() {
+        let anchor = WorldTile {
+            x: 3,
+            z: 4,
+            level: 0,
+        };
+        let outside = game_snapshot(
+            WorldTile {
+                x: 30,
+                z: 40,
+                level: 0,
+            },
+            vec![npc(19, 1, 1)],
+            vec![],
+        );
+        let mut ledger = None;
+        let mut action_id = 0;
+        let run = with_tick(&outside, &mut ledger, 1, |tick| {
+            let run = tick
+                .actions
+                .begin::<Thieve>(args(anchor, 2), &mut tick.cx)
+                .unwrap();
+            action_id = tick.cx.action_id;
+            tick.cx.emit(crate::shim::InteractReq::CloseModal).unwrap();
+            for _ in 0..3 {
+                assert!(tick.actions.poll(&run, &mut tick.cx).is_pending());
+            }
+            run
+        });
+        assert!(with_tick(&outside, &mut ledger, 2, |tick| {
+            tick.actions.poll(&run, &mut tick.cx)
+        })
+        .is_pending());
+        post_walk_receipt(
+            &mut ledger,
+            3,
+            WalkEnd::NoPath,
+            Some("first approach failed"),
+        );
+        assert!(with_tick(&outside, &mut ledger, 3, |tick| {
+            tick.actions.poll(&run, &mut tick.cx)
+        })
+        .is_pending());
+        assert!(run.machine.borrow().as_ref().unwrap().walk_retry.pending());
+        assert!(with_tick(&outside, &mut ledger, 4, |tick| {
+            tick.actions.poll(&run, &mut tick.cx)
+        })
+        .is_pending());
+        assert_eq!(walk_request_count(&ledger), 2, "the first retry is submitted");
+        post_walk_receipt(&mut ledger, 5, WalkEnd::NoPath, Some("first retry failed"));
+        assert!(with_tick(&outside, &mut ledger, 5, |tick| {
+            tick.actions.poll(&run, &mut tick.cx)
+        })
+        .is_pending());
+        assert!(run.machine.borrow().as_ref().unwrap().walk_retry.pending());
+
+        let inside = game_snapshot(anchor, vec![npc(19, 1, 1)], vec![]);
+        assert!(with_tick(&inside, &mut ledger, 6, |tick| {
+            tick.actions.poll(&run, &mut tick.cx)
+        })
+        .is_pending());
+        assert!(!run.machine.borrow().as_ref().unwrap().walk_retry.pending());
+
+        with_tick(&outside, &mut ledger, 7, |tick| {
+            tick.cx.action_id = action_id;
+            let mut machine = run.machine.borrow_mut();
+            let machine = machine.as_mut().unwrap();
+            machine.begin_walk(anchor, 2, &mut tick.cx).unwrap();
+            machine.walk_retry.action_submitted();
+        });
+        post_walk_receipt(
+            &mut ledger,
+            8,
+            WalkEnd::NoPath,
+            Some("separate approach failed"),
+        );
+        assert!(with_tick(&outside, &mut ledger, 8, |tick| {
+            tick.actions.poll(&run, &mut tick.cx)
+        })
+        .is_pending());
+        assert!(
+            run.machine.borrow().as_ref().unwrap().walk_retry.pending(),
+            "a separate approach receives a fresh retry allowance"
+        );
+        assert_eq!(walk_request_count(&ledger), 3);
+    }
+
 
     #[test]
     fn effective_level_not_base_controls_the_selected_requirement() {

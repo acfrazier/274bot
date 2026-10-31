@@ -36,6 +36,13 @@
           "required": [],
           "terminal": false,
           "recovery_entry": null,
+          "cross": [
+            {
+              "id": "nasty_tree@3108,3346,0",
+              "name": "Draynor Manor tree",
+              "reason": "The approach enters the natural tree's hunt range to test an unattackable attacker and escape."
+            }
+          ],
           "steps": [
             {
               "id": "approach-natural-unattackable-attacker",

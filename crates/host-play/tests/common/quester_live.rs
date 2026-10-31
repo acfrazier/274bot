@@ -42,12 +42,9 @@
 //! folder served through the existing `FolderSource` registry, shadowing the
 //! embedded release index). It uses the qualification profile in the fixture
 //! table under a fixed deadline.
-//! `QUESTER_TICK_MS` is supported only by the single-account generic Path
-//! smoke. `::speed` changes world-wide tick speed; use it only on isolated
-//! Engine Q, never on shared Engine A or the builder. The shared runner waits
-//! for a fresh exact system-chat confirmation and restores `::speed 600` on
-//! teardown. `QUESTER_SUSTAIN_RUN=1` enables the existing `~energy` sustain,
-//! defaulting on when `QUESTER_TICK_MS` is set.
+//! Quester live cells use Engine Q at its fixed 300 ms tick speed. Do not set
+//! `QUESTER_TICK_MS` or use `::speed`.
+//! `QUESTER_SUSTAIN_RUN=1` enables the existing `~energy` sustain.
 //!
 //! Persistence cells (`tests/quester_hint_live.rs`) add `QUESTER_LIVE_ACCOUNT`
 //! with `QUESTER_LIVE_PASSWORD` (one fixed account instead of a minted one)
@@ -76,12 +73,120 @@ use serde_json::{json, Map, Value};
 use vault::{Profile, ProfileSettings};
 
 const POLL_INTERVAL: Duration = Duration::from_millis(20);
+/// Bound on the wait for the terminal capture file. The serial capture writer
+/// synced the first capture of one run in 25.8 s and the end capture of
+/// another in 14 s (QUESTER-DIALOGUE-OPEN r1 `qvca`), and wrote the path-smoke
+/// and Jailer end captures 32 s and 11 s after their receipts under aubaine
+/// I/O load (r2). The wait ends as soon as the file is durable. The run's
+/// product result never depends on it: `run_result` in the receipt is fixed
+/// before the wait starts.
+const END_CAPTURE_BOUND: Duration = Duration::from_secs(300);
 /// Time a Restart cell lets the step at the Stop stage run before stopping it,
 /// so the Stop lands mid-step rather than on a selection boundary.
 const MID_STEP: Duration = Duration::from_secs(4);
 /// Grace after the scenario deadline for terminal bookkeeping.
 const DEADLINE_GRACE: Duration = Duration::from_secs(15);
 const PAIR_CANCELLED_REASON: &str = "pair cancelled; Stop and freshly Start both accounts";
+/// The live teardown remains bounded even when a script or the server does not progress.
+const CLEAN_LOGOUT_DEADLINE: Duration = Duration::from_secs(30);
+/// Shared fixture escape waits the same content-authored combat lockout.
+const COMBAT_LOGOUT_RETRY_TICKS: u32 = scenario::teardown::COMBAT_LOGOUT_TICKS;
+
+#[derive(Debug)]
+struct TeardownAccount {
+    stop_ack_tick: Option<u32>,
+    logout_attempt_ticks: Vec<u32>,
+    no_logout_arm: bool,
+}
+
+#[derive(Debug)]
+struct TeardownSchedule {
+    accounts: Vec<TeardownAccount>,
+    deadline: Instant,
+}
+
+impl TeardownSchedule {
+    fn new(account_count: usize, deadline: Instant) -> Self {
+        Self {
+            accounts: (0..account_count)
+                .map(|_| TeardownAccount {
+                    stop_ack_tick: None,
+                    logout_attempt_ticks: Vec::new(),
+                    no_logout_arm: false,
+                })
+                .collect(),
+            deadline,
+        }
+    }
+
+    fn acknowledge_stop(&mut self, index: usize, tick: u32) {
+        self.accounts[index].stop_ack_tick.get_or_insert(tick);
+    }
+
+    fn all_stopped(&self) -> bool {
+        self.accounts
+            .iter()
+            .all(|account| account.stop_ack_tick.is_some())
+    }
+
+    fn initial_logout_due(&self, index: usize, now: Instant) -> bool {
+        let account = &self.accounts[index];
+        self.all_stopped()
+            && now < self.deadline
+            && !account.no_logout_arm
+            && account.logout_attempt_ticks.is_empty()
+    }
+
+    fn retry_due(&self, index: usize, tick: u32, connected: bool, now: Instant) -> bool {
+        if !self.all_stopped() || !connected || now >= self.deadline {
+            return false;
+        }
+        self.accounts[index]
+            .logout_attempt_ticks
+            .last()
+            .is_some_and(|last_tick| tick.saturating_sub(*last_tick) >= COMBAT_LOGOUT_RETRY_TICKS)
+    }
+
+    fn record_logout_attempt(&mut self, index: usize, tick: u32, now: Instant) -> bool {
+        if !self.all_stopped() || now >= self.deadline || self.accounts[index].no_logout_arm {
+            return false;
+        }
+        self.accounts[index].logout_attempt_ticks.push(tick);
+        true
+    }
+
+    fn mark_no_logout_arm(&mut self, index: usize) {
+        self.accounts[index].no_logout_arm = true;
+    }
+
+    fn stop_ack_tick(&self, index: usize) -> Option<u32> {
+        self.accounts[index].stop_ack_tick
+    }
+
+    fn logout_attempt_ticks(&self, index: usize) -> &[u32] {
+        &self.accounts[index].logout_attempt_ticks
+    }
+
+    fn deadline_expired(&self, now: Instant) -> bool {
+        now >= self.deadline
+    }
+
+    fn complete(&self, disconnected: &[bool]) -> bool {
+        disconnected.len() == self.accounts.len()
+            && self.all_stopped()
+            && self
+                .accounts
+                .iter()
+                .zip(disconnected)
+                .all(|(account, disconnected)| {
+                    !account.logout_attempt_ticks.is_empty() && *disconnected
+                })
+    }
+}
+
+fn actor_frame_enabled(teardown_started: bool) -> bool {
+    !teardown_started
+}
 
 /// What the cell proves after the fixture's Start.
 #[derive(Debug, Clone)]
@@ -583,6 +688,48 @@ struct OwnedCombat {
     npc_total_health: i32,
 }
 
+#[derive(Default)]
+pub(super) struct TickMean {
+    last: Option<(u32, Instant)>,
+    elapsed: Duration,
+    intervals: u64,
+}
+
+impl TickMean {
+    pub(super) fn observe(&mut self, snapshot: &GameSnapshot) {
+        self.observe_at(snapshot.tick(), snapshot.ingame(), Instant::now());
+    }
+
+    pub(super) fn observe_at(&mut self, tick: u32, ingame: bool, now: Instant) {
+        if !ingame {
+            self.last = None;
+            return;
+        }
+        match self.last {
+            Some((previous, at)) if tick > previous => {
+                self.elapsed += now.duration_since(at);
+                self.intervals += u64::from(tick - previous);
+                self.last = Some((tick, now));
+            }
+            Some((previous, _)) if tick < previous => {
+                self.last = Some((tick, now));
+            }
+            None => {
+                self.last = Some((tick, now));
+            }
+            _ => {}
+        }
+    }
+
+    pub(super) fn mean_ms(&self) -> Option<f64> {
+        if self.intervals == 0 {
+            None
+        } else {
+            Some(self.elapsed.as_secs_f64() * 1000.0 / self.intervals as f64)
+        }
+    }
+}
+
 struct ActorShared {
     role: Option<usize>,
     quest: &'static str,
@@ -595,6 +742,9 @@ struct ActorShared {
     snapshot: GameSnapshot,
     latest_status: Option<ScriptStatus>,
     pump: Pump,
+    logout: Option<scenario::teardown::CombatLogout>,
+    logout_retry_ready: bool,
+    logout_error: Option<String>,
     start_handle: Option<ScriptStartHandle>,
     named_banks: Option<Arc<api::named_banks::NamedBankFacts>>,
     start_family: Option<StartFamily>,
@@ -602,6 +752,9 @@ struct ActorShared {
     start_receipt: Option<Value>,
     observe_tick: Option<ObserveTick>,
     tick_observations: Vec<Value>,
+    tick_mean: TickMean,
+    /// `{stage, tick}` at each observed stage change, in observed game ticks.
+    stage_ticks: Vec<Value>,
     starts: u32,
     stops: u32,
     restart_due: bool,
@@ -647,6 +800,7 @@ struct Shared {
     actors: Vec<ActorShared>,
     start_handles_ready: bool,
     initial_start_released: bool,
+    teardown_started: bool,
     inventory_proof: Option<PairInventoryProof>,
     inventory_initial_absence: [bool; 2],
     inventory_boundary: Option<Value>,
@@ -960,6 +1114,7 @@ fn capture_receipt(
     mut extra: Value,
 ) -> Value {
     extra["label"] = json!(label);
+    extra["tick"] = json!(actor.snapshot.tick());
     extra["role"] = json!(actor.role);
     extra["account"] = json!(actor.account);
     extra["status"] = status.map(status_json).unwrap_or(Value::Null);
@@ -1114,7 +1269,12 @@ fn run_cells(
             ));
         }
     }
-    let fast_settings = if quester_path {
+    let tick_speed_requested = std::env::var_os("QUESTER_TICK_MS").is_some();
+    let apply_fast_settings = quester_path || tick_speed_requested;
+    if apply_fast_settings && (mode.is_pair() || cells.len() != 1) {
+        return Err("QUESTER_TICK_MS requires a single-account Quester live cell".into());
+    }
+    let fast_settings = if apply_fast_settings {
         scenario::quester::QuesterFastSettings::from_env()?
     } else {
         scenario::quester::QuesterFastSettings {
@@ -1163,7 +1323,7 @@ fn run_cells(
     for cell in &mut cells {
         cell.scenario.settings.nav.engine_speed_ms = None;
     }
-    if quester_path {
+    if apply_fast_settings {
         scenario::quester::apply_quester_fast_settings(&mut cells[0].scenario, fast_settings);
     }
     let scenario_deadline = cells
@@ -1249,6 +1409,9 @@ fn run_cells(
             snapshot: GameSnapshot::new(),
             latest_status: None,
             pump: Pump::new(),
+            logout: None,
+            logout_retry_ready: false,
+            logout_error: None,
             start_handle: None,
             named_banks: None,
             start_family: start_family.take(),
@@ -1256,6 +1419,8 @@ fn run_cells(
             start_receipt: None,
             observe_tick: observe_tick.take(),
             tick_observations: Vec::new(),
+            tick_mean: TickMean::default(),
+            stage_ticks: Vec::new(),
             starts: 0,
             stops: 0,
             restart_due: false,
@@ -1295,6 +1460,7 @@ fn run_cells(
         actors,
         start_handles_ready: false,
         initial_start_released: false,
+        teardown_started: false,
         inventory_proof: mode.inventory_proof().cloned(),
         inventory_initial_absence: [false; 2],
         inventory_boundary: None,
@@ -1338,6 +1504,19 @@ fn run_cells(
             let drain = actor.pump.drain_client(client);
             host::publish_snapshot(&mut actor.snapshot, client, drain);
             actor.last_tile = observed_tile(&actor.snapshot);
+            if !actor_frame_enabled(frame_state.teardown_started) {
+                if let Some(logout) = &mut actor.logout {
+                    actor.logout_retry_ready = logout.allows_retry(&actor.snapshot, Instant::now());
+                    match logout.send_escape(client, Instant::now()) {
+                        Ok(true) => eprintln!(
+                            "[quester-live] logout account-only safe tele account={username}"
+                        ),
+                        Ok(false) => {}
+                        Err(error) => actor.logout_error = Some(error),
+                    }
+                }
+                return;
+            }
 
             if first_start {
                 if let Some(proof) = inventory_proof.as_ref() {
@@ -1712,6 +1891,7 @@ fn run_cells(
                             actor.last_step_observation = Some(step_key);
                             actor.step_observations.push(json!({
                                 "run": format!("{:?}", status.run),
+                                "tick": actor.snapshot.tick(),
                                 "stage": stage,
                                 "step_id": text(status, "step_id"),
                                 "child_step_id": text(status, "child_step_id"),
@@ -1730,6 +1910,9 @@ fn run_cells(
                     if let Some(receipt) = observe(&actor.snapshot, observation.status.as_deref()) {
                         actor.tick_observations.push(receipt);
                     }
+                }
+                if quester_path {
+                    actor.tick_mean.observe(&actor.snapshot);
                 }
                 observation.runner_status = actor.runner.status();
                 observation.done = quest_done(&actor.snapshot, actor.display);
@@ -1822,6 +2005,9 @@ fn run_cells(
                     if let Some(stage) = status_stage(status, actor.quest) {
                         if actor.stages_seen.last() != Some(&stage) {
                             actor.stages_seen.push(stage.clone());
+                            actor
+                                .stage_ticks
+                                .push(json!({"stage": stage, "tick": actor.snapshot.tick()}));
                             let label = format!("stage-{}", stage.replace(':', "-"));
                             let receipt = capture_receipt(actor, &label, Some(status), json!({}));
                             actor.pending_captures.push((label, receipt));
@@ -2654,8 +2840,25 @@ fn run_cells(
         }
         std::thread::sleep(POLL_INTERVAL);
     };
+    if quester_path && result.is_ok() {
+        let observed_tick_mean = shared
+            .lock()
+            .map(|state| state.actors[0].tick_mean.mean_ms().is_some())
+            .unwrap_or(false);
+        if !observed_tick_mean {
+            result = Err("the live path did not observe an in-game tick interval".into());
+        }
+    }
 
     let result_text = format!("{result:?}");
+    let run_result = result.clone();
+    let end_ticks = shared
+        .lock()
+        .map_err(|_| "live state poisoned")?
+        .actors
+        .iter()
+        .map(|actor| actor.snapshot.tick())
+        .collect::<Vec<_>>();
     let mut final_statuses = Vec::with_capacity(names.len());
     let mut final_lifecycles = Vec::with_capacity(names.len());
     for account in &names {
@@ -2679,7 +2882,8 @@ fn run_cells(
             actor.pending_captures.push((label.to_owned(), receipt));
         }
     }
-    let capture_deadline = Instant::now() + Duration::from_secs(10);
+    let capture_wait_started = Instant::now();
+    let capture_deadline = capture_wait_started + END_CAPTURE_BOUND;
     loop {
         let all_captured = shared
             .lock()
@@ -2692,6 +2896,7 @@ fn run_cells(
         }
         std::thread::sleep(POLL_INTERVAL);
     }
+    let end_capture_wait_ms = capture_wait_started.elapsed().as_millis() as u64;
 
     let capture_errors = shared
         .lock()
@@ -2710,12 +2915,23 @@ fn run_cells(
         .iter()
         .enumerate()
         .filter(|(_, actor)| !actor.end_captured)
-        .map(|(index, actor)| format!("{} ({})", index, actor.account))
+        .map(|(index, actor)| {
+            let file = actor
+                .pending_jobs
+                .iter()
+                .find(|pending| pending.label == "end-pass" || pending.label == "end-fail")
+                .map_or_else(
+                    || "never submitted (client not in game)".to_owned(),
+                    |pending| format!("{} not written", pending.png_path.display()),
+                );
+            format!("{index} ({}): end capture {file}", actor.account)
+        })
         .collect::<Vec<_>>();
     if result.is_ok() && !missing_end.is_empty() {
         result = Err(format!(
-            "terminal capture timed out for {}",
-            missing_end.join(", ")
+            "terminal capture file missing after {} s: {}",
+            END_CAPTURE_BOUND.as_secs(),
+            missing_end.join("; ")
         ));
     }
 
@@ -2731,6 +2947,7 @@ fn run_cells(
                 json!({
                     "role": actor.role,
                     "account": actor.account,
+                    "end_tick": end_ticks[index],
                     "cell": actor.label,
                     "quest": actor.quest,
                     "display": actor.display,
@@ -2757,6 +2974,17 @@ fn run_cells(
                     "pair_cancelled": actor.pair_cancelled,
                     "step_observations": actor.step_observations,
                     "tick_observations": actor.tick_observations,
+                    "observed_tick_mean_ms": if quester_path {
+                        actor.tick_mean.mean_ms()
+                    } else {
+                        None
+                    },
+                    "observed_tick_intervals": if quester_path {
+                        actor.tick_mean.intervals
+                    } else {
+                        0
+                    },
+                    "stage_ticks": actor.stage_ticks,
                     "captures": actor.captures,
                     "final_status": final_statuses[index].as_deref().map(status_json),
                     "lifecycle": format!("{:?}", final_lifecycles[index]),
@@ -2783,12 +3011,14 @@ fn run_cells(
             })
         })
     };
-    let receipt = if mode.is_pair() {
+    let mut receipt = if mode.is_pair() {
         json!({
             "cell": run_label,
             "quest": actor_receipts[0]["quest"],
             "mode": mode.name(),
             "result": format!("{result:?}"),
+            "run_result": format!("{run_result:?}"),
+            "end_capture_wait_ms": end_capture_wait_ms,
             "game_port": profile.client().game_port(),
             "nav_pack": profile.nav_pack(),
             "roles": actor_receipts,
@@ -2801,6 +3031,9 @@ fn run_cells(
             "quest": actor["quest"],
             "mode": mode.name(),
             "result": format!("{result:?}"),
+            "run_result": format!("{run_result:?}"),
+            "end_tick": actor["end_tick"],
+            "end_capture_wait_ms": end_capture_wait_ms,
             "account": actor["account"],
             "game_port": profile.client().game_port(),
             "nav_pack": profile.nav_pack(),
@@ -2812,6 +3045,9 @@ fn run_cells(
             "transitions": actor["transitions"],
             "stages_seen": actor["stages_seen"],
             "tick_observations": actor["tick_observations"],
+            "observed_tick_mean_ms": actor["observed_tick_mean_ms"],
+            "observed_tick_intervals": actor["observed_tick_intervals"],
+            "stage_ticks": actor["stage_ticks"],
             "deaths": actor["deaths"],
             "death_sent": actor["death_sent"],
             "death_observed": actor["death_observed"],
@@ -2830,6 +3066,169 @@ fn run_cells(
             "end_captured": actor["end_captured"],
         })
     };
+    let logout_deadline = Instant::now() + CLEAN_LOGOUT_DEADLINE;
+    let mut teardown = TeardownSchedule::new(names.len(), logout_deadline);
+    match shared.lock() {
+        Ok(mut state) => state.teardown_started = true,
+        Err(_) => result = Err("live state poisoned before logout teardown".into()),
+    }
+    for account in &names {
+        play.script_stop(account);
+    }
+    let mut observed_ticks = Vec::with_capacity(names.len());
+    let mut logout_retry_ready = Vec::with_capacity(names.len());
+    let mut disconnected = Vec::with_capacity(names.len());
+    loop {
+        let now = Instant::now();
+        if teardown.deadline_expired(now) {
+            break;
+        }
+        observed_ticks.clear();
+        logout_retry_ready.clear();
+        match shared.lock() {
+            Ok(state) => {
+                observed_ticks.extend(state.actors.iter().map(|actor| actor.snapshot.tick()));
+                logout_retry_ready
+                    .extend(state.actors.iter().map(|actor| actor.logout_retry_ready));
+                if let Some(error) = state
+                    .actors
+                    .iter()
+                    .find_map(|actor| actor.logout_error.as_ref())
+                {
+                    result = Err(error.clone());
+                    break;
+                }
+            }
+            Err(_) => {
+                result = Err("live state poisoned during logout teardown".into());
+                break;
+            }
+        }
+        for (index, account) in names.iter().enumerate() {
+            if teardown.stop_ack_tick(index).is_none() && start_handle.idle(account) {
+                if let Some(tick) = observed_ticks.get(index).copied() {
+                    teardown.acknowledge_stop(index, tick);
+                    match shared.lock() {
+                        Ok(mut state) => {
+                            let actor = &mut state.actors[index];
+                            actor.logout = Some(scenario::teardown::CombatLogout::new(
+                                &actor.snapshot,
+                                logout_deadline,
+                            ));
+                        }
+                        Err(_) => {
+                            result = Err("live state poisoned after script Stop".into());
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+        for (index, account) in names.iter().enumerate() {
+            let now = Instant::now();
+            if !teardown.initial_logout_due(index, now) {
+                continue;
+            }
+            let Some(tick) = observed_ticks.get(index).copied() else {
+                continue;
+            };
+            if let Some(arm) = play.arm(account) {
+                if teardown.record_logout_attempt(index, tick, now) {
+                    arm.request_logout();
+                    play.wake(account);
+                }
+            } else {
+                teardown.mark_no_logout_arm(index);
+            }
+        }
+        for (index, account) in names.iter().enumerate() {
+            let connected = play.slot_connected(account);
+            let now = Instant::now();
+            let Some(tick) = observed_ticks.get(index).copied() else {
+                continue;
+            };
+            if !logout_retry_ready[index] || !teardown.retry_due(index, tick, connected, now) {
+                continue;
+            }
+            if let Some(arm) = play.arm(account) {
+                if teardown.record_logout_attempt(index, tick, now) {
+                    arm.request_logout();
+                    play.wake(account);
+                }
+            } else {
+                teardown.mark_no_logout_arm(index);
+            }
+        }
+        disconnected.clear();
+        disconnected.extend(names.iter().map(|account| !play.slot_connected(account)));
+        if teardown.complete(&disconnected) || teardown.deadline_expired(Instant::now()) {
+            break;
+        }
+        std::thread::sleep(POLL_INTERVAL);
+    }
+    disconnected.clear();
+    disconnected.extend(names.iter().map(|account| !play.slot_connected(account)));
+    let failed_accounts = names
+        .iter()
+        .enumerate()
+        .filter(|(index, _)| {
+            teardown.stop_ack_tick(*index).is_none()
+                || teardown.logout_attempt_ticks(*index).is_empty()
+                || !disconnected[*index]
+        })
+        .map(|(_, account)| account.clone())
+        .collect::<Vec<_>>();
+    let logout_complete = teardown.complete(&disconnected);
+    for account in &names {
+        play.stop_slot(account);
+    }
+    receipt["clean_logout"] = json!({
+        "complete": logout_complete,
+        "timeout_ms": CLEAN_LOGOUT_DEADLINE.as_millis(),
+        "combat_retry_game_ticks": COMBAT_LOGOUT_RETRY_TICKS,
+        "engine_content": "content/scripts/login_logout/logout.rs2:27",
+        "stop_ack_api": "ScriptStartHandle::idle",
+        "tick_source": "GameSnapshot::tick from observed PLAYER_INFO packets",
+        "combat_escape": shared.lock().ok().map(|state| state.actors.iter().map(|actor| json!({
+            "account": actor.account,
+            "refusal_sequence": actor.logout.as_ref().and_then(|logout| logout.refusal_sequence()),
+            "account_only_teleport_sent": actor.logout.as_ref().is_some_and(|logout| logout.escape_sent()),
+            "safe_arrival_tick": actor.logout.as_ref().and_then(|logout| logout.safe_arrival_tick()),
+            "safe_tile": scenario::teardown::LOGOUT_SAFE_TILE,
+        })).collect::<Vec<_>>()),
+        "accounts": names
+            .iter()
+            .zip(&disconnected)
+            .enumerate()
+            .map(|(index, (account, disconnected))| json!({
+                "account": account,
+                "script_stop_requested": true,
+                "stop_acknowledged": teardown.stop_ack_tick(index).is_some(),
+                "stop_ack_tick": teardown.stop_ack_tick(index),
+                "logout_attempts": teardown
+                    .logout_attempt_ticks(index)
+                    .iter()
+                    .enumerate()
+                    .map(|(attempt, tick)| json!({
+                        "attempt": attempt + 1,
+                        "game_tick": tick,
+                    }))
+                    .collect::<Vec<_>>(),
+                "disconnected": disconnected,
+            }))
+            .collect::<Vec<_>>(),
+    });
+    if !logout_complete {
+        let reason = format!(
+            "clean logout teardown failed for {}",
+            failed_accounts.join(", ")
+        );
+        result = match result {
+            Ok(()) => Err(reason),
+            Err(previous) => Err(format!("{previous}; {reason}")),
+        };
+    }
+    receipt["result"] = json!(format!("{result:?}"));
     for (index, directory) in directories.iter().enumerate() {
         let mut role_receipt = receipt.clone();
         if mode.is_pair() {
@@ -2843,12 +3242,6 @@ fn run_cells(
         .map_err(|error| error.to_string())?;
     }
     println!("{receipt}");
-    for account in &names {
-        play.script_stop(account);
-    }
-    for account in &names {
-        play.stop_slot(account);
-    }
     result.map(|()| receipt)
 }
 
@@ -3075,5 +3468,74 @@ mod tests {
         assert!(path_terminal_proven(true, true));
         assert!(!path_terminal_proven(false, true));
         assert!(!path_terminal_proven(true, false));
+    }
+}
+
+#[cfg(test)]
+mod teardown_tests {
+    use super::*;
+
+    #[test]
+    fn logout_waits_for_every_script_stop_acknowledgement() {
+        let now = Instant::now();
+        let mut teardown = TeardownSchedule::new(2, now + CLEAN_LOGOUT_DEADLINE);
+
+        assert!(!teardown.initial_logout_due(0, now));
+        assert!(!teardown.record_logout_attempt(0, 100, now));
+        teardown.acknowledge_stop(0, 100);
+        assert!(!teardown.initial_logout_due(0, now));
+        assert!(!teardown.record_logout_attempt(0, 100, now));
+        teardown.acknowledge_stop(1, 100);
+        assert!(teardown.initial_logout_due(0, now));
+        assert!(teardown.record_logout_attempt(0, 100, now));
+    }
+
+    #[test]
+    fn unchanged_game_tick_does_not_retry_logout() {
+        let now = Instant::now();
+        let mut teardown = TeardownSchedule::new(1, now + CLEAN_LOGOUT_DEADLINE);
+        teardown.acknowledge_stop(0, 100);
+        assert!(teardown.record_logout_attempt(0, 100, now));
+
+        let later_wall_time = now + Duration::from_secs(25);
+        assert!(!teardown.retry_due(0, 100, true, later_wall_time));
+        assert!(!teardown.retry_due(0, 100, true, now));
+        assert!(!teardown.retry_due(0, 115, true, now));
+    }
+
+    #[test]
+    fn refused_logout_retries_after_sixteen_new_game_ticks() {
+        let now = Instant::now();
+        let mut teardown = TeardownSchedule::new(2, now + CLEAN_LOGOUT_DEADLINE);
+        teardown.acknowledge_stop(0, 100);
+        teardown.acknowledge_stop(1, 104);
+        assert!(teardown.record_logout_attempt(0, 100, now));
+        assert!(teardown.record_logout_attempt(1, 104, now));
+
+        assert!(!teardown.retry_due(0, 115, true, now));
+        assert!(teardown.retry_due(0, 116, true, now));
+        assert!(!teardown.retry_due(1, 116, true, now));
+        assert!(teardown.retry_due(1, 120, true, now));
+        assert!(!teardown.retry_due(0, 116, false, now));
+    }
+
+    #[test]
+    fn fixed_deadline_fails_while_an_account_remains_connected() {
+        let started = Instant::now();
+        let deadline = started + CLEAN_LOGOUT_DEADLINE;
+        let mut teardown = TeardownSchedule::new(1, deadline);
+        teardown.acknowledge_stop(0, 200);
+        assert!(teardown.record_logout_attempt(0, 200, started));
+
+        assert!(teardown.deadline_expired(deadline));
+        assert!(!teardown.record_logout_attempt(0, 216, deadline));
+        assert!(!teardown.retry_due(0, 216, true, deadline));
+        assert!(!teardown.complete(&[false]));
+    }
+
+    #[test]
+    fn teardown_stops_queued_actor_work() {
+        assert!(actor_frame_enabled(false));
+        assert!(!actor_frame_enabled(true));
     }
 }

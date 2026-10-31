@@ -51,9 +51,42 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.8` 
   frontend already read its result. A script that remains idle no longer
   counts as a settled Start. Start holds now log their reason once per
   change at info level, with the bot name and current tick.
+- Live terminal and Quester test runs stop scripts before logout. If the engine
+  refuses logout because combat is still active, fixture teardown teleports only
+  that account to the safe mainland tile, waits 16 observed game ticks after
+  arrival, then retries logout within the original fixed 30-second deadline.
+
+### Grinch
+
+- Grinch now retries failed ground-item approaches before running its own
+  fallback, using the same bounded walk-retry behavior as Quester.
 
 ### Quester
 
+- A fixed-destination Quester walk retries `NoPath`, `RouteEnded`, `Stalled`
+  and `Failed` receipts only when they have no typed refusal or blocked zones.
+  Each retry waits for a later observed game tick and starts a fresh route
+  from the player's latest observed position. `Refused`, any typed refusal,
+  blocked danger zones and `Blocked` entrance requirements stop at once.
+  `Aborted`, `UserInput`, `NeedsEvidence` and `Cancelled` also stop at once.
+  The walk stops after three attempts and keeps the last failure detail.
+- Quester now retries approach walks for `interact`, `use_on`, `buy`, `make`,
+  bank access, `talk`, dialogue pre-walks, gathering, partner trades, thieving,
+  the totem security-door handler, shared `Reach` actions, combat approaches
+  and combat return-to-stand. Each retry makes a fresh route from the latest
+  observed tile on a later game tick. The shared three-attempt limit matches
+  `walk`. Danger refusals, blocked zones, user input, cancellation and missing
+  evidence still stop at once. Exhaustion keeps the last failure detail.
+- A Talk step no longer fails when the NPC is out of view for a moment while
+  the bot walks to it, for example while it wanders. The bot keeps walking
+  to where it last saw the NPC and talks to it when it sees it again. If the
+  NPC is still not in view after three walk attempts, the step
+  stops with an error that names the NPC and the tile where it was last
+  seen.
+- After a Talk-to refusal, a guide walks to the NPC's latest observed tile and
+  sends one more Talk-to request. This recovery also applies when the NPC's
+  wander range is zero. If the recovery walk fails or the server refuses the
+  next Talk-to request, the error keeps the refusal text.
 - Starting Quester now shows each target's declared danger zones before a
   fleet Start. The plan asks for confirmation and checks each saved queue
   again before Start. It skips a bot if its queue changed. A bulk Start
@@ -118,16 +151,29 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.8` 
   within the anchor radius, leaving the final, live-loc approach to select an
   accessible interaction side.
 - Talk steps now approach NPCs within the configured interaction distance
-  before opening their dialogue. Damage from a quest dialogue no longer looks
-  like an attack when no visible NPC or player targets the bot. A failed walk
-  also reports where its route ended.
+  before opening their dialogue. The approach budgets one observed tick per
+  planned walking tile, plus two slack ticks. When the live reach map cannot
+  reach the NPC, the budget is the route length that the route planner reports
+  for the same walk, plus the two slack ticks. A request with no route fails
+  with a named reason after the shared three-attempt approach budget. A route
+  planner that gives no answer within eight observed ticks counts the same way.
+  A route that ends short while the NPC stands still uses the same budget. A
+  replan, one for
+  each tile other than the NPC's home tile in its legal wander square, is spent
+  only when the NPC has moved. The first-page clock counts four observed ticks
+  from the engine's read of the accepted Talk-to click, or from the bot's
+  arrival beside the NPC if that comes later. The NPC's first game message
+  restarts it. A page on the deadline tick is accepted.
+- Damage from quest dialogue no longer looks like an attack when no visible
+  NPC or player targets the bot.
+- A failed walk also reports where its route ended.
 - Thieving steps now walk to the guide's anchor while the target NPC is out
   of sight, instead of waiting beside the anchor for a target that the bot
   never approached. The required level comes from the selected game content
   whenever no NPC is visible, so a bot below it refuses before walking or
-  stealing. A failed approach walk is planned again once from where the bot
-  stands, and the second failure ends the step with its detail. Inside the
-  anchor, the bot waits one NPC respawn window for a target and then stops
+  stealing. Failed approach walks are replanned from the observed tile within
+  the shared three-attempt limit, with the last failure ending the step.
+  Inside the anchor, the bot waits one NPC respawn window for a target and then stops
   with "no thieving target appeared at the anchor".
 - Anchor walks in thieving, gather, use-on and the Tribal Totem door steps now
   accept any standable tile inside the authored radius. Before, the walk
@@ -135,6 +181,30 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.8` 
   could end with "walk route ended before arrival" while already inside the
   area. The thieving approach settles the route end through the shared walk
   adapter, so it accepts the area and goes on to look for a workman there.
+- Quest dialogue no longer stops at two identical pages in a row. Merlin's
+  Crystal shows `And wait...` twice, and the guide used to wait for the page
+  to change, so it reported `dialogue failed` while the server had already
+  accepted the Continue. The guide now counts a Continue as done when the
+  host accepted it and a later game tick was observed, or when the page
+  changes. The guide presses Continue again on an identical page, but only
+  within the 10 observed game ticks that its first Continue on that page got.
+  A page that never changes ends the wait at that bound, not after 3 seconds
+  of clock time, even when the guide did not observe every tick (for example
+  during a hold) or had to delay the repeated press to a later tick.
+- When a step with a dialogue fails while a dialogue page is still open, its
+  retry continues that page from the player's current tile. It no longer
+  walks back to the step's start position first. This matters where the
+  quest's script moves the player during the dialogue, as the Merlin's
+  Crystal crate does. The retry still counts against the step's attempt limit.
+  When the attempts run out, the step stops with the reason of the last
+  failure.
+- Quest dialogue no longer reports `expected dialogue did not open` while the
+  host has not yet sent the Talk-to click. The wait for the first page starts
+  when the host accepts the click. While the host cannot send it (not
+  connected, or holding the bot), the guide waits. When a hold drops the
+  click unsent, the guide sends it again. When the host refuses the click,
+  the guide stops at once with `expected dialogue did not open`, the NPC, the
+  tick of the refusal and the last game message.
 
 ## [0.2.8] — 2026-10-29 — Beta 2
 
@@ -250,6 +320,13 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.8` 
   see Known issues.
 
 ### Documentation
+
+- A native script that asked the host for a route assessment could wait for
+  an answer that never came. This happened when the script's earlier walk had
+  just ended: the host cleared the old walk and, with it, the new assessment.
+  The host now clears only the old walk's own work, so the assessment still
+  answers once. If the host itself cancels a live assessment (a pause or a
+  relog), the script now gets one refusal that says so.
 
 - The script API documentation now states that moving the bot by hand during a
   fight ends `api.combat.fight` as `aborted` with reason `user-input`. The host

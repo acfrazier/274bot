@@ -3,7 +3,7 @@
 use api::interact::server_ordered::{ServerOrderedDispatch, ServerOrderedRequest};
 use api::quest_progress::EvidenceStamp;
 
-use super::ledger::{HostAction, HostEffect};
+use super::ledger::{HostAction, HostCustody, HostEffect};
 use super::{ActionContext, ActionError};
 use crate::surface::ServerOrderedEnvelope;
 
@@ -58,7 +58,7 @@ impl ActionContext<'_> {
         ledger.server_ordered = None;
         ledger.server_ordered_request = Some(request_id);
         ledger.outbox.push(HostAction {
-            owner,
+            custody: HostCustody::owner(owner),
             request_id,
             batch: 0,
             effect: HostEffect::ServerOrdered(envelope),
@@ -361,7 +361,7 @@ mod tests {
                     let ledger = frame.ledger.as_mut().unwrap();
                     for offset in 0..ledger.outbox.capacity() {
                         ledger.outbox.push(HostAction {
-                            owner: Arc::clone(&frame.owner),
+                            custody: HostCustody::owner(Arc::clone(&frame.owner)),
                             request_id: NonZeroU64::new(100 + offset as u64).unwrap(),
                             batch: 0,
                             effect: HostEffect::Interaction(crate::shim::InteractReq::CloseModal),

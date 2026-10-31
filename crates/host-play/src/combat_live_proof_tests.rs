@@ -75,9 +75,9 @@ const RANGED_ABORT_SURVIVAL_TICKS: i64 = 12;
 // Selected R289 data: Protect from Melee requires base Prayer 43.
 const RANGED_ABORT_MIN_PROTECT_LEVEL: i64 = 43;
 
-// Outside every nearby static tree's one-tile hunt range. The fixture's first
-// native walk enters3108/3346's one-tile hunt range after the exact HP8 Start.
-const TREE_APPROACH: WorldTile = WorldTile {
+/// Start outside the natural tree's one-tile hunt range. The authored walk
+/// enters that range after the exact HP8 baseline and script Start.
+const TREE_APPROACH_START: WorldTile = WorldTile {
     x: 3110,
     z: 3346,
     level: 0,
@@ -385,9 +385,9 @@ impl Case {
             }
             Self::M4 => world
                 .collision
-                .standable(TREE_APPROACH)
-                .then_some(TREE_APPROACH)
-                .ok_or_else(|| "safe Draynor Manor tree approach is not standable".to_owned()),
+                .standable(TREE_APPROACH_START)
+                .then_some(TREE_APPROACH_START)
+                .ok_or_else(|| "Draynor Manor M4 approach start must be standable".to_owned()),
             Self::R1 | Self::R2 | Self::R3 => ranged_placement(self, world).map(|p| p.spawn),
         }
     }
@@ -1125,11 +1125,13 @@ fn preparation_steps(
             ));
         }
         Case::M3 => steps.push(wear_step(RUNE_SCIMITAR_ID)),
-        Case::M4 => steps.push(cheat_step(
-            "drain Hitpoints to eight before hostile-area teleport",
-            "~stat_drain hitpoints 22 0".to_owned(),
-            Proof::Stat { id: 3, min: 8 },
-        )),
+        Case::M4 => {
+            steps.push(cheat_step(
+                "drain Hitpoints to eight before hostile-area teleport",
+                "~stat_drain hitpoints 22 0".to_owned(),
+                Proof::Stat { id: 3, min: 8 },
+            ));
+        }
         Case::M5 | Case::M5Stop => {
             steps.push(wear_step(BRONZE_SCIMITAR_ID));
             steps.push(cheat_step(
@@ -8249,14 +8251,17 @@ fn run_case(case: Case) {
     let path = script::quester::compile::prepare_for_test({
         let selected = Arc::clone(&selected);
         let quests = Arc::clone(&quests);
+        let world = Arc::clone(world.as_ref().expect("selected navigation world"));
         move |cap| {
+            let navigation =
+                nav_planner::producer::lease(&world).expect("selected navigation zone catalog");
             compile_path(
                 &compile_source,
                 &selected,
                 &quests,
                 cap,
                 &script::local_state::OperatorLoadouts::absent(),
-                None,
+                navigation.zones(),
             )
         }
     })
@@ -10540,6 +10545,70 @@ fn static_tree_identity_uses_selected_type_not_debug_name() {
     assert!(start_preflight(Case::M4, &baseline).is_some());
     capture.frames[0]["nearby_npcs"][0]["type"] = json!(1226);
     assert_eq!(m4_first_tree_hit_tick(&capture), None);
+}
+
+#[test]
+fn m4_stages_outside_the_natural_tree_hunt_range() {
+    let (walk, blocked) = nav_planner::collision::pack_walk(&[0; 4 * 4 * 3]);
+    let world = nav_planner::world::NavWorld::from_parts(
+        nav_planner::collision::WorldCollision {
+            origin: WorldTile {
+                x: 3108,
+                z: 3345,
+                level: 0,
+            },
+            width: 4,
+            height: 3,
+            walk,
+            blocked,
+            flags: None,
+        },
+        nav_planner::transport::TransportGraph::default(),
+        Vec::new(),
+    );
+    assert_eq!(
+        Case::M4.stand(&world).unwrap(),
+        WorldTile {
+            x: 3110,
+            z: 3346,
+            level: 0,
+        }
+    );
+}
+
+#[test]
+fn m4_declares_the_tree_crossing_without_a_poison_fixture() {
+    let scenario = scenario_for(
+        Case::M4,
+        TREE_APPROACH_START,
+        None,
+        Arc::new(Mutex::new(CombatCapture::default())),
+    );
+    assert_eq!(Case::M4.items(), &[("lobster", 4)]);
+    let fixture: script::quester::path::PathDocument = serde_json::from_slice(include_bytes!(
+        "../../script/paths/289/fixtures/combat_unattackable.json"
+    ))
+    .unwrap();
+    let stage = &fixture.roles[0].sequences[0];
+    assert_eq!(stage.cross.len(), 1);
+    assert_eq!(stage.cross[0].id, "nasty_tree@3108,3346,0");
+    assert_eq!(stage.steps[0].args["tile"], json!([3108, 3346, 0]));
+    assert_eq!(stage.steps[0].args["radius"], json!(1));
+    let index = |name| {
+        scenario
+            .steps
+            .iter()
+            .position(|step| step.name == name)
+            .unwrap()
+    };
+    let drain = index("drain Hitpoints to eight before hostile-area teleport");
+    let stand = index("stand at the quest start");
+    let start = scenario
+        .steps
+        .iter()
+        .position(|step| matches!(step.kind, StepKind::StartScript))
+        .unwrap();
+    assert!(drain < stand && stand < start);
 }
 
 #[test]

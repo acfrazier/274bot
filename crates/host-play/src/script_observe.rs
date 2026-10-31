@@ -606,7 +606,7 @@ pub(crate) fn script_observe_cached_with_channels(
                     owner.live() && owner.request_id().get() == bot.walk_outcome_request_id
                 });
             deliver_native_walk_end(&mut slot, bot, tick);
-            host_results_dirty |= deliver_native_advice(&mut slot, bot);
+            host_results_dirty |= deliver_native_advice(&mut slot, bot, tick);
             // A newly armed walk may already have replaced the completed
             // route. Its predecessor still owns a release slot. Only when
             // the same request id remains armed must the route generation
@@ -2029,6 +2029,11 @@ fn deliver_native_walk_end(slot: &mut script::SlotScript, bot: &mut NavBot, tick
         let refusal = risk.as_deref().and_then(|risk| risk.refusal);
         let escape = risk.as_deref().and_then(|risk| risk.escape);
         let blocked = risk.as_deref().and_then(|risk| risk.blocked.clone());
+        api::host_log!(
+            api::hostlog::Category::NavTrace,
+            api::hostlog::Level::Debug,
+            "native-walk-deliver tick={tick} request_id={request_id} source=terminal end={end:?}"
+        );
         slot.complete_native_walk(
             &owner,
             receipt(
@@ -2099,6 +2104,11 @@ fn deliver_native_walk_end(slot: &mut script::SlotScript, bot: &mut NavBot, tick
             z: bot.walk_outcome_z,
             level: bot.walk_outcome_level,
         });
+    api::host_log!(
+        api::hostlog::Category::NavTrace,
+        api::hostlog::Level::Debug,
+        "native-walk-deliver tick={tick} request_id={request_id} source=outcome end={end:?}"
+    );
     slot.complete_native_walk(
         owner,
         receipt(
@@ -2110,7 +2120,7 @@ fn deliver_native_walk_end(slot: &mut script::SlotScript, bot: &mut NavBot, tick
     bot.walk_outcome_detail = None;
 }
 
-fn deliver_native_advice(slot: &mut script::SlotScript, bot: &mut NavBot) -> bool {
+fn deliver_native_advice(slot: &mut script::SlotScript, bot: &mut NavBot, tick: u64) -> bool {
     let mut completed = false;
     if let Some((authority, receipt)) = bot.bank_pick.take_native_receipt() {
         slot.complete_native_bank_pick(&authority, receipt);
@@ -2118,6 +2128,16 @@ fn deliver_native_advice(slot: &mut script::SlotScript, bot: &mut NavBot) -> boo
     }
     if let Some(result) = bot.assess_result.take() {
         let (authority, receipt) = *result;
+        api::host_log!(
+            api::hostlog::Category::NavTrace,
+            api::hostlog::Level::Debug,
+            "assess-deliver tick={tick} request_id={} live={} route_ticks={} refusal={:?} detail={:?}",
+            receipt.request_id,
+            authority.live(),
+            receipt.route_ticks,
+            receipt.refusal,
+            receipt.detail
+        );
         slot.complete_native_assess_walk(&authority, receipt);
         completed = true;
     }

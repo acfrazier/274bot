@@ -4263,6 +4263,118 @@ fn quit_closes_the_play_through_the_quit_command() {
     assert!(!session.core.has_play(), "Quit closed the play session");
 }
 
+#[test]
+fn live_quit_defers_play_shutdown_to_run_loop_cleanup() {
+    let iso = IsolatedStores::enter("tui-live-quit-cleanup");
+    let (mut session, mut app) = tui_with_profiles(&iso, &["alice", "bob"]);
+    session.live_name = Some("quester".into());
+
+    dispatch(&mut session, &mut app, AppAction::Quit);
+
+    assert!(app.quit, "the event loop ends");
+    assert_eq!(app.error, None);
+    assert!(
+        session.core.has_play(),
+        "live shutdown waits for the run-loop logout step"
+    );
+}
+
+#[test]
+fn incomplete_live_run_still_fails_after_shutdown_cleanup() {
+    let iso = IsolatedStores::enter("tui-live-incomplete-failure");
+    let (mut session, mut app) = tui_with_profiles(&iso, &["alice", "bob"]);
+    session.live_name = Some("quester".into());
+
+    let result =
+        session.finish_live_exit(&mut app, Err("live run stopped before completion".into()));
+
+    assert_eq!(result, Err("live run stopped before completion".into()));
+    assert!(!session.core.has_play(), "cleanup quits the Play session");
+}
+
+#[test]
+fn live_logout_retries_only_after_sixteen_observed_game_ticks() {
+    let mut tick = Some(100);
+    for observed in [None, Some(100), Some(100), Some(115)] {
+        assert!(!live_logout_retry_due(&mut tick, observed));
+        assert_eq!(tick, Some(100));
+    }
+    assert!(live_logout_retry_due(&mut tick, Some(116)));
+    assert_eq!(tick, Some(116));
+    assert!(!live_logout_retry_due(&mut tick, Some(116)));
+    assert!(!live_logout_retry_due(&mut tick, Some(131)));
+    assert!(live_logout_retry_due(&mut tick, Some(132)));
+}
+
+#[test]
+fn live_logout_without_a_snapshot_starts_its_wait_at_the_first_observed_tick() {
+    let mut tick = None;
+    assert!(!live_logout_retry_due(&mut tick, None));
+    assert!(!live_logout_retry_due(&mut tick, Some(500)));
+    assert_eq!(tick, Some(500));
+    assert!(!live_logout_retry_due(&mut tick, Some(515)));
+    assert!(live_logout_retry_due(&mut tick, Some(516)));
+}
+
+#[test]
+fn live_logout_tick_wait_is_per_account_and_handles_tick_wrap() {
+    let mut early = Some(100);
+    let mut late = Some(108);
+    assert!(live_logout_retry_due(&mut early, Some(116)));
+    assert!(!live_logout_retry_due(&mut late, Some(116)));
+    assert!(live_logout_retry_due(&mut late, Some(124)));
+    let mut wrapped = Some(u32::MAX - 7);
+    assert!(!live_logout_retry_due(&mut wrapped, Some(7)));
+    assert!(live_logout_retry_due(&mut wrapped, Some(8)));
+}
+
+#[cfg(feature = "js")]
+#[test]
+fn live_logout_waits_for_running_and_queued_scripts_to_stop() {
+    let iso = IsolatedStores::enter("tui-live-logout-stop");
+    let names = ["alice", "bob", "carol", "dave", "erin"];
+    let (mut session, mut app) = tui_with_profiles(&iso, &names);
+    session.names = names.iter().map(|name| (*name).to_string()).collect();
+    let path = iso.dir().join("loop.ts");
+    std::fs::write(&path, LOOPING_TS).unwrap();
+    let card = session.scripts.load_card(&path).unwrap();
+    for name in names {
+        assign(&mut session, name, &card);
+    }
+    start_assigned_script(&mut session, &mut app, "alice");
+    settle_starts(&mut session, &mut app);
+    wait_script_state(
+        session.core.play_for_test().unwrap(),
+        "alice",
+        ScriptRunState::Running,
+    );
+    run_fleet_action(&mut session, &mut app, frontend_core::FleetAction::Start);
+    let queued = names
+        .iter()
+        .find(|name| session.scripts.start_queue_place(name).is_some())
+        .expect("the frame leaves a queued Start")
+        .to_string();
+    assert!(names
+        .iter()
+        .any(|name| session.core.script_state(name) != ScriptRunState::Idle));
+    session.live_name = Some("auto_fighter".into());
+
+    session.clean_logout_live(&mut app).unwrap();
+
+    for name in names {
+        assert_eq!(
+            session.core.script_state(name),
+            ScriptRunState::Idle,
+            "{name} must acknowledge Stop before logout completes"
+        );
+        assert!(
+            !session.scripts.start_waiting(name),
+            "{name} must not retain a queued Start"
+        );
+    }
+    assert!(!session.scripts.start_waiting(&queued));
+}
+
 /// Nothing loaded is not an error when quitting.
 #[test]
 fn quit_with_nothing_loaded_is_not_an_error() {

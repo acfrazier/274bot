@@ -2286,7 +2286,6 @@ fn palette_start_opens_quester_zone_scope_before_start() {
         );
     }
 }
-
 #[test]
 fn map_search_list_uses_display_name_not_slash_breaks() {
     let (catalogue, _, label_anchor) = map_poi_catalogue();

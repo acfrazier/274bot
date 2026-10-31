@@ -1564,7 +1564,7 @@ fn case20_steady_nonemitting_combat_ticks_allocate_nothing() {
     assert_eq!(allocations.count_total, 0);
     assert!(harness.machine.counters.swings >= 50);
     assert_eq!(harness.machine.counters.food, 0);
-    assert!(std::mem::size_of::<Combat>() <= 512);
+    assert!(std::mem::size_of::<Combat>() <= 528);
     assert!(std::mem::size_of::<CombatReport>() <= 80);
     println!("Combat={} CombatReport={} CombatRequest={} ArcRequest={} ActionHandle={} HostAction={} Ledger={} InteractionReceipt={} WalkReceipt={}",
         std::mem::size_of::<Combat>(), std::mem::size_of::<CombatReport>(), std::mem::size_of::<CombatRequest>(), std::mem::size_of::<Arc<CombatRequest>>(),
@@ -3753,6 +3753,137 @@ fn leash_cancellation_grace_kill_beats_the_exact_budget_boundary() {
 }
 
 #[test]
+fn quester_combat_approach_replans_after_no_path() {
+    let mut scene = Scene::new("imp");
+    let here = scene.local.player.actor.tile;
+    let stand = tile(here.x + 20, here.z);
+    scene.npcs[0].tile = tile(stand.x + 10, stand.z);
+    scene.npcs[0].network = scene.npcs[0].tile;
+    scene.npcs[0].distance = 30;
+    scene.refresh();
+    let mut request = scene.request();
+    request.stand = Some(stand);
+    request.engage_radius = 1;
+    request.retry_approach_walks = true;
+    let mut harness = Harness::new(&scene, request);
+
+    assert!(matches!(
+        harness.pending(&scene, 1),
+        Some(HostEffect::Walk(walk)) if walk.target == stand
+    ));
+    post_walk_receipt(
+        &mut harness,
+        2,
+        crate::native::WalkEnd::NoPath,
+        Some("first route failed"),
+    );
+    scene.local.player.actor.tile = tile(here.x + 1, here.z);
+    scene.face_us();
+    scene.refresh();
+    scene.snapshot.seed_hitmarks(HitmarksView {
+        marks: [
+            HitmarkView {
+                value: 3,
+                kind: crate::combat::threats::HITMARK_DAMAGE,
+                cycle: 100,
+            },
+            HitmarkView {
+                value: 0,
+                kind: 0,
+                cycle: 0,
+            },
+            HitmarkView {
+                value: 0,
+                kind: 0,
+                cycle: 0,
+            },
+            HitmarkView {
+                value: 0,
+                kind: 0,
+                cycle: 0,
+            },
+        ],
+        loop_cycle: 70,
+    });
+    assert!(harness.pending(&scene, 2).is_none());
+    assert!(harness.machine.pending_walk.is_none());
+    assert_eq!(harness.machine.counters.damage, 3);
+    // A newer render sequence on the failure tick must not start a retry.
+    assert!(harness.poll_stamp(&scene.snapshot, 2, 20).is_pending());
+    assert!(harness.machine.pending_walk.is_none());
+    assert_eq!(harness.drain(None).len(), 0);
+    assert_eq!(
+        harness.machine.counters.damage, 3,
+        "same-tick polls do not count hits twice"
+    );
+
+    assert!(matches!(
+        harness.pending(&scene, 3),
+        Some(HostEffect::Walk(walk))
+            if walk.target == stand && walk.required_after.tick == 3
+    ));
+    post_walk_receipt(&mut harness, 4, crate::native::WalkEnd::Arrived, None);
+    scene.local.player.actor.tile = stand;
+    scene.refresh();
+    assert!(harness.poll_stamp(&scene.snapshot, 4, 4).is_pending());
+    assert!(harness.machine.pending_walk.is_none());
+    assert_eq!(harness.drain(None).len(), 0);
+}
+
+#[test]
+fn quester_combat_approach_exhaustion_keeps_the_last_walk_detail() {
+    let mut scene = Scene::new("imp");
+    let here = scene.local.player.actor.tile;
+    let stand = tile(here.x + 20, here.z);
+    scene.npcs[0].tile = tile(stand.x + 10, stand.z);
+    scene.npcs[0].network = scene.npcs[0].tile;
+    scene.npcs[0].distance = 30;
+    scene.refresh();
+    let mut request = scene.request();
+    request.stand = Some(stand);
+    request.engage_radius = 1;
+    request.retry_approach_walks = true;
+    let mut harness = Harness::new(&scene, request);
+
+    assert!(matches!(
+        harness.pending(&scene, 1),
+        Some(HostEffect::Walk(walk)) if walk.target == stand
+    ));
+    let mut previous_request = harness.machine.pending_walk.unwrap().get();
+    for (attempt, failure_tick, detail) in [
+        (1, 2, "first route failed"),
+        (2, 4, "second route failed"),
+        (3, 6, "last route failed"),
+    ] {
+        post_walk_receipt(
+            &mut harness,
+            failure_tick,
+            crate::native::WalkEnd::NoPath,
+            Some(detail),
+        );
+        if attempt == 3 {
+            assert!(matches!(
+                harness.poll(&scene.snapshot, failure_tick),
+                Poll::Ready(Err(ActionError::Blocked(reason)))
+                    if reason.as_ref() == "last route failed"
+            ));
+            break;
+        }
+        assert!(harness.pending(&scene, failure_tick).is_none());
+        let retry_tick = failure_tick + 1;
+        let Some(HostEffect::Walk(walk)) = harness.pending(&scene, retry_tick) else {
+            panic!("attempt {attempt} must submit a fresh approach walk");
+        };
+        assert_eq!(walk.target, stand);
+        assert_eq!(walk.required_after.tick, retry_tick);
+        let retry_request = harness.machine.pending_walk.unwrap().get();
+        assert_ne!(retry_request, previous_request);
+        previous_request = retry_request;
+    }
+    assert_eq!(harness.drain(None).len(), 0);
+}
+
+#[test]
 fn user_input_ends_combat_approach_without_rewalk_or_attack() {
     let mut scene = Scene::new("imp");
     let here = scene.local.player.actor.tile;
@@ -3763,6 +3894,7 @@ fn user_input_ends_combat_approach_without_rewalk_or_attack() {
     let mut request = scene.request();
     request.stand = Some(stand);
     request.engage_radius = 1;
+    request.retry_approach_walks = true;
     let mut harness = Harness::new(&scene, request);
 
     assert!(matches!(

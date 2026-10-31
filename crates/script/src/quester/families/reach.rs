@@ -121,6 +121,9 @@ pub struct Reach {
     clicked: Option<AvoidKey>,
     avoid: Avoid,
     walk: Option<Walk>,
+    walk_retry: crate::native::WalkRetryState,
+    /// The last retryable walk failure, used if a fresh target cannot be planned.
+    last_walk_failure: Option<Arc<str>>,
     request_id: u64,
     /// The last emitted target click was within interaction range on the
     /// snapshot that chose it, before the server could transform the loc or
@@ -201,6 +204,8 @@ impl NativeMachine for Reach {
             avoid: Avoid::default(),
             walk: None,
             request_id: 0,
+            walk_retry: crate::native::WalkRetryState::default(),
+            last_walk_failure: None,
             in_range_at_click: false,
             ground_attempt: None,
             ground_outcome: None,
@@ -314,14 +319,48 @@ impl NativeMachine for Reach {
                 Poll::Pending
             }
             Phase::WaitWalk { door } => {
+                if self.walk_retry.pending() {
+                    let tick = cx.evidence().tick;
+                    if self.walk_retry.waiting_for_next_tick(tick) {
+                        return Poll::Pending;
+                    }
+                    let retry = match door {
+                        Some((id, tile)) => self.walk_to(tile, None, Some((id, tile)), cx),
+                        None => self.walk_to_target(cx),
+                    };
+                    match defer_budget(retry) {
+                        Poll::Pending => {
+                            self.walk_retry.defer_until_next_tick(tick);
+                            return Poll::Pending;
+                        }
+                        Poll::Ready(Err(error)) => {
+                            let error = self
+                                .last_walk_failure
+                                .take()
+                                .map_or(error, ActionError::Blocked);
+                            return Poll::Ready(Err(error));
+                        }
+                        Poll::Ready(Ok(())) => return Poll::Pending,
+                    }
+                }
                 match self.walk.as_mut().expect("door recovery walk").poll(cx) {
                     Poll::Pending => Poll::Pending,
                     Poll::Ready(Ok(receipt)) => {
+                        if self
+                            .walk_retry
+                            .observe_approach_failure(&receipt, cx.evidence().tick)
+                        {
+                            self.last_walk_failure = Some(receipt.failure_detail_or_fallback());
+                            self.walk = None;
+                            return Poll::Pending;
+                        }
                         let arrival = receipt.into_arrival();
                         self.walk = None;
                         if let Err(error) = arrival {
                             return Poll::Ready(Err(error));
                         }
+                        self.walk_retry.reset();
+                        self.last_walk_failure = None;
                         self.phase = match door {
                             Some((id, tile)) => Phase::OpenDoor { id, tile },
                             None => Phase::Seek,
@@ -830,6 +869,7 @@ impl Reach {
             walk_request(target, 0, None, cx.evidence()),
             cx,
         )?);
+        self.walk_retry.action_submitted();
         self.phase = Phase::WaitWalk { door: None };
         Ok(())
     }
@@ -845,6 +885,7 @@ impl Reach {
             walk_request(target, 1, loc_id, cx.evidence()),
             cx,
         )?);
+        self.walk_retry.action_submitted();
         self.phase = Phase::WaitWalk { door };
         Ok(())
     }
@@ -1624,8 +1665,12 @@ pub fn duration_ms(ms: u64) -> Duration {
 mod tests {
     use super::*;
     use crate::native::HostEffect;
-    use crate::quester::families::tests::{local_player, with_tick, with_tick_snapshots};
-    use api::snapshot::{GameSnapshot, LocLayer, LocView, SnapshotView, WorldStateView};
+    use crate::quester::families::tests::{
+        local_player, post_walk_receipt, with_tick, with_tick_snapshots,
+    };
+    use api::snapshot::{
+        GameSnapshot, GroundItemView, LocLayer, LocView, SnapshotView, WorldStateView,
+    };
 
     fn tile(x: i32, z: i32) -> WorldTile {
         WorldTile { x, z, level: 0 }
@@ -1718,6 +1763,8 @@ mod tests {
             clicked: None,
             avoid: Avoid::default(),
             walk: None,
+            walk_retry: crate::native::WalkRetryState::default(),
+            last_walk_failure: None,
             request_id: 0,
             in_range_at_click: false,
             ground_attempt: None,
@@ -1852,6 +1899,91 @@ mod tests {
                 HostEffect::Interaction(InteractReq::Loc { id: Some(1530), .. })
             ));
         });
+    }
+    #[test]
+    fn retry_replanning_failure_keeps_the_walk_receipt_detail() {
+        let player = tile(5, 5);
+        let target = tile(7, 5);
+        let mut seen = scene((3200, 3200), player, Vec::new());
+        seen.seed_ground_items(vec![GroundItemView {
+            def: crate::quester::families::tests::def(1944, "Egg"),
+            count: 1,
+            actions: vec![Some("Take".into())],
+            tile: target,
+            distance: 2,
+        }]);
+        let missing = scene((3200, 3200), player, Vec::new());
+        let scene = api::snapshot::SceneView {
+            available: true,
+            base_x: player.x,
+            base_z: player.z,
+            level: player.level,
+            width: 1,
+            height: 1,
+            collision_flags: vec![0],
+        };
+        let flood = api::query::SceneQuery::new(&scene, Some(player)).flood_reach();
+        let reach = api::query::pack_reach_query(&scene, flood.as_ref());
+        let mut ledger = None;
+        let handle = crate::quester::families::tests::with_tick_reach(
+            &seen,
+            &reach,
+            &mut ledger,
+            1,
+            |tick| {
+                let handle = tick
+                    .actions
+                    .begin::<Reach>(seek_args(), &mut tick.cx)
+                    .unwrap();
+                assert!(matches!(
+                    &tick
+                        .cx
+                        .ledger
+                        .as_ref()
+                        .unwrap()
+                        .outbox
+                        .last()
+                        .unwrap()
+                        .effect,
+                    HostEffect::Walk(_)
+                ));
+                handle
+            },
+        );
+
+        post_walk_receipt(
+            &mut ledger,
+            2,
+            WalkEnd::NoPath,
+            Some("the specific first route failure"),
+        );
+        assert!(crate::quester::families::tests::with_tick_reach(
+            &seen,
+            &reach,
+            &mut ledger,
+            2,
+            |tick| tick.actions.poll(&handle, &mut tick.cx)
+        )
+        .is_pending());
+        assert!(crate::quester::families::tests::with_tick_reach(
+            &seen,
+            &reach,
+            &mut ledger,
+            2,
+            |tick| tick.actions.poll(&handle, &mut tick.cx)
+        )
+        .is_pending());
+        assert!(matches!(
+            crate::quester::families::tests::with_tick_reach(
+                &missing,
+                &reach,
+                &mut ledger,
+                3,
+                |tick| tick.actions.poll(&handle, &mut tick.cx)
+            ),
+            Poll::Ready(Err(ActionError::Blocked(detail)))
+                if detail.as_ref() == "the specific first route failure"
+        ));
     }
 }
 

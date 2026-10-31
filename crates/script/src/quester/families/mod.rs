@@ -45,12 +45,31 @@ pub(super) fn manual_movement_message() -> Arc<str> {
     Arc::clone(&REASON)
 }
 
-/// A route refusal is a terminal for the owning step, not permission to
-/// silently re-arm its approach. Park until an explicit owner retry.
+/// Map a native walk receipt to arrival evidence or its typed error.
 fn walk_step_evidence(
     receipt: WalkReceipt,
 ) -> Result<api::quest_progress::EvidenceStamp, ActionError> {
     receipt.into_arrival()
+}
+
+/// Approach owners use the same retry state as the `walk` step.
+fn begin_approach_walk(
+    retry: &mut crate::native::WalkRetryState,
+    request: crate::native::WalkRequest,
+    cx: &mut StepContext<'_, '_>,
+) -> Poll<Result<ActionHandle<Walk>, ActionError>> {
+    let now = cx.tick.cx.evidence().tick;
+    match crate::native::defer_budget(cx.tick.actions.begin::<Walk>(request, &mut cx.tick.cx)) {
+        Poll::Pending => {
+            retry.defer_until_next_tick(now);
+            Poll::Pending
+        }
+        Poll::Ready(Err(error)) => Poll::Ready(Err(error)),
+        Poll::Ready(Ok(handle)) => {
+            retry.action_submitted();
+            Poll::Ready(Ok(handle))
+        }
+    }
 }
 
 pub fn handlers() -> &'static [super::compile::StepHandler] {
@@ -1184,12 +1203,12 @@ fn parse_walk_plan(arg: WalkArgs) -> Result<WalkPlan, CompileError> {
     };
     validate_tile(arg.tile, &arg.source)?;
     let options = arg.options();
-    let cross = arg
+    let cross: Arc<[Arc<str>]> = arg
         .cross
         .into_iter()
-        .map(Arc::from)
+        .map(Arc::<str>::from)
         .collect::<Vec<_>>()
-        .into_boxed_slice();
+        .into();
     Ok(WalkPlan {
         tile: WorldTile {
             x: arg.tile[0],
@@ -1203,57 +1222,115 @@ fn parse_walk_plan(arg: WalkArgs) -> Result<WalkPlan, CompileError> {
     })
 }
 
+#[derive(Clone)]
 struct WalkPlan {
     tile: WorldTile,
     radius: u16,
     options: WalkOptions,
-    cross: Box<[Arc<str>]>,
+    cross: Arc<[Arc<str>]>,
     protect: bool,
+}
+impl WalkPlan {
+    fn request(&self, cx: &StepContext<'_, '_>) -> crate::native::WalkRequest {
+        let mut request = reach::walk_request(self.tile, self.radius, None, cx.required_after);
+        request.cross = self
+            .cross
+            .iter()
+            .cloned()
+            .collect::<Vec<_>>()
+            .into_boxed_slice();
+        request.options = self.options;
+        request.protect = self.protect;
+        request
+    }
 }
 impl StepPlan for WalkPlan {
     fn begin(&self, cx: &mut StepContext<'_, '_>) -> Result<Box<dyn StepRun>, ActionError> {
-        let mut request = reach::walk_request(self.tile, self.radius, None, cx.required_after);
-        request.cross = self.cross.clone();
-        request.options = self.options;
-        request.protect = self.protect;
-        let handle = cx.tick.actions.begin::<Walk>(request, &mut cx.tick.cx)?;
-        Ok(Box::new(WalkRun {
-            handle,
+        let mut run = WalkRun {
+            plan: self.clone(),
+            handle: None,
+            retry: crate::native::WalkRetryState::default(),
             warning: None,
-        }))
+            trace_event: None,
+        };
+        run.begin_walk(cx)?;
+        Ok(Box::new(run))
     }
 }
-
 struct WalkRun {
-    handle: ActionHandle<Walk>,
+    plan: WalkPlan,
+    handle: Option<ActionHandle<Walk>>,
+    retry: crate::native::WalkRetryState,
     warning: Option<Arc<str>>,
+    trace_event: Option<super::compile::StepTraceEvent>,
+}
+impl WalkRun {
+    fn begin_walk(&mut self, cx: &mut StepContext<'_, '_>) -> Result<(), ActionError> {
+        let request = self.plan.request(cx);
+        let handle = cx.tick.actions.begin::<Walk>(request, &mut cx.tick.cx)?;
+        self.handle = Some(handle);
+        self.retry.action_submitted();
+        self.warning = None;
+        Ok(())
+    }
 }
 impl StepRun for WalkRun {
     fn poll(&mut self, cx: &mut StepContext<'_, '_>) -> Poll<Result<StepOutcome, ActionError>> {
-        while let Some(event) = cx
-            .tick
-            .actions
-            .take_walk_event(&self.handle, &mut cx.tick.cx)
-        {
-            self.warning = Some(event.detail);
-        }
-        match cx.tick.actions.poll(&self.handle, &mut cx.tick.cx) {
-            Poll::Pending => Poll::Pending,
-            Poll::Ready(Ok(receipt)) => {
-                Poll::Ready(walk_step_evidence(receipt).map(|evidence| StepOutcome {
-                    progress: None,
-                    evidence,
-                    receipt: None,
-                }))
+        let now = cx.tick.cx.evidence().tick;
+        if self.retry.pending() {
+            if self.retry.waiting_for_next_tick(now) {
+                return Poll::Pending;
             }
-            Poll::Ready(Err(error)) => Poll::Ready(Err(error)),
+            match crate::native::defer_budget(self.begin_walk(cx)) {
+                Poll::Pending => {
+                    self.retry.defer_until_next_tick(now);
+                    return Poll::Pending;
+                }
+                Poll::Ready(Err(error)) => return Poll::Ready(Err(error)),
+                Poll::Ready(Ok(())) => {}
+            }
         }
+
+        let result = {
+            let Some(handle) = self.handle.as_ref() else {
+                return Poll::Ready(Err(ActionError::Stale));
+            };
+            while let Some(event) = cx.tick.actions.take_walk_event(handle, &mut cx.tick.cx) {
+                self.warning = Some(event.detail);
+            }
+            match cx.tick.actions.poll(handle, &mut cx.tick.cx) {
+                Poll::Pending => return Poll::Pending,
+                Poll::Ready(Ok(receipt)) => {
+                    if self.retry.observe_failure(&receipt, now) {
+                        self.handle = None;
+                        self.trace_event = Some(super::compile::StepTraceEvent::WalkRetry {
+                            attempt: self.retry.retry_attempt_number(),
+                            failure_detail: receipt.failure_detail_or_fallback(),
+                        });
+                        return Poll::Pending;
+                    }
+                    walk_step_evidence(receipt).map(|evidence| StepOutcome {
+                        progress: None,
+                        evidence,
+                        receipt: None,
+                    })
+                }
+                Poll::Ready(Err(error)) => Err(error),
+            }
+        };
+        Poll::Ready(result)
     }
+
     fn cancel(&mut self, _actions: &mut NativeActions) {}
+
     fn waiting_for(&self) -> Option<(&'static str, &Arc<str>)> {
         self.warning
             .as_ref()
             .map(|warning| ("Walk protection", warning))
+    }
+
+    fn take_trace_event(&mut self) -> Option<super::compile::StepTraceEvent> {
+        self.trace_event.take()
     }
 }
 
@@ -1521,11 +1598,10 @@ struct TalkPlan {
     options: dialogue::DialogueOptions,
     expect_combat: Option<i32>,
 }
-impl StepPlan for TalkPlan {
-    fn anchor(&self) -> Option<WorldTile> {
-        self.tile
-    }
-    fn begin(&self, _cx: &mut StepContext<'_, '_>) -> Result<Box<dyn StepRun>, ActionError> {
+impl TalkPlan {
+    /// `open_page`: the step's retry found its dialogue page still open; the
+    /// run continues that page from the current tile without the anchor walk.
+    fn run(&self, open_page: bool) -> Result<Box<dyn StepRun>, ActionError> {
         Ok(Box::new(TalkRun {
             target: self.target.clone(),
             tile: self.tile,
@@ -1533,9 +1609,25 @@ impl StepPlan for TalkPlan {
             options: self.options.clone(),
             expect_combat: self.expect_combat,
             walk: None,
+            walk_retry: crate::native::WalkRetryState::default(),
             dialogue: None,
             started: false,
+            open_page,
         }))
+    }
+}
+impl StepPlan for TalkPlan {
+    fn anchor(&self) -> Option<WorldTile> {
+        self.tile
+    }
+    fn begin(&self, _cx: &mut StepContext<'_, '_>) -> Result<Box<dyn StepRun>, ActionError> {
+        self.run(false)
+    }
+    fn begin_open_page(
+        &self,
+        cx: &mut StepContext<'_, '_>,
+    ) -> Result<Box<dyn StepRun>, ActionError> {
+        self.run(dialogue::page_open(&cx.tick.cx))
     }
 }
 
@@ -1546,20 +1638,30 @@ struct TalkRun {
     options: dialogue::DialogueOptions,
     expect_combat: Option<i32>,
     walk: Option<ActionHandle<Walk>>,
+    walk_retry: crate::native::WalkRetryState,
     dialogue: Option<ActionHandle<dialogue::Dialogue>>,
     started: bool,
+    /// The retry of a step that failed with its dialogue page open: no anchor walk.
+    open_page: bool,
 }
-// 576 B measured (+32 B headroom): both inline action handles store machine state; this approach fix adds no fields.
-const _: [(); 1] = [(); (std::mem::size_of::<TalkRun>() <= 608) as usize];
+// 664 B measured (+32 B headroom): both inline action handles store machine state; the dialogue approach round 3 fix grew `Dialogue` by 56 B (see `dialogue.rs`).
+const _: [(); 1] = [(); (std::mem::size_of::<TalkRun>() <= 696) as usize];
 impl StepRun for TalkRun {
     fn poll(&mut self, cx: &mut StepContext<'_, '_>) -> Poll<Result<StepOutcome, ActionError>> {
+        let now_tick = cx.tick.cx.evidence().tick;
         if let Some(handle) = &self.walk {
             match cx.tick.actions.poll(handle, &mut cx.tick.cx) {
                 Poll::Pending => return Poll::Pending,
                 Poll::Ready(Err(error)) => return Poll::Ready(Err(error)),
                 Poll::Ready(Ok(receipt)) => {
-                    walk_step_evidence(receipt)?;
                     self.walk = None;
+                    if self.walk_retry.observe_approach_failure(&receipt, now_tick) {
+                        return Poll::Pending;
+                    }
+                    if let Err(error) = walk_step_evidence(receipt) {
+                        return Poll::Ready(Err(error));
+                    }
+                    self.walk_retry.reset();
                 }
             }
         }
@@ -1573,16 +1675,22 @@ impl StepRun for TalkRun {
                     .map(|player| player.value.player.network);
                 let near =
                     here.is_some_and(|here| reach::within(here, tile, i32::from(self.leash)));
-                if !near {
+                if !near && !self.open_page {
+                    if self.walk_retry.waiting_for_next_tick(now_tick) {
+                        return Poll::Pending;
+                    }
                     let mut request =
                         reach::walk_request(tile, self.leash, None, cx.required_after);
                     request.arrival = nav_planner::contract::ArrivalKind::Area;
-                    self.walk = Some(std::task::ready!(crate::native::defer_budget(
-                        cx.tick.actions.begin::<Walk>(request, &mut cx.tick.cx),
+                    self.walk = Some(std::task::ready!(begin_approach_walk(
+                        &mut self.walk_retry,
+                        request,
+                        cx,
                     ))?);
                     return Poll::Pending;
                 }
             }
+            self.walk_retry.reset();
             self.dialogue = Some(std::task::ready!(crate::native::defer_budget(
                 cx.tick.actions.begin::<dialogue::Dialogue>(
                     dialogue::DialogueArgs {
@@ -1897,11 +2005,14 @@ struct InteractPlan {
     target_tile: Option<WorldTile>,
     reachable_only: bool,
 }
-impl StepPlan for InteractPlan {
-    fn anchor(&self) -> Option<WorldTile> {
-        self.tile
-    }
-    fn begin(&self, cx: &mut StepContext<'_, '_>) -> Result<Box<dyn StepRun>, ActionError> {
+impl InteractPlan {
+    /// `open_page`: the step's retry found its dialogue page still open; the
+    /// run continues that page from the current tile (`InteractRun::poll_round`).
+    fn run(
+        &self,
+        cx: &mut StepContext<'_, '_>,
+        open_page: bool,
+    ) -> Result<Box<dyn StepRun>, ActionError> {
         Ok(Box::new(InteractRun {
             kind: self.kind.clone(),
             op: Arc::clone(&self.op),
@@ -1914,6 +2025,7 @@ impl StepPlan for InteractPlan {
             missing_deadline: None,
             waiting: None,
             settle_duration: Duration::from_millis(self.settle_ms.unwrap_or(20_000)),
+            walk_retry: crate::native::WalkRetryState::default(),
             walk: None,
             wall_fallback_tile: None,
             wall_fallback_pending: None,
@@ -1936,7 +2048,23 @@ impl StepPlan for InteractPlan {
             round_deadline: None,
             round_accepted: false,
             started: false,
+            open_page,
         }))
+    }
+}
+impl StepPlan for InteractPlan {
+    fn anchor(&self) -> Option<WorldTile> {
+        self.tile
+    }
+    fn begin(&self, cx: &mut StepContext<'_, '_>) -> Result<Box<dyn StepRun>, ActionError> {
+        self.run(cx, false)
+    }
+    fn begin_open_page(
+        &self,
+        cx: &mut StepContext<'_, '_>,
+    ) -> Result<Box<dyn StepRun>, ActionError> {
+        let drives_dialogue = self.default_dialogue || self.dialogue_options.is_some();
+        self.run(cx, drives_dialogue && dialogue::page_open(&cx.tick.cx))
     }
     fn settle_timeout(&self) -> Duration {
         Duration::from_millis(self.settle_ms.unwrap_or(8_000))
@@ -1959,7 +2087,8 @@ struct InteractRun {
     waiting: Option<&'static str>,
     settle_duration: Duration,
     walk: Option<ActionHandle<Walk>>,
-    /// The wall tile for the one allowed retry of an initial facing-side walk.
+    walk_retry: crate::native::WalkRetryState,
+    /// The alternate wall-side tile selected for the approach, retained across retries.
     wall_fallback_tile: Option<WorldTile>,
     /// A retry tile whose walk request has not yet obtained budget.
     wall_fallback_pending: Option<WorldTile>,
@@ -1986,6 +2115,9 @@ struct InteractRun {
     round_deadline: Option<Duration>,
     round_accepted: bool,
     started: bool,
+    /// The retry of a step that failed with its dialogue page open: the first
+    /// poll continues that page instead of approaching the target.
+    open_page: bool,
 }
 
 impl InteractRun {
@@ -2005,6 +2137,7 @@ impl InteractRun {
         self.accepted_tick = None;
         self.scene_activity_observed = false;
         self.scene_in_range_at_acceptance = false;
+        self.walk_retry.reset();
     }
 
     /// Only a reachable match may be clicked: authored reachability, or
@@ -2180,6 +2313,23 @@ impl InteractRun {
                 }
             }
         }
+        if std::mem::take(&mut self.open_page) {
+            // The retry of a step whose dialogue page is still open. The
+            // content moved the player (a teleport inside the page's script),
+            // so the authored anchor is not near and the target is not
+            // reachable from here. Take the step as accepted: drive the open
+            // page below, and walk or click only if the round continues.
+            let now = cx.tick.cx.active_now();
+            self.deadline = Some(now + self.settle_duration);
+            self.dialogue_cap =
+                Some(now.saturating_add(self.settle_duration.max(Duration::from_secs(120))));
+            self.round_accepted = true;
+            self.accepted_tick = Some(cx.tick.cx.evidence().tick);
+            if let Some((id, _)) = self.until {
+                self.round_before = inventory_count(&cx.tick.cx, id);
+                self.round_deadline = Some(now + Duration::from_millis(ACTION_ROUND_MS));
+            }
+        }
         if self.round_accepted && !self.dialogue_completed {
             let options = self.dialogue_options.clone().or_else(|| {
                 (self.default_dialogue && dialogue::page_open(&cx.tick.cx))
@@ -2269,12 +2419,17 @@ impl InteractRun {
             }
             self.clear_round();
         }
+        if self
+            .walk_retry
+            .waiting_for_next_tick(cx.tick.cx.evidence().tick)
+        {
+            return Poll::Pending;
+        }
         if let Some(tile) = self.wall_fallback_pending {
-            self.walk = Some(std::task::ready!(crate::native::defer_budget(
-                cx.tick.actions.begin::<Walk>(
-                    reach::walk_request(tile, 1, None, cx.required_after),
-                    &mut cx.tick.cx,
-                ),
+            self.walk = Some(std::task::ready!(begin_approach_walk(
+                &mut self.walk_retry,
+                reach::walk_request(tile, 1, None, cx.required_after),
+                cx,
             ))?);
             self.wall_fallback_pending = None;
             return Poll::Pending;
@@ -2292,16 +2447,19 @@ impl InteractRun {
                 }
                 Poll::Ready(Err(error)) => return Poll::Ready(Err(error)),
                 Poll::Ready(Ok(receipt)) => {
-                    if let Some(tile) = self.wall_fallback_tile {
+                    if self
+                        .walk_retry
+                        .observe_approach_failure(&receipt, cx.tick.cx.evidence().tick)
+                    {
                         if reach::loc_wall_route_failed(&receipt) {
-                            self.walk = None;
-                            self.wall_fallback_tile = None;
-                            self.wall_fallback_pending = Some(tile);
-                            return Poll::Pending;
+                            self.wall_fallback_pending = self.wall_fallback_tile;
                         }
+                        self.walk = None;
+                        return Poll::Pending;
                     }
                     self.wall_fallback_tile = None;
                     walk_step_evidence(receipt)?;
+                    self.walk_retry.reset();
                     self.walk = None;
                 }
             }
@@ -2360,12 +2518,15 @@ impl InteractRun {
                     }
                     if !arrived {
                         self.wall_fallback_tile = fallback_tile;
-                        self.walk = Some(std::task::ready!(crate::native::defer_budget(
-                            cx.tick.actions.begin::<Walk>(request, &mut cx.tick.cx),
+                        self.walk = Some(std::task::ready!(begin_approach_walk(
+                            &mut self.walk_retry,
+                            request,
+                            cx,
                         ))?);
                         return Poll::Pending;
                     }
                     self.wall_fallback_tile = None;
+                    self.walk_retry.reset();
                 }
             }
             if let Some(tile) = self
@@ -2390,8 +2551,10 @@ impl InteractRun {
                         // standable tile in its anchor area before the live approach.
                         request.arrival = nav_planner::contract::ArrivalKind::Area;
                     }
-                    self.walk = Some(std::task::ready!(crate::native::defer_budget(
-                        cx.tick.actions.begin::<Walk>(request, &mut cx.tick.cx),
+                    self.walk = Some(std::task::ready!(begin_approach_walk(
+                        &mut self.walk_retry,
+                        request,
+                        cx,
                     ))?);
                     return Poll::Pending;
                 }
@@ -2952,6 +3115,7 @@ impl StepPlan for UseOnPlan {
             deadline: None,
             settle_duration: Duration::from_millis(self.settle_ms.unwrap_or(20_000)),
             walk: None,
+            walk_retry: crate::native::WalkRetryState::default(),
             wall_fallback_tile: None,
             wall_fallback_pending: None,
             interaction: None,
@@ -2996,7 +3160,8 @@ struct UseOnRun {
     deadline: Option<Duration>,
     settle_duration: Duration,
     walk: Option<ActionHandle<Walk>>,
-    /// The wall tile for the one allowed retry of an initial facing-side walk.
+    walk_retry: crate::native::WalkRetryState,
+    /// The alternate wall-side tile selected for the approach, retained across retries.
     wall_fallback_tile: Option<WorldTile>,
     /// A retry tile whose walk request has not yet obtained budget.
     wall_fallback_pending: Option<WorldTile>,
@@ -3045,6 +3210,7 @@ impl UseOnRun {
         self.accepted_tick = None;
         self.scene_activity_observed = false;
         self.scene_in_range_at_acceptance = false;
+        self.walk_retry.reset();
         self.dispatched = None;
     }
 
@@ -3181,18 +3347,21 @@ impl StepRun for UseOnRun {
                     Poll::Pending => return Poll::Pending,
                     Poll::Ready(Err(error)) => return Poll::Ready(Err(error)),
                     Poll::Ready(Ok(receipt)) => {
-                        if let Some(tile) = self.wall_fallback_tile {
+                        if self
+                            .walk_retry
+                            .observe_approach_failure(&receipt, cx.tick.cx.evidence().tick)
+                        {
                             if reach::loc_wall_route_failed(&receipt) {
-                                self.walk = None;
-                                self.wall_fallback_tile = None;
-                                self.wall_fallback_pending = Some(tile);
-                                self.chase = None;
-                                self.anchor_walk = false;
-                                return Poll::Pending;
+                                self.wall_fallback_pending = self.wall_fallback_tile;
                             }
+                            self.walk = None;
+                            self.chase = None;
+                            self.anchor_walk = false;
+                            return Poll::Pending;
                         }
                         self.wall_fallback_tile = None;
                         walk_step_evidence(receipt)?;
+                        self.walk_retry.reset();
                         self.walk = None;
                         self.chase = None;
                         self.anchor_walk = false;
@@ -3202,12 +3371,17 @@ impl StepRun for UseOnRun {
             if timed_out && !reached_at_deadline {
                 return Poll::Ready(Err(ActionError::Failed(Arc::from("use_on timeout"))));
             }
+            if self
+                .walk_retry
+                .waiting_for_next_tick(cx.tick.cx.evidence().tick)
+            {
+                return Poll::Pending;
+            }
             if let Some(tile) = self.wall_fallback_pending {
-                self.walk = Some(std::task::ready!(crate::native::defer_budget(
-                    cx.tick.actions.begin::<Walk>(
-                        reach::walk_request(tile, 1, None, cx.required_after),
-                        &mut cx.tick.cx,
-                    ),
+                self.walk = Some(std::task::ready!(begin_approach_walk(
+                    &mut self.walk_retry,
+                    reach::walk_request(tile, 1, None, cx.required_after),
+                    cx,
                 ))?);
                 self.wall_fallback_pending = None;
                 return Poll::Pending;
@@ -3282,8 +3456,10 @@ impl StepRun for UseOnRun {
                         // The gate above is the anchor radius; any standable
                         // tile inside it satisfies the anchor area.
                         request.arrival = nav_planner::contract::ArrivalKind::Area;
-                        self.walk = Some(std::task::ready!(crate::native::defer_budget(
-                            cx.tick.actions.begin::<Walk>(request, &mut cx.tick.cx),
+                        self.walk = Some(std::task::ready!(begin_approach_walk(
+                            &mut self.walk_retry,
+                            request,
+                            cx,
                         ))?);
                         self.anchor_walk = true;
                         return Poll::Pending;
@@ -3362,8 +3538,10 @@ impl StepRun for UseOnRun {
                                 );
                                 self.wall_fallback_tile =
                                     reach::loc_wall_fallback_tile(loc, &request);
-                                self.walk = Some(std::task::ready!(crate::native::defer_budget(
-                                    cx.tick.actions.begin::<Walk>(request, &mut cx.tick.cx),
+                                self.walk = Some(std::task::ready!(begin_approach_walk(
+                                    &mut self.walk_retry,
+                                    request,
+                                    cx,
                                 ))?);
                                 return Poll::Pending;
                             }
@@ -3391,11 +3569,10 @@ impl StepRun for UseOnRun {
                         if !adjacent {
                             // Chase the live NPC; the walk is re-checked every
                             // tick and ends as soon as the NPC is beside us.
-                            self.walk = Some(std::task::ready!(crate::native::defer_budget(
-                                cx.tick.actions.begin::<Walk>(
-                                    reach::walk_request(npc_tile, 1, None, cx.required_after),
-                                    &mut cx.tick.cx,
-                                ),
+                            self.walk = Some(std::task::ready!(begin_approach_walk(
+                                &mut self.walk_retry,
+                                reach::walk_request(npc_tile, 1, None, cx.required_after),
+                                cx,
                             ))?);
                             self.chase = Some((npc_index, npc_tile));
                             return Poll::Pending;
@@ -3418,11 +3595,10 @@ impl StepRun for UseOnRun {
                             reach::Pick::None => return Poll::Pending,
                         };
                         if !reachable {
-                            self.walk = Some(std::task::ready!(crate::native::defer_budget(
-                                cx.tick.actions.begin::<Walk>(
-                                    reach::walk_request(target, 1, None, cx.required_after),
-                                    &mut cx.tick.cx,
-                                ),
+                            self.walk = Some(std::task::ready!(begin_approach_walk(
+                                &mut self.walk_retry,
+                                reach::walk_request(target, 1, None, cx.required_after),
+                                cx,
                             ))?);
                             return Poll::Pending;
                         }

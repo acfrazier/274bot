@@ -61,8 +61,9 @@ pub(super) fn abort_walk_on_bot_with_end(bot: &mut NavBot, end: script::native::
     }
     bot.route_generation = bot.route_generation.wrapping_add(1);
     bot.clear_route();
-    bot.route_ticket = None;
-    bot.pending_route = None;
+    // Only the walk's own route work ends here. A live advisory assessment has
+    // its own owner, answers its own request, and outlives the walk.
+    bot.supersede_walk_route_work();
     bot.requested_route = None;
     bot.end_native_walk(end);
     bot.route_loc_id = None;

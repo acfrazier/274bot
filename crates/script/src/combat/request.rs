@@ -166,6 +166,8 @@ pub struct CombatRequest {
     /// change the request's cast mode or bypass spell-specific refusals.
     pub fallback_spells: bool,
     pub stand: Option<WorldTile>,
+    /// Use the shared Quester walk retry budget for this approach walk.
+    pub retry_approach_walks: bool,
     pub search_bounds: Option<Arc<[SceneRegionInput]>>,
     /// Named zone grants for this fight's approach, return, and escape routes.
     pub cross: Option<Arc<[Arc<str>]>>,
@@ -194,6 +196,7 @@ impl Default for CombatRequest {
             melee_mode: None,
             ranged_style: RangedMode::default(),
             stand: None,
+            retry_approach_walks: false,
             search_bounds: None,
             cross: None,
             engage_radius: 12,

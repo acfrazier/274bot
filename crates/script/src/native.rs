@@ -1063,22 +1063,140 @@ pub enum WalkEnd {
 // Traveller's 60-call bound (equal to observed ticks in the current host);
 // §3 records the normal content-derived stand succeeding. One fresh plan
 // from the observed position is the supported recovery.
-const MAX_RETURN_RECOVERY_ACTIONS: u8 = 1;
+const MAX_RETURN_RECOVERY_ATTEMPTS: u8 = 2;
 
-#[derive(Default)]
+/// Shared bounded-recovery policy, not a content timer: one initial route and
+/// two fresh replans. Quester walk first set this cap in b26097813.
+pub(crate) const QUEST_WALK_MAX_ATTEMPTS: u8 = 3;
+
+/// Shares Quester's walk-step retry budget and next-tick recovery state with
+/// every family that owns an approach walk.
+pub(crate) struct WalkRetryState {
+    recovery: ReturnStallRecovery,
+    // Read only while recovery is pending; that state owns whether this tick is set.
+    retry_after_tick: u64,
+}
+
+impl Default for WalkRetryState {
+    fn default() -> Self {
+        Self {
+            recovery: ReturnStallRecovery::with_max_attempts(QUEST_WALK_MAX_ATTEMPTS),
+            retry_after_tick: 0,
+        }
+    }
+}
+
+impl WalkRetryState {
+    pub(crate) fn observe_failure(&mut self, receipt: &WalkReceipt, tick: u64) -> bool {
+        if self.recovery.observe_receipt(receipt) {
+            self.retry_after_tick = tick;
+            true
+        } else {
+            false
+        }
+    }
+
+    pub(crate) fn observe_approach_failure(&mut self, receipt: &WalkReceipt, tick: u64) -> bool {
+        if !self.observe_failure(receipt, tick) {
+            return false;
+        }
+        let attempt = self.retry_attempt_number();
+        let detail = receipt.failure_detail();
+        api::host_log!(
+            api::hostlog::Category::NavTrace,
+            api::hostlog::Level::Debug,
+            "quester-approach-retry tick={tick} attempt={attempt}/{} end={:?} detail={detail:?}",
+            QUEST_WALK_MAX_ATTEMPTS,
+            receipt.end,
+        );
+        true
+    }
+
+    pub(crate) fn retryable_receipt(receipt: &WalkReceipt) -> bool {
+        let has_blocked_zones = receipt
+            .blocked
+            .as_deref()
+            .is_some_and(|blocked| !blocked.is_empty());
+        receipt.refusal.is_none()
+            && !has_blocked_zones
+            && matches!(
+                &receipt.end,
+                WalkEnd::NoPath | WalkEnd::RouteEnded | WalkEnd::Stalled(_) | WalkEnd::Failed
+            )
+    }
+
+    pub(crate) fn pending(&self) -> bool {
+        self.recovery.pending()
+    }
+
+    pub(crate) fn waiting_for_next_tick(&self, tick: u64) -> bool {
+        self.pending() && tick <= self.retry_after_tick
+    }
+
+    pub(crate) fn defer_until_next_tick(&mut self, tick: u64) {
+        if self.pending() {
+            self.retry_after_tick = tick;
+        }
+    }
+
+    pub(crate) fn action_submitted(&mut self) {
+        self.recovery.action_submitted();
+        self.retry_after_tick = 0;
+    }
+
+    pub(crate) fn reset(&mut self) {
+        self.recovery.reset();
+        self.retry_after_tick = 0;
+    }
+
+    pub(crate) fn retry_attempt_number(&self) -> u8 {
+        self.recovery.retry_attempt_number()
+    }
+}
+
+/// Counts recovery submissions separately from the initial action.
+/// `max_attempts` includes that initial action.
 pub(crate) struct ReturnStallRecovery {
     actions: u8,
+    max_attempts: u8,
     pending: bool,
 }
 
+impl Default for ReturnStallRecovery {
+    fn default() -> Self {
+        Self {
+            actions: 0,
+            max_attempts: MAX_RETURN_RECOVERY_ATTEMPTS,
+            pending: false,
+        }
+    }
+}
+
 impl ReturnStallRecovery {
+    /// Set a total request limit, including the initial request.
+    pub(crate) fn with_max_attempts(max_attempts: u8) -> Self {
+        Self {
+            max_attempts: max_attempts.max(1),
+            ..Self::default()
+        }
+    }
+
     pub(crate) fn observe(&mut self, end: &WalkEnd) -> bool {
         let transient = matches!(
             end,
             WalkEnd::Stalled(stall)
                 if matches!(stall.why, WalkStallReason::Expired | WalkStallReason::Dropped)
         );
-        if transient && self.actions < MAX_RETURN_RECOVERY_ACTIONS && !self.pending {
+        self.observe_retryable(transient)
+    }
+
+    pub(crate) fn observe_receipt(&mut self, receipt: &WalkReceipt) -> bool {
+        self.observe_retryable(WalkRetryState::retryable_receipt(receipt))
+    }
+
+    /// Dialogue also retries expired assessments, which have no walk receipt.
+    pub(crate) fn observe_retryable(&mut self, retryable: bool) -> bool {
+        if retryable && self.actions.saturating_add(1) < self.max_attempts && !self.pending {
             self.pending = true;
             true
         } else {
@@ -1102,11 +1220,17 @@ impl ReturnStallRecovery {
         self.pending = false;
     }
 
+    /// Number of the next request after the initial request.
+    pub(crate) fn retry_attempt_number(&self) -> u8 {
+        self.actions.saturating_add(2)
+    }
+
     #[cfg(test)]
     pub(crate) fn actions(&self) -> u8 {
         self.actions
     }
 }
+
 #[derive(Debug, Clone)]
 pub struct WalkReceipt {
     pub request_id: u64,
@@ -1149,6 +1273,16 @@ impl WalkReceipt {
                     .as_ref()
                     .map(|refusal| Arc::from(refusal.to_string()))
             })
+    }
+    /// Return the host or typed detail, with the same fallback used by `into_arrival`.
+    pub(crate) fn failure_detail_or_fallback(&self) -> Arc<str> {
+        self.failure_detail().unwrap_or_else(|| {
+            Arc::from(match &self.end {
+                WalkEnd::NoPath => "walk has no route",
+                WalkEnd::RouteEnded => "walk route ended before arrival",
+                _ => "walk failed",
+            })
+        })
     }
 
     /// Accept a walk only when the adapter proved its requested arrival.
@@ -1263,6 +1397,29 @@ pub struct InteractionReceipt {
     /// Newest chat sequence in the host's pre-send snapshot, not in the
     /// later snapshot where the script consumes this receipt.
     pub chat_since: i32,
+}
+
+/// Where one single interaction request is in the host's dispatch lifecycle
+/// ([`ActionContext::interaction_dispatch`]). The host takes queued native
+/// work only in an observation pass that may dispatch: connected, not held,
+/// the slot's dispatch open (`script_observe.rs:1344-1363`,
+/// `SlotScript::take_native_action`). It records the receipt of every
+/// interaction it takes in that same pass (`script_observe.rs:1649-1664`).
+/// A held pass does not dispatch: it drops queued gameplay instead
+/// (`SlotScript::seat_held_tick`, `GameplaySeat::hold` and `held_tick`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum InteractionDispatch<'a> {
+    /// The host still holds the request: no pass that may dispatch has run
+    /// since it was queued. The wait belongs to the host's lifecycle.
+    Queued,
+    /// The host dropped the request without sending it (a held tick, a
+    /// guardian hold, a seat refusal, a session reset), or this action no
+    /// longer owns it (cancelled, or superseded by a later request) and has
+    /// no receipt for it. No receipt will come.
+    Unsent,
+    /// The host took the request in a pass that could dispatch it and
+    /// settled it: `accepted` is the dispatch result.
+    Settled(&'a InteractionReceipt),
 }
 
 impl<'a> ActionContext<'a> {

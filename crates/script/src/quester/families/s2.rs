@@ -403,7 +403,8 @@ impl StepPlan for BankPlan {
             cx.required_after,
         );
         Ok(Box::new(BankStepRun {
-            run: AcquireRun::new(request, AcquirePlan::authored(), cx.banks, &cx.tick.cx),
+            run: AcquireRun::new(request, AcquirePlan::authored(), cx.banks, &cx.tick.cx)
+                .with_quester_walk_retries(),
         }))
     }
     fn settle_timeout(&self) -> Duration {
@@ -525,6 +526,7 @@ impl StepPlan for BuyPlan {
                 qty: self.qty,
             },
             walk: None,
+            retry: crate::native::WalkRetryState::default(),
             buy: None,
         }))
     }
@@ -533,17 +535,25 @@ struct BuyRun {
     tile: WorldTile,
     request: BuyRequest,
     walk: Option<ActionHandle<Walk>>,
+    retry: crate::native::WalkRetryState,
     buy: Option<ActionHandle<BuyMachine>>,
 }
 impl StepRun for BuyRun {
     fn poll(&mut self, cx: &mut StepContext<'_, '_>) -> Poll<Result<StepOutcome, ActionError>> {
+        let now = cx.tick.cx.evidence().tick;
         if let Some(handle) = &self.walk {
             match cx.tick.actions.poll(handle, &mut cx.tick.cx) {
                 Poll::Pending => return Poll::Pending,
                 Poll::Ready(Err(error)) => return Poll::Ready(Err(error)),
                 Poll::Ready(Ok(receipt)) => {
-                    walk_step_evidence(receipt)?;
                     self.walk = None;
+                    if self.retry.observe_approach_failure(&receipt, now) {
+                        return Poll::Pending;
+                    }
+                    if let Err(error) = walk_step_evidence(receipt) {
+                        return Poll::Ready(Err(error));
+                    }
+                    self.retry.reset();
                 }
             }
         }
@@ -555,19 +565,30 @@ impl StepRun for BuyRun {
                 .local_player()
                 .is_some_and(|player| reach::within(player.value.player.network, self.tile, 6));
             if !near {
-                self.walk = Some(std::task::ready!(crate::native::defer_budget(
-                    cx.tick.actions.begin::<Walk>(
-                        reach::walk_request(self.tile, 4, None, cx.required_after),
-                        &mut cx.tick.cx,
-                    ),
-                ))?);
+                if self.retry.waiting_for_next_tick(now) {
+                    return Poll::Pending;
+                }
+                let handle = match crate::native::defer_budget(cx.tick.actions.begin::<Walk>(
+                    reach::walk_request(self.tile, 4, None, cx.required_after),
+                    &mut cx.tick.cx,
+                )) {
+                    Poll::Pending => {
+                        self.retry.defer_until_next_tick(now);
+                        return Poll::Pending;
+                    }
+                    Poll::Ready(Err(error)) => return Poll::Ready(Err(error)),
+                    Poll::Ready(Ok(handle)) => handle,
+                };
+                self.retry.action_submitted();
+                self.walk = Some(handle);
                 return Poll::Pending;
             }
-            self.buy = Some(
+            self.retry.reset();
+            self.buy = Some(std::task::ready!(crate::native::defer_budget(
                 cx.tick
                     .actions
-                    .begin::<BuyMachine>(self.request.clone(), &mut cx.tick.cx)?,
-            );
+                    .begin::<BuyMachine>(self.request.clone(), &mut cx.tick.cx)
+            ))?);
             // BuyMachine emits on its first poll: poll it now (TICK-FIX #4,
             // C-BUY-PHASE).
             if !cx.tick.cx.may_continue_this_tick() {
@@ -738,6 +759,7 @@ impl StepPlan for MakePlan {
             },
             small_handle: None,
             trigger_reach: None,
+            retry: crate::native::WalkRetryState::default(),
             make: None,
         }))
     }
@@ -756,6 +778,7 @@ struct MakeRun {
     request: MakeRequest,
     small_handle: Option<MakeSmallHandle>,
     trigger_reach: Option<ActionHandle<reach::Reach>>,
+    retry: crate::native::WalkRetryState,
     make: Option<ActionHandle<MakeMachine>>,
 }
 
@@ -800,6 +823,7 @@ impl StepRun for MakeRun {
         if self.request.qty <= 0 {
             return Poll::Ready(Ok(done(cx)));
         }
+        let now = cx.tick.cx.evidence().tick;
         let mut accepted = false;
         if let Some(handle) = &self.small_handle {
             match handle {
@@ -808,8 +832,12 @@ impl StepRun for MakeRun {
                         Poll::Pending => return Poll::Pending,
                         Poll::Ready(Err(error)) => return Poll::Ready(Err(error)),
                         Poll::Ready(Ok(receipt)) => {
-                            walk_step_evidence(receipt)?;
                             self.small_handle = None;
+                            if self.retry.observe_approach_failure(&receipt, now) {
+                                return Poll::Pending;
+                            }
+                            walk_step_evidence(receipt)?;
+                            self.retry.reset();
                         }
                     }
                 }
@@ -825,6 +853,9 @@ impl StepRun for MakeRun {
                 }
             }
         }
+        if self.retry.waiting_for_next_tick(now) {
+            return Poll::Pending;
+        }
         if self.small_handle.is_none()
             && self.trigger_reach.is_none()
             && self.make.is_none()
@@ -839,10 +870,11 @@ impl StepRun for MakeRun {
                     .map(|player| player.value.player.network);
                 if !here.is_some_and(|here| reach::within(here, trigger.anchor, 6)) {
                     self.small_handle = Some(MakeSmallHandle::Walk(std::task::ready!(
-                        crate::native::defer_budget(cx.tick.actions.begin::<Walk>(
+                        begin_approach_walk(
+                            &mut self.retry,
                             reach::walk_request(trigger.anchor, 4, None, cx.required_after),
-                            &mut cx.tick.cx,
-                        ))
+                            cx,
+                        )
                     )?));
                     return Poll::Pending;
                 }
@@ -876,10 +908,11 @@ impl StepRun for MakeRun {
                         .local_player()
                         .map(|player| player.value.player.network);
                     self.small_handle = Some(MakeSmallHandle::Walk(std::task::ready!(
-                        crate::native::defer_budget(cx.tick.actions.begin::<Walk>(
+                        begin_approach_walk(
+                            &mut self.retry,
                             reach::loc_walk_request(&loc, here, cx.required_after),
-                            &mut cx.tick.cx,
-                        ))
+                            cx,
+                        )
                     )?));
                     return Poll::Pending;
                 }
@@ -1329,6 +1362,7 @@ impl LoadoutPlan {
                     cx.banks,
                     &cx.tick.cx,
                 )
+                .with_quester_walk_retries()
             }),
             worn: Arc::from(worn),
             keep_ids: Arc::clone(&self.keep_ids),
@@ -1841,67 +1875,121 @@ fn done(cx: &StepContext<'_, '_>) -> StepOutcome {
 mod loadout_tests;
 
 #[cfg(test)]
-mod production_state_size_tests {
+#[path = "production_state_size_tests.rs"]
+mod production_state_size_tests;
+
+#[cfg(test)]
+mod make_retry_tests {
     use super::*;
-    #[allow(dead_code)]
-    struct PreviousMakeRequest {
-        product_id: i32,
-        menu_id: i32,
-        qty: i32,
-        make_x: bool,
-    }
+    use crate::quester::families::tests::{local_player, post_walk_receipt, with_tick};
+    use api::snapshot::GameSnapshot;
 
-    #[expect(dead_code, reason = "preserves the prior plan layout in the size test")]
-    struct PreviousMakePlan {
-        tile: WorldTile,
-        loc_id: i32,
-        loc_name: Arc<str>,
-        op: Arc<str>,
-        product: BankItem,
-        menu_id: i32,
-        qty: QuantityPlan,
-        make_x: bool,
-    }
-
-    #[expect(dead_code, reason = "preserves the prior run layout in the size test")]
-    struct PreviousMakeRun {
-        tile: WorldTile,
-        loc_id: i32,
-        loc_name: Arc<str>,
-        op: Arc<str>,
-        request: PreviousMakeRequest,
-        walk: Option<ActionHandle<Walk>>,
-        trigger: Option<ActionHandle<reach::Reach>>,
-        make: Option<ActionHandle<MakeMachine>>,
+    fn with_step<R>(
+        tick: &mut crate::native::NativeTick<'_>,
+        f: impl FnOnce(&mut StepContext<'_, '_>) -> R,
+    ) -> R {
+        let quests = api::quest_facts::QuestCatalog::empty();
+        let banks = Arc::new(api::named_banks::NamedBankFacts::empty());
+        let choices = crate::quester::choices::QuestChoices::default();
+        let required_after = tick.cx.evidence();
+        f(&mut StepContext {
+            tick,
+            quests: &quests,
+            progress: &[],
+            required_after,
+            banks: &banks,
+            choices: &choices,
+        })
     }
 
     #[test]
-    fn production_state_sizes_stay_within_explicit_bounds() {
-        let trigger = std::mem::size_of::<MakeTrigger>();
-        let plan = std::mem::size_of::<MakePlan>();
-        let run = std::mem::size_of::<MakeRun>();
-        let request = std::mem::size_of::<MakeRequest>();
-        let previous_request = std::mem::size_of::<PreviousMakeRequest>();
-        let request_change = request as isize - previous_request as isize;
-        let previous_plan = std::mem::size_of::<PreviousMakePlan>();
-        let previous_run = std::mem::size_of::<PreviousMakeRun>();
-        let plan_change = plan as isize - previous_plan as isize;
-        let run_change = run as isize - previous_run as isize;
-        assert!(trigger <= 64, "MakeTrigger grew to {trigger} bytes");
-        assert!(plan <= 192, "MakePlan grew to {plan} bytes");
-        assert!(
-            plan <= previous_plan + 16,
-            "MakePlan grew by {} bytes",
-            plan.saturating_sub(previous_plan)
+    fn make_approach_waits_a_tick_retries_twice_and_keeps_last_detail() {
+        let tile = WorldTile {
+            x: 12,
+            z: 34,
+            level: 0,
+        };
+        let start = WorldTile {
+            x: 30,
+            z: 40,
+            level: 0,
+        };
+        let mut snapshot = GameSnapshot::new();
+        snapshot.seed_ingame(2);
+        snapshot.seed_local_player(local_player(start));
+        let mut ledger = None;
+        let mut run = MakeRun {
+            trigger_plan: Some(MakeTrigger {
+                anchor: tile,
+                loc_id: 41,
+                loc_name: Arc::from("Anvil"),
+                op: Some(Arc::from("Smith")),
+            }),
+            request: MakeRequest {
+                product_id: 1,
+                menu_id: 1,
+                qty: 1,
+                items_per_process: 1,
+                after_trigger: false,
+                make_x: false,
+            },
+            small_handle: None,
+            retry: crate::native::WalkRetryState::default(),
+            trigger_reach: None,
+            make: None,
+        };
+
+        assert!(with_tick(&snapshot, &mut ledger, 1, |tick| {
+            with_step(tick, |cx| run.poll(cx))
+        })
+        .is_pending());
+        for (failure_tick, detail) in [
+            (2, "first make route failed"),
+            (4, "second make route failed"),
+        ] {
+            post_walk_receipt(
+                &mut ledger,
+                failure_tick,
+                crate::native::WalkEnd::NoPath,
+                Some(detail),
+            );
+            assert!(with_tick(&snapshot, &mut ledger, failure_tick, |tick| {
+                with_step(tick, |cx| run.poll(cx))
+            })
+            .is_pending());
+            if failure_tick == 2 {
+                assert!(with_tick(&snapshot, &mut ledger, failure_tick, |tick| {
+                    with_step(tick, |cx| run.poll(cx))
+                })
+                .is_pending());
+                assert_eq!(ledger.as_ref().unwrap().outbox.len(), 1);
+            }
+            let retry_tick = failure_tick + 1;
+            assert!(with_tick(&snapshot, &mut ledger, retry_tick, |tick| {
+                with_step(tick, |cx| run.poll(cx))
+            })
+            .is_pending());
+            let retry = ledger.as_ref().unwrap().outbox.last().unwrap();
+            let crate::native::HostEffect::Walk(request) = &retry.effect else {
+                panic!("a make route retry should submit a new walk");
+            };
+            assert_eq!(request.required_after.tick, retry_tick);
+        }
+
+        post_walk_receipt(
+            &mut ledger,
+            6,
+            crate::native::WalkEnd::NoPath,
+            Some("third make route failed"),
         );
-        assert!(
-            run <= previous_run + 16,
-            "MakeRun grew by {} bytes",
-            run.saturating_sub(previous_run)
-        );
-        println!(
-            "production family state sizes: MakeRequest={request} ({request_change:+} from {previous_request}); MakeTrigger={trigger}; MakePlan={plan} ({plan_change:+} from {previous_plan}); MakeRun={run} ({run_change:+} from {previous_run}) bytes"
-        );
+        assert!(matches!(
+            with_tick(&snapshot, &mut ledger, 6, |tick| {
+                with_step(tick, |cx| run.poll(cx))
+            }),
+            Poll::Ready(Err(ActionError::Blocked(detail)))
+                if detail.as_ref() == "third make route failed"
+        ));
+        assert_eq!(ledger.as_ref().unwrap().outbox.len(), 1);
     }
 }
 #[cfg(test)]

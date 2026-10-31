@@ -2385,7 +2385,9 @@ impl SlotScript {
     }
 
     /// The host calls this only while holding the slot's final dispatch fence.
-    /// Keep the bounded outbox's allocation for the next observed tick.
+    /// Keep the bounded outbox's allocation for the next observed tick. A
+    /// returned action leaves the slot's custody: the host dispatches it in
+    /// this pass, so it is not dropped unsent.
     pub fn take_native_action(&mut self) -> Option<crate::native::HostAction> {
         if !self.dispatch_open() && !self.completed_seat_dispatch_open() {
             return None;
@@ -2393,8 +2395,9 @@ impl SlotScript {
         if self.seat.is_some() {
             let completed = self.completed_seat_dispatch_open();
             self.dispatch_seat_rows();
-            while let Some(action) = self.seat_native_delivery.pop_front() {
+            while let Some(mut action) = self.seat_native_delivery.pop_front() {
                 if action.live() {
+                    action.release_custody();
                     return Some(action);
                 }
                 if let Some(seat) = &mut self.seat {
@@ -2408,8 +2411,9 @@ impl SlotScript {
         }
         let ledger = self.native_runtime.ledger.as_mut()?;
         while !ledger.outbox.is_empty() {
-            let action = ledger.outbox.remove(0);
+            let mut action = ledger.outbox.remove(0);
             if action.live() {
+                action.release_custody();
                 return Some(action);
             }
         }

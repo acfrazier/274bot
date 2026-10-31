@@ -12,6 +12,28 @@ use serde_json::{Map, Value};
 /// An owned scenario. The scenario adapter value stays private to this crate.
 pub struct Scenario(Box<scenario::Scenario>);
 
+/// Fixture-only combat logout escape shared with the headless Quester cells.
+/// The scenario adapter stays private, as with the runner and fixture identity.
+pub struct CombatLogout(scenario::teardown::CombatLogout);
+
+impl CombatLogout {
+    pub fn new(snapshot: &api::snapshot::GameSnapshot, deadline: Instant) -> Self {
+        Self(scenario::teardown::CombatLogout::new(snapshot, deadline))
+    }
+
+    pub fn allows_retry(&mut self, snapshot: &api::snapshot::GameSnapshot, now: Instant) -> bool {
+        self.0.allows_retry(snapshot, now)
+    }
+
+    pub fn send_escape<D: api::interact::Driver>(
+        &mut self,
+        driver: &mut D,
+        now: Instant,
+    ) -> Result<bool, String> {
+        self.0.send_escape(driver, now)
+    }
+}
+
 /// A borrowed, scalar view of the scenario settings used by the front ends.
 #[derive(Debug, Clone, Copy)]
 pub struct ScenarioView<'a> {

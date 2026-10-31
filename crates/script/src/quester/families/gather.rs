@@ -248,6 +248,7 @@ impl StepPlan for Plan {
             fishing: FishingSurvey::default(),
             gather: None,
             walk: None,
+            walk_retry: crate::native::WalkRetryState::default(),
             last_attempt: None,
         }))
     }
@@ -270,6 +271,7 @@ struct Run {
     fishing: FishingSurvey,
     gather: Option<ActionHandle<GatherRun>>,
     walk: Option<ActionHandle<Walk>>,
+    walk_retry: crate::native::WalkRetryState,
     last_attempt: Option<u64>,
 }
 
@@ -280,7 +282,16 @@ impl StepRun for Run {
                 Poll::Pending => true,
                 Poll::Ready(Err(error)) => return Poll::Ready(Err(error)),
                 Poll::Ready(Ok(receipt)) => {
+                    if self
+                        .walk_retry
+                        .observe_approach_failure(&receipt, cx.tick.cx.evidence().tick)
+                    {
+                        self.walk = None;
+                        return Poll::Pending;
+                    }
                     super::walk_step_evidence(receipt)?;
+                    self.walk_retry.reset();
+                    self.approach = None;
                     self.walk = None;
                     false
                 }
@@ -288,6 +299,12 @@ impl StepRun for Run {
         } else {
             false
         };
+        if self
+            .walk_retry
+            .waiting_for_next_tick(cx.tick.cx.evidence().tick)
+        {
+            return Poll::Pending;
+        }
         if cx.tick.cx.active_now() >= self.deadline {
             return Poll::Ready(Err(ActionError::Failed("gather deadline exhausted".into())));
         }
@@ -359,10 +376,11 @@ impl StepRun for Run {
                 // The approach gate is the authored anchor radius; any
                 // standable tile inside the gather area is enough.
                 request.arrival = nav_planner::contract::ArrivalKind::Area;
-                self.walk = Some(std::task::ready!(crate::native::defer_budget(
-                    cx.tick.actions.begin::<Walk>(request, &mut cx.tick.cx),
+                self.walk = Some(std::task::ready!(super::begin_approach_walk(
+                    &mut self.walk_retry,
+                    request,
+                    cx,
                 ))?);
-                self.approach = None;
                 return Poll::Pending;
             }
             self.approach = None;
@@ -434,8 +452,10 @@ impl StepRun for Run {
                 ActionError::Unavailable(format!("safe resource access goals: {error}").into())
             })?
         {
-            self.walk = Some(std::task::ready!(crate::native::defer_budget(
-                cx.tick.actions.begin::<Walk>(request, &mut cx.tick.cx),
+            self.walk = Some(std::task::ready!(super::begin_approach_walk(
+                &mut self.walk_retry,
+                request,
+                cx,
             ))?);
             return Poll::Pending;
         }
@@ -466,7 +486,7 @@ impl StepRun for Run {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::quester::families::tests::{def, local_player, with_tick};
+    use crate::quester::families::tests::{def, local_player, post_walk_receipt, with_tick};
     use api::snapshot::{
         GameSnapshot, ItemActionFamily, ItemContainer, ItemView, LocLayer, LocView, StatView,
         WorldStateView,
@@ -845,6 +865,48 @@ mod tests {
     #[test]
     fn quest_gather_allowed_permissions_keep_resource_approach_unchanged() {
         assert_quest_mixed_resource_walk(false);
+    }
+    #[test]
+    fn gather_arrival_clears_authored_approach_before_stale_tile_can_rewalk() {
+        let mut plan = plan("mining.copper", 1);
+        let snapshot = snapshot(&plan, 1);
+        let here = snapshot.local_player().unwrap().player.actor.tile;
+        let anchor = WorldTile {
+            x: here.x + 20,
+            ..here
+        };
+        plan.anchor = Some(anchor);
+        plan.radius = 2;
+
+        let mut ledger = None;
+        let mut run = with_tick(&snapshot, &mut ledger, 1, |tick| {
+            with_step(tick, |cx| plan.begin(cx).unwrap())
+        });
+        assert!(with_tick(&snapshot, &mut ledger, 2, |tick| {
+            with_step(tick, |cx| run.poll(cx))
+        })
+        .is_pending());
+        let walk_count = |ledger: &Option<Box<crate::native::ledger::Ledger>>| {
+            ledger
+                .as_ref()
+                .unwrap()
+                .outbox
+                .iter()
+                .filter(|action| matches!(&action.effect, crate::native::HostEffect::Walk(_)))
+                .count()
+        };
+        assert_eq!(walk_count(&ledger), 1);
+
+        post_walk_receipt(&mut ledger, 3, crate::native::WalkEnd::Arrived, None);
+        assert!(with_tick(&snapshot, &mut ledger, 3, |tick| {
+            with_step(tick, |cx| run.poll(cx))
+        })
+        .is_pending());
+        assert_eq!(
+            walk_count(&ledger),
+            1,
+            "arrival clears the authored approach even if the snapshot tile lags"
+        );
     }
 
     #[test]

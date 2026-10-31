@@ -28,6 +28,7 @@ mod render_betty_views;
 mod runner;
 mod scenarios;
 pub mod shot;
+pub mod teardown;
 pub mod tutorial;
 
 use std::path::PathBuf;

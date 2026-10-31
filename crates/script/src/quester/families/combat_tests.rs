@@ -1,8 +1,7 @@
+use super::super::tests::compile_with_tree_crossing;
 use super::*;
 use crate::native::{WalkCancelReason, WalkEnd};
-use crate::quester::compile::{
-    compile_uncached_for_test, decode_args, CompileContext, PredicateContext, StepOutcome,
-};
+use crate::quester::compile::{decode_args, CompileContext, PredicateContext, StepOutcome};
 use crate::quester::loadouts::LoadoutOverlay;
 use crate::quester::progress::CompiledProgress;
 use api::game_data::SelectedGameData;
@@ -708,7 +707,7 @@ fn imp_and_melee_paths_resolve_observed_quest_colour_on_r289() {
         &include_bytes!("../../../paths/289/fixtures/combat_unattackable.json")[..],
     ] {
         let path =
-            compile_uncached_for_test(&serde_json::from_slice(bytes).unwrap(), &data, &quests)
+            compile_with_tree_crossing(&serde_json::from_slice(bytes).unwrap(), &data, &quests)
                 .unwrap();
         assert_eq!(
             crate::quester::progress::quest_colour(&path, &quests, view),
@@ -806,7 +805,7 @@ fn combat_end_predicate_distinguishes_unattackable_report() {
 fn unattackable_approach_is_not_reselected_after_observed_arrival() {
     let data = api::game_data::for_revision(ClientRevision::R289).unwrap();
     let quests = QuestCatalog::from_identity(data.quest_identity()).unwrap();
-    let path = compile_uncached_for_test(
+    let path = compile_with_tree_crossing(
         &serde_json::from_slice(include_bytes!(
             "../../../paths/289/fixtures/combat_unattackable.json"
         ))
@@ -854,7 +853,7 @@ fn unattackable_approach_is_not_reselected_after_observed_arrival() {
 fn unattackable_walk_out_is_selected_after_aborted_unattackable() {
     let data = api::game_data::for_revision(ClientRevision::R289).unwrap();
     let quests = QuestCatalog::from_identity(data.quest_identity()).unwrap();
-    let path = compile_uncached_for_test(
+    let path = compile_with_tree_crossing(
         &serde_json::from_slice(include_bytes!(
             "../../../paths/289/fixtures/combat_unattackable.json"
         ))
@@ -925,7 +924,7 @@ fn unattackable_outcome() -> StepOutcome {
 fn unattackable_approach_stays_skipped_after_abort_even_when_leaving_the_tree() {
     let data = api::game_data::for_revision(ClientRevision::R289).unwrap();
     let quests = QuestCatalog::from_identity(data.quest_identity()).unwrap();
-    let path = compile_uncached_for_test(
+    let path = compile_with_tree_crossing(
         &serde_json::from_slice(include_bytes!(
             "../../../paths/289/fixtures/combat_unattackable.json"
         ))
@@ -974,7 +973,7 @@ fn unattackable_approach_stays_skipped_after_abort_even_when_leaving_the_tree() 
 fn unattackable_walk_out_is_skipped_once_the_caller_has_arrived() {
     let data = api::game_data::for_revision(ClientRevision::R289).unwrap();
     let quests = QuestCatalog::from_identity(data.quest_identity()).unwrap();
-    let path = compile_uncached_for_test(
+    let path = compile_with_tree_crossing(
         &serde_json::from_slice(include_bytes!(
             "../../../paths/289/fixtures/combat_unattackable.json"
         ))
@@ -1096,6 +1095,7 @@ fn combat_test_run_with_radius(
         finish_last_tick: None,
         trace_event: None,
         abort_escape: AbortEscape::new(),
+        return_retry: crate::native::WalkRetryState::default(),
     }
 }
 
@@ -1109,8 +1109,8 @@ fn combat_run_size_stays_within_retained_budget() {
         std::mem::size_of::<CombatReceipt>(),
     );
     assert!(
-        size <= 1_280,
-        "CombatRun is {size} bytes. The source Elemental R1 head measured 1,192 bytes, including the 16-byte Option<u64> loot deadline. This integration also retains the bounded UntilDropConfig and confirmed-kill count. The one-byte miss flag records a missing drop until the until predicate check. The nested Action stayed 680 bytes in the source measurements. The integrated retained-state limit is 1,280 bytes."
+        size <= 1_480,
+        "CombatRun is {size} bytes. The source Elemental R1 head measured 1,192 bytes, including the 16-byte Option<u64> loot deadline. This integration also retains the bounded UntilDropConfig and confirmed-kill count. The one-byte miss flag records a missing drop until the until predicate check. The nested Action stayed 680 bytes in the source measurements. The dialogue-open-r2 head measured 1,224 bytes against a 1,280-byte limit. The combat escape retry fix grew AbortEscape from 56 to 256 bytes (fixed retry regions, asserted in combat_escape.rs), so the merged head measures 1,424 bytes. The limit keeps the same 56-byte headroom: 1,480 bytes."
     );
 }
 
@@ -2569,7 +2569,7 @@ fn escape_goals_on_the_reference_pack_exclude_the_dead_tree_thicket() {
 fn assert_caller_walk_out_selected(outcome: &StepOutcome, here: api::WorldTile) {
     let data = api::game_data::for_revision(ClientRevision::R289).unwrap();
     let quests = QuestCatalog::from_identity(data.quest_identity()).unwrap();
-    let path = compile_uncached_for_test(
+    let path = compile_with_tree_crossing(
         &serde_json::from_slice(include_bytes!(
             "../../../paths/289/fixtures/combat_unattackable.json"
         ))
@@ -4457,7 +4457,7 @@ fn assert_stand_goals(request: &crate::native::WalkRequest, stand: api::WorldTil
 }
 
 #[test]
-fn target_gone_walk_without_observed_arrival_blocks_reengagement() {
+fn target_gone_walk_replans_after_route_end_before_reengaging() {
     let data = api::game_data::for_revision(ClientRevision::R289).unwrap();
     let stand = api::WorldTile {
         x: 2632,
@@ -4477,6 +4477,14 @@ fn target_gone_walk_without_observed_arrival_blocks_reengagement() {
         run.on_combat_report(report(CombatEnd::TargetGone), cx)
     })
     .is_pending());
+    let first_request_id = ledger
+        .as_ref()
+        .unwrap()
+        .outbox
+        .last()
+        .unwrap()
+        .request_id
+        .get();
 
     // A route that ends without observed arrival is not arrival: combat
     // does not re-engage. The walk is planned again within the bounded
@@ -4780,7 +4788,7 @@ fn return_to_stand_route_ended_at_network_tile_is_arrival() {
                 evidence: cx.tick.cx.evidence(),
                 end: WalkEnd::RouteEnded,
                 blocked: None,
-                detail: None,
+                detail: Some(Arc::from("first route ended short")),
                 refusal: None,
                 assessment: None,
                 escape: None,
@@ -6136,22 +6144,26 @@ fn combat_loot_reaches_below_quantity_and_skips_at_the_requested_count() {
 }
 
 #[test]
-fn lifecycle_followups_unsettled_loot_take_skips_to_the_next_item() {
+fn lifecycle_followups_unreachable_loot_walk_retries_before_skipping_to_the_next_item() {
     let data = api::game_data::for_revision(ClientRevision::R289).unwrap();
     let here = api::WorldTile {
         x: 3200,
         z: 3200,
         level: 0,
     };
-    let first_tile = here;
+    let first_tile = api::WorldTile {
+        x: here.x + 15,
+        z: here.z,
+        level: here.level,
+    };
     let second_tile = api::WorldTile {
-        x: 3201,
-        z: 3201,
+        x: here.x + 1,
+        z: here.z,
         level: 0,
     };
-    let mut run = combat_test_run(
+    let mut run = combat_test_run_with_radius(
         imp_target(&data),
-        None,
+        Some(here),
         Some(Arc::new(NeverStop)),
         vec![
             LootItem {
@@ -6165,6 +6177,7 @@ fn lifecycle_followups_unsettled_loot_take_skips_to_the_next_item() {
                 qty: 1,
             },
         ],
+        20,
     );
     let ground = |id, name: &str, tile, distance| GroundItemView {
         def: api::obj_names::ItemDefView {
@@ -6186,11 +6199,15 @@ fn lifecycle_followups_unsettled_loot_take_skips_to_the_next_item() {
     snapshot.seed_ingame(2);
     snapshot.seed_inventory(Vec::new(), 28);
     snapshot.seed_ground_items(vec![
-        ground(1, "First drop", first_tile, 0),
+        ground(1, "First drop", first_tile, 15),
         ground(2, "Second drop", second_tile, 1),
     ]);
-    let reach = seed_loot_route(&mut snapshot, here, 12);
-    snapshot.seed_chat_lines(vec![]);
+    // The open test flood defaults every adjacency rank to zero. Give the
+    // distant item's stand its real rank so Reach plans an approach walk.
+    let mut reach = seed_loot_route(&mut snapshot, here, 20);
+    let first_index = (first_tile.x - reach.base_x) as usize * reach.height as usize
+        + (first_tile.z - reach.base_z) as usize;
+    reach.adjacent_rank[first_index] = 14;
     let mut ledger = None;
     assert!(
         with_step_context_reach(&snapshot, &reach, &mut ledger, 12, |cx| {
@@ -6201,52 +6218,67 @@ fn lifecycle_followups_unsettled_loot_take_skips_to_the_next_item() {
     assert!(
         with_step_context_reach(&snapshot, &reach, &mut ledger, 13, |cx| run.poll(cx)).is_pending()
     );
-    assert!(matches!(
-        &ledger.as_ref().unwrap().outbox.last().unwrap().effect,
-        crate::native::HostEffect::Interaction(crate::shim::InteractReq::Obj {
-            x,
-            z,
-            id: Some(id),
-            action,
-            ..
-        }) if *x == first_tile.x && *z == first_tile.z && *id == 1 && action == "Take"
-    ));
-    let authority = ledger.as_ref().unwrap().outbox.last().unwrap().authority();
-    ledger.as_mut().unwrap().complete_interaction(
-        &authority,
-        crate::native::InteractionReceipt {
-            request_id: authority.request_id().get(),
-            evidence: EvidenceStamp {
-                run: authority.run(),
-                tick: 13,
-                sequence: 13,
-            },
-            accepted: true,
-            chat_since: 0,
-        },
+    let last_effect = &ledger.as_ref().unwrap().outbox.last().unwrap().effect;
+    let effect_kind = match last_effect {
+        crate::native::HostEffect::Interaction(_) => "interaction",
+        crate::native::HostEffect::Walk(_) => "walk",
+        crate::native::HostEffect::BankPick(_) => "bank pick",
+        crate::native::HostEffect::AssessWalk(_) => "walk assessment",
+        crate::native::HostEffect::ServerOrdered(_) => "server ordered",
+    };
+    assert!(
+        matches!(last_effect, crate::native::HostEffect::Walk(_)),
+        "expected an approach walk, got {effect_kind}"
     );
-    ledger.as_mut().unwrap().outbox.clear();
+    assert_eq!(run.loot_index, 0);
+    assert!(matches!(run.action.as_ref(), Some(Action::Loot(_))));
 
-    let settlement_deadline = 13 + api::ground_take::SETTLEMENT_TICKS;
-    for tick in 14..settlement_deadline {
-        assert!(
-            with_step_context_reach(&snapshot, &reach, &mut ledger, tick, |cx| run.poll(cx))
-                .is_pending()
-        );
-        assert_eq!(run.loot_index, 0);
-        assert!(matches!(run.action.as_ref(), Some(Action::Loot(_))));
-        assert!(ledger.as_ref().unwrap().outbox.is_empty());
-    }
+    post_walk_end(
+        &mut ledger,
+        14,
+        WalkEnd::Failed,
+        Some("first route failure"),
+    );
+    assert!(
+        with_step_context_reach(&snapshot, &reach, &mut ledger, 14, |cx| run.poll(cx)).is_pending()
+    );
+    assert_eq!(
+        run.loot_index, 0,
+        "the first route failure keeps the item active"
+    );
 
     assert!(
-        with_step_context_reach(&snapshot, &reach, &mut ledger, settlement_deadline, |cx| {
-            run.poll(cx)
-        })
-        .is_pending()
+        with_step_context_reach(&snapshot, &reach, &mut ledger, 15, |cx| run.poll(cx)).is_pending()
+    );
+    assert!(matches!(
+        &ledger.as_ref().unwrap().outbox.last().unwrap().effect,
+        crate::native::HostEffect::Walk(_)
+    ));
+    post_walk_end(
+        &mut ledger,
+        16,
+        WalkEnd::Failed,
+        Some("second route failure"),
+    );
+    assert!(
+        with_step_context_reach(&snapshot, &reach, &mut ledger, 16, |cx| run.poll(cx)).is_pending()
+    );
+    assert_eq!(run.loot_index, 0, "the second route failure still retries");
+
+    assert!(
+        with_step_context_reach(&snapshot, &reach, &mut ledger, 17, |cx| run.poll(cx)).is_pending()
+    );
+    assert!(matches!(
+        &ledger.as_ref().unwrap().outbox.last().unwrap().effect,
+        crate::native::HostEffect::Walk(_)
+    ));
+    post_walk_end(&mut ledger, 18, WalkEnd::Failed, Some("last route failure"));
+    assert!(
+        with_step_context_reach(&snapshot, &reach, &mut ledger, 18, |cx| run.poll(cx)).is_pending()
     );
     assert_eq!(
         run.loot_index, 1,
-        "the next loot item becomes active after the first Take misses"
+        "the item is skipped only after the three route attempts"
     );
     assert!(matches!(run.action.as_ref(), Some(Action::Loot(_))));
     assert!(matches!(

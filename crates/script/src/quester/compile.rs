@@ -352,6 +352,16 @@ pub trait PredicatePlan: Send + Sync {
 }
 pub trait StepPlan: Send + Sync {
     fn begin(&self, cx: &mut StepContext<'_, '_>) -> Result<Box<dyn StepRun>, ActionError>;
+    /// Begin the retry of a step that failed while a dialogue page was still
+    /// open. A family that drives dialogue continues that page from the
+    /// current tile instead of walking to the step's anchor; every other
+    /// family begins as usual.
+    fn begin_open_page(
+        &self,
+        cx: &mut StepContext<'_, '_>,
+    ) -> Result<Box<dyn StepRun>, ActionError> {
+        self.begin(cx)
+    }
     /// Stable authored world anchor for nearest-first selection.
     fn anchor(&self) -> Option<api::WorldTile> {
         None
@@ -389,6 +399,10 @@ pub enum StepTraceEvent {
     CombatSubOperationEnd {
         target: crate::combat::Target,
         end: crate::combat::CombatEnd,
+    },
+    WalkRetry {
+        attempt: u8,
+        failure_detail: Arc<str>,
     },
 }
 
@@ -938,6 +952,47 @@ pub fn compile_uncached_for_test(
         None,
         None,
     )
+}
+
+#[cfg(test)]
+pub(crate) fn stage_cross_lease(ids: &[&str]) -> nav_planner::contract::NavLease {
+    crate::gatherer::select::tests::test_nav_lease(|world| {
+        let rect = nav_planner::router::AvoidRect {
+            min_x: 0,
+            max_x: 0,
+            min_z: 0,
+            max_z: 0,
+            level: Some(0),
+        };
+        let zones = ids
+            .iter()
+            .enumerate()
+            .map(|(index, _)| {
+                nav_planner::zones::Zone::hazard(
+                    rect,
+                    0,
+                    u16::try_from(index).expect("fixture zone index fits"),
+                )
+            })
+            .collect();
+        let kinds = ids
+            .iter()
+            .map(|id| nav_planner::zones::ZoneKind::new(*id, *id, -1, 0, false, false))
+            .collect();
+        let table = nav_planner::zones::ZoneTable::from_parts(
+            zones,
+            kinds,
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+            world.collision.origin,
+            world.collision.width as u32,
+            world.collision.height as u32,
+            &world.graph.wilderness,
+        )
+        .expect("stage cross fixture");
+        world.graph.zones = Some(table);
+    })
 }
 
 /// Test helper: compile with one actual zone catalog.
@@ -2664,46 +2719,6 @@ mod tests {
             name: name.into(),
             reason: reason.into(),
         }
-    }
-
-    fn stage_cross_lease(ids: &[&str]) -> nav_planner::contract::NavLease {
-        crate::gatherer::select::tests::test_nav_lease(|world| {
-            let rect = nav_planner::router::AvoidRect {
-                min_x: 0,
-                max_x: 0,
-                min_z: 0,
-                max_z: 0,
-                level: Some(0),
-            };
-            let zones = ids
-                .iter()
-                .enumerate()
-                .map(|(index, _)| {
-                    nav_planner::zones::Zone::hazard(
-                        rect,
-                        0,
-                        u16::try_from(index).expect("fixture zone index fits"),
-                    )
-                })
-                .collect();
-            let kinds = ids
-                .iter()
-                .map(|id| nav_planner::zones::ZoneKind::new(*id, *id, -1, 0, false, false))
-                .collect();
-            let table = nav_planner::zones::ZoneTable::from_parts(
-                zones,
-                kinds,
-                Vec::new(),
-                Vec::new(),
-                Vec::new(),
-                world.collision.origin,
-                world.collision.width as u32,
-                world.collision.height as u32,
-                &world.graph.wilderness,
-            )
-            .expect("stage cross fixture");
-            world.graph.zones = Some(table);
-        })
     }
 
     fn compile_with_stage_cross(

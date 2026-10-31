@@ -12,7 +12,10 @@ use super::style::magic::{self, CastMode, Refusal};
 use super::style::ranged;
 use super::tables::{CombatTab, CombatTables, PotionKind, PrayerRole};
 use super::threats::{StyleObs, ThreatSet};
-use crate::native::{ActionContext, ActionError, NativeMachine, WalkEnd, WalkRequest};
+use crate::native::{
+    ActionContext, ActionError, NativeMachine, ReturnStallRecovery, WalkEnd, WalkRequest,
+    QUEST_WALK_MAX_ATTEMPTS,
+};
 use crate::shim::InteractReq;
 use crate::survival::cure::{self, CureDecision, CureInputs};
 use api::prayer::PrayerObservation;
@@ -192,8 +195,10 @@ pub struct Combat {
     food_total: u16,
 
     // Fourteen wear slots: two failure bits and one Prep-origin bit each.
-    // The remaining bits hold Prep-origin and skipped boost-family masks.
+    // Bits 42–55 hold Prep-origin and skipped boost-family masks.
     prep_failures: u64,
+    approach_recovery: ReturnStallRecovery,
+    approach_walk_pending: bool,
     sequence: u64,
     rhand_pick: i32,
     suspended_type: i32,
@@ -228,7 +233,8 @@ const SKIP_RETALIATE: u16 = 16384;
 const LEASH_WALKED: u16 = 32768;
 const POTION_PREP_SHIFT: u32 = 42;
 const POTION_SKIP_SHIFT: u32 = 49;
-const _: () = assert!(std::mem::size_of::<Combat>() <= 512);
+// Combat measures 520 B; the 528 B ceiling leaves 8 B for bounded approach state.
+const _: [(); 1] = [(); (std::mem::size_of::<Combat>() <= 528) as usize];
 const BASELINE_READY: u16 = 1 << api::prayer::PRAYER_COUNT;
 
 impl NativeMachine for Combat {
@@ -354,6 +360,8 @@ impl NativeMachine for Combat {
             food_total: 0,
 
             prep_failures: 0,
+            approach_recovery: ReturnStallRecovery::with_max_attempts(QUEST_WALK_MAX_ATTEMPTS),
+            approach_walk_pending: false,
             phase: Phase::Prep,
             flags: 0,
             stand_walk_failures: 0,
@@ -434,6 +442,12 @@ impl NativeMachine for Combat {
             self.schedule.cycle.known = false;
         }
         self.flags |= OBSERVED;
+        let events = self.threats.observe(&frame, &self.tables, tick);
+        self.counters.damage = self.counters.damage.saturating_add(events.damage);
+        self.counters.protected = self
+            .counters
+            .protected
+            .saturating_add(events.positive_protected);
         self.counters.ticks = self.counters.ticks.saturating_add(1);
         let stand_failures_before_receipt = self.stand_walk_failures;
         if self.phase != Phase::Escape {
@@ -497,12 +511,6 @@ impl NativeMachine for Combat {
                 }
             }
         }
-        let events = self.threats.observe(&frame, &self.tables, tick);
-        self.counters.damage = self.counters.damage.saturating_add(events.damage);
-        self.counters.protected = self
-            .counters
-            .protected
-            .saturating_add(events.positive_protected);
         self.observe_magic(&frame, tick);
         self.settle(&frame, tick);
         let died = chat
@@ -630,7 +638,8 @@ impl NativeMachine for Combat {
                                 std::task::ready!(crate::native::defer_budget(self.walk(
                                     destination,
                                     tick,
-                                    cx
+                                    cx,
+                                    false,
                                 )))?;
                                 self.flags |= LEASH_WALKED;
                                 return Poll::Pending;
@@ -2216,7 +2225,7 @@ impl Combat {
                 self.eat(&mut plan, frame, tick, danger, poison_fire);
             }
             if plan.len == 0 && self.pending_walk.is_none() {
-                self.walk(tile, tick, cx)?;
+                self.walk(tile, tick, cx, false)?;
             }
             return Ok(plan);
         }
@@ -2310,7 +2319,7 @@ impl Combat {
         if self.flags & LOST != 0 && self.engaged.is_some() && self.phase != Phase::WindDown {
             if plan.len == 0 && self.flags & LEASH_WALKED == 0 {
                 if let Some(destination) = self.leash_cancel_tile(frame) {
-                    self.walk(destination, tick, cx)?;
+                    self.walk(destination, tick, cx, false)?;
                     self.flags |= LEASH_WALKED;
                     return Ok(plan);
                 }
@@ -2436,7 +2445,7 @@ impl Combat {
                     .stand
                     .filter(|tile| !select::stand_reached(*tile, frame.local))
                 {
-                    self.walk(tile, tick, cx)?;
+                    self.walk(tile, tick, cx, self.request.retry_approach_walks)?;
                 }
             }
             return Ok(plan);
@@ -3145,11 +3154,50 @@ impl Combat {
         })
         .or(Some(stand))
     }
+    fn approach_walk_pending(&self) -> bool {
+        self.approach_walk_pending
+    }
+
+    fn set_approach_walk_pending(&mut self, pending: bool) {
+        self.approach_walk_pending = pending;
+    }
+
+    fn observe_approach_failure(
+        &mut self,
+        receipt: &crate::native::WalkReceipt,
+        tick: u64,
+    ) -> bool {
+        let retry = self.approach_recovery.observe_receipt(receipt);
+        if retry {
+            let attempt = self.approach_recovery.retry_attempt_number();
+            let detail = receipt.failure_detail();
+            api::host_log!(
+                api::hostlog::Category::NavTrace,
+                api::hostlog::Level::Debug,
+                "quester-approach-retry tick={tick} attempt={attempt}/{} end={:?} detail={detail:?}",
+                QUEST_WALK_MAX_ATTEMPTS,
+                receipt.end,
+            );
+        }
+        retry
+    }
+
+    fn approach_action_submitted(&mut self) {
+        self.approach_recovery.action_submitted();
+        self.set_approach_walk_pending(true);
+    }
+
+    fn reset_approach_recovery(&mut self) {
+        self.approach_recovery.reset();
+        self.set_approach_walk_pending(false);
+    }
+
     fn walk(
         &mut self,
         tile: api::WorldTile,
         tick: u16,
         cx: &mut ActionContext<'_>,
+        approach: bool,
     ) -> Result<(), ActionError> {
         let id = cx.walk(WalkRequest {
             target: tile,
@@ -3166,6 +3214,11 @@ impl Combat {
             allow: Default::default(),
         })?;
         self.pending_walk = NonZeroU64::new(id);
+        if approach {
+            self.approach_action_submitted();
+        } else {
+            self.reset_approach_recovery();
+        }
         self.schedule.clear(tick, 1, false);
         self.flags |= EMITTED;
         self.emitted_tick = tick;

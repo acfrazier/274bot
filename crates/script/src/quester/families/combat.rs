@@ -547,6 +547,7 @@ fn compile_plan(args: CombatArgs, cx: &CompileContext<'_>) -> Result<CombatPlan,
         spells,
         fallback_spells: args.fallback_spells,
         stand,
+        retry_approach_walks: true,
         search_bounds,
         cross: Some(Arc::clone(&cross)),
         engage_radius: args.tactic.engage_radius,
@@ -932,6 +933,7 @@ impl StepPlan for CombatPlan {
             finish_last_tick: None,
             trace_event: None,
             abort_escape: AbortEscape::new(),
+            return_retry: crate::native::WalkRetryState::default(),
         };
         if !run.until_drop_item_held(cx) {
             run.begin_combat(cx)?;
@@ -1287,6 +1289,7 @@ struct CombatRun {
     trace_event: Option<StepTraceEvent>,
     /// Destinations tried and the last walk failure of the current abort.
     abort_escape: AbortEscape,
+    return_retry: crate::native::WalkRetryState,
 }
 
 impl CombatRun {
@@ -1397,6 +1400,7 @@ impl CombatRun {
         request.protect = self.protect;
         let handle = cx.tick.actions.begin::<Walk>(request, &mut cx.tick.cx)?;
         self.phase = Phase::ReturningToStand;
+        self.return_retry.action_submitted();
         self.action = Some(Action::Walk(handle));
         Ok(())
     }
@@ -2322,6 +2326,23 @@ impl StepRun for CombatRun {
         ) && self.should_stop(cx)
         {
             return self.finish(cx);
+        }
+        if matches!(self.phase, Phase::ReturningToStand) && self.return_retry.pending() {
+            let tick = cx.tick.cx.evidence().tick;
+            if self.return_retry.waiting_for_next_tick(tick) {
+                return Poll::Pending;
+            }
+            let Some(stand) = self.request.stand else {
+                return Poll::Ready(Err(ActionError::Stale));
+            };
+            match crate::native::defer_budget(self.begin_return_to_stand(stand, cx)) {
+                Poll::Pending => {
+                    self.return_retry.defer_until_next_tick(tick);
+                    return Poll::Pending;
+                }
+                Poll::Ready(Err(error)) => return Poll::Ready(Err(error)),
+                Poll::Ready(Ok(())) => return Poll::Pending,
+            }
         }
         let polled = match self.action.as_ref() {
             Some(Action::Combat(handle)) => match cx.tick.actions.poll(handle, &mut cx.tick.cx) {
