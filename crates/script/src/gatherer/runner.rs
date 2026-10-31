@@ -43,6 +43,9 @@ const MAX_BANK_CLOSE_ATTEMPTS: u8 = 3;
 // (macro events/scripts/fishing/macro_event_whirlpool.rs2:7); 800 exceeds both.
 const WAIT_GAMEPLAY_TICKS: u64 = 800; // Eight minutes at 600 ms per server tick.
 const IDLE_AVOID_TICKS: u64 = 60;
+// USER-0.2.3-GATHERER §4 requires a finite total action budget. Four failed
+// walks allow two targets to use their initial request and one recovery each.
+const MAX_FAILED_WALKS_PER_PHASE: u8 = 4;
 const HAZARD_RETREAT_RADIUS: i32 = 8;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -251,8 +254,10 @@ struct GatherScratch {
     bank_close_attempts: u8,
     /// Last tick a catch or XP was credited; bounds fishing surveys.
     last_yield_tick: u64,
-    /// Shared bounded retry core used by Gatherer and Quester walk plans.
+    /// Bounded retry state for Gatherer walk plans.
     return_stall_recovery: ReturnStallRecovery,
+    /// Failed return or approach walks across targets since the last progress.
+    phase_walk_failures: u8,
     /// Existing target exclusions grow only as the finite live search needs them.
     avoid: Vec<AvoidedTile>,
     /// The identity whose next action, if any, is the pending bounded retry.
@@ -262,7 +267,7 @@ struct GatherScratch {
     /// Detail from the newest failed walk, retained across target/bank fallbacks.
     last_walk_failure: Option<Arc<str>>,
     /// Banks already rejected by the access walk in this trip.
-    excluded_banks: Arc<[u16]>,
+    excluded_banks: Option<Arc<[u16]>>,
     /// Whether this trip found an item at Deposit that engine content forbids banking.
     /// Retained across action restarts until the next trip begins.
     kept_unbankable: bool,
@@ -420,8 +425,9 @@ impl Gatherer {
         self.scratch.kept_unbankable = false;
         self.scratch.withdrew_supplies = false;
         self.reset_walk_retry();
+        self.reset_phase_walk_budget();
         self.scratch.last_walk_failure = None;
-        self.scratch.excluded_banks = Arc::from([]);
+        self.scratch.excluded_banks = None;
         self.supply_missing = None;
         self.advance_trip(TripStep::Select);
         self.set_event("bank trip due");
@@ -629,8 +635,7 @@ impl Gatherer {
                     options: WalkOptions::default(),
                     explicit: (!self.settings().bank.eq_ignore_ascii_case("Nearest"))
                         .then(|| Arc::from(self.settings().bank.as_str())),
-                    excluded_banks: (!self.scratch.excluded_banks.is_empty())
-                        .then(|| Arc::clone(&self.scratch.excluded_banks)),
+                    excluded_banks: self.scratch.excluded_banks.as_ref().cloned(),
                     allow_air_fallback: false,
                 };
                 match tick.actions.begin::<bank::Select>(args, &mut tick.cx) {
@@ -859,6 +864,9 @@ impl Gatherer {
         self.scratch.walk_retry_target = None;
         self.scratch.retry_after_tick = None;
     }
+    fn reset_phase_walk_budget(&mut self) {
+        self.scratch.phase_walk_failures = 0;
+    }
 
     fn remember_walk_failure(&mut self, receipt: &WalkReceipt) {
         self.scratch.last_walk_failure = Some(receipt.failure_detail_or_fallback());
@@ -881,18 +889,22 @@ impl Gatherer {
             }
             return;
         };
-        if !self.settings().bank.eq_ignore_ascii_case("Nearest")
-            || self.scratch.excluded_banks.contains(&failed_bank)
-        {
+        let already_excluded = self
+            .scratch
+            .excluded_banks
+            .as_deref()
+            .is_some_and(|excluded| excluded.contains(&failed_bank));
+        if !self.settings().bank.eq_ignore_ascii_case("Nearest") || already_excluded {
             if !self.fail_last_walk("bank-unavailable", "no alternative bank is configured") {
                 self.fail("bank-unavailable", "no alternative bank is configured");
             }
             return;
         }
-        let mut excluded = Vec::with_capacity(self.scratch.excluded_banks.len() + 1);
-        excluded.extend_from_slice(&self.scratch.excluded_banks);
+        let previously_excluded = self.scratch.excluded_banks.as_deref().unwrap_or(&[]);
+        let mut excluded = Vec::with_capacity(previously_excluded.len() + 1);
+        excluded.extend_from_slice(previously_excluded);
         excluded.push(failed_bank);
-        self.scratch.excluded_banks = Arc::from(excluded);
+        self.scratch.excluded_banks = Some(Arc::from(excluded));
         self.scratch.retry_after_tick = Some(tick.cx.evidence().tick);
         self.advance_trip(TripStep::Select);
         self.set_event("bank access failed; selecting another bank");
@@ -1447,6 +1459,7 @@ impl Gatherer {
             return;
         }
         self.reset_walk_retry();
+        self.reset_phase_walk_budget();
         self.scratch.last_walk_failure = None;
         let Some(plan) = self.target.clone() else {
             return;
@@ -1517,6 +1530,7 @@ impl Gatherer {
                 self.last_gameplay_tick = tick.cx.evidence().tick;
             }
             if gained != 0 || xp != 0 {
+                self.reset_phase_walk_budget();
                 self.scratch.last_yield_tick = tick.cx.evidence().tick;
                 self.scratch.fishing.progress();
                 self.yielded = self.yielded.saturating_add(gained);
@@ -1532,6 +1546,7 @@ impl Gatherer {
     fn handle_gather(&mut self, result: GatherResult, tick: &mut NativeTick<'_>) {
         self.needs_validate = true;
         if result.gained > 0 || result.xp > 0 {
+            self.reset_phase_walk_budget();
             self.last_gameplay_tick = tick.cx.evidence().tick;
             self.scratch.last_yield_tick = tick.cx.evidence().tick;
             self.wait_until = None;
@@ -1617,6 +1632,7 @@ impl Gatherer {
     fn handle_walk(&mut self, result: WalkReceipt, tick: &mut NativeTick<'_>) {
         if result.end == WalkEnd::Arrived {
             self.reset_walk_retry();
+            self.reset_phase_walk_budget();
             self.scratch.last_walk_failure = None;
         }
         if result.end == WalkEnd::Arrived && std::mem::take(&mut self.scratch.observation_walk) {
@@ -1723,6 +1739,37 @@ impl Gatherer {
                     .map(|target| (target.entity, target.tile)),
             );
             let now = tick.cx.evidence().tick;
+            if matches!(self.trip, TripStep::Return | TripStep::Idle) {
+                self.scratch.phase_walk_failures =
+                    self.scratch.phase_walk_failures.saturating_add(1);
+                if self.scratch.phase_walk_failures >= MAX_FAILED_WALKS_PER_PHASE {
+                    self.reset_walk_retry();
+                    let code = if self.trip == TripStep::Return {
+                        "return-failed"
+                    } else {
+                        "walk-failed"
+                    };
+                    if !self
+                        .fail_last_walk(code, "total walk failure budget across targets was spent")
+                    {
+                        self.fail(code, walk_failure_message(&result));
+                    }
+                    return;
+                }
+            }
+            let avoid_until = if matches!(
+                result.refusal,
+                Some(
+                    crate::native::WalkRefusal::EscapeInProgress
+                        | crate::native::WalkRefusal::Unknown(
+                            crate::combat::risk::UnknownWhy::Poison
+                        )
+                )
+            ) {
+                now.saturating_add(IDLE_AVOID_TICKS)
+            } else {
+                u64::from(u32::MAX)
+            };
             if self.scratch.return_stall_recovery.observe_receipt(&result) {
                 self.scratch.retry_after_tick = Some(now);
                 match self.trip {
@@ -1761,7 +1808,7 @@ impl Gatherer {
             match self.trip {
                 TripStep::Return => {
                     if let Some(target) = target {
-                        self.avoid(target.tile, u64::from(u32::MAX));
+                        self.avoid(target.tile, avoid_until);
                     }
                     self.reset_walk_retry();
                     self.scratch.retry_after_tick = Some(now);
@@ -1774,7 +1821,7 @@ impl Gatherer {
                 }
                 TripStep::Idle => {
                     if let Some(target) = target {
-                        self.avoid(target.tile, u64::from(u32::MAX));
+                        self.avoid(target.tile, avoid_until);
                         self.reset_walk_retry();
                         self.scratch.retry_after_tick = Some(now);
                         self.set_event("resource approach failed; selecting another target");

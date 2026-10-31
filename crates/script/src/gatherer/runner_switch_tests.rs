@@ -169,8 +169,8 @@ fn catherby_partial_return_fixture() -> (Gatherer, GameSnapshot, TargetPlan, Tar
         .local_player()
         .expect("the fixture has an observed player")
         .player
-        .network;
-    let observed_plan = catherby_return_plan(&gatherer, &snapshot, observed_here);
+        .actor
+        .tile;
     let old_here = WorldTile {
         x: observed_plan.tile.x
             - i32::from(gatherer.area.expect("the fixture has a work area").radius),
@@ -202,6 +202,7 @@ fn catherby_partial_return_fixture() -> (Gatherer, GameSnapshot, TargetPlan, Tar
         .expect("the fixture has a player")
         .clone();
     player.player.network = current;
+    player.player.actor.tile = current;
     player.player.actor.moving = false;
     snapshot.seed_local_player(player);
     (gatherer, snapshot, initial, replan, current)
@@ -1715,6 +1716,182 @@ fn second_return_stall_shuns_the_failed_stand_before_terminal_failure() {
     assert!(failure.message.contains("Expired"));
     assert!(failure.message.contains("tries: 4"));
 }
+
+#[test]
+fn return_failures_across_alternating_stands_stop_within_phase_budget() {
+    let (mut gatherer, mut snapshot) = catherby_fishing_fixture();
+    let area = gatherer.area.expect("the fixture has a work area");
+    let mut positions = Vec::new();
+    for dx in (-30..=30).step_by(5) {
+        for dz in (-30..=30).step_by(5) {
+            positions.push(WorldTile {
+                x: area.anchor.x + dx,
+                z: area.anchor.z + dz,
+                level: area.anchor.level,
+            });
+        }
+    }
+    let plans: Vec<_> = positions
+        .into_iter()
+        .map(|position| {
+            let stand = catherby_return_plan(&gatherer, &snapshot, position).tile;
+            (position, stand)
+        })
+        .collect();
+    let (position_a, stand_a) = plans[0];
+    let (position_b, stand_b) = *plans
+        .iter()
+        .find(|(_, stand)| *stand != stand_a)
+        .expect("the fixture has at least two return stands");
+
+    let place_actor = |snapshot: &mut GameSnapshot, at: WorldTile| {
+        let mut player = snapshot
+            .local_player()
+            .expect("the fixture has an observed player")
+            .clone();
+        player.player.network = at;
+        player.player.actor.tile = at;
+        player.player.actor.moving = false;
+        snapshot.seed_local_player(player);
+    };
+    gatherer.trip = TripStep::Return;
+    let mut ledger = None;
+    let mut now = 800;
+    let mut failed_walks = 0;
+    let mut last_detail = String::new();
+    for cycle in 0..10 {
+        let (position, expected_stand) = if cycle % 2 == 0 {
+            (position_a, stand_a)
+        } else {
+            (position_b, stand_b)
+        };
+        place_actor(&mut snapshot, position);
+        with_tick(&snapshot, &mut ledger, now, |tick| {
+            gatherer.return_to_resources(tick)
+        });
+        if gatherer.failure.is_some() {
+            break;
+        }
+        assert_eq!(
+            gatherer.target.as_ref().map(|target| target.tile),
+            Some(expected_stand),
+            "the chooser must alternate stands from actor.tile"
+        );
+        assert!(matches!(gatherer.active, Active::Walk(_)));
+
+        now += 1;
+        last_detail = format!("alternating return failure {cycle}");
+        with_tick(&snapshot, &mut ledger, now, |tick| {
+            gatherer.active = Active::None;
+            let mut receipt = stalled_return_receipt(
+                tick.cx.evidence(),
+                position,
+                expected_stand,
+                WalkStallReason::Expired,
+                1,
+            );
+            receipt.detail = Some(Arc::from(last_detail.as_str()));
+            gatherer.handle_walk(receipt, tick);
+        });
+        failed_walks += 1;
+        if gatherer.failure.is_some() {
+            break;
+        }
+        now += 1;
+    }
+
+    let failure = gatherer
+        .failure
+        .as_ref()
+        .expect("ten alternating failed walks must not run without a terminal result");
+    assert_ne!(stand_a, stand_b);
+    assert_eq!(failure.code.as_ref(), "return-failed");
+    assert!(failure.message.contains(&last_detail));
+    assert!(failed_walks <= usize::from(MAX_FAILED_WALKS_PER_PHASE));
+}
+
+#[test]
+fn temporary_typed_return_refusals_have_a_finite_shun() {
+    for refusal in [
+        crate::native::WalkRefusal::EscapeInProgress,
+        crate::native::WalkRefusal::Unknown(crate::combat::risk::UnknownWhy::Poison),
+    ] {
+        let (mut gatherer, snapshot, initial, _, _) = catherby_partial_return_fixture();
+        let now = 740;
+        let mut ledger = None;
+        with_tick(&snapshot, &mut ledger, now, |tick| {
+            gatherer.active = Active::None;
+            gatherer.handle_walk(
+                WalkReceipt {
+                    goal: None,
+                    request_id: 23,
+                    evidence: tick.cx.evidence(),
+                    end: WalkEnd::Refused,
+                    blocked: None,
+                    detail: None,
+                    refusal: Some(refusal),
+                    assessment: None,
+                    escape: None,
+                },
+                tick,
+            );
+        });
+        assert!(!gatherer.scratch.return_stall_recovery.pending());
+        assert!(ledger.as_ref().unwrap().outbox.is_empty());
+        assert!(gatherer.failure.is_none());
+        assert!(gatherer
+            .scratch
+            .avoid
+            .iter()
+            .any(|entry| entry.tile == initial.tile
+                && u64::from(entry.until) == now + IDLE_AVOID_TICKS));
+        with_tick(&snapshot, &mut ledger, now + 1, |tick| {
+            gatherer.return_to_resources(tick);
+        });
+        assert_ne!(
+            gatherer.target.as_ref().map(|target| target.tile),
+            Some(initial.tile),
+            "the refusal must choose another stand, not retry the failed plan"
+        );
+        assert!(matches!(gatherer.active, Active::Walk(_)));
+    }
+}
+#[test]
+fn blocked_return_walk_selects_another_stand_without_retrying_the_failed_plan() {
+    let (mut gatherer, snapshot, initial, _, _) = catherby_partial_return_fixture();
+    let mut ledger = None;
+    with_tick(&snapshot, &mut ledger, 750, |tick| {
+        gatherer.active = Active::None;
+        gatherer.handle_walk(
+            WalkReceipt {
+                goal: None,
+                request_id: 24,
+                evidence: tick.cx.evidence(),
+                end: WalkEnd::NoPath,
+                blocked: Some(Arc::from([nav_planner::contract::ZoneKey::Zone(17)])),
+                detail: None,
+                refusal: None,
+                assessment: None,
+                escape: None,
+            },
+            tick,
+        );
+    });
+    assert!(!gatherer.scratch.return_stall_recovery.pending());
+    assert!(ledger.as_ref().unwrap().outbox.is_empty());
+    assert!(gatherer.failure.is_none());
+
+    with_tick(&snapshot, &mut ledger, 751, |tick| {
+        gatherer.return_to_resources(tick);
+    });
+    assert_ne!(
+        gatherer.target.as_ref().map(|target| target.tile),
+        Some(initial.tile),
+        "the blocked-zone receipt must select a different stand"
+    );
+    assert!(matches!(gatherer.active, Active::Walk(_)));
+}
+
 
 #[test]
 fn refused_return_walk_keeps_detail_while_reselecting() {

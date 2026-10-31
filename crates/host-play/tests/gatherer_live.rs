@@ -5944,54 +5944,8 @@ fn selected_profile(
     Ok((profile, template))
 }
 
-struct CleanLogoutGuard<'a> {
-    play: &'a host_play::Play,
-    account: &'a str,
-    label: &'a str,
-    attempted: bool,
-}
-
-impl CleanLogoutGuard<'_> {
-    fn logout(&mut self) -> Result<(), String> {
-        if self.attempted {
-            return Ok(());
-        }
-        self.attempted = true;
-        self.play.script_stop(self.account);
-        let arm = self
-            .play
-            .arm(self.account)
-            .ok_or_else(|| format!("{} has no slot arm for clean logout", self.label))?;
-        if !self.play.slot_connected(self.account) || arm.session_key().is_none() {
-            return Err(format!(
-                "{} account {} was not connected to an active session for clean logout",
-                self.label, self.account
-            ));
-        }
-        arm.request_logout();
-        self.play.wake(self.account);
-        let deadline = Instant::now() + CLEAN_LOGOUT_DEADLINE;
-        while arm.session_key().is_some() || self.play.slot_connected(self.account) {
-            if Instant::now() >= deadline {
-                return Err(format!(
-                    "{} account {} stayed connected after clean logout",
-                    self.label, self.account
-                ));
-            }
-            std::thread::sleep(Duration::from_millis(100));
-        }
-        println!("CLEAN LOGOUT label={} account={}", self.label, self.account);
-        Ok(())
-    }
-}
-
-impl Drop for CleanLogoutGuard<'_> {
-    fn drop(&mut self) {
-        if !self.attempted && self.play.slot_connected(self.account) {
-            let _ = self.logout();
-        }
-    }
-}
+include!("../src/clean_logout_guard.inc.rs");
+define_clean_logout_guard!(host_play::Play, CLEAN_LOGOUT_DEADLINE);
 
 fn run_cell(cell: Cell, case: LiveCase) -> Result<(), String> {
     if std::env::var("LIVE").as_deref() != Ok("1") {
@@ -9419,6 +9373,26 @@ fn draynor_oak_lifecycle_requires_bank_close_and_fresh_post_bank_yield() {
         target,
         baseline_xp,
     ));
+
+    let valid_xp = witness.last_xp;
+    for xp in [baseline_xp, baseline_xp - 1] {
+        witness.last_xp = xp;
+        assert!(
+            witness.post_bank_yields >= 1,
+            "the negative XP case keeps a fresh post-bank yield"
+        );
+        assert!(
+            !real_content_bank_lifecycle_complete(
+                LiveCase::BankCostFirstGoal,
+                &witness,
+                &plan,
+                target,
+                baseline_xp,
+            ),
+            "XP at or below the baseline must not pass with a fresh yield"
+        );
+    }
+    witness.last_xp = valid_xp;
 
     witness.post_bank_yields = 0;
     witness.last_status_yielded = 28;

@@ -1055,8 +1055,9 @@ pub enum WalkEnd {
     Cancelled,
     NeedsEvidence(Arc<[QuestGate]>),
 }
-// USER-0.2.3-GATHERER §1 reproduced a progressing return walk ending Expired;
-// §4 supports one fresh plan from the observed position before terminal failure.
+// USER-0.2.3-GATHERER §4 supports one recovery for a transient stalled return.
+// AGENTS.md §131 also covers NoPath, RouteEnded, Failed, untyped Refused, and
+// Stalled(EndBlocked): make one fresh observed-position plan before failure.
 const MAX_RETURN_RECOVERY_ATTEMPTS: u8 = 2;
 
 /// Counts recovery submissions separately from the initial action.
@@ -1610,6 +1611,61 @@ mod walk_permission_tests {
             Some("escape in progress")
         );
     }
+
+    fn walk_retry_receipt(
+        end: WalkEnd,
+        blocked: Option<Arc<[nav_planner::contract::ZoneKey]>>,
+        refusal: Option<WalkRefusal>,
+    ) -> WalkReceipt {
+        WalkReceipt {
+            goal: None,
+            request_id: 19,
+            evidence: EvidenceStamp {
+                run: RunKey {
+                    slot: 1,
+                    run: 1,
+                    session: 1,
+                },
+                tick: 1,
+                sequence: 1,
+            },
+            end,
+            blocked,
+            detail: None,
+            refusal,
+            assessment: None,
+            escape: None,
+        }
+    }
+
+    #[test]
+    fn typed_walk_refusal_does_not_schedule_a_fresh_plan() {
+        let receipt = walk_retry_receipt(
+            WalkEnd::Refused,
+            None,
+            Some(WalkRefusal::EscapeInProgress),
+        );
+        let mut recovery = ReturnStallRecovery::default();
+
+        assert!(!ReturnStallRecovery::receipt_retryable(&receipt));
+        assert!(!recovery.observe_receipt(&receipt));
+        assert!(!recovery.pending());
+    }
+
+    #[test]
+    fn blocked_zones_do_not_schedule_a_fresh_plan() {
+        let receipt = walk_retry_receipt(
+            WalkEnd::NoPath,
+            Some(Arc::from([nav_planner::contract::ZoneKey::Zone(17)])),
+            None,
+        );
+        let mut recovery = ReturnStallRecovery::default();
+
+        assert!(!ReturnStallRecovery::receipt_retryable(&receipt));
+        assert!(!recovery.observe_receipt(&receipt));
+        assert!(!recovery.pending());
+    }
+
 
     #[test]
     fn prepared_permissions_are_frozen_from_the_native_settings_bag() {

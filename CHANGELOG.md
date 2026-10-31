@@ -5,9 +5,11 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.8` 
 
 ## Unreleased
 
-- Gatherer now gives a failed walk a fresh plan from the observed position. If it
-  still cannot reach a resource, return stand or bank, it tries another choice
-  and keeps the last route detail if no choice works.
+- Gatherer retries eligible walk failures from the observed position. Return and
+  resource-approach failures share a four-failure budget across targets. A
+  successful arrival or gather resets the budget. Gatherer fails with the last
+  walk detail when the budget ends. Escape-in-progress and poison refusals
+  exclude a target for 60 observed game ticks.
 
 ## [0.2.8] — 2026-10-29 — Beta 2
 
