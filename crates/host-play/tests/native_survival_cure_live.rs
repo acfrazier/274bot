@@ -729,6 +729,9 @@ fn add_login_timer_wait_before_start(
         .position(|step| matches!(step.kind, scenario::StepKind::StartScript))
         .expect("fixture starts its native script");
     let wait_witness = Arc::clone(&witness);
+    // One lock: the guard of a `lock()` in a struct literal lives to the end
+    // of the statement, so three locks in the literal below would deadlock.
+    let stand = witness.lock().expect("survival witness").stand;
     let wait = scenario::Step {
         name: "wait for the 31-tick login poison timer to clear before provisioning",
         kind: scenario::StepKind::Await {
@@ -753,9 +756,9 @@ fn add_login_timer_wait_before_start(
         },
         wait: scenario::Wait {
             arm: scenario::Proof::Arrived {
-                x: witness.lock().expect("survival witness").stand.x,
-                z: witness.lock().expect("survival witness").stand.z,
-                level: witness.lock().expect("survival witness").stand.level,
+                x: stand.x,
+                z: stand.z,
+                level: stand.level,
             },
             // The witness reads the harness snapshot one loop pass after the
             // runner, so it can see the 31st tick one observed tick later.
@@ -2865,7 +2868,12 @@ struct SurvivalTrack {
     hit_tick: Option<u32>,
     food_drops: Vec<FoodDrop>,
     mark_rows: Vec<MarkRow>,
-    last: Option<(i32, i32)>,
+    /// The food count of the latest frame.
+    last_food: Option<i32>,
+    /// The game tick of the latest frame and the HP at the end of the tick
+    /// before it. A tick's inventory and stat updates can reach the client
+    /// in different client-loop frames, in either order.
+    tick_hp: Option<(u32, i32, i32)>,
 }
 
 fn stat_effective(snapshot: &GameSnapshot, id: i32) -> i32 {
@@ -2958,18 +2966,30 @@ fn capture_track(
     if track.hit_tick.is_none() && active_hitmark(snapshot, Some(1)) == Some(true) {
         track.hit_tick = Some(tick);
     }
-    if let Some((food, hp)) = track.last {
+    let hp_before_tick = match track.tick_hp {
+        Some((last_tick, previous, _)) if last_tick == tick => previous,
+        Some((_, _, last_hp)) => last_hp,
+        None => frame.hp,
+    };
+    track.tick_hp = Some((tick, hp_before_tick, frame.hp));
+    if let Some(food) = track.last_food {
         if frame.food < food {
             track.food_drops.push(FoodDrop {
                 tick,
                 from: food,
                 to: frame.food,
-                hp_before: hp,
+                hp_before: hp_before_tick,
                 hp_after: frame.hp,
             });
         }
     }
-    track.last = Some((frame.food, frame.hp));
+    // The bite's heal is the highest HP in its own game tick or the next.
+    if let Some(drop) = track.food_drops.last_mut() {
+        if tick <= drop.tick + 1 {
+            drop.hp_after = drop.hp_after.max(frame.hp);
+        }
+    }
+    track.last_food = Some(frame.food);
     while let Some(mark) = witness.poison_marks.get(track.mark_rows.len()) {
         track.mark_rows.push(MarkRow {
             tick: mark.tick,
@@ -3115,7 +3135,8 @@ fn check_unpark_window(
 
 /// Bites after a drink line at `drink`: the first in
 /// `[drink + 3, drink + 3 + slack]`, each next one in `[+3, +3 + slack]`.
-fn check_bite_spacing(drink: u32, drops: &[FoodDrop]) -> Result<(), String> {
+/// A bite's heal is judged once `now` is past the tick after its count drop.
+fn check_bite_spacing(drink: u32, drops: &[FoodDrop], now: u32) -> Result<(), String> {
     let mut previous = drink;
     for (index, drop) in drops.iter().enumerate() {
         let minimum = if index == 0 {
@@ -3132,7 +3153,8 @@ fn check_bite_spacing(drink: u32, drops: &[FoodDrop]) -> Result<(), String> {
                 minimum + CLICK_SLACK_TICKS
             ));
         }
-        if drop.from - drop.to != 1 || drop.hp_after <= drop.hp_before {
+        let healed = drop.hp_after > drop.hp_before || now <= drop.tick + 1;
+        if drop.from - drop.to != 1 || !healed {
             return Err(format!(
                 "bite {} did not eat one item and heal: {drop:?}",
                 index + 1
@@ -3376,6 +3398,11 @@ fn park_no_dose_receipt(
     let (Some(give), Some(dose)) = (track.give_tick, track.dose_seen_tick) else {
         return Ok(None);
     };
+    if give < *text_tick || dose < give {
+        return Err(format!(
+            "the dose was not given after the changed park text: text {text_tick}, give {give}, dose seen {dose}"
+        ));
+    }
     let drink = match witness.cure_tick {
         Some(drink) if drink < dose || drink - dose > 3 => {
             return Err(format!(
@@ -3636,7 +3663,7 @@ fn bite_after_drink_receipt(
             ));
         }
     }
-    check_bite_spacing(drink, &track.food_drops)?;
+    check_bite_spacing(drink, &track.food_drops, now)?;
     let last = match track.food_drops.last() {
         Some(last) if track.food_drops.len() >= 2 => *last,
         _ if now
@@ -3694,6 +3721,22 @@ fn bite_after_drink_receipt(
     })))
 }
 
+type TrackReceipt =
+    fn(&GameSnapshot, Option<&ScriptStatus>, &Witness) -> Result<Option<Value>, String>;
+
+/// A failed never, park or food oracle carries its tracked timeline in the
+/// receipt's error, so the failure can be classified from the receipt.
+fn with_track(
+    receipt: TrackReceipt,
+) -> impl FnMut(&GameSnapshot, Option<&ScriptStatus>, &Witness) -> Result<Option<Value>, String>
+       + Send
+       + 'static {
+    move |snapshot, status, witness| {
+        receipt(snapshot, status, witness)
+            .map_err(|error| format!("{error}; track={}", track_json(witness)))
+    }
+}
+
 fn insert_after_poison_seed(scenario: &mut scenario::Scenario, steps: Vec<scenario::Step>) {
     let seed = scenario
         .steps
@@ -3738,16 +3781,15 @@ fn give_dose_steps(witness: Arc<Mutex<Witness>>) -> Vec<scenario::Step> {
         scenario::Step {
             name: "give the parked account one antipoison dose",
             kind: scenario::StepKind::Perform {
-                send: Box::new(move |client, snapshot| {
+                send: Box::new(move |client, _| {
                     let command = format!("give {ANTIPOISON_ALIAS} 1");
                     if !api::interact::cheat(client, &command).is_sent() {
                         return false;
                     }
-                    give_witness
-                        .lock()
-                        .expect("survival witness")
-                        .track
-                        .give_tick = Some(snapshot.tick());
+                    // The witness keeps the harness snapshot's session ticks,
+                    // not the scenario runner's (see `SessionTicks`).
+                    let mut witness = give_witness.lock().expect("survival witness");
+                    witness.track.give_tick = witness.session.now;
                     true
                 }),
             },
@@ -3867,7 +3909,7 @@ fn live_l_cure_never_reports_the_need_and_keeps_gathering() {
         gatherer_willow_settings(0),
         Arc::clone(&witness),
         vault::CurePoison::Never,
-        never_receipt,
+        with_track(never_receipt),
     );
     let proof = &receipt["family_receipt"];
     assert_eq!(proof["cell"], "L-CURE-NEVER");
@@ -3902,7 +3944,7 @@ fn live_l_park_no_dose_holds_then_drinks_a_given_dose_and_resumes() {
         gatherer_willow_settings(0),
         Arc::clone(&witness),
         vault::CurePoison::WhenNeeded,
-        park_no_dose_receipt,
+        with_track(park_no_dose_receipt),
     );
     let proof = &receipt["family_receipt"];
     assert_eq!(proof["cell"], "L-PARK-NO-DOSE");
@@ -3931,7 +3973,7 @@ fn live_l_park_false_release_unparks_at_the_mark_of_five() {
         gatherer_willow_settings(0),
         Arc::clone(&witness),
         vault::CurePoison::WhenNeeded,
-        park_false_release_receipt,
+        with_track(park_false_release_receipt),
     );
     let proof = &receipt["family_receipt"];
     assert_eq!(proof["cell"], "L-PARK-FALSE-RELEASE");
@@ -3960,7 +4002,7 @@ fn live_l_park_food_release_eats_through_the_hold_and_unparks_at_the_eighth_mark
         gatherer_willow_settings(1),
         Arc::clone(&witness),
         vault::CurePoison::WhenNeeded,
-        park_food_release_receipt,
+        with_track(park_food_release_receipt),
     );
     let proof = &receipt["family_receipt"];
     assert_eq!(proof["cell"], "L-PARK-FOOD-RELEASE");
@@ -3995,7 +4037,7 @@ fn live_l_cure_bite_after_drink_waits_for_the_drink_and_the_next_food_clock() {
         gatherer_willow_settings(0),
         Arc::clone(&witness),
         vault::CurePoison::WhenNeeded,
-        bite_after_drink_receipt,
+        with_track(bite_after_drink_receipt),
     );
     let proof = &receipt["family_receipt"];
     assert_eq!(proof["cell"], "L-CURE-BITE-AFTER-DRINK");
@@ -4502,11 +4544,11 @@ mod oracle_tests {
     #[test]
     fn bite_spacing_accepts_the_drink_lock_and_the_next_food_clock() {
         assert_eq!(
-            check_bite_spacing(40, &[drop_at(43, 5), drop_at(46, 4)]),
+            check_bite_spacing(40, &[drop_at(43, 5), drop_at(46, 4)], 100),
             Ok(())
         );
         assert_eq!(
-            check_bite_spacing(40, &[drop_at(45, 5), drop_at(50, 4)]),
+            check_bite_spacing(40, &[drop_at(45, 5), drop_at(50, 4)], 100),
             Ok(())
         );
     }
@@ -4514,17 +4556,19 @@ mod oracle_tests {
     #[test]
     fn bite_spacing_rejects_a_bite_inside_a_lock_or_after_a_dropped_click() {
         // Inside the drink's delay: the engine would have dropped it.
-        assert!(check_bite_spacing(40, &[drop_at(42, 5)]).is_err());
+        assert!(check_bite_spacing(40, &[drop_at(42, 5)], 100).is_err());
         // Inside the next-food clock.
-        assert!(check_bite_spacing(40, &[drop_at(43, 5), drop_at(45, 4)]).is_err());
+        assert!(check_bite_spacing(40, &[drop_at(43, 5), drop_at(45, 4)], 100).is_err());
         // A dropped bite resent after the food op's eight-tick bound.
-        assert!(check_bite_spacing(40, &[drop_at(43, 5), drop_at(54, 4)]).is_err());
+        assert!(check_bite_spacing(40, &[drop_at(43, 5), drop_at(54, 4)], 100).is_err());
         // A first bite resent after a dropped click.
-        assert!(check_bite_spacing(40, &[drop_at(51, 5)]).is_err());
+        assert!(check_bite_spacing(40, &[drop_at(51, 5)], 100).is_err());
         // A count drop with no heal is not a bite.
         let mut no_heal = drop_at(43, 5);
         no_heal.hp_after = no_heal.hp_before;
-        assert!(check_bite_spacing(40, &[no_heal]).is_err());
+        assert!(check_bite_spacing(40, &[no_heal], 100).is_err());
+        // The heal may reach the client in the next game tick: no verdict yet.
+        assert_eq!(check_bite_spacing(40, &[no_heal], 44), Ok(()));
     }
 
     #[test]
