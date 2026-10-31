@@ -1692,6 +1692,152 @@ struct SiteReturnRequest {
     preferred_center: WorldTile,
 }
 
+#[derive(Debug, Default, Clone, serde::Serialize)]
+struct DeathReturnStopWitness {
+    allow_wilderness: Option<bool>,
+    permission_evidence_missing: bool,
+    respawn_tick: Option<u32>,
+    post_respawn_tiles: Vec<(u32, (i32, i32, i32))>,
+    observed_through_tick: Option<u32>,
+    wilderness_entered: bool,
+    tile_evidence_missing: bool,
+    terminal_detail: Option<String>,
+    terminal_tick: Option<u32>,
+    terminal_tile: Option<(i32, i32, i32)>,
+    terminal_request_id: Option<u64>,
+    terminal_stopped: bool,
+    quiet_through_tick: Option<u32>,
+    walking_after_failure: bool,
+    navigation_evidence_missing: bool,
+}
+
+impl DeathReturnStopWitness {
+    fn observe_permissions(&mut self, configured: Option<bool>, global: bool) {
+        if let Some(configured) = configured {
+            self.allow_wilderness =
+                Some(self.allow_wilderness.unwrap_or(false) || configured || global);
+        } else {
+            self.permission_evidence_missing = true;
+        }
+    }
+
+    fn observe_tile(
+        &mut self,
+        tick: u32,
+        tile: Option<(i32, i32, i32)>,
+        alive: bool,
+        in_wilderness: Option<bool>,
+    ) {
+        if self.respawn_tick.is_none() {
+            if !alive
+                || !tile.is_some_and(|(x, z, level)| {
+                    script::native::death::RESPAWN_SQUARE.contains(WorldTile { x, z, level })
+                })
+            {
+                return;
+            }
+            self.respawn_tick = Some(tick);
+        }
+        self.observed_through_tick = Some(tick);
+        match (tile, in_wilderness) {
+            (Some(tile), Some(in_wilderness)) => {
+                self.wilderness_entered |= in_wilderness;
+                if self
+                    .post_respawn_tiles
+                    .last()
+                    .is_none_or(|(_, prior)| *prior != tile)
+                {
+                    self.post_respawn_tiles.push((tick, tile));
+                }
+                if self.terminal_tick.is_some_and(|terminal| tick > terminal)
+                    && self.terminal_tile != Some(tile)
+                {
+                    self.walking_after_failure = true;
+                }
+            }
+            _ => self.tile_evidence_missing = true,
+        }
+    }
+
+    fn observe_terminal(
+        &mut self,
+        tick: u32,
+        tile: Option<(i32, i32, i32)>,
+        deaths: u8,
+        code: &str,
+        detail: &str,
+    ) {
+        if self.terminal_tick.is_none()
+            && self.respawn_tick.is_some()
+            && deaths == 1
+            && code == "return-failed"
+            && detail.contains("walk ended with ")
+        {
+            self.terminal_tick = Some(tick);
+            self.terminal_tile = tile;
+            self.terminal_detail = Some(detail.to_owned());
+            self.tile_evidence_missing |= tile.is_none();
+        }
+    }
+
+    fn observe_navigation(&mut self, tick: u32, nav: &Value, stopped: bool) {
+        let Some(terminal_tick) = self.terminal_tick else {
+            return;
+        };
+        let request_id = nav.get("request_id").and_then(Value::as_u64);
+        if let Some(prior) = self.terminal_request_id {
+            self.walking_after_failure |= request_id.is_some_and(|current| current != prior);
+        } else {
+            self.terminal_request_id = request_id;
+        }
+        self.navigation_evidence_missing |= request_id.is_none();
+        self.terminal_stopped = stopped;
+        // The terminal frame may still contain the completed walk's cleanup.
+        // Later game ticks must contain neither active work nor a new request.
+        if tick > terminal_tick {
+            for key in [
+                "armed",
+                "route",
+                "route_work_pending",
+                "pending",
+                "requested",
+                "bank_fetch",
+                "carry",
+            ] {
+                match nav.get(key).and_then(Value::as_bool) {
+                    Some(active) => self.walking_after_failure |= active,
+                    None => self.navigation_evidence_missing = true,
+                }
+            }
+            if stopped && !self.walking_after_failure && !self.navigation_evidence_missing {
+                self.quiet_through_tick = Some(tick);
+            }
+        }
+    }
+
+    fn complete(&self) -> bool {
+        self.allow_wilderness == Some(false)
+            && !self.permission_evidence_missing
+            && self.respawn_tick.is_some()
+            && !self.post_respawn_tiles.is_empty()
+            && !self.wilderness_entered
+            && !self.tile_evidence_missing
+            && self.terminal_detail.is_some()
+            && self.terminal_tile.is_some()
+            && self.terminal_request_id.is_some()
+            && self.terminal_stopped
+            && !self.walking_after_failure
+            && !self.navigation_evidence_missing
+            && self
+                .terminal_tick
+                .zip(self.quiet_through_tick)
+                .is_some_and(|(terminal, quiet)| {
+                    quiet.saturating_sub(terminal) >= 3
+                        && self.observed_through_tick.is_some_and(|tick| tick >= quiet)
+                })
+    }
+}
+
 #[derive(Debug, Default, Clone)]
 struct Witness {
     cycles: u32,
@@ -1889,8 +2035,7 @@ struct Witness {
     death_first_recovery_cycles: Option<u32>,
     death_first_recovery_post_drop_gathers: Option<u32>,
     death_haul_between: bool,
-    death_return_refused: bool,
-    death_return_stopped: bool,
+    death_return_stop: DeathReturnStopWitness,
     death_no_stock_blocked_running: bool,
     death_watchdog_aged: bool,
     death_watchdog_generation_before: Option<u64>,
@@ -2146,10 +2291,29 @@ impl GatherSlot {
                 tile_key(self.target)
             ));
         }
-        let next = auto_next_group(self.target, &latest.normal_trees);
+        let scene = self.snapshot.scene();
+        let start_query = api::query::SceneQuery::new(scene, Some(self.target));
+        if !start_query.walkable(self.target) {
+            return Err(format!(
+                "Auto start {:?} is not a standable scene tile",
+                tile_key(self.target)
+            ));
+        }
+        let next = auto_next_group(self.target, &latest.normal_trees)
+            .into_iter()
+            .filter(|&tree| {
+                start_query.can_reach(
+                    tree,
+                    &api::query::SceneReachOptions {
+                        adjacent_ok: true,
+                        ..Default::default()
+                    },
+                )
+            })
+            .collect::<Vec<_>>();
         if next.is_empty() {
             return Err(format!(
-                "Auto start {:?} has no observed real normal tree at distance 33..=128",
+                "Auto start {:?} has no reachable real normal tree with an adjacent approach at distance 33..=128",
                 tile_key(self.target)
             ));
         }
@@ -3621,14 +3785,15 @@ impl GatherSlot {
                         )?;
                         self.phase = Prep::WaitEdgeStart;
                     } else if self.case == LiveCase::LocationAuto {
-                        let reachable = api::query::SceneQuery::new(
-                            self.snapshot.scene(),
+                        let scene = self.snapshot.scene();
+                        let player_tile =
                             self.snapshot
                                 .tile()
-                                .map(|(x, z, level)| WorldTile { x, z, level }),
-                        )
-                        .flood_reach()
-                        .ok_or("Auto fixture has no observed collision reachability")?;
+                                .map(|(x, z, level)| WorldTile { x, z, level });
+                        let scene_query = api::query::SceneQuery::new(scene, player_tile);
+                        let reachable = scene_query
+                            .flood_reach()
+                            .ok_or("Auto fixture has no observed collision reachability")?;
                         let start = self
                             .latest
                             .as_ref()
@@ -3639,12 +3804,23 @@ impl GatherSlot {
                                         build,
                                         &latest.normal_trees,
                                         |tile| reachable.at(&tile).0,
+                                        |tile| scene_query.walkable(tile),
+                                        |from, tree| {
+                                            api::query::SceneQuery::new(scene, Some(from))
+                                                .can_reach(
+                                                    tree,
+                                                    &api::query::SceneReachOptions {
+                                                        adjacent_ok: true,
+                                                        ..Default::default()
+                                                    },
+                                                )
+                                        },
                                     )
                                 })
                             })
                             .ok_or_else(|| {
                                 format!(
-                                    "{} has no reachable empty Auto ring adjacent to observed real trees",
+                                    "{} has no reachable standable empty Auto ring beside a real tree with a reachable adjacent approach",
                                     self.name()
                                 )
                             })?;
@@ -4407,8 +4583,15 @@ impl GatherSlot {
                     code == "random-trapped" && inside
                 }
                 LiveCase::DeathReturnRefused => {
-                    self.witness.death_return_refused |=
-                        code == "return-failed" && message.contains("walk ended with Refused");
+                    if let Some(latest) = &self.latest {
+                        self.witness.death_return_stop.observe_terminal(
+                            latest.tick,
+                            latest.tile,
+                            self.witness.last_deaths,
+                            &code,
+                            &message,
+                        );
+                    }
                     code == "return-failed"
                 }
                 _ => false,
@@ -5268,6 +5451,8 @@ fn auto_start_candidate(
     build: BuildRect,
     normal_trees: &BTreeSet<(i32, i32, i32)>,
     reachable: impl Fn(WorldTile) -> bool,
+    standable: impl Fn(WorldTile) -> bool,
+    tree_reachable: impl Fn(WorldTile, WorldTile) -> bool,
 ) -> Option<WorldTile> {
     if build.level != origin.level || build.width <= 0 || build.height <= 0 {
         return None;
@@ -5285,22 +5470,32 @@ fn auto_start_candidate(
                 level: build.level,
             };
             if !reachable(candidate)
+                || !standable(candidate)
                 || normal_trees.iter().any(|&tree| {
                     tile_distance(tree, candidate).is_some_and(|distance| distance <= 32)
-                })
-                || !normal_trees.iter().any(|&tree| {
-                    tile_distance(tree, candidate)
-                        .is_some_and(|distance| (33..=128).contains(&distance))
                 })
             {
                 continue;
             }
             let distance = tile_distance(tile_key(origin), candidate)?;
-            if best.is_none_or(|(best_distance, best_tile)| {
-                (distance, candidate.x, candidate.z) < (best_distance, best_tile.x, best_tile.z)
+            if best.is_some_and(|(best_distance, best_tile)| {
+                (distance, candidate.x, candidate.z) >= (best_distance, best_tile.x, best_tile.z)
             }) {
-                best = Some((distance, candidate));
+                continue;
             }
+            if !normal_trees.iter().any(|&tree| {
+                let tree_tile = WorldTile {
+                    x: tree.0,
+                    z: tree.1,
+                    level: tree.2,
+                };
+                tile_distance(tree, candidate)
+                    .is_some_and(|distance| (33..=128).contains(&distance))
+                    && tree_reachable(candidate, tree_tile)
+            }) {
+                continue;
+            }
+            best = Some((distance, candidate));
         }
     }
     best.map(|(_, tile)| tile)
@@ -5929,6 +6124,7 @@ fn run_cell_with_fixture(
     let frame_account = account.clone();
     let frame_helper_account = helper_account.clone();
     let frame_helper_state = helper_state.clone();
+    let frame_world = profile.world();
     let capture_request = Arc::new(Mutex::new(None::<(PathBuf, Value)>));
     let capture_result = Arc::new(Mutex::new(None::<Result<(), String>>));
     let frame_capture_request = Arc::clone(&capture_request);
@@ -6076,6 +6272,27 @@ fn run_cell_with_fixture(
             }
             if let Ok(mut slot) = frame_state.lock() {
                 slot.frame(client, hold);
+                if case == LiveCase::DeathReturnRefused
+                    && slot.witness.death_recovery_command_sent > 0
+                {
+                    let tick = slot.latest.as_ref().map_or(0, |latest| latest.tick);
+                    let tile = slot.snapshot.tile();
+                    let alive = slot.snapshot.ingame()
+                        && slot.snapshot.scene_state() == 2
+                        && slot.snapshot.stats().iter().any(|stat| {
+                            stat.name.eq_ignore_ascii_case("Hitpoints") && stat.effective > 0
+                        });
+                    let in_wilderness =
+                        frame_world
+                            .as_ref()
+                            .zip(tile)
+                            .map(|(world, (x, z, level))| {
+                                world.graph.wilderness.contains(WorldTile { x, z, level })
+                            });
+                    slot.witness
+                        .death_return_stop
+                        .observe_tile(tick, tile, alive, in_wilderness);
+                }
             }
             let capture = frame_capture_request
                 .lock()
@@ -6750,16 +6967,6 @@ fn run_cell_with_fixture(
                     }
                 }
             }
-            if case == LiveCase::DeathReturnRefused && slot.witness.death_return_refused {
-                slot.witness.death_return_stopped |= play.script_state(&account)
-                    == script::RunState::Idle
-                    && play.script_native_run(&account).is_none()
-                    && play
-                        .script_lifecycle_receipt(&account)
-                        .is_some_and(|receipt| {
-                            receipt.state == script::ScriptTerminalState::Failed
-                        });
-            }
             if case == LiveCase::MazeRandom
                 && slot.witness.maze_blocked_inside
                 && !slot.witness.maze_stopped
@@ -6775,6 +6982,26 @@ fn run_cell_with_fixture(
                     json!({"phase": "maze-stopped", "state": "Idle", "receipt": "Failed"})
                 );
             }
+        }
+        if case == LiveCase::DeathReturnRefused {
+            let stopped = play.script_state(&account) == script::RunState::Idle
+                && play.script_native_run(&account).is_none()
+                && play
+                    .script_lifecycle_receipt(&account)
+                    .is_some_and(|receipt| receipt.state == script::ScriptTerminalState::Failed);
+            #[cfg(feature = "live-probe")]
+            let nav = play.manual_click_live_probe(&account)["nav"].clone();
+            #[cfg(not(feature = "live-probe"))]
+            let nav = Value::Null;
+            let mut slot = state.lock().map_err(|_| "live state poisoned")?;
+            let tick = slot.latest.as_ref().map_or(0, |latest| latest.tick);
+            slot.witness.death_return_stop.observe_permissions(
+                settings.get("allowWilderness").and_then(Value::as_bool),
+                play.walk_globals().allow_wilderness,
+            );
+            slot.witness
+                .death_return_stop
+                .observe_navigation(tick, &nav, stopped);
         }
         let (
             witness,
@@ -7112,8 +7339,7 @@ fn run_cell_with_fixture(
             "death_products_after": witness.death_products_after,
             "death_xp_after": witness.death_xp_after,
             "death_haul_between": witness.death_haul_between,
-            "death_return_refused": witness.death_return_refused,
-            "death_return_stopped": witness.death_return_stopped,
+            "death_return_stop": witness.death_return_stop,
             "death_watchdog_aged": witness.death_watchdog_aged,
             "death_watchdog_generation_before": witness.death_watchdog_generation_before,
             "death_watchdog_recreated": witness.death_watchdog_recreated,
@@ -8027,8 +8253,7 @@ fn interrupts_complete(case: LiveCase, witness: &Witness) -> bool {
                     .is_some_and(|bank| bank.contains("; access:"))
         }
         LiveCase::DeathReturnRefused => {
-            witness.death_return_refused
-                && witness.death_return_stopped
+            witness.death_return_stop.complete()
                 && witness.last_deaths == 1
                 && witness.death_recovery_command_sent == 1
         }
@@ -10147,6 +10372,37 @@ mod fish_harpoon_auto_fixture_tests {
 #[cfg(test)]
 mod gatherer_real_content_fixture_tests {
     use super::*;
+    use api::query::{ArrivalProbe, CollisionArrivalProbe, SceneReachOptions};
+
+    fn auto_test_build() -> BuildRect {
+        BuildRect {
+            base_x: 3008,
+            base_z: 3136,
+            width: 104,
+            height: 104,
+            level: 0,
+        }
+    }
+
+    fn auto_real_scene_trees() -> BTreeSet<(i32, i32, i32)> {
+        BTreeSet::from([
+            tile_key(world_tile(3025, 3169)),
+            tile_key(world_tile(3024, 3174)),
+            tile_key(world_tile(3024, 3176)),
+            tile_key(world_tile(3105, 3170)),
+            tile_key(world_tile(3011, 3213)),
+        ])
+    }
+
+    fn packed_collision_at(
+        collision: &nav_planner::collision::WorldCollision,
+        tile: WorldTile,
+    ) -> Option<i32> {
+        let x = usize::try_from(tile.x.checked_sub(collision.origin.x)?).ok()?;
+        let z = usize::try_from(tile.z.checked_sub(collision.origin.z)?).ok()?;
+        ((0..=3).contains(&tile.level) && x < collision.width && z < collision.height)
+            .then(|| collision.walkable_word(tile.x, tile.z, tile.level) as i32)
+    }
 
     #[test]
     fn auto_fixture_uses_observed_tree_placements_without_location_seeds() {
@@ -10157,36 +10413,121 @@ mod gatherer_real_content_fixture_tests {
         assert!(plan.auto_next.is_empty());
         assert!(task.is_none());
 
-        let build = BuildRect {
-            base_x: 3008,
-            base_z: 3136,
-            width: 104,
-            height: 104,
-            level: 0,
-        };
-        let real_scene_trees = BTreeSet::from([
-            tile_key(world_tile(3025, 3169)),
-            tile_key(world_tile(3024, 3174)),
-            tile_key(world_tile(3024, 3176)),
-            tile_key(world_tile(3105, 3170)),
-            tile_key(world_tile(3011, 3213)),
-        ]);
-        assert_eq!(
-            tile_distance(tile_key(world_tile(3025, 3169)), AUTO_START),
-            Some(33)
-        );
-        let start = auto_start_candidate(AUTO_START, build, &real_scene_trees, |_| true)
-            .expect("real scene tree placements should admit an empty Auto ring");
+        let build = auto_test_build();
+        let real_scene_trees = auto_real_scene_trees();
+        let nearest_tree = world_tile(3025, 3169);
+        assert_eq!(tile_distance(tile_key(nearest_tree), AUTO_START), Some(33));
+        let start = auto_start_candidate(
+            AUTO_START,
+            build,
+            &real_scene_trees,
+            |_| true,
+            |_| true,
+            |candidate, tree| candidate == AUTO_START && tree == nearest_tree,
+        )
+        .expect("the authored nearest tree should have an empty reachable Auto ring");
         assert_eq!(start, AUTO_START);
         assert!(real_scene_trees
             .iter()
             .all(|&tree| { tile_distance(tree, start).is_none_or(|distance| distance > 32) }));
         assert!(!auto_next_group(start, &real_scene_trees).is_empty());
-        assert!(auto_start_candidate(AUTO_START, build, &real_scene_trees, |_| false).is_none());
-        let alternate =
-            auto_start_candidate(AUTO_START, build, &real_scene_trees, |tile| tile != start)
-                .expect("an inaccessible closest tile must not hide another empty ring");
+        assert!(auto_start_candidate(
+            AUTO_START,
+            build,
+            &real_scene_trees,
+            |_| false,
+            |_| true,
+            |_, _| true,
+        )
+        .is_none());
+        assert!(auto_start_candidate(
+            AUTO_START,
+            build,
+            &real_scene_trees,
+            |_| true,
+            |_| true,
+            |_, _| false,
+        )
+        .is_none());
+        assert!(auto_start_candidate(
+            AUTO_START,
+            build,
+            &real_scene_trees,
+            |_| true,
+            |_| false,
+            |_, _| true,
+        )
+        .is_none());
+        let land_alternate = auto_start_candidate(
+            AUTO_START,
+            build,
+            &real_scene_trees,
+            |_| true,
+            |candidate| candidate != AUTO_START,
+            |_, _| true,
+        )
+        .expect("a blocked origin must not qualify merely because its flood includes it");
+        assert_ne!(land_alternate, AUTO_START);
+        let alternate = auto_start_candidate(
+            AUTO_START,
+            build,
+            &real_scene_trees,
+            |tile| tile != start,
+            |_| true,
+            |_, _| true,
+        )
+        .expect("an unreachable closest tile must not hide another empty ring");
         assert_ne!(alternate, start);
+    }
+
+    #[test]
+    fn auto_fixture_candidate_is_reachable_standable_and_beside_authored_trees_in_nav_pack() {
+        let Some(pack_path) = std::env::var_os("NAV_PACK") else {
+            return;
+        };
+        let world = nav_planner::world::NavWorld::load_pack(&PathBuf::from(pack_path))
+            .expect("the selected real navigation pack must load");
+        let collision = &world.collision;
+        let probe = CollisionArrivalProbe::new(|tile| packed_collision_at(collision, tile));
+        let trees = auto_real_scene_trees();
+        let start = auto_start_candidate(
+            AUTO_START,
+            auto_test_build(),
+            &trees,
+            |tile| probe.can_reach_from(AUTO_START, tile, &SceneReachOptions::default()),
+            |tile| collision.standable(tile),
+            |from, tree| {
+                probe.can_reach_from(
+                    from,
+                    tree,
+                    &SceneReachOptions {
+                        adjacent_ok: true,
+                        ..Default::default()
+                    },
+                )
+            },
+        )
+        .expect("the real nav pack must admit a reachable stand beside an authored tree");
+        assert!(collision.standable(start));
+        assert!(probe.can_reach_from(AUTO_START, start, &SceneReachOptions::default()));
+        assert!(trees
+            .iter()
+            .all(|&tree| { tile_distance(tree, start).is_none_or(|distance| distance > 32) }));
+        assert!(trees.iter().any(|&tree| {
+            tile_distance(tree, start).is_some_and(|distance| (33..=128).contains(&distance))
+                && probe.can_reach_from(
+                    start,
+                    WorldTile {
+                        x: tree.0,
+                        z: tree.1,
+                        level: tree.2,
+                    },
+                    &SceneReachOptions {
+                        adjacent_ok: true,
+                        ..Default::default()
+                    },
+                )
+        }));
     }
 
     #[test]
@@ -11181,5 +11522,168 @@ mod quester_shared_core_completion_tests {
             RunState::Idle,
         )
         .is_err());
+    }
+}
+
+#[cfg(test)]
+mod death_return_stop_oracle_tests {
+    use super::*;
+
+    fn quiet_nav(request_id: u64) -> Value {
+        json!({
+            "request_id": request_id,
+            "armed": false,
+            "route": false,
+            "route_work_pending": false,
+            "pending": false,
+            "requested": false,
+            "bank_fetch": false,
+            "carry": false,
+        })
+    }
+
+    fn stopped_return(detail: &str) -> Witness {
+        let mut stop = DeathReturnStopWitness::default();
+        stop.observe_permissions(Some(false), false);
+        stop.observe_tile(50, Some((3222, 3218, 0)), true, Some(false));
+        stop.observe_tile(99, Some((3092, 3243, 0)), true, Some(false));
+        stop.observe_terminal(100, Some((3092, 3243, 0)), 1, "return-failed", detail);
+        stop.observe_navigation(100, &quiet_nav(42), true);
+        stop.observe_tile(103, Some((3092, 3243, 0)), true, Some(false));
+        stop.observe_navigation(103, &quiet_nav(42), true);
+        Witness {
+            death_return_stop: stop,
+            last_deaths: 1,
+            death_recovery_command_sent: 1,
+            ..Witness::default()
+        }
+    }
+
+    #[test]
+    fn no_path_after_death_passes_and_keeps_the_walk_detail() {
+        let witness = stopped_return("walk ended with NoPath");
+        assert!(interrupts_complete(LiveCase::DeathReturnRefused, &witness));
+        assert_eq!(
+            witness.death_return_stop.terminal_detail.as_deref(),
+            Some("walk ended with NoPath")
+        );
+        assert!(interrupts_complete(
+            LiveCase::DeathReturnRefused,
+            &stopped_return("walk ended with Refused")
+        ));
+    }
+
+    #[test]
+    fn entering_wilderness_after_respawn_fails() {
+        let mut witness = stopped_return("walk ended with NoPath");
+        witness
+            .death_return_stop
+            .observe_tile(60, Some((3204, 3525, 0)), true, Some(true));
+        assert!(!interrupts_complete(LiveCase::DeathReturnRefused, &witness));
+    }
+
+    #[test]
+    fn continuing_or_rearming_walk_after_terminal_failure_fails() {
+        for key in [
+            "armed",
+            "route",
+            "route_work_pending",
+            "pending",
+            "requested",
+            "bank_fetch",
+            "carry",
+        ] {
+            let mut witness = stopped_return("walk ended with NoPath");
+            let mut nav = quiet_nav(42);
+            nav[key] = json!(true);
+            witness
+                .death_return_stop
+                .observe_navigation(104, &nav, true);
+            assert!(
+                !interrupts_complete(LiveCase::DeathReturnRefused, &witness),
+                "active {key} must fail"
+            );
+        }
+        let mut rearmed = stopped_return("walk ended with NoPath");
+        rearmed
+            .death_return_stop
+            .observe_navigation(104, &quiet_nav(43), true);
+        assert!(!interrupts_complete(LiveCase::DeathReturnRefused, &rearmed));
+        let mut moving = stopped_return("walk ended with NoPath");
+        moving
+            .death_return_stop
+            .observe_tile(104, Some((3093, 3243, 0)), true, Some(false));
+        assert!(!interrupts_complete(LiveCase::DeathReturnRefused, &moving));
+    }
+
+    #[test]
+    fn missing_or_contradictory_safety_evidence_fails() {
+        let mut granted = stopped_return("walk ended with NoPath");
+        granted
+            .death_return_stop
+            .observe_permissions(Some(false), true);
+        granted
+            .death_return_stop
+            .observe_permissions(Some(false), false);
+        assert!(!interrupts_complete(LiveCase::DeathReturnRefused, &granted));
+
+        let mut no_permission = stopped_return("walk ended with NoPath");
+        no_permission
+            .death_return_stop
+            .observe_permissions(None, false);
+        assert!(!interrupts_complete(
+            LiveCase::DeathReturnRefused,
+            &no_permission
+        ));
+
+        let mut no_tile = stopped_return("walk ended with NoPath");
+        no_tile
+            .death_return_stop
+            .observe_tile(104, None, true, None);
+        assert!(!interrupts_complete(LiveCase::DeathReturnRefused, &no_tile));
+
+        let mut no_nav = stopped_return("walk ended with NoPath");
+        no_nav
+            .death_return_stop
+            .observe_navigation(104, &Value::Null, true);
+        assert!(!interrupts_complete(LiveCase::DeathReturnRefused, &no_nav));
+
+        let mut still_running = stopped_return("walk ended with NoPath");
+        still_running
+            .death_return_stop
+            .observe_navigation(104, &quiet_nav(42), false);
+        assert!(!interrupts_complete(
+            LiveCase::DeathReturnRefused,
+            &still_running
+        ));
+    }
+
+    #[test]
+    fn terminal_requires_the_death_and_three_fresh_quiet_ticks() {
+        let mut witness = stopped_return("walk ended with NoPath");
+        witness.death_return_stop.quiet_through_tick = Some(102);
+        assert!(!interrupts_complete(LiveCase::DeathReturnRefused, &witness));
+        witness.death_return_stop.quiet_through_tick = Some(103);
+        witness.last_deaths = 0;
+        assert!(!interrupts_complete(LiveCase::DeathReturnRefused, &witness));
+
+        let mut premature = DeathReturnStopWitness::default();
+        premature.observe_tile(50, Some((3222, 3218, 0)), true, Some(false));
+        premature.observe_terminal(
+            100,
+            Some((3092, 3243, 0)),
+            0,
+            "return-failed",
+            "walk ended with NoPath",
+        );
+        assert!(premature.terminal_detail.is_none());
+        premature.observe_terminal(
+            100,
+            Some((3092, 3243, 0)),
+            1,
+            "supply-missing",
+            "walk ended with NoPath",
+        );
+        assert!(premature.terminal_detail.is_none());
     }
 }

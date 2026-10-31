@@ -728,12 +728,23 @@ correctly show `Supply`. The same-region death check waits for the native
 death and respawn tiles. Its positive witness still needs the respawn square,
 the same 64-tile region and plane, and fresh progress after recovery.
 
-The Auto-mode fixture starts near `(3058,3169,0)` and must find a reachable
-empty 32-tile ring among the real observed trees before Start. The refused
-death-return fixture uses the real oak at `(3204,3525,0)`, away from the old
-Skeleton danger zone. It starts in the wilderness but leaves
-`allowWilderness=false`, so the return from respawn still crosses a forbidden
-boundary. Neither fixture seeds resources or changes the safety gate.
+The Auto-mode fixture searches near `(3058,3169,0)` for a reachable, standable
+origin with no real tree inside its 32-tile ring. A real tree 33–128 tiles away
+must have a reachable adjacent approach. The fixture rechecks the origin and
+approaches against the observed scene after teleporting; a flood-reachable but
+blocked origin does not qualify.
+
+The refused death-return fixture uses the real oak at `(3204,3525,0)`, away
+from the old Skeleton danger zone. It starts in the wilderness but leaves
+`allowWilderness=false`, so the return from respawn crosses a forbidden boundary.
+The oracle requires a terminal `return-failed` after death and keeps its walk
+detail; it does not require the detail to name `Refused` rather than `NoPath`.
+It records the effective wilderness permission and every changed observed tile
+after respawn, using the selected world's wilderness facts. It must see no
+wilderness entry, no renewed navigation or movement after failure, and an
+Idle/Failed owner with three fresh quiet game ticks. Missing permission, tile
+or navigation evidence fails the check. Neither fixture seeds resources or
+changes the safety gate.
 
 ### Target switching
 

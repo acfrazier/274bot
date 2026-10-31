@@ -1227,7 +1227,11 @@ mod tests {
         let (rows, maximum, complete) = idle.value();
         assert_eq!(
             rows,
-            json!([{"tick": 7, "count": 0, "source": "real-encrypted-sink-commits"}])
+            json!([{"tick": 7, "count": 0, "source": if cfg!(feature = "test-support") {
+                "host-classified-driver-commits"
+            } else {
+                "real-encrypted-sink-commits"
+            }}])
         );
         assert_eq!(maximum, 0);
         assert!(!complete);
