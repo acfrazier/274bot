@@ -1,10 +1,12 @@
 use std::ops::Deref;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, LazyLock, Mutex, MutexGuard, PoisonError};
 
 use frontend_core::scripts::{LoadoutForm, Loadouts, LoadoutsErrorKind};
-use host_play::local_state::{LocalStateService, StateRoot};
+use host_play::local_state::{
+    transient_wait, wait_outcome, LocalStateService, StateRoot, WaitOutcome,
+};
 
 static NEXT_DIR: AtomicU64 = AtomicU64::new(0);
 
@@ -157,18 +159,31 @@ pub(crate) fn preferences_on_disk(
         Err(error) => panic!("read {}: {error}", path.display()),
     }
 }
-/// Retry a frontend-backed write while it reports the write queued past
-/// the frontend's bounded durability wait: under machine load a write
-/// stays queued past 5 s and settles later. Any other error returns at
-/// once, so refusals and genuine conflicts keep their fast verdict.
-pub(crate) fn patiently(mut attempt: impl FnMut() -> Result<(), String>) -> Result<(), String> {
+/// The two bounded waits the frontend reports as text, for a call site
+/// that has already stringified its error: the write stayed queued past
+/// the frontend's durability wait, or the store was still hydrating (the
+/// typed `NotReady` outcome). Both settle later under machine load.
+pub(crate) fn transient_text_wait(error: &str) -> bool {
+    error.contains("not durable within") || error.contains("is not ready")
+}
+
+/// Retry an attempt while `transient` says its failure is one of the two
+/// bounded waits this suite retries: the typed `NotReady` outcome (a read
+/// queued while the store hydrates) or a write queued past the frontend's
+/// own bound. Both settle later under machine load (a product deadline
+/// this suite must not change). Any other failure returns at once, so
+/// refusals and genuine conflicts keep their fast verdict. The bound is
+/// the suite's 60 s, as before.
+fn retry_waits<E>(
+    mut attempt: impl FnMut() -> Result<(), E>,
+    transient: impl Fn(&E) -> bool,
+) -> Result<(), E> {
     let start = std::time::Instant::now();
     loop {
         match attempt() {
             Ok(()) => return Ok(()),
             Err(error)
-                if error.contains("not durable within")
-                    && start.elapsed() < std::time::Duration::from_secs(60) =>
+                if transient(&error) && start.elapsed() < std::time::Duration::from_secs(60) =>
             {
                 std::thread::yield_now();
             }
@@ -176,32 +191,40 @@ pub(crate) fn patiently(mut attempt: impl FnMut() -> Result<(), String>) -> Resu
         }
     }
 }
-/// A preferences write through a scratch service, retried past load-slow
-/// durability (see [`patiently`]). The update re-reads and re-applies its
+
+/// Retry a condition poll that reports the suite's own "not durable
+/// within ..." text while the awaited state has not landed: the text is
+/// this suite's marker, not a product error. A call site that stringified
+/// a real frontend error is retried for both bounded waits (see
+/// [`transient_text_wait`]).
+pub(crate) fn patiently(attempt: impl FnMut() -> Result<(), String>) -> Result<(), String> {
+    retry_waits(attempt, |error: &String| transient_text_wait(error))
+}
+/// A preferences write through a scratch service, retried past the two
+/// bounded waits (see [`retry_waits`]). The typed classifier sees the
+/// fixture's `NotReady` code. The update re-reads and re-applies its
 /// change on a conflict, so a retry after a late-landing write converges.
 pub(crate) fn set_patiently(
     preferences: &frontend_core::UiPreferences,
     key: &str,
     value: serde_json::Value,
 ) {
-    patiently(|| {
-        preferences
-            .set(key, value.clone())
-            .map_err(|error| error.to_string())
-    })
-    .unwrap();
+    retry_waits(|| preferences.set(key, value.clone()), transient_wait).unwrap();
 }
-/// A [`Loadouts`] save through a scratch service, retried
-/// past load-slow durability (see [`patiently`]). A write of an earlier
-/// attempt that lands late conflicts with its own retry; the save replays
-/// the store's latest on a conflict, so a retry converges.
+/// A [`Loadouts`] save through a scratch service, retried past the two
+/// bounded waits (see [`patiently`]). Its typed `kind` is
+/// [`LoadoutsErrorKind::Write`] for both a wait and a permanent store
+/// failure, so the seam cannot tell them apart: the text names the waits.
+/// A write of an earlier attempt that lands late conflicts with its own
+/// retry; the save replays the store's latest on a conflict, so a retry
+/// converges.
 pub(crate) fn save_store_patiently(store: &mut Loadouts) {
     let start = std::time::Instant::now();
     loop {
         match store.save_for_test() {
             Ok(()) => return,
             Err(error)
-                if (error.to_string().contains("not durable within")
+                if (transient_text_wait(&error.to_string())
                     || error.kind() == LoadoutsErrorKind::Conflict)
                     && start.elapsed() < std::time::Duration::from_secs(60) =>
             {
@@ -211,23 +234,23 @@ pub(crate) fn save_store_patiently(store: &mut Loadouts) {
         }
     }
 }
-/// [`crate::loadouts::save_draft`], retried past load-slow durability: a
+/// [`crate::loadouts::save_draft`], retried past the two bounded waits: a
 /// failed save keeps the operator's draft, so saving again retries the
-/// same edit. A conflict is retried only after a timeout saw the store
-/// move under the save; a first-answer conflict (another writer) returns
-/// at once for the caller to assert on.
+/// same edit. A conflict is retried only after a wait saw the store move
+/// under the save; a first-answer conflict (another writer) returns at
+/// once for the caller to assert on.
 pub(crate) fn save_draft_patiently(session: &mut crate::session::Session) -> bool {
     let start = std::time::Instant::now();
-    let mut timed_out_before = false;
+    let mut waited_before = false;
     loop {
         let saved = crate::loadouts::save_draft(session);
         if saved {
             return true;
         }
         let status = session.loadouts.status().to_string();
-        if status.contains("not durable within") {
-            timed_out_before = true;
-        } else if !(timed_out_before && status.contains("changed since this list was loaded")) {
+        if transient_text_wait(&status) {
+            waited_before = true;
+        } else if !(waited_before && status.contains("changed since this list was loaded")) {
             return false;
         }
         if start.elapsed() >= std::time::Duration::from_secs(60) {
@@ -483,4 +506,71 @@ fn test_contexts_have_no_ini_file() {
         ctx.io().ini_filename().is_none(),
         "a test context must not read or write imgui.ini"
     );
+}
+
+/// An attempt outcome for the retry-helper test: only the wait is
+/// transient.
+#[derive(Debug, PartialEq, Eq)]
+enum TestAttempt {
+    Wait,
+    Refused,
+}
+
+/// The shared retry both ways: a typed `NotReady` attempt is retried and
+/// the next attempt succeeds; a permanent failure returns after one
+/// attempt. A service with the preferences domain closed reports the same
+/// typed `NotReady` the fixture's Reading-phase wait reports, without a
+/// five-second frontend wait.
+#[test]
+fn retry_waits_retries_not_ready_and_returns_a_permanent_failure() {
+    let root = TestDir::new("panel-retry-outcomes");
+    let closed = LocalStateService::open(
+        StateRoot::new(root.to_path_buf()),
+        &[],
+        Arc::new(api::identity::RequestIdMinter::new()),
+    );
+    let preferences = closed.preferences();
+    let attempts = AtomicUsize::new(0);
+    let result = retry_waits(
+        || {
+            if attempts.fetch_add(1, Ordering::SeqCst) == 0 {
+                preferences.set("map_bake", serde_json::json!("always"))
+            } else {
+                Ok(())
+            }
+        },
+        transient_wait,
+    );
+    assert!(result.is_ok(), "a NotReady attempt is retried");
+    assert_eq!(attempts.load(Ordering::SeqCst), 2);
+    let error = preferences
+        .set("map_bake", serde_json::json!("always"))
+        .expect_err("a closed domain refuses the write");
+    assert_eq!(
+        wait_outcome(&error),
+        WaitOutcome::NotReady,
+        "the typed Reading-phase outcome: {error}"
+    );
+
+    let attempts = AtomicUsize::new(0);
+    let result: Result<(), TestAttempt> = retry_waits(
+        || {
+            attempts.fetch_add(1, Ordering::SeqCst);
+            Err(TestAttempt::Refused)
+        },
+        |error| *error == TestAttempt::Wait,
+    );
+    assert_eq!(result.unwrap_err(), TestAttempt::Refused);
+    assert_eq!(
+        attempts.load(Ordering::SeqCst),
+        1,
+        "a refusal is not retried"
+    );
+
+    // The text classifier covers a call site that stringified its error.
+    assert!(transient_text_wait("the write was not durable within 5s"));
+    assert!(transient_text_wait(
+        "preferences: preferences is not ready (x)"
+    ));
+    assert!(!transient_text_wait("invalid preferences value: bad chars"));
 }
