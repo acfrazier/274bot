@@ -2084,13 +2084,14 @@ fn magic_spawn_teleport_step(spawn: WorldTile, capture: Arc<Mutex<CombatCapture>
 
 const M4_CURE_DEADLINE_TICKS: u32 = 16;
 const M4_CURE_CHAT: &str = "You drink some of your antipoison potion.";
+const M4_POTION_FINISHED_CHAT: &str = "You have finished your potion.";
 
-fn m4_fresh_cure_chat(snapshot: &GameSnapshot, baseline: i32) -> Option<i32> {
+fn m4_fresh_system_chat(snapshot: &GameSnapshot, baseline: i32, text: &str) -> Option<i32> {
     snapshot.chat_lines().iter().find_map(|line| {
         (line.sequence > baseline
             && line.type_ == 0
             && line.username.is_none()
-            && line.text == M4_CURE_CHAT)
+            && line.text == text)
             .then_some(line.sequence)
     })
 }
@@ -2100,11 +2101,12 @@ fn m4_cure_gate(
     tick: u32,
     fresh_cure_chat: bool,
     dose_absent: bool,
+    potion_finished: bool,
 ) -> Result<bool, &'static str> {
     if tick.wrapping_sub(sent_tick) >= M4_CURE_DEADLINE_TICKS {
-        return Err("M4 did not observe its fresh antipoison message and consumed dose within 16 game ticks before Start");
+        return Err("M4 did not observe its fresh antipoison message, consumed dose and finished potion within 16 game ticks before Start");
     }
-    Ok(fresh_cure_chat && dose_absent)
+    Ok(fresh_cure_chat && dose_absent && potion_finished)
 }
 
 fn m4_cure_steps(capture: Arc<Mutex<CombatCapture>>) -> [Step; 2] {
@@ -2151,9 +2153,9 @@ fn m4_cure_steps(capture: Arc<Mutex<CombatCapture>>) -> [Step; 2] {
             },
         },
         Step {
-            name: "observe the fresh cure message and consumed dose before Start",
+            name: "observe the fresh cure, consumed dose and finished potion before Start",
             kind: StepKind::Await {
-                evidence: "fresh antipoison message and consumed single dose",
+                evidence: "fresh antipoison message, consumed single dose and finished potion",
                 ready: Box::new(move |snapshot| {
                     let Some((sent_tick, chat_baseline)) =
                         *sent.lock().unwrap_or_else(|error| error.into_inner())
@@ -2161,14 +2163,24 @@ fn m4_cure_steps(capture: Arc<Mutex<CombatCapture>>) -> [Step; 2] {
                         return false;
                     };
                     // anti_poison.rs2:5-9 applies immunity and replaces the
-                    // dose; consume_messages.dbrow publishes this chat one
-                    // game tick later. Neither observation alone opens Start.
-                    let cure = m4_fresh_cure_chat(snapshot, chat_baseline);
+                    // dose. consume_effects.rs2:118-129 publishes the cure
+                    // message before p_delay(1), then the finished message.
+                    // Wait for completion before sending drain or teleport.
+                    let cure = m4_fresh_system_chat(snapshot, chat_baseline, M4_CURE_CHAT);
+                    let potion_finished = cure.and_then(|sequence| {
+                        m4_fresh_system_chat(snapshot, sequence, M4_POTION_FINISHED_CHAT)
+                    });
                     let dose_absent = snapshot
                         .inventory()
                         .iter()
                         .all(|item| item.def.id != dose_id || item.count <= 0);
-                    match m4_cure_gate(sent_tick, snapshot.tick(), cure.is_some(), dose_absent) {
+                    match m4_cure_gate(
+                        sent_tick,
+                        snapshot.tick(),
+                        cure.is_some(),
+                        dose_absent,
+                        potion_finished.is_some(),
+                    ) {
                         Ok(true) => {
                             capture
                                 .lock()
@@ -2180,6 +2192,8 @@ fn m4_cure_steps(capture: Arc<Mutex<CombatCapture>>) -> [Step; 2] {
                                     "tick": snapshot.tick(),
                                     "chat_sequence": cure,
                                     "chat": M4_CURE_CHAT,
+                                    "potion_finished_chat_sequence": potion_finished,
+                                    "potion_finished_chat": M4_POTION_FINISHED_CHAT,
                                     "dose_id": dose_id,
                                     "dose_absent": dose_absent,
                                 }));
@@ -10694,7 +10708,7 @@ fn m4_observes_its_own_poison_cure_before_the_hostile_teleport_and_start() {
             .unwrap()
     };
     let drink = index("drink the pre-Start antipoison dose");
-    let cure = index("observe the fresh cure message and consumed dose before Start");
+    let cure = index("observe the fresh cure, consumed dose and finished potion before Start");
     let drain = index("drain Hitpoints to eight before hostile-area teleport");
     let stand = index("stand at the quest start");
     let start = scenario
@@ -10706,29 +10720,36 @@ fn m4_observes_its_own_poison_cure_before_the_hostile_teleport_and_start() {
 }
 
 #[test]
-fn m4_cure_gate_requires_both_observations_before_a_fixed_game_tick_deadline() {
-    for (fresh_chat, dose_absent, ready) in [
-        (false, false, false),
-        (true, false, false),
-        (false, true, false),
-        (true, true, true),
+fn m4_cure_gate_requires_all_observations_before_a_fixed_game_tick_deadline() {
+    for (fresh_chat, dose_absent, potion_finished, ready) in [
+        (false, false, false, false),
+        (false, false, true, false),
+        (false, true, false, false),
+        (false, true, true, false),
+        (true, false, false, false),
+        (true, false, true, false),
+        (true, true, false, false),
+        (true, true, true, true),
     ] {
-        assert_eq!(m4_cure_gate(20, 21, fresh_chat, dose_absent), Ok(ready));
+        assert_eq!(
+            m4_cure_gate(20, 21, fresh_chat, dose_absent, potion_finished),
+            Ok(ready)
+        );
     }
     for _ in 0..100 {
-        assert_eq!(m4_cure_gate(20, 20, false, false), Ok(false));
+        assert_eq!(m4_cure_gate(20, 20, false, false, false), Ok(false));
     }
-    assert_eq!(m4_cure_gate(20, 35, true, true), Ok(true));
-    assert!(m4_cure_gate(20, 36, false, false).is_err());
-    assert!(m4_cure_gate(20, 36, true, true).is_err());
-    assert_eq!(m4_cure_gate(u32::MAX - 8, 6, true, true), Ok(true));
-    assert!(m4_cure_gate(u32::MAX - 8, 7, true, true).is_err());
+    assert_eq!(m4_cure_gate(20, 35, true, true, true), Ok(true));
+    assert!(m4_cure_gate(20, 36, false, false, false).is_err());
+    assert!(m4_cure_gate(20, 36, true, true, true).is_err());
+    assert_eq!(m4_cure_gate(u32::MAX - 8, 6, true, true, true), Ok(true));
+    assert!(m4_cure_gate(u32::MAX - 8, 7, true, true, true).is_err());
 }
 
 #[test]
 fn m4_cure_gate_waits_for_potion_completion_before_teleport() {
     assert_eq!(
-        m4_cure_gate(25, 26, true, true),
+        m4_cure_gate(25, 26, true, true, false),
         Ok(false),
         "the cure message and consumed dose precede the engine's potion busy delay"
     );
@@ -10750,7 +10771,36 @@ fn m4_cure_chat_must_be_new_server_chat_not_a_stale_or_player_message() {
             username,
             text: text.to_owned(),
         }]);
-        assert_eq!(m4_fresh_cure_chat(&snapshot, 10), expected);
+        assert_eq!(m4_fresh_system_chat(&snapshot, 10, M4_CURE_CHAT), expected);
+    }
+}
+
+#[test]
+fn m4_potion_finished_chat_must_follow_the_fresh_cure() {
+    let mut snapshot = GameSnapshot::default();
+    for (sequence, type_, username, text, expected) in [
+        (13, 0, None, M4_POTION_FINISHED_CHAT, None),
+        (14, 2, None, M4_POTION_FINISHED_CHAT, None),
+        (
+            14,
+            0,
+            Some("other player".to_owned()),
+            M4_POTION_FINISHED_CHAT,
+            None,
+        ),
+        (14, 0, None, M4_CURE_CHAT, None),
+        (14, 0, None, M4_POTION_FINISHED_CHAT, Some(14)),
+    ] {
+        snapshot.seed_chat_lines(vec![api::snapshot::ChatLineView {
+            sequence,
+            type_,
+            username,
+            text: text.to_owned(),
+        }]);
+        assert_eq!(
+            m4_fresh_system_chat(&snapshot, 13, M4_POTION_FINISHED_CHAT),
+            expected
+        );
     }
 }
 

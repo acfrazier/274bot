@@ -253,10 +253,13 @@ these lists in step with what the cells send.
 
 The host-play M4 cell seeds one single-dose Antipoison in the account's kit.
 Before the hostile-area teleport, the fixture drinks it through the ordinary
-inventory action. Start waits for both a new server antipoison message and
-the dose leaving the inventory. A fixed 16 received-game-tick deadline bounds
-that observation; stale chat and repeated snapshots cannot open the gate or
-extend it. The receipt records the cure in `random_events` as `M4PoisonCure`.
+inventory action. Start waits for a new server antipoison message, the dose
+leaving the inventory, and a later new server message that the potion has
+finished. The last message follows the engine's consumption busy delay, so
+drain and teleport do not run while the potion action is busy. A fixed 16
+received-game-tick deadline from Drink bounds all three observations; stale
+chat and repeated snapshots cannot open the gate or extend it. The receipt
+records the cure in `random_events` as `M4PoisonCure`.
 Admission policy is unchanged.
 
 M4 tests escape from an unattackable Nasty tree, not poison treatment. The
