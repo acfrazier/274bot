@@ -1644,7 +1644,9 @@ struct TalkRun {
     /// The retry of a step that failed with its dialogue page open: no anchor walk.
     open_page: bool,
 }
-// 664 B measured (+32 B headroom): both inline action handles store machine state; the dialogue approach round 3 fix grew `Dialogue` by 56 B (see `dialogue.rs`).
+// 640 B measured on x86_64 Linux, 56 B below the existing 696 B tripwire.
+// Inline Walk and Dialogue state includes approach retry, retained Walk replay,
+// and quest-window evidence.
 const _: [(); 1] = [(); (std::mem::size_of::<TalkRun>() <= 696) as usize];
 impl StepRun for TalkRun {
     fn poll(&mut self, cx: &mut StepContext<'_, '_>) -> Poll<Result<StepOutcome, ActionError>> {
