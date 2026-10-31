@@ -5,6 +5,14 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.8` 
 
 ## Unreleased
 
+### Scripting
+
+- `api.questIdentity` now returns the state variable and completion value for
+  four quests whose row held a script procedure name or zero. The Digsite Quest
+  and Clock Tower rows name the varp each progress procedure reads
+  (`itexamlevel` and `cogquest`); Monkey Madness and Troll Romance report
+  completion 9 and 45 from their own constant files.
+
 ### Developer tools
 
 - `seed-calc` computes no-food fight seeds from revision-289 combat formulas.

@@ -347,12 +347,13 @@ export function categoryName(obj: ObjType, categories: ReadonlyMap<number, strin
     return name;
 }
 
-function row(obj: ObjType, piles: ReadonlySet<number>, categories: ReadonlyMap<number, string>, destroyDeathParam: number | undefined) {
+function row(obj: ObjType, piles: ReadonlySet<number>, categories: ReadonlyMap<number, string>, destroyDeathParam: number | undefined, pvpV0: boolean) {
     if (typeof obj.tradeable !== 'boolean') throw new Error(`obj ${obj.id}: engine decode has no tradeable flag`);
     // PvP V0 `GameItem.destroy_death`: true when the obj carries
     // `param=destroy_death,^true` (`player/configs/death.param:1-3`), through
     // the same param reader the combat extractor uses (combat.ts
-    // `parameterValue`). Absent before V0 data; the Rust field defaults it.
+    // `parameterValue`). A pre-V0 revision omits the field and the Rust field
+    // defaults it.
     const destroyDeathValue = destroyDeathParam !== undefined ? obj.params?.get(destroyDeathParam) : undefined;
     const destroyDeath = destroyDeathValue === 1 || destroyDeathValue === '1';
     return {
@@ -371,7 +372,7 @@ function row(obj: ObjType, piles: ReadonlySet<number>, categories: ReadonlyMap<n
         category: categoryName(obj, categories),
         tradeable: obj.tradeable,
         stack_variant: piles.has(obj.id),
-        destroy_death: destroyDeath,
+        ...(pvpV0 ? { destroy_death: destroyDeath } : {}),
     };
 }
 function pileModels(objs: readonly ObjType[]) { const piles = new Set<number>(); for (const obj of objs) for (const pile of Array.from(obj.countobj ?? [])) if (pile > 0) piles.add(pile); return piles; }
@@ -3038,6 +3039,10 @@ const hiddenSites = new Map<number, GatherSiteWire[]>();
 async function generate(spec: Revision) {
     const pinned = assertPinned(spec);
     assertServerOrderedPinned(spec);
+    // Revision 274 predates PvP V0 (PVP-DESIGN-1026): its published core omits
+    // every V0 fact, and `DuelControls::rule_button` reports `None`
+    // (`crates/api/src/game_data_tests.rs::rule_button_is_none_on_revision_274`).
+    const pvpV0 = spec.revision !== 274;
     verifyCacheIdentity(spec.revision, spec.engine, spec.cacheIdentity);
     for (const requiredInput of ['data/pack/server/obj.dat', 'data/pack/server/npc.dat', 'data/pack/client/config']) if (!fs.existsSync(path.join(spec.engine, requiredInput))) throw new Error(`${spec.revision}: missing ${requiredInput}`);
     process.chdir(spec.engine); const environment = (await import(pathToFileURL(path.join(spec.engine, 'src/util/Environment.ts')).href)) as { default: { node: { members: boolean } } };
@@ -3051,7 +3056,7 @@ async function generate(spec: Revision) {
     }
     const piles = pileModels(objModule.default.configs);
     const destroyDeathParam = parsePack(fs.readFileSync(path.join(spec.content, 'pack/param.pack'), 'utf8')).get('destroy_death');
-    const items = objModule.default.configs.map((obj) => row(obj, piles, categoriesById, destroyDeathParam));
+    const items = objModule.default.configs.map((obj) => row(obj, piles, categoriesById, destroyDeathParam, pvpV0));
     const aliases = items.filter((item) => item.alias !== null).map((item) => item.alias as string);
     if (new Set(items.map((item) => item.id)).size !== items.length || new Set(aliases).size !== aliases.length) {
         throw new Error(`${spec.revision}: duplicate ids or aliases`);
@@ -3131,22 +3136,12 @@ async function generate(spec: Revision) {
     const combatScripts = parseCombatScripts(spec.content);
     const spellMaxHits = buildSpellMaxHits(spec.content);
     const npcNames = extractNpcNamesFacts(spec.content, spec.revision, combatScripts, spellMaxHits);
-    const combatStyles = extractCombatStyleFacts(spec.content, objModule.default.configs, npcNames.combatNpcs, combatScripts);
+    const combatStyles = extractCombatStyleFacts(spec.content, objModule.default.configs, npcNames.combatNpcs, combatScripts, pvpV0);
     // PvP V0 facts (PVP-DESIGN-1026 §3.3, §11 row V0). Alias maps join the
-    // decoded obj configs to the content aliases the extractors read.
+    // decoded obj configs to the content aliases the extractors read. Revision
+    // 274 predates V0, so its core carries none of these facts.
     const aliasToId = new Map(items.filter((item) => item.alias !== null).map((item) => [item.alias as string, item.id]));
     const idToAlias = new Map(items.filter((item) => item.alias !== null).map((item) => [item.id, item.alias as string]));
-    const specialWeapons = extractSpecialWeaponFacts(spec.content, objModule.default.configs, combatStyles.weapon_styles, aliasToId);
-    if (specialWeapons.length !== 14) throw new Error(`${spec.revision}: expected 14 specwep rows, got ${specialWeapons.length}`);
-    const itemCombatBonus = extractItemCombatBonus(spec.content, objModule.default.configs);
-    const meleeWeaponTiers = extractMeleeWeaponTiers(spec.content, combatStyles.weapon_styles, idToAlias);
-    const duelRuleButtons = extractDuelRuleButtons(spec.content);
-    if (duelRuleButtons.length !== 14) throw new Error(`${spec.revision}: expected 14 duel rule buttons, got ${duelRuleButtons.length}`);
-    if (!duelRuleButtons.every((row, index) => row.bit === index)) throw new Error(`${spec.revision}: duel rule bits are not 0-13`);
-    // `DuelControls.rule_buttons[bit]` (§3.3): the settings-script buttons in
-    // duelarena.constant bit order join the `duel` controls here.
-    Object.assign(duel, { rule_buttons: duelRuleButtons.map((row) => row.component) });
-    const duelZones = extractDuelZones(spec.content);
     Object.assign(facts, {
         style_seqs: combatStyles.style_seqs,
         style_spotanims: combatStyles.style_spotanims,
@@ -3158,11 +3153,26 @@ async function generate(spec: Revision) {
         ranged_ammo: combatStyles.ranged_ammo,
         ranged_modes: combatStyles.ranged_modes,
         ranged_mode_varp: combatStyles.ranged_mode_varp,
-        special_weapons: specialWeapons,
-        item_combat_bonus: itemCombatBonus,
-        melee_weapon_tiers: meleeWeaponTiers,
-        duel_zones: duelZones,
     });
+    if (pvpV0) {
+        const specialWeapons = extractSpecialWeaponFacts(spec.content, objModule.default.configs, combatStyles.weapon_styles, aliasToId);
+        if (specialWeapons.length !== 14) throw new Error(`${spec.revision}: expected 14 specwep rows, got ${specialWeapons.length}`);
+        const itemCombatBonus = extractItemCombatBonus(spec.content, objModule.default.configs);
+        const meleeWeaponTiers = extractMeleeWeaponTiers(spec.content, combatStyles.weapon_styles, idToAlias);
+        const duelRuleButtons = extractDuelRuleButtons(spec.content);
+        if (duelRuleButtons.length !== 14) throw new Error(`${spec.revision}: expected 14 duel rule buttons, got ${duelRuleButtons.length}`);
+        if (!duelRuleButtons.every((row, index) => row.bit === index)) throw new Error(`${spec.revision}: duel rule bits are not 0-13`);
+        // `DuelControls.rule_buttons[bit]` (§3.3): the settings-script buttons in
+        // duelarena.constant bit order join the `duel` controls here.
+        Object.assign(duel, { rule_buttons: duelRuleButtons.map((row) => row.component) });
+        const duelZones = extractDuelZones(spec.content);
+        Object.assign(facts, {
+            special_weapons: specialWeapons,
+            item_combat_bonus: itemCombatBonus,
+            melee_weapon_tiers: meleeWeaponTiers,
+            duel_zones: duelZones,
+        });
+    }
     const locNames = extractLocNamesFacts(spec.content);
     const npcPlacements = extractNpcPlacementsFacts(spec.content);
     const karamja = extractKaramjaFacts(spec.content, npcNames, locNames, npcPlacements);

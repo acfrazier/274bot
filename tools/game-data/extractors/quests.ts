@@ -1,6 +1,6 @@
 // M-296 owns full-roster extraction/resolution programs; this preserves the existing query asset.
 import fs from 'node:fs';
-import { integer, parsePack, requireGatherText } from './common.ts';
+import { integer, parsePack, requireGatherText, walkContentFiles } from './common.ts';
 import { parseRs2Blocks, stripComment, type Rs2Block } from './gathering-content.ts';
 import { parseBody, walkStatements } from './gathering-rs2.ts';
 export const questIdentityContentFiles = [
@@ -273,6 +273,66 @@ function firstVarpCall(calls: { component: string; progress: string; complete: s
     return found.find((call) => call.progress.startsWith('%')) ?? found[0] ?? null;
 }
 
+/** Every `[proc,<name>]` block in the selected scripts, keyed by name. Ambiguous names keep every definition. */
+function procDefinitions(content: string) {
+    const procs = new Map<string, Rs2Block[]>();
+    for (const file of walkContentFiles(`${content}/scripts`, '.rs2')) {
+        const relative = file.slice(content.length + 1);
+        for (const block of parseRs2Blocks(relative, fs.readFileSync(file, 'utf8'))) {
+            if (block.kind !== 'proc') continue;
+            const known = procs.get(block.name);
+            if (known) known.push(block);
+            else procs.set(block.name, [block]);
+        }
+    }
+    return procs;
+}
+
+/**
+ * The one varp a progress proc returns when its single `return` is exactly a
+ * bare `%varp` or `getbit_range(%varp, ...)`. Any other expression (a computed
+ * value, two returns, or two varps) stays unresolved: a proc call is progress,
+ * never a varp itself.
+ */
+function procProgressVarp(block: Rs2Block): string | null {
+    const returns: string[] = [];
+    walkStatements(parseBody(block.body), (stmt) => {
+        if (/^return(?![A-Za-z0-9_$])/.test(stmt.text)) returns.push(stmt.text);
+    });
+    if (returns.length !== 1) return null;
+    const value = /^return\s*\((.*)\)$/.exec(returns[0])?.[1] ?? /^return\s+(%[A-Za-z0-9_]+)$/.exec(returns[0])?.[1];
+    if (value === undefined) return null;
+    const names = new Set([...value.replace(/"[^"]*"/g, '""').matchAll(/%([A-Za-z0-9_]+)/g)].map((match) => match[1]));
+    if (names.size !== 1) return null;
+    const [varp] = [...names];
+    if (value === `%${varp}`) return varp;
+    // The call must be the whole value: its arguments (varp, start, end) hold no
+    // parentheses, so `getbit_range(%foo, 0, 3) + (1)` cannot match.
+    return new RegExp(`^getbit_range\\s*\\(\\s*%${varp}\\s*,[^()]*\\)$`).test(value) ? varp : null;
+}
+
+/** Resolve `~proc` to its backing varp; a missing, duplicated or ambiguous proc stays unresolved. */
+function resolveProgressProc(procs: Map<string, Rs2Block[]>, operand: string) {
+    const name = /^~([A-Za-z0-9_]+)/.exec(operand)?.[1];
+    if (!name) return null;
+    const blocks = procs.get(name);
+    return blocks?.length === 1 ? procProgressVarp(blocks[0]) : null;
+}
+
+/** `^name = value` in the quest's own `scripts/quests/quest_<component>` constants; null when absent or contradictory. */
+function questLocalConstant(content: string, component: string, name: string) {
+    const root = `${content}/scripts/quests/quest_${component}`;
+    if (!fs.existsSync(root)) return null;
+    const values = new Set<number>();
+    for (const file of walkContentFiles(root, '.constant')) {
+        for (const raw of fs.readFileSync(file, 'utf8').split(/\r?\n/)) {
+            const match = /^\^([A-Za-z0-9_]+)\s*=\s*(-?\d+)\s*(?:\/\/.*)?$/.exec(raw.trim());
+            if (match && match[1] === name) values.add(integer(match[2], `^${name}`));
+        }
+    }
+    return values.size === 1 ? [...values][0] : null;
+}
+
 export function extractQuestIdentityFacts(content: string, revision: number) {
     const quests = requireGatherText(content, 'scripts/general/scripts/quests.rs2');
     const constants = parseQuestConstants(requireGatherText(content, 'scripts/general/configs/quest.constant'));
@@ -328,6 +388,7 @@ export function extractQuestIdentityFacts(content: string, revision: number) {
             journal_script: journal?.script ?? null,
         };
     });
+    let procIndex: Map<string, Rs2Block[]> | null = null;
     for (const entry of listEntries) {
         if (seedIds.has(entry.component)) continue;
         if (revision === 274 && entry.component === 'routequest') continue;
@@ -335,18 +396,41 @@ export function extractQuestIdentityFacts(content: string, revision: number) {
         let varp = '';
         let varpId = -1;
         let complete = 0;
+        const unresolved: string[] = [];
         if (call) {
             const progress = /^%([A-Za-z0-9_]+)$/.exec(call.progress);
             if (progress) {
                 varp = progress[1];
                 varpId = varpPack.get(varp) ?? -1;
+            } else if (call.progress.startsWith('~')) {
+                const resolved = resolveProgressProc((procIndex ??= procDefinitions(content)), call.progress);
+                const resolvedId = resolved === null ? undefined : varpPack.get(resolved);
+                if (resolved !== null && resolvedId !== undefined) {
+                    varp = resolved;
+                    varpId = resolvedId;
+                } else {
+                    varp = call.progress;
+                    unresolved.push(`progress operand ${call.progress} does not resolve to one varp in pack/varp.pack`);
+                }
             } else {
                 varp = call.progress;
+                unresolved.push(`progress operand ${call.progress} is not a %varp or a proc`);
             }
             if (call.complete.startsWith('^')) {
                 const name = call.complete.slice(1);
-                complete = constants.get(name) ?? 0;
+                const known = constants.get(name);
+                const local = known === undefined ? questLocalConstant(content, entry.component, name) : null;
+                if (known !== undefined) complete = known;
+                else if (local !== null) complete = local;
+                else unresolved.push(`complete constant ${call.complete} is not in quest.constant or the quest's own .constant`);
+            } else {
+                unresolved.push(`complete operand ${call.complete} is not a constant`);
             }
+        } else {
+            unresolved.push('no colour call; the varp stays empty');
+        }
+        if (unresolved.length > 0) {
+            console.warn(`quest_identity: ${entry.component} unresolved: ${unresolved.join('; ')}; kept today's row values`);
         }
         const questPoints = entry.component === 'fortress'
             ? (constants.get('blackknight_questpoints') ?? 0)

@@ -256,13 +256,7 @@ fn make_cell_with_requirements(
         assert_eq!(quest_stage, 0, "Cook-profile path already seeds stage zero");
     } else {
         let (_, target_varp) = quest_varp(&selected, quest);
-        // quest_cog.rs2:9-13 stores this computed progress in cogquest bits 0-3.
-        let target_varp = if target_varp == "~get_cog_progress" {
-            "cogquest"
-        } else {
-            target_varp.as_str()
-        };
-        insert_target_quest_seed(&mut fixture, target_varp, quest_stage);
+        insert_target_quest_seed(&mut fixture, &target_varp, quest_stage);
     }
     let seed = fixture.seed;
     let seed_commands = fixture.seed_commands;
@@ -1261,10 +1255,7 @@ fn live_quester_families_ground_use_on() {
     let empty_bucket_id = item_id(&selected, "bucket_empty");
     let cog_id = item_id(&selected, "blackcog");
     let (_, cog_varp) = quest_varp(&selected, "cog");
-    assert_eq!(
-        cog_varp, "~get_cog_progress",
-        "selected Clock Tower varp alias"
-    );
+    assert_eq!(cog_varp, "cogquest", "selected Clock Tower progress varp");
     let (mut cell, seed, seed_commands) = make_cell(
         "live-quester-families-ground-use-on",
         ("cog", "Clock Tower"),
