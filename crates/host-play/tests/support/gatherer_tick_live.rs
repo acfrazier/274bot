@@ -588,7 +588,7 @@ impl LiveRun {
             return Err("selected Engine L navigation template has no world".into());
         }
         // Asset initialization is not a live host frame or a cadence observation.
-        // Complete it before the slot's five-second frame hang guard starts.
+        // Complete it before the slot's fixed setup deadline starts.
         let mut bootstrap = template.prepare_client(0, true)?;
         bootstrap.set_draw(false);
         bootstrap.maininit();
@@ -740,10 +740,12 @@ impl LiveRun {
                     "per-account tutorial/seed setup missed its fixed 180s deadline".into(),
                 );
             }
-            after = self
-                .hook
-                .wait_for_frame(after, remaining.min(FRAME_HANG_GUARD))
-                .ok_or_else(|| "live slot stopped producing frames during setup".to_owned())?;
+            after = self.hook.wait_for_frame(after, remaining).ok_or_else(|| {
+                format!(
+                    "live setup produced no frame within {SETUP_DEADLINE:?}; connected={}",
+                    self.play().slot_connected(&self.account)
+                )
+            })?;
         }
     }
 
