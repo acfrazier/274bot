@@ -335,7 +335,7 @@ pub enum CaptureError {
     Io,
     #[error("capture device operation failed")]
     Device,
-    #[error("capture requires the explicit render-test-hooks process fixture")]
+    #[error("capture requires explicitly enabled fair rendering")]
     Inactive,
     #[error("capture policy is not configured")]
     PolicyMissing,
@@ -423,8 +423,8 @@ enum TerminalOutcome {
 }
 
 impl ShotState {
-    /// Enable bounded capture only after the real test-process render fixture
-    /// has been explicitly configured.
+    /// Enable bounded capture only after fair rendering has been explicitly
+    /// enabled and a capture policy has been configured.
     pub fn configure_capture_policy(
         &mut self,
         metadata_limit: NonZeroUsize,
@@ -532,8 +532,8 @@ impl ShotState {
     }
 
     /// Replace the retained directory under the metadata lock. During the
-    /// builder call the old directory still counts, so old/new copies overlap
-    /// only inside the explicit fixture allowance.
+    /// builder call the old and new paths overlap only within the configured
+    /// metadata allowance.
     pub(crate) fn replace_output_directory(
         &mut self,
         directory: &mut Option<std::path::PathBuf>,
@@ -1728,11 +1728,11 @@ impl ActiveCapture {
 }
 
 pub(crate) fn render_fair_capture_enabled() -> bool {
-    #[cfg(feature = "render-test-hooks")]
+    #[cfg(any(feature = "render-diagnostics", feature = "render-test-hooks"))]
     {
         frontend_core::surface::render_fair_enabled()
     }
-    #[cfg(not(feature = "render-test-hooks"))]
+    #[cfg(not(any(feature = "render-diagnostics", feature = "render-test-hooks")))]
     {
         false
     }
@@ -1765,7 +1765,7 @@ fn capture_error_message(error: CaptureError) -> &'static str {
         CaptureError::Readback(_) => "retained consumer refused capture",
         CaptureError::Io => "capture output failed",
         CaptureError::Device => "capture device operation failed",
-        CaptureError::Inactive => "render capture fixture is not active",
+        CaptureError::Inactive => "fair rendering is not active",
         CaptureError::PolicyMissing => "capture policy is not configured",
         CaptureError::SequenceExhausted => "window paint sequence exhausted",
         CaptureError::DeadlineMissing => "capture request has no explicit deadline",

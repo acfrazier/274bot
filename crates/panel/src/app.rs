@@ -799,7 +799,7 @@ fn new_shot_state() -> Arc<Mutex<crate::window::ShotState>> {
                 api::host_log!(
                     api::hostlog::Category::Lifecycle,
                     api::hostlog::Level::Warn,
-                    "capture fixture configuration refused: {error}"
+                    "capture policy configuration refused: {error}"
                 );
             }
         }

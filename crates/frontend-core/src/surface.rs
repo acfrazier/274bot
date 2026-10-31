@@ -274,8 +274,8 @@ pub fn acknowledge_render_fault(sequence: u64) -> Result<(), host::render::Rende
     host::render_head::acknowledge_fault(sequence)
 }
 
-/// Whether this process explicitly enabled the experimental render fixture.
-#[cfg(feature = "render-test-hooks")]
+/// Whether fair rendering was explicitly enabled by calibration or test hooks.
+#[cfg(any(feature = "render-diagnostics", feature = "render-test-hooks"))]
 pub fn render_fair_enabled() -> bool {
     host::render_head::fair_enabled()
 }

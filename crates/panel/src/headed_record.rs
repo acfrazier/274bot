@@ -369,9 +369,9 @@ pub enum RecordError {
     EncoderUnavailable,
     /// A recorder worker could not be created.
     WorkerStart,
-    /// An experimental run supplied no capture/finalization policy.
+    /// An experimental run supplied no capture or finalization policy.
     PolicyMissing,
-    /// An explicit fixture duration is zero or cannot form an Instant.
+    /// An explicit capture duration is zero or cannot form an Instant.
     InvalidPolicy,
 }
 
@@ -383,8 +383,8 @@ impl std::fmt::Display for RecordError {
             Self::RecorderBusy => "another recording is still active",
             Self::EncoderUnavailable => "the recording encoder is unavailable",
             Self::WorkerStart => "a recording worker could not start",
-            Self::PolicyMissing => "the recording fixture policy is missing",
-            Self::InvalidPolicy => "the recording fixture duration is invalid",
+            Self::PolicyMissing => "the capture policy is missing",
+            Self::InvalidPolicy => "the capture duration is invalid",
         })
     }
 }
@@ -860,18 +860,18 @@ fn ffmpeg_candidate() -> String {
 }
 
 fn render_fair_capture_enabled() -> bool {
-    #[cfg(feature = "render-test-hooks")]
+    #[cfg(any(feature = "render-diagnostics", feature = "render-test-hooks"))]
     {
         frontend_core::surface::render_fair_enabled()
     }
-    #[cfg(not(feature = "render-test-hooks"))]
+    #[cfg(not(any(feature = "render-diagnostics", feature = "render-test-hooks")))]
     {
         false
     }
 }
 
-/// Opt-in headed recorder. Created per panel run from an explicitly
-/// configured render-test process; Drop requests termination without joining.
+/// Opt-in headed recorder. Created per panel run when fair rendering is
+/// explicitly enabled; Drop requests termination without joining.
 pub struct HeadedRecord {
     config: HeadedRecordConfig,
     pacer: RecordPacer,
@@ -883,8 +883,8 @@ pub struct HeadedRecord {
 }
 
 impl HeadedRecord {
-    /// Read the switch/cadence from the environment, gated by the process
-    /// fixture and `render-test-hooks` feature.
+    /// Read the switch/cadence from the environment. Explicitly enabled fair
+    /// rendering selects the bounded asynchronous recording pipeline.
     pub fn from_env() -> Self {
         let config = HeadedRecordConfig::from_env();
         let interval = config.interval();
@@ -918,7 +918,7 @@ impl HeadedRecord {
         self.config.enabled
     }
 
-    /// Deadline for a capture opportunity using only fixture configuration.
+    /// Deadline for a capture opportunity using configured policy.
     pub fn readback_deadline(&self, now: Instant) -> Option<Instant> {
         self.config.readback_deadline(now)
     }
@@ -1416,7 +1416,7 @@ impl HeadedRecord {
     }
 
     /// Legacy compatibility: the gate-off pipeline keeps synchronous
-    /// finalization; gated fixtures only request supervisor shutdown.
+    /// finalization; the fair-render pipeline only requests supervisor shutdown.
     pub fn finish(&mut self) {
         self.request_finish(Instant::now());
     }
