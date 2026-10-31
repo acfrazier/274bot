@@ -834,6 +834,7 @@ mod tests {
 
     fn runtime() -> Runtime {
         let mut runtime = Runtime::new(rustyscript::RuntimeOptions::default()).unwrap();
+        cb::install_ops(&mut runtime).unwrap();
         install(&mut runtime, None).unwrap();
         runtime
     }

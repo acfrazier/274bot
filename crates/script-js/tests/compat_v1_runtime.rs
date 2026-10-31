@@ -162,13 +162,29 @@ fn compat_v1_runtime__stepoffcandidates__contract() {
         r#"
 const from = { x: 10, z: 20, level: 2 };
 const before = JSON.stringify(from);
+let candidates = null;
+let error = null;
+try {
+    candidates = stepOffCandidates(from, { x: 6, z: 18 });
+} catch (caught) {
+    error = String(caught);
+}
 globalThis.__facts = {
-    candidates: stepOffCandidates(from, { x: 6, z: 18 }),
+    candidates,
+    error,
+    callbackType: typeof globalThis.__rs2b0t_step_off_candidates,
     inputUnchanged: JSON.stringify(from) === before,
 };
 "#,
     );
     let facts = run(&src, "globalThis.__facts");
+    assert_eq!(facts["callbackType"], "function");
+    assert_eq!(
+        facts["error"],
+        serde_json::Value::Null,
+        "stepOffCandidates failed: {}",
+        facts["error"]
+    );
     assert_eq!(
         facts["candidates"],
         serde_json::json!([
@@ -487,7 +503,8 @@ import { ScriptRunner } from '../../runtime/ScriptRunner.js';
 "#,
         r#"
 globalThis.__frames = 0;
-globalThis.__unsubscribe = BotHost.addFrameListener(() => ++globalThis.__frames);
+globalThis.__subscribe = () => BotHost.addFrameListener(() => ++globalThis.__frames);
+globalThis.__unsubscribe = __subscribe();
 globalThis.__stop = () => ScriptRunner.stop('frame census stop');
 "#,
     );
@@ -515,8 +532,7 @@ globalThis.__stop = () => ScriptRunner.stop('frame census stop');
     );
     assert_eq!(iso.probe("__frames").unwrap(), 2);
 
-    iso.probe("__unsubscribe = BotHost.addFrameListener(() => ++globalThis.__frames)")
-        .unwrap();
+    iso.probe("__unsubscribe = __subscribe()").unwrap();
     iso.pause();
     assert!(
         iso.test_client_frame(),

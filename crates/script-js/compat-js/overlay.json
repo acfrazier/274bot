@@ -28,8 +28,8 @@
     "module": "api/bot/Bot.js",
     "selector": "AbstractBot",
     "reason": "AbstractBot aliases the concrete prelude LoopingBot with settings views, default lifecycle hooks, posted recovery tiles and string subscriptions. Posted event payloads match EventMap except absent chat usernames are undefined; settings tile fallbacks are returned unchanged.",
-    "runtime": "crates/script-js/src/shim/bot.js:8",
-    "declaration": "export interface SettingsView { str(name: string, fallback?: string): string; num(name: string, fallback?: number): number; bool(name: string, fallback?: boolean): boolean; tile(name: string, fallback?: undefined): import('../../geometry/Tile.js').default | null; tile<F extends import('../../adapter/ClientAdapter.js').WorldTile | null>(name: string, fallback: F): import('../../geometry/Tile.js').default | F; list(name: string, fallback?: string[]): string[] }\nexport interface PostedEventMap extends Omit<import('../events/EventBus.js').EventMap, 'chat.message'> { 'chat.message': Omit<import('../events/EventBus.js').EventMap['chat.message'], 'username'> & { username: string | undefined }; }\nexport class AbstractBot { loopDelay: number; loopCadence: LoopCadence | null; onStart(): void | Promise<void>; onStop(): void | Promise<void>; onPause(): void; onResume(): void; onPaint(ctx?: CanvasRenderingContext2D): void; loop(): number | void | Promise<number | void>; recoveryAnchor(): import('../../adapter/ClientAdapter.js').WorldTile | null; grindTargets(): string[]; ignoredRandoms(): string[]; on<K extends keyof PostedEventMap>(event: K, cb: (payload: PostedEventMap[K]) => unknown): void; on(event: string, cb: (payload: unknown) => unknown): void; log(message: string): void; get settings(): SettingsView; get delegated(): boolean; requestFinish(reason: string): void; bindFinish(sink: (reason: string) => void): void; }"
+    "runtime": "crates/script-js/src/shim/bot.js:7",
+    "declaration": "export interface SettingsView { str(name: string, fallback?: string): string; num(name: string, fallback?: number): number; bool(name: string, fallback?: boolean): boolean; tile(name: string, fallback?: undefined): import('../../geometry/Tile.js').default | null; tile<F extends import('../../adapter/ClientAdapter.js').WorldTile | null>(name: string, fallback: F): import('../../geometry/Tile.js').default | F; list(name: string, fallback?: string[]): string[] }\nexport interface PostedEventMap extends Omit<import('../events/EventBus.js').EventMap, 'chat.message'> { 'chat.message': Omit<import('../events/EventBus.js').EventMap['chat.message'], 'username'> & { username: string | undefined }; }\nexport class AbstractBot { loopDelay: number; loopCadence: LoopCadence | null; onStart(): void | Promise<void>; onStop(): void | Promise<void>; onPause(): void; onResume(): void; onPaint(ctx?: CanvasRenderingContext2D): void; loop(): number | void | Promise<number | void>; recoveryAnchor(): import('../../adapter/ClientAdapter.js').WorldTile | null; grindTargets(): string[]; ignoredRandoms(): string[]; on<K extends keyof PostedEventMap>(event: K, cb: (payload: PostedEventMap[K]) => unknown): void; on(event: string, cb: (payload: unknown) => unknown): void; log(message: string): void; get settings(): SettingsView; get delegated(): boolean; requestFinish(reason: string): void; bindFinish(sink: (reason: string) => void): void; bindLog(sink: unknown): void; disposeSubscriptions(): void; subscriptions: Array<() => boolean>; }"
   },
   {
     "id": "prelude-looping-concrete",
@@ -88,20 +88,29 @@
     "declaration": "export function parkMachine(handle: number): Promise<import('../../shim/_kernel.js').MachineResult>;"
   },
   {
+    "id": "execution-script-aborted",
+    "module": "api/execution/Execution.js",
+    "selector": "$add",
+    "reason": "ScriptAborted marks host script cancellation and lets scripts identify a caught stop error.",
+    "runtime": "crates/script-js/src/shim/execution.js:12",
+    "declaration": "export class ScriptAborted extends Error { constructor(); }"
+  },
+  {
     "id": "prelude-taskbot",
     "module": "api/bot/Bot.js",
     "selector": "TaskBot",
     "reason": "The prelude's existing task loop publishes the validated task label while it executes and clears it after the turn.",
-    "runtime": "crates/script-js/src/shim/modules.rs:201",
+    "runtime": "crates/script-js/src/shim/modules.rs:206",
     "declaration": "export class TaskBot extends LoopingBot { activeTaskName: string | null; constructor(); add(...tasks: Task[]): void; loop(): Promise<number | void>; }"
   },
   {
     "id": "prelude-treebot",
     "module": "api/bot/Bot.js",
     "selector": "TreeBot",
-    "reason": "Native TreeBot.loop traverses BranchTask decisions and awaits the selected LeafTask; subclasses provide root.",
-    "runtime": "crates/script-js/src/runtime/bindings/tree_bot.rs:22",
-    "declaration": "export class TreeBot extends LoopingBot { root(): TreeNode; }"
+    "preserveMembers": true,
+    "reason": "Native TreeBot.loop traverses BranchTask decisions and awaits the selected LeafTask. Subclasses implement abstract root.",
+    "runtime": "crates/script-js/src/runtime/bindings/tree_bot.rs:30",
+    "declaration": "export abstract class TreeBot extends LoopingBot { lastSceneWaitLogAt: number; abstract root(): TreeNode; }"
   },
   {
     "id": "abstract-branch-task-contract",
@@ -125,9 +134,17 @@
     "id": "runtime-bot-host-refusal",
     "module": "runtime/BotHost.js",
     "selector": "$module",
-    "reason": "The host keeps its two BotHost snapshot members and exposes BotHostImpl only as a named constructor refusal.",
-    "runtime": "crates/script-js/src/shim/bot_host.js:36",
-    "declaration": "export const BotHost: { tickCount: number; addTickListener(cb: () => void): () => boolean; };\nexport class BotHostImpl { constructor(); }"
+    "reason": "BotHost exposes its tick count and tick/frame listeners. BotHostImpl remains a named constructor refusal.",
+    "runtime": "crates/script-js/src/shim/bot_host.js:15",
+    "declaration": "export const BotHost: { tickCount: number; addTickListener(cb: () => void): () => boolean; addFrameListener(cb: () => void): () => boolean; };\nexport class BotHostImpl { constructor(); }"
+  },
+  {
+    "id": "runtime-script-registry-register-script",
+    "module": "runtime/ScriptRegistry.js",
+    "selector": "$add",
+    "reason": "The runtime registry shim exposes the upstream manifest registration helper at this module path.",
+    "runtime": "crates/script-js/src/shim/script_registry.js:17",
+    "declaration": "import type { BotManifestInput } from './defineBot.js';\nexport function registerScript(manifest: BotManifestInput, origin?: string): ScriptMeta;"
   },
   {
     "id": "paint-frame-public-api",

@@ -79,6 +79,8 @@ pub struct Member {
     /// True when the contract accepts a non-Promise result.
     pub allows_non_promise: bool,
     pub is_static: bool,
+    /// True when an authored abstract method has no runtime implementation.
+    pub is_abstract: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -637,6 +639,7 @@ fn class_members(class: &Class) -> Vec<Member> {
                     is_async: false,
                     allows_non_promise: true,
                     is_static: false,
+                    is_abstract: false,
                 });
                 for field in constructor_this_fields(ctor) {
                     if !out.iter().any(|m| m.name == field.name) {
@@ -670,6 +673,7 @@ fn class_members(class: &Class) -> Vec<Member> {
                     is_async: method.function.is_async,
                     allows_non_promise: !method.function.is_async,
                     is_static: method.is_static,
+                    is_abstract: false,
                 });
             }
             ClassMember::ClassProp(prop) => {
@@ -686,6 +690,7 @@ fn class_members(class: &Class) -> Vec<Member> {
                     is_async: false,
                     allows_non_promise: true,
                     is_static: prop.is_static,
+                    is_abstract: false,
                 });
             }
             _ => {}
@@ -726,6 +731,7 @@ fn constructor_this_fields(ctor: &Constructor) -> Vec<Member> {
             is_async: false,
             allows_non_promise: true,
             is_static: false,
+            is_abstract: false,
         });
     }
     out
@@ -763,6 +769,7 @@ fn object_lit_members(obj: &ObjectLit, locals: &HashMap<String, CompatExport>) -
                     is_async: m.function.is_async,
                     allows_non_promise: !m.function.is_async,
                     is_static: false,
+                    is_abstract: false,
                 });
             }
             Prop::Getter(g) => {
@@ -776,6 +783,7 @@ fn object_lit_members(obj: &ObjectLit, locals: &HashMap<String, CompatExport>) -
                     is_async: false,
                     allows_non_promise: true,
                     is_static: false,
+                    is_abstract: false,
                 });
             }
             Prop::Setter(s) => {
@@ -789,6 +797,7 @@ fn object_lit_members(obj: &ObjectLit, locals: &HashMap<String, CompatExport>) -
                     is_async: false,
                     allows_non_promise: true,
                     is_static: false,
+                    is_abstract: false,
                 });
             }
             Prop::Shorthand(id) => {
@@ -803,6 +812,7 @@ fn object_lit_members(obj: &ObjectLit, locals: &HashMap<String, CompatExport>) -
                         is_async: false,
                         allows_non_promise: true,
                         is_static: false,
+                        is_abstract: false,
                     });
                 }
             }
@@ -824,6 +834,7 @@ fn object_lit_members(obj: &ObjectLit, locals: &HashMap<String, CompatExport>) -
                         is_async: func.function.is_async,
                         allows_non_promise: !func.function.is_async,
                         is_static: false,
+                        is_abstract: false,
                     }),
                     Expr::Arrow(arrow) => out.push(Member {
                         name,
@@ -832,6 +843,7 @@ fn object_lit_members(obj: &ObjectLit, locals: &HashMap<String, CompatExport>) -
                         is_async: arrow.is_async,
                         allows_non_promise: !arrow.is_async,
                         is_static: false,
+                        is_abstract: false,
                     }),
                     Expr::Ident(id) => {
                         if let Some(member) = member_from_local(id.sym.as_ref(), locals) {
@@ -842,6 +854,7 @@ fn object_lit_members(obj: &ObjectLit, locals: &HashMap<String, CompatExport>) -
                                 is_async: member.is_async,
                                 allows_non_promise: member.allows_non_promise,
                                 is_static: false,
+                                is_abstract: false,
                             });
                         } else {
                             out.push(Member {
@@ -851,6 +864,7 @@ fn object_lit_members(obj: &ObjectLit, locals: &HashMap<String, CompatExport>) -
                                 is_async: false,
                                 allows_non_promise: true,
                                 is_static: false,
+                                is_abstract: false,
                             });
                         }
                     }
@@ -861,6 +875,7 @@ fn object_lit_members(obj: &ObjectLit, locals: &HashMap<String, CompatExport>) -
                         is_async: false,
                         allows_non_promise: true,
                         is_static: false,
+                        is_abstract: false,
                     }),
                 }
             }
@@ -884,6 +899,7 @@ fn member_from_local(name: &str, locals: &HashMap<String, CompatExport>) -> Opti
             is_async: *is_async,
             allows_non_promise: *allows_non_promise,
             is_static: false,
+            is_abstract: false,
         }),
         Some(CompatExport::Class { members, .. }) => {
             let ctor = members.iter().find(|m| m.kind == MemberKind::Constructor);
@@ -894,6 +910,7 @@ fn member_from_local(name: &str, locals: &HashMap<String, CompatExport>) -> Opti
                 is_async: false,
                 allows_non_promise: true,
                 is_static: false,
+                is_abstract: false,
             })
         }
         Some(CompatExport::Object { .. } | CompatExport::Value { .. }) => Some(Member {
@@ -903,6 +920,7 @@ fn member_from_local(name: &str, locals: &HashMap<String, CompatExport>) -> Opti
             is_async: false,
             allows_non_promise: true,
             is_static: false,
+            is_abstract: false,
         }),
         None => None,
     }
@@ -998,7 +1016,7 @@ fn collect_private_supers(
         else {
             continue;
         };
-        if exports.iter().any(|e| export_ident(e) == sup) {
+        if is_builtin_error_superclass(sup) || exports.iter().any(|e| export_ident(e) == sup) {
             continue;
         }
         if !seen.insert(sup.clone()) {
@@ -1016,6 +1034,20 @@ fn collect_private_supers(
         }
     }
     out
+}
+fn is_builtin_error_superclass(name: &str) -> bool {
+    matches!(
+        name,
+        "AggregateError"
+            | "Error"
+            | "EvalError"
+            | "RangeError"
+            | "ReferenceError"
+            | "SuppressedError"
+            | "SyntaxError"
+            | "TypeError"
+            | "URIError"
+    )
 }
 
 fn resolve_aliases(modules: &mut [ShimModule], prelude: &[CompatExport]) {
@@ -2083,6 +2115,7 @@ fn dts_class_members(class: &Class) -> Vec<Member> {
                     is_async: false,
                     allows_non_promise: true,
                     is_static: false,
+                    is_abstract: false,
                 });
             }
             ClassMember::Method(method) => {
@@ -2113,6 +2146,7 @@ fn dts_class_members(class: &Class) -> Vec<Member> {
                     is_async,
                     allows_non_promise,
                     is_static: method.is_static,
+                    is_abstract: method.is_abstract,
                 });
             }
             ClassMember::ClassProp(prop) => {
@@ -2126,6 +2160,7 @@ fn dts_class_members(class: &Class) -> Vec<Member> {
                     is_async: false,
                     allows_non_promise: true,
                     is_static: prop.is_static,
+                    is_abstract: false,
                 });
             }
             _ => {}
@@ -2184,6 +2219,7 @@ fn dts_type_lit_members(elements: &[TsTypeElement]) -> Vec<Member> {
                     is_async: return_type.is_some_and(type_ann_is_promise),
                     allows_non_promise: return_type.is_none_or(type_ann_allows_non_promise),
                     is_static: false,
+                    is_abstract: m.is_abstract,
                 });
             }
             TsTypeElement::TsGetterSignature(g) => {
@@ -2197,6 +2233,7 @@ fn dts_type_lit_members(elements: &[TsTypeElement]) -> Vec<Member> {
                     is_async: false,
                     allows_non_promise: true,
                     is_static: false,
+                    is_abstract: false,
                 });
             }
             TsTypeElement::TsSetterSignature(s) => {
@@ -2210,6 +2247,7 @@ fn dts_type_lit_members(elements: &[TsTypeElement]) -> Vec<Member> {
                     is_async: false,
                     allows_non_promise: true,
                     is_static: false,
+                    is_abstract: false,
                 });
             }
             TsTypeElement::TsPropertySignature(p) => {
@@ -2227,6 +2265,7 @@ fn dts_type_lit_members(elements: &[TsTypeElement]) -> Vec<Member> {
                             is_async: type_ann_is_promise(&f.type_ann),
                             allows_non_promise: type_ann_allows_non_promise(&f.type_ann),
                             is_static: false,
+                            is_abstract: false,
                         });
                         continue;
                     }
@@ -2238,6 +2277,7 @@ fn dts_type_lit_members(elements: &[TsTypeElement]) -> Vec<Member> {
                     is_async: false,
                     allows_non_promise: true,
                     is_static: false,
+                    is_abstract: false,
                 });
             }
             TsTypeElement::TsConstructSignatureDecl(c) => {
@@ -2248,6 +2288,7 @@ fn dts_type_lit_members(elements: &[TsTypeElement]) -> Vec<Member> {
                     is_async: false,
                     allows_non_promise: true,
                     is_static: false,
+                    is_abstract: false,
                 });
             }
             _ => {}
@@ -2877,7 +2918,8 @@ fn compare_members(
             continue;
         }
         let allowed_preserved_member = preserved_owner
-            && (preserved_overlay_has_not_impl_member(label, owner, &d.name)
+            && (d.is_abstract
+                || preserved_overlay_has_not_impl_member(label, owner, &d.name)
                 || preserved_native_frame_member(label, owner, &d.name)
                 || preserved_native_inventory_member(label, owner, &d.name));
         if !allowed_preserved_member {
