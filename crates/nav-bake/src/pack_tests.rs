@@ -50,8 +50,21 @@ fn gate_window(quest: &str, signal: &str, min: Option<i32>, max: Option<i32>) ->
 }
 
 /// Bytes after the v17 trailer: empty multiway keys plus an unlabeled atlas.
-fn v18_unlabeled_tail(width: u32, height: u32) -> usize {
-    let atlas = ReachabilityAtlas::unlabeled(width, height).unwrap();
+fn v18_unlabeled_tail(width: usize, height: usize) -> usize {
+    let (walk, blocked) = pack_walk(&vec![0u32; 4 * width * height]);
+    let collision = WorldCollision {
+        origin: WorldTile {
+            x: 0,
+            z: 0,
+            level: 0,
+        },
+        width,
+        height,
+        walk,
+        blocked,
+        flags: None,
+    };
+    let atlas = ReachabilityAtlas::unlabeled(&collision).unwrap();
     encode_multiway_keys(&[]).unwrap().len() + encode_atlas_sections(&atlas).unwrap().len()
 }
 

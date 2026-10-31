@@ -17,7 +17,7 @@ pub use sidecars::{encode_canlight_sidecar, encode_flags_sidecar, encode_reach_s
 
 #[cfg(test)]
 pub(crate) use mapsquare::parse_mapsquare_text;
-pub(crate) use mapsquare::{parse_loc_fields, parse_map_line, section, LocOnSquare, SQUARE};
+pub(crate) use mapsquare::{parse_loc_fields, parse_map_line, section, SQUARE};
 
 #[cfg(test)]
 #[path = "pack_tests.rs"]
