@@ -1640,11 +1640,8 @@ mod walk_permission_tests {
 
     #[test]
     fn typed_walk_refusal_does_not_schedule_a_fresh_plan() {
-        let receipt = walk_retry_receipt(
-            WalkEnd::Refused,
-            None,
-            Some(WalkRefusal::EscapeInProgress),
-        );
+        let receipt =
+            walk_retry_receipt(WalkEnd::Refused, None, Some(WalkRefusal::EscapeInProgress));
         let mut recovery = ReturnStallRecovery::default();
 
         assert!(!ReturnStallRecovery::receipt_retryable(&receipt));
@@ -1665,7 +1662,6 @@ mod walk_permission_tests {
         assert!(!recovery.observe_receipt(&receipt));
         assert!(!recovery.pending());
     }
-
 
     #[test]
     fn prepared_permissions_are_frozen_from_the_native_settings_bag() {

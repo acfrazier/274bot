@@ -1892,7 +1892,6 @@ fn blocked_return_walk_selects_another_stand_without_retrying_the_failed_plan() 
     assert!(matches!(gatherer.active, Active::Walk(_)));
 }
 
-
 #[test]
 fn refused_return_walk_keeps_detail_while_reselecting() {
     let (mut gatherer, snapshot, initial, _, current) = catherby_partial_return_fixture();
