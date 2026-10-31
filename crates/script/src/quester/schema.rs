@@ -31,6 +31,7 @@ const _: fn(super::path::StepDocument) = |super::path::StepDocument {
                                               advances: _,
                                               skip_if: _,
                                               settle: _,
+                                              hazard: _,
                                           }| {};
 
 #[cfg(feature = "path-schema")]
@@ -73,7 +74,8 @@ impl schemars::JsonSchema for super::path::StepDocument {
                     "comment": generator.subschema_for::<Option<String>>(),
                     "advances": { "type": "boolean" },
                     "skip_if": generator.subschema_for::<super::path::PredicateDocument>(),
-                    "settle": generator.subschema_for::<super::path::PredicateDocument>()
+                    "settle": generator.subschema_for::<super::path::PredicateDocument>(),
+                    "hazard": generator.subschema_for::<Option<super::path::HazardDocument>>()
                 },
                 "required": required,
                 "additionalProperties": false

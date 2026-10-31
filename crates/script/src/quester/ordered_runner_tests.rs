@@ -53,6 +53,7 @@ fn wait_step(id: &str, skip_if: PredicateDocument, settle: PredicateDocument) ->
         advances: Some(false),
         skip_if,
         settle,
+        hazard: None,
     }
 }
 
@@ -296,6 +297,8 @@ impl Harness {
                 reads,
                 next: AtomicUsize::new(0),
             }),
+            hazard: None,
+            hazard_source: None,
         };
         path.progress_reader = Some(Box::new(reader));
     }

@@ -1,4 +1,7 @@
 //! Pure condition derivation and survival arithmetic.
+pub mod hazard;
+
+pub use hazard::{HazardStat, StepHazard};
 
 pub mod condition;
 pub mod cure;

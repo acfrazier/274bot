@@ -724,6 +724,8 @@ mod tests {
             skip_if_summary: Arc::from("never"),
             settle: Arc::new(Skip(Truth::True)),
             plan: Arc::new(Anchor(api::WorldTile { x, z, level: 0 })),
+            hazard: None,
+            hazard_source: None,
         };
         let data = selected();
         let quests = quests(&data);

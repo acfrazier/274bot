@@ -1794,6 +1794,48 @@
       ],
       "additionalProperties": false
     },
+    "HazardStat": {
+      "type": "string",
+      "enum": [
+        "none",
+        "current",
+        "base"
+      ]
+    },
+    "HazardDocument": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "of": {
+          "$ref": "#/$defs/HazardStat"
+        },
+        "mul": {
+          "type": "integer",
+          "default": 0
+        },
+        "div": {
+          "type": "integer",
+          "default": 1
+        },
+        "plus": {
+          "type": "integer",
+          "default": 0
+        },
+        "cap": {
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "source": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "of",
+        "source"
+      ]
+    },
     "step.walk.v1": {
       "type": "object",
       "properties": {
@@ -1824,6 +1866,16 @@
         },
         "settle": {
           "$ref": "#/$defs/PredicateDocument"
+        },
+        "hazard": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/HazardDocument"
+            },
+            {
+              "type": "null"
+            }
+          ]
         }
       },
       "required": [
@@ -2009,6 +2061,16 @@
         },
         "settle": {
           "$ref": "#/$defs/PredicateDocument"
+        },
+        "hazard": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/HazardDocument"
+            },
+            {
+              "type": "null"
+            }
+          ]
         }
       },
       "required": [
@@ -2299,6 +2361,16 @@
         },
         "settle": {
           "$ref": "#/$defs/PredicateDocument"
+        },
+        "hazard": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/HazardDocument"
+            },
+            {
+              "type": "null"
+            }
+          ]
         }
       },
       "required": [
@@ -2488,6 +2560,16 @@
         },
         "settle": {
           "$ref": "#/$defs/PredicateDocument"
+        },
+        "hazard": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/HazardDocument"
+            },
+            {
+              "type": "null"
+            }
+          ]
         }
       },
       "required": [
@@ -2554,6 +2636,16 @@
         },
         "settle": {
           "$ref": "#/$defs/PredicateDocument"
+        },
+        "hazard": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/HazardDocument"
+            },
+            {
+              "type": "null"
+            }
+          ]
         }
       },
       "required": [
@@ -2620,6 +2712,16 @@
         },
         "settle": {
           "$ref": "#/$defs/PredicateDocument"
+        },
+        "hazard": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/HazardDocument"
+            },
+            {
+              "type": "null"
+            }
+          ]
         }
       },
       "required": [
@@ -2739,6 +2841,16 @@
         },
         "settle": {
           "$ref": "#/$defs/PredicateDocument"
+        },
+        "hazard": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/HazardDocument"
+            },
+            {
+              "type": "null"
+            }
+          ]
         }
       },
       "required": [
@@ -2837,6 +2949,16 @@
         },
         "settle": {
           "$ref": "#/$defs/PredicateDocument"
+        },
+        "hazard": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/HazardDocument"
+            },
+            {
+              "type": "null"
+            }
+          ]
         }
       },
       "required": [
@@ -2959,6 +3081,16 @@
         },
         "settle": {
           "$ref": "#/$defs/PredicateDocument"
+        },
+        "hazard": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/HazardDocument"
+            },
+            {
+              "type": "null"
+            }
+          ]
         }
       },
       "required": [
@@ -3021,6 +3153,16 @@
         },
         "settle": {
           "$ref": "#/$defs/PredicateDocument"
+        },
+        "hazard": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/HazardDocument"
+            },
+            {
+              "type": "null"
+            }
+          ]
         }
       },
       "required": [
@@ -3063,6 +3205,16 @@
         },
         "settle": {
           "$ref": "#/$defs/PredicateDocument"
+        },
+        "hazard": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/HazardDocument"
+            },
+            {
+              "type": "null"
+            }
+          ]
         }
       },
       "required": [
@@ -3105,6 +3257,16 @@
         },
         "settle": {
           "$ref": "#/$defs/PredicateDocument"
+        },
+        "hazard": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/HazardDocument"
+            },
+            {
+              "type": "null"
+            }
+          ]
         }
       },
       "required": [
@@ -3147,6 +3309,16 @@
         },
         "settle": {
           "$ref": "#/$defs/PredicateDocument"
+        },
+        "hazard": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/HazardDocument"
+            },
+            {
+              "type": "null"
+            }
+          ]
         }
       },
       "required": [
@@ -3634,6 +3806,16 @@
         },
         "settle": {
           "$ref": "#/$defs/PredicateDocument"
+        },
+        "hazard": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/HazardDocument"
+            },
+            {
+              "type": "null"
+            }
+          ]
         }
       },
       "required": [
@@ -3763,6 +3945,16 @@
         },
         "settle": {
           "$ref": "#/$defs/PredicateDocument"
+        },
+        "hazard": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/HazardDocument"
+            },
+            {
+              "type": "null"
+            }
+          ]
         }
       },
       "required": [
@@ -3902,6 +4094,16 @@
         },
         "settle": {
           "$ref": "#/$defs/PredicateDocument"
+        },
+        "hazard": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/HazardDocument"
+            },
+            {
+              "type": "null"
+            }
+          ]
         }
       },
       "required": [
@@ -4010,6 +4212,16 @@
         },
         "settle": {
           "$ref": "#/$defs/PredicateDocument"
+        },
+        "hazard": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/HazardDocument"
+            },
+            {
+              "type": "null"
+            }
+          ]
         }
       },
       "required": [
@@ -4100,6 +4312,16 @@
         },
         "settle": {
           "$ref": "#/$defs/PredicateDocument"
+        },
+        "hazard": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/HazardDocument"
+            },
+            {
+              "type": "null"
+            }
+          ]
         }
       },
       "required": [

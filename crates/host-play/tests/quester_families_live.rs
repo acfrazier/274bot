@@ -387,6 +387,7 @@ fn step(
         advances: Some(advances),
         skip_if,
         settle,
+        hazard: None,
     }
 }
 

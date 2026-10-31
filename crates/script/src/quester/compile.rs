@@ -3,7 +3,7 @@ use super::families::{self, CompiledAcquireStep};
 #[cfg(test)]
 use super::path::SequenceOrder;
 use super::path::{
-    PathDocument, PredicateDocument, QuestItemDocument, QuestRequirementDocument,
+    HazardDocument, PathDocument, PredicateDocument, QuestItemDocument, QuestRequirementDocument,
     QuestRequirementKindDocument, StepDocument,
 };
 pub use super::progress::CompiledProgress;
@@ -20,6 +20,7 @@ use api::selected::{
     ClientRevision, FactKey, FamilyPreparation, ItemAmount, QuestGate, RequirementKind,
     SkillMinimum, SourceSpan, Truth,
 };
+use crate::survival::{HazardStat, StepHazard};
 use sha2::{Digest, Sha256};
 use std::{
     any::Any,
@@ -264,6 +265,8 @@ pub struct CompiledStep {
     pub skip_if_summary: Arc<str>,
     pub settle: Arc<dyn PredicatePlan>,
     pub plan: Arc<dyn StepPlan>,
+    pub hazard: Option<StepHazard>,
+    pub hazard_source: Option<Arc<str>>,
 }
 
 /// The frame a predicate reads. Bank facts come from `cx.snapshot().stock()`:
@@ -1202,6 +1205,64 @@ fn resolve_bank_item_with_stackable(
     ))
 }
 
+fn step_compile_error(
+    step: &StepDocument,
+    document: &PathDocument,
+    code: &'static str,
+) -> CompileError {
+    let mut error = CompileError::code(code).with_path(document.id.clone());
+    error.step = Some(step.id.clone());
+    error
+}
+
+fn compile_step_hazard(
+    step: &StepDocument,
+    document: &PathDocument,
+) -> Result<(Option<StepHazard>, Option<Arc<str>>), CompileError> {
+    let Some(hazard) = &step.hazard else {
+        return Ok((None, None));
+    };
+
+    if hazard.source.trim().is_empty() {
+        return Err(step_compile_error(
+            step,
+            document,
+            "step-hazard-source-missing",
+        ));
+    }
+    if hazard.div == 0
+        || hazard.cap == Some(0)
+        || (hazard.of != HazardStat::None && hazard.mul == 0)
+        || (hazard.of == HazardStat::None && (hazard.mul != 0 || hazard.plus < 1))
+    {
+        return Err(step_compile_error(step, document, "step-hazard-bound"));
+    }
+
+    if matches!(step.kind.as_str(), "walk" | "combat") {
+        return Err(step_compile_error(
+            step,
+            document,
+            "step-hazard-unsupported",
+        ));
+    }
+
+    let compiled = StepHazard {
+        of: hazard.of,
+        mul: hazard.mul,
+        div: hazard.div,
+        plus: hazard.plus,
+        cap: hazard.cap,
+    };
+    if !(1..=99).any(|hp| compiled.max_damage(hp, hp) >= 1) {
+        return Err(step_compile_error(step, document, "step-hazard-bound"));
+    }
+
+    Ok((
+        Some(compiled),
+        Some(Arc::from(hazard.source.as_str())),
+    ))
+}
+
 fn compile_steps(
     steps: &[StepDocument],
     cx: &CompileContext<'_>,
@@ -1240,6 +1301,7 @@ fn compile_steps(
                 detail: None,
                 source: None,
             })?;
+        let (hazard, hazard_source) = compile_step_hazard(step, document)?;
         if handler.advance == AdvanceClass::Explicit && step.advances.is_none() {
             let mut error =
                 CompileError::code("advances-undeclared").with_path(document.id.clone());
@@ -1327,6 +1389,8 @@ fn compile_steps(
             skip_if_summary: Arc::from(predicate_summary(&step.skip_if)),
             settle,
             plan,
+            hazard,
+            hazard_source,
         });
     }
     Ok(out)
@@ -2095,6 +2159,169 @@ mod tests {
         }
     }
 
+    fn find_step_mut(document: &mut PathDocument, kind: &str) -> Option<&mut StepDocument> {
+        for role in &mut document.roles {
+            if let Some(step) = role.prelude.iter_mut().find(|step| step.kind == kind) {
+                return Some(step);
+            }
+            for sequence in &mut role.sequences {
+                if let Some(step) = sequence.steps.iter_mut().find(|step| step.kind == kind) {
+                    return Some(step);
+                }
+            }
+        }
+        None
+    }
+
+    fn set_step_hazard(
+        document: &mut PathDocument,
+        kind: &str,
+        hazard: HazardDocument,
+    ) -> FactKey {
+        let step = find_step_mut(document, kind).expect("fixture has the requested step kind");
+        step.hazard = Some(hazard);
+        step.id.clone()
+    }
+
+    fn hazard_document(
+        of: HazardStat,
+        mul: u8,
+        div: u8,
+        plus: i8,
+        cap: Option<u8>,
+        source: &str,
+    ) -> HazardDocument {
+        HazardDocument {
+            of,
+            mul,
+            div,
+            plus,
+            cap,
+            source: source.to_owned(),
+        }
+    }
+
+    fn compile_document(
+        document: &PathDocument,
+    ) -> Result<Arc<CompiledPath>, CompileError> {
+        let data = selected();
+        let quest_catalog = quests(&data);
+        compile_uncached_for_test(document, &data, &quest_catalog)
+    }
+
+    fn compile_document_error(document: &PathDocument) -> CompileError {
+        match compile_document(document) {
+            Err(error) => error,
+            Ok(_) => panic!("Path unexpectedly compiled"),
+        }
+    }
+
+    #[test]
+    fn step_hazard_requires_source_bounds_and_a_supported_family() {
+        const SOURCE: &str = "content/scripts/quests/quest_mcannon/scripts/locs/railings.rs2:87-91";
+        let cases = [
+            (
+                hazard_document(HazardStat::None, 0, 1, 7, None, ""),
+                "step-hazard-source-missing",
+            ),
+            (
+                hazard_document(HazardStat::None, 0, 0, 7, None, SOURCE),
+                "step-hazard-bound",
+            ),
+            (
+                hazard_document(HazardStat::Base, 1, 10, 0, Some(0), SOURCE),
+                "step-hazard-bound",
+            ),
+            (
+                hazard_document(HazardStat::Current, 0, 100, 1, None, SOURCE),
+                "step-hazard-bound",
+            ),
+            (
+                hazard_document(HazardStat::None, 0, 1, 0, None, SOURCE),
+                "step-hazard-bound",
+            ),
+            (
+                hazard_document(HazardStat::None, 1, 1, 7, None, SOURCE),
+                "step-hazard-bound",
+            ),
+            (
+                hazard_document(HazardStat::Current, 1, 100, 0, None, SOURCE),
+                "step-hazard-bound",
+            ),
+        ];
+        for (hazard, expected_code) in cases {
+            let mut document = decode_cook().unwrap();
+            let step_id = set_step_hazard(&mut document, "interact", hazard);
+            let error = compile_document_error(&document);
+            assert_eq!(error.code.as_ref(), expected_code);
+            assert_eq!(error.step.as_ref(), Some(&step_id));
+        }
+
+        let mut document = decode_cook().unwrap();
+        let step_id = set_step_hazard(
+            &mut document,
+            "interact",
+            hazard_document(HazardStat::Base, 1, 10, 0, Some(3), SOURCE),
+        );
+        let compiled = compile_document(&document).unwrap();
+        let step = compiled
+            .prelude
+            .iter()
+            .chain(
+                compiled
+                    .sequences
+                    .iter()
+                    .flat_map(|sequence| &sequence.steps),
+            )
+            .find(|step| step.id == step_id)
+            .expect("compiled interaction step");
+        assert_eq!(
+            step.hazard,
+            Some(StepHazard {
+                of: HazardStat::Base,
+                mul: 1,
+                div: 10,
+                plus: 0,
+                cap: Some(3),
+            })
+        );
+        assert_eq!(step.hazard_source.as_deref(), Some(SOURCE));
+
+        let mut walk_document = decode_cook().unwrap();
+        let walk = find_step_mut(&mut walk_document, "talk").expect("Cook has a talk step");
+        walk.kind = "walk".into();
+        walk.hazard = Some(hazard_document(
+            HazardStat::Base,
+            1,
+            10,
+            0,
+            Some(3),
+            SOURCE,
+        ));
+        let walk_id = walk.id.clone();
+        let error = compile_document_error(&walk_document);
+        assert_eq!(error.code.as_ref(), "step-hazard-unsupported");
+        assert_eq!(error.step.as_ref(), Some(&walk_id));
+
+        let mut combat_document: PathDocument = serde_json::from_str(HUNT_JSON).unwrap();
+        let combat_id = set_step_hazard(
+            &mut combat_document,
+            "combat",
+            hazard_document(HazardStat::Base, 1, 10, 0, Some(3), SOURCE),
+        );
+        let error = compile_document_error(&combat_document);
+        assert_eq!(error.code.as_ref(), "step-hazard-unsupported");
+        assert_eq!(error.step.as_ref(), Some(&combat_id));
+    }
+
+    #[test]
+    fn compiled_step_stride_accounts_for_typed_hazard_fields() {
+        assert_eq!(std::mem::size_of::<StepHazard>(), 6);
+        assert_eq!(std::mem::size_of::<Option<StepHazard>>(), 6);
+        assert_eq!(std::mem::size_of::<Option<Arc<str>>>(), 16);
+        assert_eq!(std::mem::size_of::<CompiledStep>(), 168);
+    }
+
     fn acquire_recipe_step(id: &str, recipe: &str) -> StepDocument {
         StepDocument {
             id: FactKey::new(id),
@@ -2105,6 +2332,7 @@ mod tests {
             advances: Some(false),
             skip_if: PredicateDocument::Any(vec![]),
             settle: PredicateDocument::All(vec![]),
+            hazard: None,
         }
     }
 
@@ -2492,6 +2720,7 @@ mod tests {
             advances: None,
             skip_if: PredicateDocument::Any(vec![]),
             settle: PredicateDocument::Any(vec![]),
+            hazard: None,
         };
         document.roles[0].prelude = vec![walk];
         let data = selected();

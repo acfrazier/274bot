@@ -2771,6 +2771,11 @@
                 }
               },
               "comment": "quest_desertrescue.rs2:231-242: Agility roll (stat_random(150,250)); a slip costs 7 hp and the step retries.",
+              "hazard": {
+                "of": "none",
+                "plus": 7,
+                "source": "content/scripts/quests/quest_desertrescue/scripts/quest_desertrescue.rs2:266-271"
+              },
               "skip_if": {
                 "Any": [
                   {
@@ -2878,6 +2883,11 @@
                 "radius": 3,
                 "settle_ms": 15000
               },
+              "hazard": {
+                "of": "none",
+                "plus": 7,
+                "source": "content/scripts/quests/quest_desertrescue/scripts/quest_desertrescue.rs2:266-271"
+              },
               "skip_if": {
                 "Not": {
                   "Fact": {
@@ -2929,6 +2939,11 @@
                 },
                 "radius": 3,
                 "settle_ms": 15000
+              },
+              "hazard": {
+                "of": "none",
+                "plus": 7,
+                "source": "content/scripts/quests/quest_desertrescue/scripts/quest_desertrescue.rs2:266-271"
               },
               "skip_if": {
                 "Not": {
@@ -2983,6 +2998,11 @@
                 "settle_ms": 15000
               },
               "comment": "quest_desertrescue.rs2:247-260: lands at 3270,3039 west of the camp fence; the gate is then re-entered with the metal key.",
+              "hazard": {
+                "of": "none",
+                "plus": 7,
+                "source": "content/scripts/quests/quest_desertrescue/scripts/quest_desertrescue.rs2:256"
+              },
               "skip_if": {
                 "Not": {
                   "Fact": {
@@ -6488,6 +6508,11 @@
                 }
               },
               "comment": "quest_desertrescue.rs2:808-835: Agility roll (stat_random(100,250)); a failure costs 2 hp and the step retries. Success at stage 17 sets 18 and teleports to 3319,9431 in the deep workings.",
+              "hazard": {
+                "of": "none",
+                "plus": 2,
+                "source": "content/scripts/quests/quest_desertrescue/scripts/quest_desertrescue.rs2:820-823"
+              },
               "skip_if": {
                 "Any": [
                   {
@@ -6890,6 +6915,11 @@
                 }
               },
               "comment": "quest_desertrescue.rs2:808-835: the deep cart teleports back to 3302,9417 beside the lower cart and its barrels. Refused while carrying Ana ('not enough space for both').",
+              "hazard": {
+                "of": "none",
+                "plus": 2,
+                "source": "content/scripts/quests/quest_desertrescue/scripts/quest_desertrescue.rs2:820-823"
+              },
               "skip_if": {
                 "Any": [
                   {

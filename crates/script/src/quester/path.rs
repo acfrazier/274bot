@@ -1,4 +1,5 @@
 //! Path authoring values, not a runtime JSON interpreter.
+use crate::survival::hazard::HazardStat;
 use super::pair::PartnerDeclaration;
 use api::selected::{FactKey, SkillMinimum};
 use api::WorldTile;
@@ -265,6 +266,30 @@ pub struct StepDocument {
     pub skip_if: PredicateDocument,
     /// Predicate which settles this step after execution.
     pub settle: PredicateDocument,
+    /// The step's own one-event damage formula and source citation.
+    #[serde(default)]
+    pub hazard: Option<HazardDocument>,
+}
+
+/// Authored formula and citation for one damage event from a step.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "path-schema", derive(schemars::JsonSchema))]
+#[serde(deny_unknown_fields)]
+pub struct HazardDocument {
+    pub of: HazardStat,
+    #[serde(default)]
+    pub mul: u8,
+    #[serde(default = "one_u8")]
+    pub div: u8,
+    #[serde(default)]
+    pub plus: i8,
+    #[serde(default)]
+    pub cap: Option<u8>,
+    pub source: String,
+}
+
+fn one_u8() -> u8 {
+    1
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
