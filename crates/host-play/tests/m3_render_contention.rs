@@ -277,7 +277,8 @@ impl SlotFrames {
     fn record(&self, now: Instant, simulation_cycle: i32) {
         let previous = self.last.lock().unwrap().replace(now);
         self.frames.fetch_add(1, Relaxed);
-        self.simulation_cycle.store(simulation_cycle as u32 as u64, Relaxed);
+        self.simulation_cycle
+            .store(simulation_cycle as u32 as u64, Relaxed);
         if let Some(previous) = previous {
             let ms = now.duration_since(previous).as_micros().div_ceil(1000) as usize;
             self.histogram[ms.min(BUCKETS - 1)].fetch_add(1, Relaxed);
@@ -1476,7 +1477,11 @@ fn mixed_probe_keeps_both_backend_populations() {
 
 fn policy_masks(policy: &str, n: usize, first_focus: usize, step: usize) -> (Vec<bool>, Vec<bool>) {
     let churn = matches!(policy, "focus-churn" | "sidecar50" | "sidecar-churn");
-    let focus = if churn { (first_focus + step) % n } else { first_focus };
+    let focus = if churn {
+        (first_focus + step) % n
+    } else {
+        first_focus
+    };
     let focused: Vec<bool> = (0..n).map(|index| index == focus).collect();
     let full_rate = match policy {
         "full" => vec![true; n],
@@ -1485,7 +1490,9 @@ fn policy_masks(policy: &str, n: usize, first_focus: usize, step: usize) -> (Vec
             assert_eq!(n, 50, "sidecar50 requires fifty admitted heads");
             vec![true; n]
         }
-        "sidecar-churn" => (0..n).map(|index| index == focus || index < step % n).collect(),
+        "sidecar-churn" => (0..n)
+            .map(|index| index == focus || index < step % n)
+            .collect(),
         other => panic!("unknown M3 policy {other}"),
     };
     (focused, full_rate)
@@ -1532,9 +1539,18 @@ fn live_m3_render_contention() {
 #[test]
 #[ignore = "LIVE=1 final fairness path; requires isolated calibration timing build"]
 fn m3_fair_head_progress() {
-    assert!(cfg!(feature = "render-diagnostics"), "timing requires render-diagnostics");
-    assert!(!cfg!(feature = "render-test-hooks"), "test controls invalidate timing");
-    assert!(!cfg!(feature = "draw-memory-profile"), "drawing allocator invalidates timing");
+    assert!(
+        cfg!(feature = "render-diagnostics"),
+        "timing requires render-diagnostics"
+    );
+    assert!(
+        !cfg!(feature = "render-test-hooks"),
+        "test controls invalidate timing"
+    );
+    assert!(
+        !cfg!(feature = "draw-memory-profile"),
+        "drawing allocator invalidates timing"
+    );
     #[cfg(feature = "render-diagnostics")]
     {
         assert!(
@@ -1546,7 +1562,10 @@ fn m3_fair_head_progress() {
             "dependency feature unification compiled client drawing instrumentation"
         );
     }
-    assert!(fair_probe_inputs().is_some(), "explicit calibration values are required");
+    assert!(
+        fair_probe_inputs().is_some(),
+        "explicit calibration values are required"
+    );
     assert_eq!(env_or("M3_WARMUP_S", 10), 10u64);
     assert_eq!(env_or("M3_OBSERVE_S", 30), 30u64);
     run_m3_render_contention();
@@ -1786,7 +1805,10 @@ fn run_m3_render_contention() {
     .unwrap();
 
     for policy in &policies {
-        let churn = matches!(policy.as_str(), "focus-churn" | "sidecar50" | "sidecar-churn");
+        let churn = matches!(
+            policy.as_str(),
+            "focus-churn" | "sidecar50" | "sidecar-churn"
+        );
         let (mut focused, mut full_rate) = policy_masks(policy, n, focus_index, 0);
         if probe.is_none() {
             focused.clone_from(&full_rate);
@@ -1820,7 +1842,11 @@ fn run_m3_render_contention() {
                 "focused": focused,
                 "full_rate": full_rate,
             }));
-            thread::sleep(if churn { Duration::from_millis(200) } else { Duration::from_secs(1) });
+            thread::sleep(if churn {
+                Duration::from_millis(200)
+            } else {
+                Duration::from_secs(1)
+            });
             step += 1;
             let now = mark(&heads, &taken, pump_probe.as_deref());
             let statuses = play.statuses();
@@ -1858,9 +1884,14 @@ fn run_m3_render_contention() {
         summary["git_rev"] = json!(rev);
         summary["warmup_s"] = json!(warmup.as_secs());
         summary["monotonic_resolution_ns"] = json!(CLOCK_RESOLUTION.as_nanos());
-        summary["monotonic_resolution_method"] = json!("smallest positive Instant step in 10000 successive reads");
+        summary["monotonic_resolution_method"] =
+            json!("smallest positive Instant step in 10000 successive reads");
         summary["focus_series"] = json!(focus_series);
-        summary["group_membership"] = json!(if churn { "final focus; use samples for each interval" } else { "fixed focus" });
+        summary["group_membership"] = json!(if churn {
+            "final focus; use samples for each interval"
+        } else {
+            "fixed focus"
+        });
         std::fs::write(
             out.join(format!("{cell}.json")),
             serde_json::to_string_pretty(&summary).unwrap(),

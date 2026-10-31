@@ -45,12 +45,12 @@ pub use random::{
 };
 pub use render_head::SlotRender;
 pub use slot::{dirty_families, should_emit_tick, DirtyFamilies, DrainResult, Pump};
+#[cfg(any(feature = "render-diagnostics", feature = "render-test-hooks"))]
+pub use slot_io::SlotWakeSnapshot;
 pub use slot_io::{
     map_image_to_applet, wake_channel, FrameBuf, FrameStamp, InputEv, ManualMoveIntent, MouseOwner,
     PresentedFrame, SlotInput, SlotPark, SlotWake,
 };
-#[cfg(any(feature = "render-diagnostics", feature = "render-test-hooks"))]
-pub use slot_io::SlotWakeSnapshot;
 #[cfg(feature = "journal-paint-proof")]
 pub use slot_io::{JournalPaintStamp, JournalProofFrame};
 

@@ -418,7 +418,6 @@ pub fn configure_calibration_limits(
     Ok(())
 }
 
-
 fn validate_calibration(config: CalibrationConfig) -> Result<(), RenderError> {
     let service = RenderService::new(config.grant_ttl)?;
     service.set_consumed_quantum(config.scene_quantum)
@@ -495,7 +494,6 @@ pub fn with_process_render_budget<T>(action: impl FnOnce() -> T) -> T {
     let _scope = process_budget_scope();
     action()
 }
-
 
 pub(super) fn enabled() -> bool {
     CALIBRATION.get().is_some()
@@ -1228,11 +1226,8 @@ pub(super) fn paint(head: &mut Head, client: &mut Client) -> FrameOutput {
                     head.fair.stats.due_skips = head.fair.stats.due_skips.saturating_add(1);
                     head.fair.stats.max_due_skips =
                         head.fair.stats.max_due_skips.max(head.fair.stats.due_skips);
-                    head.fair.stats.skipped_due_opportunities = head
-                        .fair
-                        .stats
-                        .skipped_due_opportunities
-                        .saturating_add(1);
+                    head.fair.stats.skipped_due_opportunities =
+                        head.fair.stats.skipped_due_opportunities.saturating_add(1);
                 }
             }
         }
@@ -1314,10 +1309,10 @@ fn admit(frame: &mut GpuFrame, service: &RenderService, now: Instant) -> SceneAd
                 let stats = &mut fair.head.stats;
                 stats.grant_wake_samples = stats.grant_wake_samples.saturating_add(1);
                 stats.last_grant_latency = Some(latency);
-                stats.max_publication_to_notice =
-                    stats.max_publication_to_notice.max(latency.publication_to_notice());
-                stats.max_notice_to_wake =
-                    stats.max_notice_to_wake.max(latency.notice_to_wake());
+                stats.max_publication_to_notice = stats
+                    .max_publication_to_notice
+                    .max(latency.publication_to_notice());
+                stats.max_notice_to_wake = stats.max_notice_to_wake.max(latency.notice_to_wake());
                 stats.max_wake_to_consume =
                     stats.max_wake_to_consume.max(latency.wake_to_consume());
                 if stats.max_grant_latency.is_none_or(|previous| {

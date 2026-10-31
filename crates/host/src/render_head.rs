@@ -48,13 +48,13 @@ use crate::FrameBuf;
 
 #[cfg(any(feature = "render-diagnostics", feature = "render-test-hooks"))]
 mod fair;
+#[cfg(feature = "render-test-hooks")]
+pub use fair::test_hooks;
 #[cfg(any(feature = "render-diagnostics", feature = "render-test-hooks"))]
 pub use fair::{
     configure_calibration, configure_calibration_limits, with_process_render_budget,
     CalibrationConfig, DueOpportunity, GrantLatency, HeadFairStats,
 };
-#[cfg(feature = "render-test-hooks")]
-pub use fair::test_hooks;
 
 #[cfg(any(feature = "render-diagnostics", feature = "render-test-hooks"))]
 pub(crate) fn slot_budget_scope(
@@ -818,7 +818,10 @@ struct HeadWake {
     latest_cross_notice: Mutex<Option<(PublishSequence, Instant)>>,
 }
 
-#[cfg(all(test, any(feature = "render-diagnostics", feature = "render-test-hooks")))]
+#[cfg(all(
+    test,
+    any(feature = "render-diagnostics", feature = "render-test-hooks")
+))]
 impl Default for HeadWake {
     fn default() -> Self {
         let (wake, _park) = crate::wake_channel();
