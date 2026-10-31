@@ -1973,11 +1973,15 @@ mod tests {
             .clone();
 
         let write_path = |id: &str, display_name: &str, invalid: bool| {
-            let mut document: serde_json::Value = serde_json::from_str(include_str!(concat!(
-                env!("CARGO_MANIFEST_DIR"),
-                "/../script/paths/289/cook.json"
-            )))
-            .unwrap();
+            let template = if id == qualified_id {
+                script::quester::registry::bundled_path(id).expect("qualified Path bytes")
+            } else {
+                include_bytes!(concat!(
+                    env!("CARGO_MANIFEST_DIR"),
+                    "/../script/paths/289/cook.json"
+                ))
+            };
+            let mut document: serde_json::Value = serde_json::from_slice(template).unwrap();
             document["id"] = serde_json::json!(id);
             document["display_name"] = serde_json::json!(display_name);
             document["roles"][0]["sequences"][0]["steps"][0]["comment"] =
