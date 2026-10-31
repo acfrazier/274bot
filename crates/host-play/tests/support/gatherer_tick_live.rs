@@ -28,6 +28,9 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
+#[path = "tick_startup.rs"]
+mod tick_startup;
+
 const ENGINE_HOST: &str = "127.0.0.1";
 const ENGINE_GAME_PORT: u16 = 47_594;
 const ENGINE_HTTP_PORT: u16 = 3_080;
@@ -553,6 +556,7 @@ struct LiveRun {
     play: Option<host_play::Play>,
     output: PathBuf,
     started_tick: Option<u32>,
+    first_arm_budget: u32,
     baseline: Option<FrameObservation>,
     statuses: Vec<StatusObservation>,
     logout_requested: bool,
@@ -625,6 +629,19 @@ impl LiveRun {
         if template.world().is_none() {
             return Err("selected Engine L navigation template has no world".into());
         }
+        let first_arm_budget = tick_startup::first_arm_budget(
+            server_profile
+                .game_data()
+                .ok_or("Engine L profile has no selected data")?,
+            match case {
+                Case::Probe | Case::Fly => "fishing.loc_2027.op1",
+                Case::Net => "fishing.saltfish.op1",
+                Case::Iron | Case::Rune => "mining.iron",
+                Case::Oak => "woodcutting.oak",
+            },
+            case.tool().1,
+            STARTUP_TICK_BUDGET,
+        )?;
         // Asset initialization is not a live host frame or a cadence observation.
         // Complete it before the slot's fixed setup deadline starts.
         let mut bootstrap = template.prepare_client(0, true)?;
@@ -697,6 +714,7 @@ impl LiveRun {
             play: Some(play),
             output,
             started_tick: None,
+            first_arm_budget,
             baseline: None,
             statuses: Vec::new(),
             logout_requested: false,
@@ -802,6 +820,13 @@ impl LiveRun {
         loop {
             self.capture_status();
             let trace = self.hook.trace();
+            let current = self.hook.observed_game_tick();
+            if !self.case.is_rune()
+                && current.wrapping_sub(origin) > STARTUP_TICK_BUDGET
+                && !tick_startup::native_click_within(&trace, origin, STARTUP_TICK_BUDGET)
+            {
+                return Err(format!("Gatherer Start did not emit its native click within {STARTUP_TICK_BUDGET} ticks"));
+            }
             if self.case.is_rune() {
                 if let Some(status) = self.statuses.iter().find(|status| {
                     status.tick_method.as_deref() == Some("Knife (off: no-gain)")
@@ -829,9 +854,11 @@ impl LiveRun {
                 }
                 return Ok(());
             }
-            let current = self.hook.observed_game_tick();
-            if current.wrapping_sub(origin) > STARTUP_TICK_BUDGET {
-                return Err(format!("Gatherer Start did not reach the expected tick path within {STARTUP_TICK_BUDGET} ticks"));
+            if current.wrapping_sub(origin) > self.first_arm_budget {
+                return Err(format!(
+                    "Gatherer Start did not reach its first arm within the selected native-roll bound of {} ticks",
+                    self.first_arm_budget
+                ));
             }
             if Instant::now() >= deadline {
                 return Err("Gatherer Start exceeded its bounded 30s startup deadline".into());
@@ -1097,6 +1124,7 @@ fn frame_json(frame: &FrameObservation) -> Value {
     json!({
         "host_frame": frame.host_frame,
         "observed_tick": frame.game_tick,
+        "client_snapshot_tick": frame.client_tick,
         "poll": if frame.tick_edge {"Edge"} else {"Wake"},
         "animation": animation,
         "chat": chat,

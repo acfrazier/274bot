@@ -89,7 +89,7 @@ pub enum PollKind {
 /// One newly first-seen chat line, attributed to its actual host poll.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ChatObservation {
-    /// Snapshot game tick when the line was first visible.
+    /// Monotonic Play script tick when the line was first visible.
     pub game_tick: u32,
     /// Client chat-ring sequence assigned by the real Client.
     pub sequence: i32,
@@ -104,8 +104,10 @@ pub struct ChatObservation {
 pub struct FrameObservation {
     /// Monotonic host-observation index since this hook was created.
     pub host_frame: u64,
-    /// Snapshot tick, advanced only by observed PLAYER_INFO.
+    /// Play's monotonic script tick, shared with real dispatch receipts.
     pub game_tick: u32,
+    /// Raw Client snapshot tick, which can restart at a session boundary.
+    pub client_tick: u32,
     /// Whether this observation is the PLAYER_INFO edge.
     pub tick_edge: bool,
     /// The Client's actual animation update, including its reception serial.
@@ -149,7 +151,7 @@ pub struct DispatchObservation {
 pub struct WireObservation {
     /// Host observation index active when the Client committed the packet.
     pub host_frame: u64,
-    /// Snapshot tick active when the Client committed the packet.
+    /// Play script tick active when the Client committed the packet.
     pub game_tick: u32,
     /// Native request which owned this packet, if it was inside a dispatch.
     pub request_id: Option<u64>,
@@ -379,6 +381,7 @@ impl TickEngineTestHook {
         &self,
         account: &str,
         snapshot: &mut GameSnapshot,
+        game_tick: u32,
     ) -> bool {
         if account != self.account || snapshot.modals().chat != 8880 {
             return false;
@@ -387,7 +390,7 @@ impl TickEngineTestHook {
         let Some(through) = state.suppress_openchat_through_tick else {
             return false;
         };
-        if snapshot.tick() > through {
+        if game_tick > through {
             state.suppress_openchat_through_tick = None;
             return false;
         }
@@ -402,6 +405,7 @@ impl TickEngineTestHook {
         client: &Client,
         account: &str,
         snapshot: &GameSnapshot,
+        game_tick: u32,
         tick_edge: bool,
         suppressed_openchat: bool,
     ) {
@@ -412,7 +416,7 @@ impl TickEngineTestHook {
             let mut state = self.state.lock().expect("tick-engine hook poisoned");
             state.next_host_frame = state.next_host_frame.wrapping_add(1);
             let host_frame = state.next_host_frame;
-            let game_tick = snapshot.tick();
+            let client_tick = snapshot.tick();
             state.last_game_tick = game_tick;
             if state.measurement_armed {
                 let poll = if tick_edge {
@@ -459,6 +463,7 @@ impl TickEngineTestHook {
                 state.trace.frames.push(FrameObservation {
                     host_frame,
                     game_tick,
+                    client_tick,
                     tick_edge,
                     animation: client.local_animation_update(),
                     chat,
@@ -490,6 +495,7 @@ impl TickEngineTestHook {
     pub(crate) fn begin_dispatch(
         self: &Arc<Self>,
         snapshot: Option<&mut GameSnapshot>,
+        game_tick: u32,
         authority: &HostAuthority,
         envelope: &ServerOrderedEnvelope,
     ) -> DispatchGuard {
@@ -500,7 +506,6 @@ impl TickEngineTestHook {
             .pending_mutations
             .pop_front();
         let mut mutation_applied = false;
-        let game_tick = snapshot.as_deref().map_or(0, GameSnapshot::tick);
         let request_id = authority.request_id().get();
         let request_debug = match envelope.payload() {
             script::surface::ServerOrderedPayload::Content(request) => Some(format!("{request:?}")),
@@ -707,5 +712,49 @@ impl PacketObserver for ObservedPackets {
 
     fn committed_packet_count(&self) -> Option<u64> {
         PacketObserver::committed_packet_count(self.input.as_ref())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn client() -> Client {
+        Client::new_with_revision(
+            client::client::ClientConfig {
+                host: "127.0.0.1".into(),
+                port: 1,
+                cache_dir: String::new(),
+                members: true,
+                lowmem: true,
+            },
+            client::client::ClientRevision::R289,
+        )
+    }
+
+    #[test]
+    fn frame_keeps_both_clocks_after_a_client_session_reset() {
+        let hook = TickEngineTestHook::new("clock");
+        let client = client();
+        let snapshot = GameSnapshot::new();
+        hook.arm_measurement(1511, &[]);
+        hook.after_frame(&client, "clock", &snapshot, 42, true, false);
+        let trace = hook.trace();
+        assert_eq!(hook.observed_game_tick(), 42);
+        assert_eq!(trace.frames[0].game_tick, 42);
+        assert_eq!(trace.frames[0].client_tick, snapshot.tick());
+        assert_ne!(trace.frames[0].game_tick, trace.frames[0].client_tick);
+    }
+
+    #[test]
+    fn modal_suppression_expires_on_the_dispatch_clock_not_the_reset_client_clock() {
+        let hook = TickEngineTestHook::new("clock");
+        let mut snapshot = GameSnapshot::new();
+        snapshot.seed_chat_modal(8880, vec!["Make".into()]);
+        hook.suppress_openchat_through_tick(42);
+        assert!(hook.before_snapshot_observe("clock", &mut snapshot, 42));
+        snapshot.seed_chat_modal(8880, vec!["Make".into()]);
+        assert!(!hook.before_snapshot_observe("clock", &mut snapshot, 43));
+        assert_eq!(snapshot.modals().chat, 8880);
     }
 }

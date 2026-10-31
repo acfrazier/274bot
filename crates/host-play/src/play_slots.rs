@@ -1620,7 +1620,7 @@ fn spawn_slot_thread(
                             #[cfg(feature = "test-support")]
                             if let Some(test_hook) = TickEngineTestHook::current() {
                                 tick_engine_suppressed_openchat =
-                                    test_hook.before_snapshot_observe(name, &mut nav_snapshot);
+                                    test_hook.before_snapshot_observe(name, &mut nav_snapshot, *script_tick as u32);
                             }
                             if session_boundary && c.ingame {
                                 slot_navs.lock().unwrap().entry(name.to_owned()).or_default()
@@ -1962,6 +1962,7 @@ fn spawn_slot_thread(
                                     c,
                                     name,
                                     &nav_snapshot,
+                                    *script_tick as u32,
                                     tick_edge,
                                     tick_engine_suppressed_openchat,
                                 );

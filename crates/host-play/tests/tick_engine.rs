@@ -25,6 +25,8 @@ use loopback_proxy::{LoopbackProxy, ProxyObservation};
 #[path = "support/engine_packet_log.rs"]
 mod engine_packet_log;
 use engine_packet_log::{EnginePacket, EnginePacketLog};
+#[path = "support/tick_startup.rs"]
+mod tick_startup;
 
 const ENGINE_HOST: &str = "127.0.0.1";
 const ENGINE_GAME_PORT: u16 = 48_594;
@@ -707,6 +709,7 @@ struct LiveRun {
     proxy: Option<Arc<LoopbackProxy>>,
     play: Option<host_play::Play>,
     start_tick: Option<u32>,
+    first_arm_budget: u32,
     baseline: Option<FrameObservation>,
     statuses: Vec<StatusObservation>,
     engine_log: Option<EnginePacketLog>,
@@ -776,6 +779,20 @@ impl LiveRun {
         if template.world().is_none() {
             return Err("selected Engine T navigation template has no world".into());
         }
+        let first_arm_budget = tick_startup::first_arm_budget(
+            profile
+                .game_data()
+                .ok_or("Engine T profile has no selected data")?,
+            match scenario.resource {
+                ResourceKind::River => "fishing.loc_2027.op1",
+                ResourceKind::Net => "fishing.saltfish.op1",
+                ResourceKind::Copper => "mining.copper",
+                ResourceKind::Iron => "mining.iron",
+                ResourceKind::Oak => "woodcutting.oak",
+            },
+            scenario.tool.id,
+            STARTUP_EDGE_BUDGET,
+        )?;
         // Asset initialization is not a live host frame or a cadence observation.
         // Complete it before the slot's fixed setup deadline starts.
         let mut bootstrap = template.prepare_client(0, true)?;
@@ -863,6 +880,7 @@ impl LiveRun {
             proxy,
             play: Some(play),
             start_tick: None,
+            first_arm_budget,
             baseline: None,
             statuses: Vec::new(),
             engine_log: None,
@@ -946,6 +964,9 @@ impl LiveRun {
             .map_err(|error| format!("Gatherer operator Start failed: {error}"))?;
         if self.scenario.require_knife_arm {
             self.wait_until(baseline.game_tick, STARTUP_EDGE_BUDGET, |trace, _| {
+                tick_startup::native_click_within(trace, baseline.game_tick, STARTUP_EDGE_BUDGET)
+            })?;
+            self.wait_until(baseline.game_tick, self.first_arm_budget, |trace, _| {
                 trace.dispatches.iter().any(is_knife_arm)
             })?;
         } else {
@@ -1526,6 +1547,7 @@ fn evidence_json(evidence: &RunEvidence) -> Value {
         json!({
             "host_frame": frame.host_frame,
             "game_tick": frame.game_tick,
+            "client_snapshot_tick": frame.client_tick,
             "tick_edge": frame.tick_edge,
             "snapshot": {
                 "tile": frame.player_tile.map(|tile| {

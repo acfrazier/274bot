@@ -1518,6 +1518,7 @@ where
                                 let test_dispatch = TickEngineTestHook::current().map(|hook| {
                                     let guard = hook.begin_dispatch(
                                         snapshot.write(),
+                                        tick as u32,
                                         &authority,
                                         &envelope,
                                     );
