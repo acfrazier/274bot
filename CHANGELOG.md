@@ -69,6 +69,8 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.8` 
 
 ### Quester
 
+- The Quester supports The Restless Ghost. The quest picker now offers only
+  guides that passed live qualification. Saved draft choices show why they cannot start.
 - The Quester's blocked message now ends "then start the Quester again": the
   Stop button is unavailable once the run has ended, so the message names the
   action you can take.

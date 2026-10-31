@@ -120,13 +120,83 @@ owner = "S2c"
 id = "quester-route-coverage"
 kind = "known-issue"
 area = "Quester"
-text = """The Quester has routes for 20 of the 68 quests. Routes for the other
-  quests are planned in waves."""
+text = """The following Quester guides are drafts. Release builds do not support them:
+  - Cook's Assistant
+  - Sheep Shearer
+  - Rune Mysteries
+  - Romeo & Juliet
+  - Imp Catcher
+  - Vampire Slayer
+  - Doric's Quest
+  - Goblin Diplomacy
+  - Witch's Potion
+  - Prince Ali Rescue
+  - Pirate's Treasure
+  - Demon Slayer
+  - The Knight's Sword
+  - Death Plateau
+  - The Tourist Trap
+  - Priest in Peril
+  - Clock Tower
+  - Monk's Friend
+  - Hazeel Cult
+  - Plague City
+  - Druidic Ritual
+  - Gertrude's Cat
+  - Jungle Potion
+  - Sea Slug Quest
+  - Tribal Totem
+  - Black Knight's Fortress
+  - Ernest the Chicken
+  - Fishing Contest
+  - Elemental Workshop
+  - Merlin's Crystal
+  - Lost City
+  - Tree Gnome Village
+  - Scorpion Catcher
+  - Observatory Quest
+  - Shield of Arrav
+  - Hero's Quest
+  - Temple of Ikov
+  - Holy Grail
+  - Watch Tower
+  - Digsite Quest
+  - Biohazard
+  - Murder Mystery
+  - Witch's House
+  - Big Chompy Bird Hunting
+  - Dwarf Cannon
+  - Family Crest
+  - Fight Arena
+  - The Grand Tree
+  - Dragon Slayer
+  - Horror from the Deep
+  - Shilo Village
+  - Tai Bwo Wannai Trio
+  - Nature Spirit
+  - In Search of the Myreque
+  - Troll Stronghold
+  - Eadgar's Ruse
+  - Troll Romance
+  - Throne of Miscellania
+  - Waterfall Quest
+  - Legends Quest
+  - Sheep Herder
+  - Underground Pass
+  - Regicide
+  - Shades of Mort'ton
+  - The Fremennik Trials
+  - Monkey Madness"""
 first = "0.2.0"
 listed = "0.2.5"
 target = "0.2.9"
 severity = "medium"
-owner = "Quester waves"
+owner = "Quest campaign qualification"
+
+[[item.earlier]]
+until = "0.2.8"
+text = """The Quester has routes for 20 of the 68 quests. Routes for the other
+  quests are planned in waves."""
 
 [[item]]
 id = "quester-walk-step-first-failure"

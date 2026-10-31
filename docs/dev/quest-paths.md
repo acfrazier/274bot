@@ -190,11 +190,18 @@ The content posts that key for 100 ticks in `drop tables/scripts/jailer.rs2:10`.
 
 Every bundled guide is indexed and embedded three ways, and all three must agree.
 
-1. Add the row to `crates/script/paths/289/index.json`. The index has its own schema (`schema: 1`), checked by `validate_index` (`crates/script/src/quester/queue.rs:369`) and asserted by the schema test (`crates/script/tests/path_schema.rs:341-360`). A shipped draft carries `"status": "draft"`. A quest the server cannot run keeps a row with `name` and an end-user `unavailable` reason, with `file` kept when a guide was authored so it stays compiled.
-2. Add the file to the `path_bytes` match in `crates/script/src/quester/compile.rs:1774` for runtime embedding.
-3. Run `cargo test -p script bundled_paths_decode_and_compile`. The test reads each indexed row's `file` from disk, not through `path_bytes`, and compiles every indexed guide (`crates/script/tests/path_schema.rs:341-390`). Errors carry the guide, step, code, and detail. A filename whose stem differs from the document `id` fails with `path-id-mismatch` (`crates/script/src/quester/registry.rs:1101-1107`).
+1. Add the row to `crates/script/paths/289/index.json` with `"status": "draft"`. After the quest campaign records a live pass, change only the status to `"qualified"`. Missing status does not qualify a Path. A quest the server cannot run keeps a row with `name` and an end-user `unavailable` reason.
+2. Add the file to the `path_bytes` match in `crates/script/src/quester/compile.rs`. Raw draft bytes remain available to the qualification harness.
+3. Run `cargo test -p script bundled_paths_decode_and_compile`. This checks the indexed files and IDs. It does not qualify a Path for release. Compile errors carry the guide, step, code, and detail.
 
-Queue order follows the release index. Draft rows are opt-in for an empty quest selection (`crates/script/src/quester/queue.rs:163-164`). Unavailable rows stay blocked with their reason (`crates/script/src/quester/queue.rs:22-35`).
+Queue order follows the release index. Normal builds admit only qualified rows.
+An explicit draft quest or priority pick returns a typed refusal. A saved
+`include_draft_guides` value cannot bypass that rule.
+
+The `host-play/test-support` feature enables `script/test-hooks` for draft
+qualification. The normal TUI's `live-harness` feature does not grant draft
+admission. Interactive pickers offer only qualified rows in every build.
+Unavailable content rows retain their existing reasons.
 
 ## Folder loading pipeline
 

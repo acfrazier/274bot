@@ -1,7 +1,7 @@
 //! Compiled card `Quester`: Start snapshots the shared Path registry.
 #[cfg(test)]
 use super::compile::INDEX_JSON;
-use super::queue::{Queue, QueueSettings, ReleasePathStatus};
+use super::queue::{Queue, QueueConfigErrorKind, QueueSettings, ReleasePathStatus};
 use super::registry::{self, BUNDLED_INDEX};
 use super::runner::QueuedQuester;
 use crate::native::{
@@ -64,14 +64,19 @@ fn decode_settings(bag: &SettingsBag) -> Result<QuesterSettings, ConfigError> {
 
 pub(crate) fn requires_pairs(bag: &SettingsBag) -> Result<bool, ConfigError> {
     let settings = decode_settings(bag)?;
+    let allow_unqualified = cfg!(feature = "test-hooks");
     Ok(BUNDLED_INDEX.paths.iter().any(|entry| {
+        let qualified = entry.status == Some(ReleasePathStatus::Qualified);
+        let default_selected = settings.quests.is_empty()
+            && (qualified
+                || (allow_unqualified
+                    && (settings.include_draft_guides
+                        || settings.order_override.contains(&entry.id))));
         super::pair::PairQuest::from_path(&entry.id).is_some()
+            && entry.unavailable.is_none()
+            && (qualified || allow_unqualified)
             && !settings.skip.contains(&entry.id)
-            && (settings.quests.contains(&entry.id)
-                || (settings.quests.is_empty()
-                    && (entry.status != Some(ReleasePathStatus::Draft)
-                        || settings.include_draft_guides
-                        || settings.order_override.contains(&entry.id))))
+            && (settings.quests.contains(&entry.id) || default_selected)
     }))
 }
 
@@ -94,21 +99,13 @@ fn settings_schema() -> &'static [SettingDef] {
                 "quests",
                 "[]",
                 "Quests",
-                "Empty selects all released quests except drafts unless Include draft guides when no quests are picked is enabled.",
-            ),
-            setting(
-                "include_draft_guides",
-                "boolean",
-                "false",
-                "Include draft guides when no quests are picked",
-                "Include all draft Paths in the empty-selection queue. Drafts listed in Order override or explicitly selected in Quests run even when this is off.",
-                &[],
+                "Empty selects all live-qualified quests.",
             ),
             path_setting(
                 "order_override",
                 "[]",
                 "Order override",
-                "Prioritize selected quest ids; with an empty quest selection, listing a draft here includes it.",
+                "Prioritize selected quest ids; only qualified Paths run in release builds.",
             ),
             path_setting("skip", "[]", "Skip", "Do not run these released quest ids."),
             setting(
@@ -488,11 +485,11 @@ fn prepare_from(
     }
     let QuesterRegistryReady { registry, quests } = source(cx)?;
     let queue = Queue::from_registry(registry, queue_settings).map_err(|error| {
-        StartError::Config(ConfigError::new(
-            error.field,
-            "invalid-queue",
-            error.message,
-        ))
+        let code = match error.kind {
+            QueueConfigErrorKind::InvalidSetting => "invalid-queue",
+            QueueConfigErrorKind::UnqualifiedPath => "unqualified-path",
+        };
+        StartError::Config(ConfigError::new(error.field, code, error.message))
     })?;
     let prepared = Prepared {
         selected: Arc::clone(&cx.selected),
@@ -606,7 +603,6 @@ mod tests {
             ids,
             [
                 "quests",
-                "include_draft_guides",
                 "order_override",
                 "skip",
                 "partner_account",
@@ -692,16 +688,12 @@ mod tests {
         );
     }
     #[test]
-    fn include_draft_guides_defaults_off_and_roundtrips_with_card_settings() {
-        let definition = settings_schema()
-            .iter()
-            .find(|setting| setting.id == "include_draft_guides")
-            .unwrap();
-        assert_eq!(definition.ty, "boolean");
-        assert_eq!(definition.default.as_deref(), Some("false"));
-        assert_eq!(
-            definition.label.as_deref(),
-            Some("Include draft guides when no quests are picked")
+    fn saved_draft_opt_in_is_preserved_but_not_exposed() {
+        assert!(
+            !settings_schema()
+                .iter()
+                .any(|setting| setting.id == "include_draft_guides"),
+            "release settings must not advertise draft opt-in"
         );
 
         let defaults = decode_settings(&SettingsBag::new()).unwrap();

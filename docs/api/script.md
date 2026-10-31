@@ -304,16 +304,20 @@ scripts end their live step at either boundary.
 ### Quester queue and provisioning
 
 Quester uses the ordered `crates/script/paths/289/index.json` release roster.
-`quests` selects quest IDs. An empty list queues every available Path except
-rows marked `"status": "draft"`. The off-by-default `include_draft_guides` setting
-(**Include draft guides when no quests are picked**) adds those bundled drafts
-in release-roster order; quest pickers label them `[draft]`. Explicit quest
-picks always run; with an empty quest
-selection, a draft listed in `order_override` is also an explicit pick.
-`order_override` prioritizes selected IDs and `skip` excludes
-IDs. `partner_account` and `gang` are per-account settings, not bulk-copy
-settings. Partner selection uses configured vault identities, including saved
-accounts not currently loaded.
+Release builds accept only rows with `"status": "qualified"`. Currently, only
+The Restless Ghost is qualified. `quests` selects quest IDs. An empty list
+queues all qualified Paths in roster order. An explicit draft quest or
+priority pick refuses Start with the typed `unqualified-path` reason.
+`order_override` prioritizes selected IDs and `skip` excludes IDs.
+
+The former `include_draft_guides` setting is no longer offered. Saved values
+still load, but cannot enable drafts in a release build. Qualification tests
+can admit drafts through `host-play/test-support`, which enables
+`script/test-hooks`. Interactive quest pickers remain qualified-only.
+
+`partner_account` and `gang` are per-account settings, not bulk-copy settings.
+Partner selection uses configured vault identities, including saved accounts
+not currently loaded.
 
 A roster row can be unavailable on this server: it carries `name` and an
 end-user `unavailable` reason instead of being released (it may keep its

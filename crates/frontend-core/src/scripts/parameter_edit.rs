@@ -285,6 +285,11 @@ fn resolve_parameter_options_with_registry(
     options
 }
 
+fn qualified_path_row(row: &script::quester::registry::PathRow) -> bool {
+    row.unavailable.is_none()
+        && row.status == Some(script::quester::queue::ReleasePathStatus::Qualified)
+}
+
 fn resolve_released_path_options(
     def: &script::SettingDef,
     bag: &serde_json::Map<String, Value>,
@@ -297,12 +302,21 @@ fn resolve_released_path_options(
     if source == "released-paths" {
         for row in rows {
             options.values.push(row.id.clone());
-            options.labels.push(row.label.clone());
+            let label = if row.unavailable.is_none() && !qualified_path_row(row) {
+                format!(
+                    "{} — {}",
+                    row.label,
+                    script::quester::queue::UNQUALIFIED_PATH_REASON
+                )
+            } else {
+                row.label.clone()
+            };
+            options.labels.push(label);
         }
         move_unselectable_to_preserved(&mut options, |id| {
             rows.iter()
                 .find(|row| row.id == id)
-                .is_some_and(|row| row.unavailable.is_none())
+                .is_some_and(qualified_path_row)
         });
         preserve_unknown_values(def, bag, &mut options);
         return options;
@@ -327,7 +341,8 @@ fn resolve_released_path_options(
         if !ids.contains(id)
             && rows
                 .iter()
-                .any(|row| row.id == *id && row.unavailable.is_some())
+                .find(|row| row.id == *id)
+                .is_some_and(|row| !qualified_path_row(row))
         {
             ids.push(id.clone());
         }
@@ -336,7 +351,7 @@ fn resolve_released_path_options(
         let Some(row) = rows.iter().find(|row| row.id == id) else {
             continue;
         };
-        let display = if row.source == script::quester::registry::PathSource::Bundled
+        let mut display = if row.source == script::quester::registry::PathSource::Bundled
             && row.unavailable.is_none()
         {
             let display = def
@@ -355,6 +370,10 @@ fn resolve_released_path_options(
         } else {
             row.label.clone()
         };
+        if row.unavailable.is_none() && !qualified_path_row(row) {
+            display.push_str(" — ");
+            display.push_str(script::quester::queue::UNQUALIFIED_PATH_REASON);
+        }
         let label = priority
             .iter()
             .position(|selected| selected == &id)
@@ -368,7 +387,7 @@ fn resolve_released_path_options(
     move_unselectable_to_preserved(&mut options, |id| {
         rows.iter()
             .find(|row| row.id == id)
-            .is_some_and(|row| row.unavailable.is_none())
+            .is_some_and(qualified_path_row)
     });
     preserve_unknown_values(def, bag, &mut options);
     options
@@ -1455,7 +1474,8 @@ mod tests {
             resolve_parameter_options(SettingView::new(&order), &bag, &loadouts, None);
         assert_eq!(order_options.values, ["sheep", "cook"]);
         assert_eq!(order_options.labels.len(), 2);
-        assert_eq!(order_options.labels[0], "2. Sheep display");
+        assert!(order_options.labels[0].starts_with("2. Sheep display"));
+        assert!(order_options.labels[0].contains(script::quester::queue::UNQUALIFIED_PATH_REASON));
         // A concurrent Path reload may replace the process-wide cook label;
         // its display name changes, but the requested order never does.
         assert!(
@@ -1464,10 +1484,12 @@ mod tests {
                 "1. Folder Cook [folder]",
                 "1. Edited Again [folder]",
             ]
-            .contains(&order_options.labels[1].as_str()),
+            .iter()
+            .any(|prefix| order_options.labels[1].starts_with(prefix)),
             "{:?}",
             order_options.labels
         );
+        assert!(order_options.labels[1].contains(script::quester::queue::UNQUALIFIED_PATH_REASON));
 
         let mut paths = source_setting("quests", "string[]", "released-paths");
         paths.options = vec!["cook".into(), "sheep".into()];
@@ -1539,7 +1561,7 @@ mod tests {
         let reason = script::quester::card::unavailable_quest("hauntedmine").unwrap();
         let loadouts = Loadouts::default();
         let mut bag = serde_json::Map::new();
-        bag.insert("quests".into(), serde_json::json!(["cook"]));
+        bag.insert("quests".into(), serde_json::json!(["priest"]));
         bag.insert("order_override".into(), serde_json::json!(["hauntedmine"]));
         let order = resolve_parameter_options(
             SettingView::new(quester_setting("order_override")),
@@ -1547,7 +1569,7 @@ mod tests {
             &loadouts,
             None,
         );
-        assert_eq!(order.selectable(), ["cook"]);
+        assert_eq!(order.selectable(), ["priest"]);
         assert_eq!(
             order.label_for("hauntedmine"),
             format!("1. Haunted Mine — {reason}")
@@ -1558,7 +1580,7 @@ mod tests {
     fn array_toggle_adds_choices_and_only_removes_preserved_rows() {
         let loadouts = Loadouts::default();
         let mut bag = serde_json::Map::new();
-        bag.insert("quests".into(), serde_json::json!(["cook"]));
+        bag.insert("quests".into(), serde_json::json!(["priest"]));
         let options = resolve_parameter_options(
             SettingView::new(quester_setting("quests")),
             &bag,
@@ -1568,12 +1590,17 @@ mod tests {
         let index_of = |id: &str| options.values.iter().position(|value| value == id).unwrap();
         let haunted = index_of("hauntedmine");
         assert!(!options.is_selectable_index(haunted));
-        let mut selected = vec!["cook".to_owned()];
+        let draft = index_of("druid");
+        assert!(!options.is_selectable_index(draft));
+        let qualified = index_of("priest");
+        let mut selected = vec!["priest".to_owned()];
         assert!(!options.toggle_array_choice(&mut selected, haunted));
-        assert_eq!(selected, ["cook"]);
-        assert!(options.toggle_array_choice(&mut selected, index_of("sheep")));
-        assert!(options.toggle_array_choice(&mut selected, index_of("cook")));
-        assert_eq!(selected, ["sheep"]);
+        assert!(!options.toggle_array_choice(&mut selected, draft));
+        assert_eq!(selected, ["priest"]);
+        assert!(options.toggle_array_choice(&mut selected, qualified));
+        assert!(selected.is_empty());
+        assert!(options.toggle_array_choice(&mut selected, qualified));
+        assert_eq!(selected, ["priest"]);
 
         let mut stored = vec!["hauntedmine".to_owned()];
         assert!(options.toggle_array_choice(&mut stored, haunted));
@@ -1644,7 +1671,7 @@ mod tests {
             let mut empty = bag.clone();
             empty.insert("quests".into(), serde_json::json!([]));
             let offered = resolve_parameter_options(SettingView::new(def), &empty, &loadouts, None);
-            assert!(offered.selectable().iter().any(|value| value == "cook"));
+            assert!(offered.selectable().iter().any(|value| value == "priest"));
             assert!(
                 offered
                     .selectable()
@@ -1934,6 +1961,16 @@ mod tests {
             }
         }
         let _remove = RemoveFolder(folder.clone());
+        let qualified_id = PathRegistry::Bundled
+            .rows()
+            .iter()
+            .find(|row| {
+                row.status == Some(script::quester::queue::ReleasePathStatus::Qualified)
+                    && row.unavailable.is_none()
+            })
+            .expect("the bundled registry has a qualified Path")
+            .id
+            .clone();
 
         let write_path = |id: &str, display_name: &str, invalid: bool| {
             let mut document: serde_json::Value = serde_json::from_str(include_str!(concat!(
@@ -1955,7 +1992,7 @@ mod tests {
             )
             .unwrap();
         };
-        write_path("cook", "Folder Cook", false);
+        write_path(&qualified_id, "Folder Qualified", false);
         write_path("fresh-draft", "Fresh Draft", false);
         write_path("broken-draft", "Broken Draft", true);
         std::fs::write(
@@ -1995,7 +2032,7 @@ mod tests {
         let mut bag = serde_json::Map::new();
         bag.insert(
             "quests".into(),
-            serde_json::json!(["cook", "fresh-draft", "broken-draft"]),
+            serde_json::json!([qualified_id.as_str(), "fresh-draft", "broken-draft"]),
         );
         let mut paths = source_setting("quests", "string[]", "released-paths");
         paths.options = vec!["stale-schema-option".into()];
@@ -2011,19 +2048,24 @@ mod tests {
             .values
             .iter()
             .any(|value| value == "stale-schema-option"));
-        let cook = options
+        let qualified = options
             .values
             .iter()
-            .position(|value| value == "cook")
+            .position(|value| value == &qualified_id)
             .unwrap();
-        assert_eq!(options.labels[cook], "Folder Cook [folder]");
+        assert_eq!(options.labels[qualified], "Folder Qualified [folder]");
+        assert!(options.is_selectable_index(qualified));
         let draft = options
             .values
             .iter()
             .position(|value| value == "fresh-draft")
             .unwrap();
-        assert_eq!(options.labels[draft], "Fresh Draft [draft]");
-        assert!(options.is_selectable_index(draft));
+        assert!(
+            options.labels[draft].contains(script::quester::queue::UNQUALIFIED_PATH_REASON),
+            "{}",
+            options.labels[draft]
+        );
+        assert!(!options.is_selectable_index(draft));
         let broken = options
             .values
             .iter()
@@ -2049,7 +2091,7 @@ mod tests {
         order.option_labels = vec!["Stale schema label".into()];
         bag.insert(
             "order_override".into(),
-            serde_json::json!(["fresh-draft", "cook", "broken-draft"]),
+            serde_json::json!(["fresh-draft", qualified_id.as_str(), "broken-draft"]),
         );
         let ordered = resolve_parameter_options_with_registry(
             &order,
@@ -2062,21 +2104,54 @@ mod tests {
             .values
             .iter()
             .any(|value| value == "stale-schema-option"));
-        assert_eq!(ordered.label_for("fresh-draft"), "1. Fresh Draft [draft]");
-        assert_eq!(ordered.label_for("cook"), "2. Folder Cook [folder]");
+        assert!(ordered
+            .label_for("fresh-draft")
+            .contains(script::quester::queue::UNQUALIFIED_PATH_REASON));
+        assert_eq!(
+            ordered.label_for(&qualified_id),
+            "2. Folder Qualified [folder]"
+        );
         assert!(!ordered
             .selectable()
             .iter()
-            .any(|value| value == "broken-draft"));
+            .any(|value| value == "fresh-draft" || value == "broken-draft"));
         assert!(ordered.label_for("broken-draft").contains("invalid-args"));
+        assert!(!ordered
+            .label_for("broken-draft")
+            .contains(script::quester::queue::UNQUALIFIED_PATH_REASON));
     }
+
     #[test]
-    fn bundled_drafts_are_marked_in_both_quest_and_priority_pickers() {
+    fn bundled_drafts_are_refused_in_both_quest_and_priority_pickers() {
         use script::quester::registry::PathRegistry;
 
         let loadouts = Loadouts::default();
         let registry = PathRegistry::Bundled;
-        let bag = serde_json::Map::new();
+        let qualified = registry
+            .rows()
+            .iter()
+            .find(|row| {
+                row.status == Some(script::quester::queue::ReleasePathStatus::Qualified)
+                    && row.unavailable.is_none()
+            })
+            .expect("the bundled registry has a qualified Path")
+            .id
+            .clone();
+        let draft = registry
+            .rows()
+            .iter()
+            .find(|row| {
+                row.status == Some(script::quester::queue::ReleasePathStatus::Draft)
+                    && row.unavailable.is_none()
+            })
+            .expect("the bundled registry has a draft Path")
+            .id
+            .clone();
+        let mut bag = serde_json::Map::new();
+        bag.insert(
+            "quests".into(),
+            serde_json::json!([qualified.as_str(), draft.as_str()]),
+        );
         let quests = resolve_parameter_options_with_registry(
             quester_setting("quests"),
             &bag,
@@ -2084,6 +2159,25 @@ mod tests {
             None,
             Some(&registry),
         );
+        assert!(quests.selectable().contains(&qualified));
+        assert!(!quests.selectable().contains(&draft));
+        assert!(
+            quests
+                .label_for(&draft)
+                .contains(script::quester::queue::UNQUALIFIED_PATH_REASON),
+            "{}",
+            quests.label_for(&draft)
+        );
+        assert!(registry.rows().iter().all(|row| {
+            quests.selectable().iter().all(|id| {
+                id != &row.id
+                    || (row.unavailable.is_none()
+                        && row.status == Some(script::quester::queue::ReleasePathStatus::Qualified))
+            })
+        }));
+
+        bag.insert("quests".into(), serde_json::json!([qualified.as_str()]));
+        bag.insert("order_override".into(), serde_json::json!([draft.as_str()]));
         let priorities = resolve_parameter_options_with_registry(
             quester_setting("order_override"),
             &bag,
@@ -2091,20 +2185,15 @@ mod tests {
             None,
             Some(&registry),
         );
-        for id in ["druid", "fluffs", "junglepotion", "seaslug", "totem"] {
-            for options in [&quests, &priorities] {
-                let position = options
-                    .values
-                    .iter()
-                    .position(|value| value == id)
-                    .unwrap_or_else(|| panic!("{id} missing from picker"));
-                assert!(
-                    options.labels[position].ends_with("[draft]"),
-                    "{id} label was {}",
-                    options.labels[position]
-                );
-            }
-        }
+        assert!(priorities.selectable().contains(&qualified));
+        assert!(!priorities.selectable().contains(&draft));
+        assert!(
+            priorities
+                .label_for(&draft)
+                .contains(script::quester::queue::UNQUALIFIED_PATH_REASON),
+            "{}",
+            priorities.label_for(&draft)
+        );
     }
 
     #[cfg(feature = "js")]

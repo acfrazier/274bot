@@ -2331,6 +2331,142 @@ mod tests {
     }
 
     #[test]
+    fn draft_picks_and_priorities_are_refused_by_the_real_tui_picker() {
+        frontend_core::test_support::scripts::reset_quester_registry();
+        let loadouts = Loadouts::default();
+        let schema = TestSchema::quester_card();
+        let draft = "druid";
+        let qualified = "priest";
+
+        for (field, quests, priorities) in [
+            (
+                "quests",
+                serde_json::json!([qualified, draft]),
+                serde_json::json!([]),
+            ),
+            (
+                "order_override",
+                serde_json::json!([qualified]),
+                serde_json::json!([draft]),
+            ),
+        ] {
+            let dir = temp_dir(&format!("refused-{field}"));
+            let mut store = TestStore::at(dir.join("script-settings.json"));
+            let mut bag = serde_json::Map::new();
+            bag.insert("quests".into(), quests);
+            bag.insert("order_override".into(), priorities);
+            let row = schema
+                .schema_ref()
+                .iter()
+                .position(|setting| setting.id() == field)
+                .unwrap();
+            let def = schema.schema_ref().field(row).unwrap();
+            let options =
+                frontend_core::scripts::resolve_parameter_options(def, &bag, &loadouts, None);
+            assert!(
+                options.selectable().contains(&qualified.to_owned()),
+                "{field}: the real bundled registry's qualified Path remains selectable"
+            );
+            assert!(
+                !options.selectable().contains(&draft.to_owned()),
+                "{field}: a bundled draft must never be selectable"
+            );
+            let refused_label = options.label_for(draft).to_owned();
+            assert!(
+                refused_label.contains("Path has not been qualified by live testing."),
+                "{field}: {refused_label}"
+            );
+
+            let mut state = ParamsState {
+                open: true,
+                cursor: row,
+                ..Default::default()
+            };
+            {
+                let mut pane = ParamsPane {
+                    schema: schema.schema_ref(),
+                    bag: &mut bag,
+                    commit: &mut store_commit(&mut store, "Quester"),
+                    loadouts: &loadouts,
+                    game_data: None,
+                    state: &mut state,
+                };
+                assert_eq!(pane.on_key(KeyCode::Enter), ParamsKey::Edit);
+                assert!(
+                    pane.state
+                        .choice_selected
+                        .iter()
+                        .any(|value| value == draft),
+                    "{field}: the stored draft stays selected for removal"
+                );
+                pane.state.choice_searchable = true;
+                pane.state.choice_search = draft.to_owned();
+            }
+
+            let mut terminal = Terminal::new(TestBackend::new(80, 24)).unwrap();
+            terminal
+                .draw(|frame| {
+                    let pane = ParamsPane {
+                        schema: schema.schema_ref(),
+                        bag: &mut bag,
+                        commit: &mut store_commit(&mut store, "Quester"),
+                        loadouts: &loadouts,
+                        game_data: None,
+                        state: &mut state,
+                    };
+                    frame.render_widget(pane, frame.area());
+                })
+                .unwrap();
+            let text: String = terminal
+                .backend()
+                .buffer()
+                .content()
+                .iter()
+                .map(|cell| cell.symbol())
+                .collect();
+            let compact = |text: &str| {
+                text.chars()
+                    .filter(char::is_ascii_alphanumeric)
+                    .collect::<String>()
+            };
+            assert!(
+                compact(&text).contains(&compact(&refused_label)),
+                "{field}: the stored draft's reason is shown in the picker: {text:?}"
+            );
+
+            {
+                let mut pane = ParamsPane {
+                    schema: schema.schema_ref(),
+                    bag: &mut bag,
+                    commit: &mut store_commit(&mut store, "Quester"),
+                    loadouts: &loadouts,
+                    game_data: None,
+                    state: &mut state,
+                };
+                assert_eq!(pane.on_key(KeyCode::Char(' ')), ParamsKey::Toggle);
+                assert_eq!(pane.on_key(KeyCode::Char(' ')), ParamsKey::None);
+                assert!(
+                    !pane
+                        .state
+                        .choice_selected
+                        .iter()
+                        .any(|value| value == draft),
+                    "{field}: clearing a refused row cannot re-add it"
+                );
+                assert_eq!(pane.on_key(KeyCode::Enter), ParamsKey::Saved);
+            }
+            assert!(
+                !bag.get(field)
+                    .and_then(serde_json::Value::as_array)
+                    .is_some_and(|values| {
+                        values.iter().any(|value| value.as_str() == Some(draft))
+                    }),
+                "{field}: the refused draft cannot be persisted back into the setting"
+            );
+        }
+    }
+
+    #[test]
     fn stored_unavailable_quest_reason_is_not_clipped_at_80_columns() {
         let dir = temp_dir("quest-unavailable-reason");
         let mut store = TestStore::at(dir.join("script-settings.json"));

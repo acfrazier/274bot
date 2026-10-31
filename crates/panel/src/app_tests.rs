@@ -4521,6 +4521,76 @@ fn script_prefs_draw_number_bounds_and_invalid_text_at_the_field() {
         "the field displays its validation error: {text}"
     );
 }
+
+#[test]
+fn panel_parameter_rows_show_the_real_draft_priority_refusal() {
+    let _guard = crate::test_support::imgui_context_guard();
+    frontend_core::test_support::scripts::reset_quester_registry();
+    let mut session = crate::session::Session::new();
+    let mut schema = frontend_core::test_support::scripts::TestSchema::setting(
+        "order_override",
+        "string[]",
+        None,
+        Some("Order override"),
+        &[],
+    );
+    schema.set_options_from("released-path-order");
+    let selection = ScriptChoice::compiled(frontend_core::scripts::CompiledCardId::QUESTER);
+    let qualified = "priest";
+    let draft = "druid";
+    let mut bag = serde_json::Map::new();
+    bag.insert("quests".into(), serde_json::json!([qualified]));
+    bag.insert("order_override".into(), serde_json::json!([draft]));
+    let loadouts = frontend_core::scripts::Loadouts::default();
+    let def = schema.schema_ref().get("order_override").unwrap();
+    let priorities = frontend_core::scripts::resolve_parameter_options(def, &bag, &loadouts, None);
+    assert!(priorities
+        .selectable()
+        .iter()
+        .any(|value| value == qualified));
+    assert!(!priorities.selectable().iter().any(|value| value == draft));
+    let refused_label = priorities.label_for(draft).to_owned();
+    assert!(
+        refused_label.contains("Path has not been qualified by live testing."),
+        "{refused_label}"
+    );
+
+    let mut ctx = dock_host_context();
+    let drawn = DrawnText::default();
+    ctx.set_clipboard_backend(drawn.clone());
+    ctx.prepare_frame(
+        dear_imgui_rs::FramePrepareOptions::new([800.0, 700.0], 1.0 / 60.0).renderer_has_textures(),
+    );
+    {
+        let ui = ctx.frame();
+        ui.log_to_clipboard(0u32);
+        ui.window("Draft Path parameter refusal")
+            .size([360.0, 500.0], dear_imgui_rs::Condition::Always)
+            .build(|| {
+                super::script_parameter_rows(
+                    ui,
+                    &mut session,
+                    &selection,
+                    None,
+                    schema.schema_ref(),
+                    bag.clone(),
+                );
+            });
+        ui.log_finish();
+    }
+    ctx.render();
+    let text = drawn.0.take();
+    let compact = |text: &str| {
+        text.chars()
+            .filter(char::is_ascii_alphanumeric)
+            .collect::<String>()
+    };
+    assert!(
+        compact(&text).contains(&compact(&refused_label)),
+        "the panel's Order override row displays the stored draft refusal: {text}"
+    );
+}
+
 #[test]
 fn discarding_invalid_script_parameter_removes_its_dock_banner() {
     let _guard = crate::test_support::imgui_context_guard();
