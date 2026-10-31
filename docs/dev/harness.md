@@ -728,7 +728,7 @@ correctly show `Supply`. The same-region death check waits for the native
 death and respawn tiles. Its positive witness still needs the respawn square,
 the same 64-tile region and plane, and fresh progress after recovery.
 
-The Auto-mode fixture searches near Al Kharid at `(3295,3272,0)` for a
+The Auto-mode fixture searches near Al Kharid at `(3295,3298,0)` for a
 reachable, standable origin with no real tree inside its 32-tile ring.
 Its authored-scene regression includes every normal tree in the full scene,
 not just selected examples. A real tree 33–128 tiles away

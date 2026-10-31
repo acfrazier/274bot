@@ -191,7 +191,7 @@ const OAK_NO_PLACEMENT_BANK_BOOTH: WorldTile = WorldTile {
 };
 const AUTO_START: WorldTile = WorldTile {
     x: 3295,
-    z: 3272,
+    z: 3298,
     level: 0,
 };
 const GAS_START: WorldTile = WorldTile {
@@ -5480,8 +5480,7 @@ fn auto_start_candidate(
                 z,
                 level: build.level,
             };
-            if !reachable(candidate)
-                || !standable(candidate)
+            if !standable(candidate)
                 || normal_trees.iter().any(|&tree| {
                     tile_distance(tree, candidate).is_some_and(|distance| distance <= 32)
                 })
@@ -5494,16 +5493,18 @@ fn auto_start_candidate(
             }) {
                 continue;
             }
-            if !normal_trees.iter().any(|&tree| {
-                let tree_tile = WorldTile {
-                    x: tree.0,
-                    z: tree.1,
-                    level: tree.2,
-                };
-                tile_distance(tree, candidate)
-                    .is_some_and(|distance| (33..=128).contains(&distance))
-                    && tree_reachable(candidate, tree_tile)
-            }) {
+            if !reachable(candidate)
+                || !normal_trees.iter().any(|&tree| {
+                    let tree_tile = WorldTile {
+                        x: tree.0,
+                        z: tree.1,
+                        level: tree.2,
+                    };
+                    tile_distance(tree, candidate)
+                        .is_some_and(|distance| (33..=128).contains(&distance))
+                        && tree_reachable(candidate, tree_tile)
+                })
+            {
                 continue;
             }
             best = Some((distance, candidate));
@@ -10388,7 +10389,7 @@ mod gatherer_real_content_fixture_tests {
     fn auto_test_build() -> BuildRect {
         BuildRect {
             base_x: 3240,
-            base_z: 3224,
+            base_z: 3248,
             width: 104,
             height: 104,
             level: 0,
@@ -10397,45 +10398,64 @@ mod gatherer_real_content_fixture_tests {
 
     fn auto_real_scene_trees() -> BTreeSet<(i32, i32, i32)> {
         // Complete ground-plane 1276/1278 placements in this 104x104 scene,
-        // from authored maps m50_50, m50_51 and m51_50; the other three
-        // intersecting maps have none inside the scene.
+        // from the authored map census m50_50 through m52_52.
         BTreeSet::from([
             tile_key(world_tile(3241, 3268)),
+            tile_key(world_tile(3241, 3332)),
             tile_key(world_tile(3243, 3272)),
             tile_key(world_tile(3244, 3314)),
             tile_key(world_tile(3245, 3253)),
             tile_key(world_tile(3245, 3267)),
             tile_key(world_tile(3246, 3256)),
             tile_key(world_tile(3246, 3259)),
-            tile_key(world_tile(3247, 3231)),
-            tile_key(world_tile(3251, 3232)),
-            tile_key(world_tile(3255, 3241)),
+            tile_key(world_tile(3248, 3340)),
             tile_key(world_tile(3256, 3326)),
             tile_key(world_tile(3258, 3252)),
             tile_key(world_tile(3260, 3252)),
             tile_key(world_tile(3260, 3326)),
-            tile_key(world_tile(3261, 3246)),
             tile_key(world_tile(3262, 3249)),
-            tile_key(world_tile(3264, 3225)),
-            tile_key(world_tile(3264, 3235)),
-            tile_key(world_tile(3266, 3230)),
+            tile_key(world_tile(3267, 3337)),
+            tile_key(world_tile(3267, 3340)),
+            tile_key(world_tile(3270, 3337)),
+            tile_key(world_tile(3270, 3341)),
+            tile_key(world_tile(3272, 3344)),
+            tile_key(world_tile(3273, 3335)),
+            tile_key(world_tile(3273, 3340)),
+            tile_key(world_tile(3274, 3347)),
+            tile_key(world_tile(3275, 3337)),
+            tile_key(world_tile(3275, 3344)),
+            tile_key(world_tile(3278, 3342)),
+            tile_key(world_tile(3278, 3348)),
+            tile_key(world_tile(3279, 3351)),
+            tile_key(world_tile(3282, 3336)),
+            tile_key(world_tile(3283, 3348)),
+            tile_key(world_tile(3290, 3340)),
+            tile_key(world_tile(3290, 3343)),
+            tile_key(world_tile(3293, 3337)),
+            tile_key(world_tile(3294, 3331)),
+            tile_key(world_tile(3295, 3351)),
+            tile_key(world_tile(3296, 3342)),
+            tile_key(world_tile(3298, 3331)),
+            tile_key(world_tile(3299, 3341)),
+            tile_key(world_tile(3301, 3346)),
+            tile_key(world_tile(3305, 3332)),
+            tile_key(world_tile(3305, 3340)),
+            tile_key(world_tile(3306, 3350)),
+            tile_key(world_tile(3309, 3344)),
+            tile_key(world_tile(3312, 3349)),
+            tile_key(world_tile(3314, 3348)),
+            tile_key(world_tile(3315, 3344)),
+            tile_key(world_tile(3319, 3349)),
+            tile_key(world_tile(3322, 3343)),
+            tile_key(world_tile(3329, 3340)),
+            tile_key(world_tile(3335, 3330)),
         ])
-    }
-
-    fn packed_collision_at(
-        collision: &nav_planner::collision::WorldCollision,
-        tile: WorldTile,
-    ) -> Option<i32> {
-        let x = usize::try_from(tile.x.checked_sub(collision.origin.x)?).ok()?;
-        let z = usize::try_from(tile.z.checked_sub(collision.origin.z)?).ok()?;
-        ((0..=3).contains(&tile.level) && x < collision.width && z < collision.height)
-            .then(|| collision.walkable_word(tile.x, tile.z, tile.level) as i32)
     }
 
     #[test]
     fn auto_approach_search_covers_the_scene_instead_of_the_default_400_expansions() {
         let origin = AUTO_START;
-        let tree = world_tile(3262, 3249);
+        let tree = world_tile(3294, 3331);
         let probe = CollisionArrivalProbe::new(|_| Some(0));
         assert!(!probe.can_reach_from(
             origin,
@@ -10461,7 +10481,7 @@ mod gatherer_real_content_fixture_tests {
 
         let build = auto_test_build();
         let real_scene_trees = auto_real_scene_trees();
-        let nearest_tree = world_tile(3262, 3249);
+        let nearest_tree = world_tile(3294, 3331);
         assert_eq!(tile_distance(tile_key(nearest_tree), AUTO_START), Some(33));
         let start = auto_start_candidate(
             AUTO_START,
@@ -10535,50 +10555,46 @@ mod gatherer_real_content_fixture_tests {
             .expect("the selected real navigation pack must load");
         let collision = &world.collision;
         let build = auto_test_build();
-        let probe = CollisionArrivalProbe::new(|tile| {
-            if build.contains(tile_key(tile)) {
-                packed_collision_at(collision, tile)
-            } else {
-                None
-            }
-        });
+        let scene = api::snapshot::SceneView {
+            available: true,
+            base_x: build.base_x,
+            base_z: build.base_z,
+            level: build.level,
+            width: build.width,
+            height: build.height,
+            collision_flags: (0..build.width)
+                .flat_map(|x| {
+                    (0..build.height).map(move |z| {
+                        collision.walkable_word(build.base_x + x, build.base_z + z, build.level)
+                            as i32
+                    })
+                })
+                .collect(),
+        };
+        let origin_query = api::query::SceneQuery::new(&scene, Some(AUTO_START));
+        let reachable = origin_query
+            .flood_reach()
+            .expect("the real scene must admit its normal bounded reach flood");
         let trees = auto_real_scene_trees();
         let options = auto_approach_options(build.width, build.height);
         let start = auto_start_candidate(
             AUTO_START,
             build,
             &trees,
-            |tile| {
-                probe.can_reach_from(
-                    AUTO_START,
-                    tile,
-                    &SceneReachOptions {
-                        adjacent_ok: false,
-                        ..options
-                    },
-                )
-            },
-            |tile| collision.standable(tile),
-            |from, tree| probe.can_reach_from(from, tree, &options),
+            |tile| reachable.at(&tile).0,
+            |tile| origin_query.walkable(tile),
+            |from, tree| api::query::SceneQuery::new(&scene, Some(from)).can_reach(tree, &options),
         )
         .expect("the real nav pack must admit a reachable stand beside an authored tree");
         assert!(collision.standable(start));
         assert!(!world.graph.wilderness.contains(start));
-        assert!(probe.can_reach_from(
-            AUTO_START,
-            start,
-            &SceneReachOptions {
-                adjacent_ok: false,
-                ..options
-            },
-        ));
+        assert!(reachable.at(&start).0);
         assert!(trees
             .iter()
             .all(|&tree| { tile_distance(tree, start).is_none_or(|distance| distance > 32) }));
         assert!(trees.iter().any(|&tree| {
             tile_distance(tree, start).is_some_and(|distance| (33..=128).contains(&distance))
-                && probe.can_reach_from(
-                    start,
+                && api::query::SceneQuery::new(&scene, Some(start)).can_reach(
                     WorldTile {
                         x: tree.0,
                         z: tree.1,
