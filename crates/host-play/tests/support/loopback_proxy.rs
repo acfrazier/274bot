@@ -2,7 +2,7 @@ use host_play::tick_engine_test_support::{OrderedTransportController, TransportM
 use std::cmp::min;
 use std::collections::{HashMap, HashSet};
 use std::io::{self, ErrorKind, Read, Write};
-use std::net::{SocketAddr, TcpListener, TcpStream};
+use std::net::{Shutdown, SocketAddr, TcpListener, TcpStream};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread::{self, JoinHandle};
@@ -489,4 +489,98 @@ fn set_error(state: &Arc<Mutex<ProxyState>>, error: String) {
     if let Ok(mut state) = state.lock() {
         state.error.get_or_insert(error);
     }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io::Read;
+    use std::time::Instant;
+
+    const IO_TIMEOUT: Duration = Duration::from_secs(5);
+
+    fn accept_with_timeout(listener: &TcpListener) -> io::Result<(TcpStream, SocketAddr)> {
+        let deadline = Instant::now() + IO_TIMEOUT;
+        loop {
+            match listener.accept() {
+                Err(error)
+                    if error.kind() == ErrorKind::WouldBlock && Instant::now() < deadline =>
+                {
+                    thread::sleep(POLL_PAUSE);
+                }
+                Err(error) if error.kind() == ErrorKind::Interrupted => continue,
+                result => return result,
+            }
+        }
+    }
+
+    #[test]
+    fn game_and_js5_connections_are_serviced_concurrently() {
+        let upstream = TcpListener::bind(("127.0.0.1", 0)).unwrap();
+        upstream.set_nonblocking(true).unwrap();
+        let proxy = LoopbackProxy::start(upstream.local_addr().unwrap()).unwrap();
+        let server = thread::spawn(move || -> io::Result<()> {
+            let (mut game, _) = accept_with_timeout(&upstream)?;
+            game.set_nonblocking(false)?;
+            game.set_read_timeout(Some(IO_TIMEOUT))?;
+            let mut login_hello = [0_u8; 2];
+            game.read_exact(&mut login_hello)?;
+            if login_hello != [14, 0] {
+                return Err(io::Error::other("game stream did not start with login opcode 14"));
+            }
+            game.write_all(&[1, 2, 3, 4, 5, 6, 7, 8])?;
+
+            let (mut js5, _) = accept_with_timeout(&upstream)?;
+            js5.set_nonblocking(false)?;
+            js5.set_read_timeout(Some(IO_TIMEOUT))?;
+            let mut js5_hello = [0_u8; 1];
+            js5.read_exact(&mut js5_hello)?;
+            if js5_hello != [15] {
+                return Err(io::Error::other("update stream did not start with opcode 15"));
+            }
+            js5.write_all(&[8, 7, 6, 5, 4, 3, 2, 1])?;
+            let mut request = [0_u8; 4];
+            js5.read_exact(&mut request)?;
+            if request != [0, 0, 1, 2] {
+                return Err(io::Error::other("proxy changed the update request bytes"));
+            }
+            js5.write_all(b"map-data")?;
+            let mut js5_tail = Vec::new();
+            js5.read_to_end(&mut js5_tail)?;
+            let mut game_tail = Vec::new();
+            game.read_to_end(&mut game_tail)?;
+            Ok(())
+        });
+
+        let mut game = TcpStream::connect(proxy.address()).unwrap();
+        game.set_read_timeout(Some(IO_TIMEOUT)).unwrap();
+        game.write_all(&[14, 0]).unwrap();
+        let mut game_reply = [0_u8; 8];
+        game.read_exact(&mut game_reply).unwrap();
+        assert_eq!(game_reply, [1, 2, 3, 4, 5, 6, 7, 8]);
+
+        proxy.begin_dispatch(1, TransportMutation::HoldThroughNextEdge, 1, 1);
+        let mut js5 = TcpStream::connect(proxy.address()).unwrap();
+        js5.set_read_timeout(Some(IO_TIMEOUT)).unwrap();
+        js5.write_all(&[15]).unwrap();
+        let js5_exchange = (|| -> io::Result<([u8; 8], [u8; 8])> {
+            let mut hello = [0_u8; 8];
+            js5.read_exact(&mut hello)?;
+            js5.write_all(&[0, 0, 1, 2])?;
+            let mut map_data = [0_u8; 8];
+            js5.read_exact(&mut map_data)?;
+            Ok((hello, map_data))
+        })();
+        let _ = game.shutdown(Shutdown::Write);
+        let _ = js5.shutdown(Shutdown::Write);
+        let server_result = server.join().expect("upstream thread panicked");
+
+        assert_eq!(js5_exchange.unwrap(), ([8, 7, 6, 5, 4, 3, 2, 1], *b"map-data"));
+        assert!(
+            server_result.is_ok(),
+            "upstream could not finish both live streams: {server_result:?}"
+        );
+        proxy.ensure_healthy().unwrap();
+    }
+
 }
