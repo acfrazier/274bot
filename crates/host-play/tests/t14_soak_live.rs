@@ -36,20 +36,20 @@ const GATHERER_SITE_STEP: &str = "stand at the live Draynor normal tree before S
 const GATHERER_TREE_PROOF_STEP: &str = "confirm the selected-289 normal tree is live before Start";
 const GATHERER_RELOG_STEP: &str = "relog successfully so the inventory tab binds before Start";
 
-// Ten radius-five normal-tree Start patches in the western Falador content site.
+// Ten normal slots share five disjoint radius-five patches, two slots per patch.
 // The offline audit covers workload routes and ordinary recovery only.
 // Random-event movement is outside this proof.
 const NORMAL_STARTS: [(i32, i32); 10] = [
-    (2946, 3399),
-    (2946, 3412),
-    (2946, 3417),
-    (2947, 3402),
-    (2952, 3399),
-    (2952, 3417),
-    (2958, 3399),
-    (2958, 3404),
-    (2958, 3412),
-    (2958, 3417),
+    (2943, 3402),
+    (2948, 3398),
+    (2954, 3419),
+    (2960, 3400),
+    (2960, 3411),
+    (2943, 3402),
+    (2948, 3398),
+    (2954, 3419),
+    (2960, 3400),
+    (2960, 3411),
 ];
 const NORMAL_RADIUS: i32 = 5;
 const NORMAL_SITE_ID: &str = "woodcutting.falador_west.n";
