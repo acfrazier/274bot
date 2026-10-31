@@ -1717,6 +1717,11 @@ impl Gatherer {
                 Poll::Pending => self.active = Active::Tend(handle),
                 Poll::Ready(Ok(settled)) if std::mem::take(&mut self.survival_tend) => {
                     self.needs_validate = true;
+                    // Anchor the click's delays on the frame that showed its
+                    // effect, then decide again in this tick with them: a late
+                    // effect moves the drink lock past the send-frame clock.
+                    self.survival.record_settled(settled, &tick.cx);
+                    self.survival_deferred = true;
                     if settled {
                         self.set_event("survival operation settled");
                     } else {
@@ -1726,7 +1731,6 @@ impl Gatherer {
                         // (`mining.rs2:139`). That is a deferral: the poll
                         // after this one clicks again, and the interrupted
                         // work resumes when survival wants nothing more.
-                        self.survival_deferred = true;
                         self.set_event("survival click not applied; clicking again");
                     }
                 }
@@ -1739,7 +1743,9 @@ impl Gatherer {
                     }
                 }
                 Poll::Ready(Err(error)) => {
-                    self.survival_tend = false;
+                    if std::mem::take(&mut self.survival_tend) {
+                        self.survival.record_settled(false, &tick.cx);
+                    }
                     self.action_failure(error);
                 }
             },

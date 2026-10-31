@@ -339,6 +339,8 @@ struct Witness {
     bank_trip_xp_at_deposit: Option<i32>,
     bank_trip_work_animation_tick: Option<u32>,
     bank_trip_work_animation: Option<AnimationUpdateView>,
+    /// The bank interface state observed on the frame of the resumed work.
+    bank_trip_bank_closed_at_work: Option<bool>,
     bank_trip_antipoison_frames: Vec<BankTripAntipoisonFrame>,
     poison_source_tick: Option<u32>,
     poison_seed_bank_open: Option<bool>,
@@ -455,6 +457,7 @@ fn new_witness(
         bank_trip_xp_at_deposit: None,
         bank_trip_work_animation_tick: None,
         bank_trip_work_animation: None,
+        bank_trip_bank_closed_at_work: None,
         bank_trip_antipoison_frames: Vec::new(),
         poison_source_tick: None,
         poison_seed_bank_open: None,
@@ -1095,8 +1098,8 @@ fn capture_gatherer_bank_trip(snapshot: &GameSnapshot, witness: &mut Witness) {
         // Woodcutting XP after the deposit proves the resumed work; the
         // Gatherer may chop the same willow from another adjacent tile or a
         // nearer willow in its radius, so the tile is not part of the proof.
-        if now > deposit_tick && !bank_open && stat_xp(snapshot, witness.skill_stat) > xp_at_deposit
-        {
+        // The bank state on that frame goes to the receipt as observed.
+        if now > deposit_tick && stat_xp(snapshot, witness.skill_stat) > xp_at_deposit {
             if let Some(animation) = snapshot
                 .local_player()
                 .and_then(|player| player.animation_update)
@@ -1104,6 +1107,7 @@ fn capture_gatherer_bank_trip(snapshot: &GameSnapshot, witness: &mut Witness) {
             {
                 witness.bank_trip_work_animation_tick = Some(now);
                 witness.bank_trip_work_animation = Some(animation);
+                witness.bank_trip_bank_closed_at_work = Some(!bank_open);
             }
         }
     }
@@ -1880,7 +1884,7 @@ fn gatherer_bank_trip_receipt(witness: &Witness, observed_tick: u32) -> Result<V
         "antipoison_count_min_before_cure": minimum,
         "first_work_animation_after_bank_trip_tick": work_animation_tick,
         "first_work_animation_after_bank_trip": work_animation,
-        "bank_closed_at_resumed_work": true,
+        "bank_closed_at_resumed_work": witness.bank_trip_bank_closed_at_work,
         "trip_end_tick": work_animation_tick,
         "cure_line_tick": cure_line_tick,
         "observed_tick": observed_tick,
@@ -2848,6 +2852,24 @@ mod oracle_tests {
         let error = check_gatherer_bank_trip_receipt(&receipt)
             .expect_err("depositing the antipoison dose must fail");
         assert!(error.contains("tick 49"), "{error}");
+    }
+
+    #[test]
+    fn gatherer_bank_trip_receipt_fails_work_resumed_with_the_bank_open() {
+        let receipt = |closed: Value| {
+            let mut receipt = bank_trip_oracle_receipt(json!([
+                {"tick": 40, "count": 1},
+                {"tick": 60, "count": 1},
+            ]));
+            receipt["bank_closed_at_resumed_work"] = closed;
+            receipt
+        };
+        assert!(check_gatherer_bank_trip_receipt(&receipt(json!(false))).is_err());
+        assert!(check_gatherer_bank_trip_receipt(&receipt(Value::Null)).is_err());
+        assert_eq!(
+            check_gatherer_bank_trip_receipt(&receipt(json!(true))),
+            Ok(())
+        );
     }
 
     fn lethal_report(decision: Decision) -> SurvivalReport {

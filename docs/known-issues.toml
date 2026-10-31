@@ -365,9 +365,9 @@ text = """Fetching a cure or food when the bot would otherwise die is planned fo
   later release. In this release a native script that would die of poison with
   no cure held pauses its work and names what it needs."""
 first = "0.2.9"
-target = "none"
+target = "0.2.9"
 severity = "low"
-owner = "T2 survival phase 2"
+owner = "T2 survival phase 2 (later; decided again at the 0.2.9-cut backlog review)"
 
 [[item]]
 id = "survival-shop-cure-planned"
@@ -375,9 +375,9 @@ kind = "not-in-release"
 area = "Scripts"
 text = """Buying a cure from a shop is planned, not included here."""
 first = "0.2.9"
-target = "none"
+target = "0.2.9"
 severity = "low"
-owner = "T2 survival phase 2"
+owner = "T2 survival phase 2 (later; decided again at the 0.2.9-cut backlog review)"
 
 [[item]]
 id = "survival-spawn-or-made-cure-planned"
@@ -386,9 +386,9 @@ area = "Scripts"
 text = """Taking a cure from a ground spawn, or making one from held supplies, is
   planned for a later release."""
 first = "0.2.9"
-target = "none"
+target = "0.2.9"
 severity = "low"
-owner = "T2 survival phase 2"
+owner = "T2 survival phase 2 (later; decided again at the 0.2.9-cut backlog review)"
 
 [[item]]
 id = "survival-green-hitsplat-reserve"

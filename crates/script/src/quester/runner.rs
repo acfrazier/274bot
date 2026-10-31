@@ -1706,37 +1706,46 @@ impl Quester {
         }
     }
 
+    /// Poll the survival op. Returns true while it stays live, or when it
+    /// failed and parked the runner, so the caller ends this tick. An op that
+    /// settles or is not applied in this poll returns false: the survival
+    /// poll after it decides this tick's next click or hold, and ordinary work
+    /// takes the tick when survival wants nothing more.
     fn poll_survival_action(&mut self, tick: &mut NativeTick<'_>) -> bool {
         let Some(handle) = self.survival_action.as_ref() else {
             return false;
         };
-        match tick.actions.poll(handle, &mut tick.cx) {
-            Poll::Pending => {}
-            Poll::Ready(Ok(_)) => {
-                self.survival_action = None;
-                self.survival_deferred = true;
-                self.dirty = true;
+        let applied = match tick.actions.poll(handle, &mut tick.cx) {
+            Poll::Pending => {
+                self.publish(tick.output);
+                return true;
             }
+            Poll::Ready(Ok(settled)) => settled,
             Poll::Ready(Err(
                 ActionError::Busy
                 | ActionError::Held
                 | ActionError::Stale
                 | ActionError::Cancelled
                 | ActionError::BudgetExhausted,
-            )) => {
-                self.survival_action = None;
-                self.survival_deferred = true;
-                self.dirty = true;
-            }
+            )) => false,
             Poll::Ready(Err(error)) => {
+                self.survival.record_settled(false, &tick.cx);
                 self.survival_action = None;
                 self.parked = true;
                 self.record_failure(error);
                 self.dirty = true;
+                self.publish(tick.output);
+                return true;
             }
-        }
+        };
+        // Anchor the click's delays on the frame that showed its effect
+        // (`SurvivalStep::record_settled`).
+        self.survival.record_settled(applied, &tick.cx);
+        self.survival_action = None;
+        self.survival_deferred = true;
+        self.dirty = true;
         self.publish(tick.output);
-        true
+        false
     }
 
     fn finish_survival_transfer(&mut self, tick: &mut NativeTick<'_>) -> bool {
@@ -5801,6 +5810,141 @@ mod tests {
         );
     }
 
+    /// The drink's dose drop arrives one tick later than usual (tick 4). The
+    /// drink's `p_delay(1)` (`consume_effects.rs2:124-126`) starts in the
+    /// server tick that ran it (`PlayerOps.ts:376-379`), so the step restarts
+    /// when that lock ends (tick 6), not when a lock counted from the send
+    /// would end (tick 5).
+    #[test]
+    fn quester_late_drink_effect_moves_the_drink_lock() {
+        use crate::survival::CurePoison;
+        use api::condition::PoisonState;
+        use std::sync::atomic::Ordering;
+
+        let onset = PoisonState::Onset {
+            since: 20,
+            q: Some(11),
+            hit_since_line: false,
+        };
+        let cured = PoisonState::Immune { until_lower: 80 };
+        let (mut script, mut snapshot, counts) = survival_step_fixture("gather");
+        let mut ledger = None;
+        let mut tick_at = |script: &mut Quester,
+                           snapshot: &api::snapshot::GameSnapshot,
+                           observed: u64,
+                           poison: PoisonState,
+                           hp: u8| {
+            super::super::families::tests::with_tick(snapshot, &mut ledger, observed, |tick| {
+                tick.cx.condition = Some(survival_condition(poison, hp));
+                tick.cx.poison_unknown_pulse = 11;
+                tick.cx.cure_poison = CurePoison::WhenNeeded;
+                script.tick(tick).unwrap();
+            });
+        };
+        tick_at(&mut script, &snapshot, 1, PoisonState::Clear, 60);
+        assert_eq!(counts.began.load(Ordering::Relaxed), 1);
+        tick_at(&mut script, &snapshot, 2, onset, 5);
+        assert!(script.step.is_none(), "the drink cancels the step");
+        assert!(script.survival_action.is_some());
+        tick_at(&mut script, &snapshot, 3, onset, 5);
+        assert!(script.survival_action.is_some(), "tick 3: no dose drop yet");
+        snapshot.seed_inventory(vec![], 28);
+        for observed in 4..=5 {
+            tick_at(&mut script, &snapshot, observed, cured, 5);
+            assert!(script.survival_action.is_none(), "tick {observed}");
+            assert_eq!(
+                counts.began.load(Ordering::Relaxed),
+                1,
+                "no step inside the lock of a drink run in tick 4: tick {observed}"
+            );
+        }
+        tick_at(&mut script, &snapshot, 6, cured, 5);
+        assert_eq!(
+            counts.began.load(Ordering::Relaxed),
+            2,
+            "the step restarts when the late drink's lock ends"
+        );
+        assert!(script.step.is_some());
+    }
+
+    /// A bite settles (count drop) in a tick where no lock holds and survival
+    /// wants nothing more: the step restarts in that same tick. The Quester
+    /// bites only on a threat, here a weak poison whose next fire (3) reaches
+    /// its eating line (`1 + 3`). Ordinary food sets no input lock (no
+    /// `message_delay` row for the lobster in `consume_messages.dbrow`), and
+    /// the next-food clock holds only bites.
+    #[test]
+    fn quester_resumes_work_in_the_tick_its_bite_settles() {
+        use crate::survival::CurePoison;
+        use api::condition::PoisonState;
+        use api::snapshot::{ItemActionFamily, ItemContainer, ItemView, StatView};
+        use std::sync::atomic::Ordering;
+
+        let (mut script, mut snapshot, counts) = survival_step_fixture("gather");
+        let set_hp = |snapshot: &mut api::snapshot::GameSnapshot, effective| {
+            snapshot.seed_stats(vec![StatView {
+                index: 3,
+                name: "hitpoints".into(),
+                base: 99,
+                effective,
+                xp: 0,
+                used: true,
+            }]);
+        };
+        let lobster_id = api::game_data::for_revision(api::selected::ClientRevision::R289)
+            .unwrap()
+            .item_by_alias("lobster")
+            .unwrap()
+            .id;
+        snapshot.seed_inventory(
+            vec![ItemView {
+                def: super::super::families::tests::def(lobster_id, "Lobster"),
+                container: ItemContainer::Inventory,
+                action_family: ItemActionFamily::Held,
+                slot: 0,
+                count: 1,
+                actions: vec![Some("Eat".into())],
+                component_id: 0,
+            }],
+            28,
+        );
+        set_hp(&mut snapshot, 60);
+        let mut ledger = None;
+        let weak = PoisonState::Poisoned {
+            per_tick: 3,
+            last_mark: 20,
+            hit_since_mark: false,
+        };
+        let mut tick_at = |script: &mut Quester,
+                           snapshot: &api::snapshot::GameSnapshot,
+                           observed: u64,
+                           poison: PoisonState,
+                           hp: u8| {
+            super::super::families::tests::with_tick(snapshot, &mut ledger, observed, |tick| {
+                tick.cx.condition = Some(survival_condition(poison, hp));
+                tick.cx.cure_poison = CurePoison::WhenNeeded;
+                script.tick(tick).unwrap();
+            });
+        };
+        tick_at(&mut script, &snapshot, 1, PoisonState::Clear, 60);
+        assert_eq!(counts.began.load(Ordering::Relaxed), 1);
+        set_hp(&mut snapshot, 4);
+        tick_at(&mut script, &snapshot, 2, weak, 4);
+        assert!(script.step.is_none(), "the bite cancels the step");
+        assert!(script.survival_action.is_some());
+
+        snapshot.seed_inventory(vec![], 28);
+        set_hp(&mut snapshot, 60);
+        tick_at(&mut script, &snapshot, 3, weak, 60);
+        assert!(script.survival_action.is_none());
+        assert_eq!(
+            counts.began.load(Ordering::Relaxed),
+            2,
+            "the step restarts in the tick the bite settles"
+        );
+        assert!(script.step.is_some());
+    }
+
     #[test]
     fn quester_drinks_while_clear_prayers_pending() {
         use crate::combat::{ClearPrayers, ClearPrayersArgs, RaisedPrayers};
@@ -6858,6 +7002,9 @@ mod tests {
             )) if action == "Drink"
         ));
 
+        // The drink went out in the close's settle tick; its dose drop shows
+        // one tick later than usual, so its lock counts from that drop
+        // (`SurvivalStep::record_settled`).
         snapshot.seed_tick(22);
         snapshot.seed_inventory(vec![held_item], 28);
         let immune_accept_tick = next_tick;
@@ -6873,6 +7020,24 @@ mod tests {
                 accept_last_interaction(tick);
                 script.tick(tick).unwrap();
             },
+        );
+        let lock_tick = next_tick;
+        next_tick += 1;
+        super::super::families::tests::with_tick_bank(
+            &snapshot,
+            Some(&memory),
+            &mut ledger,
+            lock_tick,
+            |tick| {
+                tick.cx.condition = Some(condition(PoisonState::Immune { until_lower: 80 }, 5));
+                tick.cx.cure_poison = CurePoison::WhenNeeded;
+                script.tick(tick).unwrap();
+            },
+        );
+        assert_eq!(
+            script.provisioner.status().phase,
+            ProvisionPhase::Idle,
+            "provisioning waits inside the lock of the drink applied at the dose drop"
         );
         let settle_tick = next_tick;
         super::super::families::tests::with_tick_bank(

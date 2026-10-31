@@ -75,14 +75,19 @@ enum ClickKind {
     Food,
 }
 
-/// The last held survival click the runner sent, with the frame tick the
-/// schedule replays it at and the low 16 bits of the observed tick that bound
-/// the replay. Both are compared by wrapping subtraction, so a reset of either
+/// The last held survival click the runner sent. `frame_tick` is the frame
+/// tick the schedule replays it at: the frame the click was sent after, until
+/// its op settles on the content's own signal, then the frame before the one
+/// that first showed that signal (see [`SurvivalStep::record_settled`]).
+/// `observed` holds the low 16 bits of the observed tick that bound the
+/// replay. Both are compared by wrapping subtraction, so a reset of either
 /// count ends the replay instead of extending it. Revision-289 item ids fit in
 /// 16 bits; the record stays 8 bytes so the step keeps its 192-byte bound.
 #[derive(Debug, Clone, Copy)]
 struct SentClick {
     kind: ClickKind,
+    /// True until the runner's op for this click settles or ends.
+    awaiting: bool,
     frame_tick: u16,
     observed: u16,
     item_id: u16,
@@ -263,10 +268,10 @@ impl SurvivalStep {
         SurvivalWant::Nothing
     }
 
-    /// The server delays of the last survival click, replayed at the frame
-    /// tick it was sent. The runner's own `OneOp` waits for the click's
-    /// receipt, so the replayed operation is settled at once and only its
-    /// delays remain. The second value is true when a click was replayed.
+    /// The server delays of the last survival click, replayed at its anchored
+    /// frame tick. The runner's own `OneOp` waits for the click's effect, so
+    /// the replayed operation is settled at once and only its delays remain.
+    /// The second value is true when a click was replayed.
     fn schedule(&mut self, tick: u16, observed: u16, tables: &CombatTables) -> (Schedule, bool) {
         let mut schedule = Schedule::default();
         let Some(sent) = self.sent else {
@@ -315,27 +320,64 @@ impl SurvivalStep {
     /// Record a drink, Strange fruit or bite the runner has just sent, so the
     /// next decisions wait for the delays the engine applies to it: the
     /// drink's 3-tick lock (`combat/schedule.rs` `OpKind::Drink`) and a
-    /// food's next-food clock (`consume.rs2:122-127`). Other operations
-    /// (closing a page) leave the record unchanged.
+    /// food's next-food clock (`consume.rs2:122-127`). Until the op settles,
+    /// the delays count from the send frame: the engine runs the click in the
+    /// next server tick at the earliest. Other operations (closing a page)
+    /// leave the clocks unchanged and end the wait for the last click's
+    /// effect, because the runner's op is now the other operation.
     pub fn record_sent(&mut self, kind: OneOpKind, cx: &ActionContext<'_>) {
-        let Some(frame) = Frame::borrow(cx.snapshot()) else {
-            return;
-        };
         let (kind, item_id) = match kind {
             OneOpKind::Drink { item_id, .. } => (ClickKind::Drink, item_id),
             OneOpKind::CureFruit { item_id, .. } => (ClickKind::Fruit, item_id),
             OneOpKind::Eat { item_id, .. } => (ClickKind::Food, item_id),
-            OneOpKind::Wear { .. } | OneOpKind::CloseModal | OneOpKind::ContinueDialog => return,
+            OneOpKind::Wear { .. } | OneOpKind::CloseModal | OneOpKind::ContinueDialog => {
+                if let Some(sent) = &mut self.sent {
+                    sent.awaiting = false;
+                }
+                return;
+            }
         };
-        let Ok(item_id) = u16::try_from(item_id) else {
+        let (Some(frame), Ok(item_id)) = (Frame::borrow(cx.snapshot()), u16::try_from(item_id))
+        else {
             return;
         };
         self.sent = Some(SentClick {
             kind,
+            awaiting: true,
             item_id,
             frame_tick: frame.tick,
             observed: low_ticks(cx.evidence().tick),
         });
+    }
+
+    /// The runner's op for the last survival click has ended. `applied` is
+    /// true when it settled on the content's own signal: the dose, fruit or
+    /// food count drop, or a food's hitpoints rise, which the consume script
+    /// makes in the server tick that runs the click (`consume.rs2:122-127`
+    /// sets `%eat_delay` there; `consume_effects.rs2:113-126` deletes the dose
+    /// and calls `p_delay(1)` there). The first frame that shows the signal is
+    /// the update of that server tick, and a click sent after frame `F` runs
+    /// in tick `F + 1` at the earliest. So the click's delays are replayed as
+    /// if it was sent after the frame before the signal: a drink run in tick
+    /// `E` delays the player until `E + 2` (`PlayerOps.ts:376-379`), and the
+    /// engine drops a held click run in `E + 1` or `E + 2`
+    /// (`OpHeldHandler.ts:16-19`), so the first click it runs is sent after
+    /// frame `E + 2`, which is the replayed lock's end. A signal that arrives
+    /// late moves every clock with it. A click whose op ended without the
+    /// signal keeps the send-frame clocks.
+    pub fn record_settled(&mut self, applied: bool, cx: &ActionContext<'_>) {
+        let Some(sent) = self.sent.as_mut().filter(|sent| sent.awaiting) else {
+            return;
+        };
+        sent.awaiting = false;
+        if !applied {
+            return;
+        }
+        let Some(frame) = Frame::borrow(cx.snapshot()) else {
+            return;
+        };
+        sent.frame_tick = frame.tick.wrapping_sub(1);
+        sent.observed = low_ticks(cx.evidence().tick).wrapping_sub(1);
     }
 
     /// The runner defers this frame's click to a walk, a fight or a bank
