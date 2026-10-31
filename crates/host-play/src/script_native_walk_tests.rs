@@ -2625,7 +2625,10 @@ fn native_cross_exemption_is_scoped_to_one_walk() {
             "the second request does not inherit the first request's named grant"
         );
         assert!(bot.native_walk_failure.is_some());
-        assert!(bot.requested_route.is_none(), "the refused request is retired");
+        assert!(
+            bot.requested_route.is_none(),
+            "the refused request is retired"
+        );
     }
     rig.observe_with_here(4, origin);
     let shared = rig.shared.lock();
