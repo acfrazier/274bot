@@ -795,7 +795,7 @@ fn wait_for_log(
     timeout: Duration,
     marker: &str,
     logs: &mut Vec<String>,
-) -> u64 {
+) -> u32 {
     let deadline = Instant::now() + timeout;
     loop {
         take_logs(play, account, logs);
