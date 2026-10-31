@@ -27,6 +27,9 @@ mod engine_packet_log;
 use engine_packet_log::{EnginePacket, EnginePacketLog};
 #[path = "support/tick_startup.rs"]
 mod tick_startup;
+#[path = "support/guard_opener.rs"]
+mod guard_opener;
+use guard_opener::GuardOpenerState;
 
 const ENGINE_HOST: &str = "127.0.0.1";
 const ENGINE_GAME_PORT: u16 = 48_594;
@@ -116,6 +119,7 @@ struct Scenario {
     use_proxy: bool,
     suppress_openchat_span: Option<u32>,
     pre_batch_user_events: usize,
+    pre_batch_guard_opener: bool,
 }
 
 impl Scenario {
@@ -138,6 +142,7 @@ impl Scenario {
             use_proxy: false,
             suppress_openchat_span: None,
             pre_batch_user_events: 0,
+            pre_batch_guard_opener: false,
         }
     }
 
@@ -159,6 +164,7 @@ impl Scenario {
             use_proxy: false,
             suppress_openchat_span: None,
             pre_batch_user_events: 0,
+            pre_batch_guard_opener: false,
         }
     }
 
@@ -169,17 +175,18 @@ impl Scenario {
             skill_index: 14,
             level: 99,
             resource: ResourceKind::Copper,
-            target: tile(3_283, 3_367, 0),
+            target: tile(3_287, 3_364, 0),
             tool: item("bronze_pickaxe", BRONZE_PICKAXE_ID, 1),
             extra_items: Vec::new(),
             products: vec![COPPER_ORE_ID],
-            required_loc: Some((2_090, tile(3_282, 3_367, 0))),
+            required_loc: Some((2_090, tile(3_286, 3_364, 0))),
             require_free_world: false,
             require_knife_arm: true,
             mutations: Vec::new(),
             use_proxy: false,
             suppress_openchat_span: None,
             pre_batch_user_events: 0,
+            pre_batch_guard_opener: false,
         })
     }
 
@@ -201,6 +208,7 @@ impl Scenario {
             use_proxy: false,
             suppress_openchat_span: None,
             pre_batch_user_events: 0,
+            pre_batch_guard_opener: false,
         })
     }
 
@@ -222,6 +230,7 @@ impl Scenario {
             use_proxy: false,
             suppress_openchat_span: None,
             pre_batch_user_events: 0,
+            pre_batch_guard_opener: false,
         }
     }
 
@@ -238,6 +247,11 @@ impl Scenario {
 
     fn with_pre_batch_user_events(mut self, count: usize) -> Self {
         self.pre_batch_user_events = count;
+        self
+    }
+
+    fn with_guard_opener(mut self) -> Self {
+        self.pre_batch_guard_opener = true;
         self
     }
 
@@ -632,6 +646,7 @@ struct RunEvidence {
     world_members: String,
     product_ids: Vec<i32>,
     pre_batch_user_events: ForeignEventState,
+    pre_batch_guard_opener: GuardOpenerState,
     start_tick: Option<u32>,
     baseline: Option<FrameObservation>,
     trace: TickEngineTrace,
@@ -773,6 +788,7 @@ struct LiveRun {
     world_members: String,
     setup: Arc<Mutex<SetupState>>,
     foreign_events: Arc<Mutex<ForeignEventState>>,
+    guard_opener: Arc<Mutex<GuardOpenerState>>,
     hook: Arc<TickEngineTestHook>,
     proxy: Option<Arc<LoopbackProxy>>,
     play: Option<host_play::Play>,
@@ -899,6 +915,7 @@ impl LiveRun {
             requested: scenario.pre_batch_user_events,
             ..ForeignEventState::default()
         }));
+        let guard_opener = Arc::new(Mutex::new(GuardOpenerState::default()));
         let hook = TickEngineTestHook::new(account.clone());
         hook.install();
         if let Some(proxy) = &proxy {
@@ -906,6 +923,7 @@ impl LiveRun {
         }
         let frame_setup = Arc::clone(&setup);
         let frame_foreign_events = Arc::clone(&foreign_events);
+        let frame_guard_opener = Arc::clone(&guard_opener);
         let frame_hook = Arc::clone(&hook);
         let frame_account = account.clone();
         let play = match host_play::run_with_template(
@@ -924,6 +942,12 @@ impl LiveRun {
                         frame.hold,
                         &frame_hook,
                         &frame_foreign_events,
+                    );
+                    guard_opener::frame(
+                        client,
+                        frame.hold,
+                        &frame_hook,
+                        &frame_guard_opener,
                     );
                 }
             },
@@ -944,6 +968,7 @@ impl LiveRun {
             world_members,
             setup,
             foreign_events,
+            guard_opener,
             hook,
             proxy,
             play: Some(play),
@@ -1031,6 +1056,12 @@ impl LiveRun {
             self.foreign_events
                 .lock()
                 .map_err(|_| "tick-engine foreign event state poisoned")?
+                .armed = true;
+        }
+        if self.scenario.pre_batch_guard_opener {
+            self.guard_opener
+                .lock()
+                .map_err(|_| "tick-engine guard opener state poisoned")?
                 .armed = true;
         }
         self.play
@@ -1181,6 +1212,11 @@ impl LiveRun {
                 .foreign_events
                 .lock()
                 .expect("tick-engine foreign event state poisoned")
+                .clone(),
+            pre_batch_guard_opener: self
+                .guard_opener
+                .lock()
+                .expect("tick-engine guard opener state poisoned")
                 .clone(),
             start_tick: self.start_tick,
             baseline: self.baseline.clone(),
@@ -1479,6 +1515,11 @@ fn correlate_engine_packets(evidence: &RunEvidence) -> Result<(), String> {
     if evidence.pre_batch_user_events.requested > 0 {
         assert_deferred_terminal_row(evidence, packets)?;
     }
+    if evidence.pre_batch_guard_opener.armed {
+        let user_events = guard_carrier_user_events(evidence)?;
+        assert_engine_stale_guard(packets)?;
+        println!("TICK-MANIP stale-menu carrier: ordinary opener plus unchanged native prefix=3 wire=4; total user events={user_events}");
+    }
     if matches!(
         evidence.case,
         "tick-make-without-click" | "tick-make-proxy-drop"
@@ -1529,68 +1570,54 @@ fn assert_deferred_terminal_row(
             evidence.pre_batch_user_events.requested
         ));
     }
-    let mut by_tick = BTreeMap::<u64, Vec<&EnginePacket>>::new();
-    for packet in packets {
-        by_tick.entry(packet.tick).or_default().push(packet);
-    }
-    let accepted = engine_accepted_user_event;
-    for (tick, rows) in by_tick {
-        let movement: Vec<_> = rows
-            .iter()
-            .copied()
-            .filter(|packet| packet.opcode == ClientProt289::MOVE_GAMECLICK.id as u8)
-            .collect();
-        let opener: Vec<_> = rows
-            .iter()
-            .copied()
-            .filter(|packet| packet.opcode == ClientProt289::OPHELDU.id as u8)
-            .collect();
-        let make: Vec<_> = rows
-            .iter()
-            .copied()
-            .filter(|packet| packet.opcode == ClientProt289::IF_BUTTON.id as u8)
-            .collect();
-        let deferred_move: Vec<_> = rows
-            .iter()
-            .copied()
-            .filter(|packet| packet.opcode == ClientProt289::MOVE_OPCLICK.id as u8)
-            .collect();
-        let deferred_loc: Vec<_> = rows
-            .iter()
-            .copied()
-            .filter(|packet| packet.opcode == ClientProt289::OPLOC1.id as u8)
-            .collect();
-        if movement.len() != 3
-            || opener.len() != 1
-            || make.len() != 1
-            || deferred_move.len() != 1
-            || deferred_loc.len() != 1
-            || !movement.iter().all(|packet| accepted(packet))
-            || !accepted(opener[0])
-            || !accepted(make[0])
-            || deferred_move[0].outcome != "deferred"
-            || deferred_loc[0].outcome != "deferred"
-            || rows
+    // The rate limit stops decoding after five charged user events. The
+    // untouched terminal bytes are decoded on the next tick, not logged as
+    // fictitious deferred packets in the first tick.
+    let relevant: Vec<_> = packets
+        .iter()
+        .filter(|packet| {
+            [
+                ClientProt289::MOVE_GAMECLICK.id as u8,
+                ClientProt289::OPHELDU.id as u8,
+                ClientProt289::IF_BUTTON.id as u8,
+                ClientProt289::MOVE_OPCLICK.id as u8,
+                ClientProt289::OPLOC1.id as u8,
+            ]
+            .contains(&packet.opcode)
+        })
+        .collect();
+    let expected = [
+        ClientProt289::MOVE_GAMECLICK.id as u8,
+        ClientProt289::MOVE_GAMECLICK.id as u8,
+        ClientProt289::MOVE_GAMECLICK.id as u8,
+        ClientProt289::OPHELDU.id as u8,
+        ClientProt289::IF_BUTTON.id as u8,
+        ClientProt289::MOVE_OPCLICK.id as u8,
+        ClientProt289::OPLOC1.id as u8,
+    ];
+    for rows in relevant.windows(expected.len()) {
+        let tick = rows[0].tick;
+        if rows.iter().map(|packet| packet.opcode).ne(expected)
+            || !rows.iter().all(|packet| engine_accepted_user_event(packet))
+            || !rows[..5].iter().all(|packet| packet.tick == tick)
+            || !rows[5..].iter().all(|packet| packet.tick == tick + 1)
+            || !rows.windows(2).all(|pair| pair[0].sequence < pair[1].sequence)
+            || packets
                 .iter()
-                .filter(|packet| packet.charged_user_event)
+                .filter(|packet| packet.tick == tick && packet.charged_user_event)
                 .count()
                 != 5
-            || movement
-                .iter()
-                .any(|packet| packet.sequence >= opener[0].sequence)
-            || opener[0].sequence >= make[0].sequence
-            || make[0].sequence >= deferred_move[0].sequence
-            || deferred_move[0].sequence >= deferred_loc[0].sequence
         {
             continue;
         }
         println!(
-            "TICK-MANIP deferred terminal row proved by Engine T tick={tick}; accepted moves=3, accepted Knife/Make=2, deferred click/loc=2"
+            "TICK-MANIP Engine T tick={tick}: three foreign moves and Knife/Make charged; original terminal MOVE_OPCLICK/OPLOC1 decoded and accepted at tick={}",
+            tick + 1
         );
         return Ok(());
     }
     Err(format!(
-        "Engine T log has no tick with three accepted MOVE_GAMECLICK events before accepted Knife/Make and deferred MOVE_OPCLICK/OPLOC1: {packets:?}"
+        "Engine T log has no five-event prefix followed by its terminal pair decoded on the next tick: {packets:?}"
     ))
 }
 
@@ -1655,6 +1682,7 @@ fn evidence_json(evidence: &RunEvidence) -> Value {
                 "chat_modal_root": frame.chat_modal_root,
                 "actual_chat_modal_root": frame.actual_chat_modal_root,
                 "server_if_close_packets": frame.server_if_close_packets,
+                "iface_generation": frame.iface_generation,
                 "main_modal_opened_observation": frame.main_modal_opened_observation,
                 "main_modal_closed_observation": frame.main_modal_closed_observation,
                 "suppressed_openchat": frame.suppressed_openchat,
@@ -1790,6 +1818,15 @@ fn evidence_json(evidence: &RunEvidence) -> Value {
             "client_tick": evidence.pre_batch_user_events.client_tick,
             "host_frame": evidence.pre_batch_user_events.host_frame,
             "error": evidence.pre_batch_user_events.error,
+        },
+        "pre_batch_guard_opener": {
+            "armed": evidence.pre_batch_guard_opener.armed,
+            "sent": evidence.pre_batch_guard_opener.sent,
+            "client_tick": evidence.pre_batch_guard_opener.client_tick,
+            "host_frame": evidence.pre_batch_guard_opener.host_frame,
+            "encoded_length": evidence.pre_batch_guard_opener.encoded_length,
+            "error": evidence.pre_batch_guard_opener.error,
+            "total_user_events_with_first_native_batch": guard_carrier_user_events(evidence).ok(),
         },
         "start_tick": evidence.start_tick,
         "product_ids": evidence.product_ids,
@@ -2089,6 +2126,125 @@ fn close_packet_seen(trace: &TickEngineTrace, tick: u64, baseline: &FrameObserva
     })
 }
 
+fn iface_moved_in_window(
+    trace: &TickEngineTrace,
+    tick: u64,
+    baseline: &FrameObservation,
+) -> bool {
+    let mut previous = baseline.iface_generation;
+    trace.frames.iter().any(|frame| {
+        let fresh = frame.iface_generation != previous;
+        previous = frame.iface_generation;
+        let observed = u64::from(frame.game_tick);
+        // facts-r5:137: interface packets occur on either side of PLAYER_INFO.
+        fresh
+            && if frame.tick_edge {
+                observed.abs_diff(tick) <= 1
+            } else {
+                observed == tick || observed + 1 == tick
+            }
+    })
+}
+
+fn guard_carrier_user_events(evidence: &RunEvidence) -> Result<usize, String> {
+    let opener = &evidence.pre_batch_guard_opener;
+    let first = first_knife(&evidence.trace)?;
+    let index = evidence
+        .trace
+        .wire
+        .iter()
+        .position(|wire| wire.request_id == Some(first.receipt.request_id))
+        .ok_or("stale-menu carrier has no native packets")?;
+    let start = index.checked_sub(1).ok_or("ordinary opener is absent")?;
+    let carrier = evidence
+        .trace
+        .wire
+        .get(start..index + 4)
+        .ok_or("stale-menu native batch is incomplete")?;
+    let expected = [
+        ClientProt289::OPHELDU.id as u8,
+        ClientProt289::OPHELDU.id as u8,
+        ClientProt289::IF_BUTTON.id as u8,
+        ClientProt289::MOVE_OPCLICK.id as u8,
+        ClientProt289::OPLOC1.id as u8,
+    ];
+    if !opener.armed
+        || !opener.sent
+        || opener.error.is_some()
+        || opener.host_frame != Some(carrier[0].host_frame)
+        || opener.encoded_length != Some(carrier[0].encoded_length)
+        || evidence.trace.wire.iter().filter(|wire| {
+            wire.request_id.is_none() && wire.opcode == ClientProt289::OPHELDU.id as u8
+        }).count() != 1
+        || carrier[0].request_id.is_some()
+        || carrier.iter().map(|wire| wire.opcode).ne(expected)
+        || !carrier[1..]
+            .iter()
+            .all(|wire| wire.request_id == Some(first.receipt.request_id))
+        || first.receipt.dispatched_prefix != 3
+        || first.receipt.wire_events != 4
+        || first.receipt.terminal.is_some()
+    {
+        return Err(format!(
+            "stale-menu carrier is not one ordinary opener followed by the unchanged full native batch: opener={opener:?} receipt={:?} wire={carrier:?}",
+            first.receipt
+        ));
+    }
+    Ok(carrier.len())
+}
+
+fn assert_engine_stale_guard(packets: &[EnginePacket]) -> Result<(), String> {
+    let expected = [200, 200, 86, 67, 10];
+    let relevant: Vec<_> = packets
+        .iter()
+        .filter(|packet| expected.contains(&packet.opcode))
+        .collect();
+    for rows in relevant.windows(expected.len()) {
+        if rows.iter().map(|packet| packet.opcode).eq(expected)
+            && rows.iter().all(|packet| packet.tick == rows[0].tick)
+            && rows[..3].iter().all(|packet| engine_accepted_user_event(packet))
+            && rows[3..]
+                .iter()
+                .all(|packet| !packet.handler_accepted && !packet.charged_user_event)
+            && rows.windows(2).all(|pair| pair[0].sequence < pair[1].sequence)
+        {
+            println!(
+                "TICK-MANIP stale-menu guard Engine T tick={} (host R+1): two accepted openers, accepted Make, refused terminal pair; chat.rs2:830-834; Fletching must follow at R+2 and roll at R+4",
+                rows[0].tick
+            );
+            return Ok(());
+        }
+    }
+    Err(format!("Engine T did not decode the five-event stale-menu guard carrier in one tick: {packets:?}"))
+}
+
+fn stale_guard_landing(
+    trace: &TickEngineTrace,
+    origin: u64,
+    baseline: &FrameObservation,
+) -> bool {
+    close_packet_seen(trace, origin + 1, baseline)
+        && iface_moved_in_window(trace, origin + 1, baseline)
+        && no_fresh_animation_on_edge(trace, origin + 1)
+        && fresh_animation_on_edge(trace, origin + 2)
+            .is_some_and(|(sequence, _)| sequence == FLETCHING_ANIMATION)
+        && !has_act_line(trace, origin + 2)
+        && checked_click_pairs(trace, origin + 2) == 1
+        && fresh_animation_on_edge(trace, origin + 4)
+            .is_some_and(|(sequence, _)| sequence == ROLL_ANIMATION)
+        && knife_dispatches(trace)
+            .iter()
+            .filter(|dispatch| dispatch.game_tick < origin + 4)
+            .count()
+            == 1
+        && trace.frames.iter().all(|frame| frame.log_count == baseline.log_count)
+        && !trace.wire.iter().any(|wire| {
+            wire.opcode == ClientProt289::CLOSE_MODAL.id as u8
+                || wire.opcode == ClientProt289::IF_BUTTON.id as u8
+                    && wire.request_id.is_none()
+        })
+}
+
 fn assert_batch(
     run: &LiveRun,
     dispatch: &DispatchObservation,
@@ -2210,14 +2366,18 @@ fn assert_make_without_click_outcome(run: &mut LiveRun, origin: u64) -> Result<(
                 && checked_click_pairs(trace, origin + 1) == 1
                 && fresh_animation_on_edge(trace, origin + 3)
                     .is_some_and(|(sequence, _)| sequence == ROLL_ANIMATION)
-                && statuses
-                    .last()
-                    .is_some_and(|status| status.tick_cycle == Some(3))
+                && statuses.last().is_some_and(|status| {
+                    status.tick_slips == Some(1)
+                        && status.tick_verified == Some(0)
+                        && status.tick_unobserved == Some(0)
+                        && status.tick_cycle == Some(-1)
+                })
         },
     )?;
     let trace = run.hook.trace();
     assert_click(run, &trace, origin + 1)?;
     assert_roll(run, origin + 3)?;
+    require_first_nonverified_verdict(run, "tick_slips")?;
     if has_act_line(&trace, origin + 1) {
         return Err(
             run.failure("accepted Make without the click unexpectedly produced the act line")
@@ -2428,7 +2588,6 @@ struct PrefixFrame {
     animation: Option<(i32, u32)>,
     chat: Vec<(String, PollKind)>,
     log_count: i32,
-    product_counts: Vec<(i32, i32)>,
     skill_xp: Vec<(i32, i32)>,
     if_close_delta: u64,
     main_modal_opened_delta: u64,
@@ -2471,6 +2630,15 @@ struct PrefixStatus {
     tick_events: Option<i64>,
 }
 
+// Compare host control, not chance-gated gathering yield. Keep all raw yield
+// and XP in the evidence; Fletching XP, logs, control chat and every emission
+// remain part of this comparison.
+fn chance_gather_success(line: &str) -> bool {
+    line.starts_with("You catch ")
+        || line.starts_with("You manage to mine some ")
+        || matches!(line, "You get some logs." | "You get some oak logs.")
+}
+
 fn normalized_prefix(evidence: &RunEvidence, end_offset: u32) -> PrefixTrace {
     let (Some(baseline), Some(_start_tick)) = (evidence.baseline.as_ref(), evidence.start_tick)
     else {
@@ -2485,7 +2653,6 @@ fn normalized_prefix(evidence: &RunEvidence, end_offset: u32) -> PrefixTrace {
     else {
         return PrefixTrace::default();
     };
-    let baseline_xp: BTreeMap<i32, i32> = baseline.skill_xp.iter().copied().collect();
     let mut frames: Vec<_> = evidence
         .trace
         .frames
@@ -2506,14 +2673,18 @@ fn normalized_prefix(evidence: &RunEvidence, end_offset: u32) -> PrefixTrace {
                 chat: frame
                     .chat
                     .iter()
+                    .filter(|line| !chance_gather_success(&line.text))
                     .map(|line| (line.text.clone(), line.poll))
                     .collect(),
                 log_count: frame.log_count,
-                product_counts: frame.inventory_counts.clone(),
                 skill_xp: frame
                     .skill_xp
                     .iter()
-                    .map(|(index, xp)| (*index, xp - baseline_xp.get(index).copied().unwrap_or(0)))
+                    .filter(|(index, _)| ![8, 10, 14].contains(index))
+                    .map(|(index, xp)| {
+                        let baseline_xp = skill_xp(baseline, *index).unwrap_or(0);
+                        (*index, xp - baseline_xp)
+                    })
                     .collect(),
                 if_close_delta: frame
                     .server_if_close_packets
@@ -2741,63 +2912,29 @@ fn tick_engine_clean_ending_net_twenty_cycles() {
 #[test]
 #[ignore = "requires LIVE=1, GATHERER_ENGINE_DIR/NAV_PACK/CATALOG_ROOT, LIVE_EVIDENCE_DIR and Engine T 127.0.0.1:48594/4080"]
 fn tick_engine_stale_menu_guard_late_case_two() {
-    let scenario = Scenario::river("tick-stale-menu")
-        .with_mutation(DispatchMutation::CancelAfterPackets(1))
-        .with_openchat_suppression(4);
+    // Both real Client encoders append to the same normal out-buffer flush.
+    // The extra ordinary opener is not part of the native dispatch receipt.
+    let scenario = Scenario::river("tick-stale-menu").with_guard_opener();
     run_case(scenario, |run| {
-        let trace = run.hook.trace();
-        let first = first_knife(&trace).map_err(|error| run.failure(error))?;
+        let first = first_knife(&run.hook.trace()).map_err(|error| run.failure(error))?;
         let origin = first.game_tick;
-        assert_batch(run, &first, 1, 1)?;
-        assert_knife_wire_order(run, &trace, &first, &[ClientProt289::OPHELDU.id as u8])?;
+        assert_batch(run, &first, 3, 4)?;
         let baseline = run
             .baseline
             .as_ref()
             .expect("started run has baseline")
             .clone();
         run.wait_until(origin as u32, STALE_MENU_BUDGET, |trace, statuses| {
-            let batches = knife_dispatches(trace);
-            batches.len() >= 2
-                && batches[1].game_tick == origin + 1
-                && batches[1].receipt.dispatched_prefix == 3
-                && batches[1].receipt.wire_events == 4
-                && close_packet_seen(trace, origin + 1, &baseline)
-                && no_fresh_animation_on_edge(trace, origin + 1)
-                && fresh_animation_on_edge(trace, origin + 2)
-                    .is_some_and(|(sequence, _)| sequence == FLETCHING_ANIMATION)
-                && has_act_line(trace, origin + 2)
-                && fresh_animation_on_edge(trace, origin + 4)
-                    .is_some_and(|(sequence, _)| sequence == ROLL_ANIMATION)
-                && statuses
-                    .last()
-                    .is_some_and(|status| status.tick_slips.unwrap_or(0) >= 1)
+            stale_guard_landing(trace, origin, &baseline)
+                && statuses.last().is_some_and(|status| {
+                    status.tick_slips == Some(1)
+                        && status.tick_verified == Some(0)
+                        && status.tick_unobserved == Some(0)
+                        && status.tick_cycle == Some(-1)
+                })
         })?;
-        let trace = run.hook.trace();
-        let batches = knife_dispatches(&trace);
-        let second = batches
-            .get(1)
-            .ok_or_else(|| run.failure("stale-menu next-window batch receipt disappeared"))?;
-        assert_batch(run, second, 3, 4)?;
-        assert_knife_wire_order(
-            run,
-            &trace,
-            second,
-            &[
-                ClientProt289::OPHELDU.id as u8,
-                ClientProt289::IF_BUTTON.id as u8,
-                ClientProt289::MOVE_OPCLICK.id as u8,
-                ClientProt289::OPLOC1.id as u8,
-            ],
-        )?;
-        if !frames_in_tick(&trace, origin + 1)
-            .iter()
-            .any(|frame| frame.suppressed_openchat && frame.actual_chat_modal_root == 8_880)
-        {
-            return Err(run.failure(
-                "stale-menu guard did not filter the real 8880 root before script polling",
-            ));
-        }
-        assert_click(run, &trace, origin + 2)?;
+        guard_carrier_user_events(&run.evidence()).map_err(|error| run.failure(error))?;
+        assert_click(run, &run.hook.trace(), origin + 2)?;
         require_first_nonverified_verdict(run, "tick_slips")?;
         assert_log_unchanged(run)?;
         assert_running(run)
@@ -3186,7 +3323,7 @@ fn tick_engine_deferred_terminal_row_is_a_slip_after_three_foreign_events() {
                     .is_some_and(|(sequence, _)| sequence == ROLL_ANIMATION)
                 && statuses.last().is_some_and(|status| {
                     status.tick_slips == Some(initial_slips + 1)
-                        && status.tick_fallbacks == Some(initial_fallbacks + 1)
+                        && status.tick_fallbacks == Some(initial_fallbacks)
                         && status.tick_verified == Some(initial_verified)
                 })
         })?;
@@ -3206,11 +3343,11 @@ fn tick_engine_deferred_terminal_row_is_a_slip_after_three_foreign_events() {
             || final_status.tick_lost != Some(initial_lost)
             || final_status.tick_delayed != Some(initial_delayed)
             || final_status.tick_paused != Some(initial_paused)
-            || final_status.tick_fallbacks != Some(initial_fallbacks + 1)
+            || final_status.tick_fallbacks != Some(initial_fallbacks)
             || final_status.tick_fallback_failed != Some(initial_fallback_failed)
         {
             return Err(run.failure(format!(
-                "deferred terminal-row cycle did not end as exactly one slip and one fallback: initial={initial:?} final={final_status:?}"
+                "deferred terminal-row cycle did not end as exactly one slip without a second fallback: initial={initial:?} final={final_status:?}"
             )));
         }
         assert_log_unchanged(run)?;
@@ -3417,6 +3554,7 @@ mod packet_oracle_tests {
             chat_modal_root: -1,
             actual_chat_modal_root: -1,
             server_if_close_packets: if_close,
+            iface_generation: 0,
             main_modal_opened_observation: 0,
             main_modal_closed_observation: 0,
             suppressed_openchat: false,
@@ -3480,6 +3618,124 @@ mod packet_oracle_tests {
         }
     }
 
+    fn stale_guard_evidence() -> RunEvidence {
+        let mut evidence = prefix_evidence();
+        let receipt = &mut evidence.trace.dispatches[0].receipt;
+        receipt.dispatched_prefix = 3;
+        receipt.wire_events = 4;
+        receipt.terminal = None;
+        evidence.pre_batch_guard_opener = GuardOpenerState {
+            armed: true,
+            sent: true,
+            error: None,
+            client_tick: Some(7),
+            host_frame: Some(70),
+            encoded_length: Some(13),
+        };
+        evidence.trace.wire = [200, 200, 86, 67, 10]
+            .into_iter()
+            .enumerate()
+            .map(|(index, opcode)| {
+                let mut wire = wire(opcode, 1, if opcode == 200 { 13 } else { 1 });
+                wire.host_frame = if index == 0 { 70 } else { 71 };
+                if index == 0 {
+                    wire.request_id = None;
+                }
+                wire
+            })
+            .collect();
+        for opcode in [67, 10] {
+            let mut wire = wire(opcode, 1, 1);
+            wire.game_tick = 9;
+            wire.host_frame = 90;
+            wire.request_id = None;
+            evidence.trace.wire.push(wire);
+        }
+        evidence.trace.frames = (7..=11)
+            .map(|tick| {
+                let mut frame = observed_frame(tick, true, if tick >= 8 { 2 } else { 1 });
+                frame.iface_generation = u64::from(tick >= 8);
+                frame.animation = Some(client::client::client::LocalAnimationUpdate {
+                    sequence: if (9..=10).contains(&tick) {
+                        FLETCHING_ANIMATION
+                    } else {
+                        ROLL_ANIMATION
+                    },
+                    serial: if tick < 9 { 1 } else if tick < 11 { 2 } else { 3 },
+                });
+                frame
+            })
+            .collect();
+        evidence
+    }
+
+    #[test]
+    fn stale_guard_requires_the_five_real_events_and_unchanged_native_receipt() {
+        let evidence = stale_guard_evidence();
+        assert_eq!(guard_carrier_user_events(&evidence).unwrap(), 5);
+        let mut partial = evidence.clone();
+        partial.trace.wire.remove(0);
+        assert!(guard_carrier_user_events(&partial).is_err());
+        let mut forged = evidence.clone();
+        forged.trace.dispatches[0].receipt.wire_events = 5;
+        assert!(guard_carrier_user_events(&forged).is_err());
+        let mut duplicate = evidence;
+        duplicate.trace.wire.insert(0, duplicate.trace.wire[0]);
+        assert!(guard_carrier_user_events(&duplicate).is_err());
+    }
+
+    #[test]
+    fn stale_guard_landing_preserves_every_required_observable() {
+        let evidence = stale_guard_evidence();
+        let baseline = evidence.baseline.as_ref().unwrap();
+        assert!(stale_guard_landing(&evidence.trace, 7, baseline));
+        for facet in 0..8 {
+            let mut trace = evidence.trace.clone();
+            match facet {
+                0 => trace.frames.iter_mut().for_each(|frame| frame.server_if_close_packets = 1),
+                1 => trace.frames.iter_mut().for_each(|frame| frame.iface_generation = 0),
+                2 => trace.frames[1].animation.as_mut().unwrap().serial = 99,
+                3 => trace.frames[2].animation.as_mut().unwrap().sequence = CAST_ANIMATION,
+                4 => {
+                    let _ = trace.wire.pop();
+                }
+                5 => trace.frames[4].game_tick += 1,
+                6 => trace.frames[2].log_count = 0,
+                7 => trace.frames[2].chat.push(ChatObservation {
+                    game_tick: 9,
+                    sequence: 11,
+                    text: "You attempt to catch a fish.".into(),
+                    poll: PollKind::Edge,
+                }),
+                _ => unreachable!(),
+            }
+            assert!(!stale_guard_landing(&trace, 7, baseline), "missing facet {facet}");
+        }
+    }
+
+    #[test]
+    fn stale_guard_engine_oracle_requires_one_tick_and_refused_terminal_packets() {
+        let packets: Vec<_> = [200, 200, 86, 67, 10]
+            .into_iter()
+            .enumerate()
+            .map(|(index, opcode)| {
+                let mut packet = packet(opcode, index as u64 + 1);
+                packet.handler_accepted = index < 3;
+                packet.charged_user_event = index < 3;
+                packet
+            })
+            .collect();
+        assert_engine_stale_guard(&packets).unwrap();
+        for index in 0..packets.len() {
+            let mut wrong = packets.clone();
+            wrong[index].handler_accepted = !wrong[index].handler_accepted;
+            assert!(assert_engine_stale_guard(&wrong).is_err());
+        }
+        let mut held = packets;
+        held[1..].iter_mut().for_each(|packet| packet.tick += 1);
+        assert!(assert_engine_stale_guard(&held).is_err());
+    }
+
     #[test]
     fn normalized_prefix_ignores_only_unchanged_duplicate_polls() {
         let original = prefix_evidence();
@@ -3512,6 +3768,31 @@ mod packet_oracle_tests {
         changed.trace.wire.push(changed.trace.wire[0]);
         assert_ne!(reference, normalized_prefix(&changed, 2), "duplicate packet disappeared");
     }
+
+    #[test]
+    fn normalized_prefix_ignores_chance_yield_but_preserves_control_and_fletching() {
+        let original = prefix_evidence();
+        let reference = normalized_prefix(&original, 2);
+        let mut caught = original.clone();
+        caught.trace.frames[1].inventory_counts.push((335, 1));
+        caught.trace.frames[1].skill_xp.push((10, 50));
+        caught.trace.frames[1].chat.push(ChatObservation {
+            game_tick: 7,
+            sequence: 11,
+            text: "You catch a trout.".into(),
+            poll: PollKind::Wake,
+        });
+        assert_eq!(reference, normalized_prefix(&caught, 2));
+        caught.trace.frames[1].chat[0].text = "You attempt to catch a fish.".into();
+        assert_ne!(reference, normalized_prefix(&caught, 2), "act chat disappeared");
+        let mut changed = original.clone();
+        changed.trace.frames[1].skill_xp.push((9, 1));
+        assert_ne!(reference, normalized_prefix(&changed, 2), "Fletching XP disappeared");
+        let mut changed = original;
+        changed.trace.frames[1].log_count = 0;
+        assert_ne!(reference, normalized_prefix(&changed, 2), "log use disappeared");
+    }
+
 
     #[test]
     fn chat_attribution_uses_first_seen_poll_position() {
@@ -3621,6 +3902,36 @@ mod packet_oracle_tests {
     }
 
     #[test]
+    fn copper_replacements_share_a_real_standable_cardinal_stand() {
+        let pack = PathBuf::from(std::env::var_os("NAV_PACK").expect("NAV_PACK is required"));
+        let world = nav_planner::world::NavWorld::load_pack(&pack).unwrap();
+        let scenario = Scenario::copper("tick-setup").unwrap();
+        let first = scenario.required_loc.unwrap().1;
+        let second = tile(3_287, 3_365, 0);
+        let data = api::game_data::for_revision(client::io::ClientRevision::R289).unwrap();
+        let catalog =
+            api::selected::FamilyPreparation::run(move |worker| data.prepare_gathering(worker))
+                .unwrap()
+                .join()
+                .unwrap()
+                .unwrap();
+        assert!(world.collision.standable(scenario.target));
+        for target in [first, second] {
+            assert_eq!(scenario.target.level, target.level);
+            assert_eq!(
+                (scenario.target.x - target.x).abs() + (scenario.target.z - target.z).abs(),
+                1
+            );
+            assert!(catalog.methods().iter().any(|method| match &method.spots {
+                api::selected::Knowledge::Known(spots) => spots.iter().any(|spot| {
+                    spot.entity == api::selected::EntityId::Loc(2_090) && spot.origin == target
+                }),
+                _ => false,
+            }));
+        }
+    }
+
+    #[test]
     fn setup_observes_relogin_without_requiring_an_offline_callback() {
         let account = "tick-setup";
         let mut setup = SetupState::new(account.into(), Scenario::river("tick-setup"));
@@ -3725,6 +4036,44 @@ mod packet_oracle_tests {
     }
 
     #[test]
+    fn deferred_terminal_pair_is_decoded_only_after_the_five_event_tick() {
+        let opcodes = [234, 234, 234, 200, 86, 67, 10];
+        let mut packets: Vec<_> = opcodes
+            .into_iter()
+            .enumerate()
+            .map(|(index, opcode)| {
+                let mut packet = packet(opcode, index as u64 + 1);
+                packet.charged_user_event = true;
+                packet.tick += u64::from(index >= 5);
+                packet
+            })
+            .collect();
+        packets[3].outcome = "deferred".into();
+        packets[3].reason = "script-suspended".into();
+        let mut evidence = evidence(vec![], vec![], vec![]);
+        evidence.pre_batch_user_events.requested = 3;
+        assert_deferred_terminal_row(&evidence, &packets).unwrap();
+        for index in 0..packets.len() {
+            let mut refused = packets.clone();
+            refused[index].handler_accepted = false;
+            assert!(assert_deferred_terminal_row(&evidence, &refused).is_err());
+        }
+        let mut early = packets.clone();
+        early[5].tick -= 1;
+        early[6].tick -= 1;
+        early[5].outcome = "deferred".into();
+        early[6].outcome = "deferred".into();
+        assert!(assert_deferred_terminal_row(&evidence, &early).is_err());
+        let mut late = packets.clone();
+        late[5].tick += 1;
+        late[6].tick += 1;
+        assert!(assert_deferred_terminal_row(&evidence, &late).is_err());
+        packets.swap(5, 6);
+        assert!(assert_deferred_terminal_row(&evidence, &packets).is_err());
+    }
+
+
+    #[test]
     fn ordinary_click_pairs_require_one_real_client_frame_without_an_ordered_receipt() {
         let mut movement = wire(ClientProt289::MOVE_OPCLICK.id as u8, 11, 7);
         movement.request_id = None;
@@ -3809,6 +4158,7 @@ mod packet_oracle_tests {
             world_members: "unknown".into(),
             product_ids: Vec::new(),
             pre_batch_user_events: ForeignEventState::default(),
+            pre_batch_guard_opener: GuardOpenerState::default(),
             start_tick: Some(7),
             baseline: None,
             trace: TickEngineTrace {

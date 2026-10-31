@@ -7,14 +7,12 @@ use client::client::{Client, ClientConfig, ClientRevision};
 use client::io::ClientProt289;
 use host_play::tick_engine_test_support::TickEngineTestHook;
 
-use crate::loopback_proxy::LoopbackProxy;
-
 const KNIFE_ID: i32 = 946;
 const LOGS_ID: i32 = 1_511;
 const ROLL_ANIMATION: i32 = 623;
 
 /// One stale-menu opener sent from a real Client before the native batch.
-#[derive(Debug, Default)]
+#[derive(Debug, Clone, Default)]
 pub struct GuardOpenerState {
     pub armed: bool,
     pub sent: bool,
@@ -30,7 +28,6 @@ pub fn frame(
     client: &mut Client,
     hold: bool,
     hook: &TickEngineTestHook,
-    proxy: &LoopbackProxy,
     state: &Mutex<GuardOpenerState>,
 ) {
     if hold {
@@ -144,10 +141,6 @@ pub fn frame(
                 trace.wire.get(previous_wire_count..)
             ),
         );
-        return;
-    }
-    if let Err(error) = proxy.arm_guard_opener_prefix(opcode, encoded_length) {
-        record_error(state, client_tick, host_frame, error);
         return;
     }
     match state.lock() {

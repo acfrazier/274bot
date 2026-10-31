@@ -128,6 +128,8 @@ pub struct FrameObservation {
     pub actual_chat_modal_root: i32,
     /// Actual inbound IF_CLOSE packet count for this Client session.
     pub server_if_close_packets: u64,
+    /// Actual Client interface-family generation, before snapshot filtering.
+    pub iface_generation: u64,
     /// Actual main-modal open observation stamp for this Client session.
     pub main_modal_opened_observation: u64,
     /// Actual main-modal close observation stamp for this Client session.
@@ -574,6 +576,7 @@ impl TickEngineTestHook {
                     chat_modal_root,
                     actual_chat_modal_root,
                     server_if_close_packets: modal_packets.close_packets,
+                    iface_generation: client.gens.iface,
                     main_modal_opened_observation: modal_packets.opened_observation,
                     main_modal_closed_observation: modal_packets.closed_observation,
                     suppressed_openchat,

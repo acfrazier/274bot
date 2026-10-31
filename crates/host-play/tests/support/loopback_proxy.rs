@@ -22,9 +22,6 @@ pub struct ProxyObservation {
     pub packet_requests: Vec<(u64, usize)>,
     pub packet_opcodes: Vec<u8>,
     pub packet_lengths: Vec<usize>,
-    /// One standalone opener sent before the native dispatch; it has no
-    /// request ID and is deliberately separate from native packet metadata.
-    pub pre_batch_prefix: Option<(u8, usize)>,
     pub forwarded_bytes: usize,
     pub dropped_bytes: usize,
     pub release_edge_tick: Option<u32>,
@@ -36,7 +33,6 @@ pub struct ProxyObservation {
 #[derive(Default)]
 struct ProxyState {
     gate: Option<Gate>,
-    pending_guard_opener_prefix: Option<(u8, usize)>,
     completed: Vec<ProxyObservation>,
     error: Option<String>,
 }
@@ -82,37 +78,6 @@ impl LoopbackProxy {
         })
     }
 
-    /// Hold one ordinary Client packet as the prefix before the next native
-    /// dispatch's real encoded batch.
-    pub fn arm_guard_opener_prefix(
-        &self,
-        opcode: u8,
-        encoded_length: usize,
-    ) -> Result<(), String> {
-        let mut state = self
-            .state
-            .lock()
-            .map_err(|_| "loopback proxy state poisoned".to_owned())?;
-        if let Some(error) = &state.error {
-            return Err(error.clone());
-        }
-        let error = if encoded_length == 0 {
-            Some("guard opener prefix must be non-empty".to_owned())
-        } else if state.gate.is_some() {
-            Some("guard opener prefix cannot be armed while a transport gate is active".to_owned())
-        } else if state.pending_guard_opener_prefix.is_some() {
-            Some("a guard opener prefix is already pending".to_owned())
-        } else {
-            None
-        };
-        if let Some(error) = error {
-            state.error = Some(error.clone());
-            return Err(error);
-        }
-        state.pending_guard_opener_prefix = Some((opcode, encoded_length));
-        Ok(())
-    }
-
     pub fn address(&self) -> SocketAddr {
         self.address
     }
@@ -144,13 +109,6 @@ impl OrderedTransportController for LoopbackProxy {
         host_frame: u64,
     ) {
         let mut state = self.state.lock().expect("loopback proxy state poisoned");
-        let pre_batch_prefix = state.pending_guard_opener_prefix.take();
-        if pre_batch_prefix.is_some() && mutation != TransportMutation::HoldThroughNextEdge {
-            state.error = Some(format!(
-                "guard opener prefix for request {request_id} requires HoldThroughNextEdge"
-            ));
-            return;
-        }
         if mutation == TransportMutation::JoinActiveGate {
             if let Some(gate) = state.gate.as_mut().filter(|gate| {
                 matches!(
@@ -185,12 +143,11 @@ impl OrderedTransportController for LoopbackProxy {
         request_packets.insert(request_id, 0);
         let mut active_requests = HashSet::new();
         active_requests.insert(request_id);
-        let prefix_length = pre_batch_prefix.map_or(0, |(_, encoded_length)| encoded_length);
         state.gate = Some(Gate {
             mutation,
-            expected_bytes: prefix_length,
+            expected_bytes: 0,
             processed_bytes: 0,
-            release_prefix_bytes: prefix_length,
+            release_prefix_bytes: 0,
             release_all: false,
             next_edge_frame: None,
             request_packets,
@@ -204,7 +161,6 @@ impl OrderedTransportController for LoopbackProxy {
                 packet_requests: Vec::new(),
                 packet_opcodes: Vec::new(),
                 packet_lengths: Vec::new(),
-                pre_batch_prefix,
                 forwarded_bytes: 0,
                 dropped_bytes: 0,
                 release_edge_tick: None,
@@ -253,9 +209,7 @@ impl OrderedTransportController for LoopbackProxy {
         gate.observation.packet_lengths.push(encoded_length);
         match gate.mutation {
             TransportMutation::SplitAfterFirstPacket
-                if gate.observation.pre_batch_prefix.is_none()
-                    && request_id == gate.observation.request_id
-                    && packet_index == 1 =>
+                if request_id == gate.observation.request_id && packet_index == 1 =>
             {
                 gate.release_prefix_bytes = encoded_length;
             }
@@ -484,42 +438,32 @@ fn flush_upstream(
                 let prefix = gate
                     .release_prefix_bytes
                     .saturating_sub(gate.processed_bytes);
-                if gate.observation.pre_batch_prefix.is_some() {
-                    if gate.release_all {
-                        UpstreamAction::Forward(available)
-                    } else if prefix > 0 {
-                        UpstreamAction::Forward(min(available, prefix))
-                    } else {
-                        UpstreamAction::Wait
+                match gate.mutation {
+                    TransportMutation::HoldThroughNextEdge
+                    | TransportMutation::HoldUntilNextDispatch => {
+                        if gate.release_all {
+                            UpstreamAction::Forward(available)
+                        } else {
+                            UpstreamAction::Wait
+                        }
                     }
-                } else {
-                    match gate.mutation {
-                        TransportMutation::HoldThroughNextEdge
-                        | TransportMutation::HoldUntilNextDispatch => {
-                            if gate.release_all {
-                                UpstreamAction::Forward(available)
-                            } else {
-                                UpstreamAction::Wait
-                            }
+                    TransportMutation::SplitAfterFirstPacket => {
+                        if gate.release_all {
+                            UpstreamAction::Forward(available)
+                        } else if prefix > 0 {
+                            UpstreamAction::Forward(min(available, prefix))
+                        } else {
+                            UpstreamAction::Wait
                         }
-                        TransportMutation::SplitAfterFirstPacket => {
-                            if gate.release_all {
-                                UpstreamAction::Forward(available)
-                            } else if prefix > 0 {
-                                UpstreamAction::Forward(min(available, prefix))
-                            } else {
-                                UpstreamAction::Wait
-                            }
-                        }
-                        TransportMutation::DropSuffixAfterPacket(_) => {
-                            if prefix > 0 {
-                                UpstreamAction::Forward(min(available, prefix))
-                            } else {
-                                UpstreamAction::Drop(available)
-                            }
-                        }
-                        TransportMutation::JoinActiveGate => UpstreamAction::Pass,
                     }
+                    TransportMutation::DropSuffixAfterPacket(_) => {
+                        if prefix > 0 {
+                            UpstreamAction::Forward(min(available, prefix))
+                        } else {
+                            UpstreamAction::Drop(available)
+                        }
+                    }
+                    TransportMutation::JoinActiveGate => UpstreamAction::Pass,
                 }
             }
         };
@@ -713,82 +657,9 @@ mod tests {
         let result = server.read(&mut byte);
         server.set_nonblocking(false).unwrap();
         assert!(
-            matches!(result, Err(error) if error.kind() == ErrorKind::WouldBlock),
+            matches!(&result, Err(error) if error.kind() == ErrorKind::WouldBlock),
             "unexpected upstream bytes: {result:?}"
         );
-    }
-
-    #[test]
-    fn guard_opener_prefix_precedes_a_held_native_batch_and_preserves_accounting() {
-        let (proxy, mut client, mut server) = connected_game_proxy();
-        let opener = [0xA1; 13];
-        let native_batch = [0xB2; 19];
-
-        proxy
-            .arm_guard_opener_prefix(200, opener.len())
-            .expect("one ordinary opener prefix can be armed");
-        proxy.begin_dispatch(41, TransportMutation::HoldThroughNextEdge, 7, 100);
-        proxy.packet_committed(41, 1, 196, native_batch.len());
-        proxy.end_dispatch(41, 100);
-        client.write_all(&opener).unwrap();
-        client.write_all(&native_batch).unwrap();
-
-        let mut received_opener = [0; 13];
-        server.read_exact(&mut received_opener).unwrap();
-        assert_eq!(received_opener, opener, "the lone opener passes immediately");
-        assert_no_upstream_bytes(&mut server);
-
-        proxy.observed_frame(8, true, 101);
-        assert_no_upstream_bytes(&mut server);
-        proxy.observed_frame(8, false, 102);
-        let mut received_batch = [0; 19];
-        server.read_exact(&mut received_batch).unwrap();
-        assert_eq!(received_batch, native_batch);
-
-        client.write_all(&[0xCC]).unwrap();
-        let mut tail = [0];
-        server.read_exact(&mut tail).unwrap();
-        assert_eq!(tail, [0xCC]);
-        let observations = proxy.observations();
-        assert_eq!(observations.len(), 1);
-        let observation = &observations[0];
-        assert_eq!(observation.pre_batch_prefix, Some((200, opener.len())));
-        assert_eq!(observation.request_id, 41);
-        assert_eq!(observation.request_ids, [41]);
-        assert_eq!(observation.packet_requests, [(41, 1)]);
-        assert_eq!(observation.packet_opcodes, [196]);
-        assert_eq!(observation.packet_lengths, [native_batch.len()]);
-        assert_eq!(observation.forwarded_bytes, opener.len() + native_batch.len());
-        assert_eq!(observation.dropped_bytes, 0);
-        assert_eq!(observation.release_edge_frame, Some(101));
-        assert_eq!(observation.released_host_frame, Some(102));
-        proxy.ensure_healthy().unwrap();
-    }
-
-    #[test]
-    fn guard_opener_prefix_rejects_empty_duplicate_and_mismatched_pairings() {
-        let upstream = TcpListener::bind(("127.0.0.1", 0)).unwrap();
-        let proxy = LoopbackProxy::start(upstream.local_addr().unwrap()).unwrap();
-        assert!(proxy.arm_guard_opener_prefix(200, 0).is_err());
-        assert!(proxy.ensure_healthy().is_err());
-
-        let upstream = TcpListener::bind(("127.0.0.1", 0)).unwrap();
-        let proxy = LoopbackProxy::start(upstream.local_addr().unwrap()).unwrap();
-        proxy.arm_guard_opener_prefix(200, 13).unwrap();
-        assert!(proxy.arm_guard_opener_prefix(200, 13).is_err());
-        assert!(proxy.ensure_healthy().is_err());
-
-        let upstream = TcpListener::bind(("127.0.0.1", 0)).unwrap();
-        let proxy = LoopbackProxy::start(upstream.local_addr().unwrap()).unwrap();
-        proxy.arm_guard_opener_prefix(200, 13).unwrap();
-        proxy.begin_dispatch(42, TransportMutation::SplitAfterFirstPacket, 7, 100);
-        assert!(proxy.ensure_healthy().is_err());
-
-        let upstream = TcpListener::bind(("127.0.0.1", 0)).unwrap();
-        let proxy = LoopbackProxy::start(upstream.local_addr().unwrap()).unwrap();
-        proxy.begin_dispatch(43, TransportMutation::HoldThroughNextEdge, 7, 100);
-        assert!(proxy.arm_guard_opener_prefix(200, 13).is_err());
-        assert!(proxy.ensure_healthy().is_err());
     }
 
     #[test]
@@ -820,7 +691,6 @@ mod tests {
         server.read_exact(&mut tail).unwrap();
         assert_eq!(tail, [0x53]);
         let observation = proxy.observations().pop().unwrap();
-        assert_eq!(observation.pre_batch_prefix, None);
         assert_eq!(observation.packet_lengths, [first.len(), suffix.len()]);
         assert_eq!(observation.forwarded_bytes, first.len() + suffix.len());
         assert_eq!(observation.dropped_bytes, 0);
@@ -849,7 +719,6 @@ mod tests {
         server.read_exact(&mut tail).unwrap();
         assert_eq!(tail, [0x75]);
         let observation = proxy.observations().pop().unwrap();
-        assert_eq!(observation.pre_batch_prefix, None);
         assert_eq!(observation.packet_lengths, [packet.len()]);
         assert_eq!(observation.forwarded_bytes, packet.len());
         assert_eq!(observation.dropped_bytes, 0);
