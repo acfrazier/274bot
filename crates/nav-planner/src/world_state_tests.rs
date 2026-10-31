@@ -1029,8 +1029,10 @@ fn admission_keeps_unknown_inventory_distinct_from_denied() {
         EdgeAdmission::Unknown(MissingRequirement::InventoryObservation)
     );
     assert!(!unknown.allows(&edge));
-    let mut observed = WorldState::default();
-    observed.inventory_ready = true;
+    let mut observed = WorldState {
+        inventory_ready: true,
+        ..WorldState::default()
+    };
     assert_eq!(observed.admission(&edge), EdgeAdmission::Denied);
     observed.inv.insert(995, 1);
     assert_eq!(observed.admission(&edge), EdgeAdmission::Allowed);

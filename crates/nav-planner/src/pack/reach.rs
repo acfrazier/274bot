@@ -157,16 +157,15 @@ fn decode_directory(payload: &[u8], expected: &[u32]) -> Result<(Vec<DirEnt>, us
     }
     let mut ents = Vec::with_capacity(n);
     let mut seen = Vec::new();
-    for i in 0..n {
+    for (i, &expected_kind) in expected.iter().enumerate() {
         let at = 4 + i * 16;
         let kind = u32_at(payload, at)?;
         let offset = u32_at(payload, at + 4)?;
         let count = u32_at(payload, at + 8)?;
         let stride = u32_at(payload, at + 12)?;
-        if kind != expected[i] {
+        if kind != expected_kind {
             return Err(PackError::BadLength(format!(
-                "reach table {i} has kind {kind}, expected {}",
-                expected[i]
+                "reach table {i} has kind {kind}, expected {expected_kind}"
             )));
         }
         if seen.contains(&kind) {
@@ -316,7 +315,7 @@ fn decode_labels(payload: &[u8]) -> Result<ReachabilityAtlas, PackError> {
         ));
     }
     let mut chunks = Vec::with_capacity(expected_chunks as usize);
-    for row in chunk_bytes.chunks_exact(20) {
+    for row in chunk_bytes.as_chunks::<20>().0 {
         if row[17] != 0 || row[18] != 0 || row[19] != 0 {
             return Err(PackError::BadLength(
                 "atlas chunk reserved bytes must be zero".into(),
@@ -332,7 +331,7 @@ fn decode_labels(payload: &[u8]) -> Result<ReachabilityAtlas, PackError> {
     }
     let palette_bytes = table_bytes(payload, ents[2])?;
     let mut palette = Vec::with_capacity(ents[2].count as usize);
-    for row in palette_bytes.chunks_exact(4) {
+    for row in palette_bytes.as_chunks::<4>().0 {
         palette.push(u32_slice(row)?);
     }
     let indexes = table_bytes(payload, ents[3])?.to_vec();
@@ -430,7 +429,7 @@ fn decode_labels(payload: &[u8]) -> Result<ReachabilityAtlas, PackError> {
 fn read_coverage(bytes: &[u8]) -> Result<Box<[CoverageRow]>, PackError> {
     let mut rows = Vec::with_capacity(bytes.len() / 8);
     let mut last = None;
-    for row in bytes.chunks_exact(8) {
+    for row in bytes.as_chunks::<8>().0 {
         let tile = u32_at(row, 0)?;
         unpack_tile_key(tile)?;
         let reason = u32_at(row, 4)?;
@@ -447,7 +446,7 @@ fn read_coverage(bytes: &[u8]) -> Result<Box<[CoverageRow]>, PackError> {
 
 fn read_exceptional(bytes: &[u8]) -> Result<Box<[ExceptionalTransition]>, PackError> {
     let mut rows = Vec::with_capacity(bytes.len() / 16);
-    for row in bytes.chunks_exact(16) {
+    for row in bytes.as_chunks::<16>().0 {
         let source = u32_at(row, 0)?;
         let destination = u32_at(row, 4)?;
         unpack_tile_key(source)?;
@@ -465,7 +464,7 @@ fn read_exceptional(bytes: &[u8]) -> Result<Box<[ExceptionalTransition]>, PackEr
 fn read_runs(bytes: &[u8]) -> Result<Box<[CellRun]>, PackError> {
     let mut rows = Vec::with_capacity(bytes.len() / 8);
     let mut next = 0u64;
-    for row in bytes.chunks_exact(8) {
+    for row in bytes.as_chunks::<8>().0 {
         let first = u32_at(row, 0)?;
         let count = u32_at(row, 4)?;
         if count == 0 {
@@ -542,14 +541,16 @@ fn encode_graph(atlas: &ReachabilityAtlas) -> Result<Vec<u8>, PackError> {
 }
 
 fn decode_u32_table(bytes: &[u8]) -> Result<Box<[u32]>, PackError> {
-    if bytes.len() % 4 != 0 {
+    if !bytes.len().is_multiple_of(4) {
         return Err(PackError::BadLength(
             "reach u32 table length is not aligned".into(),
         ));
     }
     Ok(bytes
-        .chunks_exact(4)
-        .map(u32_slice)
+        .as_chunks::<4>()
+        .0
+        .iter()
+        .map(|row| u32_slice(row))
         .collect::<Result<Vec<_>, _>>()?
         .into_boxed_slice())
 }
@@ -637,7 +638,7 @@ fn check_csr(
 
 fn read_closure_runs(bytes: &[u8]) -> Result<Box<[ClosureRun]>, PackError> {
     let mut rows = Vec::with_capacity(bytes.len() / 8);
-    for row in bytes.chunks_exact(8) {
+    for row in bytes.as_chunks::<8>().0 {
         let first = u32_at(row, 0)?;
         let count = u32_at(row, 4)?;
         if count == 0 {
@@ -650,7 +651,7 @@ fn read_closure_runs(bytes: &[u8]) -> Result<Box<[ClosureRun]>, PackError> {
 
 fn read_joins(bytes: &[u8]) -> Result<Box<[ConditionalJoin]>, PackError> {
     let mut rows = Vec::with_capacity(bytes.len() / 8);
-    for row in bytes.chunks_exact(8) {
+    for row in bytes.as_chunks::<8>().0 {
         rows.push(ConditionalJoin {
             destination: u32_at(row, 0)?,
             edge: u32_at(row, 4)?,
@@ -661,7 +662,7 @@ fn read_joins(bytes: &[u8]) -> Result<Box<[ConditionalJoin]>, PackError> {
 
 fn read_teleports(bytes: &[u8]) -> Result<Box<[TeleportTemplate]>, PackError> {
     let mut rows = Vec::with_capacity(bytes.len() / 12);
-    for row in bytes.chunks_exact(12) {
+    for row in bytes.as_chunks::<12>().0 {
         rows.push(TeleportTemplate {
             teleport: u32_at(row, 0)?,
             landing_base: u32_at(row, 4)?,
@@ -673,7 +674,7 @@ fn read_teleports(bytes: &[u8]) -> Result<Box<[TeleportTemplate]>, PackError> {
 
 fn read_sessions(bytes: &[u8]) -> Result<Box<[SessionTemplate]>, PackError> {
     let mut rows = Vec::with_capacity(bytes.len() / 28);
-    for row in bytes.chunks_exact(28) {
+    for row in bytes.as_chunks::<28>().0 {
         let source_tile = u32_at(row, 12)?;
         let landing_tile = u32_at(row, 16)?;
         unpack_tile_key(source_tile)?;
@@ -712,7 +713,7 @@ fn decode_placements(payload: &[u8], atlas: &mut ReachabilityAtlas) -> Result<()
     let bytes = table_bytes(payload, ents[0])?;
     let mut rows = Vec::with_capacity(bytes.len() / 24);
     let mut last = None;
-    for row in bytes.chunks_exact(24) {
+    for row in bytes.as_chunks::<24>().0 {
         let origin = u32_at(row, 0)?;
         let tile = unpack_tile_key(origin)?;
         let loc_id = i32_at(row, 4)?;
@@ -759,7 +760,7 @@ fn decode_stands(payload: &[u8], atlas: &mut ReachabilityAtlas) -> Result<(), Pa
     let (ents, _) = decode_directory(payload, &ONE_KIND)?;
     let bytes = table_bytes(payload, ents[0])?;
     let mut rows = Vec::with_capacity(bytes.len() / 8);
-    for row in bytes.chunks_exact(8) {
+    for row in bytes.as_chunks::<8>().0 {
         let tile = u32_at(row, 0)?;
         unpack_tile_key(tile)?;
         let base = u32_at(row, 4)?;
