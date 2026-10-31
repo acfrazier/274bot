@@ -2166,7 +2166,7 @@ fn checked_click_pair_completions(
         .wire
         .iter()
         .filter(|wire| wire.request_id.is_none())
-        .filter_map(move |wire| {
+        .filter(move |&wire| {
             let completes_pair = previous.is_some_and(|movement| {
                 movement.host_frame == wire.host_frame
                     && movement.game_tick == wire.game_tick
@@ -2175,7 +2175,7 @@ fn checked_click_pair_completions(
                         || wire.opcode == ClientProt289::OPNPC1.id as u8)
             });
             previous = Some(wire);
-            completes_pair.then_some(wire)
+            completes_pair
         })
 }
 
