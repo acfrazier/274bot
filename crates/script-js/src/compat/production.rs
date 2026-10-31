@@ -474,9 +474,13 @@ mod compat {
                     } else {
                         probe.main_modal_id
                     };
-                    let receipt = probe
-                        .inventory_count(product_id)
+                    let inventory_count = probe.inventory_count(product_id);
+                    let receipt = inventory_count
                         .is_some_and(|count| count.checked_sub(before_count) == Some(1));
+                    eprintln!(
+                        "[DEBUG-MAKEONE-50F9] tick={:?} product={product_id} page={now} before={before} inventory={inventory_count:?} before_count={before_count} receipt={receipt}",
+                        probe.tick
+                    );
                     let timed_out = probe.tick.is_some_and(|tick| tick >= deadline_tick);
                     done_or_wait(now != before && receipt, timed_out)
                 }
