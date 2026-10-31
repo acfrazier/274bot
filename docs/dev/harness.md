@@ -737,6 +737,11 @@ approaches against the observed scene after teleporting; a flood-reachable but
 blocked origin does not qualify.
 The adjacent-approach prerequisite uses a scene-sized expansion budget, not
 the query API's 400-expansion default for short reach checks.
+The oracle requires a resolved Auto anchor outside the initial 32-tile ring
+and a recorded search bound above 32 and at most 128. It then requires movement
+to a real next group, fresh products and XP. This covers the initial Auto search
+and its expanded rings, not the exhausted-group retry path. Initial search need
+not emit that retry path's `widening Auto within 128 tiles` event.
 
 The refused death-return fixture uses the real oak at `(3204,3525,0)`, away
 from the old Skeleton danger zone. It starts in the wilderness but leaves

@@ -4369,6 +4369,11 @@ impl GatherSlot {
                 .initial_area
                 .get_or_insert_with(|| area.to_owned());
             self.witness.last_area = Some(area.to_owned());
+            if self.case == LiveCase::LocationAuto
+                && auto_search_beyond_start_ring(self.target, area)
+            {
+                self.witness.auto_widen_seen = true;
+            }
             if let Some((_, deadline)) = area.split_once("; wait_until: ") {
                 self.witness.wait_until = deadline.trim().parse().ok();
             }
@@ -4413,15 +4418,6 @@ impl GatherSlot {
                 return Err("unwieldable rune axe wear action was started".into());
             }
             self.witness.last_event = Some(event.to_owned());
-            if self.case == LiveCase::LocationAuto
-                && auto_search_beyond_start_ring(
-                    self.target,
-                    text_field(status, "area").unwrap_or_default(),
-                    event,
-                )
-            {
-                self.witness.auto_widen_seen = true;
-            }
             if self.case == LiveCase::OakNearEdge
                 && event == "approaching target"
                 && text_field(status, "phase") == Some("walking")
@@ -5450,8 +5446,30 @@ fn observe_death_respawn_region(
         });
 }
 
-fn auto_search_beyond_start_ring(_start: WorldTile, _area: &str, event: &str) -> bool {
-    event == "widening Auto within 128 tiles"
+fn auto_search_beyond_start_ring(start: WorldTile, area: &str) -> bool {
+    let Some((coords, search)) = area
+        .strip_prefix("auto (")
+        .and_then(|area| area.split_once(") r32; searched: "))
+    else {
+        return false;
+    };
+    let Some((searched, attempts)) = search.split_once("; tried: ") else {
+        return false;
+    };
+    let Some((tried, limit)) = attempts.split_once("; limit: ") else {
+        return false;
+    };
+    if limit != "128" || tried.parse::<usize>().is_err() {
+        return false;
+    }
+    let Ok(searched) = searched.parse::<u32>() else {
+        return false;
+    };
+    let Ok(anchor) = parse_tile("Auto area", coords) else {
+        return false;
+    };
+    let distance = anchor.x.abs_diff(start.x).max(anchor.z.abs_diff(start.z));
+    searched <= 128 && anchor.level == start.level && (33..=searched).contains(&distance)
 }
 
 fn auto_approach_options(width: i32, height: i32) -> api::query::SceneReachOptions {
@@ -10402,14 +10420,7 @@ mod auto_search_oracle_tests {
             "auto (3294,3331,0) r32; searched: 33; tried: 0; limit: 128",
             "auto (3295,3426,0) r32; searched: 128; tried: 1; limit: 128",
         ] {
-            assert!(
-                auto_search_beyond_start_ring(
-                    AUTO_START,
-                    area,
-                    "searching Auto within 128 tiles",
-                ),
-                "{area}"
-            );
+            assert!(auto_search_beyond_start_ring(AUTO_START, area), "{area}");
         }
     }
 
@@ -10423,14 +10434,7 @@ mod auto_search_oracle_tests {
             "auto (3295,3330,0) r32; searched: 64; tried: 0; limit: 128",
             "auto (3292,3347,1) r32; searched: 64; tried: 0; limit: 128",
         ] {
-            assert!(
-                !auto_search_beyond_start_ring(
-                    AUTO_START,
-                    area,
-                    "widening Auto within 128 tiles",
-                ),
-                "{area}"
-            );
+            assert!(!auto_search_beyond_start_ring(AUTO_START, area), "{area}");
         }
     }
 
@@ -10447,14 +10451,7 @@ mod auto_search_oracle_tests {
             "auto (3295,3427,0) r32; searched: 128; tried: 0; limit: 128",
             "auto (3295,3363,0) r32; searched: 64; tried: 0; limit: 128",
         ] {
-            assert!(
-                !auto_search_beyond_start_ring(
-                    AUTO_START,
-                    area,
-                    "widening Auto within 128 tiles",
-                ),
-                "{area}"
-            );
+            assert!(!auto_search_beyond_start_ring(AUTO_START, area), "{area}");
         }
     }
 }
