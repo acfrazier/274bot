@@ -48,86 +48,6 @@ const WAIT_GAMEPLAY_TICKS: u64 = 800; // Eight minutes at 600 ms per server tick
 const IDLE_AVOID_TICKS: u64 = 60;
 const HAZARD_RETREAT_RADIUS: i32 = 8;
 
-const SHORT_HANDOFF_MAX_STEPS: u32 = 2;
-
-/// Only a checked idle depleting cycle may bypass its normal walk, and only
-/// when the same live loc approach has a walkable stand in the posted flood.
-fn short_loc_replacement_access(
-    selected: &SelectedTarget,
-    request: &WalkRequest,
-    tick: &NativeTick<'_>,
-) -> bool {
-    if selected.class != PlacementClass::Live
-        || request.candidate_goals.is_some()
-        || request.arrival != ArrivalKind::Reach
-        || request.radius != RESOURCE_APPROACH_RADIUS
-        || request.target != selected.plan.tile
-    {
-        return false;
-    }
-    let api::selected::EntityId::Loc(loc_id) = selected.plan.entity else {
-        return false;
-    };
-    if request.loc_id != Some(loc_id) {
-        return false;
-    }
-    let Some(frame) = tick.frame.snapshot else {
-        return false;
-    };
-    if !frame.ingame() || frame.scene_state() != 2 {
-        return false;
-    }
-    let Some(loc) = frame
-        .locs()
-        .iter()
-        .find(|loc| loc.id == loc_id && loc.tile == selected.plan.tile)
-    else {
-        return false;
-    };
-    let scene = frame.scene();
-    if !scene.available {
-        return false;
-    }
-    let context = tick.cx.snapshot();
-    let Some(player) = context.local_player() else {
-        return false;
-    };
-    let here = player.value.player.network;
-    let Some(reach) = crate::reach_route::live(
-        context.reach().map(|observed| observed.value),
-        Some(here),
-    ) else {
-        return false;
-    };
-    let scene_query = api::query::SceneQuery::new(scene, None);
-    if !scene_query.contains(selected.plan.tile) {
-        return false;
-    }
-    // This small box bounds possible two-step endpoints. Every candidate still
-    // needs the live loc footprint/wall proof and an exact posted-flood path.
-    let span = SHORT_HANDOFF_MAX_STEPS as i32;
-    for dx in -span..=span {
-        for dz in -span..=span {
-            let stand = WorldTile {
-                x: here.x.saturating_add(dx),
-                z: here.z.saturating_add(dz),
-                level: here.level,
-            };
-            if api::query::loc_approach::distance_from(loc, stand)
-                .is_none_or(|distance| distance > u32::from(request.radius))
-                || api::query::loc_approach::can_operate_from(loc, scene, stand) != Some(true)
-                || !scene_query.walkable(stand)
-                || crate::reach_route::exact_depth(reach, stand)
-                    .is_none_or(|steps| steps > SHORT_HANDOFF_MAX_STEPS)
-            {
-                continue;
-            }
-            return true;
-        }
-    }
-    false
-}
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct ToolState {
     id: i32,
@@ -1406,24 +1326,6 @@ impl Gatherer {
                     return;
                 }
             };
-        let short_handoff = approach.as_ref().is_some_and(|request| {
-            self.parked_cycle
-                .as_ref()
-                .is_some_and(|cycle| cycle.permits_short_depleting_handoff())
-                && short_loc_replacement_access(&selected, request, tick)
-        });
-        if short_handoff {
-            if let Some(plan) = self.target.clone() {
-                if let Some(timing) = self.timing_for_target(&plan, &tick.cx) {
-                    if timing.cycle.permits_short_depleting_handoff() {
-                        self.begin_gather_target(plan, Some(timing), tick);
-                        return;
-                    }
-                    self.tick_policy = timing.policy;
-                    self.parked_cycle = Some(timing.cycle);
-                }
-            }
-        }
         if let Some(request) = approach {
             match tick.actions.begin::<Walk>(request, &mut tick.cx) {
                 Ok(handle) => {

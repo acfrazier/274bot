@@ -578,14 +578,6 @@ impl TickCycle {
         matches!(self.phase, Phase::Native { .. } | Phase::Idle { .. })
     }
 
-    /// A successful depleting cycle can arm a live replacement before ordinary
-    /// approach only while its checked owner has fully settled.
-    pub(crate) fn permits_short_depleting_handoff(&self) -> bool {
-        self.spec.depletes
-            && matches!(self.phase, Phase::Idle { .. })
-            && !self.has_unresolved_requests()
-    }
-
     pub(crate) fn batch_request_id(&self) -> Option<u64> {
         self.pending_batch_id.map(NonZeroU64::get)
     }

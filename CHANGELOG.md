@@ -17,9 +17,10 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.8` 
   unloaded, and returns to it after banking. Moving NPC spots keep their own
   observation and return paths.
 - A successful depleting Knife cycle survives a skipped edge while a live
-  replacement is selected. It can arm before the usual walk only when a
-  walkable loc-approach tile is within two steps in the current posted reach
-  flood; long, blocked and unknown routes keep the ordinary approach.
+  replacement is selected. Gatherer arms a live loc immediately only from an
+  exact current stand. For a remote loc, Gatherer keeps the cycle parked while
+  it completes the ordinary approach walk, then re-adopts the cycle after
+  arrival.
 - Knife engine tests attribute chat and fresh `IF_CLOSE` packets by their
   position against `PLAYER_INFO`. A chat-only close no longer requires a
   main-modal transition, and a retained close count cannot stand for a new one.

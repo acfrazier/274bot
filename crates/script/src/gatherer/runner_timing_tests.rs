@@ -440,7 +440,7 @@ fn parked_depleting_idle_cycle_keeps_walk_for_long_or_unreachable_access() {
             ledger.as_ref().unwrap().outbox.iter().all(|action| {
                 !matches!(action.effect, HostEffect::ServerOrdered(_))
             }),
-            "no replacement batch is emitted without short exact access"
+            "no replacement batch is emitted while the normal approach walk remains active"
         );
         assert!(
             gatherer.parked_cycle.is_some(),
