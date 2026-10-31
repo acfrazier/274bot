@@ -148,9 +148,10 @@ fn decode_directory(payload: &[u8], expected: &[u32]) -> Result<(Vec<DirEnt>, us
         )));
     }
     let dir_end = 4usize
-        .checked_add(n.checked_mul(16).ok_or_else(|| {
-            PackError::BadLength("reach directory size overflows".into())
-        })?)
+        .checked_add(
+            n.checked_mul(16)
+                .ok_or_else(|| PackError::BadLength("reach directory size overflows".into()))?,
+        )
         .ok_or_else(|| PackError::BadLength("reach directory size overflows".into()))?;
     if payload.len() < dir_end {
         return Err(PackError::Truncated);
@@ -217,9 +218,7 @@ fn table_bytes(payload: &[u8], ent: DirEnt) -> Result<&[u8], PackError> {
     let len = (ent.count as usize)
         .checked_mul(ent.stride as usize)
         .ok_or_else(|| PackError::BadLength("reach table size overflows".into()))?;
-    payload
-        .get(start..start + len)
-        .ok_or(PackError::Truncated)
+    payload.get(start..start + len).ok_or(PackError::Truncated)
 }
 
 fn encode_labels(atlas: &ReachabilityAtlas) -> Result<Vec<u8>, PackError> {

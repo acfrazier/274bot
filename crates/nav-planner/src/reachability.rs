@@ -281,9 +281,10 @@ impl ReachabilityAtlas {
             .and_then(|n| n.checked_add(cz.checked_mul(chunk_cols)?))
             .and_then(|n| n.checked_add(cx))
             .ok_or_else(|| PackError::BadLength("atlas chunk index overflows".into()))?;
-        let chunk = self.chunks.get(chunk_index as usize).ok_or_else(|| {
-            PackError::BadLength("atlas chunk index is out of range".into())
-        })?;
+        let chunk = self
+            .chunks
+            .get(chunk_index as usize)
+            .ok_or_else(|| PackError::BadLength("atlas chunk index is out of range".into()))?;
         let cell = local_z
             .checked_mul(CHUNK_SIDE)
             .and_then(|n| n.checked_add(local_x))

@@ -106,7 +106,8 @@ impl CacheManifest {
                 self.revision
             ));
         }
-        self.verify_bytes(cache_dir).map_err(|error| error.to_string())
+        self.verify_bytes(cache_dir)
+            .map_err(|error| error.to_string())
     }
 
     /// Stable cache identity: revision plus sorted archive name/hash pairs.

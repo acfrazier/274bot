@@ -109,18 +109,19 @@ impl<'a> LocStandView<'a> {
     ) -> impl Iterator<Item = Result<(WorldTile, BoundComponentKey), ReachabilityError>> + 'a {
         let pack = self.pack;
         self.stands.iter().map(move |row| {
-            let tile = unpack_tile_key(row.tile).map_err(|_| ReachabilityError::MissingPlacement {
-                key: LocPlacementKey {
-                    tile: WorldTile {
-                        x: 0,
-                        z: 0,
-                        level: 0,
+            let tile =
+                unpack_tile_key(row.tile).map_err(|_| ReachabilityError::MissingPlacement {
+                    key: LocPlacementKey {
+                        tile: WorldTile {
+                            x: 0,
+                            z: 0,
+                            level: 0,
+                        },
+                        loc_id: 0,
+                        shape: 0,
+                        angle: 0,
                     },
-                    loc_id: 0,
-                    shape: 0,
-                    angle: 0,
-                },
-            })?;
+                })?;
             Ok((
                 tile,
                 BoundComponentKey {
@@ -167,7 +168,10 @@ impl<'a> ReachabilityView<'a> {
 
     /// Borrowed stands for a placed loc. Unsupported geometry stays typed.
     pub fn loc_stands(&self, key: LocPlacementKey) -> Result<LocStandView<'a>, ReachabilityError> {
-        let Some(row) = self.atlas.placement(key.tile, key.loc_id, key.shape, key.angle) else {
+        let Some(row) = self
+            .atlas
+            .placement(key.tile, key.loc_id, key.shape, key.angle)
+        else {
             return Err(ReachabilityError::MissingPlacement { key });
         };
         if row.coverage == crate::reachability::PLACEMENT_UNSUPPORTED_GEOMETRY {

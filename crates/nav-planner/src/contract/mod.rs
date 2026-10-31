@@ -30,12 +30,12 @@ mod zones;
 
 pub use arrival::ArrivalSpec;
 pub use collision::CollisionView;
-pub use reachability::{
-    BoundComponentKey, LocPlacementKey, LocStandView, ReachabilityError, ReachabilityView,
-};
 pub use envelope::{
     BoundRouteRequest, RouteFamilyError, RouteFamilyResult, RoutePermissions, RoutePhase,
     RouteRequest, RouteService,
+};
+pub use reachability::{
+    BoundComponentKey, LocPlacementKey, LocStandView, ReachabilityError, ReachabilityView,
 };
 pub use route::{LegView, RoutePlanLease, RouteView};
 pub use transport::TransportView;
