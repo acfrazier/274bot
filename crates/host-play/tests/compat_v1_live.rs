@@ -341,12 +341,12 @@ fn wait_ready(state: &Arc<Mutex<FrameState>>) -> Result<(), String> {
         if let Some(error) = &frame.error {
             return Err(error.clone());
         }
-        if frame.ready {
+        if frame.ready && frame.snapshot.attached() {
             return Ok(());
         }
         drop(frame);
         if Instant::now() >= deadline {
-            return Err("timed out waiting for the generated account to enter the game".into());
+            return Err("timed out waiting for the generated account to attach in the game".into());
         }
         thread::sleep(POLL_INTERVAL);
     }
@@ -895,7 +895,9 @@ fn wait_for_next_tick_without_restart_event(session: &mut LiveSession<'_>) -> Re
 
 fn run_events_cell(receipt: &mut Receipt) -> Result<(), String> {
     let mut session = session("compat-v1-events", receipt)?;
-    // Seed the fresh account into the game at a stable tile.
+    // Give the fresh account one item before its position seed.
+    request_command(&session, "give coins 1")?;
+    wait_command(&mut session, "give coins 1")?;
     request_seed_at(
         &session.state,
         EVENTS_SEED_TILE.2,
@@ -903,6 +905,7 @@ fn run_events_cell(receipt: &mut Receipt) -> Result<(), String> {
         EVENTS_SEED_TILE.1,
     );
     wait_for_tile(&session.state, EVENTS_SEED_TILE)?;
+    wait_for_inventory_count(&session.state, 995, 1)?;
     session
         .receipt
         .logs
@@ -910,9 +913,6 @@ fn run_events_cell(receipt: &mut Receipt) -> Result<(), String> {
             "EVENTS:SEED:{},{},{}",
             EVENTS_SEED_TILE.0, EVENTS_SEED_TILE.1, EVENTS_SEED_TILE.2
         ));
-    request_command(&session, "give coins 1")?;
-    wait_command(&mut session, "give coins 1")?;
-    wait_for_inventory_count(&session.state, 995, 1)?;
     start_script(&session, events_source(1))?;
     wait_for_logs(&mut session, ACTION_DEADLINE, |logs| {
         logs.iter().any(|line| line == "EVENTS:READY:1")
