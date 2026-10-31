@@ -2336,6 +2336,20 @@ impl Run {
             value["gpu_buffer_bytes"] = gpu.buffers.into();
             value["gpu_texture_bytes"] = gpu.textures.into();
             value["gpu_peak_tracked_bytes"] = gpu.peak.into();
+            #[cfg(feature = "render-diagnostics")]
+            {
+                let render = host::render_head::workspace_stats();
+                value["render_service"] = serde_json::json!({
+                    "pump_calls": render.pump_calls(),
+                    "max_actual_pump_interval_ns": render.max_pump_interval().as_nanos(),
+                    "pump_interval_scope": "process lifetime",
+                    "scene_leases": render.leased(),
+                    "busy": render.busy(),
+                    "fault_totals": render.faults().totals(),
+                    "client_test_controls_compiled": client::render::backend::render_test_hooks_compiled(),
+                    "drawing_instrumentation_compiled": client::render::backend::draw_memory_profile_compiled(),
+                });
+            }
             value["v8_live_isolates"] = live.into();
             value["v8_sampled_isolates"] = sampled.into();
             let now_ms = std::time::SystemTime::now()

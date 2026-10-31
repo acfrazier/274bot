@@ -70,6 +70,11 @@ path = "tests/t44_headed_live.rs"
 harness = false
 required-features = ["render-test-hooks"]
 
+[[test]]
+name = "t44_focus_wake"
+path = "tests/t44_focus_wake.rs"
+required-features = ["render-test-hooks", "render-diagnostics"]
+
 [features]
 default = ["js"]
 js = ["frontend-core/js"]

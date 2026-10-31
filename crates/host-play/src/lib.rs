@@ -465,6 +465,13 @@ impl Play {
         }
     }
 
+    /// Observe the real worker's control wake pair without creating or
+    /// replacing a channel. Unknown and retired names have no snapshot.
+    #[cfg(any(feature = "render-diagnostics", feature = "render-test-hooks"))]
+    pub fn slot_wake_snapshot(&self, name: &str) -> Option<host::SlotWakeSnapshot> {
+        self.wakes.get(name).map(host::SlotWake::snapshot)
+    }
+
     /// Bind explicit render inputs before the named slot starts.
     #[cfg(feature = "render-test-hooks")]
     pub fn set_render_test_control(

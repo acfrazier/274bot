@@ -320,7 +320,7 @@ unchanged manifest; compression does not change selected-content identities.
 | `lib.rs` | slot pump and crate facade | one OS thread per slot |
 | `render.rs` | neutral render reservation protocol (D12, §23 §2) | metadata only; no render thread; one process instance, owned by `render_head.rs` |
 | `render_head.rs` | per-slot render heads over the process `RenderService` (T4.2 wrap) | `HeadLease` per drawing slot; GPU scene submissions under a `FrameLease` through the client's scene-workspace hook, CPU heads take none; the client's `GPU_SCENE_LOCK` wait is retained until T4.4 |
-| `render_head/fair.rs` | opt-in fair-render admission and head samples | explicit `render-test-hooks` process fixture only; one consume per scene paint, retained Busy overlays, target slot wakes, and release before overlays |
+| `render_head/fair.rs` | opt-in fair-render admission and head samples | explicit calibration under `render-diagnostics`, or deterministic `render-test-hooks` fixtures; one consume per scene paint, retained Busy overlays, target slot wakes, and release before overlays |
 | `slot.rs` | per-slot drain pump | gens diff, tick synthesis, dirty families |
 | `slot_io.rs` | frame and input channels | mailbox (accepts only its attached head's frames), input, park and wake |
 | `login_queue.rs` | login FIFO and backoff | production rate limits |
@@ -338,19 +338,26 @@ cleanup. Attach reconstructs a head over the same Client and connection.
 Ground stamps and simulation observation generations remain on the world.
 An attached head still preserves its last 3D scene while `scene_state == 1`.
 Normal builds retain the synchronous GPU workspace wait and the 100 ms wrap
-grant lifetime until the final qualification slice. With `render-test-hooks`,
-an explicit process fixture can activate nonwaiting admission without changing
-those production defaults. Its independent pump reports consumed overruns
-without reclaiming an active workspace. Frontend-core forwards bounded fault
-snapshots and selected-incident acknowledgements to the panel.
-The M3 `render-test-hooks` probe also requires `M3_FAIR_PROBE=1` and explicit
-grant-lifetime and scene-quantum inputs. It labels every receipt PROVISIONAL.
-Its head samples keep separate grant publication, cross-thread notification,
-actual slot-tick wake and consume times; an unobserved wake is not fabricated.
-The samples retain the worst observed delivery and consumed-lease duration
-between polls. Scene consumes and composite paints have separate rates.
+grant lifetime until final qualification. An explicit diagnostic calibration
+can activate nonwaiting admission without changing those production defaults.
+Deterministic clock, paint and GPU failure controls remain test-hook-only.
+The independent pump reports consumed overruns without reclaiming an active
+workspace. Frontend-core forwards bounded fault snapshots and selected-incident
+acknowledgements to the panel.
+M3 calibration requires `M3_FAIR_PROBE=1`, explicit grant-lifetime and
+scene-quantum inputs, thirteen byte ceilings, and a retained-present resource
+cap. It labels every receipt PROVISIONAL. A timing build rejects render test
+controls and drawing allocator instrumentation, including client features
+enabled through dependency unification.
+Head samples separate grant publication, notification, actual slot-tick wake,
+and consume times. An unobserved wake is not fabricated. Each stage retains
+its independent maximum between polls. Samples also record cumulative skipped
+due opportunities separately from the current skip streak.
+M3 reports actual simulation cycles, consumer turns, head paints and GPU scene
+consumes separately. Pump maxima retain nanosecond precision without a
+histogram ceiling. Churn samples record the selected head and full-rate set.
 `M3_BACKEND=mixed` takes an explicit `M3_CPU_HEADS` count. `M3_FOCUS_INDEX`
-selects either backend's focused head without changing the other heads' simulation.
+selects either backend's focused head without changing simulation cadence.
 
 The slice-4 fixture keeps one 684,032-byte clean CPU scene per drawing CPU
 head after its first successful live scene. Loading restores that storage and
@@ -364,13 +371,13 @@ scene (or PendingScene), draws current overlays and chrome, and publishes
 the complete pixels. The renderer forwards the typed fault by value through
 the head's `FramePaintStatus` into the mailbox's `render_fault` field.
 Only an incomplete output is `Refused`; a recovered image is usable.
-Without the explicit process fixture, the head never sets this recovery metadata.
+Without explicit process configuration, the head never sets this recovery metadata.
 The headed fixture can apply loading and crosshair appear/move/remove inputs
 for one paint. Its scope restores scene and crosshair state before simulation
 resumes, including on unwind.
 
-Budget scopes are explicit fixture inputs until qualification. Growing scene,
-model, nav, sprite and GPU storage reserves its byte charge before allocation,
+Budget scopes require explicit calibration or fixture inputs until qualification.
+Growing scene, model, nav, sprite and GPU storage reserves its byte charge before allocation,
 including old-plus-new replacement peaks and nested payloads. GPU heads share
 one process-owned scene vertex buffer, brightness uniform and scene bind group.
 Only scene submission accesses them, inside the consumed lease and GPU scene
@@ -392,6 +399,11 @@ Registered GPU consumer images are a separate
 logical-device domain: one 1,539,180-byte image per active or draining
 registration, zero without a registration. A held image survives later
 display paints and retirement but cannot prove a reattached head's identity.
+Diagnostic counters report actual retained allocations, copies and logical
+bytes. Their CPU encoding and queue submission durations are not GPU execution
+times. The resource permit retains its byte charge through registration
+failure and draining. Live totals require quiescent producers for an exact
+phase-boundary comparison.
 
 The mailbox moves `PresentedFrame` output, ROI and `FrameStamp` together.
 The stamp contains the exact head, checked mailbox sequence, scene validity

@@ -108,8 +108,8 @@ windows-sys = { version = "0.59", features = [
 [features]
 default = ["js"]
 js = ["dep:script-js"]
-render-diagnostics = ["client/render-diagnostics"]
-# Opt-in host render controls for the provisional M3 contention probe.
+render-diagnostics = ["client/render-diagnostics", "host/render-diagnostics"]
+# Opt-in render controls for deterministic integration tests, never timing.
 render-test-hooks = ["host/render-test-hooks"]
 
 debug-catalog = ["api/debug-catalog"]

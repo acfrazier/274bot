@@ -7,7 +7,7 @@
 //! `set_draw(true)`, as the panel's focus switch does). A consumer thread
 //! takes every mailbox on its UI period and runs the independent render pump
 //! on that same thread. Unset `M3_FAIR_PROBE` retains the legacy full/focus1
-//! cadence and grouping. With the explicit hook probe, `M3_FOCUS_INDEX`
+//! cadence and grouping. With explicit calibration, `M3_FOCUS_INDEX`
 //! (default 0) selects the focused head in both policies. `full` sets every
 //! cadence to full-rate and `focus1` sets only that selection to full-rate.
 //! Per cell the harness writes a JSON summary and per-second samples:
@@ -31,10 +31,10 @@
 //! `M3_FOCUS_INDEX` (0), `M3_WARMUP_S` (10), `M3_OBSERVE_S` (30),
 //! `M3_POLICIES` (`full,focus1`), `M3_PORT` (44594), `M3_HTTP_PORT` (1080).
 //!
-//! The hook-enabled probe is opt-in and never supplies TTL or quantum defaults:
-//! set `M3_FAIR_PROBE=1`, `M3_GRANT_TTL_MS`, and `M3_SCENE_QUANTUM_MS`, and
-//! build with `--features memory-profile,render-test-hooks`. Its receipts are
-//! labelled PROVISIONAL and are not production qualification.
+//! Calibration is opt-in and never supplies TTL or quantum defaults:
+//! set `M3_FAIR_PROBE=1`, `M3_GRANT_TTL_MS`, and `M3_SCENE_QUANTUM_MS`.
+//! Build with `--features memory-profile,render-diagnostics` without test hooks
+//! or drawing allocator features. Calibration receipts remain PROVISIONAL.
 #![cfg(feature = "memory-profile")]
 
 use std::collections::HashMap;
@@ -104,32 +104,105 @@ fn fair_probe_inputs() -> Option<FairProbeInputs> {
     })
 }
 
+#[cfg(any(feature = "render-test-hooks", feature = "render-diagnostics"))]
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RenderBudgetInputs {
+    capture: usize,
+    nav_vertices: usize,
+    nav_quads: usize,
+    nav_edges: usize,
+    nav_input: usize,
+    head_models: usize,
+    head_misc: usize,
+    temp_models: usize,
+    shared_models: usize,
+    shared_sprites: usize,
+    vertex: usize,
+    context_cpu: usize,
+    context_gpu: usize,
+}
+
+#[cfg(any(feature = "render-test-hooks", feature = "render-diagnostics"))]
+impl RenderBudgetInputs {
+    fn into_limits(self) -> client::render::budget::RenderBudgetLimits {
+        client::render::budget::RenderBudgetLimits::new(
+            self.capture,
+            self.nav_vertices,
+            self.nav_quads,
+            self.nav_edges,
+            self.nav_input,
+            self.head_models,
+            self.head_misc,
+            self.temp_models,
+            self.shared_models,
+            self.shared_sprites,
+            self.vertex,
+            self.context_cpu,
+            self.context_gpu,
+        )
+    }
+}
+
 fn configure_fair_probe(inputs: Option<FairProbeInputs>) {
     let Some(inputs) = inputs else {
         return;
     };
-    #[cfg(feature = "render-test-hooks")]
-    render_head::test_hooks::configure_process(render_head::test_hooks::ProcessFixture {
-        grant_ttl: Duration::from_millis(inputs.grant_ttl_ms),
-        quantum: Duration::from_millis(inputs.scene_quantum_ms),
-    })
-    .expect("configure M3 render process before its first use");
-    #[cfg(not(feature = "render-test-hooks"))]
+    #[cfg(any(feature = "render-test-hooks", feature = "render-diagnostics"))]
+    {
+        let budgets: RenderBudgetInputs =
+            serde_json::from_str(&required("T44_RENDER_BUDGET_LIMITS_JSON"))
+                .expect("all thirteen explicit render byte ceilings are required");
+        render_head::configure_calibration_limits(budgets.into_limits())
+            .expect("configure M3 budgets before creating any head");
+        let cap = required("M3_RETAINED_PRESENT_CAP")
+            .parse()
+            .ok()
+            .and_then(std::num::NonZeroUsize::new)
+            .expect("M3_RETAINED_PRESENT_CAP is a positive process resource count");
+        client::render::backend::present::configure_retained_present_budget(cap)
+            .expect("configure retained-present resources before any registration");
+        render_head::configure_calibration(render_head::CalibrationConfig {
+            grant_ttl: Duration::from_millis(inputs.grant_ttl_ms),
+            scene_quantum: Duration::from_millis(inputs.scene_quantum_ms),
+        })
+        .expect("configure M3 render process before its first use");
+    }
+    #[cfg(not(any(feature = "render-test-hooks", feature = "render-diagnostics")))]
     panic!(
-        "M3_FAIR_PROBE=1 requires host-play --features render-test-hooks; inputs were {:?} ms TTL and {:?} ms quantum",
+        "M3_FAIR_PROBE=1 requires host-play --features render-diagnostics; inputs were {:?} ms TTL and {:?} ms quantum",
         inputs.grant_ttl_ms, inputs.scene_quantum_ms
     );
+}
+
+fn client_compiled_features() -> Value {
+    #[cfg(feature = "render-diagnostics")]
+    {
+        json!({
+            "render_test_hooks": client::render::backend::render_test_hooks_compiled(),
+            "draw_memory_profile": client::render::backend::draw_memory_profile_compiled(),
+        })
+    }
+    #[cfg(not(feature = "render-diagnostics"))]
+    {
+        Value::Null
+    }
 }
 
 fn add_probe_receipt(receipt: &mut Value, inputs: Option<FairProbeInputs>) {
     if let Some(inputs) = inputs {
         receipt["render_probe"] = json!({
-            "mode": "hook-enabled",
+            "mode": if cfg!(feature = "render-test-hooks") { "hook-enabled" } else { "diagnostic-calibration" },
             "qualification": "PROVISIONAL",
+            "test_hooks_compiled": cfg!(feature = "render-test-hooks"),
+            "drawing_allocator_compiled": cfg!(feature = "draw-memory-profile"),
+            "client_compiled_features": client_compiled_features(),
             "inputs_ms": {
                 "M3_GRANT_TTL_MS": inputs.grant_ttl_ms,
                 "M3_SCENE_QUANTUM_MS": inputs.scene_quantum_ms,
             },
+            "byte_limits": serde_json::from_str::<Value>(&required("T44_RENDER_BUDGET_LIMITS_JSON")).expect("validated explicit byte limits"),
+            "retained_present_cap": required("M3_RETAINED_PRESENT_CAP").parse::<usize>().expect("validated retained cap"),
             "background_scene_progress_oracle": {
                 "ordinary_cadence_ms": BACKGROUND_CADENCE.as_millis(),
                 "max_gap_ms": BACKGROUND_SCENE_GAP.as_millis(),
@@ -187,6 +260,7 @@ fn watch_grant_wake_latency_is_measured_from_publication() {
 struct SlotFrames {
     last: Mutex<Option<Instant>>,
     frames: AtomicU64,
+    simulation_cycle: AtomicU64,
     histogram: [AtomicU64; BUCKETS],
 }
 
@@ -195,13 +269,15 @@ impl SlotFrames {
         Self {
             last: Mutex::new(None),
             frames: AtomicU64::new(0),
+            simulation_cycle: AtomicU64::new(0),
             histogram: [const { AtomicU64::new(0) }; BUCKETS],
         }
     }
 
-    fn record(&self, now: Instant) {
+    fn record(&self, now: Instant, simulation_cycle: i32) {
         let previous = self.last.lock().unwrap().replace(now);
         self.frames.fetch_add(1, Relaxed);
+        self.simulation_cycle.store(simulation_cycle as u32 as u64, Relaxed);
         if let Some(previous) = previous {
             let ms = now.duration_since(previous).as_micros().div_ceil(1000) as usize;
             self.histogram[ms.min(BUCKETS - 1)].fetch_add(1, Relaxed);
@@ -215,6 +291,21 @@ impl SlotFrames {
 
 /// Origin of every `t_s` this harness writes outside a cell's own clock.
 static EPOCH: LazyLock<Instant> = LazyLock::new(Instant::now);
+
+/// Smallest positive monotonic step observed in 10,000 successive reads.
+static CLOCK_RESOLUTION: LazyLock<Duration> = LazyLock::new(|| {
+    let mut previous = Instant::now();
+    let mut smallest = None;
+    for _ in 0..10_000 {
+        let now = Instant::now();
+        let step = now.saturating_duration_since(previous);
+        if !step.is_zero() {
+            smallest = Some(smallest.map_or(step, |old: Duration| old.min(step)));
+        }
+        previous = now;
+    }
+    smallest.expect("the monotonic clock advances during resolution sampling")
+});
 
 fn since_epoch(at: Instant) -> f64 {
     at.duration_since(*EPOCH).as_secs_f64()
@@ -414,13 +505,14 @@ struct Mark {
     paints: Vec<u64>,
     published: Vec<Publication>,
     frames: Vec<u64>,
+    simulation_cycles: Vec<u64>,
     histograms: Vec<Vec<u64>>,
     taken: u64,
     workspace: render_head::WorkspaceStats,
     pump: Option<PumpSnapshot>,
-    #[cfg(feature = "render-test-hooks")]
+    #[cfg(any(feature = "render-test-hooks", feature = "render-diagnostics"))]
     fair: Option<Vec<Option<render_head::HeadFairStats>>>,
-    #[cfg(feature = "render-test-hooks")]
+    #[cfg(any(feature = "render-test-hooks", feature = "render-diagnostics"))]
     head_identities: Option<Vec<Option<host::render::HeadIdentity>>>,
 }
 
@@ -434,15 +526,19 @@ fn mark(heads: &[HeadProbe], taken: &AtomicU64, pump: Option<&PumpProbe>) -> Mar
             .iter()
             .map(|h| h.frames.frames.load(Relaxed))
             .collect(),
+        simulation_cycles: heads
+            .iter()
+            .map(|head| head.frames.simulation_cycle.load(Relaxed))
+            .collect(),
         histograms: heads.iter().map(|h| h.frames.histogram()).collect(),
         taken: taken.load(Relaxed),
         workspace: render_head::workspace_stats(),
         pump: pump.map(PumpProbe::snapshot),
-        #[cfg(feature = "render-test-hooks")]
+        #[cfg(any(feature = "render-test-hooks", feature = "render-diagnostics"))]
         fair: pump
             .is_some()
             .then(|| heads.iter().map(|h| h.mailbox.fair_stats()).collect()),
-        #[cfg(feature = "render-test-hooks")]
+        #[cfg(any(feature = "render-test-hooks", feature = "render-diagnostics"))]
         head_identities: pump
             .is_some()
             .then(|| heads.iter().map(|h| h.mailbox.head()).collect()),
@@ -453,16 +549,20 @@ fn mark(heads: &[HeadProbe], taken: &AtomicU64, pump: Option<&PumpProbe>) -> Mar
 struct PumpProbe {
     last: Mutex<Option<Instant>>,
     calls: AtomicU64,
+    consumer_turns: AtomicU64,
     intervals: AtomicU64,
     interval_ns: AtomicU64,
+    max_interval_ns: AtomicU64,
     histogram: [AtomicU64; BUCKETS],
 }
 
 #[derive(Clone, Copy)]
 struct PumpSnapshot {
     calls: u64,
+    consumer_turns: u64,
     intervals: u64,
     interval_ns: u64,
+    max_interval_ns: u64,
     histogram: [u64; BUCKETS],
 }
 
@@ -471,8 +571,10 @@ impl PumpProbe {
         Self {
             last: Mutex::new(None),
             calls: AtomicU64::new(0),
+            consumer_turns: AtomicU64::new(0),
             intervals: AtomicU64::new(0),
             interval_ns: AtomicU64::new(0),
+            max_interval_ns: AtomicU64::new(0),
             histogram: [const { AtomicU64::new(0) }; BUCKETS],
         }
     }
@@ -489,6 +591,10 @@ impl PumpProbe {
             u64::try_from(interval.as_nanos()).unwrap_or(u64::MAX),
             Relaxed,
         );
+        self.max_interval_ns.fetch_max(
+            u64::try_from(interval.as_nanos()).unwrap_or(u64::MAX),
+            Relaxed,
+        );
         let ms = interval.as_micros().div_ceil(1000);
         let bucket = usize::try_from(ms).unwrap_or(usize::MAX).min(BUCKETS - 1);
         self.histogram[bucket].fetch_add(1, Relaxed);
@@ -497,11 +603,24 @@ impl PumpProbe {
     fn snapshot(&self) -> PumpSnapshot {
         PumpSnapshot {
             calls: self.calls.load(Relaxed),
+            consumer_turns: self.consumer_turns.load(Relaxed),
             intervals: self.intervals.load(Relaxed),
             interval_ns: self.interval_ns.load(Relaxed),
+            max_interval_ns: self.max_interval_ns.load(Relaxed),
             histogram: std::array::from_fn(|i| self.histogram[i].load(Relaxed)),
         }
     }
+}
+
+#[test]
+fn pump_maximum_preserves_submillisecond_precision_and_long_intervals() {
+    let probe = PumpProbe::new();
+    let start = Instant::now();
+    probe.record(start);
+    probe.record(start + Duration::from_nanos(350_123_456));
+    let measured = probe.snapshot();
+    assert_eq!(measured.max_interval_ns, 350_123_456);
+    assert_eq!(measured.histogram[BUCKETS - 1], 1);
 }
 
 /// Quantile (ms ceiling) of a 1 ms histogram.
@@ -544,17 +663,20 @@ fn pump_metrics(from: Option<PumpSnapshot>, to: Option<PumpSnapshot>) -> Option<
         "schedule": "earlier-of-returned-deadline-and-consumer-period",
         "consumer_period_ms": CONSUMER_PERIOD.as_millis(),
         "pump_calls": to.calls.saturating_sub(from.calls),
+        "offscreen_consumer_turns": to.consumer_turns.saturating_sub(from.consumer_turns),
         "actual_intervals": intervals,
         "actual_interval_ms_mean": (intervals > 0)
             .then(|| interval_ns as f64 / intervals as f64 / 1e6),
         "actual_interval_ms_p50": quantile(&histogram, 0.50),
         "actual_interval_ms_p95": quantile(&histogram, 0.95),
         "actual_interval_ms_p99": quantile(&histogram, 0.99),
-        "actual_interval_ms_max": histogram.iter().rposition(|&count| count > 0),
+        "actual_interval_ms_max": to.max_interval_ns as f64 / 1e6,
+        "actual_interval_max_scope": "process lifetime through sample",
+        "actual_interval_histogram_max_bucket_ms": histogram.iter().rposition(|&count| count > 0),
     }))
 }
 
-#[cfg(feature = "render-test-hooks")]
+#[cfg(any(feature = "render-test-hooks", feature = "render-diagnostics"))]
 fn fair_head_metrics(
     previous: Option<render_head::HeadFairStats>,
     current: Option<render_head::HeadFairStats>,
@@ -640,7 +762,8 @@ fn fair_head_metrics(
         "slot_incarnation": identity.slot().incarnation().get(),
         "head_generation": identity.generation().get(),
         "interval_identity_valid": interval_identity,
-        "due_skips": count(current.due_skips(), previous.map(|stats| stats.due_skips())),
+        "skipped_due_opportunities": count(current.skipped_due_opportunities(), previous.map(|stats| stats.skipped_due_opportunities())),
+        "due_skip_streak": current.due_skips(),
         "max_due_skips": current.max_due_skips(),
         "expiry_events": count(current.expiry_events(), previous.map(|stats| stats.expiry_events())),
         "expiry_streak": current.expiry_streak(),
@@ -653,6 +776,10 @@ fn fair_head_metrics(
         "grant_delivery_samples": count(current.grant_delivery_samples(), previous.map(|stats| stats.grant_delivery_samples())),
         "grant_delivery_samples_total": current.grant_delivery_samples(),
         "max_grant_to_consume_ms": current.max_grant_to_consume().as_secs_f64() * 1e3,
+        "max_publication_to_notice_ms": current.max_publication_to_notice().as_secs_f64() * 1e3,
+        "max_notice_to_wake_ms": current.max_notice_to_wake().as_secs_f64() * 1e3,
+        "max_wake_to_consume_ms": current.max_wake_to_consume().as_secs_f64() * 1e3,
+        "latency_maxima_scope": "head lifetime; each stage maximum is independent",
         "grant_wake_samples": count(current.grant_wake_samples(), previous.map(|stats| stats.grant_wake_samples())),
         "grant_wake_samples_total": current.grant_wake_samples(),
         "scene_releases": count(current.scene_releases(), previous.map(|stats| stats.scene_releases())),
@@ -672,7 +799,7 @@ fn fair_head_metrics(
     })
 }
 
-#[cfg(feature = "render-test-hooks")]
+#[cfg(any(feature = "render-test-hooks", feature = "render-diagnostics"))]
 fn fair_workspace_metrics(
     from: render_head::WorkspaceStats,
     to: render_head::WorkspaceStats,
@@ -684,6 +811,9 @@ fn fair_workspace_metrics(
     json!({
         "leased": to.leased().saturating_sub(from.leased()),
         "busy": to.busy().saturating_sub(from.busy()),
+        "pump_calls": to.pump_calls().saturating_sub(from.pump_calls()),
+        "max_actual_pump_interval_ns": to.max_pump_interval().as_nanos(),
+        "pump_interval_scope": "process lifetime",
         "faults": {
             "lock_contention": after_totals[0].saturating_sub(before_totals[0]),
             "consumed_overdue": after_totals[1].saturating_sub(before_totals[1]),
@@ -701,7 +831,7 @@ fn fair_workspace_metrics(
     })
 }
 
-#[cfg(feature = "render-test-hooks")]
+#[cfg(any(feature = "render-test-hooks", feature = "render-diagnostics"))]
 #[derive(Clone, Copy)]
 struct FairOracleHead<'a> {
     name: &'a str,
@@ -721,14 +851,14 @@ struct FairOracleHead<'a> {
     scene_progress: client::render::backend::SceneProgress,
 }
 
-#[cfg(feature = "render-test-hooks")]
+#[cfg(any(feature = "render-test-hooks", feature = "render-diagnostics"))]
 #[derive(Clone, Copy)]
 enum FairOracleInterval {
     Sample,
     Cell(Duration),
 }
 
-#[cfg(feature = "render-test-hooks")]
+#[cfg(any(feature = "render-test-hooks", feature = "render-diagnostics"))]
 fn m3_fair_oracle(
     expected_heads: usize,
     heads: &[FairOracleHead<'_>],
@@ -815,7 +945,7 @@ fn m3_fair_oracle(
     Ok(())
 }
 
-#[cfg(feature = "render-test-hooks")]
+#[cfg(any(feature = "render-test-hooks", feature = "render-diagnostics"))]
 #[test]
 fn m3_oracle_rejects_paints_without_scene() {
     let head = FairOracleHead {
@@ -848,7 +978,7 @@ fn m3_oracle_rejects_paints_without_scene() {
     );
 }
 
-#[cfg(feature = "render-test-hooks")]
+#[cfg(any(feature = "render-test-hooks", feature = "render-diagnostics"))]
 #[test]
 fn m3_oracle_rejects_missing_refused_and_stopped_heads() {
     let head = FairOracleHead {
@@ -893,7 +1023,7 @@ fn m3_oracle_rejects_missing_refused_and_stopped_heads() {
     .contains("stopped"));
 }
 
-#[cfg(feature = "render-test-hooks")]
+#[cfg(any(feature = "render-test-hooks", feature = "render-diagnostics"))]
 fn background_oracle_fixture() -> FairOracleHead<'static> {
     FairOracleHead {
         name: "background",
@@ -914,7 +1044,7 @@ fn background_oracle_fixture() -> FairOracleHead<'static> {
     }
 }
 
-#[cfg(feature = "render-test-hooks")]
+#[cfg(any(feature = "render-test-hooks", feature = "render-diagnostics"))]
 #[test]
 fn m3_oracle_accepts_phase_jitter_with_an_empty_sample() {
     let head = background_oracle_fixture();
@@ -934,7 +1064,7 @@ fn m3_oracle_accepts_phase_jitter_with_an_empty_sample() {
     .unwrap();
 }
 
-#[cfg(feature = "render-test-hooks")]
+#[cfg(any(feature = "render-test-hooks", feature = "render-diagnostics"))]
 #[test]
 fn m3_oracle_rejects_starvation_beyond_background_gap() {
     let head = background_oracle_fixture();
@@ -953,7 +1083,7 @@ fn m3_oracle_rejects_starvation_beyond_background_gap() {
     }
 }
 
-#[cfg(feature = "render-test-hooks")]
+#[cfg(any(feature = "render-test-hooks", feature = "render-diagnostics"))]
 #[test]
 fn m3_oracle_rejects_too_few_consumes_over_thirty_seconds() {
     let head = FairOracleHead {
@@ -970,7 +1100,7 @@ fn m3_oracle_rejects_too_few_consumes_over_thirty_seconds() {
     assert!(error.contains("at least 15 required"), "{error}");
 }
 
-#[cfg(feature = "render-test-hooks")]
+#[cfg(any(feature = "render-test-hooks", feature = "render-diagnostics"))]
 #[test]
 fn m3_oracle_replays_real_empty_bins_over_thirty_seconds() {
     let fixture: Value = serde_json::from_str(include_str!(
@@ -1024,7 +1154,7 @@ fn m3_oracle_replays_real_empty_bins_over_thirty_seconds() {
     .unwrap();
 }
 
-#[cfg(feature = "render-test-hooks")]
+#[cfg(any(feature = "render-test-hooks", feature = "render-diagnostics"))]
 fn assert_fair_interval(
     cell: &str,
     heads: &[HeadProbe],
@@ -1034,6 +1164,32 @@ fn assert_fair_interval(
     focused: &[bool],
     interval: FairOracleInterval,
 ) {
+    let before_pump = from.pump.expect("fairness requires an independent pump");
+    let after_pump = to.pump.expect("fairness requires an independent pump");
+    assert!(
+        after_pump.calls > before_pump.calls,
+        "{cell}: independent pump made no progress"
+    );
+    assert!(
+        after_pump.consumer_turns > before_pump.consumer_turns,
+        "{cell}: offscreen consumer made no progress"
+    );
+    if matches!(interval, FairOracleInterval::Cell(_)) {
+        for (index, head) in heads.iter().enumerate() {
+            assert!(
+                to.frames[index] > from.frames[index],
+                "{cell}: {} simulation made no progress",
+                head.name
+            );
+            assert_ne!(
+                (to.simulation_cycles[index] as u32)
+                    .wrapping_sub(from.simulation_cycles[index] as u32),
+                0,
+                "{cell}: {} Client.loop_cycle made no progress",
+                head.name
+            );
+        }
+    }
     let evidence: Vec<_> = heads
         .iter()
         .enumerate()
@@ -1134,7 +1290,7 @@ fn summarize(
         let raster_ms = (published_paints > 0)
             .then(|| published_raster_ns as f64 / published_paints as f64 / 1e6);
         let fair = {
-            #[cfg(feature = "render-test-hooks")]
+            #[cfg(any(feature = "render-test-hooks", feature = "render-diagnostics"))]
             {
                 if probe.is_some() {
                     fair_head_metrics(
@@ -1156,7 +1312,7 @@ fn summarize(
                     Value::Null
                 }
             }
-            #[cfg(not(feature = "render-test-hooks"))]
+            #[cfg(not(any(feature = "render-test-hooks", feature = "render-diagnostics")))]
             {
                 let _ = probe;
                 Value::Null
@@ -1194,6 +1350,8 @@ fn summarize(
                 "paints": published_paints,
             },
             "slot_frames": frames,
+            "simulation_cycles": (to.simulation_cycles[i] as u32).wrapping_sub(from.simulation_cycles[i] as u32),
+            "simulation_cycle_source": "Client.loop_cycle advanced by the production frame loop",
             "frame_interval_ms_p50": quantile(&histogram, 0.50),
             "frame_interval_ms_p95": quantile(&histogram, 0.95),
             "frame_interval_ms_p99": quantile(&histogram, 0.99),
@@ -1247,13 +1405,13 @@ fn summarize(
         "max_wait_ms_process": ws_to.max_wait().as_secs_f64() * 1e3,
         "unleased": ws_to.unleased() - ws_from.unleased(),
     });
-    #[cfg(feature = "render-test-hooks")]
+    #[cfg(any(feature = "render-test-hooks", feature = "render-diagnostics"))]
     let scene_workspace = if probe.is_some() {
         fair_workspace_metrics(ws_from, ws_to)
     } else {
         legacy_workspace
     };
-    #[cfg(not(feature = "render-test-hooks"))]
+    #[cfg(not(any(feature = "render-test-hooks", feature = "render-diagnostics")))]
     let scene_workspace = legacy_workspace;
     let mut summary = json!({
         "observe_s": secs,
@@ -1316,9 +1474,85 @@ fn mixed_probe_keeps_both_backend_populations() {
     assert!(cpu_heads_for("other", 4, None).is_err());
 }
 
+fn policy_masks(policy: &str, n: usize, first_focus: usize, step: usize) -> (Vec<bool>, Vec<bool>) {
+    let churn = matches!(policy, "focus-churn" | "sidecar50" | "sidecar-churn");
+    let focus = if churn { (first_focus + step) % n } else { first_focus };
+    let focused: Vec<bool> = (0..n).map(|index| index == focus).collect();
+    let full_rate = match policy {
+        "full" => vec![true; n],
+        "focus1" | "focus-churn" => focused.clone(),
+        "sidecar50" => {
+            assert_eq!(n, 50, "sidecar50 requires fifty admitted heads");
+            vec![true; n]
+        }
+        "sidecar-churn" => (0..n).map(|index| index == focus || index < step % n).collect(),
+        other => panic!("unknown M3 policy {other}"),
+    };
+    (focused, full_rate)
+}
+
+fn apply_policy(heads: &[HeadProbe], focused: &[bool], full_rate: &[bool], fair: bool) {
+    for (index, head) in heads.iter().enumerate() {
+        #[cfg(any(feature = "render-test-hooks", feature = "render-diagnostics"))]
+        if fair {
+            head.input.set_render_focused(focused[index]);
+        }
+        #[cfg(not(any(feature = "render-test-hooks", feature = "render-diagnostics")))]
+        let _ = (focused, fair);
+        head.input.set_full_rate(full_rate[index]);
+    }
+}
+
+#[test]
+fn focus_churn_covers_every_head_and_sidecar_population() {
+    for n in [1, 10, 16, 32, 50] {
+        let mut seen = vec![false; n];
+        for step in 0..n {
+            let (focused, full) = policy_masks("focus-churn", n, 0, step);
+            assert_eq!(focused.iter().filter(|&&selected| selected).count(), 1);
+            assert_eq!(focused, full);
+            for (seen, focused) in seen.iter_mut().zip(focused) {
+                *seen |= focused;
+            }
+            let (_, full) = policy_masks("sidecar-churn", n, 0, step);
+            assert_eq!(full.iter().filter(|&&selected| selected).count(), step + 1);
+        }
+        assert!(seen.into_iter().all(|seen| seen));
+    }
+    let (_, full) = policy_masks("sidecar50", 50, 0, 17);
+    assert!(full.into_iter().all(|selected| selected));
+}
+
 #[test]
 #[ignore = "LIVE=1 Engine A measurement; logs in its own BOT_LIVE_NAME_PREFIX accounts"]
 fn live_m3_render_contention() {
+    run_m3_render_contention();
+}
+
+#[test]
+#[ignore = "LIVE=1 final fairness path; requires isolated calibration timing build"]
+fn m3_fair_head_progress() {
+    assert!(cfg!(feature = "render-diagnostics"), "timing requires render-diagnostics");
+    assert!(!cfg!(feature = "render-test-hooks"), "test controls invalidate timing");
+    assert!(!cfg!(feature = "draw-memory-profile"), "drawing allocator invalidates timing");
+    #[cfg(feature = "render-diagnostics")]
+    {
+        assert!(
+            !client::render::backend::render_test_hooks_compiled(),
+            "dependency feature unification compiled client render test controls"
+        );
+        assert!(
+            !client::render::backend::draw_memory_profile_compiled(),
+            "dependency feature unification compiled client drawing instrumentation"
+        );
+    }
+    assert!(fair_probe_inputs().is_some(), "explicit calibration values are required");
+    assert_eq!(env_or("M3_WARMUP_S", 10), 10u64);
+    assert_eq!(env_or("M3_OBSERVE_S", 30), 30u64);
+    run_m3_render_contention();
+}
+
+fn run_m3_render_contention() {
     assert_eq!(std::env::var("LIVE").as_deref(), Ok("1"));
     let n: usize = required("M3_N").parse().expect("M3_N");
     let backend = required("M3_BACKEND");
@@ -1335,6 +1569,7 @@ fn live_m3_render_contention() {
     );
     let probe = fair_probe_inputs();
     configure_fair_probe(probe);
+    LazyLock::force(&CLOCK_RESOLUTION);
 
     let out = PathBuf::from(required("M3_OUT"));
     std::fs::create_dir_all(&out).unwrap();
@@ -1439,7 +1674,7 @@ fn live_m3_render_contention() {
             move |client, name, _| {
                 client.set_draw(draw.load(Relaxed));
                 if let Some((stats, raster)) = hook_probes.get(name) {
-                    stats.record(Instant::now());
+                    stats.record(Instant::now(), client.loop_cycle);
                     raster.observe(name);
                 }
                 census.observe(client, name);
@@ -1465,6 +1700,7 @@ fn live_m3_render_contention() {
                 while !stop.load(Relaxed) {
                     let mut pump_due = false;
                     if Instant::now() >= next_consumer {
+                        pump_probe.consumer_turns.fetch_add(1, Relaxed);
                         for mailbox in &mailboxes {
                             if mailbox.take().is_some() {
                                 taken.fetch_add(1, Relaxed);
@@ -1550,27 +1786,16 @@ fn live_m3_render_contention() {
     .unwrap();
 
     for policy in &policies {
-        let full_rate: Vec<bool> = match policy.as_str() {
-            "full" => vec![true; n],
-            "focus1" => (0..n).map(|i| i == focus_index).collect(),
-            other => panic!("unknown M3 policy {other}"),
-        };
-        let focused: Vec<bool> = if probe.is_some() {
-            (0..n).map(|i| i == focus_index).collect()
-        } else {
-            full_rate.clone()
-        };
-        for (i, head) in heads.iter().enumerate() {
-            #[cfg(feature = "render-test-hooks")]
-            if probe.is_some() {
-                head.input.set_render_focused(focused[i]);
-            }
-            head.input.set_full_rate(full_rate[i]);
+        let churn = matches!(policy.as_str(), "focus-churn" | "sidecar50" | "sidecar-churn");
+        let (mut focused, mut full_rate) = policy_masks(policy, n, focus_index, 0);
+        if probe.is_none() {
+            focused.clone_from(&full_rate);
         }
+        apply_policy(&heads, &focused, &full_rate, probe.is_some());
         thread::sleep(warmup);
         let cell = format!("{backend}-n{n}-{policy}");
         let mut samples = std::fs::File::create(out.join(format!("{cell}.samples.jsonl"))).unwrap();
-        #[cfg(feature = "render-test-hooks")]
+        #[cfg(any(feature = "render-test-hooks", feature = "render-diagnostics"))]
         if probe.is_some() {
             let start = Instant::now();
             for head in &heads {
@@ -1583,8 +1808,20 @@ fn live_m3_render_contention() {
         }
         let start = mark(&heads, &taken, pump_probe.as_deref());
         let mut last = start.clone();
+        let mut focus_series = Vec::new();
+        let mut step = 0;
         while last.at.duration_since(start.at) < observe {
-            thread::sleep(Duration::from_secs(1));
+            if churn {
+                (focused, full_rate) = policy_masks(policy, n, focus_index, step);
+                apply_policy(&heads, &focused, &full_rate, probe.is_some());
+            }
+            focus_series.push(json!({
+                "at_t_s": last.at.duration_since(start.at).as_secs_f64(),
+                "focused": focused,
+                "full_rate": full_rate,
+            }));
+            thread::sleep(if churn { Duration::from_millis(200) } else { Duration::from_secs(1) });
+            step += 1;
             let now = mark(&heads, &taken, pump_probe.as_deref());
             let statuses = play.statuses();
             let ingame = statuses.iter().filter(|status| status.ingame).count();
@@ -1593,7 +1830,7 @@ fn live_m3_render_contention() {
             sample["ingame"] = json!(ingame);
             writeln!(samples, "{sample}").unwrap();
             if probe.is_some() {
-                #[cfg(feature = "render-test-hooks")]
+                #[cfg(any(feature = "render-test-hooks", feature = "render-diagnostics"))]
                 assert_fair_interval(
                     &cell,
                     &heads,
@@ -1603,8 +1840,8 @@ fn live_m3_render_contention() {
                     &focused,
                     FairOracleInterval::Sample,
                 );
-                #[cfg(not(feature = "render-test-hooks"))]
-                unreachable!("the probe setup rejects missing render-test-hooks");
+                #[cfg(not(any(feature = "render-test-hooks", feature = "render-diagnostics")))]
+                unreachable!("the probe setup requires render-diagnostics or render-test-hooks");
             }
             last = now;
         }
@@ -1620,6 +1857,10 @@ fn live_m3_render_contention() {
         summary["ingame_at_end"] = json!(ingame);
         summary["git_rev"] = json!(rev);
         summary["warmup_s"] = json!(warmup.as_secs());
+        summary["monotonic_resolution_ns"] = json!(CLOCK_RESOLUTION.as_nanos());
+        summary["monotonic_resolution_method"] = json!("smallest positive Instant step in 10000 successive reads");
+        summary["focus_series"] = json!(focus_series);
+        summary["group_membership"] = json!(if churn { "final focus; use samples for each interval" } else { "fixed focus" });
         std::fs::write(
             out.join(format!("{cell}.json")),
             serde_json::to_string_pretty(&summary).unwrap(),
@@ -1627,7 +1868,7 @@ fn live_m3_render_contention() {
         .unwrap();
         eprintln!("m3 {cell}: {}", summary["groups"]);
         if probe.is_some() {
-            #[cfg(feature = "render-test-hooks")]
+            #[cfg(any(feature = "render-test-hooks", feature = "render-diagnostics"))]
             assert_fair_interval(
                 &cell,
                 &heads,
@@ -1637,8 +1878,8 @@ fn live_m3_render_contention() {
                 &focused,
                 FairOracleInterval::Cell(last.at.duration_since(start.at)),
             );
-            #[cfg(not(feature = "render-test-hooks"))]
-            unreachable!("the probe setup rejects missing render-test-hooks");
+            #[cfg(not(any(feature = "render-test-hooks", feature = "render-diagnostics")))]
+            unreachable!("the probe setup requires render-diagnostics or render-test-hooks");
         }
         assert_eq!(ingame, n, "{cell}: every head stayed in game");
     }

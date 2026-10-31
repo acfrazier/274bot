@@ -27,6 +27,9 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.8` 
   view releases that buffer and its budget charge. A larger frame reports a
   resource fault and keeps the last completed image. Navigation debug paint
   follows the focused GPU view and releases its storage on focus loss.
+- Diagnostic render builds can measure grant delivery, skipped due
+  opportunities and retained GPU copies without deterministic test controls.
+  These calibration paths do not activate fairness in normal builds.
 
 ## [0.2.8] — 2026-10-29 — Beta 2
 
