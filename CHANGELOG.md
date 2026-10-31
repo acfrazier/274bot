@@ -5,6 +5,13 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.8` 
 
 ## Unreleased
 
+### Developer tools
+
+- `seed-calc` computes no-food fight seeds from revision-289 combat formulas.
+  Consecutive-kill queries carry remaining Hitpoints without healing.
+  It also finds crossing seeds through the product route planner and admission code.
+  The tool reports unsupported combat instead of assigning a guessed seed.
+
 ### Panel and terminal app
 
 - Live catalog runs now report a JavaScript Start failure even if the
