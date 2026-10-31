@@ -23,8 +23,8 @@ const POLL_INTERVAL: Duration = Duration::from_millis(50);
 const LOG_PREFIX: &str = "WALK_PROBE_RESULT:";
 
 const PROBE_SOURCE: &str = r#"
-import { reader } from '../../api/adapter/ClientAdapter.js';
-import { Reachability } from '../../api/event/webwalk/geometry/Reachability.js';
+import { reader } from '../../adapter/ClientAdapter.js';
+import { Reachability } from '../../event/webwalk/geometry/Reachability.js';
 export default class CompatWalkingProbe extends LoopingBot {
     async loop() {
         if (this.done || !reader.ingame() || reader.sceneState() !== 2) return;
