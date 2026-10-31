@@ -162,13 +162,16 @@ impl BenchRun {
     }
 
     /// Advance the run against `core`'s play session: `Ok(true)` once the
-    /// observation completed; without a play session nothing happens.
+    /// observation completed; without a play session nothing happens. The
+    /// run reads the script lines `core`'s last poll took (it drains them).
     pub fn poll<Io>(&mut self, core: &OperatorSession<Io>) -> Result<bool, BenchError> {
         match core.play() {
-            Some(play) => self
-                .0
-                .poll(play)
-                .map_err(|error| BenchError(BenchStep::Run(error))),
+            Some(play) => {
+                self.0.observe_script_lines(core.script_lines());
+                self.0
+                    .poll(play)
+                    .map_err(|error| BenchError(BenchStep::Run(error)))
+            }
             None => Ok(false),
         }
     }

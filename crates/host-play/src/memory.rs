@@ -312,31 +312,30 @@ fn accountleveler_bank_state(c: &client::client::Client) -> (usize, bool) {
     (rows, rows > 0)
 }
 
-fn collect_script_bank_rows(play: &Play, name: &str) {
-    for line in play.script_take_pending_logs(name) {
-        let listener_removed = line.contains("MEMAB_LISTENER_REMOVED");
-        let bank_rows = line.find("MEMAB_BANK_ROWS:").and_then(|marker| {
-            let value = line[marker + "MEMAB_BANK_ROWS:".len()..]
-                .split_whitespace()
-                .next()
-                .unwrap_or_default();
-            let (ready, rows) = value.split_once(':')?;
-            let ready = ready.parse::<u8>().ok()?;
-            let rows = rows.parse::<usize>().ok()?;
-            Some((ready == 1, rows))
-        });
-        if !listener_removed && bank_rows.is_none() {
-            continue;
+/// Record one Q4 probe marker line from slot `name`'s script log.
+fn collect_script_bank_row(name: &str, line: &str) {
+    let listener_removed = line.contains("MEMAB_LISTENER_REMOVED");
+    let bank_rows = line.find("MEMAB_BANK_ROWS:").and_then(|marker| {
+        let value = line[marker + "MEMAB_BANK_ROWS:".len()..]
+            .split_whitespace()
+            .next()
+            .unwrap_or_default();
+        let (ready, rows) = value.split_once(':')?;
+        let ready = ready.parse::<u8>().ok()?;
+        let rows = rows.parse::<usize>().ok()?;
+        Some((ready == 1, rows))
+    });
+    if !listener_removed && bank_rows.is_none() {
+        return;
+    }
+    let mut delivery = FRAME_DELIVERY.lock().unwrap();
+    if let Some(counters) = delivery.as_mut().and_then(|slots| slots.get_mut(name)) {
+        if listener_removed && counters.listener_removed_delivered.is_none() {
+            counters.listener_removed_delivered = Some(counters.observation_delivered);
         }
-        let mut delivery = FRAME_DELIVERY.lock().unwrap();
-        if let Some(counters) = delivery.as_mut().and_then(|slots| slots.get_mut(name)) {
-            if listener_removed && counters.listener_removed_delivered.is_none() {
-                counters.listener_removed_delivered = Some(counters.observation_delivered);
-            }
-            if let Some((ready, rows)) = bank_rows {
-                counters.script_bank_ready = ready;
-                counters.bank_rows_from_script = Some(rows);
-            }
+        if let Some((ready, rows)) = bank_rows {
+            counters.script_bank_ready = ready;
+            counters.bank_rows_from_script = Some(rows);
         }
     }
 }
@@ -2892,6 +2891,21 @@ impl Run {
         Ok(())
     }
 
+    /// Record the Q4 probe markers in the script lines the frontend session
+    /// took on its last poll (`(slot, line)`). The session drains every
+    /// slot's pending script logs on each poll, so the run reads that copy
+    /// rather than draining the logs itself (it would see none of them).
+    pub fn observe_script_lines(&self, lines: &[(String, String)]) {
+        if self.q4_frame_arm.is_none() {
+            return;
+        }
+        for (name, line) in lines {
+            if self.names.contains(name) {
+                collect_script_bank_row(name, line);
+            }
+        }
+    }
+
     /// Drive warmup/observe/lifecycle. `Ok(true)` when teardown finished. A
     /// failure is recorded per slot before it is returned, because both
     /// frontends exit on it.
@@ -2916,9 +2930,6 @@ impl Run {
             .last_sample
             .is_none_or(|sample| now.duration_since(sample) >= Duration::from_secs(1));
         if self.q4_frame_arm.is_some() && sample_due {
-            for name in &self.names {
-                collect_script_bank_rows(play, name);
-            }
             let observed_rows = frame_delivery_bank_rows(&self.names);
             if self.observing.is_some() {
                 if observed_rows != self.q4_bank_rows {
@@ -3921,6 +3932,28 @@ mod tests {
                 .bank_rows_from_script = Some(26);
         }
         assert_eq!(frame_delivery_bank_rows(&names), None);
+    }
+
+    /// The run reads the probe's markers from the frontend's copy of each
+    /// poll's script lines, with whatever prefix the log line carries.
+    #[test]
+    fn q4_script_markers_record_bank_rows_and_listener_removal() {
+        let _lock = ENV_LOCK.lock().unwrap();
+        let _guard = FrameDeliveryGuard;
+        let names = vec!["alice".to_string()];
+        configure_frame_delivery(&names);
+        collect_script_bank_row("alice", "unrelated line");
+        collect_script_bank_row("bob", "MEMAB_BANK_ROWS:1:27");
+        collect_script_bank_row("alice", "[script] MEMAB_BANK_ROWS:1:27");
+        collect_script_bank_row("alice", "MEMAB_LISTENER_REMOVED");
+        let delivery = FRAME_DELIVERY.lock().unwrap();
+        let counters = delivery
+            .as_ref()
+            .and_then(|slots| slots.get("alice"))
+            .expect("configured account counters");
+        assert_eq!(counters.bank_rows_from_script, Some(27));
+        assert!(counters.script_bank_ready);
+        assert_eq!(counters.listener_removed_delivered, Some(0));
     }
 
     #[test]
