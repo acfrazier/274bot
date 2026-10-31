@@ -876,7 +876,7 @@ fn run_make_one_cell() {
         modal_roots(&state.snapshot),
         inventory_count(&state.snapshot, "Shortbow"),
         state.snapshot.tick(),
-        &state.modal_samples
+        state.modal_samples
     );
     wait_for(&play, &account, &fixture, CELL_DEADLINE, |_, state| {
         inventory_count(&state.snapshot, "Shortbow") == 1
