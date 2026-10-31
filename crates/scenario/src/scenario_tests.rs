@@ -8034,12 +8034,14 @@ fn ardy_thiever_fight_prepares_food_and_attacks_a_real_guard_before_start() {
     );
     let mut client = native_seed_client();
     let _peer = attach_loopback(&mut client);
-    let mut snapshot = GameSnapshot::new();
-    snapshot.rebuild(&client);
-    // No Guard in this snapshot: admission waits for a later one
-    // instead of failing, and invents no combat.
-    assert!(send(&mut client, &snapshot));
-    assert_eq!(client.out.pos, 0, "no Guard means no invented combat");
+    {
+        let mut snapshot = GameSnapshot::new();
+        snapshot.rebuild(&client);
+        // No Guard in this snapshot: admission waits for a later one
+        // instead of failing, and invents no combat.
+        assert!(send(&mut client, &snapshot));
+        assert_eq!(client.out.pos, 0, "no Guard means no invented combat");
+    }
     plant_named_banker(&mut client, "Guard", 21, 20);
     std::sync::Arc::get_mut(&mut client.cache).unwrap().npcs[0].op =
         vec![Some("Attack".into()), None, None, None, None];
@@ -14013,6 +14015,7 @@ fn shop_buyout_npc_teller_variants_seed_through_named_dialog() {
 fn plant_named_banker(client: &mut Client, name: &str, local_x: i32, local_z: i32) {
     use client::client::ClientNpc;
     use client::config::NpcType;
+    api::snapshot::clear_client_adapter_cache_for_tests(&client.cache);
     let cache = std::sync::Arc::get_mut(&mut client.cache).expect("sole cache owner");
     if cache.npcs.is_empty() {
         cache.npcs.push(NpcType::default());
