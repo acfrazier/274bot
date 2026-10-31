@@ -51,6 +51,10 @@ pub const ABORT_ESCAPE_UNSAFE_REASON: &str =
 pub const ABORT_ESCAPE_STALLED_REASON: &str =
     "combat abort escape walk made no settled progress within its tick budget";
 
+/// Failed return-to-stand walks in one return before the last failure
+/// ends the step. Each retry is a fresh walk request, so the router
+/// plans again from the observed tile.
+const MAX_RETURN_WALK_FAILURES: u8 = 3;
 static ABORTED_COMBAT_STEP: std::sync::LazyLock<Arc<str>> =
     std::sync::LazyLock::new(|| Arc::from(ABORTED_COMBAT_STEP_REASON));
 static ABORT_WALK_FAILED: std::sync::LazyLock<Arc<str>> =
@@ -919,6 +923,8 @@ impl StepPlan for CombatPlan {
             nonkill_reengagements: 0,
             last_outcome: None,
             target_gone_restarts: 0,
+            return_walk_failures: 0,
+            stand_walk_failures: 0,
             raised_prayers: RaisedPrayers::empty(),
             manual_takeover_watch: crate::native::ManualTakeoverWatch::default(),
             finish_target_index: None,
@@ -1266,6 +1272,12 @@ struct CombatRun {
     reengage_budget: u32,
     /// Non-kill re-engagements used by this step; successful kills do not reset the bound.
     nonkill_reengagements: u32,
+    return_walk_failures: u8,
+    /// Stand-approach walk failures every fight attempt of this step spent. A
+    /// kill-budget end rebegins the fight inside the same step, so the bound
+    /// of three spans attempts; the field starts at zero and only the step's
+    /// end discards it.
+    stand_walk_failures: u8,
     raised_prayers: RaisedPrayers,
     manual_takeover_watch: crate::native::ManualTakeoverWatch,
     finish: Option<FinishConfig>,
@@ -1278,6 +1290,18 @@ struct CombatRun {
 }
 
 impl CombatRun {
+    /// Mirror the live attempt's stand-approach count. The run outlives one
+    /// fight attempt: a kill-budget end starts the next attempt from this
+    /// count, so the three-failure bound is the step's, not the attempt's.
+    fn observe_stand_walks(&mut self) {
+        let Some(Action::Combat(handle)) = self.action.as_ref() else {
+            return;
+        };
+        if let Some(failures) = handle.inspect(|machine| machine.stand_walk_failures()) {
+            self.stand_walk_failures = failures;
+        }
+    }
+
     fn capture_prayer_cleanup(&mut self) {
         match self.action.as_ref() {
             Some(Action::Combat(handle)) => {
@@ -1358,6 +1382,7 @@ impl CombatRun {
             (Arc::clone(&self.request), Arc::clone(&self.tables)),
             &mut cx.tick.cx,
         )?;
+        handle.seed_stand_walk_failures(self.stand_walk_failures);
         self.phase = Phase::Combat;
         self.action = Some(Action::Combat(handle));
         Ok(())
@@ -1690,8 +1715,42 @@ impl CombatRun {
         cx: &mut StepContext<'_, '_>,
     ) -> Poll<Result<StepOutcome, ActionError>> {
         self.action = None;
-        receipt.into_arrival()?;
-        self.rebegin_combat(cx, true)
+        let route_ended_at_stand =
+            matches!(&receipt.end, crate::native::WalkEnd::RouteEnded)
+                && self.request.stand.is_some_and(|stand| {
+                    cx.tick.cx.snapshot().local_player().is_some_and(|local| {
+                        crate::combat::select::stand_reached(stand, local.value)
+                    })
+                });
+        let arrival = if route_ended_at_stand {
+            Ok(receipt.evidence)
+        } else {
+            receipt.into_arrival()
+        };
+        match arrival {
+            Ok(_) => {
+                self.return_walk_failures = 0;
+                self.rebegin_combat(cx, true)
+            }
+            // A blocked walk is information first: walk again, replanned
+            // from the observed tile, within the bounded count. Typed
+            // evidence failures (user input, cancellation, missing quest
+            // evidence) are not retryable and keep their exact error.
+            Err(error) if matches!(error, ActionError::Blocked(_)) => {
+                self.return_walk_failures = self.return_walk_failures.saturating_add(1);
+                if self.return_walk_failures >= MAX_RETURN_WALK_FAILURES {
+                    return Poll::Ready(Err(error));
+                }
+                match self.request.stand {
+                    Some(stand) => match self.begin_return_to_stand(stand, cx) {
+                        Ok(()) => Poll::Pending,
+                        Err(begin_error) => Poll::Ready(Err(begin_error)),
+                    },
+                    None => Poll::Ready(Err(error)),
+                }
+            }
+            Err(error) => Poll::Ready(Err(error)),
+        }
     }
 
     /// Ends an escape walk that stays unsettled past its observed-tick
@@ -1848,6 +1907,7 @@ impl CombatRun {
                     return self.reengagement_budget_failure();
                 }
                 if let Some(stand) = self.request.stand {
+                    self.return_walk_failures = 0;
                     match self.begin_return_to_stand(stand, cx) {
                         Ok(()) => Poll::Pending,
                         Err(error) => Poll::Ready(Err(error)),
@@ -2224,6 +2284,7 @@ impl CombatRun {
 impl StepRun for CombatRun {
     fn poll(&mut self, cx: &mut StepContext<'_, '_>) -> Poll<Result<StepOutcome, ActionError>> {
         self.capture_prayer_cleanup();
+        self.observe_stand_walks();
         if self.manual_takeover_watch.interrupted(&cx.tick.cx) {
             self.action = None;
             return Poll::Ready(Err(ActionError::UserInput));

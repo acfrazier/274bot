@@ -1,6 +1,6 @@
 //! Borrowed combat selection, danger lines and fact-derived combat formulas.
 use super::frame::Frame;
-use super::request::{ActorKind, ActorRef, CombatRequest, Pick, Target};
+use super::request::{ActorKind, ActorRef, CombatRequest, Pick, Style, Target};
 use super::tables::{CombatTables, PrayerRole, StyleMask};
 use super::threats::{StyleObs, Threat, ThreatSet};
 use api::game_data::{DragonfireKind, NpcAttackKind, NpcNameRow, PrayerFact};
@@ -281,6 +281,34 @@ fn has_attack(actions: &[Option<String>]) -> bool {
         .any(|action| action.as_deref() == Some("Attack"))
 }
 
+/// True when the local player's network tile is within the stand's walk radius.
+pub fn stand_reached(stand: api::WorldTile, local: &api::snapshot::LocalPlayerView) -> bool {
+    tile_distance(local.player.network, stand) <= 1
+}
+
+/// True while an authored stand is still to be reached. A fight with a stand
+/// picks no target until the network tile is within one tile of it.
+pub fn stand_pending(request: &CombatRequest, frame: &Frame<'_>) -> bool {
+    request
+        .stand
+        .is_some_and(|stand| !stand_reached(stand, frame.local))
+}
+
+/// Walking steps from the player's tile to a wall-valid stand beside
+/// `npc`, from the posted live reach flood. `None` when no stand beside
+/// the NPC is reachable in that flood.
+fn npc_route_steps(view: &api::query::ReachQueryView, npc: &NpcView) -> Option<u32> {
+    crate::reach_route::route_steps(
+        view,
+        crate::reach_route::Footprint {
+            tile: npc.tile,
+            width: npc.size.max(1),
+            length: npc.size.max(1),
+        },
+    )
+    .map(|(steps, _)| steps)
+}
+
 /// Pick an attackable target without allocating or weakening actor identity.
 /// The parent machine retains a selected actor/type while it remains valid.
 pub fn pick_target(
@@ -296,24 +324,56 @@ pub fn pick_target(
             pick,
             not_targeting_others,
         } => {
+            // Walk to the stand first: a target near the stand is not
+            // engageable from wherever the player happens to be, and a
+            // melee click from outside its walls or fence never lands.
+            if stand_pending(request, frame) {
+                return None;
+            }
             let origin = request.stand.unwrap_or(frame.here);
-            let mut best: Option<(&NpcView, u64, u64)> = None;
+            // Melee uses the posted reach flood when it starts at the
+            // network tile. A stale posted flood gives no pick this poll.
+            // Only a missing flood keeps straight-line picks.
+            let reach = if request.style == Style::Melee {
+                match frame.reach {
+                    Some(view) => Some(crate::reach_route::live(
+                        Some(view),
+                        Some(frame.local.player.network),
+                    )?),
+                    None => None,
+                }
+            } else {
+                None
+            };
+            let mut best: Option<(ActorRef, u64, u64)> = None;
             let mut random_state = seed | 1;
             let mut seen = 0u64;
-            for npc in frame.npcs.iter().filter(|npc| {
-                !corpse(npc)
-                    && npc.r#type.is_some_and(|id| {
+            let candidates = frame.npcs.iter().filter_map(|npc| {
+                if corpse(npc)
+                    || !npc.r#type.is_some_and(|id| {
                         types
                             .iter()
                             .any(|wanted| usize::try_from(*wanted).ok() == Some(id))
                     })
-                    && within_search_bounds(npc.tile, request.search_bounds.as_deref())
-                    && tile_distance(npc.tile, origin) <= u32::from(request.engage_radius)
-                    && (!not_targeting_others || !taken_by_another(npc, None, frame.me()))
-                    && npc_actor(npc).is_some_and(|actor| actor_attackable(frame, actor))
-            }) {
+                    || !within_search_bounds(npc.tile, request.search_bounds.as_deref())
+                    || tile_distance(npc.tile, origin) > u32::from(request.engage_radius)
+                {
+                    return None;
+                }
+                let route_steps = reach.and_then(|view| npc_route_steps(view, npc));
+                if reach.is_some() && route_steps.is_none() {
+                    return None;
+                }
+                if *not_targeting_others && taken_by_another(npc, None, frame.me()) {
+                    return None;
+                }
+                let actor = npc_actor(npc)?;
+                actor_attackable(frame, actor).then_some((npc, actor, route_steps))
+            });
+            for (npc, actor, route_steps) in candidates {
                 seen = seen.saturating_add(1);
-                let distance = u64::from(tile_distance(npc.tile, origin));
+                let distance = route_steps
+                    .map_or_else(|| u64::from(tile_distance(npc.tile, origin)), u64::from);
                 let health = health_rank(npc);
                 let replace = match (pick, best) {
                     (Pick::Nearest, Some((_, best_distance, _))) => distance < best_distance,
@@ -327,10 +387,10 @@ pub fn pick_target(
                     (_, None) => true,
                 };
                 if replace || best.is_none() {
-                    best = Some((npc, distance, health));
+                    best = Some((actor, distance, health));
                 }
             }
-            best.and_then(|(npc, _, _)| npc_actor(npc))
+            best.map(|(actor, _, _)| actor)
         }
         Target::Attacker { npcs, players } => threats
             .iter(frame.tick)

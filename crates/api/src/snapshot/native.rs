@@ -217,7 +217,7 @@ impl<'a> SnapshotView<'a> {
         stock
     }
 
-    pub fn reach(&self) -> Option<Observed<&crate::query::ReachQueryView>> {
+    pub fn reach(&self) -> Option<Observed<&'a crate::query::ReachQueryView>> {
         let snapshot = self.snapshot?;
         let reach = self.reach?;
         (snapshot.ingame() && snapshot.scene_state() == 2 && reach.available).then_some(Observed {

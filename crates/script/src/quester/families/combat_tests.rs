@@ -1086,6 +1086,8 @@ fn combat_test_run_with_radius(
         last_outcome: None,
         nonkill_reengagements: 0,
         target_gone_restarts: 0,
+        return_walk_failures: 0,
+        stand_walk_failures: 0,
         manual_takeover_watch: crate::native::ManualTakeoverWatch::default(),
         raised_prayers: crate::combat::RaisedPrayers::empty(),
         finish: None,
@@ -4294,6 +4296,77 @@ fn target_gone_walks_to_stand_and_rebegins_only_after_arrival() {
 }
 
 #[test]
+fn return_to_stand_walk_retries_blocked_failures_to_a_bound() {
+    let data = api::game_data::for_revision(ClientRevision::R289).unwrap();
+    let stand = api::WorldTile {
+        x: 2632,
+        z: 3222,
+        level: 0,
+    };
+    let mut snapshot = GameSnapshot::new();
+    snapshot.seed_ingame(2);
+    let mut ledger = None;
+    let mut run = combat_test_run(
+        imp_target(&data),
+        Some(stand),
+        Some(Arc::new(NeverStop)),
+        Vec::new(),
+    );
+    assert!(with_step_context(&snapshot, &mut ledger, 12, |cx| {
+        run.on_combat_report(report(CombatEnd::TargetGone), cx)
+    })
+    .is_pending());
+
+    let blocked = |run: &mut CombatRun,
+                   ledger: &mut Option<Box<crate::native::ledger::Ledger>>,
+                   tick: u64,
+                   detail: &'static str| {
+        with_step_context(&snapshot, ledger, tick, |cx| {
+            run.on_return_walk(
+                WalkReceipt {
+                    goal: None,
+                    request_id: 1,
+                    evidence: cx.tick.cx.evidence(),
+                    end: WalkEnd::NoPath,
+                    blocked: None,
+                    detail: Some(Arc::from(detail)),
+                    refusal: None,
+                    assessment: None,
+                    escape: None,
+                },
+                cx,
+            )
+        })
+    };
+
+    // Two blocked walks are retried with fresh walk requests.
+    for (tick, failures) in [(13, 1), (14, 2)] {
+        assert!(blocked(&mut run, &mut ledger, tick, "route stopped short").is_pending());
+        assert_eq!(run.return_walk_failures, failures);
+        assert!(matches!(&run.phase, Phase::ReturningToStand));
+        assert!(matches!(run.action.as_ref(), Some(Action::Walk(_))));
+        assert!(matches!(
+            &ledger.as_ref().unwrap().outbox.last().unwrap().effect,
+            crate::native::HostEffect::Walk(request)
+                if request.target == stand && request.radius == 1
+        ));
+    }
+    // The third blocked walk is terminal and keeps its own detail.
+    let result = blocked(&mut run, &mut ledger, 15, "the last route failure");
+    assert_eq!(run.return_walk_failures, 3);
+    match result {
+        Poll::Ready(Err(ActionError::Blocked(reason))) => {
+            assert_eq!(reason.as_ref(), "the last route failure");
+        }
+        Poll::Ready(Err(other)) => panic!("expected the last blocked walk error, got {other:?}"),
+        Poll::Ready(Ok(_)) => panic!("expected the last blocked walk error, got a step outcome"),
+        Poll::Pending => panic!("expected the last blocked walk error, got Pending"),
+    }
+    assert_eq!(run.target_gone_restarts, 0);
+    assert!(run.action.is_none());
+}
+
+#[test]
 fn return_and_abort_walks_use_only_authored_protection() {
     let data = api::game_data::for_revision(ClientRevision::R289).unwrap();
     let stand = api::WorldTile {
@@ -4405,11 +4478,305 @@ fn target_gone_walk_without_observed_arrival_blocks_reengagement() {
     })
     .is_pending());
 
+    // A route that ends without observed arrival is not arrival: combat
+    // does not re-engage. The walk is planned again within the bounded
+    // count, and only the last failure blocks the step.
+    let mut route_ended = |run: &mut CombatRun, tick: u64| {
+        with_step_context(&snapshot, &mut ledger, tick, |cx| {
+            run.on_return_walk(
+                WalkReceipt {
+                    goal: None,
+                    request_id: 1,
+                    evidence: cx.tick.cx.evidence(),
+                    end: WalkEnd::RouteEnded,
+                    blocked: None,
+                    detail: None,
+                    refusal: None,
+                    assessment: None,
+                    escape: None,
+                },
+                cx,
+            )
+        })
+    };
+    for tick in [13, 14] {
+        assert!(route_ended(&mut run, tick).is_pending());
+        assert_eq!(run.target_gone_restarts, 0);
+        assert!(matches!(&run.phase, Phase::ReturningToStand));
+        assert!(matches!(run.action.as_ref(), Some(Action::Walk(_))));
+    }
+    let result = route_ended(&mut run, 15);
+    assert!(matches!(result, Poll::Ready(Err(ActionError::Blocked(_)))));
+    assert_eq!(run.target_gone_restarts, 0);
+    assert!(run.action.is_none());
+}
+
+#[test]
+fn unreachable_stand_ends_quester_step_with_the_last_walk_failure() {
+    let data = api::game_data::for_revision(ClientRevision::R289).unwrap();
+    let here = api::WorldTile {
+        x: 3000,
+        z: 3000,
+        level: 0,
+    };
+    let stand = api::WorldTile {
+        x: 3010,
+        z: 3000,
+        level: 0,
+    };
+    let mut snapshot = GameSnapshot::new();
+    seed_abort_scene(&mut snapshot, here, 40, Vec::new(), None, None);
+    let mut run = combat_test_run(
+        imp_target(&data),
+        Some(stand),
+        Some(Arc::new(NeverStop)),
+        Vec::new(),
+    );
+    let mut ledger = None;
+    with_step_context(&snapshot, &mut ledger, 1, |cx| {
+        run.begin_combat(cx).unwrap()
+    });
+
+    let mut walks = 0;
+    for (tick, detail) in [
+        (2, "first route failure"),
+        (3, "second route failure"),
+        (4, "last route failure"),
+    ] {
+        assert!(
+            with_step_context(&snapshot, &mut ledger, tick, |cx| run.poll(cx)).is_pending(),
+            "the walk request must remain pending"
+        );
+        assert_eq!(last_walk(&ledger).target, stand);
+        walks += 1;
+        post_walk_end(&mut ledger, tick, WalkEnd::NoPath, Some(detail));
+    }
+
+    let result = with_step_context(&snapshot, &mut ledger, 5, |cx| run.poll(cx));
+    match result {
+        Poll::Ready(Err(ActionError::Blocked(reason))) => {
+            assert_eq!(reason.as_ref(), "last route failure");
+        }
+        Poll::Ready(Err(other)) => panic!("expected the last route failure, got {other:?}"),
+        Poll::Ready(Ok(_)) => panic!("the unreachable stand must not complete the step"),
+        Poll::Pending => panic!("the spent walk budget must end the step"),
+    }
+    assert_eq!(walks, 3);
+    assert!(
+        run.action.is_none(),
+        "the Quester must not start another fight"
+    );
+}
+
+/// A kill-budget end during the stand approach starts a new fight attempt
+/// inside the same quest step (`paths/289`'s farm-imps step runs a 50-tick
+/// budget with a named fight spot). The step's three-failure bound must span
+/// that boundary: the new attempt cannot buy a fresh three walks, and the
+/// step still stops with the last route failure.
+#[test]
+fn stand_walk_bound_spans_the_kill_budget_attempt_boundary() {
+    let data = api::game_data::for_revision(ClientRevision::R289).unwrap();
+    let here = api::WorldTile {
+        x: 3000,
+        z: 3000,
+        level: 0,
+    };
+    let stand = api::WorldTile {
+        x: 3010,
+        z: 3000,
+        level: 0,
+    };
+    let mut snapshot = GameSnapshot::new();
+    seed_abort_scene(&mut snapshot, here, 40, Vec::new(), None, None);
+    let mut run = combat_test_run(
+        imp_target(&data),
+        Some(stand),
+        Some(Arc::new(NeverStop)),
+        Vec::new(),
+    );
+    Arc::make_mut(&mut run.request).budget_ticks = 50;
+    let mut ledger = None;
+    with_step_context(&snapshot, &mut ledger, 1, |cx| {
+        run.begin_combat(cx).unwrap()
+    });
+
+    // Two failed approaches inside the first attempt's kill budget.
+    for (tick, detail) in [(2, "first route failure"), (3, "second route failure")] {
+        assert!(
+            with_step_context(&snapshot, &mut ledger, tick, |cx| run.poll(cx)).is_pending(),
+            "the walk request must remain pending"
+        );
+        assert_eq!(last_walk(&ledger).target, stand);
+        post_walk_end(&mut ledger, tick, WalkEnd::NoPath, Some(detail));
+    }
+    // The third walk is still in flight when the 50-tick budget ends.
+    assert!(with_step_context(&snapshot, &mut ledger, 4, |cx| run.poll(cx)).is_pending());
+    let in_flight = last_walk(&ledger);
+    assert_eq!(in_flight.target, stand);
+
+    // The budget end rebegins the fight, and the new attempt revokes the old
+    // outbox, so drive polls until a new walk request appears; the step must
+    // still count the two walks the previous attempt spent.
+    let mut tick = 4;
+    while pending_walk(&ledger).is_none_or(|walk| walk.request_id == in_flight.request_id) {
+        tick += 1;
+        assert!(
+            tick < 60,
+            "the kill budget must end the attempt and the new attempt must walk"
+        );
+        assert!(
+            with_step_context(&snapshot, &mut ledger, tick, |cx| run.poll(cx)).is_pending(),
+            "the budget end must rebegin the fight, not end the step"
+        );
+    }
+    assert_eq!(last_walk(&ledger).target, stand);
+    post_walk_end(
+        &mut ledger,
+        tick,
+        WalkEnd::NoPath,
+        Some("third route failure"),
+    );
+
+    let result = with_step_context(&snapshot, &mut ledger, tick + 1, |cx| run.poll(cx));
+    match result {
+        Poll::Ready(Err(ActionError::Blocked(reason))) => {
+            assert_eq!(reason.as_ref(), "third route failure");
+        }
+        Poll::Ready(Err(other)) => panic!("expected the third route failure, got {other:?}"),
+        Poll::Ready(Ok(_)) => panic!("the unreachable stand must not complete the step"),
+        Poll::Pending => {
+            panic!("three stand-walk failures across the kill-budget end must end the step")
+        }
+    }
+    assert!(
+        run.action.is_none(),
+        "the Quester must not start another fight"
+    );
+}
+
+#[test]
+fn stand_walk_count_survives_a_failure_on_the_budget_tick() {
+    let data = api::game_data::for_revision(ClientRevision::R289).unwrap();
+    let here = api::WorldTile {
+        x: 3000,
+        z: 3000,
+        level: 0,
+    };
+    let stand = api::WorldTile {
+        x: 3010,
+        z: 3000,
+        level: 0,
+    };
+    let mut snapshot = GameSnapshot::new();
+    seed_abort_scene(&mut snapshot, here, 40, Vec::new(), None, None);
+    let mut run = combat_test_run(
+        imp_target(&data),
+        Some(stand),
+        Some(Arc::new(NeverStop)),
+        Vec::new(),
+    );
+    Arc::make_mut(&mut run.request).budget_ticks = 50;
+    let mut ledger = None;
+    with_step_context(&snapshot, &mut ledger, 1, |cx| {
+        run.begin_combat(cx).unwrap()
+    });
+
+    assert!(with_step_context(&snapshot, &mut ledger, 2, |cx| run.poll(cx)).is_pending());
+    post_walk_end(&mut ledger, 2, WalkEnd::NoPath, Some("first route failure"));
+    assert!(with_step_context(&snapshot, &mut ledger, 3, |cx| run.poll(cx)).is_pending());
+    let in_flight = last_walk(&ledger);
+    assert_eq!(in_flight.target, stand);
+    for tick in 4..51 {
+        assert!(with_step_context(&snapshot, &mut ledger, tick, |cx| run.poll(cx)).is_pending());
+    }
+    post_walk_end(
+        &mut ledger,
+        50,
+        WalkEnd::NoPath,
+        Some("second route failure"),
+    );
+
+    let mut tick = 51;
+    while pending_walk(&ledger).is_none_or(|walk| walk.request_id == in_flight.request_id) {
+        assert!(tick < 60, "the new attempt must request its own stand walk");
+        assert!(
+            with_step_context(&snapshot, &mut ledger, tick, |cx| run.poll(cx)).is_pending(),
+            "the budget end must rebegin the fight, not end the step"
+        );
+        tick += 1;
+    }
+    assert_eq!(
+        run.stand_walk_failures, 2,
+        "the failure counted on the budget tick must seed the new attempt"
+    );
+    post_walk_end(
+        &mut ledger,
+        tick,
+        WalkEnd::NoPath,
+        Some("third route failure"),
+    );
+    let result = with_step_context(&snapshot, &mut ledger, tick + 1, |cx| run.poll(cx));
+    match result {
+        Poll::Ready(Err(ActionError::Blocked(reason))) => {
+            assert_eq!(reason.as_ref(), "third route failure");
+        }
+        Poll::Ready(Err(other)) => panic!("expected the third route failure, got {other:?}"),
+        Poll::Ready(Ok(_)) => panic!("the unreachable stand must not complete the step"),
+        Poll::Pending => panic!("three stand-walk failures must end the step"),
+    }
+}
+
+/// The run is inlined into the compiled step and lives for a whole combat
+/// step. Its step-local counts must fit the layout the machine's own sizes
+/// were measured at; 1176 bytes is the size before the stand-walk count.
+#[test]
+fn combat_run_layout_stays_compact() {
+    assert!(std::mem::size_of::<CombatRun>() <= 1176);
+    println!("CombatRun={}", std::mem::size_of::<CombatRun>());
+}
+
+#[test]
+fn return_to_stand_route_ended_at_network_tile_is_arrival() {
+    let data = api::game_data::for_revision(ClientRevision::R289).unwrap();
+    let stand = api::WorldTile {
+        x: 2632,
+        z: 3222,
+        level: 0,
+    };
+    let here = api::WorldTile {
+        x: 2628,
+        z: 3222,
+        level: 0,
+    };
+    let adjacent = api::WorldTile {
+        x: 2631,
+        z: 3222,
+        level: 0,
+    };
+    let mut snapshot = GameSnapshot::new();
+    seed_abort_scene(&mut snapshot, here, 40, Vec::new(), None, None);
+    let mut ledger = None;
+    let mut run = combat_test_run(
+        imp_target(&data),
+        Some(stand),
+        Some(Arc::new(NeverStop)),
+        Vec::new(),
+    );
+    assert!(with_step_context(&snapshot, &mut ledger, 12, |cx| {
+        run.on_combat_report(report(CombatEnd::TargetGone), cx)
+    })
+    .is_pending());
+    let request_id = last_walk(&ledger).request_id;
+
+    let mut local = snapshot.local_player().unwrap().clone();
+    local.player.actor.tile = here;
+    local.player.network = adjacent;
+    snapshot.seed_local_player(local);
     let result = with_step_context(&snapshot, &mut ledger, 13, |cx| {
         run.on_return_walk(
             WalkReceipt {
                 goal: None,
-                request_id: 1,
+                request_id,
                 evidence: cx.tick.cx.evidence(),
                 end: WalkEnd::RouteEnded,
                 blocked: None,
@@ -4421,9 +4788,12 @@ fn target_gone_walk_without_observed_arrival_blocks_reengagement() {
             cx,
         )
     });
-    assert!(matches!(result, Poll::Ready(Err(ActionError::Blocked(_)))));
-    assert_eq!(run.target_gone_restarts, 0);
-    assert!(run.action.is_none());
+
+    assert!(result.is_pending(), "the return walk arrived at the stand");
+    assert_eq!(run.return_walk_failures, 0);
+    assert_eq!(run.target_gone_restarts, 1);
+    assert!(matches!(&run.phase, Phase::Combat));
+    assert!(matches!(run.action.as_ref(), Some(Action::Combat(_))));
 }
 
 #[test]

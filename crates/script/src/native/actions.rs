@@ -670,6 +670,14 @@ impl<M: NativeMachine> ActionHandle<M> {
 }
 
 impl ActionHandle<crate::combat::Combat> {
+    /// Give this attempt the stand-approach walks its quest step already spent.
+    /// The step owns the count: a kill-budget end rebegins the fight inside it.
+    pub(crate) fn seed_stand_walk_failures(&self, failures: u8) {
+        if let Some(machine) = self.machine.borrow_mut().as_mut() {
+            machine.seed_stand_walk_failures(failures);
+        }
+    }
+
     /// Read accepted combat prayer-cleanup debt without polling the machine.
     pub fn prayer_cleanup(&self) -> crate::combat::RaisedPrayers {
         let machine = self.machine.borrow();

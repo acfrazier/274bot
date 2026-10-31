@@ -42,6 +42,12 @@ enum RangedReadinessWait {
     },
 }
 const PREP_READINESS_TICKS: u16 = 8;
+/// Failed stand-approach walks in one fight before the step ends.
+/// Each retry is a fresh route plan from the observed tile, which is
+/// the recovery for a transient stall or a route that ended short.
+/// Three failures return the last walk detail instead of re-walking
+/// until the kill budget expires.
+const MAX_STAND_WALK_FAILURES: u8 = 3;
 #[derive(Default)]
 struct Counters {
     ticks: u16,
@@ -202,6 +208,7 @@ pub struct Combat {
     emitted_tick: u16,
     phase: Phase,
     flags: u16,
+    stand_walk_failures: u8,
 }
 const OBSERVED: u16 = 1;
 const EMITTED: u16 = 2;
@@ -349,6 +356,7 @@ impl NativeMachine for Combat {
             prep_failures: 0,
             phase: Phase::Prep,
             flags: 0,
+            stand_walk_failures: 0,
         };
 
         // Request facts can warrant a boost before the first complete actor
@@ -427,12 +435,67 @@ impl NativeMachine for Combat {
         }
         self.flags |= OBSERVED;
         self.counters.ticks = self.counters.ticks.saturating_add(1);
-        if self.phase != Phase::Escape
-            && self
-                .pending_walk
-                .is_some_and(|id| cx.walk_receipt(id.get()).is_some())
-        {
-            self.pending_walk = None;
+        let stand_failures_before_receipt = self.stand_walk_failures;
+        if self.phase != Phase::Escape {
+            if let Some(receipt) = self.pending_walk.and_then(|id| cx.walk_receipt(id.get())) {
+                // A stand-approach walk is identified by its context, as
+                // `pending_walk` also carries leash and escape walks:
+                // no engaged target yet, still in Prep/Engage, and the
+                // stand still ahead. Its failure is information first:
+                // the plan below walks again from the observed tile.
+                // Only the bounded count is terminal. Arrival is read
+                // from the network tile: at route end the rendered tile
+                // can lag one tile behind it, and the host then reports
+                // `RouteEnded` for a walk that did reach its aim. That
+                // receipt is arrival, not a failure.
+                let stand_arrived = self
+                    .request
+                    .stand
+                    .is_some_and(|stand| select::stand_reached(stand, frame.local));
+                let stand_walk = self.engaged.is_none()
+                    && matches!(self.phase, Phase::Prep | Phase::Engage)
+                    && select::stand_pending(&self.request, &frame);
+                self.pending_walk = None;
+                if stand_arrived {
+                    self.stand_walk_failures = 0;
+                }
+                if stand_walk {
+                    match &receipt.end {
+                        WalkEnd::Arrived => self.stand_walk_failures = 0,
+                        WalkEnd::NeedsEvidence(gates) => {
+                            return Poll::Ready(Err(ActionError::NeedsEvidence(Arc::clone(gates))));
+                        }
+                        WalkEnd::Cancelled => {
+                            return Poll::Ready(Err(ActionError::Cancelled));
+                        }
+                        WalkEnd::UserInput => {
+                            return Poll::Ready(Err(ActionError::UserInput));
+                        }
+                        end => {
+                            self.stand_walk_failures = self.stand_walk_failures.saturating_add(1);
+                            if self.stand_walk_failures >= MAX_STAND_WALK_FAILURES {
+                                let detail = receipt
+                                    .failure_detail()
+                                    .unwrap_or_else(|| Arc::from("combat stand walk failed"));
+                                if let Some(stand) = self.request.stand {
+                                    api::host_log!(
+                                        api::hostlog::Category::NavEvent,
+                                        api::hostlog::Level::Info,
+                                        "combat stand walk to ({},{},{}) failed {} times; last end {:?}; detail {}",
+                                        stand.x,
+                                        stand.z,
+                                        stand.level,
+                                        self.stand_walk_failures,
+                                        end,
+                                        detail.as_ref(),
+                                    );
+                                }
+                                return Poll::Ready(Err(ActionError::Blocked(detail)));
+                            }
+                        }
+                    }
+                }
+            }
         }
         let events = self.threats.observe(&frame, &self.tables, tick);
         self.counters.damage = self.counters.damage.saturating_add(events.damage);
@@ -573,6 +636,14 @@ impl NativeMachine for Combat {
                                 return Poll::Pending;
                             }
                         }
+                        // A completed handle drops this machine before
+                        // the quest step can inspect it. If this poll
+                        // changed the stand count, keep the machine alive
+                        // for one more poll so the step mirrors the exact
+                        // count before it seeds the next attempt.
+                        if self.stand_walk_failures != stand_failures_before_receipt {
+                            return Poll::Pending;
+                        }
                         return Poll::Ready(Ok(self.report(evidence)));
                     }
                     return Poll::Pending;
@@ -611,6 +682,17 @@ impl Combat {
     }
     pub fn engaged(&self) -> Option<ActorRef> {
         self.engaged
+    }
+    /// Stand-approach walk failures this attempt inherited and spent. The quest
+    /// step mirrors this into the run that outlives one attempt.
+    pub(crate) fn stand_walk_failures(&self) -> u8 {
+        self.stand_walk_failures
+    }
+    /// Continue a quest step's spent stand approaches: the step owns the count,
+    /// so the attempt it starts keeps counting toward the same bound. Every
+    /// other caller begins at zero.
+    pub(crate) fn seed_stand_walk_failures(&mut self, failures: u8) {
+        self.stand_walk_failures = failures;
     }
     /// Observed resource consumption counts splashes as casts, never as hits.
     pub fn casts(&self) -> u16 {
@@ -1229,11 +1311,22 @@ impl Combat {
             self.flags &= !(LOST | LEASH_WALKED);
         }
         if self.engaged.is_none() {
-            if self.flags & LOST == 0 {
+            if select::stand_pending(&self.request, frame) {
+                // Walking to the stand is the approach, not lost time:
+                // the no-target clock starts only after arrival, and the
+                // bounded stand-walk failures and the request deadline
+                // remain the approach's own limits. The failure count is
+                // spent only by failed walks, so it survives this refresh.
                 self.lost_since = tick;
                 self.flags |= LOST;
-            } else if elapsed(tick, self.lost_since) >= 15 {
-                self.finish(CombatEnd::NoTarget, tick);
+            } else {
+                self.stand_walk_failures = 0;
+                if self.flags & LOST == 0 {
+                    self.lost_since = tick;
+                    self.flags |= LOST;
+                } else if elapsed(tick, self.lost_since) >= 15 {
+                    self.finish(CombatEnd::NoTarget, tick);
+                }
             }
         }
         if self.phase == Phase::Engage
@@ -2341,7 +2434,7 @@ impl Combat {
                 if let Some(tile) = self
                     .request
                     .stand
-                    .filter(|tile| distance(frame.here, *tile) > 1)
+                    .filter(|tile| !select::stand_reached(*tile, frame.local))
                 {
                     self.walk(tile, tick, cx)?;
                 }
@@ -2996,7 +3089,11 @@ impl Combat {
     }
     fn leash_cancel_tile(&self, frame: &Frame<'_>) -> Option<api::WorldTile> {
         let stand = self.request.stand?;
-        if distance(frame.here, stand) > 1 {
+        // The fight spot is read from the network tile, as every other
+        // arrival check is: a rendered tile that lags behind it would send a
+        // walk to a spot the player already reached, and that walk gives no
+        // driver movement to cancel the chase.
+        if !select::stand_reached(stand, frame.local) {
             return Some(stand);
         }
         let actor = self.engaged?;
