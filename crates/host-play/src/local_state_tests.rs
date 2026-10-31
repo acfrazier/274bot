@@ -2309,8 +2309,8 @@ fn a_failed_or_interrupted_many_member_update_changes_nothing() {
         step.store(failure, Ordering::SeqCst);
         let error = preferences.update(renumber).expect_err(case);
         assert!(
-            !matches!(wait_outcome(&error), WaitOutcome::WriteExpired),
-            "{case}: {error}"
+            !transient_wait(&error),
+            "{case}: a load timeout is not the injected failure: {error}"
         );
         assert_eq!(std::fs::read(&path).unwrap(), bytes_before, "{case}: file");
         preferences.reload().unwrap();
