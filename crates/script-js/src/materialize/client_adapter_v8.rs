@@ -126,20 +126,22 @@ pub(super) fn read<'s>(
         "ifText" => if_text(scope, snapshot, arg0),
         "countDialogOpen" => bool_property_value(scope, snapshot, "count_dialog_open"),
         "makeProducts" => make_products(scope, snapshot),
-        "overlayPosWorld" => overlay_pos_world(scope, facts, [arg0, arg1, arg2, arg3, arg4], false),
+        // The host builds the projection scene (height and link grids, loc
+        // list) only for a run that asked for it: building it for every bot
+        // cost about 0.3 MiB of Rust memory per bot and, for the loc list, a
+        // full-scene model walk per loc rebuild. The first call of a run
+        // raises the demand; until the next host snapshot posts the scene,
+        // these readers return null, as they do for a point off the scene.
+        "overlayPosWorld" => {
+            request_projection(scope)?;
+            overlay_pos_world(scope, facts, [arg0, arg1, arg2, arg3, arg4], false)
+        }
         "projectAreaGameWorld" => {
+            request_projection(scope)?;
             overlay_pos_world(scope, facts, [arg0, arg1, arg2, arg3, arg4], true)
         }
-        // The host builds the scene's projection loc list only for a run that
-        // asked for it (a full-scene model walk per loc rebuild is too costly
-        // for every bot). The first call raises the demand; until the next
-        // host snapshot posts the list, locBox returns null, as it does for a
-        // loc that is not in the live scene.
         "locBox" => {
-            scope
-                .get_slot::<Arc<AtomicBool>>()
-                .ok_or_else(|| "loc projection interest is not installed".to_string())?
-                .store(true, Ordering::Release);
+            request_projection(scope)?;
             loc_box(scope, snapshot, facts, arg0, arg1)
         }
         "itemIconPixels" => item_icon_pixels(scope, facts, arg0),
@@ -148,6 +150,15 @@ pub(super) fn read<'s>(
             Err(format!("not impl: reader.{method}"))
         }
     }
+}
+
+/// Raise this isolate's projection demand (read by the slot publisher).
+fn request_projection(scope: &mut v8::HandleScope<'_>) -> Result<(), String> {
+    scope
+        .get_slot::<Arc<AtomicBool>>()
+        .ok_or_else(|| "loc projection interest is not installed".to_string())?
+        .store(true, Ordering::Release);
+    Ok(())
 }
 
 fn snapshot<'s>(scope: &mut v8::HandleScope<'s>) -> Result<v8::Local<'s, v8::Value>, String> {

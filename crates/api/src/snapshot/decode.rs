@@ -1136,13 +1136,20 @@ impl GameSnapshot {
     }
 
     fn publish_scene_from_client(&mut self, client: &Client) {
+        self.projection_scene_wanted = self.projection_locs_wanted;
         if !client.ingame || client.scene_state != 2 {
             self.scene = SceneView::default();
             self.projection_scene = ProjectionSceneView::default();
             self.projection_locs_built = false;
             return;
         }
-        self.projection_scene = Self::projection_scene_view(client).unwrap_or_default();
+        // The height and link grids serve only the synchronous projection
+        // readers; build them only for a run that asked for them.
+        self.projection_scene = if self.projection_locs_wanted {
+            Self::projection_scene_view(client).unwrap_or_default()
+        } else {
+            ProjectionSceneView::default()
+        };
         self.projection_locs_built = false;
         let level = client.minusedlevel;
         match client.collision.get(level as usize) {
@@ -1260,7 +1267,8 @@ impl GameSnapshot {
             || self.scene.level != client.minusedlevel
             || self.scene.base_x != client.map_build_base_x
             || self.scene.base_z != client.map_build_base_z;
-        if moved || loc_dirty || identity_stale {
+        let projection_stale = self.projection_locs_wanted != self.projection_scene_wanted;
+        if moved || loc_dirty || identity_stale || projection_stale {
             self.publish_scene_from_client(client);
         }
         moved
@@ -1362,7 +1370,9 @@ impl GameSnapshot {
     fn rebuild_projection_locs(&mut self, client: &Client) {
         if !self.projection_scene.available || !self.projection_locs_wanted {
             self.projection_scene.locs = std::sync::Arc::from([]);
-            self.projection_locs_built = false;
+            // Settled for this state: an unwanted list stays empty, and a
+            // wanted one waits for the next scene publish (which clears this).
+            self.projection_locs_built = self.projection_locs_wanted;
             return;
         }
         let mut locs = Vec::new();
@@ -2689,6 +2699,33 @@ mod tests {
         assert!(!snapshot.rebuild_loc(&client));
         assert!(snapshot.projection_scene().locs.is_empty());
         assert!(!snapshot.projection_locs_built);
+    }
+
+    /// The projection height and link grids (about 99 KB per scene) are built
+    /// only while a reader asks for them, and a change of demand republishes
+    /// the scene without a scene generation move.
+    #[test]
+    fn projection_scene_grids_follow_demand() {
+        let mut client = r289_client();
+        client.ingame = true;
+        client.scene_state = 2;
+        client.gens.scene = 1;
+        let mut snapshot = GameSnapshot::new();
+        snapshot.rebuild_scene(&client);
+        assert!(!snapshot.projection_scene().available);
+        assert!(snapshot.projection_scene().heights.is_empty());
+        assert!(snapshot.projection_scene().link_below.is_empty());
+
+        snapshot.set_loc_projection_wanted(true);
+        snapshot.rebuild_scene(&client);
+        assert!(snapshot.projection_scene().available);
+        assert_eq!(snapshot.projection_scene().heights.len(), 105 * 105);
+        assert_eq!(snapshot.projection_scene().link_below.len(), 104 * 104);
+
+        snapshot.set_loc_projection_wanted(false);
+        snapshot.rebuild_scene(&client);
+        assert!(!snapshot.projection_scene().available);
+        assert!(snapshot.projection_scene().heights.is_empty());
     }
 
     #[test]

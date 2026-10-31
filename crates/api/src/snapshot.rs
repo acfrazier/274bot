@@ -118,14 +118,20 @@ pub struct GameSnapshot {
     /// The built scene's collision grid from the last scene rebuild.
     scene: SceneView,
     /// Native-only bounded camera/height/loc data for synchronous projection.
+    /// Built only while a live script reader asks for it (about 99 KB of
+    /// height and link grids per scene, plus the loc list).
     #[serde(skip)]
     projection_scene: ProjectionSceneView,
-    /// Whether the projection loc list is requested by a live script reader.
+    /// Whether the projection scene and loc list are requested by a live
+    /// script reader.
     #[serde(skip)]
     projection_locs_wanted: bool,
-    /// Whether the projection loc list has been built for the current wanted state.
+    /// Whether the projection loc list is settled for the current wanted state.
     #[serde(skip)]
     projection_locs_built: bool,
+    /// The wanted state the projection scene was last published for.
+    #[serde(skip)]
+    projection_scene_wanted: bool,
     /// The client's world scalars from the last world rebuild.
     world: WorldStateView,
     /// The camera state from the last camera rebuild.
@@ -370,6 +376,7 @@ impl Default for GameSnapshot {
             projection_scene: ProjectionSceneView::default(),
             projection_locs_wanted: false,
             projection_locs_built: false,
+            projection_scene_wanted: false,
             world: WorldStateView::default(),
             camera: CameraView::default(),
             map_flag: None,
