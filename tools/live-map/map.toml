@@ -290,7 +290,7 @@ cells = [
 [[cover]]
 globs = ["crates/host-play/src/script_bank_harness.rs"]
 cells = [
-  "host.script-bank-tests|${ISOHOME:?} nice -n 10 cargo test --locked -p host-play --features live-harness,test-support --lib script_bank::tests",
+"host.script-bank-tests|${ISOHOME:?} nice -n 10 cargo test --locked -p host-play --features live-harness,test-support --lib script_runtime::bank::tests",
 ]
 
 [[cover]]

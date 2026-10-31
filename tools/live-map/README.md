@@ -87,7 +87,8 @@ It checks `LIVE=1` and writes receipts when `LIVE_EVIDENCE_DIR` is set at
 `crates/host-play/src/bank_npc_live.rs`. The first runs the real Mage Arena
 teller receipt; the second exercises the shared bank-pick retry burst.
 `host.script-bank-tests` covers `crates/host-play/src/script_bank_harness.rs`
-through its unit tests.
+through the `script_runtime::bank::tests` unit tests. These tests call the
+shared native Select helpers in that harness.
 
 `host.grinch-cross-region-return` covers
 `crates/script/src/acquire/run.rs`: `Grinch::start_bank` constructs
