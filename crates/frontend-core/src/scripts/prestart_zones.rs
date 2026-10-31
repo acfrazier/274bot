@@ -1,9 +1,15 @@
 //! Pre-start disclosure of the exact zone crossings selected by Quester's queue.
-use std::sync::Arc;
-
+use crate::selection::ProfileIdentity;
 use script::quester::path::{PathDocument, StepDocument};
 use script::quester::queue::{Queue, QueueSettings};
 use script::quester::registry::{self, PathRegistry};
+use std::fmt::Write as _;
+use std::sync::Arc;
+
+pub const START_ZONE_SCOPE_TITLE: &str = "Start zone scope";
+pub const START_ZONE_PANEL_SCROLL_HINT: &str = "Scroll this panel to read the full list.";
+pub const START_ZONE_TUI_SCROLL_HINT: &str = "Scroll this list with j/k or PgUp/PgDn.";
+pub const START_ZONE_UNAVAILABLE_NOTICE: &str = "The selected Quester scope is unavailable.";
 use serde_json::{Map, Value};
 
 /// One authored zone crossing, with the exact identifier the guide accepts.
@@ -14,7 +20,7 @@ pub struct QuesterStartZone {
     pub step_id: Option<String>,
     pub name: String,
     pub reason: String,
-    /// Cached presentation label. It includes the exact accepted `id`.
+    /// Cached presentation label with scope and exact accepted `id`.
     pub display_label: String,
 }
 
@@ -41,116 +47,157 @@ impl QuesterStartZones {
     pub fn is_empty(&self) -> bool {
         self.scopes.is_empty()
     }
+
+    /// The shared operator-facing explanation for this frozen disclosure.
+    pub fn notice(&self) -> &'static str {
+        if self.is_empty() {
+            "No danger zones are declared. Quester walks avoid every danger zone."
+        } else {
+            "Start accepts only these zones. The food guard is armed for the whole walk; protection runs only where a step requests it. Every other danger zone stays avoided."
+        }
+    }
+
+    /// Append the shared per-profile disclosure used by plan and report text.
+    pub fn append_plan_disclosure(&self, profile: &str, text: &mut String) {
+        let _ = write!(text, "{profile}: {}", self.notice());
+        for scope in &self.scopes {
+            let _ = write!(text, "\n  {}", scope.display_label);
+            for zone in &scope.zones {
+                let _ = write!(text, "\n    {} — {}", zone.display_label, zone.reason);
+            }
+        }
+    }
 }
 
-/// Caches the selected guide metadata until either queue settings or the
-/// immutable Path registry snapshot changes.
+/// Caches effective settings and derived disclosure by profile, profile
+/// generation, and the published registry revision.
 #[derive(Debug, Default)]
 pub struct QuesterStartZoneCache {
-    settings: Option<QueueSettingsSignature>,
-    registry: Option<PathRegistry>,
-    view: Option<Result<QuesterStartZones, String>>,
+    profile: Option<ProfileIdentity>,
+    profiles_generation: Option<u64>,
+    registry_revision: Option<u64>,
+    settings: Option<Map<String, Value>>,
+    view: Option<Arc<Result<QuesterStartZones, String>>>,
 }
 
 impl QuesterStartZoneCache {
-    /// Refresh from the selected profile's effective Quester settings.
-    /// Returns `true` when the cached view changes.
-    pub fn update(&mut self, bag: &Map<String, Value>) -> bool {
-        let current_registry = registry::snapshot();
-        if self
-            .settings
-            .as_ref()
-            .is_some_and(|settings| settings.matches(bag))
-            && self
-                .registry
-                .as_ref()
-                .is_some_and(|cached| same_snapshot(cached, &current_registry))
-        {
-            return false;
-        }
+    /// Whether the durable effective settings are already cached for this
+    /// profile version.
+    pub fn settings_match(&self, profile: ProfileIdentity, generation: u64) -> bool {
+        self.profile == Some(profile) && self.profiles_generation == Some(generation)
+    }
 
-        let settings = QueueSettingsSignature::capture(bag);
-        let view = resolve_selected_zones(&current_registry, bag);
-        self.settings = Some(settings);
-        self.registry = Some(current_registry);
-        self.view = Some(view);
+    /// Refresh from one durable effective-settings read.
+    pub fn update_settings(
+        &mut self,
+        profile: ProfileIdentity,
+        generation: u64,
+        settings: Result<Map<String, Value>, String>,
+    ) -> bool {
+        let (current_registry, registry_revision) = registry::snapshot_with_revision();
+        self.profile = Some(profile);
+        self.profiles_generation = Some(generation);
+        self.registry_revision = Some(registry_revision);
+        let view = match settings {
+            Ok(settings) => {
+                let view = resolve_selected_zones(&current_registry, &settings);
+                self.settings = Some(settings);
+                view
+            }
+            Err(reason) => {
+                self.settings = None;
+                Err(reason)
+            }
+        };
+        self.view = Some(Arc::new(view));
         true
     }
 
-    /// Store an unavailable-settings error from the effective-settings reader.
-    pub fn set_unavailable(&mut self, reason: impl Into<String>) -> bool {
+    /// Store an unavailable-settings error for this profile version.
+    pub fn update_unavailable(
+        &mut self,
+        profile: ProfileIdentity,
+        generation: u64,
+        reason: impl Into<String>,
+    ) -> bool {
         let reason = reason.into();
-        if self.settings.is_none()
-            && self.registry.is_none()
+        let registry_revision = registry::revision();
+        if self.settings_match(profile, generation)
+            && self.registry_revision == Some(registry_revision)
             && self
                 .view
                 .as_ref()
-                .and_then(|view| view.as_ref().err())
-                .is_some_and(|previous| previous == &reason)
+                .and_then(|view| view.as_ref().as_ref().err())
+                .is_some_and(|previous| previous.as_str() == reason.as_str())
         {
             return false;
         }
+        self.profile = Some(profile);
+        self.profiles_generation = Some(generation);
+        self.registry_revision = Some(registry_revision);
         self.settings = None;
-        self.registry = None;
-        self.view = Some(Err(reason));
+        self.view = Some(Arc::new(Err(reason)));
+        true
+    }
+
+    /// Re-resolve cached settings only when the registry publishes a new
+    /// version. The common frame path reads one atomic and allocates nothing.
+    pub fn refresh_registry(&mut self) -> bool {
+        let Some(cached_revision) = self.registry_revision else {
+            return false;
+        };
+        if registry::revision() == cached_revision {
+            return false;
+        }
+        let (current_registry, current_revision) = registry::snapshot_with_revision();
+        if current_revision == cached_revision {
+            return false;
+        }
+        self.registry_revision = Some(current_revision);
+        let Some(settings) = self.settings.as_ref() else {
+            return false;
+        };
+        self.view = Some(Arc::new(resolve_selected_zones(
+            &current_registry,
+            settings,
+        )));
         true
     }
 
     /// Clear the view when Quester is not the selected card.
     pub fn clear(&mut self) -> bool {
-        if self.view.is_none() && self.settings.is_none() && self.registry.is_none() {
+        if self.view.is_none()
+            && self.profile.is_none()
+            && self.profiles_generation.is_none()
+            && self.registry_revision.is_none()
+            && self.settings.is_none()
+        {
             return false;
         }
+        self.profile = None;
+        self.profiles_generation = None;
+        self.registry_revision = None;
         self.settings = None;
-        self.registry = None;
         self.view = None;
         true
     }
 
     /// The latest complete view, or its explicit failure.
     pub fn view(&self) -> Option<Result<&QuesterStartZones, &str>> {
-        self.view.as_ref().map(|view| match view {
+        self.view.as_deref().map(|view| match view {
             Ok(zones) => Ok(zones),
             Err(reason) => Err(reason.as_str()),
         })
     }
-}
 
-#[derive(Debug, Default, PartialEq, Eq)]
-struct QueueSettingsSignature {
-    quests: Option<Value>,
-    include_draft_guides: Option<Value>,
-    order_override: Option<Value>,
-    skip: Option<Value>,
-}
-
-impl QueueSettingsSignature {
-    fn capture(bag: &Map<String, Value>) -> Self {
-        Self {
-            quests: bag.get("quests").cloned(),
-            include_draft_guides: bag.get("include_draft_guides").cloned(),
-            order_override: bag.get("order_override").cloned(),
-            skip: bag.get("skip").cloned(),
-        }
-    }
-
-    fn matches(&self, bag: &Map<String, Value>) -> bool {
-        self.quests.as_ref() == bag.get("quests")
-            && self.include_draft_guides.as_ref() == bag.get("include_draft_guides")
-            && self.order_override.as_ref() == bag.get("order_override")
-            && self.skip.as_ref() == bag.get("skip")
+    /// Share the immutable, versioned view with a front-end without copying
+    /// its text or zone list.
+    pub fn shared_view(&self) -> Option<Arc<Result<QuesterStartZones, String>>> {
+        self.view.as_ref().map(Arc::clone)
     }
 }
 
-fn same_snapshot(left: &PathRegistry, right: &PathRegistry) -> bool {
-    match (left, right) {
-        (PathRegistry::Bundled, PathRegistry::Bundled) => true,
-        (PathRegistry::Folder(left), PathRegistry::Folder(right)) => Arc::ptr_eq(left, right),
-        _ => false,
-    }
-}
-
-fn resolve_selected_zones(
+pub(crate) fn resolve_selected_zones(
     registry: &PathRegistry,
     bag: &Map<String, Value>,
 ) -> Result<QuesterStartZones, String> {
@@ -402,6 +449,10 @@ fn scope(
         format!("stage {stage_id}")
     };
     let display_label = format!("{quest_name} ({quest_id}) · {context}{role}");
+    let mut zones = zones;
+    for zone in &mut zones {
+        zone.display_label = format!("{display_label} · {}", zone.display_label);
+    }
     QuesterStartZoneScope {
         quest_id: quest_id.to_owned(),
         quest_name: quest_name.to_owned(),
@@ -415,6 +466,7 @@ fn scope(
 #[cfg(test)]
 mod tests {
     use super::{QuesterStartZoneCache, QuesterStartZones};
+    use crate::selection::ProfileIdentity;
     use api::selected::{ClientRevision, FamilyPreparation};
     use api::snapshot::WorldTile;
     use nav_planner::collision::WorldCollision;
@@ -582,6 +634,18 @@ mod tests {
         Map::from_iter([("quests".into(), json!(quests))])
     }
 
+    fn update_cache(
+        cache: &mut QuesterStartZoneCache,
+        generation: u64,
+        settings: Map<String, Value>,
+    ) -> bool {
+        cache.update_settings(
+            ProfileIdentity::synthetic("prestart-zone-cache-test"),
+            generation,
+            Ok(settings),
+        )
+    }
+
     fn preview(cache: &QuesterStartZoneCache) -> &QuesterStartZones {
         cache.view().expect("the cache has a view").unwrap()
     }
@@ -635,6 +699,9 @@ mod tests {
         assert!(sequence_step
             .display_label
             .contains("step fixture-sequence-walk"));
+        assert!(sequence_step
+            .display_label
+            .contains("Cook Fixture (cook) · stage cook:0"));
         assert_eq!(
             sequence_step.reason,
             "The guide crosses this bank to reach the mill."
@@ -661,6 +728,9 @@ mod tests {
         assert!(prelude_step
             .display_label
             .contains("step fixture-prelude-walk"));
+        assert!(prelude_step
+            .display_label
+            .contains("Cook Fixture (cook) · prelude"));
         assert_eq!(
             prelude_step.reason,
             "The guide crosses this bank to reach the mill."
@@ -739,24 +809,24 @@ mod tests {
     fn queue_defaults_skip_drafts_and_apply_opt_in_and_order_override() {
         let _source_lock = crate::quester_paths::registry_source_test_lock();
         let mut cache = QuesterStartZoneCache::default();
-        assert!(cache.update(&Map::new()));
+        assert!(update_cache(&mut cache, 0, Map::new()));
         let default_ids = quest_ids(preview(&cache));
         assert!(!default_ids.contains(&"arthur"));
 
         let mut draft_opt_in = Map::new();
         draft_opt_in.insert("include_draft_guides".into(), json!(true));
-        assert!(cache.update(&draft_opt_in));
+        assert!(update_cache(&mut cache, 1, draft_opt_in));
         assert!(quest_ids(preview(&cache)).contains(&"arthur"));
 
         let mut ordered = Map::new();
         ordered.insert("order_override".into(), json!(["arthur"]));
-        assert!(cache.update(&ordered));
+        assert!(update_cache(&mut cache, 2, ordered));
         assert_eq!(quest_ids(preview(&cache)).first().copied(), Some("arthur"));
 
         let mut explicit = bag(&["arthur"]);
         explicit.insert("skip".into(), json!(["arthur"]));
         explicit.insert("order_override".into(), json!(["arthur"]));
-        assert!(cache.update(&explicit));
+        assert!(update_cache(&mut cache, 3, explicit));
         assert!(preview(&cache).is_empty());
     }
 
@@ -764,18 +834,52 @@ mod tests {
     fn empty_declarations_and_live_settings_changes_are_visible() {
         let _source_lock = crate::quester_paths::registry_source_test_lock();
         let mut cache = QuesterStartZoneCache::default();
-        assert!(cache.update(&bag(&["sheep"])));
+        let identity = ProfileIdentity::synthetic("prestart-zone-cache-test");
+        assert!(update_cache(&mut cache, 1, bag(&["sheep"])));
         assert!(preview(&cache).is_empty());
+        assert_eq!(
+            preview(&cache).notice(),
+            "No danger zones are declared. Quester walks avoid every danger zone."
+        );
 
         let mut arthur = bag(&["arthur"]);
         arthur.insert("include_draft_guides".into(), json!(true));
-        assert!(cache.update(&arthur));
+        assert!(update_cache(&mut cache, 2, arthur));
         assert!(!preview(&cache).is_empty());
-        assert!(!cache.update(&arthur), "unchanged settings reuse the cache");
-        assert!(
-            cache.update(&bag(&["sheep"])),
-            "live settings refresh the cache"
+        assert_eq!(
+            preview(&cache).notice(),
+            "Start accepts only these zones. The food guard is armed for the whole walk; protection runs only where a step requests it. Every other danger zone stays avoided."
         );
+        assert!(cache.settings_match(identity, 2));
+        assert!(
+            !cache.refresh_registry(),
+            "unchanged registry reuses the cache"
+        );
+
+        assert!(update_cache(&mut cache, 3, bag(&["sheep"])));
         assert!(preview(&cache).is_empty());
+    }
+
+    #[test]
+    fn desert_rescue_discloses_both_captain_crossings() {
+        let zones =
+            super::resolve_selected_zones(&PathRegistry::default(), &bag(&["desertrescue"]))
+                .expect("bundled Desert Rescue queue resolves");
+        let ids: Vec<_> = zones
+            .scopes
+            .iter()
+            .flat_map(|scope| scope.zones.iter().map(|zone| zone.id.as_str()))
+            .collect();
+        for id in [
+            "ugthanki@3268,3052,0",
+            "ugthanki@3281,3056,0",
+            "ugthanki@3305,3089,0",
+        ] {
+            assert_eq!(
+                ids.iter().filter(|&&found| found == id).count(),
+                2,
+                "both captain walks disclose {id}: {ids:?}"
+            );
+        }
     }
 }

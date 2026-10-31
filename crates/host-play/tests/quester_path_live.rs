@@ -6,8 +6,6 @@
 //! Optional account seeds come from the `QUESTER_SEEDS` JSON file.
 //! Stage mode checks the expected stage after Start. Clean mode checks terminal
 //! completion without seeding the target Path's stage.
-//! Set `QUESTER_ALLOW_DANGER_ZONES=1` to run a separate cell with the Quester
-//! card's `allow_danger_zones` setting enabled; unset keeps the default.
 //! The cell runs under a fixed deadline.
 //!
 //! Run from the repository root against an explicitly selected local 289
@@ -95,7 +93,6 @@ fn smoke_cell(
     loadout: Option<FixtureLoadout<'_>>,
     extra_items: &[(&str, i32)],
     seed_vars: &[(&str, i32)],
-    allow_danger_zones: bool,
 ) -> Result<Cell, String> {
     let (mode, stage) = match seeds.mode.as_deref().unwrap_or("stage") {
         "stage" => (
@@ -123,22 +120,8 @@ fn smoke_cell(
         mode,
         before_relog: seeds.before_relog_steps(),
     })?;
-    if allow_danger_zones {
-        cell.start_settings
-            .insert("allow_danger_zones".into(), true.into());
-    }
     cell.scenario.settings.deadline = DEADLINE;
     Ok(cell)
-}
-
-fn allow_danger_zones_from_env() -> Result<bool, String> {
-    match std::env::var("QUESTER_ALLOW_DANGER_ZONES") {
-        Ok(value) if value == "1" => Ok(true),
-        Ok(value) if value == "0" => Ok(false),
-        Ok(_) => Err("QUESTER_ALLOW_DANGER_ZONES must be 0 or 1".into()),
-        Err(std::env::VarError::NotPresent) => Ok(false),
-        Err(error) => Err(format!("QUESTER_ALLOW_DANGER_ZONES: {error}")),
-    }
 }
 
 #[test]
@@ -159,17 +142,8 @@ fn live_quester_path_smoke() {
         .unwrap_or_else(|error| panic!("{error}"));
     let extra_items = seeds.extra_item_refs();
     let seed_vars = seeds.seed_var_refs();
-    let allow_danger_zones =
-        allow_danger_zones_from_env().unwrap_or_else(|error| panic!("{error}"));
-    let cell = smoke_cell(
-        row,
-        &seeds,
-        loadout,
-        &extra_items,
-        &seed_vars,
-        allow_danger_zones,
-    )
-    .unwrap_or_else(|error| panic!("build {quest} smoke cell from {source}: {error}"));
+    let cell = smoke_cell(row, &seeds, loadout, &extra_items, &seed_vars)
+        .unwrap_or_else(|error| panic!("build {quest} smoke cell from {source}: {error}"));
     let result = quester_live::run_quester_path(cell);
     println!("PATH-SMOKE {quest} ({source}): {:?}", result.is_ok());
     registry::set_source(before);
@@ -215,7 +189,7 @@ mod smoke_tests {
         let loadout = seeds.fixture_loadout().unwrap();
         let extra_items = seeds.extra_item_refs();
         let seed_vars = seeds.seed_var_refs();
-        smoke_cell(row, seeds, loadout, &extra_items, &seed_vars, false).unwrap()
+        smoke_cell(row, seeds, loadout, &extra_items, &seed_vars).unwrap()
     }
 
     #[test]
@@ -254,7 +228,7 @@ mod smoke_tests {
         let loadout = seeds.fixture_loadout().unwrap();
         let extra_items = seeds.extra_item_refs();
         let seed_vars = seeds.seed_var_refs();
-        let cell = smoke_cell(row, &seeds, loadout, &extra_items, &seed_vars, false).unwrap();
+        let cell = smoke_cell(row, &seeds, loadout, &extra_items, &seed_vars).unwrap();
         assert!(matches!(cell.mode, Mode::Clean));
         assert!(!cell.start_settings.contains_key("allow_danger_zones"));
         assert!(!cell
@@ -285,43 +259,11 @@ mod smoke_tests {
             let loadout = seeds.fixture_loadout().unwrap();
             let extra_items = seeds.extra_item_refs();
             let seed_vars = seeds.seed_var_refs();
-            let cell = smoke_cell(row, &seeds, loadout, &extra_items, &seed_vars, false).unwrap();
+            let cell = smoke_cell(row, &seeds, loadout, &extra_items, &seed_vars).unwrap();
             assert_eq!(cell.quest, quest);
             assert!(matches!(cell.mode, Mode::Stage { .. }));
             assert_eq!(cell.scenario.settings.deadline, DEADLINE);
         }
-    }
-
-    #[test]
-    fn danger_route_permission_is_opt_in() {
-        let _registry_guard = PATH_REGISTRY_LOCK.lock().unwrap();
-        let seeds = parse_seeds(COG_CLEAN_SEEDS).unwrap();
-        let row = smoke_row("cog").unwrap();
-        let extra_items = seeds.extra_item_refs();
-        let seed_vars = seeds.seed_var_refs();
-        let default = smoke_cell(
-            row,
-            &seeds,
-            seeds.fixture_loadout().unwrap(),
-            &extra_items,
-            &seed_vars,
-            false,
-        )
-        .unwrap();
-        assert!(!default.start_settings.contains_key("allow_danger_zones"));
-        let allowed = smoke_cell(
-            row,
-            &seeds,
-            seeds.fixture_loadout().unwrap(),
-            &extra_items,
-            &seed_vars,
-            true,
-        )
-        .unwrap();
-        assert_eq!(
-            allowed.start_settings.get("allow_danger_zones"),
-            Some(&serde_json::Value::Bool(true))
-        );
     }
 
     #[test]
@@ -341,7 +283,7 @@ mod smoke_tests {
         assert!(seeds.fixture_loadout().is_ok());
         let row = smoke_row("cook").unwrap();
         let empty: Vec<(&str, i32)> = Vec::new();
-        assert!(smoke_cell(row, &seeds, None, &empty, &empty, false).is_err());
+        assert!(smoke_cell(row, &seeds, None, &empty, &empty).is_err());
         let seeds = parse_seeds(
             &COOK_SEEDS.replace(r#""loadout": null"#, r#""loadout": {"standard": "plate"}"#),
         )

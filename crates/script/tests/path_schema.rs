@@ -441,6 +441,12 @@ fn generated_schema_uses_numeric_bounds_without_rust_formats() {
     assert_eq!(radius["minimum"], json!(0));
     assert_eq!(radius["maximum"], json!(65535));
     assert!(radius.get("format").is_none());
+    assert!(
+        schema["$defs"]["WalkArgs"]["properties"]
+            .get("allow_danger_zones")
+            .is_none(),
+        "stage danger grants are not a walk-step option"
+    );
     let step = &schema["$defs"]["step.walk.v1"];
     assert_eq!(step["properties"]["max_attempts"]["minimum"], json!(1));
     assert_eq!(

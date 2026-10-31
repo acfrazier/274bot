@@ -71,7 +71,9 @@ impl Modal {
         match self {
             Modal::Help(_) => "type to search · Up/Down scroll · Esc close",
             Modal::Palette(_) => "type to filter · Up/Down · Enter run · Esc close",
-            Modal::Confirm(_) => "Enter/y confirm · Esc/n cancel",
+            Modal::Confirm(_) => {
+                "Up/Down or j/k scroll · PgUp/PgDn faster · Enter/y confirm · Esc/n cancel"
+            }
             Modal::Context(_) => "Up/Down · Enter run · Esc close",
             Modal::Message { .. } => "Up/Down scroll · Esc close",
             Modal::Manual => "W A S D / arrows step one tile · Esc disarm",
@@ -89,6 +91,8 @@ pub struct Confirm {
     pub kind: ConfirmKind,
     /// Shown above the buttons (for example after the scope changed).
     pub note: Option<&'static str>,
+    /// First wrapped body row shown in the confirmation.
+    pub scroll: u16,
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -231,7 +235,9 @@ impl Confirm {
                 summary.clone(),
                 "The current script keeps running if you choose Later.".into(),
             ],
-            ConfirmKind::FleetPlan { prompt, .. } => vec![prompt.clone()],
+            ConfirmKind::FleetPlan { prompt, .. } => {
+                prompt.split('\n').map(str::to_owned).collect()
+            }
         };
         if let Some(note) = self.note {
             lines.push(note.into());
@@ -274,7 +280,11 @@ impl TuiApp {
 
     /// Ask to confirm `kind`; nothing runs until the operator confirms.
     pub fn confirm(&mut self, kind: ConfirmKind) {
-        self.open_modal(Modal::Confirm(Confirm { kind, note: None }));
+        self.open_modal(Modal::Confirm(Confirm {
+            kind,
+            note: None,
+            scroll: 0,
+        }));
     }
 
     pub(crate) fn modal_key(&mut self, key: KeyEvent) -> AppAction {
@@ -284,7 +294,7 @@ impl TuiApp {
         let (keep, action) = match modal {
             Modal::Help(state) => (self.help_key(state, key), AppAction::None),
             Modal::Palette(state) => self.palette_key(state, key),
-            Modal::Confirm(confirm) => match key.code {
+            Modal::Confirm(mut confirm) => match key.code {
                 KeyCode::Enter | KeyCode::Char('y') | KeyCode::Char('Y') => {
                     self.run_confirm(confirm)
                 }
@@ -295,6 +305,30 @@ impl TuiApp {
                         _ => AppAction::None,
                     };
                     (None, action)
+                }
+                KeyCode::Up | KeyCode::Char('k') => {
+                    confirm.scroll = confirm.scroll.saturating_sub(1);
+                    (Some(Modal::Confirm(confirm)), AppAction::None)
+                }
+                KeyCode::Down | KeyCode::Char('j') => {
+                    confirm.scroll = confirm.scroll.saturating_add(1);
+                    (Some(Modal::Confirm(confirm)), AppAction::None)
+                }
+                KeyCode::PageUp => {
+                    confirm.scroll = confirm.scroll.saturating_sub(10);
+                    (Some(Modal::Confirm(confirm)), AppAction::None)
+                }
+                KeyCode::PageDown => {
+                    confirm.scroll = confirm.scroll.saturating_add(10);
+                    (Some(Modal::Confirm(confirm)), AppAction::None)
+                }
+                KeyCode::Home => {
+                    confirm.scroll = 0;
+                    (Some(Modal::Confirm(confirm)), AppAction::None)
+                }
+                KeyCode::End => {
+                    confirm.scroll = u16::MAX;
+                    (Some(Modal::Confirm(confirm)), AppAction::None)
                 }
                 _ => (Some(Modal::Confirm(confirm)), AppAction::None),
             },
@@ -599,6 +633,10 @@ impl TuiApp {
             Some(Modal::ProfileImport(view)) => view.scroll_by(delta),
             Some(Modal::FleetCard(picker)) => picker.step(delta as isize),
             Some(Modal::WorldPicker(picker)) => picker.step(delta as isize),
+            Some(Modal::Confirm(confirm)) => {
+                let rows = delta as i16 * 3;
+                confirm.scroll = confirm.scroll.saturating_add_signed(rows);
+            }
             _ => {}
         }
     }
@@ -640,7 +678,7 @@ impl TuiApp {
         self.modal = Some(modal);
     }
 
-    fn draw_confirm(&mut self, confirm: &Confirm, area: Rect, buf: &mut Buffer) {
+    fn draw_confirm(&mut self, confirm: &mut Confirm, area: Rect, buf: &mut Buffer) {
         let lines = confirm.lines(self);
         let longest = lines.iter().map(|l| l.chars().count()).max().unwrap_or(0) as u16;
         let width = (longest + 4).clamp(30, 90).min(area.width);
@@ -652,7 +690,7 @@ impl TuiApp {
             .iter()
             .map(|line| wrapped_rows(line, text_width))
             .sum();
-        let height = (wrapped as u16 + 4).min(area.height);
+        let height = wrapped.saturating_add(4).min(usize::from(area.height)) as u16;
         let paragraph = Paragraph::new(lines.into_iter().map(Line::from).collect::<Vec<_>>())
             .wrap(Wrap { trim: false });
         let popup = centered(area, width, height);
@@ -661,15 +699,17 @@ impl TuiApp {
         let block = Block::default().borders(Borders::ALL).title(title);
         let inner = block.inner(popup);
         block.render(popup, buf);
-        paragraph.render(
-            Rect::new(
-                inner.x,
-                inner.y,
-                inner.width,
-                inner.height.saturating_sub(1),
-            ),
-            buf,
+        let body = Rect::new(
+            inner.x,
+            inner.y,
+            inner.width,
+            inner.height.saturating_sub(1),
         );
+        let max_scroll = wrapped
+            .saturating_sub(usize::from(body.height))
+            .min(usize::from(u16::MAX)) as u16;
+        confirm.scroll = confirm.scroll.min(max_scroll);
+        paragraph.scroll((confirm.scroll, 0)).render(body, buf);
         self.regions.modal = popup;
         if inner.height == 0 {
             return;

@@ -53,12 +53,23 @@ Each route accepts the union of its step and current stage declarations, without
 The compiler rejects unknown ids and a route whose combined set exceeds eight zones.
 Stage declarations also require unique ids and nonempty names and reasons.
 A navigation pack must be available when a guide declares zones.
+
+A Quester walk step cannot use `args.allow_danger_zones`. The compiler rejects
+that field. Declare stage grants in the sequence's `cross` array. Use
+`args.cross` only for a step-scoped grant.
 Panel and TUI list stage and step declarations before Start, with their scopes.
 The next stage does not retain the previous stage's declarations.
-Other zones remain avoided, even when a global or card danger setting permits them.
-Protection, food, and escape logic remain active.
+Other zones remain avoided, even when the global danger setting is on.
+An empty `cross` set on an active Quester stage is still a scope. It grants no
+danger zones. A global setting or an old saved Quester card value does not
+change that rule.
+A route whose only path crosses an undeclared danger zone is refused. Unscoped
+walks outside a Quester stage are unchanged.
 
-
+The food guard is armed for the whole walk when a route uses a declared
+crossing. Protection runs only where a step requests it. A declaration does not
+add a survivability check to a fully declared route; its existing admission
+behavior is unchanged.
 
 ## Steps
 
@@ -66,7 +77,7 @@ Every step `kind` below is version 1. Explicit kinds require `advances`; the res
 
 | `kind` | Class | Purpose |
 | --- | --- | --- |
-| `walk` | Default | Walk to an authored `tile` (`source`, `radius`, optional `cross` danger-zone names, `guard: "protect"`, and per-step walk-permission overrides). An omitted `radius` means 1; an explicit `0` requires the exact tile, and a blocked or unstandable tile is refused rather than approached. |
+| `walk` | Default | Walk to an authored `tile` (`source`, `radius`, optional `cross` danger-zone names, `guard: "protect"`, and per-step teleport or Wilderness overrides). An omitted `radius` means 1; an explicit `0` requires the exact tile, and a blocked or unstandable tile is refused rather than approached. |
 | `talk` | Explicit | Selected NPC dialogue with shared answer rules (`prefer`, `choose`, `line_rules`, `strict`). An optional end gap (`gap_ticks`; see Gaps, waits, and combat finish), `continue_only` draining, or an `expect_combat` handoff can follow. |
 | `interact` | Explicit | One selected scene, ground-item, named, or held-item operation with optional repetition (`until` inventory-count goal) and shared dialogue handling. |
 | `use_on` | Explicit | Held-item operation onto one NPC, loc, item, or exact ground stack, with the same `until` goal and dialogue handling as `interact`. |

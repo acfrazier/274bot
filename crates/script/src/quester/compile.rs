@@ -2870,6 +2870,23 @@ mod tests {
     }
 
     #[test]
+    fn walk_rejects_step_danger_override_with_stage_level_guidance() {
+        let error = compile_err(|document| {
+            let mut walk = cook_cross_walk(document);
+            walk.args["allow_danger_zones"] = serde_json::json!(true);
+            document.roles[0].sequences[0].steps.push(walk);
+        });
+        assert_eq!(error.code.as_ref(), "invalid-args");
+        assert_eq!(error.step, Some(FactKey::new("cross-test-walk")));
+        let detail = error
+            .detail
+            .as_deref()
+            .expect("the error explains the field");
+        assert!(detail.contains("allow_danger_zones"), "{detail}");
+        assert!(detail.contains("stage-level `cross`"), "{detail}");
+    }
+
+    #[test]
     fn step_cross_rejects_unknown_catalog_ids() {
         let mut document = decode_cook().unwrap();
         let mut walk = cook_cross_walk(&document);

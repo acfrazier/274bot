@@ -1498,15 +1498,9 @@ fn browse_rows_select_a_card_for_start() {
         Some(ScriptChoice::loaded(CardSource::Catalog, "BoneBurier")),
         "clicking the first card row selects it"
     );
-    assert_eq!(
-        app.on_key(ch('t')),
-        AppAction::None,
-        "Browse keeps the keys while it is open: t does not start yet"
-    );
-    assert_eq!(app.on_key(key(KeyCode::Enter)), AppAction::None);
     assert!(
         !app.script_browse_open,
-        "Enter closes Browse; the pick stays"
+        "a mouse pick closes Browse; the selected card stays"
     );
     assert_eq!(
         app.on_key(ch('t')),
@@ -1946,21 +1940,28 @@ fn arthur_zone_scope_renders_all_eight_names_and_reasons_at_common_sizes() {
             EXIT_UPPER,
         ),
     ];
-    fn script_text(rows: &[String], area: ratatui::layout::Rect) -> String {
+    fn zone_rows(rows: &[String], area: ratatui::layout::Rect) -> Vec<String> {
         let inner = ratatui::widgets::Block::default()
             .borders(ratatui::widgets::Borders::ALL)
             .inner(area);
+        let mut in_zone_list = false;
         rows.iter()
             .skip(usize::from(inner.y))
             .take(usize::from(inner.height))
-            .map(|row| {
-                row.chars()
+            .filter_map(|row| {
+                let line = row
+                    .chars()
                     .skip(usize::from(inner.x))
                     .take(usize::from(inner.width))
-                    .collect::<String>()
+                    .collect::<String>();
+                if !in_zone_list {
+                    in_zone_list = line.contains("PgUp/PgDn.");
+                    None
+                } else {
+                    Some(line)
+                }
             })
-            .collect::<Vec<_>>()
-            .join("\n")
+            .collect()
     }
 
     let evidence_root =
@@ -1972,9 +1973,16 @@ fn arthur_zone_scope_renders_all_eight_names_and_reasons_at_common_sizes() {
             ("quests".to_owned(), serde_json::json!(["arthur"])),
             ("include_draft_guides".to_owned(), serde_json::json!(true)),
         ]);
-        assert!(app.quester_start_zone_cache.update(&settings));
+        let mut disclosure = frontend_core::scripts::QuesterStartZoneCache::default();
+        assert!(disclosure.update_settings(
+            frontend_core::selection::ProfileIdentity::synthetic("tui-zone-capture"),
+            0,
+            Ok(settings),
+        ));
+        app.set_quester_start_zone_view(disclosure.shared_view());
+        app.script_state = ScriptRunState::Error;
 
-        let mut combined = String::new();
+        let mut pages: Vec<Vec<String>> = Vec::new();
         let mut page_index = 0;
         let mut rows = draw(&mut app, width, height);
         let mut shown = text(&rows);
@@ -1986,13 +1994,20 @@ fn arthur_zone_scope_renders_all_eight_names_and_reasons_at_common_sizes() {
             shown.contains("Start accepts only these zones."),
             "{width}x{height}: {shown}"
         );
+        assert!(
+            shown.contains("The food guard is armed for the whole walk"),
+            "{width}x{height}: {shown}"
+        );
+        assert!(
+            shown.contains("protection runs only where a step requests it."),
+            "{width}x{height}: {shown}"
+        );
         assert!(shown.contains("[Start t]"), "{width}x{height}: {shown}");
         assert!(
             !shown.contains("Prince Ali Rescue"),
             "only the selected Arthur queue is disclosed: {shown}"
         );
-        combined.push_str(&script_text(&rows, app.script_area));
-        combined.push('\n');
+        pages.push(zone_rows(&rows, app.script_area));
 
         if let Some(root) = &evidence_root {
             let directory = root.join("QUEST-DANGER-CONSENT");
@@ -2023,8 +2038,7 @@ fn arthur_zone_scope_renders_all_eight_names_and_reasons_at_common_sizes() {
                 shown.contains("Start zone scope") && shown.contains("[Start t]"),
                 "{width}x{height}: controls stay visible while scrolling: {shown}"
             );
-            combined.push_str(&script_text(&rows, app.script_area));
-            combined.push('\n');
+            pages.push(zone_rows(&rows, app.script_area));
             if let Some(root) = &evidence_root {
                 std::fs::write(
                     root.join("QUEST-DANGER-CONSENT")
@@ -2035,7 +2049,19 @@ fn arthur_zone_scope_renders_all_eight_names_and_reasons_at_common_sizes() {
             }
         }
 
-        let normalized = combined.split_whitespace().collect::<Vec<_>>().join(" ");
+        let mut combined = Vec::new();
+        for page in pages {
+            let overlap = (1..=combined.len().min(page.len()))
+                .rev()
+                .find(|&overlap| combined[combined.len() - overlap..] == page[..overlap])
+                .unwrap_or(0);
+            combined.extend(page.into_iter().skip(overlap));
+        }
+        let normalized = combined
+            .join(" ")
+            .split_whitespace()
+            .collect::<Vec<_>>()
+            .join(" ");
         for (name, id, reason) in ZONES {
             let expected = format!("{name} [{id}] Guide reason: {reason}");
             assert!(
@@ -2047,6 +2073,216 @@ fn arthur_zone_scope_renders_all_eight_names_and_reasons_at_common_sizes() {
         assert!(
             app.quester_start_zone_scroll < max,
             "{width}x{height}: PageUp moves back through the scope"
+        );
+    }
+}
+
+fn assert_mouse_browse_pick_discloses_quester_zones_before_start(width: u16, height: u16) {
+    let evidence_root =
+        std::env::var_os("QUESTER_DANGER_CONSENT_TUI_EVIDENCE").map(std::path::PathBuf::from);
+    let id = CompiledCardId::QUESTER;
+    let mut app = script_app();
+    app.script_cards = vec![BrowseCard {
+        name: id.as_str().into(),
+        description: String::new(),
+        category: "Questing".into(),
+        tags: Vec::new(),
+        kind: CardRuntime::Compiled,
+        source: CardSource::Builtin,
+        #[cfg(feature = "js")]
+        unloadable: None,
+    }];
+    app.script_card_choices = vec![ScriptChoice::compiled(id)];
+    let settings = serde_json::Map::from_iter([
+        ("quests".to_owned(), serde_json::json!(["arthur"])),
+        ("include_draft_guides".to_owned(), serde_json::json!(true)),
+    ]);
+    let mut disclosure = frontend_core::scripts::QuesterStartZoneCache::default();
+    assert!(disclosure.update_settings(
+        frontend_core::selection::ProfileIdentity::synthetic("mouse-quester-zone-capture"),
+        0,
+        Ok(settings),
+    ));
+    app.set_quester_start_zone_view(disclosure.shared_view());
+    app.script_state = ScriptRunState::Idle;
+
+    let rows = draw(&mut app, width, height);
+    let (col, row) = find(&rows, "[Browse b]").expect("Browse button");
+    assert_eq!(app.on_click(col + 1, row), AppAction::ScriptBrowse);
+    assert!(app.script_browse_open);
+
+    let rows = draw(&mut app, width, height);
+    let (col, row) = find(&rows, "Quester").expect("Quester row in Browse");
+    assert_eq!(app.on_click(col, row), AppAction::None);
+    assert_eq!(app.script_sel, Some(ScriptChoice::compiled(id)));
+    assert!(
+        !app.script_browse_open,
+        "{width}x{height}: a mouse pick closes Browse before Start"
+    );
+
+    let mut shown = text(&draw(&mut app, width, height));
+    for _ in 0..8 {
+        if shown.contains("Guide reason:") {
+            break;
+        }
+        assert_eq!(
+            app.on_key(key(KeyCode::PageDown)),
+            AppAction::None,
+            "{width}x{height}: reading the zone list does not start Quester"
+        );
+        shown = text(&draw(&mut app, width, height));
+    }
+    assert!(
+        shown.contains(frontend_core::scripts::START_ZONE_SCOPE_TITLE),
+        "{width}x{height}: the selected guide's zone scope is shown before Start: {shown}"
+    );
+    assert!(
+        shown.contains("Start accepts only these zones."),
+        "{width}x{height}: the shared Start notice is shown: {shown}"
+    );
+    assert!(
+        shown.contains("renegade_knight@2773,3399,0"),
+        "{width}x{height}: the selected guide's declared zone is shown: {shown}"
+    );
+    assert!(
+        shown.contains("Guide reason:"),
+        "{width}x{height}: a declared zone reason is shown: {shown}"
+    );
+    assert!(shown.contains("[Start t]"), "{width}x{height}: {shown}");
+
+    if let Some(root) = &evidence_root {
+        let directory = root.join("QUEST-DANGER-CONSENT");
+        std::fs::create_dir_all(&directory).expect("create TUI evidence directory");
+        std::fs::write(
+            directory.join(format!("tui-mouse-{width}x{height}-before-start.txt")),
+            &shown,
+        )
+        .expect("write mouse-pick disclosure capture");
+    }
+
+    let rows = draw(&mut app, width, height);
+    let (col, row) = find(&rows, "[Browse b]").expect("Browse button");
+    assert_eq!(app.on_click(col + 1, row), AppAction::ScriptBrowse);
+    assert!(app.script_browse_open);
+    let rows = draw(&mut app, width, height);
+    let hidden = text(&rows);
+    assert!(
+        !hidden.contains(frontend_core::scripts::START_ZONE_SCOPE_TITLE),
+        "{width}x{height}: Browse covers the zone list: {hidden}"
+    );
+    let (col, row) = find(&rows, "[Start t]").expect("Start button");
+    assert_eq!(
+        app.on_click(col + 1, row),
+        AppAction::None,
+        "{width}x{height}: Start closes Browse instead of starting Quester"
+    );
+    assert!(
+        !app.script_browse_open,
+        "{width}x{height}: the zone list is exposed before another Start click"
+    );
+    assert!(
+        text(&draw(&mut app, width, height))
+            .contains(frontend_core::scripts::START_ZONE_SCOPE_TITLE),
+        "{width}x{height}: closing Browse shows the selected guide's zone list"
+    );
+    let rows = draw(&mut app, width, height);
+    let (col, row) = find(&rows, "[Start t]").expect("Start button");
+    assert_eq!(
+        app.on_click(col + 1, row),
+        AppAction::ScriptStart(ScriptChoice::compiled(id)),
+        "{width}x{height}: Start works after the zone list is visible"
+    );
+}
+
+#[test]
+fn mouse_browse_pick_discloses_quester_zones_before_start_120x40() {
+    assert_mouse_browse_pick_discloses_quester_zones_before_start(120, 40);
+}
+
+#[test]
+fn mouse_browse_pick_discloses_quester_zones_before_start_80x24() {
+    assert_mouse_browse_pick_discloses_quester_zones_before_start(80, 24);
+}
+
+#[test]
+fn palette_start_opens_quester_zone_scope_before_start() {
+    let evidence_root =
+        std::env::var_os("QUESTER_DANGER_CONSENT_TUI_EVIDENCE").map(std::path::PathBuf::from);
+    for (width, height) in [(120, 40), (80, 24)] {
+        let mut app = script_app();
+        app.script_sel = Some(ScriptChoice::compiled(CompiledCardId::QUESTER));
+        let settings = serde_json::Map::from_iter([
+            ("quests".to_owned(), serde_json::json!(["arthur"])),
+            ("include_draft_guides".to_owned(), serde_json::json!(true)),
+        ]);
+        let mut disclosure = frontend_core::scripts::QuesterStartZoneCache::default();
+        assert!(disclosure.update_settings(
+            frontend_core::selection::ProfileIdentity::synthetic("tui-palette-zone-capture"),
+            0,
+            Ok(settings),
+        ));
+        app.set_quester_start_zone_view(disclosure.shared_view());
+        app.script_state = ScriptRunState::Idle;
+        assert_eq!(app.show_screen(Screen::Overview), AppAction::None);
+
+        assert_eq!(
+            app.on_key(KeyEvent::new(KeyCode::Char('p'), KeyModifiers::CONTROL)),
+            AppAction::None
+        );
+        for character in "start script".chars() {
+            assert_eq!(app.on_key(ch(character)), AppAction::None);
+        }
+        assert!(
+            text(&draw(&mut app, width, height)).contains("Start script"),
+            "{width}x{height}: the palette lists Start script"
+        );
+        assert_eq!(
+            app.on_key(key(KeyCode::Enter)),
+            AppAction::None,
+            "the palette opens the Script section and does not start Quester"
+        );
+        assert_eq!(app.screen, Screen::Script);
+        assert!(app.modal.is_none());
+
+        let mut shown = text(&draw(&mut app, width, height));
+        assert!(
+            shown.contains(frontend_core::scripts::START_ZONE_SCOPE_TITLE),
+            "{width}x{height}: {shown}"
+        );
+        assert!(
+            shown.contains("Start accepts only these zones."),
+            "{width}x{height}: {shown}"
+        );
+        assert!(shown.contains("[Start t]"), "{width}x{height}: {shown}");
+        for _ in 0..8 {
+            if shown.contains("Guide reason:") {
+                break;
+            }
+            assert_eq!(
+                app.on_key(key(KeyCode::PageDown)),
+                AppAction::None,
+                "scrolling the declared-zone list does not start Quester"
+            );
+            shown = text(&draw(&mut app, width, height));
+        }
+        assert!(
+            shown.contains("Guide reason:"),
+            "{width}x{height}: a declared zone is visible before Start: {shown}"
+        );
+        assert!(shown.contains("[Start t]"), "{width}x{height}: {shown}");
+        if let Some(root) = &evidence_root {
+            let directory = root.join("QUEST-DANGER-CONSENT");
+            std::fs::create_dir_all(&directory).expect("create TUI evidence directory");
+            std::fs::write(
+                directory.join(format!("tui-palette-{width}x{height}-before-start.txt")),
+                &shown,
+            )
+            .expect("write pre-start palette capture");
+        }
+        assert_eq!(
+            app.on_key(ch('t')),
+            AppAction::ScriptStart(ScriptChoice::compiled(CompiledCardId::QUESTER)),
+            "the user must select Start after reviewing the zone list"
         );
     }
 }

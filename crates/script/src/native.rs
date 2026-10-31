@@ -963,8 +963,8 @@ pub struct WalkRequest {
     /// Create a [`crate::combat::WalkGuard`] for this followed route.
     pub protect: bool,
     /// Create a food-only [`crate::combat::WalkGuard`] when `protect` is
-    /// false. Only combat abort walks set this; ordinary walks run no host
-    /// guard. Requires `allow.food`, or the walk is refused.
+    /// false. A declared danger crossing arms this guard for ordinary walks.
+    /// Requires `allow.food`, or the host refuses the walk.
     pub food_guard: bool,
     /// Represented on the request so a protect walk can still be refused
     /// when the owner disallows prayer.

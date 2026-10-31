@@ -7,28 +7,34 @@ use std::panic::{catch_unwind, resume_unwind, AssertUnwindSafe};
 /// Add the stage's declared grants to this step's declared route grants.
 /// Named consent never enables the blanket danger opt-in.
 fn apply_stage_cross(request: &mut WalkRequest, stage: Option<&[Arc<str>]>) {
-    let Some(stage) = stage else {
-        return;
-    };
-    request.options.allow_danger_zones = WalkBit::Forbid;
-    let duplicates = request
-        .cross
-        .iter()
-        .enumerate()
-        .filter(|(index, zone)| request.cross[..*index].contains(zone))
-        .count();
-    let missing = stage
-        .iter()
-        .filter(|zone| !request.cross.contains(zone))
-        .count();
-    if missing != 0 || duplicates != 0 {
-        let mut cross = Vec::with_capacity(request.cross.len() - duplicates + missing);
-        for zone in request.cross.iter().chain(stage) {
-            if !cross.contains(zone) {
-                cross.push(Arc::clone(zone));
+    let has_stage_scope = stage.is_some();
+    if let Some(stage) = stage {
+        let duplicates = request
+            .cross
+            .iter()
+            .enumerate()
+            .filter(|(index, zone)| request.cross[..*index].contains(zone))
+            .count();
+        let missing = stage
+            .iter()
+            .filter(|zone| !request.cross.contains(zone))
+            .count();
+        if missing != 0 || duplicates != 0 {
+            let mut cross = Vec::with_capacity(request.cross.len() - duplicates + missing);
+            for zone in request.cross.iter().chain(stage) {
+                if !cross.contains(zone) {
+                    cross.push(Arc::clone(zone));
+                }
             }
+            request.cross = cross.into_boxed_slice();
         }
-        request.cross = cross.into_boxed_slice();
+    }
+    if has_stage_scope || !request.cross.is_empty() {
+        request.options.allow_danger_zones = WalkBit::Forbid;
+    }
+    if !request.cross.is_empty() {
+        request.food_guard = true;
+        request.allow.food = true;
     }
 }
 
@@ -2695,6 +2701,78 @@ mod tests {
     }
 
     #[test]
+    fn plain_walk_under_stage_grant_arms_food_guard() {
+        let mut ledger = None;
+        with_frame(&mut ledger, Duration::ZERO, |cx| {
+            cx.stage_cross = Some(Arc::from([Arc::from("declared-zone")]));
+            let mut actions = NativeActions { _private: () };
+            let handle = actions
+                .begin::<walk::Walk>(assessment_walk_request(cx.evidence()), cx)
+                .unwrap();
+            let HostEffect::Walk(request) = &cx.ledger.as_ref().unwrap().outbox[0].effect else {
+                panic!("the stage-granted walk must use the native walk path");
+            };
+            assert_eq!(request.cross.as_ref(), &[Arc::<str>::from("declared-zone")]);
+            assert!(
+                request.food_guard,
+                "a declared crossing must arm the food guard"
+            );
+            assert!(request.allow.food);
+            assert!(!request.protect);
+            drop(handle);
+        });
+    }
+    #[test]
+    fn an_unscoped_walk_keeps_the_inherited_danger_policy() {
+        let mut ledger = None;
+        with_frame(&mut ledger, Duration::ZERO, |cx| {
+            assert!(cx.stage_cross.is_none());
+            let mut actions = NativeActions { _private: () };
+            let handle = actions
+                .begin::<walk::Walk>(assessment_walk_request(cx.evidence()), cx)
+                .unwrap();
+            let HostEffect::Walk(request) = &cx.ledger.as_ref().unwrap().outbox[0].effect else {
+                panic!("the unscoped walk must use the native walk path");
+            };
+            assert_eq!(
+                request.options.allow_danger_zones,
+                WalkBit::Inherit,
+                "an unscoped Quester walk retains the pre-consent admission policy"
+            );
+            drop(handle);
+        });
+    }
+    #[test]
+    fn plain_walk_under_step_grant_arms_food_guard_without_a_stage() {
+        let mut ledger = None;
+        with_frame(&mut ledger, Duration::ZERO, |cx| {
+            let mut request = assessment_walk_request(cx.evidence());
+            request.cross = vec![Arc::from("declared-step-zone")].into_boxed_slice();
+            let mut actions = NativeActions { _private: () };
+            let handle = actions.begin::<walk::Walk>(request, cx).unwrap();
+            let HostEffect::Walk(request) = &cx.ledger.as_ref().unwrap().outbox[0].effect else {
+                panic!("the step-granted walk must use the native walk path");
+            };
+            assert_eq!(
+                request.cross.as_ref(),
+                &[Arc::<str>::from("declared-step-zone")]
+            );
+            assert!(
+                request.food_guard,
+                "a declared crossing must arm the food guard"
+            );
+            assert!(request.allow.food);
+            assert_eq!(
+                request.options.allow_danger_zones,
+                WalkBit::Forbid,
+                "a step grant must not permit unnamed danger zones"
+            );
+            assert!(!request.protect);
+            drop(handle);
+        });
+    }
+
+    #[test]
     fn stage_cross_unions_step_grants_without_disabling_survival() {
         let mut ledger = None;
         with_frame(&mut ledger, Duration::ZERO, |cx| {
@@ -2703,7 +2781,6 @@ mod tests {
             request.cross = vec![Arc::from("step-zone")].into_boxed_slice();
             request.options.allow_danger_zones = WalkBit::Allow;
             request.protect = true;
-            request.food_guard = true;
             let mut actions = NativeActions { _private: () };
             let handle = actions.begin::<walk::Walk>(request, cx).unwrap();
             let HostEffect::Walk(request) = &cx.ledger.as_ref().unwrap().outbox[0].effect else {
@@ -2719,7 +2796,11 @@ mod tests {
             );
             assert_eq!(request.options.allow_danger_zones, WalkBit::Forbid);
             assert!(request.protect && request.food_guard);
-            assert_eq!(request.allow, WalkAllow::default());
+            let expected_allow = WalkAllow {
+                food: true,
+                ..WalkAllow::default()
+            };
+            assert_eq!(request.allow, expected_allow);
             drop(handle);
             actions
                 .assess_walk(assessment_walk_request(cx.evidence()), cx)
@@ -2759,6 +2840,32 @@ mod tests {
             ordinary.options.allow_danger_zones = WalkBit::Allow;
             apply_stage_cross(&mut ordinary, None);
             assert_eq!(ordinary.options.allow_danger_zones, WalkBit::Allow);
+        });
+    }
+
+    #[test]
+    fn empty_declared_stage_forbids_zones_the_old_walk_bit_allowed() {
+        let mut ledger = None;
+        with_frame(&mut ledger, Duration::ZERO, |cx| {
+            cx.stage_cross = Some(Arc::<[Arc<str>]>::from([]));
+            let mut request = assessment_walk_request(cx.evidence());
+            request.options.allow_danger_zones = WalkBit::Allow;
+            let mut actions = NativeActions { _private: () };
+            let handle = actions.begin::<walk::Walk>(request, cx).unwrap();
+            let HostEffect::Walk(request) = &cx.ledger.as_ref().unwrap().outbox[0].effect else {
+                panic!("the scoped walk must use the native walk path");
+            };
+            assert!(request.cross.is_empty(), "the stage declares no zones");
+            assert_eq!(
+                request.options.allow_danger_zones,
+                WalkBit::Forbid,
+                "an empty declaration must not inherit a previous allow"
+            );
+            assert_eq!(
+                RiskPolicy::from(request.options.allow_danger_zones),
+                RiskPolicy::Avoid
+            );
+            drop(handle);
         });
     }
 }

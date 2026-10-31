@@ -1723,6 +1723,9 @@ fn panel_driver_shows_quester_zone_disclosure_before_start() {
     let (mut session, _dir) = session_with_play("frame-quester-zone-disclosure", &["alice"]);
     session.script_sel = Some(ScriptChoice::compiled(CompiledCardId::QUESTER));
     let Some(mut rig) = Rig::new(Drive::UiFrame, session) else {
+        eprintln!(
+            "panel_driver_shows_quester_zone_disclosure_before_start: no headless GPU, skipped"
+        );
         return;
     };
     rig.frames_until("the panel preferences", |rig| {
@@ -1744,7 +1747,14 @@ fn panel_driver_shows_quester_zone_disclosure_before_start() {
         rig.text
     );
     assert!(
-        rig.text.contains("Survival remains active."),
+        rig.text
+            .contains("The food guard is armed for the whole walk"),
+        "{}",
+        rig.text
+    );
+    assert!(
+        rig.text
+            .contains("protection runs only where a step requests it."),
         "{}",
         rig.text
     );

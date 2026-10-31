@@ -146,11 +146,6 @@ fn settings_schema() -> &'static [SettingDef] {
                 "Allow wilderness",
                 "Allow this script to route through wilderness when the global setting is off.",
             ),
-            walk_permission_setting(
-                "allow_danger_zones",
-                "Allow danger zones",
-                "Allow this script to route through danger zones when the global setting is off.",
-            ),
         ]
     });
     &SETTINGS
@@ -588,7 +583,6 @@ mod tests {
                 "max_deaths",
                 "allow_teleports",
                 "allow_wilderness",
-                "allow_danger_zones",
             ],
         );
         assert_eq!(
@@ -804,9 +798,9 @@ mod walk_permission_settings_tests {
     use super::*;
 
     #[test]
-    fn walk_permission_settings_roundtrip_with_legacy_defaults_and_schema_v3() {
+    fn walk_permission_settings_keep_teleports_and_legacy_danger_data() {
         assert_eq!(CARD.schema_version, 3);
-        let ids = ["allow_teleports", "allow_wilderness", "allow_danger_zones"];
+        let ids = ["allow_teleports", "allow_wilderness"];
         for id in ids {
             let definition = settings_schema()
                 .iter()
@@ -816,6 +810,12 @@ mod walk_permission_settings_tests {
             assert_eq!(definition.default.as_deref(), Some("false"));
             assert_eq!(definition.group.as_deref(), Some("Walk permissions"));
         }
+        assert!(
+            !settings_schema()
+                .iter()
+                .any(|setting| setting.id == "allow_danger_zones"),
+            "the Quester card must not expose the old danger-zone override"
+        );
 
         let mut bag = SettingsBag::new();
         bag.insert("allow_teleports".into(), serde_json::json!(true));

@@ -6466,7 +6466,7 @@ fn path_walk_crossing_and_protection_are_independent() {
             } else {
                 args["cross"] = serde_json::json!(["death-plateau-throwers"]);
             }
-            let plan = super::compile_walk(test_args::<WalkArgs>(args), cx).unwrap();
+            let plan = super::compile_walk(&args, cx).unwrap();
             let mut snapshot = ready();
             snapshot.seed_local_player(local_player(tile(3100, 3200)));
             let mut ledger = None;

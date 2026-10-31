@@ -1851,7 +1851,7 @@ mod production_state_size_tests {
         make_x: bool,
     }
 
-    #[allow(dead_code)]
+    #[expect(dead_code, reason = "preserves the prior plan layout in the size test")]
     struct PreviousMakePlan {
         tile: WorldTile,
         loc_id: i32,
@@ -1863,7 +1863,7 @@ mod production_state_size_tests {
         make_x: bool,
     }
 
-    #[allow(dead_code)]
+    #[expect(dead_code, reason = "preserves the prior run layout in the size test")]
     struct PreviousMakeRun {
         tile: WorldTile,
         loc_id: i32,

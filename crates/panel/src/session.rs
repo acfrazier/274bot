@@ -1276,8 +1276,6 @@ pub struct Session {
     /// section button. This is the focused heading; per-profile pending
     /// Browse lives in the shared [`frontend_core::Scripts`].
     pub script_sel: Option<ScriptChoice>,
-    /// Cached effective zone declarations shown before a Quester start.
-    pub(crate) quester_start_zone_cache: frontend_core::scripts::QuesterStartZoneCache,
     /// Shared script coordination (card library and catalog, assignment,
     /// per-profile parameters, Start/Stop all, reload, Apply to all).
     pub scripts: frontend_core::Scripts,
@@ -1881,7 +1879,6 @@ impl Session {
             multibox: false,
             ui,
             script_sel: None,
-            quester_start_zone_cache: frontend_core::scripts::QuesterStartZoneCache::default(),
             scripts,
             script_browse_open: false,
             #[cfg(feature = "js")]
@@ -5741,41 +5738,6 @@ impl Session {
     ) {
         self.core
             .advance_quester_paths(&mut self.quester_paths, selected);
-    }
-
-    /// Refresh the selected Quester card's disclosure from the same effective
-    /// profile bag Start consumes.
-    pub(crate) fn refresh_quester_start_zone_cache(&mut self) {
-        if self.script_sel.as_ref().and_then(ScriptChoice::compiled_id)
-            != Some(frontend_core::scripts::CompiledCardId::QUESTER)
-        {
-            self.quester_start_zone_cache.clear();
-            return;
-        }
-        let Some(profile) = self.focused_name() else {
-            self.quester_start_zone_cache
-                .set_unavailable("Quester settings are unavailable without a focused profile");
-            return;
-        };
-        match self.scripts.compiled_bag(
-            &self.core,
-            &profile,
-            frontend_core::scripts::CompiledCardId::QUESTER,
-        ) {
-            Ok(bag) => {
-                self.quester_start_zone_cache.update(&bag);
-            }
-            Err(error) => {
-                self.quester_start_zone_cache
-                    .set_unavailable(format!("Quester settings are unavailable: {error}"));
-            }
-        }
-    }
-
-    pub(crate) fn quester_start_zone_view(
-        &self,
-    ) -> Option<Result<&frontend_core::scripts::QuesterStartZones, &str>> {
-        self.quester_start_zone_cache.view()
     }
 
     /// The focused slot's script lifecycle state; `Idle` when nothing is

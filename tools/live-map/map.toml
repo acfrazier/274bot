@@ -102,6 +102,13 @@ cells = [
   "panel.settings-feedback-headless|${ISOHOME:?} nice -n 10 cargo test --locked -p panel --lib settings_feedback_",
   "tui.settings-feedback-headless|${ISOHOME:?} nice -n 10 cargo test --locked -p tui --lib settings_feedback_",
 ]
+# Bulk Start's per-bot disclosure is assembled in the shared command-plan layer.
+[[cover]]
+globs = ["crates/frontend-core/src/fleet_plan.rs"]
+cells = [
+  "frontend-core.driver-command-headless|${ISOHOME:?} nice -n 10 cargo test --locked -p frontend-core --lib driver::tests::",
+]
+
 
 # These UI paths have controlled-state driver proof, not game-world fixtures.
 [[cover]]
@@ -228,7 +235,7 @@ cells = [
 ]
 
 [[cover]]
-globs = ["crates/tui/src/app.rs"]
+globs = ["crates/tui/src/app.rs", "crates/tui/src/script_shape.rs"]
 cells = [
   "tui.app-headless|${ISOHOME:?} nice -n 10 cargo test --locked -p tui --lib app::tests::",
 ]
@@ -422,7 +429,7 @@ cells = [
 ]
 
 [[cover]]
-globs = ["crates/script/src/quester/**", "crates/script/src/dialogue_outcome.rs", "crates/script/src/quest_journal/**", "crates/script-js/src/compat/quest_journal/**", "crates/script/src/quest_journal.rs"]
+globs = ["crates/script/src/quester/**", "crates/script/src/dialogue_outcome.rs", "crates/script/src/quest_journal/**", "crates/script-js/src/compat/quest_journal/**", "crates/script/src/quest_journal.rs", "crates/script/paths/289/desertrescue.json"]
 cells = [
   "host.quester-path-engine-q|LIVE=1 BOT_LIVE_NAME_PREFIX=${BOT_LIVE_NAME_PREFIX:?} BOT_CPU=1 BOT_NAV_BUILD=skip QUESTER_TICK_MS=300 QUESTER_PATH=cook QUESTER_SEEDS=${PWD}/crates/host-play/tests/fixtures/quester-path/cook.json WORLD_GAME_PORT=44694 WORLD_HTTP_PORT=1180 WORLD_ENGINE_DIR=${ENGINE_Q_DIR:?} WORLD_NAV_PACK=${NAV_PACK_289:?} RS2B0T=${CATALOG_ROOT:?} BOT_CACHE_DIR=${BOT_CACHE_DIR:?} LIVE_EVIDENCE_DIR=${LIVE_EVIDENCE_DIR:?} ${ISOHOME:?} nice -n 10 cargo test --locked -p host-play --features live-harness,test-support,live-probe --test quester_path_live -- --ignored --exact live_quester_path_smoke --nocapture --test-threads=1",
   "host.quester-sheep-spin-engine-q|LIVE=1 BOT_LIVE_NAME_PREFIX=${BOT_LIVE_NAME_PREFIX:?} BOT_CPU=1 BOT_NAV_BUILD=skip QUESTER_TICK_MS=300 QUESTER_SUSTAIN_RUN=1 QUESTER_PATH=sheep QUESTER_SEEDS=${PWD}/crates/host-play/tests/fixtures/quester-path/sheep-spin.json WORLD_GAME_PORT=44694 WORLD_HTTP_PORT=1180 WORLD_ENGINE_DIR=${ENGINE_Q_DIR:?} WORLD_NAV_PACK=${NAV_PACK_289:?} RS2B0T=${CATALOG_ROOT:?} BOT_CACHE_DIR=${BOT_CACHE_DIR:?} LIVE_EVIDENCE_DIR=${LIVE_EVIDENCE_DIR:?} ${ISOHOME:?} nice -n 10 cargo test --locked -p host-play --features live-harness,test-support,live-probe --test quester_path_live -- --ignored --exact live_quester_path_smoke --nocapture --test-threads=1",

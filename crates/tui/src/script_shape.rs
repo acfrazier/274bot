@@ -491,7 +491,7 @@ impl<'a> ScriptPane<'a> {
         let load_open = false;
         !self.browse_open
             && !load_open
-            && self.state == ScriptRunState::Idle
+            && matches!(self.state, ScriptRunState::Idle | ScriptRunState::Error)
             && self.sel.and_then(ScriptChoice::compiled_id) == Some(CompiledCardId::QUESTER)
             && (self.start_zones.is_some() || self.start_zones_error.is_some())
     }
@@ -661,20 +661,23 @@ impl<'a> ScriptPane<'a> {
             lines.push(Line::from("load: browse for .ts/.js file"));
         }
         if self.start_zone_disclosure_shown() {
-            lines.push(Line::from("Start zone scope"));
+            lines.push(Line::from(frontend_core::scripts::START_ZONE_SCOPE_TITLE));
             match self.start_zones {
-                Some(zones) if zones.is_empty() => lines.push(Line::from(
-                    "Start accepts only declared zones. No zones are declared. Survival remains active.",
-                )),
-                Some(_) => {
-                    lines.push(Line::from(
-                        "Start accepts only these zones. Survival remains active.",
-                    ));
-                    lines.push(Line::from("Scroll this list with j/k or PgUp/PgDn."));
+                Some(zones) => {
+                    lines.push(Line::from(zones.notice()));
+                    if !zones.is_empty() {
+                        lines.push(Line::from(
+                            frontend_core::scripts::START_ZONE_TUI_SCROLL_HINT,
+                        ));
+                    }
                 }
                 None => {
-                    lines.push(Line::from("The selected Quester scope is unavailable."));
-                    lines.push(Line::from("Scroll this list with j/k or PgUp/PgDn."));
+                    lines.push(Line::from(
+                        frontend_core::scripts::START_ZONE_UNAVAILABLE_NOTICE,
+                    ));
+                    lines.push(Line::from(
+                        frontend_core::scripts::START_ZONE_TUI_SCROLL_HINT,
+                    ));
                 }
             }
         }

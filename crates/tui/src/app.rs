@@ -633,8 +633,9 @@ pub struct TuiApp {
     pub script_queued: bool,
     /// The focused profile's script heading; Start keys on `(source, name)`.
     pub script_sel: Option<ScriptChoice>,
-    /// Cached disclosure for the selected Quester queue.
-    pub(crate) quester_start_zone_cache: frontend_core::scripts::QuesterStartZoneCache,
+    /// Immutable versioned disclosure received from frontend-core.
+    pub(crate) quester_start_zones:
+        Option<Arc<Result<frontend_core::scripts::QuesterStartZones, String>>>,
     /// Vertical scroll through the complete pre-start disclosure.
     pub(crate) quester_start_zone_scroll: u16,
     /// The operator picked a card in Browse since the last pump: the
@@ -796,7 +797,7 @@ impl TuiApp {
             script_load_sel: 0,
             #[cfg(feature = "js")]
             script_load_last_dir: None,
-            quester_start_zone_cache: frontend_core::scripts::QuesterStartZoneCache::default(),
+            quester_start_zones: None,
             quester_start_zone_scroll: 0,
             params_schema: OwnedSchema::default(),
             params_unavailable: None,
@@ -1980,10 +1981,18 @@ impl TuiApp {
             self.script_load_open,
             self.reload_confirm,
         );
-        pane.with_start_zone_view(
-            self.quester_start_zone_cache.view(),
-            self.quester_start_zone_scroll,
-        )
+        let view = self.quester_start_zones.as_deref().map(|view| match view {
+            Ok(zones) => Ok(zones),
+            Err(reason) => Err(reason.as_str()),
+        });
+        pane.with_start_zone_view(view, self.quester_start_zone_scroll)
+    }
+
+    pub(crate) fn set_quester_start_zone_view(
+        &mut self,
+        view: Option<Arc<Result<frontend_core::scripts::QuesterStartZones, String>>>,
+    ) {
+        self.quester_start_zones = view;
     }
 
     pub(crate) fn scroll_quester_start_zones(&mut self, delta: i32) -> bool {
@@ -1994,10 +2003,13 @@ impl TuiApp {
         #[cfg(not(feature = "js"))]
         let load_open = false;
         if !selected_quester
-            || self.script_state != ScriptRunState::Idle
+            || !matches!(
+                self.script_state,
+                ScriptRunState::Idle | ScriptRunState::Error
+            )
             || self.script_browse_open
             || load_open
-            || self.quester_start_zone_cache.view().is_none()
+            || self.quester_start_zones.is_none()
         {
             return false;
         }
@@ -2035,6 +2047,7 @@ impl TuiApp {
                 if let Some(card) = self.script_cards.get(idx) {
                     self.script_sel = card_selection(card);
                     self.browse_changed = true;
+                    self.script_browse_open = false;
                 }
                 AppAction::None
             }
@@ -2054,15 +2067,25 @@ impl TuiApp {
                     AppAction::None
                 }
             }
-            Command::ScriptStart => match self.script_sel.as_ref().map(ScriptChoice::duplicate) {
-                Some(sel) => AppAction::ScriptStart(sel),
-                None => AppAction::Refused(Refusal {
-                    command: Some(OperatorCommand::StartScript),
-                    bot: self.focused_name(),
-                    reason: "script: browse to pick one first".into(),
-                    need: Unavailable::NoScriptPicked.need(),
-                }),
-            },
+            Command::ScriptStart => {
+                let quester_selected = self.script_sel.as_ref().and_then(ScriptChoice::compiled_id)
+                    == Some(frontend_core::scripts::CompiledCardId::QUESTER);
+                if quester_selected && self.script_browse_open {
+                    // Browse covers Quester's shared pre-start zone disclosure.
+                    self.script_browse_open = false;
+                    AppAction::None
+                } else {
+                    match self.script_sel.as_ref().map(ScriptChoice::duplicate) {
+                        Some(sel) => AppAction::ScriptStart(sel),
+                        None => AppAction::Refused(Refusal {
+                            command: Some(OperatorCommand::StartScript),
+                            bot: self.focused_name(),
+                            reason: "script: browse to pick one first".into(),
+                            need: Unavailable::NoScriptPicked.need(),
+                        }),
+                    }
+                }
+            }
             Command::ScriptPause => AppAction::ScriptPause,
             Command::ScriptStop => AppAction::ScriptStop,
             #[cfg(feature = "js")]

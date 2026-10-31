@@ -2045,7 +2045,11 @@
                 ],
                 "source": "C maps/m51_47.jm2:5030 (desertminingcaptain 830); same tile and radius as taunt-captain-again's anchor and leash",
                 "radius": 6,
-                "allow_danger_zones": true
+                "cross": [
+                  "ugthanki@3268,3052,0",
+                  "ugthanki@3281,3056,0",
+                  "ugthanki@3305,3089,0"
+                ]
               },
               "comment": "Same grant as walk-to-captain for a resume at stage 3 away from the captain: the Kharidian strip is Ugthanki / Desert Wolf habitat with no danger-free route (DIAG-QUESTER-CI7 §2).",
               "skip_if": {

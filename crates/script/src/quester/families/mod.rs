@@ -55,7 +55,13 @@ fn walk_step_evidence(
 
 pub fn handlers() -> &'static [super::compile::StepHandler] {
     static HANDLERS: &[super::compile::StepHandler] = &[
-        super::compile::step!("walk", 1, Default, WalkArgs, compile_walk),
+        super::compile::StepHandler {
+            kind: "walk",
+            version: 1,
+            advance: super::compile::AdvanceClass::Default,
+            args_schema: super::schema::args_schema::<WalkArgs>(),
+            compile: compile_walk,
+        },
         super::compile::step!("talk", 1, Explicit, TalkArgs, compile_talk),
         super::compile::step!("interact", 1, Explicit, InteractArgs, compile_interact),
         super::compile::step!("use_on", 1, Explicit, UseOnArgs, compile_use_on),
@@ -1141,9 +1147,6 @@ struct WalkArgs {
     /// Override inherited Wilderness permission for this movement.
     #[serde(default)]
     allow_wilderness: Option<bool>,
-    /// Override inherited danger-zone permission for this movement.
-    #[serde(default)]
-    allow_danger_zones: Option<bool>,
 }
 
 impl WalkArgs {
@@ -1151,15 +1154,21 @@ impl WalkArgs {
         WalkOptions {
             allow_teleports: self.allow_teleports.into(),
             allow_wilderness: self.allow_wilderness.into(),
-            allow_danger_zones: self.allow_danger_zones.into(),
+            ..WalkOptions::default()
         }
     }
 }
 
 fn compile_walk(
-    arg: WalkArgs,
+    value: &serde_json::Value,
     _cx: &CompileContext<'_>,
 ) -> Result<Arc<dyn StepPlan>, CompileError> {
+    if value.get("allow_danger_zones").is_some() {
+        return Err(CompileError::code("invalid-args").with_detail(
+            "walk: `allow_danger_zones` is not supported; declare crossings in the stage-level `cross` field",
+        ));
+    }
+    let arg = super::compile::decode_args::<WalkArgs>(value)?;
     Ok(Arc::new(parse_walk_plan(arg)?))
 }
 

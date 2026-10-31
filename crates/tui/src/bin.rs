@@ -3832,23 +3832,14 @@ impl TuiSession {
             None => app.params_schema.clear(),
         }
         let zone_view_changed = match app.script_sel.as_ref().and_then(ScriptChoice::compiled_id) {
-            Some(frontend_core::scripts::CompiledCardId::QUESTER) => match app.focused_name() {
-                Some(profile) => match self.scripts.compiled_bag(
-                    &self.core,
-                    &profile,
-                    frontend_core::scripts::CompiledCardId::QUESTER,
-                ) {
-                    Ok(bag) => app.quester_start_zone_cache.update(&bag),
-                    Err(error) => app
-                        .quester_start_zone_cache
-                        .set_unavailable(format!("Quester settings are unavailable: {error}")),
-                },
-                None => app
-                    .quester_start_zone_cache
-                    .set_unavailable("Quester settings are unavailable without a focused profile"),
-            },
-            _ => app.quester_start_zone_cache.clear(),
+            Some(frontend_core::scripts::CompiledCardId::QUESTER) => {
+                let profile = self.core.selected();
+                self.scripts
+                    .refresh_quester_start_zones(&self.core, profile)
+            }
+            _ => self.scripts.clear_quester_start_zones(),
         };
+        app.set_quester_start_zone_view(self.scripts.shared_quester_start_zone_view());
         if zone_view_changed {
             app.quester_start_zone_scroll = 0;
         }

@@ -15,6 +15,7 @@ use std::collections::{BTreeMap, HashMap, HashSet};
 use std::fs::{File, ReadDir};
 use std::io::{self, Read};
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, LazyLock, Mutex};
 
 pub const MAX_PATH_BYTES: u64 = 1024 * 1024;
@@ -214,13 +215,25 @@ static STATE: Mutex<State> = Mutex::new(State {
     },
     snapshot: PathRegistry::Bundled,
 });
+static REGISTRY_REVISION: AtomicU64 = AtomicU64::new(0);
 
 pub fn set_source(source: FolderSource) {
     let mut state = STATE.lock().unwrap_or_else(|error| error.into_inner());
     if state.source != source {
         state.source = source;
         state.snapshot = PathRegistry::Bundled;
+        advance_revision();
     }
+}
+
+/// Version of the published registry and its source settings.
+/// Consumers can poll this without cloning the active snapshot.
+pub fn revision() -> u64 {
+    REGISTRY_REVISION.load(Ordering::Acquire)
+}
+
+fn advance_revision() {
+    REGISTRY_REVISION.fetch_add(1, Ordering::Release);
 }
 pub fn source() -> FolderSource {
     STATE
@@ -247,6 +260,15 @@ pub fn snapshot() -> PathRegistry {
         .unwrap_or_else(|error| error.into_inner())
         .snapshot
         .clone()
+}
+
+/// Capture the active snapshot and its version under the same registry lock.
+pub fn snapshot_with_revision() -> (PathRegistry, u64) {
+    let state = STATE.lock().unwrap_or_else(|error| error.into_inner());
+    (
+        state.snapshot.clone(),
+        REGISTRY_REVISION.load(Ordering::Acquire),
+    )
 }
 
 /// A prepared Path snapshot holds no registry lock and publishes nothing.
@@ -285,6 +307,7 @@ fn commit_prepared(prepared: PreparedRegistry) -> Result<PathRegistry, CompileEr
             .with_detail("Path folder setting changed during Reload; reload again"));
     }
     state.snapshot = registry.clone();
+    advance_revision();
     drop(state);
     for diagnostic in registry.diagnostics() {
         api::host_log!(

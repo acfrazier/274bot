@@ -1985,6 +1985,44 @@ fn held_inherited_admission_keeps_the_exact_legacy_router_outcome() {
     }
 }
 
+/// An empty declared stage overrides a global danger grant. The old inherited
+/// walk crosses this only route, but the stage's empty grant set avoids it.
+#[test]
+fn empty_quester_stage_forbid_avoids_a_globally_allowed_undeclared_zone() {
+    const { assert!(!crate::NET_AVAILABLE) };
+    let world = known_corridor(&[12]);
+    let from = tile(0, 1);
+    let to = tile(23, 1);
+    let state = WorldState::default();
+    let mut globals = crate::WalkGlobals::default();
+    globals.set_danger_level(crate::DangerLevel::Always);
+    let script = script::native::WalkPermissions::default();
+
+    let inherited = script::native::WalkOptions::default();
+    assert!(!globals.enforces_risk(script, inherited));
+    assert_eq!(globals.risk_policy(script, inherited), RiskPolicy::Proceed);
+    let old_route_options = globals.manual_options(false);
+    assert!(matches!(
+        real_search(&world, from, to, old_route_options, &state, &[]),
+        crate::RouteOutcome::Routed(_)
+    ));
+
+    let empty_stage = script::native::WalkOptions {
+        allow_danger_zones: script::native::WalkBit::Forbid,
+        ..Default::default()
+    };
+    assert!(globals.enforces_risk(script, empty_stage));
+    assert_eq!(globals.risk_policy(script, empty_stage), RiskPolicy::Avoid);
+    let no_zone_exemptions = nav_planner::router::FindOptions {
+        zones: ZoneExempt::NONE,
+        ..old_route_options
+    };
+    assert!(matches!(
+        real_search(&world, from, to, no_zone_exemptions, &state, &[]),
+        crate::RouteOutcome::NoPath
+    ));
+}
+
 /// R3 M-A: the named retry's keys never reach `admission.grants`, so the
 /// retried route must be judged. From a fringe origin (inside E_z, outside
 /// A_z) walking into A_z is a crossing, never an unjudged escape.

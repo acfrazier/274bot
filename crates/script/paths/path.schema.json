@@ -504,14 +504,6 @@
           ],
           "description": "Override inherited Wilderness permission for this movement.",
           "default": null
-        },
-        "allow_danger_zones": {
-          "type": [
-            "boolean",
-            "null"
-          ],
-          "description": "Override inherited danger-zone permission for this movement.",
-          "default": null
         }
       },
       "required": [

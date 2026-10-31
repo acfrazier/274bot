@@ -5,7 +5,34 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.8` 
 
 ## Unreleased
 
+### Panel and terminal app
+
+- Live catalog runs now report a JavaScript Start failure even if the
+  frontend already read its result. A script that remains idle no longer
+  counts as a settled Start. Start holds now log their reason once per
+  change at info level, with the bot name and current tick.
+
 ### Quester
+
+- Starting Quester now shows each target's declared danger zones before a
+  fleet Start. The plan asks for confirmation and checks each saved queue
+  again before Start. It skips a bot if its queue changed. A bulk Start
+  without a plan does not start Quester.
+
+- Starting one Quester shows its declared danger zones in the Script section
+  before Start. Selecting a card in Browse closes Browse, and Start will not
+  run Quester while Browse hides that list. The TUI palette opens that section
+  first; the user must select Start after reviewing the zones.
+- The Quester card no longer offers the blanket `Allow danger zones` setting.
+  The old saved value still loads, but it no longer affects Quester routes.
+  The harness no longer offers `QUESTER_ALLOW_DANGER_ZONES`. Guides use
+  `cross` to declare stage and step zones. A declared crossing arms the food
+  guard for the walk. Protect stays active only on steps that request it.
+  Even a Quester scope with no grants avoids every danger zone, even when the
+  global setting allows danger routing. Desert Rescue declares the same zones
+  for both walks to the captain.
+- Guide `walk` steps that set `args.allow_danger_zones` now fail to compile.
+  Use `cross` to declare the danger zones that a step may cross.
 
 - Quest guides now respond to an NPC's "I can't reach that!" message at once:
   they recover from the NPC's current location when possible, or report the

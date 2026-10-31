@@ -421,8 +421,8 @@ fn authored_combat_walk_permissions_reach_initial_return_and_abort_requests() {
                 assert_eq!(request.protect, protect, "{expected:?}: cross={cross}");
                 assert_eq!(
                     request.food_guard,
-                    aborted && !protect,
-                    "only an unprotected abort walk requests the food-only guard"
+                    cross || (aborted && !protect),
+                    "declared crossings and unprotected abort walks request the food guard"
                 );
                 if aborted {
                     assert_eq!(request.allow.prayer, protect);
@@ -4353,7 +4353,7 @@ fn return_and_abort_walks_use_only_authored_protection() {
                 assert_eq!(request.radius, 1);
             }
             assert_eq!(request.protect, protect);
-            assert_eq!(request.food_guard, aborting && !protect);
+            assert_eq!(request.food_guard, cross || (aborting && !protect));
             if aborting {
                 assert_eq!(request.allow.prayer, protect);
                 assert!(request.allow.food);

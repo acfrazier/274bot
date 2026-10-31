@@ -442,10 +442,20 @@ impl TuiApp {
                 let run = self.script_run(command);
                 return AppAction::batch(show, run);
             }
-            Command::ScriptStart
-            | Command::ScriptPause
-            | Command::ScriptStop
-            | Command::ScriptParams => return self.script_run(command),
+            Command::ScriptStart => {
+                let quester_selected = self
+                    .script_sel
+                    .as_ref()
+                    .and_then(|selection| selection.compiled_id())
+                    == Some(frontend_core::scripts::CompiledCardId::QUESTER);
+                if quester_selected && self.screen != Screen::Script {
+                    return self.show_screen(Screen::Script);
+                }
+                return self.script_run(command);
+            }
+            Command::ScriptPause | Command::ScriptStop | Command::ScriptParams => {
+                return self.script_run(command);
+            }
             #[cfg(feature = "js")]
             Command::ScriptReload | Command::ScriptReloadCancel => {
                 return self.script_run(command);
