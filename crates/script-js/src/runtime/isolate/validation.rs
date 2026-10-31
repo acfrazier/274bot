@@ -213,6 +213,7 @@ fn validate_one(
         siblings,
         None,
         std::sync::Arc::clone(&EMPTY_BANKS),
+        std::sync::Arc::from([]),
         None,
     )
     .map_err(|error| error.to_string())?;

@@ -19,7 +19,7 @@
 use crate::task_clock::InstantTaskClock;
 use crate::walk::avoid_refusal;
 use crate::walk_wait;
-use crate::wire::{InspectHop as InspectHopTable, Snapshot};
+use crate::wire::{InspectHop as InspectHopTable, Snapshot, Tile as TileTable};
 use script::shim::{InspectAvoidWire, InteractReq};
 use serde_json::{json, Value};
 use std::cell::RefCell;
@@ -56,6 +56,7 @@ struct Terminal {
     ticks: f64,
     hops: Vec<InspectHop>,
     request_id: u64,
+    terminal: Option<(i32, i32, i32)>,
 }
 
 impl Terminal {
@@ -67,6 +68,7 @@ impl Terminal {
             ticks: 0.0,
             hops: Vec::new(),
             request_id: 0,
+            terminal: None,
         }
     }
 
@@ -78,6 +80,7 @@ impl Terminal {
             ticks: 0.0,
             hops: Vec::new(),
             request_id: 0,
+            terminal: None,
         }
     }
 
@@ -89,6 +92,7 @@ impl Terminal {
             ticks: 0.0,
             hops: Vec::new(),
             request_id: 0,
+            terminal: None,
         }
     }
 
@@ -99,6 +103,7 @@ impl Terminal {
             "bankPlanned": self.bank_planned,
             "ticks": self.ticks,
             "request_id": self.request_id,
+            "terminal": self.terminal.map(|(x, z, level)| json!({ "x": x, "z": z, "level": level })),
             "hops": self.hops.iter().map(|h| json!({
                 "kind": h.kind,
                 "locId": h.loc_id,
@@ -153,6 +158,7 @@ struct RouteSpec {
     allow_bank_fetch: bool,
     avoid: Vec<InspectAvoidWire>,
     cross: Vec<String>,
+    max_expansions: Option<u64>,
 }
 
 impl RouteSpec {
@@ -169,6 +175,10 @@ impl RouteSpec {
             .or_else(|| opts.get("cross"))
             .or_else(|| opts.get("crossZones"))
             .or_else(|| opts.get("cross_zones"));
+        let max_expansions = input
+            .get("max_expansions")
+            .or_else(|| input.get("maxExpansions"))
+            .or_else(|| opts.get("maxExpansions"));
         Self {
             from: tile_xyz(from),
             to: tile_xyz(to),
@@ -191,9 +201,9 @@ impl RouteSpec {
             ),
             avoid: avoid_spec(avoid),
             cross: cross_spec(cross),
+            max_expansions: max_expansions.and_then(Value::as_u64),
         }
     }
-
     fn from_route(req: &InteractReq) -> Option<Self> {
         let InteractReq::InspectRoute {
             x,
@@ -207,6 +217,7 @@ impl RouteSpec {
             allow_bank_fetch,
             avoid,
             cross,
+            max_expansions,
             ..
         } = req
         else {
@@ -220,6 +231,7 @@ impl RouteSpec {
             allow_bank_fetch: *allow_bank_fetch,
             avoid: avoid.clone(),
             cross: cross.clone(),
+            max_expansions: *max_expansions,
         })
     }
 }
@@ -345,6 +357,7 @@ impl InspectSlot {
             snap.route_inspect_reason(),
             snap.route_inspect_bank_planned(),
             snap.route_inspect_ticks(),
+            snap.route_inspect_terminal(),
             snap.route_inspect_hops(),
         );
         let prev = published_terminal(
@@ -354,6 +367,7 @@ impl InspectSlot {
             snap.route_inspect_prev_reason(),
             snap.route_inspect_prev_bank_planned(),
             snap.route_inspect_prev_ticks(),
+            snap.route_inspect_prev_terminal(),
             snap.route_inspect_prev_hops(),
         );
         let mut i = 0;
@@ -625,6 +639,7 @@ fn published_terminal<'a>(
     reason: Option<&str>,
     bank_planned: bool,
     ticks: f64,
+    terminal: Option<TileTable<'a>>,
     hops: Option<flatbuffers::Vector<'a, flatbuffers::ForwardsUOffset<InspectHopTable<'a>>>>,
 ) -> Option<Terminal> {
     if seq == 0 || request_id == 0 {
@@ -635,6 +650,7 @@ fn published_terminal<'a>(
         reason: reason.unwrap_or_default().to_string(),
         bank_planned,
         ticks,
+        terminal: terminal.map(|tile| (tile.x(), tile.z(), tile.level())),
         hops: hops
             .into_iter()
             .flat_map(|hops| hops.iter())
@@ -663,11 +679,20 @@ fn hop_from_reader(h: &InspectHopTable<'_>) -> InspectHop {
 
 fn begin_invalid(input: &Value) -> bool {
     let opts = input.get("opts").unwrap_or(&Value::Null);
-    if opts.get("avoidDoors").is_some()
-        || opts.get("maxExpansions").is_some()
-        || opts.get("state").is_some()
-    {
+    if opts.get("avoidDoors").is_some() || opts.get("state").is_some() {
         return true;
+    }
+    if let Some(value) = input
+        .get("max_expansions")
+        .or_else(|| input.get("maxExpansions"))
+        .or_else(|| opts.get("maxExpansions"))
+    {
+        if value
+            .as_u64()
+            .is_none_or(|limit| limit == 0 || limit > 9_007_199_254_740_991)
+        {
+            return true;
+        }
     }
     if let Some(policy) = opts.get("policy") {
         if policy.get("distanceBeforeTeleport").is_some()
@@ -756,6 +781,7 @@ fn route_args_invalid(req: &InteractReq) -> bool {
         from_level,
         avoid,
         cross,
+        max_expansions,
         ..
     } = req
     else {
@@ -765,6 +791,7 @@ fn route_args_invalid(req: &InteractReq) -> bool {
         || !(0..=3).contains(level)
         || avoid_refusal(avoid).is_some()
         || cross.len() > 8
+        || max_expansions.is_some_and(|limit| limit == 0 || limit > 9_007_199_254_740_991)
 }
 
 /// Drop JS-forged `inspect-ack` and unauthorized `inspect-route` before the
@@ -870,6 +897,7 @@ mod tests {
     use crate::wire::{
         encode_snapshot, encode_snapshot_with_native, InspectHopInput, NativeFactsInput,
         ReachViewInput, RouteInspectFactsInput, RouteInspectTerminalInput, SnapshotInput,
+        TileInput,
     };
 
     fn empty_input(tick: u64) -> SnapshotInput<'static> {
@@ -1000,6 +1028,11 @@ mod tests {
             reason: Some(reason),
             bank_planned: false,
             ticks: if ok { 2.5 } else { 0.0 },
+            terminal: ok.then_some(TileInput {
+                x: 2698,
+                z: 3206,
+                level: 0,
+            }),
             hops,
         }
     }
@@ -1165,6 +1198,10 @@ mod tests {
         );
         assert!(settled(a));
         assert_eq!(value(a)["hops"][0]["locName"], "Captain Barnaby");
+        assert_eq!(
+            value(a)["terminal"],
+            json!({ "x": 2698, "z": 3206, "level": 0 })
+        );
         observe(
             empty_input(3),
             facts(
@@ -1181,6 +1218,11 @@ mod tests {
             value(a)["hops"][0]["locName"],
             "Captain Barnaby",
             "copied terminal must not mutate"
+        );
+        assert_eq!(
+            value(a)["terminal"],
+            json!({ "x": 2698, "z": 3206, "level": 0 }),
+            "copied terminal tile must not mutate"
         );
         assert!(settled(c));
     }
@@ -1359,6 +1401,7 @@ mod tests {
             allow_teleports: false,
             allow_wilderness: true,
             allow_bank_fetch: false,
+            max_expansions: None,
             avoid: Vec::new(),
             cross: Vec::new(),
             request_id,
@@ -1432,6 +1475,7 @@ mod tests {
             allow_teleports: false,
             allow_wilderness: false,
             allow_bank_fetch: false,
+            max_expansions: None,
             avoid: Vec::new(),
             cross: Vec::new(),
             request_id: 0,

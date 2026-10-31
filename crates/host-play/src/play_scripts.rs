@@ -386,15 +386,16 @@ impl ScriptStartHandle {
                     None => self.operator_loadouts(name).map(Arc::from),
                 };
                 match loadouts {
-                    Ok(loadouts) => {
-                        slot.start_surface_with_settings(script_runtime::js_surface_start(
+                    Ok(loadouts) => slot.start_surface_with_settings(
+                        script_runtime::js_surface_start_with_wilderness(
                             script_runtime::js_start_card(source, shape, siblings),
                             bag.map(Arc::new),
                             self.game_data.clone(),
                             Arc::clone(&self.named_banks),
                             loadouts,
-                        ))
-                    }
+                            Arc::clone(&self.wilderness_zones),
+                        ),
+                    ),
                     Err(error) => Err(Refused(error)),
                 }
             }

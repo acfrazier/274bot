@@ -22,6 +22,7 @@ fn load() -> SlotScript {
         game_data: Some(api::game_data::for_revision(ClientRevision::R289).unwrap()),
         named_banks: Arc::default(),
         loadouts: Arc::default(),
+        wilderness_zones: std::sync::Arc::from([]),
     })
     .unwrap();
     factory

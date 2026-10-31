@@ -204,6 +204,25 @@ pub(super) fn js_surface_start(
     named_banks: Arc<api::named_banks::NamedBankFacts>,
     loadouts: Arc<[api::loadout::Loadout]>,
 ) -> script::surface::SurfaceStart {
+    js_surface_start_with_wilderness(
+        card,
+        settings_bag,
+        game_data,
+        named_banks,
+        loadouts,
+        Arc::from([]),
+    )
+}
+
+#[cfg(feature = "js")]
+pub(super) fn js_surface_start_with_wilderness(
+    card: Arc<script_js::surface::JsStartCard>,
+    settings_bag: Option<Arc<script::native::SettingsBag>>,
+    game_data: Option<Arc<api::game_data::SelectedGameData>>,
+    named_banks: Arc<api::named_banks::NamedBankFacts>,
+    loadouts: Arc<[api::loadout::Loadout]>,
+    wilderness_zones: Arc<[script::native::walk::WildernessZonePair]>,
+) -> script::surface::SurfaceStart {
     let card: Arc<dyn script::surface::SurfaceCard> = card;
     script::surface::SurfaceStart {
         card,
@@ -211,6 +230,7 @@ pub(super) fn js_surface_start(
         game_data,
         named_banks,
         loadouts,
+        wilderness_zones,
     }
 }
 

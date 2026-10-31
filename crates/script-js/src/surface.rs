@@ -76,6 +76,7 @@ impl SurfaceFactory for JsSurfaceFactory {
                 card.siblings.iter().cloned().collect(),
                 start.game_data.clone(),
                 Arc::clone(&start.named_banks),
+                Arc::clone(&start.wilderness_zones),
                 Some(execution),
             )
             .map_err(|error| SurfaceError::Spawn(error.to_string()))?;

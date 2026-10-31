@@ -33,6 +33,7 @@ fn paint_slot(source: &str, incarnation: u64) -> SlotScript {
         ),
         named_banks: Arc::default(),
         loadouts: Arc::default(),
+        wilderness_zones: std::sync::Arc::from([]),
     })
     .unwrap();
     let deadline = Instant::now() + Duration::from_secs(10);

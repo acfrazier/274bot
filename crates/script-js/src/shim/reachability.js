@@ -26,6 +26,11 @@ export const Reachability = proxy('Reachability', {
         if (!tile) return false;
         return globalThis.__rs2b0t_reach('walkable', tile);
     },
+    probeable(target) {
+        const tile = resolveTile(target);
+        if (!tile) return false;
+        return globalThis.__rs2b0t_reach('probeable', tile);
+    },
     canReach(target, opts = {}) {
         const tile = resolveTile(target);
         if (!tile) return false;
@@ -44,3 +49,8 @@ export const Reachability = proxy('Reachability', {
         return globalThis.__rs2b0t_reach('canStep', a, b);
     },
 });
+
+export function isArrived(target, radius) {
+    const tile = resolveTile(target);
+    return tile ? globalThis.__rs2b0t_reach('arrived', tile, radius) : false;
+}

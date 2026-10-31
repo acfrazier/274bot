@@ -53,7 +53,9 @@ use crate::reach_entity::{
 };
 use crate::supply_v2;
 use crate::walk::{
-    avoid_refusal, here, interrupted, resolve_teleports, teleport_span_allows, Resilient, Walk,
+    avoid_refusal, here, interrupted, last_outcome, outcome_for_walk, reset_executor_status,
+    resolve_teleports, set_last_outcome, teleport_span_allows, Resilient, Walk,
+    WalkExecutorOutcome,
 };
 use api::query::SceneReachOptions;
 use api::snapshot::WorldTile;
@@ -1752,8 +1754,6 @@ pub(crate) struct WalkToArgs {
     /// Whether the caller passed `pathFollow` overrides.
     #[serde(default)]
     path_follow: bool,
-    #[serde(default)]
-    force_repath: bool,
 }
 
 /// Frozen `opts?.radius ?? 2` (`WalkExecutor.ts:227`).
@@ -1778,9 +1778,6 @@ impl WalkToArgs {
         }
         if self.path_follow {
             return Some("pathFollow: the host follow has no stall/deviation overrides".into());
-        }
-        if self.force_repath {
-            return Some("forceRepath: the host walk has no forced repath of a live route".into());
         }
         None
     }
@@ -1829,7 +1826,9 @@ impl Family for WalkTo {
     type Output = bool;
 
     fn begin(args: WalkToArgs, cx: &mut Cx<'_>) -> Begin<Self> {
+        reset_executor_status();
         if let Some(reason) = args.refusal() {
+            set_last_outcome(Some(WalkExecutorOutcome::Failed));
             return Begin::Refuse(reason);
         }
         let dest = WorldTile {
@@ -1867,18 +1866,27 @@ impl Family for WalkTo {
                 pumped: false,
                 waiting: false,
             }),
-            Err(arrived) => Begin::Done(arrived),
+            Err(arrived) => {
+                set_last_outcome(Some(if arrived {
+                    WalkExecutorOutcome::Arrived
+                } else {
+                    WalkExecutorOutcome::Failed
+                }));
+                Begin::Done(arrived)
+            }
         }
     }
 
     fn step(&mut self, cx: &mut Cx<'_>) -> Step<bool> {
         if cx.user_move_intent_interrupted() {
+            set_last_outcome(Some(WalkExecutorOutcome::Interrupted));
             if let Some(stop) = Family::release(self) {
                 cx.emit(stop);
             }
             return Step::Done(false);
         }
         if let Some(Reply::Threw(thrown)) = cx.reply() {
+            set_last_outcome(Some(WalkExecutorOutcome::Failed));
             return Step::Fail(thrown);
         }
         loop {
@@ -1945,27 +1953,52 @@ impl WalkTo {
             self.logs
                 .push_back(format!("walk interrupted — {}", interrupt_cause(cx)));
         }
+        set_last_outcome(Some(WalkExecutorOutcome::Interrupted));
         self.result = Some(false);
     }
 
     fn advance(&mut self, cx: &mut Cx<'_>) {
         match &mut self.phase {
             WalkToPhase::Walking { walk, retried } => {
+                if crate::walk_wait::take_repath() && !walk.repath(cx) {
+                    crate::walk_wait::request_repath();
+                }
                 let Some(value) = walk.step(cx) else {
                     return;
                 };
+                let blocked = walk.blocked();
+                let no_path = walk.no_path();
+                set_last_outcome(Some(outcome_for_walk(
+                    value,
+                    blocked,
+                    no_path,
+                    self.dest,
+                    self.radius,
+                )));
                 if value || *retried {
                     self.result = Some(value);
                     return;
                 }
                 match Recover::start(self.dest, cx, &mut self.logs) {
                     Ok(recover) => self.phase = WalkToPhase::Recover(Box::new(recover)),
-                    Err(_) => self.result = Some(false),
+                    Err(_) => {
+                        if no_path {
+                            set_last_outcome(Some(WalkExecutorOutcome::Unreachable));
+                        } else {
+                            set_last_outcome(Some(WalkExecutorOutcome::Failed));
+                        }
+                        self.result = Some(false);
+                    }
                 }
             }
             WalkToPhase::Recover(recover) => match recover.step(cx, &mut self.logs) {
                 None => {}
-                Some(false) => self.result = Some(false),
+                Some(false) => {
+                    if last_outcome() != Some("unreachable") {
+                        set_last_outcome(Some(WalkExecutorOutcome::Failed));
+                    }
+                    self.result = Some(false);
+                }
                 Some(true) => match Walk::begin_compat_avoiding(
                     self.dest,
                     self.radius,
@@ -1981,7 +2014,14 @@ impl WalkTo {
                             retried: true,
                         }
                     }
-                    Err(arrived) => self.result = Some(arrived),
+                    Err(arrived) => {
+                        set_last_outcome(Some(if arrived {
+                            WalkExecutorOutcome::Arrived
+                        } else {
+                            WalkExecutorOutcome::Failed
+                        }));
+                        self.result = Some(arrived);
+                    }
                 },
             },
         }

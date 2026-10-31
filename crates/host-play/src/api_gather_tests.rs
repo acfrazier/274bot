@@ -698,6 +698,7 @@ fn paused_gather_seat_keeps_host_rows_queued_until_resume_in_every_frame_state()
                     allow_teleports: false,
                     allow_wilderness: false,
                     allow_bank_fetch: false,
+                    max_expansions: None,
                     avoid: vec![],
                     cross: vec![],
                     request_id: 9,

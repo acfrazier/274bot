@@ -157,6 +157,7 @@ fn req(from: WorldTile, to: WorldTile, request_id: u64) -> InspectRequest {
         allow_teleports: false,
         allow_wilderness: true,
         allow_bank_fetch: false,
+        max_expansions: None,
         zones: nav_planner::zones::ZoneExempt::NONE,
         avoid: Vec::new(),
         request_id,

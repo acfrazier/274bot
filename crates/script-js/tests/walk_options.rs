@@ -10,9 +10,9 @@ use script_js::{LoadIsolate, LoadShape};
 mod common;
 use common::{ingame_snapshot, post_snapshot_input};
 
-/// A frozen search bound (`maxBudget` on walkResilient, `maxExpansions` on
-/// walkTo) is accepted and the walk still routes and settles: the host
-/// router's own bound never searches less than a frozen caller asked.
+/// A frozen search bound is accepted when the initial walk is started. This
+/// test drives its arrival; the resilient verify-probe cap is checked on the
+/// native request in `compat::walk`.
 fn walk_with_bound(call: &str) -> (String, Vec<InteractReq>, serde_json::Value) {
     let src = format!(
         r#"

@@ -3082,6 +3082,7 @@ export function tick() {{}}
             &[],
             None,
             std::sync::Arc::new(api::named_banks::NamedBankFacts::empty()),
+            std::sync::Arc::from([]),
         )
     })
     .unwrap();

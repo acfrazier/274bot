@@ -335,7 +335,7 @@ impl InspectSubmission {
                         options: blocker_options,
                         avoid_capacity,
                         zone_filter_bytes,
-                        max_settles: nav_planner::router::NODE_BUDGET,
+                        max_settles: strict_budget(capture),
                     },
                 )?;
                 bounds.include(&blockers_with_bank, InspectSearchKind::Blockers)?;
@@ -352,7 +352,7 @@ impl InspectSubmission {
                             },
                             avoid_capacity,
                             zone_filter_bytes,
-                            max_settles: nav_planner::router::NODE_BUDGET,
+                            max_settles: strict_budget(capture),
                         },
                     )?;
                     bounds.include(&blockers_without_bank, InspectSearchKind::Blockers)?;
@@ -1414,36 +1414,34 @@ impl InspectJob {
 fn strict_budget(capture: &InspectCapture) -> usize {
     capture
         .search_budget_strict
-        .unwrap_or(nav_planner::router::NODE_BUDGET)
+        .unwrap_or(capture.max_expansions)
 }
 
 #[cfg(not(test))]
-fn strict_budget(_capture: &InspectCapture) -> usize {
-    nav_planner::router::NODE_BUDGET
+fn strict_budget(capture: &InspectCapture) -> usize {
+    capture.max_expansions
 }
 
 #[cfg(test)]
 fn stand_budget(capture: &InspectCapture) -> usize {
     capture
         .search_budget_stand
-        .unwrap_or(nav_planner::router::NODE_BUDGET)
+        .unwrap_or(capture.max_expansions)
 }
 
 #[cfg(not(test))]
-fn stand_budget(_capture: &InspectCapture) -> usize {
-    nav_planner::router::NODE_BUDGET
+fn stand_budget(capture: &InspectCapture) -> usize {
+    capture.max_expansions
 }
 
 #[cfg(test)]
 fn post_budget(capture: &InspectCapture) -> usize {
-    capture
-        .search_budget_post
-        .unwrap_or(nav_planner::router::NODE_BUDGET)
+    capture.search_budget_post.unwrap_or(capture.max_expansions)
 }
 
 #[cfg(not(test))]
-fn post_budget(_capture: &InspectCapture) -> usize {
-    nav_planner::router::NODE_BUDGET
+fn post_budget(capture: &InspectCapture) -> usize {
+    capture.max_expansions
 }
 impl InspectJob {
     fn after_unit(
@@ -1702,7 +1700,7 @@ impl CooperativeJob for InspectJob {
                                 from,
                                 to,
                                 options,
-                                nav_planner::router::NODE_BUDGET,
+                                strict_budget(self.capture_ref()),
                                 InspectSearchInput::Blocking(filter),
                                 InspectSearchPurpose::Blockers { bank_planned },
                                 preflight,
@@ -2016,6 +2014,7 @@ pub(crate) struct InspectTerminal {
     pub bank_planned: bool,
     pub ticks: f64,
     pub hops: InspectHops,
+    pub terminal: Option<WorldTile>,
 }
 
 impl InspectTerminal {
@@ -2029,6 +2028,7 @@ impl InspectTerminal {
             bank_planned: false,
             ticks: 0.0,
             hops: InspectHops::default(),
+            terminal: None,
         }
     }
 
@@ -2046,6 +2046,7 @@ impl InspectTerminal {
             reason: InspectReason::Owned(Arc::clone(&result)),
             bank_planned: value.bank_planned,
             ticks: value.ticks,
+            terminal: value.route.as_ref().map(|route| route.destination()),
             hops: InspectHops::owner(result),
         }
     }
@@ -2059,6 +2060,7 @@ impl InspectTerminal {
         bank_planned: bool,
         ticks: f64,
         hops: Vec<InspectHop>,
+        terminal: Option<WorldTile>,
     ) -> Self {
         let result = Arc::new(InspectLegacy {
             ok,
@@ -2076,6 +2078,7 @@ impl InspectTerminal {
             bank_planned: result.bank_planned,
             ticks: result.ticks,
             hops: InspectHops::legacy(result),
+            terminal,
         }
     }
     #[cfg(test)]
@@ -2088,6 +2091,7 @@ impl InspectTerminal {
             false,
             0.0,
             Vec::new(),
+            None,
         )
     }
 }
@@ -2105,6 +2109,7 @@ pub(crate) struct InspectCapture {
     pub bank: Vec<(i32, i32)>,
     pub from: WorldTile,
     pub to: WorldTile,
+    pub max_expansions: usize,
     pub opts: FindOptions,
     pub avoid: Vec<AvoidRect>,
     pub cache: Option<Arc<Cache>>,
@@ -2403,6 +2408,7 @@ pub(super) struct InspectRequest {
     pub allow_teleports: bool,
     pub allow_wilderness: bool,
     pub allow_bank_fetch: bool,
+    pub max_expansions: Option<u64>,
     pub zones: ZoneExempt,
     pub avoid: Vec<AvoidRect>,
     pub request_id: u64,
@@ -2461,7 +2467,10 @@ pub(super) fn queue_inspect(
             bot.inspect.refuse_unreserved(req.request_id);
             return;
         }
-        if req.invalid_args || validate_request(req.from, req.to, &req.avoid).is_err() {
+        if req.invalid_args
+            || req.max_expansions.is_some_and(|limit| limit == 0)
+            || validate_request(req.from, req.to, &req.avoid).is_err()
+        {
             refuse_locked(bot, req.request_id, "invalid-args");
         } else {
             refuse_locked(bot, req.request_id, "missing-graph");
@@ -2482,7 +2491,10 @@ pub(super) fn queue_inspect(
             bot.inspect.refuse_unreserved(req.request_id);
             return;
         }
-        if req.invalid_args || validate_request(req.from, req.to, &req.avoid).is_err() {
+        if req.invalid_args
+            || req.max_expansions.is_some_and(|limit| limit == 0)
+            || validate_request(req.from, req.to, &req.avoid).is_err()
+        {
             refuse_locked(bot, req.request_id, "invalid-args");
             return;
         }
@@ -2522,6 +2534,11 @@ pub(super) fn queue_inspect(
         bank: bank.rows,
         from: req.from,
         to: req.to,
+        max_expansions: req
+            .max_expansions
+            .map(|limit| usize::try_from(limit).unwrap_or(usize::MAX))
+            .unwrap_or(nav_planner::router::NODE_BUDGET)
+            .min(nav_planner::router::NODE_BUDGET),
         opts,
         avoid: req.avoid,
         cache,
@@ -3348,6 +3365,7 @@ fn ok_terminal(capture: &InspectCapture, route: Route, bank_planned: bool) -> In
         bank_planned,
         route.ticks,
         hops,
+        Some(capture.to),
     )
 }
 fn hop_texts<'a>(
@@ -3494,6 +3512,13 @@ pub(super) fn terminal_to_input<'a>(
         reason: Some(term.reason.as_str()),
         bank_planned: term.bank_planned,
         ticks: term.ticks,
+        terminal: term
+            .terminal
+            .map(|tile| script::native::snapshot_source::TileInput {
+                x: tile.x,
+                z: tile.z,
+                level: tile.level,
+            }),
         hops,
     }
 }

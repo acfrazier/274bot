@@ -182,6 +182,7 @@ pub(super) fn isolate_main(
     siblings: Vec<(String, String)>,
     game_data: Option<std::sync::Arc<api::game_data::SelectedGameData>>,
     named_banks: std::sync::Arc<api::named_banks::NamedBankFacts>,
+    wilderness_zones: std::sync::Arc<[script::native::walk::WildernessZonePair]>,
     runtime_handle: tokio::runtime::Handle,
     cmds: CmdQueue,
     out: Sender<ThreadMsg>,
@@ -249,7 +250,15 @@ pub(super) fn isolate_main(
         return;
     }
     let wired = super::super::lineage_v8::enter_root(&mut runtime, |runtime| {
-        wire_runtime(runtime, &source, shape, &siblings, game_data, named_banks)
+        wire_runtime(
+            runtime,
+            &source,
+            shape,
+            &siblings,
+            game_data,
+            named_banks,
+            wilderness_zones,
+        )
     });
     if let Err(e) = wired {
         let _ = setup.send(SetupMessage::Ready(Err(e)));

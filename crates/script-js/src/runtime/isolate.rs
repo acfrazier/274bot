@@ -414,9 +414,18 @@ impl GameplayFactory {
         siblings: Vec<(String, String)>,
         game_data: Option<std::sync::Arc<api::game_data::SelectedGameData>>,
         named_banks: std::sync::Arc<api::named_banks::NamedBankFacts>,
+        wilderness_zones: std::sync::Arc<[script::native::walk::WildernessZonePair]>,
         execution: Option<api::identity::ExecutionId>,
     ) -> Result<LoadIsolate, LoadIsolateError> {
-        LoadIsolate::spawn_inner(js, shape, siblings, game_data, named_banks, execution)
+        LoadIsolate::spawn_inner(
+            js,
+            shape,
+            siblings,
+            game_data,
+            named_banks,
+            wilderness_zones,
+            execution,
+        )
     }
 }
 
@@ -438,6 +447,25 @@ impl LoadIsolate {
             siblings,
             None,
             std::sync::Arc::new(api::named_banks::NamedBankFacts::empty()),
+            std::sync::Arc::from([]),
+            None,
+        )
+    }
+    /// Spawn with selected wilderness geometry for read-only contract tests.
+    #[cfg(any(test, feature = "test-hooks"))]
+    pub fn spawn_with_wilderness(
+        js: String,
+        shape: LoadShape,
+        siblings: Vec<(String, String)>,
+        wilderness_zones: std::sync::Arc<[script::native::walk::WildernessZonePair]>,
+    ) -> Result<Self, LoadIsolateError> {
+        Self::spawn_inner(
+            js,
+            shape,
+            siblings,
+            None,
+            std::sync::Arc::new(api::named_banks::NamedBankFacts::empty()),
+            wilderness_zones,
             None,
         )
     }
@@ -456,6 +484,7 @@ impl LoadIsolate {
             siblings,
             None,
             std::sync::Arc::new(api::named_banks::NamedBankFacts::empty()),
+            std::sync::Arc::from([]),
             Some(execution),
         )
     }
@@ -474,6 +503,7 @@ impl LoadIsolate {
             siblings,
             Some(game_data),
             std::sync::Arc::new(api::named_banks::NamedBankFacts::empty()),
+            std::sync::Arc::from([]),
             None,
         )
     }
@@ -487,7 +517,15 @@ impl LoadIsolate {
         game_data: Option<std::sync::Arc<api::game_data::SelectedGameData>>,
         named_banks: std::sync::Arc<api::named_banks::NamedBankFacts>,
     ) -> Result<Self, LoadIsolateError> {
-        Self::spawn_inner(js, shape, siblings, game_data, named_banks, None)
+        Self::spawn_inner(
+            js,
+            shape,
+            siblings,
+            game_data,
+            named_banks,
+            std::sync::Arc::from([]),
+            None,
+        )
     }
 
     /// Queue a whole refresh on the single process ValidationSeat. The
@@ -504,6 +542,7 @@ impl LoadIsolate {
         siblings: Vec<(String, String)>,
         game_data: Option<std::sync::Arc<api::game_data::SelectedGameData>>,
         named_banks: std::sync::Arc<api::named_banks::NamedBankFacts>,
+        wilderness_zones: std::sync::Arc<[script::native::walk::WildernessZonePair]>,
         execution: Option<api::identity::ExecutionId>,
     ) -> Result<Self, LoadIsolateError> {
         super::platform::require_v8_platform()?;
@@ -545,6 +584,7 @@ impl LoadIsolate {
                     siblings,
                     game_data,
                     named_banks,
+                    wilderness_zones,
                     runtime_handle,
                     CmdQueue {
                         rx,

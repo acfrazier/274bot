@@ -39,6 +39,7 @@ fn surface_start(
         game_data,
         named_banks: Arc::new(api::named_banks::NamedBankFacts::empty()),
         loadouts: Arc::from(Vec::<api::loadout::Loadout>::new()),
+        wilderness_zones: std::sync::Arc::from([]),
     }
 }
 
