@@ -978,14 +978,9 @@ impl TickCycle {
                     pending,
                 };
             }
-            Phase::Idle {
-                fallback, pending, ..
-            } => {
-                self.phase = Phase::Native {
-                    roll_due: None,
-                    fallback,
-                    pending,
-                };
+            Phase::Idle { .. } => {
+                // A proven depleting outcome stays idle while the runner walks
+                // to a replacement; only a live cycle is unobserved on a skip.
             }
         }
 
