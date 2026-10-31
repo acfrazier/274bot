@@ -102,9 +102,16 @@ const SINISTER_KEY_ID: i32 = 993;
 const TWISTED_CHEST_LOC_ID: i32 = 377;
 // agility_dungeon.rs2:113-120 adds nine reward items.
 const TWISTED_CHEST_REWARD_COUNT: i32 = 9;
-// p_delay(3) resumes at +4 ticks; queue(..., 0) runs on the next eligible
-// player queue pass: PlayerOps.ts:376-379, Player.ts:903-912.
-const TWISTED_CHEST_POISON_SIGNAL_TICKS: u32 = 12;
+// The server reads the click in the tick after the observed send tick;
+// p_delay(3) resumes 4 ticks later and queue(..., 0) runs on that eligible
+// player queue pass (PlayerOps.ts:376-379, Player.ts:903-912): 5 ticks. Engine
+// L measured 6 (SURVIVAL-NATIVE-CURE/fix-r2/diag, receipt f525f90e: source
+// 39, poison line 45; two runs with a bound of 5 failed). The content does
+// not explain the extra tick; the bound is the measured value.
+const TWISTED_CHEST_POISON_SIGNAL_TICKS: u32 = 6;
+// The last dose of a 1-dose potion leaves an empty vial in its slot
+// (`potions.obj:676`, `next_obj_stage,vial_empty`; `pack/obj.pack:230`).
+const VIAL_EMPTY_ID: i32 = 229;
 // The debugproc's queue(..., 0) runs on the first eligible queue pass;
 // cheat_other.rs2:1-3, Player.ts:903-912.
 const DEBUGPROC_POISON_SIGNAL_TICKS: u32 = 2;
@@ -1603,6 +1610,7 @@ fn common_receipt(
     let expected_inventory_after = inventory_at_start + chest_rewards_after_start
         - chest_key_consumed_after_start
         - witness.baseline_antipoison.saturating_sub(antipoison_after)
+        + item_count(snapshot, VIAL_EMPTY_ID)
         + tool_after.saturating_sub(witness.baseline_tool)
         + resource_after
         - witness.baseline_resource;
