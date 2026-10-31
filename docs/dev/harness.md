@@ -249,6 +249,22 @@ content) is needed by:
 The scenario crate's `every_engine_patch_user_is_documented` test keeps
 these lists in step with what the cells send.
 
+## M4 unattackable-target escape fixture
+
+The host-play M4 cell seeds one single-dose Antipoison in the account's kit.
+Before the hostile-area teleport, the fixture drinks it through the ordinary
+inventory action. Start waits for both a new server antipoison message and
+the dose leaving the inventory. A fixed 16 received-game-tick deadline bounds
+that observation; stale chat and repeated snapshots cannot open the gate or
+extend it. The receipt records the cure in `random_events` as `M4PoisonCure`.
+Admission policy is unchanged.
+
+M4 tests escape from an unattackable Nasty tree, not poison treatment. The
+tree uses ordinary melee crush damage, not poison. The fixture still starts
+with eight of 30 Hitpoints, one Prayer and four lobsters, so the temporary
+poison immunity does not alter the attack, unattackable-target abort or
+escape predicates.
+
 ## Random-event Guardian cells
 
 `guardian_event_*` (the eight general events, `::macro_event 1`–`8`) and

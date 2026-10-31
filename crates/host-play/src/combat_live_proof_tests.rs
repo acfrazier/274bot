@@ -145,7 +145,7 @@ const M2_ITEMS: &[(&str, i32)] = &[
     ("4dose2attack", 1),
 ];
 const M3_ITEMS: &[(&str, i32)] = &[("rune_scimitar", 1), ("lobster", 20)];
-const M4_ITEMS: &[(&str, i32)] = &[("lobster", 4)];
+const M4_ITEMS: &[(&str, i32)] = &[("lobster", 4), ("1doseantipoison", 1)];
 const M5_ITEMS: &[(&str, i32)] = &[("bronze_scimitar", 1)];
 const M6_ITEMS: &[(&str, i32)] = &[
     ("rune_scimitar", 1),
@@ -1132,11 +1132,14 @@ fn preparation_steps(
             ));
         }
         Case::M3 => steps.push(wear_step(RUNE_SCIMITAR_ID)),
-        Case::M4 => steps.push(cheat_step(
-            "drain Hitpoints to eight before hostile-area teleport",
-            "~stat_drain hitpoints 22 0".to_owned(),
-            Proof::Stat { id: 3, min: 8 },
-        )),
+        Case::M4 => {
+            steps.extend(m4_cure_steps(Arc::clone(&capture)));
+            steps.push(cheat_step(
+                "drain Hitpoints to eight before hostile-area teleport",
+                "~stat_drain hitpoints 22 0".to_owned(),
+                Proof::Stat { id: 3, min: 8 },
+            ));
+        }
         Case::M5 | Case::M5Stop => {
             steps.push(wear_step(BRONZE_SCIMITAR_ID));
             steps.push(cheat_step(
@@ -2077,6 +2080,130 @@ fn magic_spawn_teleport_step(spawn: WorldTile, capture: Arc<Mutex<CombatCapture>
             budget_ticks: 120,
         },
     }
+}
+
+const M4_CURE_DEADLINE_TICKS: u32 = 16;
+const M4_CURE_CHAT: &str = "You drink some of your antipoison potion.";
+
+fn m4_fresh_cure_chat(snapshot: &GameSnapshot, baseline: i32) -> Option<i32> {
+    snapshot.chat_lines().iter().find_map(|line| {
+        (line.sequence > baseline
+            && line.type_ == 0
+            && line.username.is_none()
+            && line.text == M4_CURE_CHAT)
+            .then_some(line.sequence)
+    })
+}
+
+fn m4_cure_gate(
+    sent_tick: u32,
+    tick: u32,
+    fresh_cure_chat: bool,
+    dose_absent: bool,
+) -> Result<bool, &'static str> {
+    if tick.wrapping_sub(sent_tick) >= M4_CURE_DEADLINE_TICKS {
+        return Err("M4 did not observe its fresh antipoison message and consumed dose within 16 game ticks before Start");
+    }
+    Ok(fresh_cure_chat && dose_absent)
+}
+
+fn m4_cure_steps(capture: Arc<Mutex<CombatCapture>>) -> [Step; 2] {
+    let dose_id = api::game_data::for_revision(ClientRevision::R289)
+        .expect("selected M4 content")
+        .item_by_alias("1doseantipoison")
+        .expect("selected M4 antipoison dose")
+        .id;
+    let sent = Arc::new(Mutex::new(None::<(u32, i32)>));
+    let drink_sent = Arc::clone(&sent);
+    [
+        Step {
+            name: "drink the pre-Start antipoison dose",
+            kind: StepKind::Perform {
+                send: Box::new(move |client, snapshot| {
+                    let Some(dose) = snapshot
+                        .inventory()
+                        .iter()
+                        .find(|item| item.def.id == dose_id && item.count > 0)
+                    else {
+                        return false;
+                    };
+                    let chat_baseline = snapshot
+                        .chat_lines()
+                        .iter()
+                        .map(|line| line.sequence)
+                        .max()
+                        .unwrap_or(0);
+                    if !matches!(
+                        Interactions::new(snapshot, client)
+                            .interact(OpTarget::Item(dose), ActionSpec::Label("Drink")),
+                        SendResult::Sent { .. }
+                    ) {
+                        return false;
+                    }
+                    *drink_sent.lock().unwrap_or_else(|error| error.into_inner()) =
+                        Some((snapshot.tick(), chat_baseline));
+                    true
+                }),
+            },
+            wait: Wait {
+                arm: Proof::Stat { id: 3, min: 1 },
+                budget_ticks: 120,
+            },
+        },
+        Step {
+            name: "observe the fresh cure message and consumed dose before Start",
+            kind: StepKind::Await {
+                ready: Box::new(move |snapshot| {
+                    let Some((sent_tick, chat_baseline)) =
+                        *sent.lock().unwrap_or_else(|error| error.into_inner())
+                    else {
+                        return false;
+                    };
+                    // anti_poison.rs2:5-9 applies immunity and replaces the
+                    // dose; consume_messages.dbrow publishes this chat one
+                    // game tick later. Neither observation alone opens Start.
+                    let cure = m4_fresh_cure_chat(snapshot, chat_baseline);
+                    let dose_absent = snapshot
+                        .inventory()
+                        .iter()
+                        .all(|item| item.def.id != dose_id || item.count <= 0);
+                    match m4_cure_gate(sent_tick, snapshot.tick(), cure.is_some(), dose_absent) {
+                        Ok(true) => {
+                            capture
+                                .lock()
+                                .unwrap_or_else(|error| error.into_inner())
+                                .random_events
+                                .push(json!({
+                                    "kind": "M4PoisonCure",
+                                    "sent_tick": sent_tick,
+                                    "tick": snapshot.tick(),
+                                    "chat_sequence": cure,
+                                    "chat": M4_CURE_CHAT,
+                                    "dose_id": dose_id,
+                                    "dose_absent": dose_absent,
+                                }));
+                            true
+                        }
+                        Ok(false) => false,
+                        Err(reason) => {
+                            capture
+                                .lock()
+                                .unwrap_or_else(|error| error.into_inner())
+                                .invalid_reason = Some(reason.to_owned());
+                            false
+                        }
+                    }
+                }),
+                summary: None,
+            },
+            wait: Wait {
+                arm: Proof::Stat { id: 3, min: 1 },
+                // Await counts dirty snapshots, not game ticks. The fixed
+                // observed-tick deadline above bounds this fixture gate.
+                budget_ticks: u32::MAX,
+            },
+        },
+    ]
 }
 
 fn wear_step(id: i32) -> Step {
@@ -10558,7 +10685,13 @@ fn m4_observes_its_own_poison_cure_before_the_hostile_teleport_and_start() {
         Arc::new(Mutex::new(CombatCapture::default())),
     );
     assert!(Case::M4.items().contains(&("1doseantipoison", 1)));
-    let index = |name| scenario.steps.iter().position(|step| step.name == name).unwrap();
+    let index = |name| {
+        scenario
+            .steps
+            .iter()
+            .position(|step| step.name == name)
+            .unwrap()
+    };
     let drink = index("drink the pre-Start antipoison dose");
     let cure = index("observe the fresh cure message and consumed dose before Start");
     let drain = index("drain Hitpoints to eight before hostile-area teleport");
@@ -10569,6 +10702,46 @@ fn m4_observes_its_own_poison_cure_before_the_hostile_teleport_and_start() {
         .position(|step| matches!(step.kind, StepKind::StartScript))
         .unwrap();
     assert!(drink < cure && cure < drain && drain < stand && stand < start);
+}
+
+#[test]
+fn m4_cure_gate_requires_both_observations_before_a_fixed_game_tick_deadline() {
+    for (fresh_chat, dose_absent, ready) in [
+        (false, false, false),
+        (true, false, false),
+        (false, true, false),
+        (true, true, true),
+    ] {
+        assert_eq!(m4_cure_gate(20, 21, fresh_chat, dose_absent), Ok(ready));
+    }
+    for _ in 0..100 {
+        assert_eq!(m4_cure_gate(20, 20, false, false), Ok(false));
+    }
+    assert_eq!(m4_cure_gate(20, 35, true, true), Ok(true));
+    assert!(m4_cure_gate(20, 36, false, false).is_err());
+    assert!(m4_cure_gate(20, 36, true, true).is_err());
+    assert_eq!(m4_cure_gate(u32::MAX - 8, 6, true, true), Ok(true));
+    assert!(m4_cure_gate(u32::MAX - 8, 7, true, true).is_err());
+}
+
+#[test]
+fn m4_cure_chat_must_be_new_server_chat_not_a_stale_or_player_message() {
+    let mut snapshot = GameSnapshot::default();
+    for (sequence, type_, username, text, expected) in [
+        (10, 0, None, M4_CURE_CHAT, None),
+        (11, 2, None, M4_CURE_CHAT, None),
+        (11, 0, Some("other player".to_owned()), M4_CURE_CHAT, None),
+        (11, 0, None, "You have been poisoned!", None),
+        (11, 0, None, M4_CURE_CHAT, Some(11)),
+    ] {
+        snapshot.seed_chat_lines(vec![api::snapshot::ChatLineView {
+            sequence,
+            type_,
+            username,
+            text: text.to_owned(),
+        }]);
+        assert_eq!(m4_fresh_cure_chat(&snapshot, 10), expected);
+    }
 }
 
 #[test]
