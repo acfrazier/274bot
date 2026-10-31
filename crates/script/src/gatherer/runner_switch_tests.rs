@@ -2221,6 +2221,98 @@ fn gatherer_late_bite_effect_moves_the_next_food_clock() {
     assert_eq!(held[1].0, "Eat", "the second bite follows the clock");
 }
 
+/// Natural regeneration raises Hitpoints in the frame before the first bite's
+/// count drop arrives (`stat.rs2:58-60` restores one point on its own timer).
+/// That rise is not the bite: the next-food clock starts in the server tick
+/// that ran the click (`consume.rs2:122-127`), which only the count drop
+/// shows. The clock must be counted from the count drop's tick, so the second
+/// bite waits exactly as in the late-bite case without the rise.
+#[test]
+fn gatherer_natural_regeneration_before_a_late_bite_does_not_start_the_food_clock() {
+    let (mut gatherer, mut snapshot) = fixture();
+    snapshot.seed_inventory(vec![held_lobster(0), held_lobster(1)], 28);
+    snapshot.seed_tick(20);
+    let mut ledger = None;
+    let mut held = Vec::new();
+    tick_with_hp(&mut gatherer, &snapshot, &mut ledger, 1, 60);
+    assert!(matches!(gatherer.active, Active::Gather(_)));
+    seed_low_hp(&mut snapshot);
+    tick_with_hp(&mut gatherer, &snapshot, &mut ledger, 2, 5);
+    assert_eq!(note_held(&ledger, &mut held), 1);
+    assert_eq!(held[0].0, "Eat", "the first bite is sent in tick 2");
+    // Tick 3: Hitpoints 5 -> 6 from natural regeneration; the count is intact.
+    let mut stats = snapshot.stats().to_vec();
+    for stat in &mut stats {
+        if stat.index == 3 {
+            stat.effective = 6;
+        }
+    }
+    snapshot.seed_stats(stats);
+    tick_with_hp(&mut gatherer, &snapshot, &mut ledger, 3, 6);
+    assert_eq!(
+        note_held(&ledger, &mut held),
+        1,
+        "tick 3: a hitpoints rise alone is not a bite"
+    );
+    snapshot.seed_inventory(vec![held_lobster(1)], 28);
+    let delay = crate::combat::guard::shared_tables()
+        .unwrap()
+        .food(held_lobster(1).def.id)
+        .unwrap()
+        .eat_delay_arg
+        .expect("lobster uses the shared next-food clock");
+    // The first bite ran in tick 4 (the count drop): the content accepts the
+    // next bite in tick `4 + delay + 1`, so it is sent after frame `4 + delay`.
+    let ready = 4 + u64::try_from(delay).unwrap();
+    for observed in 4..ready {
+        tick_with_hp(&mut gatherer, &snapshot, &mut ledger, observed, 6);
+        assert_eq!(
+            note_held(&ledger, &mut held),
+            1,
+            "no second bite inside the next-food clock: tick {observed}"
+        );
+        assert!(!matches!(gatherer.active, Active::Gather(_)));
+    }
+    tick_with_hp(&mut gatherer, &snapshot, &mut ledger, ready, 6);
+    assert_eq!(note_held(&ledger, &mut held), 2, "tick {ready}");
+    assert_eq!(held[1].0, "Eat", "the second bite follows the clock");
+}
+
+/// The same rise settles nothing: the bite's op keeps waiting for the count
+/// drop (`OneOp` settles a bite on the count alone).
+#[test]
+fn gatherer_natural_regeneration_does_not_settle_a_bite() {
+    let (mut gatherer, mut snapshot) = fixture();
+    snapshot.seed_inventory(vec![held_lobster(0), held_lobster(1)], 28);
+    snapshot.seed_tick(20);
+    let mut ledger = None;
+    tick_with_hp(&mut gatherer, &snapshot, &mut ledger, 1, 60);
+    seed_low_hp(&mut snapshot);
+    tick_with_hp(&mut gatherer, &snapshot, &mut ledger, 2, 5);
+    assert!(
+        matches!(gatherer.active, Active::Tend(_)),
+        "the bite is out"
+    );
+    let mut stats = snapshot.stats().to_vec();
+    for stat in &mut stats {
+        if stat.index == 3 {
+            stat.effective = 6;
+        }
+    }
+    snapshot.seed_stats(stats);
+    tick_with_hp(&mut gatherer, &snapshot, &mut ledger, 3, 6);
+    assert!(
+        matches!(gatherer.active, Active::Tend(_)),
+        "a hitpoints rise alone does not settle the bite"
+    );
+    snapshot.seed_inventory(vec![held_lobster(1)], 28);
+    tick_with_hp(&mut gatherer, &snapshot, &mut ledger, 4, 6);
+    assert!(
+        !matches!(gatherer.active, Active::Tend(_)),
+        "the count drop settles the bite"
+    );
+}
+
 /// Tick an unpoisoned Gatherer at `observed` with the condition's hitpoints.
 fn tick_with_hp(
     gatherer: &mut Gatherer,

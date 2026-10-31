@@ -5945,6 +5945,82 @@ mod tests {
         assert!(script.step.is_some());
     }
 
+    /// Natural regeneration restores one Hitpoint on its own timer
+    /// (`stat.rs2:58-60`). A rise in the frame after a bite was sent, with the
+    /// food still held, is not the bite: the survival op keeps waiting for the
+    /// count drop, so the next-food clock is not anchored on the rise.
+    #[test]
+    fn quester_natural_regeneration_does_not_settle_a_bite() {
+        use crate::survival::CurePoison;
+        use api::condition::PoisonState;
+        use api::snapshot::{ItemActionFamily, ItemContainer, ItemView, StatView};
+
+        let (mut script, mut snapshot, _) = survival_step_fixture("gather");
+        let set_hp = |snapshot: &mut api::snapshot::GameSnapshot, effective| {
+            snapshot.seed_stats(vec![StatView {
+                index: 3,
+                name: "hitpoints".into(),
+                base: 99,
+                effective,
+                xp: 0,
+                used: true,
+            }]);
+        };
+        let lobster_id = api::game_data::for_revision(api::selected::ClientRevision::R289)
+            .unwrap()
+            .item_by_alias("lobster")
+            .unwrap()
+            .id;
+        let lobsters = |count| {
+            vec![ItemView {
+                def: super::super::families::tests::def(lobster_id, "Lobster"),
+                container: ItemContainer::Inventory,
+                action_family: ItemActionFamily::Held,
+                slot: 0,
+                count,
+                actions: vec![Some("Eat".into())],
+                component_id: 0,
+            }]
+        };
+        snapshot.seed_inventory(lobsters(2), 28);
+        set_hp(&mut snapshot, 60);
+        let mut ledger = None;
+        let weak = PoisonState::Poisoned {
+            per_tick: 3,
+            last_mark: 20,
+            hit_since_mark: false,
+        };
+        let mut tick_at = |script: &mut Quester,
+                           snapshot: &api::snapshot::GameSnapshot,
+                           observed: u64,
+                           poison: PoisonState,
+                           hp: u8| {
+            super::super::families::tests::with_tick(snapshot, &mut ledger, observed, |tick| {
+                tick.cx.condition = Some(survival_condition(poison, hp));
+                tick.cx.cure_poison = CurePoison::WhenNeeded;
+                script.tick(tick).unwrap();
+            });
+        };
+        tick_at(&mut script, &snapshot, 1, PoisonState::Clear, 60);
+        set_hp(&mut snapshot, 4);
+        tick_at(&mut script, &snapshot, 2, weak, 4);
+        assert!(script.survival_action.is_some(), "the bite is sent");
+
+        set_hp(&mut snapshot, 5);
+        tick_at(&mut script, &snapshot, 3, weak, 5);
+        assert!(
+            script.survival_action.is_some(),
+            "a hitpoints rise with the food still held is not the bite"
+        );
+
+        snapshot.seed_inventory(lobsters(1), 28);
+        tick_at(&mut script, &snapshot, 4, weak, 5);
+        assert!(
+            script.survival_action.is_none(),
+            "the count drop settles the bite"
+        );
+    }
+
     #[test]
     fn quester_drinks_while_clear_prayers_pending() {
         use crate::combat::{ClearPrayers, ClearPrayersArgs, RaisedPrayers};
