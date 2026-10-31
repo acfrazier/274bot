@@ -4077,25 +4077,30 @@ mod packet_oracle_tests {
             11,
             MITHRIL_PICK_ANIMATION
         ));
-        for facet in 0..6 {
+        let mut start_act = evidence.trace.clone();
+        start_act.frames[4].chat.push(ChatObservation {
+            game_tick: 11,
+            sequence: 11,
+            text: "You swing your pick at the rock.".into(),
+            poll: PollKind::Edge,
+        });
+        assert!(
+            !fresh_mining_roll(&start_act, 11, MITHRIL_PICK_ANIMATION),
+            "a fresh Mining animation with a start-Act line is not a natural roll"
+        );
+        for facet in 0..5 {
             let mut trace = evidence.trace.clone();
             match facet {
                 0 => trace.frames[4].tick_edge = false,
                 1 => trace.frames[4].animation.as_mut().unwrap().serial = 2,
                 2 => trace.frames[4].animation.as_mut().unwrap().sequence = -1,
                 3 => trace.dispatches.clear(),
-                4 | 5 => trace.frames[4].chat.push(ChatObservation {
+                4 => trace.frames[4].chat.push(ChatObservation {
                     game_tick: 11,
                     sequence: 11,
-                    text: if facet == 4 {
-                        "You swing your pick at the rock."
-                    } else {
-                        "You manage to mine some iron."
-                    }
-                    .into(),
+                    text: "You manage to mine some iron.".into(),
                     poll: PollKind::Edge,
                 }),
-                _ => unreachable!(),
             }
             assert!(
                 !fresh_mining_roll(&trace, 11, MITHRIL_PICK_ANIMATION),
@@ -4392,6 +4397,14 @@ mod packet_oracle_tests {
         assert!(close_packet_seen(&trace, 16, &baseline));
         assert!(!close_packet_seen(&trace, 14, &baseline));
         assert!(!close_packet_seen(&trace, 17, &baseline));
+    }
+
+    #[test]
+    fn late_iron_scenario_skips_the_first_arm_wait_but_keeps_knife_method() {
+        let scenario = Scenario::iron("tick-late-iron")
+            .expect("iron setup uses the default mining tile");
+        assert!(!scenario.require_knife_arm);
+        assert_eq!(scenario.settings()["tickMethod"], json!("Knife"));
     }
 
     #[test]
