@@ -304,7 +304,9 @@ fn parse_survival_op_event(line: &HostLog) -> Result<Option<SurvivalOpEvent>, St
     let (tick, remainder) = remainder.split_once(" kind=").ok_or_else(&malformed)?;
     let (kind, remainder) = remainder.split_once(" applied=").ok_or_else(&malformed)?;
     let (applied, deadline) = remainder.split_once(" deadline=").ok_or_else(&malformed)?;
-    let (deadline, player_info) = deadline.split_once(" player_info=").ok_or_else(&malformed)?;
+    let (deadline, player_info) = deadline
+        .split_once(" player_info=")
+        .ok_or_else(&malformed)?;
     if kind.is_empty() {
         return Err(malformed());
     }

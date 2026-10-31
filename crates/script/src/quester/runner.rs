@@ -1669,13 +1669,16 @@ impl Quester {
         match tick.actions.begin::<OneOp>(args, &mut tick.cx) {
             Ok(handle) => {
                 if api::hostlog::enabled(api::hostlog::Category::ScriptTrace) {
-                    if let Some((kind, deadline)) = handle.inspect(OneOp::trace_state) {
+                    if let Some(((kind, deadline), snapshot)) = handle
+                        .inspect(OneOp::trace_state)
+                        .zip(tick.frame().snapshot())
+                    {
                         api::host_log!(
                             api::hostlog::Category::ScriptTrace,
                             api::hostlog::Level::Debug,
                             "quester survival op event=begin tick={} kind={kind:?} applied=pending deadline={deadline} player_info={}",
                             tick.cx.evidence().tick,
-                            tick.cx.snapshot().gens().player_info
+                            snapshot.gens().player_info
                         );
                     }
                 }
@@ -1879,17 +1882,22 @@ impl Quester {
             return false;
         };
         let trace = api::hostlog::enabled(api::hostlog::Category::ScriptTrace)
-            .then(|| handle.inspect(OneOp::trace_state))
+            .then(|| {
+                let ((kind, deadline), snapshot) = handle
+                    .inspect(OneOp::trace_state)
+                    .zip(tick.frame().snapshot())?;
+                Some((kind, deadline, snapshot.gens().player_info))
+            })
             .flatten();
         let result = tick.actions.poll(handle, &mut tick.cx);
-        if let (Some((kind, deadline)), Poll::Ready(result)) = (trace, &result) {
+        if let (Some((kind, deadline, player_info)), Poll::Ready(result)) = (trace, &result) {
             api::host_log!(
                 api::hostlog::Category::ScriptTrace,
                 api::hostlog::Level::Debug,
                 "quester survival op event=end tick={} kind={kind:?} applied={} deadline={deadline} player_info={}",
                 tick.cx.evidence().tick,
                 matches!(result, Ok(true)),
-                tick.cx.snapshot().gens().player_info
+                player_info
             );
         }
         let applied = match result {
@@ -3177,7 +3185,10 @@ impl Quester {
                 .stage
                 .as_ref()
                 .map_or("unknown", |stage| stage.0.as_ref());
-            if api::hostlog::enabled(api::hostlog::Category::ScriptTrace) {
+            let trace_snapshot = api::hostlog::enabled(api::hostlog::Category::ScriptTrace)
+                .then(|| tick.frame().snapshot())
+                .flatten();
+            if let Some(snapshot) = trace_snapshot {
                 trace_root_event(
                     &mut self.trace,
                     tick.output,
@@ -3185,7 +3196,7 @@ impl Quester {
                     self.path.id.0.as_ref(),
                     stage,
                     step,
-                    format_args!("begin player_info={}", tick.cx.snapshot().gens().player_info),
+                    format_args!("begin player_info={}", snapshot.gens().player_info),
                 );
             } else {
                 trace_root_event(
