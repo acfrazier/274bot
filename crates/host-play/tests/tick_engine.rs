@@ -2155,31 +2155,34 @@ fn wires_for_request(trace: &TickEngineTrace, request_id: u64) -> Vec<WireObserv
         .collect()
 }
 
-fn checked_click_pairs(trace: &TickEngineTrace, tick: u64) -> usize {
+fn checked_click_pair_completions(
+    trace: &TickEngineTrace,
+) -> impl Iterator<Item = &WireObservation> {
     // Ordinary Interact completions are not ServerOrderedDispatch receipts.
-    // Keep their real Client packets together by the frame that emitted them;
-    // the independent Engine T correlation below establishes acceptance.
-    let mut groups: BTreeMap<u64, Vec<u8>> = BTreeMap::new();
-    for wire in trace
+    // Their two real unowned Client packets must share one native tick and
+    // host frame. Engine T correlation separately establishes acceptance.
+    let mut previous: Option<&WireObservation> = None;
+    trace
         .wire
         .iter()
-        .filter(|wire| u64::from(wire.game_tick) == tick && wire.request_id.is_none())
-    {
-        groups.entry(wire.host_frame).or_default().push(wire.opcode);
-    }
-    groups
-        .values()
-        .map(|opcodes| {
-            opcodes
-                .windows(2)
-                .filter(|pair| {
-                    pair[0] == ClientProt289::MOVE_OPCLICK.id as u8
-                        && (pair[1] == ClientProt289::OPLOC1.id as u8
-                            || pair[1] == ClientProt289::OPNPC1.id as u8)
-                })
-                .count()
+        .filter(|wire| wire.request_id.is_none())
+        .filter_map(move |wire| {
+            let completes_pair = previous.is_some_and(|movement| {
+                movement.host_frame == wire.host_frame
+                    && movement.game_tick == wire.game_tick
+                    && movement.opcode == ClientProt289::MOVE_OPCLICK.id as u8
+                    && (wire.opcode == ClientProt289::OPLOC1.id as u8
+                        || wire.opcode == ClientProt289::OPNPC1.id as u8)
+            });
+            previous = Some(wire);
+            completes_pair.then_some(wire)
         })
-        .sum()
+}
+
+fn checked_click_pairs(trace: &TickEngineTrace, tick: u64) -> usize {
+    checked_click_pair_completions(trace)
+        .filter(|wire| u64::from(wire.game_tick) == tick)
+        .count()
 }
 
 fn frames_in_tick(trace: &TickEngineTrace, tick: u64) -> Vec<&FrameObservation> {
@@ -3261,6 +3264,16 @@ fn prefix_receipt_counter_error(
         receipts.push((completed_frame, events));
         total += events;
     }
+    // The documented counter also includes two events per real checked
+    // technique click. These have ordinary Interact, not server-ordered,
+    // completions; use the same exact-frame packet proof as the click oracle.
+    for packet in checked_click_pair_completions(&evidence.trace) {
+        if packet.game_tick.wrapping_sub(origin) < end_offset {
+            receipts.push((packet.host_frame + 1, 2));
+            total += 2;
+        }
+    }
+    receipts.sort_unstable_by_key(|&(frame, _)| frame);
     let mut next_receipt = 0;
     let mut emitted = 0_i64;
     let mut last_counter = None;
@@ -4430,6 +4443,50 @@ mod packet_oracle_tests {
                 prefix_difference(&observed, &reference).is_some(),
                 "reverse facet {facet}"
             );
+        }
+    }
+
+    #[test]
+    fn prefix_status_counts_real_ordinary_checked_pairs_without_ordered_receipts() {
+        for opcode in [
+            ClientProt289::OPLOC1.id as u8,
+            ClientProt289::OPNPC1.id as u8,
+        ] {
+            let mut original = receipt_status_evidence();
+            let mut movement = wire(ClientProt289::MOVE_OPCLICK.id as u8, 11, 7);
+            movement.request_id = None;
+            movement.host_frame = 75;
+            movement.game_tick = 8;
+            let mut target = movement;
+            target.opcode = opcode;
+            original.trace.wire.extend([movement, target]);
+            original.statuses[1].tick_events = Some(3);
+            assert_eq!(original.trace.dispatches.len(), 1);
+            assert_eq!(checked_click_pairs(&original.trace, 8), 1);
+            let reference = normalized_prefix(&original, 2);
+            assert_eq!(reference.counter_error, None);
+            assert_eq!(prefix_difference(&reference, &reference), None);
+            for facet in 0..6 {
+                let mut changed = original.clone();
+                match facet {
+                    0 => changed.trace.wire[2].host_frame += 1,
+                    1 => changed.trace.wire[2].request_id = Some(11),
+                    2 => changed.statuses[0].tick_events = Some(3),
+                    3 => changed.trace.wire[2].opcode = ClientProt289::IF_BUTTON.id as u8,
+                    4 => changed.trace.wire[2].game_tick += 1,
+                    5 => {
+                        changed.trace.wire.remove(1);
+                    }
+                    _ => unreachable!(),
+                }
+                let observed = normalized_prefix(&changed, 2);
+                assert!(
+                    observed.counter_error.is_some(),
+                    "opcode={opcode} facet={facet}"
+                );
+                assert!(prefix_difference(&reference, &observed).is_some());
+                assert!(prefix_difference(&observed, &reference).is_some());
+            }
         }
     }
 
