@@ -4216,8 +4216,43 @@ impl TuiSession {
                     .with_slot_snapshot(account, |snapshot| snapshot.tick())
             })
             .collect::<Vec<_>>();
+        let trace_logout = std::env::var_os("BOT_LIVE_LOGOUT_TRACE").is_some();
+        let mut trace_ticks = vec![None; self.names.len()];
         loop {
             self.pump(app);
+            if trace_logout {
+                for (account, last_tick) in self.names.iter().zip(&mut trace_ticks) {
+                    self.core.with_slot_snapshot(account, |snapshot| {
+                        if *last_tick == Some(snapshot.tick()) {
+                            return;
+                        }
+                        *last_tick = Some(snapshot.tick());
+                        let attackers = snapshot
+                            .npcs()
+                            .iter()
+                            .filter(|npc| {
+                                npc.target.is_some_and(|target| {
+                                    target.kind == api::snapshot::ActorKind::Player
+                                        && i32::try_from(target.index).ok()
+                                            == Some(snapshot.self_slot())
+                                })
+                            })
+                            .collect::<Vec<_>>();
+                        eprintln!(
+                            "[live-logout-observation] {}",
+                            serde_json::json!({
+                                "account": account,
+                                "tick": snapshot.tick(),
+                                "ingame": snapshot.ingame(),
+                                "player": snapshot.local_player(),
+                                "hp": snapshot.stats().iter().find(|stat| stat.index == 3),
+                                "attackers": attackers,
+                                "chat": snapshot.chat_lines(),
+                            })
+                        );
+                    });
+                }
+            }
             if self.names.iter().all(|account| {
                 self.core
                     .fleet_view()

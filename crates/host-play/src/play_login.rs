@@ -1696,11 +1696,28 @@ pub(super) fn tick_flags(
 ) -> bool {
     observe_client_session_exit(client, arm);
     if let Some(command) = arm.logout_command(client.ingame) {
+        let trace = std::env::var_os("BOT_LIVE_LOGOUT_TRACE")
+            .is_some()
+            .then(|| api::interact::PacketCheckpoint::capture(client));
         if !api::interact::logout(client, ifaces) {
             // Missing/refused IF is still pending. A removal deadline may set
             // Stop, in which case fall back to a dirty disconnect rather than
             // reporting a logout that was never sent.
             return arm.stop.load(Ordering::Relaxed);
+        }
+        if let Some(checkpoint) = trace {
+            let mut opcodes = Vec::new();
+            let decoded = api::interact::Driver::trace_packets(
+                client,
+                checkpoint,
+                &mut |opcode| opcodes.push(opcode),
+            );
+            eprintln!(
+                "[live-logout-packets] self_slot={} loop_cycle={} iface={:?} decoded={decoded} opcodes={opcodes:?}",
+                client.self_slot,
+                client.loop_cycle,
+                api::interact::logout_iface_id(ifaces),
+            );
         }
         arm.acknowledge_logout(command);
         // Do not honor `stop` on the same probe as the logout press — the
