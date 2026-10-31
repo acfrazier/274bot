@@ -4582,6 +4582,10 @@ mod packet_oracle_tests {
             .expect("iron setup uses the default mining tile");
         assert!(!scenario.require_knife_arm);
         assert_eq!(scenario.settings()["tickMethod"], json!("Knife"));
+        // pickaxes.obj:162-164 permits the real four-tick mithril tool at 21.
+        // The late case needs a failed native roll, not S6b's high-yield setup.
+        assert_eq!(scenario.level, 21);
+        assert_eq!(scenario.tool.id, MITHRIL_PICKAXE_ID);
     }
 
     #[test]

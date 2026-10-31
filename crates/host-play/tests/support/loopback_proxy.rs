@@ -730,4 +730,41 @@ mod tests {
         assert_eq!(observation.dropped_bytes, 0);
         proxy.ensure_healthy().unwrap();
     }
+
+    #[test]
+    fn final_drained_byte_completes_the_gate_without_another_client_packet() {
+        for mutation in [
+            TransportMutation::HoldUntilNextDispatch,
+            TransportMutation::DropSuffixAfterPacket(1),
+        ] {
+            let (proxy, _client, mut server) = connected_game_proxy();
+            proxy.begin_dispatch(71, mutation, 30, 400);
+            proxy.packet_committed(71, 1, 31, 3);
+            if mutation == TransportMutation::HoldUntilNextDispatch {
+                proxy.end_dispatch(71, 400);
+                proxy.begin_dispatch(72, TransportMutation::JoinActiveGate, 31, 401);
+                proxy.packet_committed(72, 1, 32, 5);
+                proxy.end_dispatch(72, 401);
+            } else {
+                proxy.packet_committed(71, 2, 32, 5);
+                proxy.end_dispatch(71, 400);
+            }
+            let mut buffer = vec![0x31; 8];
+            assert!(flush_upstream(&mut buffer, &mut server, true, &proxy.state).unwrap());
+            assert!(buffer.is_empty());
+            let observations = proxy.observations();
+            assert_eq!(observations.len(), 1, "mutation={mutation:?}");
+            assert_eq!(observations[0].packet_lengths, [3, 5]);
+            if mutation == TransportMutation::HoldUntilNextDispatch {
+                assert_eq!(observations[0].request_ids, [71, 72]);
+                assert_eq!(observations[0].forwarded_bytes, 8);
+                assert_eq!(observations[0].dropped_bytes, 0);
+            } else {
+                assert_eq!(observations[0].request_ids, [71]);
+                assert_eq!(observations[0].forwarded_bytes, 3);
+                assert_eq!(observations[0].dropped_bytes, 5);
+            }
+            proxy.ensure_healthy().unwrap();
+        }
+    }
 }
