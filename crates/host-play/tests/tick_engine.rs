@@ -645,7 +645,7 @@ impl SetupState {
                                 npc.r#type.and_then(|id| i32::try_from(id).ok()) == Some(type_id)
                                     && npc.tile == target
                                     && (x - target.x).abs() + (z - target.z).abs() == 1
-                                    && npc.actions.get(0).is_some_and(Option::is_some)
+                                    && npc.actions.first().is_some_and(Option::is_some)
                             })
                     })
                 })
