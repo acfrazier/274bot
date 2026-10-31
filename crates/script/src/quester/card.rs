@@ -337,6 +337,35 @@ mod released_path_stage_order_tests {
             ]
         );
     }
+
+    #[test]
+    fn out_of_order_numeric_stages_precede_named_stages_in_authored_order() {
+        use crate::quester::path::{PathRoleDocument, SequenceDocument};
+
+        let role = PathRoleDocument {
+            role: None,
+            progress_binding: api::selected::FactKey::new("q"),
+            progress: None,
+            progress_reader: None,
+            prelude: Vec::new(),
+            sequences: ["q:20", "q:10", "q:named_b", "q:named_a"]
+                .into_iter()
+                .map(|stage| SequenceDocument {
+                    stage: api::selected::FactKey::new(stage),
+                    required: Vec::new(),
+                    terminal: false,
+                    recovery_entry: None,
+                    order: Default::default(),
+                    cross: Vec::new(),
+                    steps: Vec::new(),
+                })
+                .collect(),
+        };
+        assert_eq!(
+            ordered_stages(&[role]).iter().map(AsRef::as_ref).collect::<Vec<&str>>(),
+            ["q:10", "q:20", "q:named_b", "q:named_a"]
+        );
+    }
 }
 
 struct Prepared {

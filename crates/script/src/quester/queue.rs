@@ -77,7 +77,7 @@ impl QueueStatus {
 
 /// Where a run stopped when it parked, kept after the executor is dropped so
 /// the queue-level Blocked status can still name the stage and step.
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct ParkedRun {
     pub quest: Arc<str>,
     pub stage: Option<Arc<str>>,
@@ -628,6 +628,33 @@ mod tests {
         assert_eq!(queue.status(1), Some(QueueStatus::Unknown));
         assert_eq!(queue.reason(1), None);
         assert_eq!(queue.next_candidate(), Some(1));
+    }
+
+    #[test]
+    fn leaving_parked_drops_the_retained_run_detail() {
+        for blocked in [false, true] {
+            let index = index();
+            let mut queue = Queue::from_index(&index, settings(&["cook"], &[], &[])).unwrap();
+            queue.mark_parked(
+                0,
+                ParkedRun {
+                    quest: Arc::from("cook"),
+                    stage: Some(Arc::from("not_started")),
+                    step: Arc::from("talk-cook"),
+                    failure: Arc::from("old parked failure"),
+                },
+            );
+            assert!(queue.parked(0).is_some());
+            if blocked {
+                queue.mark_blocked(0, Arc::from("new blocked failure"));
+                assert_eq!(queue.status(0), Some(QueueStatus::Blocked));
+                assert_eq!(queue.reason(0), Some("new blocked failure"));
+            } else {
+                queue.mark_done(0);
+                assert_eq!(queue.status(0), Some(QueueStatus::Done));
+            }
+            assert!(queue.parked(0).is_none());
+        }
     }
 
     #[test]

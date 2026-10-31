@@ -4065,7 +4065,11 @@ impl Script for QueuedQuester {
                                         .or_else(|| {
                                             active.current_step().map(|step| Arc::clone(&step.id.0))
                                         })
-                                        .unwrap_or_else(|| Arc::from("")),
+                                        .unwrap_or_else(|| {
+                                            static EMPTY_STEP: std::sync::LazyLock<Arc<str>> =
+                                                std::sync::LazyLock::new(|| Arc::from(""));
+                                            Arc::clone(&EMPTY_STEP)
+                                        }),
                                     failure: Arc::clone(&failure.message),
                                 },
                             );

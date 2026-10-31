@@ -40,6 +40,9 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.8` 
   and Clock Tower rows name the varp each progress procedure reads
   (`itexamlevel` and `cogquest`); Monkey Madness and Troll Romance report
   completion 9 and 45 from their own constant files.
+- JavaScript `ChatDialog` calls now report a combat close as failure only when
+  a visible NPC or player targets the bot. Damage without an observed attacker
+  no longer fails the dialogue.
 
 ### Developer tools
 
@@ -66,6 +69,9 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.8` 
 
 ### Quester
 
+- Quester's Blocked status keeps the quest stage, step and last failure after
+  a parked executor stops. A park with no selected step reports an empty
+  `step_id`. A row that becomes Done or Blocked discards its old parked detail.
 - A fixed-destination Quester walk retries `NoPath`, `RouteEnded`, `Stalled`
   and `Failed` receipts only when they have no typed refusal or blocked zones.
   Each retry waits for a later observed game tick and starts a fresh route

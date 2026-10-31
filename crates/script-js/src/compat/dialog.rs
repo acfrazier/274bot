@@ -959,6 +959,9 @@ mod tests {
             (true, None, true),
             (true, Some("npc"), false),
             (true, Some("player"), false),
+            (true, Some("npc-other-slot"), true),
+            (true, Some("player-other-slot"), true),
+            (true, Some("npc-target"), true),
             (false, None, true),
         ] {
             let mut observation = obs(vec![npc("Gundai", &["Talk-to"], 1, 3)]);
@@ -977,6 +980,17 @@ mod tests {
                 Some("player") => observation
                     .players
                     .push(player(PLAYER_TARGET_KIND, LOCAL_SLOT)),
+                Some("npc-other-slot") => {
+                    observation.npcs[0].target_kind = PLAYER_TARGET_KIND;
+                    observation.npcs[0].target_index = LOCAL_SLOT + 1;
+                }
+                Some("player-other-slot") => observation
+                    .players
+                    .push(player(PLAYER_TARGET_KIND, LOCAL_SLOT + 1)),
+                Some("npc-target") => {
+                    observation.npcs[0].target_kind = 1;
+                    observation.npcs[0].target_index = LOCAL_SLOT;
+                }
                 None => {}
                 Some(other) => panic!("unexpected attacker type: {other}"),
             }

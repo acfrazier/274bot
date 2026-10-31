@@ -1017,6 +1017,41 @@ fn continuation_waits_for_content_page_after_post_fight_close() {
 }
 
 #[test]
+fn pending_first_continuation_requires_a_real_attacker_for_combat_interruption() {
+    use super::tests::{seed_dialogue_attacker, seed_dialogue_combat};
+
+    for attacker in [
+        None,
+        Some(api::snapshot::ActorKind::Npc),
+        Some(api::snapshot::ActorKind::Player),
+    ] {
+        let mut snapshot = snapshot();
+        seed_dialogue_combat(&mut snapshot, true);
+        let mut ledger = None;
+        let handle = with_tick(&snapshot, &mut ledger, 1, |tick| {
+            tick.actions
+                .begin::<Dialogue>(continuation_args(), &mut tick.cx)
+                .unwrap()
+        });
+        if let Some(kind) = attacker {
+            seed_dialogue_attacker(&mut snapshot, kind);
+        }
+        let result = with_tick(&snapshot, &mut ledger, 2, |tick| {
+            tick.actions.poll(&handle, &mut tick.cx)
+        });
+        if attacker.is_some() {
+            assert!(matches!(
+                result,
+                Poll::Ready(Err(ActionError::CombatInterrupted))
+            ), "{attacker:?}");
+        } else {
+            assert!(result.is_pending(), "a stale flag is not an attacker");
+        }
+        assert!(ledger.as_ref().unwrap().outbox.is_empty());
+    }
+}
+
+#[test]
 fn owned_chat_waits_for_a_fresh_acceptance_before_draining_a_selected_scroll() {
     let ids = dialogue_ui();
     let mut snapshot = snapshot();

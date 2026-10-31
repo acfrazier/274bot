@@ -1659,7 +1659,7 @@ struct ChatObs<'a> {
     in_combat: bool,
     attacker_evidence: bool,
 }
-// Poll observations remain borrowed stack values, not per-bot retained state.
+// 56 B measured on 0cd550dfa (+8 B headroom): borrowed poll observations.
 const _: () = assert!(std::mem::size_of::<ChatObs<'static>>() <= 64);
 
 impl ChatObs<'_> {
@@ -1694,6 +1694,7 @@ struct MainObs<'a> {
     in_combat: bool,
     attacker_evidence: bool,
 }
+// 80 B measured on 0cd550dfa (+16 B headroom): borrowed Main-surface observations.
 const _: () = assert!(std::mem::size_of::<MainObs<'static>>() <= 96);
 
 impl MainObs<'_> {

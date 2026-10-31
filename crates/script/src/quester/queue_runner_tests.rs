@@ -208,6 +208,67 @@ fn a_parked_queue_row_publishes_its_stage_step_and_failure() {
 }
 
 #[test]
+fn a_queued_no_step_park_publishes_and_reuses_the_empty_step_id() {
+    use crate::quester::path::PredicateDocument;
+
+    let mut previous_empty_step = None;
+    for _ in 0..2 {
+        let (mut queued, mut snapshot) = fixture(cook_settings());
+        snapshot.seed_quest_statuses(
+            vec![QuestStatusView {
+                name: "Cook's Assistant".into(),
+                component_id: 42,
+                colour: 0xf80000,
+            }],
+            true,
+        );
+        let mut document = crate::quester::compile::decode_cook().unwrap();
+        document.quest.as_mut().unwrap().owns_inventory = true;
+        for role in &mut document.roles {
+            for sequence in &mut role.sequences {
+                for step in &mut sequence.steps {
+                    step.skip_if = PredicateDocument::All(Vec::new());
+                }
+            }
+        }
+        let path = crate::quester::compile::compile_uncached_for_test(
+            &document,
+            &queued.selected,
+            &queued.quests,
+        )
+        .unwrap();
+        let index = queued.queue.next_candidate().unwrap();
+        queued.active_index = Some(index);
+        let mut ledger = None;
+        let mut output = Capture::default();
+        with_tick_output(&snapshot, &mut ledger, 1, &mut output, |native| {
+            queued.activate(native, path);
+        });
+        for tick in 2..=10 {
+            with_tick_output(&snapshot, &mut ledger, tick, &mut output, |native| {
+                queued.tick(native).unwrap();
+            });
+            if queued.active.is_none() {
+                break;
+            }
+        }
+        let parked = queued.queue.parked(index).expect("the no-step run must park");
+        assert_eq!(parked.step.as_ref(), "");
+        if let Some(previous) = &previous_empty_step {
+            assert!(Arc::ptr_eq(previous, &parked.step));
+        }
+        previous_empty_step = Some(Arc::clone(&parked.step));
+        let status = output.0.last().expect("the queued Blocked status is published");
+        assert_eq!(status.phase, NativePhase::Blocked);
+        assert!(status.fields.iter().any(|field| {
+            field.key == "step_id"
+                && matches!(&field.value, StatusValue::Text(step) if step.is_empty())
+        }));
+        assert!(status.failure.as_ref().unwrap().message.contains("no step for stage"));
+    }
+}
+
+#[test]
 fn individually_missing_quest_row_stays_fail_closed() {
     let (mut queued, mut snapshot) = fixture(runemysteries_settings());
     snapshot.seed_quest_statuses(
