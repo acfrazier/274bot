@@ -1726,12 +1726,17 @@ mod tests {
             receipt.s_service(),
             S_SERVICE_CEILING_BYTES
         );
-        // Hooks plus draw-memory-profile measure 1,512 B, leaving 24 B below
-        // this ceiling. Production has its own no-hooks receipt in slot_io::tests.
+        // S5 adds 72 B to the diagnostic sample: three Duration maxima, two
+        // u64 counters, and one aligned focus-state word. Hooks plus drawing
+        // profiling now measure 1,584 B. Preserve the existing 24 B headroom.
+        // Production has its own no-hooks receipt in slot_io::tests.
+        let instrumented_mailbox_ceiling = 1_536 + 3 * std::mem::size_of::<Duration>()
+            + 3 * std::mem::size_of::<u64>();
         assert!(
-            receipt.mailbox_per_loaded_bot_bytes() <= 1_536,
-            "instrumented mailbox={} B exceeds 1536 B ceiling",
+            receipt.mailbox_per_loaded_bot_bytes() <= instrumented_mailbox_ceiling,
+            "instrumented mailbox={} B exceeds {} B ceiling",
             receipt.mailbox_per_loaded_bot_bytes(),
+            instrumented_mailbox_ceiling,
         );
 
         if receipt.process_budget_state_allocation_count() == 0 {

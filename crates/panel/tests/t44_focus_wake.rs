@@ -388,63 +388,64 @@ fn t44_panel_focus_wake_live() {
         std::thread::sleep(Duration::from_millis(5));
     }
     focus_observe(&mut session, Duration::from_secs(10));
-    let mut receipts = Vec::new();
-    receipts.push(record_focus_action(
-        &mut session,
-        &names,
-        "sidecar-on",
-        [true, false],
-        [true, false],
-        |s| s.set_sidecar_50(true),
-    ));
-    receipts.push(record_focus_action(
-        &mut session,
-        &names,
-        "live-full-rate-off",
-        [true, false],
-        [true, false],
-        |s| s.set_live_full_rate(false),
-    ));
-    receipts.push(record_focus_action(
-        &mut session,
-        &names,
-        "select-second",
-        [true, false],
-        [false, true],
-        |s| s.select(&names[1]),
-    ));
-    receipts.push(record_focus_action(
-        &mut session,
-        &names,
-        "live-full-rate-on",
-        [false, true],
-        [false, true],
-        |s| s.set_live_full_rate(true),
-    ));
-    receipts.push(record_focus_action(
-        &mut session,
-        &names,
-        "sidecar-off",
-        [false, true],
-        [false, true],
-        |s| s.set_sidecar_50(false),
-    ));
-    receipts.push(record_focus_action(
-        &mut session,
-        &names,
-        "select-first",
-        [false, true],
-        [true, false],
-        |s| s.select(&names[0]),
-    ));
-    receipts.push(record_focus_action(
-        &mut session,
-        &names,
-        "select-same",
-        [true, false],
-        [true, false],
-        |s| s.select(&names[0]),
-    ));
+    let receipts = vec![
+        record_focus_action(
+            &mut session,
+            &names,
+            "sidecar-on",
+            [true, false],
+            [true, false],
+            |s| s.set_sidecar_50(true),
+        ),
+        record_focus_action(
+            &mut session,
+            &names,
+            "live-full-rate-off",
+            [true, false],
+            [true, false],
+            |s| s.set_live_full_rate(false),
+        ),
+        record_focus_action(
+            &mut session,
+            &names,
+            "select-second",
+            [true, false],
+            [false, true],
+            |s| s.select(&names[1]),
+        ),
+        record_focus_action(
+            &mut session,
+            &names,
+            "live-full-rate-on",
+            [false, true],
+            [false, true],
+            |s| s.set_live_full_rate(true),
+        ),
+        record_focus_action(
+            &mut session,
+            &names,
+            "sidecar-off",
+            [false, true],
+            [false, true],
+            |s| s.set_sidecar_50(false),
+        ),
+        record_focus_action(
+            &mut session,
+            &names,
+            "select-first",
+            [false, true],
+            [true, false],
+            |s| s.select(&names[0]),
+        ),
+        record_focus_action(
+            &mut session,
+            &names,
+            "select-same",
+            [true, false],
+            [true, false],
+            |s| s.select(&names[0]),
+        ),
+    ];
     // Preserve failed evidence before the assertions and before teardown.
     let verdicts: Vec<_> = receipts.iter().map(focus_verdict).collect();
     std::fs::write(

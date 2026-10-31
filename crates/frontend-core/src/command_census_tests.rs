@@ -449,6 +449,8 @@ const CORE: &[(&str, Decision)] = &[
     ("process.rs::shutdown_background_work", Excluded(PROCESS)),
     // bench.rs: the opt-in memory benchmark's run and records.
     ("bench.rs::BenchRun::poll", Excluded(BENCH)),
+    ("bench.rs::BenchRun::poll_with_render_samples", Excluded(BENCH)),
+    ("bench.rs::configure_render_calibration", Excluded(BENCH)),
     ("bench.rs::mark_startup", Excluded(BENCH)),
     ("bench.rs::record_adapter", Excluded(BENCH)),
     ("bench.rs::require_live_benchmark", Excluded(BENCH)),

@@ -27,6 +27,8 @@ use std::time::{Duration, Instant};
 use api::interact::{cheat, tele_args};
 use api::snapshot::WorldTile;
 
+type RenderHeadSample<'a> = dyn FnMut(&str) -> Option<serde_json::Value> + 'a;
+
 pub use crate::memory_startup::{
     mark_process_start, mark_startup, record_adapter, AdapterRecord, StartupMark,
 };
@@ -1994,7 +1996,7 @@ impl Run {
     fn poll_inner(
         &mut self,
         play: &Play,
-        mut render_sample: Option<&mut dyn FnMut(&str) -> Option<serde_json::Value>>,
+        mut render_sample: Option<&mut RenderHeadSample<'_>>,
     ) -> Result<bool, String> {
         let now = Instant::now();
         let statuses = play.statuses();
