@@ -2030,12 +2030,5 @@
       "stage": "excluded",
       "reason": "Imports ./scheduler.fixture.js (upstream scheduler.fixture.ts, not vendored), which imports scripts/JiveDragons/{JiveDragons,combat,sites}.js and bun:test mock/spyOn; neither is served by the Load isolate."
     }
-  ],
-  "expected_failure_notes": [
-    {
-      "file": "api/input/input.test.ts",
-      "case": " > Input > exposes every driver operation",
-      "why": "Approved cut in plan-r3.md:762-776 and the operator's 2026-10-29 scope call: this upstream unit test checks that the Input driver operations exist, but no catalog script or upstream Load path calls the cut verbs. Catalog scripts use only Input.walk and Input.invButton; the upstream internal callers are replaced by native shims."
-    }
   ]
 }
