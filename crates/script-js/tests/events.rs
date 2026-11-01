@@ -398,7 +398,9 @@ fn script_finish_event_delivers_native_stop_reason() {
     let src = r#"
 export default class T extends LoopingBot {
     onStart() {
-        this.on('script.finish', event => { globalThis.__finishReason = event.reason; });
+        this.on('script.finish', event => {
+            globalThis.__rs2b0t_host.log.push(`finish:${event.reason}`);
+        });
     }
     loop() {
         globalThis.__rs2b0t_host.stopRequested = true;
@@ -410,13 +412,15 @@ export default class T extends LoopingBot {
     let snap = base_snapshot();
     post_snapshot_input(&iso, &snap);
     iso.on_game_tick(1);
-    let _ = iso.probe("1");
-    assert_eq!(
-        iso.probe("globalThis.__finishReason").unwrap(),
-        serde_json::json!("finished by script")
-    );
     iso.join();
+    assert!(
+        iso.drain_logs()
+            .iter()
+            .any(|line| line == "finish:finished by script"),
+        "script.finish listener did not receive and log the native stop reason"
+    );
 }
+
 
 #[test]
 fn skill_level_and_varp_events_use_posted_snapshot_state() {

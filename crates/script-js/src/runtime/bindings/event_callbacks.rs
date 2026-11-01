@@ -177,7 +177,7 @@ pub(crate) fn clear_all() {
 fn on<'s>(
     scope: &mut v8::HandleScope<'s>,
     args: v8::FunctionCallbackArguments<'s>,
-    mut rv: v8::ReturnValue,
+    rv: v8::ReturnValue,
 ) {
     let event = args.get(0);
     if !event.is_string()

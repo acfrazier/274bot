@@ -84,7 +84,7 @@
     "module": "api/bot/Bot.js",
     "selector": "TaskBot",
     "reason": "The prelude's existing task loop publishes the validated task label while it executes and clears it after the turn.",
-    "runtime": "crates/script-js/src/shim/modules.rs:206",
+    "runtime": "crates/script-js/src/shim/modules.rs:212",
     "declaration": "export class TaskBot extends LoopingBot { activeTaskName: string | null; constructor(); add(...tasks: Task[]): void; loop(): Promise<number | void>; }"
   },
   {
