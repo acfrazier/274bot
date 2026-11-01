@@ -2121,7 +2121,16 @@ fn repeated_cancels_end_in_a_terminal_failure_that_keeps_the_last_detail() {
         // The next observed tick sends the Talk again, and the host accepts it.
         sent_at = tick + 1;
         let sent = ledger.as_ref().unwrap().outbox.len();
-        assert!(poll(&mut run, &snapshot, &mut ledger, sent_at, &state, &mut budget).is_pending());
+        let polled = poll(&mut run, &snapshot, &mut ledger, sent_at, &state, &mut budget);
+        eprintln!(
+            "DEBUG cancel={cancel} tick={sent_at} pending={} before={sent} after={} handle={} pend={} cancels={}",
+            polled.is_pending(),
+            ledger.as_ref().unwrap().outbox.len(),
+            talk_drive(&run).handle.is_some(),
+            talk_drive(&run).pending.is_some(),
+            talk_drive(&run).reach_cancels
+        );
+        assert!(polled.is_pending());
         assert_eq!(ledger.as_ref().unwrap().outbox.len(), sent + 1);
         assert!(matches!(last_interaction(&ledger), InteractReq::Npc { .. }));
         accept_last(&mut ledger, sent_at, cancel);
