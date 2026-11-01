@@ -356,6 +356,7 @@ fn seed_item_icon() -> Arc<Cache> {
 }
 
 fn setup() -> (Runtime, Arc<Cache>) {
+    v8::V8::set_flags_from_string("--allow-natives-syntax");
     crate::platform::bootstrap_test_v8_platform();
     let mut runtime = Runtime::new(RuntimeOptions::default()).unwrap();
     super::super::install(
@@ -397,7 +398,6 @@ fn client_adapter_objects_have_fast_properties() {
     if !run_in_child(FAST_CHILD_ENV, FAST_TEST_NAME) {
         return;
     }
-    v8::V8::set_flags_from_string("--allow-natives-syntax");
     let (mut runtime, _cache) = setup();
     let diagnostics: Value =
         serde_json::from_str(&runtime.eval::<String>("__clientAdapterFast()").unwrap())
