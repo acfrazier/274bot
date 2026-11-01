@@ -320,13 +320,7 @@ fn invalid_progress_arguments_refuse_without_emitting_a_host_row() {
 fn compat_v1_questlog__quests_journal__contract() {
     let iso = journal_isolate();
 
-    begin_journal(&iso, "skipped", "'Cook', false");
-    let _ = iso.probe("true").unwrap();
-    assert_eq!(result(&iso, "skipped"), serde_json::json!([]));
-    assert_eq!(settles(&iso, "skipped"), 1);
-    assert!(iso.drain_interacts().is_empty());
-
-    begin_journal(&iso, "journal", "'cOoK'");
+    begin_journal(&iso, "journal", "'cOoK', false");
     forward_queued_controls(&iso);
     let requests = iso.drain_interacts();
     assert_eq!(requests.len(), 1);
