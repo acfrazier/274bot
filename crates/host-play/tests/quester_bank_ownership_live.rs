@@ -271,20 +271,18 @@ fn bind_closed_duel_lids(locs: &[LocView]) -> Result<Vec<ClosedLid>, String> {
     Ok(closed)
 }
 
-fn opened_bound_lid(
-    closed: &[ClosedLid],
-    locs: &[LocView],
-    bank_open: bool,
-) -> Option<ClosedLid> {
+fn opened_bound_lid(closed: &[ClosedLid], locs: &[LocView], bank_open: bool) -> Option<ClosedLid> {
     if bank_open {
         return None;
     }
-    locs.iter().filter(|loc| open_duel_lid(loc)).find_map(|loc| {
-        closed
-            .iter()
-            .find(|candidate| candidate.tile == loc.tile)
-            .copied()
-    })
+    locs.iter()
+        .filter(|loc| open_duel_lid(loc))
+        .find_map(|loc| {
+            closed
+                .iter()
+                .find(|candidate| candidate.tile == loc.tile)
+                .copied()
+        })
 }
 
 fn record_session(trace: &mut BankTrace, sample: SessionSample) {
@@ -446,7 +444,10 @@ fn observe_gundai_start_seed(
         || trace.start_bank_law_runes != Some(1)
         || trace.start_inventory_law_runes != Some(0)
     {
-        return Err("Gundai Start requires the full pre-Talk seed proof and the real player-open bank".to_owned());
+        return Err(
+            "Gundai Start requires the full pre-Talk seed proof and the real player-open bank"
+                .to_owned(),
+        );
     }
     let stand = gundai_dialogue_stand(
         trace.gundai_choice_stand,
@@ -849,12 +850,8 @@ fn insert_player_open_gundai_steps(
                 };
                 let stand = WorldTile { x, z, level };
                 let mut witness = bank_trace.lock().expect("bank witness mutex");
-                if gundai_dialogue_stand(
-                    witness.gundai_choice_stand,
-                    Some(stand),
-                    snapshot.tile(),
-                )
-                .is_err()
+                if gundai_dialogue_stand(witness.gundai_choice_stand, Some(stand), snapshot.tile())
+                    .is_err()
                 {
                     return false;
                 }
@@ -1387,7 +1384,11 @@ mod oracle_tests {
     }
 
     fn chest_loc(tile: WorldTile, open: bool) -> LocView {
-        let id = if open { DUEL_OPEN_CHEST_ID } else { DUEL_CLOSED_CHEST_ID };
+        let id = if open {
+            DUEL_OPEN_CHEST_ID
+        } else {
+            DUEL_CLOSED_CHEST_ID
+        };
         LocView {
             typecode: id,
             info: 0,
@@ -1424,7 +1425,11 @@ mod oracle_tests {
             .filter(|placement| placement.id == DUEL_CLOSED_CHEST_ID)
             .map(|placement| {
                 chest_loc(
-                    WorldTile { x: placement.x, z: placement.z, level: placement.level },
+                    WorldTile {
+                        x: placement.x,
+                        z: placement.z,
+                        level: placement.level,
+                    },
                     false,
                 )
             })
@@ -1436,7 +1441,10 @@ mod oracle_tests {
     fn two_real_chests_bind_either_exact_closed_lid_but_not_a_wrong_lid() {
         let rows = real_closed_duel_chests();
         assert_eq!(rows.len(), 2);
-        assert_eq!(duel_chest_rows_state(&rows), ChestState::Closed { count: 2 });
+        assert_eq!(
+            duel_chest_rows_state(&rows),
+            ChestState::Closed { count: 2 }
+        );
         let closed = bind_closed_duel_lids(&rows).unwrap();
         for lid in &closed {
             let observed: Vec<_> = rows
@@ -1446,9 +1454,16 @@ mod oracle_tests {
             assert_eq!(opened_bound_lid(&closed, &observed, false), Some(*lid));
             assert_eq!(opened_bound_lid(&closed, &observed, true), None);
         }
-        let wrong_tile = WorldTile { x: 3383, z: 3270, level: 0 };
+        let wrong_tile = WorldTile {
+            x: 3383,
+            z: 3270,
+            level: 0,
+        };
         assert!(!closed.iter().any(|lid| lid.tile == wrong_tile));
-        assert_eq!(opened_bound_lid(&closed, &[chest_loc(wrong_tile, true)], false), None);
+        assert_eq!(
+            opened_bound_lid(&closed, &[chest_loc(wrong_tile, true)], false),
+            None
+        );
         let mut wrong_id = chest_loc(closed[0].tile, true);
         wrong_id.id += 1;
         assert_eq!(opened_bound_lid(&closed, &[wrong_id], false), None);
@@ -1519,7 +1534,11 @@ mod oracle_tests {
         dialogue_stand: WorldTile,
     ) -> BankTrace {
         BankTrace {
-            start_session: Some(SessionSample { tick: 20, open: true, generation: 9 }),
+            start_session: Some(SessionSample {
+                tick: 20,
+                open: true,
+                generation: 9,
+            }),
             start_bank_loaded: true,
             start_bank_law_runes: Some(1),
             start_inventory_law_runes: Some(0),
@@ -1536,7 +1555,11 @@ mod oracle_tests {
     #[test]
     fn gundai_seed_accepts_the_dialogue_walk_but_refuses_forced_or_wrong_stands() {
         let (seed, mut snapshot) = gundai_seed_snapshot();
-        let walked = WorldTile { x: 2537, z: 4718, level: 0 };
+        let walked = WorldTile {
+            x: 2537,
+            z: 4718,
+            level: 0,
+        };
         let mut witness = gundai_prepared_trace(&seed, &snapshot, walked);
         snapshot.seed_tile(walked);
         assert!(seed.observe_start(&snapshot).is_err());
@@ -1546,7 +1569,11 @@ mod oracle_tests {
 
         for wrong in [
             GUNDAI_STAND,
-            WorldTile { x: 2538, z: 4718, level: 0 },
+            WorldTile {
+                x: 2538,
+                z: 4718,
+                level: 0,
+            },
             WorldTile { level: 1, ..walked },
         ] {
             snapshot.seed_tile(wrong);
@@ -1562,7 +1589,11 @@ mod oracle_tests {
     #[test]
     fn gundai_seed_checks_before_talk_and_rejects_missing_proof_bank_or_stats() {
         let (seed, mut snapshot) = gundai_seed_snapshot();
-        let walked = WorldTile { x: 2537, z: 4718, level: 0 };
+        let walked = WorldTile {
+            x: 2537,
+            z: 4718,
+            level: 0,
+        };
         snapshot.seed_tile(walked);
         assert!(seed.observe_start(&snapshot).is_err());
         snapshot.seed_tile(GUNDAI_STAND);
@@ -1620,7 +1651,9 @@ mod oracle_tests {
             ],
             inventory_law_runes: Some(1),
             start_inventory_law_runes: Some(0),
-            start_chest: Some(ChestState::Closed { count: closed_lids.len() }),
+            start_chest: Some(ChestState::Closed {
+                count: closed_lids.len(),
+            }),
             start_closed_lids: closed_lids,
             opened_closed_lid: Some(opened_lid),
             provision_phases: vec![
@@ -1661,7 +1694,11 @@ mod oracle_tests {
         let mut wrong_lid = base_owned_trace();
         wrong_lid.opened_closed_lid = Some(ClosedLid {
             id: DUEL_CLOSED_CHEST_ID,
-            tile: WorldTile { x: 3383, z: 3270, level: 0 },
+            tile: WorldTile {
+                x: 3383,
+                z: 3270,
+                level: 0,
+            },
         });
         assert!(!own_close_predicate(&wrong_lid, true));
 
@@ -1689,7 +1726,11 @@ mod oracle_tests {
     #[test]
     fn player_open_oracle_rejects_generation_change_close_and_false_completion() {
         let (seed, snapshot) = gundai_seed_snapshot();
-        let walked = WorldTile { x: 2537, z: 4718, level: 0 };
+        let walked = WorldTile {
+            x: 2537,
+            z: 4718,
+            level: 0,
+        };
         let mut good = BankTrace {
             start_session: Some(SessionSample {
                 tick: 20,
