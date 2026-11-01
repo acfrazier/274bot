@@ -327,8 +327,7 @@ impl PrereqRun {
             return None;
         };
         Some(JournalAttempt {
-            attempts_started: JOURNAL_TIMEOUT_RETRIES - retries_left
-                + u8::from(handle.is_some()),
+            attempts_started: JOURNAL_TIMEOUT_RETRIES - retries_left + u8::from(handle.is_some()),
             owner_active: handle
                 .as_ref()
                 .is_some_and(|handle| handle.inspect(|_| ()).is_some()),

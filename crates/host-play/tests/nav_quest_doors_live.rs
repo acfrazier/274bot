@@ -1182,14 +1182,11 @@ fn journal_attempt_receipts_keep_timeout_retry_and_last_error() {
     let started = journal_attempt_receipt(None, Some(first), stamp(1), None, false).unwrap();
     assert_eq!(started["event"], "started");
     assert_eq!(started["attempt"], 1);
-    let timeout =
-        journal_attempt_receipt(Some(first), Some(retry), stamp(6), None, false).unwrap();
+    let timeout = journal_attempt_receipt(Some(first), Some(retry), stamp(6), None, false).unwrap();
     assert_eq!(timeout["event"], "failed");
     assert_eq!(timeout["failure"], "journal modal timeout");
     assert_eq!(timeout["observed"]["tick"], 6);
-    assert!(
-        journal_attempt_receipt(Some(retry), Some(retry), stamp(6), None, false).is_none()
-    );
+    assert!(journal_attempt_receipt(Some(retry), Some(retry), stamp(6), None, false).is_none());
     let restarted =
         journal_attempt_receipt(Some(retry), Some(second), stamp(7), None, false).unwrap();
     assert_eq!(restarted["event"], "started");
@@ -1219,8 +1216,7 @@ fn journal_attempt_receipts_keep_timeout_retry_and_last_error() {
     .unwrap();
     assert_eq!(begin_failed["event"], "begin_failed");
     assert_eq!(begin_failed["attempt"], 2);
-    let completed =
-        journal_attempt_receipt(Some(second), None, stamp(9), None, true).unwrap();
+    let completed = journal_attempt_receipt(Some(second), None, stamp(9), None, true).unwrap();
     assert_eq!(completed["event"], "completed");
     assert_eq!(completed["attempt"], 2);
 }
@@ -1914,7 +1910,15 @@ fn run_phoenix_native_and_crossing(
             return Err("production prerequisite journal run timed out".into());
         }
         let lifecycle = play.script_lifecycle_receipt(account);
-        let (attempts, journal_attempts, unsupported, pages, report_error, report_finished, current_stamp) = {
+        let (
+            attempts,
+            journal_attempts,
+            unsupported,
+            pages,
+            report_error,
+            report_finished,
+            current_stamp,
+        ) = {
             let report = report.lock();
             (
                 report.attempts.clone(),
