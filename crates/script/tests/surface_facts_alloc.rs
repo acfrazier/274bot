@@ -328,8 +328,9 @@ fn session_boundaries_clear_posted_facts_without_replacing_the_run() {
 fn slot_size_matches_the_measured_linux_parent_layout() {
     let actual = std::mem::size_of::<SlotScript>();
     println!("Prerequisite-aware SlotScript layout: {actual} bytes");
+    // Measured composed layout: W1 boxed replay and the cold prerequisite handover.
     assert_eq!(
-        actual, 1656,
+        actual, 1576,
         "the surface slot changed from its measured size"
     );
 }
