@@ -285,10 +285,7 @@ mod tests {
         let mut core = OperatorSession::<()>::new(InstancePermit::SkipLock);
         core.set_spawn_workers(false);
         core.start(vault, empty_play());
-        core.set_script_lines_for_test(vec![(
-            name.clone(),
-            "MEMAB_BANK_ROWS:1:65".into(),
-        )]);
+        core.set_script_lines_for_test(vec![(name.clone(), "MEMAB_BANK_ROWS:1:65".into())]);
 
         // The test has no prepared seed runner, so the observation can return
         // an unrelated seed error after it consumes the supplied script lines.
