@@ -369,11 +369,13 @@ keep their explicit metadata and completion-deadline inputs.
 The panel initializes its injected client GPU context under that process
 budget before any head attaches. Otherwise the head correctly refuses the
 uncharged context and falls back to CPU, even if the window adapter is a GPU.
-The first shell frame requests the deferred startup frame in every redraw
-mode. In Wait mode, an active memory benchmark adds its existing one-second
-poll deadline to the recorder deadline. These share the existing scalar UI
-work deadline; neither changes the independent render-pump cadence nor adds
-a capture job.
+Diagnostic and test-hook builds request the deferred startup frame on the
+first shell frame, so startup advances without user input. A production
+build requests no first-frame redraw and advances only through real
+activity. In Wait mode, an active memory benchmark adds its existing
+one-second poll deadline to the recorder deadline. These share the
+existing scalar UI work deadline; neither changes the independent
+render-pump cadence nor adds a capture job.
 Headed benchmark rows sample real mailboxes, applied focus and Play wake
 channels once per second. They retain Busy, Granted and scene-consume counts
 as separate values. Per-head counters cover the head lifetime, not just the
