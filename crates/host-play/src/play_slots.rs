@@ -137,17 +137,17 @@ pub(crate) fn script_state_builds_nav_facts(script_state: Option<script::RunStat
 /// isolate receipt after releasing that lock.
 pub(crate) fn dispatch_client_frame(
     slot: &Arc<Mutex<script::SlotScript>>,
-    name: &str,
+    _name: &str,
 ) -> bool {
     #[cfg(feature = "memory-profile")]
-    memory::frame_dispatch_begin(name);
+    memory::frame_dispatch_begin(_name);
     let dispatch = {
         let mut slot = slot.lock().unwrap();
         slot.begin_client_frame()
     };
     let delivered = dispatch.is_some_and(|dispatch| dispatch.wait_for_ack());
     #[cfg(feature = "memory-profile")]
-    memory::frame_dispatch_end(name, delivered);
+    memory::frame_dispatch_end(_name, delivered);
     delivered
 }
 

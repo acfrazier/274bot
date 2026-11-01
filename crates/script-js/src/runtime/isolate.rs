@@ -512,7 +512,7 @@ fn fire_execution_interrupt_shared(
     true
 }
 
-pub(super) fn register_execution_deadline(
+fn register_execution_deadline(
     teardown: &Arc<Mutex<TeardownState>>,
     handle: v8::IsolateHandle,
     id: u64,
