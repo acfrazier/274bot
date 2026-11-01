@@ -369,12 +369,13 @@ pub enum OperatorCommand {
     MarkAll,
     /// Clear the marks (`MarkedSelection::clear`).
     ClearMarks,
-    /// Reorder the saved Load order with the staged
-    /// [`crate::profile_order::ReorderOp`] (a rail or Fleet-row drag, the
-    /// TUI move keys, Move marked to top;
-    /// [`crate::OperatorSession::stage_reorder`]). Refused unless the fleet
-    /// view shows Load order. Settles `Done` when the saved order is
-    /// durable (at once when nothing moved).
+    /// Reorder the one saved Load order with the staged
+    /// [`crate::profile_order::ReorderOp`] (a rail, Fleet-row or
+    /// Profiles-row drag, the TUI move keys, Move marked to top;
+    /// [`crate::OperatorSession::stage_reorder`]). A Fleet-list reorder is
+    /// refused unless the fleet view shows Load order; a Profiles-list
+    /// move is not. Settles `Done` when the saved order is durable (at
+    /// once when nothing moved).
     ReorderProfiles,
     /// Commit the fleet card the lent fleet model staged
     /// ([`crate::FleetModel::stage_card`]): which card the fleet buttons

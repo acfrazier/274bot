@@ -394,12 +394,17 @@ disabled with the reason `this server has one world`.
 ### Chooser
 
 A fitted **Profiles** window (same one as the strip **Profiles** button
-and rail **Profiles…**), not a blocking modal. Clicking a row focuses it
-(and loads it onto the wall while MultiBox is on); the window stays open
-either way, with any open edit form as it was. The focused profile's own
-script card shows, and no script starts. **Load all** is MultiBox-only.
-Unlocking the vault while MultiBox is already on focuses the remembered
-(or first) profile the same way, so it joins the rail.
+and rail **Profiles…**), not a blocking modal. Its list shows every vault
+profile in the one saved **Load order** the Fleet uses, whatever view sort
+the Fleet shows. Clicking a row focuses it (and loads it onto the wall
+while MultiBox is on); dragging a row's name onto another row reorders that
+saved order (a line on the target row marks where the drop will land, and
+the drop neither focuses, loads, edits nor deletes). A name too wide for
+its row is cut with a "…"; hovering the row shows the whole name. The
+window stays open either way, with any open edit form as it was. The
+focused profile's own script card shows, and no script starts. **Load all**
+is MultiBox-only. Unlocking the vault while MultiBox is already on focuses
+the remembered (or first) profile the same way, so it joins the rail.
 **Close**/Esc closes without loading. **Edit** (next to **✕**) shows
 username/password; **New profile** is a blank edit. The editor stays on
 the profile it opened on while other rows are loaded or focused. **Save**
@@ -617,16 +622,21 @@ when the filter hides its row or the profile is unloaded; it is dropped
 only when the profile is deleted. A click on a loaded bot's name focuses
 it, as a click on a rail cap does; its checkbox only marks it, and a click
 elsewhere in the row does neither.
-**Load order** is the saved order: drag a row's name onto another row, or
-choose **Move marked to top** in the toolbar's **Marks** menu (it keeps the
-marked profiles' order), and the
-new order is saved as `profile_order` in the shared preferences. A profile
-the filter hides keeps its place. Load all logs in bots in this order, a new
-profile goes to the end, a renamed one keeps its place and removing a bot
-from the wall keeps its place. **Name** and **Status** only sort the view:
-they never change the saved order, and reordering needs **Load order**. A
-reorder stays pending until the file is written; if the write fails, the
-error is shown and the last saved order comes back.
+**Load order** is the one saved order, shared with the **Profiles** window:
+drag a row's name onto another row in either list (a line on the target
+row marks where the drop will land), or choose **Move marked
+to top** in the toolbar's **Marks** menu (it keeps the marked profiles'
+order), and the new order is saved as `profile_order` in the shared
+preferences. A profile the filter hides keeps its place. Load all logs in
+bots in this order, a new profile goes to the end, a renamed one keeps its
+place and removing a bot from the wall keeps its place. **Name** and
+**Status** only sort the Fleet view: they never change the saved order.
+Reordering from the Fleet needs **Load order**; the **Profiles** list always
+shows the saved order, so its drags work under any Fleet sort and never
+change that sort. While a reorder saves, both the Fleet table and the
+**Profiles** list show **Saving…**; if the write fails, both show the
+error and the last saved order comes back. The error clears when a later
+reorder saves, or by itself after a short while.
 
 Shared preferences still use `panel-ui.json`. Reads use the latest cached
 saved state. Saves run on the process writer, so a slow disk does not block

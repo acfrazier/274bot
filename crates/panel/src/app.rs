@@ -1909,7 +1909,7 @@ fn apply_tile_click(session: &mut Session, clicked: Option<TileClick>) {
         | TileClick::Select(index)
         | TileClick::World(index) => index,
         TileClick::Move(op) => {
-            session.reorder_profiles(op);
+            session.reorder_profiles(op, frontend_core::ReorderSurface::Fleet);
             return;
         }
     };
@@ -5998,7 +5998,8 @@ fn rail_tiles(ui: &Ui, gpu: &mut Gpu, state: &mut PanelState) {
         let body_clicked = if preview {
             let body_clicked = rail_body(ui, gpu, state, name, draw);
             if reorder && dropped.is_none() {
-                dropped = crate::fleet::profile_drop_target(ui);
+                dropped = crate::fleet::profile_drop_target(ui)
+                    .and_then(crate::fleet::ProfileDrop::dropped);
             }
             body_clicked
         } else {
@@ -6145,7 +6146,8 @@ fn rail_cap(
     record_test_rail_item(ui);
     if let Some(drag) = drag {
         drag.dragging = crate::fleet::profile_drag_source(ui, drag.identity, row.name());
-        drag.dropped = crate::fleet::profile_drop_target(ui);
+        drag.dropped =
+            crate::fleet::profile_drop_target(ui).and_then(crate::fleet::ProfileDrop::dropped);
         // A drag is not a click: it must not focus the bot.
         clicked &= !drag.dragging;
     }
@@ -6583,21 +6585,25 @@ const PROFILES_REGION_MIN_H: f32 = 72.0;
 /// One profile row.
 const PROFILE_ROW_H: f32 = 24.0;
 
-/// What the operator did in the profile list this frame.
+/// What the operator did in the profile list this frame. A delivered
+/// reorder drop stands alone: it never also picks, edits or deletes.
 #[derive(Default)]
 struct ListPick {
     picked: Option<String>,
     removed: Option<String>,
     edit: Option<String>,
+    reorder: Option<ReorderOp>,
 }
 
-/// Profile picker (single-bot and MultiBox). Click a row to focus it
-/// (and load onto the wall while MultiBox is on); Edit opens the form;
-/// ✕ deletes the vault row only. Load all is MultiBox-only. The list and
-/// the editor pane (the edit form or the rs2b0t import, one at a time)
-/// each scroll on their own, side by side when the window is wide enough
-/// ([`PROFILES_SIDE_BY_SIDE_W`]) and stacked otherwise, with a draggable
-/// divider between them; Close stays at the bottom.
+/// Profile picker (single-bot and MultiBox), in the one saved order the
+/// Fleet uses. Click a row to focus it (and load onto the wall while
+/// MultiBox is on); drag a row's name to reorder the saved order; Edit
+/// opens the form; ✕ deletes the vault row only. Load all is
+/// MultiBox-only. The list and the editor pane (the edit form or the
+/// rs2b0t import, one at a time) each scroll on their own, side by side
+/// when the window is wide enough ([`PROFILES_SIDE_BY_SIDE_W`]) and
+/// stacked otherwise, with a draggable divider between them; Close stays
+/// at the bottom.
 fn chooser_window(ui: &Ui, session: &mut Session, panel_dock: Option<Id>) {
     if !session.wall.chooser_open {
         #[cfg(feature = "js")]
@@ -6633,7 +6639,10 @@ fn chooser_window(ui: &Ui, session: &mut Session, panel_dock: Option<Id>) {
                 let region_h = (ui.content_region_avail()[1] - footer)
                     .max(scale_px(ui, PROFILES_REGION_MIN_H));
                 let pick = profiles_regions(ui, session, right, region_h);
-                if let Some(name) = pick.edit {
+                if let Some(op) = pick.reorder {
+                    // A delivered drop changes the saved order only.
+                    session.reorder_profiles(op, frontend_core::ReorderSurface::Profiles);
+                } else if let Some(name) = pick.edit {
                     session.begin_edit_profile(Some(&name));
                 } else if let Some(name) = pick.removed {
                     session.delete_understood = false;
@@ -6647,6 +6656,12 @@ fn chooser_window(ui: &Ui, session: &mut Session, panel_dock: Option<Id>) {
                 edit_switch_popup(ui, session);
             }
             ui.spacing();
+            // A Load-order write that is pending or failed (a drag in
+            // this list or in the Fleet) says so here, as it does under
+            // the Fleet table: the core holds the state, so it shows on
+            // reopen too and leaves when a later write resolves it or
+            // the error timeout passes.
+            setting_feedback_line(ui, session, Setting::ProfileOrder);
             if let Some(record) = session.core.saves_in_flight().last() {
                 let name = record.destination();
                 ui.text_disabled("saving ");
@@ -6659,12 +6674,11 @@ fn chooser_window(ui: &Ui, session: &mut Session, panel_dock: Option<Id>) {
             if ui.button_with_size("Close", [w, 0.0]) {
                 session.request_close_profiles();
             }
-            let pending = session.pending_profile_delete.clone();
-            let body = match pending.as_deref() {
-                Some(n) => format!(
+            let body: std::borrow::Cow<'_, str> = match session.pending_profile_delete.as_deref() {
+                Some(n) => std::borrow::Cow::Owned(format!(
                     "Remove {n} from the vault? A running wall member stays up. This cannot be undone."
-                ),
-                None => "Remove this profile from the vault?".into(),
+                )),
+                None => std::borrow::Cow::Borrowed("Remove this profile from the vault?"),
             };
             if scary_confirm_popup(
                 ui,
@@ -6723,16 +6737,22 @@ fn profiles_toolbar(ui: &Ui, session: &mut Session, right: f32) {
     }
 }
 
-/// The height under the split regions: the spacing, the saving line and
-/// Close.
+/// The height under the split regions: the spacing, the Load-order
+/// feedback line while its write is pending or failed, the saving line
+/// and Close.
 fn profiles_footer_height(ui: &Ui, session: &Session) -> f32 {
     let spacing = ui.clone_style().item_spacing()[1];
+    let order = match session.core.setting_status(Setting::ProfileOrder) {
+        SettingStatus::Saved => 0.0,
+        SettingStatus::Pending => ui.text_line_height_with_spacing(),
+        SettingStatus::Failed(text) => wrapped_height(ui, text, ui.content_region_avail()[0]),
+    };
     let saving = if session.core.saves_in_flight().is_empty() {
         0.0
     } else {
         ui.text_line_height_with_spacing()
     };
-    spacing + saving + ui.frame_height_with_spacing()
+    spacing + order + saving + ui.frame_height_with_spacing()
 }
 
 /// The profile list and, when the form or the import is open, the editor
@@ -6787,7 +6807,7 @@ fn profiles_regions(ui: &Ui, session: &mut Session, right: f32, region_h: f32) -
 
 /// The height the whole profile list needs: its heading and every row.
 fn profile_list_height(ui: &Ui, session: &Session) -> f32 {
-    let rows = session.core.profiles().count().max(1);
+    let rows = session.core.profile_order().names().len().max(1);
     ui.text_line_height_with_spacing() + scale_px(ui, rows as f32 * PROFILE_ROW_H + 8.0)
 }
 
@@ -6821,14 +6841,13 @@ fn profiles_divider(ui: &Ui, id: &str, size: [f32; 2], vertical: bool) -> Option
     (active && delta != 0.0).then_some(delta)
 }
 
-/// The profile list in its own scrolling region of `size`.
+/// The profile list in its own scrolling region of `size`, in the one
+/// saved order (the same rows, in the same sequence, as the Fleet's Load
+/// order). It borrows the core's order entries: no per-frame copy.
 fn profile_list(ui: &Ui, session: &Session, right: f32, size: [f32; 2]) -> ListPick {
-    let names: Vec<String> = session
-        .core
-        .profiles()
-        .map(|p| p.username().to_string())
-        .collect();
-    let focused = session.focused_name();
+    let order = session.core.profile_order();
+    // The core's own string, borrowed: no per-frame copy of the name.
+    let focused = session.core.selected();
     let members = session.core.members();
     let multibox = session.multibox;
     // The JavaScript import pane keeps its report while writes settle.
@@ -6837,38 +6856,50 @@ fn profile_list(ui: &Ui, session: &Session, right: f32, size: [f32; 2]) -> ListP
     #[cfg(not(feature = "js"))]
     let edit_waits = false;
     let mut pick = ListPick::default();
+    let mut dropped: Option<(u64, ProfileIdentity)> = None;
     ui.child_window("##profiles-list")
         .size(size)
         .child_flags(ChildFlags::NAV_FLATTENED)
         .build(ui, || {
             ui.text_colored(ACCENT, "Vault profiles");
-            if names.is_empty() {
+            if order.names().is_empty() {
                 ui.text_disabled("vault is empty — New profile then Save");
                 return;
             }
-            for name in &names {
+            for (name, identity) in order.entries() {
                 let selected = if multibox {
-                    members.iter().any(|m| m == name)
+                    members.iter().any(|member| member.as_str() == name)
                 } else {
-                    focused.as_deref() == Some(name.as_str())
+                    focused == Some(name)
                 };
                 // A profile whose first save is still being written is not
-                // selectable, editable or deletable until the write settles.
+                // selectable, editable, deletable or draggable until the
+                // write settles.
                 let saving = session.core.profile_saving(name);
                 let _saving = saving.then(|| ui.begin_disabled());
-                let (p, r, e) = chooser_row(ui, name, selected, right, edit_waits);
+                let (p, r, e, d) =
+                    chooser_row(ui, order, name, identity, selected, right, edit_waits);
                 if saving {
                     continue;
                 }
-                if e {
-                    pick.edit = Some(name.clone());
+                if let Some(moving) = d {
+                    dropped = Some((moving, identity));
+                } else if e {
+                    pick.edit = Some(name.to_owned());
                 } else if r {
-                    pick.removed = Some(name.clone());
+                    pick.removed = Some(name.to_owned());
                 } else if p {
-                    pick.picked = Some(name.clone());
+                    pick.picked = Some(name.to_owned());
                 }
             }
         });
+    if let Some((moving, target)) = dropped {
+        // The drag payload is an identity's raw value; only a profile in
+        // this order can be its source.
+        if let Some((_, moving)) = order.entries().find(|(_, id)| id.raw() == moving) {
+            pick.reorder = order.drop_op(moving, target);
+        }
+    }
     pick
 }
 
@@ -7668,39 +7699,104 @@ fn lamp_skill_presets() -> Vec<&'static str> {
         .collect()
 }
 
-/// One picker row: name (click focuses / loads), Edit, then red ✕ (vault
-/// delete, confirm). Sibling buttons so an Edit/✕ click never also picks.
-/// The row ends at `right` (see [`chooser_right_edge`]), so Edit and ✕ stay
-/// on screen when the docked window runs past the display. `edit_waits`
-/// disables Edit (an import's writes keep the editor pane).
+std::thread_local! {
+    /// One reused buffer for every formatted Profiles row label (the cut
+    /// name, Edit, ✕), built and consumed label by label: a warm frame
+    /// of the list allocates nothing for them.
+    static ROW_LABEL: RefCell<String> = const { RefCell::new(String::new()) };
+}
+
+/// One picker row: name (click focuses / loads; drag reorders the saved
+/// order, with the same profile payload as a Fleet drag), Edit, then red
+/// ✕ (vault delete, confirm). Sibling buttons so an Edit/✕ click never
+/// also picks. The row ends at `right` (see [`chooser_right_edge`]), so
+/// Edit and ✕ stay on screen when the docked window runs past the
+/// display. A name too wide for its slot is cut with a visible "…"
+/// (drawn from the reused label buffer; the widget id still carries the
+/// whole name), and its tooltip always shows the whole name.
+/// `edit_waits` disables Edit (an import's writes keep the editor pane).
+/// Returns (picked, removed, edit, dropped-profile-raw).
 fn chooser_row(
     ui: &Ui,
+    order: &frontend_core::ProfileOrder,
     name: &str,
+    identity: ProfileIdentity,
     selected: bool,
     right: f32,
     edit_waits: bool,
-) -> (bool, bool, bool) {
+) -> (bool, bool, bool, Option<u64>) {
     const EDIT_W: f32 = 44.0;
     const X_W: f32 = 28.0;
     let avail = on_screen_avail(ui, right);
     let edit_w = scale_px(ui, EDIT_W);
     let x_w = scale_px(ui, X_W);
     let name_w = (avail - edit_w - x_w - scale_px(ui, BUTTON_GAP * 2.0)).max(scale_px(ui, 10.0));
-    let loaded = ui
-        .selectable_config(name)
-        .selected(selected)
-        .close_popups(false)
-        .size([name_w, 0.0])
-        .build();
+    let inner_w = name_w - ui.clone_style().frame_padding()[0] * 2.0;
+    let text_w = ui
+        .current_font()
+        .calc_text_size(ui.current_font_size(), f32::MAX, 0.0, name)[0];
+    let cut = text_w > inner_w;
+    let build_name = |label: &str| {
+        ui.selectable_config(label)
+            .selected(selected)
+            .close_popups(false)
+            .size([name_w, 0.0])
+            .build()
+    };
+    let loaded = if cut {
+        ROW_LABEL.with_borrow_mut(|label| {
+            label.clear();
+            crate::picker::ellipsize_into(ui, name, inner_w, label);
+            label.push_str("##");
+            label.push_str(name);
+            build_name(label)
+        })
+    } else {
+        build_name(name)
+    };
+    let (rect_min, rect_max) = (ui.item_rect_min(), ui.item_rect_max());
+    if ui.is_item_hovered() {
+        ui.set_item_tooltip(if cut { name } else { "drag to reorder" });
+    }
+    crate::fleet::profile_drag_source(ui, identity, name);
+    let dropped = match crate::fleet::profile_drop_target(ui) {
+        Some(crate::fleet::ProfileDrop::Dropped(raw)) => Some(raw),
+        Some(crate::fleet::ProfileDrop::Hover(raw)) => {
+            // The line marks where the drop would land in this order.
+            let moving = order
+                .entries()
+                .find(|(_, id)| id.raw() == raw)
+                .map(|(_, id)| id);
+            if let Some(before) = crate::fleet::insertion_before(
+                moving
+                    .and_then(|moving| order.drop_op(moving, identity))
+                    .as_ref(),
+            ) {
+                crate::fleet::profile_insertion_marker(ui, rect_min, rect_max, before);
+            }
+            None
+        }
+        None => None,
+    };
     gap_line(ui);
     let edit = {
         let _waits = ui.begin_disabled_with_cond(edit_waits);
-        ui.button_with_size(format!("Edit##edit-{name}"), [edit_w, 0.0])
+        ROW_LABEL.with_borrow_mut(|label| {
+            label.clear();
+            label.push_str("Edit##edit-");
+            label.push_str(name);
+            ui.button_with_size(&*label, [edit_w, 0.0])
+        })
     };
     gap_line(ui);
     let _red = ui.push_style_color(StyleColor::Text, ERROR);
-    let removed = ui.button_with_size(format!("✕##{name}"), [x_w, 0.0]);
-    (loaded, removed, edit)
+    let removed = ROW_LABEL.with_borrow_mut(|label| {
+        label.clear();
+        label.push_str("✕##");
+        label.push_str(name);
+        ui.button_with_size(&*label, [x_w, 0.0])
+    });
+    (loaded, removed, edit, dropped)
 }
 
 /// Offline prepare: mint isolated identity, write server-native `.sav` via

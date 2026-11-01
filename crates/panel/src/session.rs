@@ -4535,13 +4535,18 @@ impl Session {
         }
     }
 
-    /// Reorder the saved Load order: stage `op`, then submit
-    /// `ReorderProfiles` (the core decides; it refuses outside Load order).
+    /// Reorder the one saved Load order: stage `op` from the list it came
+    /// from, then submit `ReorderProfiles` (the core decides; a Fleet-list
+    /// reorder refuses outside Load order, a Profiles-list move does not).
     /// A refusal or a failed write shows on the banner.
-    pub(crate) fn reorder_profiles(&mut self, op: frontend_core::ReorderOp) {
+    pub(crate) fn reorder_profiles(
+        &mut self,
+        op: frontend_core::ReorderOp,
+        surface: frontend_core::ReorderSurface,
+    ) {
         #[cfg(test)]
         REORDERS_SUBMITTED.set(REORDERS_SUBMITTED.get() + 1);
-        self.core.stage_reorder(op);
+        self.core.stage_reorder(op, surface);
         let Some(submitted) = self.submit(OperatorCommand::ReorderProfiles, Targets::Application)
         else {
             return;

@@ -875,18 +875,28 @@ pub(crate) fn walkto_selection_caption(
 }
 
 pub(crate) fn ellipsize_to_width(ui: &Ui, text: &str, max_w: f32) -> String {
+    let mut out = String::new();
+    ellipsize_into(ui, text, max_w, &mut out);
+    out
+}
+
+/// Append `text` to `out`, cut to `max_w` with a trailing "…" when it is
+/// too wide (nothing at all when even the "…" does not fit). The buffer
+/// is the caller's, so a warm frame reuses it.
+pub(crate) fn ellipsize_into(ui: &Ui, text: &str, max_w: f32, out: &mut String) {
     if max_w <= 0.0 {
-        return String::new();
+        return;
     }
     let font = ui.current_font();
     let size = ui.current_font_size();
     if font.calc_text_size(size, f32::MAX, 0.0, text)[0] <= max_w {
-        return text.to_string();
+        out.push_str(text);
+        return;
     }
     const ELLIPSIS: &str = "…";
     let ellipsis_w = font.calc_text_size(size, f32::MAX, 0.0, ELLIPSIS)[0];
     if ellipsis_w >= max_w {
-        return String::new();
+        return;
     }
     let mut lo = 0usize;
     let mut hi = text.len();
@@ -907,7 +917,8 @@ pub(crate) fn ellipsize_to_width(ui: &Ui, text: &str, max_w: f32) -> String {
     while end > 0 && !text.is_char_boundary(end) {
         end -= 1;
     }
-    format!("{}{ELLIPSIS}", &text[..end])
+    out.push_str(&text[..end]);
+    out.push_str(ELLIPSIS);
 }
 
 pub(crate) fn format_walkto_status(caption: WalktoCaption, status: &str) -> String {

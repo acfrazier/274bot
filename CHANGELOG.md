@@ -356,6 +356,19 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.8` 
   can be scrolled on an 80x24 terminal. Before, the panel's Browse window could
   save its category order again on every frame after a failure and show
   "Saving…" without end.
+- Profiles and Fleet now share one saved order. The **Profiles** window
+  lists your profiles in your saved Load order (not alphabetically), and
+  dragging a row there changes the same order as a Fleet drag in the panel
+  or **Alt-Up** / **Alt-Down** in the terminal app. A Profiles drag also
+  works while the Fleet is sorted by Name or Status, and leaves that sort
+  alone. While an order change saves, the Profiles list and the Fleet
+  table show **Saving…**; if the save fails, both show the reason and
+  your last saved order comes back. A line on the row under your drag
+  marks where the profile will land, and a name too long for its row is
+  cut with a "…" (hover shows the whole name). Importing rs2b0t
+  profiles now keeps the export file's order: new profiles join the end
+  of your saved order in the file's sequence, and a profile you already
+  have keeps its place.
 
 ### Combat
 

@@ -111,8 +111,10 @@ cells = [
 
 
 # These UI paths have controlled-state driver proof, not game-world fixtures.
+# session/fleet.rs routes the fleet-row commands (marks, filter, sort, the
+# saved-order reorder and fleet plans); the driver cell drives them all.
 [[cover]]
-globs = ["crates/frontend-core/src/error_expiry.rs", "crates/frontend-core/src/lib.rs", "crates/frontend-core/src/session/commands.rs"]
+globs = ["crates/frontend-core/src/error_expiry.rs", "crates/frontend-core/src/lib.rs", "crates/frontend-core/src/session/commands.rs", "crates/frontend-core/src/session/fleet.rs"]
 cells = [
   "frontend-core.driver-command-headless|${ISOHOME:?} nice -n 10 cargo test --locked -p frontend-core --lib driver::tests::",
   "frontend-core.error-expiry-headless|${ISOHOME:?} nice -n 10 cargo test --locked -p frontend-core --lib error_expiry::tests::",

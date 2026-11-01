@@ -4523,11 +4523,13 @@ impl TuiSession {
         app.error = Some(text.to_owned());
     }
 
-    /// Reorder the saved Load order (`ReorderProfiles`): stage the op, then
-    /// submit it with the fleet model lent. The core refuses it unless the
-    /// model shows Load order. The cursor follows its profile by identity.
+    /// Reorder the one saved Load order (`ReorderProfiles`) from the Fleet
+    /// list: stage the op, then submit it with the fleet model lent. The
+    /// core refuses it unless the model shows Load order. The cursor
+    /// follows its profile by identity.
     fn reorder_profiles(&mut self, app: &mut TuiApp, op: frontend_core::ReorderOp) {
-        self.core.stage_reorder(op);
+        self.core
+            .stage_reorder(op, frontend_core::ReorderSurface::Fleet);
         if let Err(error) =
             self.submit_with(app, OperatorCommand::ReorderProfiles, Targets::Application)
         {

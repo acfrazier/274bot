@@ -7758,6 +7758,59 @@ fn alt_keys_reorder_the_saved_load_order_and_the_drawn_table() {
     assert_eq!(saved_order(&session), ["alice", "bob", "carol", "dave"]);
 }
 
+/// One shared order: a Profiles-list move staged on the core (as the
+/// panel's Profiles drag stages it) writes the same saved order the TUI
+/// table draws, and Alt keys then move within that order.
+#[test]
+fn a_profiles_list_move_is_the_order_the_tui_table_draws() {
+    let iso = IsolatedStores::enter("tui-profiles-order");
+    let names = ["alice", "bob", "carol"];
+    let (mut session, mut app) = tui_with_profiles(&iso, &names);
+    drawn_fleet_names(&mut app, &names);
+    // The cursor sits on bob, by identity.
+    let bob = session.core.profile_identity("bob").unwrap();
+    app.table.cursor_to(1, &app.fleet_model);
+    assert_eq!(
+        app.fleet_model
+            .identity(app.table.cursor_row(&app.fleet_model).unwrap()),
+        Some(bob)
+    );
+    let op = session
+        .core
+        .profile_order()
+        .drop_op(
+            session.core.profile_identity("carol").unwrap(),
+            session.core.profile_identity("alice").unwrap(),
+        )
+        .expect("a Profiles drop");
+    session
+        .core
+        .stage_reorder(op, frontend_core::ReorderSurface::Profiles);
+    session
+        .submit_with(
+            &mut app,
+            OperatorCommand::ReorderProfiles,
+            Targets::Application,
+        )
+        .expect("reorder submitted");
+    session.core.flush_writes();
+    session.pump(&mut app);
+    assert_eq!(saved_order(&session), ["carol", "alice", "bob"]);
+    assert_eq!(
+        drawn_fleet_names(&mut app, &names),
+        ["carol", "alice", "bob"],
+        "the TUI draws the Profiles move"
+    );
+    assert_eq!(
+        app.fleet_model
+            .identity(app.table.cursor_row(&app.fleet_model).unwrap()),
+        Some(bob),
+        "the cursor stays on bob through the Profiles move"
+    );
+    assert_eq!(app.table.cursor, 2, "bob is third in the new order");
+    assert_eq!(app.error, None);
+}
+
 /// A filter hides the middle profile: Alt+Down on the upper shown row lands
 /// after the lower shown row, and the hidden profile keeps its relative
 /// place among the others.

@@ -700,7 +700,7 @@ fn marks_row(ui: &Ui, session: &mut Session) {
         session.submit(OperatorCommand::MarkFleet(op), Targets::Application);
     }
     if move_to_top {
-        session.reorder_profiles(ReorderOp::MarkedToTop);
+        session.reorder_profiles(ReorderOp::MarkedToTop, frontend_core::ReorderSurface::Fleet);
     }
 }
 

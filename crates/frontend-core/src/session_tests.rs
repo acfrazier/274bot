@@ -3367,10 +3367,13 @@ fn a_failed_quiet_load_order_write_is_reported_and_the_stored_order_stays() {
         session.profile_identity("C").unwrap(),
         session.profile_identity("A").unwrap(),
     );
-    session.stage_reorder(crate::ReorderOp::Move {
-        moving: c,
-        to: crate::Placement::Before(a),
-    });
+    session.stage_reorder(
+        crate::ReorderOp::Move {
+            moving: c,
+            to: crate::Placement::Before(a),
+        },
+        crate::ReorderSurface::Fleet,
+    );
     struct FleetLend<'a>(&'a mut crate::FleetModel);
     impl SlotSurface for FleetLend<'_> {
         type Io = u32;
