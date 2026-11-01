@@ -24,7 +24,7 @@ a pull request or a doc.
 ## Build and run
 
 1. Install [Rust through rustup](https://rustup.rs). The repository pins Rust
-   **1.98.1** in `rust-toolchain.toml`, and rustup installs it for you.
+   **1.99.1** in `rust-toolchain.toml`, and rustup installs it for you.
 2. On Linux, install the audio and window headers CI uses:
 
    ```bash
@@ -88,8 +88,9 @@ to set.
   tests these. Run the lane for the crate you changed:
 
   ```bash
-  cargo test -p script --features load --tests
+  cargo test -p script-js --tests
   cargo test -p script --no-default-features
+  cargo test -p host-play --no-default-features --lib
   cargo test -p host-play --features live-harness,test-support --test grinch_live
   cargo test -p host-play --features memory-profile
   cargo test -p host-play --features memory-profile-no-alloc --lib
@@ -102,9 +103,9 @@ to set.
   On Linux the panel also has a test that needs a virtual display (install
   `xvfb`):
   `xvfb-run -a cargo test -p panel --features memory-profile --test ime_frame`.
-- **FlatBuffer bindings.** If you change `crates/script/schema/isolate.fbs`,
+- **FlatBuffer bindings.** If you change `crates/script-js/schema/isolate.fbs`,
   regenerate the bindings with the `flatc` version CI pins (see `ci.yml`):
-  `flatc --rust -o crates/script/schema/generated crates/script/schema/isolate.fbs`.
+  `flatc --rust -o crates/script-js/schema/generated crates/script-js/schema/isolate.fbs`.
 - **Architecture check.** `tools/architecture/run.sh` needs Python 3.11 or newer
   and a pinned `rust-analyzer` on your `PATH`. A new crate dependency, feature
   link or checker change needs a change in the separate `274bot-arch` repository,

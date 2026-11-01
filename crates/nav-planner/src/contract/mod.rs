@@ -81,7 +81,7 @@ pub struct PackId(NonZeroU64);
 impl PackId {
     fn mint() -> Result<Self, ContractError> {
         static LAST: AtomicU64 = AtomicU64::new(0);
-        match LAST.fetch_update(Ordering::Relaxed, Ordering::Relaxed, |last| {
+        match LAST.try_update(Ordering::Relaxed, Ordering::Relaxed, |last| {
             last.checked_add(1)
         }) {
             Ok(previous) => NonZeroU64::new(previous + 1)

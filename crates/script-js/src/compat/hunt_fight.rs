@@ -1742,7 +1742,7 @@ impl FightRuntime {
         if !uses_safespot(proj.style) {
             return Ladder::Held;
         }
-        if let Some(alt) = {
+        let alternate_spot = {
             if proj.site.key == TAVERLEY_BLACK
                 && proj.style == Style::Range
                 && at_tile(obs, anchor(proj))
@@ -1753,7 +1753,8 @@ impl FightRuntime {
             } else {
                 None
             }
-        } {
+        };
+        if let Some(alt) = alternate_spot {
             // Caller emits set-safespot then walks. Keep it internal: next pass
             // reads safespotIndex from projection, so we cannot mutate it here.
             let _ = alt;

@@ -151,7 +151,7 @@ pub(super) fn script_slot_or_insert(wall: &ScriptWall, name: &str) -> ScriptSlot
             static NEXT_INCARNATION: std::sync::atomic::AtomicU64 =
                 std::sync::atomic::AtomicU64::new(1);
             let incarnation = NEXT_INCARNATION
-                .fetch_update(
+                .try_update(
                     std::sync::atomic::Ordering::Relaxed,
                     std::sync::atomic::Ordering::Relaxed,
                     |next| next.checked_add(1),
