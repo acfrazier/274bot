@@ -167,7 +167,7 @@ impl BenchRun {
     pub fn poll<Io>(&mut self, core: &OperatorSession<Io>) -> Result<bool, BenchError> {
         match core.play() {
             Some(play) => {
-                self.0.observe_script_lines(core.script_lines());
+                feed_script_lines(self.0.as_ref(), core.script_lines());
                 self.0
                     .poll(play)
                     .map_err(|error| BenchError(BenchStep::Run(error)))
@@ -180,6 +180,48 @@ impl BenchRun {
     #[cfg(any(test, feature = "test-support"))]
     pub fn finish_for_test(&mut self) {
         self.0.finish_for_test();
+    }
+}
+
+trait ScriptLineSink {
+    fn observe_script_lines(&self, lines: &[(String, String)]);
+}
+
+impl ScriptLineSink for host_play::memory::Run {
+    fn observe_script_lines(&self, lines: &[(String, String)]) {
+        host_play::memory::Run::observe_script_lines(self, lines);
+    }
+}
+
+fn feed_script_lines(run: &impl ScriptLineSink, lines: &[(String, String)]) {
+    run.observe_script_lines(lines);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{feed_script_lines, ScriptLineSink};
+    use std::cell::RefCell;
+
+    #[derive(Default)]
+    struct ScriptLineRecorder(RefCell<Vec<(String, String)>>);
+
+    impl ScriptLineSink for ScriptLineRecorder {
+        fn observe_script_lines(&self, lines: &[(String, String)]) {
+            self.0.borrow_mut().extend_from_slice(lines);
+        }
+    }
+
+    #[test]
+    fn feed_script_lines_forwards_the_poll_batch_in_order() {
+        let run = ScriptLineRecorder::default();
+        let lines = vec![
+            ("alice".to_string(), "MEMAB_BANK_ROWS:1:288".to_string()),
+            ("bob".to_string(), "MEMAB_LISTENER_REMOVED".to_string()),
+        ];
+
+        feed_script_lines(&run, &lines);
+
+        assert_eq!(*run.0.borrow(), lines);
     }
 }
 

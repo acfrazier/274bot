@@ -21,8 +21,7 @@ export const Quests = proxy('Quests', {
         const row = rows().find((q) => q && String(q.name).toLowerCase() === want);
         return row ? row.status || 'unknown' : 'unknown';
     },
-    async journal(name, ifButton = true) {
-        if (!ifButton) return [];
+    async journal(name) {
         const out = await runMachine('quest-progress', {
             quest: String(name),
             journal_only: true,

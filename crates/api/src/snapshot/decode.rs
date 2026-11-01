@@ -1367,8 +1367,15 @@ impl GameSnapshot {
         dirty
     }
 
+    fn projection_locs_should_build(scene_available: bool, demanded: bool) -> bool {
+        scene_available && demanded
+    }
+
     fn rebuild_projection_locs(&mut self, client: &Client) {
-        if !self.projection_scene.available || !self.projection_locs_wanted {
+        if !Self::projection_locs_should_build(
+            self.projection_scene.available,
+            self.projection_locs_wanted,
+        ) {
             self.projection_scene.locs = std::sync::Arc::from([]);
             // Settled for this state: an unwanted list stays empty, and a
             // wanted one waits for the next scene publish (which clears this).
@@ -2674,6 +2681,13 @@ mod tests {
             Vec::new(),
             ClientRevision::R289,
         )
+    }
+
+    #[test]
+    fn projection_loc_build_gate_requires_demand_even_when_scene_is_available() {
+        assert!(!GameSnapshot::projection_locs_should_build(true, false));
+        assert!(GameSnapshot::projection_locs_should_build(true, true));
+        assert!(!GameSnapshot::projection_locs_should_build(false, true));
     }
     #[test]
     fn projection_locs_follow_demand_independently_of_loc_generation() {

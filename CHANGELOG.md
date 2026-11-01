@@ -87,6 +87,10 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.7` 
 
 ### Scripting
 
+- `Bank.items()` and `reader.bankItems()` now reuse frozen snapshots for a
+  bank session and item generation. Their arrays, rows, and nested `ops`
+  lists are read-only; `Bank.ready()` still returns a boolean.
+
 - Bank opening now waits for its own walk to finish. A completed walk from
   a script could reuse the bank walk's request number and end the bank walk
   before the bot reached the bank. The host now checks the route generation

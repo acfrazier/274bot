@@ -543,6 +543,14 @@ pub enum SurfaceError {
     ForeignCard(SurfaceKind),
 }
 
+/// A queued host-owned client frame whose isolate acknowledgement is awaited
+/// without holding the owning slot mutex.
+pub trait ClientFrameDispatch: Send + Sync {
+    /// Wait for the isolate to finish this frame and return whether it
+    /// acknowledged delivery.
+    fn wait_for_ack(&self) -> bool;
+}
+
 /// One running surface. The slot owns lifecycle transitions, and `stop`
 /// transfers the run to its retirement worker.
 pub trait SurfaceRun: Send {
@@ -570,13 +578,19 @@ pub trait SurfaceRun: Send {
     fn pause(&self);
     /// Resume script execution.
     fn resume(&self);
+    /// Queue one client frame and return its independently waitable receipt.
+    /// Hosts must drop their slot lock before waiting for the receipt.
+    fn begin_client_frame(&mut self) -> Option<Arc<dyn ClientFrameDispatch>> {
+        None
+    }
     /// Notify this run of one host-owned client main-loop frame.
     ///
     /// The host invokes this after each 20 ms client loop, independently of
     /// game-tick delivery. Implementations that do not expose frame events
     /// keep the default no-op.
     fn on_client_frame(&mut self) -> bool {
-        false
+        self.begin_client_frame()
+            .is_some_and(|dispatch| dispatch.wait_for_ack())
     }
     /// Return whether this run has requested the lazy projection loc list.
     fn loc_projection_wanted(&self) -> bool {

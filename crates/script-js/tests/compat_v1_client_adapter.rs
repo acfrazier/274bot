@@ -311,6 +311,7 @@ fn reader_catalog() -> &'static Value {
             },
         ];
         let side_tabs = [
+            SideTabIfaceInput { index: 0, id: 900 },
             SideTabIfaceInput { index: 2, id: 200 },
             SideTabIfaceInput { index: 6, id: 6600 },
         ];
@@ -367,7 +368,7 @@ fn reader_catalog() -> &'static Value {
 
         let mut accurate_label = widget(19, 900, 901);
         accurate_label.type_ = 4;
-        accurate_label.text = Some("Accurate");
+        accurate_label.text = Some("(Accurate)");
         accurate_label.y = 300;
         accurate_label.height = 20;
 
@@ -383,9 +384,24 @@ fn reader_catalog() -> &'static Value {
 
         let mut aggressive_label = widget(21, 900, 901);
         aggressive_label.type_ = 4;
-        aggressive_label.text = Some("Aggressive");
+        aggressive_label.text = Some("(Aggressive)");
         aggressive_label.y = 330;
         aggressive_label.height = 20;
+        let mut punch_button = widget(23, 900, 901);
+        punch_button.button_type = 5;
+        punch_button.script_opcode = 5;
+        punch_button.script_varp = 43;
+        punch_button.script_value = 3;
+        punch_button.x = 10;
+        punch_button.y = 360;
+        punch_button.width = 20;
+        punch_button.height = 20;
+
+        let mut punch_label = widget(24, 900, 901);
+        punch_label.type_ = 4;
+        punch_label.text = Some("Punch");
+        punch_label.y = 360;
+        punch_label.height = 20;
 
         let mut pause_button = widget(22, 100, 100);
         pause_button.button_type = 6;
@@ -419,6 +435,8 @@ fn reader_catalog() -> &'static Value {
             accurate_label,
             aggressive_button,
             aggressive_label,
+            punch_button,
+            punch_label,
             pause_button,
             shop_widget,
             mine_small_widget,
@@ -1381,7 +1399,7 @@ reader_contract!(
     {
         assert_eq!(
             value,
-            &json!([{"mode": 1, "label": "Accurate"}, {"mode": 2, "label": "Aggressive"}])
+            &json!([{"mode": 1, "label": "(Accurate)"}, {"mode": 2, "label": "(Aggressive)"}])
         );
     }
 );
@@ -2074,4 +2092,55 @@ globalThis.__observation = () => {
     let _ = iso.probe("true");
     assert_eq!(iso.probe("__observation()").unwrap(), Value::Null);
     iso.join();
+}
+
+/// Operator ruling (2026-11-01, "demand plus early raise"): a card whose code
+/// or a sibling it loads names a projection reader has the projection demand
+/// raised at start, before its first tick, so its first read sees a built
+/// scene. A card that names none keeps the scene unbuilt.
+#[test]
+fn naming_a_projection_reader_raises_the_demand_before_the_first_tick() {
+    const NAMES: &str = r#"
+import { reader } from '../../adapter/ClientAdapter.js';
+export default class ProjectionNamer extends LoopingBot {
+    async loop() { globalThis.__box = reader.locBox(1, 2); }
+}
+"#;
+    const SIBLING_NAMES: &str = r#"
+import './Paint.js';
+export default class SiblingNamer extends LoopingBot {
+    async loop() {}
+}
+"#;
+    const SIBLING: &str = r#"
+import { reader } from '../../adapter/ClientAdapter.js';
+export const paint = (x, z) => reader.overlayPosWorld(x, z, 0, 0.5, 0.5);
+"#;
+    const SILENT: &str = r#"
+export default class Silent extends LoopingBot {
+    async loop() { globalThis.__locBoxes = 1; }
+}
+"#;
+    let wanted = |js: &str, siblings: Vec<(String, String)>| {
+        let iso = LoadIsolate::spawn(js.to_string(), LoadShape::CompatClass, siblings)
+            .expect("spawn projection probe");
+        let raised = iso.loc_projection_wanted_for_test();
+        iso.join();
+        raised
+    };
+    assert!(wanted(NAMES, vec![]), "the card names locBox");
+    assert!(
+        wanted(
+            SIBLING_NAMES,
+            vec![(
+                "/rs2b0t/bot/scripts/bot/Paint.js".to_string(),
+                SIBLING.to_string()
+            )]
+        ),
+        "a loaded sibling names overlayPosWorld"
+    );
+    assert!(
+        !wanted(SILENT, vec![]),
+        "an identifier that only contains a reader name is not a reader"
+    );
 }

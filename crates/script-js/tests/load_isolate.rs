@@ -8725,7 +8725,7 @@ export default class T extends LoopingBot {
     let mut snap = base_snapshot();
     let styles = [script_js::wire::CombatStyleInput {
         mode: 1,
-        label: "Aggressive",
+        label: "(Aggressive)",
         component_id: 77,
     }];
     snap.combat_styles = &styles;
@@ -8769,7 +8769,7 @@ export default class T extends LoopingBot {
             width: 80,
             height: 20,
             hidden: false,
-            text: Some("Aggressive"),
+            text: Some("(Aggressive)"),
             alternate_text: None,
             button_text: None,
             target_base: None,
@@ -8815,12 +8815,12 @@ export default class T extends LoopingBot {
     let styles = [
         script_js::wire::CombatStyleInput {
             mode: 0,
-            label: "Accurate",
+            label: "(Accurate)",
             component_id: 76,
         },
         script_js::wire::CombatStyleInput {
             mode: 1,
-            label: "Aggressive",
+            label: "(Aggressive)",
             component_id: 77,
         },
     ];
@@ -8837,8 +8837,8 @@ export default class T extends LoopingBot {
     assert_eq!(
         iso.probe("__styles").unwrap(),
         serde_json::json!([
-            { "mode": 0, "label": "Accurate" },
-            { "mode": 1, "label": "Aggressive" }
+            { "mode": 0, "label": "(Accurate)" },
+            { "mode": 1, "label": "(Aggressive)" }
         ])
     );
     assert_eq!(iso.probe("__set").unwrap(), serde_json::json!(true));

@@ -594,33 +594,7 @@ pub(super) fn wire_runtime(
             Ok(serde_json::json!(facing_player(args.first())))
         })
         .map_err(|e| format!("register player face helper: {e}"))?;
-    runtime
-        .register_function(
-            "__rs2b0t_step_off_candidates",
-            |args: &[serde_json::Value]| {
-                let from = json_tile(args.first()).ok_or_else(|| {
-                    rustyscript::Error::Runtime("stepOffCandidates: invalid origin".into())
-                })?;
-                let away = args
-                    .get(1)
-                    .and_then(serde_json::Value::as_object)
-                    .ok_or_else(|| {
-                        rustyscript::Error::Runtime("stepOffCandidates: invalid threat".into())
-                    })?;
-                let away_x = json_i32(away.get("x")).ok_or_else(|| {
-                    rustyscript::Error::Runtime("stepOffCandidates: invalid threat x".into())
-                })?;
-                let away_z = json_i32(away.get("z")).ok_or_else(|| {
-                    rustyscript::Error::Runtime("stepOffCandidates: invalid threat z".into())
-                })?;
-                serde_json::to_value(script::native::walk::step_off_candidates(
-                    from,
-                    (away_x, away_z),
-                ))
-                .map_err(|error| rustyscript::Error::Runtime(error.to_string()))
-            },
-        )
-        .map_err(|error| format!("register step-off candidates: {error}"))?;
+    super::step_off_candidates_v8::install(runtime)?;
     runtime
         .register_function(
             "__rs2b0t_parse_interface_combat_style",

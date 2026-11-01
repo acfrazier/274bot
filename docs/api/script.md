@@ -1993,6 +1993,12 @@ flight settles false (a deposit loop does nothing).
   and the bank session generation moved on, within `timeoutMs` (4 s when
   omitted). A reopened or logged-out session is false.
 
+`Bank.items()` and `reader.bankItems()` return a read-only snapshot. The
+outer array, item rows, and nested `ops` arrays are frozen. Repeated reads in
+one bank session and item generation reuse the same array identity; a new
+session or posted item generation produces a new array. A closed bank returns
+a frozen empty list.
+
 NativeApi v2 scripts can use `withdraw-x` with the number of free inventory
 slots, or compatibility `Bank.withdrawLoad(name)`.
 

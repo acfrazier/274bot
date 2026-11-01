@@ -114,7 +114,7 @@ impl Q4FrameCell {
                 "removal" => Self::Removal,
                 "pause" => Self::Pause,
                 "stop" => Self::Stop,
-                "busy_full_bank_sampling" => Self::BusyFullBankSampling,
+                "busy_bank_65_row_sampling" => Self::BusyFullBankSampling,
                 _ => return Err(format!("unknown BOT_MEMORY_Q4_CELL {value}")),
             },
             Err(std::env::VarError::NotPresent) => default,
@@ -141,7 +141,7 @@ impl Q4FrameCell {
             Self::Removal => "removal",
             Self::Pause => "pause",
             Self::Stop => "stop",
-            Self::BusyFullBankSampling => "busy_full_bank_sampling",
+            Self::BusyFullBankSampling => "busy_bank_65_row_sampling",
         }
     }
 }
@@ -2831,23 +2831,35 @@ impl Run {
     }
 
     fn q4_expected_active(&self) -> Option<usize> {
-        match self.q4_frame_cell {
-            Some(Q4FrameCell::Pause) => {
-                if self.q4_pause_request_at.is_none() {
-                    Some(self.config.n)
-                } else if self.q4_pause_started_at.is_none()
-                    || (self.q4_pause_resume_requested_at.is_some()
-                        && self.q4_resume_counts.is_none())
-                {
-                    None
-                } else if self.q4_resume_counts.is_some() {
-                    Some(self.config.n)
-                } else {
-                    Some(0)
-                }
+        Self::q4_expected_active_for(
+            self.q4_frame_cell,
+            self.config.n,
+            self.q4_pause_request_at.is_some(),
+            self.q4_pause_started_at.is_some(),
+            self.q4_pause_resume_requested_at.is_some(),
+            self.q4_resume_counts.is_some(),
+            self.q4_stop_counts.is_some(),
+        )
+    }
+
+    fn q4_expected_active_for(
+        cell: Option<Q4FrameCell>,
+        bot_count: usize,
+        pause_requested: bool,
+        pause_started: bool,
+        resume_requested: bool,
+        resume_counts: bool,
+        stop_counts: bool,
+    ) -> Option<usize> {
+        match cell {
+            Some(Q4FrameCell::Pause) if !pause_requested => Some(bot_count),
+            Some(Q4FrameCell::Pause) if !pause_started || (resume_requested && !resume_counts) => {
+                None
             }
-            Some(Q4FrameCell::Stop) if self.q4_stop_counts.is_some() => Some(0),
-            Some(_) | None => Some(self.config.n),
+            Some(Q4FrameCell::Pause) if resume_counts => Some(bot_count),
+            Some(Q4FrameCell::Pause) => Some(0),
+            Some(Q4FrameCell::Stop) if stop_counts => Some(0),
+            Some(_) | None => Some(bot_count),
         }
     }
 
@@ -3718,6 +3730,10 @@ mod tests {
             Q4FrameCell::from_env(listener).unwrap(),
             Q4FrameCell::BusyFullBankSampling
         );
+        assert_eq!(
+            Q4FrameCell::BusyFullBankSampling.as_str(),
+            "busy_bank_65_row_sampling"
+        );
         std::env::set_var("BOT_MEMORY_Q4_CELL", "pause");
         assert_eq!(Q4FrameCell::from_env(listener).unwrap(), Q4FrameCell::Pause);
         std::env::set_var("BOT_MEMORY_Q4_CELL", "zero_listeners");
@@ -3730,12 +3746,62 @@ mod tests {
             Q4FrameCell::from_env(zero).unwrap(),
             Q4FrameCell::ZeroListeners
         );
-        std::env::set_var("BOT_MEMORY_Q4_CELL", "busy_full_bank_sampling");
+        std::env::set_var("BOT_MEMORY_Q4_CELL", "busy_bank_65_row_sampling");
         assert!(Q4FrameCell::from_env(zero).is_err());
         std::env::set_var("BOT_MEMORY_Q4_CELL", "unknown");
         assert!(Q4FrameCell::from_env(zero).is_err());
         std::env::set_var("BOT_MEMORY_Q4_LISTENER", "invalid");
         assert!(Q4FrameArm::from_env("accountleveler_listener_probe", Workload::Active).is_err());
+    }
+
+    #[test]
+    fn q4_expected_active_tracks_pause_resume_and_stop_confirmations() {
+        let n = 3;
+        let expected = Run::q4_expected_active_for;
+        assert_eq!(
+            expected(None, n, false, false, false, false, false),
+            Some(n)
+        );
+        assert_eq!(
+            expected(
+                Some(Q4FrameCell::Pause),
+                n,
+                false,
+                false,
+                false,
+                false,
+                false
+            ),
+            Some(n)
+        );
+        assert_eq!(
+            expected(Some(Q4FrameCell::Pause), n, true, true, false, false, false),
+            Some(0)
+        );
+        assert_eq!(
+            expected(Some(Q4FrameCell::Pause), n, true, true, true, false, false),
+            None
+        );
+        assert_eq!(
+            expected(Some(Q4FrameCell::Pause), n, true, true, true, true, false),
+            Some(n)
+        );
+        assert_eq!(
+            expected(Some(Q4FrameCell::Stop), n, false, false, false, false, true),
+            Some(0)
+        );
+        assert_eq!(
+            expected(
+                Some(Q4FrameCell::Stop),
+                n,
+                false,
+                false,
+                false,
+                false,
+                false
+            ),
+            Some(n)
+        );
     }
 
     #[cfg(feature = "js")]

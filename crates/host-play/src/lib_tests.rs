@@ -7867,6 +7867,241 @@ fn script_start_load_spawns_isolate_only_on_start_and_refuses_when_active() {
 
 #[cfg(feature = "js")]
 #[test]
+fn client_frame_and_lifecycle_hooks_do_not_hold_slot_and_are_watchdog_bounded() {
+    fn bounded_slot_call<T: Send + 'static>(
+        slot: Arc<Mutex<script::SlotScript>>,
+        action: impl FnOnce(&mut script::SlotScript) -> T + Send + 'static,
+    ) -> T {
+        let (tx, rx) = std::sync::mpsc::channel();
+        let worker = thread::spawn(move || {
+            let result = {
+                let mut slot = slot.lock().unwrap();
+                action(&mut slot)
+            };
+            tx.send(result).unwrap();
+        });
+        let result = rx
+            .recv_timeout(Duration::from_millis(350))
+            .expect("slot action exceeded its bound");
+        worker.join().expect("slot action thread panicked");
+        result
+    }
+
+    fn wait_for_execution(slot: &Arc<Mutex<script::SlotScript>>, active: bool) {
+        let deadline = Instant::now() + Duration::from_secs(2);
+        loop {
+            if bounded_slot_call(Arc::clone(slot), |slot| slot.surface_execution_active()) == active
+            {
+                return;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "surface execution did not become active={active}"
+            );
+            thread::sleep(Duration::from_millis(5));
+        }
+    }
+
+    fn wait_for_execution_end(slot: &Arc<Mutex<script::SlotScript>>) -> bool {
+        let deadline = Instant::now() + Duration::from_secs(2);
+        loop {
+            if !bounded_slot_call(Arc::clone(slot), |slot| slot.surface_execution_active()) {
+                return true;
+            }
+            if Instant::now() >= deadline {
+                return false;
+            }
+            thread::sleep(Duration::from_millis(5));
+        }
+    }
+
+    fn start_frame_wait(
+        slot: Arc<Mutex<script::SlotScript>>,
+    ) -> (thread::JoinHandle<()>, std::sync::mpsc::Receiver<bool>) {
+        let (tx, rx) = std::sync::mpsc::channel();
+        let worker = thread::spawn(move || {
+            tx.send(crate::play_slots::dispatch_client_frame(&slot, "alice"))
+                .unwrap();
+        });
+        (worker, rx)
+    }
+
+    let mut play = run_with_io(
+        &PlayOptions {
+            host: "127.0.0.1".into(),
+            transport: client::Transport::Tcp,
+            port: 43594,
+            cache_dir: "/tmp".into(),
+            lowmem: true,
+            mainland: false,
+        },
+        vec![],
+        |_| (None, None),
+        |_, _, _| {},
+    );
+    play.attach_arm("alice", SlotArm::new(7, false));
+    play.script_start_load(
+        "alice",
+        r#"
+import { BotHost } from '../../runtime/BotHost.js';
+globalThis.__frameCalled = false;
+globalThis.__hangFrame = false;
+BotHost.addFrameListener(() => {
+    globalThis.__frameCalled = true;
+    if (globalThis.__hangFrame) {
+        globalThis.__hangFrame = false;
+        while (true) {}
+    }
+});
+export default class T extends LoopingBot {
+    loop() {}
+    onPause() {
+        globalThis.__pauseCalled = true;
+        while (true) {}
+    }
+    onResume() {
+        globalThis.__resumeCalled = true;
+        while (true) {}
+    }
+}
+"#
+        .to_string(),
+        script_js::LoadShape::CompatClass,
+        None,
+        vec![],
+    )
+    .unwrap();
+    let slot = script_slot(&play.scripts, "alice").expect("script slot exists");
+    let startup_deadline = Instant::now() + Duration::from_secs(5);
+    while play.script_state("alice") != script::RunState::Running
+        && Instant::now() < startup_deadline
+    {
+        play.pump_script_lifecycle("alice");
+        thread::sleep(Duration::from_millis(5));
+    }
+    assert_eq!(
+        play.script_state("alice"),
+        script::RunState::Running,
+        "compat script did not finish setup"
+    );
+    bounded_slot_call(Arc::clone(&slot), |slot| {
+        let mut driver = NavRec::default();
+        slot.on_game_tick(&mut script::ScriptCtx {
+            driver: &mut driver,
+            tick: 1,
+            here: None,
+            walk: None,
+            walk_with: None,
+            inv: None,
+            snapshot: None,
+            obj_names: None,
+            compiled: script::CompiledTick::default(),
+        });
+        slot.probe("true").expect("the first compat tick completes");
+    });
+    slot.lock()
+        .unwrap()
+        .probe("globalThis.__hangFrame = true")
+        .unwrap();
+
+    let (frame_thread, frame_done) = start_frame_wait(Arc::clone(&slot));
+    wait_for_execution(&slot, true);
+    assert_eq!(
+        bounded_slot_call(Arc::clone(&slot), |slot| slot.state()),
+        script::RunState::Running,
+        "state remains readable while the frame listener is stuck"
+    );
+    bounded_slot_call(Arc::clone(&slot), |slot| slot.pause());
+    assert_eq!(
+        bounded_slot_call(Arc::clone(&slot), |slot| slot.state()),
+        script::RunState::Paused,
+        "Pause returns while the frame listener is stuck"
+    );
+    assert!(
+        frame_done
+            .recv_timeout(Duration::from_secs(2))
+            .expect("frame listener watchdog did not release its dispatch"),
+        "the host receives the frame acknowledgement after the listener is cut"
+    );
+    frame_thread.join().unwrap();
+
+    wait_for_execution(&slot, true);
+    assert_eq!(
+        bounded_slot_call(Arc::clone(&slot), |slot| slot.state()),
+        script::RunState::Paused,
+        "state remains readable while onPause is stuck"
+    );
+    let on_pause_ended = wait_for_execution_end(&slot);
+    if !on_pause_ended {
+        bounded_slot_call(Arc::clone(&slot), |slot| slot.stop());
+        wait_script_state(&play, "alice", script::RunState::Idle);
+    }
+    assert!(
+        on_pause_ended,
+        "onPause watchdog did not interrupt its non-returning hook"
+    );
+    assert!(
+        slot.lock()
+            .unwrap()
+            .probe("globalThis.__frameCalled")
+            .unwrap()
+            .as_bool()
+            .unwrap(),
+        "the frame listener ran before the watchdog cut its infinite loop"
+    );
+    assert!(
+        slot.lock()
+            .unwrap()
+            .probe("globalThis.__pauseCalled")
+            .unwrap()
+            .as_bool()
+            .unwrap(),
+        "onPause ran before the watchdog cut its infinite loop"
+    );
+
+    bounded_slot_call(Arc::clone(&slot), |slot| slot.resume());
+    assert_eq!(
+        bounded_slot_call(Arc::clone(&slot), |slot| slot.state()),
+        script::RunState::Running
+    );
+    wait_for_execution(&slot, true);
+    assert_eq!(
+        bounded_slot_call(Arc::clone(&slot), |slot| slot.state()),
+        script::RunState::Running,
+        "state remains readable while onResume is stuck"
+    );
+    let on_resume_ended = wait_for_execution_end(&slot);
+    if !on_resume_ended {
+        bounded_slot_call(Arc::clone(&slot), |slot| slot.stop());
+        wait_script_state(&play, "alice", script::RunState::Idle);
+    }
+    assert!(
+        on_resume_ended,
+        "onResume watchdog did not interrupt its non-returning hook"
+    );
+    assert!(
+        slot.lock()
+            .unwrap()
+            .probe("globalThis.__resumeCalled")
+            .unwrap()
+            .as_bool()
+            .unwrap(),
+        "onResume ran before the watchdog cut its infinite loop"
+    );
+
+    bounded_slot_call(Arc::clone(&slot), |slot| slot.pause());
+    wait_for_execution(&slot, true);
+    assert_eq!(
+        bounded_slot_call(Arc::clone(&slot), |slot| slot.state()),
+        script::RunState::Paused,
+        "state remains readable while the second onPause is stuck"
+    );
+    bounded_slot_call(Arc::clone(&slot), |slot| slot.stop());
+    wait_script_state(&play, "alice", script::RunState::Idle);
+}
+
+#[cfg(feature = "js")]
+#[test]
 fn script_start_returns_before_setup_and_stop_before_reap() {
     let mut play = run_with_io(
         &PlayOptions {

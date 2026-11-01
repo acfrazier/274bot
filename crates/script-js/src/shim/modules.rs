@@ -193,15 +193,21 @@ globalThis.__rs2b0t_dispatch_native_events = (events) => {
     globalThis.__rs2b0t_native_event_batch_dispatch(events);
 };
 globalThis.__rs2b0t_invoke_native_event_listener = (callback, payload, hasPayload) => {
+    const logError = (err) => {
+        const h = globalThis.__rs2b0t_host;
+        if (!h) return;
+        h.log = h.log || [];
+        const message = String((err && err.message) || err).slice(0, 256);
+        h.log.push(`[rs2b0t] listener error: ${message}`);
+    };
     try {
         const result = hasPayload ? callback(payload) : callback();
         if (result && typeof result.then === 'function') {
-            result.then(() => {}, (err) => {
-                const h = globalThis.__rs2b0t_host;
-                if (h) h.lastError = String((err && err.message) || err);
-            });
+            result.then(() => {}, logError);
         }
-    } catch (_) {}
+    } catch (err) {
+        logError(err);
+    }
 };
 globalThis.TaskBot = class TaskBot extends globalThis.LoopingBot {
     constructor() {

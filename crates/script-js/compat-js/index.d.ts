@@ -193,12 +193,12 @@ export const reader: {
         x: number;
         z: number;
     } | null;
-    /** Project a world-tile point onto the overlay; `u` and `v` are clamped tile fractions. */
+    /** Project a world-tile point onto the overlay; `u` and `v` are clamped tile fractions. 274bot builds the projection only for a script whose code names this reader; a call reached without the name (for example a computed property) returns null until the next game tick. */
     overlayPosWorld(x: number, z: number, height?: number, u?: number, v?: number): {
         x: number;
         y: number;
     } | null;
-    /** Project a world-tile corner into areaGame pixels while Pix2D is bound there. */
+    /** Project a world-tile corner into areaGame pixels while Pix2D is bound there. 274bot builds the projection only for a script whose code names this reader; a call reached without the name (for example a computed property) returns null until the next game tick. */
     projectAreaGameWorld(x: number, z: number, height?: number, u?: number, v?: number): {
         x: number;
         y: number;
@@ -230,7 +230,7 @@ export const reader: {
     }[] | null;
     /**
      * Loc object hull: eight corners of the object AABB in overlay pixels, or areaGame pixels when `areaGame`.
-     * Centre comes from live scene placement; size from LocType, multi-tile footprint or model minY. Null when off-scene.
+     * Centre comes from live scene placement; size from LocType, multi-tile footprint or model minY. Null when off-scene. 274bot builds the projection only for a script whose code names this reader; a call reached without the name returns null until the next game tick.
      */
     locBox(opts: {
         id?: number;
@@ -256,7 +256,9 @@ export const reader: {
     inventorySnapshotReady(): boolean;
     equipment(): InvItemSnapshot[];
     bankComId(): number;
-    bankItems(): InvItemSnapshot[];
+    bankItems(): readonly Readonly<Omit<InvItemSnapshot, "ops"> & {
+        ops: readonly (string | null)[];
+    }>[];
     bankSideItems(): InvItemSnapshot[];
     bankSnapshotReady(): boolean;
     bankSideSnapshotReady(): boolean;
@@ -777,7 +779,10 @@ export const Bank: {
     /** @internal */
     backpackReady(expected?: readonly BackpackItem[], log?: (msg: string) => void): Promise<boolean>;
     setNoteMode(on: boolean): Promise<void>;
-    items(): InvItemSnapshot[];
+    items(): readonly Readonly<Omit<InvItemSnapshot, "ops"> & {
+        ops: readonly (string | null)[];
+        cert: number;
+    }>[];
     count(name: string): number;
     countById(id: number): number;
     withdraw(name: string, op?: string): boolean | Promise<boolean>;
