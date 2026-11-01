@@ -9191,6 +9191,8 @@ fn incomplete_wall_approach_exhausts_three_attempts_with_the_last_detail() {
         })
         .is_pending());
         let mut active_request = latest_walk_request(&ledger).0;
+        // The ledger retires consumed requests; count each observed submission.
+        let mut submitted_requests = 1;
         for attempt in 1u8..=3 {
             let failure_tick = u64::from(attempt) * 2 + 1;
             let detail = format!("incomplete wall route {attempt}");
@@ -9227,13 +9229,15 @@ fn incomplete_wall_approach_exhausts_three_attempts_with_the_last_detail() {
                 assert_eq!(planned_after, failure_tick + 1);
                 assert_eq!(latest_retry_walk_target(&ledger), wall_tile);
                 active_request = next_request;
+                submitted_requests += 1;
             } else {
                 assert!(
                     matches!(result, Poll::Ready(Err(ActionError::Blocked(reason))) if reason.as_ref() == detail)
                 );
             }
         }
-        assert_eq!(walk_request_count(&ledger), 3);
+        assert_eq!(submitted_requests, 3);
+        assert_eq!(latest_walk_request(&ledger).0, active_request);
         assert!(!ledger
             .as_ref()
             .unwrap()
