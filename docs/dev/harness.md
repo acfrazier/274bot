@@ -1066,7 +1066,9 @@ to name the staged engine and `T44_CENSUS_RUNTIME_INPUT_MANIFEST` to name its
 frozen runtime-input manifest. It verifies engine/content hashes before it
 derives legal population bounds. Missing emitter, lifetime or static-map
 premises keep the census incomplete; a measured scene peak is not a legal
-content upper.
+content upper. The affected `Capture`, `HeadModels` and `Vertex` rows keep
+their proposed budgets null and preserve conservative calculations only as
+diagnostic measurements until those premises are established.
 The location-change preflight parses the pinned Rust source and checks each
 call's enclosing tile/shape guard. Unrelated guarded paths cannot hide an
 unguarded location-change call. The NPC-list capacity comes from its actual

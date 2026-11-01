@@ -3156,9 +3156,9 @@ fn resource_rows(
     shared_index_layout: Option<client::render::store::RenderTestSharedIndexLayout>,
     item_sprite_ids: Option<usize>,
     owner_bounds: Option<&OwnerBounds>,
-    vertex_content_upper_established: bool,
+    scene_content_upper_established: bool,
 ) -> Vec<Value> {
-    let legal_vertex_capacity = if vertex_content_upper_established {
+    let legal_vertex_capacity = if scene_content_upper_established {
         capture_bounds
             .and_then(|capture| vertex_capacity_bytes(capture.admitted.vertex_payload_bytes_upper))
     } else {
@@ -3288,7 +3288,7 @@ fn resource_rows(
             .and_then(|(capacity, atlas)| {
                 vertex_capacity_supported(capacity, atlas.max_storage_buffer_binding_size)
             });
-        let legal_capacity = if vertex_content_upper_established {
+        let legal_capacity = if scene_content_upper_established {
             final_capacity
         } else {
             None
@@ -3303,7 +3303,7 @@ fn resource_rows(
             "capacity_derivation": "B_vertex = checked_next_power_of_two(max(1048576, content_upper_vertex_bytes))",
             "device_requirement": "Reject the device if max_storage_buffer_binding_size is below the full B_vertex capacity. Do not clamp B_vertex.",
             "minimum_capacity_bytes": VERTEX_BUFFER_MIN_BYTES,
-            "legal_content_upper_qualified": vertex_content_upper_established,
+            "legal_content_upper_qualified": scene_content_upper_established,
             "legal_B_vertex_capacity_bytes": legal_capacity,
             "legal_B_vertex_replacement_peak_bytes": legal_capacity.and_then(vertex_growth_peak_bytes),
             "legal_device_supports_full_B_vertex": device_support_for_legal_upper,
@@ -3489,9 +3489,9 @@ fn resource_rows(
         .map(|(resource, formula, trigger, blocker)| {
             let (content_upper, measured, complete) = match resource {
                 RenderResource::Capture => (
-                    capture_bounds.map_or(Value::Null, |capture| json!(capture.conservative_capture_peak_bytes_upper)),
+                    capture_bounds.filter(|_| scene_content_upper_established).map_or(Value::Null, |capture| json!(capture.conservative_capture_peak_bytes_upper)),
                     capture_known.clone().unwrap_or(Value::Null),
-                    capture_bounds.is_some(),
+                    scene_content_upper_established && capture_bounds.is_some(),
                 ),
                 RenderResource::NavVertices => (
                     nav_bounds.map_or(Value::Null, |nav| json!(nav.nav_vertices_peak_bytes)),
@@ -3514,7 +3514,7 @@ fn resource_rows(
                     nav_bounds.is_some(),
                 ),
                 RenderResource::HeadModels => (
-                    owner_bounds.map_or(Value::Null, |bounds| json!(bounds.head_models.bytes)),
+                    owner_bounds.filter(|_| scene_content_upper_established).map_or(Value::Null, |bounds| json!(bounds.head_models.bytes)),
                     owner_bounds.map_or_else(
                         || json!({
                             "largest_available_family_id": trigger.as_deref(),
@@ -3523,7 +3523,7 @@ fn resource_rows(
                         }),
                         |bounds| bounds.head_models.details.clone(),
                     ),
-                    owner_bounds.is_some(),
+                    scene_content_upper_established && owner_bounds.is_some(),
                 ),
                 RenderResource::HeadMisc => (
                     owner_bounds.map_or(Value::Null, |bounds| json!(bounds.head_misc.bytes)),
@@ -3553,7 +3553,7 @@ fn resource_rows(
                     owner_bounds.is_some(),
                 ),
                 RenderResource::Vertex => (
-                    if vertex_content_upper_established {
+                    if scene_content_upper_established {
                         capture_bounds.map_or(Value::Null, |capture| {
                             json!(capture.admitted.vertex_payload_bytes_upper)
                         })
@@ -3561,7 +3561,7 @@ fn resource_rows(
                         Value::Null
                     },
                     vertex_known.clone().unwrap_or(Value::Null),
-                    vertex_content_upper_established && vertex_known.is_some(),
+                    scene_content_upper_established && vertex_known.is_some(),
                 ),
                 RenderResource::VertexCoordinates => {
                     unreachable!("fixed coordinate range is not a byte-budget census row")
@@ -3629,7 +3629,14 @@ fn resource_rows(
                         "required_capacity_bytes": legal_vertex_capacity,
                         "device_max_storage_buffer_binding_size": atlas_layout.map(|atlas| atlas.max_storage_buffer_binding_size),
                     })]
-                } else if resource == RenderResource::Vertex && !vertex_content_upper_established {
+                } else if matches!(resource, RenderResource::Capture | RenderResource::HeadModels)
+                    && !scene_content_upper_established
+                {
+                    vec![json!({
+                        "code": "legal_scene_content_upper_unqualified",
+                        "required": blocker,
+                    })]
+                } else if resource == RenderResource::Vertex && !scene_content_upper_established {
                     vec![json!({
                         "code": "legal_vertex_content_upper_unqualified",
                         "required": blocker,
@@ -5404,4 +5411,62 @@ fn census_reports_exact_nav_alignment_and_separate_vertex_replacement_charge() {
     assert_eq!(vertex["B_bytes"], Value::Null);
     assert_eq!(vertex["charge_limit_bytes"], Value::Null);
     assert_eq!(vertex["status"], "incomplete");
+}
+
+#[test]
+fn unqualified_scene_upper_keeps_capture_and_head_models_diagnostic_only() {
+    let capture = SceneCaptureBounds {
+        conservative_capture_peak_bytes_upper: 128,
+        ..Default::default()
+    };
+    let owner = || OwnerValue {
+        bytes: 256,
+        details: json!({"diagnostic_upper_bytes": 256}),
+    };
+    let owners = OwnerBounds {
+        head_models: owner(),
+        head_misc: owner(),
+        temp_models: owner(),
+        shared_models: owner(),
+        shared_sprites: owner(),
+        context_cpu: owner(),
+    };
+    for qualified in [false, true] {
+        let resources = resource_rows(
+            &BTreeMap::new(),
+            &BTreeMap::new(),
+            None,
+            None,
+            None,
+            Some(&capture),
+            None,
+            None,
+            None,
+            None,
+            Some(&owners),
+            qualified,
+        );
+        for (resource, bytes) in [("Capture", 128), ("HeadModels", 256)] {
+            let row = resources
+                .iter()
+                .find(|row| row["resource"] == resource)
+                .unwrap();
+            assert_ne!(row["known_measurements"], Value::Null);
+            if qualified {
+                assert_eq!(row["status"], "complete");
+                assert_eq!(row["content_upper_bytes"], bytes);
+                assert_eq!(row["B_bytes"], bytes);
+                assert_eq!(row["charge_limit_bytes"], bytes);
+            } else {
+                assert_eq!(row["status"], "incomplete");
+                assert_eq!(row["content_upper_bytes"], Value::Null);
+                assert_eq!(row["B_bytes"], Value::Null);
+                assert_eq!(row["charge_limit_bytes"], Value::Null);
+                assert_eq!(
+                    row["blockers"][0]["code"],
+                    "legal_scene_content_upper_unqualified"
+                );
+            }
+        }
+    }
 }
