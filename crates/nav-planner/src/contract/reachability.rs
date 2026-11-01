@@ -258,4 +258,84 @@ mod tests {
             .unwrap_err();
         assert!(matches!(err, ReachabilityError::MissingComponent { .. }));
     }
+
+    fn world_with_one_stand() -> (Arc<NavWorld>, LocPlacementKey, WorldTile) {
+        let (walk, blocked) = pack_walk(&[0; 8]);
+        let collision = WorldCollision {
+            origin: WorldTile {
+                x: 3200,
+                z: 3200,
+                level: 0,
+            },
+            width: 2,
+            height: 1,
+            walk,
+            blocked,
+            flags: None,
+        };
+        let tile = WorldTile {
+            x: 3200,
+            z: 3200,
+            level: 0,
+        };
+        let origin = crate::pack::pack_tile_key(tile).unwrap();
+        let mut atlas = ReachabilityAtlas::unlabeled(&collision).unwrap();
+        atlas.placements = Box::from([crate::reachability::PlacementRow {
+            origin,
+            loc_id: 42,
+            shape: 0,
+            angle: 0,
+            coverage: crate::reachability::PLACEMENT_COMPLETE,
+            trigger: crate::reachability::TRIGGER_OP,
+            stand_start: 0,
+            stand_count: 1,
+            detail: 0,
+        }]);
+        atlas.stands = Box::from([crate::reachability::StandRow {
+            tile: origin,
+            base: 0,
+        }]);
+        let world = Arc::new(NavWorld::from_decoded(
+            collision,
+            crate::transport::TransportGraph::default(),
+            Vec::new(),
+            atlas,
+        ));
+        let key = LocPlacementKey::new(tile, 42, 0, 0).unwrap();
+        (world, key, tile)
+    }
+
+    #[test]
+    fn hundred_bound_leases_share_one_atlas_payload() {
+        let world = tiny_world();
+        let digest = PackDigest::of(b"share-atlas");
+        let leases: Vec<_> = (0..100)
+            .map(|_| NavLease::wrap(Arc::clone(&world), digest).unwrap())
+            .collect();
+        let first = leases[0].reachability();
+        for lease in &leases {
+            let view = lease.reachability();
+            assert!(
+                std::ptr::eq(view.atlas, first.atlas),
+                "each bound lease must borrow the same atlas payload"
+            );
+        }
+    }
+
+    #[test]
+    fn borrowed_component_and_stand_lookups_do_not_allocate() {
+        let (world, key, tile) = world_with_one_stand();
+        let lease = NavLease::wrap(world, PackDigest::of(b"zero-alloc")).unwrap();
+        let view = lease.reachability();
+        let measured = allocation_counter::measure(|| {
+            let component = view.component_at(tile);
+            let stands = view.loc_stands(key).expect("fixture placement is covered");
+            assert_eq!(stands.len(), 1);
+            let _ = std::hint::black_box((component, stands));
+        });
+        assert_eq!(
+            measured.count_total, 0,
+            "borrowed component and stand lookups must not allocate: {measured:?}"
+        );
+    }
 }

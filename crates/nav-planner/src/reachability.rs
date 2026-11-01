@@ -338,6 +338,38 @@ impl ReachabilityAtlas {
             .map_or(0, |id| id.saturating_add(1))
     }
 
+    /// Transport edges that never joined a labelled component.
+    pub fn unmatched_join_count(&self) -> usize {
+        self.coverage
+            .iter()
+            .filter(|row| row.reason == COVERAGE_UNMATCHED_JOIN)
+            .count()
+    }
+
+    /// Joined takeoffs whose landings sit off the labelled walk surface.
+    pub fn exceptional_landing_count(&self) -> usize {
+        self.exceptional
+            .iter()
+            .filter(|row| row.reason == COVERAGE_EXCEPTIONAL_LANDING)
+            .count()
+    }
+
+    /// Teleport templates that never joined a labelled landing.
+    pub fn unmatched_teleport_count(&self) -> usize {
+        self.teleports
+            .iter()
+            .filter(|row| row.reason == COVERAGE_UNMATCHED_JOIN)
+            .count()
+    }
+
+    /// Session templates that never joined a labelled source or landing.
+    pub fn unmatched_session_count(&self) -> usize {
+        self.sessions
+            .iter()
+            .filter(|row| row.reason == COVERAGE_UNMATCHED_JOIN)
+            .count()
+    }
+
     pub fn placement(
         &self,
         origin: WorldTile,
