@@ -4284,6 +4284,9 @@ mod tests {
     #[test]
     #[ignore = "invoked in an isolated process by recorder acceptance tests"]
     fn recorder_fixture_child() {
+        // A fresh child has not run panel startup, which installs this sink.
+        #[cfg(feature = "render-diagnostics")]
+        let _ = frontend_core::log::global();
         let mode = std::env::var("RECORDER_CHILD_MODE").expect("recorder fixture mode");
         if mode != "legacy" {
             host::render_head::test_hooks::configure_process(
