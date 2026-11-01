@@ -818,6 +818,7 @@ fn verify_client_dynamic_sprite_capacity(
             {"path": DRAW, "lines": [916, 930, 945, 1024, 1025, 1056, 1057, 1108, 1110]},
         ],
     }))
+}
 
 
 fn parse_script_opcode_values(source: &str) -> Result<BTreeMap<String, u16>, String> {
