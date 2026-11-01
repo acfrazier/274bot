@@ -1833,6 +1833,20 @@ mod tests {
         );
     }
 
+    fn expect_rejected_because(receipt: &C0Receipt, logs: &[HostLog], reason: &str) {
+        let error = match c0_acceptance_oracle(receipt, logs) {
+            Ok(()) => panic!(
+                "unexpectedly accepted invalid C0 receipt: {:#}",
+                receipt.json(RunPurpose::Acceptance, logs)
+            ),
+            Err(error) => error,
+        };
+        assert!(
+            error.contains(reason),
+            "rejected for the wrong reason: expected {reason:?}, got {error:?}"
+        );
+    }
+
     #[test]
     fn acceptance_oracle_accepts_the_dropped_first_click_retry_path() {
         let dropped_click_retry = valid_receipt(3, 2, 9, 16, 2, 20);
@@ -2074,7 +2088,18 @@ mod tests {
         expect_rejected(&died, &valid_hazard_logs());
 
         let no_hazard = valid_receipt(3, 2, 9, 16, 2, 20);
-        expect_rejected(&no_hazard, &[]);
+        expect_rejected_because(
+            &no_hazard,
+            &[valid_hazard_logs()[1].clone()],
+            "O6: expected one selected hazard log",
+        );
+
+        let hazard_without_step_line = valid_receipt(3, 2, 9, 16, 2, 20);
+        expect_rejected_because(
+            &hazard_without_step_line,
+            &[valid_hazard_logs()[0].clone()],
+            "C0 has no climb-cell-rock-1 ScriptTrace PLAYER_INFO line",
+        );
 
         let mut early_end = valid_receipt(3, 2, 9, 16, 2, 20);
         early_end.s1 = None;
