@@ -1987,7 +1987,7 @@ fn quest_facade_rows<'s>(
         let status = if status.boolean_value(scope) {
             status
         } else {
-            v8_str(scope, "unknown")?.into()
+            v8_str(scope, "unknown")?
         };
         let row = new_object(scope, ClientAdapterObjectShape::QuestFacadeRow)?;
         set_key(scope, row, "name", name);
