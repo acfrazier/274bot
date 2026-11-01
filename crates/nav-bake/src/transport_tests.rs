@@ -9987,12 +9987,18 @@ fn real_content_atlas_stands_match_the_client_reach_strategy() {
             atlas.placements().len()
         );
         assert_eq!((illegal, missing), (0, 0));
-        for shape in 0..=10 {
-            assert!(
-                seen.iter().any(|&(s, _)| s == shape),
-                "no complete placement of shape {shape} in {}",
-                root.display()
-            );
+        // Shapes 6 to 8 (diagonal wall decorations) have no operable
+        // placement in the 274 or 289 maps; the engine-oracle unit test in
+        // `crates/api/tests/loc_approach_reach.rs` covers them. Every other
+        // reach shape appears in all four rotations.
+        for shape in [0u8, 1, 2, 3, 4, 5, 9, 10, 11, 22] {
+            for angle in 0u8..4 {
+                assert!(
+                    seen.contains(&(shape, angle)),
+                    "no complete placement of shape {shape} angle {angle} in {}",
+                    root.display()
+                );
+            }
         }
         // The stands the reviewers named were illegal in the first v18 bake.
         for (origin, id, shape, angle, stand) in [
