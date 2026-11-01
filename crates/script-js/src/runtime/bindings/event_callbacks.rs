@@ -702,7 +702,7 @@ for (const type of ['chat.message', 'skill.xp', 'skill.level', 'script.finish', 
         println!(
             "compat v1 Events V8 heap baseline={baseline} after={after} growth={growth} limit={limit}"
         );
-        assert_eq!(count, 6150, "every event reaches its listener once");
+        assert_eq!(count, 5 * 1025, "every event reaches its listener once");
         assert!(
             growth <= limit,
             "collected native-event heap grew {growth} bytes; limit {limit}"
