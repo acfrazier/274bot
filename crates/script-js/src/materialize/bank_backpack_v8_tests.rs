@@ -79,8 +79,9 @@ fn load_bank_api(runtime: &mut Runtime) {
     );
     let kernel = Module::new("/rs2b0t/bot/shim/_kernel.js", BANK_KERNEL);
     let entry = Module::new("/bank_backpack_test.js", BANK_ENTRY);
+    // Both shims import `_kernel.js`; register it before the importers.
     runtime
-        .load_modules(&entry, vec![&bank, &adapter, &kernel])
+        .load_modules(&entry, vec![&kernel, &bank, &adapter])
         .unwrap();
 }
 
