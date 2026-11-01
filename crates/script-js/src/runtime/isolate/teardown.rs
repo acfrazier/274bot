@@ -202,6 +202,15 @@ pub(super) fn begin_frame_execution(
     begin_execution(teardown, tick, generation, false)
 }
 
+/// Pause/resume lifecycle callbacks are allowed while ScriptRunner work is
+/// paused, but their synchronous JavaScript body still has an execution bound.
+pub(super) fn begin_lifecycle_hook_execution(
+    teardown: &Mutex<TeardownState>,
+    generation: u64,
+) -> bool {
+    begin_execution(teardown, super::LIFECYCLE_HOOK_TICK, generation, false)
+}
+
 /// Finish the active eval and cancel its terminate while holding the same lock
 /// Pause/watchdog use to fire it. They therefore cannot fire after this cancel
 /// and leave termination armed for a later eval or `onStop`.

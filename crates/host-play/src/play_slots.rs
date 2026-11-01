@@ -133,6 +133,21 @@ pub(crate) fn script_state_builds_nav_facts(script_state: Option<script::RunStat
     )
 }
 
+/// Queue one host-owned client frame under the slot lock, then wait for its
+/// isolate receipt after releasing that lock.
+pub(crate) fn dispatch_client_frame(slot: &Arc<Mutex<script::SlotScript>>, _name: &str) -> bool {
+    #[cfg(feature = "memory-profile")]
+    memory::frame_dispatch_begin(_name);
+    let dispatch = {
+        let mut slot = slot.lock().unwrap();
+        slot.begin_client_frame()
+    };
+    let delivered = dispatch.is_some_and(|dispatch| dispatch.wait_for_ack());
+    #[cfg(feature = "memory-profile")]
+    memory::frame_dispatch_end(_name, delivered);
+    delivered
+}
+
 pub(super) type SlotFrame = Arc<dyn Fn(&mut Client, &str, SlotFrameInput) + Send + Sync>;
 
 #[cfg(any(test, feature = "test-support"))]
@@ -1819,11 +1834,7 @@ fn spawn_slot_thread(
                                 )
                             ) {
                                 if let Some(slot) = script_slot(&slot_scripts, name) {
-                                    #[cfg(feature = "memory-profile")]
-                                    memory::frame_dispatch_begin(name);
-                                    frame_delivered = slot.lock().unwrap().on_client_frame();
-                                    #[cfg(feature = "memory-profile")]
-                                    memory::frame_dispatch_end(name, frame_delivered);
+                                    frame_delivered = dispatch_client_frame(&slot, name);
                                 }
                             }
                             if !mainland_sent && mainland && ready {

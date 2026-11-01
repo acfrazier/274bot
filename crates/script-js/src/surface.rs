@@ -221,8 +221,8 @@ impl SurfaceRun for JsSurfaceRun {
     fn resume(&self) {
         self.isolate.resume();
     }
-    fn on_client_frame(&mut self) -> bool {
-        self.isolate.on_client_frame()
+    fn begin_client_frame(&mut self) -> Option<Arc<dyn script::surface::ClientFrameDispatch>> {
+        self.isolate.begin_client_frame()
     }
     fn loc_projection_wanted(&self) -> bool {
         self.isolate.loc_projection_wanted()

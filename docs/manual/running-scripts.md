@@ -84,6 +84,10 @@ Click **Pause** to hold the script. Click **Resume** to let it go on. Click
 **Stop** to end it. **Pause** works only while the script is starting, running or
 paused.
 
+When an rs2b0t script defines `onPause` or `onResume`, 274bot calls the
+corresponding hook. The runtime watchdog interrupts a hook that does not
+return.
+
 Your own movement can also pause a script. Clicking in the game view or on the
 minimap counts as movement. Choosing an entry such as Walk or Talk-to from the
 world menu also counts. Choosing **Examine** or **Cancel** from that menu does

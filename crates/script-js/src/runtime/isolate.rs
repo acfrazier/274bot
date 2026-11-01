@@ -91,6 +91,11 @@ const ON_STOP_DEADLINE: Duration = Duration::from_millis(50);
 const RECOVERY_ANCHOR_TICK: u64 = u64::MAX;
 /// Reserved execution id for synchronous client-frame listener dispatch.
 pub(super) const FRAME_CALLBACK_TICK: u64 = u64::MAX - 1;
+const LIFECYCLE_HOOK_TICK: u64 = u64::MAX - 2;
+/// A frame receipt should arrive before the execution watchdog expires; this
+/// final bound also covers a disconnected or otherwise unresponsive isolate.
+const CLIENT_FRAME_ACK_TIMEOUT: Duration = Duration::from_millis(800);
+const CLIENT_FRAME_ACK_POLL: Duration = Duration::from_millis(100);
 /// Hard stop for yielding JS (rustyscript `RuntimeOptions.timeout`).
 const RUNTIME_TIMEOUT: Duration = Duration::from_millis(50);
 /// How long setup waits for V8 creation and startup evaluation before the
@@ -337,11 +342,10 @@ pub struct LoadIsolate {
     frame_interest: std::sync::Arc<AtomicUsize>,
     /// Set by the native `reader.locBox` callback, read by the slot publisher.
     loc_projection_interest: std::sync::Arc<std::sync::atomic::AtomicBool>,
-    /// Reused zero-capacity receipt channel: at most one client frame can
-    /// be pending while the host client thread waits for V8 dispatch. The
-    /// mutex keeps the isolate handle `Sync`; the frame path takes it with
-    /// `get_mut`, so it never locks.
-    frame_ack_rx: Mutex<Receiver<()>>,
+    /// One outstanding client-frame command and its receipt. A timed-out
+    /// dispatch stays pending until its late receipt is drained, so the host
+    /// never queues frames behind an isolate that is still handling one.
+    frame_ack_state: Arc<Mutex<FrameAckState>>,
     stopped: std::sync::atomic::AtomicBool,
     /// One bounded, non-consuming terminal receipt for ScriptRunner.stop.
     script_stop: Mutex<Option<ScriptStopReceipt>>,
@@ -353,7 +357,7 @@ pub struct LoadIsolate {
     /// it, keeping each tick paired with its scene.
     snapshot_refused: AtomicBool,
     rx: Mutex<Receiver<ThreadMsg>>,
-    logs: Mutex<Vec<String>>,
+    logs: Arc<Mutex<Vec<String>>>,
     /// Typed diagnostics collected while each tick runs. Kept separate from
     /// user-authored `Log` messages so slot state cannot be driven by text.
     tick_errors: Mutex<HashMap<(u64, u64), Vec<String>>>,
@@ -436,6 +440,220 @@ enum SetupState {
     },
     Ready,
     Failed(String),
+}
+struct FrameAckState {
+    receiver: Receiver<()>,
+    next_id: u64,
+    pending: Option<u64>,
+    disconnected: bool,
+}
+
+struct FrameDispatch {
+    state: Arc<Mutex<FrameAckState>>,
+    id: u64,
+    watchdog: FrameWatchdog,
+}
+
+struct FrameWatchdog {
+    teardown: Arc<Mutex<TeardownState>>,
+    terminate: Option<v8::IsolateHandle>,
+    logs: Arc<Mutex<Vec<String>>>,
+    ready: bool,
+}
+
+impl script::surface::ClientFrameDispatch for FrameDispatch {
+    fn wait_for_ack(&self) -> bool {
+        let deadline = Instant::now() + CLIENT_FRAME_ACK_TIMEOUT;
+        let mut state = match self.state.try_lock() {
+            Ok(state) => state,
+            Err(std::sync::TryLockError::Poisoned(error)) => error.into_inner(),
+            Err(std::sync::TryLockError::WouldBlock) => return false,
+        };
+        if state.pending != Some(self.id) {
+            return false;
+        }
+        loop {
+            let remaining = deadline.saturating_duration_since(Instant::now());
+            if remaining.is_zero() {
+                return false;
+            }
+            match state
+                .receiver
+                .recv_timeout(remaining.min(CLIENT_FRAME_ACK_POLL))
+            {
+                Ok(()) => {
+                    state.pending = None;
+                    return true;
+                }
+                Err(mpsc::RecvTimeoutError::Disconnected) => {
+                    state.pending = None;
+                    state.disconnected = true;
+                    return false;
+                }
+                Err(mpsc::RecvTimeoutError::Timeout) => {
+                    self.watchdog.interrupt_slow_execution();
+                }
+            }
+        }
+    }
+}
+
+impl FrameWatchdog {
+    fn interrupt_slow_execution(&self) {
+        interrupt_slow_execution_shared(
+            &self.teardown,
+            self.terminate.as_ref(),
+            &self.logs,
+            self.ready,
+        );
+    }
+}
+
+fn fire_execution_interrupt_shared(
+    teardown: &Arc<Mutex<TeardownState>>,
+    terminate: Option<&v8::IsolateHandle>,
+    execution_id: u64,
+    owner: teardown::ExecutionInterrupt,
+) -> bool {
+    let mut state = teardown.lock().unwrap();
+    if state.phase != TeardownPhase::Running
+        || !state.execution_active
+        || state.execution_id != execution_id
+        || state.execution_interrupt.is_some()
+    {
+        return false;
+    }
+    state.execution_interrupt = Some(teardown::InterruptedExecution {
+        owner,
+        consumed: matches!(owner, teardown::ExecutionInterrupt::NoDeadline(_)),
+    });
+    if let Some(handle) = terminate {
+        handle.terminate_execution();
+    }
+    true
+}
+
+fn register_execution_deadline(
+    teardown: &Arc<Mutex<TeardownState>>,
+    handle: v8::IsolateHandle,
+    id: u64,
+    owner: teardown::ExecutionInterrupt,
+    at: Instant,
+) -> Result<(), LoadIsolateError> {
+    #[cfg(any(test, feature = "test-hooks"))]
+    let injected = teardown.lock().unwrap().fail_execution_registration;
+    #[cfg(not(any(test, feature = "test-hooks")))]
+    let injected: Option<teardown::DeadlineRefusal> = None;
+    if let Some(reason) = injected {
+        return Err(match reason {
+            teardown::DeadlineRefusal::Capacity => LoadIsolateError::SupervisorCapacity,
+            teardown::DeadlineRefusal::Stopped => {
+                LoadIsolateError::Supervisor("supervisor worker stopped".into())
+            }
+        });
+    }
+    supervisor::get()?.arm_execution(Arc::clone(teardown), handle, id, owner, at)
+}
+
+fn arm_active_execution_deadline_shared(
+    teardown: &Arc<Mutex<TeardownState>>,
+    terminate: Option<&v8::IsolateHandle>,
+    logs: &Mutex<Vec<String>>,
+    owner: teardown::ExecutionInterrupt,
+) {
+    let deadline = {
+        let mut state = teardown.lock().unwrap();
+        let (Some(started), Some(handle)) = (state.execution_started, terminate) else {
+            return;
+        };
+        if state.phase != TeardownPhase::Running
+            || !state.execution_active
+            || state.execution_interrupt.is_some()
+        {
+            return;
+        }
+        if owner != teardown::ExecutionInterrupt::Watchdog
+            || state.execution_deadline_owner.is_none()
+        {
+            state.execution_deadline_owner = Some(owner);
+        }
+        if state.execution_deadline_armed {
+            return;
+        }
+        state.execution_deadline_armed = true;
+        (
+            state.execution_id,
+            started + EXECUTION_WATCHDOG_HORIZON,
+            handle.clone(),
+        )
+    };
+    let (id, at, handle) = deadline;
+    let registration = register_execution_deadline(teardown, handle, id, owner, at);
+    if let Err(error) = registration {
+        let reason = match error {
+            LoadIsolateError::SupervisorCapacity => teardown::DeadlineRefusal::Capacity,
+            _ => teardown::DeadlineRefusal::Stopped,
+        };
+        fire_execution_interrupt_shared(
+            teardown,
+            terminate,
+            id,
+            teardown::ExecutionInterrupt::NoDeadline(reason),
+        );
+        logs.lock().unwrap().push(error.to_string());
+    }
+}
+
+fn interrupt_slow_execution_shared(
+    teardown: &Arc<Mutex<TeardownState>>,
+    terminate: Option<&v8::IsolateHandle>,
+    logs: &Mutex<Vec<String>>,
+    ready: bool,
+) {
+    if !ready {
+        return;
+    }
+    let active = {
+        let state = teardown.lock().unwrap();
+        match (
+            state.phase,
+            state.execution_active,
+            state.execution_interrupt,
+            state.execution_started,
+        ) {
+            (TeardownPhase::Running, true, None, Some(started)) => {
+                Some((state.execution_id, state.execution_tick, started.elapsed()))
+            }
+            _ => None,
+        }
+    };
+    let Some((execution_id, tick, elapsed)) = active else {
+        return;
+    };
+    if elapsed <= EXECUTION_WATCHDOG_HORIZON {
+        arm_active_execution_deadline_shared(
+            teardown,
+            terminate,
+            logs,
+            teardown::ExecutionInterrupt::Watchdog,
+        );
+        return;
+    }
+    if fire_execution_interrupt_shared(
+        teardown,
+        terminate,
+        execution_id,
+        teardown::ExecutionInterrupt::Watchdog,
+    ) {
+        let line = if tick == RECOVERY_ANCHOR_TICK {
+            format!("interrupted slow recoveryAnchor ({elapsed:?})")
+        } else if tick == FRAME_CALLBACK_TICK {
+            format!("interrupted slow client-frame callback ({elapsed:?})")
+        } else {
+            format!("interrupted slow tick {tick} ({elapsed:?})")
+        };
+        logs.lock().unwrap().push(line);
+    }
 }
 
 /// The only production gameplay construction path is the slot-owned factory.
@@ -630,7 +848,13 @@ impl LoadIsolate {
             names_projection_reader(&js, &siblings),
         ));
         let thread_loc_projection_interest = std::sync::Arc::clone(&loc_projection_interest);
-        let (frame_ack_tx, frame_ack_rx) = mpsc::sync_channel(0);
+        let (frame_ack_tx, frame_ack_rx) = mpsc::sync_channel(1);
+        let frame_ack_state = Arc::new(Mutex::new(FrameAckState {
+            receiver: frame_ack_rx,
+            next_id: 0,
+            pending: None,
+            disconnected: false,
+        }));
         let queued = std::sync::Arc::new(AtomicUsize::new(0));
         let thread_queued = queued.clone();
         let walking_ownership = std::sync::Arc::new(crate::machine::WalkingOwnership::default());
@@ -682,14 +906,14 @@ impl LoadIsolate {
             paint_generation,
             frame_interest,
             loc_projection_interest,
-            frame_ack_rx: Mutex::new(frame_ack_rx),
+            frame_ack_state,
             stopped: std::sync::atomic::AtomicBool::new(false),
             script_stop: Mutex::new(None),
             tx,
             queued,
             snapshot_refused: AtomicBool::new(false),
             rx: Mutex::new(msg_rx),
-            logs: Mutex::new(Vec::new()),
+            logs: Arc::new(Mutex::new(Vec::new())),
             tick_errors: Mutex::new(HashMap::new()),
             tick_outcomes: Mutex::new(Vec::new()),
             tick_outcome_error_generation: Mutex::new(None),
@@ -765,36 +989,61 @@ impl LoadIsolate {
             .fetch_sub(1, std::sync::atomic::Ordering::AcqRel);
         false
     }
-    /// Deliver one host-owned client-loop frame without queueing another
-    /// frame while the isolate is still handling this one.
-    pub(crate) fn on_client_frame(&mut self) -> bool {
-        if self
-            .frame_interest
-            .load(std::sync::atomic::Ordering::Acquire)
-            == 0
-            || self.stopped.load(std::sync::atomic::Ordering::Acquire)
-            || self.teardown_blocks_dispatch()
-        {
-            return false;
-        }
-        if !self.send(IsolateCmd::ClientFrame) {
-            return false;
-        }
-        loop {
-            let receipts = self
-                .frame_ack_rx
-                .get_mut()
-                .unwrap_or_else(std::sync::PoisonError::into_inner);
-            match receipts.recv_timeout(Duration::from_millis(100)) {
-                Ok(()) => return true,
-                Err(mpsc::RecvTimeoutError::Disconnected) => return false,
-                Err(mpsc::RecvTimeoutError::Timeout) => {
-                    let ready = self.poll_ready() == Ready::Ready;
-                    self.interrupt_slow_execution(ready);
-                    self.pump_logs();
+    /// Queue one host-owned client frame and return a bounded receipt waiter.
+    /// The caller must release the slot mutex before waiting on the receipt.
+    pub(crate) fn begin_client_frame(
+        &mut self,
+    ) -> Option<Arc<dyn script::surface::ClientFrameDispatch>> {
+        let mut state = match self.frame_ack_state.try_lock() {
+            Ok(state) => state,
+            Err(std::sync::TryLockError::Poisoned(error)) => error.into_inner(),
+            Err(std::sync::TryLockError::WouldBlock) => return None,
+        };
+        if state.pending.is_some() {
+            match state.receiver.try_recv() {
+                Ok(()) => state.pending = None,
+                Err(mpsc::TryRecvError::Empty) => return None,
+                Err(mpsc::TryRecvError::Disconnected) => {
+                    state.pending = None;
+                    state.disconnected = true;
+                    return None;
                 }
             }
         }
+        if state.disconnected
+            || self
+                .frame_interest
+                .load(std::sync::atomic::Ordering::Acquire)
+                == 0
+            || self.stopped.load(std::sync::atomic::Ordering::Acquire)
+            || self.teardown_blocks_dispatch()
+        {
+            return None;
+        }
+        let ready = self.poll_ready() == Ready::Ready;
+        if !self.send(IsolateCmd::ClientFrame) {
+            return None;
+        }
+        let id = state.next_id;
+        state.next_id = state.next_id.wrapping_add(1);
+        state.pending = Some(id);
+        Some(Arc::new(FrameDispatch {
+            state: Arc::clone(&self.frame_ack_state),
+            id,
+            watchdog: FrameWatchdog {
+                teardown: Arc::clone(&self.teardown),
+                terminate: self.terminate.get().cloned(),
+                logs: Arc::clone(&self.logs),
+                ready,
+            },
+        }))
+    }
+
+    /// Deliver one host-owned client-loop frame without queueing another
+    /// frame while the isolate is still handling this one.
+    pub(crate) fn on_client_frame(&mut self) -> bool {
+        self.begin_client_frame()
+            .is_some_and(|dispatch| dispatch.wait_for_ack())
     }
 
     /// Deliver a client-loop frame through the real BotHost producer in tests.
@@ -944,99 +1193,18 @@ impl LoadIsolate {
     /// never the cadence of later host dispatches. If it is still inside its
     /// horizon, arm one execution-scoped sleeper for the remaining time.
     fn interrupt_slow_execution(&self, ready: bool) {
-        if !ready {
-            return;
-        }
-        let active = {
-            let st = self.teardown.lock().unwrap();
-            match (
-                st.phase,
-                st.execution_active,
-                st.execution_interrupt,
-                st.execution_started,
-            ) {
-                (TeardownPhase::Running, true, None, Some(started)) => {
-                    Some((st.execution_id, st.execution_tick, started.elapsed()))
-                }
-                _ => None,
-            }
-        };
-        let Some((execution_id, tick, elapsed)) = active else {
-            return;
-        };
-        if elapsed <= EXECUTION_WATCHDOG_HORIZON {
-            self.arm_active_execution_deadline(teardown::ExecutionInterrupt::Watchdog);
-            return;
-        }
-        if self.fire_execution_interrupt(execution_id, teardown::ExecutionInterrupt::Watchdog) {
-            let line = if tick == RECOVERY_ANCHOR_TICK {
-                format!("interrupted slow recoveryAnchor ({elapsed:?})")
-            } else if tick == FRAME_CALLBACK_TICK {
-                format!("interrupted slow client-frame callback ({elapsed:?})")
-            } else {
-                format!("interrupted slow tick {tick} ({elapsed:?})")
-            };
-            self.logs.lock().unwrap().push(line);
-        }
+        interrupt_slow_execution_shared(&self.teardown, self.terminate.get(), &self.logs, ready);
     }
 
     /// Arm the independent process supervisor against the execution's original
     /// start. Changing Pause/reset ownership never extends that deadline.
     fn arm_active_execution_deadline(&self, owner: teardown::ExecutionInterrupt) {
-        let deadline = {
-            let mut st = self.teardown.lock().unwrap();
-            let (Some(started), Some(handle)) = (st.execution_started, self.terminate.get()) else {
-                return;
-            };
-            if st.phase != TeardownPhase::Running
-                || !st.execution_active
-                || st.execution_interrupt.is_some()
-            {
-                return;
-            }
-            if owner != teardown::ExecutionInterrupt::Watchdog
-                || st.execution_deadline_owner.is_none()
-            {
-                st.execution_deadline_owner = Some(owner);
-            }
-            if st.execution_deadline_armed {
-                return;
-            }
-            st.execution_deadline_armed = true;
-            (
-                st.execution_id,
-                started + EXECUTION_WATCHDOG_HORIZON,
-                handle.clone(),
-            )
-        };
-        let (id, at, handle) = deadline;
-        #[cfg(any(test, feature = "test-hooks"))]
-        let injected = self.teardown.lock().unwrap().fail_execution_registration;
-        #[cfg(not(any(test, feature = "test-hooks")))]
-        let injected: Option<teardown::DeadlineRefusal> = None;
-        let registration = if let Some(reason) = injected {
-            Err(match reason {
-                teardown::DeadlineRefusal::Capacity => LoadIsolateError::SupervisorCapacity,
-                teardown::DeadlineRefusal::Stopped => {
-                    LoadIsolateError::Supervisor("supervisor worker stopped".into())
-                }
-            })
-        } else {
-            supervisor::get().and_then(|service| {
-                service.arm_execution(self.teardown.clone(), handle, id, owner, at)
-            })
-        };
-        if let Err(error) = registration {
-            // No independent owner: interrupt this exact execution immediately.
-            // Pause still allows healthy work when registration succeeds; without
-            // an independent bound, it cannot promise an unbounded completion.
-            let reason = match error {
-                LoadIsolateError::SupervisorCapacity => teardown::DeadlineRefusal::Capacity,
-                _ => teardown::DeadlineRefusal::Stopped,
-            };
-            self.fire_execution_interrupt(id, teardown::ExecutionInterrupt::NoDeadline(reason));
-            self.logs.lock().unwrap().push(error.to_string());
-        }
+        arm_active_execution_deadline_shared(
+            &self.teardown,
+            self.terminate.get(),
+            &self.logs,
+            owner,
+        );
     }
 
     #[cfg(feature = "memory-profile")]
@@ -1620,33 +1788,6 @@ impl LoadIsolate {
         if let Some(handle) = self.terminate.get() {
             handle.terminate_execution();
         }
-    }
-
-    /// Fire an eval interrupt only for the exact execution the caller
-    /// inspected. The isolate-side finish/cancel uses this same lock, so a
-    /// delayed watchdog observation cannot terminate a later tick or onStop.
-    fn fire_execution_interrupt(
-        &self,
-        execution_id: u64,
-        owner: teardown::ExecutionInterrupt,
-    ) -> bool {
-        let mut st = self.teardown.lock().unwrap();
-        if st.phase != TeardownPhase::Running
-            || !st.execution_active
-            || st.execution_id != execution_id
-            || st.execution_interrupt.is_some()
-        {
-            return false;
-        }
-        st.execution_interrupt = Some(teardown::InterruptedExecution {
-            owner,
-            // Refused supervision is a terminal cut even if the V8-entry
-            // fence has not consumed the terminate request yet. Otherwise a
-            // Pause before entry could suppress both the cut and its cause.
-            consumed: matches!(owner, teardown::ExecutionInterrupt::NoDeadline(_)),
-        });
-        self.fire_terminate();
-        true
     }
 
     /// Terminate setup/tick failure while it is still before Hook.
