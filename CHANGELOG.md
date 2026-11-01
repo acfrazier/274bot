@@ -77,9 +77,11 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.7` 
   If the page times out, the walker retries once on a later observed game
   tick. A failed retry keeps the gate closed and reports the terminal failure.
 
-- Navigation no longer emits a completed-quest gate from an untransmitted
-  varp when it has neither an authoritative stage domain nor an authoritative
-  quest-row colour. That comparison stays unknown.
+- Navigation keeps quest-gated crossings without a proven stage range (the
+  Legends' Guild barrier, the Desert Rescue mining camp, the Routequest
+  trapdoor) for accounts whose quest list shows the quest complete. A
+  completed-quest gate whose quest-list colour is not proven to follow that
+  quest's own progress stays unknown.
 
 - Two default-on navigation settings allow prerequisite dialogue and quest
   starts. Global, script and guide-level `true` grants are additive. A
@@ -92,8 +94,10 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.7` 
   handover is refused.
   Food from Drezel remains ordinary inventory and follows existing bank
   behavior. No prerequisite step drops it.
-- After a script sends a game interaction, the host defers its auto-run press
-  until a later observed game tick. This keeps both actions off the same tick.
+- After a script sends a game interaction, the host holds its auto-run press
+  until the window the interaction opens is seen, or for two game ticks if
+  none opens, so the run button no longer closes a quest journal that a walk
+  just opened.
 - Bots now wait and try again when another player is using a shortcut,
   instead of giving up. The Yanille dungeon ledge ("The ledge is being
   used") stays held for at most 9 game ticks after a refusal, so the bot

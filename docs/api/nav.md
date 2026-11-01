@@ -560,9 +560,13 @@ standard bake verifies the selected `quests` family artifact before deriving
 content entrances and binds its digest and schema into the graph. Supported
 quest-complete predicates become canonical `QuestGate::Complete` requirements;
 an intermediate or exact hidden quest stage is not inferred from completion.
-An untransmitted completion varp does not create a `Complete` gate unless its
-selected quest-row colour is authoritative. Without that colour or an
-authoritative stage domain, the comparison stays unknown.
+When a quest comparison has no authoritative stage domain, the completed
+branch keeps its `Complete` gate only if a green quest-list row proves that
+the varp reached completion: the generated row is colour-authoritative, or the
+content's own colour rule (`send_quest_progress_colour`, green when
+`progress >= complete`) has exactly one row for that varp. The account's
+journal decides at run time. Otherwise the comparison stays unknown. This
+applies to every such varp, transmitted or not.
 
 ### Prerequisite crossing steps
 
@@ -629,10 +633,15 @@ A `journal modal timeout` permits one retry on the first observed game tick
 after the timeout. Each read retains the journal owner's five-tick window.
 The run-on button closes modals once before enabling run
 (`player_controls.rs2:34-46`). The host keeps its run-on latch until energy
-reaches 0 or the session changes (`crates/host/src/lib.rs:1435-1439,1452-1471`). Energy
+reaches 0 or the session changes (`crates/host/src/lib.rs:1460-1466,1482-1492`). Energy
 recovery or a new session allows another press.
-After a script sends a game interaction, the host defers its auto-run press
-until a later observed game tick. This keeps both actions off the same tick.
+After a script sends a game interaction, the host holds its auto-run press
+until a modal is observed open (the modal check then holds it until the modal
+closes) or two observed game ticks pass without one. The server reads the
+click in the next cycle and flushes its `if_openmain` with that cycle's
+`PLAYER_INFO` (`World.ts:355,378,408`); the second tick covers a click one
+cycle late. Both sides count the host's own observed ticks, one per
+`PLAYER_INFO`, and the count survives relogs.
 The journal content opens the page without a delay (`quest_journal.rs2:1-55`).
 If the retry fails, the walk blocks with the terminal failure detail. The live
 proof receipt records each attempt, its start and terminal ticks, and its
