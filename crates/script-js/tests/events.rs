@@ -399,9 +399,10 @@ fn script_finish_event_delivers_native_stop_reason() {
 import { ScriptRunner } from '../../runtime/ScriptRunner.js';
 export default class T extends LoopingBot {
     onStart() {
-        this.on('script.finish', event => {
-            globalThis.__rs2b0t_host.log.push(`finish:${event.reason}`);
-        });
+        this.on('script.finish', event => { globalThis.__finishReason = event.reason; });
+    }
+    onStop() {
+        this.log(`finish:${globalThis.__finishReason}`);
     }
     loop() {
         if (globalThis.__rs2b0t_host.tick === 2) {
