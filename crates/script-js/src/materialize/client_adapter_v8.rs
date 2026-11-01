@@ -1,7 +1,117 @@
 use super::{js_i32, js_to_string, object_i32, set_key, v8_str, PENDING};
+use rustyscript::Runtime;
+use std::cell::RefCell;
 use std::collections::HashMap;
+use std::rc::Rc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+
+#[derive(Clone, Copy)]
+#[repr(usize)]
+enum ClientAdapterObjectShape {
+    ItemRow,
+    Modals,
+    ChatOption,
+    Tile,
+    Point,
+    Stat,
+    ChatLine,
+    RunControls,
+    MapBuildBase,
+    LocalTile,
+    SelectButtonLabel,
+    ModalButton,
+    TradeConfirmOffers,
+    DuelOffers,
+    QuestStatus,
+    MakeProduct,
+    MakeButton,
+    ModalCloseState,
+    ModalCloseObservation,
+    ItemIconPixels,
+}
+
+const OBJECT_SHAPE_FIELDS: &[&[&str]] = &[
+    &["slot", "id", "name", "count", "ops", "comId"],
+    &["main", "chat", "side"],
+    &["text", "comId"],
+    &["x", "z", "level"],
+    &["x", "y"],
+    &["name", "effective", "base", "xp"],
+    &["type", "username", "text"],
+    &["onComId", "offComId"],
+    &["x", "z"],
+    &["lx", "lz"],
+    &["mode", "label"],
+    &["comId", "label", "menu", "hidden", "pause"],
+    &["mine", "theirs"],
+    &["ready", "mine", "theirs"],
+    &["comId", "name", "colour"],
+    &["obj", "name", "buttons"],
+    &["qty", "comId"],
+    &["session_generation", "token"],
+    &["session", "generation"],
+    &["width", "height", "data"],
+];
+
+struct ClientAdapterObjectShapes {
+    templates: Vec<v8::Global<v8::ObjectTemplate>>,
+}
+
+pub(super) fn install(runtime: &mut Runtime) -> Result<(), String> {
+    let shapes = {
+        let mut scope = runtime.deno_runtime().handle_scope();
+        let templates = OBJECT_SHAPE_FIELDS
+            .iter()
+            .map(|fields| object_template(&mut scope, fields))
+            .collect::<Result<Vec<_>, _>>()?;
+        Rc::new(RefCell::new(ClientAdapterObjectShapes { templates }))
+    };
+    if runtime.deno_runtime().v8_isolate().set_slot(shapes) {
+        Ok(())
+    } else {
+        Err("ClientAdapter object shape cache already installed".to_string())
+    }
+}
+
+fn object_template(
+    scope: &mut v8::HandleScope,
+    fields: &[&str],
+) -> Result<v8::Global<v8::ObjectTemplate>, String> {
+    let template = v8::ObjectTemplate::new(scope);
+    let placeholder: v8::Local<v8::Data> = v8::undefined(scope).into();
+    for field in fields {
+        let key = v8::String::new_from_utf8(
+            scope,
+            field.as_bytes(),
+            v8::NewStringType::Internalized,
+        )
+        .ok_or_else(|| format!("ClientAdapter object shape key `{field}`"))?;
+        template.set(key.into(), placeholder);
+    }
+    Ok(v8::Global::new(scope, template))
+}
+
+fn new_object<'s>(
+    scope: &mut v8::HandleScope<'s>,
+    shape: ClientAdapterObjectShape,
+) -> Result<v8::Local<'s, v8::Object>, String> {
+    let cache = scope
+        .get_slot::<Rc<RefCell<ClientAdapterObjectShapes>>>()
+        .cloned()
+        .ok_or_else(|| "ClientAdapter object shape cache is not installed".to_string())?;
+    let template = {
+        let cache = cache.borrow();
+        let template = cache
+            .templates
+            .get(shape as usize)
+            .ok_or_else(|| "ClientAdapter object shape index is invalid".to_string())?;
+        v8::Local::new(scope, template)
+    };
+    template
+        .new_instance(scope)
+        .ok_or_else(|| "ClientAdapter object allocation failed".to_string())
+}
 
 pub(super) fn read<'s>(
     scope: &mut v8::HandleScope<'s>,
@@ -363,7 +473,7 @@ fn item_rows<'s>(
         };
         let ops_value = property(scope, row, "ops")?;
         let ops = copy_any_array(scope, ops_value)?;
-        let item = v8::Object::new(scope);
+        let item = new_object(scope, ClientAdapterObjectShape::ItemRow)?;
         set_i32(scope, item, "slot", slot);
         set_i32(scope, item, "id", id);
         set_key(scope, item, "name", name);
@@ -419,7 +529,7 @@ fn modals<'s>(
     scope: &mut v8::HandleScope<'s>,
     snapshot: v8::Local<'s, v8::Value>,
 ) -> Result<v8::Local<'s, v8::Value>, String> {
-    let object = v8::Object::new(scope);
+    let object = new_object(scope, ClientAdapterObjectShape::Modals)?;
     for (key, source) in [
         ("main", "main_modal_id"),
         ("chat", "chat_modal_id"),
@@ -448,7 +558,7 @@ fn chat_options<'s>(
         let text = property(scope, row, "text")?;
         let id = property(scope, row, "comId")?;
         let id = js_i32(scope, id)?.unwrap_or(-1);
-        let result = v8::Object::new(scope);
+        let result = new_object(scope, ClientAdapterObjectShape::ChatOption)?;
         set_key(scope, result, "text", text);
         set_i32(scope, result, "comId", id);
         output
@@ -511,7 +621,7 @@ fn tile_object<'s>(
     z: i32,
     level: i32,
 ) -> Result<v8::Local<'s, v8::Value>, String> {
-    let object = v8::Object::new(scope);
+    let object = new_object(scope, ClientAdapterObjectShape::Tile)?;
     set_i32(scope, object, "x", x);
     set_i32(scope, object, "z", z);
     set_i32(scope, object, "level", level);
@@ -564,7 +674,7 @@ fn npc_box<'s>(
         let Some(y) = object_i32(scope, point, "y")? else {
             return Ok(v8::null(scope).into());
         };
-        let p = v8::Object::new(scope);
+        let p = new_object(scope, ClientAdapterObjectShape::Point)?;
         set_i32(scope, p, "x", x);
         set_i32(scope, p, "y", y);
         output
@@ -643,7 +753,7 @@ fn stat<'s>(
     } else {
         (0, 0, 0)
     };
-    let result = v8::Object::new(scope);
+    let result = new_object(scope, ClientAdapterObjectShape::Stat)?;
     set_key(scope, result, "name", name);
     set_i32(scope, result, "effective", effective);
     set_i32(scope, result, "base", base);
@@ -727,7 +837,7 @@ fn chat<'s>(
         } else {
             username
         };
-        let result = v8::Object::new(scope);
+        let result = new_object(scope, ClientAdapterObjectShape::ChatLine)?;
         set_key(scope, result, "type", type_);
         set_key(scope, result, "username", username);
         set_key(scope, result, "text", text);
@@ -793,7 +903,7 @@ fn run_controls<'s>(
     if on < 0 || off < 0 {
         return Ok(v8::null(scope).into());
     }
-    let result = v8::Object::new(scope);
+    let result = new_object(scope, ClientAdapterObjectShape::RunControls)?;
     set_i32(scope, result, "onComId", on);
     set_i32(scope, result, "offComId", off);
     Ok(result.into())
@@ -813,7 +923,7 @@ fn map_build_base<'s>(
     let Some(z) = object_i32(scope, base, "z")? else {
         return Ok(v8::null(scope).into());
     };
-    let result = v8::Object::new(scope);
+    let result = new_object(scope, ClientAdapterObjectShape::MapBuildBase)?;
     set_i32(scope, result, "x", x);
     set_i32(scope, result, "z", z);
     Ok(result.into())
@@ -880,7 +990,7 @@ fn to_local<'s>(
     if !(0..104).contains(&lx) || !(0..104).contains(&lz) {
         return Ok(v8::null(scope).into());
     }
-    let result = v8::Object::new(scope);
+    let result = new_object(scope, ClientAdapterObjectShape::LocalTile)?;
     set_i32(scope, result, "lx", lx);
     set_i32(scope, result, "lz", lz);
     Ok(result.into())
@@ -1269,7 +1379,7 @@ fn select_button_labels_by_varp<'s>(
             if !label.is_string() {
                 continue;
             }
-            let item = v8::Object::new(scope);
+            let item = new_object(scope, ClientAdapterObjectShape::SelectButtonLabel)?;
             set_i32(scope, item, "mode", mode);
             set_key(scope, item, "label", label);
             output
@@ -1338,7 +1448,7 @@ fn select_button_labels_by_varp<'s>(
         if let Some((_, label)) = best {
             let mode = object_i32(scope, button, "script_value")?.unwrap_or(0);
             let label = v8_str(scope, &label)?;
-            let item = v8::Object::new(scope);
+            let item = new_object(scope, ClientAdapterObjectShape::SelectButtonLabel)?;
             set_i32(scope, item, "mode", mode);
             set_key(scope, item, "label", label);
             output
@@ -1349,6 +1459,7 @@ fn select_button_labels_by_varp<'s>(
     }
     Ok(output.into())
 }
+
 
 fn main_modal_button_near_text<'s>(
     scope: &mut v8::HandleScope<'s>,
@@ -1431,7 +1542,7 @@ fn modal_buttons<'s>(
         } else {
             v8_str(scope, "")?
         };
-        let item = v8::Object::new(scope);
+        let item = new_object(scope, ClientAdapterObjectShape::ModalButton)?;
         set_i32(scope, item, "comId", id);
         set_key(scope, item, "label", label);
         set_key(scope, item, "menu", menu);
@@ -1449,7 +1560,7 @@ fn trade_confirm_offers<'s>(
     scope: &mut v8::HandleScope<'s>,
     facts: v8::Local<'s, v8::Value>,
 ) -> Result<v8::Local<'s, v8::Value>, String> {
-    let result = v8::Object::new(scope);
+    let result = new_object(scope, ClientAdapterObjectShape::TradeConfirmOffers)?;
     let mine_small = component_items(scope, facts, 3542)?;
     let mine_large = component_items(scope, facts, 3538)?;
     let their_small = component_items(scope, facts, 3532)?;
@@ -1558,7 +1669,7 @@ fn duel_offers<'s>(
     } else {
         (empty_array(scope).into(), empty_array(scope).into(), false)
     };
-    let result = v8::Object::new(scope);
+    let result = new_object(scope, ClientAdapterObjectShape::DuelOffers)?;
     set_bool(scope, result, "ready", ready);
     set_key(scope, result, "mine", mine);
     set_key(scope, result, "theirs", theirs);
@@ -1607,7 +1718,7 @@ fn quest_statuses<'s>(
     }
     let output = v8::Array::new(scope, result_rows.len() as i32);
     for (index, (component_id, name, colour)) in result_rows.into_iter().enumerate() {
-        let row = v8::Object::new(scope);
+        let row = new_object(scope, ClientAdapterObjectShape::QuestStatus)?;
         set_i32(scope, row, "comId", component_id);
         set_key(scope, row, "name", name);
         set_i32(scope, row, "colour", colour);
@@ -1651,7 +1762,7 @@ fn make_products<'s>(
         let product = source
             .get_index(scope, index)
             .ok_or_else(|| PENDING.to_string())?;
-        let result = v8::Object::new(scope);
+        let result = new_object(scope, ClientAdapterObjectShape::MakeProduct)?;
         let obj = property(scope, product, "object_id")?;
         let name = property(scope, product, "name")?;
         let buttons = property(scope, product, "buttons")?;
@@ -1678,7 +1789,7 @@ fn copy_make_buttons<'s>(
         let button = source
             .get_index(scope, index)
             .ok_or_else(|| PENDING.to_string())?;
-        let result = v8::Object::new(scope);
+        let result = new_object(scope, ClientAdapterObjectShape::MakeButton)?;
         let qty = property(scope, button, "qty")?;
         let com_id = property(scope, button, "comId")?;
         set_key(scope, result, "qty", qty);
@@ -1732,13 +1843,13 @@ fn modal_close_observation<'s>(
             v8::String::new(scope, "client-adapter-session").ok_or_else(|| PENDING.to_string())?;
         v8::Symbol::new(scope, Some(description)).into()
     };
-    let state = v8::Object::new(scope);
+    let state = new_object(scope, ClientAdapterObjectShape::ModalCloseState)?;
     set_number(scope, state, "session_generation", session_number);
     set_key(scope, state, "token", token);
     global
         .set(scope, state_key, state.into())
         .ok_or_else(|| PENDING.to_string())?;
-    let result = v8::Object::new(scope);
+    let result = new_object(scope, ClientAdapterObjectShape::ModalCloseObservation)?;
     set_key(scope, result, "session", token);
     set_number(scope, result, "generation", generation_number);
     Ok(result.into())
@@ -1986,7 +2097,7 @@ fn point_object<'s>(
     x: i32,
     y: i32,
 ) -> Result<v8::Local<'s, v8::Value>, String> {
-    let object = v8::Object::new(scope);
+    let object = new_object(scope, ClientAdapterObjectShape::Point)?;
     set_i32(scope, object, "x", x);
     set_i32(scope, object, "y", y);
     Ok(object.into())
@@ -2195,7 +2306,7 @@ fn item_icon_pixels<'s>(
     }
     let data = v8::Int32Array::new(scope, buffer, 0, values.len())
         .ok_or_else(|| "item icon Int32Array".to_string())?;
-    let result = v8::Object::new(scope);
+    let result = new_object(scope, ClientAdapterObjectShape::ItemIconPixels)?;
     set_i32(scope, result, "width", width);
     set_i32(scope, result, "height", height);
     set_key(scope, result, "data", data.into());
