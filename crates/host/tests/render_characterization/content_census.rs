@@ -18,6 +18,8 @@ use sha2::{Digest, Sha256};
 
 #[path = "concrete_crowd.rs"]
 mod concrete_crowd;
+#[path = "legal_population.rs"]
+mod legal_population;
 
 const R289_VERSION: &str = "37214163f1e6ceca";
 const CLIENT_JAGS: [&str; 8] = [
@@ -850,9 +852,6 @@ impl StaticGeometryMaximum {
                 "max_two_triangle_clipped_vertex_count": self.max_two_triangle_clipped_vertex_count,
                 "max_two_triangle_clipped_vertex_payload_bytes": self.max_two_triangle_clipped_vertex_payload_bytes
             },
-            "binding_limit_bytes": VERTEX_BINDING_LIMIT_BYTES,
-            "raw_unclipped_payload_fits_binding_limit": self.raw_unclipped_vertex_payload_bytes <= VERTEX_BINDING_LIMIT_BYTES,
-            "max_two_triangle_clipped_payload_fits_binding_limit": self.max_two_triangle_clipped_vertex_payload_bytes <= VERTEX_BINDING_LIMIT_BYTES
         })
     }
 }
@@ -1728,10 +1727,55 @@ fn source_root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..")
 }
 
+fn legal_population_receipt(
+    inputs: &mut InputLedger,
+    client_sources: &BTreeMap<&'static str, Vec<u8>>,
+) -> Option<Value> {
+    let Some(engine_root) = std::env::var_os("ENGINE_DIR").map(PathBuf::from) else {
+        inputs.fail(
+            "legal_population_engine_unavailable",
+            "ENGINE_DIR is required to verify the pinned engine/content population envelope",
+        );
+        return None;
+    };
+    let Some(manifest_path) = engine_root
+        .parent()
+        .map(|parent| parent.join("runtime-input-manifest.json"))
+    else {
+        inputs.fail(
+            "legal_population_manifest_unavailable",
+            format!(
+                "staged engine root has no sibling runtime-input-manifest.json: {}",
+                engine_root.display()
+            ),
+        );
+        return None;
+    };
+    let result = legal_population::verify_staged_engine(&engine_root, &manifest_path).and_then(
+        |verified| {
+            legal_population::derive_population(
+                &verified,
+                client_sources,
+                client::dash3d::collision_map::BuildArea::SIZE as usize,
+                client::dash3d::collision_map::BuildArea::LEVELS as usize,
+                &LOC_SHAPE_TO_LAYER,
+            )
+        },
+    );
+    match result {
+        Ok(receipt) => Some(receipt),
+        Err(error) => {
+            inputs.fail("legal_population_census_failed", error);
+            None
+        }
+    }
+}
+
 fn add_source_hashes(ledger: &mut InputLedger) -> BTreeMap<&'static str, Vec<u8>> {
     const SOURCES: &[&str] = &[
         "crates/host/tests/render_characterization/content_census.rs",
         "crates/host/tests/render_characterization/concrete_crowd.rs",
+        "crates/host/tests/render_characterization/legal_population.rs",
         "vendor/fr-client-rust/crates/client/src/render/budget.rs",
         "vendor/fr-client-rust/crates/client/src/render/nav_debug.rs",
         "vendor/fr-client-rust/crates/client/src/render/backend/gpu_atlas.rs",
@@ -1757,6 +1801,10 @@ fn add_source_hashes(ledger: &mut InputLedger) -> BTreeMap<&'static str, Vec<u8>
         "vendor/fr-client-rust/crates/client/src/config/npc_type.rs",
         "vendor/fr-client-rust/crates/client/src/config/obj_type.rs",
         "vendor/fr-client-rust/crates/client/src/config/idk_type.rs",
+        "vendor/fr-client-rust/crates/client/src/dash3d/loc_shape.rs",
+        "vendor/fr-client-rust/crates/client/src/dash3d/map_spot_anim.rs",
+        "vendor/fr-client-rust/crates/client/src/dash3d/collision_map.rs",
+        "vendor/fr-client-rust/crates/client/src/client/zone_289.rs",
         "vendor/fr-client-rust/crates/client/src/config/spot_type.rs",
         "vendor/fr-client-rust/crates/client/src/config/if_type.rs",
         "vendor/fr-client-rust/crates/client/src/dash3d/client_player.rs",
@@ -1784,13 +1832,19 @@ fn add_source_hashes(ledger: &mut InputLedger) -> BTreeMap<&'static str, Vec<u8>
                 | "vendor/fr-client-rust/crates/client/src/config/idk_type.rs"
                 | "vendor/fr-client-rust/crates/client/src/config/spot_type.rs"
                 | "vendor/fr-client-rust/crates/client/src/config/if_type.rs"
-                | "vendor/fr-client-rust/crates/client/src/dash3d/client_player.rs"
+                | "vendor/fr-client-rust/crates/client/src/dash3d/loc_shape.rs"
+                | "vendor/fr-client-rust/crates/client/src/dash3d/map_spot_anim.rs"
+                | "vendor/fr-client-rust/crates/client/src/dash3d/collision_map.rs"
+                | "vendor/fr-client-rust/crates/client/src/client/zone_289.rs"
+                | "vendor/fr-client-rust/crates/client/src/client/actor_289.rs"
+                | "vendor/fr-client-rust/crates/client/src/datastruct/link_list.rs"
+                | "vendor/fr-client-rust/crates/client/src/datastruct/linkable.rs"
                 | "vendor/fr-client-rust/crates/client/src/dash3d/client_entity.rs"
+                | "vendor/fr-client-rust/crates/client/src/dash3d/client_player.rs"
                 | "vendor/fr-client-rust/crates/client/src/client/client.rs"
                 | "crates/nav-planner/src/router.rs"
                 | "crates/nav-planner/src/paint.rs"
                 | "crates/panel/src/session.rs"
-        ) {
             if let Some(bytes) = bytes {
                 selected.insert(*relative, bytes);
             }
@@ -1898,6 +1952,34 @@ struct NavContentBounds {
 
 fn vector_replacement_peak_bytes(items: usize, item_bytes: usize) -> Option<usize> {
     items.checked_mul(item_bytes)?.checked_mul(3)
+}
+const VERTEX_BUFFER_MIN_BYTES: usize = 1_048_576;
+
+fn vertex_capacity_bytes(content_upper_vertex_bytes: usize) -> Option<usize> {
+    content_upper_vertex_bytes
+        .max(VERTEX_BUFFER_MIN_BYTES)
+        .checked_next_power_of_two()
+}
+
+fn previous_vertex_capacity_bytes(capacity_bytes: usize) -> usize {
+    if capacity_bytes > VERTEX_BUFFER_MIN_BYTES {
+        capacity_bytes / 2
+    } else {
+        0
+    }
+}
+
+fn vertex_growth_peak_bytes(capacity_bytes: usize) -> Option<usize> {
+    capacity_bytes.checked_add(previous_vertex_capacity_bytes(capacity_bytes))
+}
+
+fn vertex_capacity_supported(
+    capacity_bytes: usize,
+    max_storage_buffer_binding_size: u64,
+) -> Option<bool> {
+    u64::try_from(capacity_bytes)
+        .ok()
+        .map(|required| required <= max_storage_buffer_binding_size)
 }
 
 fn nav_content_bounds(
@@ -3075,7 +3157,21 @@ fn resource_rows(
     shared_index_layout: Option<client::render::store::RenderTestSharedIndexLayout>,
     item_sprite_ids: Option<usize>,
     owner_bounds: Option<&OwnerBounds>,
+    vertex_content_upper_established: bool,
 ) -> Vec<Value> {
+    let legal_vertex_capacity = if vertex_content_upper_established {
+        capture_bounds.and_then(|capture| {
+            vertex_capacity_bytes(capture.admitted.vertex_payload_bytes_upper)
+        })
+    } else {
+        None
+    };
+    let vertex_device_support = legal_vertex_capacity
+        .zip(atlas_layout)
+        .and_then(|(capacity, atlas)| {
+            vertex_capacity_supported(capacity, atlas.max_storage_buffer_binding_size)
+        });
+    let vertex_device_rejected = vertex_device_support == Some(false);
     let model_trigger = families
         .get("base_models")
         .and_then(|family| family.trigger.as_deref());
@@ -3177,32 +3273,51 @@ fn resource_rows(
             "conservative_scene_triangles_upper": capture.conservative_scene_triangles_upper,
             "conservative_capture_payload_bytes_upper": capture.conservative_capture_payload_bytes_upper,
             "conservative_capture_replacement_peak_bytes_upper": capture.conservative_capture_peak_bytes_upper,
-            "binding_limit_bytes": VERTEX_BINDING_LIMIT_BYTES,
-            "conservative_upper_payload_fits_binding_limit": capture.conservative_capture_payload_bytes_upper <= VERTEX_BINDING_LIMIT_BYTES
+            "diagnostic_unqualified_capture_capacity_bytes": vertex_capacity_bytes(capture.conservative_capture_payload_bytes_upper)
         })
     });
-    let vertex_known = capture_bounds.and_then(|capture| {
-        let atlas = atlas_layout?;
-        let final_capacity = capture.admitted.vertex_payload_bytes_upper.checked_next_power_of_two()?;
-        let previous_capacity = if final_capacity > 1 {
-            final_capacity / 2
-        } else {
-            0
-        };
-        let replacement_peak = final_capacity.checked_add(previous_capacity)?;
+    let vertex_known = capture_bounds.map(|capture| {
         let static_payload = capture
             .submitted_static
             .max_two_triangle_clipped_vertex_payload_bytes;
-        let static_capacity = static_payload.checked_next_power_of_two()?;
-        Some(json!({
-            "vertex_bytes": capture.submitted_static.vertex_bytes,
-            "retained_cap_bytes": VERTEX_BINDING_LIMIT_BYTES,
-            "maximum_old_plus_new_growth_peak_bytes": VERTEX_BINDING_LIMIT_BYTES + VERTEX_BINDING_LIMIT_BYTES / 2,
-            "over_cap_behavior": "typed Vertex resource fault; retain last completed image and log the fault once; no chunk split",
+        let final_capacity = vertex_capacity_bytes(capture.admitted.vertex_payload_bytes_upper);
+        let previous_capacity = final_capacity.map(previous_vertex_capacity_bytes);
+        let replacement_peak = final_capacity.and_then(vertex_growth_peak_bytes);
+        let static_capacity = vertex_capacity_bytes(static_payload);
+        let device_support_for_unqualified_upper = final_capacity
+            .zip(atlas_layout)
+            .and_then(|(capacity, atlas)| {
+                vertex_capacity_supported(capacity, atlas.max_storage_buffer_binding_size)
+            });
+        let legal_capacity = if vertex_content_upper_established {
+            final_capacity
+        } else {
+            None
+        };
+        let device_support_for_legal_upper = legal_capacity
+            .zip(atlas_layout)
+            .and_then(|(capacity, atlas)| {
+                vertex_capacity_supported(capacity, atlas.max_storage_buffer_binding_size)
+            });
+        json!({
             "classification": "conservative_unqualified_upper_not_an_achieved_scene",
+            "capacity_derivation": "B_vertex = checked_next_power_of_two(max(1048576, content_upper_vertex_bytes))",
+            "device_requirement": "Reject the device if max_storage_buffer_binding_size is below the full B_vertex capacity. Do not clamp B_vertex.",
+            "minimum_capacity_bytes": VERTEX_BUFFER_MIN_BYTES,
+            "legal_content_upper_qualified": vertex_content_upper_established,
+            "legal_B_vertex_capacity_bytes": legal_capacity,
+            "legal_B_vertex_replacement_peak_bytes": legal_capacity.and_then(vertex_growth_peak_bytes),
+            "legal_device_supports_full_B_vertex": device_support_for_legal_upper,
+            "device_selection_for_legal_B_vertex": match device_support_for_legal_upper {
+                Some(true) => "supported",
+                Some(false) => "reject_device",
+                None => "unqualified_or_device_limit_unavailable",
+            },
             "maximum_submitted_static_clipped_vertex_payload_bytes": static_payload,
             "maximum_submitted_static_next_power_of_two_capacity_bytes": static_capacity,
-            "maximum_submitted_static_payload_fits_binding_limit": static_payload <= VERTEX_BINDING_LIMIT_BYTES,
+            "maximum_submitted_static_capacity_fits_requested_device_storage_limit": static_capacity
+                .zip(atlas_layout)
+                .and_then(|(capacity, atlas)| vertex_capacity_supported(capacity, atlas.max_storage_buffer_binding_size)),
             "admitted_geometry": {
                 "classification": "sound_count_and_face_upper_not_a_reachability_claim",
                 "shared_dynamic_count_upper": capture.admitted.shared_dynamic_count_upper,
@@ -3217,13 +3332,13 @@ fn resource_rows(
                     "core/world.rs:34,982-987 and render/world.rs:692-714 share 5000 admitted dynamic sprites among players, NPCs, projectiles, and map spots",
                 ],
             },
-            "conservative_unqualified_vertex_payload_bytes_upper": capture.admitted.vertex_payload_bytes_upper,
-            "conservative_upper_next_power_of_two_storage_capacity_bytes": final_capacity,
-            "conservative_upper_replacement_peak_bytes": replacement_peak,
-            "binding_limit_bytes": VERTEX_BINDING_LIMIT_BYTES,
-            "device_max_storage_buffer_binding_size": atlas.max_storage_buffer_binding_size,
-            "conservative_upper_fits_requested_device_storage_limit": final_capacity <= atlas.max_storage_buffer_binding_size as usize,
-        }))
+            "diagnostic_unqualified_vertex_payload_bytes_upper": capture.admitted.vertex_payload_bytes_upper,
+            "diagnostic_unqualified_B_vertex_capacity_bytes": final_capacity,
+            "diagnostic_unqualified_previous_capacity_bytes": previous_capacity,
+            "diagnostic_unqualified_replacement_peak_bytes": replacement_peak,
+            "device_max_storage_buffer_binding_size": atlas_layout.map(|atlas| atlas.max_storage_buffer_binding_size),
+            "diagnostic_unqualified_upper_fits_requested_device_storage_limit": device_support_for_unqualified_upper,
+        })
     });
     let atlas_known = atlas_layout.map(|layout| {
         json!({
@@ -3353,9 +3468,9 @@ fn resource_rows(
         ),
         (
             RenderResource::Vertex,
-            "Source-derived face/count upper times two CPU-clipped triangles, three lossless 16-byte vertices. The revised operator ruling retains at most one process-wide 128 MiB scene buffer. Its old-plus-new replacement charge is at most 192 MiB. The theoretical content upper can exceed the retained cap and is not an initialization requirement.",
+            "B_vertex = checked_next_power_of_two(max(1048576, legal content_upper_vertex_bytes)). Reject a device whose max_storage_buffer_binding_size is below the full B_vertex capacity. Do not clamp B_vertex.",
             capture_trigger.clone(),
-            "The submitted static geometry, capture vertex layout, or requested device storage limit is unavailable.",
+            "The legal vertex content upper, checked power-of-two capacity, or requested device storage limit is unavailable.",
         ),
         (
             RenderResource::ContextCpu,
@@ -3439,9 +3554,15 @@ fn resource_rows(
                     owner_bounds.is_some(),
                 ),
                 RenderResource::Vertex => (
-                    capture_bounds.map_or(Value::Null, |capture| json!(capture.admitted.vertex_payload_bytes_upper)),
+                    if vertex_content_upper_established {
+                        capture_bounds.map_or(Value::Null, |capture| {
+                            json!(capture.admitted.vertex_payload_bytes_upper)
+                        })
+                    } else {
+                        Value::Null
+                    },
                     vertex_known.clone().unwrap_or(Value::Null),
-                    vertex_known.is_some(),
+                    vertex_content_upper_established && vertex_known.is_some(),
                 ),
                 RenderResource::VertexCoordinates => {
                     unreachable!("fixed coordinate range is not a byte-budget census row")
@@ -3462,18 +3583,22 @@ fn resource_rows(
             };
             let alignment = resource_alignment(resource);
             let budget_bytes = if resource == RenderResource::Vertex {
-                Some(128_u64 * 1024 * 1024)
+                legal_vertex_capacity.and_then(|capacity| u64::try_from(capacity).ok())
             } else {
                 content_upper
                     .as_u64()
                     .and_then(|bytes| bytes.checked_next_multiple_of(alignment as u64))
             };
             let charge_limit_bytes = if resource == RenderResource::Vertex {
-                Some((64_u64 + 128) * 1024 * 1024)
+                legal_vertex_capacity
+                    .and_then(vertex_growth_peak_bytes)
+                    .and_then(|bytes| u64::try_from(bytes).ok())
             } else {
                 budget_bytes
             };
-            let complete = complete && budget_bytes.is_some();
+            let complete = complete
+                && budget_bytes.is_some()
+                && (resource != RenderResource::Vertex || vertex_device_support == Some(true));
             json!({
                 "resource": format!("{resource:?}"),
                 "display": resource.to_string(),
@@ -3483,15 +3608,38 @@ fn resource_rows(
                 "B_bytes": budget_bytes,
                 "charge_limit_bytes": charge_limit_bytes,
                 "budget_derivation": if resource == RenderResource::Vertex {
-                    "operator-fixed 128 MiB retained cap, plus 64 MiB old storage during replacement"
+                    "B_vertex = checked_next_power_of_two(max(1048576, legal content_upper_vertex_bytes)); reject devices below the full storage-buffer binding size"
                 } else {
                     "align_up(content_upper_bytes, allocation_or_device_alignment_bytes)"
                 },
                 "known_measurements": measured,
                 "largest_triggering_content_id": trigger,
-                "status": if complete { "complete" } else { "incomplete" },
+                "status": if resource == RenderResource::Vertex && vertex_device_rejected {
+                    "unsupported_device"
+                } else if complete {
+                    "complete"
+                } else {
+                    "incomplete"
+                },
                 "blockers": if complete {
                     Vec::<Value>::new()
+                } else if resource == RenderResource::Vertex && vertex_device_rejected {
+                    vec![json!({
+                        "code": "device_cannot_support_full_B_vertex",
+                        "required": "Reject this device because max_storage_buffer_binding_size is below the full derived B_vertex capacity.",
+                        "required_capacity_bytes": legal_vertex_capacity,
+                        "device_max_storage_buffer_binding_size": atlas_layout.map(|atlas| atlas.max_storage_buffer_binding_size),
+                    })]
+                } else if resource == RenderResource::Vertex && !vertex_content_upper_established {
+                    vec![json!({
+                        "code": "legal_vertex_content_upper_unqualified",
+                        "required": blocker,
+                    })]
+                } else if resource == RenderResource::Vertex {
+                    vec![json!({
+                        "code": "vertex_capacity_or_device_limit_unavailable",
+                        "required": blocker,
+                    })]
                 } else {
                     vec![json!({"code": "private_or_unbounded_owner_input", "required": blocker})]
                 },
@@ -3506,6 +3654,7 @@ fn render_budget_content_census() {
     let _serial = super::serial();
     let mut inputs = InputLedger::default();
     let source_inputs = add_source_hashes(&mut inputs);
+    let legal_population = legal_population_receipt(&mut inputs, &source_inputs);
     let model_cache_layouts = ModelCacheLayouts::load();
     if model_cache_layouts.is_none() {
         inputs.fail(
@@ -4431,6 +4580,20 @@ fn render_budget_content_census() {
             None
         }
     };
+    let legal_population_complete = legal_population
+        .as_ref()
+        .and_then(|population| population.pointer("/qualification/dynamic_population_bound_established"))
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+    let legal_static_map_equivalence_established = legal_population
+        .as_ref()
+        .and_then(|population| {
+            population.pointer("/static_map_content/source_map_to_server_pack_equivalence_established")
+        })
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+    let legal_vertex_content_upper_established =
+        legal_population_complete && legal_static_map_equivalence_established;
     let resources = resource_rows(
         &families,
         &scene_maxima,
@@ -4443,9 +4606,12 @@ fn render_budget_content_census() {
         shared_index_layout,
         item_sprite_ids,
         owner_bounds.as_ref(),
+        legal_vertex_content_upper_established,
     );
-    let complete =
-        inputs.failures.is_empty() && resources.iter().all(|row| row["status"] == "complete");
+    let complete = inputs.failures.is_empty()
+        && legal_population_complete
+        && legal_vertex_content_upper_established
+        && resources.iter().all(|row| row["status"] == "complete");
     let receipt = json!({
         "schema": "T4.4-S2-S4-content-census-v1",
         "revision": 289,
@@ -4466,6 +4632,8 @@ fn render_budget_content_census() {
         "dynamic_face_uppers": dynamic_face_uppers,
         "model_total_retained_bytes": model_total_bytes,
         "map_inventory": map_stats,
+        "legal_dynamic_population": legal_population,
+        "legal_vertex_content_upper_established": legal_vertex_content_upper_established,
         "resources": resources,
         "complete": complete,
     });
@@ -4482,7 +4650,6 @@ fn render_budget_content_census() {
 const MAP_WORLD_TILES: usize = 256 * 64;
 const MAP_LOAD_ORIGIN_STRIDE: usize = 8;
 const SUBMITTED_SCENE_TILES: usize = 50;
-const VERTEX_BINDING_LIMIT_BYTES: usize = 134_217_728;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 struct LocIdentity {
@@ -5160,6 +5327,31 @@ fn admitted_geometry_rejects_face_overflow() {
 }
 
 #[test]
+fn vertex_capacity_uses_minimum_power_of_two_without_a_ceiling() {
+    assert_eq!(vertex_capacity_bytes(0), Some(1_048_576));
+    assert_eq!(vertex_capacity_bytes(1_048_576), Some(1_048_576));
+    assert_eq!(vertex_capacity_bytes(1_048_577), Some(2_097_152));
+    assert_eq!(
+        vertex_capacity_bytes(128 * 1024 * 1024 + 1),
+        Some(256 * 1024 * 1024)
+    );
+    assert_eq!(vertex_capacity_bytes(usize::MAX), None);
+}
+
+#[test]
+fn vertex_growth_peak_and_device_support_use_the_full_capacity() {
+    assert_eq!(vertex_growth_peak_bytes(1_048_576), Some(1_048_576));
+    assert_eq!(vertex_growth_peak_bytes(2_097_152), Some(3_145_728));
+    assert_eq!(
+        vertex_capacity_supported(2_097_152, 2_097_151),
+        Some(false)
+    );
+    assert_eq!(
+        vertex_capacity_supported(2_097_152, 2_097_152),
+        Some(true)
+    );
+}
+#[test]
 fn census_reports_exact_nav_alignment_and_separate_vertex_replacement_charge() {
     let nav = render_test_nav_layout();
     assert_eq!(
@@ -5207,12 +5399,13 @@ fn census_reports_exact_nav_alignment_and_separate_vertex_replacement_charge() {
         None,
         None,
         None,
+        false,
     );
     let vertex = resources
         .iter()
         .find(|row| row["resource"] == "Vertex")
         .unwrap();
-    assert_eq!(vertex["B_bytes"], 128_u64 * 1024 * 1024);
-    assert_eq!(vertex["charge_limit_bytes"], (64_u64 + 128) * 1024 * 1024);
+    assert_eq!(vertex["B_bytes"], Value::Null);
+    assert_eq!(vertex["charge_limit_bytes"], Value::Null);
     assert_eq!(vertex["status"], "incomplete");
 }
