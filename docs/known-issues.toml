@@ -496,3 +496,17 @@ first = "0.2.9"
 target = "0.3.0"
 severity = "low"
 owner = "COMPAT-FINISH ClientAdapter"
+
+[[item]]
+id = "compat-projection-first-read"
+kind = "known-issue"
+area = "Scripts"
+text = """`reader.locBox`, `reader.overlayPosWorld` and
+  `reader.projectAreaGameWorld` can return `null` once when a script reaches
+  them without their names in its code (for example through a computed
+  property name). A script that names the reader gets correct values from its
+  first game tick. Call the reader by its name."""
+first = "0.2.9"
+target = "none"
+severity = "low"
+owner = "COMPAT-FINISH ClientAdapter"

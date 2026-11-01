@@ -106,6 +106,27 @@ const JOIN_TIMEOUT: Duration = Duration::from_secs(2);
 const ISOLATE_STACK: usize = 2 * 1024 * 1024;
 /// Heap cap for the isolate (~64 MB, the brief's number).
 const MAX_HEAP: usize = 64 * 1024 * 1024;
+
+/// The ClientAdapter readers that need the projection scene.
+const PROJECTION_READERS: [&str; 3] = ["locBox", "overlayPosWorld", "projectAreaGameWorld"];
+
+/// Whether the card's code or a sibling it loads names a projection reader
+/// as a whole identifier. One scan per start; a reader reached without its
+/// name in the text (a computed property) raises the demand on first call.
+pub(crate) fn names_projection_reader(js: &str, siblings: &[(String, String)]) -> bool {
+    fn names(text: &str) -> bool {
+        PROJECTION_READERS.iter().any(|reader| {
+            text.match_indices(reader).any(|(at, _)| {
+                let ident = |c: char| c.is_ascii_alphanumeric() || c == '_' || c == '$';
+                let before = text[..at].chars().next_back();
+                let after = text[at + reader.len()..].chars().next();
+                !before.is_some_and(ident) && !after.is_some_and(ident)
+            })
+        })
+    }
+    names(js) || siblings.iter().any(|(_, source)| names(source))
+}
+
 /// Bounded native pairing metadata for mouse gestures produced by one
 /// isolate. Overflow invalidates every unmatched pair rather than letting
 /// a later up inherit a newer gesture's identity.
@@ -603,8 +624,11 @@ impl LoadIsolate {
         let thread_paint_generation = paint_generation.clone();
         let frame_interest = std::sync::Arc::new(AtomicUsize::new(0));
         let thread_frame_interest = std::sync::Arc::clone(&frame_interest);
-        let loc_projection_interest =
-            std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        // A card whose code names a projection reader raises the demand
+        // before its first tick, so its first read sees a built scene.
+        let loc_projection_interest = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(
+            names_projection_reader(&js, &siblings),
+        ));
         let thread_loc_projection_interest = std::sync::Arc::clone(&loc_projection_interest);
         let (frame_ack_tx, frame_ack_rx) = mpsc::sync_channel(0);
         let queued = std::sync::Arc::new(AtomicUsize::new(0));
