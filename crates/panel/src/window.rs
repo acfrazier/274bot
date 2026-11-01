@@ -3415,11 +3415,11 @@ where
         }
     }
 
-    fn close_window(&mut self, event_loop: &ActiveEventLoop, reason: &'static str) {
+    fn close_window(&mut self, event_loop: &ActiveEventLoop, _reason: &'static str) {
         self.drop_window();
         self.pending = None;
         #[cfg(feature = "render-diagnostics")]
-        self.diagnostics.close(reason);
+        self.diagnostics.close(_reason);
         event_loop.exit();
     }
 
