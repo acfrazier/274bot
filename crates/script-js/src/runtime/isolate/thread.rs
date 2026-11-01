@@ -200,8 +200,10 @@ pub(super) fn isolate_main(
     paint_generation: std::sync::Arc<std::sync::atomic::AtomicU64>,
     teardown: std::sync::Arc<Mutex<TeardownState>>,
     frame_interest: std::sync::Arc<std::sync::atomic::AtomicUsize>,
+    frame_ready: std::sync::Arc<std::sync::atomic::AtomicBool>,
     loc_projection_interest: std::sync::Arc<std::sync::atomic::AtomicBool>,
     frame_ack_tx: std::sync::mpsc::SyncSender<()>,
+    terminate_cell: std::sync::Arc<std::sync::OnceLock<v8::IsolateHandle>>,
     proof: std::sync::Arc<TeardownProofInner>,
     execution: Option<api::identity::ExecutionId>,
     local_state: Option<std::sync::Arc<script::local_state::SlotState>>,
@@ -234,6 +236,7 @@ pub(super) fn isolate_main(
     _runtime_lifetime = RuntimeLifetime::enter();
     let terminate = runtime.deno_runtime().v8_isolate().thread_safe_handle();
     let setup_handle = terminate.clone();
+    let _ = terminate_cell.set(setup_handle.clone());
     let setup_failed = setup.send(SetupMessage::Interrupt(terminate)).is_err();
     {
         let st = teardown.lock().unwrap();
@@ -300,6 +303,7 @@ pub(super) fn isolate_main(
             Ok(Some(2))
         );
     let _ = super::super::lineage_v8::eval::<serde_json::Value>(&mut runtime, INSTALL_HOST_HOOKS);
+    frame_ready.store(true, std::sync::atomic::Ordering::Release);
     let _ = setup.send(SetupMessage::Ready(Ok(())));
     tick_loop(
         runtime,
