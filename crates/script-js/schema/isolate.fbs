@@ -684,7 +684,7 @@ table Snapshot {
   // main_modal_id/chat_modal_id in meaning only. With bank_open it tells a
   // posted (possibly empty) bank_side from one not posted yet; never infer
   // that from the vector length. Written on the keyframe and whenever it
-  // changes; an omitted delta keeps the last root; old buffers read -1.
+  // changes; an omitted delta keeps the last root; old buffers read null.
   side_modal_id: int = null;
   // Slot 286: local-player motion. 0 is unknown or unobserved (including old
   // buffers), 1 is stationary, and 2 is moving. Omitted deltas keep the last
