@@ -816,7 +816,12 @@ class RunCellsTests(unittest.TestCase):
 
     def test_env_sets_common_values_and_unsets_tick(self) -> None:
         with unittest.mock.patch.dict(
-            os.environ, {"QUESTER_TICK_MS": "300", "QUESTER_SPEED_RESTORE": "1"}
+            os.environ,
+            {
+                "QUESTER_TICK_MS": "300",
+                "QUESTER_SPEED_RESTORE": "1",
+                "BOT_LIVE_PARTNER_NAME_PREFIX": "def",
+            },
         ):
             env, _ = build_cell_env(
                 cell_name="host.sherlock-search-live",
@@ -835,6 +840,7 @@ class RunCellsTests(unittest.TestCase):
                 defaults={"ISOHOME": "/isohome"},
             )
         self.assertEqual(env["BOT_LIVE_NAME_PREFIX"], "abc")
+        self.assertEqual(env["BOT_LIVE_PARTNER_NAME_PREFIX"], "def")
         self.assertEqual(env["BOT_NAV_BUILD"], "skip")
         self.assertEqual(env["WORLD_GAME_PORT"], "47594")
         self.assertEqual(env["WORLD_HTTP_PORT"], "3080")

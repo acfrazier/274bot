@@ -417,20 +417,30 @@ The runner refuses to start when the clone has uncommitted tracked changes. It r
 cells one at a time and never stops on a failure. It creates one `BOT_CACHE_DIR` per
 cell, one `LIVE_EVIDENCE_DIR` per cell and pass, plus per-cell unpack dirs and a kept
 panel home. It sets `BOT_LIVE_NAME_PREFIX`, `BOT_NAV_BUILD=skip`,
-`WORLD_GAME_PORT`/`WORLD_HTTP_PORT` from the engine ports, and the v17 `NAV_PACK` and
-flags from the reference pack. It sets `ISOHOME_DIR` to `<LIVE_EVIDENCE_DIR>/home`
+`WORLD_GAME_PORT`/`WORLD_HTTP_PORT` from the selected engine ports. Explicit caller
+engine and nav paths take precedence over discovered reference-v17 defaults.
+It sets `ISOHOME_DIR` to `<LIVE_EVIDENCE_DIR>/home`
 for each cell and pass, so `isohome` keeps `HOME` under `BOT_EVIDENCE_DIR`
 (`crates/host-play/tests/script_api_live.rs:503-507`). Panel cells override this
 with the inline `ISOHOME_DIR=${PANEL_LIVE_HOME:?}` in the map command. Quest cells use the quest ports and set
-`QUESTER_SPEED_RESTORE=0`. The runner never sets `QUESTER_TICK_MS`, so it sends
-no speed command: `crates/scenario/src/quester.rs:78-82` changes the world speed
-only when `QUESTER_TICK_MS` is present. The product reads `QUESTER_SPEED_RESTORE`
-only after the `quest-campaign` branch merges (reader `4e449b1a1`). Until then
-the runner stores the flag but the flag has no reader. The runner refuses any
-cell whose command sets `QUESTER_TICK_MS`. It rewrites inline
-`_GAME_PORT`, `_HTTP_PORT`, `--port`, and `--http-port` values to the selected ports.
+`QUESTER_SPEED_RESTORE=0`. The runner leaves `QUESTER_TICK_MS` unset and refuses
+any cell whose command sets it. Engine Q stays at 300 ms; never send `::speed`.
+It rewrites inline `_GAME_PORT`, `_HTTP_PORT`, `--port`, and `--http-port` values
+to the selected ports.
 `ISOHOME` comes from the host wrapper where the map command names it. Each cell runs
 by `bash -lc` from the repo root.
+
+Paired quest cells, including `host.quester-jonny-stand-engine-q`, also require
+`BOT_LIVE_PARTNER_NAME_PREFIX`. Export a distinct partner prefix in the same
+remote shell that invokes the runner (for example, partner `b2q` with
+`--prefix b29`). The runner inherits that value; a Merlot-only environment
+assignment is not forwarded by the lab wrapper. It still sets the primary
+prefix from `--prefix`.
+
+Export the selected combined nav pack and matching flags for batch proofs.
+Do not substitute a discovered reference pack when its quest-family binding
+does not match the selected data.
+
 Use `--catalog-root <path>` for the local `rs2b0t` checkout root. The flag is
 required when any selected cell uses `${CATALOG_ROOT}`. The runner exports it as
 `CATALOG_ROOT` and refuses to start without it. Use `--unpack-source <path>` for
@@ -440,13 +450,10 @@ source tree (never a symlink) to `panel-home/.274bot/unpack-289`, as the panel
 live test expects (`crates/panel/src/manual_click_live_tests.rs:77-90`). The copy
 runs once per panel home and the receipt records it as `unpack_source`
 (`<source>#<hash>`).
-Some cells still open 44594/1080 instead of reading `WORLD_GAME_PORT` and
-`WORLD_HTTP_PORT`: `host.nav-quest-doors`, `host.nav-gated-entrances`,
-`host.nav-busy-transport-two-bots`, `host.nav-busy-transport-rope-swing`,
-`host.survivable-compat-v1-crossing`, `panel.manual-start-live`, and
-`panel.state-gap-stop-live`. Branch `live-port-env` (`0676124f9`) fixes them
-through the shared `live_ports` helper. The runner does not rewrite those cells.
-It depends on that branch for the port move.
+The merged `live-port-env` repair (`8b9e84e2691d`) makes its covered live tests
+read the selected ports through `live_ports`. The runner does not rewrite
+ports embedded in Rust code. The five Engine B sites left outside that repair
+retain their 45594/2080 contract; changing them needs a separate brief.
 Non-quest lab cells use Engine L. On aubaine the 44594/1080 defaults reach Engine L
 through the relay. On chardonnay pass `--engine-game-port 47594 --engine-http-port 3080`
 (the forwarded Engine L) and never use 44594/1080 there. Quest cells use Engine Q.
