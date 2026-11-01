@@ -559,7 +559,7 @@ fn bank_path(bank: WorldTile, bank_required: bool) -> PathDocument {
             "wait",
             json!({"until": have_law_rune, "max_ticks": 800}),
             false,
-            empty_any(),
+            have_law_rune,
             fact("has_item", json!({"obj": LAW_RUNE_ALIAS})),
         )],
     }];
@@ -1200,6 +1200,29 @@ mod oracle_tests {
                 Arc::clone(&quests),
             );
             assert_eq!(cell.law_rune_id, law_rune.id, "{name}");
+        }
+    }
+
+    #[test]
+    fn bank_terminal_sequences_skip_only_on_the_observed_provisioned_item() {
+        for (bank, required) in [
+            (DUEL_BANK_STAND, true),
+            (SHILO_BANK_STAND, true),
+            (GUNDAI_BANK_TILE, false),
+        ] {
+            let document = bank_path(bank, required);
+            let sequence = &document.roles[0].sequences[0];
+            assert!(sequence.terminal);
+            assert_eq!(sequence.steps.len(), 1);
+            let step = &sequence.steps[0];
+            assert_eq!(step.advances, Some(false));
+            for predicate in [&step.skip_if, &step.settle] {
+                let PredicateDocument::Fact { kind, args, .. } = predicate else {
+                    panic!("bank terminal needs an observed item predicate: {predicate:?}");
+                };
+                assert_eq!(kind, "has_item");
+                assert_eq!(args, &json!({"obj": LAW_RUNE_ALIAS}));
+            }
         }
     }
 
