@@ -1356,7 +1356,7 @@ pub(crate) fn script_observe_cached_with_channels(
     }
     if !interact.is_empty() {
         if let Some(run_policy) = run_policy.as_deref_mut() {
-            run_policy.note_script_interaction(tick);
+            run_policy.note_script_interaction();
         }
     }
     // Dispatch the shim's interact requests through the slot's own Driver
@@ -1595,7 +1595,7 @@ pub(crate) fn script_observe_cached_with_channels(
                                 // modal before the host sees it; apply the same observed-tick fence.
                                 if accepted {
                                     if let Some(run_policy) = run_policy.as_deref_mut() {
-                                        run_policy.note_script_interaction(tick);
+                                        run_policy.note_script_interaction();
                                     }
                                 }
                                 let mut emitted_packets = 0;

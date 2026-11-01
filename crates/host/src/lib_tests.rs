@@ -848,8 +848,7 @@ fn auto_run_yields_to_script_action_and_recurs_after_energy_and_session_changes(
     slot.after_drain(&mut client);
 
     let action_tick = slot.snapshot.tick();
-    slot.run_policy
-        .note_script_interaction(u64::from(action_tick));
+    slot.run_policy.note_script_interaction();
     slot.apply_auto_run(&mut client);
     assert_eq!(slot.run_sends, 0, "the host yields during the script tick");
     assert_eq!(client.out.pos, 0, "the host sends no competing run press");
@@ -893,8 +892,7 @@ fn auto_run_yields_to_script_action_and_recurs_after_energy_and_session_changes(
     assert_eq!(slot.run_sends, 2, "energy recovery permits the next press");
 
     client.out.pos = 0;
-    slot.run_policy
-        .note_script_interaction(u64::from(slot.snapshot.tick()));
+    slot.run_policy.note_script_interaction();
     client.ingame = false;
     slot.after_drain(&mut client);
     ingame_scene2(&mut client);
@@ -903,6 +901,163 @@ fn auto_run_yields_to_script_action_and_recurs_after_energy_and_session_changes(
     slot.after_drain(&mut client);
     slot.apply_auto_run(&mut client);
     assert_eq!(slot.run_sends, 3, "a new session clears the old fence");
+}
+
+/// One PLAYER_INFO per tick: `drain` is the number of packets the drain held.
+fn observe_ticks(slot: &mut SlotLoop, client: &mut Client, drain: u32) {
+    client.gens.player_info += u64::from(drain);
+    client.gens.player += 1;
+    slot.after_drain(client);
+}
+
+fn fenced_slot(client: &mut Client) -> SlotLoop {
+    let mut slot = SlotLoop::new();
+    ingame_scene2(client);
+    client.runenergy = 20;
+    client.gens.stat = 1;
+    slot.after_drain(client);
+    slot.run_policy.note_script_interaction();
+    slot
+}
+
+#[test]
+fn script_interaction_fence_ends_after_the_bound_when_no_modal_opens() {
+    let mut client = prepare_client(
+        cfg(),
+        1,
+        Arc::new(Cache::default()),
+        Arc::new(vec![]),
+        Vec::new(),
+    );
+    let mut slot = fenced_slot(&mut client);
+    slot.apply_auto_run(&mut client);
+    assert_eq!(slot.run_sends, 0, "held on the interaction's own tick");
+    observe_ticks(&mut slot, &mut client, 1);
+    slot.apply_auto_run(&mut client);
+    assert_eq!(slot.run_sends, 0, "held one tick later: the click may be a cycle late");
+    observe_ticks(&mut slot, &mut client, 1);
+    slot.apply_auto_run(&mut client);
+    assert_eq!(
+        slot.run_sends, 1,
+        "released after SCRIPT_INTERACTION_FENCE_TICKS observed ticks"
+    );
+}
+
+#[test]
+fn script_interaction_fence_holds_until_the_page_appears_and_closes() {
+    let mut client = prepare_client(
+        cfg(),
+        1,
+        Arc::new(Cache::default()),
+        Arc::new(vec![]),
+        Vec::new(),
+    );
+    // A late click: no page on the first tick, the page on the second.
+    let mut slot = fenced_slot(&mut client);
+    slot.apply_auto_run(&mut client);
+    observe_ticks(&mut slot, &mut client, 1);
+    slot.apply_auto_run(&mut client);
+    assert_eq!(slot.run_sends, 0);
+    client.main_modal_id = 8134;
+    observe_ticks(&mut slot, &mut client, 1);
+    slot.apply_auto_run(&mut client);
+    assert_eq!(slot.run_sends, 0, "the journal page is up: no press");
+    assert_eq!(client.out.pos, 0);
+    client.main_modal_id = -1;
+    observe_ticks(&mut slot, &mut client, 1);
+    slot.apply_auto_run(&mut client);
+    assert_eq!(slot.run_sends, 1, "the press follows the observed close");
+}
+
+#[test]
+fn script_interaction_fence_counts_every_packet_of_a_multi_packet_drain() {
+    let mut client = prepare_client(
+        cfg(),
+        1,
+        Arc::new(Cache::default()),
+        Arc::new(vec![]),
+        Vec::new(),
+    );
+    let mut slot = fenced_slot(&mut client);
+    let before = slot.run_policy.observed_ticks;
+    // Two cycles arrive in one drain: the page is in it, so nothing is sent.
+    client.main_modal_id = 8134;
+    observe_ticks(&mut slot, &mut client, 2);
+    assert_eq!(slot.run_policy.observed_ticks, before + 2);
+    slot.apply_auto_run(&mut client);
+    assert_eq!(slot.run_sends, 0);
+    client.main_modal_id = -1;
+    observe_ticks(&mut slot, &mut client, 1);
+    slot.apply_auto_run(&mut client);
+    assert_eq!(slot.run_sends, 1);
+
+    // The same two packets without a page are the whole bound.
+    client.out.pos = 0;
+    slot.run_on = false;
+    slot.run_policy.note_script_interaction();
+    observe_ticks(&mut slot, &mut client, 2);
+    slot.apply_auto_run(&mut client);
+    assert_eq!(
+        slot.run_sends, 2,
+        "two observed cycles with no page end the fence"
+    );
+}
+
+#[test]
+fn script_interaction_fence_survives_a_relog_on_one_clock() {
+    let mut client = prepare_client(
+        cfg(),
+        1,
+        Arc::new(Cache::default()),
+        Arc::new(vec![]),
+        Vec::new(),
+    );
+    let mut slot = SlotLoop::new();
+    ingame_scene2(&mut client);
+    client.runenergy = 20;
+    client.gens.stat = 1;
+    slot.after_drain(&mut client);
+    for _ in 0..9 {
+        observe_ticks(&mut slot, &mut client, 1);
+    }
+    let lived = slot.run_policy.observed_ticks;
+    assert!(lived >= 9);
+
+    // Relog: `run_client` builds a new SlotLoop and carries the policy over.
+    let mut next = SlotLoop::new();
+    next.run_policy = std::mem::take(&mut slot.run_policy);
+    client.ingame = false;
+    next.after_drain(&mut client);
+    ingame_scene2(&mut client);
+    // The new session counts from its own watermark (`session_start_gens`,
+    // zero here), as a real login does.
+    client.gens = client::client::ClientGens {
+        session: client.gens.session.wrapping_add(1),
+        ..client::client::ClientGens::default()
+    };
+    client.gens.player += 1;
+    client.gens.player_info += 1;
+    client.runenergy = 20;
+    next.after_drain(&mut client);
+    assert!(
+        next.snapshot.tick() < lived,
+        "the snapshot count restarts at a relog; the policy clock does not"
+    );
+    let relogged = next.run_policy.observed_ticks;
+    assert!(relogged >= lived);
+
+    next.run_policy.note_script_interaction();
+    next.apply_auto_run(&mut client);
+    assert_eq!(next.run_sends, 0);
+    observe_ticks(&mut next, &mut client, 1);
+    next.apply_auto_run(&mut client);
+    assert_eq!(next.run_sends, 0);
+    observe_ticks(&mut next, &mut client, 1);
+    next.apply_auto_run(&mut client);
+    assert_eq!(
+        next.run_sends, 1,
+        "a new session's fence ends after two of its own ticks, not the old session's count"
+    );
 }
 
 #[test]

@@ -126,15 +126,35 @@ const WATCH_PARK_MS: Duration = Duration::from_secs(1);
 /// Host: spawns and owns per-client slot threads.
 pub struct Host;
 
+/// Game ticks the host holds its auto-run press after a script interaction
+/// unless the content's own signal ends the hold sooner (a modal opening).
+///
+/// The server reads the click in the next cycle's input phase and queues its
+/// `if_openmain` in that cycle, ahead of the same flush as `PLAYER_INFO`
+/// (`World.ts:355` input, `:378` players, `:408` flush). The modal is therefore
+/// observed with the first later tick. One more tick covers a click that
+/// reaches the server one cycle late. A press that goes out after those two
+/// ticks follows an observed modal or an interaction that opened none.
+pub const SCRIPT_INTERACTION_FENCE_TICKS: u32 = 2;
+
 /// Host-owned script auto-run overlay. Host-play identifies the active script
 /// run and applies only generation-matched FlatBuffer updates through this
 /// sink; script Stop/replacement clears the value, while relogs preserve it.
-/// A script interaction also defers the next host press until a later observed tick.
+///
+/// A script interaction also holds the next host press. The hold is counted on
+/// this policy's own observed-tick clock, the only clock the fence reads or
+/// writes: the host advances it once per `PLAYER_INFO` and it survives relogs,
+/// so no caller supplies a tick that could come from another counter. It ends
+/// when a modal opens or after [`SCRIPT_INTERACTION_FENCE_TICKS`] observed
+/// ticks.
 #[derive(Debug, Default)]
 pub struct ScriptRunPolicy {
     runtime_generation: Option<u64>,
     policy_override: Option<RunPolicyOverride>,
-    auto_run_defer_until: Option<u64>,
+    /// Observed game ticks (one per `PLAYER_INFO`) across the slot's logins.
+    observed_ticks: u32,
+    /// The observed tick of the latest script interaction still being fenced.
+    interaction_tick: Option<u32>,
 }
 
 impl ScriptRunPolicy {
@@ -144,7 +164,7 @@ impl ScriptRunPolicy {
         if self.runtime_generation != runtime_generation {
             self.runtime_generation = runtime_generation;
             self.policy_override = None;
-            self.auto_run_defer_until = None;
+            self.interaction_tick = None;
         }
     }
 
@@ -155,28 +175,35 @@ impl ScriptRunPolicy {
         }
     }
 
-    /// Mark the observed tick that contains a script game interaction.
-    pub fn note_script_interaction(&mut self, observed_tick: u64) {
-        self.auto_run_defer_until = Some(
-            self.auto_run_defer_until
-                .map_or(observed_tick, |until| until.max(observed_tick)),
-        );
+    /// Count `ticks` observed game ticks (`PLAYER_INFO` packets). The host
+    /// calls this once per drain with that drain's packet count.
+    fn observe_game_ticks(&mut self, ticks: u32) {
+        self.observed_ticks = self.observed_ticks.wrapping_add(ticks);
     }
 
-    /// Return true until a later observed game tick arrives.
-    pub fn should_defer_auto_run(&mut self, observed_tick: u64) -> bool {
-        match self.auto_run_defer_until {
-            Some(until) if observed_tick <= until => true,
-            Some(_) => {
-                self.auto_run_defer_until = None;
-                false
-            }
-            None => false,
+    /// Mark a script game interaction sent on the current observed tick.
+    pub fn note_script_interaction(&mut self) {
+        self.interaction_tick = Some(self.observed_ticks);
+    }
+
+    /// True while the host must not press run: after a script interaction,
+    /// until a modal is observed open (the press is then held by the modal
+    /// check until it closes) or [`SCRIPT_INTERACTION_FENCE_TICKS`] observed
+    /// ticks have passed with none.
+    pub fn should_defer_auto_run(&mut self, modal_open: bool) -> bool {
+        let Some(sent) = self.interaction_tick else {
+            return false;
+        };
+        let held = !modal_open
+            && self.observed_ticks.wrapping_sub(sent) < SCRIPT_INTERACTION_FENCE_TICKS;
+        if !held {
+            self.interaction_tick = None;
         }
+        held
     }
 
     fn clear_auto_run_defer(&mut self) {
-        self.auto_run_defer_until = None;
+        self.interaction_tick = None;
     }
 
     fn resolved(&self) -> RunPolicy {
@@ -1438,7 +1465,17 @@ impl SlotLoop {
             self.run_on = false;
             self.run_policy.clear_auto_run_defer();
         }
+        let ticks_before = self.snapshot.tick();
         publish_snapshot(&mut self.snapshot, client, result);
+        // One observed tick per PLAYER_INFO, read from the snapshot's own
+        // count: a logout or a session change restarts that count at zero.
+        let ticks_after = self.snapshot.tick();
+        let restarted = !client.ingame || result.session_changed;
+        self.run_policy.observe_game_ticks(if restarted {
+            ticks_after
+        } else {
+            ticks_after.wrapping_sub(ticks_before)
+        });
         result
     }
 
@@ -1454,16 +1491,15 @@ impl SlotLoop {
             self.run_on = false;
         }
         let policy = self.run_policy.resolved();
-        let defer_auto_run = self
-            .run_policy
-            .should_defer_auto_run(u64::from(self.snapshot.tick()));
+        let modal_free = auto_run::modal_free(
+            client.main_modal_id,
+            client.chat_modal_id,
+            client.side_modal_id,
+        );
+        let defer_auto_run = self.run_policy.should_defer_auto_run(!modal_free);
         if self.snapshot.local_player().is_some()
             && auto_run_ready(client.ingame, client.scene_state)
-            && auto_run::modal_free(
-                client.main_modal_id,
-                client.chat_modal_id,
-                client.side_modal_id,
-            )
+            && modal_free
             && auto_run_tick(energy, self.run_on, policy)
             && !defer_auto_run
             && set_run(client, true)
