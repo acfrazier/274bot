@@ -49,7 +49,7 @@ use api::quest_facts::QuestCatalog;
 use api::selected::{ClientRevision, FactKey, RunKey};
 use api::snapshot::{GameSnapshot, LocView, WorldTile};
 use quester_live::{Cell, Mode, ObserveFamily, StartFamily};
-use scenario::quester::{quester_stage_with_seeds, QuesterStage};
+use scenario::quester::{quester_stage_with_seeds, QuesterSeed, QuesterStage};
 use scenario::{Proof, Step, StepKind, Wait};
 use script::native::{ScriptStatus, StatusValue};
 use script::quester::compile::compile_path;
@@ -146,6 +146,10 @@ struct BankTrace {
     gundai_talk_sent: bool,
     gundai_choice_sent: bool,
     gundai_choice_text: Option<String>,
+    gundai_seed_before_talk: Option<Value>,
+    gundai_choice_stand: Option<WorldTile>,
+    gundai_player_open_stand: Option<WorldTile>,
+    gundai_start_stand: Option<WorldTile>,
     start_teller_npc: Option<usize>,
 }
 
@@ -397,6 +401,65 @@ fn owned_transfer_predicate(trace: &BankTrace, lifecycle_completed: bool) -> boo
         && trace.status_failure.is_none()
 }
 
+fn gundai_dialogue_stand(
+    choice: Option<WorldTile>,
+    opened: Option<WorldTile>,
+    current: Option<(i32, i32, i32)>,
+) -> Result<WorldTile, String> {
+    let choice = choice.ok_or("Gundai bank choice has no observed stand")?;
+    let opened = opened.ok_or("Gundai player-open bank has no bound stand")?;
+    if choice != opened
+        || opened.level != GUNDAI_STAND.level
+        || current != Some((opened.x, opened.z, opened.level))
+    {
+        return Err(format!(
+            "Gundai stand changed outside the real opening dialogue: choice={choice:?}, bank={opened:?}, current={current:?}"
+        ));
+    }
+    Ok(opened)
+}
+
+fn gundai_start_bound(trace: &BankTrace) -> bool {
+    trace.gundai_seed_before_talk.is_some()
+        && trace.gundai_start_stand.is_some_and(|stand| {
+            gundai_dialogue_stand(
+                trace.gundai_choice_stand,
+                trace.gundai_player_open_stand,
+                Some((stand.x, stand.z, stand.level)),
+            )
+            .is_ok()
+        })
+}
+
+fn observe_gundai_start_seed(
+    seed: &QuesterSeed,
+    trace: &mut BankTrace,
+    snapshot: &GameSnapshot,
+) -> Result<Value, String> {
+    trace.gundai_start_stand = None;
+    if trace.gundai_seed_before_talk.is_none()
+        || !trace.gundai_talk_sent
+        || !trace.gundai_choice_sent
+        || trace.gundai_choice_text.as_deref() != Some(GUNDAI_CHOICE_TEXT)
+        || !trace.start_session.is_some_and(|sample| sample.open)
+        || !trace.start_bank_loaded
+        || trace.start_bank_law_runes != Some(1)
+        || trace.start_inventory_law_runes != Some(0)
+    {
+        return Err("Gundai Start requires the full pre-Talk seed proof and the real player-open bank".to_owned());
+    }
+    let stand = gundai_dialogue_stand(
+        trace.gundai_choice_stand,
+        trace.gundai_player_open_stand,
+        snapshot.tile(),
+    )?;
+    let mut at_start = seed.clone();
+    at_start.stand = stand;
+    let receipt = at_start.observe_start(snapshot)?;
+    trace.gundai_start_stand = Some(stand);
+    Ok(receipt)
+}
+
 fn player_open_predicate(trace: &BankTrace, lifecycle_completed: bool) -> bool {
     let Some(start) = trace.start_session else {
         return false;
@@ -411,6 +474,7 @@ fn player_open_predicate(trace: &BankTrace, lifecycle_completed: bool) -> bool {
             .skip(1)
             .all(|sample| sample.open && sample.generation == start.generation);
     lifecycle_completed
+        && gundai_start_bound(trace)
         && trace.gundai_talk_sent
         && trace.gundai_choice_sent
         && trace.gundai_choice_text.as_deref() == Some(GUNDAI_CHOICE_TEXT)
@@ -473,6 +537,10 @@ fn trace_receipt(trace: &BankTrace) -> Value {
         "gundai_choice_sent": trace.gundai_choice_sent,
         "gundai_choice_text": &trace.gundai_choice_text,
         "start_teller_npc": trace.start_teller_npc,
+        "gundai_seed_before_talk": &trace.gundai_seed_before_talk,
+        "gundai_choice_stand": trace.gundai_choice_stand,
+        "gundai_player_open_stand": trace.gundai_player_open_stand,
+        "gundai_start_stand": trace.gundai_start_stand,
     })
 }
 
@@ -658,6 +726,7 @@ fn insert_player_open_gundai_steps(
     selected: &SelectedGameData,
     trace: Arc<Mutex<BankTrace>>,
     law_id: i32,
+    seed: QuesterSeed,
 ) {
     let (gundai_id, definition) = selected_gundai_metadata(selected);
     let teller: BankOperation = definition.npc.expect("validated Gundai operation");
@@ -667,10 +736,14 @@ fn insert_player_open_gundai_steps(
         .to_owned();
     let talk_trace = Arc::clone(&trace);
     let choice_trace = Arc::clone(&trace);
+    let bank_trace = Arc::clone(&trace);
     let talk = Step {
         name: "player opens Gundai's selected teller dialogue before Quester Start",
         kind: StepKind::Perform {
             send: Box::new(move |client, snapshot| {
+                let Ok(seed_receipt) = seed.observe_start(snapshot) else {
+                    return false;
+                };
                 let Some(npc) = snapshot.npcs().iter().find(|npc| {
                     npc.r#type == usize::try_from(gundai_id).ok()
                         && npc.name.as_deref() == Some(teller.name)
@@ -686,10 +759,9 @@ fn insert_player_open_gundai_steps(
                     api::interact::SendResult::Sent { .. }
                 );
                 if sent {
-                    talk_trace
-                        .lock()
-                        .expect("bank witness mutex")
-                        .gundai_talk_sent = true;
+                    let mut witness = talk_trace.lock().expect("bank witness mutex");
+                    witness.gundai_seed_before_talk = Some(seed_receipt);
+                    witness.gundai_talk_sent = true;
                 }
                 sent
             }),
@@ -736,6 +808,10 @@ fn insert_player_open_gundai_steps(
                 let Ok(choice) = i32::try_from(index + 1) else {
                     return false;
                 };
+                let Some((x, z, level)) = snapshot.tile() else {
+                    return false;
+                };
+                let stand = WorldTile { x, z, level };
                 let text = option.text.clone();
                 let mut interactions = api::interact::Interactions::new(snapshot, client);
                 let sent = matches!(
@@ -746,6 +822,7 @@ fn insert_player_open_gundai_steps(
                     let mut witness = choice_trace.lock().expect("bank witness mutex");
                     witness.gundai_choice_sent = true;
                     witness.gundai_choice_text = Some(text);
+                    witness.gundai_choice_stand = Some(stand);
                 }
                 sent
             }),
@@ -764,7 +841,25 @@ fn insert_player_open_gundai_steps(
                 let loaded = snapshot.bank_loaded();
                 let law_runes = count_item(snapshot.bank(), law_id);
                 let inventory_law = count_item(snapshot.inventory(), law_id);
-                open && loaded && law_runes == 1 && inventory_law == 0
+                if !(open && loaded && law_runes == 1 && inventory_law == 0) {
+                    return false;
+                }
+                let Some((x, z, level)) = snapshot.tile() else {
+                    return false;
+                };
+                let stand = WorldTile { x, z, level };
+                let mut witness = bank_trace.lock().expect("bank witness mutex");
+                if gundai_dialogue_stand(
+                    witness.gundai_choice_stand,
+                    Some(stand),
+                    snapshot.tile(),
+                )
+                .is_err()
+                {
+                    return false;
+                }
+                witness.gundai_player_open_stand = Some(stand);
+                true
             }),
             summary: Some(Box::new(|| {
                 "waiting for observed Gundai bank session generation and law-rune row".to_owned()
@@ -837,7 +932,8 @@ fn family_start(
                         && witness.start_bank_law_runes == Some(1)
                         && witness.start_inventory_law_runes == Some(0)
                         && witness.gundai_talk_sent
-                        && witness.gundai_choice_sent;
+                        && witness.gundai_choice_sent
+                        && gundai_start_bound(&witness);
                     if !valid {
                         return Err(format!(
                             "Gundai player-open fixture did not establish a loaded bank before Start: {}",
@@ -982,13 +1078,13 @@ fn build_bank_cell(
             &selected,
             Arc::clone(&trace),
             law_id,
+            fixture.seed.clone(),
         );
     }
 
     let seed = fixture.seed;
     let observe_trace = Arc::clone(&trace);
     let observe_start: quester_live::ObserveStart = Box::new(move |snapshot| {
-        let seed_receipt = seed.observe_start(snapshot)?;
         let sample = SessionSample::from_snapshot(snapshot);
         let inventory_law = count_item(snapshot.inventory(), law_id);
         let bank_loaded = snapshot.bank_loaded();
@@ -1003,6 +1099,11 @@ fn build_bank_cell(
         witness.start_bank_loaded = bank_loaded;
         witness.start_bank_law_runes = bank_law;
         witness.start_chest = chest;
+        let seed_receipt = if matches!(guard, StartGuard::PlayerOpenGundai) {
+            observe_gundai_start_seed(&seed, &mut witness, snapshot)?
+        } else {
+            seed.observe_start(snapshot)?
+        };
         if matches!(guard, StartGuard::DuelClosedChest) {
             witness.start_closed_lids = bind_closed_duel_lids(snapshot.locs())?;
         }
@@ -1026,6 +1127,10 @@ fn build_bank_cell(
             "gundai_talk_sent": witness.gundai_talk_sent,
             "gundai_choice_sent": witness.gundai_choice_sent,
             "gundai_choice_text": witness.gundai_choice_text,
+            "gundai_seed_before_talk": &witness.gundai_seed_before_talk,
+            "gundai_choice_stand": witness.gundai_choice_stand,
+            "gundai_player_open_stand": witness.gundai_player_open_stand,
+            "gundai_start_stand": witness.gundai_start_stand,
             "classification": match guard {
                 StartGuard::DuelClosedChest => "all observed candidate lids closed and bound before Start",
                 StartGuard::PlayerOpenGundai => "player-opened Gundai bank observed before Start",
@@ -1361,6 +1466,120 @@ mod oracle_tests {
         assert!(bind_closed_duel_lids(&[]).is_err());
     }
 
+    fn gundai_seed_snapshot() -> (QuesterSeed, GameSnapshot) {
+        let (selected, _) = live_data();
+        let document = bank_path(GUNDAI_BANK_TILE, false);
+        let identity = selected
+            .quest_identity()
+            .unwrap()
+            .rows
+            .iter()
+            .find(|row| row.id == "cook")
+            .unwrap();
+        let seed = quester_stage_with_seeds(
+            QuesterStage {
+                name: "unit-gundai-seed",
+                quest_display: COOK_DISPLAY,
+                path: &document,
+                identity,
+                selected: &selected,
+                stage: COOK_STAGE,
+                loadout: None,
+                extra_items: &[],
+                stand: GUNDAI_STAND,
+            },
+            &[(COOK_VARP, 0)],
+        )
+        .unwrap()
+        .seed;
+        let mut snapshot = GameSnapshot::new();
+        snapshot.seed_ingame(2);
+        snapshot.seed_tile(seed.stand);
+        snapshot.seed_stats(
+            seed.stats
+                .iter()
+                .map(|minimum| api::snapshot::StatView {
+                    index: i32::from(minimum.skill),
+                    name: String::new(),
+                    base: i32::from(minimum.level),
+                    effective: i32::from(minimum.level),
+                    xp: 0,
+                    used: true,
+                })
+                .collect(),
+        );
+        snapshot.seed_inventory(Vec::new(), 28);
+        snapshot.seed_equipment(Vec::new());
+        (seed, snapshot)
+    }
+
+    fn gundai_prepared_trace(
+        seed: &QuesterSeed,
+        before_talk: &GameSnapshot,
+        dialogue_stand: WorldTile,
+    ) -> BankTrace {
+        BankTrace {
+            start_session: Some(SessionSample { tick: 20, open: true, generation: 9 }),
+            start_bank_loaded: true,
+            start_bank_law_runes: Some(1),
+            start_inventory_law_runes: Some(0),
+            gundai_talk_sent: true,
+            gundai_choice_sent: true,
+            gundai_choice_text: Some(GUNDAI_CHOICE_TEXT.to_owned()),
+            gundai_seed_before_talk: Some(seed.observe_start(before_talk).unwrap()),
+            gundai_choice_stand: Some(dialogue_stand),
+            gundai_player_open_stand: Some(dialogue_stand),
+            ..BankTrace::default()
+        }
+    }
+
+    #[test]
+    fn gundai_seed_accepts_the_dialogue_walk_but_refuses_forced_or_wrong_stands() {
+        let (seed, mut snapshot) = gundai_seed_snapshot();
+        let walked = WorldTile { x: 2537, z: 4718, level: 0 };
+        let mut witness = gundai_prepared_trace(&seed, &snapshot, walked);
+        snapshot.seed_tile(walked);
+        assert!(seed.observe_start(&snapshot).is_err());
+        let receipt = observe_gundai_start_seed(&seed, &mut witness, &snapshot).unwrap();
+        assert_eq!(receipt["tile"], json!(walked));
+        assert!(gundai_start_bound(&witness));
+
+        for wrong in [
+            GUNDAI_STAND,
+            WorldTile { x: 2538, z: 4718, level: 0 },
+            WorldTile { level: 1, ..walked },
+        ] {
+            snapshot.seed_tile(wrong);
+            assert!(observe_gundai_start_seed(&seed, &mut witness, &snapshot).is_err());
+            assert!(!gundai_start_bound(&witness));
+        }
+        snapshot.seed_tile(walked);
+        witness.gundai_player_open_stand = Some(GUNDAI_STAND);
+        assert!(observe_gundai_start_seed(&seed, &mut witness, &snapshot).is_err());
+        assert!(!gundai_start_bound(&witness));
+    }
+
+    #[test]
+    fn gundai_seed_checks_before_talk_and_rejects_missing_proof_bank_or_stats() {
+        let (seed, mut snapshot) = gundai_seed_snapshot();
+        let walked = WorldTile { x: 2537, z: 4718, level: 0 };
+        snapshot.seed_tile(walked);
+        assert!(seed.observe_start(&snapshot).is_err());
+        snapshot.seed_tile(GUNDAI_STAND);
+        let mut witness = gundai_prepared_trace(&seed, &snapshot, walked);
+        snapshot.seed_tile(walked);
+
+        let proof = witness.gundai_seed_before_talk.take();
+        assert!(observe_gundai_start_seed(&seed, &mut witness, &snapshot).is_err());
+        witness.gundai_seed_before_talk = proof;
+        witness.start_session.as_mut().unwrap().open = false;
+        assert!(observe_gundai_start_seed(&seed, &mut witness, &snapshot).is_err());
+        witness.start_session.as_mut().unwrap().open = true;
+        snapshot.seed_stats(Vec::new());
+        assert!(observe_gundai_start_seed(&seed, &mut witness, &snapshot).is_err());
+        assert!(!gundai_start_bound(&witness));
+    }
+
     fn base_owned_trace() -> BankTrace {
         let closed_lids = bind_closed_duel_lids(&real_closed_duel_chests()).unwrap();
         let opened_lid = closed_lids[0];
@@ -1469,6 +1688,8 @@ mod oracle_tests {
 
     #[test]
     fn player_open_oracle_rejects_generation_change_close_and_false_completion() {
+        let (seed, snapshot) = gundai_seed_snapshot();
+        let walked = WorldTile { x: 2537, z: 4718, level: 0 };
         let mut good = BankTrace {
             start_session: Some(SessionSample {
                 tick: 20,
@@ -1507,7 +1728,8 @@ mod oracle_tests {
             gundai_talk_sent: true,
             gundai_choice_sent: true,
             gundai_choice_text: Some(GUNDAI_CHOICE_TEXT.to_owned()),
-            ..BankTrace::default()
+            gundai_start_stand: Some(walked),
+            ..gundai_prepared_trace(&seed, &snapshot, walked)
         };
         assert!(player_open_predicate(&good, true));
         good.bank_stock.reverse();

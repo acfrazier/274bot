@@ -60,6 +60,9 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.8` 
 - The Duel Arena bank probe binds both real closed chest candidates before
   Start. It rejects an already-open site and accepts only the same previously
   closed lid opening without a bank session.
+- The Gundai player-open bank probe checks the full seed before Talk-to and
+  again at the stand reached by the real opening dialogue. A changed or forced
+  stand is rejected without moving the player or closing the bank.
 
 ### Panel and terminal app
 
