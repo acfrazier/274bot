@@ -307,6 +307,81 @@ fn with_journal_only_hero(check: impl FnOnce(&QuestSource<'_>)) {
     });
 }
 
+/// The generated row of a quest such as Legends, Desert Rescue or Routequest:
+/// a not-transmitted varp whose colour is not generated as authoritative
+/// because no stage domain is proven.
+fn with_non_authoritative_hero(check: impl FnOnce(&QuestSource<'_>)) {
+    let selected =
+        api::game_data::for_revision(client::io::ClientRevision::R289).expect("selected revision");
+    let (mut facts, identity) = selected.quest_identity_for_bake().expect("verified family");
+    let row = facts
+        .rows
+        .iter_mut()
+        .find(|row| row.varp == "heroquest")
+        .unwrap();
+    row.colour_authoritative = false;
+    row.stage_domain = None;
+    row.transmission = api::quest_facts::Transmission::NotTransmitted;
+    check(&QuestSource {
+        family: nav_planner::quest_gates::QuestFamilyId::new(identity.sha256, identity.schema),
+        facts: &facts,
+    });
+}
+
+/// A quest-gated entrance on a non-authoritative row stays in the pack when
+/// the content's own colour rule proves a green row means progress reached
+/// completion (Legends' force barrier, the Desert Rescue mining camp gate and
+/// the Routequest trapdoor have this shape). The account's journal decides at
+/// run time. Without that proof the comparison stays unknown.
+#[test]
+fn non_authoritative_completion_keeps_its_gate_only_when_the_green_row_is_proven() {
+    const HANDLER: &str = r#"
+[oploc2,obstacle]
+if(%heroquest < ^hero_phoenix_talked_charlie) { return; }
+p_delay(1);
+p_teleport(0_44_53_5_46);
+"#;
+    let proven = Fixture::new();
+    write_forced_fixture(&proven, HANDLER);
+    with_non_authoritative_hero(|quests| {
+        let (graph, _) = derive_entrance_fixture_with_quests(&proven, quests);
+        let edges: Vec<_> = graph
+            .edges
+            .iter()
+            .filter(|edge| edge.loc_id == 6000)
+            .collect();
+        assert!(
+            !edges.is_empty(),
+            "the journal-gated entrance must stay in the pack"
+        );
+        for edge in edges {
+            assert!(matches!(
+                edge.quest_gates.as_ref().map(|gates| gates.gates()),
+                Some([api::selected::QuestGate::Complete(quest)]) if quest.0.as_ref() == "hero"
+            ));
+            assert_eq!(edge.to, tile(2821, 3438));
+        }
+    });
+
+    let unproven = Fixture::new();
+    write_forced_fixture(&unproven, HANDLER);
+    // The journal row now reads a different progress expression, so a green
+    // row says nothing about `%heroquest`.
+    unproven.write(
+        "scripts/general/scripts/quests.rs2",
+        &format!(
+            "{JOURNAL_GREEN_SOURCE}~send_quest_progress_colour(questlist:hero, ~hero_progress, ^hero_complete);\n"
+        ),
+    );
+    with_non_authoritative_hero(|quests| {
+        let (graph, _) = derive_entrance_fixture_with_quests(&unproven, quests);
+        assert!(
+            !graph.edges.iter().any(|edge| edge.loc_id == 6000),
+            "an unproven colour cannot be encoded as a Complete gate"
+        );
+    });
+}
+
 #[test]
 fn nonzero_stage_door_keeps_started_window_in_both_directions() {
     // Mort Myre's refusal-before-open shape. The progress-only write follows

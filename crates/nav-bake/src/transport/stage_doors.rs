@@ -441,6 +441,11 @@ struct Sources {
     quest_stage: HashMap<String, QuestStageFacts>,
     /// Varp names whose every possible source write is bounded by completion.
     quest_exact: HashSet<String>,
+    /// Varp names whose one `send_quest_progress_colour` row, under the exact
+    /// green rule, proves `progress >= complete`. A green journal row is then
+    /// a sound reading of this varp's completion, with or without a stage
+    /// domain.
+    quest_green_proves_complete: HashSet<String>,
     labels: HashMap<String, Vec<Option<Block>>>,
     timers: HashMap<String, Vec<Option<Block>>>,
     /// Proc name → each definition's normalized header parameters + body,
@@ -494,6 +499,12 @@ impl Sources {
                     },
                 )
             })
+            .collect();
+        let journal = super::observable::JournalLinks::from_content(content_root);
+        let quest_green_proves_complete = quest_complete
+            .iter()
+            .filter(|(varp, (_, complete))| journal.completed_name(varp, *complete).is_some())
+            .map(|(varp, _)| varp.clone())
             .collect();
         let mut quest_exact = quest_complete.keys().cloned().collect();
         let all_scripts_read = visit_rs2(&content_root.join("scripts"), &mut |text| {
@@ -565,6 +576,7 @@ impl Sources {
             quest_complete,
             quest_stage,
             quest_exact,
+            quest_green_proves_complete,
             oplocu,
             labels,
             timers,

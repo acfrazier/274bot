@@ -455,6 +455,12 @@ impl Motion<'_> {
                 let quest_stage = self.base.src.quest_stage.get(quest_varp).copied();
                 let colour_authoritative =
                     quest_stage.is_some_and(|facts| facts.colour_authoritative);
+                // Without a stage domain, a green row proves only that
+                // progress reached completion. That is enough for the
+                // completed branch when the row is either generated as
+                // authoritative or proven by the content's own colour rule.
+                let green_proves_complete = colour_authoritative
+                    || self.base.src.quest_green_proves_complete.contains(quest_varp);
                 let stage_domain = self
                     .base
                     .src
@@ -526,7 +532,7 @@ impl Motion<'_> {
                         ..Needs::default()
                     }
                 } else {
-                    match (input.complete, colour_authoritative) {
+                    match (input.complete, green_proves_complete) {
                         (true, true) => Needs {
                             quests: vec![api::selected::QuestGate::Complete(quest.clone())],
                             quest_family: self.base.src.quest_family,
@@ -1337,8 +1343,9 @@ mod stage_window_tests {
         );
     }
 
-    #[test]
-    fn non_authoritative_completion_without_stage_domain_is_unknown() {
+    /// The completed branch of `%heroquest >= ^hero_complete` for a row with no
+    /// stage domain, as the entrance evaluator reads it.
+    fn completed_hero_comparison(colour_authoritative: bool, green_proven: bool) -> Cond {
         let src = Sources {
             oplocs: std::array::from_fn(|_| HashMap::new()),
             oplocu: HashMap::new(),
@@ -1350,12 +1357,17 @@ mod stage_window_tests {
             quest_stage: HashMap::from([(
                 "heroquest".to_owned(),
                 QuestStageFacts {
-                    colour_authoritative: false,
+                    colour_authoritative,
                     stage_domain: None,
                     transmission: api::quest_facts::Transmission::NotTransmitted,
                 },
             )]),
             quest_exact: HashSet::new(),
+            quest_green_proves_complete: if green_proven {
+                HashSet::from(["heroquest".to_owned()])
+            } else {
+                HashSet::new()
+            },
             labels: HashMap::new(),
             timers: HashMap::new(),
             procs: HashMap::new(),
@@ -1419,11 +1431,35 @@ mod stage_window_tests {
         };
         let lhs = Expr::Word("%heroquest".to_owned());
         let rhs = Expr::Word("^hero_complete".to_owned());
-        let condition = motion
+        motion
             .entrance_compare(CmpOp::Ge, &lhs, &rhs, &Env::new())
-            .expect("quest comparison");
+            .expect("quest comparison")
+    }
+
+    #[test]
+    fn unproven_completion_without_stage_domain_is_unknown() {
+        // Neither the generated row nor the content's colour rule proves that
+        // a green row means progress reached completion.
+        let condition = completed_hero_comparison(false, false);
 
         assert_eq!(condition.value, None);
         assert!(condition.needs.quests.is_empty());
+    }
+
+    #[test]
+    fn completion_without_stage_domain_keeps_its_gate_when_a_green_row_is_proven() {
+        for (colour_authoritative, green_proven) in [(false, true), (true, false), (true, true)] {
+            let condition = completed_hero_comparison(colour_authoritative, green_proven);
+
+            assert_eq!(condition.value, Some(true));
+            assert!(
+                matches!(
+                    condition.needs.quests.as_slice(),
+                    [api::selected::QuestGate::Complete(quest)] if quest.0.as_ref() == "hero"
+                ),
+                "authoritative={colour_authoritative} proven={green_proven}: {:?}",
+                condition.needs.quests
+            );
+        }
     }
 }
