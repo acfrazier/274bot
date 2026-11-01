@@ -1122,7 +1122,7 @@ impl SlotScript {
         banks: Arc<api::named_banks::NamedBankFacts>,
         nav: Option<nav_planner::contract::NavLease>,
     ) -> Result<(), StartError> {
-        self.start_compiled_inner(account, id, bag, selected, banks, None)
+        self.start_compiled_inner(account, id, bag, selected, banks, nav, None)
     }
 
     pub fn start_manual_walk_handover(
@@ -1139,6 +1139,7 @@ impl SlotScript {
             Arc::new(SettingsBag::new()),
             selected,
             banks,
+            None,
             Some((handover, route_run)),
         )
     }
@@ -1150,6 +1151,7 @@ impl SlotScript {
         bag: Arc<SettingsBag>,
         selected: Arc<api::game_data::SelectedGameData>,
         banks: Arc<api::named_banks::NamedBankFacts>,
+        nav: Option<nav_planner::contract::NavLease>,
         manual_handover: Option<(WalkHandover, Option<RunKey>)>,
     ) -> Result<(), StartError> {
         let (handover, route_run) = match manual_handover {
