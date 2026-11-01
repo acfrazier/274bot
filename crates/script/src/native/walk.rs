@@ -183,7 +183,10 @@ impl Observation for Frame<'_> {
             .map(|player| player.value.player.actor.moving)
     }
 }
-fn deadline_failure_receipt(request_id: u64, evidence: EvidenceStamp) -> WalkReceipt {
+fn deadline_failure_receipt(
+    request_id: u64,
+    evidence: api::quest_progress::EvidenceStamp,
+) -> WalkReceipt {
     WalkReceipt {
         goal: None,
         request_id,
