@@ -167,7 +167,7 @@ impl BenchRun {
     pub fn poll<Io>(&mut self, core: &OperatorSession<Io>) -> Result<bool, BenchError> {
         match core.play() {
             Some(play) => {
-                feed_script_lines(self.0.as_ref(), core.script_lines());
+                self.0.observe_script_lines(core.script_lines());
                 self.0
                     .poll(play)
                     .map_err(|error| BenchError(BenchStep::Run(error)))
@@ -181,20 +181,6 @@ impl BenchRun {
     pub fn finish_for_test(&mut self) {
         self.0.finish_for_test();
     }
-}
-
-trait ScriptLineSink {
-    fn observe_script_lines(&self, lines: &[(String, String)]);
-}
-
-impl ScriptLineSink for host_play::memory::Run {
-    fn observe_script_lines(&self, lines: &[(String, String)]) {
-        host_play::memory::Run::observe_script_lines(self, lines);
-    }
-}
-
-fn feed_script_lines(run: &impl ScriptLineSink, lines: &[(String, String)]) {
-    run.observe_script_lines(lines);
 }
 
 #[cfg(test)]
