@@ -396,6 +396,7 @@ export default class T extends LoopingBot {
 #[test]
 fn script_finish_event_delivers_native_stop_reason() {
     let src = r#"
+import { ScriptRunner } from '../../runtime/ScriptRunner.js';
 export default class T extends LoopingBot {
     onStart() {
         this.on('script.finish', event => {
@@ -404,8 +405,7 @@ export default class T extends LoopingBot {
     }
     loop() {
         if (globalThis.__rs2b0t_host.tick === 2) {
-            globalThis.__rs2b0t_host.stopRequested = true;
-            globalThis.__rs2b0t_host.stopReason = 'finished by script';
+            ScriptRunner.stop('finished by script');
         }
     }
 }
