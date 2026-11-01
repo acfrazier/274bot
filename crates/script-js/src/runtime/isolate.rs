@@ -921,6 +921,7 @@ impl LoadIsolate {
                 },
             }),
             frame_ready,
+            stopped: std::sync::atomic::AtomicBool::new(false),
             script_stop: Mutex::new(None),
             tx,
             queued,
