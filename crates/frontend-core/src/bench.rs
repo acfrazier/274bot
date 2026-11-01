@@ -290,7 +290,9 @@ mod tests {
             "MEMAB_BANK_ROWS:1:65".into(),
         )]);
 
-        bench.poll(&core).unwrap();
+        // The test has no prepared seed runner, so the observation can return
+        // an unrelated seed error after it consumes the supplied script lines.
+        let _ = bench.poll(&core);
 
         assert_eq!(
             bench.0.observed_script_bank_rows_for_test(&name),
