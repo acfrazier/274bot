@@ -934,7 +934,10 @@ fn script_interaction_fence_ends_after_the_bound_when_no_modal_opens() {
     assert_eq!(slot.run_sends, 0, "held on the interaction's own tick");
     observe_ticks(&mut slot, &mut client, 1);
     slot.apply_auto_run(&mut client);
-    assert_eq!(slot.run_sends, 0, "held one tick later: the click may be a cycle late");
+    assert_eq!(
+        slot.run_sends, 0,
+        "held one tick later: the click may be a cycle late"
+    );
     observe_ticks(&mut slot, &mut client, 1);
     slot.apply_auto_run(&mut client);
     assert_eq!(

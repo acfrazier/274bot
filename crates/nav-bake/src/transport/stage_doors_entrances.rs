@@ -460,7 +460,11 @@ impl Motion<'_> {
                 // completed branch when the row is either generated as
                 // authoritative or proven by the content's own colour rule.
                 let green_proves_complete = colour_authoritative
-                    || self.base.src.quest_green_proves_complete.contains(quest_varp);
+                    || self
+                        .base
+                        .src
+                        .quest_green_proves_complete
+                        .contains(quest_varp);
                 let stage_domain = self
                     .base
                     .src

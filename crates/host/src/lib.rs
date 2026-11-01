@@ -194,8 +194,8 @@ impl ScriptRunPolicy {
         let Some(sent) = self.interaction_tick else {
             return false;
         };
-        let held = !modal_open
-            && self.observed_ticks.wrapping_sub(sent) < SCRIPT_INTERACTION_FENCE_TICKS;
+        let held =
+            !modal_open && self.observed_ticks.wrapping_sub(sent) < SCRIPT_INTERACTION_FENCE_TICKS;
         if !held {
             self.interaction_tick = None;
         }

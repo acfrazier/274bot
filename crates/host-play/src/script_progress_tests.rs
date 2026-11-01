@@ -523,12 +523,7 @@ fn auto_run_press_waits_for_a_page_that_arrives_a_cycle_late() {
 #[test]
 fn auto_run_press_goes_out_after_the_bound_when_no_page_opens() {
     let mut rig = FenceRig::new();
-    let presses = rig.run(&[
-        click_frame(1, -1),
-        frame(1, -1),
-        frame(1, -1),
-        frame(1, -1),
-    ]);
+    let presses = rig.run(&[click_frame(1, -1), frame(1, -1), frame(1, -1), frame(1, -1)]);
     assert_eq!(
         presses,
         [0, 0, 1, 1],
@@ -545,7 +540,11 @@ fn auto_run_fence_counts_each_packet_of_a_multi_packet_drain() {
         frame(1, -1),
         frame(1, -1),
     ]);
-    assert_eq!(presses, [0, 0, 1, 1], "the page was in the two-packet drain");
+    assert_eq!(
+        presses,
+        [0, 0, 1, 1],
+        "the page was in the two-packet drain"
+    );
 
     let mut rig = FenceRig::new();
     let presses = rig.run(&[click_frame(1, -1), frame(2, -1), frame(1, -1)]);
@@ -564,12 +563,7 @@ fn auto_run_fence_uses_the_same_clock_after_a_relog() {
     let first = rig.run(&[frame(1, -1); 9]);
     assert_eq!(first[0], 1, "the first session presses once");
     rig.relog();
-    let presses = rig.run(&[
-        click_frame(1, -1),
-        frame(1, -1),
-        frame(1, -1),
-        frame(1, -1),
-    ]);
+    let presses = rig.run(&[click_frame(1, -1), frame(1, -1), frame(1, -1), frame(1, -1)]);
     assert_eq!(
         presses,
         [0, 0, 1, 1],
