@@ -940,42 +940,8 @@ fn wait_ready(iso: &LoadIsolate) {
     }
 }
 
-#[test]
-fn warmed_client_frame_dispatch_handles_allocate_nothing_per_frame() {
-    let (_ack_tx, ack_rx) = mpsc::sync_channel(1);
-    let dispatch = Arc::new(FrameDispatch {
-        state: Arc::new(Mutex::new(FrameAckState {
-            receiver: ack_rx,
-            pending: false,
-            disconnected: false,
-        })),
-        watchdog: FrameWatchdog {
-            teardown: Arc::new(Mutex::new(TeardownState::new())),
-            terminate: Arc::new(OnceLock::new()),
-            logs: Arc::new(Mutex::new(Vec::new())),
-            ready: Arc::new(std::sync::atomic::AtomicBool::new(false)),
-        },
-    });
-    drop(dispatch.handle());
-
-    const FRAMES: usize = 128;
-    let allocations = allocation_counter::measure(|| {
-        for _ in 0..FRAMES {
-            std::hint::black_box(dispatch.handle());
-        }
-    });
-    assert_eq!(
-        allocations,
-        allocation_counter::AllocationInfo::default(),
-        "{FRAMES} warmed frame dispatch handles allocated: {allocations:?}"
-    );
-}
-
-/// The host path: every delivered frame hands out the isolate's one
-/// dispatch handle, so a frame allocates no new `FrameDispatch`.
-#[test]
-fn begin_client_frame_reuses_one_dispatch_handle() {
-    let mut iso = LoadIsolate::spawn(
+fn frame_listener_isolate() -> LoadIsolate {
+    let iso = LoadIsolate::spawn(
         r#"
 import { BotHost } from '../../runtime/BotHost.js';
 export default class T extends LoopingBot {
@@ -995,6 +961,47 @@ loop() {
     wait_ready(&iso);
     iso.on_game_tick(1);
     assert_eq!(iso.probe("__frames").unwrap(), 0);
+    iso
+}
+
+/// The host path allocates no dispatch handle per frame. Only the
+/// `begin_client_frame` call is measured, on this thread; the isolate
+/// thread's work and the acknowledgement wait are outside the measure.
+#[test]
+fn warmed_client_frame_dispatch_handles_allocate_nothing_per_frame() {
+    let mut iso = frame_listener_isolate();
+    const FRAMES: u64 = 64;
+    let mut allocated = 0;
+    let mut handles: Vec<Arc<dyn script::surface::ClientFrameDispatch>> = Vec::new();
+    for _ in 0..FRAMES {
+        let mut dispatch = None;
+        let allocations = allocation_counter::measure(|| {
+            dispatch = iso.begin_client_frame();
+        });
+        allocated += allocations.count_total;
+        let dispatch = dispatch.expect("a registered listener receives the frame");
+        assert!(
+            dispatch.wait_for_ack(),
+            "the isolate acknowledges the frame"
+        );
+        handles.push(dispatch);
+    }
+    drop(handles);
+    // The command channel allocates one block per 31 sends; a dispatch
+    // handle built per frame would allocate at least once on every frame.
+    assert!(
+        allocated <= FRAMES / 16,
+        "{FRAMES} warmed client frames allocated {allocated} times"
+    );
+    assert_eq!(iso.probe("__frames").unwrap(), FRAMES);
+    iso.join();
+}
+
+/// The host path: every delivered frame hands out the isolate's one
+/// dispatch handle, so a frame allocates no new `FrameDispatch`.
+#[test]
+fn begin_client_frame_reuses_one_dispatch_handle() {
+    let mut iso = frame_listener_isolate();
     const FRAMES: i64 = 16;
     // Keep every handle alive: a fresh allocation per frame could otherwise
     // reuse the address of the previous frame's dropped handle.
