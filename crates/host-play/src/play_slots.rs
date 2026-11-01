@@ -2098,6 +2098,7 @@ fn spawn_slot_thread(
                             slot_busy_requires_tick(running, frame_delivered)
                                 || slot_cheats
                                     .lock()
+                                    .unwrap()
                                     .get(name)
                                     .is_some_and(|q| !q.is_empty())
                                 || slot_wires
