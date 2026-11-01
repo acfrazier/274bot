@@ -468,42 +468,6 @@ fn is_scripts_sibling_specifier(spec: &str) -> bool {
     )
 }
 
-// WalkTo is reserved as a host card, but its pinned File card needs this private helper.
-// Keep the exception tied to src/bot/scripts/WalkToBot instead of widening relative imports.
-
-const WALK_TO_DESTINATIONS_IMPORT: &str = "../../api/map/WalkDestinations.js";
-const WALK_TO_DESTINATIONS_URL: &str = "/rs2b0t/bot/api/map/WalkDestinations.js";
-
-fn is_walk_to_script_dir(card_dir: &Path) -> bool {
-    let Some(scripts_dir) = card_dir.parent() else {
-        return false;
-    };
-    let Some(bot_dir) = scripts_dir.parent() else {
-        return false;
-    };
-    let Some(src_dir) = bot_dir.parent() else {
-        return false;
-    };
-    card_dir.file_name().and_then(|name| name.to_str()) == Some("WalkToBot")
-        && scripts_dir.file_name().and_then(|name| name.to_str()) == Some("scripts")
-        && bot_dir.file_name().and_then(|name| name.to_str()) == Some("bot")
-        && src_dir.file_name().and_then(|name| name.to_str()) == Some("src")
-}
-
-fn walk_to_destination_imports(source: &str) -> Vec<String> {
-    let mut imports = scan_import_specifiers(source);
-    imports.retain(|specifier| specifier == WALK_TO_DESTINATIONS_IMPORT);
-    imports
-}
-
-fn walk_to_destination_imports_for_card(card_dir: &Path, source: &str) -> Vec<String> {
-    if is_walk_to_script_dir(card_dir) {
-        walk_to_destination_imports(source)
-    } else {
-        Vec::new()
-    }
-}
-
 /// Find the first import that the generic loader cannot resolve.
 pub fn first_unloadable_specifier(source: &str) -> Option<String> {
     scan_import_specifiers(source)
@@ -511,28 +475,9 @@ pub fn first_unloadable_specifier(source: &str) -> Option<String> {
         .find(|s| !specifier_is_ok(s))
 }
 
-fn first_unloadable_specifier_for_card(source: &str, card_path: &Path) -> Option<String> {
-    first_unloadable_specifier_for_walk_to(
-        source,
-        card_path.parent().is_some_and(is_walk_to_script_dir),
-    )
-}
-
-fn first_unloadable_specifier_for_walk_to(
-    source: &str,
-    allows_walk_to_helper: bool,
-) -> Option<String> {
-    scan_import_specifiers(source)
-        .into_iter()
-        .find(|specifier| {
-            !specifier_is_ok(specifier)
-                && !(allows_walk_to_helper && specifier == WALK_TO_DESTINATIONS_IMPORT)
-        })
-}
-
 /// Card-level scan: the origin, then each supported sibling origin that exists.
 pub fn first_unloadable_for_card(origin: &str, card_path: &Path) -> Option<String> {
-    if let Some(spec) = first_unloadable_specifier_for_card(origin, card_path) {
+    if let Some(spec) = first_unloadable_specifier(origin) {
         return Some(spec);
     }
     let dir = card_path.parent()?;
@@ -543,7 +488,7 @@ pub fn first_unloadable_for_card(origin: &str, card_path: &Path) -> Option<Strin
         let Ok(text) = std::fs::read_to_string(&sib) else {
             continue;
         };
-        if let Some(spec) = first_unloadable_specifier_for_card(&text, card_path) {
+        if let Some(spec) = first_unloadable_specifier(&text) {
             return Some(spec);
         }
     }
@@ -554,18 +499,7 @@ pub fn first_unloadable_for_card(origin: &str, card_path: &Path) -> Option<Strin
         let Ok(text) = std::fs::read_to_string(&sib) else {
             continue;
         };
-        if let Some(spec) = first_unloadable_specifier_for_card(&text, card_path) {
-            return Some(spec);
-        }
-    }
-    for rel in walk_to_destination_imports_for_card(dir, origin) {
-        let Some(sib) = resolve_sibling_path(dir, &rel) else {
-            continue;
-        };
-        let Ok(text) = std::fs::read_to_string(&sib) else {
-            continue;
-        };
-        if let Some(spec) = first_unloadable_specifier_for_card(&text, card_path) {
+        if let Some(spec) = first_unloadable_specifier(&text) {
             return Some(spec);
         }
     }
@@ -587,14 +521,7 @@ pub fn sibling_module_url(import_rel: &str) -> Option<String> {
     None
 }
 
-fn sibling_module_url_for_card(card_dir: &Path, import_rel: &str) -> Option<String> {
-    if is_walk_to_script_dir(card_dir) && import_rel == WALK_TO_DESTINATIONS_IMPORT {
-        return Some(WALK_TO_DESTINATIONS_URL.to_owned());
-    }
-    sibling_module_url(import_rel)
-}
-
-/// Resolve a same-folder import, a scripts sibling, or WalkTo's exact map helper.
+/// Resolve a same-folder import or a scripts sibling.
 pub fn resolve_sibling_path(card_dir: &Path, import_rel: &str) -> Option<PathBuf> {
     if let Some(rel) = import_rel.strip_prefix("./") {
         if rel.contains("..") {
@@ -610,12 +537,6 @@ pub fn resolve_sibling_path(card_dir: &Path, import_rel: &str) -> Option<PathBuf
         let verbatim = scripts_root.join(rest);
         let candidate = file_or_ts_twin(scripts_root, rest, verbatim)?;
         return canonical_under_dir(scripts_root, &candidate);
-    }
-    if import_rel == WALK_TO_DESTINATIONS_IMPORT && is_walk_to_script_dir(card_dir) {
-        let bot_dir = card_dir.parent()?.parent()?;
-        let rel = "api/map/WalkDestinations.js";
-        let candidate = file_or_ts_twin(bot_dir, rel, bot_dir.join(rel))?;
-        return canonical_under_dir(bot_dir, &candidate);
     }
     None
 }
@@ -682,7 +603,6 @@ impl PreparationSiblingWork {
         for import_rel in scan_same_folder_js_imports(origin)
             .into_iter()
             .chain(scan_scripts_sibling_js_imports(origin))
-            .chain(walk_to_destination_imports_for_card(card_dir, origin))
         {
             if queued.insert(import_rel.clone()) {
                 if queued.len() > MAX_PREPARATION_SIBLINGS {
@@ -715,7 +635,7 @@ impl PreparationSiblingWork {
         if self.seen.len() > MAX_PREPARATION_SIBLINGS {
             return Err("script has more than 128 sibling modules".into());
         }
-        let Some(url) = sibling_module_url_for_card(&self.card_dir, &import_rel) else {
+        let Some(url) = sibling_module_url(&import_rel) else {
             return Ok(true);
         };
         let Some(path) = resolve_sibling_path(&self.card_dir, &import_rel) else {
@@ -735,10 +655,6 @@ impl PreparationSiblingWork {
             })?;
         let mut imports = scan_same_folder_js_imports(&origin_text);
         imports.extend(scan_scripts_sibling_js_imports(&origin_text));
-        imports.extend(walk_to_destination_imports_for_card(
-            &self.card_dir,
-            &origin_text,
-        ));
         for dependency in imports {
             if self.queued.insert(dependency.clone()) {
                 if self.queued.len() + self.seen.len() > MAX_PREPARATION_SIBLINGS {
@@ -822,29 +738,21 @@ pub(crate) struct FirstUnloadableWork {
     nodes: Option<Vec<PreparationSibling>>,
     imports: Vec<String>,
     import_index: usize,
-    allows_walk_to_helper: bool,
 }
 
 impl FirstUnloadableWork {
     pub(crate) fn new(origin: &str, card_path: &Path, source_limit: usize) -> Result<Self, String> {
-        let allows_walk_to_helper = card_path.parent().is_some_and(is_walk_to_script_dir);
-        if let Some(specifier) =
-            first_unloadable_specifier_for_walk_to(origin, allows_walk_to_helper)
-        {
+        if let Some(specifier) = first_unloadable_specifier(origin) {
             return Ok(Self {
                 result: Some(Some(specifier)),
                 graph: None,
                 nodes: None,
                 imports: Vec::new(),
                 import_index: 0,
-                allows_walk_to_helper,
             });
         }
         let mut imports = scan_same_folder_js_imports(origin);
         imports.extend(scan_scripts_sibling_js_imports(origin));
-        if let Some(card_dir) = card_path.parent() {
-            imports.extend(walk_to_destination_imports_for_card(card_dir, origin));
-        }
         Ok(Self {
             result: None,
             graph: Some(PreparationSiblingWork::new(
@@ -855,7 +763,6 @@ impl FirstUnloadableWork {
             nodes: None,
             imports,
             import_index: 0,
-            allows_walk_to_helper,
         })
     }
 
@@ -879,9 +786,7 @@ impl FirstUnloadableWork {
                 .iter()
                 .find(|(relative, _, _, _)| relative == import_rel)
             {
-                if let Some(specifier) =
-                    first_unloadable_specifier_for_walk_to(source, self.allows_walk_to_helper)
-                {
+                if let Some(specifier) = first_unloadable_specifier(source) {
                     self.result = Some(Some(specifier));
                 }
             }
@@ -1064,7 +969,6 @@ pub fn collect_raw_sibling_hashes(card_path: &Path, origin: &str) -> Vec<(String
     let mut pending: Vec<String> = scan_same_folder_js_imports(origin)
         .into_iter()
         .chain(scan_scripts_sibling_js_imports(origin))
-        .chain(walk_to_destination_imports_for_card(card_dir, origin))
         .collect();
     let mut seen = HashSet::new();
     let mut out = Vec::new();
@@ -1084,7 +988,6 @@ pub fn collect_raw_sibling_hashes(card_path: &Path, origin: &str) -> Vec<(String
         let origin_text = String::from_utf8_lossy(&bytes).into_owned();
         pending.extend(scan_same_folder_js_imports(&origin_text));
         pending.extend(scan_scripts_sibling_js_imports(&origin_text));
-        pending.extend(walk_to_destination_imports_for_card(card_dir, &origin_text));
         out.push((import_rel, script::identity::raw_sha(&bytes)));
     }
     out
@@ -1114,7 +1017,6 @@ fn order_siblings_deps_first(
         for imp in scan_same_folder_js_imports(js)
             .into_iter()
             .chain(scan_scripts_sibling_js_imports(js))
-            .chain(walk_to_destination_imports(js))
         {
             if rels.contains(&imp) && imp != *rel {
                 needed.push(imp);
@@ -1238,14 +1140,19 @@ mod tests {
     use super::*;
     use script::identity::{card_identity_id, file_identity};
 
+    /// `WalkDestinations` is a served compatibility module (wave 3 walking),
+    /// so WalkTo's `../../api/map/WalkDestinations.js` import resolves to the
+    /// shim for every card and the upstream file is never loaded as a sibling
+    /// (a sibling at the same URL would register the module twice).
     #[test]
-    fn walk_to_destination_import_is_folder_scoped_and_ordered() {
+    fn walk_destinations_import_resolves_to_the_shim_not_a_sibling() {
         struct RemoveOnDrop(PathBuf);
         impl Drop for RemoveOnDrop {
             fn drop(&mut self) {
                 let _ = std::fs::remove_dir_all(&self.0);
             }
         }
+        const IMPORT: &str = "../../api/map/WalkDestinations.js";
 
         let root =
             std::env::temp_dir().join(format!("274bot-walk-to-import-{}", std::process::id()));
@@ -1259,32 +1166,28 @@ mod tests {
 
         let card_path = card_dir.join("WalkToBot.ts");
         let logic_path = card_dir.join("WalkToLogic.ts");
-        let destinations_path = map_dir.join("WalkDestinations.ts");
         let origin = r#"import { resolveDestination } from '../../api/map/WalkDestinations.js';
 import './WalkToLogic.js';
 export default class WalkToBot extends TaskBot {}"#;
         let logic = r#"import { resolveDestination } from '../../api/map/WalkDestinations.js';
 export const target = resolveDestination('Lumbridge');"#;
-        let destinations = r#"import Tile from '../../geometry/Tile.js';
-export const WALK_OPTIONS = ['Lumbridge'];
-export function resolveDestination(name) {
-    return name === 'Lumbridge' ? { name, tile: new Tile(1, 2, 0) } : null;
-}"#;
         std::fs::write(&card_path, origin).unwrap();
         std::fs::write(&logic_path, logic).unwrap();
-        std::fs::write(&destinations_path, destinations).unwrap();
+        std::fs::write(
+            map_dir.join("WalkDestinations.ts"),
+            "export const WALK_OPTIONS = [];",
+        )
+        .unwrap();
 
+        assert_eq!(first_unloadable_specifier(origin), None);
         assert_eq!(first_unloadable_for_card(origin, &card_path), None);
         assert_eq!(
             first_unloadable_for_card_bounded(origin, &card_path, MAX_PREPARATION_SOURCE_BYTES)
                 .unwrap(),
             None
         );
-        assert!(sibling_module_url(WALK_TO_DESTINATIONS_IMPORT).is_none());
-        assert_eq!(
-            sibling_module_url_for_card(&card_dir, WALK_TO_DESTINATIONS_IMPORT).as_deref(),
-            Some(WALK_TO_DESTINATIONS_URL)
-        );
+        assert!(sibling_module_url(IMPORT).is_none());
+        assert!(resolve_sibling_path(&card_dir, IMPORT).is_none());
 
         let cache = JsCache::new(root.join("cache"));
         let siblings = resolve_sibling_modules(
@@ -1300,59 +1203,10 @@ export function resolveDestination(name) {
         )
         .unwrap();
         let urls: Vec<_> = siblings.iter().map(|(url, _)| url.as_str()).collect();
-        assert_eq!(
-            urls,
-            [
-                WALK_TO_DESTINATIONS_URL,
-                "/rs2b0t/bot/scripts/bot/WalkToLogic.js"
-            ]
-        );
-        let ordered = order_siblings_deps_first(vec![
-            (
-                "./WalkToLogic.js".into(),
-                "/rs2b0t/bot/scripts/bot/WalkToLogic.js".into(),
-                "import '../../api/map/WalkDestinations.js';".into(),
-                String::new(),
-            ),
-            (
-                WALK_TO_DESTINATIONS_IMPORT.into(),
-                WALK_TO_DESTINATIONS_URL.into(),
-                String::new(),
-                String::new(),
-            ),
-        ]);
-        assert_eq!(
-            ordered
-                .iter()
-                .map(|(url, _)| url.as_str())
-                .collect::<Vec<_>>(),
-            [
-                WALK_TO_DESTINATIONS_URL,
-                "/rs2b0t/bot/scripts/bot/WalkToLogic.js"
-            ]
-        );
-        assert!(collect_raw_sibling_hashes(&card_path, origin)
+        assert_eq!(urls, ["/rs2b0t/bot/scripts/bot/WalkToLogic.js"]);
+        assert!(!collect_raw_sibling_hashes(&card_path, origin)
             .iter()
-            .any(|(relative, _)| relative == WALK_TO_DESTINATIONS_IMPORT));
-
-        let other_card = bot_dir.join("scripts/Other/Other.ts");
-        assert_eq!(
-            first_unloadable_specifier_for_card(origin, &other_card).as_deref(),
-            Some(WALK_TO_DESTINATIONS_IMPORT)
-        );
-        assert!(
-            resolve_sibling_path(other_card.parent().unwrap(), WALK_TO_DESTINATIONS_IMPORT)
-                .is_none()
-        );
-        let decoy_card = root.join("mirror/bot/scripts/WalkToBot/WalkToBot.ts");
-        assert_eq!(
-            first_unloadable_specifier_for_card(origin, &decoy_card).as_deref(),
-            Some(WALK_TO_DESTINATIONS_IMPORT)
-        );
-        assert!(
-            resolve_sibling_path(decoy_card.parent().unwrap(), WALK_TO_DESTINATIONS_IMPORT)
-                .is_none()
-        );
+            .any(|(relative, _)| relative == IMPORT));
     }
 
     #[test]

@@ -1925,7 +1925,7 @@ fn validate_walk_map_pick(logs: &[String], start: usize) -> Result<String, Strin
 
 fn run_runtime_settings_walk_cell(receipt: &mut Receipt) -> Result<(), String> {
     receipt.coverage_notes.push(
-        "WalkToBot.ts loads as a ScriptSource::File card. Its exact ../../api/map/WalkDestinations.js import resolves only under src/bot/scripts/WalkToBot. This proves File-card, not Catalog-card, coverage. The Alcher Catalog cell separately checks settings writes, listener delivery and read-back.".into(),
+        "WalkToBot.ts loads as a ScriptSource::File card. Its ../../api/map/WalkDestinations.js import resolves to the served compatibility module. This proves File-card, not Catalog-card, coverage. The Alcher Catalog cell separately checks settings writes, listener delivery and read-back.".into(),
     );
     let mut session = session("compat-v1-runtime-settings-walk", receipt)?;
     let catalog_root = required_path("RS2B0T")?;
