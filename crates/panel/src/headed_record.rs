@@ -2971,7 +2971,7 @@ mod tests {
         events
     }
 
-    #[cfg(feature = "render-diagnostics")]
+    #[cfg(all(feature = "render-diagnostics", feature = "render-test-hooks", unix))]
     fn assert_full_drain_diagnostics(recorder_id: u64) {
         let events = recorder_diagnostic_events(recorder_id);
         assert!(

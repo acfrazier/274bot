@@ -320,8 +320,12 @@ impl StartupPreparation {
             || self.validate_pending.is_some()
     }
 
-    fn needs_redraw(&self, first_frame: bool) -> bool {
-        first_frame || self.in_flight()
+    fn needs_redraw(&self, _first_frame: bool) -> bool {
+        #[cfg(any(feature = "render-diagnostics", feature = "render-test-hooks"))]
+        if _first_frame {
+            return true;
+        }
+        self.in_flight()
     }
 }
 

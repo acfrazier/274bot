@@ -21,12 +21,13 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.8` 
   and recording sidecars have bounded memory, and recording shutdown does not
   join the encoder on the UI thread. A sleeping experimental panel wakes for
   recording frames and encoder shutdown. These paths remain opt-in pending qualification.
-- A sleeping diagnostic panel now advances deferred startup and benchmark
-  samples without user input. The headed GPU context is charged to the same
-  process budget as its views, so configured GPU views do not fall back to CPU
-  merely because the context was initialized before the first view.
-  Completed diagnostic benchmarks keep polling recorder shutdown after their
-  Play workers retire, so a finished video can close the panel normally.
+- Diagnostic and test-hook builds request an initial redraw on the first frame.
+  This lets deferred startup advance without user input. Diagnostic builds
+  also use the redraw to advance benchmark samples. The headed GPU context
+  shares its process budget with its views, so configured GPU views do not
+  fall back to CPU because the context started before the first view. Completed
+  diagnostic benchmarks keep polling recorder shutdown after their Play
+  workers retire. A finished video can then close the panel normally.
 - GPU scene vertices use one third less memory without changing their image.
   The renderer keeps the existing CPU clipping and drawing order. GPU views
   share one scene vertex buffer, capped at 128 MiB per process. The last GPU

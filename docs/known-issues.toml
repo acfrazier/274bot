@@ -42,6 +42,17 @@ severity = "low"
 owner = "T4"
 
 [[item]]
+id = "fair-rendering-not-active-in-0-2-9"
+kind = "not-in-release"
+area = "Drawing"
+text = """Version 0.2.9 includes fair rendering, but it is not active in this
+  release. We plan to activate it in version 0.3.0."""
+first = "0.2.9"
+target = "0.3.0"
+severity = "medium"
+owner = "T4"
+
+[[item]]
 id = "bank-native-planned"
 kind = "not-in-release"
 area = "Scripts"

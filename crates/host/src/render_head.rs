@@ -1013,7 +1013,7 @@ mod tests {
             lease,
             wake,
             scenes: 0,
-            #[cfg(feature = "render-test-hooks")]
+            #[cfg(any(feature = "render-diagnostics", feature = "render-test-hooks"))]
             fair: None,
         }
     }

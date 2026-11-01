@@ -480,9 +480,11 @@ impl MacosAllocatorStats {
 
 #[cfg(target_os = "macos")]
 fn macos_native_allocator_sample() -> Option<serde_json::Value> {
-    // SAFETY: malloc_statistics_t is a plain C output struct and a null zone
-    // requests the supported aggregate across all registered malloc zones.
+    // SAFETY: `malloc_statistics_t` is a plain C output struct, and zeroing it
+    // initializes every field before the system function writes its values.
     let mut stats: libc::malloc_statistics_t = unsafe { std::mem::zeroed() };
+    // SAFETY: a null zone requests the supported aggregate across all registered
+    // malloc zones, and `stats` is a valid writable output structure.
     unsafe { libc::malloc_zone_statistics(std::ptr::null_mut(), &mut stats) };
     Some(
         MacosAllocatorStats {
@@ -3563,6 +3565,19 @@ mod tests {
         assert_eq!(receipt["malloc_zone_in_use_bytes"], 123);
         assert_eq!(receipt["malloc_zone_allocated_bytes"], 456);
         assert!(receipt.get("glibc_mmap_bytes").is_none());
+    }
+
+    #[test]
+    fn macos_allocator_sampler_calls_native_sampler() {
+        #[cfg(target_os = "macos")]
+        {
+            let sample = macos_native_allocator_sample().expect("macOS allocator sample");
+            assert_eq!(sample["source"], MACOS_ALLOCATOR_SOURCE);
+            assert!(sample["malloc_zone_in_use_bytes"].as_u64().is_some());
+            assert!(sample["malloc_zone_allocated_bytes"].as_u64().is_some());
+        }
+        #[cfg(not(target_os = "macos"))]
+        eprintln!("SKIP: the macOS allocator sampler requires macOS");
     }
 
     #[cfg(all(target_os = "linux", target_env = "gnu"))]

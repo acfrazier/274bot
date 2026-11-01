@@ -341,7 +341,7 @@ pub enum CaptureError {
     Io,
     #[error("capture device operation failed")]
     Device,
-    #[error("capture requires explicitly enabled fair rendering")]
+    #[error("capture is not available in this build")]
     Inactive,
     #[error("capture policy is not configured")]
     PolicyMissing,
@@ -1771,7 +1771,7 @@ fn capture_error_message(error: CaptureError) -> &'static str {
         CaptureError::Readback(_) => "retained consumer refused capture",
         CaptureError::Io => "capture output failed",
         CaptureError::Device => "capture device operation failed",
-        CaptureError::Inactive => "fair rendering is not active",
+        CaptureError::Inactive => "capture is not available in this build",
         CaptureError::PolicyMissing => "capture policy is not configured",
         CaptureError::SequenceExhausted => "window paint sequence exhausted",
         CaptureError::DeadlineMissing => "capture request has no explicit deadline",
