@@ -19,8 +19,10 @@ use super::compile::{
 use super::path::PredicateDocument;
 use crate::combat::{begin_clear_owned_prayers, ClearPrayers, Hygiene, RaisedPrayers};
 use crate::dialogue_outcome::DialogueOutcome;
+#[cfg(test)]
 use crate::native::walk::Walk;
 use crate::native::{ActionError, ActionHandle, NativeActions, WalkOptions, WalkReceipt};
+use crate::quester::prereq::{reach::PrereqReach, walk::PrereqWalk};
 use crate::shim::InteractReq;
 use api::selected::{FactKey, Truth};
 use api::snapshot::{ChatLineView, QuestListStatus};
@@ -57,9 +59,9 @@ fn begin_approach_walk(
     retry: &mut crate::native::WalkRetryState,
     request: crate::native::WalkRequest,
     cx: &mut StepContext<'_, '_>,
-) -> Poll<Result<ActionHandle<Walk>, ActionError>> {
+) -> Poll<Result<PrereqWalk, ActionError>> {
     let now = cx.tick.cx.evidence().tick;
-    match crate::native::defer_budget(cx.tick.actions.begin::<Walk>(request, &mut cx.tick.cx)) {
+    match crate::native::defer_budget(PrereqWalk::begin(request, cx.tick.actions, &mut cx.tick.cx)) {
         Poll::Pending => {
             retry.defer_until_next_tick(now);
             Poll::Pending
@@ -1166,6 +1168,12 @@ struct WalkArgs {
     /// Override inherited Wilderness permission for this movement.
     #[serde(default)]
     allow_wilderness: Option<bool>,
+    /// Additive dialogue permission; false is a request-level Forbid.
+    #[serde(default)]
+    allow_prereq_dialogue: Option<bool>,
+    /// Additive quest-start permission; false is a request-level Forbid.
+    #[serde(default)]
+    allow_quest_start: Option<bool>,
 }
 
 impl WalkArgs {
@@ -1173,6 +1181,8 @@ impl WalkArgs {
         WalkOptions {
             allow_teleports: self.allow_teleports.into(),
             allow_wilderness: self.allow_wilderness.into(),
+            allow_prereq_dialogue: self.allow_prereq_dialogue.into(),
+            allow_quest_start: self.allow_quest_start.into(),
             ..WalkOptions::default()
         }
     }
@@ -1259,7 +1269,7 @@ impl StepPlan for WalkPlan {
 }
 struct WalkRun {
     plan: WalkPlan,
-    handle: Option<ActionHandle<Walk>>,
+    handle: Option<PrereqWalk>,
     retry: crate::native::WalkRetryState,
     warning: Option<Arc<str>>,
     trace_event: Option<super::compile::StepTraceEvent>,
@@ -1267,7 +1277,7 @@ struct WalkRun {
 impl WalkRun {
     fn begin_walk(&mut self, cx: &mut StepContext<'_, '_>) -> Result<(), ActionError> {
         let request = self.plan.request(cx);
-        let handle = cx.tick.actions.begin::<Walk>(request, &mut cx.tick.cx)?;
+        let handle = PrereqWalk::begin(request, cx.tick.actions, &mut cx.tick.cx)?;
         self.handle = Some(handle);
         self.retry.action_submitted();
         self.warning = None;
@@ -1292,13 +1302,15 @@ impl StepRun for WalkRun {
         }
 
         let result = {
-            let Some(handle) = self.handle.as_ref() else {
+            let Some(handle) = self.handle.as_mut() else {
                 return Poll::Ready(Err(ActionError::Stale));
             };
-            while let Some(event) = cx.tick.actions.take_walk_event(handle, &mut cx.tick.cx) {
-                self.warning = Some(event.detail);
+            if let Some(native) = handle.walk_handle() {
+                while let Some(event) = cx.tick.actions.take_walk_event(native, &mut cx.tick.cx) {
+                    self.warning = Some(event.detail);
+                }
             }
-            match cx.tick.actions.poll(handle, &mut cx.tick.cx) {
+            match handle.poll(cx.tick.actions, &mut cx.tick.cx, cx.tick.state) {
                 Poll::Pending => return Poll::Pending,
                 Poll::Ready(Ok(receipt)) => {
                     if self.retry.observe_failure(&receipt, now) {
@@ -1321,7 +1333,11 @@ impl StepRun for WalkRun {
         Poll::Ready(result)
     }
 
-    fn cancel(&mut self, _actions: &mut NativeActions) {}
+    fn cancel(&mut self, _actions: &mut NativeActions) {
+        if let Some(handle) = self.handle.as_mut() {
+            handle.cancel();
+        }
+    }
 
     fn waiting_for(&self) -> Option<(&'static str, &Arc<str>)> {
         self.warning
@@ -1637,7 +1653,7 @@ struct TalkRun {
     leash: u16,
     options: dialogue::DialogueOptions,
     expect_combat: Option<i32>,
-    walk: Option<ActionHandle<Walk>>,
+    walk: Option<PrereqWalk>,
     walk_retry: crate::native::WalkRetryState,
     dialogue: Option<ActionHandle<dialogue::Dialogue>>,
     started: bool,
@@ -1651,8 +1667,8 @@ const _: [(); 1] = [(); (std::mem::size_of::<TalkRun>() <= 696) as usize];
 impl StepRun for TalkRun {
     fn poll(&mut self, cx: &mut StepContext<'_, '_>) -> Poll<Result<StepOutcome, ActionError>> {
         let now_tick = cx.tick.cx.evidence().tick;
-        if let Some(handle) = &self.walk {
-            match cx.tick.actions.poll(handle, &mut cx.tick.cx) {
+        if let Some(handle) = &mut self.walk {
+            match handle.poll(cx.tick.actions, &mut cx.tick.cx, cx.tick.state) {
                 Poll::Pending => return Poll::Pending,
                 Poll::Ready(Err(error)) => return Poll::Ready(Err(error)),
                 Poll::Ready(Ok(receipt)) => {
@@ -2015,43 +2031,9 @@ impl InteractPlan {
         cx: &mut StepContext<'_, '_>,
         open_page: bool,
     ) -> Result<Box<dyn StepRun>, ActionError> {
-        Ok(Box::new(InteractRun {
-            kind: self.kind.clone(),
-            op: Arc::clone(&self.op),
-            tile: self.tile,
-            radius: self.radius,
-            wait_if_missing: self.wait_if_missing,
-            deadline: None,
-            dialogue_cap: None,
-            dialogue_page: None,
-            missing_deadline: None,
-            waiting: None,
-            settle_duration: Duration::from_millis(self.settle_ms.unwrap_or(20_000)),
-            walk_retry: crate::native::WalkRetryState::default(),
-            walk: None,
-            wall_fallback_tile: None,
-            wall_fallback_pending: None,
-            reach: None,
-            default_dialogue: self.default_dialogue,
-            dialogue_options: self.dialogue_options.clone(),
-            dialogue: None,
-            dialogue_started: None,
-            dialogue_completed: false,
-            accepted_tick: None,
-            scene_activity_observed: false,
-            scene_in_range_at_acceptance: false,
-            until: begin_until(self.until.as_ref(), cx)?,
-            wait_until: self.wait_until.clone(),
-            target_tile: self.target_tile,
-            reachable_only: self.reachable_only,
-            round_pick: None,
-            retargets_left: reach::RETARGET_LIMIT,
-            round_before: None,
-            round_deadline: None,
-            round_accepted: false,
-            started: false,
-            open_page,
-        }))
+        let mut run = InteractRun::new(self, begin_until(self.until.as_ref(), cx)?);
+        run.open_page = open_page;
+        Ok(Box::new(run))
     }
 }
 impl StepPlan for InteractPlan {
@@ -2076,7 +2058,7 @@ impl StepPlan for InteractPlan {
     }
 }
 
-struct InteractRun {
+pub(crate) struct InteractRun {
     kind: reach::ReachKind,
     op: Arc<str>,
     tile: Option<WorldTile>,
@@ -2088,13 +2070,13 @@ struct InteractRun {
     missing_deadline: Option<Duration>,
     waiting: Option<&'static str>,
     settle_duration: Duration,
-    walk: Option<ActionHandle<Walk>>,
+    walk: Option<PrereqWalk>,
     walk_retry: crate::native::WalkRetryState,
     /// The alternate wall-side tile selected for the approach, retained across retries.
     wall_fallback_tile: Option<WorldTile>,
     /// A retry tile whose walk request has not yet obtained budget.
     wall_fallback_pending: Option<WorldTile>,
-    reach: Option<ActionHandle<reach::Reach>>,
+    reach: Option<PrereqReach>,
     default_dialogue: bool,
     dialogue_options: Option<dialogue::DialogueOptions>,
     dialogue: Option<ActionHandle<dialogue::Dialogue>>,
@@ -2123,6 +2105,133 @@ struct InteractRun {
 }
 
 impl InteractRun {
+    fn new(plan: &InteractPlan, until: Option<(i32, i32)>) -> Self {
+        Self {
+            kind: plan.kind.clone(),
+            op: Arc::clone(&plan.op),
+            tile: plan.tile,
+            radius: plan.radius,
+            wait_if_missing: plan.wait_if_missing,
+            deadline: None,
+            dialogue_cap: None,
+            dialogue_page: None,
+            missing_deadline: None,
+            waiting: None,
+            settle_duration: Duration::from_millis(plan.settle_ms.unwrap_or(20_000)),
+            walk_retry: crate::native::WalkRetryState::default(),
+            walk: None,
+            wall_fallback_tile: None,
+            wall_fallback_pending: None,
+            reach: None,
+            default_dialogue: plan.default_dialogue,
+            dialogue_options: plan.dialogue_options.clone(),
+            dialogue: None,
+            dialogue_started: None,
+            dialogue_completed: false,
+            accepted_tick: None,
+            scene_activity_observed: false,
+            scene_in_range_at_acceptance: false,
+            until,
+            wait_until: plan.wait_until.clone(),
+            target_tile: plan.target_tile,
+            reachable_only: plan.reachable_only,
+            round_pick: None,
+            retargets_left: reach::RETARGET_LIMIT,
+            round_before: None,
+            round_deadline: None,
+            round_accepted: false,
+            started: false,
+            open_page: false,
+        }
+    }
+
+    /// One exact prerequisite op. The enclosing runner owns the authored
+    /// landing/refusal and tick waits; this is the normal Interact reach/click
+    /// path, without its optional unclassified dialogue adoption.
+    pub(crate) fn prereq_probe(
+        crossing: &api::prereq_steps::CrossingId,
+        loc_tile: WorldTile,
+        op: Arc<str>,
+    ) -> Self {
+        Self::new(
+            &InteractPlan {
+                kind: reach::ReachKind::Loc {
+                    id: Some(crossing.loc_id),
+                    name: None,
+                },
+                op,
+                tile: Some(crossing.at),
+                radius: 1,
+                wait_if_missing: false,
+                settle_ms: None,
+                ambiguous: false,
+                default_dialogue: false,
+                dialogue_options: None,
+                until: None,
+                wait_until: None,
+                target_tile: Some(loc_tile),
+                reachable_only: true,
+            },
+            None,
+        )
+    }
+
+    pub(crate) fn poll_prereq_click(
+        &mut self,
+        actions: &mut crate::native::NativeActions,
+        cx: &mut crate::native::ActionContext<'_>,
+    ) -> Poll<Result<(), ActionError>> {
+        if self.reach.is_none() {
+            self.reach = Some(std::task::ready!(crate::native::defer_budget(
+                PrereqReach::begin_unresolved(
+                    reach::ReachArgs {
+                        kind: self.kind.clone(),
+                        op: Arc::clone(&self.op),
+                        anchor: self.tile,
+                        radius: self.radius,
+                        wait_if_missing: false,
+                        target_tile: self.target_tile,
+                        reachable_only: true,
+                    },
+                    actions,
+                    cx
+                ),
+            ))?);
+        }
+        let handle = self.reach.as_mut().expect("probe has a reach owner");
+        // Keep that owner alive while its content acknowledgement is awaited.
+        if handle.inspect(reach::Reach::request_id).unwrap_or(0) != 0 {
+            return Poll::Ready(Ok(()));
+        }
+        match handle.poll(actions, cx, None) {
+            Poll::Ready(Err(error)) => Poll::Ready(Err(error)),
+            Poll::Ready(Ok(_)) => Poll::Ready(Err(ActionError::Failed(
+                "prerequisite op ended before a click".into(),
+            ))),
+            Poll::Pending => {
+                if handle.inspect(reach::Reach::request_id).unwrap_or(0) == 0 {
+                    Poll::Pending
+                } else {
+                    Poll::Ready(Ok(()))
+                }
+            }
+        }
+    }
+
+    pub(crate) fn prereq_send(
+        &self,
+        cx: &mut crate::native::ActionContext<'_>,
+    ) -> Option<(u64, Option<crate::native::InteractionReceipt>)> {
+        self.reach.as_ref()?.inspect_in(cx, |reach, cx| {
+            let id = reach.request_id();
+            (id, cx.interaction_receipt(id).copied())
+        })
+    }
+
+    pub(crate) fn prereq_revoker(&self) -> Option<crate::native::ActionRevoker> {
+        self.reach.as_ref()?.current_revoker()
+    }
+
     fn clear_round(&mut self) {
         self.dialogue_page = None;
         self.reach = None;
@@ -2436,8 +2545,8 @@ impl InteractRun {
             self.wall_fallback_pending = None;
             return Poll::Pending;
         }
-        if let Some(handle) = &self.walk {
-            match cx.tick.actions.poll(handle, &mut cx.tick.cx) {
+        if let Some(handle) = &mut self.walk {
+            match handle.poll(cx.tick.actions, &mut cx.tick.cx, cx.tick.state) {
                 Poll::Pending => {
                     if !self.retarget_while_walking(&cx.tick.cx) {
                         return Poll::Pending;
@@ -2614,7 +2723,7 @@ impl InteractRun {
                 self.round_before = Some(count);
             }
             self.reach = Some(std::task::ready!(crate::native::defer_budget(
-                cx.tick.actions.begin::<reach::Reach>(
+                PrereqReach::begin(
                     reach::ReachArgs {
                         kind: self.kind.clone(),
                         op: Arc::clone(&self.op),
@@ -2624,20 +2733,21 @@ impl InteractRun {
                         target_tile: self.pinned_tile(),
                         reachable_only: self.strict(),
                     },
+                    cx.tick.actions,
                     &mut cx.tick.cx,
                 ),
             ))?);
             self.started = true;
             return Poll::Pending;
         }
-        if let Some(handle) = &self.reach {
+        if let Some(handle) = &mut self.reach {
             // An adjacent instant op can transform the target or teleport the
             // player before the receipt is read, so range is also proven on
             // the snapshot that chose the click.
             let in_range_at_click = handle
                 .inspect(reach::Reach::in_range_at_click)
                 .unwrap_or(false);
-            match cx.tick.actions.poll(handle, &mut cx.tick.cx) {
+            match handle.poll(cx.tick.actions, &mut cx.tick.cx, cx.tick.state) {
                 Poll::Pending => Poll::Pending,
                 Poll::Ready(Ok(false)) => Poll::Ready(Err(ActionError::Failed(Arc::from(
                     "interact target not reached",
@@ -3162,7 +3272,7 @@ struct UseOnRun {
     radius: i32,
     deadline: Option<Duration>,
     settle_duration: Duration,
-    walk: Option<ActionHandle<Walk>>,
+    walk: Option<PrereqWalk>,
     walk_retry: crate::native::WalkRetryState,
     /// The alternate wall-side tile selected for the approach, retained across retries.
     wall_fallback_tile: Option<WorldTile>,
@@ -3403,8 +3513,8 @@ impl StepRun for UseOnRun {
                 self.chase = None;
                 self.anchor_walk = false;
             }
-            if let Some(handle) = &self.walk {
-                match cx.tick.actions.poll(handle, &mut cx.tick.cx) {
+            if let Some(handle) = &mut self.walk {
+                match handle.poll(cx.tick.actions, &mut cx.tick.cx, cx.tick.state) {
                     Poll::Ready(Ok(receipt))
                         if receipt.end == crate::native::WalkEnd::UserInput =>
                     {

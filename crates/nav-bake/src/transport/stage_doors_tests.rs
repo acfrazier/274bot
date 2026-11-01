@@ -83,6 +83,18 @@ fn derive_stage(fx: &Fixture, locs: &[i32]) -> (TransportGraph, WorldCollision) 
     (graph, wc)
 }
 
+fn derive_stage_with_quests(
+    fx: &Fixture,
+    locs: &[i32],
+    quests: &QuestSource<'_>,
+) -> (TransportGraph, WorldCollision) {
+    let entries: Vec<(i32, i32, i32)> = locs.iter().map(|&id| (id, 1, 1)).collect();
+    let defs = loc_defs(&entries);
+    let wc = bake_collision(fx, &defs, &locs.iter().copied().collect());
+    let graph = derive_transports_with_audit(fx.path(), &defs, &wc, None, Some(quests)).0;
+    (graph, wc)
+}
+
 fn tile(x: i32, z: i32) -> WorldTile {
     WorldTile { x, z, level: 0 }
 }
@@ -175,6 +187,243 @@ fn quest_stage_double_doors_cross_only_with_the_completed_quest() {
             "{from:?} -> {to:?} without the quest"
         );
     }
+}
+
+#[test]
+fn authoritative_stage_comparison_emits_an_exact_window_gate() {
+    const OPENER: &str = "\
+[oploc1,plain_door]
+if (%heroquest >= ^hero_complete) {
+    ~open_and_close_door(loc_1535, ~check_axis(coord, loc_coord, loc_angle), false);
+}
+";
+    let fx = plain_opener_fixture(OPENER);
+    let selected =
+        api::game_data::for_revision(client::io::ClientRevision::R289).expect("selected revision");
+    let (mut facts, identity) = selected.quest_identity_for_bake().expect("verified family");
+    let row = facts
+        .rows
+        .iter_mut()
+        .find(|row| row.varp == "heroquest")
+        .expect("Hero's Quest progress row");
+    row.colour_authoritative = true;
+    row.stage_domain = Some(api::selected::InclusiveRange {
+        min: Some(0),
+        max: Some(20),
+    });
+    row.transmission = api::quest_facts::Transmission::NotTransmitted;
+    let quests = QuestSource {
+        family: nav_planner::quest_gates::QuestFamilyId::new(identity.sha256, identity.schema),
+        facts: &facts,
+    };
+
+    let (graph, _) = derive_stage_with_quests(&fx, &[900], &quests);
+    let edges: Vec<_> = graph
+        .edges
+        .iter()
+        .filter(|edge| edge.loc_id == 900)
+        .collect();
+    assert_eq!(edges.len(), 2);
+    for edge in edges {
+        assert!(edge.quest_req.is_empty(), "{edge:?}");
+        assert!(edge.varp_req.is_empty(), "{edge:?}");
+        let gates = edge.quest_gates.as_ref().expect("typed quest gate");
+        assert_eq!(gates.family(), &quests.family);
+        let [api::selected::QuestGate::Window(window)] = gates.gates() else {
+            panic!("stage comparison must retain its exact window: {gates:?}");
+        };
+        assert_eq!(window.quest, api::selected::FactKey::new("hero"));
+        assert_eq!(window.signal, api::selected::FactKey::new("heroquest"));
+        assert_eq!(
+            window.values,
+            api::selected::InclusiveRange {
+                min: Some(15),
+                max: Some(20),
+            }
+        );
+    }
+    let exact_opener = OPENER.replace(">=", "=");
+    let exact_fx = plain_opener_fixture(&exact_opener);
+    let (exact_graph, _) = derive_stage_with_quests(&exact_fx, &[900], &quests);
+    let exact_edges: Vec<_> = exact_graph
+        .edges
+        .iter()
+        .filter(|edge| edge.loc_id == 900)
+        .collect();
+    assert_eq!(exact_edges.len(), 2);
+    for edge in exact_edges {
+        let gates = edge.quest_gates.as_ref().expect("typed quest gate");
+        assert_eq!(gates.family(), &quests.family);
+        assert!(
+            matches!(
+                gates.gates(),
+                [api::selected::QuestGate::Window(window)]
+                    if window.quest.0.as_ref() == "hero"
+                        && window.signal.0.as_ref() == "heroquest"
+                        && window.values.min == Some(15)
+                        && window.values.max == Some(15)
+            ),
+            "exact completion still needs an exact window when later stages exist: {gates:?}"
+        );
+    }
+}
+
+fn with_authoritative_hero(check: impl FnOnce(&QuestSource<'_>)) {
+    let selected =
+        api::game_data::for_revision(client::io::ClientRevision::R289).expect("selected revision");
+    let (mut facts, identity) = selected.quest_identity_for_bake().expect("verified family");
+    let row = facts
+        .rows
+        .iter_mut()
+        .find(|row| row.varp == "heroquest")
+        .unwrap();
+    row.colour_authoritative = true;
+    row.stage_domain = Some(api::selected::InclusiveRange {
+        min: Some(0),
+        max: Some(20),
+    });
+    row.transmission = api::quest_facts::Transmission::NotTransmitted;
+    check(&QuestSource {
+        family: nav_planner::quest_gates::QuestFamilyId::new(identity.sha256, identity.schema),
+        facts: &facts,
+    });
+}
+
+fn with_journal_only_hero(check: impl FnOnce(&QuestSource<'_>)) {
+    let selected =
+        api::game_data::for_revision(client::io::ClientRevision::R289).expect("selected revision");
+    let (mut facts, identity) = selected.quest_identity_for_bake().expect("verified family");
+    let row = facts
+        .rows
+        .iter_mut()
+        .find(|row| row.varp == "heroquest")
+        .unwrap();
+    row.colour_authoritative = true;
+    row.stage_domain = None;
+    row.transmission = api::quest_facts::Transmission::NotTransmitted;
+    check(&QuestSource {
+        family: nav_planner::quest_gates::QuestFamilyId::new(identity.sha256, identity.schema),
+        facts: &facts,
+    });
+}
+
+#[test]
+fn nonzero_stage_door_keeps_started_window_in_both_directions() {
+    // Mort Myre's refusal-before-open shape. The progress-only write follows
+    // the crossing and does not narrow its pre-crossing requirement.
+    let fx = plain_opener_fixture(
+        "[oploc1,plain_door]\n\
+         if (%heroquest = 0) { mes(\"Not started.\"); return; }\n\
+         ~open_and_close_door(loc_1535, ~check_axis(coord, loc_coord, loc_angle), false);\n\
+         if (%heroquest = 5) { %heroquest = 10; }\n",
+    );
+    with_authoritative_hero(|quests| {
+        let (graph, _) = derive_stage_with_quests(&fx, &[900], quests);
+        let edges: Vec<_> = graph
+            .edges
+            .iter()
+            .filter(|edge| edge.loc_id == 900)
+            .collect();
+        assert_eq!(edges.len(), 2, "{edges:?}");
+        for edge in edges {
+            assert!(edge.quest_req.is_empty(), "{edge:?}");
+            assert!(edge.varp_req.is_empty(), "{edge:?}");
+            assert!(
+                matches!(
+                    edge.quest_gates.as_ref().unwrap().gates(),
+                    [api::selected::QuestGate::Window(window)]
+                        if window.signal.0.as_ref() == "heroquest"
+                            && window.values.min == Some(1)
+                            && window.values.max == Some(20)
+                ),
+                "{edge:?}"
+            );
+        }
+    });
+}
+
+#[test]
+fn post_completion_pass_through_keeps_exact_stage_and_current_player() {
+    // Holy barrier's exact-stage + protected-current-player shape, with a
+    // different quest, loc id and coordinates so extraction is generic.
+    // No script .loc row is needed for a placement-only telejump opener.
+    let fx = plain_opener_fixture(
+        "[oploc1,plain_door]\n\
+         if (%heroquest = 16) {\n\
+           if (p_finduid(uid) = true) { p_telejump(0_44_53_10_47); }\n\
+         }\n\
+         [proc,grant_access]\n%heroquest = 16;\n",
+    );
+    write_open_square(&fx, "0 5 46: 900 10 0\n");
+    let defs = LocDefs::from_locs(&[LocType {
+        id: 900,
+        width: 1,
+        length: 1,
+        blockwalk: false,
+        op: vec![Some("Pass-through".to_owned())],
+        ..Default::default()
+    }]);
+    let collision = bake_collision(&fx, &defs, &HashSet::new());
+    with_authoritative_hero(|quests| {
+        let graph =
+            derive_transports_with_audit(fx.path(), &defs, &collision, None, Some(quests)).0;
+        let edges: Vec<_> = graph
+            .edges
+            .iter()
+            .filter(|edge| edge.loc_id == 900)
+            .collect();
+        assert!(!edges.is_empty(), "post-completion entrance was omitted");
+        for edge in edges {
+            assert_eq!(edge.kind, TransportKind::Door);
+            assert_eq!(edge.to, tile(2826, 3439));
+            let gates = edge.quest_gates.as_ref().expect("typed quest window");
+            assert_eq!(gates.family(), &quests.family);
+            let [api::selected::QuestGate::Window(window)] = gates.gates() else {
+                panic!("exact post-completion stage must remain a window: {gates:?}");
+            };
+            assert_eq!(window.quest, api::selected::FactKey::new("hero"));
+            assert_eq!(window.signal, api::selected::FactKey::new("heroquest"));
+            assert_eq!(
+                window.values,
+                api::selected::InclusiveRange {
+                    min: Some(16),
+                    max: Some(16),
+                }
+            );
+        }
+    });
+
+    // A non-current uid is unresolved and cannot authorize the same crossing.
+    let other_fx = plain_opener_fixture(
+        "[oploc1,plain_door]\n\
+         if (%heroquest = 16) {\n\
+           if (p_finduid(other_uid) = true) { p_telejump(0_44_53_10_47); }\n\
+         }\n",
+    );
+    write_open_square(&other_fx, "0 5 46: 900 10 0\n");
+    let other_defs = LocDefs::from_locs(&[LocType {
+        id: 900,
+        width: 1,
+        length: 1,
+        blockwalk: false,
+        op: vec![Some("Pass-through".to_owned())],
+        ..Default::default()
+    }]);
+    let other_collision = bake_collision(&other_fx, &other_defs, &HashSet::new());
+    with_authoritative_hero(|quests| {
+        let graph = derive_transports_with_audit(
+            other_fx.path(),
+            &other_defs,
+            &other_collision,
+            None,
+            Some(quests),
+        )
+        .0;
+        assert!(
+            !graph.edges.iter().any(|edge| edge.loc_id == 900),
+            "non-current uid lookup must fail closed"
+        );
+    });
 }
 
 /// A gate the live client cannot observe never becomes an edge: the same
@@ -1497,7 +1746,7 @@ if(inv_total(worn, gown) > 0 & inv_total(worn, robe) > 0) {
         &mut graph,
         &collision,
         &mut HashMap::new(),
-        &ObservableGates::from_content(fx.path()),
+        &ObservableGates::from_content(fx.path(), None),
         &mut audit,
         None,
     );
@@ -1653,9 +1902,17 @@ fn death_plateau_rocks_cross_only_with_strictly_worn_climbing_boots() {
     ));
 }
 
-fn derive_entrance_fixture(fx: &Fixture) -> (TransportGraph, WorldCollision) {
+fn derive_entrance_fixture_with_quests(
+    fx: &Fixture,
+    quests: &QuestSource<'_>,
+) -> (TransportGraph, WorldCollision) {
     let defs = loc_defs(&[(6000, 2, 2), (6001, 2, 2)]);
     let collision = bake_collision(fx, &defs, &HashSet::new());
+    let graph = derive_transports_with_audit(fx.path(), &defs, &collision, None, Some(quests)).0;
+    (graph, collision)
+}
+
+fn derive_entrance_fixture(fx: &Fixture) -> (TransportGraph, WorldCollision) {
     let selected =
         api::game_data::for_revision(client::io::ClientRevision::R289).expect("selected revision");
     let (facts, identity) = selected.quest_identity_for_bake().expect("verified family");
@@ -1663,8 +1920,7 @@ fn derive_entrance_fixture(fx: &Fixture) -> (TransportGraph, WorldCollision) {
         family: nav_planner::quest_gates::QuestFamilyId::new(identity.sha256, identity.schema),
         facts: &facts,
     };
-    let graph = derive_transports_with_audit(fx.path(), &defs, &collision, None, Some(&quests)).0;
-    (graph, collision)
+    derive_entrance_fixture_with_quests(fx, &quests)
 }
 
 #[test]
@@ -1874,17 +2130,20 @@ if(%heroquest ! ^hero_complete) { return; }
 p_teleport(0_44_53_5_46);
 "#,
         );
-        // A queue is not an entrance handler. Its writes still constrain
-        // what the completed journal row can prove.
+        // These later writes exceed the selected Hero domain (0..=15), so
+        // this synthetic uncertainty uses an authoritative journal colour
+        // with no bounded stage-domain claim.
         fx.write(
             "scripts/later.rs2",
             &format!("[queue,later]\n{later_write}\n"),
         );
-        let (graph, _) = derive_entrance_fixture(&fx);
-        assert!(
-            !graph.edges.iter().any(|edge| edge.loc_id == 6000),
-            "green means at least completion, not equality: {later_write}"
-        );
+        with_journal_only_hero(|quests| {
+            let (graph, _) = derive_entrance_fixture_with_quests(&fx, quests);
+            assert!(
+                !graph.edges.iter().any(|edge| edge.loc_id == 6000),
+                "green means at least completion, not equality: {later_write}"
+            );
+        });
     }
 }
 
@@ -1901,15 +2160,20 @@ p_teleport(0_44_53_5_46);
 %heroquest = calc(%heroquest + 1);
 "#,
     );
-    let (graph, _) = derive_entrance_fixture(&fx);
-    let edges: Vec<_> = graph
-        .edges
-        .iter()
-        .filter(|edge| edge.loc_id == 6000)
-        .collect();
-    assert!(!edges.is_empty());
-    assert!(edges.iter().all(|edge| edge.quest_gates.as_ref().is_some_and(|gates|
-        matches!(gates.gates(), [api::selected::QuestGate::Complete(quest)] if quest.0.as_ref() == "hero"))));
+    // The synthetic queue write can advance beyond the selected 0..=15
+    // domain. Journal-only facts still prove completion, hence the earlier
+    // threshold, without claiming exact progress after a possible later write.
+    with_journal_only_hero(|quests| {
+        let (graph, _) = derive_entrance_fixture_with_quests(&fx, quests);
+        let edges: Vec<_> = graph
+            .edges
+            .iter()
+            .filter(|edge| edge.loc_id == 6000)
+            .collect();
+        assert!(!edges.is_empty());
+        assert!(edges.iter().all(|edge| edge.quest_gates.as_ref().is_some_and(|gates|
+            matches!(gates.gates(), [api::selected::QuestGate::Complete(quest)] if quest.0.as_ref() == "hero"))));
+    });
 }
 
 #[test]
@@ -2058,4 +2322,63 @@ return(false);
         ),
         Err(RouteError::NoPath)
     );
+}
+
+#[test]
+fn shared_journal_kitchen_door_requires_the_phoenix_signal_in_both_directions() {
+    // brimhaven_restaurant.rs2:1-6, quest_hero.constant:4, and
+    // quests.rs2:328-332: the green Shield of Arrav row does not identify a gang.
+    let fx = plain_opener_fixture(
+        "[oploc1,plain_door]\n\
+         if (%heroquest >= 3 & %phoenixgang = 10) {\n\
+         ~open_and_close_door(loc_1535, ~check_axis(coord, loc_coord, loc_angle), false);\n\
+         return;\n}\nmes(\"This door seems to be locked...\");\n",
+    );
+    fx.write("pack/varp.pack", "188=heroquest\n146=phoenixgang\n");
+    let selected =
+        api::game_data::for_revision(client::io::ClientRevision::R289).expect("selected revision");
+    let (facts, identity) = selected.quest_identity_for_bake().expect("verified family");
+    let phoenix = facts
+        .rows
+        .iter()
+        .find(|row| row.varp == "phoenixgang")
+        .unwrap();
+    assert!(!phoenix.colour_authoritative);
+    assert_eq!(phoenix.varp_id, 146);
+    let quests = QuestSource {
+        family: nav_planner::quest_gates::QuestFamilyId::new(identity.sha256, identity.schema),
+        facts: &facts,
+    };
+    let (graph, _) = derive_stage_with_quests(&fx, &[900], &quests);
+    let edges: Vec<_> = graph
+        .edges
+        .iter()
+        .filter(|edge| edge.loc_id == 900)
+        .collect();
+    assert_eq!(edges.len(), 2, "both physical door directions survive");
+    for edge in edges {
+        assert!(
+            edge.varp_req.is_empty(),
+            "hidden varps are not snapshot evidence"
+        );
+        assert!(
+            edge.quest_req.is_empty(),
+            "a shared journal colour is not membership"
+        );
+        let gates = edge.quest_gates.as_ref().expect("typed signal gates");
+        assert_eq!(gates.gates().len(), 2);
+        for gate in gates.gates() {
+            let api::selected::QuestGate::Window(window) = gate else {
+                panic!("neither a shared gang journal nor early Heroes' stage is completion");
+            };
+            let expected = match window.signal.0.as_ref() {
+                "phoenixgang" => ("blackarmgang", 10, 10),
+                "heroquest" => ("hero", 3, 15),
+                signal => panic!("unexpected signal {signal}"),
+            };
+            assert_eq!(window.quest.0.as_ref(), expected.0);
+            assert_eq!(window.values.min, Some(expected.1));
+            assert_eq!(window.values.max, Some(expected.2));
+        }
+    }
 }

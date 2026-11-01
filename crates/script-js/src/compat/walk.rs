@@ -214,6 +214,11 @@ struct WalkResilientOpts {
     /// Per-walk named danger-zone exemptions.
     #[serde(default)]
     cross_zones: Vec<String>,
+    /// Additive prerequisite grants; an explicit false narrows global allow.
+    #[serde(default)]
+    allow_prereq_dialogue: Option<bool>,
+    #[serde(default)]
+    allow_quest_start: Option<bool>,
 }
 
 #[derive(Deserialize)]
@@ -725,6 +730,8 @@ fn shut_obstacle_at(door: WorldTile, obstacles: &[String]) -> Option<SceneRow> {
 struct WalkOptions {
     avoid: Vec<InspectAvoidWire>,
     cross: Vec<String>,
+    allow_prereq_dialogue: Option<bool>,
+    allow_quest_start: Option<bool>,
 }
 
 /// One native walk: arrival check, then the settled outcome. Frozen
@@ -775,12 +782,18 @@ impl Walk {
             allow_teleports,
             avoid,
             cross,
+            None,
+            None,
             false,
             cx,
         )
     }
 
     /// Compat `Traversal` walks preserve a walkable requested tile as route end.
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "Preserve the original routing policy and both request-level consent overrides"
+    )]
     pub(crate) fn begin_compat_avoiding(
         dest: WorldTile,
         radius: i32,
@@ -788,6 +801,8 @@ impl Walk {
         allow_teleports: bool,
         avoid: Vec<InspectAvoidWire>,
         cross: Vec<String>,
+        allow_prereq_dialogue: Option<bool>,
+        allow_quest_start: Option<bool>,
         cx: &mut Cx<'_>,
     ) -> Result<Self, bool> {
         Self::begin_with_intent(
@@ -797,6 +812,8 @@ impl Walk {
             allow_teleports,
             avoid,
             cross,
+            allow_prereq_dialogue,
+            allow_quest_start,
             true,
             cx,
         )
@@ -810,6 +827,8 @@ impl Walk {
         allow_teleports: bool,
         avoid: Vec<InspectAvoidWire>,
         cross: Vec<String>,
+        allow_prereq_dialogue: Option<bool>,
+        allow_quest_start: Option<bool>,
         compat_tile_intent: bool,
         cx: &mut Cx<'_>,
     ) -> Result<Self, bool> {
@@ -832,10 +851,19 @@ impl Walk {
         }))
         .as_u64()
         .unwrap_or(0);
-        let options = if avoid.is_empty() && cross.is_empty() {
+        let options = if avoid.is_empty()
+            && cross.is_empty()
+            && allow_prereq_dialogue.is_none()
+            && allow_quest_start.is_none()
+        {
             None
         } else {
-            Some(Box::new(WalkOptions { avoid, cross }))
+            Some(Box::new(WalkOptions {
+                avoid,
+                cross,
+                allow_prereq_dialogue,
+                allow_quest_start,
+            }))
         };
         let walk = Self {
             token,
@@ -883,10 +911,18 @@ impl Walk {
     /// The host walk this wait is for.
     fn request(&self) -> InteractReq {
         let WorldTile { x, z, level } = self.dest;
-        let (avoid, cross) = self.options.as_ref().map_or_else(
-            || (Vec::new(), Vec::new()),
-            |options| (options.avoid.clone(), options.cross.clone()),
-        );
+        let (avoid, cross, allow_prereq_dialogue, allow_quest_start) =
+            self.options.as_ref().map_or_else(
+                || (Vec::new(), Vec::new(), None, None),
+                |options| {
+                    (
+                        options.avoid.clone(),
+                        options.cross.clone(),
+                        options.allow_prereq_dialogue,
+                        options.allow_quest_start,
+                    )
+                },
+            );
         if self.radius > 0 {
             InteractReq::WalkNear {
                 x,
@@ -900,6 +936,8 @@ impl Walk {
                 request_id: self.token,
                 cross,
                 avoid,
+                allow_prereq_dialogue,
+                allow_quest_start,
             }
         } else {
             InteractReq::Walk {
@@ -912,6 +950,8 @@ impl Walk {
                 request_id: self.token,
                 avoid,
                 cross,
+                allow_prereq_dialogue,
+                allow_quest_start,
             }
         }
     }
@@ -999,6 +1039,8 @@ pub(crate) struct Resilient {
     /// Per-walk zone names are preserved across repaths, but apply only to
     /// this request.
     cross: Box<[String]>,
+    allow_prereq_dialogue: Option<bool>,
+    allow_quest_start: Option<bool>,
     logs: VecDeque<String>,
 }
 
@@ -1030,6 +1072,8 @@ impl Resilient {
             avoid: Vec::new(),
             logs: VecDeque::new(),
             cross: Box::default(),
+            allow_prereq_dialogue: None,
+            allow_quest_start: None,
         }
     }
 
@@ -1047,6 +1091,15 @@ impl Resilient {
     }
     pub(crate) fn with_cross(mut self, cross: Vec<String>) -> Self {
         self.cross = cross.into_boxed_slice();
+        self
+    }
+    pub(crate) fn with_prereq_permissions(
+        mut self,
+        allow_prereq_dialogue: Option<bool>,
+        allow_quest_start: Option<bool>,
+    ) -> Self {
+        self.allow_prereq_dialogue = allow_prereq_dialogue;
+        self.allow_quest_start = allow_quest_start;
         self
     }
 
@@ -1258,6 +1311,8 @@ impl Resilient {
             allow_teleports,
             self.avoid.clone(),
             self.cross.to_vec(),
+            self.allow_prereq_dialogue,
+            self.allow_quest_start,
             cx,
         ) {
             Ok(walk) => {
@@ -1585,6 +1640,7 @@ impl Family for WalkResilient {
         .with_scene_radius(opts.scene_radius.unwrap_or(radius.saturating_add(1)))
         .with_teleport_min_span(opts.policy.distance_before_teleport.unwrap_or(0))
         .with_cross(opts.cross_zones)
+        .with_prereq_permissions(opts.allow_prereq_dialogue, opts.allow_quest_start)
         .with_avoid(opts.avoid_zones);
         Begin::Run(Self {
             drive,
@@ -1731,6 +1787,8 @@ impl WalkOpening {
                         false,
                         Vec::new(),
                         Vec::new(),
+                        None,
+                        None,
                         cx,
                     ) {
                         Ok(walk) => {
@@ -2610,6 +2668,31 @@ pub(crate) mod tests {
                 }]
             ),
             other => panic!("one baked walk, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn walk_resilient_preserves_prerequisite_overrides_on_host_walk() {
+        reset();
+        post_here(0, 0);
+        let args = json!({
+            "tile": { "x": 10, "z": 0, "level": 0 },
+            "opts": { "radius": 0, "allowQuestStart": false },
+        });
+        let Started::Running(_) = machine::start("walk-resilient", args, Vec::new(), 0) else {
+            panic!("walk-resilient runs");
+        };
+        machine::step(&mut NoJs);
+        match machine::merge_ops(Vec::new()).as_slice() {
+            [InteractReq::Walk {
+                allow_prereq_dialogue,
+                allow_quest_start,
+                ..
+            }] => {
+                assert_eq!(*allow_prereq_dialogue, None);
+                assert_eq!(*allow_quest_start, Some(false));
+            }
+            other => panic!("expected the compat walk, got {other:?}"),
         }
     }
 

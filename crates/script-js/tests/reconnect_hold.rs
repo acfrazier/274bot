@@ -195,6 +195,7 @@ export default class T extends LoopingBot {
             refusal: None,
             assessment: None,
             escape: None,
+            prereq_allow: None,
         },
     );
     snap.here = Some(tile(3230, 3230));

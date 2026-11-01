@@ -17,6 +17,8 @@ import { extractCombatStyleFacts, parseCombatScripts, extractSpecialWeaponFacts,
 import { extractDuelRuleButtons, extractDuelZones } from './extractors/duel.ts';
 import { extractNpcNamesFacts } from './extractors/npc-names.ts';
 import './dialogue-ui.test.ts';
+import './extractors/prereq-preservation.test.ts';
+import './extractors/prereq-steps.test.ts';
 import './server-ordered.test.ts';
 import './npc-transforms.test.ts';
 import './npc-stat-default.test.ts';
@@ -1880,16 +1882,16 @@ assertQuestRows(withExtras);
 assert.deepEqual(withExtras.coverage, []);
 assert.equal(withExtras.rows.some((row) => row.id === 'routequest' && row.display === 'In Search of the Myreque'), true);
 assert.equal(withExtras.rows.some((row) => row.id === 'misc' || row.id === 'troll_love' || row.id === 'mm'), false);
-// ---- quests family publication: schema, identity-only deterministic payload, actual descriptor ----
+// ---- quests family publication: static metadata, deterministic payload, actual descriptor ----
 {
-    assert.equal(QUESTS_SCHEMA, 1, 'quests family schema is pinned');
+    assert.equal(QUESTS_SCHEMA, 2, 'quests family schema includes static observation metadata');
     const draft = extractQuestsFamily(questRoot, 289);
     assert.equal(draft.schema, QUESTS_SCHEMA);
     assert.deepEqual(draft.payload, quest289, 'the family payload is the existing identity extract, unchanged');
     const payload = JSON.parse(JSON.stringify(draft.payload)) as { rows: { id: string }[]; coverage: unknown[] };
-    assert.deepEqual(Object.keys(payload).sort(), ['coverage', 'rows'], 'identity rows plus coverage only: no stage fields');
-    const rowKeys = ['id', 'component', 'display', 'varp', 'varp_id', 'complete', 'quest_points', 'unknown_sides', 'requirements', 'members', 'kind', 'journal_title', 'journal_script'];
-    for (const row of payload.rows) assert.deepEqual(Object.keys(row).sort(), [...rowKeys].sort(), `quest row ${row.id} carries no stage fields`);
+    assert.deepEqual(Object.keys(payload).sort(), ['coverage', 'rows'], 'static identity rows plus coverage only');
+    const rowKeys = ['id', 'component', 'display', 'varp', 'varp_id', 'complete', 'quest_points', 'colour_authoritative', 'stage_domain', 'transmission', 'unknown_sides', 'requirements', 'members', 'kind', 'journal_title', 'journal_script'];
+    for (const row of payload.rows) assert.deepEqual(Object.keys(row).sort(), [...rowKeys].sort(), `quest row ${row.id} carries static metadata, not per-account progress`);
     const upstream = { revision: 289, engine_commit: 'engine', content_commit: 'content', cache_id: 'cache', content_id: 'content', inputs: [] };
     const first = familyBytes(upstream, draft, 'quests');
     const envelope = JSON.parse(first);

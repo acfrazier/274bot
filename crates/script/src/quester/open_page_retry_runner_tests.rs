@@ -98,25 +98,22 @@ fn fail_walk(ledger: &mut TestLedger, tick: u64) {
             matches!(&entry.effect, HostEffect::Walk(_)).then(|| entry.request_id.get())
         })
         .expect("the first attempt requested a walk");
-    ledger.as_mut().unwrap().walk = Some(WalkReceipt {
-        request_id,
-        evidence: EvidenceStamp {
-            run: RunKey {
-                slot: 1,
-                run: 1,
-                session: 1,
-            },
-            tick,
-            sequence: tick,
+    ledger.as_mut().unwrap().walk = Some(WalkReceipt { request_id,
+    evidence: EvidenceStamp {
+        run: RunKey {
+            slot: 1,
+            run: 1,
+            session: 1,
         },
-        goal: None,
-        end: WalkEnd::Cancelled,
-        blocked: None,
-        detail: Some(Arc::from("open page retry fixture")),
-        refusal: None,
-        assessment: None,
-        escape: None,
-    });
+        tick,
+        sequence: tick,
+    },
+    goal: None,
+    end: WalkEnd::Cancelled,
+    blocked: None,
+    detail: Some(Arc::from("open page retry fixture")),
+    refusal: None,
+    assessment: None, escape: None, prereq_allow: None });
 }
 
 struct Fixture {

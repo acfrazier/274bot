@@ -281,6 +281,18 @@ fn project_walk_globals(value: &Value) -> Result<WalkGlobals, &'static str> {
             defaults.survivable_routing,
             "nav.survivable_routing must be a boolean",
         )?,
+        allow_prereq_dialogue: walk_boolean(
+            nav,
+            "allow_prereq_dialogue",
+            defaults.allow_prereq_dialogue,
+            "nav.allow_prereq_dialogue must be a boolean",
+        )?,
+        allow_quest_start: walk_boolean(
+            nav,
+            "allow_quest_start",
+            defaults.allow_quest_start,
+            "nav.allow_quest_start must be a boolean",
+        )?,
     })
 }
 

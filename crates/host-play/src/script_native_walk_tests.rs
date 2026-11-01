@@ -96,6 +96,7 @@ impl Script for WalkerScript {
                 required_after: tick.cx.evidence(),
                 evidence: None,
                 cross: cross.into_boxed_slice(),
+                avoid: Box::default(),
                 protect: shared.protect,
                 food_guard: shared.food_guard,
                 allow: script::native::WalkAllow {
@@ -3654,6 +3655,8 @@ fn native_admission_teleport_and_wilderness_forbids_override_global_grants() {
             allow_teleports: bit,
             allow_wilderness: bit,
             allow_danger_zones: WalkBit::Allow,
+            allow_prereq_dialogue: WalkBit::Inherit,
+            allow_quest_start: WalkBit::Inherit,
         };
         rig.observe(1);
         rig.wait_routed();
@@ -3685,7 +3688,9 @@ fn native_protect_alone_does_not_grant_danger_and_invalid_cross_still_refuses() 
     }
     for names in [
         vec![Arc::from("unknown-danger-zone")],
-        vec![Arc::from("test-barrier@2,0,0"); 9],
+        (2..11)
+            .map(|x| Arc::from(format!("test-barrier@{x},0,0")))
+            .collect(),
     ] {
         let mut rig = rig(Some(Arc::new(zoned_open_world())), false);
         rig.shared.lock().options.allow_danger_zones = script::native::WalkBit::Forbid;
@@ -3759,6 +3764,8 @@ fn sherlock_bool_walk_inherits_committed_bits_while_isolate_wiring_stays_frozen(
                 allow_teleports: false,
                 allow_wilderness: false,
                 allow_bank_fetch: false,
+                allow_prereq_dialogue: None,
+                allow_quest_start: None,
                 request_id: 1,
                 avoid: vec![],
                 cross: vec![],
@@ -5209,6 +5216,8 @@ fn queued_walking_decisions_are_fenced_but_observed_fresh_walk_is_allowed() {
             allow_teleports: false,
             allow_wilderness: false,
             allow_bank_fetch: false,
+            allow_prereq_dialogue: None,
+            allow_quest_start: None,
             request_id: 90,
             avoid: vec![],
             cross: vec![],
@@ -5222,6 +5231,8 @@ fn queued_walking_decisions_are_fenced_but_observed_fresh_walk_is_allowed() {
             allow_teleports: false,
             allow_wilderness: false,
             allow_bank_fetch: false,
+            allow_prereq_dialogue: None,
+            allow_quest_start: None,
             request_id: 91,
             avoid: vec![],
             cross: vec![],
@@ -5696,6 +5707,7 @@ fn real_catherby_water_centroid_accepts_area_shore_but_preserves_reach_refusal()
         arrival,
         opts: FindOptions::default(),
         state: None,
+        prereq_catalog: None,
         bank_origin: api::bank_memory::Origin::Unknown,
         bank: Vec::new(),
         live_geometry: None,
@@ -6077,6 +6089,25 @@ fn s2b_admission_per_bot_layouts() {
     // NAV-BUSY-TRANSPORT adds 32 B to Traveller (busy-refusal retry state and
     // the distinct-tick transport clock): NavBot is 3816 B. Lab memory A/B on
     // the branch head passed (NAV-BUSY-TRANSPORT/mem-ab-r3).
+    // Prerequisite hop tracking and captured logical-walk ownership add 240 B
+    // to NavBot, including 24 B for physical takeoff/destination identity;
+    // the slot's manual-run alias and exact bank policy add 32 B.
+    // Linux x86_64 measured 4056 B / 1656 B on this branch. The batch owns
+    // the corresponding macOS pre-FLOOR and Linux/Windows memory lanes.
+    #[cfg(all(
+        target_os = "macos",
+        target_arch = "aarch64",
+        not(feature = "memory-profile")
+    ))]
+    assert_eq!(
+        (
+            std::mem::size_of::<NavBot>(),
+            std::mem::size_of::<script::SlotScript>(),
+            std::mem::size_of::<script::combat::Combat>(),
+            std::mem::size_of::<script::combat::WalkGuard>()
+        ),
+        (4056, 1656, 520, 264)
+    );
     #[cfg(all(
         target_os = "linux",
         target_arch = "x86_64",
@@ -6090,7 +6121,7 @@ fn s2b_admission_per_bot_layouts() {
             std::mem::size_of::<script::combat::Combat>(),
             std::mem::size_of::<script::combat::WalkGuard>()
         ),
-        (3816, 1544, 520, 264)
+        (4056, 1656, 520, 264)
     );
     // Combat is 520 B with bounded approach retries; retain 8 B of headroom.
     assert!(std::mem::size_of::<script::combat::Combat>() <= 528);
@@ -6427,6 +6458,7 @@ mod s2b_admission_contract {
                 required_after,
                 evidence: None,
                 cross: Box::new([]),
+                avoid: Box::new([]),
                 protect: false,
                 food_guard: false,
                 allow: Default::default(),

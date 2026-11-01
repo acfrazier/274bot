@@ -470,6 +470,43 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.8` 
   to its normal limit. A walk to a place that cannot be reached can take
   longer to fail.
 
+- Normal walks can now obtain Drezel's advice for the holy barrier and start
+  Nature Spirit before entering Mort Myre. The walker first checks the
+  crossing when its state is unknown. It remembers witnessed passes,
+  dialogue effects and refusals for the current run, then resumes the
+  original walk. Stop cancels the current walk or conversation.
+  Bank choices use the same remembered crossing state.
+  Manual map walks can check these crossings without a running script.
+  The manual walker uses the same quest evidence for planning and crossing.
+  Earlier quest-gated ladders no longer discard a later barrier's refusal check.
+  Dialogue pages do not need a duplicate chat message to stop a refused crossing.
+  Refusal checks also match sentences split across adjacent dialogue lines.
+  Scene reloads no longer discard a manual walk's crossing observations.
+  The crossing check uses the packed legal interaction stand. For the barrier,
+  the route planner chooses between both legal stands instead of committing
+  to a side the account cannot reach. It never walks onto the blocked tile.
+  Walks from Morytania can reach the barrier through the east trapdoor.
+  The Brimhaven restaurant kitchen door admits Phoenix Gang members from
+  the Heroes' Quest stage after they speak to Alfonse. It still refuses
+  Black Arm Gang members. Walks without available prerequisite steps skip
+  the extra prerequisite search.
+- Walks can now read the Shield of Arrav journal to identify completed
+  Phoenix Gang membership for the Brimhaven kitchen door. A shared green
+  quest-list row alone remains insufficient. Black Arm members stay refused.
+  An on-demand Heroes' Quest page also proves eligibility after Alfonse,
+  before quest completion, without starting dialogue or a quest.
+  If the page times out, the walker retries once on a later observed game
+  tick. A failed retry keeps the gate closed and reports the last failure.
+- Two default-on navigation settings allow prerequisite dialogue and quest
+  starts. A global or script grant allows the step. A per-walk `false`
+  forbids it. Combat escapes and other safety walks never stop to talk.
+  Scripted `walkTo` and `walkResilient` preserve these per-walk choices,
+  including after the existing boat-fare recovery.
+  Scripted walks retain their original walk identity during a prerequisite
+  step, including scene reloads, and release it when the walk ends or a
+  handover is refused.
+  Food from Drezel remains ordinary inventory and follows existing bank
+  behavior. No prerequisite step drops it.
 - Bots now wait and try again when another player is using a shortcut,
   instead of giving up. The Yanille dungeon ledge ("The ledge is being
   used") stays held for at most 9 game ticks after a refusal, so the bot

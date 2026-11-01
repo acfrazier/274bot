@@ -562,6 +562,86 @@ content entrances and binds its digest and schema into the graph. Supported
 quest-complete predicates become canonical `QuestGate::Complete` requirements;
 an intermediate or exact hidden quest stage is not inferred from completion.
 
+### Prerequisite crossing steps
+
+Ordinary walks can repair the generated holy-barrier and Mort Myre gates
+through the native Quester runner. Global and script dialogue/quest-start
+grants are additive; only a request-level prohibition narrows them. The
+runner records witnessed effects, passes and refusals for the current run,
+and resumes the original walk without changing its target or options.
+
+`api::prereq_steps::CrossingId` identifies the loc, menu option, transport
+kind, loc anchor `at`, exact directed interaction stand `takeoff`, and final
+landing `to`. `at` is always the same loc anchor as `TransportEdge.at`; it
+is never replaced by a player position. Two directions of one loc have
+distinct identities. The holy barrier also has distinct entries for its two
+legal stands on opposite sides of its blocked anchor.
+
+Conditional edges for the same physical directed crossing share one identity.
+The export retains every distinct requirement array in
+`quest_gate_alternatives`: any alternative can admit the crossing, but all
+requirements within that alternative must hold. An empty array is an
+unconditional alternative. Fully identical edge records collapse only in the
+export and are listed separately with their source paths; exporting never
+changes the pack.
+
+Generate these identities from the actual pack, not an authored coordinate
+table: `nav-pack --export-crossings PACK --out JSON` loads the pack and
+its `navflags` sidecar, groups alternatives over ordinary and teleport edges,
+and records standability and transport admission for each takeoff.
+The prerequisite generator consumes this projection through
+`GAME_DATA_289_PREREQ_CROSSINGS` and verifies it against
+`GAME_DATA_289_NAV_PACK`. Catalog schema 3 retains the required takeoff.
+The probe walks to that exact legal stand, then clicks the exact loc anchor.
+It never walks onto a blocked anchor or substitutes an arbitrary nearby tile.
+Loc interaction reach remains the engine's shape-, rotation-, footprint-
+and wall-aware rule; a route endpoint alone does not prove operability.
+
+Probes require the host's current collision reach view; an unverified target
+does not grant permission to click. Compatibility handovers keep their
+request identity, selected pin and continuation in one cold allocation.
+Unrelated API seats reserve only a pointer. Native reissues retain the
+original destination and policy, but bind a fresh evidence stamp rather than
+keeping the expired request stamp in every ordinary walk.
+
+The same catalog can declare a journal evidence source instead of a world
+interaction. The runner reads that page through the native journal owner:
+one quest-row click, a fresh title-checked page, one close, and an observed
+close. All source-pinned text rules must match within that page. No match
+or multiple matches leave the gate closed. A failed journal read also leaves
+the gate closed and blocks the walk. The session remembers only the proved
+signal range and its content-checked preservation range.
+
+The Shield of Arrav page distinguishes completed Phoenix and Black Arm
+accounts even though their quest-list row has the same green colour.
+Its Phoenix completion text proves `phoenixgang = 10`: the Phoenix section
+requires Black Arm to remain unjoined (`blackarmgang_journal.rs2:16`).
+Together, its Phoenix text at line 104 and completion text at lines 203-204
+therefore prove Phoenix completion, not Black Arm completion.
+Its Black Arm completion text proves `phoenixgang < 9`.
+The Brimhaven kitchen can therefore
+use real membership evidence rather than guessing from that shared row.
+The runner reads at most twice per prerequisite attempt (one read and one retry), never per tick or search.
+A `journal modal timeout` permits one retry, on the next observed game tick
+after the timeout. Each read retains the journal owner's five-tick window.
+The run-on button closes modals once before enabling run
+(`player_controls.rs2:34-46`). The host latches that send until run energy
+reaches 0 or the session changes (`crates/host/src/lib.rs:1411-1439`), so one
+retry covers this login race.
+The journal content opens the page without a delay (`quest_journal.rs2:1-55`).
+If the retry fails, the walk blocks with the last failure's detail.
+Later walks in the same run retain the completed Phoenix proof. The Black
+Arm range widens conservatively after acquisition, so it never grants
+Phoenix membership. Neither this read nor the search starts a quest or
+probes a door.
+
+The same page-source mechanism reads the Heroes' Quest journal when the
+required `heroquest >= 3` fact is unknown. The Phoenix text about giving
+Alfonse the password proves the eligible stage range without starting
+dialogue or changing quest progress. This keeps the kitchen available
+before Heroes' Quest completion as well as after it.
+
+
 ## Router (`nav_planner::router`)
 
 `find(collision, graph, from, to) -> Result<Route, RouteError>` is Dijkstra
@@ -760,7 +840,7 @@ request that names grants (Path `cross`) also has the zones engaged at the
 route's endpoint granted, the router's endpoint completion
 (`risk::Grants::request`). The named retry's witness keys never are.
 
-Permission layers above the router stay separate: the global Danger routing level in Nav config, the WalkTo-only **Route through danger zones** checkbox (one admission for the current picker opening, never persisted), per-script Script prefs (**Allow teleports**, **Allow wilderness**, **Allow danger zones**, each granting that script's own walks when the global switch is off), and per-walk Path overrides (`cross` names, `guard`, `allow_*`).
+Permission layers above the router stay separate: the global Danger routing level in Nav config, the WalkTo-only **Route through danger zones** checkbox (one admission for the current picker opening, never persisted), per-script Script prefs (**Allow teleports**, **Allow wilderness**, **Allow danger zones**, each granting that script's own walks when the global switch is off), and per-walk Path overrides (`cross` names, `guard`, `allow_*`). The prerequisite grants (Nav config **Allow dialogue steps on walks** and **Allow starting quests on walks**, both default on) compose the same way: the global switch or the script's own grant allows the step, and only a per-request Forbid narrows it.
 
 Refusals distinguish `NoRouteWithinBounds { tried, last }`, `Unsurvivable`,
 `FixableWith`, `Unknown` and `EscapeInProgress`; an ordinary hard no-path

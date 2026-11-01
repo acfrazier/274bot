@@ -3488,6 +3488,7 @@ impl Script for Quester {
         })
     }
     fn tick(&mut self, tick: &mut NativeTick<'_>) -> Result<ScriptFlow, ScriptFailure> {
+        tick.cx.walk_prereq = self.path.prereq;
         if tick.cx.run() != self.run {
             api::host_log!(
                 api::hostlog::Category::ScriptLifecycle,
@@ -5289,6 +5290,7 @@ mod tests {
             refusal: None,
             assessment: None,
             escape: None,
+            prereq_allow: None,
         });
         assert!(matches!(
             super::super::families::tests::with_tick_output(
@@ -7848,6 +7850,76 @@ mod tests {
                 matches!(flow, ScriptFlow::Blocked(failure) if failure.message.contains(expected_name))
             );
         }
+    }
+
+    #[test]
+    fn path_header_forbid_blocks_quest_start_on_the_real_walk_request() {
+        use super::super::families::tests::with_tick;
+        use crate::native::{HostEffect, WalkBit};
+        use api::snapshot::{GameSnapshot, QuestStatusView};
+
+        let data = api::game_data::for_revision(api::selected::ClientRevision::R289).unwrap();
+        let quests = Arc::new(QuestCatalog::from_identity(data.quest_identity()).unwrap());
+        let mut document = super::super::compile::decode_cook().unwrap();
+        document.quest.as_mut().unwrap().owns_inventory = true;
+        document.prereq.quest_start = Some(false);
+        document.prereq.dialogue = Some(false);
+        let step = &mut document.roles[0].sequences[0].steps[0];
+        step.kind = "walk".into();
+        step.args = serde_json::json!({
+            "tile": [3103, 3163, 2], "source": "header consent fixture",
+            "allow_prereq_dialogue": true, "allow_quest_start": true
+        });
+        step.skip_if = super::super::path::PredicateDocument::Any(vec![]);
+        step.settle = super::super::path::PredicateDocument::All(vec![]);
+        let path =
+            super::super::compile::compile_uncached_for_test(&document, &data, &quests).unwrap();
+        let mut script = Quester::new(
+            RunKey {
+                slot: 1,
+                run: 1,
+                session: 1,
+            },
+            path,
+            data,
+            quests,
+            Arc::new(api::named_banks::NamedBankFacts::empty()),
+        );
+        let mut snapshot = GameSnapshot::new();
+        snapshot.seed_ingame(2);
+        snapshot.seed_quest_statuses(
+            vec![QuestStatusView {
+                name: "Cook's Assistant".into(),
+                component_id: 0,
+                colour: 0xf80000,
+            }],
+            true,
+        );
+        let mut ledger = None;
+        let mut checked = false;
+        for tick in 1..=8 {
+            with_tick(&snapshot, &mut ledger, tick, |native| {
+                assert_eq!(script.tick(native).unwrap(), ScriptFlow::Continue);
+            });
+            if let Some(request) = ledger.as_ref().and_then(|ledger| {
+                ledger
+                    .outbox
+                    .iter()
+                    .find_map(|action| match &action.effect {
+                        HostEffect::Walk(request) => Some(request),
+                        _ => None,
+                    })
+            }) {
+                assert_eq!(request.options.allow_prereq_dialogue, WalkBit::Forbid);
+                assert_eq!(request.options.allow_quest_start, WalkBit::Forbid);
+                checked = true;
+                break;
+            }
+        }
+        assert!(
+            checked,
+            "the real Path runner must submit its narrowed walk"
+        );
     }
 
     #[test]

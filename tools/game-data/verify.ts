@@ -16,6 +16,7 @@ import { extractQuestStartFacts, questStartContentFiles } from './extractors/que
 import { extractDialogueUiFacts } from './extractors/dialogue-ui.ts';
 import { loadServerOrderedFacts } from './extractors/server-ordered.ts';
 import { extractNpcTransformClosure } from './extractors/npc-transforms.ts';
+import { assertPrereqStepFacts, extractPrereqStepsFacts, prereqStepInputs, PREREQ_STEPS_SCHEMA } from './extractors/prereq-steps.ts';
 const root = path.resolve(import.meta.dirname, '../..');
 const expected = Object.fromEntries(revisions.map(spec => [spec.revision, {
     engine: spec.expectedEngine, content: spec.expectedContent,
@@ -624,6 +625,19 @@ async function verifyRevision(revision: number) {
     assertEqual(JSON.stringify(Object.keys(questsDraft.payload).sort()), JSON.stringify(['coverage', 'rows']), `${revision} quests family is identity rows plus coverage only`);
     if (!fs.readFileSync(questsFile).equals(Buffer.from(familyBytes(upstream, questsDraft, 'quests')))) throw new Error(`${revision}: quests family differs from the writer extract`);
     assertEqual(JSON.stringify(manifestRow.families?.quests), JSON.stringify({ path: `${revision}/quests.json`, schema: QUESTS_SCHEMA, ...digest(questsFile) }), `${revision} manifest quests descriptor`);
+    if (revision === 289) {
+        const prereqSteps = extractPrereqStepsFacts(revision);
+        assertPrereqStepFacts(pin.contentRoot, prereqSteps, extractedQuest.rows);
+        const prereqFile = path.join(root, 'crates/api/data/game-data/289/prereq_steps.json');
+        const prereqDraft = { schema: PREREQ_STEPS_SCHEMA, payload: prereqSteps };
+        const prereqInputs = { ...upstream, inputs: prereqStepInputs(pin.contentRoot, prereqSteps) };
+        if (!fs.readFileSync(prereqFile).equals(Buffer.from(familyBytes(prereqInputs, prereqDraft, 'prereq_steps')))) {
+            throw new Error(`${revision}: prerequisite-step family differs from the authored, source-pinned rows`);
+        }
+        assertEqual(JSON.stringify(manifestRow.families?.prereq_steps), JSON.stringify({ path: '289/prereq_steps.json', schema: PREREQ_STEPS_SCHEMA, ...digest(prereqFile) }), `${revision} manifest prerequisite-step descriptor`);
+    } else if (manifestRow.families?.prereq_steps !== undefined) {
+        throw new Error(`${revision}: prerequisite steps are not authored for this pin`);
+    }
     if (revision === 289 && payload.quest_starts === undefined) throw new Error(`${revision}: quest_starts family missing`);
     if (payload.quest_starts !== undefined) {
         const questStarts = payload.quest_starts;

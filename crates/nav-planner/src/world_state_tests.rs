@@ -317,6 +317,7 @@ fn allows_requires_every_req_kind() {
         quests: HashSet::from(["Rune Mysteries".to_string()]),
         map_members: false,
         quest_evidence: None,
+        establishable: None,
         combat_level: None,
     };
     assert!(s.allows(&e), "all facts present");
@@ -375,6 +376,53 @@ fn stage_gates_open_on_evidence_never_on_snapshot_facts() {
     let mut unpaid = proven;
     unpaid.inv.clear();
     assert!(!unpaid.allows(&e), "evidence waives no other requirement");
+}
+
+/// Prerequisite stage windows authorize diagnosis only when the API
+/// implication proves the exact quest and signal interval. They never
+/// override current `True` evidence or make the strict edge pass.
+#[test]
+fn establishable_windows_only_make_unproven_implied_gates_actionable() {
+    use crate::test_support::{range, tbwt_evidence, window};
+    use api::selected::{FactKey, StageWindow, Truth};
+
+    let gate = window("tbwt", "tbwt_main", Some(3), Some(3));
+    let established = StageWindow {
+        quest: FactKey::new("tbwt"),
+        signal: FactKey::new("tbwt_main"),
+        values: range(Some(3), Some(3)),
+    };
+    let windows: Arc<[StageWindow]> = Arc::from([established]);
+
+    let unknown = WorldState::empty().with_establishable(windows.clone());
+    assert!(unknown.quest_evidence.is_none());
+    assert!(unknown.gate_actionable(&gate));
+
+    let false_gate = WorldState::empty()
+        .with_quest_evidence(tbwt_evidence(range(Some(2), Some(2))))
+        .with_establishable(windows.clone());
+    assert_eq!(
+        false_gate.quest_evidence.as_ref().unwrap().test(&gate),
+        Truth::False
+    );
+    assert!(false_gate.gate_actionable(&gate));
+
+    let true_gate = WorldState::empty()
+        .with_quest_evidence(tbwt_evidence(range(Some(3), Some(3))))
+        .with_establishable(windows);
+    assert_eq!(
+        true_gate.quest_evidence.as_ref().unwrap().test(&gate),
+        Truth::True
+    );
+    assert!(!true_gate.gate_actionable(&gate));
+
+    let unrelated = StageWindow {
+        quest: FactKey::new("tbwt"),
+        signal: FactKey::new("tbwt_druid"),
+        values: range(Some(3), Some(3)),
+    };
+    let unrelated = WorldState::empty().with_establishable(Arc::from([unrelated]));
+    assert!(!unrelated.gate_actionable(&gate));
 }
 
 /// `worn_req` is any-of: a slash-weapon web hop lists every blade

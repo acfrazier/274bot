@@ -712,6 +712,7 @@ mod tests {
             role: None,
             kind: crate::quester::path::PathKind::Quest,
             partner: None,
+            prereq: Default::default(),
             progress_reader: None,
             display_name: Arc::from("Synthetic"),
             tested_stats: None,

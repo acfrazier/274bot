@@ -5,8 +5,8 @@ use super::super::compile::{
 };
 use super::super::pair::*;
 use crate::bank::ops;
-use crate::native::walk::Walk;
 use crate::native::{ActionContext, ActionError, ActionHandle, NativeActions, NativeMachine};
+use crate::quester::prereq::walk::PrereqWalk;
 use crate::shim::InteractReq;
 use crate::trade_screen::{
     CloseDriver, ScreenDriver, ScreenKind, WaitEnd, TRADE_CLOSE_DEBOUNCE_MS, TRADE_CONFIRM_WAIT_MS,
@@ -442,12 +442,14 @@ impl StepPlan for TradePlan {
             .ok_or(PairError::MissingPartner)
             .map_err(PairError::action)?;
         let mut walk_retry = crate::native::WalkRetryState::default();
-        let walk = cx.tick.actions.begin::<Walk>(
+        let mut walk = PrereqWalk::begin(
             super::reach::walk_request(self.tile, 1, None, cx.required_after),
+            cx.tick.actions,
             &mut cx.tick.cx,
         )?;
         walk_retry.action_submitted();
-        port.register_action(&token, cx.tick.cx.run(), walk.revoker())
+        let revoker = walk.revoker().ok_or(ActionError::Stale)?;
+        port.register_action(&token, cx.tick.cx.run(), revoker)
             .map_err(PairError::action)?;
         Ok(Box::new(TradeRun {
             walk_retry,
@@ -466,7 +468,7 @@ impl StepPlan for TradePlan {
     }
 }
 struct TradeRun {
-    walk: Option<ActionHandle<Walk>>,
+    walk: Option<PrereqWalk>,
     walk_retry: crate::native::WalkRetryState,
     tile: WorldTile,
     trade: Option<ActionHandle<TradeMachine>>,
@@ -484,19 +486,20 @@ impl StepRun for TradeRun {
             };
             let port = Arc::clone(&args.port);
             let token = args.token;
-            let walk = std::task::ready!(super::begin_approach_walk(
+            let mut walk = std::task::ready!(super::begin_approach_walk(
                 &mut self.walk_retry,
                 super::reach::walk_request(self.tile, 1, None, cx.required_after),
                 cx,
             ))?;
-            if let Err(error) = port.register_action(&token, cx.tick.cx.run(), walk.revoker()) {
+            let revoker = walk.revoker().ok_or(ActionError::Stale)?;
+            if let Err(error) = port.register_action(&token, cx.tick.cx.run(), revoker) {
                 return Poll::Ready(Err(error.action()));
             }
             self.walk = Some(walk);
             return Poll::Pending;
         }
-        if let Some(walk) = &self.walk {
-            match cx.tick.actions.poll(walk, &mut cx.tick.cx) {
+        if let Some(walk) = self.walk.as_mut() {
+            match walk.poll(cx.tick.actions, &mut cx.tick.cx, cx.tick.state) {
                 Poll::Pending => return Poll::Pending,
                 Poll::Ready(Err(error)) => return Poll::Ready(Err(error)),
                 Poll::Ready(Ok(receipt)) => {
@@ -542,6 +545,9 @@ impl StepRun for TradeRun {
             .poll(self.trade.as_ref().unwrap(), &mut cx.tick.cx)
     }
     fn cancel(&mut self, _actions: &mut NativeActions) {
+        if let Some(walk) = self.walk.as_mut() {
+            walk.cancel();
+        }
         self.walk = None;
         self.trade = None;
         self.args = None;

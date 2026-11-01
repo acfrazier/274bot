@@ -95,6 +95,23 @@ fn fixture(names: &[&'static str], slots: &[Slot]) -> Fixture {
 }
 
 fn fixture_with_world(names: &[&'static str], slots: &[Slot], world: NavWorld) -> Fixture {
+    fixture_with_world_and_snapshots(names, slots, world, true)
+}
+
+fn fixture_without_observed_snapshot(
+    names: &[&'static str],
+    slots: &[Slot],
+    world: NavWorld,
+) -> Fixture {
+    fixture_with_world_and_snapshots(names, slots, world, false)
+}
+
+fn fixture_with_world_and_snapshots(
+    names: &[&'static str],
+    slots: &[Slot],
+    world: NavWorld,
+    publish_snapshots: bool,
+) -> Fixture {
     let map = MapFixture::new(&world, "local-289");
     let mut play = map.play(slots[0].at);
     for other in &slots[1..] {
@@ -144,6 +161,15 @@ fn fixture_with_world(names: &[&'static str], slots: &[Slot], world: NavWorld) -
     let mut core = OperatorSession::new(InstancePermit::SkipLock);
     core.set_spawn_workers(false);
     core.start(vault, play);
+    if publish_snapshots {
+        for observed in slots {
+            core.frames().publish_test_snapshot(
+                observed.name,
+                api::snapshot::GameSnapshot::new(),
+                WorldState::empty(),
+            );
+        }
+    }
     let _ = std::fs::remove_dir_all(&dir);
     let mut model = MapModel::default();
     model.bind(dest_context);
@@ -237,6 +263,26 @@ fn every_marked_bot_walks_to_the_one_tile_and_unmarked_bots_stay() {
         assert_eq!(f.queued(name), Some(dest), "{name}");
     }
     assert_eq!(f.queued("erin"), None, "an unmarked bot was routed");
+}
+
+#[test]
+fn group_confirmation_without_observed_snapshot_keeps_ordinary_walk_available() {
+    let mut fixture =
+        fixture_without_observed_snapshot(&["alice"], &[slot("alice", t(1, 1, 0))], world(12, &[]));
+    assert!(
+        fixture
+            .core
+            .frames()
+            .with_snapshot("alice", |_| ())
+            .is_none(),
+        "the live slot has not published a frame yet"
+    );
+    let destination = t(10, 3, 0);
+    let report = fixture.walk_to(&marks(&[1]), destination);
+    assert_eq!(report.failed_count(), 0);
+    assert_eq!(report.done_count(), 1);
+    assert_eq!(report.rows()[0].outcome(), &BulkOutcome::Done);
+    assert_eq!(fixture.queued("alice"), Some(destination));
 }
 
 #[test]

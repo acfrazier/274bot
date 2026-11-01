@@ -2006,6 +2006,8 @@ fn load_gather_watchdog_arm_walk_keeps_load_script_options() {
             allow_teleports: true,
             allow_wilderness: true,
             allow_danger_zones: true,
+            allow_prereq_dialogue: false,
+            allow_quest_start: false,
         })
     );
 

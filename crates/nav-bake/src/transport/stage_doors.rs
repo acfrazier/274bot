@@ -356,12 +356,89 @@ fn retain_quest_upper_bounds(
     }
 }
 
+/// Content-proven bounds for a quest signal. Journal authority is separate:
+/// a shared journal row cannot prove which underlying signal is complete.
+#[derive(Debug, Clone, Copy)]
+struct QuestStageFacts {
+    colour_authoritative: bool,
+    stage_domain: Option<api::selected::InclusiveRange>,
+    transmission: api::quest_facts::Transmission,
+}
+fn authoritative_stage_domain(facts: QuestStageFacts, complete: i32) -> Option<(i32, i32)> {
+    if facts.transmission != api::quest_facts::Transmission::NotTransmitted || complete <= 0 {
+        return None;
+    }
+    let domain = facts.stage_domain?;
+    let (Some(min), Some(max)) = (domain.min, domain.max) else {
+        return None;
+    };
+    (min == 0 && max >= complete).then_some((min, max))
+}
+
+/// The exact interval on which a comparison has the selected branch value.
+/// A disjoint complement (for an interior `=`/`!`) has no single safe window.
+fn comparison_window(
+    op: CmpOp,
+    branch_value: bool,
+    threshold: i32,
+    domain_min: i32,
+    domain_max: i32,
+) -> Option<api::selected::InclusiveRange> {
+    let except_threshold = || {
+        if threshold < domain_min || threshold > domain_max {
+            Some((domain_min, domain_max))
+        } else if threshold == domain_min {
+            Some((domain_min.checked_add(1)?, domain_max))
+        } else if threshold == domain_max {
+            Some((domain_min, domain_max.checked_sub(1)?))
+        } else {
+            None
+        }
+    };
+    let interval = match (op, branch_value) {
+        (CmpOp::Eq, true) | (CmpOp::Ne, false) => Some((threshold, threshold)),
+        (CmpOp::Eq, false) | (CmpOp::Ne, true) => except_threshold(),
+        (CmpOp::Lt, true) => Some((domain_min, threshold.checked_sub(1)?)),
+        (CmpOp::Lt, false) => Some((threshold, domain_max)),
+        (CmpOp::Le, true) => Some((domain_min, threshold)),
+        (CmpOp::Le, false) => Some((threshold.checked_add(1)?, domain_max)),
+        (CmpOp::Gt, true) => Some((threshold.checked_add(1)?, domain_max)),
+        (CmpOp::Gt, false) => Some((domain_min, threshold)),
+        (CmpOp::Ge, true) => Some((threshold, domain_max)),
+        (CmpOp::Ge, false) => Some((domain_min, threshold.checked_sub(1)?)),
+    }?;
+    let (min, max) = (interval.0.max(domain_min), interval.1.min(domain_max));
+    (min <= max).then_some(api::selected::InclusiveRange {
+        min: Some(min),
+        max: Some(max),
+    })
+}
+
+fn comparison_value(op: CmpOp, min: i32, max: i32, threshold: i32) -> Option<bool> {
+    match op {
+        CmpOp::Eq if min == max => Some(min == threshold),
+        CmpOp::Eq if threshold < min || threshold > max => Some(false),
+        CmpOp::Ne if min == max => Some(min != threshold),
+        CmpOp::Ne if threshold < min || threshold > max => Some(true),
+        CmpOp::Lt if max < threshold => Some(true),
+        CmpOp::Lt if min >= threshold => Some(false),
+        CmpOp::Le if max <= threshold => Some(true),
+        CmpOp::Le if min > threshold => Some(false),
+        CmpOp::Gt if min > threshold => Some(true),
+        CmpOp::Gt if max <= threshold => Some(false),
+        CmpOp::Ge if min >= threshold => Some(true),
+        CmpOp::Ge if max < threshold => Some(false),
+        _ => None,
+    }
+}
+
 /// The script facts an opener evaluation reads.
 struct Sources {
     oplocs: [HashMap<String, Vec<Option<Block>>>; 5],
     oplocu: HashMap<String, Vec<Option<Block>>>,
     quest_family: Option<nav_planner::quest_gates::QuestFamilyId>,
     quest_complete: HashMap<String, (api::selected::FactKey, i32)>,
+    quest_stage: HashMap<String, QuestStageFacts>,
     /// Varp names whose every possible source write is bounded by completion.
     quest_exact: HashSet<String>,
     labels: HashMap<String, Vec<Option<Block>>>,
@@ -400,6 +477,21 @@ impl Sources {
                 (
                     row.varp.clone(),
                     (api::selected::FactKey::new(&row.id), row.complete),
+                )
+            })
+            .collect();
+        let quest_stage: HashMap<_, _> = quests
+            .into_iter()
+            .flat_map(|quests| &quests.facts.rows)
+            .filter(|row| !row.varp.is_empty() && row.varp_id >= 0 && row.complete > 0)
+            .map(|row| {
+                (
+                    row.varp.clone(),
+                    QuestStageFacts {
+                        colour_authoritative: row.colour_authoritative,
+                        stage_domain: row.stage_domain,
+                        transmission: row.transmission,
+                    },
                 )
             })
             .collect();
@@ -471,6 +563,7 @@ impl Sources {
             oplocs,
             quest_family: quests.map(|quests| quests.family),
             quest_complete,
+            quest_stage,
             quest_exact,
             oplocu,
             labels,
@@ -1237,6 +1330,45 @@ impl Eval<'_> {
                 let (Some(&id), Val::Int(c)) = (self.src.varps.get(&w[1..]), rhs_val) else {
                     return Cond::unknown();
                 };
+                if let (Some(family), Some((quest, complete)), Some(facts)) = (
+                    self.src.quest_family,
+                    self.src.quest_complete.get(&w[1..]),
+                    self.src.quest_stage.get(&w[1..]),
+                ) {
+                    if let Some((min, max)) = authoritative_stage_domain(*facts, *complete) {
+                        let value = if op == CmpOp::Eq && c != 0 {
+                            true
+                        } else {
+                            past_threshold(op, c).0
+                        };
+                        let Some(values) = comparison_window(op, value, c, min, max) else {
+                            return Cond::unknown();
+                        };
+                        // A green journal row is canonical only when the
+                        // authoritative domain makes completion exact.
+                        let gate = if facts.colour_authoritative
+                            && max == *complete
+                            && values.min == Some(*complete)
+                            && values.max == Some(*complete)
+                        {
+                            api::selected::QuestGate::Complete(quest.clone())
+                        } else {
+                            api::selected::QuestGate::Window(api::selected::StageWindow {
+                                quest: quest.clone(),
+                                signal: api::selected::FactKey::new(&w[1..]),
+                                values,
+                            })
+                        };
+                        return Cond {
+                            value: Some(value),
+                            needs: Needs {
+                                quests: vec![gate],
+                                quest_family: Some(family),
+                                ..Needs::default()
+                            },
+                        };
+                    }
+                }
                 let (value, min) = past_threshold(op, c);
                 Cond {
                     value: Some(value),

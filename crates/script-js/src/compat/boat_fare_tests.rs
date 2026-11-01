@@ -858,10 +858,12 @@ fn talk(world: &mut World, options: &[String], want: i32, after_answer: impl FnO
     world.cont = false;
 }
 
-fn start_walk_to(world: &mut World) -> machine::Handle {
+fn start_walk_to(world: &mut World, consent: (Option<bool>, Option<bool>)) -> machine::Handle {
     world.post();
     let args = json!({
         "tile": { "x": PORT_SARIM.x, "z": PORT_SARIM.z, "level": 0 },
+        "allowPrereqDialogue": consent.0,
+        "allowQuestStart": consent.1,
     });
     match machine::start("walk-to", args, Vec::new(), 0) {
         Started::Running(handle) => handle,
@@ -908,6 +910,7 @@ fn fail_luthas_reach(world: &mut World, what: &str) -> WorldTile {
 /// row, the world, the first walk and the re-walk.
 fn earn_the_fare(
     retry_point: Option<RetryPoint>,
+    consent: (Option<bool>, Option<bool>),
 ) -> (machine::Handle, World, InteractReq, InteractReq) {
     reset();
     let mut world = World::new(MUSA, 5);
@@ -924,7 +927,7 @@ fn earn_the_fare(
     let paid = world.facts.preferences[1].clone();
     let coins_id = world.facts.coins;
     let fare = world.facts.coin_payout;
-    let h = start_walk_to(&mut world);
+    let h = start_walk_to(&mut world, consent);
     let first = machine::merge_ops(Vec::new());
     assert!(
         matches!(first.as_slice(), [op] if walk_near(PORT_SARIM, 2)(op)),
@@ -1051,7 +1054,7 @@ fn earn_the_fare(
 
 #[test]
 fn walk_to_earns_the_fare_at_the_plantation_then_takes_the_boat() {
-    let (h, mut world, first, again) = earn_the_fare(None);
+    let (h, mut world, first, again) = earn_the_fare(None, (None, None));
     assert_eq!(machine::take(h), Take::Pending);
     world.here = PORT_SARIM;
     world.post();
@@ -1062,7 +1065,8 @@ fn walk_to_earns_the_fare_at_the_plantation_then_takes_the_boat() {
 
 #[test]
 fn walk_to_retries_a_failed_luthas_approach_and_completes() {
-    let (h, mut world, first, again) = earn_the_fare(Some(RetryPoint::InitialTalk));
+    let (h, mut world, first, again) =
+        earn_the_fare(Some(RetryPoint::InitialTalk), (None, None));
     assert_eq!(machine::take(h), Take::Pending);
     world.here = PORT_SARIM;
     world.post();
@@ -1073,7 +1077,8 @@ fn walk_to_retries_a_failed_luthas_approach_and_completes() {
 
 #[test]
 fn walk_to_retries_a_failed_post_fill_luthas_approach_and_completes() {
-    let (h, mut world, first, again) = earn_the_fare(Some(RetryPoint::PostFillTalk));
+    let (h, mut world, first, again) =
+        earn_the_fare(Some(RetryPoint::PostFillTalk), (None, None));
     assert_eq!(machine::take(h), Take::Pending);
     world.here = PORT_SARIM;
     world.post();
@@ -1488,9 +1493,49 @@ fn a_failed_talk_walk_retries_and_logs_the_terminal_failure() {
 }
 
 #[test]
+fn walk_to_keeps_prerequisite_consent_after_earning_the_fare() {
+    for consent in [
+        (Some(false), Some(false)),
+        (Some(false), Some(true)),
+        (Some(true), Some(false)),
+        (Some(true), Some(true)),
+    ] {
+        let (handle, mut world, first, again) = earn_the_fare(None, consent);
+        for walk in [&first, &again] {
+            let InteractReq::WalkNear {
+                allow_prereq_dialogue,
+                allow_quest_start,
+                ..
+            } = walk
+            else {
+                panic!("expected a world walk, got {walk:?}");
+            };
+            assert_eq!((*allow_prereq_dialogue, *allow_quest_start), consent);
+        }
+        world.here = PORT_SARIM;
+        world.post();
+        assert!(tick().is_empty());
+        assert_eq!(
+            machine::take(handle),
+            Take::Settled(Outcome::Done(json!(true)))
+        );
+    }
+}
+
+#[test]
+fn walk_to_consent_metadata_keeps_the_active_frame_bounded() {
+    let bytes = std::mem::size_of::<super::WalkTo>();
+    println!("WalkTo active frame: {bytes} bytes");
+    assert!(
+        bytes <= 176,
+        "WalkTo active frame exceeds 176 bytes: {bytes}"
+    );
+}
+
+#[test]
 fn an_interrupt_during_the_re_walk_stops_it_and_ends_false() {
     // Frozen follow pass: EventSignal.pending ends the walk (WalkExecutor.ts:844-853).
-    let (h, mut world, _, again) = earn_the_fare(None);
+    let (h, mut world, _, again) = earn_the_fare(None, (None, None));
     world.ours = true;
     world.post();
     assert_eq!(
@@ -1521,7 +1566,7 @@ fn walk_to_does_not_recover_a_short_that_is_not_the_boat_fare() {
         reset();
         let mut world = World::new(from, 5);
         let coins_id = world.facts.coins;
-        let h = start_walk_to(&mut world);
+        let h = start_walk_to(&mut world, (None, None));
         let first = machine::merge_ops(Vec::new());
         fail_short(
             &mut world,
@@ -1549,7 +1594,7 @@ fn walk_to_with_a_full_pack_and_no_banana_does_not_recover() {
     world.filler = 27;
     let coins_id = world.facts.coins;
     let fare = world.facts.coin_payout;
-    let h = start_walk_to(&mut world);
+    let h = start_walk_to(&mut world, (None, None));
     let first = machine::merge_ops(Vec::new());
     fail_short(
         &mut world,
@@ -1618,7 +1663,7 @@ fn walk_to_waits_out_the_frozen_300_second_default() {
         },
         5,
     );
-    let h = start_walk_to(&mut world);
+    let h = start_walk_to(&mut world, (None, None));
     let first = machine::merge_ops(Vec::new());
     assert!(
         matches!(first.as_slice(), [op] if walk_near(PORT_SARIM, 2)(op)),

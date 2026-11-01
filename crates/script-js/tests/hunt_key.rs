@@ -936,6 +936,8 @@ export async function tick(api) {
                 allow_teleports: false,
                 allow_wilderness: false,
                 allow_bank_fetch: false,
+                allow_prereq_dialogue: None,
+                allow_quest_start: None,
                 request_id,
                 avoid: _,
                 cross: _,

@@ -282,6 +282,7 @@ impl CookFixture {
                         refusal: None,
                         assessment: None,
                         escape: None,
+                        prereq_allow: None,
                     });
                 }
                 HostEffect::AssessWalk(_) => {

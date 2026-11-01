@@ -963,16 +963,21 @@ fn bound_host_walk_arms_and_rejects_a_foreign_nav_without_replacing_the_route() 
     let command = model
         .confirm(ActionKind::Walk, &ctx, Some(origin), FindOptions::default())
         .unwrap();
-    let route = play
+    let snapshot = api::snapshot::GameSnapshot::new();
+    let WalkActionOutcome::Walking(route) = play
         .map_walk(
             command,
             &ctx,
+            &snapshot,
             &WorldState::empty(),
             &BankRows::default(),
             Default::default(),
             &arms,
         )
-        .unwrap();
+        .unwrap()
+    else {
+        panic!("manual route should be armed directly");
+    };
     assert_eq!(route.route.dest, wt(3205, 3206, 0));
     let generation = {
         let arms = arms.lock().unwrap();
@@ -1001,6 +1006,7 @@ fn bound_host_walk_arms_and_rejects_a_foreign_nav_without_replacing_the_route() 
         play.map_walk(
             command,
             &foreign,
+            &snapshot,
             &WorldState::empty(),
             &BankRows::default(),
             Default::default(),
@@ -1457,10 +1463,12 @@ fn single_bot_walk_and_teleport_follow_a_focus_switch() {
             FindOptions::default(),
         )
         .unwrap();
+    let snapshot = api::snapshot::GameSnapshot::new();
     let arms = Arc::new(Mutex::new(HashMap::new()));
     play.map_walk(
         command,
         &bob_ctx,
+        &snapshot,
         &WorldState::empty(),
         &BankRows::default(),
         Default::default(),
@@ -1517,6 +1525,7 @@ fn group_walk_mixed_eligibility_own_origins_and_consumes_once() {
     assert_eq!(model.select_tile(&baked, dest), Some(dest));
 
     let empty = WorldState::empty();
+    let snapshot = api::snapshot::GameSnapshot::new();
     let bank = BankRows::default();
     let names = ["alice", "bob", "logged-out", "nopos", "scripter", "bot3"];
     let reqs: Vec<WalkSlotRequest<'_>> = names
@@ -1524,6 +1533,7 @@ fn group_walk_mixed_eligibility_own_origins_and_consumes_once() {
         .map(|name| WalkSlotRequest {
             name,
             state: &empty,
+            snapshot: Some(&snapshot),
             bank: &bank,
             risk_input: Default::default(),
         })
@@ -1679,9 +1689,11 @@ fn grouped_zone_refusal_keeps_its_named_detail() {
 
     let state = WorldState::empty();
     let bank = BankRows::default();
+    let snapshot = api::snapshot::GameSnapshot::new();
     let request = [WalkSlotRequest {
         name: "alice",
         state: &state,
+        snapshot: Some(&snapshot),
         bank: &bank,
         risk_input: Default::default(),
     }];
@@ -1933,4 +1945,192 @@ fn manual_walk_refuses_before_boarding_and_names_the_total_coin_shortfall() {
     assert!(message.contains("need 60, carrying 30"), "{message}");
     // A held default refusal is the pre-S2b bare NoPath: no arm is created.
     assert!(arms.lock().unwrap().get("alice").is_none());
+}
+
+#[test]
+fn eligible_ordinary_group_walk_without_snapshot_uses_validated_status_origin() {
+    let origin = t(3201, 3201, 0);
+    let destination = t(3205, 3206, 0);
+    let fixture = MapFixture::new(&world(t(3200, 3200, 0), 8, &[]), "local-289");
+    let play = fixture.play(origin);
+    let dest_ctx = bound_context(&play);
+    let baked = play.world().unwrap();
+    let mut model = MapModel::default();
+    model.bind(dest_ctx);
+    assert_eq!(model.select_tile(&baked, destination), Some(destination));
+    let plan = model
+        .confirm_walk_plan(&dest_ctx, FindOptions::default())
+        .unwrap();
+    let state = WorldState::empty();
+    let bank = BankRows::default();
+    let request = [WalkSlotRequest {
+        name: "alice",
+        state: &state,
+        snapshot: None,
+        bank: &bank,
+        risk_input: Default::default(),
+    }];
+    let arms = Arc::new(Mutex::new(HashMap::new()));
+
+    let report = play.map_walk_group(plan, &dest_ctx, &request, &arms);
+    assert_eq!(report.outcomes[0].kind, WalkSlotOutcomeKind::Walking);
+    assert_eq!(
+        arms.lock().unwrap()["alice"].lock().unwrap().queued_tile(),
+        Some(destination)
+    );
+}
+
+#[test]
+fn catalog_gated_group_walk_without_snapshot_cannot_start_a_prerequisite() {
+    use nav_planner::quest_gates::{QuestEvidence, QuestGates};
+    use nav_planner::test_support::{family, stamp};
+
+    struct ClosedGate;
+    impl api::quest_progress::EvidenceProvider for ClosedGate {
+        fn observe_gate(
+            &self,
+            _: &api::selected::QuestGate,
+            required_after: api::quest_progress::EvidenceStamp,
+        ) -> Option<api::prereq_knowledge::Observation> {
+            Some(api::prereq_knowledge::Observation {
+                truth: api::selected::Truth::False,
+                observed: Some(required_after),
+            })
+        }
+    }
+
+    let selected = api::game_data::for_revision(api::selected::ClientRevision::R289).unwrap();
+    let catalog = api::selected::FamilyPreparation::run(move |worker| {
+        selected.prepare_prereq_steps(worker).unwrap()
+    })
+    .unwrap()
+    .join()
+    .unwrap();
+    let (row, entry) = catalog
+        .iter()
+        .flat_map(|(_, row)| row.crossings.iter().map(move |entry| (row, entry)))
+        .find(|(_, entry)| {
+            let crossing = &entry.crossing;
+            crossing.takeoff != crossing.to
+                && crossing.takeoff.level == crossing.to.level
+                && crossing.takeoff.x.abs_diff(crossing.to.x) <= 4
+                && crossing.takeoff.z.abs_diff(crossing.to.z) <= 4
+        })
+        .expect("selected catalog has a local gated crossing");
+    let crossing = &entry.crossing;
+    let origin = t(
+        crossing.takeoff.x,
+        crossing.takeoff.z,
+        crossing.takeoff.level,
+    );
+    let destination = t(
+        crossing.to.x + (crossing.to.x - crossing.takeoff.x).signum(),
+        crossing.to.z + (crossing.to.z - crossing.takeoff.z).signum(),
+        crossing.to.level,
+    );
+    let size = crossing
+        .takeoff
+        .x
+        .abs_diff(crossing.to.x)
+        .max(crossing.takeoff.z.abs_diff(crossing.to.z)) as usize
+        + 3;
+    let grid_origin = wt(
+        crossing.takeoff.x.min(crossing.at.x).min(crossing.to.x) - 1,
+        crossing.takeoff.z.min(crossing.at.z).min(crossing.to.z) - 1,
+        0,
+    );
+    // Both endpoints are valid stands; wall bits forbid walking between them.
+    let mut flags = vec![client::dash3d::CollisionFlag::SQ_BLOCKED as u32; 4 * size * size];
+    for stand in [crossing.takeoff, crossing.to] {
+        let x = (stand.x - grid_origin.x) as usize;
+        let z = (stand.z - grid_origin.z) as usize;
+        flags[stand.level as usize * size * size + z * size + x] =
+            (client::dash3d::CollisionFlag::WALK_BLOCK_FLAGS
+                & !client::dash3d::CollisionFlag::SQ_BLOCKED) as u32;
+    }
+    // Map clicks require a face-free destination, beyond the transport landing.
+    let x = (destination.x - grid_origin.x) as usize;
+    let z = (destination.z - grid_origin.z) as usize;
+    flags[destination.level as usize * size * size + z * size + x] = 0;
+    let (walk, blocked) = pack_walk(&flags);
+    let mut gate_edge = edge(TransportKind::Door, crossing.at, crossing.to);
+    gate_edge.loc_id = crossing.loc_id;
+    gate_edge.option = i32::from(crossing.option);
+    gate_edge.takeoff = Some(crossing.takeoff);
+    gate_edge.quest_gates = Some(
+        QuestGates::new(
+            family(7),
+            [api::selected::QuestGate::Window(row.establishes.clone())],
+        )
+        .unwrap(),
+    );
+    let mut graph = TransportGraph {
+        quest_family: Some(family(7)),
+        ..TransportGraph::default()
+    };
+    graph.at.insert(crossing.takeoff, vec![0]);
+    graph.edges.push(gate_edge);
+    let nav = NavWorld::from_parts(
+        WorldCollision {
+            origin: grid_origin,
+            width: size,
+            height: size,
+            walk,
+            blocked,
+            flags: None,
+        },
+        graph,
+        vec![],
+    );
+    let mut state = WorldState::empty();
+    state.establishable = Some(catalog.establishable_windows());
+    state.quest_evidence = Some(QuestEvidence::new(
+        Arc::new(ClosedGate),
+        family(7),
+        stamp(1),
+    ));
+    assert!(
+        nav_planner::router::find_actionable_quest_gates(
+            &nav.collision,
+            &nav.graph,
+            crossing.takeoff,
+            &[wt(destination.x, destination.z, destination.level)],
+            FindOptions::default(),
+            &state,
+            &[],
+        )
+        .unwrap()
+        .is_some(),
+        "the route must need a real catalog-backed prerequisite"
+    );
+
+    let fixture = MapFixture::new(&nav, "local-289");
+    let play = fixture.play(origin);
+    let context = bound_context(&play);
+    let mut model = MapModel::default();
+    model.bind(context);
+    model.select_tile(&play.world().unwrap(), destination);
+    let plan = model
+        .confirm_walk_plan(&context, FindOptions::default())
+        .unwrap();
+    let bank = BankRows::default();
+    let request = [WalkSlotRequest {
+        name: "alice",
+        state: &state,
+        snapshot: None,
+        bank: &bank,
+        risk_input: Default::default(),
+    }];
+    let arms = Arc::new(Mutex::new(HashMap::new()));
+    let report = play.map_walk_group(plan, &context, &request, &arms);
+    assert_eq!(
+        report.outcomes[0].kind,
+        WalkSlotOutcomeKind::Failed(ActionError::NoPath)
+    );
+    assert!(arms.lock().unwrap()["alice"]
+        .lock()
+        .unwrap()
+        .route
+        .is_none());
+    assert_eq!(play.script_state("alice"), script::RunState::Idle);
 }

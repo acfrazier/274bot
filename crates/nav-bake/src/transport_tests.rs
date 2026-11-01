@@ -1766,7 +1766,7 @@ p_telejump($dest);
         ),
     ]);
     let mut graph = TransportGraph::default();
-    let gates = ObservableGates::from_content(fx.path());
+    let gates = ObservableGates::from_content(fx.path(), None);
     spirit_tree_edges(
         fx.path(),
         &ids,
@@ -1856,7 +1856,7 @@ p_telejump($dest);\n";
     let mut graph = TransportGraph::default();
     let mut skipped = HashMap::new();
     let mut audit = VarpGateAudit::default();
-    let gates = ObservableGates::from_content(fx.path());
+    let gates = ObservableGates::from_content(fx.path(), None);
     spirit_tree_edges(
         fx.path(),
         &ids,
@@ -8429,7 +8429,7 @@ fn producers_require_transmission_or_a_unique_completed_journal_proof() {
         edge(13, 500, 3),
         edge(14, 150, 161),
     ];
-    let gates = ObservableGates::from_content(fx.path());
+    let gates = ObservableGates::from_content(fx.path(), None);
     let mut graph = TransportGraph::default();
     let mut audit = VarpGateAudit::default();
     assert!(
@@ -9842,6 +9842,170 @@ if (%quest = 2) { p_telejump(movecoord(coord, -549, 0, 756)); }
         !graph.edges.iter().any(|edge| edge.loc_id == 9003),
         "a conditional offset is not an unconditional crossing"
     );
+}
+
+#[test]
+fn scripted_trapdoor_pair_uses_its_open_leaf_and_absolute_landing() {
+    let fx = Fixture::new();
+    fx.write(
+        "pack/loc.pack",
+        "9001=area_trapdoor\n9002=area_trapdoor_open\n",
+    );
+    fx.write(
+        "maps/m53_54.jm2",
+        "==== MAP ====\n0 0 0: h1\n==== LOC ====\n0 30 29: 9001 22\n0 31 29: 9002 22\n",
+    );
+    fx.write(
+        "scripts/areas/area_example/scripts/trapdoor.rs2",
+        "\
+[oploc1,area_trapdoor]
+mes(\"The trapdoor opens...\");
+sound_synth(door_open, 1, 0);
+loc_change(area_trapdoor_open, 500);
+[oploc1,area_trapdoor_open]
+mes(\"You climb down through the trapdoor...\");
+anim(human_pickupfloor, 0);
+p_delay(0);
+p_telejump(0_53_154_48_31);
+[oploc2,area_trapdoor_open]
+loc_change(area_trapdoor, 500);
+",
+    );
+    let defs = LocDefs::from_locs(&[
+        LocType {
+            id: 9001,
+            op: vec![Some("Open".into())],
+            ..Default::default()
+        },
+        LocType {
+            id: 9002,
+            op: vec![Some("Climb-down".into()), Some("Close".into())],
+            ..Default::default()
+        },
+    ]);
+    let graph = derive_transports(
+        fx.path(),
+        &defs,
+        &bake_collision(&fx, &defs, &HashSet::new()),
+    );
+    let landing = WorldTile {
+        x: 3440,
+        z: 9887,
+        level: 0,
+    };
+    let closed = graph
+        .edges
+        .iter()
+        .find(|edge| edge.loc_id == 9001)
+        .expect("the closed placement opens, then climbs its certified open leaf");
+    assert_eq!(closed.kind, TransportKind::Ladder);
+    assert_eq!(closed.open_loc_id, Some(9002));
+    assert_eq!(closed.option, 1);
+    assert_eq!(
+        closed.at,
+        WorldTile {
+            x: 3422,
+            z: 3485,
+            level: 0
+        }
+    );
+    assert_eq!(closed.to, landing);
+    assert_eq!(closed.player_delta, None);
+    assert_eq!(
+        closed.ticks, 4,
+        "Open and Climb operations, shared arrival delay, and source p_delay(0)"
+    );
+    let open = graph
+        .edges
+        .iter()
+        .find(|edge| edge.loc_id == 9002)
+        .expect("an already-open placement uses the same absolute landing");
+    assert_eq!(open.to, landing);
+    assert_eq!(open.option, 1);
+    assert_eq!(open.open_loc_id, None);
+    assert_eq!(open.ticks, 3);
+    assert_eq!(
+        graph
+            .edges
+            .iter()
+            .filter(|edge| matches!(edge.loc_id, 9001 | 9002))
+            .count(),
+        2,
+        "Close does not become a transport"
+    );
+}
+
+#[test]
+fn scripted_trapdoor_pair_rejects_unproved_open_or_climb_handlers() {
+    for (name, opening, climbing, duplicate) in [
+        (
+            "conditional opening",
+            "if (%quest = 1) { loc_change(area_trapdoor_open, 500); }",
+            "p_telejump(0_53_154_48_31);",
+            "",
+        ),
+        (
+            "unknown opening effect",
+            "~unproved; loc_change(area_trapdoor_open, 500);",
+            "p_telejump(0_53_154_48_31);",
+            "",
+        ),
+        (
+            "conditional climb",
+            "loc_change(area_trapdoor_open, 500);",
+            "if (%quest = 1) { p_telejump(0_53_154_48_31); }",
+            "",
+        ),
+        (
+            "duplicate opening",
+            "loc_change(area_trapdoor_open, 500);",
+            "p_telejump(0_53_154_48_31);",
+            "[oploc1,area_trapdoor]\nloc_change(area_trapdoor_open, 500);",
+        ),
+        (
+            "duplicate climb",
+            "loc_change(area_trapdoor_open, 500);",
+            "p_telejump(0_53_154_48_31);",
+            "[oploc1,area_trapdoor_open]\np_telejump(0_53_154_48_31);",
+        ),
+    ] {
+        let fx = Fixture::new();
+        fx.write(
+            "pack/loc.pack",
+            "9001=area_trapdoor\n9002=area_trapdoor_open\n",
+        );
+        fx.write(
+            "maps/m53_54.jm2",
+            "==== MAP ====\n0 0 0: h1\n==== LOC ====\n0 30 29: 9001 22\n",
+        );
+        fx.write(
+            "scripts/areas/area_example/scripts/trapdoor.rs2",
+            &format!(
+                "[oploc1,area_trapdoor]\n{opening}\n[oploc1,area_trapdoor_open]\n{climbing}\n{duplicate}\n"
+            ),
+        );
+        let defs = LocDefs::from_locs(&[
+            LocType {
+                id: 9001,
+                op: vec![Some("Open".into())],
+                ..Default::default()
+            },
+            LocType {
+                id: 9002,
+                op: vec![Some("Climb-down".into())],
+                ..Default::default()
+            },
+        ]);
+        let graph = derive_transports(
+            fx.path(),
+            &defs,
+            &bake_collision(&fx, &defs, &HashSet::new()),
+        );
+        assert!(
+            !graph.edges.iter().any(|edge| edge.loc_id == 9001),
+            "{name} cannot certify a closed-to-open transport"
+        );
+    }
 }
 
 #[path = "transport/stage_doors_tests.rs"]

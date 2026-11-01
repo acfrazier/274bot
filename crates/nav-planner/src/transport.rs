@@ -5,6 +5,7 @@
 
 use std::collections::HashMap;
 
+use api::prereq_steps::{CrossingId, CrossingKind};
 use api::snapshot::WorldTile;
 
 use crate::collision::WorldCollision;
@@ -181,6 +182,35 @@ impl TransportEdge {
         }
     }
 
+    /// Stable API identity: the loc anchor and exact directed takeoff stay separate.
+    ///
+    /// An option that cannot be represented by the shared `u8` identity is
+    /// unavailable rather than truncated.
+    pub fn crossing_id(&self) -> Option<CrossingId> {
+        Some(CrossingId {
+            loc_id: self.loc_id,
+            option: u8::try_from(self.option).ok()?,
+            at: self.at,
+            takeoff: self
+                .takeoff
+                .or_else(|| wall_door_takeoff_geometry(self))
+                .unwrap_or(self.at),
+            to: self.to,
+            kind: match self.kind {
+                TransportKind::Door => CrossingKind::Door,
+                TransportKind::Ladder => CrossingKind::Ladder,
+                TransportKind::Stairs => CrossingKind::Stairs,
+                TransportKind::Boat => CrossingKind::Boat,
+                TransportKind::Teleport => CrossingKind::Teleport,
+                TransportKind::AgilityShortcut => CrossingKind::AgilityShortcut,
+                TransportKind::Glider => CrossingKind::Glider,
+                TransportKind::SpiritTree => CrossingKind::SpiritTree,
+                TransportKind::Npc => CrossingKind::Npc,
+                TransportKind::EssenceExit => CrossingKind::EssenceExit,
+            },
+        })
+    }
+
     /// Whether this is one of the packed `bigweb_slashable` crossings.
     /// Revision 289 identifies the closed/slashed loc pair as 733/734.
     pub(crate) fn is_slashable_web(&self) -> bool {
@@ -326,6 +356,11 @@ impl TransportGraph {
 /// neighbour, `transport/doors.rs` `diagonal_door_crossings`).
 #[inline(always)]
 fn wall_door_takeoff(edge: &TransportEdge, collision: &WorldCollision) -> Option<WorldTile> {
+    let takeoff = wall_door_takeoff_geometry(edge)?;
+    (takeoff != edge.at || collision.standable(edge.at)).then_some(takeoff)
+}
+
+fn wall_door_takeoff_geometry(edge: &TransportEdge) -> Option<WorldTile> {
     if edge.kind != TransportKind::Door || edge.player_delta.is_some() {
         return None;
     }
@@ -340,7 +375,7 @@ fn wall_door_takeoff(edge: &TransportEdge, collision: &WorldCollision) -> Option
     let forward = edge.to.x == edge.at.x + dx
         && edge.to.z == edge.at.z + dz
         && edge.to.level == edge.at.level;
-    (forward && collision.standable(edge.at)).then_some(edge.at)
+    forward.then_some(edge.at)
 }
 /// The `(dx, dz)` tile step of a crossing direction.
 fn dir_delta(dir: DoorDir) -> (i32, i32) {

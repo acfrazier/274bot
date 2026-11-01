@@ -16,7 +16,7 @@
 mod quester_live;
 
 use std::sync::atomic::{AtomicBool, AtomicI32, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use api::game_data::SelectedGameData;
@@ -709,12 +709,18 @@ fn inventory_receipt(snapshot: &GameSnapshot) -> Vec<Value> {
         .collect()
 }
 
-fn dialogue_texts(snapshot: &GameSnapshot) -> Vec<String> {
+fn dialogue_texts_after(snapshot: &GameSnapshot, after: i32) -> Vec<String> {
     let mut texts: Vec<_> = snapshot
         .chat_options()
         .iter()
         .map(|option| option.text.clone())
-        .chain(snapshot.chat_lines().iter().map(|line| line.text.clone()))
+        .chain(
+            snapshot
+                .chat_lines()
+                .iter()
+                .filter(|line| line.sequence > after)
+                .map(|line| line.text.clone()),
+        )
         .collect();
     // chat.rs2 splits one speech across adjacent chat widgets. Preserve the
     // rendered page as well as individual choices and system messages.
@@ -737,7 +743,11 @@ fn dialogue_texts(snapshot: &GameSnapshot) -> Vec<String> {
 }
 
 fn remember_dialogue_texts(snapshot: &GameSnapshot, seen: &mut Vec<String>) {
-    for text in dialogue_texts(snapshot) {
+    remember_dialogue_texts_after(snapshot, i32::MIN, seen);
+}
+
+fn remember_dialogue_texts_after(snapshot: &GameSnapshot, after: i32, seen: &mut Vec<String>) {
+    for text in dialogue_texts_after(snapshot, after) {
         if !seen.iter().any(|old| old.eq_ignore_ascii_case(&text)) {
             seen.push(text);
         }
@@ -2743,4 +2753,922 @@ fn live_quester_families_bronze_bar_on_anvil_makes_wire() {
         true
     );
     assert_eq!(receipt["family_receipt"]["main_make_wire_row_seen"], true);
+}
+
+const PREREQ_WEST: WorldTile = WorldTile {
+    x: 3408,
+    z: 3489,
+    level: 0,
+};
+const PREREQ_EAST: WorldTile = WorldTile {
+    x: 3423,
+    z: 3485,
+    level: 0,
+};
+const PREREQ_SWAMP: WorldTile = WorldTile {
+    x: 3443,
+    z: 3456,
+    level: 0,
+};
+const HOLY_PASS: &str = "You pass through the holy barrier.";
+const MORT_IN: &str = "You walk into the gloomy atmosphere of Mort Myre.";
+const MORT_OUT: &str = "You skip gladly out of murky Mort Myre.";
+const HOLY_ADVICE: &str = "Okay, I will keep it equipped whenever I fight werewolves.";
+const DAGGER_RECLAIM: &str = "Luckily for you it washed up";
+const DAGGER_RECLAIM_OPENER: &str = "I've lost my wolfbane dagger.";
+const MORT_FOOD: &str = "The cleric hands you some food.";
+
+struct PrereqLiveCase {
+    selector: &'static str,
+    priest: i32,
+    druid: i32,
+    bank_dagger: bool,
+    pies: i32,
+    stand: WorldTile,
+    goal: WorldTile,
+    holy: bool,
+    mort: Option<bool>,
+    advice: bool,
+    reclaim: bool,
+    start: bool,
+}
+
+fn insert_prereq_account_seed(cell: &mut Cell, command: String) {
+    let relog = cell
+        .scenario
+        .steps
+        .iter()
+        .position(|step| step.name == "relog after permanent quest stage and loadout seed")
+        .expect("account seed has its normal post-seed relog");
+    cell.scenario.steps.insert(
+        relog,
+        Step {
+            name: "seed prerequisite account state before relog",
+            kind: StepKind::Perform {
+                send: Box::new(move |client, _| api::interact::cheat(client, &command).is_sent()),
+            },
+            wait: Wait {
+                arm: Proof::SideTabAvailable { index: 3 },
+                budget_ticks: 100,
+            },
+        },
+    );
+}
+
+fn run_quester_prereq_cell(case: PrereqLiveCase) {
+    run_quester_prereq_case(case, None);
+}
+
+fn prerequisite_path(goal: WorldTile, recipe: bool) -> PathDocument {
+    let mut document = family_path(
+        "cook",
+        "Native prerequisite-aware Quester Path",
+        "cook:0",
+        vec![step(
+            "prerequisite-walk",
+            if recipe { "acquire" } else { "walk" },
+            if recipe {
+                json!({"recipe": "open:morytania"})
+            } else {
+                json!({
+                    "tile": [goal.x, goal.z, goal.level],
+                    "source": "C maps/m53_54.jm2:5089,5096; scripts/quests/quest_druidspirit/scripts/quest_druidspirit.rs2:9-23; fixture destination beyond the generated crossing"
+                })
+            },
+            false,
+            empty_any(),
+            empty_all(),
+        )],
+        true,
+    );
+    // This fixture owns one walk, not an authored rule that repeats until a
+    // changing skip predicate excludes it after the fresh pass has settled.
+    document.roles[0].sequences[0].order = script::quester::path::SequenceOrder::Ordered;
+    if recipe {
+        let mut released: PathDocument =
+            serde_json::from_str(include_str!("../../script/paths/289/priestperil.json"))
+                .expect("released Priest in Peril Path");
+        let steps = released
+            .quest
+            .as_mut()
+            .expect("Priest in Peril quest header")
+            .acquire
+            .remove("open:morytania")
+            .expect("released Morytania recipe");
+        document
+            .quest
+            .as_mut()
+            .expect("live Path quest header")
+            .acquire
+            .insert("open:morytania".into(), steps);
+    }
+    document
+}
+
+#[test]
+fn prerequisite_live_paths_compile_with_provenance_and_one_pass_order() {
+    let (selected, quests) = live_data();
+    for (goal, recipe) in [
+        (PREREQ_EAST, true),
+        (PREREQ_SWAMP, false),
+        (
+            WorldTile {
+                x: 3443,
+                z: 3458,
+                level: 0,
+            },
+            false,
+        ),
+    ] {
+        let document = prerequisite_path(goal, recipe);
+        assert_eq!(
+            document.roles[0].sequences[0].order,
+            script::quester::path::SequenceOrder::Ordered
+        );
+        let bytes = serde_json::to_vec(&document).unwrap();
+        let selected = Arc::clone(&selected);
+        let quests = Arc::clone(&quests);
+        let compiled = api::selected::FamilyPreparation::run(move |worker| {
+            compile_path(
+                &bytes,
+                &selected,
+                &quests,
+                worker,
+                &script::local_state::OperatorLoadouts::absent(),
+            )
+        })
+        .unwrap()
+        .join()
+        .unwrap();
+        assert!(
+            compiled.is_ok(),
+            "goal={goal:?} recipe={recipe}: {:?}",
+            compiled.err()
+        );
+    }
+}
+
+struct PrereqFailureOracle {
+    expected: &'static str,
+    messages: Vec<String>,
+    wolfbane: i32,
+    meat_pie: i32,
+    apple_pie: i32,
+    pies: i32,
+    stand: WorldTile,
+    start_inventory: Arc<Mutex<Option<Vec<Value>>>>,
+}
+
+impl PrereqFailureOracle {
+    fn new(selected: Arc<SelectedGameData>, expected: &'static str, case: &PrereqLiveCase) -> Self {
+        use script::native::{PrereqMissing, PrereqRefusal, PrereqStepIdentity, PrereqSwitch};
+        let wolfbane = item_id(&selected, "dagger_wolfbane");
+        let meat_pie = item_id(&selected, "meat_pie");
+        let apple_pie = item_id(&selected, "apple_pie");
+        let catalog = api::selected::FamilyPreparation::run(move |worker| {
+            selected.prepare_prereq_steps(worker)
+        })
+        .unwrap()
+        .join()
+        .unwrap()
+        .unwrap();
+        let id = match expected {
+            "FreeSlots" => "priestperil:drezel-advice",
+            "quest_start is not allowed" => "druidspirit:drezel-start",
+            other => panic!("unsupported negative prerequisite oracle: {other}"),
+        };
+        let row = catalog
+            .iter()
+            .find_map(|(_, row)| (row.id.as_ref() == id).then_some(row))
+            .expect("negative fixture has an authored prerequisite row");
+        let messages = row
+            .crossings
+            .iter()
+            .map(|crossing| {
+                let step = PrereqStepIdentity {
+                    id: Arc::clone(&row.id),
+                    source: Arc::clone(&crossing.source.0),
+                };
+                match expected {
+                    "FreeSlots" => PrereqRefusal::PreconditionMissing {
+                        step,
+                        missing: PrereqMissing::FreeSlots { required: 1 },
+                    },
+                    _ => PrereqRefusal::NotAllowed {
+                        step,
+                        switch: PrereqSwitch::QuestStart,
+                    },
+                }
+                .to_string()
+            })
+            .collect();
+        Self {
+            expected,
+            messages,
+            wolfbane,
+            meat_pie,
+            apple_pie,
+            pies: case.pies,
+            stand: case.stand,
+            start_inventory: Arc::new(Mutex::new(None)),
+        }
+    }
+
+    fn observe(
+        &self,
+        snapshot: &GameSnapshot,
+        status: Option<&ScriptStatus>,
+        lifecycle: Option<&script::ScriptLifecycleReceipt>,
+        dialogue_seen: &[String],
+    ) -> Result<Option<Value>, String> {
+        let Some(native) = status else {
+            return Ok(None);
+        };
+        if native.phase != script::native::NativePhase::Blocked {
+            if native.failure.is_some() {
+                return Err(format!(
+                    "negative prerequisite has failure outside Blocked: {native:?}"
+                ));
+            }
+            return Ok(None);
+        }
+        let failure = native
+            .failure
+            .as_ref()
+            .ok_or("blocked prerequisite cell has no native failure")?;
+        if failure.code.as_ref() != "parked"
+            || !self
+                .messages
+                .iter()
+                .any(|message| message == failure.message.as_ref())
+        {
+            return Err(format!(
+                "expected exact prerequisite refusal {:?}, got {failure:?}",
+                self.messages
+            ));
+        }
+        if snapshot.modals().chat != -1 || snapshot.modals().main != -1 {
+            return Err("blocked prerequisite left an open modal".into());
+        }
+        let inventory_after = inventory_receipt(snapshot);
+        let inventory_before = self
+            .start_inventory
+            .lock()
+            .map_err(|_| "start inventory poisoned")?;
+        if inventory_before.as_ref() != Some(&inventory_after) {
+            return Err(format!("denied prerequisite changed inventory: before={inventory_before:?}, after={inventory_after:?}"));
+        }
+        require_item(snapshot, self.wolfbane, 0, "dagger_wolfbane")?;
+        require_item(snapshot, self.meat_pie, self.pies, "meat_pie")?;
+        require_item(snapshot, self.apple_pie, 0, "apple_pie")?;
+        if snapshot
+            .ground_items()
+            .iter()
+            .any(|item| item.def.id == self.wolfbane)
+        {
+            return Err("failed reclaim dropped Wolfbane on the floor".into());
+        }
+        if saw_text(dialogue_seen, HOLY_ADVICE) || saw_text(dialogue_seen, MORT_FOOD) {
+            return Err(format!(
+                "denied prerequisite performed a repair: {dialogue_seen:?}"
+            ));
+        }
+        if self.expected == "FreeSlots" && !saw_text(dialogue_seen, DAGGER_RECLAIM_OPENER) {
+            return Err("full-pack refusal did not reach the real reclaim opener".into());
+        }
+        let here = tile(snapshot);
+        if self.expected == "quest_start is not allowed"
+            && (here != Some(self.stand) || !dialogue_seen.is_empty())
+        {
+            return Err(format!(
+                "request-level Forbid began a repair: here={here:?}, pages={dialogue_seen:?}"
+            ));
+        }
+        Ok(Some(json!({"family_step": "prerequisite-walk",
+            "owner": "native Quester Path", "expected_failure": self.expected,
+            "expected_native_failures": self.messages,
+            "request_quest_start": if self.expected == "quest_start is not allowed" { Some(false) } else { None },
+            "final_tile": here, "dialogue_pages": dialogue_seen,
+            "inventory_after": inventory_receipt(snapshot),
+            "native_status": native_status_receipt(status), "lifecycle": lifecycle})))
+    }
+}
+
+#[cfg(test)]
+mod prereq_failure_oracle_tests {
+    use super::*;
+    use api::snapshot::{ItemActionFamily, ItemContainer, ItemView};
+    use script::native::{NativePhase, ScriptFailure, StatusField};
+
+    fn fixture() -> (PrereqFailureOracle, GameSnapshot, ScriptStatus, Vec<String>) {
+        fixture_for("FreeSlots", 28)
+    }
+
+    fn fixture_for(
+        expected: &'static str,
+        pies: i32,
+    ) -> (PrereqFailureOracle, GameSnapshot, ScriptStatus, Vec<String>) {
+        let (selected, _) = live_data();
+        let case = PrereqLiveCase {
+            selector: "negative-oracle-unit",
+            priest: 60,
+            druid: 0,
+            bank_dagger: false,
+            pies,
+            stand: PREREQ_WEST,
+            goal: PREREQ_EAST,
+            holy: true,
+            mort: None,
+            advice: false,
+            reclaim: false,
+            start: false,
+        };
+        let oracle = PrereqFailureOracle::new(selected, expected, &case);
+        let mut snapshot = GameSnapshot::new();
+        snapshot.seed_tile(PREREQ_WEST);
+        snapshot.seed_inventory(
+            (0..pies)
+                .map(|slot| ItemView {
+                    def: api::ItemDefView {
+                        id: oracle.meat_pie,
+                        name: None,
+                        stackable: false,
+                        members: false,
+                        base_value: 0,
+                        noted: false,
+                        certificate_link: -1,
+                        certificate_template: -1,
+                    },
+                    container: ItemContainer::Inventory,
+                    action_family: ItemActionFamily::Held,
+                    slot,
+                    count: 1,
+                    actions: vec![],
+                    component_id: -1,
+                })
+                .collect(),
+            28,
+        );
+        *oracle.start_inventory.lock().unwrap() = Some(inventory_receipt(&snapshot));
+        let status = ScriptStatus {
+            run: RunKey {
+                slot: 1,
+                run: 1,
+                session: 1,
+            },
+            card: script::CompiledId("Quester"),
+            phase: NativePhase::Blocked,
+            active_settings: 1,
+            pending_settings: None,
+            failure: Some(ScriptFailure {
+                code: "parked".into(),
+                message: oracle.messages[0].as_str().into(),
+            }),
+            fields: Arc::from([]),
+        };
+        let pages = if expected == "FreeSlots" {
+            vec![DAGGER_RECLAIM_OPENER.into()]
+        } else {
+            vec![]
+        };
+        (oracle, snapshot, status, pages)
+    }
+
+    #[test]
+    fn prereq_negative_oracle_ignores_pre_start_chat() {
+        let (oracle, mut snapshot, status, _) = fixture_for("quest_start is not allowed", 0);
+        snapshot.seed_chat_lines(vec![ChatLineView {
+            type_: 0,
+            username: None,
+            text: "get druidspirit: 0".into(),
+            sequence: 10,
+        }]);
+        let pages = dialogue_texts_after(&snapshot, 10);
+        assert!(oracle
+            .observe(&snapshot, Some(&status), None, &pages)
+            .unwrap()
+            .is_some());
+    }
+
+    #[test]
+    fn prereq_negative_oracle_still_rejects_fresh_chat() {
+        let (oracle, mut snapshot, status, _) = fixture_for("quest_start is not allowed", 0);
+        snapshot.seed_chat_lines(vec![ChatLineView {
+            type_: 0,
+            username: None,
+            text: HOLY_ADVICE.into(),
+            sequence: 11,
+        }]);
+        let pages = dialogue_texts_after(&snapshot, 10);
+        assert!(oracle
+            .observe(&snapshot, Some(&status), None, &pages)
+            .is_err());
+    }
+
+    #[test]
+    fn prereq_negative_oracle_accepts_exact_native_blocked_refusal() {
+        let (oracle, snapshot, status, pages) = fixture();
+        assert!(oracle
+            .observe(&snapshot, Some(&status), None, &pages)
+            .unwrap()
+            .is_some());
+    }
+
+    #[test]
+    fn prereq_negative_oracle_rejects_reclaim_effect_without_opener() {
+        let (oracle, snapshot, status, _) = fixture();
+        assert!(oracle
+            .observe(&snapshot, Some(&status), None, &[DAGGER_RECLAIM.into()])
+            .is_err());
+    }
+
+    #[test]
+    fn prereq_negative_oracle_rejects_different_failure() {
+        let (oracle, snapshot, mut status, pages) = fixture();
+        status.failure.as_mut().unwrap().message =
+            format!("{} with a different cause", oracle.messages[0]).into();
+        assert!(oracle
+            .observe(&snapshot, Some(&status), None, &pages)
+            .is_err());
+    }
+
+    #[test]
+    fn prereq_negative_oracle_rejects_open_modal() {
+        for main in [false, true] {
+            let (oracle, mut snapshot, status, pages) = fixture();
+            if main {
+                snapshot.seed_main_modal(1, vec![]);
+            } else {
+                snapshot.seed_chat_modal(1, vec![]);
+            }
+            assert!(oracle
+                .observe(&snapshot, Some(&status), None, &pages)
+                .is_err());
+        }
+    }
+
+    #[test]
+    fn prereq_negative_oracle_rejects_changed_inventory() {
+        let (oracle, mut snapshot, status, pages) = fixture();
+        snapshot.seed_inventory(vec![], 28);
+        assert!(oracle
+            .observe(&snapshot, Some(&status), None, &pages)
+            .is_err());
+    }
+
+    #[test]
+    fn prereq_negative_oracle_rejects_repair_attempt() {
+        for repair in [HOLY_ADVICE, MORT_FOOD] {
+            let (oracle, snapshot, status, mut pages) = fixture();
+            pages.push(repair.into());
+            assert!(oracle
+                .observe(&snapshot, Some(&status), None, &pages)
+                .is_err());
+        }
+    }
+
+    #[test]
+    fn prereq_negative_oracle_rejects_working_with_block_reason() {
+        let (oracle, snapshot, mut status, pages) = fixture();
+        status.phase = NativePhase::Working;
+        status.fields = Arc::from([StatusField {
+            key: "block_reason",
+            label: "Block",
+            value: StatusValue::Text(status.failure.as_ref().unwrap().message.clone()),
+        }]);
+        assert!(oracle
+            .observe(&snapshot, Some(&status), None, &pages)
+            .is_err());
+    }
+}
+
+fn run_quester_prereq_case(case: PrereqLiveCase, expected_failure: Option<&'static str>) {
+    let (selected, quests) = live_data();
+    let wolfbane = item_id(&selected, "dagger_wolfbane");
+    let meat_pie = item_id(&selected, "meat_pie");
+    let apple_pie = item_id(&selected, "apple_pie");
+    let failure_oracle = expected_failure
+        .map(|expected| PrereqFailureOracle::new(Arc::clone(&selected), expected, &case));
+    let failure_inventory = failure_oracle
+        .as_ref()
+        .map(|oracle| Arc::clone(&oracle.start_inventory));
+    let items: &'static [(&'static str, i32)] = match case.pies {
+        0 => &[],
+        27 => &[("meat_pie", 27)],
+        28 => &[("meat_pie", 28)],
+        other => panic!("unsupported exact full-pack fixture: {other}"),
+    };
+    let (mut cell, seed, mut seed_commands) = make_cell(
+        case.selector,
+        ("priestperil", "Priest in Peril prerequisite walk"),
+        case.priest,
+        items,
+        case.stand,
+        None,
+        Arc::clone(&selected),
+    );
+    let druid_seed = format!("setvar druidspirit {}", case.druid);
+    insert_prereq_account_seed(&mut cell, druid_seed.clone());
+    seed_commands.push(druid_seed);
+    if case.bank_dagger {
+        // ClientCheatHandler.ts:355-373 seeds only this account's bank without
+        // opening a bank interface or giving the client a known bank snapshot.
+        let command = "givebank dagger_wolfbane 1".to_owned();
+        insert_prereq_account_seed(&mut cell, command.clone());
+        seed_commands.push(command);
+    }
+    let priest_reply = match case.priest {
+        60 => "get priestperil: 60",
+        61 => "get priestperil: 61",
+        other => panic!("unsupported prerequisite priest stage: {other}"),
+    };
+    let druid_reply = match case.druid {
+        0 => "get druidspirit: 0",
+        5 => "get druidspirit: 5",
+        10 => "get druidspirit: 10",
+        35 => "get druidspirit: 35",
+        other => panic!("unsupported prerequisite druid stage: {other}"),
+    };
+    let priest_query =
+        insert_quest_stage_query(&mut cell, "getvar priestperil", priest_reply, None);
+    let druid_query = insert_quest_stage_query(&mut cell, "getvar druidspirit", druid_reply, None);
+    let start_sequence = Arc::new(AtomicI32::new(i32::MAX));
+    let observed_sequence = Arc::clone(&start_sequence);
+    let stand = case.stand;
+    let pies = case.pies;
+    cell.observe_start = Some(Box::new(move |snapshot| {
+        let seed_receipt = seed.observe_start(snapshot)?;
+        let fixture_receipt = common_observe_start(snapshot, stand)?;
+        for (baseline, expected) in [
+            (priest_query.load(Ordering::Relaxed), priest_reply),
+            (druid_query.load(Ordering::Relaxed), druid_reply),
+        ] {
+            if quest_stage_witness(snapshot.chat_lines(), baseline, expected).is_none() {
+                return Err(format!(
+                    "prerequisite fixture lacks fresh server witness {expected:?}"
+                ));
+            }
+        }
+        require_item(snapshot, wolfbane, 0, "dagger_wolfbane")?;
+        require_item(snapshot, meat_pie, pies, "meat_pie")?;
+        require_item(snapshot, apple_pie, 0, "apple_pie")?;
+        if let Some(inventory) = failure_inventory.as_ref() {
+            *inventory.lock().map_err(|_| "start inventory poisoned")? =
+                Some(inventory_receipt(snapshot));
+        }
+        observed_sequence.store(
+            snapshot
+                .chat_lines()
+                .iter()
+                .map(|line| line.sequence)
+                .max()
+                .unwrap_or(0),
+            Ordering::Relaxed,
+        );
+        Ok(json!({"fixture": fixture_receipt, "seed": seed_receipt,
+            "account_seed_commands": seed_commands,
+            "server_stage_witnesses": [priest_reply, druid_reply],
+            "bank_memory": "unknown; no bank interface was opened"}))
+    }));
+    let recipe = case.holy && case.mort.is_none();
+    let mut document = prerequisite_path(case.goal, recipe);
+    if expected_failure == Some("quest_start is not allowed") {
+        document.prereq.quest_start = Some(false);
+    }
+    let start = family_start(document, Arc::clone(&selected), quests);
+    let mut dialogue_seen = Vec::new();
+    let mut holy_landing = false;
+    let mut mort_landing = false;
+    let mut pass_receipts = Vec::new();
+    let selector = case.selector;
+    let observe: ObserveFamily = Box::new(move |snapshot, status, lifecycle| {
+        let baseline = start_sequence.load(Ordering::Relaxed);
+        if failure_oracle.is_some() {
+            remember_dialogue_texts_after(snapshot, baseline, &mut dialogue_seen);
+        } else {
+            remember_dialogue_texts(snapshot, &mut dialogue_seen);
+        }
+        let here = tile(snapshot);
+        if let Some(oracle) = failure_oracle.as_ref() {
+            return oracle.observe(snapshot, status, lifecycle, &dialogue_seen);
+        }
+        for (message, required, landings, seen) in [
+            (
+                HOLY_PASS,
+                case.holy,
+                [PREREQ_EAST, PREREQ_EAST],
+                &mut holy_landing,
+            ),
+            (
+                if case.mort == Some(false) {
+                    MORT_OUT
+                } else {
+                    MORT_IN
+                },
+                case.mort.is_some(),
+                if case.mort == Some(false) {
+                    [
+                        WorldTile {
+                            x: 3443,
+                            z: 3458,
+                            level: 0,
+                        },
+                        WorldTile {
+                            x: 3444,
+                            z: 3458,
+                            level: 0,
+                        },
+                    ]
+                } else {
+                    [
+                        WorldTile {
+                            x: 3443,
+                            z: 3457,
+                            level: 0,
+                        },
+                        WorldTile {
+                            x: 3444,
+                            z: 3457,
+                            level: 0,
+                        },
+                    ]
+                },
+                &mut mort_landing,
+            ),
+        ] {
+            if !required || *seen || !here.is_some_and(|here| landings.contains(&here)) {
+                continue;
+            }
+            if let Some(line) = quest_stage_witness(snapshot.chat_lines(), baseline, message) {
+                *seen = true;
+                pass_receipts.push(json!({"message": message, "sequence": line.sequence,
+                    "landing": here, "tick": snapshot.tick()}));
+            }
+        }
+        if !completed_lifecycle(lifecycle)
+            || !here.is_some_and(|here| within(here, case.goal, 1))
+            || (case.holy && !holy_landing)
+            || (case.mort.is_some() && !mort_landing)
+            || snapshot.modals().chat != -1
+            || snapshot.modals().main != -1
+        {
+            return Ok(None);
+        }
+        for (expected, fragment) in [
+            (case.advice, HOLY_ADVICE),
+            (case.reclaim, DAGGER_RECLAIM),
+            (case.start, MORT_FOOD),
+        ] {
+            if saw_text(&dialogue_seen, fragment) != expected {
+                return Err(format!("prerequisite branch {fragment:?}: expected observed={expected}; pages={dialogue_seen:?}"));
+            }
+        }
+        require_item(
+            snapshot,
+            wolfbane,
+            i32::from(case.reclaim),
+            "dagger_wolfbane",
+        )?;
+        require_item(
+            snapshot,
+            meat_pie,
+            case.pies + if case.start { 3 } else { 0 },
+            "meat_pie",
+        )?;
+        require_item(
+            snapshot,
+            apple_pie,
+            if case.start { 3 } else { 0 },
+            "apple_pie",
+        )?;
+        Ok(Some(
+            json!({"family_step": "prerequisite-walk", "owner": "native Quester Path",
+            "released_recipe": if recipe { Some("open:morytania") } else { None },
+            "goal": case.goal, "final_tile": here, "fresh_exact_landing_passes": pass_receipts,
+            "dialogue_pages": dialogue_seen, "inventory_after": inventory_receipt(snapshot),
+            "native_status": native_status_receipt(status), "lifecycle": lifecycle}),
+        ))
+    });
+    let result = if expected_failure.is_some() {
+        quester_live::run_family_expected_blocked(cell, start, observe)
+    } else {
+        quester_live::run_family(cell, start, observe)
+    };
+    result.unwrap_or_else(|error| panic!("{selector} native prerequisite proof failed: {error}"));
+    eprintln!("prereq cell outcome=completed test={selector}");
+}
+
+#[test]
+#[ignore = "requires LIVE=1 and the already-running shared local Engine Q"]
+fn live_quester_prereq_holy_barrier() {
+    run_quester_prereq_cell(PrereqLiveCase {
+        selector: "live_quester_prereq_holy_barrier",
+        priest: 60,
+        druid: 0,
+        bank_dagger: true,
+        pies: 0,
+        stand: PREREQ_WEST,
+        goal: PREREQ_EAST,
+        holy: true,
+        mort: None,
+        advice: true,
+        reclaim: false,
+        start: false,
+    });
+}
+
+#[test]
+#[ignore = "requires LIVE=1 and the already-running shared local Engine Q"]
+fn live_quester_prereq_reclaim_then_advice() {
+    run_quester_prereq_cell(PrereqLiveCase {
+        selector: "live_quester_prereq_reclaim_then_advice",
+        priest: 60,
+        druid: 0,
+        bank_dagger: false,
+        pies: 27,
+        stand: PREREQ_WEST,
+        goal: PREREQ_EAST,
+        holy: true,
+        mort: None,
+        advice: true,
+        reclaim: true,
+        start: false,
+    });
+}
+
+#[test]
+#[ignore = "requires LIVE=1 and the already-running shared local Engine Q"]
+fn live_quester_prereq_bank_unknown_full_pack() {
+    run_quester_prereq_cell(PrereqLiveCase {
+        selector: "live_quester_prereq_bank_unknown_full_pack",
+        priest: 60,
+        druid: 0,
+        bank_dagger: true,
+        pies: 28,
+        stand: PREREQ_WEST,
+        goal: PREREQ_EAST,
+        holy: true,
+        mort: None,
+        advice: true,
+        reclaim: false,
+        start: false,
+    });
+}
+
+#[test]
+#[ignore = "requires LIVE=1 and the already-running shared local Engine Q"]
+fn live_quester_prereq_authoritative_pass() {
+    run_quester_prereq_cell(PrereqLiveCase {
+        selector: "live_quester_prereq_authoritative_pass",
+        priest: 61,
+        druid: 35,
+        bank_dagger: false,
+        pies: 28,
+        stand: PREREQ_WEST,
+        goal: PREREQ_EAST,
+        holy: true,
+        mort: None,
+        advice: false,
+        reclaim: false,
+        start: false,
+    });
+}
+
+#[test]
+#[ignore = "requires LIVE=1 and the already-running shared local Engine Q"]
+fn live_quester_prereq_mort_myre() {
+    run_quester_prereq_cell(PrereqLiveCase {
+        selector: "live_quester_prereq_mort_myre",
+        priest: 61,
+        druid: 0,
+        bank_dagger: true,
+        pies: 0,
+        stand: PREREQ_EAST,
+        goal: PREREQ_SWAMP,
+        holy: false,
+        mort: Some(true),
+        advice: false,
+        reclaim: false,
+        start: true,
+    });
+}
+
+#[test]
+#[ignore = "requires LIVE=1 and the already-running shared local Engine Q"]
+fn live_quester_prereq_both_gates() {
+    run_quester_prereq_cell(PrereqLiveCase {
+        selector: "live_quester_prereq_both_gates",
+        priest: 60,
+        druid: 0,
+        bank_dagger: true,
+        pies: 0,
+        stand: PREREQ_WEST,
+        goal: PREREQ_SWAMP,
+        holy: true,
+        mort: Some(true),
+        advice: true,
+        reclaim: false,
+        start: true,
+    });
+}
+
+#[test]
+#[ignore = "requires LIVE=1 and the already-running shared local Engine Q"]
+fn live_quester_prereq_mort_myre_outward() {
+    run_quester_prereq_cell(PrereqLiveCase {
+        selector: "live_quester_prereq_mort_myre_outward",
+        priest: 61,
+        druid: 10,
+        bank_dagger: true,
+        pies: 0,
+        stand: PREREQ_SWAMP,
+        goal: PREREQ_EAST,
+        holy: false,
+        mort: Some(false),
+        advice: false,
+        reclaim: false,
+        start: false,
+    });
+}
+
+#[test]
+#[ignore = "requires LIVE=1 and the already-running shared local Engine Q"]
+fn live_quester_prereq_reclaim_full_pack_refused() {
+    run_quester_prereq_case(
+        PrereqLiveCase {
+            selector: "live_quester_prereq_reclaim_full_pack_refused",
+            priest: 60,
+            druid: 0,
+            bank_dagger: false,
+            pies: 28,
+            stand: PREREQ_WEST,
+            goal: PREREQ_EAST,
+            holy: true,
+            mort: None,
+            advice: false,
+            reclaim: false,
+            start: false,
+        },
+        Some("FreeSlots"),
+    );
+}
+
+#[test]
+#[ignore = "requires LIVE=1 and the already-running shared local Engine Q"]
+fn live_quester_prereq_authoritative_bank_unknown_full_pack() {
+    run_quester_prereq_cell(PrereqLiveCase {
+        selector: "live_quester_prereq_authoritative_bank_unknown_full_pack",
+        priest: 61,
+        druid: 35,
+        bank_dagger: true,
+        pies: 28,
+        stand: PREREQ_WEST,
+        goal: PREREQ_EAST,
+        holy: true,
+        mort: None,
+        advice: false,
+        reclaim: false,
+        start: false,
+    });
+}
+
+#[test]
+#[ignore = "requires LIVE=1 and the already-running shared local Engine Q"]
+fn live_quester_prereq_mort_myre_already_started() {
+    run_quester_prereq_cell(PrereqLiveCase {
+        selector: "live_quester_prereq_mort_myre_already_started",
+        priest: 61,
+        druid: 5,
+        bank_dagger: true,
+        pies: 0,
+        stand: PREREQ_EAST,
+        goal: PREREQ_SWAMP,
+        holy: false,
+        mort: Some(true),
+        advice: false,
+        reclaim: false,
+        start: false,
+    });
+}
+
+#[test]
+#[ignore = "requires LIVE=1 and the already-running shared local Engine Q"]
+fn live_quester_prereq_mort_myre_request_forbid() {
+    run_quester_prereq_case(
+        PrereqLiveCase {
+            selector: "live_quester_prereq_mort_myre_request_forbid",
+            priest: 61,
+            druid: 0,
+            bank_dagger: true,
+            pies: 0,
+            stand: PREREQ_EAST,
+            goal: PREREQ_SWAMP,
+            holy: false,
+            mort: Some(true),
+            advice: false,
+            reclaim: false,
+            start: false,
+        },
+        Some("quest_start is not allowed"),
+    );
 }

@@ -48,6 +48,109 @@ pub(crate) fn abort_script_walk(navs: &Arc<Mutex<HashMap<String, NavBot>>>, name
     }
 }
 
+/// Fold a compatibility transfer before the observer reports a Load terminal.
+/// A true result consumes that Load terminal, not an inner native terminal.
+pub(crate) fn observe_compat_walk(
+    slot: &mut script::SlotScript,
+    bot: &mut NavBot,
+    here: Option<WorldTile>,
+    name: &str,
+) -> bool {
+    use script::native::{ActionError, WalkEnd};
+
+    let mut consumed = false;
+    if let Some((run, request_id, result)) = slot.take_compat_walk_terminal() {
+        let request_id = request_id.get();
+        if bot.compat_walk_run() == Some(run)
+            && bot.compat_walk_request_id() == Some(request_id)
+            && bot.compat_walk_context_current()
+            && bot.compat_walk_handed_over()
+        {
+            let (end, detail) = match result {
+                Ok(receipt) => {
+                    let detail = receipt.failure_detail();
+                    (receipt.end, detail)
+                }
+                Err(error) => {
+                    let end = match error {
+                        ActionError::Cancelled => WalkEnd::Cancelled,
+                        ActionError::UserInput => WalkEnd::UserInput,
+                        _ => WalkEnd::Failed,
+                    };
+                    (end, Some(Arc::from(error.to_string())))
+                }
+            };
+            consumed = bot.complete_compat_walk(request_id, end, detail);
+            if consumed {
+                slot.finish_compat_walk(request_id);
+            }
+        }
+    }
+    let Some(request_id) = bot.compat_walk_request_id() else {
+        return consumed;
+    };
+    if !bot.compat_walk_context_current() {
+        bot.retire_compat_walk(request_id);
+        return consumed;
+    }
+    if bot.compat_walk_handed_over() {
+        return true;
+    }
+    if !bot.compat_walk_direct_terminal() {
+        return consumed;
+    }
+
+    // This is the terminal's first owner decision, including denied or failed
+    // handovers. Keep the matched page's stamp, not this observer's tick.
+    if let Some(observation) = bot.compat_walk_refusal() {
+        if slot.record_gate_refusal(observation.fact.observed.run, observation) {
+            api::host_log!(
+                api::hostlog::Category::NavEvent,
+                api::hostlog::Level::Info,
+                slot = name,
+                "prereq refusal-record owner=compat request={} run={:?} tick={} sequence={}",
+                request_id,
+                observation.fact.observed.run,
+                observation.fact.observed.tick,
+                observation.fact.observed.sequence,
+            );
+        }
+    }
+    let run = bot.compat_walk_run().expect("retained compatibility run");
+    if let Some(handover) = here.and_then(|here| bot.take_compat_walk_handover(here)) {
+        let entry = match &handover.entry {
+            script::native::HandoverEntry::NeedsStep(_) => "NeedsStep",
+            script::native::HandoverEntry::GateRefused(_) => "GateRefused",
+        };
+        api::host_log!(
+            api::hostlog::Category::NavEvent,
+            api::hostlog::Level::Info,
+            slot = name,
+            "prereq handover owner=compat entry={} request={} run={:?}",
+            entry,
+            request_id,
+            run,
+        );
+        if let Err(error) = slot.accept_compat_walk_handover(run, handover) {
+            bot.complete_compat_walk(
+                request_id,
+                WalkEnd::Refused,
+                Some(Arc::from(format!(
+                    "walk prerequisite handover was refused: {error:?}"
+                ))),
+            );
+            // No runner owns this terminal. Let the ordinary observer retire
+            // the admitted physical walk's release reservation.
+            return false;
+        }
+        return true;
+    }
+
+    // An ordinary direct terminal keeps the existing observer/seat path.
+    bot.retire_compat_walk(request_id);
+    consumed
+}
+
 /// End the uid's walk follow and everything that shares its ownership. A
 /// still-live native owner receives `Cancelled`; a revoked one nothing.
 pub(super) fn abort_walk_on_bot(bot: &mut NavBot) {
@@ -1198,6 +1301,10 @@ pub(crate) fn step_nav_bot<D: Driver>(
                                 quest_evidence: bot.route_quest_evidence.as_ref(),
                                 ..TravelOptions::default()
                             };
+                            if let Some(content) = route.prereq_content() {
+                                options.refusal_texts = Arc::clone(&content.refusal_texts);
+                                options.crossing_passes = Arc::clone(&content.crossing_passes);
+                            }
                             match route.plan_for_follow() {
                                 Some(plan) => {
                                     bot.traveller

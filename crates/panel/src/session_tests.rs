@@ -3819,6 +3819,21 @@ fn walk_permissions_projection_follows_a_peer_write() {
         session.ui.nav.allow_teleports,
         "the edit buffer follows the durable projection"
     );
+    // A peer write to a default-on prerequisite grant lands the same way.
+    frontend_core::nav_prefs::write_nav_preference_for_test(
+        &peer,
+        frontend_core::NavPreference::AllowPrereqDialogue,
+        false,
+    )
+    .map(|()| false)
+    .unwrap();
+    session.preferences.reload().unwrap();
+    session.refresh_walk_permissions();
+    assert!(!session.walk_permissions.globals().allow_prereq_dialogue());
+    assert!(
+        !session.ui.nav.allow_prereq_dialogue,
+        "the edit buffer follows the durable prerequisite projection"
+    );
     assert_eq!(
         session.preferences.value("peer_marker"),
         Some(serde_json::json!("written by the other frontend"))

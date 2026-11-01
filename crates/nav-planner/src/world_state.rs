@@ -14,8 +14,10 @@
 use std::alloc::Layout;
 use std::collections::{HashMap, HashSet};
 use std::sync::atomic::AtomicUsize;
+use std::sync::Arc;
 
-use api::selected::Truth;
+use api::prereq_steps::proves;
+use api::selected::{QuestGate, StageWindow, Truth};
 use api::snapshot::GameSnapshot;
 
 use crate::quest_gates::QuestEvidence;
@@ -62,6 +64,11 @@ pub struct WorldState {
     /// Host-play / panel / tui / scenario or-in the bound profile fact
     /// via [`WorldState::with_map_members`].
     pub map_members: bool,
+
+    /// Stage windows that an API-owned prerequisite step can establish.
+    /// This is diagnostic authority only; strict routing still requires
+    /// every quest gate to be proven `True` by `quest_evidence`.
+    pub establishable: Option<Arc<[StageWindow]>>,
     /// Resolved quest progress stage gates are tested with
     /// ([`TransportEdge::quest_gates`]). `None` — every caller without a
     /// pinned progress provider — leaves each gated edge `Unknown`, so it is
@@ -69,7 +76,6 @@ pub struct WorldState {
     /// snapshot's varps and quest list are not stage evidence.
     pub quest_evidence: Option<QuestEvidence>,
 }
-
 /// A content entrance requirement that the route state cannot prove.
 /// These are not bank-fetch requirements: diagnosis never changes the
 /// player's held or worn items to make the entrance acceptable.
@@ -334,8 +340,30 @@ impl WorldState {
             quests,
             allow_fetchable_worn: false,
             map_members: false,
+            establishable: None,
             quest_evidence: None,
         }
+    }
+    /// Attach the prerequisite-stage windows that an API-owned step can
+    /// establish. Strict route admission does not consult this list.
+    pub fn with_establishable(mut self, windows: Arc<[StageWindow]>) -> Self {
+        self.establishable = Some(windows);
+        self
+    }
+
+    /// Whether an unproven quest gate can be established by a prerequisite
+    /// step. The API owns the implication rule; this method only applies it
+    /// to the caller-supplied candidate list.
+    pub(crate) fn gate_actionable(&self, gate: &QuestGate) -> bool {
+        let truth = self
+            .quest_evidence
+            .as_ref()
+            .map_or(Truth::Unknown, |evidence| evidence.test(gate));
+        truth != Truth::True
+            && self
+                .establishable
+                .as_deref()
+                .is_some_and(|windows| windows.iter().any(|established| proves(established, gate)))
     }
 
     /// Bind the WORLD `map_members` fact from the selected server profile.
@@ -375,6 +403,21 @@ impl WorldState {
     pub fn quest_gates(&self, e: &TransportEdge) -> Truth {
         e.quest_gates.as_ref().map_or(Truth::True, |gates| {
             gates.test(self.quest_evidence.as_ref())
+        })
+    }
+
+    /// Every gate on the edge is already proven or can be established by a
+    /// catalog-backed prerequisite window. Snapshot requirements are checked
+    /// separately and remain strict.
+    pub(crate) fn quest_gates_actionable(&self, e: &TransportEdge) -> bool {
+        e.quest_gates.as_ref().is_none_or(|gates| {
+            gates.gates().iter().all(|gate| {
+                self.quest_evidence
+                    .as_ref()
+                    .map_or(Truth::Unknown, |evidence| evidence.test(gate))
+                    == Truth::True
+                    || self.gate_actionable(gate)
+            })
         })
     }
 

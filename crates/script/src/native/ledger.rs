@@ -264,6 +264,7 @@ pub struct Ledger {
     next_id: u64,
     pub(crate) outbox: Vec<HostAction>,
     pub(crate) walk: Option<WalkReceipt>,
+    pub(crate) walk_prereq_allow: Option<(NonZeroU64, super::PrereqAllow)>,
     pub(crate) walk_events: Vec<WalkEvent>,
     pub(crate) interaction: Option<InteractionReceipt>,
     pub(crate) interaction_request: Option<NonZeroU64>,
@@ -306,6 +307,7 @@ impl Default for Ledger {
             next_id: 1,
             outbox: Vec::with_capacity(6),
             walk: None,
+            walk_prereq_allow: None,
             walk_events: Vec::new(),
             interaction: None,
             interaction_request: None,
@@ -325,6 +327,29 @@ impl Default for Ledger {
 }
 
 impl Ledger {
+    /// Freeze consent on this live walk request, not its later terminal frame.
+    pub(crate) fn capture_walk_prereq_allow(
+        &mut self,
+        authority: &HostAuthority,
+        allow: super::PrereqAllow,
+    ) -> bool {
+        if !authority.walk
+            || !authority.live()
+            || !self.owner.as_ref().is_some_and(|owner| {
+                owner.run == authority.run() && owner.id == authority.action_id() && owner.live()
+            })
+        {
+            return false;
+        }
+        if let Some((request, captured)) = self.walk_prereq_allow {
+            if request == authority.request_id() {
+                return captured == allow;
+            }
+        }
+        self.walk_prereq_allow = Some((authority.request_id(), allow));
+        true
+    }
+
     /// Test-only borrow of the real queued host actions.
     #[cfg(any(test, feature = "test-hooks"))]
     pub fn test_outbox(&self) -> &[HostAction] {
@@ -393,6 +418,7 @@ impl Ledger {
         self.outbox
             .retain(|action| matches!(action.effect, HostEffect::AssessWalk(_)));
         self.walk = None;
+        self.walk_prereq_allow = None;
         self.walk_events.clear();
         self.interaction = None;
         self.interaction_request = None;
@@ -869,6 +895,87 @@ impl TickBudget {
 mod tests {
     use super::*;
     use crate::native::QuietReadLease;
+
+    #[test]
+    fn walk_consent_capture_is_frozen_and_fenced_to_the_live_request_and_run() {
+        let run = RunKey {
+            slot: 1,
+            run: 2,
+            session: 3,
+        };
+        let mut ledger = Ledger::default();
+        assert!(ledger.walk_prereq_allow.is_none());
+        let owner = Owner::new(run, ledger.next_id().unwrap());
+        ledger.owner = Some(Arc::clone(&owner));
+        let request = ledger.next_id().unwrap();
+        owner.set_walk(request);
+        let current = HostAuthority {
+            owner: Arc::clone(&owner),
+            request,
+            walk: true,
+        };
+        let allowed = super::super::PrereqAllow {
+            dialogue: true,
+            quest_start: false,
+        };
+        assert!(ledger.capture_walk_prereq_allow(&current, allowed));
+        assert!(ledger.capture_walk_prereq_allow(&current, allowed));
+        assert!(!ledger.capture_walk_prereq_allow(&current, super::super::PrereqAllow::default(),));
+        assert_eq!(ledger.walk_prereq_allow, Some((request, allowed)));
+
+        owner.set_interaction(request);
+        let interaction = HostAuthority {
+            walk: false,
+            ..current.clone()
+        };
+        assert!(interaction.live());
+        assert!(!ledger.capture_walk_prereq_allow(&interaction, allowed));
+
+        let next_request = ledger.next_id().unwrap();
+        owner.set_walk(next_request);
+        let next = HostAuthority {
+            request: next_request,
+            ..current.clone()
+        };
+        assert!(!ledger.capture_walk_prereq_allow(&current, allowed));
+        let denied = super::super::PrereqAllow::default();
+        assert!(ledger.capture_walk_prereq_allow(&next, denied));
+        for foreign_run in [
+            RunKey {
+                slot: run.slot + 1,
+                ..run
+            },
+            RunKey {
+                run: run.run + 1,
+                ..run
+            },
+            RunKey {
+                session: run.session + 1,
+                ..run
+            },
+        ] {
+            let foreign_owner = Owner::new(foreign_run, owner.id);
+            foreign_owner.set_walk(next_request);
+            let foreign = HostAuthority {
+                owner: foreign_owner,
+                request: next_request,
+                walk: true,
+            };
+            assert!(foreign.live());
+            assert!(!ledger.capture_walk_prereq_allow(&foreign, allowed));
+            assert_eq!(ledger.walk_prereq_allow, Some((next_request, denied)));
+        }
+
+        let capture_bytes = std::mem::size_of_val(&ledger.walk_prereq_allow);
+        println!(
+            "native_walk_consent_layout ledger={} capture={capture_bytes}",
+            std::mem::size_of::<Ledger>(),
+        );
+        assert!(capture_bytes <= 16);
+        ledger.revoke();
+        assert!(ledger.walk_prereq_allow.is_none());
+        assert!(!ledger.capture_walk_prereq_allow(&next, allowed));
+    }
 
     #[test]
     fn interaction_receipts_reject_old_requests_sessions_and_revoked_owners() {

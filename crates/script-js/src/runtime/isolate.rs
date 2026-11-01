@@ -1876,6 +1876,8 @@ mod kept_reconnect_release_tests {
                 request_id: id as u64 + 1,
                 avoid: Vec::new(),
                 cross: Vec::new(),
+                allow_prereq_dialogue: None,
+                allow_quest_start: None,
             },
             observed_walk_outcome_seq: 3,
         });

@@ -59,6 +59,406 @@ fn tick(slot: &mut SlotScript) {
 }
 
 #[test]
+fn manual_walk_handover_starts_internal_card_and_refuses_an_empty_diagnosis_once() {
+    let mut slot = SlotScript::new();
+    slot.bind_incarnation(102_421);
+    let here = api::snapshot::WorldTile {
+        x: 3200,
+        z: 3200,
+        level: 0,
+    };
+    let route_run = api::selected::RunKey {
+        slot: 102_421,
+        run: 7,
+        session: 0,
+    };
+    let handover = crate::native::WalkHandover {
+        outer: crate::native::OuterWalk {
+            identity: crate::native::OuterIdentity::Manual { intent_seq: 9 },
+            target: here,
+            radius: 0,
+            arrival: nav_planner::contract::ArrivalKind::Reach,
+            avoid: Box::default(),
+            cross: Box::default(),
+            options: crate::native::WalkOptions::default(),
+            allow_bank_fetch: false,
+            prereq_allow: crate::native::PrereqAllow::default(),
+        },
+        entry: crate::native::HandoverEntry::NeedsStep(Arc::from([])),
+        here,
+    };
+    slot.start_manual_walk_handover(
+        "account",
+        handover,
+        Some(route_run),
+        selected(),
+        Arc::default(),
+    )
+    .unwrap();
+    assert_eq!(settle(&mut slot), StartOutcome::Ready);
+    assert_eq!(slot.state(), RunState::Running);
+    assert_eq!(slot.manual_route_run(), Some(route_run));
+    assert_eq!(slot.manual_route_bank_fetch(), Some(false));
+
+    slot.on_is_up(false);
+    assert_eq!(slot.manual_route_bank_fetch(), None);
+    slot.on_is_up(true);
+    slot.align_seat_session(Some(api::identity::SessionKey::new(
+        api::identity::SlotKey::from_incarnation(route_run.slot).unwrap(),
+        55,
+    )));
+    assert_eq!(slot.manual_route_run(), Some(route_run));
+    assert_eq!(slot.manual_route_bank_fetch(), Some(false));
+
+    let walk_run = slot.native_run().expect("internal WalkTo run is active");
+    let mut retained = slot
+        .retained
+        .as_ref()
+        .expect("manual WalkTo retained memory")
+        .lock()
+        .unwrap();
+    assert!(retained.take_walk_handover(walk_run).is_none());
+    drop(retained);
+
+    // An empty gate diagnosis cannot prove arrival, even at the requested tile.
+    tick(&mut slot);
+    assert_eq!(slot.state(), RunState::Idle);
+    assert_eq!(
+        slot.lifecycle_receipt().map(|receipt| receipt.state),
+        Some(crate::ScriptTerminalState::Failed),
+    );
+}
+#[test]
+fn card_refusal_entry_with_denied_global_returns_not_allowed() {
+    use api::local_state::{
+        AccountKey, ContentScope, DomainEdit, DomainIdentity, DomainLease, ErrorCode,
+        LocalStatePort, StoreVersion, SubmitReceipt, WriteSettlement,
+    };
+    use api::prereq_knowledge::{CatalogRef, Fact, FactSource, RefusalObservation};
+    use api::prereq_steps::{ActionableGate, ConsentSwitch};
+    use api::quest_progress::EvidenceStamp;
+    use api::selected::{ClientRevision, FamilyPreparation, QuestGate, RunKey, Truth};
+
+    struct NoStore;
+    impl LocalStatePort for NoStore {
+        fn lease(&self, identity: &DomainIdentity) -> Result<DomainLease, ErrorCode> {
+            Err(ErrorCode::NotReady {
+                domain: identity.domain(),
+            })
+        }
+        fn submit(&self, edit: DomainEdit) -> SubmitReceipt {
+            SubmitReceipt::Refused(ErrorCode::Busy {
+                domain: edit.identity().domain(),
+            })
+        }
+        fn observe(&self, _: api::identity::RequestId) -> Option<WriteSettlement> {
+            None
+        }
+    }
+    impl crate::local_state::StatePort for NoStore {
+        fn lease_version(&self, identity: &DomainIdentity) -> Result<StoreVersion, ErrorCode> {
+            Err(ErrorCode::NotReady {
+                domain: identity.domain(),
+            })
+        }
+    }
+
+    let selected_for_catalog = selected();
+    let catalog = FamilyPreparation::run(move |worker| {
+        selected_for_catalog.prepare_prereq_steps(worker).unwrap()
+    })
+    .unwrap()
+    .join()
+    .unwrap();
+    let (row_index, row) = catalog
+        .iter()
+        .find(|(_, row)| row.consent == ConsentSwitch::PrereqDialogue)
+        .expect("selected catalog has a dialogue prerequisite");
+    let crossing = &row.crossings[0];
+    let incarnation = 102_423;
+    let route_run = RunKey {
+        slot: incarnation,
+        run: 7,
+        session: 0,
+    };
+    let mut slot = SlotScript::new();
+    slot.bind_incarnation(incarnation);
+    slot.runtime_generation = route_run.run;
+    let state = Arc::new(crate::local_state::SlotState::new(
+        Arc::new(NoStore),
+        AccountKey::try_new("local-289", "manual_card").unwrap(),
+        ContentScope::try_new(ClientRevision::R289, "test-content").unwrap(),
+    ));
+    slot.bind_local_state(Arc::clone(&state));
+
+    let gate = ActionableGate {
+        gate: QuestGate::Window(row.establishes.clone()),
+        truth: Truth::False,
+        leg: 0,
+        crossing: crossing.crossing,
+    };
+    let refusal = row.probe.refuse.first().expect("refusal probe");
+    let observation = Arc::new(RefusalObservation {
+        crossing: crossing.crossing,
+        leg: 0,
+        gates: vec![gate].into(),
+        matched: CatalogRef {
+            row: row_index,
+            entry: 0,
+        },
+        fact: Fact {
+            quest: row.establishes.quest.clone(),
+            signal: row.establishes.signal.clone(),
+            possible: refusal.proves,
+            after: row.after_for(refusal.proves).unwrap(),
+            refused: Some(row.establishes.values),
+            source: FactSource::Refusal {
+                row: row_index,
+                entry: 0,
+            },
+            observed: EvidenceStamp {
+                run: route_run,
+                tick: 1,
+                sequence: 1,
+            },
+        },
+    });
+    assert!(slot.record_gate_refusal(route_run, &observation));
+    let before = state.prereq_snapshot();
+    let handover = crate::native::WalkHandover {
+        outer: crate::native::OuterWalk {
+            identity: crate::native::OuterIdentity::Manual { intent_seq: 10 },
+            target: crossing.crossing.to,
+            radius: 0,
+            arrival: nav_planner::contract::ArrivalKind::Reach,
+            avoid: Box::default(),
+            cross: Box::default(),
+            options: crate::native::WalkOptions::default(),
+            allow_bank_fetch: false,
+            prereq_allow: crate::native::PrereqAllow {
+                dialogue: false,
+                quest_start: true,
+            },
+        },
+        entry: crate::native::HandoverEntry::GateRefused(Arc::clone(&observation)),
+        here: crossing.crossing.at,
+    };
+    slot.start_manual_walk_handover(
+        "account",
+        handover,
+        Some(route_run),
+        selected(),
+        Arc::default(),
+    )
+    .unwrap();
+    assert_eq!(settle(&mut slot), StartOutcome::Ready);
+    tick(&mut slot);
+
+    let terminal = slot.lifecycle_receipt().expect("denial is terminal");
+    assert_eq!(terminal.state, crate::ScriptTerminalState::Failed);
+    assert!(
+        terminal.reason.contains("NotAllowed"),
+        "the card preserves the typed consent refusal: {}",
+        terminal.reason,
+    );
+    assert_eq!(state.prereq_snapshot(), before);
+    assert!(
+        !slot.live_native_owner(),
+        "consent precedes every native handle"
+    );
+}
+
+#[test]
+fn manual_walk_memory_alias_follows_the_fact_writer_run() {
+    use api::local_state::{
+        AccountKey, ContentScope, DomainEdit, DomainIdentity, DomainLease, ErrorCode,
+        LocalStatePort, StoreVersion, SubmitReceipt, WriteSettlement,
+    };
+    use api::prereq_knowledge::{CatalogRef, Fact, FactSource, RefusalObservation};
+    use api::prereq_steps::{ActionableGate, CrossingId, CrossingKind};
+    use api::quest_progress::EvidenceStamp;
+    use api::selected::{
+        ClientRevision, FactKey, InclusiveRange, QuestGate, RunKey, StageWindow, Truth,
+    };
+
+    struct NoStore;
+    impl LocalStatePort for NoStore {
+        fn lease(&self, identity: &DomainIdentity) -> Result<DomainLease, ErrorCode> {
+            Err(ErrorCode::NotReady {
+                domain: identity.domain(),
+            })
+        }
+        fn submit(&self, edit: DomainEdit) -> SubmitReceipt {
+            SubmitReceipt::Refused(ErrorCode::Busy {
+                domain: edit.identity().domain(),
+            })
+        }
+        fn observe(&self, _: api::identity::RequestId) -> Option<WriteSettlement> {
+            None
+        }
+    }
+    impl crate::local_state::StatePort for NoStore {
+        fn lease_version(&self, identity: &DomainIdentity) -> Result<StoreVersion, ErrorCode> {
+            Err(ErrorCode::NotReady {
+                domain: identity.domain(),
+            })
+        }
+    }
+
+    let incarnation = 102_422;
+    let route_run = RunKey {
+        slot: incarnation,
+        run: 7,
+        session: 0,
+    };
+    let here = api::snapshot::WorldTile {
+        x: 3200,
+        z: 3200,
+        level: 0,
+    };
+    let to = api::snapshot::WorldTile {
+        x: 3201,
+        z: 3200,
+        level: 0,
+    };
+    let crossing = CrossingId {
+        loc_id: 1,
+        option: 0,
+        at: here,
+        takeoff: here,
+        to,
+        kind: CrossingKind::Door,
+    };
+    let quest = FactKey::new("manual-route-quest");
+    let signal = FactKey::new("stage");
+    let value = InclusiveRange {
+        min: Some(1),
+        max: Some(1),
+    };
+    let gate = ActionableGate {
+        gate: QuestGate::Window(StageWindow {
+            quest: quest.clone(),
+            signal: signal.clone(),
+            values: value,
+        }),
+        truth: Truth::False,
+        leg: 0,
+        crossing,
+    };
+    let observation = Arc::new(RefusalObservation {
+        crossing,
+        leg: 0,
+        gates: vec![gate.clone()].into(),
+        matched: CatalogRef { row: 0, entry: 0 },
+        fact: Fact {
+            quest: quest.clone(),
+            signal: signal.clone(),
+            possible: value,
+            after: value,
+            refused: Some(value),
+            source: FactSource::Refusal { row: 0, entry: 0 },
+            observed: EvidenceStamp {
+                run: route_run,
+                tick: 1,
+                sequence: 1,
+            },
+        },
+    });
+    let handover = crate::native::WalkHandover {
+        outer: crate::native::OuterWalk {
+            identity: crate::native::OuterIdentity::Manual { intent_seq: 10 },
+            target: to,
+            radius: 0,
+            arrival: nav_planner::contract::ArrivalKind::Reach,
+            avoid: Box::default(),
+            cross: Box::default(),
+            options: crate::native::WalkOptions::default(),
+            allow_bank_fetch: false,
+            prereq_allow: crate::native::PrereqAllow {
+                dialogue: true,
+                quest_start: true,
+            },
+        },
+        entry: crate::native::HandoverEntry::GateRefused(Arc::clone(&observation)),
+        here,
+    };
+
+    let state = Arc::new(crate::local_state::SlotState::new(
+        Arc::new(NoStore),
+        AccountKey::try_new("local-289", "manual_route").unwrap(),
+        ContentScope::try_new(ClientRevision::R289, "test-content").unwrap(),
+    ));
+    let mut slot = SlotScript::new();
+    slot.bind_incarnation(incarnation);
+    slot.bind_local_state(Arc::clone(&state));
+    slot.start_manual_walk_handover(
+        "account",
+        handover,
+        Some(route_run),
+        selected(),
+        Arc::default(),
+    )
+    .unwrap();
+    assert_eq!(settle(&mut slot), StartOutcome::Ready);
+    let walk_run = slot.native_run().expect("hidden WalkTo run");
+    assert_ne!(walk_run, route_run);
+    assert_eq!(slot.manual_route_run(), Some(route_run));
+
+    assert!(slot.record_gate_refusal(route_run, &observation));
+    let refused = state.prereq_snapshot();
+    assert_eq!(refused.facts()[0].observed.run, route_run);
+    assert_eq!(
+        refused
+            .observe(
+                &gate.gate,
+                EvidenceStamp {
+                    run: route_run,
+                    tick: 2,
+                    sequence: 2,
+                },
+            )
+            .unwrap()
+            .truth,
+        Truth::False,
+        "denied repair retains the original manual refusal run",
+    );
+
+    assert!(state.record_prereq_fact(Fact {
+        quest,
+        signal,
+        possible: value,
+        after: value,
+        refused: None,
+        source: FactSource::Crossing {
+            loc_id: crossing.loc_id,
+            option: crossing.option,
+            passed: true,
+        },
+        observed: EvidenceStamp {
+            run: walk_run,
+            tick: 3,
+            sequence: 3,
+        },
+    }));
+    slot.update_manual_route_run_from_fact_writer();
+    let later_manual_run = slot.manual_route_run().expect("manual context run");
+    assert_eq!(later_manual_run, walk_run);
+    let learned = state.prereq_snapshot();
+    let observed = learned
+        .observe(
+            &gate.gate,
+            EvidenceStamp {
+                run: later_manual_run,
+                tick: 4,
+                sequence: 4,
+            },
+        )
+        .expect("later manual route selects the learned fact");
+    assert_eq!(observed.truth, Truth::True);
+    assert_eq!(observed.observed.unwrap().run, walk_run);
+}
+
+#[test]
 fn resume_consumes_the_takeover_for_a_step_that_continues() {
     struct InPlaceOwner;
 
@@ -1020,6 +1420,7 @@ impl Script for Relog {
                     required_after: first,
                     evidence: None,
                     cross: Vec::new().into_boxed_slice(),
+                    avoid: Vec::new().into_boxed_slice(),
                     protect: false,
                     food_guard: false,
                     allow: Default::default(),
@@ -1876,6 +2277,216 @@ mod api_gather_seat {
     fn run_in_seat(slot: &mut SlotScript, token: u64) {
         run_in_seat_with_settings(slot, token, gather_settings());
     }
+    #[test]
+    fn seat_refusal_entry_with_denied_script_setting_returns_not_allowed() {
+        assert_compat_refusal_after_scene_observation(false);
+    }
+
+    #[test]
+    fn compat_refusal_keeps_actual_session_after_scene_only_down_observation() {
+        assert_compat_refusal_after_scene_observation(true);
+    }
+
+    fn assert_compat_refusal_after_scene_observation(scene_only_down: bool) {
+        use api::local_state::{
+            DomainEdit, DomainIdentity, DomainLease, ErrorCode, LocalStatePort, StoreVersion,
+            SubmitReceipt, WriteSettlement,
+        };
+        use api::prereq_knowledge::{CatalogRef, Fact, FactSource, RefusalObservation};
+        use api::prereq_steps::{ActionableGate, ConsentSwitch};
+        use api::quest_progress::EvidenceStamp;
+        use api::selected::{FamilyPreparation, QuestGate, RunKey, Truth};
+
+        struct NoStore;
+        impl LocalStatePort for NoStore {
+            fn lease(&self, identity: &DomainIdentity) -> Result<DomainLease, ErrorCode> {
+                Err(ErrorCode::NotReady {
+                    domain: identity.domain(),
+                })
+            }
+            fn submit(&self, edit: DomainEdit) -> SubmitReceipt {
+                SubmitReceipt::Refused(ErrorCode::Busy {
+                    domain: edit.identity().domain(),
+                })
+            }
+            fn observe(&self, _: api::identity::RequestId) -> Option<WriteSettlement> {
+                None
+            }
+        }
+        impl crate::local_state::StatePort for NoStore {
+            fn lease_version(&self, identity: &DomainIdentity) -> Result<StoreVersion, ErrorCode> {
+                Err(ErrorCode::NotReady {
+                    domain: identity.domain(),
+                })
+            }
+        }
+
+        let selected = selected();
+        let catalog =
+            FamilyPreparation::run(move |worker| selected.prepare_prereq_steps(worker).unwrap())
+                .unwrap()
+                .join()
+                .unwrap();
+        let (row_index, row) = catalog
+            .iter()
+            .find(|(_, row)| row.consent == ConsentSwitch::QuestStart)
+            .expect("selected catalog has a quest-start prerequisite");
+        let crossing = &row.crossings[0];
+        let incarnation = 83_441;
+        let token = 83_442;
+        let mut slot = stub_surface_slot(incarnation, true);
+        let run = slot.native_run().unwrap_or(RunKey {
+            slot: incarnation,
+            run: slot.runtime_generation,
+            session: slot.work_epoch,
+        });
+        let outer_request = request_id(token);
+        let request = InteractReq::WalkNear {
+            x: crossing.crossing.to.x,
+            z: crossing.crossing.to.z,
+            level: crossing.crossing.to.level,
+            radius: 2,
+            compat_tile_intent: true,
+            allow_teleports: false,
+            allow_wilderness: true,
+            allow_bank_fetch: true,
+            allow_prereq_dialogue: None,
+            allow_quest_start: Some(false),
+            request_id: token,
+            avoid: Vec::new(),
+            cross: Vec::new(),
+        };
+        slot.consume_seat_batch(
+            DecodedSeatBatch {
+                consumed_terminal_seq: 0,
+                starts: Vec::new(),
+                decisions: Vec::new(),
+                cancels: Vec::new(),
+                mirror_revokes: Vec::new(),
+                reqs: vec![SeatInteractDecoded {
+                    lineage: None,
+                    mirror_owner: None,
+                    request: request.clone(),
+                }],
+            },
+            0,
+            &[],
+        );
+        let (_, rows, _) = slot.drain_host_interacts();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].req, request);
+        let seat = slot.seat.as_ref().expect("compat physical seat");
+        assert!(seat.live().is_empty(), "legacy WalkTo has no native start");
+        assert_eq!(
+            seat.lookup(outer_request),
+            api::script_contract::AuthorityStatus::Pending
+        );
+        assert_eq!(seat.reserved_releases(), 1);
+
+        let state = Arc::new(crate::local_state::SlotState::new(
+            Arc::new(NoStore),
+            api::local_state::AccountKey::try_new("local-289", "compat_seat").unwrap(),
+            api::local_state::ContentScope::try_new(
+                api::selected::ClientRevision::R289,
+                "test-content",
+            )
+            .unwrap(),
+        ));
+        slot.bind_local_state(Arc::clone(&state));
+        let gate = ActionableGate {
+            gate: QuestGate::Window(row.establishes.clone()),
+            truth: Truth::False,
+            leg: 0,
+            crossing: crossing.crossing,
+        };
+        let refusal = row.probe.refuse.first().expect("refusal probe");
+        let observation = Arc::new(RefusalObservation {
+            crossing: crossing.crossing,
+            leg: 0,
+            gates: vec![gate].into(),
+            matched: CatalogRef {
+                row: row_index,
+                entry: 0,
+            },
+            fact: Fact {
+                quest: row.establishes.quest.clone(),
+                signal: row.establishes.signal.clone(),
+                possible: refusal.proves,
+                after: row.after_for(refusal.proves).unwrap(),
+                refused: Some(row.establishes.values),
+                source: FactSource::Refusal {
+                    row: row_index,
+                    entry: 0,
+                },
+                observed: EvidenceStamp {
+                    run,
+                    tick: 1,
+                    sequence: 1,
+                },
+            },
+        });
+        assert!(slot.record_gate_refusal(run, &observation));
+        let before = state.prereq_snapshot();
+        let handover = crate::native::WalkHandover {
+            outer: crate::native::OuterWalk {
+                identity: crate::native::OuterIdentity::Compat { request_id: token },
+                target: crossing.crossing.to,
+                radius: 0,
+                arrival: nav_planner::contract::ArrivalKind::Reach,
+                avoid: Box::default(),
+                cross: Box::default(),
+                options: crate::native::WalkOptions::default(),
+                allow_bank_fetch: false,
+                prereq_allow: crate::native::PrereqAllow {
+                    dialogue: true,
+                    quest_start: false,
+                },
+            },
+            entry: crate::native::HandoverEntry::GateRefused(Arc::clone(&observation)),
+            here: crossing.crossing.at,
+        };
+        assert_eq!(slot.api_live_compat_walk_request_id(), None);
+        slot.accept_compat_walk_handover(run, handover)
+            .expect("live compat request accepts its refusal owner");
+        assert_eq!(slot.api_live_compat_walk_request_id(), Some(token));
+        if scene_only_down {
+            slot.on_is_up(false);
+            slot.on_is_up(true);
+            assert_ne!(slot.work_epoch, run.session);
+            assert_eq!(slot.seat.as_ref().unwrap().run(), run);
+        }
+        assert_eq!(slot.api_live_compat_walk_request_id(), Some(token));
+
+        tick(&mut slot);
+        assert_eq!(slot.api_live_compat_walk_request_id(), None);
+        let (terminal_run, terminal_request, result) = slot
+            .take_compat_walk_terminal()
+            .expect("denial publishes one outer terminal");
+        assert_eq!(terminal_run, run);
+        assert_eq!(terminal_request, outer_request);
+        let receipt = result.expect("permission refusal is a typed receipt");
+        assert_eq!(receipt.end, crate::native::WalkEnd::Refused);
+        assert!(matches!(
+            receipt.refusal,
+            Some(crate::native::WalkRefusal::Prerequisite(refusal))
+                if matches!(
+                    refusal.as_ref(),
+                    crate::native::PrereqRefusal::NotAllowed {
+                        switch: crate::native::PrereqSwitch::QuestStart,
+                        ..
+                    }
+                )
+        ));
+        assert_eq!(state.prereq_snapshot(), before);
+        assert!(
+            !slot.live_native_owner(),
+            "consent precedes every native handle"
+        );
+        assert!(slot.finish_compat_walk(token));
+        assert_eq!(slot.api_live_compat_walk_request_id(), None);
+        assert!(slot.take_compat_walk_terminal().is_none());
+        assert_eq!(slot.seat.as_ref().unwrap().reserved_releases(), 0);
+    }
 
     fn stop(slot: &mut SlotScript, token: u64) {
         slot.consume_api_control(&InteractReq::GatherStop { request_id: token });
@@ -2016,6 +2627,8 @@ mod api_gather_seat {
                 allow_teleports: true,
                 allow_wilderness: true,
                 allow_danger_zones: true,
+                allow_prereq_dialogue: false,
+                allow_quest_start: false,
             })
         );
 

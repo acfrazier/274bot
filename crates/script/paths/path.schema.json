@@ -47,6 +47,14 @@
         }
       ]
     },
+    "prereq": {
+      "$ref": "#/$defs/PathPrereqDocument",
+      "description": "Request-level prerequisite overrides applied to every walk in this Path.",
+      "default": {
+        "dialogue": null,
+        "quest_start": null
+      }
+    },
     "quest": {
       "anyOf": [
         {
@@ -150,6 +158,28 @@
         "Phoenix",
         "BlackArm"
       ]
+    },
+    "PathPrereqDocument": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "dialogue": {
+          "type": [
+            "boolean",
+            "null"
+          ],
+          "description": "None inherits grants. False forbids dialogue steps throughout the Path.",
+          "default": null
+        },
+        "quest_start": {
+          "type": [
+            "boolean",
+            "null"
+          ],
+          "description": "None inherits grants. False forbids quest starts throughout the Path.",
+          "default": null
+        }
+      }
     },
     "QuestHeaderDocument": {
       "type": "object",
@@ -503,6 +533,22 @@
             "null"
           ],
           "description": "Override inherited Wilderness permission for this movement.",
+          "default": null
+        },
+        "allow_prereq_dialogue": {
+          "type": [
+            "boolean",
+            "null"
+          ],
+          "description": "Additive dialogue permission; false is a request-level Forbid.",
+          "default": null
+        },
+        "allow_quest_start": {
+          "type": [
+            "boolean",
+            "null"
+          ],
+          "description": "Additive quest-start permission; false is a request-level Forbid.",
           "default": null
         }
       },

@@ -571,17 +571,34 @@ pub(crate) fn script_observe_cached_with_channels(
         );
         if terminal_slot {
             if let Some(generation) = slot.terminal_lifecycle_generation() {
+                if navs
+                    .lock()
+                    .unwrap()
+                    .get(name)
+                    .is_some_and(|bot| bot.compat_walk_request_id().is_some())
+                {
+                    super::script_interact::retire_logical_walk(
+                        Some(&mut slot),
+                        navs,
+                        name,
+                        None,
+                        script::native::WalkEnd::Cancelled,
+                    );
+                }
                 if reset_script_nav(navs, name, Some(generation)) {
                     retire_run_status(statuses, name);
                 }
-            } else if navs
-                .lock()
-                .unwrap()
-                .get(name)
-                .is_some_and(NavBot::script_walk_armed)
-            {
+            } else if navs.lock().unwrap().get(name).is_some_and(|bot| {
+                bot.script_walk_armed() || bot.compat_walk_request_id().is_some()
+            }) {
                 // Legacy self-stops without a terminal receipt can only own a walk.
-                abort_script_walk(navs, name);
+                super::script_interact::retire_logical_walk(
+                    Some(&mut slot),
+                    navs,
+                    name,
+                    None,
+                    script::native::WalkEnd::Cancelled,
+                );
                 retire_run_status(statuses, name);
             }
         }
@@ -607,23 +624,33 @@ pub(crate) fn script_observe_cached_with_channels(
                     owner.live() && owner.request_id().get() == bot.walk_outcome_request_id
                 });
             deliver_native_walk_end(&mut slot, bot, tick);
+            let compat_handover = super::observe_compat_walk(
+                &mut slot,
+                bot,
+                here.map(|(x, z, level)| api::snapshot::WorldTile { x, z, level }),
+                name,
+            );
             host_results_dirty |= deliver_native_advice(&mut slot, bot, tick);
             // A newly armed walk may already have replaced the completed
             // route. Its predecessor still owns a release slot. Only when
             // the same request id remains armed must the route generation
             // match, so a stale outcome cannot free the new arm.
-            let terminal_request = api::identity::RequestId::from_raw(bot.walk_outcome_request_id)
-                .filter(|request| {
-                    request.get() != bot.walk_request_id
-                        || bot.walk_outcome_generation == bot.route_generation
-                })
-                .map(|request| {
-                    if native_terminal {
-                        SeatWalkTerminal::Native(request)
-                    } else {
-                        SeatWalkTerminal::Load(request)
-                    }
-                });
+            let terminal_request = if compat_handover {
+                None
+            } else {
+                api::identity::RequestId::from_raw(bot.walk_outcome_request_id)
+                    .filter(|request| {
+                        request.get() != bot.walk_request_id
+                            || bot.walk_outcome_generation == bot.route_generation
+                    })
+                    .map(|request| {
+                        if native_terminal {
+                            SeatWalkTerminal::Native(request)
+                        } else {
+                            SeatWalkTerminal::Load(request)
+                        }
+                    })
+            };
             host_results_dirty |= slot.observe_walk_outcome(
                 bot.walk_outcome_seq,
                 bot.compiled_walk_cancel_reason(),
@@ -1401,6 +1428,7 @@ pub(crate) fn script_observe_cached_with_channels(
                         wrote |= dispatch_script_interact_cached_scoped(
                             driver,
                             &interact_context,
+                            Some(&mut slot),
                             releases
                                 .into_iter()
                                 .map(|queued| queued.req)
@@ -1560,6 +1588,7 @@ pub(crate) fn script_observe_cached_with_channels(
                                     dispatch_script_interact_cached_scoped(
                                         driver,
                                         &interact_context,
+                                        Some(&mut slot),
                                         [request],
                                     )
                                 };
@@ -1678,6 +1707,13 @@ pub(crate) fn script_observe_cached_with_channels(
                                     &request,
                                     snapshot,
                                 );
+                                let prereq_allow = super::walk_permissions::native_prereq_allow(
+                                    navs,
+                                    name,
+                                    request.options,
+                                    walk_permissions,
+                                );
+                                slot.capture_native_walk_prereq_allow(&authority, prereq_allow);
                                 let arm = super::ScriptWalkArm {
                                     here,
                                     world: world.clone(),
@@ -1693,6 +1729,7 @@ pub(crate) fn script_observe_cached_with_channels(
                                     request,
                                     authority,
                                     walk_permissions,
+                                    slot.manual_route_bank_fetch(),
                                 );
                             }
                             script::native::HostEffect::AssessWalk(request) => {
@@ -1714,6 +1751,7 @@ pub(crate) fn script_observe_cached_with_channels(
                                         sequence: tick,
                                     },
                                     walk_permissions,
+                                    slot.manual_route_bank_fetch(),
                                 );
                             }
                             script::native::HostEffect::BankPick(request) => {
@@ -1739,6 +1777,7 @@ pub(crate) fn script_observe_cached_with_channels(
                                     scope,
                                     world,
                                     state.as_ref(),
+                                    snapshot,
                                     super::bank::NativeBankPickInput {
                                         request,
                                         authority,
@@ -1807,6 +1846,7 @@ pub(crate) fn script_observe_cached_with_channels(
                     wrote |= dispatch_script_interact_cached_scoped(
                         driver,
                         &interact_context,
+                        Some(&mut slot),
                         dispatchable,
                     );
                     if (armed.is_some()
@@ -2016,6 +2056,7 @@ fn deliver_native_walk_end(slot: &mut script::SlotScript, bot: &mut NavBot, tick
         assessment,
         refusal,
         escape,
+        prereq_allow: None,
     };
     if let Some((owner, end)) = bot.native_end.take() {
         let request_id = owner.request_id().get();
@@ -2025,11 +2066,15 @@ fn deliver_native_walk_end(slot: &mut script::SlotScript, bot: &mut NavBot, tick
             } else {
                 None
             };
-        let risk = bot.native_end_risk.take();
-        let assessment = risk.as_deref().and_then(|risk| risk.assessment.clone());
-        let refusal = risk.as_deref().and_then(|risk| risk.refusal);
-        let escape = risk.as_deref().and_then(|risk| risk.escape);
-        let blocked = risk.as_deref().and_then(|risk| risk.blocked.clone());
+        let (assessment, refusal, escape, blocked) = bot
+            .native_end_risk
+            .take()
+            .map_or((None, None, None, None), |risk| {
+                (risk.assessment, risk.refusal, risk.escape, risk.blocked)
+            });
+        if let script::native::WalkEnd::GateRefused(observation) = &end {
+            slot.record_gate_refusal(observation.fact.observed.run, observation);
+        }
         api::host_log!(
             api::hostlog::Category::NavTrace,
             api::hostlog::Level::Debug,
@@ -2085,7 +2130,7 @@ fn deliver_native_walk_end(slot: &mut script::SlotScript, bot: &mut NavBot, tick
         .risk_refusal
         .as_deref()
         .filter(|(request, _)| *request == request_id)
-        .map(|(_, refusal)| *refusal);
+        .map(|(_, refusal)| refusal.clone());
     let assessment = bot.assessment.clone();
     let escape = bot
         .admission
@@ -2110,6 +2155,9 @@ fn deliver_native_walk_end(slot: &mut script::SlotScript, bot: &mut NavBot, tick
         api::hostlog::Level::Debug,
         "native-walk-deliver tick={tick} request_id={request_id} source=outcome end={end:?}"
     );
+    if let script::native::WalkEnd::GateRefused(observation) = &end {
+        slot.record_gate_refusal(observation.fact.observed.run, observation);
+    }
     slot.complete_native_walk(
         owner,
         receipt(

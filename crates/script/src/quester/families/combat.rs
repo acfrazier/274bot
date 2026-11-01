@@ -1766,6 +1766,7 @@ impl CombatRun {
             refusal: None,
             assessment: None,
             escape: None,
+            prereq_allow: None,
         };
         if matches!(self.phase, Phase::WalkingOutAfterAbort) {
             self.on_abort_walk(receipt, cx)

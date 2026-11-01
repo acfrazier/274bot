@@ -1367,8 +1367,8 @@ fn u11_native_publication_reassesses_stale_input_then_refuses_before_follow() {
         .is_some_and(|fresh_assessment| !Arc::ptr_eq(fresh_assessment, &worker_assessment)));
     assert!(bot.last_assessment.as_ref().unwrap().input.missing_facts);
     assert_eq!(
-        bot.risk_refusal.as_deref().map(|entry| entry.1),
-        Some(WalkRefusal::Unknown(UnknownWhy::MissingFacts))
+        bot.risk_refusal.as_deref().map(|entry| &entry.1),
+        Some(&WalkRefusal::Unknown(UnknownWhy::MissingFacts))
     );
 }
 
@@ -1464,8 +1464,8 @@ fn u11_publication_during_live_escape_refuses_without_reassessment() {
 
     assert!(bot.route.is_none());
     assert_eq!(
-        bot.risk_refusal.as_deref().map(|entry| entry.1),
-        Some(WalkRefusal::EscapeInProgress)
+        bot.risk_refusal.as_deref().map(|entry| &entry.1),
+        Some(&WalkRefusal::EscapeInProgress)
     );
     assert!(Arc::ptr_eq(
         bot.last_assessment.as_ref().unwrap(),
@@ -1901,6 +1901,14 @@ fn escape(state: EscapeState) -> Escape {
 struct UnknownEvidence;
 
 impl EvidenceProvider for UnknownEvidence {
+    fn observe_gate(
+        &self,
+        _gate: &QuestGate,
+        _required_after: EvidenceStamp,
+    ) -> Option<api::prereq_knowledge::Observation> {
+        None
+    }
+
     fn test_gate(&self, _gate: &QuestGate, _required_after: EvidenceStamp) -> Truth {
         Truth::Unknown
     }
@@ -2393,6 +2401,7 @@ fn real_squire_walk(
     let request = crate::ScriptRouteRequest {
         candidate_goals: None,
         admission,
+        prereq_catalog: None,
         generation: 1,
         request_id: 1,
         world: Arc::clone(world),
@@ -2606,7 +2615,7 @@ mod compact_final_route_tests {
         );
         let custody: Arc<dyn std::any::Any + Send + Sync> =
             Arc::new(reservation.hold(plan.clone()));
-        crate::walk_plan::RoutePath::compact(plan, lease, custody)
+        crate::walk_plan::RoutePath::compact(plan, lease, custody, None)
     }
 
     #[test]
@@ -2870,8 +2879,8 @@ mod compact_final_route_tests {
         assert!(!bot.admission_pending);
         assert!(bot.route.is_none(), "refusal clears the compact route");
         assert_eq!(
-            bot.risk_refusal.as_deref().map(|(_, refusal)| *refusal),
-            Some(WalkRefusal::Unknown(UnknownWhy::MissingFacts))
+            bot.risk_refusal.as_deref().map(|(_, refusal)| refusal),
+            Some(&WalkRefusal::Unknown(UnknownWhy::MissingFacts))
         );
         assert_eq!(bot.route_destination(), None);
     }

@@ -58,6 +58,8 @@ impl FactStrings {
 // Refusal paths clone a fixed key, without allocating or taking an intern lock.
 pub(crate) static QUESTS_FAMILY: LazyLock<FactKey> = LazyLock::new(|| FactKey::new("quests"));
 pub(crate) static GATHERING_FAMILY: LazyLock<FactKey> = LazyLock::new(|| FactKey::new("gathering"));
+pub(crate) static PREREQ_STEPS_FAMILY: LazyLock<FactKey> =
+    LazyLock::new(|| FactKey::new("prereq_steps"));
 pub(crate) static PIN_FAMILY: LazyLock<FactKey> = LazyLock::new(|| FactKey::new("selected-pin"));
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

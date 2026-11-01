@@ -1403,10 +1403,10 @@ unchanged.
    Sherlock was meant to be native. In practice it became a port of the compatibility
    clue machine, so it needs the JS runtime build until the native clue rewrite replaces
    that machine. Sherlock itself never creates a V8 isolate. Sherlock's schema version 1
-   carries only the three
-   walk-permission opt-ins (`allow_teleports`, `allow_wilderness`,
-   `allow_danger_zones`), distinct from unavailable metadata or an unsupported
-   saved schema. Compiled names remain reserved. Native v2 scripts use the
+   carries the walk-permission opt-ins (`allow_teleports`, `allow_wilderness`,
+   `allow_danger_zones`, `allow_prereq_dialogue`, `allow_quest_start`).
+   These differ from unavailable metadata or an unsupported saved schema.
+   Compiled names remain reserved. Native v2 scripts use the
    typed declarations in `crates/script-js/host-js/index.d.ts`
    ([js-api-v2.md](js-api-v2.md)).
 - Catalog cards are **Catalog** source: static parse of
@@ -1676,9 +1676,18 @@ Either may allow the walk, while a walk-local `false` forbids it even when a glo
 per-script setting allows it. Native script settings (**Script prefs** in the
 panel, **Params** in the TUI) default off and use `allow_teleports`,
 `allow_wilderness` and `allow_danger_zones` (Gatherer exposes camelCase ids).
-Path `walk` steps accept the same three optional
-booleans, so omitted bits inherit and `true` opts in for only that step. Native
-script walking never exposes bank fetch.
+Path `walk` steps accept these three optional booleans and
+`allow_prereq_dialogue` and `allow_quest_start`. An omitted field inherits.
+`true` allows that permission for the step. `false` forbids it for the step,
+even when a global or script grant allows it.
+Native script walking never exposes bank fetch.
+
+Two more global grants cover prerequisite steps: **Allow dialogue steps on
+walks** (`allow_prereq_dialogue`) and **Allow starting quests on walks**
+(`allow_quest_start`). Both default on, including on a first run; an
+unreadable or malformed preferences file denies them until the next save.
+They compose like the other grants: the global switch or the script's own
+grant allows the step, and only a per-request Forbid narrows it.
 
 The panel Nav config and TUI settings share these global permissions in
 `panel-ui.json`. Teleports and wilderness apply to manual and Rust-native

@@ -79,7 +79,7 @@
         "test": 0
       },
       "clippy::too_many_arguments": {
-        "non_test": 38,
+        "non_test": 44,
         "test": 18
       },
       "dead_code": {
@@ -101,6 +101,12 @@
         "test": 0
       },
       "clippy::type_complexity": {
+        "non_test": 1,
+        "test": 0
+      }
+    },
+    "nav-executor": {
+      "clippy::too_many_arguments": {
         "non_test": 1,
         "test": 0
       }
@@ -127,7 +133,7 @@
         "test": 0
       },
       "clippy::too_many_arguments": {
-        "non_test": 38,
+        "non_test": 39,
         "test": 3
       },
       "clippy::type_complexity": {
@@ -173,7 +179,7 @@
         "test": 0
       },
       "clippy::too_many_arguments": {
-        "non_test": 17,
+        "non_test": 18,
         "test": 2
       },
       "dead_code": {
@@ -191,11 +197,11 @@
         "test": 0
       },
       "clippy::large_enum_variant": {
-        "non_test": 3,
+        "non_test": 5,
         "test": 0
       },
       "clippy::too_many_arguments": {
-        "non_test": 8,
+        "non_test": 9,
         "test": 0
       },
       "dead_code": {
@@ -208,12 +214,6 @@
       },
       "unused_imports": {
         "non_test": 3,
-        "test": 0
-      }
-    },
-    "tui": {
-      "clippy::too_many_arguments": {
-        "non_test": 1,
         "test": 0
       }
     },

@@ -1127,6 +1127,8 @@ const SURFACE: &[(&str, Decision)] = &[
         Rows(
             &[
                 C::SetNavPreference(NavPreference::AllowTeleports, true),
+                C::SetNavPreference(NavPreference::AllowPrereqDialogue, true),
+                C::SetNavPreference(NavPreference::AllowQuestStart, true),
                 C::SetDangerLevel(DangerLevel::Never),
             ],
             "the Nav config window: one command per changed navigation preference, and the danger level",
@@ -1151,6 +1153,8 @@ const SURFACE: &[(&str, Decision)] = &[
         Rows(
             &[
                 C::SetNavPreference(NavPreference::AllowTeleports, true),
+                C::SetNavPreference(NavPreference::AllowPrereqDialogue, true),
+                C::SetNavPreference(NavPreference::AllowQuestStart, true),
                 C::SetDangerLevel(DangerLevel::Never),
             ],
             "which walk permission the operator changed selects the row: a grant or an acknowledgement is a navigation preference, the danger routing level its own row",

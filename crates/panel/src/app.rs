@@ -3578,6 +3578,14 @@ fn routing_feedback(ui: &Ui, session: &mut Session) {
             Setting::Nav(N::AllowBankFetch),
         ),
         (
+            frontend_core::PREREQ_PERMISSION_LABELS[0].1,
+            Setting::Nav(N::AllowPrereqDialogue),
+        ),
+        (
+            frontend_core::PREREQ_PERMISSION_LABELS[1].1,
+            Setting::Nav(N::AllowQuestStart),
+        ),
+        (
             frontend_core::GLOBAL_PERMISSION_LABELS[3].1,
             Setting::DangerRouting,
         ),
@@ -3657,6 +3665,34 @@ fn routing_group(ui: &Ui, nav: &mut crate::nav_settings::NavSettings) -> bool {
     ui.text_disabled(frontend_core::BANK_FETCH_PERMISSION_SCOPE);
     #[cfg(test)]
     record_test_routing_item(ui);
+    {
+        let _dim = ui.push_style_color(StyleColor::Text, TEXT_DIM);
+        ui.text_wrapped(frontend_core::PREREQ_SCOPE_NOTE);
+    }
+    #[cfg(test)]
+    record_test_routing_item(ui);
+    if ui.checkbox(
+        frontend_core::PREREQ_PERMISSION_LABELS[0].1,
+        &mut nav.allow_prereq_dialogue,
+    ) {
+        changed = true;
+    }
+    #[cfg(test)]
+    record_test_routing_item(ui);
+    ui.set_item_tooltip(
+        "Global permission for walks to run dialogue steps. The script's own grant also allows it; only a per-request Forbid narrows it.",
+    );
+    if ui.checkbox(
+        frontend_core::PREREQ_PERMISSION_LABELS[1].1,
+        &mut nav.allow_quest_start,
+    ) {
+        changed = true;
+    }
+    #[cfg(test)]
+    record_test_routing_item(ui);
+    ui.set_item_tooltip(
+        "Global permission for walks to start quests. The script's own grant also allows it; only a per-request Forbid narrows it.",
+    );
     let danger_level = nav.danger_level();
     ui.text(frontend_core::GLOBAL_PERMISSION_LABELS[3].1);
     #[cfg(test)]
@@ -3903,6 +3939,18 @@ fn commit_nav_settings(
             "allow_bank_fetch",
             before.allow_bank_fetch,
             after.allow_bank_fetch,
+        ),
+        (
+            P::AllowPrereqDialogue,
+            "allow_prereq_dialogue",
+            before.allow_prereq_dialogue,
+            after.allow_prereq_dialogue,
+        ),
+        (
+            P::AllowQuestStart,
+            "allow_quest_start",
+            before.allow_quest_start,
+            after.allow_quest_start,
         ),
         (
             P::ScriptScopeNoticeAck,

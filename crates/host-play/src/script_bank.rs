@@ -825,7 +825,8 @@ impl CooperativeJob for CooperativeBankPickJob {
                         | SearchRequest::MissingItemReqsForRoute { .. }
                         | SearchRequest::BlockingZones { .. }
                         | SearchRequest::EntranceRequirements { .. }
-                        | SearchRequest::UnresolvedQuestGates { .. } => {
+                        | SearchRequest::UnresolvedQuestGates { .. }
+                        | SearchRequest::ActionableQuestGates { .. } => {
                             unreachable!("bank-pick request uses a route search variant")
                         }
                     };
@@ -980,7 +981,8 @@ impl CooperativeJob for CooperativeBankPickJob {
                                 | SearchOutcome::MissingItemReqsForRoute { .. }
                                 | SearchOutcome::BlockingZones(_)
                                 | SearchOutcome::EntranceRequirements(_)
-                                | SearchOutcome::UnresolvedQuestGates(_) => {
+                                | SearchOutcome::UnresolvedQuestGates(_)
+                                | SearchOutcome::ActionableQuestGates(_) => {
                                     unreachable!("bank-pick search returns a route outcome")
                                 }
                             }
@@ -1872,12 +1874,17 @@ fn make_bank_pick_request(
     })
 }
 
+#[expect(
+    clippy::too_many_arguments,
+    reason = "bank selection captures the gating state and the current quest observation"
+)]
 pub(super) fn queue_native_bank_pick_scoped(
     navs: &Arc<Mutex<HashMap<String, super::NavBot>>>,
     name: &str,
     scope: Scope,
     world: &Option<Arc<NavWorld>>,
     state: Option<&WorldState>,
+    snapshot: &GameSnapshot,
     input: NativeBankPickInput,
     session_permissions: Option<script::native::WalkPermissions>,
 ) {
@@ -1890,6 +1897,7 @@ pub(super) fn queue_native_bank_pick_scoped(
         scope,
         world,
         state,
+        snapshot,
         from,
         super::walk_permissions::native_admission(
             navs,
@@ -1910,12 +1918,17 @@ pub(super) fn queue_native_bank_pick_scoped(
 }
 
 /// The raw native walk-nearest-bank verb keeps native option defaults.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "bank walking captures the gating state and the current quest observation"
+)]
 pub(super) fn queue_bank_walk_scoped(
     navs: &Arc<Mutex<HashMap<String, super::NavBot>>>,
     name: &str,
     scope: Scope,
     world: &Option<Arc<NavWorld>>,
     state: Option<&WorldState>,
+    snapshot: &GameSnapshot,
     from: WorldTile,
     fishing_base: Option<i32>,
 ) -> bool {
@@ -1925,6 +1938,7 @@ pub(super) fn queue_bank_walk_scoped(
         scope,
         world,
         state,
+        snapshot,
         from,
         FindOptions::default(),
         0,
@@ -1948,6 +1962,7 @@ fn queue_bank(
     scope: Scope,
     world: &Option<Arc<NavWorld>>,
     state: Option<&WorldState>,
+    snapshot: &GameSnapshot,
     from: WorldTile,
     mut opts: FindOptions,
     request_id: u64,
@@ -2061,8 +2076,15 @@ fn queue_bank(
     let Some(lease) = lease else {
         unreachable!("a present NavWorld has an owner lease");
     };
-    let empty = WorldState::default();
-    let state = state.unwrap_or(&empty);
+    let mut state = state.cloned().unwrap_or_else(WorldState::empty);
+    state.quest_evidence = world.graph.quest_family.and_then(|family| {
+        super::script_nav::captured_service_quests(
+            family,
+            bot.quest_context.as_ref(),
+            snapshot,
+            native.as_ref().map(|native| native.evidence),
+        )
+    });
     let from = native.as_ref().map_or(from, |native| native.request.from);
     let BankCandidates {
         order,
@@ -2071,7 +2093,7 @@ fn queue_bank(
         world.as_ref(),
         facts.as_ref(),
         from,
-        state,
+        &state,
         preferences,
         fishing_base,
         native.as_ref().map(|native| &native.request),
@@ -2098,7 +2120,7 @@ fn queue_bank(
         facts,
         from,
         opts,
-        state.clone(),
+        state,
         order,
         target_count,
         walk_generation,
@@ -2635,6 +2657,7 @@ fn apply_bank_pick_result(
                         plan.lease.clone(),
                         job.request.lease.clone(),
                         Arc::clone(&custody),
+                        None,
                     );
                     bot.publish_compact_route(
                         route_generation,

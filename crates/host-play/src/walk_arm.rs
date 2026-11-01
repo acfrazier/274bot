@@ -10,10 +10,12 @@ use nav_planner::world::NavWorld;
 use nav_planner::WorldState;
 
 use crate::admission::{Admission, RouteBasis};
-use crate::script_runtime::{session_freezes_follow, step_bank_fetch_on_bot, NavBot};
+use crate::script_runtime::{
+    session_freezes_follow, step_bank_fetch_on_bot, NavBot, RoutePrereqContent,
+};
 use crate::walk_plan::{route_or_bank_fetch, PendingBankFetch, RouteOutcome};
 use script::combat::risk::RouteAssessment;
-use script::native::WalkRefusal;
+use script::native::{HandoverEntry, OuterIdentity, OuterWalk, WalkHandover, WalkRefusal};
 /// Per-username WalkTo arm: the whole-world [`Traveller`] plus the
 /// [`Route`] it is following. [`arm_walk_on`] stores the route (found
 /// over the shared [`NavWorld`]); the slot hook polls
@@ -39,6 +41,37 @@ pub struct WalkArm {
     pub refusal: Option<WalkRefusal>,
     pub refusal_detail: Option<Arc<str>>,
     pub admission_pending: bool,
+    pub manual_prereq: Option<Box<ManualWalkPrereqContext>>,
+}
+
+#[derive(Clone)]
+pub struct ManualWalkPrereqContext {
+    outer: OuterWalk,
+    route_run: api::selected::RunKey,
+    content: Arc<RoutePrereqContent>,
+    handover_enabled: bool,
+    start: crate::ScriptStartHandle,
+    slot: Arc<str>,
+}
+
+impl ManualWalkPrereqContext {
+    pub(crate) fn new(
+        outer: OuterWalk,
+        route_run: api::selected::RunKey,
+        content: Arc<RoutePrereqContent>,
+        handover_enabled: bool,
+        start: crate::ScriptStartHandle,
+        slot: Arc<str>,
+    ) -> Self {
+        Self {
+            outer,
+            route_run,
+            content,
+            handover_enabled,
+            start,
+            slot,
+        }
+    }
 }
 
 #[cfg(feature = "test-support")]
@@ -103,15 +136,15 @@ pub struct NoPath {
     pub refusal: Option<WalkRefusal>,
     pub detail: Option<Arc<str>>,
     pub incomplete_search: bool,
+    pub generation: u64,
 }
 
-/// A manual route and the same assessment returned by native admission.
 #[derive(Debug)]
 pub struct WalkRoute {
     pub route: Route,
     pub assessment: Arc<RouteAssessment>,
+    pub generation: u64,
 }
-
 /// Route `from` → `dest` over `world` and latch the found route on the
 /// focused slot's [`WalkArm`] (keyed by username) when one is named.
 /// `options` carries the caller's nav settings (`allow_teleports` /
@@ -138,9 +171,39 @@ pub fn arm_walk_on(
     options: FindOptions,
     state: &WorldState,
     bank: &nav_planner::bank_fetch::BankRows,
+    admission: Admission,
+    travellers: &WalkArms,
+    focused: Option<&str>,
+) -> Result<WalkRoute, NoPath> {
+    arm_walk_on_with_prereq(
+        world,
+        from,
+        dest,
+        options,
+        state,
+        bank,
+        admission,
+        travellers,
+        focused,
+        |_| None,
+    )
+}
+
+#[expect(
+    clippy::too_many_arguments,
+    reason = "the shared arm boundary retains the route inputs and optional prerequisite context"
+)]
+pub(crate) fn arm_walk_on_with_prereq(
+    world: &NavWorld,
+    from: Tile,
+    dest: Tile,
+    options: FindOptions,
+    state: &WorldState,
+    bank: &nav_planner::bank_fetch::BankRows,
     mut admission: Admission,
     travellers: &WalkArms,
     focused: Option<&str>,
+    manual_prereq: impl FnOnce(&Route) -> Option<Box<ManualWalkPrereqContext>>,
 ) -> Result<WalkRoute, NoPath> {
     let from_w = WorldTile {
         x: from.x,
@@ -161,15 +224,28 @@ pub fn arm_walk_on(
     options.essence = focused.and_then(|name| {
         travellers
             .lock()
-            .unwrap()
+            .expect("a panic while holding the walk-arm registry invalidates its route ownership")
             .get(name)
-            .and_then(|arm| arm.lock().unwrap().traveller.essence())
+            .and_then(|arm| {
+                arm.lock()
+                    .expect("a panic while holding a walk arm invalidates its traveller state")
+                    .traveller
+                    .essence()
+            })
     });
     if let Some(escape) = focused
-        .and_then(|name| travellers.lock().unwrap().get(name).cloned())
+        .and_then(|name| {
+            travellers
+                .lock()
+                .expect(
+                    "a panic while holding the walk-arm registry invalidates its route ownership",
+                )
+                .get(name)
+                .cloned()
+        })
         .and_then(|arm| {
             arm.lock()
-                .unwrap()
+                .expect("a panic while holding a walk arm invalidates its admission state")
                 .admission
                 .as_deref()
                 .and_then(|admission| admission.escape)
@@ -177,7 +253,10 @@ pub fn arm_walk_on(
     {
         admission.escape = Some(escape);
     }
-    admission.generation = crate::walk_map::next_map_route_generation();
+    if admission.generation == 0 {
+        admission.generation = crate::walk_map::next_map_route_generation();
+    }
+    let generation = admission.generation;
     let admitted = crate::admission::route(
         world,
         &admission,
@@ -244,6 +323,7 @@ pub fn arm_walk_on(
                 ),
                 RouteOutcome::IncompleteSearch { .. } | RouteOutcome::NoPath => unreachable!(),
             };
+            let manual_prereq = manual_prereq(&route);
             replace_walk_arm(
                 travellers,
                 focused,
@@ -254,14 +334,16 @@ pub fn arm_walk_on(
                 Arc::clone(&assessment),
                 options,
                 state,
+                manual_prereq,
             );
             Ok(WalkRoute {
                 route: route.as_ref().clone(),
                 assessment,
+                generation,
             })
         }
         RouteOutcome::IncompleteSearch { .. } | RouteOutcome::NoPath => {
-            let refusal_detail = admitted.refusal.map(|refusal| {
+            let refusal_detail = admitted.refusal.as_ref().map(|refusal| {
                 assessment
                     .as_ref()
                     .map(|assessment| Arc::clone(&assessment.reason))
@@ -314,11 +396,13 @@ pub fn arm_walk_on(
                     }
                     let arm = travellers
                         .lock()
-                        .unwrap()
+                        .expect("a panic while holding the walk-arm registry invalidates its route ownership")
                         .entry(name.to_string())
                         .or_insert_with(|| Arc::new(Mutex::new(WalkArm::default())))
                         .clone();
-                    let mut arm = arm.lock().unwrap();
+                    let mut arm = arm
+                        .lock()
+                        .expect("a panic while holding a walk arm invalidates its admission state");
                     if let Some(assessment) = assessment.as_ref() {
                         arm.last_assessment = Some(Arc::clone(assessment));
                     }
@@ -332,7 +416,7 @@ pub fn arm_walk_on(
                         arm.route_generation = admission.generation;
                         arm.admission_pending = false;
                     }
-                    arm.refusal = admitted.refusal;
+                    arm.refusal = admitted.refusal.clone();
                     arm.refusal_detail = detail.clone();
                 }
             }
@@ -341,6 +425,7 @@ pub fn arm_walk_on(
                 refusal: admitted.refusal,
                 detail,
                 incomplete_search,
+                generation,
             })
         }
     }
@@ -445,6 +530,7 @@ fn replace_walk_arm(
     assessment: Arc<RouteAssessment>,
     options: FindOptions,
     state: &WorldState,
+    manual_prereq: Option<Box<ManualWalkPrereqContext>>,
 ) {
     let Some(name) = focused else {
         return;
@@ -476,6 +562,7 @@ fn replace_walk_arm(
         arm.refusal = None;
         arm.refusal_detail = None;
         arm.admission_pending = true;
+        arm.manual_prereq = manual_prereq;
         replaced
     };
     if let Some((destination, generation)) = replaced {
@@ -602,11 +689,21 @@ pub fn step_walk_arm_follow<D: Driver>(
         close_enough: 0,
         teleports: world.map(|world| world.graph.teleports.as_slice()),
         edges: world.map(|world| world.graph.edges.as_slice()),
+        quest_evidence: arm
+            .basis
+            .as_deref()
+            .and_then(|basis| basis.quest_evidence.as_ref()),
         ..TravelOptions::default()
     };
+    if let Some(context) = arm.manual_prereq.as_deref() {
+        options.refusal_texts = Arc::clone(&context.content.refusal_texts);
+        options.crossing_passes = Arc::clone(&context.content.crossing_passes);
+    }
     let outcome = arm
         .traveller
         .follow_shared(driver, snapshot, Arc::clone(route), &mut options);
+    // Release the borrowed route evidence before clearing the arm.
+    drop(options);
     if walking_stand && matches!(&outcome, Some(TravelOutcome::Arrived { .. })) {
         arm.route = None;
         return false;
@@ -619,14 +716,18 @@ pub fn step_walk_arm_follow<D: Driver>(
     } else {
         arm.traveller.terminal_leg_index()
     };
-    crate::walk_map::emit_walk_terminal(
-        slot,
-        destination,
-        &outcome,
-        leg,
-        route,
-        world.is_some_and(|world| world.graph.zones.is_none()),
-    );
+    let handed_over = matches!(&outcome, TravelOutcome::GateRefused { .. })
+        && handover_manual_refusal(&mut arm.manual_prereq, &outcome);
+    if !handed_over {
+        crate::walk_map::emit_walk_terminal(
+            slot,
+            destination,
+            &outcome,
+            leg,
+            route,
+            world.is_some_and(|world| world.graph.zones.is_none()),
+        );
+    }
     if walking_stand {
         arm.bank_fetch = None;
     }
@@ -635,11 +736,83 @@ pub fn step_walk_arm_follow<D: Driver>(
     true
 }
 
+fn handover_manual_refusal(
+    pending: &mut Option<Box<ManualWalkPrereqContext>>,
+    outcome: &TravelOutcome,
+) -> bool {
+    let Some(context) = pending.take().map(|context| *context) else {
+        return false;
+    };
+    let TravelOutcome::GateRefused {
+        at,
+        leg,
+        crossing,
+        gates,
+        matched,
+        ..
+    } = outcome
+    else {
+        return false;
+    };
+    let Some(observation) = context
+        .content
+        .refusal_observation(*leg, *crossing, gates, *matched)
+    else {
+        return false;
+    };
+    if !context
+        .start
+        .record_gate_refusal(context.slot.as_ref(), context.route_run, &observation)
+    {
+        return false;
+    }
+    api::host_log!(
+        api::hostlog::Category::NavEvent,
+        api::hostlog::Level::Info,
+        slot = context.slot.as_ref(),
+        "prereq refusal-record owner=manual run={:?} leg={} crossing={:?} tick={} sequence={}",
+        context.route_run,
+        observation.leg,
+        observation.crossing,
+        observation.fact.observed.tick,
+        observation.fact.observed.sequence,
+    );
+    if !context.handover_enabled
+        || (!context.outer.prereq_allow.dialogue && !context.outer.prereq_allow.quest_start)
+    {
+        return false;
+    }
+    let intent_seq = match context.outer.identity {
+        OuterIdentity::Manual { intent_seq } => intent_seq,
+        OuterIdentity::Compat { .. } => return false,
+    };
+    api::host_log!(
+        api::hostlog::Category::NavEvent,
+        api::hostlog::Level::Info,
+        slot = context.slot.as_ref(),
+        "prereq handover owner=manual entry=GateRefused run={:?} intent_seq={} leg={} crossing={:?}",
+        context.route_run,
+        intent_seq,
+        leg,
+        crossing,
+    );
+    let handover = WalkHandover {
+        outer: context.outer,
+        entry: HandoverEntry::GateRefused(observation),
+        here: *at,
+    };
+    context
+        .start
+        .start_manual_walk_to(context.slot.as_ref(), handover, context.route_run)
+        .is_ok()
+}
+
 fn clear_admission(arm: &mut WalkArm) {
     arm.admission = None;
     arm.assessment = None;
     arm.basis = None;
     arm.admission_pending = false;
+    arm.manual_prereq = None;
 }
 
 /// Cancel one active manual WalkTo at a frontend/session ownership boundary.
@@ -678,4 +851,34 @@ pub fn cancel_walk_arm_on_manual_input(
     };
     let mut owned = arm.lock().unwrap();
     cancel_walk_arm(Some(slot), &mut owned, at, "UserInput")
+}
+
+#[cfg(test)]
+mod prereq_layout_tests {
+    use super::*;
+    use std::mem::size_of;
+
+    #[test]
+    fn idle_manual_arm_keeps_prerequisite_context_boxed_and_unallocated() {
+        let idle = allocation_counter::measure(|| {
+            let arm = std::hint::black_box(WalkArm::default());
+            assert!(arm.manual_prereq.is_none());
+        });
+        eprintln!(
+            "prereq manual layout WalkArm={} ManualWalkPrereqContext={} idle_context={} SlotScript={} idle={idle:?}",
+            size_of::<WalkArm>(),
+            size_of::<ManualWalkPrereqContext>(),
+            size_of::<Option<Box<ManualWalkPrereqContext>>>(),
+            size_of::<script::SlotScript>(),
+        );
+        assert_eq!(
+            size_of::<Option<Box<ManualWalkPrereqContext>>>(),
+            size_of::<usize>()
+        );
+        assert!(size_of::<ManualWalkPrereqContext>() <= 512);
+        assert!(size_of::<WalkArm>() <= 4096);
+        assert!(size_of::<script::SlotScript>() <= 2048);
+        assert_eq!(idle.count_total, 0);
+        assert_eq!(idle.bytes_total, 0);
+    }
 }

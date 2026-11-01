@@ -40,6 +40,7 @@ serde_json = "=1.0.140"
 [dev-dependencies]
 api = { path = "../api", features = ["test-support"] }
 nav-bake = { path = "../nav-bake" }
+nav-planner = { path = "../nav-planner", features = ["test-support"] }
 allocation-counter = "=0.8.1"
 bzip2 = "0.4"
 # The local HTTPS update servers of `tests/cold_fill_lookups.rs`; the
@@ -87,12 +88,20 @@ name = "nav_gated_entrances_live"
 required-features = ["test-support"]
 
 [[test]]
+name = "nav_quest_doors_live"
+required-features = ["test-support"]
+
+[[test]]
 name = "survivable_admission_live"
 required-features = ["live-harness", "test-support", "live-probe"]
 
 [[test]]
 name = "seat_live"
 required-features = ["live-harness", "test-support", "live-probe"]
+
+[[test]]
+name = "nav_prereq_live"
+required-features = ["live-harness", "test-support", "live-probe", "js"]
 
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.59", features = [

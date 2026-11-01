@@ -348,6 +348,8 @@ fn walk_to(x: i32, z: i32, level: i32) -> InteractReq {
         request_id: 0,
         avoid: Vec::new(),
         cross: Vec::new(),
+        allow_prereq_dialogue: None,
+        allow_quest_start: None,
     }
 }
 

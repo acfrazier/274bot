@@ -28,6 +28,8 @@ mod n1_tests;
 mod door_expire_tests;
 #[path = "traveller/entrance_exclusion_tests.rs"]
 mod entrance_exclusion_tests;
+#[path = "traveller/gate_refusal_tests.rs"]
+mod gate_refusal_tests;
 #[path = "traveller/occupied_tests.rs"]
 mod occupied_tests;
 
@@ -6007,6 +6009,8 @@ fn troll_open_door_progress_does_not_reverse_to_approach() {
             door_retry: super::DoorRetry::default(),
             occupied: super::OccupiedRetry::default(),
             chat_seq: 0,
+            refusal_watch: None,
+            pass_watch: None,
             dialog_page: None,
             approach: None,
         });
@@ -6073,6 +6077,8 @@ fn troll_probes_crossing_after_open_once_the_snapshot_catches_up() {
         door_retry: super::DoorRetry::default(),
         occupied: super::OccupiedRetry::default(),
         chat_seq: 0,
+        refusal_watch: None,
+        pass_watch: None,
         dialog_page: None,
         approach: None,
     });
@@ -6280,6 +6286,8 @@ fn troll_does_not_reopen_a_door_behind_the_walker() {
             door_retry: super::DoorRetry::default(),
             occupied: super::OccupiedRetry::default(),
             chat_seq: 0,
+            refusal_watch: None,
+            pass_watch: None,
             dialog_page: None,
             approach: None,
         });
@@ -8173,6 +8181,8 @@ fn level_change_transport_requires_proximity_to_to() {
         door_retry: super::DoorRetry::default(),
         occupied: super::OccupiedRetry::default(),
         chat_seq: 0,
+        refusal_watch: None,
+        pass_watch: None,
         dialog_page: None,
         approach: None,
     });
@@ -8276,6 +8286,8 @@ fn horizontal_climb_proves_translated_takeoff_without_widening_arrival() {
         door_retry: super::DoorRetry::default(),
         occupied: super::OccupiedRetry::default(),
         chat_seq: 0,
+        refusal_watch: None,
+        pass_watch: None,
         dialog_page: None,
         approach: None,
     });
@@ -8332,8 +8344,16 @@ fn executor_state_size_pins() {
     // +32 B: the transport hop's distinct-tick clock (`TickCount`) and the
     // occupied-crossing retry (`OccupiedRetry`): a refused ledge or rope
     // swing is retried within the hop budget instead of ending the follow.
-    assert_eq!(std::mem::size_of::<Traveller>(), 848);
-    assert_eq!(std::mem::size_of::<FollowRun>(), 808);
+    // Prerequisite refusal-page tracking adds 176 B to the active hop union.
+    // Full physical identity retains takeoff and destination: +24 B over the
+    // former anchor-only crossing. It names both A1 approaches and A2 directions.
+    eprintln!(
+        "prereq executor layout Traveller={} FollowRun={}",
+        std::mem::size_of::<Traveller>(),
+        std::mem::size_of::<FollowRun>()
+    );
+    assert_eq!(std::mem::size_of::<Traveller>(), 1048);
+    assert_eq!(std::mem::size_of::<FollowRun>(), 1008);
 }
 const BLOCKED_DISPLAY_TILE: WorldTile = WorldTile {
     x: 12,

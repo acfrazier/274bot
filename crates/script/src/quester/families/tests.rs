@@ -107,6 +107,100 @@ pub(crate) fn with_tick_reach<R>(
     )
 }
 
+/// Publish the same collision flood as the host for scene-backed fixtures.
+pub(crate) fn with_tick_scene_reach<R>(
+    snapshot: &GameSnapshot,
+    ledger: &mut Option<Box<ledger::Ledger>>,
+    tick: u64,
+    f: impl FnOnce(&mut NativeTick<'_>) -> R,
+) -> R {
+    with_tick_scene_bank(snapshot, None, ledger, tick, f)
+}
+
+pub(crate) fn scene_reach(snapshot: &GameSnapshot) -> api::query::ReachQueryView {
+    let scene = snapshot.scene();
+    let here = snapshot.local_player().map(|player| player.player.network);
+    let flood = api::query::SceneQuery::new(scene, here).flood_reach();
+    api::query::pack_reach_query(scene, flood.as_ref())
+}
+
+pub(crate) fn with_tick_scene_bank<R>(
+    snapshot: &GameSnapshot,
+    bank: Option<&api::bank_memory::BankMemory>,
+    ledger: &mut Option<Box<ledger::Ledger>>,
+    tick: u64,
+    f: impl FnOnce(&mut NativeTick<'_>) -> R,
+) -> R {
+    let reach = scene_reach(snapshot);
+    with_tick_output_reach(
+        snapshot,
+        Some(&reach),
+        Truth::Unknown,
+        ledger,
+        tick,
+        &mut Output,
+        bank,
+        snapshot,
+        None,
+        |native, _, _| f(native),
+    )
+}
+
+/// Geometry of the two reviewed prerequisite fixtures, including the blocked
+/// A1 anchor and the A2 straight wall's engine-operable north and south stands.
+pub(crate) fn seed_prereq_crossing(
+    snapshot: &mut GameSnapshot,
+    row: &api::prereq_steps::PrereqStep,
+    crossing: &api::prereq_steps::CrossingId,
+) {
+    assert!(row.crossing(crossing).is_some());
+    let barrier = row.consent == api::prereq_steps::ConsentSwitch::PrereqDialogue;
+    let mut actions = vec![None; usize::from(crossing.option)];
+    actions[usize::from(crossing.option) - 1] =
+        Some(if barrier { "Pass-through" } else { "Open" }.into());
+    snapshot.seed_locs(vec![LocView {
+        id: crossing.loc_id,
+        name: Some("Prerequisite crossing".into()),
+        actions,
+        tile: crossing.at,
+        distance: 1,
+        typecode: 0,
+        info: 0,
+        description: None,
+        layer: if barrier {
+            LocLayer::Ground
+        } else {
+            LocLayer::Wall
+        },
+        shape: if barrier { 10 } else { 0 },
+        angle: if barrier { 1 } else { 3 },
+        width: 1,
+        length: 1,
+        footprint_width: 1,
+        footprint_length: 1,
+        block_walk: true,
+        block_range: false,
+        active: true,
+        animation: -1,
+        map_function: -1,
+        map_scene: -1,
+        force_approach: 0,
+    }]);
+    let mut scene = api::snapshot::SceneView {
+        available: true,
+        base_x: crossing.at.x - 2,
+        base_z: crossing.at.z - 2,
+        level: crossing.at.level,
+        width: 5,
+        height: 5,
+        collision_flags: vec![0; 25],
+    };
+    if barrier {
+        scene.collision_flags[12] = client::dash3d::CollisionFlag::SQ_BLOCKED;
+    }
+    snapshot.seed_scene(scene);
+}
+
 pub(crate) fn with_tick_reach_snapshots<R>(
     snapshot: &GameSnapshot,
     next_snapshot: &GameSnapshot,
@@ -254,6 +348,7 @@ fn with_tick_output_reach<R>(
         actions: &mut actions,
         cx: crate::native::ActionContext {
             stage_cross: None,
+            walk_prereq: Default::default(),
             condition: None,
             poison_unknown_pulse: u8::MAX,
             cure_poison: crate::survival::CurePoison::WhenNeeded,
@@ -682,6 +777,7 @@ pub(crate) fn post_user_input_walk_receipt(
         refusal: None,
         assessment: None,
         escape: None,
+        prereq_allow: None,
     });
     request_id
 }
@@ -711,21 +807,18 @@ pub(crate) fn post_walk_receipt_with(
             .expect("walk request must be queued");
         (action.request_id.get(), action.run())
     };
-    ledger.as_mut().expect("ledger must remain present").walk = Some(crate::native::WalkReceipt {
-        goal: None,
-        request_id,
-        evidence: EvidenceStamp {
-            run,
-            tick,
-            sequence: tick,
-        },
-        end,
-        blocked,
-        detail: detail.map(Arc::from),
-        refusal,
-        assessment: None,
-        escape: None,
-    });
+    ledger.as_mut().expect("ledger must remain present").walk = Some(crate::native::WalkReceipt { goal: None,
+    request_id,
+    evidence: EvidenceStamp {
+        run,
+        tick,
+        sequence: tick,
+    },
+    end,
+    blocked,
+    detail: detail.map(Arc::from),
+    refusal,
+    assessment: None, escape: None, prereq_allow: None });
     request_id
 }
 
@@ -817,6 +910,7 @@ fn mapped_walk_receipt(
         refusal: None,
         assessment: None,
         escape: None,
+        prereq_allow: None,
     }
 }
 
@@ -1189,6 +1283,73 @@ fn quest_walk_step_blocks_after_three_failures_with_the_last_detail() {
         }
     }
     assert_eq!(latest_walk_request(&ledger).0, active_request);
+}
+
+#[test]
+fn prereq_walk_ordinary_failures_keep_bounded_retries_and_last_detail() {
+    let snapshot = ready();
+    let mut ledger = None;
+    let mut run = WalkRun {
+        plan: walk_retry_plan(tile(3200, 3200)),
+        handle: None,
+        retry: crate::native::WalkRetryState::default(),
+        warning: None,
+        trace_event: None,
+    };
+    with_tick(&snapshot, &mut ledger, 1, |tick| {
+        with_step(tick, |cx| run.begin_walk(cx).unwrap())
+    });
+    let _: &PrereqWalk = run.handle.as_ref().expect("the real prerequisite walk owns the route");
+    let mut submissions = vec![latest_walk_request(&ledger).0];
+    for (index, end) in [WalkEnd::NoPath, WalkEnd::RouteEnded, WalkEnd::Failed]
+        .into_iter()
+        .enumerate()
+    {
+        let attempt = index + 1;
+        let failure_tick = attempt as u64 * 2;
+        let detail = format!("ordinary prerequisite walk failure {attempt}");
+        let request = post_walk_receipt(&mut ledger, failure_tick, end, Some(&detail));
+        assert_eq!(Some(&request), submissions.last());
+        let result = with_tick(&snapshot, &mut ledger, failure_tick, |tick| {
+            with_step(tick, |cx| run.poll(cx))
+        });
+        if attempt < usize::from(crate::native::QUEST_WALK_MAX_ATTEMPTS) {
+            assert!(result.is_pending());
+            assert!(matches!(
+                run.take_trace_event(),
+                Some(StepTraceEvent::WalkRetry { attempt: retry, failure_detail })
+                    if usize::from(retry) == attempt + 1 && failure_detail.as_ref() == detail
+            ));
+            assert!(with_tick(&snapshot, &mut ledger, failure_tick, |tick| {
+                with_step(tick, |cx| run.poll(cx))
+            })
+            .is_pending());
+            assert_eq!(latest_walk_request(&ledger).0, request, "no same-tick retry");
+            assert!(with_tick(&snapshot, &mut ledger, failure_tick + 1, |tick| {
+                with_step(tick, |cx| run.poll(cx))
+            })
+            .is_pending());
+            let (retry, required_after) = latest_walk_request(&ledger);
+            assert_ne!(retry, request);
+            assert_eq!(required_after, failure_tick + 1);
+            submissions.push(retry);
+        } else {
+            assert!(matches!(
+                result,
+                Poll::Ready(Err(ActionError::Blocked(reason))) if reason.as_ref() == detail
+            ));
+            assert!(run.take_trace_event().is_none());
+        }
+    }
+    assert_eq!(submissions.len(), usize::from(crate::native::QUEST_WALK_MAX_ATTEMPTS));
+    let terminal_requests = walk_request_count(&ledger);
+    assert!(matches!(
+        with_tick(&snapshot, &mut ledger, 7, |tick| {
+            with_step(tick, |cx| run.poll(cx))
+        }),
+        Poll::Ready(Err(ActionError::Stale))
+    ));
+    assert_eq!(walk_request_count(&ledger), terminal_requests, "no fourth request");
 }
 
 #[test]
@@ -2144,6 +2305,7 @@ fn non_straight_wall_door_route_end_before_arrival_does_not_open_the_door() {
         refusal: None,
         assessment: None,
         escape: None,
+        prereq_allow: None,
     });
     assert!(with_tick_reach(&s, &reach, &mut ledger, 3, |t| t
         .actions
@@ -2239,6 +2401,7 @@ fn reach_wait_walk_preserves_typed_needs_evidence() {
         refusal: None,
         assessment: None,
         escape: None,
+        prereq_allow: None,
     });
 
     assert!(with_tick_reach(&s, &reach, &mut ledger, 3, |t| {
@@ -2778,9 +2941,7 @@ fn interact_false_is_failure_not_success() {
     let s = ready();
     let mut ledger = None;
     let handle = with_tick(&s, &mut ledger, 1, |t| {
-        t.actions
-            .begin::<reach::Reach>(egg(false), &mut t.cx)
-            .unwrap()
+        crate::quester::prereq::reach::PrereqReach::begin(egg(false), t.actions, &mut t.cx).unwrap()
     });
     // Reach's observed-missing result is Ok(false), not an action error.
     let mut run = InteractRun {
@@ -7605,6 +7766,8 @@ fn path_walk_permissions_decode_as_tri_state_options() {
         "radius": 1,
         "allow_teleports": true,
         "allow_wilderness": false,
+        "allow_prereq_dialogue": false,
+        "allow_quest_start": true,
     })))
     .unwrap();
     assert_eq!(
@@ -7613,6 +7776,8 @@ fn path_walk_permissions_decode_as_tri_state_options() {
             allow_teleports: crate::native::WalkBit::Allow,
             allow_wilderness: crate::native::WalkBit::Forbid,
             allow_danger_zones: crate::native::WalkBit::Inherit,
+            allow_prereq_dialogue: crate::native::WalkBit::Forbid,
+            allow_quest_start: crate::native::WalkBit::Allow,
         }
     );
 }
@@ -10174,6 +10339,7 @@ fn arrive_slot_walk(
             refusal: None,
             assessment: None,
             escape: None,
+            prereq_allow: None,
         },
     );
 }

@@ -514,6 +514,7 @@ fn walk_request(required_after: api::quest_progress::EvidenceStamp) -> WalkReque
         required_after,
         evidence: None,
         cross: Box::default(),
+        avoid: Box::default(),
         protect: false,
         food_guard: true,
         allow: WalkAllow {

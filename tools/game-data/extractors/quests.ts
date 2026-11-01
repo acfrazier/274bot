@@ -1,8 +1,8 @@
 // M-296 owns full-roster extraction/resolution programs; this preserves the existing query asset.
 import fs from 'node:fs';
 import { integer, parsePack, requireGatherText, walkContentFiles } from './common.ts';
-import { parseRs2Blocks, stripComment, type Rs2Block } from './gathering-content.ts';
-import { parseBody, walkStatements } from './gathering-rs2.ts';
+import { parseRs2Blocks, stripComment, walkContent, type Rs2Block } from './gathering-content.ts';
+import { parseBody, walkStatements, type Node } from './gathering-rs2.ts';
 export const questIdentityContentFiles = [
     'scripts/general/scripts/quests.rs2',
     'scripts/general/configs/quest.constant',
@@ -19,6 +19,14 @@ const QUEST_IDENTITY_SEEDS = [
     { id: 'death', component: 'death' },
     { id: 'zanaris', component: 'zanaris' },
 ] as const;
+
+/** Source files scanned when quest progress domains are derived. */
+export function questIdentityAnalysisFiles(content: string) {
+    return walkContent(content, 'scripts', ['.rs2', '.constant', '.varp']).filter(productionScriptPath);
+}
+function productionScriptPath(file: string) {
+    return !file.split(/[\\/]/).some((segment) => segment === '_test' || segment === 'debug');
+}
 
 type QuestItemAlias = { alias: string; quantity: number | null; kind: 'inv' | 'use-site' };
 type QuestSkillGate = { skill: string; level: number };
@@ -333,9 +341,227 @@ function questLocalConstant(content: string, component: string, name: string) {
     return values.size === 1 ? [...values][0] : null;
 }
 
+type ProgressMetadata = {
+    colour_authoritative: boolean;
+    stage_domain: { min: number; max: number } | null;
+    transmission: 'posted_by_content' | 'not_transmitted' | 'unknown';
+};
+
+function progressConstants(content: string, sourceFiles: readonly string[]) {
+    const values = new Map<string, number | null>();
+    for (const file of sourceFiles) {
+        if (!file.endsWith('.constant')) continue;
+        const text = fs.readFileSync(`${content}/${file}`, 'utf8');
+        for (const raw of text.split(/\r?\n/)) {
+            const match = /^\^([A-Za-z0-9_]+)\s*=\s*(-?\d+)\s*(?:\/\/.*)?$/.exec(raw.trim());
+            if (!match) continue;
+            const value = integer(match[2], `^${match[1]}`);
+            if (!values.has(match[1])) values.set(match[1], value);
+            else if (values.get(match[1]) !== value) values.set(match[1], null);
+        }
+    }
+    return values;
+}
+
+type ProgressWriter = { block: Rs2Block; line: number; right: string; nodes: Node[] | null };
+
+function progressWriters(content: string, sourceFiles: readonly string[]) {
+    const byVariable = new Map<string, ProgressWriter[]>();
+    const add = (variable: string, block: Rs2Block, line: number, right: string, nodes: Node[] | null) => {
+        const writers = byVariable.get(variable) ?? [];
+        if (!writers.some((writer) => writer.block === block && writer.line === line && writer.right === right)) {
+            writers.push({ block, line, right, nodes });
+            byVariable.set(variable, writers);
+        }
+    };
+    for (const file of sourceFiles) {
+        if (!file.endsWith('.rs2') || !productionScriptPath(file)) continue;
+        const text = fs.readFileSync(`${content}/${file}`, 'utf8');
+        for (const block of parseRs2Blocks(file, text)) {
+            let nodes: Node[] | null = null;
+            try {
+                nodes = parseBody(block.body);
+                walkStatements(nodes, (stmt) => {
+                    const assignment = /^%([A-Za-z0-9_]+)\s*=\s*(.+)$/.exec(stmt.text);
+                    if (assignment) add(assignment[1], block, stmt.line, assignment[2].trim(), nodes);
+                });
+            } catch {
+                // Physical assignment lines below still cover unparsed switch bodies.
+            }
+            for (const { line, text: raw } of block.body) {
+                const code = stripComment(raw).trim();
+                const assignment = /^(?:case\s+[^:]+:\s*)?%([A-Za-z0-9_]+)\s*=\s*(.+?)\s*;?$/.exec(code);
+                if (assignment) add(assignment[1], block, line, assignment[2].trim().replace(/;$/, '').trim(), nodes);
+            }
+        }
+    }
+    return byVariable;
+}
+
+function varpTransmission(content: string, varp: string, sourceFiles: readonly string[]): ProgressMetadata['transmission'] {
+    let sawSection = false;
+    let sawYes = false;
+    let sawNo = false;
+    for (const file of sourceFiles) {
+        if (!file.endsWith('.varp')) continue;
+        let section: string | null = null;
+        for (const raw of fs.readFileSync(`${content}/${file}`, 'utf8').split(/\r?\n/)) {
+            const line = raw.trim();
+            if (!line || line.startsWith('//')) continue;
+            if (line.startsWith('[') && line.endsWith(']')) {
+                section = line.slice(1, -1);
+                if (section === varp) sawSection = true;
+                continue;
+            }
+            if (section !== varp || !line.startsWith('transmit=')) continue;
+            const value = line.slice('transmit='.length).trim();
+            if (value === 'yes') sawYes = true;
+            else if (value === 'no') sawNo = true;
+            else return 'unknown';
+        }
+    }
+    if (!sawSection || (sawYes && sawNo)) return 'unknown';
+    if (sawYes) return 'posted_by_content';
+    return 'not_transmitted';
+}
+
+function lastLine(node: Node): number {
+    if (node.kind === 'stmt') return node.line;
+    const children = node.kind === 'if' ? [...node.then, ...node.els] : node.body;
+    return children.reduce((last, child) => Math.max(last, lastLine(child)), node.line);
+}
+
+function hasDirectReturn(nodes: Node[]) {
+    return nodes.some((node) => node.kind === 'stmt' && /^return\b/.test(node.text));
+}
+
+function guardedIncrementBound(
+    nodes: Node[] | null,
+    variable: string,
+    writerLine: number,
+    constants: Map<string, number | null>,
+): number | null {
+    if (!nodes) return null;
+    let bound: number | null = null;
+    const visit = (items: Node[]) => {
+        for (const node of items) {
+            if (node.kind === 'if') {
+                if (
+                    node.line < writerLine
+                    && lastLine(node) < writerLine
+                    && hasDirectReturn(node.then)
+                    && !/[&]/.test(node.cond)
+                ) {
+                    const match = new RegExp(`%${variable}\\s*>=\\s*(?:\\^([A-Za-z0-9_]+)|(-?\\d+))`).exec(node.cond);
+                    if (match) {
+                        const value = match[1] ? constants.get(match[1]) : integer(match[2], `${variable} upper guard`);
+                        if (typeof value === 'number') bound = bound === null ? value : Math.min(bound, value);
+                    }
+                }
+                visit(node.then);
+                visit(node.els);
+            } else if (node.kind === 'while') {
+                visit(node.body);
+            }
+        }
+    };
+    visit(nodes);
+    return bound;
+}
+
+function stageDomain(
+    quest: string,
+    variable: string,
+    complete: number,
+    constants: Map<string, number | null>,
+    writersByVariable: Map<string, ProgressWriter[]>,
+): ProgressMetadata['stage_domain'] {
+    if (!variable) return null;
+    let maximum = complete;
+    let sawWriter = false;
+    let safe = Number.isInteger(complete) && complete >= 0;
+    for (const [name, value] of constants) {
+        if (!name.startsWith(`${quest}_`) || name.endsWith('_questpoints')) continue;
+        if (value === null || value < 0) safe = false;
+        else maximum = Math.max(maximum, value);
+    }
+    for (const writer of writersByVariable.get(variable) ?? []) {
+        sawWriter = true;
+        const literal = /^(-?\d+)$/.exec(writer.right);
+        const constant = /^\^([A-Za-z0-9_]+)$/.exec(writer.right);
+        if (literal || constant) {
+            const value = literal
+                ? integer(literal[1], `${writer.block.span.file}:${writer.line}`)
+                : constants.get(constant![1]);
+            if (typeof value !== 'number' || value < 0) safe = false;
+            else maximum = Math.max(maximum, value);
+            continue;
+        }
+        const increment = new RegExp(`^add\\(\\s*%${variable}\\s*,\\s*1\\s*\\)$`).test(writer.right);
+        if (!increment) {
+            safe = false;
+            continue;
+        }
+        const bound = guardedIncrementBound(writer.nodes, variable, writer.line, constants);
+        if (bound === null || bound < 0) safe = false;
+        else maximum = Math.max(maximum, bound);
+    }
+    if (!sawWriter || !safe) return null;
+    return { min: 0, max: maximum };
+}
+
+function exactColourHelper(questsText: string) {
+    const blocks = parseRs2Blocks('scripts/general/scripts/quests.rs2', questsText)
+        .filter((block) => block.kind === 'proc' && block.name === 'send_quest_progress_colour');
+    if (blocks.length !== 1) return false;
+    const block = blocks[0];
+    const lines = block.body.map(({ text }) => stripComment(text).trim()).filter(Boolean);
+    return block.params.replace(/\s+/g, ' ').trim() === '(component $component, int $progress, int $complete_progress)'
+        && JSON.stringify(lines) === JSON.stringify([
+            'if ($progress = 0) {',
+            'if_setcolour($component, ^red_rgb);',
+            '} else if ($progress >= $complete_progress) {',
+            'if_setcolour($component, ^green_rgb);',
+            '} else {',
+            'if_setcolour($component, ^yellow_rgb);',
+            '}',
+        ]);
+}
+
+function progressMetadata(
+    content: string,
+    quest: string,
+    component: string,
+    variable: string,
+    complete: number,
+    calls: { component: string; progress: string; complete: string }[],
+    helperIsExact: boolean,
+    sourceFiles: readonly string[],
+    constants: Map<string, number | null>,
+    writersByVariable: Map<string, ProgressWriter[]>,
+): ProgressMetadata {
+    const transmission = varpTransmission(content, variable, sourceFiles);
+    const domain = stageDomain(quest, variable, complete, constants, writersByVariable);
+    const rows = calls.filter((call) => call.component === component);
+    const direct = rows.length === 1
+        && rows[0].progress === `%${variable}`
+        && rows[0].complete === `^${quest}_complete`;
+    return {
+        colour_authoritative: direct
+            && helperIsExact
+            && transmission === 'not_transmitted'
+            && domain !== null,
+        stage_domain: domain,
+        transmission,
+    };
+}
+
 export function extractQuestIdentityFacts(content: string, revision: number) {
     const quests = requireGatherText(content, 'scripts/general/scripts/quests.rs2');
     const constants = parseQuestConstants(requireGatherText(content, 'scripts/general/configs/quest.constant'));
+    const sourceFiles = questIdentityAnalysisFiles(content);
+    const progressConstantMap = progressConstants(content, sourceFiles);
+    const progressWriterIndex = progressWriters(content, sourceFiles);
     const questlistText = requireGatherText(content, 'scripts/player/interfaces/questlist.if');
     const displays = parseQuestListText(questlistText);
     const listEntries = parseQuestListEntries(questlistText);
@@ -343,6 +569,7 @@ export function extractQuestIdentityFacts(content: string, revision: number) {
     const enumNames = parseQuestEnumDisplays(requireGatherText(content, 'scripts/general/configs/quest.enum'));
     if (varpPack.size === 0) throw new Error('pack/varp.pack: required file missing ids');
     const calls = parseQuestColourCalls(quests);
+    const helperIsExact = exactColourHelper(quests);
     const journals = journalIndex(content);
     const seedIds = new Set(QUEST_IDENTITY_SEEDS.map((seed) => seed.id));
     const rows = QUEST_IDENTITY_SEEDS.map((seed) => {
@@ -367,6 +594,18 @@ export function extractQuestIdentityFacts(content: string, revision: number) {
         const questPoints = constants.get(`${seed.id}_questpoints`);
         if (complete === undefined) throw new Error(`quest.constant: missing ^${seed.id}_complete`);
         if (questPoints === undefined) throw new Error(`quest.constant: missing ^${seed.id}_questpoints`);
+        const metadata = progressMetadata(
+            content,
+            seed.id,
+            seed.component,
+            varp,
+            complete,
+            calls,
+            helperIsExact,
+            sourceFiles,
+            progressConstantMap,
+            progressWriterIndex,
+        );
         const display = displays.get(seed.component);
         if (!display) throw new Error(`questlist.if: missing text= for ${seed.component}`);
         if (!enumNames.has(display)) throw new Error(`quest.enum: display mismatch for ${seed.id}: ${display}`);
@@ -380,6 +619,9 @@ export function extractQuestIdentityFacts(content: string, revision: number) {
             varp_id: varpId,
             complete,
             quest_points: questPoints,
+            colour_authoritative: metadata.colour_authoritative,
+            stage_domain: metadata.stage_domain,
+            transmission: metadata.transmission,
             unknown_sides: [] as string[],
             requirements: requirementsFor(seed.id, content),
             members: list?.members ?? false,
@@ -435,6 +677,18 @@ export function extractQuestIdentityFacts(content: string, revision: number) {
         const questPoints = entry.component === 'fortress'
             ? (constants.get('blackknight_questpoints') ?? 0)
             : (constants.get(`${entry.component}_questpoints`) ?? 0);
+        const metadata = progressMetadata(
+            content,
+            entry.component,
+            entry.component,
+            varp,
+            complete,
+            calls,
+            helperIsExact,
+            sourceFiles,
+            progressConstantMap,
+            progressWriterIndex,
+        );
         const journal = journals.get(entry.component);
         rows.push({
             id: entry.component,
@@ -444,6 +698,9 @@ export function extractQuestIdentityFacts(content: string, revision: number) {
             varp_id: varpId,
             complete,
             quest_points: questPoints,
+            colour_authoritative: metadata.colour_authoritative,
+            stage_domain: metadata.stage_domain,
+            transmission: metadata.transmission,
             unknown_sides: [],
             requirements: emptyMustHave(),
             members: entry.members,
@@ -461,6 +718,9 @@ export function extractQuestIdentityFacts(content: string, revision: number) {
             varp_id: varpPack.get('barcrawl') ?? 77,
             complete: 2,
             quest_points: 0,
+            colour_authoritative: false,
+            stage_domain: null,
+            transmission: 'unknown',
             unknown_sides: [],
             requirements: emptyMustHave(),
             members: true,

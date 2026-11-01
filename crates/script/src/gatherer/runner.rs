@@ -25,6 +25,7 @@ use crate::native::{
     ReturnStallRecovery, Script, ScriptFailure, ScriptFlow, SettingsApply, StopReason, WalkBit,
     WalkEnd, WalkOptions, WalkReceipt, WalkRefusal, WalkRequest,
 };
+use crate::quester::prereq::walk::PrereqWalk;
 use api::game_data::GatherForbiddenState;
 use api::gather_methods::known_rows;
 use api::selected::{RunKey, Truth};
@@ -97,7 +98,8 @@ enum Active {
     None,
     Gather(ActionHandle<GatherRun>),
     Drop(ActionHandle<DropBatch>),
-    Walk(ActionHandle<Walk>),
+    Walk(PrereqWalk),
+    EscapeWalk(ActionHandle<Walk>),
     Tend(ActionHandle<OneOp>),
     Select(ActionHandle<bank::Select>),
     Open(ActionHandle<bank::Open>),
@@ -244,6 +246,7 @@ fn hazard_retreat_stand(
 struct GatherScratch {
     fishing: FishingSurvey,
     withdrawals: Option<Arc<[bank::Withdrawal]>>,
+    selected_bank: Option<SelectedBank>,
     bank_open_attempts: u8,
     bank_close_attempts: u8,
     /// Last tick a catch or XP was credited; bounds fishing surveys.
@@ -275,7 +278,6 @@ pub struct Gatherer {
     tried_groups: [TriedGroup; 4],
     hazard_escape: Option<WorldTile>,
     trip: TripStep,
-    selected_bank: Option<SelectedBank>,
     supply_missing: Option<Arc<str>>,
     bank_label: Arc<str>,
     trips: u16,
@@ -333,7 +335,6 @@ impl Gatherer {
             tried_groups: [TriedGroup::default(); 4],
             hazard_escape: None,
             trip: TripStep::Idle,
-            selected_bank: None,
             supply_missing: None,
             bank_label: Arc::from("—"),
             trips: 0,
@@ -370,7 +371,7 @@ impl Gatherer {
 
     fn advance_trip(&mut self, step: TripStep) {
         self.trip = step;
-        if let Some(selected) = &self.selected_bank {
+        if let Some(selected) = &self.scratch.selected_bank {
             if let Some(bank) = self
                 .prepared
                 .banks
@@ -402,7 +403,7 @@ impl Gatherer {
         );
         self.target = None;
         self.wait_until = None;
-        self.selected_bank = None;
+        self.scratch.selected_bank = None;
         self.scratch.bank_open_attempts = 0;
         self.scratch.bank_close_attempts = 0;
         self.scratch.withdrawals = None;
@@ -417,7 +418,8 @@ impl Gatherer {
     /// The packed stand the current trip opened, for the transfer verbs'
     /// re-open (`native_bank::MAX_BANK_REOPENS`).
     fn selected_access(&self) -> Option<Arc<bank::BankStandAccess>> {
-        self.selected_bank
+        self.scratch
+            .selected_bank
             .as_ref()
             .and_then(|selected| selected.access.clone())
     }
@@ -467,14 +469,15 @@ impl Gatherer {
             required_after: tick.cx.evidence(),
             evidence: None,
             cross: Box::default(),
+            avoid: Box::new([]),
             protect: false,
             food_guard: false,
             allow: Default::default(),
         };
-        match tick.actions.begin::<Walk>(request, &mut tick.cx) {
-            Ok(handle) => {
+        match PrereqWalk::begin(request, tick.actions, &mut tick.cx) {
+            Ok(walk) => {
                 self.scratch.observation_walk = observation_walk;
-                self.active = Active::Walk(handle);
+                self.active = Active::Walk(walk);
                 true
             }
             Err(error) => {
@@ -610,12 +613,12 @@ impl Gatherer {
                 }
             }
             TripStep::Access => {
-                if let Some(selected) = &self.selected_bank {
+                if let Some(selected) = &self.scratch.selected_bank {
                     self.trip_walk(selected.access_tile, 1, ArrivalKind::Reach, None, tick);
                 }
             }
             TripStep::Open => {
-                let Some(selected) = &self.selected_bank else {
+                let Some(selected) = &self.scratch.selected_bank else {
                     return;
                 };
                 let Some(access) = &selected.access else {
@@ -835,6 +838,9 @@ impl Gatherer {
                 .as_ref()
                 .map(|target| (target.entity, target.tile)),
         );
+        if let Active::Walk(walk) = &mut self.active {
+            walk.cancel();
+        }
         self.active = Active::None;
         self.scratch.observation_walk = false;
         self.target = None;
@@ -1316,10 +1322,10 @@ impl Gatherer {
                 }
             };
         if let Some(request) = approach {
-            match tick.actions.begin::<Walk>(request, &mut tick.cx) {
-                Ok(handle) => {
+            match PrereqWalk::begin(request, tick.actions, &mut tick.cx) {
+                Ok(walk) => {
                     self.scratch.observation_walk = selected.observation_goals.is_some();
-                    self.active = Active::Walk(handle);
+                    self.active = Active::Walk(walk);
                     self.set_event("approaching target");
                 }
                 Err(error) => self.action_failure(error),
@@ -1615,7 +1621,7 @@ impl Gatherer {
         }
         match self.trip {
             TripStep::Access => {
-                if self.selected_bank.is_some() {
+                if self.scratch.selected_bank.is_some() {
                     self.advance_trip(TripStep::Open);
                 }
                 return;
@@ -1690,8 +1696,8 @@ impl Gatherer {
                     }
                 }
             }
-            Active::Walk(handle) => match tick.actions.poll(&handle, &mut tick.cx) {
-                Poll::Pending => self.active = Active::Walk(handle),
+            Active::Walk(mut walk) => match walk.poll(tick.actions, &mut tick.cx, tick.state) {
+                Poll::Pending => self.active = Active::Walk(walk),
                 Poll::Ready(Ok(result)) => {
                     self.handle_walk(result, tick);
                 }
@@ -1702,6 +1708,11 @@ impl Gatherer {
                         self.action_failure(error);
                     }
                 }
+            },
+            Active::EscapeWalk(handle) => match tick.actions.poll(&handle, &mut tick.cx) {
+                Poll::Pending => self.active = Active::EscapeWalk(handle),
+                Poll::Ready(Ok(result)) => self.handle_walk(result, tick),
+                Poll::Ready(Err(error)) => self.action_failure(error),
             },
             Active::Tend(handle) => match tick.actions.poll(&handle, &mut tick.cx) {
                 Poll::Pending => self.active = Active::Tend(handle),
@@ -1728,7 +1739,7 @@ impl Gatherer {
                             format!("bank-unavailable:{}", self.settings().bank),
                         );
                     } else {
-                        self.selected_bank = Some(selected);
+                        self.scratch.selected_bank = Some(selected);
                         self.advance_trip(TripStep::Access);
                         self.set_event("bank selected");
                     }
@@ -2200,6 +2211,7 @@ impl Gatherer {
             required_after: tick.cx.evidence(),
             evidence: None,
             cross: Vec::new().into_boxed_slice(),
+            avoid: Box::new([]),
             protect: false,
             food_guard: false,
             allow: Default::default(),
@@ -2207,7 +2219,7 @@ impl Gatherer {
         match tick.actions.begin::<Walk>(request, &mut tick.cx) {
             Ok(handle) => {
                 self.scratch.observation_walk = false;
-                self.active = Active::Walk(handle);
+                self.active = Active::EscapeWalk(handle);
                 self.set_event("walking away from hazard");
             }
             Err(error) => self.action_failure(error),
@@ -2262,7 +2274,9 @@ impl Gatherer {
         if matches!(self.retained.recovery, RecoveryState::Pending { .. }) {
             return ("recovering", NativePhase::Working);
         }
-        if self.trip != TripStep::Idle && !matches!(self.active, Active::Walk(_)) {
+        if self.trip != TripStep::Idle
+            && !matches!(self.active, Active::Walk(_) | Active::EscapeWalk(_))
+        {
             if self.wait_until.is_some() {
                 return ("waiting", NativePhase::Waiting);
             }
@@ -2280,7 +2294,7 @@ impl Gatherer {
             }
             Active::Gather(_) => ("gathering", NativePhase::Working),
             Active::Drop(_) => ("dropping", NativePhase::Working),
-            Active::Walk(_)
+            Active::Walk(_) | Active::EscapeWalk(_)
                 if self.settings().skill_kind() == Skill::Fishing
                     && self
                         .target
@@ -2289,7 +2303,7 @@ impl Gatherer {
             {
                 ("surveying", NativePhase::Waiting)
             }
-            Active::Walk(_) => ("walking", NativePhase::Working),
+            Active::Walk(_) | Active::EscapeWalk(_) => ("walking", NativePhase::Working),
             Active::Tend(_) => ("tending", NativePhase::Working),
             Active::Select(_)
             | Active::Open(_)
@@ -2590,27 +2604,24 @@ mod tests {
         let detail: Arc<str> = Arc::from(
             "search_result=BudgetExhausted nodes_settled=unavailable (incomplete search)",
         );
-        let receipt = WalkReceipt {
-            goal: None,
-            request_id: 1,
-            evidence: api::quest_progress::EvidenceStamp {
-                run: RunKey {
-                    slot: 1,
-                    run: 1,
-                    session: 1,
-                },
-                tick: 1,
-                sequence: 1,
+        let receipt = WalkReceipt { goal: None,
+        request_id: 1,
+        evidence: api::quest_progress::EvidenceStamp {
+            run: RunKey {
+                slot: 1,
+                run: 1,
+                session: 1,
             },
-            end: WalkEnd::Refused,
-            blocked: None,
-            detail: Some(Arc::clone(&detail)),
-            refusal: Some(WalkRefusal::SearchIncomplete {
-                nodes_settled: None,
-            }),
-            assessment: None,
-            escape: None,
-        };
+            tick: 1,
+            sequence: 1,
+        },
+        end: WalkEnd::Refused,
+        blocked: None,
+        detail: Some(Arc::clone(&detail)),
+        refusal: Some(WalkRefusal::SearchIncomplete {
+            nodes_settled: None,
+        }),
+        assessment: None, escape: None, prereq_allow: None };
         assert_eq!(
             walk_failure_message(&receipt),
             format!("walk search incomplete: {detail}"),
@@ -2731,6 +2742,13 @@ mod tests {
             size_of::<crate::native::WalkRequest>(),
             size_of::<crate::native::WalkReceipt>()
         );
+        assert_eq!(size_of::<Walk>(), 136, "Walk inline layout changed");
+        assert!(
+            size_of::<Gatherer>() <= 1024,
+            "Gatherer={} exceeds its inline budget",
+            size_of::<Gatherer>()
+        );
+        assert!(size_of::<GatherRetained>() <= 80);
     }
     #[test]
     fn gatherer_tickfix_validate_begins_resource_return_walk_same_tick() {
@@ -2824,6 +2842,7 @@ mod tests {
                     refusal: None,
                     assessment: None,
                     escape: None,
+                    prereq_allow: None,
                 },
                 tick,
             );
@@ -2868,6 +2887,7 @@ mod tests {
                     refusal: None,
                     assessment: None,
                     escape: None,
+                    prereq_allow: None,
                 },
                 tick,
             );
@@ -2931,6 +2951,7 @@ mod tests {
                     refusal: None,
                     assessment: None,
                     escape: None,
+                    prereq_allow: None,
                 },
                 tick,
             );
@@ -2998,6 +3019,7 @@ mod tests {
                     refusal: None,
                     assessment: None,
                     escape: None,
+                    prereq_allow: None,
                 },
                 native,
             );
@@ -3311,7 +3333,7 @@ mod tests {
             choose: None,
         });
         gatherer.trip = TripStep::Open;
-        gatherer.selected_bank = Some(SelectedBank {
+        gatherer.scratch.selected_bank = Some(SelectedBank {
             bank_index: 0,
             access_tile: bank_tile,
             kind: PickKind::Reachable,
@@ -3330,7 +3352,13 @@ mod tests {
             });
             assert!(gatherer.failure.is_none());
             assert_eq!(gatherer.trip, TripStep::Open);
-            assert!(gatherer.selected_bank.as_ref().unwrap().access.is_some());
+            assert!(gatherer
+                .scratch
+                .selected_bank
+                .as_ref()
+                .unwrap()
+                .access
+                .is_some());
             assert!(matches!(gatherer.active, Active::Open(_)));
         }
         assert_eq!(gatherer.scratch.bank_open_attempts, MAX_BANK_OPEN_ATTEMPTS);
@@ -3884,6 +3912,7 @@ mod tests {
                         refusal: None,
                         assessment: None,
                         escape: None,
+                        prereq_allow: None,
                     },
                     tick,
                 );

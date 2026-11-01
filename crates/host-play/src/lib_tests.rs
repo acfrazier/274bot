@@ -5003,6 +5003,8 @@ fn park_walk_isolate(
             allow_teleports: false,
             allow_wilderness: true,
             allow_bank_fetch: true,
+            allow_prereq_dialogue: None,
+            allow_quest_start: None,
             request_id,
             avoid: _,
             cross: _,
@@ -5034,6 +5036,8 @@ fn park_two_walks(iso: &script_js::LoadIsolate, x: i32, z: i32, radius: i32) -> 
             allow_teleports: false,
             allow_wilderness: true,
             allow_bank_fetch: true,
+            allow_prereq_dialogue: None,
+            allow_quest_start: None,
             request_id: first,
             avoid: _,
             cross: _,
@@ -5046,6 +5050,8 @@ fn park_two_walks(iso: &script_js::LoadIsolate, x: i32, z: i32, radius: i32) -> 
             compat_tile_intent: true,
             allow_wilderness: true,
             allow_bank_fetch: true,
+            allow_prereq_dialogue: None,
+            allow_quest_start: None,
             request_id: second,
             avoid: _,
             cross: _,
@@ -6019,6 +6025,7 @@ fn a_script_walk_routes_around_its_avoid_rectangle() {
         radius: 0,
         opts: FindOptions::default(),
         state: None,
+        prereq_catalog: None,
         bank_origin: Origin::Unknown,
         bank: Vec::new(),
         live_geometry: None,
@@ -6113,6 +6120,7 @@ fn radius_route_job_keeps_first_connected_open_floor_approach() {
         radius: 1,
         opts: FindOptions::default(),
         state: None,
+        prereq_catalog: None,
         bank_origin: Origin::Unknown,
         bank: Vec::new(),
         live_geometry: None,
@@ -6170,6 +6178,7 @@ fn radius_route_job_drops_wall_separated_candidate() {
         radius: 1,
         opts: FindOptions::default(),
         state: None,
+        prereq_catalog: None,
         bank_origin: Origin::Unknown,
         bank: Vec::new(),
         live_geometry: None,
@@ -6228,6 +6237,7 @@ fn radius_route_job_uses_occupied_target_approach_candidates() {
         radius: 1,
         opts: FindOptions::default(),
         state: None,
+        prereq_catalog: None,
         bank_origin: Origin::Unknown,
         bank: Vec::new(),
         live_geometry: None,
@@ -6279,6 +6289,7 @@ fn compat_radius_falls_back_to_arrival_endpoints_when_walkable_anchor_is_unreach
         radius: 2,
         opts: FindOptions::default(),
         state: None,
+        prereq_catalog: None,
         bank_origin: Origin::Unknown,
         bank: Vec::new(),
         live_geometry: None,
@@ -6379,6 +6390,7 @@ fn compat_radius_falls_back_to_an_in_radius_endpoint_when_center_is_blocked() {
         radius: 2,
         opts: FindOptions::default(),
         state: None,
+        prereq_catalog: None,
         bank_origin: Origin::Unknown,
         bank: Vec::new(),
         live_geometry: None,
@@ -6429,6 +6441,7 @@ fn exact_tile_route_job_reaches_the_tile_or_refuses_an_occupied_one() {
                 0,
                 crate::WalkGlobals::default(),
             ),
+            prereq_catalog: None,
             bank_origin: Default::default(),
             loc_id: None,
             arrival: nav_planner::arrival::ArrivalKind::Reach,
@@ -6506,6 +6519,7 @@ fn radius_route_job_respects_wall_l_diagonal_geometry() {
         radius: 1,
         opts: FindOptions::default(),
         state: None,
+        prereq_catalog: None,
         bank_origin: Origin::Unknown,
         bank: Vec::new(),
         live_geometry: None,
@@ -6571,6 +6585,7 @@ fn radius_route_job_drops_detour_outside_radius() {
         radius: 1,
         opts: FindOptions::default(),
         state: None,
+        prereq_catalog: None,
         bank_origin: Origin::Unknown,
         bank: Vec::new(),
         live_geometry: None,
@@ -6634,6 +6649,7 @@ fn actual_289_radius_arrival_stays_out_of_horvik() {
         radius: 2,
         opts: FindOptions::default(),
         state: None,
+        prereq_catalog: None,
         bank_origin: Origin::Unknown,
         bank: Vec::new(),
         live_geometry: None,
@@ -14740,6 +14756,8 @@ fn dispatch_script_interact_walk_forwards_allow_teleports() {
             allow_teleports: false,
             allow_wilderness: false,
             allow_bank_fetch: false,
+            allow_prereq_dialogue: None,
+            allow_quest_start: None,
             request_id: 0,
             avoid: Vec::new(),
             cross: Vec::new(),
@@ -14775,6 +14793,8 @@ fn dispatch_script_interact_walk_forwards_allow_teleports() {
             allow_teleports: true,
             allow_wilderness: false,
             allow_bank_fetch: false,
+            allow_prereq_dialogue: None,
+            allow_quest_start: None,
             request_id: 0,
             avoid: Vec::new(),
             cross: Vec::new(),
@@ -14813,6 +14833,8 @@ fn queued_walk_keeps_the_state_of_the_frame_that_queued_it() {
             allow_teleports: false,
             allow_wilderness: false,
             allow_bank_fetch: false,
+            allow_prereq_dialogue: None,
+            allow_quest_start: None,
             request_id: 7,
             avoid: Vec::new(),
             cross: Vec::new(),
@@ -14967,6 +14989,8 @@ fn dispatch_script_interact_walk_honors_wilderness_and_bank_fetch_bits() {
             allow_teleports: false,
             allow_wilderness: false,
             allow_bank_fetch: false,
+            allow_prereq_dialogue: None,
+            allow_quest_start: None,
             request_id: 1,
             avoid: Vec::new(),
             cross: Vec::new(),
@@ -15002,6 +15026,8 @@ fn dispatch_script_interact_walk_honors_wilderness_and_bank_fetch_bits() {
             allow_teleports: false,
             allow_wilderness: true,
             allow_bank_fetch: true,
+            allow_prereq_dialogue: None,
+            allow_quest_start: None,
             request_id: 2,
             avoid: Vec::new(),
             cross: Vec::new(),
@@ -15152,6 +15178,8 @@ fn dispatch_v2_walk_near_forwards_plane_radius_and_request_id() {
             allow_teleports: false,
             allow_wilderness: false,
             allow_bank_fetch: false,
+            allow_prereq_dialogue: None,
+            allow_quest_start: None,
             request_id: 77,
             avoid: Vec::new(),
             cross: Vec::new(),
@@ -23500,6 +23528,8 @@ fn a_rapid_pause_resume_pause_sends_the_walk_once_more() {
         allow_teleports,
         allow_wilderness,
         allow_bank_fetch,
+        allow_prereq_dialogue: None,
+        allow_quest_start: None,
         request_id,
         avoid: Vec::new(),
         cross: Vec::new(),
@@ -24066,6 +24096,8 @@ fn a_scene_load_hold_keeps_the_script_walk_abort_and_drops_its_gameplay() {
             allow_teleports: false,
             allow_wilderness: false,
             allow_bank_fetch: false,
+            allow_prereq_dialogue: None,
+            allow_quest_start: None,
             request_id: 777,
             avoid: Vec::new(),
             cross: Vec::new(),
@@ -26622,6 +26654,8 @@ impl script::native::Script for WalkProbe {
             allow_teleports: false,
             allow_wilderness: false,
             allow_bank_fetch: false,
+            allow_prereq_dialogue: None,
+            allow_quest_start: None,
             request_id: 0,
             avoid: Vec::new(),
             cross: Vec::new(),
@@ -26968,6 +27002,7 @@ fn raw_bank_walk_reaches_resolved_stand_before_native_v2_opens_booth() {
                 cache: &None,
                 obj_names_arc: &None,
             },
+            None,
             requests,
         ),
         "raw bank selection must be accepted without a movement packet",
@@ -27204,6 +27239,8 @@ export function tick(api) {
             allow_teleports: false,
             allow_wilderness: false,
             allow_bank_fetch: false,
+            allow_prereq_dialogue: None,
+            allow_quest_start: None,
             request_id: 0,
             avoid: Vec::new(),
             cross: Vec::new(),
@@ -27463,7 +27500,10 @@ fn script_observe_walk_arms_route_and_pump_steps_follow() {
 }
 
 #[test]
-fn host_npc_hop_recovery_retargets_and_clears_after_landing() {
+fn host_gated_npc_hop_recovery_uses_retained_route_evidence() {
+    use nav_planner::quest_gates::QuestGates;
+    use nav_planner::test_support::{family, range, tbwt_evidence, window};
+
     let mut c = nav_client();
     {
         let cache = Arc::get_mut(&mut c.cache).expect("sole cache owner");
@@ -27516,17 +27556,26 @@ fn host_npc_hop_recovery_retargets_and_clears_after_landing() {
         worn_req: Vec::new(),
         members_req: false,
         wildy_cap: None,
-        quest_gates: None,
+        quest_gates: Some(
+            QuestGates::new(family(1), [window("tbwt", "tbwt_main", Some(3), Some(3))])
+                .expect("typed gated NPC crossing"),
+        ),
     };
-    let route = Route {
+    let route = Arc::new(Route {
         legs: vec![Leg::Transport {
             edge: Box::new(edge.clone()),
         }],
         dest: edge.to,
         ticks: 1.0,
-    };
+    });
     let mut arm = WalkArm {
-        route: Some(Arc::new(route)),
+        route: Some(Arc::clone(&route)),
+        basis: Some(Arc::new(crate::admission::RouteBasis {
+            _route: crate::walk_plan::RoutePath::legacy(route),
+            options: FindOptions::default(),
+            avoid: Arc::from([]),
+            quest_evidence: Some(tbwt_evidence(range(Some(3), Some(3)))),
+        })),
         ..Default::default()
     };
     let mut d = NavRec::default();
@@ -27974,6 +28023,7 @@ fn native_walk_receives_host_arrival_even_if_the_next_frame_is_outside_radius() 
                                 required_after: tick.cx.evidence(),
                                 evidence: None,
                                 cross: Box::default(),
+                                avoid: Box::default(),
                                 protect: false,
                                 food_guard: false,
                                 allow: Default::default(),
@@ -29593,6 +29643,7 @@ fn real_v16_return_radius_endpoint_is_native_arrival() {
             ..FindOptions::default()
         },
         state: None,
+        prereq_catalog: None,
         bank_origin: Origin::Unknown,
         bank: Vec::new(),
         live_geometry: None,
@@ -31619,8 +31670,6 @@ mod quest_route_evidence_tests {
     use super::*;
     use api::identity::Scope;
     use api::quest_progress::EvidenceStamp;
-    #[cfg(feature = "js")]
-    use api::selected::RunKey;
     use api::selected::{QuestGate, Truth};
     use api::snapshot::{ItemActionFamily, ItemContainer, ItemView, QuestStatusView, StatView};
     use script::native::{NativeTick, Script, ScriptFailure, ScriptFlow};
@@ -31885,19 +31934,6 @@ export default class T extends LoopingBot {
             false,
         );
     }
-    #[cfg(feature = "js")]
-    fn route_run(slot: &script::SlotScript) -> RunKey {
-        slot.native_run().unwrap_or_else(|| {
-            let Scope::Slot(key) = slot.work_scope().expect("slot work scope") else {
-                panic!("compatibility route must use slot scope");
-            };
-            RunKey {
-                slot: key.incarnation().get(),
-                run: slot.runtime_generation(),
-                session: slot.work_epoch(),
-            }
-        })
-    }
 
     #[cfg(feature = "js")]
     fn start_walk(slot: &Arc<Mutex<script::SlotScript>>) {
@@ -31945,8 +31981,18 @@ export default class T extends LoopingBot {
         start_walk(&slot);
         observe(&rig, &mut driver, &snapshot, 2, None);
         await_walk(&rig);
+        let expected_run = {
+            let slot = slot.lock().unwrap();
+            let run = slot.seat_run().expect("compatibility gameplay seat");
+            assert_ne!(
+                run.session,
+                slot.work_epoch(),
+                "fixture must distinguish gameplay session from work epoch"
+            );
+            run
+        };
         let expected = EvidenceStamp {
-            run: route_run(&slot.lock().unwrap()),
+            run: expected_run,
             tick: 2,
             sequence: 2,
         };
@@ -32036,6 +32082,7 @@ export default class T extends LoopingBot {
                             required_after: tick.cx.evidence(),
                             evidence: None,
                             cross: Box::default(),
+                            avoid: Box::default(),
                             protect: false,
                             food_guard: false,
                             allow: Default::default(),

@@ -977,21 +977,18 @@ mod tests {
             (action.request_id.get(), action.run())
         };
         ledger.as_mut().expect("ledger must remain present").walk =
-            Some(crate::native::WalkReceipt {
-                goal: None,
-                request_id,
-                evidence: api::quest_progress::EvidenceStamp {
-                    run,
-                    tick,
-                    sequence: tick,
-                },
-                end,
-                blocked: None,
-                detail: detail.map(Arc::from),
-                refusal: None,
-                assessment: None,
-                escape: None,
-            });
+            Some(crate::native::WalkReceipt { goal: None,
+            request_id,
+            evidence: api::quest_progress::EvidenceStamp {
+                run,
+                tick,
+                sequence: tick,
+            },
+            end,
+            blocked: None,
+            detail: detail.map(Arc::from),
+            refusal: None,
+            assessment: None, escape: None, prereq_allow: None });
     }
 
     fn args_with_level(

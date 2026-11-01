@@ -1,13 +1,64 @@
+use std::mem::size_of;
 use std::sync::Arc;
 
 use api::selected::{FactKey, QuestGate, Truth};
 
 use super::{QuestEvidence, QuestFamilyMismatch, QuestGateError, QuestGates};
 use crate::test_support::{family, family_schema, range, stamp, tbwt_evidence, window, Resolved};
-use crate::transport::TransportGraph;
+use crate::transport::{TransportEdge, TransportGraph};
 
 fn gates(list: Vec<QuestGate>) -> QuestGates {
     QuestGates::new(family(1), list).expect("valid gates")
+}
+
+#[test]
+fn shared_gates_keeps_the_canonical_gate_allocation() {
+    let gates = gates(vec![QuestGate::Complete(FactKey::new("arrav"))]);
+    let first = gates.shared_gates();
+    let second = gates.shared_gates();
+    let clone = gates.clone();
+    let cloned = clone.shared_gates();
+    assert!(Arc::ptr_eq(&first, &second));
+    assert!(Arc::ptr_eq(&first, &cloned));
+    assert_eq!(first.as_ref(), gates.gates());
+}
+
+#[test]
+fn quest_gate_layout_stays_compact() {
+    let canonical: Arc<[QuestGate]> = vec![QuestGate::Complete(FactKey::new("arrav"))].into();
+    let mut shared = None;
+    let allocation = allocation_counter::measure(|| {
+        shared = Some(Arc::new(super::GateSet {
+            family: family(1),
+            gates: Arc::clone(&canonical),
+        }));
+    });
+    assert_eq!(allocation.count_total, 1, "one allocation per shared set");
+    eprintln!(
+        "quest gate layout QuestGates={} OptionQuestGates={} TransportEdge={} GateSet={} GateSetAllocation={}",
+        size_of::<QuestGates>(),
+        size_of::<Option<QuestGates>>(),
+        size_of::<TransportEdge>(),
+        size_of::<super::GateSet>(),
+        allocation.bytes_current,
+    );
+    assert!(shared.is_some(), "the measurement retains the shared set");
+    assert_eq!(
+        size_of::<QuestGates>(),
+        size_of::<usize>(),
+        "QuestGates is one shared thin pointer"
+    );
+    assert_eq!(
+        size_of::<Option<QuestGates>>(),
+        size_of::<usize>(),
+        "Option<QuestGates> uses the Arc null niche"
+    );
+    // Chardonnay measured 336 bytes; reserve 8 bytes of explicit headroom.
+    // The former 56-byte Option<QuestGates> added 48 bytes to every edge.
+    assert!(
+        size_of::<TransportEdge>() <= 344,
+        "TransportEdge should stay within 8 bytes of the measured 336-byte layout"
+    );
 }
 
 #[test]

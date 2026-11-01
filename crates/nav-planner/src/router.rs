@@ -35,6 +35,7 @@ use std::task::{Context, Poll, Waker};
 use std::time::Instant;
 
 use api::identity::Cancellation;
+use api::prereq_steps::{ActionableGate, CrossingId};
 use api::selected::{QuestGate, Truth};
 use api::snapshot::WorldTile;
 use api::work::{Checkpoint, StepContext, WorkPhase};
@@ -950,6 +951,13 @@ pub enum SearchRequest {
         avoid: Box<[AvoidRect]>,
         max_settles: usize,
     },
+    ActionableQuestGates {
+        from: WorldTile,
+        targets: Box<[WorldTile]>,
+        options: FindOptions,
+        avoid: Box<[AvoidRect]>,
+        max_settles: usize,
+    },
     EntranceRequirements {
         from: WorldTile,
         targets: Box<[WorldTile]>,
@@ -1003,6 +1011,12 @@ pub enum SearchRequestShape {
         max_settles: usize,
     },
     UnresolvedQuestGates {
+        target_capacity: usize,
+        options: FindOptions,
+        avoid_capacity: usize,
+        max_settles: usize,
+    },
+    ActionableQuestGates {
         target_capacity: usize,
         options: FindOptions,
         avoid_capacity: usize,
@@ -1104,6 +1118,18 @@ impl SearchRequestShape {
                 avoid_capacity: avoid.len(),
                 max_settles: *max_settles,
             },
+            SearchRequest::ActionableQuestGates {
+                targets,
+                options,
+                avoid,
+                max_settles,
+                ..
+            } => Self::ActionableQuestGates {
+                target_capacity: targets.len(),
+                options: *options,
+                avoid_capacity: avoid.len(),
+                max_settles: *max_settles,
+            },
             SearchRequest::EntranceRequirements {
                 targets,
                 options,
@@ -1140,6 +1166,7 @@ impl SearchRequestShape {
             | Self::MissingItemReqs { options, .. }
             | Self::BlockingZones { options, .. }
             | Self::UnresolvedQuestGates { options, .. }
+            | Self::ActionableQuestGates { options, .. }
             | Self::EntranceRequirements { options, .. } => options,
         }
     }
@@ -1152,6 +1179,7 @@ impl SearchRequestShape {
             | Self::MissingItemReqs { max_settles, .. }
             | Self::BlockingZones { max_settles, .. }
             | Self::UnresolvedQuestGates { max_settles, .. }
+            | Self::ActionableQuestGates { max_settles, .. }
             | Self::EntranceRequirements { max_settles, .. } => max_settles,
             Self::MissingItemReqsForRoute { .. } => 0,
         }
@@ -1280,6 +1308,25 @@ impl SearchRequestShape {
                     && max_settles >= actual_settles
             }
             (
+                Self::ActionableQuestGates {
+                    target_capacity,
+                    options,
+                    avoid_capacity,
+                    max_settles,
+                },
+                Self::ActionableQuestGates {
+                    target_capacity: actual_targets,
+                    options: actual_options,
+                    avoid_capacity: actual_avoid,
+                    max_settles: actual_settles,
+                },
+            ) => {
+                options == actual_options
+                    && target_capacity >= actual_targets
+                    && avoid_capacity >= actual_avoid
+                    && max_settles >= actual_settles
+            }
+            (
                 Self::EntranceRequirements {
                     target_capacity,
                     options,
@@ -1337,6 +1384,9 @@ impl SearchRequestShape {
             | Self::UnresolvedQuestGates {
                 target_capacity, ..
             }
+            | Self::ActionableQuestGates {
+                target_capacity, ..
+            }
             | Self::EntranceRequirements {
                 target_capacity, ..
             } => Some(target_capacity),
@@ -1363,6 +1413,11 @@ impl SearchRequestShape {
                 ..
             }
             | Self::UnresolvedQuestGates {
+                target_capacity,
+                avoid_capacity,
+                ..
+            }
+            | Self::ActionableQuestGates {
                 target_capacity,
                 avoid_capacity,
                 ..
@@ -1462,6 +1517,7 @@ impl SearchRequest {
             | Self::MissingItemReqs { max_settles, .. }
             | Self::BlockingZones { max_settles, .. }
             | Self::UnresolvedQuestGates { max_settles, .. }
+            | Self::ActionableQuestGates { max_settles, .. }
             | Self::EntranceRequirements { max_settles, .. } => *max_settles,
             Self::MissingItemReqsForRoute { .. } => 0,
         }
@@ -1508,6 +1564,7 @@ pub enum SearchOutcome {
     },
     BlockingZones(Option<Box<[ZoneKey]>>),
     UnresolvedQuestGates(Result<Option<Box<[QuestGate]>>, QuestFamilyMismatch>),
+    ActionableQuestGates(Result<Option<Box<[ActionableGate]>>, QuestFamilyMismatch>),
     /// First real exclusion on the relaxed route, if the route contains one.
     /// The diagnosis does not return or retain a route.
     EntranceRequirements(Option<crate::world_state::EntranceRequirement>),
@@ -2076,7 +2133,11 @@ fn search_worst_case_reservation(
     let carry_rows = envelope.carry_rows;
     let return_rows = envelope.return_rows;
     let max_worn_ids_per_edge = envelope.max_worn_ids_per_edge;
-    let max_quest_gates = if matches!(shape, SearchRequestShape::UnresolvedQuestGates { .. }) {
+    let max_quest_gates = if matches!(
+        shape,
+        SearchRequestShape::UnresolvedQuestGates { .. }
+            | SearchRequestShape::ActionableQuestGates { .. }
+    ) {
         envelope.max_quest_gates
     } else {
         0
@@ -2119,6 +2180,7 @@ fn search_worst_case_reservation(
                 | SearchRequestShape::MissingItemReqs { .. }
                 | SearchRequestShape::BlockingZones { .. }
                 | SearchRequestShape::UnresolvedQuestGates { .. }
+                | SearchRequestShape::ActionableQuestGates { .. }
                 | SearchRequestShape::EntranceRequirements { .. }
         ) {
         // Each partition and its goal/index arrays reserve their exact input
@@ -2169,7 +2231,8 @@ fn search_worst_case_reservation(
             .checked_add(target_set_bytes(fallback_capacity)?)?
             .checked_add(std::mem::size_of::<FirstGoals<'_>>())?,
         SearchRequestShape::BlockingZones { .. }
-        | SearchRequestShape::UnresolvedQuestGates { .. } => {
+        | SearchRequestShape::UnresolvedQuestGates { .. }
+        | SearchRequestShape::ActionableQuestGates { .. } => {
             target_set_bytes(target_count)?.checked_add(std::mem::size_of::<FirstGoals<'_>>())?
         }
         SearchRequestShape::EntranceRequirements {
@@ -2312,6 +2375,12 @@ fn search_worst_case_reservation(
                 vector_storage_bound::<QuestGate>(max_quest_gates)?,
             )?;
         }
+        SearchRequestShape::ActionableQuestGates { .. } => {
+            add_reserved(
+                &mut result_bytes,
+                vector_storage_bound::<ActionableGate>(max_quest_gates)?,
+            )?;
+        }
         SearchRequestShape::EntranceRequirements { .. } => {}
         SearchRequestShape::MissingItemReqsForRoute { .. } => {
             unreachable!("route-only diagnostics return before search reservation")
@@ -2349,6 +2418,7 @@ fn search_worst_case_reservation(
         }
         SearchRequestShape::BlockingZones { .. }
         | SearchRequestShape::UnresolvedQuestGates { .. }
+        | SearchRequestShape::ActionableQuestGates { .. }
         | SearchRequestShape::EntranceRequirements { .. } => {
             add_reserved(&mut materialization_phase, route_result_bytes(settles)?)?;
         }
@@ -6843,6 +6913,28 @@ async fn run_search_request(
             .await?;
             (SearchOutcome::UnresolvedQuestGates(gates), settled)
         }
+        SearchRequest::ActionableQuestGates {
+            from,
+            targets,
+            options,
+            avoid,
+            max_settles,
+        } => {
+            let (gates, settled) = actionable_quest_cursor_search(
+                collision,
+                graph,
+                from,
+                &targets,
+                options,
+                &state,
+                &avoid,
+                max_settles,
+                reservation.max_quest_gates,
+                progress,
+            )
+            .await?;
+            (SearchOutcome::ActionableQuestGates(gates), settled)
+        }
         SearchRequest::EntranceRequirements {
             from,
             targets,
@@ -7050,6 +7142,111 @@ async fn unresolved_quest_cursor_search(
         forward_settled,
     ))
 }
+#[expect(
+    clippy::too_many_arguments,
+    reason = "the cooperative kernel borrows the unchanged quest search inputs"
+)]
+async fn actionable_quest_cursor_search(
+    collision: &WorldCollision,
+    graph: &TransportGraph,
+    from: WorldTile,
+    targets: &[WorldTile],
+    options: FindOptions,
+    state: &WorldState,
+    avoid: &[AvoidRect],
+    budget: usize,
+    max_quest_gates: usize,
+    progress: Option<&AtomicUsize>,
+) -> Result<
+    (
+        Result<Option<Box<[ActionableGate]>>, QuestFamilyMismatch>,
+        usize,
+    ),
+    SearchCursorError,
+> {
+    if let (Some(evidence), Some(pack)) = (&state.quest_evidence, graph.quest_family) {
+        if *evidence.family() != pack {
+            return Ok((
+                Err(QuestFamilyMismatch {
+                    pack: Some(pack),
+                    expected: *evidence.family(),
+                }),
+                0,
+            ));
+        }
+    }
+    let search = first_cursor_search(
+        collision,
+        graph,
+        from,
+        targets,
+        &[],
+        options,
+        state,
+        Relax::ActionableQuest,
+        avoid,
+        FIRST_TARGET_BUDGET.min(budget),
+        budget,
+        progress,
+    )
+    .await?;
+    let forward_settled = search.settled();
+    let (preferred, _) = search.into_routes();
+    let Ok(route) = preferred else {
+        return Ok((Ok(None), forward_settled));
+    };
+    let mut actionable = Vec::new();
+    actionable
+        .try_reserve_exact(max_quest_gates)
+        .map_err(|_| SearchCursorError::Allocation)?;
+    for (leg_index, leg) in route.cursor(graph).enumerate() {
+        work_unit().await;
+        let CompactRouteLeg::Transport(step) = leg else {
+            continue;
+        };
+        let Some(edge) = step.source() else {
+            continue;
+        };
+        let Some(gates) = &edge.quest_gates else {
+            continue;
+        };
+        let evidence = match &state.quest_evidence {
+            Some(evidence) if evidence.family() != gates.family() => {
+                return Ok((
+                    Err(QuestFamilyMismatch {
+                        pack: Some(*gates.family()),
+                        expected: *evidence.family(),
+                    }),
+                    forward_settled,
+                ));
+            }
+            evidence => evidence.as_ref(),
+        };
+        for gate in gates.gates() {
+            work_unit().await;
+            let truth = evidence.map_or(Truth::Unknown, |evidence| evidence.test(gate));
+            if truth == Truth::True || !state.gate_actionable(gate) {
+                continue;
+            }
+            let leg =
+                u16::try_from(leg_index).map_err(|_| SearchCursorError::ResultNotRepresentable)?;
+            let crossing = crossing_id(edge).ok_or(SearchCursorError::ResultNotRepresentable)?;
+            if actionable.len() == max_quest_gates {
+                return Err(SearchCursorError::ResultNotRepresentable);
+            }
+            actionable.push(ActionableGate {
+                gate: gate.clone(),
+                truth,
+                leg,
+                crossing,
+            });
+        }
+    }
+    Ok((
+        Ok((!actionable.is_empty()).then(|| actionable.into_boxed_slice())),
+        forward_settled,
+    ))
+}
 
 /// Diagnose a strict search that could not route through a quest-stage
 /// gate: search again crossing every gate the state's evidence leaves
@@ -7131,6 +7328,143 @@ pub fn find_unresolved_quest_gates(
         }
     }
     Ok((!unresolved.is_empty()).then(|| unresolved.into()))
+}
+/// Diagnose a strict `NoPath` by allowing only gates for which an API-owned
+/// prerequisite window proves an establishment implication. Every snapshot
+/// requirement remains strict, and this search is never used to route.
+pub fn find_actionable_quest_gates(
+    collision: &WorldCollision,
+    graph: &TransportGraph,
+    from: WorldTile,
+    targets: &[WorldTile],
+    opts: FindOptions,
+    state: &WorldState,
+    avoid: &[AvoidRect],
+) -> Result<Option<Arc<[ActionableGate]>>, QuestFamilyMismatch> {
+    if let (Some(evidence), Some(pack)) = (&state.quest_evidence, graph.quest_family) {
+        if *evidence.family() != pack {
+            return Err(QuestFamilyMismatch {
+                pack: Some(pack),
+                expected: *evidence.family(),
+            });
+        }
+    }
+    let Some(route) = first_search(
+        collision,
+        graph,
+        from,
+        targets,
+        &[],
+        opts,
+        state,
+        Relax::ActionableQuest,
+        avoid,
+        NODE_BUDGET,
+        NODE_BUDGET,
+    )
+    .into_route()
+    .ok() else {
+        return Ok(None);
+    };
+
+    let mut actionable = Vec::new();
+    for (leg_index, leg) in route.legs.iter().enumerate() {
+        let Leg::Transport { edge } = leg else {
+            continue;
+        };
+        let Some(gates) = &edge.quest_gates else {
+            continue;
+        };
+        let evidence = match &state.quest_evidence {
+            Some(evidence) if evidence.family() != gates.family() => {
+                return Err(QuestFamilyMismatch {
+                    pack: Some(*gates.family()),
+                    expected: *evidence.family(),
+                });
+            }
+            evidence => evidence.as_ref(),
+        };
+        for gate in gates.gates() {
+            let truth = evidence.map_or(Truth::Unknown, |evidence| evidence.test(gate));
+            if truth == Truth::True || !state.gate_actionable(gate) {
+                continue;
+            }
+            let Some(leg) = u16::try_from(leg_index).ok() else {
+                // The shared API represents route-leg indices as u16. Do
+                // not return a partial list or invent a truncated index.
+                return Ok(None);
+            };
+            let Some(crossing) = crossing_id(edge) else {
+                // An API crossing identity must preserve the edge's exact
+                // option; an out-of-range nav option cannot be truncated.
+                return Ok(None);
+            };
+            actionable.push(ActionableGate {
+                gate: gate.clone(),
+                truth,
+                leg,
+                crossing,
+            });
+        }
+    }
+    Ok((!actionable.is_empty()).then(|| actionable.into()))
+}
+
+/// Capture every API-establishable quest gate on the accepted route, in
+/// original route-leg and canonical edge-gate order.
+///
+/// Unlike [`find_actionable_quest_gates`], this retains gates whose current
+/// evidence is already `True`: a live refusal can contradict that evidence.
+/// `None` means the route has no such gates or cannot be represented exactly.
+pub fn route_establishable_quest_gates(
+    route: RouteView<'_>,
+    state: &WorldState,
+) -> Option<Arc<[ActionableGate]>> {
+    let windows = state.establishable.as_deref()?;
+    let evidence = state.quest_evidence.as_ref();
+    let mut result = Vec::new();
+    for (leg_index, leg) in route.legs().enumerate() {
+        let Some(transport) = leg.transport() else {
+            continue;
+        };
+        let Some(gates) = transport.quest_gates() else {
+            continue;
+        };
+        let Some(family) = transport.quest_family() else {
+            continue;
+        };
+        if evidence.is_some_and(|evidence| evidence.family() != family) {
+            return None;
+        }
+        if !gates.iter().any(|gate| {
+            windows
+                .iter()
+                .any(|window| api::prereq_steps::proves(window, gate))
+        }) {
+            continue;
+        }
+        let leg = u16::try_from(leg_index).ok()?;
+        let crossing = transport.crossing_id()?;
+        for gate in gates {
+            if !windows
+                .iter()
+                .any(|window| api::prereq_steps::proves(window, gate))
+            {
+                continue;
+            }
+            result.push(ActionableGate {
+                gate: gate.clone(),
+                truth: evidence.map_or(Truth::Unknown, |evidence| evidence.test(gate)),
+                leg,
+                crossing,
+            });
+        }
+    }
+    (!result.is_empty()).then(|| result.into())
+}
+
+fn crossing_id(edge: &TransportEdge) -> Option<CrossingId> {
+    edge.crossing_id()
 }
 
 /// [`find`] with an explicit per-search cost model (the run-vs-walk rate).
@@ -7737,6 +8071,10 @@ enum Relax {
     /// The quest-evidence diagnosis ([`find_unresolved_quest_gates`]): a
     /// stage gate the evidence leaves `Unknown` is crossed; `False` closes.
     UnknownQuest,
+    /// The actionable-quest diagnosis: every snapshot requirement stays
+    /// strict; each non-`True` stage gate must be implied by an
+    /// API-established window.
+    ActionableQuest,
     /// Entrance diagnosis names exclusions, unknown absence observations,
     /// and missing conjunctive worn items. Other positive gates stay strict.
     EntranceExclusions,
@@ -7755,6 +8093,7 @@ fn edge_allowed(state: &WorldState, edge: &TransportEdge, relax: Relax) -> bool 
         Relax::UnknownQuest => {
             state.snapshot_allows(edge) && state.quest_gates(edge) != Truth::False
         }
+        Relax::ActionableQuest => state.snapshot_allows(edge) && state.quest_gates_actionable(edge),
         Relax::EntranceExclusions => {
             state.snapshot_allows_ignoring_exclusions(edge)
                 && state.quest_gates(edge) == Truth::True
@@ -7779,7 +8118,10 @@ fn proof_edge_allowed(
     if inventory_can_grow
         && matches!(
             relax,
-            Relax::Strict | Relax::UnknownQuest | Relax::EntranceExclusions
+            Relax::Strict
+                | Relax::UnknownQuest
+                | Relax::ActionableQuest
+                | Relax::EntranceExclusions
         )
     {
         resources::fixed_allowed(state, edge, relax)
@@ -7797,8 +8139,10 @@ fn prefer_worn_slash_for_web(
     state: &WorldState,
     relax: Relax,
 ) -> bool {
-    if !matches!(relax, Relax::Strict | Relax::EntranceExclusions)
-        || !edge.is_slashable_web()
+    if !matches!(
+        relax,
+        Relax::Strict | Relax::ActionableQuest | Relax::EntranceExclusions
+    ) || !edge.is_slashable_web()
         || edge.option != 0
         || edge.item_req.is_empty()
     {

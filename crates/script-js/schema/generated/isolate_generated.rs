@@ -12223,6 +12223,8 @@ impl<'a> Interact<'a> {
   pub const VT_COMPAT_TILE_INTENT: ::flatbuffers::VOffsetT = 90;
   pub const VT_LINEAGE: ::flatbuffers::VOffsetT = 92;
   pub const VT_MIRROR_OWNER: ::flatbuffers::VOffsetT = 94;
+  pub const VT_ALLOW_PREREQ_DIALOGUE: ::flatbuffers::VOffsetT = 96;
+  pub const VT_ALLOW_QUEST_START: ::flatbuffers::VOffsetT = 98;
 
   #[inline]
   pub unsafe fn init_from_table(table: ::flatbuffers::Table<'a>) -> Self {
@@ -12271,6 +12273,8 @@ impl<'a> Interact<'a> {
     builder.add_z(args.z);
     builder.add_x(args.x);
     if let Some(x) = args.op { builder.add_op(x); }
+    if let Some(x) = args.allow_quest_start { builder.add_allow_quest_start(x); }
+    if let Some(x) = args.allow_prereq_dialogue { builder.add_allow_prereq_dialogue(x); }
     builder.add_compat_tile_intent(args.compat_tile_intent);
     builder.add_run_energy_kind(args.run_energy_kind);
     builder.add_run_auto_kind(args.run_auto_kind);
@@ -12590,6 +12594,20 @@ impl<'a> Interact<'a> {
     // which contains a valid value in this slot
     unsafe { self._tab.get::<u64>(Interact::VT_MIRROR_OWNER, Some(0)).unwrap()}
   }
+  #[inline]
+  pub fn allow_prereq_dialogue(&self) -> Option<bool> {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<bool>(Interact::VT_ALLOW_PREREQ_DIALOGUE, None)}
+  }
+  #[inline]
+  pub fn allow_quest_start(&self) -> Option<bool> {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<bool>(Interact::VT_ALLOW_QUEST_START, None)}
+  }
 }
 
 impl ::flatbuffers::Verifiable for Interact<'_> {
@@ -12642,6 +12660,8 @@ impl ::flatbuffers::Verifiable for Interact<'_> {
      .visit_field::<bool>("compat_tile_intent", Self::VT_COMPAT_TILE_INTENT, false)?
      .visit_field::<u64>("lineage", Self::VT_LINEAGE, false)?
      .visit_field::<u64>("mirror_owner", Self::VT_MIRROR_OWNER, false)?
+     .visit_field::<bool>("allow_prereq_dialogue", Self::VT_ALLOW_PREREQ_DIALOGUE, false)?
+     .visit_field::<bool>("allow_quest_start", Self::VT_ALLOW_QUEST_START, false)?
      .finish();
     Ok(())
   }
@@ -12691,6 +12711,8 @@ pub struct InteractArgs<'a> {
     pub compat_tile_intent: bool,
     pub lineage: u64,
     pub mirror_owner: u64,
+    pub allow_prereq_dialogue: Option<bool>,
+    pub allow_quest_start: Option<bool>,
 }
 impl<'a> Default for InteractArgs<'a> {
   #[inline]
@@ -12740,6 +12762,8 @@ impl<'a> Default for InteractArgs<'a> {
       compat_tile_intent: false,
       lineage: 0,
       mirror_owner: 0,
+      allow_prereq_dialogue: None,
+      allow_quest_start: None,
     }
   }
 }
@@ -12926,6 +12950,14 @@ impl<'a: 'b, 'b, A: ::flatbuffers::Allocator + 'a> InteractBuilder<'a, 'b, A> {
     self.fbb_.push_slot::<u64>(Interact::VT_MIRROR_OWNER, mirror_owner, 0);
   }
   #[inline]
+  pub fn add_allow_prereq_dialogue(&mut self, allow_prereq_dialogue: bool) {
+    self.fbb_.push_slot_always::<bool>(Interact::VT_ALLOW_PREREQ_DIALOGUE, allow_prereq_dialogue);
+  }
+  #[inline]
+  pub fn add_allow_quest_start(&mut self, allow_quest_start: bool) {
+    self.fbb_.push_slot_always::<bool>(Interact::VT_ALLOW_QUEST_START, allow_quest_start);
+  }
+  #[inline]
   pub fn new(_fbb: &'b mut ::flatbuffers::FlatBufferBuilder<'a, A>) -> InteractBuilder<'a, 'b, A> {
     let start = _fbb.start_table();
     InteractBuilder {
@@ -12987,6 +13019,8 @@ impl ::core::fmt::Debug for Interact<'_> {
       ds.field("compat_tile_intent", &self.compat_tile_intent());
       ds.field("lineage", &self.lineage());
       ds.field("mirror_owner", &self.mirror_owner());
+      ds.field("allow_prereq_dialogue", &self.allow_prereq_dialogue());
+      ds.field("allow_quest_start", &self.allow_quest_start());
       ds.finish()
   }
 }

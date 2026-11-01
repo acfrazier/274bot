@@ -8,7 +8,7 @@ A guide is a compiled, restartable description of one quest. The compiler checks
 
 A guide is one JSON file with schema 3. It names the quest, the checks the Quester runs before it starts, and the roles, sequences, and steps the runner follows. Unknown fields and unregistered step kinds fail before any run.
 
-- Top level: `$schema`, `schema: 3`, `id`, `display_name`, `kind`, `required`, `tested_stats`, `partner`, `quest`, and `roles`.
+- Top level: `$schema`, `schema: 3`, `id`, `display_name`, `kind`, `required`, `tested_stats`, `partner`, optional `prereq`, `quest`, and `roles`.
 
   `id` is the content quest stem, for example `cook`. `kind` is `Quest` by default. A `Miniquest` role needs its own typed `progress_reader`, and one without it is rejected. `required` holds header requirement ids that gate Start.
 
@@ -31,6 +31,16 @@ A guide is one JSON file with schema 3. It names the quest, the checks the Quest
 `skip_if` and `settle` use externally tagged predicate documents: `{"All":[...]}`, `{"Any":[...]}`, `{"Not":...}`, and `{"Fact":{"kind":"...","version":1,"args":{...}}}`. Keep this envelope as written.
 
 Step ids must stay unique across recipes and the selected role's prelude, sequences, and `progress_reader`. A solo guide declares exactly one role. Paired guides declare one role per gang.
+
+### Prerequisite switches
+
+The optional header `"prereq": {"quest_start": false}` forbids prerequisite quest starts on every walk in the guide.
+Use `"dialogue": false` in that header to forbid prerequisite dialogue steps.
+An omitted field inherits the global and script grants.
+A true header field grants that permission.
+A false header field or a false per-step permission always forbids it.
+For one `walk` step, use `allow_prereq_dialogue` or `allow_quest_start` in its arguments.
+These switches do not change the guide's explicitly authored quest conversations.
 
 ## Required danger zones
 

@@ -65,6 +65,56 @@ export default class T extends LoopingBot {{
 }
 
 #[test]
+fn public_traversal_preserves_prerequisite_consent_overrides() {
+    for method in ["walkTo", "walkResilient"] {
+        for (options, expected_dialogue, expected_start) in [
+            ("{}", None, None),
+            (
+                "{ allowPrereqDialogue: false, allowQuestStart: false }",
+                Some(false),
+                Some(false),
+            ),
+            (
+                "{ allowPrereqDialogue: false, allowQuestStart: true }",
+                Some(false),
+                Some(true),
+            ),
+            (
+                "{ allowPrereqDialogue: true, allowQuestStart: false }",
+                Some(true),
+                Some(false),
+            ),
+            (
+                "{ allowPrereqDialogue: true, allowQuestStart: true }",
+                Some(true),
+                Some(true),
+            ),
+        ] {
+            let call = format!("Traversal.{method}({{ x: 3222, z: 3240, level: 0 }}, {options})");
+            let (error, operations, arrived) = walk_with_bound(&call);
+            assert_eq!(error, "", "{call}");
+            let walks = world_walks(&operations);
+            let [InteractReq::Walk {
+                allow_prereq_dialogue,
+                allow_quest_start,
+                ..
+            }
+            | InteractReq::WalkNear {
+                allow_prereq_dialogue,
+                allow_quest_start,
+                ..
+            }] = walks.as_slice()
+            else {
+                panic!("expected one public world walk for {call}: {operations:?}");
+            };
+            assert_eq!(*allow_prereq_dialogue, expected_dialogue, "{call}");
+            assert_eq!(*allow_quest_start, expected_start, "{call}");
+            assert_eq!(arrived, true, "{call}");
+        }
+    }
+}
+
+#[test]
 fn a_frozen_search_bound_is_accepted_and_the_walk_still_resolves() {
     // JiveKQ passes maxBudget 120_000 (route.ts:17); 0 and a bound past the
     // host's own are accepted the same way.

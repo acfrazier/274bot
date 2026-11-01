@@ -39,6 +39,7 @@ pub(super) use script_nav::{
     ScriptWalkArm,
 };
 use script_nav::{log_walk_arm_bot, take_carried_walk};
+pub(crate) use script_nav::{manual_route_state, route_prereq_content, RoutePrereqContent};
 
 /// Resolve live-fixture crossing grants through the script walk product path.
 #[cfg(feature = "test-support")]
@@ -68,8 +69,8 @@ mod script_walk;
 #[cfg(not(test))]
 use script_walk::apply_watchdog_nav_action;
 pub(super) use script_walk::{
-    abort_script_walk, pause_script, session_freezes_follow, step_bank_fetch_on_bot, step_nav_bot,
-    take_manual_walk_ownership,
+    abort_script_walk, observe_compat_walk, pause_script, session_freezes_follow,
+    step_bank_fetch_on_bot, step_nav_bot, take_manual_walk_ownership,
 };
 #[cfg(test)]
 pub(super) use script_walk::{

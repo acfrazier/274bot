@@ -132,17 +132,17 @@ impl fmt::Display for QuestGateError {
 
 impl std::error::Error for QuestGateError {}
 
-/// An edge's quest-stage gates: a non-empty, canonical (sorted, duplicate
-/// free) list bound to the quest family its keys come from. The edge is
-/// usable only while every gate is `True`. Cloning shares one allocation.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct QuestGates(Arc<GateSet>);
-
 #[derive(Debug, PartialEq, Eq)]
 struct GateSet {
     family: QuestFamilyId,
-    gates: Box<[QuestGate]>,
+    gates: Arc<[QuestGate]>,
 }
+
+/// An edge's quest-stage gates: a non-empty, canonical (sorted, duplicate
+/// free) list bound to the quest family its keys come from. The edge is
+/// usable only while every gate is `True`. Cloning shares the canonical gates.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct QuestGates(Arc<GateSet>);
 
 impl QuestGates {
     /// Validate and canonicalize `gates` for `family`.
@@ -161,7 +161,7 @@ impl QuestGates {
         }
         Ok(Self(Arc::new(GateSet {
             family,
-            gates: gates.into_boxed_slice(),
+            gates: Arc::from(gates),
         })))
     }
 
@@ -173,6 +173,11 @@ impl QuestGates {
     /// The gates, in canonical order.
     pub fn gates(&self) -> &[QuestGate] {
         &self.0.gates
+    }
+
+    /// Share the canonical gate list without copying its members.
+    pub fn shared_gates(&self) -> Arc<[QuestGate]> {
+        Arc::clone(&self.0.gates)
     }
 
     /// `True` only when evidence prepared from the same quest family proves

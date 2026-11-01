@@ -1621,6 +1621,8 @@ fn nav_member_setting(key: &str) -> frontend_core::Setting {
         "allow_teleports" => Setting::Nav(N::AllowTeleports),
         "allow_wilderness" => Setting::Nav(N::AllowWilderness),
         "allow_bank_fetch" => Setting::Nav(N::AllowBankFetch),
+        "allow_prereq_dialogue" => Setting::Nav(N::AllowPrereqDialogue),
+        "allow_quest_start" => Setting::Nav(N::AllowQuestStart),
         "allow_danger_zones" | "survivable_routing" => Setting::DangerRouting,
         "script_scope_notice_ack" => Setting::Nav(N::ScriptScopeNoticeAck),
         "survivable_routing_notice_ack" => Setting::Nav(N::SurvivableRoutingNoticeAck),
@@ -1639,6 +1641,18 @@ fn apply_walk_permissions_to_nav(
     apply_walk_permission(nav, "allow_teleports", globals.allow_teleports(), pending);
     apply_walk_permission(nav, "allow_wilderness", globals.allow_wilderness(), pending);
     apply_walk_permission(nav, "allow_bank_fetch", globals.allow_bank_fetch(), pending);
+    apply_walk_permission(
+        nav,
+        "allow_prereq_dialogue",
+        globals.allow_prereq_dialogue(),
+        pending,
+    );
+    apply_walk_permission(
+        nav,
+        "allow_quest_start",
+        globals.allow_quest_start(),
+        pending,
+    );
     apply_walk_permission(
         nav,
         "allow_danger_zones",
@@ -1687,6 +1701,8 @@ fn nav_member_mut<'a>(nav: &'a mut NavSettings, key: &'static str) -> &'a mut bo
         "allow_teleports" => &mut nav.allow_teleports,
         "allow_wilderness" => &mut nav.allow_wilderness,
         "allow_bank_fetch" => &mut nav.allow_bank_fetch,
+        "allow_prereq_dialogue" => &mut nav.allow_prereq_dialogue,
+        "allow_quest_start" => &mut nav.allow_quest_start,
         "allow_danger_zones" => &mut nav.allow_danger_zones,
         "survivable_routing" => &mut nav.survivable_routing,
         "script_scope_notice_ack" => &mut nav.script_scope_notice_ack,
@@ -1701,6 +1717,8 @@ fn apply_pending_nav_members(nav: &mut NavSettings, pending: &HashMap<&'static s
             "allow_teleports" => nav.allow_teleports = *value,
             "allow_wilderness" => nav.allow_wilderness = *value,
             "allow_bank_fetch" => nav.allow_bank_fetch = *value,
+            "allow_prereq_dialogue" => nav.allow_prereq_dialogue = *value,
+            "allow_quest_start" => nav.allow_quest_start = *value,
             "allow_danger_zones" => nav.allow_danger_zones = *value,
             "survivable_routing" => nav.survivable_routing = *value,
             "script_scope_notice_ack" => nav.script_scope_notice_ack = *value,

@@ -1,7 +1,8 @@
 //! Native adapter for the shared walk correlation and arrival core.
 use super::walk_wait::{HostOutcome, Observation, WalkKey, WalkSlot};
 use super::{
-    ActionContext, ActionError, HoldResume, NativeMachine, WalkEnd, WalkReceipt, WalkRequest,
+    ActionContext, ActionError, HoldResume, NativeMachine, PrereqAllow, WalkEnd, WalkReceipt,
+    WalkRequest,
 };
 use api::selected::QuestGate;
 use api::snapshot::SnapshotView;
@@ -199,6 +200,7 @@ fn deadline_failure_receipt(
         refusal: None,
         assessment: None,
         escape: None,
+        prereq_allow: None,
     }
 }
 
@@ -211,6 +213,13 @@ impl Walk {
             .request()
             .expect("walk correlation remains active")
             .0
+    }
+
+    /// Read the effective grants from this walk's fresh terminal receipt.
+    pub(crate) fn prereq_allow(&self, cx: &ActionContext<'_>) -> Option<PrereqAllow> {
+        cx.walk_receipt(self.request_id())
+            .filter(|receipt| receipt.evidence.meets(self.replay.required_after))
+            .and_then(|receipt| receipt.prereq_allow)
     }
 
     fn replan_after_quest_list_wait(
@@ -438,6 +447,7 @@ impl NativeMachine for Walk {
                 refusal: None,
                 assessment: None,
                 escape: None,
+                prereq_allow: receipt.and_then(|receipt| receipt.prereq_allow),
             }));
         }
         match receipt {

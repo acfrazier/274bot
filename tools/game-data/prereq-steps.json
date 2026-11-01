@@ -1,0 +1,337 @@
+{
+  "rows": [
+    {
+      "id": "priestperil:drezel-advice",
+      "crossings": [
+        {
+          "loc_id": 3443,
+          "option": 1,
+          "kind": "door",
+          "pass": {
+            "message": "You pass through the holy barrier.",
+            "proves": { "min": 61, "max": 61 },
+            "source": "scripts/areas/area_mausoleum/scripts/holy_barrier.rs2:2-5"
+          },
+          "delay": { "ticks": 0 },
+          "source": "scripts/areas/area_mausoleum/scripts/holy_barrier.rs2:1-6; maps/m53_154.jm2:4437"
+        }
+      ],
+      "establishes": {
+        "quest": "priestperil",
+        "signal": "priestperil",
+        "values": { "min": 61, "max": 61 }
+      },
+      "after": [
+        { "proves": { "min": 61, "max": 61 }, "after": { "min": 61, "max": 61 } },
+        { "proves": { "min": 60, "max": 61 }, "after": { "min": 60, "max": 61 } },
+        { "proves": { "min": 60, "max": 60 }, "after": { "min": 60, "max": 61 } },
+        { "proves": { "min": 0, "max": 59 }, "after": { "min": 0, "max": 61 } }
+      ],
+      "reviewed_writes": [
+        {
+          "write": "scripts/areas/area_mausoleum/scripts/temple_guardian.rs2:12",
+          "sets": 3,
+          "guard": "scripts/areas/area_mausoleum/scripts/temple_guardian.rs2:14-22",
+          "guard_text": "%priestperil > ^priestperil_killed_dog",
+          "called_from": "scripts/skill_combat/scripts/npc/npc_combat.rs2:144,223"
+        }
+      ],
+      "probe": {
+        "refuse": [
+          {
+            "page": "speak to me first",
+            "then": "talk",
+            "proves": { "min": 60, "max": 60 },
+            "source": "scripts/areas/area_mausoleum/scripts/drezel.rs2:126-131"
+          },
+          {
+            "page": "You must restore the sanctity of the Salve",
+            "then": { "precondition": { "Complete": "priestperil" } },
+            "proves": { "min": 0, "max": 59 },
+            "source": "scripts/areas/area_mausoleum/scripts/drezel.rs2:120-125"
+          }
+        ]
+      },
+      "target": {
+        "npc": 1049,
+        "op": 1,
+        "anchor": { "x": 3440, "z": 9895, "level": 0 },
+        "leash": 2,
+        "source": "maps/m53_154.jm2:6139; scripts/areas/area_mausoleum/scripts/drezel.rs2:8-19"
+      },
+      "preconditions": [
+        {
+          "kind": "gate",
+          "gate": { "Complete": "priestperil" },
+          "source": "scripts/areas/area_mausoleum/scripts/drezel.rs2:8"
+        },
+        {
+          "kind": "owned_anywhere",
+          "item": "dagger_wolfbane",
+          "otherwise": "reclaim",
+          "source": "scripts/areas/area_mausoleum/scripts/drezel.rs2:9-13"
+        }
+      ],
+      "talk": {
+        "strict": true,
+        "prefer": [],
+        "line_rules": [],
+        "branches": [
+          {
+            "opener": "So can I pass through that barrier now?",
+            "outcome": "advice",
+            "effect_page": "Okay, I will keep it equipped whenever I fight werewolves.",
+            "terminal": "Okay, I will keep it equipped whenever I fight werewolves.",
+            "proves": { "min": 61, "max": 61 },
+            "source": "scripts/areas/area_mausoleum/scripts/drezel.rs2:139-147"
+          },
+          {
+            "opener": "I've lost my wolfbane dagger.",
+            "outcome": "reclaimed",
+            "effect_page": "Luckily for you it washed up",
+            "terminal": "Thanks for that!",
+            "proves": { "min": 60, "max": 61 },
+            "source": "scripts/areas/area_mausoleum/scripts/drezel.rs2:154-158",
+            "requires_at_opener": { "kind": "free_slots", "count": 1, "otherwise": "close" }
+          },
+          {
+            "opener": "*",
+            "outcome": "satisfied",
+            "proves": { "min": 61, "max": 61 },
+            "source": "scripts/areas/area_mausoleum/scripts/drezel.rs2:14-19,160-161",
+            "exit": "close"
+          }
+        ],
+        "repeat_after": { "reclaimed": 1 }
+      },
+      "memory": "durable",
+      "consent": "prereq_dialogue"
+    },
+    {
+      "id": "druidspirit:drezel-start",
+      "crossings": [
+        {
+          "loc_id": 3507,
+          "option": 1,
+          "kind": "door",
+          "heading": "south",
+          "pass": {
+            "message": "You walk into the gloomy atmosphere of Mort Myre.",
+            "proves": { "min": 1, "max": 110 },
+            "source": "scripts/quests/quest_druidspirit/scripts/quest_druidspirit.rs2:9-16"
+          },
+          "delay": {
+            "ticks": 2,
+            "source": "scripts/doors/scripts/open_and_close_double_doors.rs2:104"
+          },
+          "source": "scripts/quests/quest_druidspirit/scripts/quest_druidspirit.rs2:2; maps/m53_54.jm2:5089; scripts/doors/scripts/door_procs.rs2:90-101; scripts/doors/scripts/open_and_close_double_doors.rs2:96-108"
+        },
+        {
+          "loc_id": 3506,
+          "option": 1,
+          "kind": "door",
+          "heading": "south",
+          "pass": {
+            "message": "You walk into the gloomy atmosphere of Mort Myre.",
+            "proves": { "min": 1, "max": 110 },
+            "source": "scripts/quests/quest_druidspirit/scripts/quest_druidspirit.rs2:9-16"
+          },
+          "delay": {
+            "ticks": 2,
+            "source": "scripts/doors/scripts/open_and_close_double_doors.rs2:104"
+          },
+          "source": "scripts/quests/quest_druidspirit/scripts/quest_druidspirit.rs2:1; maps/m53_54.jm2:5096; scripts/doors/scripts/door_procs.rs2:90-101; scripts/doors/scripts/open_and_close_double_doors.rs2:96-108"
+        },
+        {
+          "loc_id": 3507,
+          "option": 1,
+          "kind": "door",
+          "heading": "north",
+          "pass": {
+            "message": "You skip gladly out of murky Mort Myre.",
+            "proves": { "min": 1, "max": 110 },
+            "source": "scripts/quests/quest_druidspirit/scripts/quest_druidspirit.rs2:17-23"
+          },
+          "delay": { "ticks": 0 },
+          "source": "scripts/quests/quest_druidspirit/scripts/quest_druidspirit.rs2:2; maps/m53_54.jm2:5089; scripts/doors/scripts/door_procs.rs2:90-101; scripts/doors/scripts/open_and_close_double_doors.rs2:96-108"
+        },
+        {
+          "loc_id": 3506,
+          "option": 1,
+          "kind": "door",
+          "heading": "north",
+          "pass": {
+            "message": "You skip gladly out of murky Mort Myre.",
+            "proves": { "min": 1, "max": 110 },
+            "source": "scripts/quests/quest_druidspirit/scripts/quest_druidspirit.rs2:17-23"
+          },
+          "delay": { "ticks": 0 },
+          "source": "scripts/quests/quest_druidspirit/scripts/quest_druidspirit.rs2:1; maps/m53_54.jm2:5096; scripts/doors/scripts/door_procs.rs2:90-101; scripts/doors/scripts/open_and_close_double_doors.rs2:96-108"
+        }
+      ],
+      "establishes": {
+        "quest": "druidspirit",
+        "signal": "druidspirit",
+        "values": { "min": 5, "max": 5 }
+      },
+      "after": [
+        { "proves": { "min": 5, "max": 5 }, "after": { "min": 5, "max": 110 } },
+        { "proves": { "min": 1, "max": 110 }, "after": { "min": 1, "max": 110 } },
+        { "proves": { "min": 5, "max": 10 }, "after": { "min": 5, "max": 110 } },
+        { "proves": { "min": 0, "max": 0 }, "after": { "min": 0, "max": 110 } }
+      ],
+      "reviewed_writes": [],
+      "probe": {
+        "refuse": [
+          {
+            "page": "All persons wishing to enter must see Drezel",
+            "then": "talk",
+            "proves": { "min": 0, "max": 0 },
+            "source": "scripts/quests/quest_druidspirit/scripts/quest_druidspirit.rs2:5-8"
+          }
+        ]
+      },
+      "target": {
+        "npc": 1049,
+        "op": 1,
+        "anchor": { "x": 3440, "z": 9895, "level": 0 },
+        "leash": 2,
+        "source": "maps/m53_154.jm2:6139; scripts/areas/area_mausoleum/scripts/drezel.rs2:8-19"
+      },
+      "preconditions": [
+        {
+          "kind": "gate",
+          "gate": {
+            "Window": {
+              "quest": "priestperil",
+              "signal": "priestperil",
+              "values": { "min": 61, "max": 61 }
+            }
+          },
+          "source": "scripts/areas/area_mausoleum/scripts/drezel.rs2:14-19"
+        },
+        {
+          "kind": "owned_anywhere",
+          "item": "dagger_wolfbane",
+          "otherwise": "reclaim",
+          "source": "scripts/areas/area_mausoleum/scripts/drezel.rs2:15-18"
+        }
+      ],
+      "talk": {
+        "strict": true,
+        "prefer": [
+          "Is there anything else interesting to do around here?",
+          "Well, what is it, I may be able to help?",
+          "Yes, I'll go and look for him.",
+          "Yes, I'm sure."
+        ],
+        "line_rules": [],
+        "branches": [
+          {
+            "opener": "Greetings again adventurer",
+            "outcome": "start",
+            "effect_page": "The cleric hands you some food.",
+            "terminal": "I'll do my very best, don't worry, if he's in there and he's still alive I'll definitely find him.",
+            "proves": { "min": 5, "max": 5 },
+            "source": "scripts/areas/area_mausoleum/scripts/drezel.rs2:276-338"
+          },
+          {
+            "opener": "Hello again!",
+            "outcome": "satisfied",
+            "proves": { "min": 5, "max": 10 },
+            "source": "scripts/areas/area_mausoleum/scripts/drezel.rs2:265-266",
+            "exit": "close"
+          },
+          {
+            "opener": "I've lost my wolfbane dagger.",
+            "outcome": "reclaimed",
+            "effect_page": "Luckily for you it washed up",
+            "terminal": "Thanks for that!",
+            "proves": { "min": 60, "max": 61 },
+            "source": "scripts/areas/area_mausoleum/scripts/drezel.rs2:154-158",
+            "requires_at_opener": { "kind": "free_slots", "count": 1, "otherwise": "close" }
+          },
+          {
+            "opener": "*",
+            "outcome": "satisfied",
+            "proves": { "min": 1, "max": 110 },
+            "source": "scripts/areas/area_mausoleum/scripts/drezel.rs2:161-278",
+            "exit": "close"
+          }
+        ],
+        "repeat_after": { "reclaimed": 1 }
+      },
+      "memory": "durable",
+      "consent": "quest_start"
+    }
+  ],
+  "journals": [
+    {
+      "id": "blackarmgang:phoenixgang-stage",
+      "quest": "blackarmgang",
+      "establishes": {
+        "quest": "blackarmgang",
+        "signal": "phoenixgang",
+        "values": { "min": 10, "max": 10 }
+      },
+      "after": [
+        { "proves": { "min": 10, "max": 10 }, "after": { "min": 10, "max": 10 } },
+        { "proves": { "min": 0, "max": 8 }, "after": { "min": 0, "max": 10 } }
+      ],
+      "reviewed_writes": [],
+      "rules": [
+        {
+          "all": [
+            "i searched the phoenix gang headquarters and found",
+            "half of the shield of arrav.",
+            "quest complete!"
+          ],
+          "proves": { "min": 10, "max": 10 },
+          "source": "scripts/quests/quest_blackarmgang/scripts/blackarmgang_journal.rs2:16,96-108,203-204; scripts/general/configs/quest.constant:8"
+        },
+        {
+          "all": [
+            "i searched the black arm gang headquarters and found",
+            "half of the shield of arrav.",
+            "quest complete!"
+          ],
+          "proves": { "min": 0, "max": 8 },
+          "source": "scripts/quests/quest_blackarmgang/scripts/blackarmgang_journal.rs2:114,186-197,203-205; scripts/quests/quest_blackarmgang/configs/quest_blackarmgang.constant:12"
+        }
+      ],
+      "source": "scripts/quests/quest_blackarmgang/scripts/blackarmgang_journal.rs2:1"
+    },
+    {
+      "id": "hero:phoenixgang-stage",
+      "quest": "hero",
+      "establishes": {
+        "quest": "hero",
+        "signal": "heroquest",
+        "values": { "min": 3, "max": 15 }
+      },
+      "after": [
+        { "proves": { "min": 3, "max": 13 }, "after": { "min": 3, "max": 15 } }
+      ],
+      "reviewed_writes": [
+        {
+          "write": "scripts/areas/areas_heroes_guild/scripts/achietties.rs2:42",
+          "sets": 1,
+          "guard": "scripts/quests/quest_hero/scripts/quest_hero.rs2:9-13",
+          "guard_text": "%heroquest > ^hero_not_started & %heroquest < ^hero_complete",
+          "called_from": "scripts/areas/areas_heroes_guild/scripts/achietties.rs2:10"
+        }
+      ],
+      "rules": [
+        {
+          "all": [
+            "i spoke to straven about the master thieves armband.",
+            "then i told alfonse the password 'gherkin'."
+          ],
+          "proves": { "min": 3, "max": 13 },
+          "source": "scripts/quests/quest_hero/scripts/hero_journal.rs2:1-14,110-125; scripts/quests/quest_hero/configs/quest_hero.constant:3,14"
+        }
+      ],
+      "source": "scripts/quests/quest_hero/scripts/hero_journal.rs2:1"
+    }
+  ]
+}

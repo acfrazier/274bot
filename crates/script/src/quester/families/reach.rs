@@ -175,6 +175,15 @@ impl NativeMachine for GroundTake {
     }
 }
 
+impl GroundTake {
+    pub(crate) fn prereq_allow(
+        &self,
+        cx: &ActionContext<'_>,
+    ) -> Option<crate::native::PrereqAllow> {
+        self.0.prereq_allow(cx)
+    }
+}
+
 /// What the chooser asks the reach loop to do next.
 enum Choice {
     /// Request, avoid key, held count before, target within interaction range.
@@ -380,6 +389,20 @@ impl NativeMachine for Reach {
         if let Some(walk) = self.walk.as_mut() {
             walk.cancel();
         }
+    }
+}
+
+impl Reach {
+    /// Last target operation queued by the shared reach/click driver.
+    pub(crate) fn request_id(&self) -> u64 {
+        self.request_id
+    }
+
+    pub(crate) fn prereq_allow(
+        &self,
+        cx: &ActionContext<'_>,
+    ) -> Option<crate::native::PrereqAllow> {
+        self.walk.as_ref()?.prereq_allow(cx)
     }
 }
 
@@ -1590,7 +1613,7 @@ pub fn last_chat_seq(cx: &ActionContext<'_>) -> i32 {
         .unwrap_or(0)
 }
 
-fn saw_cant_reach(cx: &ActionContext<'_>, since: i32) -> bool {
+pub(in crate::quester) fn saw_cant_reach(cx: &ActionContext<'_>, since: i32) -> bool {
     saw_game_message(cx, since, CANT_REACH)
 }
 
@@ -1649,6 +1672,7 @@ pub fn walk_request(
         required_after,
         evidence: None,
         cross: Vec::new().into_boxed_slice(),
+        avoid: Box::new([]),
         protect: false,
         food_guard: false,
         allow: Default::default(),

@@ -382,6 +382,7 @@ export default class T extends LoopingBot {{
                 refusal: None,
                 assessment: None,
                 escape: None,
+                prereq_allow: None,
             },
         );
 

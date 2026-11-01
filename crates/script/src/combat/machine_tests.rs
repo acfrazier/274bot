@@ -65,6 +65,7 @@ impl Runtime {
         let mut actions = NativeActions { _private: () };
         let mut cx = ActionContext {
             stage_cross: None,
+            walk_prereq: Default::default(),
             condition: self.condition,
             poison_unknown_pulse: self.poison_unknown_pulse,
             cure_poison: self.cure_poison,
@@ -634,6 +635,7 @@ fn post_walk_receipt(
         refusal: None,
         assessment: None,
         escape: None,
+        prereq_allow: None,
     });
 }
 
@@ -1739,6 +1741,7 @@ fn combat_and_guard_share_projectile_first_protect_policy() {
         protect: true,
         food_guard: false,
         allow: crate::native::WalkAllow::default(),
+        avoid: Box::default(),
     };
     let mut guard =
         crate::combat::WalkGuard::begin_with(&request, &snapshot, Arc::clone(&scene.tables))
@@ -2444,6 +2447,7 @@ fn case15_terminal_walk_receipt_without_arrival_is_retreat_failed() {
         refusal: None,
         assessment: None,
         escape: None,
+        prereq_allow: None,
     });
     assert_eq!(
         harness.ready(&scene, 4).end,

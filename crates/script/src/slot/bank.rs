@@ -12,10 +12,12 @@ use crate::bank::seat_open::{Opening, OpeningArgs, OpeningValue};
 use crate::bank::seat_transfer::{
     Transfer, TransferAnswer, TransferArgs, TransferCall, TransferHooks, TransferValue,
 };
+use crate::local_state::SlotState;
 use crate::native::request::NativeKind;
 use crate::native::snapshot_source::BankSelectionInput;
 use crate::native::{ActionContext, ActionError, ActionHandle, NativeActions, NativeMachine};
 use crate::native_bank::{bank_value, PickKind, SelectedBank};
+use crate::quester::prereq::walk::PrereqWalk;
 use api::named_banks::{BankPreferences, NamedBankFacts};
 use api::snapshot::WorldTile;
 use serde_json::{json, Value};
@@ -140,7 +142,7 @@ enum Job {
         deadline: Option<Duration>,
     },
     ReturnWalk {
-        handle: ActionHandle<crate::native::walk::Walk>,
+        walk: PrereqWalk,
         deadline: Duration,
     },
     Finished,
@@ -296,10 +298,15 @@ impl BankRow {
         None
     }
 
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "The bank seat borrows its separate owners and selected facts without another context allocation."
+    )]
     fn poll(
         &mut self,
         actions: &mut NativeActions,
         cx: &mut ActionContext<'_>,
+        slot_state: Option<&SlotState>,
         facts: &Arc<NamedBankFacts>,
         preferences: BankPreferences,
         note: &mut Option<(u64, NoteIntent)>,
@@ -495,14 +502,15 @@ impl BankRow {
                         required_after: cx.evidence(),
                         evidence: None,
                         cross: Box::new([]),
+                        avoid: Box::new([]),
                         protect: false,
                         food_guard: false,
                         allow: Default::default(),
                     };
-                    match actions.begin::<crate::native::walk::Walk>(request, cx) {
-                        Ok(handle) => {
+                    match PrereqWalk::begin(request, actions, cx) {
+                        Ok(walk) => {
                             self.job = Job::ReturnWalk {
-                                handle,
+                                walk,
                                 deadline: deadline.unwrap_or_else(|| {
                                     cx.active_now().saturating_add(Duration::from_secs(120))
                                 }),
@@ -517,11 +525,11 @@ impl BankRow {
                         Err(_) => return Poll::Ready(Ok(json!(true))),
                     }
                 }
-                Job::ReturnWalk { handle, deadline } => {
+                Job::ReturnWalk { mut walk, deadline } => {
                     if cx.active_now() >= deadline {
                         return Poll::Ready(Ok(json!(true)));
                     }
-                    match actions.poll(&handle, cx) {
+                    match walk.poll(actions, cx, slot_state) {
                         Poll::Ready(Ok(receipt))
                             if receipt.end == crate::native::WalkEnd::Cancelled =>
                         {
@@ -533,7 +541,7 @@ impl BankRow {
                             };
                         }
                         Poll::Ready(_) => return Poll::Ready(Ok(json!(true))),
-                        Poll::Pending => self.job = Job::ReturnWalk { handle, deadline },
+                        Poll::Pending => self.job = Job::ReturnWalk { walk, deadline },
                     }
                     return Poll::Pending;
                 }
@@ -591,11 +599,11 @@ impl SlotScript {
                         Job::Transfer(handle) | Job::ResumeTransfer { handle, .. } => {
                             Job::ResumeTransfer { kind, handle }
                         }
-                        Job::ReturnWalk { handle, deadline } => {
-                            // The old primitive belongs to the dropped
+                        Job::ReturnWalk { walk, deadline } => {
+                            // The old logical walk belongs to the dropped
                             // session. Retain the trip's return cursor and
                             // deadline, then revalidate a fresh follow.
-                            drop(handle);
+                            drop(walk);
                             Job::Return {
                                 deadline: Some(deadline),
                             }
@@ -729,6 +737,7 @@ impl SlotScript {
                 row.poll(
                     &mut actions,
                     &mut cx,
+                    self.local_state.as_deref(),
                     &facts,
                     preferences,
                     &mut bank.note,

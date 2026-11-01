@@ -42,16 +42,251 @@
 //! The derivation itself lives in [`nav_bake::bake`], shared with the ordinary
 //! application build (`host-play`'s build script), which bakes and stages the
 //! selected revision automatically; this CLI stays for deliberate
-//! developer/custom-input bakes.
-
+//! developer/custom-input bakes. Export all pack crossings with
+//! `nav-pack --export-crossings PACK --out JSON`.
+use std::collections::HashMap;
 use std::env;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
+use api::prereq_steps::CrossingId;
+use api::selected::QuestGate;
 use nav_bake::bake::{
     self, config_jag_for, content_inputs, verify_cache_manifest, BakeRequest, BakedNav,
 };
 use nav_planner::manifest::{nav_manifest_path, CacheManifest};
+use nav_planner::transport::TransportGraph;
+
+/// Input paths for the standalone crossing projection mode.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ExportInputs {
+    pack: PathBuf,
+    out: PathBuf,
+}
+
+fn parse_export_args(
+    args: impl IntoIterator<Item = impl AsRef<str>>,
+) -> Result<ExportInputs, String> {
+    let args: Vec<String> = args.into_iter().map(|s| s.as_ref().to_string()).collect();
+    let mut pack = None;
+    let mut out = None;
+    let mut it = args.iter();
+    while let Some(flag) = it.next() {
+        if !flag.starts_with("--") {
+            return Err(format!(
+                "unexpected positional argument {flag:?} in crossing-export mode"
+            ));
+        }
+        let value = it.next().ok_or_else(|| format!("{flag} needs a value"))?;
+        if value.starts_with("--") || value.is_empty() {
+            return Err(format!("{flag} needs a value"));
+        }
+        match flag.as_str() {
+            "--export-crossings" if pack.is_none() => pack = Some(PathBuf::from(value)),
+            "--out" if out.is_none() => out = Some(PathBuf::from(value)),
+            "--export-crossings" | "--out" => {
+                return Err(format!("duplicate crossing-export option {flag}"));
+            }
+            _ => return Err(format!("unknown crossing-export option {flag}")),
+        }
+    }
+    Ok(ExportInputs {
+        pack: pack
+            .ok_or_else(|| "crossing-export mode requires --export-crossings PACK".to_owned())?,
+        out: out.ok_or_else(|| "crossing-export mode requires --out JSON".to_owned())?,
+    })
+}
+
+#[derive(serde::Serialize)]
+struct CrossingExport<'a> {
+    schema: u8,
+    navpack_sha256: String,
+    crossings: Vec<CrossingExportRow<'a>>,
+    identical_edge_groups: Vec<Vec<String>>,
+}
+
+#[derive(serde::Serialize)]
+struct CrossingExportRow<'a> {
+    crossing: CrossingId,
+    standable: bool,
+    admissible: bool,
+    quest_gate_alternatives: Vec<&'a [QuestGate]>,
+}
+
+fn crossing_export_json(
+    pack_bytes: &[u8],
+    collision: &nav_planner::collision::WorldCollision,
+    graph: &TransportGraph,
+) -> Result<String, String> {
+    let edge_count = graph.edges.len();
+    let mut crossings = Vec::with_capacity(edge_count + graph.teleports.len());
+    let mut crossing_index = HashMap::with_capacity(edge_count + graph.teleports.len());
+    for (index, edge) in graph.edges.iter().chain(&graph.teleports).enumerate() {
+        let source = crossing_row_source(index, edge_count);
+        let crossing = edge.crossing_id().ok_or_else(|| {
+            format!(
+                "{source} has no representable CrossingId (loc_id {}, option {})",
+                edge.loc_id, edge.option
+            )
+        })?;
+        let standable = collision.standable(crossing.takeoff);
+        // Any-tile teleports are not stored in `graph.edges` and have no
+        // loc-approach predicate. Their exact candidate tile is admissible
+        // whenever it is standable; normal crossings use the shared graph
+        // predicate below.
+        let admissible = if index < edge_count {
+            graph.admissible_from(collision, index, crossing.takeoff)
+        } else {
+            standable
+        };
+        let gates = edge
+            .quest_gates
+            .as_ref()
+            .map_or(&[][..], |quest_gates| quest_gates.gates());
+        match crossing_index.entry(crossing) {
+            std::collections::hash_map::Entry::Vacant(entry) => {
+                entry.insert(crossings.len());
+                crossings.push(CrossingExportRow {
+                    crossing,
+                    standable,
+                    admissible,
+                    quest_gate_alternatives: vec![gates],
+                });
+            }
+            std::collections::hash_map::Entry::Occupied(entry) => {
+                let row = &mut crossings[*entry.get()];
+                // A physical crossing is admissible when any represented
+                // source edge admits its exact takeoff.
+                row.admissible |= admissible;
+                if !row.quest_gate_alternatives.contains(&gates) {
+                    row.quest_gate_alternatives.push(gates);
+                }
+            }
+        }
+    }
+
+    let export = CrossingExport {
+        schema: 2,
+        navpack_sha256: nav_planner::manifest::hash_bytes(pack_bytes),
+        crossings,
+        identical_edge_groups: identical_edge_groups(graph)?,
+    };
+    serde_json::to_string_pretty(&export)
+        .map_err(|error| format!("serialize crossing export: {error}"))
+}
+
+fn identical_edge_groups(graph: &TransportGraph) -> Result<Vec<Vec<String>>, String> {
+    struct CandidateGroup {
+        first_index: usize,
+        members: Option<Vec<usize>>,
+    }
+
+    let edge_count = graph.edges.len();
+    let edges: Vec<_> = graph.edges.iter().chain(&graph.teleports).collect();
+    let mut groups_by_crossing: HashMap<CrossingId, Vec<usize>> = HashMap::new();
+    let mut groups = Vec::<CandidateGroup>::new();
+
+    for (index, edge) in edges.iter().enumerate() {
+        let crossing = edge.crossing_id().ok_or_else(|| {
+            let source = crossing_row_source(index, edge_count);
+            format!(
+                "{source} has no representable CrossingId (loc_id {}, option {})",
+                edge.loc_id, edge.option
+            )
+        })?;
+        let matching_group = groups_by_crossing.get(&crossing).and_then(|candidates| {
+            candidates
+                .iter()
+                .copied()
+                .find(|candidate| edges[groups[*candidate].first_index] == *edge)
+        });
+        if let Some(group_index) = matching_group {
+            let group = &mut groups[group_index];
+            match &mut group.members {
+                Some(members) => members.push(index),
+                None => group.members = Some(vec![group.first_index, index]),
+            }
+        } else {
+            let group_index = groups.len();
+            groups.push(CandidateGroup {
+                first_index: index,
+                members: None,
+            });
+            groups_by_crossing
+                .entry(crossing)
+                .or_default()
+                .push(group_index);
+        }
+    }
+
+    Ok(groups
+        .into_iter()
+        .filter_map(|group| {
+            group.members.map(|members| {
+                members
+                    .into_iter()
+                    .map(|index| crossing_row_source(index, edge_count))
+                    .collect()
+            })
+        })
+        .collect())
+}
+
+fn crossing_row_source(index: usize, edge_count: usize) -> String {
+    if index < edge_count {
+        format!("graph.edges[{index}]")
+    } else {
+        format!("graph.teleports[{}]", index - edge_count)
+    }
+}
+
+fn export_crossings(inputs: &ExportInputs) -> Result<(), String> {
+    let pack_bytes = std::fs::read(&inputs.pack)
+        .map_err(|error| format!("read {}: {error}", inputs.pack.display()))?;
+    let (mut collision, graph, _) = nav_planner::pack::decode(&pack_bytes)
+        .map_err(|error| format!("decode {}: {error}", inputs.pack.display()))?;
+    let flags_path = flags_path_for(&inputs.pack);
+    let flags = nav_planner::pack::read_flags_sidecar(&flags_path, false)
+        .map_err(|error| format!("read flags sidecar {}: {error}", flags_path.display()))?;
+    if flags.origin != collision.origin
+        || flags.width != collision.width
+        || flags.height != collision.height
+    {
+        return Err(format!(
+            "flags sidecar {} grid {:?} {}x{} does not match pack grid {:?} {}x{}",
+            flags_path.display(),
+            flags.origin,
+            flags.width,
+            flags.height,
+            collision.origin,
+            collision.width,
+            collision.height
+        ));
+    }
+    let expected_flag_count = collision
+        .width
+        .checked_mul(collision.height)
+        .and_then(|cells| cells.checked_mul(nav_planner::collision::LEVELS))
+        .ok_or_else(|| "pack collision dimensions overflow the flags sidecar size".to_owned())?;
+    if flags.flags.len() != expected_flag_count {
+        return Err(format!(
+            "flags sidecar {} has {} words; pack grid requires {expected_flag_count}",
+            flags_path.display(),
+            flags.flags.len()
+        ));
+    }
+    let raw_flags = std::sync::Arc::try_unwrap(flags.flags).map_err(|_| {
+        format!(
+            "flags sidecar {} is unexpectedly shared",
+            flags_path.display()
+        )
+    })?;
+    collision.attach_flags(raw_flags);
+
+    let json = crossing_export_json(&pack_bytes, &collision, &graph)?;
+    std::fs::write(&inputs.out, json)
+        .map_err(|error| format!("write {}: {error}", inputs.out.display()))
+}
 
 fn legacy_default_paths(
     engine_dir: Option<PathBuf>,
@@ -253,7 +488,24 @@ fn parse_args(args: impl IntoIterator<Item = impl AsRef<str>>) -> Result<BakeInp
 }
 
 fn main() -> ExitCode {
-    let inputs = match parse_args(env::args().skip(1)) {
+    let args: Vec<String> = env::args().skip(1).collect();
+    if args.first().is_some_and(|arg| arg == "--export-crossings") {
+        let inputs = match parse_export_args(&args) {
+            Ok(inputs) => inputs,
+            Err(error) => {
+                eprintln!("nav-pack: {error}");
+                return ExitCode::FAILURE;
+            }
+        };
+        return match export_crossings(&inputs) {
+            Ok(()) => ExitCode::SUCCESS,
+            Err(error) => {
+                eprintln!("nav-pack: {error}");
+                ExitCode::FAILURE
+            }
+        };
+    }
+    let inputs = match parse_args(args) {
         Ok(inputs) => inputs,
         Err(error) => {
             eprintln!("nav-pack: {error}");

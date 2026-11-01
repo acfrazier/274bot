@@ -5004,6 +5004,8 @@ fn decode_interact_rows<'a>(
                 allow_teleports: row.action().is_some_and(|a| a == "tele" || a == "on"),
                 allow_wilderness: row.allow_wilderness(),
                 allow_bank_fetch: row.allow_bank_fetch(),
+                allow_prereq_dialogue: row.allow_prereq_dialogue(),
+                allow_quest_start: row.allow_quest_start(),
                 request_id: row.request_id(),
                 avoid: decoded_avoid(&row),
                 cross: row
@@ -5020,6 +5022,8 @@ fn decode_interact_rows<'a>(
                 allow_teleports: row.action().is_some_and(|a| a == "tele" || a == "on"),
                 allow_wilderness: row.allow_wilderness(),
                 allow_bank_fetch: row.allow_bank_fetch(),
+                allow_prereq_dialogue: row.allow_prereq_dialogue(),
+                allow_quest_start: row.allow_quest_start(),
                 request_id: row.request_id(),
                 avoid: decoded_avoid(&row),
                 cross: row
@@ -6246,6 +6250,8 @@ fn interact_off<'b>(
             request_id,
             allow_wilderness,
             allow_bank_fetch,
+            allow_prereq_dialogue,
+            allow_quest_start,
             ..
         } => {
             table.add_x(*x);
@@ -6266,6 +6272,12 @@ fn interact_off<'b>(
             }
             if *allow_bank_fetch {
                 table.add_allow_bank_fetch(true);
+            }
+            if let Some(allow) = allow_prereq_dialogue {
+                table.add_allow_prereq_dialogue(*allow);
+            }
+            if let Some(allow) = allow_quest_start {
+                table.add_allow_quest_start(*allow);
             }
         }
         InteractReq::WalkNearestBank => {}
@@ -6317,6 +6329,8 @@ fn interact_off<'b>(
             request_id,
             allow_wilderness,
             allow_bank_fetch,
+            allow_prereq_dialogue,
+            allow_quest_start,
             ..
         } => {
             table.add_x(*x);
@@ -6333,6 +6347,12 @@ fn interact_off<'b>(
             }
             if *allow_bank_fetch {
                 table.add_allow_bank_fetch(true);
+            }
+            if let Some(allow) = allow_prereq_dialogue {
+                table.add_allow_prereq_dialogue(*allow);
+            }
+            if let Some(allow) = allow_quest_start {
+                table.add_allow_quest_start(*allow);
             }
         }
         InteractReq::WalkTo { x, z, level } | InteractReq::RecoveryAnchor { x, z, level } => {
@@ -8082,6 +8102,8 @@ pub(crate) mod tests {
                 allow_teleports: true,
                 allow_wilderness: false,
                 allow_bank_fetch: false,
+                allow_prereq_dialogue: None,
+                allow_quest_start: None,
                 request_id: 9,
                 avoid: Vec::new(),
                 cross: Vec::new(),
@@ -8095,6 +8117,8 @@ pub(crate) mod tests {
                 allow_teleports: false,
                 allow_wilderness: false,
                 allow_bank_fetch: false,
+                allow_prereq_dialogue: None,
+                allow_quest_start: None,
                 request_id: 0,
                 avoid: Vec::new(),
                 cross: Vec::new(),
@@ -8130,6 +8154,8 @@ pub(crate) mod tests {
                 allow_teleports: false,
                 allow_wilderness: true,
                 allow_bank_fetch: true,
+                allow_prereq_dialogue: None,
+                allow_quest_start: Some(false),
                 request_id: 11,
                 avoid: Vec::new(),
                 cross: Vec::new(),
@@ -8143,6 +8169,8 @@ pub(crate) mod tests {
                 allow_teleports: true,
                 allow_wilderness: false,
                 allow_bank_fetch: true,
+                allow_prereq_dialogue: Some(true),
+                allow_quest_start: None,
                 request_id: 12,
                 avoid: Vec::new(),
                 cross: Vec::new(),
@@ -8150,6 +8178,46 @@ pub(crate) mod tests {
         ];
         let bytes = encode_interact_batch(&reqs);
         assert_eq!(decode_interact_batch(&bytes).expect("decode"), reqs);
+    }
+
+    #[test]
+    fn walk_prerequisite_overrides_roundtrip_without_collapsing_inherit_and_forbid() {
+        for allow_prereq_dialogue in [None, Some(false), Some(true)] {
+            for allow_quest_start in [None, Some(false), Some(true)] {
+                let reqs = [
+                    InteractReq::Walk {
+                        x: 3100,
+                        z: 3525,
+                        level: 0,
+                        allow_teleports: false,
+                        allow_wilderness: false,
+                        allow_bank_fetch: false,
+                        allow_prereq_dialogue,
+                        allow_quest_start,
+                        request_id: 11,
+                        avoid: Vec::new(),
+                        cross: Vec::new(),
+                    },
+                    InteractReq::WalkNear {
+                        x: 3222,
+                        z: 3222,
+                        level: 0,
+                        radius: 2,
+                        compat_tile_intent: true,
+                        allow_teleports: false,
+                        allow_wilderness: false,
+                        allow_bank_fetch: false,
+                        allow_prereq_dialogue,
+                        allow_quest_start,
+                        request_id: 12,
+                        avoid: Vec::new(),
+                        cross: Vec::new(),
+                    },
+                ];
+                let bytes = encode_interact_batch(&reqs);
+                assert_eq!(decode_interact_batch(&bytes).expect("decode"), reqs);
+            }
+        }
     }
 
     #[test]
@@ -8192,6 +8260,8 @@ pub(crate) mod tests {
                 allow_teleports: false,
                 allow_wilderness: false,
                 allow_bank_fetch: false,
+                allow_prereq_dialogue: None,
+                allow_quest_start: None,
                 request_id: 7,
                 avoid: Vec::new(),
                 cross: Vec::new(),

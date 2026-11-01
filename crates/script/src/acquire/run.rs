@@ -4,11 +4,11 @@ use super::plan::{self, Counts};
 use super::*;
 use crate::bank::{self, BankStandAccess, PickKind};
 use crate::gatherer::oneop::{OneOp, OneOpArgs};
-use crate::native::walk::Walk;
 use crate::native::{
     ActionContext, ActionHandle, NativeActions, NativeTick, WalkRequest, WalkRetryState,
 };
 use crate::native_bank::{BankMachine, BankRequest};
+use crate::quester::prereq::walk::PrereqWalk;
 use api::named_banks::NamedBankFacts;
 use api::selected::RunKey;
 use api::snapshot::ItemView;
@@ -38,7 +38,7 @@ enum Active {
     #[default]
     None,
     Select(ActionHandle<bank::Select>),
-    Walk(ActionHandle<Walk>),
+    Walk(PrereqWalk),
     Open(ActionHandle<bank::Open>),
     Deposit(ActionHandle<bank::Deposit>),
     Machine(ActionHandle<BankMachine>),
@@ -248,7 +248,7 @@ impl AcquireRun {
                     } else {
                         self.request.required_after
                     };
-                    let handle = match tick.actions.begin::<Walk>(
+                    let handle = match PrereqWalk::begin(
                         WalkRequest {
                             target,
                             candidate_goals: None,
@@ -259,10 +259,12 @@ impl AcquireRun {
                             required_after,
                             evidence: None,
                             cross: Box::default(),
+                            avoid: Box::new([]),
                             protect: false,
                             food_guard: false,
                             allow: Default::default(),
                         },
+                        tick.actions,
                         &mut tick.cx,
                     ) {
                         Ok(handle) => handle,
@@ -511,7 +513,7 @@ impl AcquireRun {
         match std::mem::take(&mut self.active) {
             Active::None => {}
             Active::Select(handle) => actions.cancel(handle),
-            Active::Walk(handle) => actions.cancel(handle),
+            Active::Walk(mut walk) => walk.cancel(),
             Active::Open(handle) => actions.cancel(handle),
             Active::Deposit(handle) => actions.cancel(handle),
             Active::Machine(handle) => actions.cancel(handle),
@@ -647,8 +649,8 @@ impl AcquireRun {
                     self.phase = Phase::Walk;
                 }
             },
-            Active::Walk(handle) => match tick.actions.poll(&handle, &mut tick.cx) {
-                Poll::Pending => self.active = Active::Walk(handle),
+            Active::Walk(mut walk) => match walk.poll(tick.actions, &mut tick.cx, tick.state) {
+                Poll::Pending => self.active = Active::Walk(walk),
                 Poll::Ready(Err(error)) => return Poll::Ready(Err(error)),
                 Poll::Ready(Ok(receipt)) => {
                     if self.walk_retry.as_mut().is_some_and(|retry| {

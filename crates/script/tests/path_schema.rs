@@ -1582,6 +1582,51 @@ fn ordered_monks_friend_wood_agrees_once_then_chops_and_hands_in() {
     );
 }
 
+#[test]
+fn open_morytania_recipe_uses_only_the_shared_a1_prerequisite_walk() {
+    use script::quester::probe::{known_empty_bank, Choice, Probe};
+
+    let _home = script::IsolatedEnv::enter("path-schema-morytania-prerequisite");
+    let (selected, quests) = selected_and_quests();
+    let _gathering = script::quester::compile::prepare_for_test({
+        let selected = Arc::clone(&selected);
+        move |worker| selected.prepare_gathering(worker)
+    })
+    .expect("289 gather catalog");
+    let document = read_path(&paths_dir().join("priestperil.json"));
+    let recipe = document["quest"]["acquire"]["open:morytania"]
+        .as_array()
+        .expect("Morytania recipe");
+    assert_eq!(
+        recipe.len(),
+        1,
+        "the catalog is the only Drezel dialogue plan"
+    );
+    assert_eq!(recipe[0]["kind"], "walk");
+    assert_eq!(
+        recipe[0]["args"]["tile"],
+        serde_json::json!([3423, 3485, 0])
+    );
+    assert_eq!(recipe[0]["args"]["allow_quest_start"], false);
+    let document: PathDocument = serde_json::from_value(document).expect("priestperil decodes");
+    let compiled =
+        compile_uncached_for_test(&document, &selected, &quests).expect("priestperil compiles");
+    let bank = known_empty_bank();
+    let probe = Probe {
+        path: &compiled,
+        selected: &selected,
+        quests: &quests,
+        progress: &[],
+        bank: &bank,
+    };
+    for (x, z) in [(3408, 3489), (3440, 9895)] {
+        assert_eq!(
+            probe.recipe_choice("open:morytania", &snapshot_at(x, z)),
+            Choice::Step(FactKey::new("pass-holy-barrier"))
+        );
+    }
+}
+
 /// DIAG-CRYPT-GATE-NAV: nav has no edge through either Priest in Peril crypt
 /// gate, and Gate 2's west stand (3431,9897) is outside `monuments` and north
 /// of Gate 1's wall line, so Gate 1's Open approach from there targets the

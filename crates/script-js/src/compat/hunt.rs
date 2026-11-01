@@ -749,6 +749,8 @@ impl<K: Kind> Hunt<K> {
                 request_id: token,
                 avoid: Vec::new(),
                 cross: Vec::new(),
+                allow_prereq_dialogue: None,
+                allow_quest_start: None,
             }
         } else {
             InteractReq::WalkNear {
@@ -763,6 +765,8 @@ impl<K: Kind> Hunt<K> {
                 request_id: token,
                 avoid: Vec::new(),
                 cross: Vec::new(),
+                allow_prereq_dialogue: None,
+                allow_quest_start: None,
             }
         });
         self.reply = Some(json!({ "queued": true, "walkToken": token }));

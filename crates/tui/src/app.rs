@@ -490,6 +490,8 @@ pub(crate) struct PendingSettings {
     pub(crate) teleports: bool,
     pub(crate) wilderness: bool,
     pub(crate) bank_fetch: bool,
+    pub(crate) prereq_dialogue: bool,
+    pub(crate) quest_start: bool,
     pub(crate) danger: bool,
     pub(crate) scope_ack: bool,
     pub(crate) survivable_ack: bool,
@@ -859,6 +861,8 @@ impl TuiApp {
             NavPreference::AllowTeleports => self.pending.teleports,
             NavPreference::AllowWilderness => self.pending.wilderness,
             NavPreference::AllowBankFetch => self.pending.bank_fetch,
+            NavPreference::AllowPrereqDialogue => self.pending.prereq_dialogue,
+            NavPreference::AllowQuestStart => self.pending.quest_start,
             NavPreference::AllowDangerZones | NavPreference::SurvivableRouting => {
                 self.pending.danger
             }
@@ -985,6 +989,16 @@ impl TuiApp {
                 self.holds(NavPreference::SurvivableRouting),
                 self.nav.survivable_routing(),
                 next.survivable_routing(),
+            ),
+            keep(
+                self.holds(NavPreference::AllowPrereqDialogue),
+                self.nav.allow_prereq_dialogue(),
+                next.allow_prereq_dialogue(),
+            ),
+            keep(
+                self.holds(NavPreference::AllowQuestStart),
+                self.nav.allow_quest_start(),
+                next.allow_quest_start(),
             ),
         );
         self.script_scope_notice_ack = keep(

@@ -1413,21 +1413,18 @@ fn post_stand_walk_failure(
     detail: Option<&str>,
     refusal: Option<script::native::WalkRefusal>,
 ) -> Option<String> {
-    let receipt = script::native::WalkReceipt {
-        request_id: walk.request_id,
-        evidence: EvidenceStamp {
-            run: walk.authority.run(),
-            tick: observed_tick,
-            sequence: observed_tick,
-        },
-        goal: None,
-        end,
-        blocked: None,
-        detail: detail.map(Arc::from),
-        refusal,
-        assessment: None,
-        escape: None,
-    };
+    let receipt = script::native::WalkReceipt { request_id: walk.request_id,
+    evidence: EvidenceStamp {
+        run: walk.authority.run(),
+        tick: observed_tick,
+        sequence: observed_tick,
+    },
+    goal: None,
+    end,
+    blocked: None,
+    detail: detail.map(Arc::from),
+    refusal,
+    assessment: None, escape: None, prereq_allow: None };
     let failure_detail = receipt.failure_detail().map(|detail| detail.to_string());
     if let Some(detail) = detail {
         assert_eq!(failure_detail.as_deref(), Some(detail));

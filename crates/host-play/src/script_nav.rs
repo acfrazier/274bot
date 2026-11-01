@@ -281,6 +281,7 @@ struct RoutePreflights {
     missing_route: SearchPreflight,
     blocking: SearchPreflight,
     unresolved: SearchPreflight,
+    actionable: Option<SearchPreflight>,
     entrance: SearchPreflight,
 }
 
@@ -411,6 +412,19 @@ impl RouteSubmission {
             avoid_capacity,
             max_settles,
         })?;
+        let actionable = state
+            .establishable
+            .as_ref()
+            .is_some_and(|windows| !windows.is_empty())
+            .then(|| {
+                preflight(SearchRequestShape::ActionableQuestGates {
+                    target_capacity: candidate_capacity,
+                    options,
+                    avoid_capacity,
+                    max_settles,
+                })
+            })
+            .transpose()?;
         let entrance = preflight(SearchRequestShape::EntranceRequirements {
             target_capacity: candidate_capacity,
             options,
@@ -426,6 +440,7 @@ impl RouteSubmission {
             missing_route,
             blocking,
             unresolved,
+            actionable,
             entrance,
         };
 
@@ -521,6 +536,9 @@ impl RouteSubmission {
             })
             .ok_or(RouteJobError::Budget)?;
         result_bytes = result_bytes.max(preflights.unresolved.reservation().result_bytes);
+        if let Some(actionable) = &preflights.actionable {
+            result_bytes = result_bytes.max(actionable.reservation().result_bytes);
+        }
         result_bytes = result_bytes.max(preflights.entrance.reservation().result_bytes);
         result_bytes = result_bytes
             .checked_add(state.quest_evidence.as_ref().map_or(
@@ -561,7 +579,10 @@ impl RouteSubmission {
             &preflights.blocking,
             &preflights.unresolved,
             &preflights.entrance,
-        ] {
+        ]
+        .into_iter()
+        .chain(preflights.actionable.as_ref())
+        {
             include_peak(
                 search
                     .input_bytes()
@@ -1029,6 +1050,7 @@ enum RouteSearchPurpose {
     FetchableFirst,
     Blocking,
     Unresolved,
+    Actionable,
     MissingCarry,
     Entrance,
 }
@@ -1145,7 +1167,11 @@ impl RouteJob {
         mut request: Box<ScriptRouteRequest>,
         kind: RouteDemandKind,
     ) -> Result<Self, RouteJobError> {
-        let state = Arc::new(request.state.take().unwrap_or_else(WorldState::empty));
+        let mut state = request.state.take().unwrap_or_else(WorldState::empty);
+        if let Some(catalog) = request.prereq_catalog.as_ref() {
+            state.establishable = Some(catalog.establishable_windows());
+        }
+        let state = Arc::new(state);
         let basis_avoid: Arc<[AvoidRect]> = Arc::from(copy_boxed_slice(request.avoid())?);
         let lease = nav_lease(&request.world).map_err(|_| RouteJobError::Budget)?;
         let bank_rows_limit = request.bank.capacity();
@@ -1336,6 +1362,13 @@ impl RouteJob {
             bytes = bytes.checked_add(detail.capacity())?;
         }
         if let Some(script::native::WalkEnd::NeedsEvidence(gates)) = &self.native_failure {
+            bytes =
+                bytes
+                    .checked_add(std::mem::size_of_val(gates.as_ref()).checked_add(
+                        std::mem::size_of::<[std::sync::atomic::AtomicUsize; 2]>(),
+                    )?)?;
+        }
+        if let Some(script::native::WalkEnd::NeedsStep(gates)) = &self.native_failure {
             bytes =
                 bytes
                     .checked_add(std::mem::size_of_val(gates.as_ref()).checked_add(
@@ -1802,6 +1835,19 @@ impl RouteJob {
                 self.preflights.unresolved,
             )
             .map_err(|_| RouteJobError::Search)?,
+            RouteSearchPurpose::Actionable => SearchCursor::new_preflighted(
+                SearchRequest::ActionableQuestGates {
+                    from: self.request.from,
+                    targets: std::mem::take(&mut self.goal_copy).into_boxed_slice(),
+                    options,
+                    avoid,
+                    max_settles,
+                },
+                self.lease.clone(),
+                Arc::clone(&self.state),
+                self.preflights.actionable.ok_or(RouteJobError::Search)?,
+            )
+            .map_err(|_| RouteJobError::Search)?,
             RouteSearchPurpose::Entrance => SearchCursor::new_preflighted(
                 SearchRequest::EntranceRequirements {
                     from: self.request.from,
@@ -2087,13 +2133,20 @@ impl RouteJob {
                 if let Some(keys) = blocked.filter(|keys| !keys.is_empty()) {
                     self.blocked = keys;
                 }
-                if self.kind.as_ref().is_some_and(|kind| {
-                    matches!(kind, RouteDemandKind::Walk { authority: Some(_) })
+                if self.kind.as_ref().is_some_and(|kind| match kind {
+                    RouteDemandKind::Walk { authority } => {
+                        authority.is_some() || self.request.request_id != 0
+                    }
+                    RouteDemandKind::Advisory { .. } => false,
                 }) {
                     if self.blocked.is_empty() {
                         self.prepare_goal_copy(
                             RouteGoalCopy::Diagnostics,
-                            RouteSearchPurpose::Unresolved,
+                            if self.preflights.actionable.is_some() {
+                                RouteSearchPurpose::Actionable
+                            } else {
+                                RouteSearchPurpose::Unresolved
+                            },
                         )?;
                     } else {
                         self.native_failure = Some(script::native::WalkEnd::Refused);
@@ -2101,6 +2154,25 @@ impl RouteJob {
                     }
                 } else {
                     self.stage = RouteJobStage::Diagnostics;
+                }
+            }
+            (RouteSearchPurpose::Actionable, SearchOutcome::ActionableQuestGates(result)) => {
+                match result {
+                    Ok(Some(gates)) if !gates.is_empty() => {
+                        self.native_failure =
+                            Some(script::native::WalkEnd::NeedsStep(Arc::from(gates)));
+                        self.schedule_search(RouteSearchPurpose::MissingCarry);
+                    }
+                    Ok(_) => {
+                        self.prepare_goal_copy(
+                            RouteGoalCopy::Diagnostics,
+                            RouteSearchPurpose::Unresolved,
+                        )?;
+                    }
+                    Err(_) => {
+                        self.native_failure = Some(script::native::WalkEnd::Refused);
+                        self.schedule_search(RouteSearchPurpose::MissingCarry);
+                    }
                 }
             }
             (RouteSearchPurpose::Unresolved, SearchOutcome::UnresolvedQuestGates(result)) => {
@@ -2377,6 +2449,14 @@ impl RouteJob {
         }
     }
 
+    fn prereq_content_for_route(&self, route: &CompactRoute) -> Option<Arc<RoutePrereqContent>> {
+        let catalog = self.request.prereq_catalog.as_ref()?;
+        let run = self.state.quest_evidence.as_ref()?.required_after().run;
+        let route = nav_planner::producer::compact_route_view(&self.lease, route).ok()?;
+        let gates = nav_planner::router::route_establishable_quest_gates(route, &self.state)?;
+        route_prereq_content(catalog, run, gates)
+    }
+
     fn finish(&mut self) -> RouteJobOutput {
         let outcome = self.outcome.take().unwrap_or(RouteJobOutcome::NoPath);
         if let Some(settled) = self.budget_settled {
@@ -2398,6 +2478,20 @@ impl RouteJob {
         }
         let search_result =
             matches!(&outcome, RouteJobOutcome::NoPath).then(|| self.search_result_kind());
+        let (prereq_content, final_prereq_content) = match &outcome {
+            RouteJobOutcome::Route(route) => (self.prereq_content_for_route(route), None),
+            RouteJobOutcome::Bank {
+                route, final_route, ..
+            } => {
+                let final_content = self.prereq_content_for_route(final_route);
+                let current_content = route
+                    .as_ref()
+                    .map(|route| self.prereq_content_for_route(route))
+                    .unwrap_or_else(|| final_content.clone());
+                (current_content, final_content)
+            }
+            RouteJobOutcome::NoPath => (None, None),
+        };
         let mut detail = self.detail.take();
         if let Some(search_result) = search_result {
             let search_detail = format!("search_result={search_result}");
@@ -2514,6 +2608,8 @@ impl RouteJob {
             opts: self.request.opts,
             compat_v1: self.request.admission.compat_v1,
             quest_evidence: self.state.quest_evidence.clone(),
+            prereq_content,
+            final_prereq_content,
             outcome,
             search_result,
             assessment: self.assessment.take(),
@@ -3069,6 +3165,8 @@ pub(crate) struct RouteJobOutput {
     opts: FindOptions,
     compat_v1: bool,
     quest_evidence: Option<nav_planner::quest_gates::QuestEvidence>,
+    prereq_content: Option<Arc<RoutePrereqContent>>,
+    final_prereq_content: Option<Arc<RoutePrereqContent>>,
     outcome: RouteJobOutcome,
     search_result: Option<RouteSearchResultKind>,
     assessment: Option<Arc<script::combat::risk::RouteAssessment>>,
@@ -3104,6 +3202,301 @@ impl RouteJobOutcome {
             Self::NoPath => None,
         }
     }
+}
+#[derive(Debug)]
+struct RouteGateGroup {
+    leg: u16,
+    crossing: api::prereq_steps::CrossingId,
+    gates: Arc<[api::prereq_steps::ActionableGate]>,
+}
+
+#[derive(Debug, PartialEq, Eq)]
+struct RouteRefusalCandidate {
+    leg: u16,
+    gate: api::selected::QuestGate,
+    row: u16,
+    crossing_entry: u8,
+    page_entry: u8,
+    quest: api::selected::FactKey,
+    signal: api::selected::FactKey,
+    possible: api::selected::InclusiveRange,
+    after: api::selected::InclusiveRange,
+    refused: api::selected::InclusiveRange,
+}
+
+pub(crate) struct RoutePrereqContent {
+    pub(crate) run: api::selected::RunKey,
+    pub(crate) gates: Arc<[api::prereq_steps::ActionableGate]>,
+    gate_groups: Arc<[RouteGateGroup]>,
+    pub(crate) crossing_passes: Arc<[nav_executor::CrossingPass]>,
+    pub(crate) refusal_texts: Arc<[(api::prereq_steps::CrossingId, Arc<str>)]>,
+    refusal_candidates: Arc<[RouteRefusalCandidate]>,
+}
+
+impl RoutePrereqContent {
+    pub(crate) fn refusal_observation(
+        &self,
+        leg: usize,
+        crossing: api::prereq_steps::CrossingId,
+        edge_gates: &[api::selected::QuestGate],
+        matched: nav_executor::RefusalMatch,
+    ) -> Option<Arc<api::prereq_knowledge::RefusalObservation>> {
+        let leg = u16::try_from(leg).ok()?;
+        let mut ordinal = 0usize;
+        let candidate = self
+            .refusal_candidates
+            .iter()
+            .zip(self.refusal_texts.iter())
+            .find_map(|(candidate, (text_crossing, _))| {
+                if *text_crossing != crossing {
+                    return None;
+                }
+                let current = ordinal;
+                ordinal += 1;
+                (current == usize::from(matched.text)).then_some(candidate)
+            })?;
+        if candidate.leg != leg || !edge_gates.contains(&candidate.gate) {
+            return None;
+        }
+        let group = self
+            .gate_groups
+            .iter()
+            .find(|group| group.leg == leg && group.crossing == crossing)?;
+        if !group
+            .gates
+            .iter()
+            .all(|gate| edge_gates.contains(&gate.gate))
+        {
+            return None;
+        }
+        Some(Arc::new(api::prereq_knowledge::RefusalObservation {
+            crossing,
+            leg,
+            gates: Arc::clone(&group.gates),
+            matched: api::prereq_knowledge::CatalogRef {
+                row: candidate.row,
+                entry: candidate.crossing_entry,
+            },
+            fact: api::prereq_knowledge::Fact {
+                quest: candidate.quest.clone(),
+                signal: candidate.signal.clone(),
+                possible: candidate.possible,
+                after: candidate.after,
+                refused: Some(candidate.refused),
+                source: api::prereq_knowledge::FactSource::Refusal {
+                    row: candidate.row,
+                    entry: candidate.page_entry,
+                },
+                observed: EvidenceStamp {
+                    run: self.run,
+                    tick: matched.tick,
+                    sequence: matched.sequence,
+                },
+            },
+        }))
+    }
+
+    pub(crate) fn retained_bytes(&self) -> Option<usize> {
+        let (content_layout, _) = std::alloc::Layout::new::<[std::sync::atomic::AtomicUsize; 2]>()
+            .extend(std::alloc::Layout::new::<Self>())
+            .ok()?;
+        let mut bytes = content_layout.pad_to_align().size();
+        for allocation in [
+            arc_slice_heap_bytes::<api::prereq_steps::ActionableGate>(self.gates.len())?,
+            arc_slice_heap_bytes::<RouteGateGroup>(self.gate_groups.len())?,
+            arc_slice_heap_bytes::<nav_executor::CrossingPass>(self.crossing_passes.len())?,
+            arc_slice_heap_bytes::<(api::prereq_steps::CrossingId, Arc<str>)>(
+                self.refusal_texts.len(),
+            )?,
+            arc_slice_heap_bytes::<RouteRefusalCandidate>(self.refusal_candidates.len())?,
+        ] {
+            bytes = bytes.checked_add(allocation)?;
+        }
+        for group in self.gate_groups.iter() {
+            bytes = bytes.checked_add(
+                arc_slice_heap_bytes::<api::prereq_steps::ActionableGate>(group.gates.len())?,
+            )?;
+        }
+        Some(bytes)
+    }
+}
+
+pub(crate) fn route_prereq_content(
+    catalog: &api::prereq_steps::PrereqCatalog,
+    run: api::selected::RunKey,
+    gates: Arc<[api::prereq_steps::ActionableGate]>,
+) -> Option<Arc<RoutePrereqContent>> {
+    if gates.is_empty() {
+        return None;
+    }
+    // Proved crossings need no repair row. They must not discard refusal
+    // metadata for later registered crossings on the same accepted route.
+    let mut registered: Option<Vec<api::prereq_steps::ActionableGate>> = None;
+    for (index, gate) in gates.iter().enumerate() {
+        if catalog.for_journal(&gate.gate).is_some()
+            || catalog.for_gate(&gate.gate, &gate.crossing).is_some()
+        {
+            if let Some(registered) = registered.as_mut() {
+                registered.push(gate.clone());
+            }
+        } else {
+            if gate.truth != api::selected::Truth::True {
+                return None;
+            }
+            if registered.is_none() {
+                let mut retained = Vec::new();
+                retained.try_reserve_exact(gates.len() - 1).ok()?;
+                retained.extend_from_slice(&gates[..index]);
+                registered = Some(retained);
+            }
+        }
+    }
+    let gates = registered.map_or(gates, Arc::from);
+    if gates.is_empty() {
+        return None;
+    }
+
+    let mut grouped = Vec::<(
+        u16,
+        api::prereq_steps::CrossingId,
+        Vec<api::prereq_steps::ActionableGate>,
+    )>::new();
+    grouped.try_reserve_exact(gates.len()).ok()?;
+    for gate in gates.iter() {
+        if let Some((leg, crossing, group)) = grouped.last_mut() {
+            if *leg == gate.leg && *crossing == gate.crossing {
+                group.try_reserve(1).ok()?;
+                group.push(gate.clone());
+                continue;
+            }
+        }
+        let mut group = Vec::new();
+        group.try_reserve_exact(1).ok()?;
+        group.push(gate.clone());
+        grouped.push((gate.leg, gate.crossing, group));
+    }
+    let mut gate_groups = Vec::new();
+    gate_groups.try_reserve_exact(grouped.len()).ok()?;
+    for (leg, crossing, group) in grouped {
+        gate_groups.push(RouteGateGroup {
+            leg,
+            crossing,
+            gates: group.into(),
+        });
+    }
+
+    let mut crossing_passes = Vec::<nav_executor::CrossingPass>::new();
+    crossing_passes.try_reserve_exact(gates.len()).ok()?;
+    let mut ambiguous_passes = Vec::<api::prereq_steps::CrossingId>::new();
+    ambiguous_passes.try_reserve_exact(gates.len()).ok()?;
+    let mut refusal_entries = Vec::<(
+        api::prereq_steps::CrossingId,
+        Arc<str>,
+        RouteRefusalCandidate,
+    )>::new();
+    let mut refusal_conflicts = Vec::<api::prereq_steps::CrossingId>::new();
+    refusal_conflicts.try_reserve_exact(gates.len()).ok()?;
+
+    for group in &gate_groups {
+        for gate in group.gates.iter() {
+            // Journal evidence is acquired before route acceptance. It does
+            // not invent a server crossing message or refusal classifier.
+            if catalog.for_journal(&gate.gate).is_some() {
+                continue;
+            }
+            let (row_index, row) = catalog.for_gate(&gate.gate, &gate.crossing)?;
+            let (crossing_entry, entry) = row.crossing(&gate.crossing)?;
+            let pass = nav_executor::CrossingPass {
+                crossing: entry.crossing,
+                message: Arc::clone(&entry.pass.message),
+                landing: entry.pass.landing,
+                delay_ticks: entry.delay.ticks,
+            };
+            if !ambiguous_passes.contains(&gate.crossing) {
+                if let Some(existing) = crossing_passes
+                    .iter()
+                    .find(|existing| existing.crossing == gate.crossing)
+                {
+                    if existing != &pass {
+                        ambiguous_passes.push(gate.crossing);
+                    }
+                } else {
+                    crossing_passes.try_reserve(1).ok()?;
+                    crossing_passes.push(pass);
+                }
+            }
+
+            if refusal_conflicts.contains(&gate.crossing) {
+                continue;
+            }
+            for (page_index, page) in row.probe.refuse.iter().enumerate() {
+                let Some(page_entry) = u8::try_from(page_index).ok() else {
+                    refusal_conflicts.push(gate.crossing);
+                    break;
+                };
+                let Some(after) = row.after_for(page.proves) else {
+                    continue;
+                };
+                let candidate = RouteRefusalCandidate {
+                    leg: gate.leg,
+                    gate: gate.gate.clone(),
+                    row: row_index,
+                    crossing_entry,
+                    page_entry,
+                    quest: row.establishes.quest.clone(),
+                    signal: row.establishes.signal.clone(),
+                    possible: page.proves,
+                    after,
+                    refused: row.establishes.values,
+                };
+                if let Some((_, _, existing)) =
+                    refusal_entries.iter().find(|(crossing, text, _)| {
+                        *crossing == gate.crossing && text.as_ref() == page.page.as_ref()
+                    })
+                {
+                    if existing != &candidate {
+                        refusal_conflicts.push(gate.crossing);
+                        break;
+                    }
+                    continue;
+                }
+                let text_count = refusal_entries
+                    .iter()
+                    .filter(|(crossing, _, _)| *crossing == gate.crossing)
+                    .count();
+                if text_count > usize::from(u8::MAX) {
+                    refusal_conflicts.push(gate.crossing);
+                    break;
+                }
+                refusal_entries.try_reserve(1).ok()?;
+                refusal_entries.push((gate.crossing, Arc::clone(&page.page), candidate));
+            }
+        }
+    }
+
+    crossing_passes.retain(|pass| !ambiguous_passes.contains(&pass.crossing));
+    refusal_entries.retain(|(crossing, _, _)| !refusal_conflicts.contains(crossing));
+    let mut refusal_texts = Vec::new();
+    let mut refusal_candidates = Vec::new();
+    refusal_texts
+        .try_reserve_exact(refusal_entries.len())
+        .ok()?;
+    refusal_candidates
+        .try_reserve_exact(refusal_entries.len())
+        .ok()?;
+    for (crossing, text, candidate) in refusal_entries {
+        refusal_texts.push((crossing, text));
+        refusal_candidates.push(candidate);
+    }
+
+    Some(Arc::new(RoutePrereqContent {
+        run,
+        gates,
+        gate_groups: gate_groups.into(),
+        crossing_passes: crossing_passes.into(),
+        refusal_texts: refusal_texts.into(),
+        refusal_candidates: refusal_candidates.into(),
+    }))
 }
 
 fn route_assessment_future_layout_bytes(
@@ -3181,6 +3574,22 @@ fn route_output_retained_bytes(
         .0
         .pad_to_align()
         .size();
+    let sidecar_bytes = output
+        .prereq_content
+        .as_ref()
+        .map_or(Some(0), |content| content.retained_bytes())
+        .and_then(|current| {
+            let final_bytes = match (
+                output.prereq_content.as_ref(),
+                output.final_prereq_content.as_ref(),
+            ) {
+                (Some(current), Some(final_content)) if Arc::ptr_eq(current, final_content) => 0,
+                (_, Some(final_content)) => final_content.retained_bytes()?,
+                (_, None) => 0,
+            };
+            current.checked_add(final_bytes)
+        })
+        .ok_or(nav_planner::producer::OwnerResultRefusal::SizeOverflow)?;
     let retained = match &output.outcome {
         RouteJobOutcome::NoPath => return Ok(None),
         RouteJobOutcome::Route(route) => nav_planner::producer::compact_route_storage_bytes(route)
@@ -3189,6 +3598,7 @@ fn route_output_retained_bytes(
             .and_then(|bytes| bytes.checked_add(custody_bytes))
             .and_then(|bytes| bytes.checked_add(basis_bytes))
             .and_then(|bytes| bytes.checked_add(route_basis_layout))
+            .and_then(|bytes| bytes.checked_add(sidecar_bytes))
             .ok_or(nav_planner::producer::OwnerResultRefusal::SizeOverflow)?,
         RouteJobOutcome::Bank {
             steps,
@@ -3228,6 +3638,7 @@ fn route_output_retained_bytes(
                 .and_then(|bytes| bytes.checked_add(shared_custody))
                 .and_then(|bytes| bytes.checked_add(basis_bytes))
                 .and_then(|bytes| bytes.checked_add(route_basis_layout))
+                .and_then(|bytes| bytes.checked_add(sidecar_bytes))
                 .ok_or(nav_planner::producer::OwnerResultRefusal::SizeOverflow)?
         }
     };
@@ -3676,7 +4087,9 @@ pub(crate) fn publish_route_owner_refusal(
         nav_planner::producer::OwnerResultRefusal::Full { .. }
         | nav_planner::producer::OwnerResultRefusal::SizeOverflow => None,
     };
-    let detail = refusal.map_or_else(|| error.to_string(), |refusal| refusal.to_string());
+    let detail = refusal
+        .as_ref()
+        .map_or_else(|| error.to_string(), |refusal| refusal.to_string());
     publish_accepted_route_refusal(navs, name, generation, request_id, kind, &detail, refusal);
 }
 
@@ -3686,6 +4099,7 @@ fn make_compact_route_path(
     identity: WorkIdentity,
     revision: InputRevision,
     reservation: &OwnerResultReservation,
+    prereq_content: Option<Arc<RoutePrereqContent>>,
 ) -> (RoutePath, Arc<dyn std::any::Any + Send + Sync>) {
     let plan = nav_planner::producer::publish_compact_route(
         lease,
@@ -3697,7 +4111,12 @@ fn make_compact_route_path(
     let custody = Arc::new(reservation.clone().hold(plan.clone()));
     let custody_any: Arc<dyn std::any::Any + Send + Sync> = custody;
     (
-        RoutePath::compact(plan, lease.clone(), Arc::clone(&custody_any)),
+        RoutePath::compact(
+            plan,
+            lease.clone(),
+            Arc::clone(&custody_any),
+            prereq_content,
+        ),
         custody_any,
     )
 }
@@ -3812,6 +4231,7 @@ fn apply_route_output(
                         output.identity,
                         output.revision,
                         reservation,
+                        output.prereq_content.take(),
                     );
                     (Some(path), None, Some(custody))
                 }
@@ -3837,6 +4257,7 @@ fn apply_route_output(
                         output.identity,
                         output.revision,
                         reservation,
+                        output.final_prereq_content.take(),
                     );
                     let (path, custody) = match route {
                         Some(route) => make_compact_route_path(
@@ -3845,6 +4266,7 @@ fn apply_route_output(
                             output.identity,
                             output.revision,
                             reservation,
+                            output.prereq_content.take(),
                         ),
                         None => (final_path.clone(), final_custody),
                     };
@@ -4230,54 +4652,128 @@ impl ScriptRouteExclusions {
     }
 }
 
+fn native_route_exclusions(
+    avoid: &[Arc<str>],
+    cross: &[Arc<str>],
+    compat: Option<&ScriptRouteExclusions>,
+) -> ScriptRouteExclusions {
+    // Compatibility requests keep their complete original wire entries.
+    // Re-resolve them at the new endpoints, not the rectangles derived by
+    // the previous find, which would otherwise accumulate on every reissue.
+    let mut exclusions = compat.map_or_else(ScriptRouteExclusions::default, |original| {
+        ScriptRouteExclusions {
+            avoid_wire: original.avoid_wire.clone(),
+            cross: original.cross.clone(),
+            ..Default::default()
+        }
+    });
+    for name in avoid {
+        if !exclusions.avoid_wire.iter().any(|entry| {
+            matches!(entry, script::shim::InspectAvoidWire::Catalog(existing) if existing == name.as_ref())
+        }) {
+            exclusions
+                .avoid_wire
+                .push(script::shim::InspectAvoidWire::Catalog(name.to_string()));
+        }
+    }
+    for name in cross {
+        if !exclusions.cross.contains(name) {
+            exclusions.cross.push(Arc::clone(name));
+        }
+    }
+    exclusions
+}
+
 #[derive(Clone)]
 pub(crate) struct RouteQuestContext {
     selected: Arc<api::game_data::SelectedGameData>,
+    prereq_catalog: Option<Arc<api::prereq_steps::PrereqCatalog>>,
     stamp: EvidenceStamp,
+    local_state: Option<Arc<script::local_state::SlotState>>,
 }
-
 /// Retain only immutable catalog ownership and the observation's actual
 /// causal stamp. Status rows are copied only when a route is requested.
 pub(crate) fn route_quest_context(
     slot: &script::SlotScript,
     tick: u64,
 ) -> Option<RouteQuestContext> {
+    route_quest_context_with_data(slot, tick, slot.compiled_game_data()?)
+}
+
+fn route_quest_context_with_data(
+    slot: &script::SlotScript,
+    tick: u64,
+    selected: Arc<api::game_data::SelectedGameData>,
+) -> Option<RouteQuestContext> {
     let api::identity::Scope::Slot(key) = slot.work_scope()? else {
         return None;
     };
-    let run = slot.native_run().unwrap_or(api::selected::RunKey {
-        slot: key.incarnation().get(),
-        run: slot.runtime_generation(),
-        session: slot.work_epoch(),
-    });
+    let run = slot
+        .native_run()
+        .or_else(|| slot.seat_run())
+        .unwrap_or(api::selected::RunKey {
+            slot: key.incarnation().get(),
+            run: slot.runtime_generation(),
+            session: slot.work_epoch(),
+        });
     Some(RouteQuestContext {
-        selected: slot.compiled_game_data()?,
+        prereq_catalog: selected.try_prereq_steps(),
+        selected,
         stamp: EvidenceStamp {
             run,
             tick,
             sequence: tick,
         },
+        local_state: slot.local_state().cloned(),
     })
 }
 
+pub(crate) fn manual_route_state(
+    slot: &mut script::SlotScript,
+    snapshot: &GameSnapshot,
+    base: &WorldState,
+    world: &NavWorld,
+    profile_data: Option<&Arc<api::game_data::SelectedGameData>>,
+) -> Option<(
+    api::selected::RunKey,
+    Option<Arc<api::prereq_steps::PrereqCatalog>>,
+    WorldState,
+)> {
+    let selected = slot
+        .compiled_game_data()
+        .or_else(|| profile_data.cloned())?;
+    let mut context = route_quest_context_with_data(slot, u64::from(snapshot.tick()), selected)?;
+    context.stamp.run = slot.capture_manual_route_run();
+    let mut state = base.clone();
+    state.establishable = context
+        .prereq_catalog
+        .as_ref()
+        .map(|catalog| catalog.establishable_windows());
+    state.quest_evidence = world.graph.quest_family.and_then(|family| {
+        captured_route_quests(family, Some(&context), snapshot, None, context.stamp)
+    });
+    Some((context.stamp.run, context.prereq_catalog, state))
+}
+
 struct RouteQuestProvider {
+    memory: api::prereq_knowledge::SessionMemory,
     explicit: Option<Arc<dyn api::quest_progress::EvidenceProvider>>,
     ordinary: api::quest_progress::QuestListEvidenceProvider,
 }
 
 impl api::quest_progress::EvidenceProvider for RouteQuestProvider {
-    fn test_gate(
+    fn observe_gate(
         &self,
         gate: &api::selected::QuestGate,
         required_after: EvidenceStamp,
-    ) -> api::selected::Truth {
-        if let Some(explicit) = self.explicit.as_ref() {
-            let truth = explicit.test_gate(gate, required_after);
-            if truth != api::selected::Truth::Unknown {
-                return truth;
-            }
-        }
-        self.ordinary.test_gate(gate, required_after)
+    ) -> Option<api::prereq_knowledge::Observation> {
+        Some(api::prereq_knowledge::compose(
+            gate,
+            required_after,
+            &self.memory,
+            self.explicit.as_deref(),
+            &self.ordinary,
+        ))
     }
 }
 
@@ -4316,10 +4812,23 @@ fn captured_route_quests(
             .ok()?
             .0
             .pad_to_align();
+        let memory = context
+            .and_then(|context| context.local_state.as_ref())
+            .map(|state| state.prereq_snapshot())
+            .unwrap_or_default();
         let bytes = layout
             .size()
-            .checked_add(ordinary.retained_status_bytes())?;
-        let provider = Arc::new(RouteQuestProvider { explicit, ordinary });
+            .checked_add(ordinary.retained_status_bytes())?
+            .checked_add(
+                memory
+                    .retained_bytes()
+                    .checked_sub(std::mem::size_of::<api::prereq_knowledge::SessionMemory>())?,
+            )?;
+        let provider = Arc::new(RouteQuestProvider {
+            memory,
+            explicit,
+            ordinary,
+        });
         Some(
             nav_planner::quest_gates::QuestEvidence::new(provider, family, required_after)
                 .with_owned_provider_bytes(bytes),
@@ -4329,6 +4838,34 @@ fn captured_route_quests(
             nav_planner::quest_gates::QuestEvidence::new(provider, family, required_after)
         })
     }
+}
+/// Service selection uses the same request-time evidence view as a walk.
+pub(super) fn captured_service_quests(
+    family: nav_planner::quest_gates::QuestFamilyId,
+    context: Option<&RouteQuestContext>,
+    snapshot: &GameSnapshot,
+    required_after: Option<EvidenceStamp>,
+) -> Option<nav_planner::quest_gates::QuestEvidence> {
+    let context = context?;
+    captured_route_quests(
+        family,
+        Some(context),
+        snapshot,
+        None,
+        required_after.unwrap_or(context.stamp),
+    )
+}
+
+/// The first Load request remains the logical owner while native repair walks
+/// use their own request IDs. Only an active compatibility walk allocates this.
+pub(crate) struct CompatWalk {
+    run: api::selected::RunKey,
+    request_id: u64,
+    generation: u64,
+    key: (WorldTile, i32, bool, bool, bool, ZoneExempt),
+    exclusions: Option<Arc<ScriptRouteExclusions>>,
+    /// Taken once when the direct traveller hands ownership to the API seat.
+    outer: Option<script::native::OuterWalk>,
 }
 
 /// Per-uid nav state: the whole-world traveller plus the route it is
@@ -4379,6 +4916,7 @@ pub(crate) struct NavBot {
     /// Native ownership survives worker handoff, but not action revocation.
     pub(crate) native_walk: Option<script::native::HostAuthority>,
     pub(crate) native_receipt_seq: u64,
+    pub(crate) compat_walk: Option<Box<CompatWalk>>,
     pub(crate) native_walk_failure: Option<(u64, script::native::WalkEnd)>,
     pub(crate) native_walk_blocked: Option<(u64, Arc<[ZoneKey]>)>,
     /// A native walk's terminal that no published walk outcome carries: a
@@ -4690,6 +5228,7 @@ impl ScriptWalkArm {
         authority: script::native::HostAuthority,
         evidence: api::quest_progress::EvidenceStamp,
         session_permissions: Option<script::native::WalkPermissions>,
+        manual_bank_fetch: Option<bool>,
     ) {
         if !authority.live() {
             return;
@@ -4771,12 +5310,15 @@ impl ScriptWalkArm {
         });
         let from = WorldTile { x, z, level };
         let radius = i32::from(request.radius);
-        let (options, policy, enforce) = super::walk_permissions::native_admission(
+        let (mut options, policy, enforce) = super::walk_permissions::native_admission(
             &self.navs,
             &self.name,
             request.options,
             session_permissions,
         );
+        if let Some(allow) = manual_bank_fetch {
+            options.allow_bank_fetch = allow;
+        }
         let empty = WorldState::empty();
         let state = self.state.as_ref().unwrap_or(&empty);
         let (options, exclusions) = match resolve_route_exclusions(
@@ -4785,10 +5327,7 @@ impl ScriptWalkArm {
             from,
             request.target,
             state,
-            ScriptRouteExclusions {
-                cross: request.cross.to_vec(),
-                ..Default::default()
-            },
+            native_route_exclusions(&request.avoid, &request.cross, None),
         ) {
             Ok(resolved) => resolved,
             Err(detail) => {
@@ -4839,6 +5378,7 @@ impl ScriptWalkArm {
             opts: options,
             admission,
             state: self.state,
+            prereq_catalog: None,
             compat_tile_intent: false,
             bank_origin: self.bank.origin,
             bank: self.bank.rows,
@@ -4898,6 +5438,7 @@ impl ScriptWalkArm {
         request: script::native::WalkRequest,
         authority: script::native::HostAuthority,
         session_permissions: Option<script::native::WalkPermissions>,
+        manual_bank_fetch: Option<bool>,
     ) -> bool {
         if !authority.live() {
             return false;
@@ -4959,26 +5500,38 @@ impl ScriptWalkArm {
         } else {
             None
         };
-        let (options, policy, enforce) = super::walk_permissions::native_admission(
+        let (mut options, policy, enforce) = super::walk_permissions::native_admission(
             &self.navs,
             &self.name,
             request.options,
             session_permissions,
         );
+        if let Some(allow) = manual_bank_fetch {
+            options.allow_bank_fetch = allow;
+        }
         // A v1 card keeps frozen danger routing on the machine-owned native
         // walks too (Banking.open's stand walk), as on its compiled walks.
-        let (off_debt, compat_v1, condition) =
-            self.navs
-                .lock()
-                .unwrap()
-                .get(&self.name)
-                .map_or((false, false, None), |bot| {
-                    (
-                        bot.walk_guard_off.is_some(),
-                        bot.compat_v1,
-                        bot.condition.current().copied(),
-                    )
-                });
+        let (off_debt, compat_v1, condition, compat_policy) = self
+            .navs
+            .lock()
+            .unwrap()
+            .get(&self.name)
+            .map_or((false, false, None, None), |bot| {
+                (
+                    bot.walk_guard_off.is_some(),
+                    bot.compat_v1,
+                    bot.condition.current().copied(),
+                    bot.compat_walk_native_policy(authority.run()),
+                )
+            });
+        if let Some((original, _)) = compat_policy.as_ref() {
+            options.allow_teleports = original.allow_teleports
+                && request.options.allow_teleports != script::native::WalkBit::Forbid;
+            options.allow_wilderness = original.allow_wilderness
+                && request.options.allow_wilderness != script::native::WalkBit::Forbid;
+            options.allow_bank_fetch = original.allow_bank_fetch;
+            options.zones = original.zones;
+        }
         let admission = crate::admission::Admission {
             policy,
             enforce: enforce || !request.cross.is_empty(),
@@ -5016,10 +5569,13 @@ impl ScriptWalkArm {
                     request.required_after,
                 )
             });
-        let exclusions = ScriptRouteExclusions {
-            cross: request.cross.to_vec(),
-            ..Default::default()
-        };
+        let exclusions = native_route_exclusions(
+            &request.avoid,
+            &request.cross,
+            compat_policy
+                .as_ref()
+                .and_then(|(_, exclusions)| exclusions.as_deref()),
+        );
         let queued = self.queue_route_impl(
             request.target.x,
             request.target.z,
@@ -5721,6 +6277,15 @@ impl ScriptWalkArm {
                 bot.bank_pick.reset_for_route_replacement();
             }
             bot.route_generation = admission.generation;
+            if authority.is_none() {
+                if let Some(walk) = bot
+                    .compat_walk
+                    .as_mut()
+                    .filter(|walk| walk.request_id == request_id && walk.outer.is_some())
+                {
+                    walk.generation = bot.route_generation;
+                }
+            }
             bot.manual_walk_cancelled_detail = false;
             bot.walk_request_id = request_id;
             bot.native_walk_blocked = None;
@@ -5746,6 +6311,10 @@ impl ScriptWalkArm {
                 opts,
                 admission,
                 state,
+                prereq_catalog: bot
+                    .quest_context
+                    .as_ref()
+                    .and_then(|context| context.prereq_catalog.clone()),
                 compat_tile_intent,
                 bank_origin: self.bank.origin,
                 bank: self.bank.rows.clone(),
@@ -6223,6 +6792,7 @@ pub(crate) struct ScriptRouteRequest {
     pub(crate) opts: FindOptions,
     pub(crate) state: Option<WorldState>,
     pub(crate) admission: crate::admission::Admission,
+    pub(crate) prereq_catalog: Option<Arc<api::prereq_steps::PrereqCatalog>>,
     /// The arm's bank memory ([`ScriptWalkArm::bank`]), its origin beside
     /// its rows so the byte packs into this request's own padding.
     pub(crate) bank_origin: Origin,
@@ -6560,6 +7130,285 @@ impl ScriptRouteRequest {
     }
 }
 impl NavBot {
+    /// Retain policy only after the host accepted this exact Load request.
+    pub(crate) fn retain_compat_walk(
+        &mut self,
+        request_id: u64,
+        mut options: script::native::WalkOptions,
+        prereq_allow: script::native::PrereqAllow,
+    ) -> bool {
+        let Some(context) = self.quest_context.as_ref() else {
+            return false;
+        };
+        let Some(key) = self.requested_route else {
+            return false;
+        };
+        if request_id == 0 || request_id != self.walk_request_id || self.native_walk.is_some() {
+            return false;
+        }
+        if let Some(live) = self.compat_walk.as_ref() {
+            return live.request_id == request_id && live.run == context.stamp.run;
+        }
+        let Ok(radius) = u16::try_from(key.1) else {
+            return false;
+        };
+        let Some(admission) = self.admission.as_deref() else {
+            return false;
+        };
+        options.allow_teleports = script::native::WalkBit::from(Some(key.2));
+        options.allow_wilderness = script::native::WalkBit::from(Some(key.3));
+        options.allow_danger_zones = match admission.policy {
+            script::native::RiskPolicy::Inherit => script::native::WalkBit::Inherit,
+            script::native::RiskPolicy::Proceed => script::native::WalkBit::Allow,
+            script::native::RiskPolicy::Avoid => script::native::WalkBit::Forbid,
+        };
+        let exclusions = self.requested_exclusions.clone();
+        let (avoid, cross) = exclusions.as_ref().map_or_else(
+            || (Box::default(), Box::default()),
+            |exclusions| {
+                (
+                    exclusions
+                        .avoid_wire
+                        .iter()
+                        .filter_map(|entry| match entry {
+                            script::shim::InspectAvoidWire::Catalog(name) => {
+                                Some(Arc::<str>::from(name.as_str()))
+                            }
+                            _ => None,
+                        })
+                        .collect(),
+                    exclusions.cross.clone().into_boxed_slice(),
+                )
+            },
+        );
+        self.compat_walk = Some(Box::new(CompatWalk {
+            run: context.stamp.run,
+            request_id,
+            generation: self.route_generation,
+            key,
+            exclusions,
+            outer: Some(script::native::OuterWalk {
+                identity: script::native::OuterIdentity::Compat { request_id },
+                target: key.0,
+                radius,
+                arrival: self.route_arrival,
+                avoid,
+                cross,
+                options,
+                allow_bank_fetch: key.4,
+                prereq_allow,
+            }),
+        }));
+        true
+    }
+
+    pub(crate) fn compat_walk_request_id(&self) -> Option<u64> {
+        self.compat_walk.as_ref().map(|walk| walk.request_id)
+    }
+
+    pub(crate) fn compat_walk_run(&self) -> Option<api::selected::RunKey> {
+        self.compat_walk.as_ref().map(|walk| walk.run)
+    }
+
+    pub(crate) fn compat_walk_context_current(&self) -> bool {
+        self.compat_walk.as_ref().is_some_and(|walk| {
+            self.quest_context
+                .as_ref()
+                .is_some_and(|context| context.stamp.run == walk.run)
+        })
+    }
+
+    pub(crate) fn compat_walk_direct_terminal(&self) -> bool {
+        self.compat_walk.as_ref().is_some_and(|walk| {
+            walk.outer.is_some()
+                && self.walk_outcome_seq != 0
+                && walk.generation == self.walk_outcome_generation
+                && walk.request_id == self.walk_outcome_request_id
+        })
+    }
+
+    fn compat_walk_native_policy(
+        &self,
+        run: api::selected::RunKey,
+    ) -> Option<(FindOptions, Option<Arc<ScriptRouteExclusions>>)> {
+        let walk = self.compat_walk.as_ref()?;
+        if walk.run != run || walk.outer.is_some() || !self.compat_walk_context_current() {
+            return None;
+        }
+        Some((
+            FindOptions {
+                allow_teleports: walk.key.2,
+                allow_wilderness: walk.key.3,
+                allow_bank_fetch: walk.key.4,
+                zones: walk.key.5,
+                ..Default::default()
+            },
+            walk.exclusions.clone(),
+        ))
+    }
+
+    pub(crate) fn compat_walk_is_following(
+        &self,
+        request_id: u64,
+        key: (WorldTile, i32, bool, bool, bool),
+        exclusions: &ScriptRouteExclusions,
+    ) -> bool {
+        let same_exclusions = |original: Option<&ScriptRouteExclusions>| {
+            original.map_or_else(
+                || exclusions.is_empty(),
+                |original| {
+                    original.avoid_wire == exclusions.avoid_wire
+                        && original.cross == exclusions.cross
+                },
+            )
+        };
+        if let Some(walk) = self.compat_walk.as_ref() {
+            return self.compat_walk_context_current()
+                && walk.request_id == request_id
+                && (walk.key.0, walk.key.1, walk.key.2, walk.key.3, walk.key.4) == key
+                && same_exclusions(walk.exclusions.as_deref());
+        }
+        self.native_walk.is_none()
+            && self.walk_request_id == request_id
+            && self.requested_route.is_some_and(|original| {
+                (original.0, original.1, original.2, original.3, original.4) == key
+            })
+            && same_exclusions(self.requested_exclusions.as_deref())
+            && (self.has_route() || self.route_work_pending())
+    }
+
+    pub(crate) fn retire_compat_walk(&mut self, request_id: u64) -> bool {
+        if self.compat_walk_request_id() != Some(request_id) {
+            return false;
+        }
+        self.compat_walk = None;
+        true
+    }
+
+    pub(crate) fn compat_walk_refusal(
+        &self,
+    ) -> Option<&Arc<api::prereq_knowledge::RefusalObservation>> {
+        let walk = self.compat_walk.as_ref()?;
+        if walk.outer.is_none()
+            || walk.generation != self.walk_outcome_generation
+            || walk.request_id != self.walk_outcome_request_id
+        {
+            return None;
+        }
+        match self.native_walk_failure.as_ref()? {
+            (request, script::native::WalkEnd::GateRefused(observation))
+                if *request == walk.request_id =>
+            {
+                Some(observation)
+            }
+            _ => None,
+        }
+    }
+
+    /// The observation must be recorded before this ownership transfer.
+    pub(crate) fn take_compat_walk_handover(
+        &mut self,
+        here: WorldTile,
+    ) -> Option<script::native::WalkHandover> {
+        if !self.compat_walk_context_current() {
+            return None;
+        }
+        let walk = self.compat_walk.as_mut()?;
+        if walk.generation != self.walk_outcome_generation
+            || walk.request_id != self.walk_outcome_request_id
+        {
+            return None;
+        }
+        let (request, failure) = self.native_walk_failure.as_ref()?;
+        if *request != walk.request_id {
+            return None;
+        }
+        let entry = match failure {
+            script::native::WalkEnd::NeedsStep(gates) => {
+                script::native::HandoverEntry::NeedsStep(Arc::clone(gates))
+            }
+            script::native::WalkEnd::GateRefused(observation)
+                if observation.fact.observed.run == walk.run =>
+            {
+                script::native::HandoverEntry::GateRefused(Arc::clone(observation))
+            }
+            _ => return None,
+        };
+        let outer = walk.outer.take()?;
+        super::script_walk::owe_walk_guard_off(self);
+        self.route_generation = self.route_generation.wrapping_add(1);
+        self.route_ticket = None;
+        self.pending_route = None;
+        self.clear_route();
+        self.traveller.clear();
+        self.bank_fetch = None;
+        self.requested_route = None;
+        self.route_quest_evidence = None;
+        self.walk_request_id = 0;
+        self.native_walk_failure = None;
+        self.clear_walk_outcome();
+        Some(script::native::WalkHandover { outer, entry, here })
+    }
+
+    pub(crate) fn compat_walk_handed_over(&self) -> bool {
+        self.compat_walk
+            .as_ref()
+            .is_some_and(|walk| walk.outer.is_none())
+    }
+
+    /// Publish the wrapper's one logical terminal, never an inner native ID.
+    pub(crate) fn complete_compat_walk(
+        &mut self,
+        request_id: u64,
+        end: script::native::WalkEnd,
+        detail: Option<Arc<str>>,
+    ) -> bool {
+        if self.compat_walk_request_id() != Some(request_id) {
+            return false;
+        }
+        let walk = self.compat_walk.take().expect("matched compatibility walk");
+        super::script_walk::owe_walk_guard_off(self);
+        self.route_generation = self.route_generation.wrapping_add(1);
+        self.route_ticket = None;
+        self.pending_route = None;
+        self.clear_route();
+        self.traveller.clear();
+        self.bank_fetch = None;
+        self.requested_route = None;
+        self.native_walk = None;
+        self.native_walk_failure = None;
+        self.route_quest_evidence = None;
+        self.walk_request_id = 0;
+        let (target, radius, teleports, ..) = walk.key;
+        let blocked = matches!(
+            &end,
+            script::native::WalkEnd::Stalled(stall)
+                if stall.why == script::native::WalkStallReason::EndBlocked
+        );
+        if blocked
+            || matches!(
+                &end,
+                script::native::WalkEnd::Arrived | script::native::WalkEnd::RouteEnded
+            )
+        {
+            self.note_route_end(
+                self.route_generation,
+                request_id,
+                target,
+                radius,
+                teleports,
+                blocked,
+            );
+        } else {
+            self.note_failure(self.route_generation, request_id, target, radius, teleports);
+        }
+        if end == script::native::WalkEnd::UserInput {
+            self.walk_outcome_cancel_reason = script::native::WalkCancelReason::UserInput;
+        }
+        self.walk_outcome_detail = detail;
+        true
+    }
+
     pub(crate) fn has_route(&self) -> bool {
         self.route.is_some() || self.compact_route.is_some()
     }
@@ -6819,7 +7668,8 @@ impl NavBot {
     }
 
     pub(crate) fn ordinary_movement_owned(&self, tick: u16) -> bool {
-        self.native_walk.as_ref().is_some_and(|owner| owner.live())
+        self.compat_walk_handed_over()
+            || self.native_walk.as_ref().is_some_and(|owner| owner.live())
             || self.has_route()
             || self.bank_fetch.is_some()
             || self.slot_escape().is_some()
@@ -6862,7 +7712,7 @@ impl NavBot {
                         .risk_refusal
                         .as_deref()
                         .filter(|(request, _)| *request == owner.request_id().get())
-                        .map(|(_, refusal)| *refusal),
+                        .map(|(_, refusal)| refusal.clone()),
                     escape: self
                         .admission
                         .as_deref()
@@ -6944,6 +7794,23 @@ impl NavBot {
             nav_executor::TravelOutcome::Blocked { .. }
             | nav_executor::TravelOutcome::EntranceRefused { .. } => {
                 Some(script::native::WalkEnd::Blocked)
+            }
+            nav_executor::TravelOutcome::GateRefused {
+                leg,
+                crossing,
+                gates,
+                matched,
+                ..
+            } => {
+                let observation = self.route_path_for_follow().and_then(|path| {
+                    path.prereq_content().and_then(|content| {
+                        content.refusal_observation(*leg, *crossing, gates, *matched)
+                    })
+                });
+                Some(observation.map_or(
+                    script::native::WalkEnd::Blocked,
+                    script::native::WalkEnd::GateRefused,
+                ))
             }
             nav_executor::TravelOutcome::EvidenceUnproven {
                 verdict: Truth::Unknown,
@@ -7241,7 +8108,8 @@ impl NavBot {
 
     /// Whether a script walk is armed, in flight or following.
     pub(crate) fn script_walk_armed(&self) -> bool {
-        self.has_route()
+        self.compat_walk.is_some()
+            || self.has_route()
             || self.bank_fetch.is_some()
             || self.route_work_pending()
             || self.requested_route.is_some()
@@ -7423,6 +8291,8 @@ pub(super) fn preserve_recovery_walk_identity(
             allow_wilderness,
             compat_tile_intent: bot.route_compat_tile_intent,
             allow_bank_fetch,
+            allow_prereq_dialogue: None,
+            allow_quest_start: None,
             request_id: bot.walk_request_id,
             avoid: Vec::new(),
             cross: Vec::new(),
@@ -7468,6 +8338,16 @@ pub(crate) fn hold_script_nav(
         {
             let (to, radius, allow_teleports, allow_wilderness, allow_bank_fetch, _) = requested;
             let request_id = nav.walk_request_id;
+            let (allow_prereq_dialogue, allow_quest_start) = nav
+                .compat_walk
+                .as_ref()
+                .and_then(|walk| walk.outer.as_ref())
+                .map_or((None, None), |outer| {
+                    (
+                        Some(outer.prereq_allow.dialogue),
+                        Some(outer.prereq_allow.quest_start),
+                    )
+                });
             let (avoid, cross) = nav.requested_exclusions.as_deref().map_or_else(
                 || (Vec::new(), Vec::new()),
                 |exclusions| {
@@ -7491,6 +8371,8 @@ pub(crate) fn hold_script_nav(
                     allow_teleports,
                     allow_wilderness,
                     allow_bank_fetch,
+                    allow_prereq_dialogue,
+                    allow_quest_start,
                     request_id,
                     avoid,
                     cross,
@@ -7503,6 +8385,8 @@ pub(crate) fn hold_script_nav(
                     allow_teleports,
                     allow_wilderness,
                     allow_bank_fetch,
+                    allow_prereq_dialogue,
+                    allow_quest_start,
                     request_id,
                     avoid,
                     cross,
@@ -7634,6 +8518,7 @@ mod diagnostic_tests {
                 ..FindOptions::default()
             },
             state: None,
+            prereq_catalog: None,
             bank_origin: Origin::Unknown,
             bank: Vec::new(),
             live_geometry: None,
@@ -7701,6 +8586,7 @@ mod diagnostic_tests {
             arrival: ArrivalKind::Reach,
             opts: FindOptions::default(),
             state: None,
+            prereq_catalog: None,
             bank_origin: Origin::Unknown,
             bank: Vec::new(),
             live_geometry: None,
@@ -8022,6 +8908,104 @@ mod diagnostic_tests {
             nav_planner::transport::TransportGraph::default(),
             Vec::new(),
         )))
+    }
+
+    #[test]
+    fn compat_no_path_diagnoses_actionable_gates_before_reporting_failure() {
+        let mut request = tiny_stage_request();
+        request.state =
+            Some(
+                WorldState::empty().with_establishable(Arc::from([api::selected::StageWindow {
+                    quest: api::selected::FactKey::new("quest"),
+                    signal: api::selected::FactKey::new("stage"),
+                    values: api::selected::InclusiveRange {
+                        min: Some(1),
+                        max: Some(1),
+                    },
+                }])),
+            );
+        let mut job =
+            RouteJob::prepare("test", request, RouteDemandKind::Walk { authority: None }).unwrap();
+        job.search_purpose = RouteSearchPurpose::Blocking;
+        job.handle_search(SearchOutcome::BlockingZones(None))
+            .unwrap();
+        assert_eq!(job.search_purpose, RouteSearchPurpose::Actionable);
+        let crossing = api::prereq_steps::CrossingId {
+            loc_id: 1,
+            option: 0,
+            at: WorldTile {
+                x: 1,
+                z: 1,
+                level: 0,
+            },
+            takeoff: WorldTile {
+                x: 1,
+                z: 1,
+                level: 0,
+            },
+            to: WorldTile {
+                x: 2,
+                z: 1,
+                level: 0,
+            },
+            kind: api::prereq_steps::CrossingKind::Door,
+        };
+        let gate = api::prereq_steps::ActionableGate {
+            gate: api::selected::QuestGate::Complete(api::selected::FactKey(Arc::from("quest"))),
+            truth: api::selected::Truth::False,
+            leg: 0,
+            crossing,
+        };
+        let expected = gate.clone();
+
+        job.handle_search(SearchOutcome::ActionableQuestGates(Ok(Some(Box::from([
+            gate,
+        ])))))
+        .unwrap();
+
+        assert!(matches!(
+            job.native_failure.as_ref(),
+            Some(script::native::WalkEnd::NeedsStep(gates)) if gates.as_ref() == [expected]
+        ));
+        assert_eq!(job.search_purpose, RouteSearchPurpose::MissingCarry);
+    }
+
+    #[test]
+    fn no_establishable_windows_skip_actionable_preflight_and_search() {
+        // Revision 274 has no prerequisite catalog. An empty catalog also
+        // cannot establish a gate, so neither case reserves or runs this pass.
+        for establishable in [None, Some(Arc::from([]))] {
+            let mut request = tiny_stage_request();
+            request.state = Some(WorldState {
+                establishable,
+                ..WorldState::empty()
+            });
+            let mut job =
+                RouteJob::prepare("test", request, RouteDemandKind::Walk { authority: None })
+                    .unwrap();
+            assert!(job.preflights.actionable.is_none());
+            job.search_purpose = RouteSearchPurpose::Blocking;
+            job.handle_search(SearchOutcome::BlockingZones(None))
+                .unwrap();
+            assert_eq!(job.search_purpose, RouteSearchPurpose::Unresolved);
+            assert!(job.native_failure.is_none());
+            job.handle_search(SearchOutcome::UnresolvedQuestGates(Ok(None)))
+                .unwrap();
+            assert_eq!(job.search_purpose, RouteSearchPurpose::MissingCarry);
+            assert_eq!(job.native_failure, Some(script::native::WalkEnd::Failed));
+        }
+    }
+
+    #[test]
+    fn legacy_safety_walk_does_not_start_prerequisite_diagnosis() {
+        let mut request = tiny_stage_request();
+        request.request_id = 0;
+        let mut job =
+            RouteJob::prepare("test", request, RouteDemandKind::Walk { authority: None }).unwrap();
+        job.search_purpose = RouteSearchPurpose::Blocking;
+        job.handle_search(SearchOutcome::BlockingZones(None))
+            .unwrap();
+        assert_eq!(job.search_purpose, RouteSearchPurpose::MissingCarry);
     }
 
     #[test]
@@ -8893,6 +9877,7 @@ mod diagnostic_tests {
                     RouteSearchPurpose::FetchableFirst => "FetchableFirst",
                     RouteSearchPurpose::Blocking => "Blocking",
                     RouteSearchPurpose::Unresolved => "Unresolved",
+                    RouteSearchPurpose::Actionable => "Actionable",
                     RouteSearchPurpose::MissingCarry => "MissingCarry",
                     RouteSearchPurpose::Entrance => "Entrance",
                 };
@@ -9025,7 +10010,10 @@ mod route_quest_provider_tests {
                 script::preparation::PreparationKind::Profile,
                 Scope::Process,
                 input,
-                move |worker| worker_data.prepare_quests(worker),
+                move |worker| {
+                    worker_data.prepare_quests(worker)?;
+                    worker_data.prepare_prereq_steps(worker)
+                },
             )
             .expect("submit production quest preparation")
             .join()
@@ -9109,7 +10097,293 @@ mod route_quest_provider_tests {
         selected: Arc<api::game_data::SelectedGameData>,
         stamp: EvidenceStamp,
     ) -> RouteQuestContext {
-        RouteQuestContext { selected, stamp }
+        let prereq_catalog = selected.try_prereq_steps();
+        RouteQuestContext {
+            selected,
+            prereq_catalog,
+            stamp,
+            local_state: None,
+        }
+    }
+    struct ColdStatePort;
+
+    impl api::local_state::LocalStatePort for ColdStatePort {
+        fn lease(
+            &self,
+            identity: &api::local_state::DomainIdentity,
+        ) -> Result<api::local_state::DomainLease, api::local_state::ErrorCode> {
+            Err(api::local_state::ErrorCode::NotReady {
+                domain: identity.domain(),
+            })
+        }
+
+        fn submit(&self, edit: api::local_state::DomainEdit) -> api::local_state::SubmitReceipt {
+            api::local_state::SubmitReceipt::Refused(api::local_state::ErrorCode::NotReady {
+                domain: edit.identity().domain(),
+            })
+        }
+
+        fn observe(
+            &self,
+            _request: api::identity::RequestId,
+        ) -> Option<api::local_state::WriteSettlement> {
+            None
+        }
+    }
+
+    impl script::local_state::StatePort for ColdStatePort {
+        fn lease_version(
+            &self,
+            identity: &api::local_state::DomainIdentity,
+        ) -> Result<api::local_state::StoreVersion, api::local_state::ErrorCode> {
+            Err(api::local_state::ErrorCode::NotReady {
+                domain: identity.domain(),
+            })
+        }
+    }
+
+    fn state_with_fact(fact: api::prereq_knowledge::Fact) -> Arc<script::local_state::SlotState> {
+        let state = Arc::new(script::local_state::SlotState::new(
+            Arc::new(ColdStatePort),
+            api::local_state::AccountKey::try_new("test", "alice").expect("valid test account"),
+            api::local_state::ContentScope::try_new(client::io::ClientRevision::R289, "test")
+                .expect("valid test content"),
+        ));
+        assert!(state.record_prereq_fact(fact));
+        state
+    }
+
+    #[test]
+    fn compat_route_context_keeps_actual_session_after_scene_only_down_observation() {
+        let selected = selected_r289();
+        let mut slot = script::SlotScript::new();
+        slot.bind_incarnation(44);
+        let factory = Arc::new(script::surface::test_support::StubSurfaceFactory::new());
+        slot.bind_surface_factory(factory.clone());
+        slot.start_surface(script::surface::SurfaceStart {
+            card: Arc::new(script::surface::test_support::StubSurfaceCard),
+            settings_bag: None,
+            game_data: Some(selected),
+            named_banks: Arc::default(),
+            loadouts: Arc::default(),
+        })
+        .expect("start the real compatibility surface owner");
+        factory
+            .last_run()
+            .expect("stub surface run")
+            .set_readiness(script::surface::SurfaceReady::Ready);
+        assert_eq!(
+            slot.poll_start(),
+            script::StartPoll::Settled(script::StartOutcome::Ready)
+        );
+        slot.on_is_up(true);
+        let before = route_quest_context(&slot, 1)
+            .expect("active compatibility route context")
+            .stamp
+            .run;
+        slot.on_is_up(false);
+        slot.on_is_up(false);
+        slot.on_is_up(true);
+        assert_ne!(slot.work_epoch(), before.session);
+        assert_eq!(
+            route_quest_context(&slot, 2)
+                .expect("same live owner")
+                .stamp
+                .run,
+            before
+        );
+        slot.reset_session_work();
+        assert_ne!(
+            route_quest_context(&slot, 3).map(|context| context.stamp.run),
+            Some(before),
+            "an actual connection boundary must revoke the old route identity"
+        );
+        slot.stop();
+    }
+
+    #[test]
+    fn idle_manual_route_uses_profile_data_and_same_run_memory() {
+        let selected = selected_r289();
+        let mut slot = script::SlotScript::new();
+        slot.bind_incarnation(41);
+        let run = RunKey {
+            slot: 41,
+            run: slot.runtime_generation(),
+            session: slot.work_epoch(),
+        };
+        let quest = api::selected::FactKey::new("priestperil");
+        let values = api::selected::InclusiveRange {
+            min: Some(61),
+            max: Some(61),
+        };
+        slot.bind_local_state(state_with_fact(api::prereq_knowledge::Fact {
+            quest: quest.clone(),
+            signal: quest.clone(),
+            possible: values,
+            after: values,
+            refused: None,
+            source: api::prereq_knowledge::FactSource::Page { row: 0, line: 0 },
+            observed: stamp(run, 0, 0),
+        }));
+        assert!(slot.compiled_game_data().is_none());
+        assert!(route_quest_context(&slot, 0).is_none());
+        let mut world = tiny_world();
+        Arc::get_mut(&mut world).unwrap().graph.quest_family = Some(family(&selected));
+        let snapshot = GameSnapshot::new();
+        let (captured_run, catalog, route_state) = manual_route_state(
+            &mut slot,
+            &snapshot,
+            &WorldState::empty(),
+            &world,
+            Some(&selected),
+        )
+        .expect("idle manual request uses the bound profile capability");
+        assert_eq!(captured_run, run);
+        assert!(catalog.is_some());
+        assert!(route_state.establishable.is_some());
+        assert_eq!(
+            route_state.quest_evidence.unwrap().test(&QuestGate::Window(
+                api::selected::StageWindow {
+                    quest: quest.clone(),
+                    signal: quest,
+                    values,
+                }
+            )),
+            Truth::True
+        );
+    }
+
+    #[test]
+    fn idle_manual_route_without_profile_data_stays_unavailable() {
+        let mut slot = script::SlotScript::new();
+        slot.bind_incarnation(42);
+        assert!(manual_route_state(
+            &mut slot,
+            &GameSnapshot::new(),
+            &WorldState::empty(),
+            &tiny_world(),
+            None,
+        )
+        .is_none());
+    }
+
+    #[test]
+    fn manual_route_refusal_survives_scene_reload_but_not_owner_boundaries() {
+        use api::prereq_knowledge::{CatalogRef, Fact, FactSource, RefusalObservation};
+        use api::prereq_steps::ActionableGate;
+
+        let selected = selected_r289();
+        let catalog = selected.try_prereq_steps().expect("prepared prerequisites");
+        let (row_index, row) = catalog
+            .iter()
+            .find(|(_, row)| {
+                row.establishes.quest.0.as_ref() == "priestperil"
+                    && row.establishes.values.min == Some(61)
+                    && row.establishes.values.max == Some(61)
+            })
+            .expect("holy barrier prerequisite");
+        let crossing = row.crossings[0].crossing;
+        let mut world = tiny_world();
+        Arc::get_mut(&mut world).unwrap().graph.quest_family = Some(family(&selected));
+
+        for boundary in ["reset", "reconnect", "stop"] {
+            let mut slot = script::SlotScript::new();
+            slot.bind_incarnation(43);
+            let run = RunKey {
+                slot: 43,
+                run: slot.runtime_generation(),
+                session: slot.work_epoch(),
+            };
+            let state = state_with_fact(Fact {
+                quest: row.establishes.quest.clone(),
+                signal: row.establishes.signal.clone(),
+                possible: row.establishes.values,
+                after: row.establishes.values,
+                refused: None,
+                source: FactSource::Page { row: 0, line: 0 },
+                observed: stamp(run, 0, 0),
+            });
+            slot.bind_local_state(Arc::clone(&state));
+            let snapshot = GameSnapshot::new();
+            let (captured_run, _, _) = manual_route_state(
+                &mut slot,
+                &snapshot,
+                &WorldState::empty(),
+                &world,
+                Some(&selected),
+            )
+            .expect("capture idle manual route");
+            assert_eq!(captured_run, run);
+
+            slot.on_is_up(false);
+            slot.on_is_up(false);
+            slot.on_is_up(true);
+            assert_ne!(slot.work_epoch(), run.session);
+            let refusal = row.probe.refuse.first().expect("barrier refusal");
+            let mut observation = RefusalObservation {
+                crossing,
+                leg: 7,
+                gates: vec![ActionableGate {
+                    gate: QuestGate::Window(row.establishes.clone()),
+                    truth: Truth::True,
+                    leg: 7,
+                    crossing,
+                }]
+                .into(),
+                matched: CatalogRef {
+                    row: row_index,
+                    entry: 0,
+                },
+                fact: Fact {
+                    quest: row.establishes.quest.clone(),
+                    signal: row.establishes.signal.clone(),
+                    possible: refusal.proves,
+                    after: row.after_for(refusal.proves).unwrap(),
+                    refused: Some(row.establishes.values),
+                    source: FactSource::Refusal {
+                        row: row_index,
+                        entry: 0,
+                    },
+                    observed: stamp(captured_run, 61, 12),
+                },
+            };
+            assert!(
+                slot.record_gate_refusal(captured_run, &observation),
+                "a scene reload must not revoke the route's real refusal"
+            );
+            let before = state.prereq_snapshot();
+            let (later_run, _, later_state) = manual_route_state(
+                &mut slot,
+                &snapshot,
+                &WorldState::empty(),
+                &world,
+                Some(&selected),
+            )
+            .expect("same manual route session");
+            assert_eq!(later_run, captured_run);
+            assert_eq!(
+                later_state
+                    .quest_evidence
+                    .unwrap()
+                    .test(&QuestGate::Window(row.establishes.clone())),
+                Truth::False
+            );
+
+            match boundary {
+                "reset" => slot.reset_session_work(),
+                "reconnect" => {
+                    slot.reconnect_session_work();
+                }
+                "stop" => slot.stop(),
+                _ => unreachable!(),
+            }
+            observation.fact.observed.tick += 1;
+            assert!(
+                !slot.record_gate_refusal(captured_run, &observation),
+                "{boundary} must revoke the captured route"
+            );
+            assert_eq!(state.prereq_snapshot(), before);
+        }
     }
 
     #[test]
@@ -9207,6 +10481,85 @@ mod route_quest_provider_tests {
             "Unknown explicit evidence must fall back to ordinary Complete"
         );
     }
+    #[test]
+    fn current_refusal_memory_overrides_ordinary_quest_colour_and_is_charged() {
+        let selected = selected_r289();
+        let (_, name) = selected_quest(&selected);
+        let family = family(&selected);
+        let observed = stamp(run(), 9, 9);
+        let gate = QuestGate::Window(api::selected::StageWindow {
+            quest: api::selected::FactKey::new("unlisted-quest"),
+            signal: api::selected::FactKey::new("unlisted-signal"),
+            values: api::selected::InclusiveRange {
+                min: Some(61),
+                max: Some(61),
+            },
+        });
+        let snapshot = snapshot(&name, nav_planner::world_state::QUEST_COMPLETE_COLOUR, true);
+        let without_memory_context = context(Arc::clone(&selected), observed);
+        let without_memory = captured_route_quests(
+            family,
+            Some(&without_memory_context),
+            &snapshot,
+            None,
+            observed,
+        )
+        .expect("ordinary route evidence");
+        let without_memory_bytes = without_memory.owned_provider_bytes();
+        let state = state_with_fact(api::prereq_knowledge::Fact {
+            quest: api::selected::FactKey::new("unlisted-quest"),
+            signal: api::selected::FactKey::new("unlisted-signal"),
+            possible: api::selected::InclusiveRange {
+                min: Some(60),
+                max: Some(60),
+            },
+            after: api::selected::InclusiveRange {
+                min: Some(60),
+                max: Some(61),
+            },
+            refused: Some(api::selected::InclusiveRange {
+                min: Some(61),
+                max: Some(61),
+            }),
+            source: api::prereq_knowledge::FactSource::Crossing {
+                loc_id: 3443,
+                option: 1,
+                passed: false,
+            },
+            observed,
+        });
+        let with_memory_context = RouteQuestContext {
+            prereq_catalog: selected.try_prereq_steps(),
+            selected,
+            stamp: observed,
+            local_state: Some(state),
+        };
+        let evidence = captured_route_quests(
+            family,
+            Some(&with_memory_context),
+            &snapshot,
+            None,
+            observed,
+        )
+        .expect("memory and ordinary route evidence");
+        assert_eq!(evidence.test(&gate), Truth::False);
+        assert_eq!(
+            evidence.owned_provider_bytes() - without_memory_bytes,
+            std::mem::size_of::<api::prereq_knowledge::Fact>()
+        );
+        let service_evidence = captured_service_quests(
+            family,
+            Some(&with_memory_context),
+            &snapshot,
+            Some(observed),
+        )
+        .expect("service selection captures the same immutable memory");
+        assert_eq!(service_evidence.test(&gate), Truth::False);
+        assert_eq!(
+            service_evidence.owned_provider_bytes(),
+            evidence.owned_provider_bytes()
+        );
+    }
 
     #[test]
     fn captured_rows_fail_closed_after_the_run_or_causal_floor_changes() {
@@ -9281,6 +10634,7 @@ mod route_quest_provider_tests {
             live_geometry: None,
             exclusions: None,
             compat_tile_intent: false,
+            prereq_catalog: None,
             completion,
         }
     }
@@ -9321,5 +10675,477 @@ mod route_quest_provider_tests {
             .expect("evidence route budget");
         assert_eq!(charged.input_bytes - baseline.input_bytes, owned_bytes);
         assert_eq!(charged.result_bytes - baseline.result_bytes, owned_bytes);
+    }
+
+    fn compat_bot(request_id: u64) -> NavBot {
+        let target = WorldTile {
+            x: 3423,
+            z: 3485,
+            level: 0,
+        };
+        let exclusions = ScriptRouteExclusions {
+            avoid_wire: vec![
+                script::shim::InspectAvoidWire::Rect {
+                    min_x: 3400,
+                    max_x: 3401,
+                    min_z: 3480,
+                    max_z: 3481,
+                    level: Some(0),
+                },
+                script::shim::InspectAvoidWire::Catalog("named-avoid".to_owned()),
+            ],
+            cross: vec![Arc::from("named-cross")],
+            ..Default::default()
+        };
+        let mut bot = NavBot {
+            quest_context: Some(context(selected_r289(), stamp(run(), 100, 100))),
+            route_generation: 7,
+            walk_request_id: request_id,
+            requested_route: Some((target, 3, false, false, true, ZoneExempt::NONE)),
+            requested_exclusions: Some(Arc::new(exclusions)),
+            admission: Some(Box::new(crate::admission::Admission::manual(
+                FindOptions {
+                    allow_bank_fetch: true,
+                    ..Default::default()
+                },
+                Default::default(),
+                7,
+                crate::WalkGlobals::default(),
+            ))),
+            ..Default::default()
+        };
+        assert!(bot.retain_compat_walk(
+            request_id,
+            script::native::WalkOptions {
+                allow_quest_start: script::native::WalkBit::Forbid,
+                ..Default::default()
+            },
+            script::native::PrereqAllow {
+                dialogue: true,
+                quest_start: false,
+            },
+        ));
+        bot
+    }
+
+    fn compat_gates() -> (
+        Arc<api::prereq_steps::PrereqCatalog>,
+        Arc<[api::prereq_steps::ActionableGate]>,
+    ) {
+        let catalog = selected_r289()
+            .try_prereq_steps()
+            .expect("prepared prerequisites");
+        let (_, row) = catalog
+            .iter()
+            .find(|(_, row)| row.id.contains("drezel-advice"))
+            .expect("released A1 row");
+        let gates = Arc::from([api::prereq_steps::ActionableGate {
+            gate: QuestGate::Window(row.establishes.clone()),
+            truth: Truth::False,
+            leg: 0,
+            crossing: row.crossings[0].crossing,
+        }]);
+        (catalog, gates)
+    }
+
+    #[test]
+    fn journal_prerequisite_metadata_does_not_invent_crossing_messages() {
+        use api::prereq_steps::{ActionableGate, CrossingId, CrossingKind};
+        use api::selected::{FactKey, InclusiveRange, StageWindow};
+        let catalog = selected_r289().try_prereq_steps().unwrap();
+        let gate = ActionableGate {
+            gate: QuestGate::Window(StageWindow {
+                quest: FactKey::new("blackarmgang"),
+                signal: FactKey::new("phoenixgang"),
+                values: InclusiveRange {
+                    min: Some(10),
+                    max: Some(10),
+                },
+            }),
+            truth: Truth::Unknown,
+            leg: 0,
+            crossing: CrossingId {
+                loc_id: 2628,
+                option: 1,
+                at: WorldTile {
+                    x: 2788,
+                    z: 3190,
+                    level: 0,
+                },
+                takeoff: WorldTile {
+                    x: 2788,
+                    z: 3190,
+                    level: 0,
+                },
+                to: WorldTile {
+                    x: 2788,
+                    z: 3189,
+                    level: 0,
+                },
+                kind: CrossingKind::Door,
+            },
+        };
+        let content = route_prereq_content(&catalog, run(), Arc::from([gate.clone()]))
+            .expect("an unknown journal-backed gate must reach the native prerequisite owner");
+        assert_eq!(content.gates.as_ref(), &[gate]);
+        assert_eq!(content.gate_groups.len(), 1);
+        assert!(content.crossing_passes.is_empty());
+        assert!(content.refusal_texts.is_empty());
+        assert!(content.refusal_candidates.is_empty());
+    }
+
+    #[test]
+    fn registered_refusal_content_survives_preceding_proved_ladder_gates() {
+        let (catalog, gates) = compat_gates();
+        let mut barrier = gates[0].clone();
+        barrier.truth = Truth::True;
+        barrier.leg = 7;
+        let mut route_gates = Vec::new();
+        for (leg, minimum, loc_id) in [(3, 5, 3444), (5, 8, 3445)] {
+            let mut ladder = barrier.clone();
+            let QuestGate::Window(window) = &mut ladder.gate else {
+                panic!("released A1 stage window");
+            };
+            window.values = api::selected::InclusiveRange {
+                min: Some(minimum),
+                max: Some(61),
+            };
+            ladder.leg = leg;
+            ladder.crossing.loc_id = loc_id;
+            ladder.crossing.kind = api::prereq_steps::CrossingKind::Ladder;
+            assert!(catalog.for_gate(&ladder.gate, &ladder.crossing).is_none());
+            route_gates.push(ladder);
+        }
+        route_gates.push(barrier.clone());
+        let content = route_prereq_content(&catalog, run(), route_gates.into())
+            .expect("proved ladders must not discard the registered barrier's refusal content");
+        assert_eq!(content.gates.as_ref(), std::slice::from_ref(&barrier));
+        assert_eq!(content.gate_groups.len(), 1);
+        assert_eq!(content.gate_groups[0].leg, 7);
+        assert_eq!(content.crossing_passes.len(), 1);
+        assert_eq!(content.crossing_passes[0].crossing, barrier.crossing);
+        assert!(!content.refusal_texts.is_empty());
+        assert!(content
+            .refusal_texts
+            .iter()
+            .all(|(crossing, _)| *crossing == barrier.crossing));
+    }
+
+    #[test]
+    fn unproved_unregistered_crossings_do_not_get_partial_repair_content() {
+        let (catalog, gates) = compat_gates();
+        for truth in [Truth::False, Truth::Unknown] {
+            let mut unregistered = gates[0].clone();
+            unregistered.truth = truth;
+            unregistered.crossing.loc_id = 3444;
+            unregistered.crossing.kind = api::prereq_steps::CrossingKind::Ladder;
+            assert!(catalog
+                .for_gate(&unregistered.gate, &unregistered.crossing)
+                .is_none());
+            assert!(route_prereq_content(
+                &catalog,
+                run(),
+                Arc::from([unregistered, gates[0].clone()]),
+            )
+            .is_none());
+        }
+    }
+
+    fn fail_compat(bot: &mut NavBot, end: script::native::WalkEnd) {
+        let (target, radius, teleports, ..) = bot.requested_route.expect("direct route key");
+        bot.note_failure(
+            bot.route_generation,
+            bot.walk_request_id,
+            target,
+            radius,
+            teleports,
+        );
+        bot.native_walk_failure = Some((bot.walk_request_id, end));
+    }
+
+    #[test]
+    fn compat_handover_moves_original_policy_and_preserves_rectangular_exclusions() {
+        let mut bot = compat_bot(11);
+        let (_, gates) = compat_gates();
+        fail_compat(
+            &mut bot,
+            script::native::WalkEnd::NeedsStep(Arc::clone(&gates)),
+        );
+        let handover = bot
+            .take_compat_walk_handover(WorldTile {
+                x: 3408,
+                z: 3489,
+                level: 0,
+            })
+            .expect("owned no-path handover");
+        assert_eq!(
+            handover.outer.identity,
+            script::native::OuterIdentity::Compat { request_id: 11 }
+        );
+        assert_eq!(handover.outer.radius, 3);
+        assert_eq!(
+            handover.outer.options.allow_teleports,
+            script::native::WalkBit::Forbid
+        );
+        assert_eq!(
+            handover.outer.options.allow_wilderness,
+            script::native::WalkBit::Forbid
+        );
+        assert_eq!(
+            handover.outer.options.allow_quest_start,
+            script::native::WalkBit::Forbid
+        );
+        assert!(handover.outer.allow_bank_fetch);
+        assert!(!handover.outer.prereq_allow.quest_start);
+        let script::native::HandoverEntry::NeedsStep(found) = handover.entry else {
+            panic!("no-path entry");
+        };
+        assert!(Arc::ptr_eq(&found, &gates));
+        assert_eq!(bot.walk_request_id, 0);
+        assert_eq!(
+            bot.walk_outcome_request_id, 0,
+            "direct failure is consumed, not posted"
+        );
+        assert!(bot.ordinary_movement_owned(0));
+        let (options, frozen) = bot.compat_walk_native_policy(run()).expect("child policy");
+        assert!(!options.allow_teleports && !options.allow_wilderness);
+        assert!(options.allow_bank_fetch);
+        let exclusions = native_route_exclusions(
+            &handover.outer.avoid,
+            &handover.outer.cross,
+            frozen.as_deref(),
+        );
+        assert!(
+            exclusions.avoid.is_empty(),
+            "derived rectangles must not accumulate"
+        );
+        assert_eq!(exclusions.avoid_wire.len(), 2);
+        assert!(matches!(
+            exclusions.avoid_wire[0],
+            script::shim::InspectAvoidWire::Rect { .. }
+        ));
+        assert_eq!(exclusions.cross.len(), 1);
+        assert!(bot.take_compat_walk_handover(handover.here).is_none());
+    }
+
+    #[test]
+    fn compat_refusal_keeps_the_acknowledged_page_stamp_and_same_observation() {
+        let mut bot = compat_bot(12);
+        let (catalog, gates) = compat_gates();
+        let content = route_prereq_content(&catalog, run(), Arc::clone(&gates))
+            .expect("canonical route content");
+        let observation = content
+            .refusal_observation(
+                0,
+                gates[0].crossing,
+                &[gates[0].gate.clone()],
+                nav_executor::RefusalMatch {
+                    text: 0,
+                    tick: 17,
+                    sequence: 21,
+                },
+            )
+            .expect("content-witnessed refusal");
+        assert_eq!(observation.fact.observed, stamp(run(), 17, 21));
+        fail_compat(
+            &mut bot,
+            script::native::WalkEnd::GateRefused(Arc::clone(&observation)),
+        );
+        assert!(Arc::ptr_eq(
+            bot.compat_walk_refusal().expect("record first"),
+            &observation
+        ));
+        let handover = bot
+            .take_compat_walk_handover(WorldTile {
+                x: 3408,
+                z: 3489,
+                level: 0,
+            })
+            .expect("refusal handover");
+        let script::native::HandoverEntry::GateRefused(found) = handover.entry else {
+            panic!("refusal entry");
+        };
+        assert!(Arc::ptr_eq(&found, &observation));
+        assert_eq!(found.fact.observed, stamp(run(), 17, 21));
+    }
+
+    #[test]
+    fn compat_handover_rejects_a_refusal_from_each_stale_run_component() {
+        for stale in [
+            RunKey { slot: 2, ..run() },
+            RunKey { run: 2, ..run() },
+            RunKey {
+                session: 2,
+                ..run()
+            },
+        ] {
+            let mut bot = compat_bot(16);
+            let (catalog, gates) = compat_gates();
+            let content = route_prereq_content(&catalog, stale, Arc::clone(&gates))
+                .expect("canonical route content");
+            let observation = content
+                .refusal_observation(
+                    0,
+                    gates[0].crossing,
+                    &[gates[0].gate.clone()],
+                    nav_executor::RefusalMatch {
+                        text: 0,
+                        tick: 17,
+                        sequence: 21,
+                    },
+                )
+                .expect("content-witnessed refusal");
+            fail_compat(&mut bot, script::native::WalkEnd::GateRefused(observation));
+            assert!(bot
+                .take_compat_walk_handover(WorldTile {
+                    x: 3408,
+                    z: 3489,
+                    level: 0
+                })
+                .is_none());
+            assert_eq!(bot.compat_walk_request_id(), Some(16));
+            assert!(!bot.compat_walk_handed_over());
+        }
+    }
+
+    #[test]
+    fn compat_handover_and_native_children_reject_each_stale_run_component() {
+        for stale in [
+            RunKey { slot: 2, ..run() },
+            RunKey { run: 2, ..run() },
+            RunKey {
+                session: 2,
+                ..run()
+            },
+        ] {
+            let mut bot = compat_bot(13);
+            let (_, gates) = compat_gates();
+            fail_compat(&mut bot, script::native::WalkEnd::NeedsStep(gates));
+            bot.quest_context.as_mut().expect("context").stamp.run = stale;
+            assert!(!bot.compat_walk_context_current());
+            assert!(bot
+                .take_compat_walk_handover(WorldTile {
+                    x: 3408,
+                    z: 3489,
+                    level: 0
+                })
+                .is_none());
+            assert!(bot.compat_walk_native_policy(run()).is_none());
+            assert_eq!(
+                bot.compat_walk_request_id(),
+                Some(13),
+                "stale take does not consume owner"
+            );
+        }
+    }
+
+    #[test]
+    fn compat_completion_reports_only_the_outer_id_and_only_once() {
+        let mut bot = compat_bot(14);
+        let (_, gates) = compat_gates();
+        fail_compat(&mut bot, script::native::WalkEnd::NeedsStep(gates));
+        let handover = bot
+            .take_compat_walk_handover(WorldTile {
+                x: 3408,
+                z: 3489,
+                level: 0,
+            })
+            .expect("handover");
+        bot.walk_request_id = 91;
+        assert!(!bot.complete_compat_walk(13, script::native::WalkEnd::Cancelled, None));
+        assert!(bot.complete_compat_walk(14, script::native::WalkEnd::Arrived, None));
+        assert_eq!(bot.walk_outcome_request_id, 14);
+        assert_eq!(
+            (bot.walk_outcome_x, bot.walk_outcome_z),
+            (handover.outer.target.x, handover.outer.target.z)
+        );
+        assert_eq!(bot.walk_outcome_radius, 3);
+        assert!(!bot.walk_outcome_failed);
+        assert!(!bot.script_walk_armed());
+        let sequence = bot.walk_outcome_seq;
+        assert!(!bot.complete_compat_walk(14, script::native::WalkEnd::Arrived, None));
+        assert_eq!(bot.walk_outcome_seq, sequence);
+    }
+
+    #[test]
+    fn rejected_compat_handover_keeps_outer_terminal_for_seat_observer() {
+        let mut bot = compat_bot(17);
+        let (_, gates) = compat_gates();
+        fail_compat(&mut bot, script::native::WalkEnd::NeedsStep(gates));
+        let mut slot = script::SlotScript::new();
+        assert!(!super::super::script_walk::observe_compat_walk(
+            &mut slot,
+            &mut bot,
+            Some(WorldTile {
+                x: 3408,
+                z: 3489,
+                level: 0,
+            }),
+            "rejected-compat-test",
+        ));
+        assert_eq!(bot.compat_walk_request_id(), None);
+        assert_eq!(bot.walk_outcome_request_id, 17);
+        assert!(bot.walk_outcome_failed);
+        let sequence = bot.walk_outcome_seq;
+        assert!(!super::super::script_walk::observe_compat_walk(
+            &mut slot,
+            &mut bot,
+            None,
+            "rejected-compat-test",
+        ));
+        assert_eq!(bot.walk_outcome_seq, sequence);
+    }
+
+    #[test]
+    fn compat_reissue_preserves_a_false_bank_fetch_policy() {
+        let mut bot = compat_bot(15);
+        let walk = bot.compat_walk.as_mut().expect("retained owner");
+        walk.key.4 = false;
+        walk.outer.as_mut().expect("original walk").allow_bank_fetch = false;
+        let (_, gates) = compat_gates();
+        fail_compat(&mut bot, script::native::WalkEnd::NeedsStep(gates));
+        let handover = bot
+            .take_compat_walk_handover(WorldTile {
+                x: 3408,
+                z: 3489,
+                level: 0,
+            })
+            .expect("handover");
+        assert!(!handover.outer.allow_bank_fetch);
+        assert!(
+            !bot.compat_walk_native_policy(run())
+                .expect("child policy")
+                .0
+                .allow_bank_fetch
+        );
+    }
+
+    #[test]
+    fn native_walk_exclusions_keep_request_avoid_names_and_deduplicate_crosses() {
+        let avoid = [Arc::from("named-avoid")];
+        let cross = [Arc::from("named-cross"), Arc::from("named-cross")];
+        let exclusions = native_route_exclusions(&avoid, &cross, None);
+        assert_eq!(
+            exclusions.avoid_wire,
+            vec![script::shim::InspectAvoidWire::Catalog(
+                "named-avoid".to_owned()
+            )],
+        );
+        assert_eq!(exclusions.cross, vec![Arc::<str>::from("named-cross")]);
+    }
+
+    #[test]
+    fn compat_owner_idle_storage_is_one_pointer_and_live_metadata_is_bounded() {
+        assert_eq!(
+            std::mem::size_of::<Option<Box<CompatWalk>>>(),
+            std::mem::size_of::<usize>(),
+        );
+        assert!(std::mem::size_of::<CompatWalk>() <= 384);
+        println!(
+            "prereq host layout NavBot={} CompatWalk={} idle_compat={}",
+            std::mem::size_of::<NavBot>(),
+            std::mem::size_of::<CompatWalk>(),
+            std::mem::size_of::<Option<Box<CompatWalk>>>(),
+        );
     }
 }

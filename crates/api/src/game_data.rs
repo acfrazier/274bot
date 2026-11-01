@@ -7,7 +7,7 @@ use std::sync::{Arc, OnceLock};
 
 use client::io::ClientRevision;
 use flate2::read::GzDecoder;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
 use crate::selected::{FactError, SelectedPin};
@@ -1020,6 +1020,16 @@ pub struct QuestRequirements {
     pub unknown_as_satisfied: bool,
 }
 
+/// Whether the progress varp is sent by content updates or remains local.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Deserialize, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Transmission {
+    PostedByContent,
+    NotTransmitted,
+    #[default]
+    Unknown,
+}
+
 /// One seed join. `id` is the seed id. `complete` is one constant, not a range.
 /// `unknown_sides` stays empty. Enum index is not a field.
 #[derive(Debug, Deserialize, Clone)]
@@ -1031,6 +1041,12 @@ pub struct QuestIdentityRow {
     pub varp: String,
     pub varp_id: i32,
     pub complete: i32,
+    #[serde(default)]
+    pub colour_authoritative: bool,
+    #[serde(default)]
+    pub stage_domain: Option<crate::selected::InclusiveRange>,
+    #[serde(default)]
+    pub transmission: Transmission,
     pub quest_points: i32,
     pub unknown_sides: Vec<String>,
     pub requirements: QuestRequirements,
@@ -2024,6 +2040,14 @@ impl SelectedGameData {
         crate::quest_facts::prepare(self, worker)
     }
 
+    /// Verify and prepare the selected prerequisite-step family off-pump.
+    pub fn prepare_prereq_steps(
+        &self,
+        worker: &mut crate::selected::FamilyPreparation,
+    ) -> Result<Arc<crate::prereq_steps::PrereqCatalog>, crate::selected::FactError> {
+        crate::prereq_steps::prepare(self, worker)
+    }
+
     /// Verify and decode the selected gathering family, or share the copy another user holds. Off-pump only.
     pub fn prepare_gathering(
         &self,
@@ -2035,6 +2059,11 @@ impl SelectedGameData {
     /// Return the prepared quest catalog from cache. This never decodes or hashes.
     pub fn try_quests(&self) -> Option<Arc<crate::quest_facts::QuestCatalog>> {
         crate::quest_facts::cached(self)
+    }
+
+    /// Return the prepared prerequisite catalog without decoding or hashing.
+    pub fn try_prereq_steps(&self) -> Option<Arc<crate::prereq_steps::PrereqCatalog>> {
+        crate::prereq_steps::cached(self)
     }
 
     /// Cache-only: the prepared gathering catalog after its first process decode. Never decodes.

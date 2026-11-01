@@ -153,6 +153,22 @@ impl Default for PageAcknowledgement {
     }
 }
 
+/// Last queued send, retained so an enclosing content-timed machine can bind
+/// its wait to the host's receipt without taking over this dialogue's owner.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct DialogueSend {
+    pub request_id: u64,
+    pub evidence: api::quest_progress::EvidenceStamp,
+    pub page: PageAcknowledgement,
+    pub kind: DialogueSendKind,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum DialogueSendKind {
+    Talk,
+    Advance,
+}
+
 #[derive(Clone)]
 pub enum DialogueTarget {
     Npc {
@@ -424,6 +440,7 @@ pub struct Dialogue {
     /// player after the dialogue began. `None`: the snapshot carried no mark
     /// data, so the combat guard keeps its earlier evidence rule.
     attack_baseline: Option<api::snapshot::AttackMarks>,
+    last_send: Option<DialogueSend>,
 }
 // Keep retained per-action dialogue state within its reviewed size budget.
 // 400 B measured on x86_64 Linux (no headroom left). The approach round 3 fix
@@ -506,6 +523,7 @@ impl NativeMachine for Dialogue {
             chat_page_owned: false,
             chat_advance_request_id: None,
             attack_baseline: local_attack_marks(cx),
+            last_send: None,
         };
         dialogue.open(cx)?;
         Ok(dialogue)
@@ -948,6 +966,10 @@ impl NativeMachine for Dialogue {
 }
 
 impl Dialogue {
+    pub(crate) fn last_send(&self) -> Option<DialogueSend> {
+        self.last_send
+    }
+
     /// Quiet ticks this conversation waits after the chat closes, and after
     /// each re-arm signal.
     fn gap_ticks(&self) -> u64 {
@@ -1446,6 +1468,12 @@ impl Dialogue {
         self.talk_approach_budget_ticks = talk_approach_budget_ticks;
         self.talk_arrival_tick = None;
         self.talk_message_tick = None;
+        self.last_send = Some(DialogueSend {
+            request_id: talk_request_id,
+            evidence: cx.evidence(),
+            page: talk_baseline.unwrap_or_default(),
+            kind: DialogueSendKind::Talk,
+        });
         self.surface = Surface::Chat;
         // No deadline yet: the page budget starts when the host accepts the
         // click (`update_talk_open_deadline`).
@@ -1660,6 +1688,12 @@ impl Dialogue {
             self.phase = Phase::WaitContinueAck;
             self.chat_advanced = true;
             self.chat_advance_request_id = Some(request_id);
+            self.last_send = Some(DialogueSend {
+                request_id,
+                evidence: cx.evidence(),
+                page: ack_page,
+                kind: DialogueSendKind::Advance,
+            });
             return Poll::Pending;
         }
         if !obs.options.is_empty() {
@@ -1690,6 +1724,12 @@ impl Dialogue {
             self.content_deadline_tick = obs.tick.saturating_add(PAGE_ACK_TICKS);
             self.chat_advanced = true;
             self.chat_advance_request_id = Some(request_id);
+            self.last_send = Some(DialogueSend {
+                request_id,
+                evidence: cx.evidence(),
+                page: ack_page,
+                kind: DialogueSendKind::Advance,
+            });
             return Poll::Pending;
         }
         self.steps += 1;

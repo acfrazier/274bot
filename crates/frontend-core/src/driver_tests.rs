@@ -5918,6 +5918,52 @@ fn saved_settings() -> Vec<Saved> {
             },
         },
         Saved {
+            name: "prereq-dialogue",
+            setting: S::Nav(N::AllowPrereqDialogue),
+            stage: nothing_staged,
+            command: OperatorCommand::SetNavPreference(N::AllowPrereqDialogue, false),
+            unchanged: |d| {
+                d.models().walk_globals().globals().allow_prereq_dialogue()
+                    && d.session()
+                        .play()
+                        .expect("play")
+                        .walk_globals()
+                        .allow_prereq_dialogue
+            },
+            changed: |d| {
+                !d.models().walk_globals().globals().allow_prereq_dialogue()
+                    && !d
+                        .session()
+                        .play()
+                        .expect("play")
+                        .walk_globals()
+                        .allow_prereq_dialogue
+            },
+        },
+        Saved {
+            name: "quest-start",
+            setting: S::Nav(N::AllowQuestStart),
+            stage: nothing_staged,
+            command: OperatorCommand::SetNavPreference(N::AllowQuestStart, false),
+            unchanged: |d| {
+                d.models().walk_globals().globals().allow_quest_start()
+                    && d.session()
+                        .play()
+                        .expect("play")
+                        .walk_globals()
+                        .allow_quest_start
+            },
+            changed: |d| {
+                !d.models().walk_globals().globals().allow_quest_start()
+                    && !d
+                        .session()
+                        .play()
+                        .expect("play")
+                        .walk_globals()
+                        .allow_quest_start
+            },
+        },
+        Saved {
             name: "danger",
             setting: S::DangerRouting,
             stage: nothing_staged,

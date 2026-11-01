@@ -299,6 +299,7 @@ fn router_goal_tiles(
             1,
             crate::WalkGlobals::default(),
         ),
+        prereq_catalog: None,
         bank_origin: super::Origin::Unknown,
         bank: Vec::new(),
         live_geometry,

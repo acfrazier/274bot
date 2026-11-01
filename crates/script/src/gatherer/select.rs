@@ -500,6 +500,7 @@ impl SelectedTarget {
                 required_after,
                 evidence: None,
                 cross: Vec::new().into_boxed_slice(),
+                avoid: Box::new([]),
                 protect: false,
                 food_guard: false,
                 allow: Default::default(),

@@ -430,7 +430,7 @@ pub enum OperatorCommand {
     SetDraw(DrawSwitch, bool),
 
     // --- Preferences and notices ---
-    /// Set one shared navigation preference (`nav_prefs.rs:5-25`).
+    /// Set one shared navigation preference (`nav_prefs.rs:10-32`).
     SetNavPreference(NavPreference, bool),
     /// Set the global danger-routing level
     /// (`WalkGlobalsView::persist_changed_at`, `walk_permissions.rs:183`).

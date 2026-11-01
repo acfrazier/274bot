@@ -1997,6 +1997,8 @@ mod tests {
             request_id: 0,
             avoid: Vec::new(),
             cross: Vec::new(),
+            allow_prereq_dialogue: None,
+            allow_quest_start: None,
         }
     }
 
@@ -2311,25 +2313,23 @@ mod tests {
     fn manual_clue_movement_keeps_its_reason_after_the_deadline() {
         for timed_out in [false, true] {
             let failure = clue_walk_receipt_failure(
-                script::native::WalkReceipt {
-                    goal: None,
-                    request_id: 1,
-                    evidence: api::quest_progress::EvidenceStamp {
-                        run: RunKey {
-                            slot: 1,
-                            run: 1,
-                            session: 1,
-                        },
-                        tick: 1002,
-                        sequence: 1002,
+                script::native::WalkReceipt { goal: None,
+                request_id: 1,
+                prereq_allow: None,
+                evidence: api::quest_progress::EvidenceStamp {
+                    run: RunKey {
+                        slot: 1,
+                        run: 1,
+                        session: 1,
                     },
-                    end: script::native::WalkEnd::UserInput,
-                    blocked: None,
-                    detail: None,
-                    refusal: None,
-                    assessment: None,
-                    escape: None,
+                    tick: 1002,
+                    sequence: 1002,
                 },
+                end: script::native::WalkEnd::UserInput,
+                blocked: None,
+                detail: None,
+                refusal: None,
+                assessment: None, escape: None, prereq_allow: None },
                 timed_out,
             );
             assert_eq!(failure.code.as_ref(), "manual-movement");
@@ -2607,6 +2607,8 @@ mod tests {
                 allow_teleports: false,
                 allow_wilderness: false,
                 allow_bank_fetch: false,
+                allow_prereq_dialogue: None,
+                allow_quest_start: None,
                 request_id: 0,
                 avoid: _,
                 cross: _,

@@ -83,6 +83,7 @@ fn accept_walk(slot: &mut BankSlot, action: &HostAction, tick: u64) {
             refusal: None,
             assessment: None,
             escape: None,
+            prereq_allow: None,
         },
     );
 }

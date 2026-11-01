@@ -276,6 +276,8 @@ impl Family for DeathRecovery {
                         request_id: 0,
                         avoid: Vec::new(),
                         cross: Vec::new(),
+                        allow_prereq_dialogue: None,
+                        allow_quest_start: None,
                     });
                     self.phase = Phase::Walking;
                     return Step::Wait;

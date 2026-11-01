@@ -350,6 +350,8 @@ pub(crate) fn rebased<'a>(
         allow_teleports: current.nav.allow_teleports,
         allow_wilderness: current.nav.allow_wilderness,
         allow_bank_fetch: current.nav.allow_bank_fetch,
+        allow_prereq_dialogue: current.nav.allow_prereq_dialogue,
+        allow_quest_start: current.nav.allow_quest_start,
         allow_danger_zones: current.nav.allow_danger_zones,
         survivable_routing: current.nav.survivable_routing,
         script_scope_notice_ack: current.nav.script_scope_notice_ack,
@@ -423,6 +425,8 @@ const MERGED_NAV_KEYS: &[(&str, bool)] = &[
     ("allow_teleports", false),
     ("allow_wilderness", false),
     ("allow_bank_fetch", false),
+    ("allow_prereq_dialogue", true),
+    ("allow_quest_start", true),
     ("allow_danger_zones", false),
     ("survivable_routing", true),
     ("script_scope_notice_ack", false),
@@ -784,6 +788,8 @@ mod tests {
         assert_eq!(after_panel_save["nav"]["allow_teleports"], true);
         assert_eq!(after_panel_save["nav"]["allow_wilderness"], false);
         assert_eq!(after_panel_save["nav"]["allow_bank_fetch"], false);
+        assert_eq!(after_panel_save["nav"]["allow_prereq_dialogue"], true);
+        assert_eq!(after_panel_save["nav"]["allow_quest_start"], true);
         assert_eq!(after_panel_save["nav"]["allow_danger_zones"], false);
         assert_eq!(after_panel_save["nav"]["survivable_routing"], false);
         assert_eq!(after_panel_save["nav"]["script_scope_notice_ack"], false);
@@ -826,6 +832,8 @@ mod tests {
         assert!(!refreshed_nav.allow_teleports);
         assert!(refreshed_nav.allow_wilderness);
         assert!(refreshed_nav.allow_bank_fetch);
+        assert!(refreshed_nav.allow_prereq_dialogue);
+        assert!(refreshed_nav.allow_quest_start);
         assert!(refreshed_nav.allow_danger_zones);
         assert!(refreshed_nav.survivable_routing);
         assert!(refreshed_nav.script_scope_notice_ack);

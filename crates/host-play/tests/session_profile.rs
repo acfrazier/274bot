@@ -2128,7 +2128,7 @@ fn public_membership_requires_every_configured_world_to_be_rs2b2t() {
 #[ignore = "requires NAV_TEST_PACK pointing to the shipped revision-289 nav pack"]
 fn public_profile_routes_lumbridge_to_ardougne() {
     use api::snapshot::WorldTile;
-    use host_play::walk_map::{ActionError, WalkRequest};
+    use host_play::walk_map::{ActionError, WalkActionOutcome, WalkRequest};
     use nav_planner::{
         router::{find_blocking_zones, FindOptions},
         world::NavWorld,
@@ -2207,11 +2207,12 @@ fn public_profile_routes_lumbridge_to_ardougne() {
                 &host_play::WalkArms::default(),
                 None,
             )
+            .map(WalkActionOutcome::Walking)
             .map_err(|_| ActionError::NoPath)
         });
         let label = format!("{override_members:?} combat={combat:?} {from:?}->{to:?}");
         assert_eq!(result.is_ok(), reachable, "{label}: {result:?}");
-        if let Ok(route) = &result {
+        if let Ok(WalkActionOutcome::Walking(route)) = &result {
             let walked: Vec<_> = route
                 .route
                 .legs

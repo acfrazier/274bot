@@ -94,6 +94,9 @@ fn error_reason(error: ActionError) -> Arc<str> {
         ActionError::BankDeposit(reason) => format!("failed:{reason}").into(),
         ActionError::CombatInterrupted => "combat-interrupted".into(),
         ActionError::NeedsEvidence(gates) => format!("needs-evidence:{gates:?}").into(),
+        ActionError::NeedsStep(gates) => format!("needs-step:{gates:?}").into(),
+        ActionError::GateRefused(observation) => format!("gate-refused:{observation:?}").into(),
+        ActionError::Prerequisite(refusal) => format!("prerequisite:{refusal}").into(),
         ActionError::GroundTake(api::ground_take::GroundRefusal::Capacity) => {
             "ground-take-capacity".into()
         }

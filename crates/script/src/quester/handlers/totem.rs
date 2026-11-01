@@ -5,7 +5,6 @@
 //! document. Content echoes each dial letter after every click
 //! (`quest_totem.rs2` `tribal_door_combo`: `if_settext(tribal_door2:com_43..46,
 //! enum(alphabet, $stage))`).
-use crate::native::walk::Walk;
 use crate::native::{
     ActionContext, ActionError, ActionHandle, NativeActions, NativeMachine, WalkReceipt,
     WalkRetryState,
@@ -14,6 +13,7 @@ use crate::quester::compile::{
     CompileContext, CompileError, StepContext, StepOutcome, StepPlan, StepRun,
 };
 use crate::quester::families::reach;
+use crate::quester::prereq::{reach::PrereqReach, walk::PrereqWalk};
 use crate::shim::InteractReq;
 use api::WorldTile;
 use serde::Deserialize;
@@ -140,17 +140,17 @@ struct Run {
     door_name: Arc<str>,
     tile: WorldTile,
     radius: i32,
-    walk: Option<ActionHandle<Walk>>,
+    walk: Option<PrereqWalk>,
     walk_retry: WalkRetryState,
-    reach: Option<ActionHandle<reach::Reach>>,
+    reach: Option<PrereqReach>,
     combo: Option<ActionHandle<Combo>>,
     opened: bool,
 }
 
 impl StepRun for Run {
     fn poll(&mut self, cx: &mut StepContext<'_, '_>) -> Poll<Result<StepOutcome, ActionError>> {
-        if let Some(handle) = &self.walk {
-            match cx.tick.actions.poll(handle, &mut cx.tick.cx) {
+        if let Some(walk) = self.walk.as_mut() {
+            match walk.poll(cx.tick.actions, &mut cx.tick.cx, cx.tick.state) {
                 Poll::Pending => return Poll::Pending,
                 Poll::Ready(Err(error)) => return Poll::Ready(Err(error)),
                 Poll::Ready(Ok(receipt)) => {
@@ -186,7 +186,7 @@ impl StepRun for Run {
                 // standable tile inside it is close enough to open the door.
                 request.arrival = nav_planner::contract::ArrivalKind::Area;
                 match crate::native::defer_budget(
-                    cx.tick.actions.begin::<Walk>(request, &mut cx.tick.cx),
+                    PrereqWalk::begin(request, cx.tick.actions, &mut cx.tick.cx),
                 ) {
                     Poll::Pending => {
                         self.walk_retry.defer_until_next_tick(tick);
@@ -202,7 +202,7 @@ impl StepRun for Run {
             }
             self.walk_retry.reset();
             if self.reach.is_none() {
-                self.reach = Some(cx.tick.actions.begin::<reach::Reach>(
+                self.reach = Some(PrereqReach::begin(
                     reach::ReachArgs {
                         kind: reach::ReachKind::Loc {
                             id: Some(self.door_id),
@@ -215,13 +215,14 @@ impl StepRun for Run {
                         target_tile: None,
                         reachable_only: false,
                     },
+                    cx.tick.actions,
                     &mut cx.tick.cx,
                 )?);
                 return Poll::Pending;
             }
         }
-        if let Some(handle) = &self.reach {
-            match cx.tick.actions.poll(handle, &mut cx.tick.cx) {
+        if let Some(handle) = &mut self.reach {
+            match handle.poll(cx.tick.actions, &mut cx.tick.cx, cx.tick.state) {
                 Poll::Pending => return Poll::Pending,
                 Poll::Ready(Err(error)) => return Poll::Ready(Err(error)),
                 Poll::Ready(Ok(false)) => {
@@ -260,6 +261,12 @@ impl StepRun for Run {
     }
 
     fn cancel(&mut self, _actions: &mut NativeActions) {
+        if let Some(walk) = self.walk.as_mut() {
+            walk.cancel();
+        }
+        if let Some(reach) = self.reach.as_mut() {
+            reach.cancel();
+        }
         self.walk = None;
         self.reach = None;
         self.combo = None;

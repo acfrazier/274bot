@@ -715,6 +715,37 @@ pub fn chat_page_fingerprint<'a, T: Hash>(
     hash.finish()
 }
 
+/// Match rendered dialogue text across adjacent widgets without allocating.
+/// Widget boundaries contribute one space. Matching ignores ASCII case.
+pub fn chat_page_matches<T: AsRef<str>>(texts: &[T], fragment: &str) -> bool {
+    let Some((first, rest)) = fragment.as_bytes().split_first() else {
+        return false;
+    };
+    if texts.iter().any(|line| {
+        line.as_ref()
+            .as_bytes()
+            .windows(fragment.len())
+            .any(|bytes| bytes.eq_ignore_ascii_case(fragment.as_bytes()))
+    }) {
+        return true;
+    }
+    let mut bytes = texts
+        .iter()
+        .flat_map(|line| line.as_ref().bytes().chain(std::iter::once(b' ')));
+    while let Some(byte) = bytes.next() {
+        if byte.eq_ignore_ascii_case(first) {
+            let mut tail = bytes.clone();
+            if rest.iter().all(|expected| {
+                tail.next()
+                    .is_some_and(|byte| byte.eq_ignore_ascii_case(expected))
+            }) {
+                return true;
+            }
+        }
+    }
+    false
+}
+
 /// Local combat observation from the player actor.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct CombatView {
@@ -908,6 +939,20 @@ mod tests {
             first,
             chat_page_fingerprint(&texts, [(4884, "No"), (4883, "Yes")])
         );
+    }
+
+    #[test]
+    fn dialogue_page_matching_respects_widget_boundaries() {
+        let texts = ["The barrier refuses", "to open."];
+        let refusal = "The barrier refuses to open.";
+        assert!(chat_page_matches(&texts, refusal));
+        assert!(chat_page_matches(&texts, "REFUSES to"));
+        assert!(chat_page_matches(&[refusal], refusal));
+        assert!(chat_page_matches(&texts.map(String::from), refusal));
+        assert!(!chat_page_matches(&texts, "refusesto"));
+        assert!(!chat_page_matches(&texts, "open. another page"));
+        assert!(!chat_page_matches(&texts, ""));
+        assert!(!chat_page_matches::<&str>(&[], refusal));
     }
 
     #[test]

@@ -270,6 +270,7 @@ impl Script for NativeWalkScript {
                 required_after: tick.cx.evidence(),
                 evidence: None,
                 cross: Box::default(),
+                avoid: Box::default(),
                 protect: true,
                 food_guard: false,
                 allow: Default::default(),

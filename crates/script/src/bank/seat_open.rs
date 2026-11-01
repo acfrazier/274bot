@@ -370,6 +370,7 @@ fn build_walk_request(
         required_after,
         evidence: None,
         cross: Box::default(),
+        avoid: Box::default(),
         protect: false,
         food_guard: false,
         allow: WalkAllow::default(),
@@ -381,6 +382,7 @@ fn access_walk_options() -> WalkOptions {
         allow_teleports: WalkBit::Forbid,
         allow_wilderness: WalkBit::Allow,
         allow_danger_zones: WalkBit::Inherit,
+        ..WalkOptions::default()
     }
 }
 
@@ -389,6 +391,7 @@ fn world_walk_options() -> WalkOptions {
         allow_teleports: WalkBit::Forbid,
         allow_wilderness: WalkBit::Inherit,
         allow_danger_zones: WalkBit::Inherit,
+        ..WalkOptions::default()
     }
 }
 
@@ -2237,6 +2240,7 @@ impl SelectorCore {
                 WalkBit::Forbid
             },
             allow_danger_zones: WalkBit::Inherit,
+            ..WalkOptions::default()
         };
         let machine = Select::begin(
             SelectArgs {

@@ -961,6 +961,9 @@ table Interact {
   lineage: ulong = 0;
   // In-isolate machine row that owned this emission, or 0 for none.
   mirror_owner: ulong = 0;
+  // Per-walk prerequisite consent: absent inherits; only false forbids.
+  allow_prereq_dialogue: bool = null;
+  allow_quest_start: bool = null;
 }
 
 // The tick's shim interact queue, forwarded to the host.

@@ -1042,7 +1042,7 @@ mod tests {
             open: true,
             cursor: 0,
             walk_permissions: frontend_core::WalkGlobalsView::new(
-                frontend_core::WalkGlobals::new(true, false, false, false, false),
+                frontend_core::WalkGlobals::new(true, false, false, false, false, true, true),
                 false,
                 false,
             ),
@@ -1098,7 +1098,7 @@ mod tests {
         );
 
         state.walk_permissions = frontend_core::WalkGlobalsView::new(
-            frontend_core::WalkGlobals::new(false, false, false, false, false),
+            frontend_core::WalkGlobals::new(false, false, false, false, false, true, true),
             false,
             false,
         );

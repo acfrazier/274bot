@@ -34,8 +34,13 @@ pub use services::{
 pub mod death;
 pub mod ledger;
 mod owner;
+mod prereq;
 mod server_ordered;
 pub mod thieve;
+pub use prereq::{
+    HandoverEntry, OuterIdentity, OuterWalk, PrereqAllow, PrereqFailure, PrereqMissing,
+    PrereqRefusal, PrereqStepIdentity, PrereqSwitch, PrereqWaitName, WalkHandover,
+};
 pub mod thieving_core;
 pub use server_ordered::ServerOrderedCompletion;
 pub mod walk;
@@ -127,6 +132,29 @@ pub struct WalkOptions {
     pub allow_teleports: WalkBit,
     pub allow_wilderness: WalkBit,
     pub allow_danger_zones: WalkBit,
+    pub allow_prereq_dialogue: WalkBit,
+    pub allow_quest_start: WalkBit,
+}
+
+/// Path-level request policy. An explicit Forbid at either level wins.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub(crate) struct PrereqOptions {
+    pub dialogue: WalkBit,
+    pub quest_start: WalkBit,
+}
+
+impl PrereqOptions {
+    fn apply(self, options: &mut WalkOptions) {
+        fn merge(header: WalkBit, request: WalkBit) -> WalkBit {
+            match (header, request) {
+                (WalkBit::Forbid, _) | (_, WalkBit::Forbid) => WalkBit::Forbid,
+                (header, WalkBit::Inherit) => header,
+                (_, request) => request,
+            }
+        }
+        options.allow_prereq_dialogue = merge(self.dialogue, options.allow_prereq_dialogue);
+        options.allow_quest_start = merge(self.quest_start, options.allow_quest_start);
+    }
 }
 
 /// The validated, per-script permission bits frozen into a prepared card.
@@ -135,6 +163,8 @@ pub struct WalkPermissions {
     pub allow_teleports: bool,
     pub allow_wilderness: bool,
     pub allow_danger_zones: bool,
+    pub allow_prereq_dialogue: bool,
+    pub allow_quest_start: bool,
 }
 
 /// The host's danger decision for a candidate's actual walk access tiles.
@@ -213,6 +243,10 @@ impl WalkPermissions {
             allow_teleports: read(teleports),
             allow_wilderness: read(wilderness),
             allow_danger_zones: read(danger_zones),
+            allow_prereq_dialogue: read("allow_prereq_dialogue")
+                || (card == CompiledId("Gatherer") && read("allowPrereqDialogue")),
+            allow_quest_start: read("allow_quest_start")
+                || (card == CompiledId("Gatherer") && read("allowQuestStart")),
         }
     }
 }
@@ -398,6 +432,12 @@ pub struct RetainedMemory {
     gather: crate::gatherer::GatherRetained,
     quester: crate::quester::QuesterRetained,
     sherlock: SherlockRetained,
+    walk_handover: Option<Box<RetainedWalkHandover>>,
+}
+
+struct RetainedWalkHandover {
+    run: RunKey,
+    handover: WalkHandover,
 }
 
 /// Watchdog-retained death state; active clue tokens and action ownership stay card-local.
@@ -440,6 +480,28 @@ impl RetainedMemory {
 
     pub fn sherlock(&mut self) -> &mut SherlockRetained {
         &mut self.sherlock
+    }
+
+    /// Reserve a one-shot factory input for this exact compiled run.
+    pub fn set_walk_handover(
+        &mut self,
+        run: RunKey,
+        handover: WalkHandover,
+    ) -> Result<(), StartError> {
+        if self.walk_handover.is_some() {
+            return Err(StartError::Busy);
+        }
+        self.walk_handover = Some(Box::new(RetainedWalkHandover { run, handover }));
+        Ok(())
+    }
+
+    /// A stale preparation cannot consume a newer run's input.
+    /// The start owner also takes this value when preparation is cancelled.
+    pub fn take_walk_handover(&mut self, run: RunKey) -> Option<WalkHandover> {
+        if self.walk_handover.as_ref()?.run != run {
+            return None;
+        }
+        self.walk_handover.take().map(|pending| pending.handover)
     }
 }
 
@@ -692,6 +754,7 @@ pub fn with_test_tick<R>(
         actions: &mut actions,
         cx: ActionContext {
             stage_cross: None,
+            walk_prereq: PrereqOptions::default(),
             condition: None,
             poison_unknown_pulse: u8::MAX,
             cure_poison: crate::survival::CurePoison::WhenNeeded,
@@ -777,6 +840,7 @@ pub struct NativeActions {
 /// Host-only frame context; deliberately no public constructor or family preparation.
 pub struct ActionContext<'a> {
     pub(crate) evidence: EvidenceStamp,
+    pub(crate) walk_prereq: PrereqOptions,
     pub(crate) pin: &'a SelectedPin,
     pub(crate) snapshot: SnapshotView<'a>,
     /// Frame-local stage consent. Every route keeps the existing named `cross` path.
@@ -964,6 +1028,7 @@ pub struct WalkRequest {
     pub required_after: EvidenceStamp,
     pub evidence: Option<Arc<dyn EvidenceProvider>>,
     pub cross: Box<[Arc<str>]>,
+    pub avoid: Box<[Arc<str>]>,
     /// Create a [`crate::combat::WalkGuard`] for this followed route.
     pub protect: bool,
     /// Create a food-only [`crate::combat::WalkGuard`] when `protect` is
@@ -974,7 +1039,7 @@ pub struct WalkRequest {
     /// when the owner disallows prayer.
     pub allow: WalkAllow,
 }
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum WalkRefusal {
     SearchIncomplete {
         nodes_settled: Option<usize>,
@@ -991,6 +1056,7 @@ pub enum WalkRefusal {
     FixableWith,
     Unknown(crate::combat::risk::UnknownWhy),
     EscapeInProgress,
+    Prerequisite(Arc<PrereqRefusal>),
 }
 
 impl std::fmt::Display for WalkRefusal {
@@ -1020,6 +1086,7 @@ impl std::fmt::Display for WalkRefusal {
             Self::FixableWith => f.write_str("route needs additional supplies"),
             Self::Unknown(why) => write!(f, "route risk is unknown: {why:?}"),
             Self::EscapeInProgress => f.write_str("escape in progress"),
+            Self::Prerequisite(refusal) => std::fmt::Display::fmt(refusal, f),
         }
     }
 }
@@ -1071,6 +1138,8 @@ pub enum WalkEnd {
     Aborted,
     Cancelled,
     NeedsEvidence(Arc<[QuestGate]>),
+    NeedsStep(Arc<[api::prereq_steps::ActionableGate]>),
+    GateRefused(Arc<api::prereq_knowledge::RefusalObservation>),
 }
 // USER-0.2.3-GATHERER §1 records a progressed return ending Expired at the
 // Traveller's 60-call bound (equal to observed ticks in the current host);
@@ -1287,6 +1356,8 @@ pub struct WalkReceipt {
     pub refusal: Option<WalkRefusal>,
     pub assessment: Option<Arc<crate::combat::risk::RouteAssessment>>,
     pub escape: Option<crate::combat::guard::Escape>,
+    /// Effective prerequisite grants captured by host admission. Missing means denied.
+    pub prereq_allow: Option<PrereqAllow>,
 }
 impl WalkReceipt {
     /// Prefer host detail and a typed stall over an applicable model reason,
@@ -1336,6 +1407,8 @@ impl WalkReceipt {
             WalkEnd::Arrived => Ok(self.evidence),
             WalkEnd::UserInput => Err(ActionError::UserInput),
             WalkEnd::NeedsEvidence(gates) => Err(ActionError::NeedsEvidence(gates)),
+            WalkEnd::NeedsStep(gates) => Err(ActionError::NeedsStep(gates)),
+            WalkEnd::GateRefused(observation) => Err(ActionError::GateRefused(observation)),
             WalkEnd::Cancelled => Err(ActionError::Cancelled),
             WalkEnd::NoPath => Err(ActionError::Blocked(failure_detail.unwrap_or_else(|| {
                 static REASON: LazyLock<Arc<str>> =
@@ -1377,25 +1450,22 @@ mod walk_receipt_tests {
             generation: 1,
             reason: Arc::clone(&risk_reason),
         });
-        let receipt = WalkReceipt {
-            request_id: 7,
-            evidence: EvidenceStamp {
-                run: RunKey {
-                    slot: 1,
-                    run: 1,
-                    session: 1,
-                },
-                tick: 1,
-                sequence: 1,
+        let receipt = WalkReceipt { request_id: 7,
+        evidence: EvidenceStamp {
+            run: RunKey {
+                slot: 1,
+                run: 1,
+                session: 1,
             },
-            goal: None,
-            end: WalkEnd::RouteEnded,
-            blocked: None,
-            detail: None,
-            refusal: None,
-            assessment: Some(assessment),
-            escape: None,
-        };
+            tick: 1,
+            sequence: 1,
+        },
+        goal: None,
+        end: WalkEnd::RouteEnded,
+        blocked: None,
+        detail: None,
+        refusal: None,
+        assessment: Some(assessment), escape: None, prereq_allow: None };
         assert_eq!(
             receipt
                 .assessment
@@ -1525,18 +1595,73 @@ pub struct ActionHandle<M: NativeMachine> {
 /// Revocation only: a Play-owned pair lease can fence queued work without
 /// taking the actor's slot lock or accessing its machine.
 #[derive(Clone)]
-pub struct ActionRevoker(Arc<owner::Owner>);
+pub struct ActionRevoker(RevokerTarget);
+#[derive(Clone)]
+enum RevokerTarget {
+    Owner(Arc<owner::Owner>),
+    Logical(Arc<parking_lot::Mutex<LogicalRevocation>>),
+}
+struct LogicalRevocation {
+    run: RunKey,
+    revoked: bool,
+    current: Option<ActionRevoker>,
+}
+
+/// A lazily allocated revocation link for a logical action whose native owner
+/// changes. Installing after a concurrent revoke fences the new owner too.
+pub(crate) struct ActionLink(Arc<parking_lot::Mutex<LogicalRevocation>>);
+impl ActionLink {
+    pub(crate) fn new(current: ActionRevoker) -> Self {
+        Self(Arc::new(parking_lot::Mutex::new(LogicalRevocation {
+            run: current.run(),
+            revoked: false,
+            current: Some(current),
+        })))
+    }
+    pub(crate) fn revoker(&self) -> ActionRevoker {
+        ActionRevoker(RevokerTarget::Logical(Arc::clone(&self.0)))
+    }
+    pub(crate) fn revoked(&self) -> bool {
+        self.0.lock().revoked
+    }
+    pub(crate) fn replace(&self, current: Option<ActionRevoker>) {
+        let mut state = self.0.lock();
+        if state.revoked {
+            drop(state);
+            if let Some(current) = current {
+                current.revoke();
+            }
+        } else {
+            state.current = current;
+        }
+    }
+}
 impl ActionRevoker {
     pub fn run(&self) -> RunKey {
-        self.0.run
+        match &self.0 {
+            RevokerTarget::Owner(owner) => owner.run,
+            RevokerTarget::Logical(state) => state.lock().run,
+        }
     }
     pub fn revoke(&self) {
-        self.0.revoke();
+        match &self.0 {
+            RevokerTarget::Owner(owner) => owner.revoke(),
+            RevokerTarget::Logical(state) => {
+                let current = {
+                    let mut state = state.lock();
+                    state.revoked = true;
+                    state.current.take()
+                };
+                if let Some(current) = current {
+                    current.revoke();
+                }
+            }
+        }
     }
 }
 impl<M: NativeMachine> ActionHandle<M> {
     pub fn revoker(&self) -> ActionRevoker {
-        ActionRevoker(Arc::clone(&self.owner))
+        ActionRevoker(RevokerTarget::Owner(Arc::clone(&self.owner)))
     }
 }
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
@@ -1570,6 +1695,12 @@ pub enum ActionError {
     /// The action requires typed quest evidence before it can continue.
     #[error("the native action needs quest evidence: {0:?}")]
     NeedsEvidence(Arc<[QuestGate]>),
+    #[error("the native action needs a navigation prerequisite: {0:?}")]
+    NeedsStep(Arc<[api::prereq_steps::ActionableGate]>),
+    #[error("a navigation crossing refused the account: {0:?}")]
+    GateRefused(Arc<api::prereq_knowledge::RefusalObservation>),
+    #[error(transparent)]
+    Prerequisite(Arc<PrereqRefusal>),
     /// Typed capacity or duplicate refusal from exact ground-item Take.
     #[error("ground-item Take was refused: {0:?}")]
     GroundTake(api::ground_take::GroundRefusal),
@@ -1729,6 +1860,8 @@ mod walk_permission_tests {
                 allow_teleports: WalkBit::Inherit,
                 allow_wilderness: WalkBit::Inherit,
                 allow_danger_zones: WalkBit::Inherit,
+                allow_prereq_dialogue: WalkBit::Inherit,
+                allow_quest_start: WalkBit::Inherit,
             }
         );
     }
@@ -1860,6 +1993,7 @@ mod walk_permission_tests {
             refusal: None,
             assessment: None,
             escape: None,
+            prereq_allow: None,
         };
         assert_eq!(
             receipt.into_arrival(),
@@ -1873,27 +2007,24 @@ mod walk_permission_tests {
         let detail: Arc<str> = Arc::from(
             "search_result=BudgetExhausted nodes_settled=unavailable (incomplete search)",
         );
-        let receipt = WalkReceipt {
-            goal: None,
-            request_id: 7,
-            evidence: EvidenceStamp {
-                run: RunKey {
-                    slot: 1,
-                    run: 1,
-                    session: 1,
-                },
-                tick: 1,
-                sequence: 1,
+        let receipt = WalkReceipt { goal: None,
+        request_id: 7,
+        evidence: EvidenceStamp {
+            run: RunKey {
+                slot: 1,
+                run: 1,
+                session: 1,
             },
-            end: WalkEnd::Refused,
-            blocked: None,
-            detail: Some(Arc::clone(&detail)),
-            refusal: Some(WalkRefusal::SearchIncomplete {
-                nodes_settled: None,
-            }),
-            assessment: None,
-            escape: None,
-        };
+            tick: 1,
+            sequence: 1,
+        },
+        end: WalkEnd::Refused,
+        blocked: None,
+        detail: Some(Arc::clone(&detail)),
+        refusal: Some(WalkRefusal::SearchIncomplete {
+            nodes_settled: None,
+        }),
+        assessment: None, escape: None, prereq_allow: None };
         assert_eq!(
             receipt.into_arrival(),
             Err(ActionError::Blocked(detail)),
@@ -1921,6 +2052,7 @@ mod walk_permission_tests {
             refusal: Some(WalkRefusal::EscapeInProgress),
             assessment: None,
             escape: None,
+            prereq_allow: None,
         };
         assert_eq!(
             receipt.failure_detail().as_deref(),
@@ -1934,6 +2066,8 @@ mod walk_permission_tests {
             "allow_teleports": true,
             "allow_wilderness": false,
             "allow_danger_zones": true,
+            "allow_prereq_dialogue": true,
+            "allow_quest_start": false,
         }))
         .unwrap();
         let roundtrip: SettingsBag =
@@ -1951,6 +2085,8 @@ mod walk_permission_tests {
                 allow_teleports: true,
                 allow_wilderness: false,
                 allow_danger_zones: true,
+                allow_prereq_dialogue: true,
+                allow_quest_start: false,
             }
         );
         assert_eq!(config.bag(), &roundtrip);
@@ -1965,6 +2101,8 @@ mod walk_permission_tests {
             "allowTeleports": true,
             "allowWilderness": true,
             "allowDangerZones": false,
+            "allowPrereqDialogue": false,
+            "allowQuestStart": true,
         }))
         .unwrap();
         let config = PreparedConfig::new(CompiledId("Gatherer"), 4, 1, Arc::new(bag), ());
@@ -1974,6 +2112,8 @@ mod walk_permission_tests {
                 allow_teleports: true,
                 allow_wilderness: true,
                 allow_danger_zones: false,
+                allow_prereq_dialogue: false,
+                allow_quest_start: true,
             }
         );
     }

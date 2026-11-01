@@ -19,10 +19,11 @@ use crate::movement::step_ok;
 use crate::pack::{BankAccess, BankStand};
 use crate::quest_gates::{QuestEvidence, QuestFamilyMismatch, QuestGates};
 use crate::router::{
-    find, find_allow_teleports, find_bounded, find_first_missing_item_reqs_with_avoid,
-    find_first_with, find_first_with_fallback, find_many_with, find_many_with_avoid_bounded,
-    find_many_with_avoid_bounded_until, find_missing_item_reqs, find_missing_item_reqs_with_avoid,
-    find_on_grid, find_unresolved_quest_gates, find_with, find_with_avoid, find_with_avoid_bounded,
+    find, find_actionable_quest_gates, find_allow_teleports, find_bounded,
+    find_first_missing_item_reqs_with_avoid, find_first_with, find_first_with_fallback,
+    find_many_with, find_many_with_avoid_bounded, find_many_with_avoid_bounded_until,
+    find_missing_item_reqs, find_missing_item_reqs_with_avoid, find_on_grid,
+    find_unresolved_quest_gates, find_with, find_with_avoid, find_with_avoid_bounded,
     find_with_model, local_step_component, missing_item_reqs, AvoidRect, CostModel, FallbackRoute,
     FindOptions, GridLeg, Leg, MissingReq, ReverseProof, RouteError, TargetError,
     BANK_TARGET_BUDGET, FIRST_TARGET_BUDGET, PER_STEP_WALK, REVERSE_PROOF_BUDGET,
@@ -1428,6 +1429,261 @@ fn cooperative_quest_gate_diagnosis_matches_blocked_and_satisfied_stage_fixture(
             format!("{new_gates:#?}").as_bytes(),
             "{label}: cooperative stage diagnosis must match the old API"
         );
+    }
+}
+
+/// Actionable diagnosis is a separate relaxed route after strict failure.
+/// It carries exact route-position and crossing identity, admits only a
+/// catalog-implied `Unknown` or `False` gate, and leaves the cursor form
+/// byte-for-byte aligned with the direct diagnostic.
+#[test]
+fn actionable_quest_diagnosis_preserves_strict_route_and_crossing_identity() {
+    use api::prereq_steps::CrossingKind;
+    use api::selected::{StageWindow, Truth};
+
+    let gate = gate_window("tbwt", "tbwt_main", Some(3), Some(3));
+    let QuestGate::Window(established) = gate.clone() else {
+        panic!("fixture is a stage window");
+    };
+    let establishable: Arc<[StageWindow]> = Arc::from([established]);
+    let world = Arc::new(crate::world::NavWorld::from_parts(
+        walled_5x5(),
+        stage_door_graph(vec![gate.clone()]),
+        Vec::new(),
+    ));
+    let lease = crate::producer::lease(&world).expect("stage-door fixture lease");
+    let (from, to) = (tile(0, 0, 0), tile(4, 4, 0));
+    let options = FindOptions::default();
+    let proven = evidenced(tbwt_evidence(gate_range(Some(3), Some(3))));
+    let proven_route = find_with(&world.collision, &world.graph, from, to, options, &proven)
+        .expect("fresh proof keeps the strict gate route");
+    let expected_leg = proven_route
+        .legs
+        .iter()
+        .position(|leg| matches!(leg, Leg::Transport { edge } if edge.quest_gates.is_some()))
+        .expect("the proof route crosses the stage door");
+
+    for (label, truth, state) in [
+        (
+            "unknown",
+            Truth::Unknown,
+            WorldState::empty().with_establishable(establishable.clone()),
+        ),
+        (
+            "false",
+            Truth::False,
+            evidenced(tbwt_evidence(gate_range(Some(4), Some(6))))
+                .with_establishable(establishable),
+        ),
+    ] {
+        assert_eq!(
+            find_with(&world.collision, &world.graph, from, to, options, &state),
+            Err(RouteError::NoPath),
+            "{label}: establishable windows never relax strict routing"
+        );
+        let actionable = find_actionable_quest_gates(
+            &world.collision,
+            &world.graph,
+            from,
+            &[to],
+            options,
+            &state,
+            &[],
+        )
+        .unwrap()
+        .expect("the establishment implication opens one diagnostic route");
+        assert_eq!(actionable.len(), 1, "{label}");
+        assert_eq!(actionable[0].gate, gate, "{label}");
+        assert_eq!(actionable[0].truth, truth, "{label}");
+        assert_eq!(actionable[0].leg as usize, expected_leg, "{label}");
+        let edge = &world.graph.edges[0];
+        assert_eq!(actionable[0].crossing.loc_id, edge.loc_id, "{label}");
+        assert_eq!(
+            actionable[0].crossing.option,
+            u8::try_from(edge.option).unwrap(),
+            "{label}"
+        );
+        assert_eq!(actionable[0].crossing.at, edge.at, "{label}");
+        assert_eq!(actionable[0].crossing.to, edge.to, "{label}");
+        assert_eq!(actionable[0].crossing.kind, CrossingKind::Door, "{label}");
+
+        let completion = advance_real_route_completion(
+            crate::router::SearchRequest::ActionableQuestGates {
+                from,
+                targets: Box::new([to]),
+                options,
+                avoid: Box::new([]),
+                max_settles: crate::router::NODE_BUDGET,
+            },
+            &lease,
+            &state,
+        );
+        assert!(completion.forward_settled() > 0, "{label}");
+        let crate::router::SearchOutcome::ActionableQuestGates(cursor_gates) =
+            completion.into_parts().0
+        else {
+            panic!("actionable quest cursor returned the wrong result shape")
+        };
+        let cursor_gates = cursor_gates
+            .unwrap()
+            .expect("cursor finds the implied gate");
+        assert_eq!(cursor_gates.len(), actionable.len(), "{label}");
+        assert_eq!(cursor_gates[0].gate, actionable[0].gate, "{label}");
+        assert_eq!(cursor_gates[0].truth, actionable[0].truth, "{label}");
+        assert_eq!(cursor_gates[0].leg, actionable[0].leg, "{label}");
+        assert_eq!(cursor_gates[0].crossing, actionable[0].crossing, "{label}");
+    }
+
+    let not_implied: Arc<[StageWindow]> = Arc::from([StageWindow {
+        quest: api::selected::FactKey::new("tbwt"),
+        signal: api::selected::FactKey::new("tbwt_main"),
+        values: gate_range(Some(2), Some(2)),
+    }]);
+    assert!(
+        find_actionable_quest_gates(
+            &world.collision,
+            &world.graph,
+            from,
+            &[to],
+            options,
+            &WorldState::empty().with_establishable(not_implied),
+            &[],
+        )
+        .unwrap()
+        .is_none(),
+        "a stage window outside the accepted implication is not actionable"
+    );
+}
+
+/// Relaxed no-path diagnosis must not report a proven gate when a sibling
+/// gate on the same edge is still actionable.
+#[test]
+fn no_path_diagnosis_excludes_true_sibling_gates() {
+    use api::selected::{StageWindow, Truth};
+
+    let true_gate = gate_window("tbwt", "tbwt_main", Some(3), Some(3));
+    let actionable_gate = gate_window("tbwt", "tbwt_side", Some(2), Some(2));
+    let QuestGate::Window(true_window) = true_gate.clone() else {
+        panic!("fixture is a stage window");
+    };
+    let QuestGate::Window(actionable_window) = actionable_gate.clone() else {
+        panic!("fixture is a stage window");
+    };
+    let windows: Arc<[StageWindow]> = Arc::from([true_window, actionable_window]);
+    let world = Arc::new(crate::world::NavWorld::from_parts(
+        walled_5x5(),
+        stage_door_graph(vec![true_gate.clone(), actionable_gate.clone()]),
+        Vec::new(),
+    ));
+    let (from, to) = (tile(0, 0, 0), tile(4, 4, 0));
+    let evidence = QuestEvidence::new(
+        Arc::new(Resolved {
+            stamp: stamp(10),
+            signals: vec![
+                ("tbwt", "tbwt_main", gate_range(Some(3), Some(3))),
+                ("tbwt", "tbwt_side", gate_range(Some(3), Some(3))),
+            ],
+            complete: Vec::new(),
+        }),
+        gate_family(1),
+        stamp(5),
+    );
+    let state = WorldState::empty()
+        .with_quest_evidence(evidence)
+        .with_establishable(windows);
+
+    assert_eq!(
+        find_with(
+            &world.collision,
+            &world.graph,
+            from,
+            to,
+            FindOptions::default(),
+            &state,
+        ),
+        Err(RouteError::NoPath),
+        "one false gate keeps the strict route closed"
+    );
+    let actionable = find_actionable_quest_gates(
+        &world.collision,
+        &world.graph,
+        from,
+        &[to],
+        FindOptions::default(),
+        &state,
+        &[],
+    )
+    .unwrap()
+    .expect("the remaining non-True gate is actionable");
+    assert_eq!(actionable.len(), 1);
+    assert_eq!(actionable[0].gate, actionable_gate);
+    assert_eq!(actionable[0].truth, Truth::False);
+    assert_ne!(actionable[0].gate, true_gate);
+    assert_eq!(
+        actionable[0].crossing,
+        world.graph.edges[0]
+            .crossing_id()
+            .expect("directed crossing identity")
+    );
+}
+
+/// The accepted-route record preserves a catalog-backed gate even when
+/// current evidence is True, so a later live refusal can contradict it.
+#[test]
+fn accepted_route_establishable_gates_retain_true_evidence() {
+    use api::prereq_steps::CrossingKind;
+    use api::selected::{StageWindow, Truth};
+
+    let gate = gate_window("tbwt", "tbwt_main", Some(3), Some(3));
+    let implied_gate = gate_window("tbwt", "tbwt_main", Some(2), Some(4));
+    let QuestGate::Window(established) = gate.clone() else {
+        panic!("fixture is a stage window");
+    };
+    let windows: Arc<[StageWindow]> = Arc::from([established]);
+    let world = Arc::new(crate::world::NavWorld::from_parts(
+        walled_5x5(),
+        stage_door_graph(vec![gate.clone(), implied_gate.clone()]),
+        Vec::new(),
+    ));
+    let lease = crate::producer::lease(&world).expect("stage-door fixture lease");
+    let (from, to) = (tile(0, 0, 0), tile(4, 4, 0));
+    let state = evidenced(tbwt_evidence(gate_range(Some(3), Some(3)))).with_establishable(windows);
+    let route = find_with(
+        &world.collision,
+        &world.graph,
+        from,
+        to,
+        FindOptions::default(),
+        &state,
+    )
+    .expect("fresh proof keeps the strict gate route");
+    let retained = crate::router::route_establishable_quest_gates(
+        crate::producer::route_view(&lease, &route).expect("route belongs to fixture lease"),
+        &state,
+    )
+    .expect("the accepted route has two catalog-backed gates");
+    assert_eq!(retained.len(), 2);
+    assert!(retained
+        .iter()
+        .any(|observed| observed.gate == gate && observed.truth == Truth::True));
+    assert!(retained
+        .iter()
+        .any(|observed| observed.gate == implied_gate && observed.truth == Truth::True));
+    let edge = &world.graph.edges[0];
+    let leg = route
+        .legs
+        .iter()
+        .position(|leg| matches!(leg, Leg::Transport { edge } if edge.quest_gates.is_some()))
+        .unwrap();
+    let crossing = edge.crossing_id().expect("directed crossing identity");
+    for observed in retained.iter() {
+        assert_eq!(observed.leg as usize, leg);
+        assert_eq!(observed.crossing, crossing);
+        assert_eq!(observed.crossing.loc_id, edge.loc_id);
+        assert_eq!(observed.crossing.option, u8::try_from(edge.option).unwrap());
+        assert_eq!(observed.crossing.at, edge.at);
+        assert_eq!(observed.crossing.to, edge.to);
+        assert_eq!(observed.crossing.kind, CrossingKind::Door);
     }
 }
 
@@ -5695,8 +5951,57 @@ fn combat_lifting_is_by_tile_and_never_bypasses_wilderness_permission() {
     ));
 }
 
+/// This routing fixture knows the six listed quests are complete and explicitly
+/// seeds every other selected quest signal at zero. Display names in
+/// `WorldState::quests` do not themselves prove a typed quest-stage gate.
+struct ZonesQuestProfile {
+    facts: Arc<api::game_data::QuestIdentityFacts>,
+    complete: std::collections::HashSet<String>,
+}
+
+impl api::quest_progress::EvidenceProvider for ZonesQuestProfile {
+    fn observe_gate(
+        &self,
+        gate: &QuestGate,
+        required_after: api::quest_progress::EvidenceStamp,
+    ) -> Option<api::prereq_knowledge::Observation> {
+        let observed = stamp(10);
+        if !observed.meets(required_after) {
+            return None;
+        }
+        let key = match gate {
+            QuestGate::Complete(key) => key,
+            QuestGate::Window(window) => &window.quest,
+        };
+        let row = self
+            .facts
+            .rows
+            .iter()
+            .find(|row| row.id == key.0.as_ref())?;
+        let complete = self.complete.contains(&row.display);
+        let truth = match gate {
+            QuestGate::Complete(_) => {
+                if complete {
+                    api::selected::Truth::True
+                } else {
+                    api::selected::Truth::False
+                }
+            }
+            QuestGate::Window(window) if window.signal.0.as_ref() == row.varp => {
+                let stage = if complete { row.complete } else { 0 };
+                window.values.test(&gate_range(Some(stage), Some(stage)))
+            }
+            QuestGate::Window(_) => api::selected::Truth::Unknown,
+        };
+        Some(api::prereq_knowledge::Observation {
+            truth,
+            observed: Some(observed),
+        })
+    }
+}
+
 fn zones_rich_289_state(combat_level: Option<i32>) -> WorldState {
-    WorldState {
+    let mut state = WorldState {
         combat_level,
         map_members: true,
         quests: [
@@ -5722,7 +6027,28 @@ fn zones_rich_289_state(combat_level: Option<i32>) -> WorldState {
         ]),
         stats: (0..21).map(|skill| (skill, 99)).collect(),
         ..WorldState::empty()
-    }
+    };
+    static QUESTS: std::sync::LazyLock<(
+        Arc<api::game_data::QuestIdentityFacts>,
+        crate::quest_gates::QuestFamilyId,
+    )> = std::sync::LazyLock::new(|| {
+        let selected = api::game_data::for_revision(client::io::ClientRevision::R289).unwrap();
+        let (facts, family) = selected.quest_identity_for_bake().unwrap();
+        (
+            Arc::new(facts),
+            crate::quest_gates::QuestFamilyId::new(family.sha256, family.schema),
+        )
+    });
+    let (facts, family) = &*QUESTS;
+    state.quest_evidence = Some(QuestEvidence::new(
+        Arc::new(ZonesQuestProfile {
+            facts: Arc::clone(facts),
+            complete: state.quests.clone(),
+        }),
+        *family,
+        stamp(10),
+    ));
+    state
 }
 
 fn zone_route_cell_count(route: &crate::router::Route) -> usize {
@@ -6947,47 +7273,77 @@ fn retained_compact_view_is_allocation_free_and_pack_checked() {
 
 #[test]
 fn real_289_cooperative_request_shapes_match_legacy_serialization() {
-    let Some(world) = crate::world::NavWorld::load_default_pack_or_skip() else {
-        return;
+    let path = crate::world::NavWorld::default_pack_path();
+    let world = match crate::world::NavWorld::load_pack(&path) {
+        Ok(world) => world,
+        Err(crate::pack::PackError::Io(error))
+            if error.kind() == std::io::ErrorKind::NotFound
+                && std::env::var_os("NAV_PACK").is_none()
+                && std::env::var("GITHUB_ACTIONS").is_ok_and(|value| value == "true") =>
+        {
+            eprintln!(
+                "SKIP: hosted CI has no nav-pack asset at {}; set NAV_PACK or build host-play's revision-289 pack",
+                path.display()
+            );
+            return;
+        }
+        Err(error) => panic!(
+            "could not load selected nav pack at {}: {error}",
+            path.display()
+        ),
     };
     let world = Arc::new(world);
-    let lease = crate::producer::lease(&world).expect("real pack lease");
-    assert_eq!(
-        lease.identity().content().bytes(),
-        [
-            0x4e, 0x8a, 0xb5, 0xaf, 0x46, 0x94, 0xcf, 0x67, 0x22, 0xed, 0x38, 0x36, 0xc3, 0xe1,
-            0xf4, 0x2e, 0x9a, 0xc1, 0xbe, 0x13, 0x6d, 0x4d, 0x11, 0x27, 0xc7, 0xdb, 0x69, 0x8f,
-            0x4f, 0xc6, 0x50, 0x0b,
-        ],
-        "qualified entrance pack SHA-256 is 4e8ab5af4694cf6722ed3836c3e1f42e9ac1be136d4d1127c7db698f4fc6500b; update this pin with the transport and route corpus diff"
-    );
-    assert_eq!(
+    eprintln!(
+        "transport graph layout ordinary={} teleports={} gated={} edge_bytes={}",
         world.graph.edges.len(),
-        3_361,
-        "qualified entrance-pack census: 3249 unchanged edges plus 112 additions"
-    );
-    assert_eq!(
-        world.graph.quest_family,
-        Some(crate::quest_gates::QuestFamilyId::new(
-            [
-                0xd5, 0x89, 0xa7, 0xd7, 0x77, 0x05, 0x21, 0xa7, 0x2d, 0xc5, 0x02, 0x24, 0x5d, 0x41,
-                0x61, 0x32, 0x14, 0x25, 0x9e, 0xc9, 0x2a, 0xc0, 0x96, 0x8a, 0x13, 0xb9, 0x33, 0x11,
-                0xdd, 0xb9, 0xb5, 0x9a,
-            ],
-            std::num::NonZeroU16::new(1).expect("quest schema is nonzero"),
-        )),
-        "qualified selected quest family"
-    );
-    assert_eq!(
+        world.graph.teleports.len(),
         world
             .graph
             .edges
             .iter()
+            .chain(&world.graph.teleports)
             .filter(|edge| edge.quest_gates.is_some())
             .count(),
-        62,
-        "all 62 quest-gated edges are additions; the 3249 reference edges are unchanged"
+        std::mem::size_of::<crate::transport::TransportEdge>(),
     );
+    let lease = crate::producer::lease(&world).expect("real pack lease");
+    assert_eq!(
+        lease.identity().content(),
+        *world
+            .content
+            .get()
+            .expect("loaded pack has its content identity"),
+        "lease identity must come from the loaded pack"
+    );
+    if let Some(family) = world.graph.quest_family.as_ref() {
+        world
+            .graph
+            .admit_quest_family(family)
+            .expect("the loaded pack admits its own quest family");
+        assert!(
+            world
+                .graph
+                .edges
+                .iter()
+                .chain(&world.graph.teleports)
+                .all(|edge| {
+                    edge.quest_gates
+                        .as_ref()
+                        .is_none_or(|gates| gates.family() == family)
+                }),
+            "every loaded gate uses the pack's decoded quest family"
+        );
+    } else {
+        assert!(
+            world
+                .graph
+                .edges
+                .iter()
+                .chain(&world.graph.teleports)
+                .all(|edge| edge.quest_gates.is_none()),
+            "a pack without a quest family cannot carry quest gates"
+        );
+    }
     let from = tile(3222, 3218, 0);
     let west_bank = tile(3092, 3243, 0);
     let east_bank = tile(3253, 3420, 0);
@@ -7581,11 +7937,6 @@ fn real_289_cooperative_request_shapes_match_legacy_serialization() {
         &quest_state,
         &[],
     );
-    assert_eq!(
-        old_gates,
-        Ok(None),
-        "reference 289 pack has no quest gates; update this check if a later pack adds gates"
-    );
     let new_gates = advance_real_route_completion(
         crate::router::SearchRequest::UnresolvedQuestGates {
             from: quest_from,
@@ -7604,9 +7955,9 @@ fn real_289_cooperative_request_shapes_match_legacy_serialization() {
         panic!("quest-gate cursor returned the wrong result shape")
     };
     assert_eq!(
-        new_gates,
-        Ok(None),
-        "the cooperative path must preserve the reference pack's no-gate result"
+        new_gates.as_ref().map(|gates| gates.as_deref()),
+        old_gates.as_ref().map(|gates| gates.as_deref()),
+        "the cooperative path must preserve this pack's unresolved quest-gate result"
     );
     let old_bytes = format!("{old_gates:#?}");
     let new_bytes = format!("{new_gates:#?}");

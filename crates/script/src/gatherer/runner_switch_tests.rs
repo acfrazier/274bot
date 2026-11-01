@@ -1,7 +1,7 @@
 use super::super::select::PlacementClass;
 use super::*;
 use crate::native::WalkStallReason;
-use crate::quester::families::tests::{def, with_tick};
+use crate::quester::families::tests::{def, with_tick, with_tick_scene_reach};
 use api::gather_methods::{known_rows, TargetClass};
 use api::named_banks::{NamedBank, NamedBankFacts};
 use api::selected::{EntityId, FamilyPreparation};
@@ -37,6 +37,209 @@ fn fixture() -> (Gatherer, GameSnapshot) {
         GatherRetained::default(),
     );
     (gatherer, snapshot)
+}
+
+fn prerequisite_gate() -> (
+    api::prereq_steps::ActionableGate,
+    api::prereq_steps::CrossingId,
+    Arc<str>,
+) {
+    let data =
+        api::game_data::for_revision(api::selected::ClientRevision::R289).expect("R289 data");
+    let catalog = api::selected::FamilyPreparation::run(move |worker| {
+        data.prepare_prereq_steps(worker)
+            .expect("R289 prerequisite catalog")
+    })
+    .expect("family preparation worker")
+    .join()
+    .expect("prerequisite preparation");
+    let (_, row) = catalog
+        .iter()
+        .find(|(_, row)| row.crossings.iter().any(|entry| entry.crossing.option > 0))
+        .expect("R289 has a prerequisite crossing");
+    let entry = row
+        .crossings
+        .iter()
+        .find(|entry| entry.crossing.option > 0)
+        .expect("selected row has a supported operation");
+    let crossing = entry.crossing;
+    let gate = api::selected::QuestGate::Window(api::selected::StageWindow {
+        quest: row.establishes.quest.clone(),
+        signal: row.establishes.signal.clone(),
+        values: api::selected::InclusiveRange {
+            min: None,
+            max: None,
+        },
+    });
+    (
+        api::prereq_steps::ActionableGate {
+            gate,
+            truth: api::selected::Truth::Unknown,
+            leg: 0,
+            crossing,
+        },
+        crossing,
+        Arc::clone(&entry.pass.message),
+    )
+}
+
+#[test]
+fn prerequisite_handoff_reissues_original_walk_once_and_cancel_revokes_it() {
+    let (mut gatherer, mut snapshot) = fixture();
+    let (gate, crossing, pass_message) = prerequisite_gate();
+    let target = WorldTile {
+        x: crossing.at.x + 80,
+        z: crossing.at.z + 80,
+        level: crossing.at.level,
+    };
+    let mut player = snapshot
+        .local_player()
+        .expect("fixture has a local player")
+        .clone();
+    player.player.network = crossing.takeoff;
+    player.player.actor.tile = crossing.takeoff;
+    player.player.actor.moving = false;
+    snapshot.seed_local_player(player);
+    let data = api::game_data::for_revision(api::selected::ClientRevision::R289).unwrap();
+    let catalog = FamilyPreparation::run(move |worker| data.prepare_prereq_steps(worker).unwrap())
+        .unwrap()
+        .join()
+        .unwrap();
+    let (_, row) = catalog
+        .iter()
+        .find(|(_, row)| row.crossing(&crossing).is_some())
+        .unwrap();
+    crate::quester::families::tests::seed_prereq_crossing(&mut snapshot, row, &crossing);
+
+    let mut ledger = None;
+    with_tick(&snapshot, &mut ledger, 1, |tick| {
+        assert!(gatherer.trip_walk(target, 2, ArrivalKind::Reach, None, tick));
+    });
+    let (outer_id, outer_run) = {
+        let action = &ledger.as_ref().unwrap().outbox[0];
+        (action.request_id.get(), action.run())
+    };
+    ledger.as_mut().unwrap().walk = Some(WalkReceipt {
+        goal: None,
+        request_id: outer_id,
+        evidence: api::quest_progress::EvidenceStamp {
+            run: outer_run,
+            tick: 2,
+            sequence: 2,
+        },
+        end: WalkEnd::NeedsStep(Arc::from([gate])),
+        blocked: None,
+        detail: None,
+        refusal: None,
+        assessment: None,
+        escape: None,
+        prereq_allow: Some(crate::native::PrereqAllow {
+            dialogue: true,
+            quest_start: true,
+        }),
+    });
+    with_tick_scene_reach(&snapshot, &mut ledger, 2, |tick| {
+        gatherer.poll_active(tick);
+    });
+    assert!(matches!(gatherer.active, Active::Walk(_)));
+    let (probe_authority, probe_id, probe_run) = {
+        let probe = ledger
+            .as_ref()
+            .unwrap()
+            .outbox
+            .iter()
+            .find(|action| {
+                matches!(
+                    &action.effect,
+                    crate::native::HostEffect::Interaction(
+                        crate::shim::InteractReq::Loc { id: Some(id), .. }
+                    ) if *id == crossing.loc_id
+                )
+            })
+            .expect("prerequisite probe was submitted");
+        (probe.authority(), probe.request_id.get(), probe.run())
+    };
+    ledger.as_mut().unwrap().complete_interaction(
+        &probe_authority,
+        crate::native::InteractionReceipt {
+            request_id: probe_id,
+            evidence: api::quest_progress::EvidenceStamp {
+                run: probe_run,
+                tick: 2,
+                sequence: 2,
+            },
+            accepted: true,
+            chat_since: 0,
+        },
+    );
+    let mut player = snapshot
+        .local_player()
+        .expect("fixture has a local player")
+        .clone();
+    player.player.network = crossing.to;
+    player.player.actor.tile = crossing.to;
+    snapshot.seed_local_player(player);
+    snapshot.seed_chat_lines(vec![api::snapshot::ChatLineView {
+        sequence: 1,
+        type_: 0,
+        username: None,
+        text: pass_message.to_string(),
+    }]);
+    with_tick(&snapshot, &mut ledger, 3, |tick| {
+        gatherer.poll_active(tick);
+    });
+
+    let walk_ids: Vec<_> = ledger
+        .as_ref()
+        .unwrap()
+        .outbox
+        .iter()
+        .filter_map(|action| match &action.effect {
+            crate::native::HostEffect::Walk(request) => {
+                Some((action.request_id.get(), request.clone()))
+            }
+            _ => None,
+        })
+        .collect();
+    assert_eq!(walk_ids.len(), 1, "only the live reissue remains queued");
+    let (reissued_id, reissued) = &walk_ids[0];
+    assert!(
+        *reissued_id > outer_id,
+        "the outer request was replaced once"
+    );
+    assert_eq!(reissued.target, target);
+    assert_eq!(reissued.radius, 2);
+    assert_eq!(
+        reissued.options.allow_teleports,
+        WalkOptions::default().allow_teleports
+    );
+    assert!(reissued.cross.is_empty());
+    assert!(reissued.avoid.is_empty());
+    assert!(!reissued.protect);
+    assert!(!reissued.food_guard);
+    assert_eq!(reissued.required_after.tick, 3);
+    assert!(gatherer.target.is_none());
+
+    with_tick(&snapshot, &mut ledger, 4, |tick| {
+        gatherer.poll_active(tick);
+    });
+    assert_eq!(
+        ledger.as_ref().unwrap().outbox.len(),
+        1,
+        "an unchanged pending wrapper keeps only its one live reissue"
+    );
+    gatherer.cancel_active();
+    let reissued_action = ledger
+        .as_ref()
+        .unwrap()
+        .outbox
+        .iter()
+        .find(|action| action.request_id.get() == *reissued_id)
+        .expect("re-issued walk remains recorded");
+    assert!(
+        !reissued_action.live(),
+        "cancellation revokes the owned walk"
+    );
 }
 
 fn catherby_fishing_fixture() -> (Gatherer, GameSnapshot) {
@@ -226,6 +429,7 @@ fn stalled_return_receipt(
         refusal: None,
         assessment: None,
         escape: None,
+        prereq_allow: None,
     }
 }
 fn assert_return_recovery_submitted(gatherer: &Gatherer) {
@@ -852,28 +1056,29 @@ fn resource_approach_arrival_selects_and_clicks_without_a_settle_tick() {
     gatherer.cancel_active();
     with_tick(&snapshot, &mut ledger, 2, |tick| {
         gatherer.active = Active::Walk(
-            tick.actions
-                .begin::<Walk>(
-                    WalkRequest {
-                        target: target.tile,
-                        candidate_goals: None,
-                        loc_id: match target.entity {
-                            EntityId::Loc(id) => Some(id),
-                            _ => None,
-                        },
-                        radius: 1,
-                        arrival: nav_planner::contract::ArrivalKind::Reach,
-                        options: crate::native::WalkOptions::default(),
-                        required_after: tick.cx.evidence(),
-                        evidence: None,
-                        cross: Vec::new().into_boxed_slice(),
-                        protect: false,
-                        food_guard: false,
-                        allow: Default::default(),
+            PrereqWalk::begin(
+                WalkRequest {
+                    target: target.tile,
+                    candidate_goals: None,
+                    loc_id: match target.entity {
+                        EntityId::Loc(id) => Some(id),
+                        _ => None,
                     },
-                    &mut tick.cx,
-                )
-                .unwrap(),
+                    radius: 1,
+                    arrival: nav_planner::contract::ArrivalKind::Reach,
+                    options: crate::native::WalkOptions::default(),
+                    required_after: tick.cx.evidence(),
+                    evidence: None,
+                    cross: Vec::new().into_boxed_slice(),
+                    avoid: Box::new([]),
+                    protect: false,
+                    food_guard: false,
+                    allow: Default::default(),
+                },
+                tick.actions,
+                &mut tick.cx,
+            )
+            .unwrap(),
         );
         gatherer.target = Some(target.clone());
     });
@@ -1086,6 +1291,7 @@ fn assert_route_ended_tree_reselection(observation: TargetObservation, loaded: b
                 refusal: None,
                 assessment: None,
                 escape: None,
+                prereq_allow: None,
             },
             tick,
         );
@@ -1217,6 +1423,7 @@ fn unloaded_npc_observation_stand_uses_area_without_loc_identity() {
                 assessment: None,
                 refusal: None,
                 escape: None,
+                prereq_allow: None,
             },
             tick,
         );
@@ -1435,6 +1642,7 @@ fn refused_recovery_route_is_terminal_and_preserves_host_reason() {
                 refusal: None,
                 assessment: None,
                 escape: None,
+                prereq_allow: None,
             },
             tick,
         );

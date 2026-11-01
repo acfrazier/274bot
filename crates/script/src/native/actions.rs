@@ -428,6 +428,7 @@ impl ActionContext<'_> {
         if !self.budget.event(false) {
             return Err(ActionError::BudgetExhausted);
         }
+        self.walk_prereq.apply(&mut request.options);
         let ledger = self.ledger.as_mut().expect("owner checked");
         let request_id = ledger.next_id()?;
         owner.set_walk(request_id);
@@ -775,6 +776,24 @@ impl<M: NativeMachine> ActionHandle<M> {
     pub(crate) fn inspect<R>(&self, read: impl FnOnce(&M) -> R) -> Option<R> {
         self.machine.borrow().as_ref().map(read)
     }
+
+    /// Observe a live machine's receipts under its existing owner. This does
+    /// not poll, send, or spend an observed-tick allowance.
+    pub(crate) fn inspect_in<R>(
+        &self,
+        cx: &mut ActionContext<'_>,
+        read: impl FnOnce(&M, &ActionContext<'_>) -> R,
+    ) -> Option<R> {
+        if self.owner.run != cx.run() || !self.owner.live() {
+            return None;
+        }
+        cx.action_id = self.owner.id.get();
+        cx.owner().ok()?;
+        self.machine
+            .borrow()
+            .as_ref()
+            .map(|machine| read(machine, cx))
+    }
 }
 
 impl ActionHandle<crate::combat::Combat> {
@@ -1100,6 +1119,7 @@ mod tests {
         budget.observe(1);
         let mut cx = ActionContext {
             stage_cross: None,
+            walk_prereq: Default::default(),
             condition: None,
             poison_unknown_pulse: u8::MAX,
             cure_poison: crate::survival::CurePoison::WhenNeeded,
@@ -1557,6 +1577,7 @@ mod tests {
         budget.observe(1);
         let mut cx = ActionContext {
             stage_cross: None,
+            walk_prereq: Default::default(),
             condition: None,
             poison_unknown_pulse: u8::MAX,
             evidence,
@@ -2085,6 +2106,7 @@ mod tests {
                 evidence: None,
                 loc_id: None,
                 cross: Box::new([]),
+                avoid: Box::new([]),
                 protect: false,
                 food_guard: false,
                 allow: Default::default(),
@@ -2556,6 +2578,8 @@ mod tests {
                     allow_teleports: false,
                     allow_wilderness: false,
                     allow_bank_fetch: false,
+                    allow_prereq_dialogue: None,
+                    allow_quest_start: None,
                     request_id: 0,
                     avoid: Vec::new(),
                     cross: Vec::new(),
@@ -2597,6 +2621,7 @@ mod tests {
                 required_after: cx.evidence(),
                 evidence: None,
                 cross: Vec::new().into_boxed_slice(),
+                avoid: Box::new([]),
                 protect: false,
                 food_guard: false,
                 allow: Default::default(),
@@ -2697,6 +2722,7 @@ mod tests {
                             required_after: cx.evidence(),
                             evidence: None,
                             cross: Vec::new().into_boxed_slice(),
+                            avoid: Box::new([]),
                             protect: false,
                             food_guard: false,
                             allow: Default::default(),
@@ -2713,6 +2739,7 @@ mod tests {
                             refusal: None,
                             assessment: None,
                             escape: None,
+                            prereq_allow: None,
                         });
                         assert!(actions.poll(&handle, cx).is_pending(),
                         "radius {radius}: a still-moving final segment is not a stationary route end");
@@ -2759,6 +2786,7 @@ mod tests {
             required_after: evidence,
             evidence: None,
             cross: Vec::new().into_boxed_slice(),
+            avoid: Box::new([]),
             protect: false,
             food_guard: false,
             allow: WalkAllow::default(),

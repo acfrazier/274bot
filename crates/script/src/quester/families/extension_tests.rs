@@ -3772,21 +3772,18 @@ fn loc_make_starts_menu_clock_after_multi_tick_approach() {
                 .unwrap();
             (action.request_id.get(), action.run())
         };
-        ledger.as_mut().unwrap().walk = Some(crate::native::WalkReceipt {
-            goal: None,
-            request_id,
-            evidence: api::quest_progress::EvidenceStamp {
-                run: run_key,
-                tick: 6,
-                sequence: 6,
-            },
-            end: crate::native::WalkEnd::Arrived,
-            blocked: None,
-            detail: None,
-            refusal: None,
-            assessment: None,
-            escape: None,
-        });
+        ledger.as_mut().unwrap().walk = Some(crate::native::WalkReceipt { goal: None,
+        request_id,
+        evidence: api::quest_progress::EvidenceStamp {
+            run: run_key,
+            tick: 6,
+            sequence: 6,
+        },
+        end: crate::native::WalkEnd::Arrived,
+        blocked: None,
+        detail: None,
+        refusal: None,
+        assessment: None, escape: None, prereq_allow: None });
         assert!(with_tick(&snapshot, &mut ledger, 6, |tick| {
             with_step(tick, |cx| run.poll(cx))
         })

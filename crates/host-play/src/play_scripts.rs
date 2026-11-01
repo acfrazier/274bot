@@ -192,6 +192,10 @@ pub(crate) enum StartRequest<'a> {
         #[cfg(not(feature = "js"))]
         _lifetime: std::marker::PhantomData<&'a ()>,
     },
+    WalkHandover {
+        handover: script::native::WalkHandover,
+        route_run: api::selected::RunKey,
+    },
 }
 fn validate_script_loadout_setting(
     rows: &[api::loadout::Loadout],
@@ -211,6 +215,58 @@ impl ScriptStartHandle {
             Some(state) => state.operator_loadouts(name),
             None => Ok(Vec::new()),
         }
+    }
+    pub(crate) fn manual_route_state(
+        &self,
+        name: &str,
+        snapshot: &api::snapshot::GameSnapshot,
+        base: &nav_planner::WorldState,
+        world: &nav_planner::world::NavWorld,
+    ) -> Option<(
+        api::selected::RunKey,
+        Option<Arc<api::prereq_steps::PrereqCatalog>>,
+        nav_planner::WorldState,
+    )> {
+        let slot = script_slot(&self.scripts, name)?;
+        let mut slot = slot.lock().ok()?;
+        script_runtime::manual_route_state(
+            &mut slot,
+            snapshot,
+            base,
+            world,
+            self.game_data.as_ref(),
+        )
+    }
+
+    pub(crate) fn record_gate_refusal(
+        &self,
+        name: &str,
+        run: api::selected::RunKey,
+        observation: &api::prereq_knowledge::RefusalObservation,
+    ) -> bool {
+        let Some(slot) = script_slot(&self.scripts, name) else {
+            return false;
+        };
+        slot.lock()
+            .ok()
+            .is_some_and(|slot| slot.record_gate_refusal(run, observation))
+    }
+
+    pub(crate) fn start_manual_walk_to(
+        &self,
+        name: &str,
+        handover: script::native::WalkHandover,
+        route_run: api::selected::RunKey,
+    ) -> Result<(), String> {
+        self.dispatch_start(
+            name,
+            || StartRequest::WalkHandover {
+                handover,
+                route_run,
+            },
+            || Ok(()),
+        )
+        .map_err(|error| error.to_string())
     }
 
     #[cfg(feature = "js")]
@@ -318,8 +374,10 @@ impl ScriptStartHandle {
         let slot = match &request {
             #[cfg(feature = "js")]
             StartRequest::Load { .. } => script_slot_or_insert(&self.scripts, name),
-            StartRequest::Compiled { .. } => script_slot(&self.scripts, name)
-                .ok_or_else(|| Refused(format!("no slot: {name}")))?,
+            StartRequest::Compiled { .. } | StartRequest::WalkHandover { .. } => {
+                script_slot(&self.scripts, name)
+                    .ok_or_else(|| Refused(format!("no slot: {name}")))?
+            }
         };
         let mut slot = slot
             .lock()
@@ -380,6 +438,28 @@ impl ScriptStartHandle {
                     Err(Refused("selected game data unavailable".into()))
                 }
             }
+            StartRequest::WalkHandover {
+                handover,
+                route_run,
+            } => {
+                let preserve_run = matches!(
+                    &handover.entry,
+                    script::native::HandoverEntry::GateRefused(_)
+                ) || slot.manual_route_run() == Some(route_run);
+                let route_run = preserve_run.then_some(route_run);
+                if let Some(selected) = self.game_data.clone() {
+                    slot.start_manual_walk_handover(
+                        name,
+                        handover,
+                        route_run,
+                        selected,
+                        Arc::clone(&self.named_banks),
+                    )
+                    .map_err(|error| Refused(error.to_string()))
+                } else {
+                    Err(Refused("selected game data unavailable".into()))
+                }
+            }
             #[cfg(feature = "js")]
             StartRequest::Load {
                 source,
@@ -433,6 +513,27 @@ impl ScriptStartHandle {
             .lock()
             .map_err(|_| format!("script slot retiring: {name}"))?;
         slot.start_test_script(script, selected)?;
+        slot.native_run()
+            .ok_or_else(|| format!("test script did not publish a run: {name}"))
+    }
+
+    /// Start a native fixture and bind session-local state before the slot
+    /// lock is released, so its first host tick observes the supplied state.
+    #[cfg(any(test, feature = "test-support"))]
+    #[doc(hidden)]
+    pub fn start_test_script_with_local_state(
+        &self,
+        name: &str,
+        script: Box<dyn script::native::Script>,
+        selected: Option<Arc<api::game_data::SelectedGameData>>,
+        state: Arc<script::local_state::SlotState>,
+    ) -> Result<api::selected::RunKey, String> {
+        let slot = script_slot_or_insert(&self.scripts, name);
+        let mut slot = slot
+            .lock()
+            .map_err(|_| format!("script slot retiring: {name}"))?;
+        slot.start_test_script(script, selected)?;
+        slot.bind_local_state(state);
         slot.native_run()
             .ok_or_else(|| format!("test script did not publish a run: {name}"))
     }

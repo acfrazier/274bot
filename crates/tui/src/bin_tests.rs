@@ -3027,7 +3027,7 @@ mod bank_fetch_fixtures {
 #[test]
 fn map_walk_options_keep_the_frontend_bank_fetch_permission() {
     let mut app = TuiApp::new("274bot headless");
-    app.nav = frontend_core::WalkGlobals::new(false, false, true, true, true);
+    app.nav = frontend_core::WalkGlobals::new(false, false, true, true, true, true, true);
     app.nav = app
         .nav
         .with_danger_level(frontend_core::DangerLevel::Always);
@@ -3099,6 +3099,15 @@ fn removing_a_walk_slot_twice_logs_one_cancellation() {
     });
     play.focus(slot);
     session.core.set_play(Some(play));
+    publish_map_walk_snapshot(
+        &mut session.core,
+        slot,
+        Tile {
+            x: 0,
+            z: 1,
+            level: 0,
+        },
+    );
 
     let mut app = TuiApp::new("274bot headless");
     app.names = vec![slot.into()];
@@ -4108,6 +4117,10 @@ fn walk_permission_changes_in_the_settings_popup_are_saved_through_the_commands(
     assert_eq!(app.on_key(enter), AppAction::None);
     app.settings_state.row = 8;
     assert_eq!(app.on_key(enter), AppAction::None);
+    app.settings_state.row = 9;
+    assert_eq!(app.on_key(enter), AppAction::None);
+    app.settings_state.row = 10;
+    assert_eq!(app.on_key(enter), AppAction::None);
     assert_eq!(
         app.on_key(settings_key(crossterm::event::KeyCode::Char('d'))),
         AppAction::None
@@ -4120,7 +4133,17 @@ fn walk_permission_changes_in_the_settings_popup_are_saved_through_the_commands(
     assert_eq!(prefs["nav"]["allow_danger_zones"], true);
     assert_eq!(prefs["nav"]["survivable_routing"], false);
     assert_eq!(prefs["nav"]["script_scope_notice_ack"], true);
+    assert_eq!(
+        prefs["nav"]["allow_prereq_dialogue"], false,
+        "the default-on dialogue grant toggles off through its row"
+    );
+    assert_eq!(
+        prefs["nav"]["allow_quest_start"], false,
+        "the default-on quest-start grant toggles off through its row"
+    );
     assert!(app.walk_permissions.globals().allow_teleports());
+    assert!(!app.walk_permissions.globals().allow_prereq_dialogue());
+    assert!(!app.walk_permissions.globals().allow_quest_start());
     assert_eq!(
         app.walk_permissions.danger_level(),
         frontend_core::DangerLevel::Always
@@ -4143,7 +4166,7 @@ fn tui_refresh_preserves_unsaved_checkbox_and_folder_draft() {
         AppAction::None,
     );
     assert!(app.nav.allow_teleports());
-    app.settings_state.row = 13;
+    app.settings_state.row = 15;
     app.on_key(settings_key(crossterm::event::KeyCode::Enter));
     app.on_key(settings_key(crossterm::event::KeyCode::Char('x')));
     let folder = app.quester_paths.folder().to_path_buf();
@@ -4186,7 +4209,7 @@ fn pending_preferences_survive_settings_reopen_and_keep_the_folder_draft() {
     entered_rx.recv_timeout(Duration::from_secs(10)).unwrap();
     assert!(app.settings_state.preferences_pending);
     assert!(!app.walk_permissions.globals().allow_teleports());
-    app.settings_state.row = 13;
+    app.settings_state.row = 15;
     app.on_key(settings_key(crossterm::event::KeyCode::Enter));
     app.on_key(settings_key(crossterm::event::KeyCode::Char('x')));
     let folder = app.quester_paths.folder().to_path_buf();
@@ -5049,7 +5072,7 @@ fn settings_feedback_tui_row_shows_saving_then_the_failure_then_clears_on_retry(
     session.preferences.reload().unwrap();
     app.restore_preferences(session.preferences.share());
     open_settings(&mut session, &mut app);
-    app.settings_state.row = 10;
+    app.settings_state.row = 12;
     let disk = TuiDisk::install(&session);
     settings_press(&mut session, &mut app, KeyCode::Enter);
     session.pump(&mut app);
@@ -5177,7 +5200,7 @@ fn settings_feedback_tui_row_failure_expires_by_itself() {
     session.preferences.reload().unwrap();
     app.restore_preferences(session.preferences.share());
     open_settings(&mut session, &mut app);
-    app.settings_state.row = 10;
+    app.settings_state.row = 12;
     let disk = TuiDisk::install(&session);
     drop(disk.release);
     settings_press(&mut session, &mut app, KeyCode::Enter);

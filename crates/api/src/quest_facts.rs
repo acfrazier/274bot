@@ -11,8 +11,9 @@ mod cache;
 mod catalog;
 mod wire;
 
+pub use crate::game_data::Transmission;
 pub(crate) use cache::{cached, cached_identity, for_bake, prepare, verify_identity};
-pub use catalog::{QuestCatalog, QuestFacts, QuestKind, StageFacts, StartLocation, Transmission};
+pub use catalog::{QuestCatalog, QuestFacts, QuestKind, StageFacts, StartLocation};
 
 pub const IDENTITY_UNAVAILABLE: &str = "family-unavailable:quest_identity";
 pub const PREREQS_UNAVAILABLE: &str = "family-unavailable:quest_prereqs";

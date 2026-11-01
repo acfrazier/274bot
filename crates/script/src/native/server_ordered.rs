@@ -140,6 +140,7 @@ mod tests {
         fn with<R>(&mut self, f: impl FnOnce(&mut ActionContext<'_>) -> R) -> R {
             let mut cx = ActionContext {
                 stage_cross: None,
+                walk_prereq: Default::default(),
                 condition: None,
                 poison_unknown_pulse: u8::MAX,
                 cure_poison: crate::survival::CurePoison::WhenNeeded,
@@ -407,8 +408,9 @@ mod tests {
         assert_eq!(std::mem::size_of::<ServerOrderedCompletion>(), 72);
         // The 32 B dispatch receipt stays Copy on the stack: prefix results without heap growth.
         assert_eq!(std::mem::size_of::<ServerOrderedDispatch>(), 32);
-        // The 912 B native ledger stays fixed-size with a bounded outbox: no per-bot growth.
-        assert_eq!(std::mem::size_of::<Ledger>(), 912);
+        // Frozen walk consent and aligned receipt storage add 24 B to the
+        // existing native ledger allocation; ordered dispatch adds no buffer.
+        assert_eq!(std::mem::size_of::<Ledger>(), 936);
         let mut frame = Frame::new();
         assert!(frame.ledger.as_ref().unwrap().server_ordered.is_none());
         frame.with(|cx| cx.emit_server_ordered(request())).unwrap();

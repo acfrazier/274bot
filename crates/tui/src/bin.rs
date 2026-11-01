@@ -3315,6 +3315,12 @@ impl TuiSession {
                 NavPreference::AllowBankFetch => {
                     OperatorCommand::SetNavPreference(*preference, now.allow_bank_fetch())
                 }
+                NavPreference::AllowPrereqDialogue => {
+                    OperatorCommand::SetNavPreference(*preference, now.allow_prereq_dialogue())
+                }
+                NavPreference::AllowQuestStart => {
+                    OperatorCommand::SetNavPreference(*preference, now.allow_quest_start())
+                }
                 NavPreference::AllowDangerZones | NavPreference::SurvivableRouting => {
                     if danger_sent {
                         continue;
@@ -3570,10 +3576,12 @@ impl TuiSession {
     /// which drafts are still the operator's own change.
     fn project_setting_feedback(&mut self, app: &mut TuiApp) {
         use frontend_core::{NavPreference as N, Setting as S, SettingStatus};
-        const SHOWN: [frontend_core::Setting; 12] = [
+        const SHOWN: [frontend_core::Setting; 14] = [
             S::Nav(N::AllowTeleports),
             S::Nav(N::AllowWilderness),
             S::Nav(N::AllowBankFetch),
+            S::Nav(N::AllowPrereqDialogue),
+            S::Nav(N::AllowQuestStart),
             S::DangerRouting,
             S::Nav(N::PauseScriptOnManualWalkAbort),
             S::Nav(N::ScriptScopeNoticeAck),
@@ -3606,6 +3614,8 @@ impl TuiSession {
             teleports: pending(S::Nav(N::AllowTeleports)),
             wilderness: pending(S::Nav(N::AllowWilderness)),
             bank_fetch: pending(S::Nav(N::AllowBankFetch)),
+            prereq_dialogue: pending(S::Nav(N::AllowPrereqDialogue)),
+            quest_start: pending(S::Nav(N::AllowQuestStart)),
             danger: pending(S::DangerRouting),
             scope_ack: pending(S::Nav(N::ScriptScopeNoticeAck)),
             survivable_ack: pending(S::Nav(N::SurvivableRoutingNoticeAck)),

@@ -192,6 +192,8 @@ fn mage_family_maps_selected_spell_order_and_explicit_fallback() {
 
 #[test]
 fn authored_combat_walk_permissions_reach_initial_return_and_abort_requests() {
+    // The compiled run is erased, but combat walk storage must stay a bare native handle.
+    let _: fn(crate::native::ActionHandle<Walk>) -> Action = Action::Walk;
     let data = api::game_data::for_revision(ClientRevision::R289).unwrap();
     let quests = QuestCatalog::from_identity(data.quest_identity()).unwrap();
     let progress = CompiledProgress {
@@ -1731,6 +1733,7 @@ fn post_walk_receipt(
         refusal: None,
         assessment: None,
         escape: None,
+        prereq_allow: None,
     });
 }
 
@@ -2705,6 +2708,7 @@ fn aborted_walk_user_input_and_failure_preserve_the_terminal_report() {
                     refusal: None,
                     assessment: None,
                     escape: None,
+                    prereq_allow: None,
                 },
                 cx,
             )
@@ -3499,6 +3503,39 @@ fn failed_abort_walk_does_not_retry_named_tiles_after_food_exhaustion() {
         }),
         "food exhaustion starts a request with only untried tiles"
     );
+    let envelope = ledger.as_ref().unwrap().outbox.last().unwrap();
+    let crate::native::HostEffect::Walk(request) = &envelope.effect else {
+        panic!("food exhaustion must retain its bare escape walk");
+    };
+    assert!(!request.allow.prayer);
+    assert!(!request.allow.food);
+    let escape_walk = envelope.request_id.get();
+    ledger.as_mut().unwrap().outbox.clear();
+    ledger.as_mut().unwrap().walk = Some(WalkReceipt {
+        goal: None,
+        request_id: escape_walk,
+        evidence: EvidenceStamp {
+            run: RunKey {
+                slot: 1,
+                run: 1,
+                session: 1,
+            },
+            tick: 16,
+            sequence: 16,
+        },
+        end: WalkEnd::Arrived,
+        blocked: None,
+        detail: None,
+        refusal: None,
+        assessment: None,
+        escape: None,
+        prereq_allow: None,
+    });
+    assert!(matches!(
+        with_step_context(&snapshot, &mut ledger, 16, |cx| run.poll(cx)),
+        Poll::Ready(Err(ActionError::Blocked(reason))) if reason.contains("escape")
+    ));
+    assert!(ledger.as_ref().unwrap().outbox.is_empty());
 }
 
 /// Every escape walk fails. A pass makes at most one request per destination
@@ -4335,6 +4372,7 @@ fn target_gone_walks_to_stand_and_rebegins_only_after_arrival() {
                 refusal: None,
                 assessment: None,
                 escape: None,
+                prereq_allow: None,
             },
             cx,
         )
@@ -4402,17 +4440,14 @@ fn return_to_stand_bounds_each_retryable_class_and_retains_last_failure() {
         ] {
             let result = with_step_context(&snapshot, &mut ledger, tick, |cx| {
                 run.on_return_walk(
-                    WalkReceipt {
-                        goal: None,
-                        request_id,
-                        evidence: cx.tick.cx.evidence(),
-                        end: end.clone(),
-                        blocked: None,
-                        detail: Some(Arc::from(detail)),
-                        refusal: None,
-                        assessment: None,
-                        escape: None,
-                    },
+                    WalkReceipt { goal: None,
+                    request_id,
+                    evidence: cx.tick.cx.evidence(),
+                    end: end.clone(),
+                    blocked: None,
+                    detail: Some(Arc::from(detail)),
+                    refusal: None,
+                    assessment: None, escape: None, prereq_allow: None },
                     cx,
                 )
             });
@@ -4510,17 +4545,14 @@ fn return_to_stand_stops_for_each_terminal_class() {
         .is_pending());
         let request_id = last_walk(&ledger).request_id;
         with_step_context(&snapshot, &mut ledger, 13, |cx| {
-            let receipt = WalkReceipt {
-                goal: None,
-                request_id,
-                evidence: cx.tick.cx.evidence(),
-                end,
-                blocked,
-                detail: Some(Arc::from("terminal return failure")),
-                refusal,
-                assessment: None,
-                escape: None,
-            };
+            let receipt = WalkReceipt { goal: None,
+            request_id,
+            evidence: cx.tick.cx.evidence(),
+            end,
+            blocked,
+            detail: Some(Arc::from("terminal return failure")),
+            refusal,
+            assessment: None, escape: None, prereq_allow: None };
             let expected = receipt.clone().into_arrival().unwrap_err();
             let Poll::Ready(Err(error)) = run.on_return_walk(receipt, cx) else {
                 panic!("{expected:?} must end the first return walk");
@@ -4666,6 +4698,7 @@ fn target_gone_walk_replans_after_route_end_before_reengaging() {
                 refusal: None,
                 assessment: None,
                 escape: None,
+                prereq_allow: None,
             },
             cx,
         )
@@ -4973,17 +5006,14 @@ fn return_to_stand_route_ended_at_network_tile_is_arrival() {
     snapshot.seed_local_player(local);
     let result = with_step_context(&snapshot, &mut ledger, 13, |cx| {
         run.on_return_walk(
-            WalkReceipt {
-                goal: None,
-                request_id,
-                evidence: cx.tick.cx.evidence(),
-                end: WalkEnd::RouteEnded,
-                blocked: None,
-                detail: Some(Arc::from("first route ended short")),
-                refusal: None,
-                assessment: None,
-                escape: None,
-            },
+            WalkReceipt { goal: None,
+            request_id,
+            evidence: cx.tick.cx.evidence(),
+            end: WalkEnd::RouteEnded,
+            blocked: None,
+            detail: Some(Arc::from("first route ended short")),
+            refusal: None,
+            assessment: None, escape: None, prereq_allow: None },
             cx,
         )
     });
@@ -5023,6 +5053,7 @@ fn combat_walk_mappers_preserve_typed_evidence_without_reengaging() {
                 refusal: None,
                 assessment: None,
                 escape: None,
+                prereq_allow: None,
             };
             if abort {
                 run.on_abort_walk(receipt, cx)
@@ -5073,6 +5104,7 @@ fn target_gone_walk_user_input_parks_without_reengaging() {
                 refusal: None,
                 assessment: None,
                 escape: None,
+                prereq_allow: None,
             },
             cx,
         )
@@ -5140,6 +5172,7 @@ fn manual_takeover_watch_covers_return_and_loot_sublegs() {
                     refusal: None,
                     assessment: None,
                     escape: None,
+                    prereq_allow: None,
                 },
                 cx,
             )

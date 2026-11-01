@@ -603,7 +603,8 @@ fn quest_paths_settings_are_reachable_editable_and_reload_routes_at_common_sizes
             "Settings opens at {width}x{height}"
         );
 
-        for _ in 0..12 {
+        // The two prerequisite-consent rows precede the Quester Path settings.
+        for _ in 0..14 {
             app.on_key(key(KeyCode::Down));
         }
         let rows = draw(&mut app, width, height);
@@ -723,10 +724,10 @@ fn manual_movement_pause_toggle_is_reachable_and_last_settings_row_stays_clamped
     let mut app = TuiApp::new("274bot headless");
     assert!(app.pause_script_on_manual_walk_abort);
     app.settings_state.open = true;
-    for _ in 0..9 {
+    for _ in 0..11 {
         assert_eq!(app.on_key(key(KeyCode::Down)), AppAction::None);
     }
-    assert_eq!(app.settings_state.row, 9);
+    assert_eq!(app.settings_state.row, 11);
     assert_eq!(app.on_key(key(KeyCode::Enter)), AppAction::None);
     assert!(!app.pause_script_on_manual_walk_abort);
     assert!(app.pause_script_on_manual_walk_abort_dirty);
@@ -735,8 +736,8 @@ fn manual_movement_pause_toggle_is_reachable_and_last_settings_row_stays_clamped
         app.on_key(key(KeyCode::Down));
     }
     assert_eq!(
-        app.settings_state.row, 15,
-        "navigation clamps at the final settings row (cure poison), past Reload Paths at 14"
+        app.settings_state.row, 17,
+        "navigation clamps at the final settings row (cure poison), past Reload Paths at 16"
     );
 }
 
@@ -840,7 +841,7 @@ fn map_enter_confirms_a_walk_selection() {
 #[test]
 fn map_zone_toggle_selects_request_policy_and_resets_per_open() {
     let mut app = open_map_world();
-    app.nav = frontend_core::WalkGlobals::new(true, false, false, false, true);
+    app.nav = frontend_core::WalkGlobals::new(true, false, false, false, true, true, true);
 
     assert_eq!(app.on_key(key(KeyCode::F(4))), AppAction::MapOpen);
     assert_eq!(

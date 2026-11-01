@@ -221,6 +221,7 @@ mod tests {
         let mut budget = TickBudget::default();
         let cx = ActionContext {
             stage_cross: None,
+            walk_prereq: Default::default(),
             condition: None,
             poison_unknown_pulse: u8::MAX,
             cure_poison: crate::survival::CurePoison::WhenNeeded,

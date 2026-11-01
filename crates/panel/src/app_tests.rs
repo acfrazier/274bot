@@ -6958,8 +6958,9 @@ fn the_vault_buttons_are_greyed_out_until_the_passphrase_can_be_sent() {
 /// review's screenshot clipped the Danger routing button at.
 const NAV_ROUTING_CONTENT_W: f32 = 330.0;
 /// Row of the Danger routing drop-down in the Routing group: after the scope
-/// note, the three checkboxes, the bank-fetch scope, and the drop-down's label.
-const DANGER_ROUTING_COMBO_ROW: usize = 6;
+/// note, the three checkboxes, the bank-fetch scope, the prerequisite note,
+/// the two prerequisite checkboxes, and the drop-down's label.
+const DANGER_ROUTING_COMBO_ROW: usize = 9;
 
 /// One headless frame of the Routing group in a window whose content area is
 /// [`NAV_ROUTING_CONTENT_W`] wide. Returns the group as drawn and the content
@@ -7171,12 +7172,13 @@ fn nav_routing_rows_fit_the_docked_width_at_every_danger_level() {
             "the test window's content is the docked width, got {}",
             right - left
         );
-        // The scope note, three checkboxes, the bank-fetch scope, the drop-down's
-        // label and the drop-down, plus the note under a held level and the
-        // Always warning.
+        // The scope note, three checkboxes, the bank-fetch scope, the
+        // prerequisite note, the two prerequisite checkboxes, the
+        // drop-down's label and the drop-down, plus the note under a held
+        // level and the Always warning.
         let notes = usize::from(frontend_core::walk_permissions::danger_routing_held(level))
             + usize::from(level == frontend_core::DangerLevel::Always);
-        assert_eq!(routing.items.len(), 7 + notes, "routing rows at {level:?}");
+        assert_eq!(routing.items.len(), 10 + notes, "routing rows at {level:?}");
         for (index, item) in routing.items.iter().enumerate() {
             let [min_x, _, max_x, _] = *item;
             assert!(

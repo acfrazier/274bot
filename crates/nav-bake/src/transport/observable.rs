@@ -170,10 +170,12 @@ pub(super) struct ObservableGates {
     transmitted: HashSet<i32>,
     names_by_id: HashMap<i32, String>,
     journal: JournalLinks,
+    stage_windows: HashMap<i32, api::selected::StageWindow>,
+    quest_family: Option<nav_planner::quest_gates::QuestFamilyId>,
 }
 
 impl ObservableGates {
-    pub(super) fn from_content(content_root: &Path) -> Self {
+    pub(super) fn from_content(content_root: &Path, quests: Option<&QuestSource<'_>>) -> Self {
         Self {
             transmitted: transmitted_varps(content_root),
             names_by_id: varp_ids_by_name(content_root)
@@ -181,6 +183,34 @@ impl ObservableGates {
                 .map(|(name, id)| (id, name))
                 .collect(),
             journal: JournalLinks::from_content(content_root),
+            stage_windows: quests
+                .into_iter()
+                .flat_map(|quests| &quests.facts.rows)
+                .filter_map(|row| {
+                    let domain = row.stage_domain?;
+                    let (Some(min), Some(max)) = (domain.min, domain.max) else {
+                        return None;
+                    };
+                    (row.colour_authoritative
+                        && row.transmission == api::quest_facts::Transmission::NotTransmitted
+                        && !row.varp.is_empty()
+                        && row.varp_id >= 0
+                        && row.complete > 0
+                        && min == 0
+                        && max >= row.complete)
+                        .then(|| {
+                            (
+                                row.varp_id,
+                                api::selected::StageWindow {
+                                    quest: api::selected::FactKey::new(&row.id),
+                                    signal: api::selected::FactKey::new(&row.varp),
+                                    values: domain,
+                                },
+                            )
+                        })
+                })
+                .collect(),
+            quest_family: quests.map(|quests| quests.family),
         }
     }
     pub(super) fn completed_quest_name(
@@ -203,8 +233,20 @@ impl ObservableGates {
             return true;
         }
         let mut proofs = Vec::new();
+        let mut windows = Vec::new();
         for &(id, min) in &edge.varp_req {
             if self.transmitted.contains(&id) {
+                continue;
+            }
+            if let Some(window) = self.stage_windows.get(&id) {
+                let mut window = window.clone();
+                let max = window.values.max.expect("prepared bounded domain");
+                if min > max {
+                    *audit.omitted.entry(id).or_default() += 1;
+                    return false;
+                }
+                window.values.min = Some(min.max(0));
+                windows.push(api::selected::QuestGate::Window(window));
                 continue;
             }
             let name = self
@@ -216,6 +258,22 @@ impl ObservableGates {
                 return false;
             };
             proofs.push(name);
+        }
+        if !windows.is_empty() {
+            let family = self.quest_family.expect("prepared stage-window identity");
+            let mut gates = if let Some(existing) = edge.quest_gates.take() {
+                if *existing.family() != family {
+                    return false;
+                }
+                existing.gates().to_vec()
+            } else {
+                Vec::new()
+            };
+            gates.extend(windows);
+            edge.quest_gates = Some(
+                nav_planner::quest_gates::QuestGates::new(family, gates)
+                    .expect("prepared nonempty quest-window gates"),
+            );
         }
         audit.converted += proofs.len();
         edge.quest_req.extend(proofs.into_iter().map(str::to_owned));

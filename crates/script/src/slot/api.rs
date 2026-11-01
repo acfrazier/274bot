@@ -4,8 +4,12 @@ use super::*;
 use crate::api_combat::{CombatEnd, CombatPage, CombatSessionRequest};
 use crate::api_gather::{GatherCounts, GatherEnd, GatherFailure, GatherPage, GatherPhase};
 use crate::combat_session::{CombatSessionCard, Settle, SettleCell};
-use crate::native::{Script, ScriptStatus, SettingsBag, StartError, StatusValue};
-use api::selected::RunKey;
+use crate::native::{
+    ActionError, NativeActions, OuterIdentity, Script, ScriptStatus, SettingsBag, StartError,
+    StatusValue, WalkHandover, WalkReceipt,
+};
+use crate::quester::prereq::walk::PrereqWalk;
+use api::selected::{RunKey, SelectedPin};
 use std::sync::Mutex;
 
 #[path = "progress.rs"]
@@ -28,11 +32,46 @@ pub(super) struct ApiSeat {
     progress: ProgressSeat,
     pub(super) progress_page: Option<crate::api_progress::ProgressPage>,
     progress_retiring: Vec<progress::ProgressJob>,
+    compat_walk: CompatWalkSeat,
     #[cfg(feature = "test-hooks")]
     journal_evidence: Option<(
         api::quest_progress::EvidenceStamp,
         api::quest_progress::EvidenceStamp,
     )>,
+}
+
+#[derive(Default)]
+enum CompatWalkSeat {
+    #[default]
+    Idle,
+    Owned(Box<CompatWalkOwner>),
+}
+
+/// Only a real handover allocates its metadata and continuation together.
+struct CompatWalkOwner {
+    run: RunKey,
+    request_id: RequestId,
+    pin: Arc<SelectedPin>,
+    state: CompatWalkState,
+}
+
+/// Completion replaces the runner in that same allocation.
+enum CompatWalkState {
+    Walking(PrereqWalk),
+    Finished(Result<WalkReceipt, ActionError>),
+}
+
+impl CompatWalkSeat {
+    fn request_id(&self) -> Option<RequestId> {
+        match self {
+            Self::Idle => None,
+            Self::Owned(owner) => Some(owner.request_id),
+        }
+    }
+
+    fn active(&self) -> bool {
+        !matches!(self, Self::Idle)
+    }
 }
 
 #[derive(Default)]
@@ -144,6 +183,7 @@ impl ApiSeat {
         self.gather.token().is_some()
             || self.combat.token().is_some()
             || self.progress.token().is_some()
+            || self.compat_walk.active()
     }
 
     /// The phase of an admitted API Session, not the preparation worker's
@@ -192,13 +232,21 @@ impl ApiSeat {
             | ProgressSeat::Preparing { token: live, .. }
                 if *live == token =>
             {
-                Some(NativePhase::Preparing)
+                return Some(NativePhase::Preparing)
             }
             ProgressSeat::Reading { token: live, .. } if *live == token => {
-                Some(NativePhase::Waiting)
+                return Some(NativePhase::Waiting)
             }
-            _ => None,
+            _ => {}
         }
+        if self
+            .compat_walk
+            .request_id()
+            .is_some_and(|live| live.get() == token)
+        {
+            return Some(NativePhase::Working);
+        }
+        None
     }
 }
 
@@ -207,6 +255,143 @@ impl SlotScript {
         self.seat
             .as_ref()
             .map_or(self.work_epoch, |seat| seat.run().session)
+    }
+
+    fn compat_walk_run_is_current(&self, run: RunKey) -> bool {
+        let current = self.native_run().or_else(|| self.seat_run());
+        current == Some(run)
+            && matches!(
+                self.work_scope(),
+                Some(api::identity::Scope::Slot(key)) if key.incarnation().get() == run.slot
+            )
+            && self.surface_active()
+            && self.state == RunState::Running
+    }
+
+    /// Accept one host-owned compatibility walk after the direct route hands
+    /// its prerequisite owner to this slot.
+    pub fn accept_compat_walk_handover(
+        &mut self,
+        run: RunKey,
+        handover: WalkHandover,
+    ) -> Result<(), StartError> {
+        let OuterIdentity::Compat { request_id } = handover.outer.identity else {
+            return Err(StartError::Unavailable(
+                "compatibility walk handover has a non-compat identity".into(),
+            ));
+        };
+        let request_id = RequestId::isolate(request_id).map_err(|_| {
+            StartError::Unavailable("compatibility walk has an invalid request id".into())
+        })?;
+        if !self.compat_walk_run_is_current(run) {
+            return Err(StartError::Unavailable(
+                "compatibility walk run is no longer current".into(),
+            ));
+        }
+        let Some(owner) = self.seat.as_ref() else {
+            return Err(StartError::Unavailable(
+                "compatibility walk has no active isolate seat".into(),
+            ));
+        };
+        if !owner.has_armed_walk(request_id) {
+            return Err(StartError::Unavailable(
+                "compatibility walk request is no longer live".into(),
+            ));
+        }
+        if let crate::native::HandoverEntry::GateRefused(observation) = &handover.entry {
+            if observation.fact.observed.run != run {
+                return Err(StartError::Unavailable(
+                    "compatibility refusal belongs to a different run".into(),
+                ));
+            }
+        }
+        if self.api.as_ref().is_some_and(|seat| seat.busy()) {
+            return Err(StartError::Busy);
+        }
+        let selected = self
+            .surface_start
+            .as_ref()
+            .and_then(|identity| identity.game_data.as_ref())
+            .ok_or_else(|| {
+                StartError::Unavailable("compatibility walk has no selected game data".into())
+            })?;
+        let pin = selected.selected_pin().map_err(StartError::Facts)?;
+        self.retained
+            .get_or_insert_with(|| Arc::new(Mutex::new(RetainedMemory::default())));
+        let seat = self.api.get_or_insert_with(|| Box::new(ApiSeat::default()));
+        seat.compat_walk = CompatWalkSeat::Owned(Box::new(CompatWalkOwner {
+            run,
+            request_id,
+            pin,
+            state: CompatWalkState::Walking(PrereqWalk::from_handover(handover)),
+        }));
+        Ok(())
+    }
+
+    /// Read the outer terminal until the host retires its matching NavBot
+    /// owner. Repeated reads cannot create another terminal.
+    pub fn take_compat_walk_terminal(
+        &self,
+    ) -> Option<(RunKey, RequestId, Result<WalkReceipt, ActionError>)> {
+        let CompatWalkSeat::Owned(owner) = &self.api.as_ref()?.compat_walk else {
+            return None;
+        };
+        let CompatWalkState::Finished(result) = &owner.state else {
+            return None;
+        };
+        Some((owner.run, owner.request_id, result.clone()))
+    }
+
+    /// The current logical outer walk, including its Approach and Talk phases.
+    #[cfg(any(test, feature = "test-hooks"))]
+    #[doc(hidden)]
+    pub fn api_live_compat_walk_request_id(&self) -> Option<u64> {
+        let CompatWalkSeat::Owned(owner) = &self.api.as_ref()?.compat_walk else {
+            return None;
+        };
+        (matches!(&owner.state, CompatWalkState::Walking(_))
+            && self.compat_walk_run_is_current(owner.run))
+        .then_some(owner.request_id.get())
+    }
+
+    /// Cancel only the exact compatibility walk seat that the host owns.
+    pub fn abort_compat_walk(&mut self, request_id: u64) -> bool {
+        let Ok(request_id) = RequestId::isolate(request_id) else {
+            return false;
+        };
+        let Some(seat) = self.api.as_mut() else {
+            return false;
+        };
+        let CompatWalkSeat::Owned(owner) = &mut seat.compat_walk else {
+            return false;
+        };
+        if owner.request_id != request_id {
+            return false;
+        }
+        let CompatWalkState::Walking(walk) = &mut owner.state else {
+            return false;
+        };
+        walk.cancel();
+        owner.state = CompatWalkState::Finished(Err(ActionError::Cancelled));
+        true
+    }
+
+    /// Retire the exact completed or cancelled compatibility walk seat.
+    pub fn finish_compat_walk(&mut self, request_id: u64) -> bool {
+        let Ok(request_id) = RequestId::isolate(request_id) else {
+            return false;
+        };
+        let Some(seat) = self.api.as_mut() else {
+            return false;
+        };
+        if seat.compat_walk.request_id() != Some(request_id) {
+            return false;
+        }
+        seat.compat_walk = CompatWalkSeat::Idle;
+        if let Some(owner) = self.seat.as_mut() {
+            owner.walk_terminal(request_id);
+        }
+        true
     }
 
     pub fn api_owns_foreground(&self) -> bool {
@@ -434,6 +619,12 @@ impl SlotScript {
         let gather = cancelled(families.gather.token());
         let combat = cancelled(families.combat.token());
         let progress = cancelled(families.progress.token());
+        let compat_walk = cancelled(
+            families
+                .compat_walk
+                .request_id()
+                .map(|request_id| request_id.get()),
+        );
         if let Some(token) = gather {
             self.stop_api_gather(token);
             self.api.as_mut().expect("family seat").terminal = None;
@@ -447,6 +638,9 @@ impl SlotScript {
             families.progress.reset(&mut families.progress_retiring);
             families.progress_page = None;
             self.native_runtime.revoke();
+        }
+        if let Some(request_id) = compat_walk {
+            self.abort_compat_walk(request_id);
         }
     }
 
@@ -677,6 +871,7 @@ impl SlotScript {
             }
         }
         self.tick_api_combat(&mut seat, ctx);
+        self.tick_api_compat_walk(&mut seat, ctx);
         if let GatherSeat::Running { token, run } = &mut seat.gather {
             ctx.compiled.interacts = None;
             let result = {
@@ -763,6 +958,43 @@ impl SlotScript {
         }
         self.tick_api_progress(&mut seat, ctx);
         self.api = Some(seat);
+    }
+
+    fn tick_api_compat_walk(&mut self, seat: &mut ApiSeat, ctx: &mut ScriptCtx<'_>) {
+        let CompatWalkSeat::Owned(owner) = &mut seat.compat_walk else {
+            return;
+        };
+        let CompatWalkState::Walking(walk) = &mut owner.state else {
+            return;
+        };
+        let result = if !self.compat_walk_run_is_current(owner.run) {
+            walk.cancel();
+            Some(Err(ActionError::Cancelled))
+        } else if let Some(retained) = self.retained.as_ref() {
+            let mut retained = retained
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            let mut actions = NativeActions { _private: () };
+            let mut cx = compiled::frame_context(
+                ctx,
+                owner.run,
+                &owner.pin,
+                &mut retained,
+                &mut self.native_runtime,
+            );
+            match walk.poll(&mut actions, &mut cx, self.local_state.as_deref()) {
+                std::task::Poll::Pending => None,
+                std::task::Poll::Ready(result) => Some(result),
+            }
+        } else {
+            walk.cancel();
+            Some(Err(ActionError::Unavailable(
+                "compatibility walk lost retained memory".into(),
+            )))
+        };
+        if let Some(result) = result {
+            owner.state = CompatWalkState::Finished(result);
+        }
     }
 
     pub(super) fn interrupt_api(&mut self, event: Interrupt) {
@@ -898,5 +1130,37 @@ impl SlotScript {
                 Some(None)
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod compat_walk_layout_tests {
+    use super::{ApiSeat, CompatWalkSeat, PrereqWalk, SlotScript};
+
+    #[test]
+    fn idle_compat_seat_reserves_no_inline_runner_or_heap() {
+        let measured = allocation_counter::measure(|| {
+            let seat = ApiSeat::default();
+            assert!(!seat.compat_walk.active());
+            std::hint::black_box(seat);
+        });
+        println!(
+            "compat seat layout: ApiSeat={} CompatWalkSeat={} SlotScript={} runner_pointer={} idle={measured:?}",
+            std::mem::size_of::<ApiSeat>(),
+            std::mem::size_of::<CompatWalkSeat>(),
+            std::mem::size_of::<SlotScript>(),
+            std::mem::size_of::<Box<PrereqWalk>>(),
+        );
+        assert_eq!(measured.count_total, 0);
+        assert_eq!(measured.bytes_current, 0);
+        assert_eq!(
+            std::mem::size_of::<Box<PrereqWalk>>(),
+            std::mem::size_of::<usize>(),
+        );
+        assert_eq!(
+            std::mem::size_of::<CompatWalkSeat>(),
+            std::mem::size_of::<usize>(),
+            "unrelated API seats pay only one pointer for compatibility walks",
+        );
     }
 }

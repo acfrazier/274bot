@@ -4,6 +4,8 @@
 
 use std::fmt;
 
+use api::prereq_steps::CrossingId;
+use api::selected::QuestGate;
 use api::snapshot::WorldTile;
 
 use crate::transport::TransportEdge;
@@ -97,6 +99,25 @@ impl<'a> TransportView<'a> {
             TransportSource::Edge { edge, landing } => landing.unwrap_or(edge.to),
             TransportSource::Essence { landing, .. } => landing,
         }
+    }
+
+    /// Exact API-owned identity of this directed crossing, when available.
+    pub fn crossing_id(self) -> Option<CrossingId> {
+        self.edge().and_then(TransportEdge::crossing_id)
+    }
+
+    /// Quest gates carried by this edge, in their canonical order.
+    pub fn quest_gates(self) -> Option<&'a [QuestGate]> {
+        self.edge()
+            .and_then(|edge| edge.quest_gates.as_ref())
+            .map(|gates| gates.gates())
+    }
+
+    /// The content family of this edge's quest gates.
+    pub fn quest_family(self) -> Option<&'a crate::quest_gates::QuestFamilyId> {
+        self.edge()
+            .and_then(|edge| edge.quest_gates.as_ref())
+            .map(|gates| gates.family())
     }
 
     /// Optional exact takeoff; `None` keeps radius/footprint admission.

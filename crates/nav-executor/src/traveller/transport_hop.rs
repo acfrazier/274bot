@@ -133,20 +133,40 @@ pub(super) fn find_door_loc<'s>(
     find_transport_loc(snapshot, edge)
 }
 
-/// Whether a transport hop drives the script's chat dialogs itself: an
-/// Npc hop's `opnpc1` opens the ride's chat (the cart fare, Elkoy's
-/// escort), a jewellery rub opens its destination choice, a spirit tree's
-/// `oploc1` opens the dest dialog (`spirit_tree.rs2`: "Where can I go?"
-/// then the sibling list, or the young tree's "Yes please."), and a
-/// dialogue Door hop — the Al Kharid border toll (`border_gate.rs2`
-/// `p_choice3`) or the Shantay henge (`shantay_pass.rs2` pass handover
-/// and first-crossing disclaimer) — opens chat before the crossing.
-/// A plain door hop never opens chat.
-pub(super) fn drives_hop_dialogs(edge: &TransportEdge) -> bool {
+/// Whether this transport hop drives chat itself: existing NPC-backed,
+/// jewellery, spirit-tree and dialogue-door pages, plus authored quest-gate
+/// refusal pages.
+pub(super) fn drives_hop_dialogs(edge: &TransportEdge, options: &TravelOptions<'_>) -> bool {
     npc_backed(edge)
         || edge.kind == TransportKind::SpiritTree
         || (edge.kind == TransportKind::Teleport && edge.loc_id > 0)
         || (edge.kind == TransportKind::Door && is_dialogue_door_loc(edge.loc_id))
+        || has_refusal_texts(edge, options)
+}
+
+fn has_refusal_texts(edge: &TransportEdge, options: &TravelOptions<'_>) -> bool {
+    let Some(crossing) = edge.quest_gates.as_ref().and_then(|_| edge.crossing_id()) else {
+        return false;
+    };
+    options.refusal_texts.iter().any(|(id, _)| *id == crossing)
+}
+
+fn crossing_pass<'a>(
+    edge: &TransportEdge,
+    options: &'a TravelOptions<'_>,
+) -> Option<&'a CrossingPass> {
+    let crossing = edge.quest_gates.as_ref().and_then(|_| edge.crossing_id())?;
+    options
+        .crossing_passes
+        .iter()
+        .find(|pass| pass.crossing == crossing)
+}
+
+pub(super) fn has_authored_crossing_metadata(
+    edge: &TransportEdge,
+    options: &TravelOptions<'_>,
+) -> bool {
+    has_refusal_texts(edge, options) || crossing_pass(edge, options).is_some()
 }
 
 /// Whether the live loc family already reads **open**. Packed closed/open
@@ -171,6 +191,250 @@ pub(super) fn edge_loc_open(snapshot: &GameSnapshot, edge: &TransportEdge) -> bo
 /// attribute an older line to a delayed or re-armed interaction.
 pub(super) fn chat_seq(snapshot: &GameSnapshot) -> i32 {
     Query::new(snapshot.chat_lines()).latest_sequence()
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct ChatModalKey {
+    root: i32,
+    continue_component_id: i32,
+    fingerprint: u64,
+}
+
+#[derive(Clone, Copy, Debug)]
+pub(super) struct GateRefusalWatch {
+    crossing: api::prereq_steps::CrossingId,
+    acknowledged_page: ChatModalKey,
+    matched: Option<RefusalMatch>,
+    wait_since: u32,
+    wait_ticks: TickCount,
+    logged_page: Option<ChatModalKey>,
+}
+
+#[derive(Clone, Copy, Debug)]
+pub(super) struct GatePassWatch {
+    crossing: api::prereq_steps::CrossingId,
+    since: u32,
+    ticks: TickCount,
+    bound: u32,
+}
+
+const PREREQ_DIALOGUE_WAIT_BOUND: u32 = 3;
+
+fn gate_pass_bound(delay_ticks: u16) -> u32 {
+    1 + u32::from(delay_ticks) + 2
+}
+
+pub(super) fn gate_pass_watch(
+    snapshot: &GameSnapshot,
+    edge: &TransportEdge,
+    options: &TravelOptions<'_>,
+) -> Option<GatePassWatch> {
+    let pass = crossing_pass(edge, options)?;
+    let since = snapshot.tick();
+    Some(GatePassWatch {
+        crossing: pass.crossing,
+        since,
+        ticks: TickCount::sent_at(since),
+        bound: gate_pass_bound(pass.delay_ticks),
+    })
+}
+
+#[expect(
+    clippy::too_many_arguments,
+    reason = "Keep the observed content-wait count separate from its stamps and the reused hop budget."
+)]
+fn log_prereq_hop_wait(
+    wait: &'static str,
+    crossing: api::prereq_steps::CrossingId,
+    since: u32,
+    at: u32,
+    count: u32,
+    bound: u32,
+    end: &'static str,
+    hop_budget: u32,
+) {
+    api::host_log!(
+        Category::NavEvent,
+        Level::Info,
+        "prereq hop-wait={} crossing={:?} since={} at={} count={} bound={} end={} hop_budget={}",
+        wait,
+        crossing,
+        since,
+        at,
+        count,
+        bound,
+        end,
+        hop_budget
+    );
+}
+
+fn log_prereq_hop_timeout(snapshot: &GameSnapshot, hop: &mut TransportHop, hop_budget: u32) {
+    let refusal_matched = hop
+        .refusal_watch
+        .as_ref()
+        .is_some_and(|watch| watch.matched.is_some());
+    let pass_watch = if refusal_matched {
+        None
+    } else {
+        hop.pass_watch.take()
+    };
+    if let Some(mut watch) = pass_watch {
+        let count = watch.ticks.observe(snapshot.tick());
+        log_prereq_hop_wait(
+            "pass",
+            watch.crossing,
+            watch.since,
+            snapshot.tick(),
+            count,
+            watch.bound,
+            "timeout",
+            hop_budget,
+        );
+    }
+    if let Some(watch) = hop.refusal_watch.as_mut() {
+        let wait = if watch.matched.is_some() {
+            "refusal-close"
+        } else {
+            "refusal-page"
+        };
+        let count = watch.wait_ticks.observe(snapshot.tick());
+        log_prereq_hop_wait(
+            wait,
+            watch.crossing,
+            watch.wait_since,
+            snapshot.tick(),
+            count,
+            PREREQ_DIALOGUE_WAIT_BOUND,
+            "timeout",
+            hop_budget,
+        );
+    }
+}
+
+fn chat_modal_key(snapshot: &GameSnapshot) -> ChatModalKey {
+    ChatModalKey {
+        root: snapshot.modals().chat,
+        continue_component_id: snapshot.chat_continue_component_id(),
+        fingerprint: api::snapshot::chat_page_fingerprint(
+            snapshot.chat_modal_texts(),
+            snapshot
+                .chat_options()
+                .iter()
+                .map(|option| (option.component_id, option.text.as_str())),
+        ),
+    }
+}
+
+pub(super) fn gate_refusal_watch(
+    snapshot: &GameSnapshot,
+    edge: &TransportEdge,
+    options: &TravelOptions<'_>,
+) -> Option<GateRefusalWatch> {
+    let crossing = edge.quest_gates.as_ref().and_then(|_| edge.crossing_id())?;
+    has_refusal_texts(edge, options).then(|| {
+        let wait_since = snapshot.tick();
+        GateRefusalWatch {
+            crossing,
+            acknowledged_page: chat_modal_key(snapshot),
+            matched: None,
+            wait_since,
+            wait_ticks: TickCount::sent_at(wait_since),
+            logged_page: None,
+        }
+    })
+}
+
+fn fresh_refusal_match(
+    snapshot: &GameSnapshot,
+    after: i32,
+    crossing: api::prereq_steps::CrossingId,
+    options: &TravelOptions<'_>,
+) -> Option<RefusalMatch> {
+    let latest_sequence = chat_seq(snapshot);
+    for (ordinal, (_, text)) in options
+        .refusal_texts
+        .iter()
+        .filter(|(id, _)| *id == crossing)
+        .enumerate()
+    {
+        let page_matches =
+            api::snapshot::chat_page_matches(snapshot.chat_modal_texts(), text.as_ref());
+        let matching_line = snapshot
+            .chat_lines()
+            .iter()
+            .find(|line| line.sequence > after && line.text.contains(text.as_ref()));
+        let sequence = match matching_line {
+            Some(line) if page_matches || line.sequence == latest_sequence => line.sequence,
+            Some(_) => continue,
+            // The caller already rejected the acknowledged page. NPC pages
+            // need not also append an ordinary chat-ring message.
+            None if page_matches => latest_sequence,
+            None => continue,
+        };
+        return Some(RefusalMatch {
+            text: u8::try_from(ordinal).ok()?,
+            tick: u64::from(snapshot.tick()),
+            sequence: u64::try_from(sequence).ok()?,
+        });
+    }
+    None
+}
+
+fn poll_gate_refusal_dialog<D: Driver>(
+    d: &mut D,
+    snapshot: &GameSnapshot,
+    hop: &mut TransportHop,
+    options: &TravelOptions<'_>,
+    hop_budget: u32,
+) -> Option<RefusalMatch> {
+    let page = chat_modal_key(snapshot);
+    let watch = hop.refusal_watch.as_mut()?;
+    if page.root == -1 {
+        if let Some(matched) = watch.matched {
+            let count = watch.wait_ticks.observe(snapshot.tick());
+            log_prereq_hop_wait(
+                "refusal-close",
+                watch.crossing,
+                watch.wait_since,
+                snapshot.tick(),
+                count,
+                PREREQ_DIALOGUE_WAIT_BOUND,
+                "closed",
+                hop_budget,
+            );
+            return Some(matched);
+        }
+        return None;
+    }
+    if page == watch.acknowledged_page || page.continue_component_id == -1 {
+        return None;
+    }
+    let count = watch.wait_ticks.observe(snapshot.tick());
+    if watch.logged_page != Some(page) {
+        log_prereq_hop_wait(
+            "refusal-page",
+            watch.crossing,
+            watch.wait_since,
+            snapshot.tick(),
+            count,
+            PREREQ_DIALOGUE_WAIT_BOUND,
+            "page",
+            hop_budget,
+        );
+        watch.logged_page = Some(page);
+    }
+    let matched = watch
+        .matched
+        .or_else(|| fresh_refusal_match(snapshot, hop.chat_seq, watch.crossing, options));
+    let mut ix = Interactions::new(snapshot, d);
+    if matches!(ix.continue_dialog(None), SendResult::Sent { .. }) {
+        watch.acknowledged_page = page;
+        watch.matched = matched;
+        watch.wait_since = snapshot.tick();
+        watch.wait_ticks = TickCount::sent_at(snapshot.tick());
+        watch.logged_page = None;
+    }
+    None
 }
 
 const WEB_CUT_FAILURE_MESSAGE: &str = "You fail to cut through it.";
@@ -579,7 +843,8 @@ impl FollowRun {
                 hop.troll |= edge.kind == TransportKind::Door
                     && (edge.open_loc_id.is_some() || edge.dir.is_some())
                     && !is_slashable_web(edge)
-                    && !drives_hop_dialogs(edge);
+                    && !drives_hop_dialogs(edge, options)
+                    && !has_authored_crossing_metadata(edge, options);
             }
         }
         if hop.troll {
@@ -636,6 +901,7 @@ impl FollowRun {
                                     hop.ticks_waited = TickCount::sent_at(snapshot.tick());
                                     hop.sent_tile = Some(here);
                                     hop.arrival_footprint = arrival_footprint;
+                                    hop.pass_watch = gate_pass_watch(snapshot, edge, options);
                                     self.loc_wait = 0;
                                     self.transport = Some(hop);
                                     Poll::Watching
@@ -751,8 +1017,9 @@ impl FollowRun {
                     };
                     let chat_seq_at_send = (npc_backed(&edge)
                         || is_slashable_web(&edge)
-                        || edge.kind == TransportKind::AgilityShortcut)
-                        .then(|| chat_seq(snapshot));
+                        || edge.kind == TransportKind::AgilityShortcut
+                        || has_authored_crossing_metadata(&edge, options))
+                    .then(|| chat_seq(snapshot));
                     let arrival_footprint = target.footprint();
                     let mut ix = Interactions::new(snapshot, d);
                     match interact_transport(
@@ -770,6 +1037,8 @@ impl FollowRun {
                             if let Some(seq) = chat_seq_at_send {
                                 hop.chat_seq = seq;
                             }
+                            hop.refusal_watch = gate_refusal_watch(snapshot, &edge, options);
+                            hop.pass_watch = gate_pass_watch(snapshot, &edge, options);
                             hop.approach = None;
                             if edge.kind == TransportKind::Door {
                                 hop.open_sent_tick = Some(snapshot.tick());
@@ -851,7 +1120,29 @@ impl FollowRun {
         // defined choice exactly once when the choice page is up, then keep
         // watching `arrived(to)`. Unknown Door pages and an Al Kharid pay
         // page without 10 coins refuse instead of guessing.
-        if drives_hop_dialogs(&edge) {
+        if hop.refusal_watch.is_some() {
+            if let Some(matched) =
+                poll_gate_refusal_dialog(d, snapshot, &mut hop, options, self.budget)
+            {
+                let watch = hop
+                    .refusal_watch
+                    .expect("a matched refusal has an active watch");
+                let gates = edge
+                    .quest_gates
+                    .as_ref()
+                    .expect("a refusal watch requires authored quest gates")
+                    .shared_gates();
+                fire_leg(options, &hop.leg, LegPhase::Failed);
+                return Poll::Terminal(TravelOutcome::GateRefused {
+                    at: here,
+                    leg: self.leg_index,
+                    crossing: watch.crossing,
+                    gates,
+                    matched,
+                });
+            }
+        }
+        if hop.refusal_watch.is_none() && drives_hop_dialogs(&edge, options) {
             if npc_hop
                 && (snapshot.chat_continue_component_id() != -1
                     || !snapshot.chat_options().is_empty()
@@ -968,7 +1259,17 @@ impl FollowRun {
         }
         let close_enough = self.close_enough;
         let hop_dialog_started = hop.npc_recovery.dialog_started;
-        let arrived_arm: Evidence<'static> = if edge.takeoff.is_some() {
+        let arrived_arm: Evidence<'static> = if let Some(pass) = crossing_pass(&edge, options) {
+            let landing = pass.landing;
+            let message = pass.message.clone();
+            let pass_message_seen = snapshot
+                .chat_lines()
+                .iter()
+                .any(|line| line.sequence > hop.chat_seq && line.text.contains(message.as_ref()));
+            Box::new(move |now: &ReadContext<'_>, _before: &ReadContext<'_>| {
+                pass_message_seen && now.world_tile() == Some(landing)
+            })
+        } else if edge.takeoff.is_some() {
             arrived(edge.to, 0)
         } else if edge.kind == TransportKind::Door && edge.dir.is_some() {
             Box::new(move |now: &ReadContext<'_>, _before: &ReadContext<'_>| {
@@ -1099,6 +1400,19 @@ impl FollowRun {
                 })
             }
             Some(Outcome::Matched { .. }) => {
+                if let Some(mut watch) = hop.pass_watch.take() {
+                    let count = watch.ticks.observe(snapshot.tick());
+                    log_prereq_hop_wait(
+                        "pass",
+                        watch.crossing,
+                        watch.since,
+                        snapshot.tick(),
+                        count,
+                        watch.bound,
+                        "pass",
+                        self.budget,
+                    );
+                }
                 // Agility forcemove holds the player after they land on
                 // `to`. Completing on the first arrived poll sends the
                 // next walk into a locked player (live Yanille ledge
@@ -1128,6 +1442,7 @@ impl FollowRun {
                             // crossing still settling when the hop budget
                             // is spent ends here, as an unlanded hop does.
                             if hop.ticks_waited.get() > self.budget {
+                                log_prereq_hop_timeout(snapshot, &mut hop, self.budget);
                                 fire_leg(options, &hop.leg, LegPhase::Failed);
                                 return Poll::Terminal(hop_stalled(here, &hop));
                             }
@@ -1155,6 +1470,7 @@ impl FollowRun {
                 Poll::LegDone
             }
             Some(Outcome::Expired { .. }) => {
+                log_prereq_hop_timeout(snapshot, &mut hop, self.budget);
                 fire_leg(options, &hop.leg, LegPhase::Failed);
                 Poll::Terminal(hop_stalled(here, &hop))
             }
@@ -1173,6 +1489,7 @@ impl FollowRun {
                     return Poll::Terminal(self.npc_expired(snapshot, &hop));
                 }
                 if hop.ticks_waited.get() > self.budget {
+                    log_prereq_hop_timeout(snapshot, &mut hop, self.budget);
                     fire_leg(options, &hop.leg, LegPhase::Failed);
                     Poll::Terminal(hop_stalled(here, &hop))
                 } else {
@@ -1206,6 +1523,7 @@ impl FollowRun {
                 hop.sent_tile = Some(here);
                 hop.arrival_footprint = arrival_footprint;
                 hop.tries = hop.tries.saturating_add(1);
+                hop.pass_watch = gate_pass_watch(snapshot, action, options);
                 self.loc_wait = 0;
                 Poll::Watching
             }

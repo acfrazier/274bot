@@ -106,8 +106,8 @@ pub use map_cache::{
 pub use map_producer::{map_artifact_policies, NativeMapProducer};
 pub use walk_arm::{
     arm_walk_on, cancel_walk_arm, cancel_walk_arm_on_manual_input, observe_walk_arm_admission,
-    step_walk_arm_bank_fetch, step_walk_arm_follow, walk_arm_bank_fetch_freezes_follow, NoPath,
-    WalkArm, WalkArms, WalkRoute,
+    step_walk_arm_bank_fetch, step_walk_arm_follow, walk_arm_bank_fetch_freezes_follow,
+    ManualWalkPrereqContext, NoPath, WalkArm, WalkArms, WalkRoute,
 };
 pub use walk_permissions::{DangerLevel, WalkGlobals, NET_AVAILABLE};
 mod play_scripts;

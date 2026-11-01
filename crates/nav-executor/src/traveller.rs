@@ -101,6 +101,18 @@ pub enum TransportRefusal {
     NotStarted,
 }
 
+/// Fresh refusal page evidence correlated with one transport send.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct RefusalMatch {
+    /// Zero-based ordinal among this crossing's entries in
+    /// [`TravelOptions::refusal_texts`].
+    pub text: u8,
+    /// Snapshot tick when the matching page's Continue was sent.
+    pub tick: u64,
+    /// Fresh chat-line sequence associated with the matched page.
+    pub sequence: u64,
+}
+
 /// A transport-specific failure that prevents a web cut from being sent.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Error)]
 pub enum WebCutFailure {
@@ -313,6 +325,16 @@ pub enum TravelOutcome {
         leg: usize,
         requirement: nav_planner::world_state::EntranceRequirement,
     },
+    /// A gated crossing was refused by fresh content text after its send.
+    /// The page was acknowledged and the chat modal observed closed before
+    /// this terminal was returned.
+    GateRefused {
+        at: WorldTile,
+        leg: usize,
+        crossing: api::prereq_steps::CrossingId,
+        gates: Arc<[api::selected::QuestGate]>,
+        matched: RefusalMatch,
+    },
     /// The hop budget (`max_hops`) was exhausted before arrival.
     GaveUp { at: WorldTile, hops: u32 },
 }
@@ -385,6 +407,19 @@ pub enum TravelEvent {
     },
 }
 
+/// Direction-specific pass evidence for an authored prerequisite crossing.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CrossingPass {
+    /// The exact directed crossing this message proves.
+    pub crossing: api::prereq_steps::CrossingId,
+    /// Fresh content message required to promote the crossing.
+    pub message: Arc<str>,
+    /// Exact world tile required with the fresh message.
+    pub landing: WorldTile,
+    /// Content delay on the path from the interaction to the pass message.
+    pub delay_ticks: u16,
+}
+
 /// A callback that observes each active route leg's phase transitions.
 pub type TravelLegCallback<'a> = Box<dyn FnMut(&Leg, LegPhase) + 'a>;
 
@@ -414,6 +449,14 @@ pub struct TravelOptions<'a> {
     /// Pinned evidence used by route selection, rechecked before gated
     /// transport sends. Missing or undecided evidence fails closed.
     pub quest_evidence: Option<&'a nav_planner::quest_gates::QuestEvidence>,
+    /// Ordered content refusal literals keyed by exact directed crossing.
+    /// `RefusalMatch::text` is the zero-based ordinal within the entries for
+    /// its crossing.
+    pub refusal_texts: Arc<[(api::prereq_steps::CrossingId, Arc<str>)]>,
+    /// Authored direction-specific pass messages and exact landing tiles.
+    /// When present for a gated edge, both the fresh message and exact
+    /// landing are required to settle the hop.
+    pub crossing_passes: Arc<[CrossingPass]>,
     /// Per-leg phase callback; fired during the poll that crosses the
     /// transition. May borrow the caller (like `Evidence<'a>` in settle).
     pub on_leg: Option<TravelLegCallback<'a>>,
@@ -429,6 +472,8 @@ impl Default for TravelOptions<'_> {
             teleports: None,
             edges: None,
             quest_evidence: None,
+            refusal_texts: Arc::default(),
+            crossing_passes: Arc::default(),
             on_leg: None,
         }
     }
@@ -924,6 +969,7 @@ impl FollowRun {
                         match teleport_send(snapshot, d, edge) {
                             TeleportSend::Sent => {
                                 let to = edge.to;
+                                let pass_watch = gate_pass_watch(snapshot, edge, options);
                                 self.loc_wait = 0;
                                 self.transport = Some(TransportHop {
                                     leg,
@@ -939,6 +985,8 @@ impl FollowRun {
                                     door_retry: DoorRetry::default(),
                                     occupied: OccupiedRetry::default(),
                                     chat_seq: chat_seq(snapshot),
+                                    refusal_watch: None,
+                                    pass_watch,
                                     dialog_page: None,
                                     approach: None,
                                 });
@@ -983,6 +1031,7 @@ impl FollowRun {
                         let mut ix = Interactions::new(snapshot, d);
                         match ix.walk(to) {
                             SendResult::Sent { .. } => {
+                                let pass_watch = gate_pass_watch(snapshot, edge, options);
                                 self.loc_wait = 0;
                                 self.transport = Some(TransportHop {
                                     leg,
@@ -998,6 +1047,8 @@ impl FollowRun {
                                     door_retry: DoorRetry::default(),
                                     occupied: OccupiedRetry::default(),
                                     chat_seq: chat_seq(snapshot),
+                                    refusal_watch: None,
+                                    pass_watch,
                                     dialog_page: None,
                                     approach: None,
                                 });
@@ -1131,6 +1182,8 @@ impl FollowRun {
                                     door_retry: DoorRetry::default(),
                                     occupied: OccupiedRetry::default(),
                                     chat_seq: chat_seq(snapshot),
+                                    refusal_watch: None,
+                                    pass_watch: None,
                                     npc_index: selected_npc_index,
                                     npc_recovery,
                                     dialog_page: None,
@@ -1224,6 +1277,8 @@ impl FollowRun {
                                         last_tick: Some(snapshot.tick()),
                                         ..Default::default()
                                     };
+                                    let refusal_watch = gate_refusal_watch(snapshot, edge, options);
+                                    let pass_watch = gate_pass_watch(snapshot, edge, options);
                                     self.loc_wait = 0;
                                     self.transport = Some(TransportHop {
                                         leg,
@@ -1239,6 +1294,8 @@ impl FollowRun {
                                         door_retry: DoorRetry::opened_at(open_sent_tick),
                                         occupied: OccupiedRetry::default(),
                                         chat_seq: chat_seq_at_send,
+                                        refusal_watch,
+                                        pass_watch,
                                         dialog_page: None,
                                         approach: None,
                                     });
@@ -1338,6 +1395,7 @@ impl FollowRun {
 }
 
 /// The outcome of one settle poll inside a follow step.
+#[derive(Debug)]
 enum Poll {
     /// The hop is still being watched: the call ends (`None` to the host).
     Watching,
@@ -1408,9 +1466,9 @@ impl WalkHop {
 /// recovery within the original hop budget for Door-kind edges with a packed
 /// open leaf or cardinal crossing direction (except dialogue doors and webs):
 /// re-read the matching loc, Open while closed (paced by `door_retry`), probe
-/// and walk when open. `chat_seq` is the watermark
-/// for fresh "I can't reach that!" and web cut-failure evidence; NPC-backed
-/// hops refresh it at every interaction and recover only before fare dialogue.
+/// and walk when open. `chat_seq` is the send watermark for fresh
+/// reachability, web-cut, and authored crossing evidence; NPC-backed hops
+/// refresh it at every interaction and recover only before fare dialogue.
 struct TransportHop {
     leg: Leg,
     to: WorldTile,
@@ -1441,6 +1499,10 @@ struct TransportHop {
     /// (see [`OccupiedRetry`]).
     occupied: OccupiedRetry,
     chat_seq: i32,
+    /// Page acknowledgement state for an authored gated refusal flow.
+    refusal_watch: Option<GateRefusalWatch>,
+    /// Timing evidence for the exact authored pass, when the table supplies one.
+    pass_watch: Option<GatePassWatch>,
     /// The chat option-page last answered (joined option texts). A new
     /// page (spirit-tree dest list after "Where can I go?") is answered;
     /// the same page is never re-pressed.

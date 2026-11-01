@@ -3,7 +3,6 @@ use super::{begin_approach_walk, reach, walk_step_evidence, NoArgs};
 use crate::acquire::run::AcquireRun;
 use crate::acquire::{AcquireOutcome, AcquirePlan, AcquireRequest, OpenGate};
 use crate::combat::RaisedPrayers;
-use crate::native::walk::Walk;
 use crate::native::{ActionContext, ActionError, ActionHandle, NativeActions};
 use crate::native_bank::{BankAction, BankItem, BankReceipt};
 use crate::native_equipment::{EquipmentMachine, EquipmentRequest};
@@ -13,6 +12,7 @@ use crate::quester::compile::{
     CompileContext, CompileError, CompiledCarry, FamilyReceipt, PredicateContext, PredicatePlan,
     StepContext, StepOutcome, StepPlan, StepRun,
 };
+use crate::quester::prereq::{reach::PrereqReach, walk::PrereqWalk};
 use api::bank_memory::Origin;
 use api::quest_progress::{EvidenceStamp, QuestProgress};
 use api::selected::{FactKey, Knowledge, Truth};
@@ -534,15 +534,15 @@ impl StepPlan for BuyPlan {
 struct BuyRun {
     tile: WorldTile,
     request: BuyRequest,
-    walk: Option<ActionHandle<Walk>>,
+    walk: Option<PrereqWalk>,
     retry: crate::native::WalkRetryState,
     buy: Option<ActionHandle<BuyMachine>>,
 }
 impl StepRun for BuyRun {
     fn poll(&mut self, cx: &mut StepContext<'_, '_>) -> Poll<Result<StepOutcome, ActionError>> {
         let now = cx.tick.cx.evidence().tick;
-        if let Some(handle) = &self.walk {
-            match cx.tick.actions.poll(handle, &mut cx.tick.cx) {
+        if let Some(walk) = self.walk.as_mut() {
+            match walk.poll(cx.tick.actions, &mut cx.tick.cx, cx.tick.state) {
                 Poll::Pending => return Poll::Pending,
                 Poll::Ready(Err(error)) => return Poll::Ready(Err(error)),
                 Poll::Ready(Ok(receipt)) => {
@@ -568,19 +568,11 @@ impl StepRun for BuyRun {
                 if self.retry.waiting_for_next_tick(now) {
                     return Poll::Pending;
                 }
-                let handle = match crate::native::defer_budget(cx.tick.actions.begin::<Walk>(
+                self.walk = Some(std::task::ready!(begin_approach_walk(
+                    &mut self.retry,
                     reach::walk_request(self.tile, 4, None, cx.required_after),
-                    &mut cx.tick.cx,
-                )) {
-                    Poll::Pending => {
-                        self.retry.defer_until_next_tick(now);
-                        return Poll::Pending;
-                    }
-                    Poll::Ready(Err(error)) => return Poll::Ready(Err(error)),
-                    Poll::Ready(Ok(handle)) => handle,
-                };
-                self.retry.action_submitted();
-                self.walk = Some(handle);
+                    cx,
+                ))?);
                 return Poll::Pending;
             }
             self.retry.reset();
@@ -605,7 +597,13 @@ impl StepRun for BuyRun {
             Poll::Ready(Ok(_)) => Poll::Ready(Ok(done(cx))),
         }
     }
-    fn cancel(&mut self, _actions: &mut NativeActions) {}
+    fn cancel(&mut self, _actions: &mut NativeActions) {
+        if let Some(walk) = self.walk.as_mut() {
+            walk.cancel();
+        }
+        self.walk = None;
+        self.buy = None;
+    }
 }
 
 #[derive(Debug, Deserialize)]
@@ -769,7 +767,7 @@ impl StepPlan for MakePlan {
 }
 
 enum MakeSmallHandle {
-    Walk(ActionHandle<Walk>),
+    Walk(PrereqWalk),
     UseOn(ActionHandle<super::UseOnAction>),
 }
 
@@ -777,7 +775,7 @@ struct MakeRun {
     trigger_plan: Option<MakeTrigger>,
     request: MakeRequest,
     small_handle: Option<MakeSmallHandle>,
-    trigger_reach: Option<ActionHandle<reach::Reach>>,
+    trigger_reach: Option<PrereqReach>,
     retry: crate::native::WalkRetryState,
     make: Option<ActionHandle<MakeMachine>>,
 }
@@ -825,10 +823,10 @@ impl StepRun for MakeRun {
         }
         let now = cx.tick.cx.evidence().tick;
         let mut accepted = false;
-        if let Some(handle) = &self.small_handle {
+        if let Some(handle) = &mut self.small_handle {
             match handle {
                 MakeSmallHandle::Walk(handle) => {
-                    match cx.tick.actions.poll(handle, &mut cx.tick.cx) {
+                    match handle.poll(cx.tick.actions, &mut cx.tick.cx, cx.tick.state) {
                         Poll::Pending => return Poll::Pending,
                         Poll::Ready(Err(error)) => return Poll::Ready(Err(error)),
                         Poll::Ready(Ok(receipt)) => {
@@ -918,7 +916,7 @@ impl StepRun for MakeRun {
                 }
                 if let Some(op) = trigger.op.as_ref() {
                     self.trigger_reach = Some(std::task::ready!(crate::native::defer_budget(
-                        cx.tick.actions.begin::<reach::Reach>(
+                        PrereqReach::begin(
                             reach::ReachArgs {
                                 kind: reach::ReachKind::Loc {
                                     id: Some(trigger.loc_id),
@@ -931,6 +929,7 @@ impl StepRun for MakeRun {
                                 target_tile: None,
                                 reachable_only: false,
                             },
+                            cx.tick.actions,
                             &mut cx.tick.cx,
                         )
                     ))?);
@@ -953,8 +952,8 @@ impl StepRun for MakeRun {
                     .begin::<MakeMachine>(self.request.clone(), &mut cx.tick.cx)?,
             );
         }
-        if let Some(handle) = &self.trigger_reach {
-            match cx.tick.actions.poll(handle, &mut cx.tick.cx) {
+        if let Some(handle) = &mut self.trigger_reach {
+            match handle.poll(cx.tick.actions, &mut cx.tick.cx, cx.tick.state) {
                 Poll::Pending => return Poll::Pending,
                 Poll::Ready(Err(error)) => return Poll::Ready(Err(error)),
                 Poll::Ready(Ok(false)) => {
@@ -998,7 +997,17 @@ impl StepRun for MakeRun {
             }
         }
     }
-    fn cancel(&mut self, _actions: &mut NativeActions) {}
+    fn cancel(&mut self, _actions: &mut NativeActions) {
+        if let Some(MakeSmallHandle::Walk(walk)) = self.small_handle.as_mut() {
+            walk.cancel();
+        }
+        if let Some(trigger) = self.trigger_reach.as_mut() {
+            trigger.cancel();
+        }
+        self.small_handle = None;
+        self.trigger_reach = None;
+        self.make = None;
+    }
 }
 
 #[derive(Debug, Deserialize)]

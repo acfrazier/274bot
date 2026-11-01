@@ -33,6 +33,8 @@ pub mod named_banks;
 pub mod native_input;
 pub mod obj_names;
 pub mod prayer;
+pub mod prereq_knowledge;
+pub mod prereq_steps;
 pub mod process_condition;
 pub mod prot;
 pub mod query;
