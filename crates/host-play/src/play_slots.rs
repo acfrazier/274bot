@@ -2095,11 +2095,9 @@ fn spawn_slot_thread(
                             // queued cheats, or an armed nav bot must keep
                             // ticking (never parked), so the observe hook
                             // reports it every frame.
-                            running
-                                || frame_delivered
+                            slot_busy_requires_tick(running, frame_delivered)
                                 || slot_cheats
                                     .lock()
-                                    .unwrap()
                                     .get(name)
                                     .is_some_and(|q| !q.is_empty())
                                 || slot_wires
@@ -2242,6 +2240,10 @@ pub(super) fn update_transfer_title(
     true
 }
 
+
+fn slot_busy_requires_tick(running: bool, frame_delivered: bool) -> bool {
+    running || frame_delivered
+}
 #[cfg(test)]
 mod capacity_class_tests {
     use super::capacity_service_class;
@@ -2299,6 +2301,12 @@ mod capacity_class_tests {
             capacity_service_class(true, false, quiet),
             ServiceClass::Quiet
         );
+    }
+    #[test]
+    fn delivered_frame_keeps_even_a_paused_slot_busy() {
+        assert!(!super::slot_busy_requires_tick(false, false));
+        assert!(super::slot_busy_requires_tick(false, true));
+        assert!(super::slot_busy_requires_tick(true, false));
     }
 }
 #[cfg(test)]
