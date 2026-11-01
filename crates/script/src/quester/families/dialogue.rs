@@ -258,8 +258,9 @@ pub struct Dialogue {
     last_send: Option<DialogueSend>,
     /// The wait for the page of the current send; see [`Phase::awaits_page`].
     modal_wait: Option<ModalWaitLease>,
-    /// `steps` when `modal_wait` was taken: each new send takes a new lease.
-    modal_wait_step: u32,
+    /// `(steps, gap_rearms_left)` when `modal_wait` was taken: each new send
+    /// and each re-armed end gap takes a new lease, so each wait is short.
+    modal_wait_epoch: (u32, u64),
 }
 
 impl NativeMachine for Dialogue {
@@ -303,7 +304,7 @@ impl NativeMachine for Dialogue {
             chat_advance_request_id: None,
             last_send: None,
             modal_wait: None,
-            modal_wait_step: 0,
+            modal_wait_epoch: (0, 0),
         };
         dialogue.open(cx)?;
         dialogue.sync_modal_wait(cx)?;
@@ -325,14 +326,16 @@ impl NativeMachine for Dialogue {
 
 impl Dialogue {
     /// Hold one modal-wait lease while the phase waits for a page, and none
-    /// otherwise. A new send (a new `steps` count) takes a new lease, so each
-    /// wait has its own key. Completing or dropping the machine releases it.
+    /// otherwise. A new send (a new `steps` count) or a re-armed end gap takes
+    /// a new lease, so each wait has its own key and stays far inside the
+    /// host's safety bound. Completing or dropping the machine releases it.
     fn sync_modal_wait(&mut self, cx: &mut ActionContext<'_>) -> Result<(), ActionError> {
+        let epoch = (self.steps, self.gap_rearms_left);
         if !self.phase.awaits_page() {
             self.modal_wait = None;
-        } else if self.modal_wait.is_none() || self.modal_wait_step != self.steps {
+        } else if self.modal_wait.is_none() || self.modal_wait_epoch != epoch {
             self.modal_wait = Some(cx.begin_modal_wait()?);
-            self.modal_wait_step = self.steps;
+            self.modal_wait_epoch = epoch;
         }
         Ok(())
     }
