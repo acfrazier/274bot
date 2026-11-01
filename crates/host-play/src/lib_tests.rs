@@ -7899,6 +7899,19 @@ fn client_frame_and_lifecycle_hooks_do_not_hold_slot_and_are_watchdog_bounded() 
         }
     }
 
+    fn wait_for_execution_end(slot: &Arc<Mutex<script::SlotScript>>) -> bool {
+        let deadline = Instant::now() + Duration::from_secs(2);
+        loop {
+            if !bounded_slot_call(Arc::clone(slot), |slot| slot.surface_execution_active()) {
+                return true;
+            }
+            if Instant::now() >= deadline {
+                return false;
+            }
+            thread::sleep(Duration::from_millis(5));
+        }
+    }
+
     fn start_frame_wait(
         slot: Arc<Mutex<script::SlotScript>>,
     ) -> (
@@ -8018,7 +8031,15 @@ export default class T extends LoopingBot {
         script::RunState::Paused,
         "state remains readable while onPause is stuck"
     );
-    wait_for_execution(&slot, false);
+    let on_pause_ended = wait_for_execution_end(&slot);
+    if !on_pause_ended {
+        bounded_slot_call(Arc::clone(&slot), |slot| slot.stop());
+        wait_script_state(&play, "alice", script::RunState::Idle);
+    }
+    assert!(
+        on_pause_ended,
+        "onPause watchdog did not interrupt its non-returning hook"
+    );
     assert!(
         slot.lock()
             .unwrap()
@@ -8049,7 +8070,15 @@ export default class T extends LoopingBot {
         script::RunState::Running,
         "state remains readable while onResume is stuck"
     );
-    wait_for_execution(&slot, false);
+    let on_resume_ended = wait_for_execution_end(&slot);
+    if !on_resume_ended {
+        bounded_slot_call(Arc::clone(&slot), |slot| slot.stop());
+        wait_script_state(&play, "alice", script::RunState::Idle);
+    }
+    assert!(
+        on_resume_ended,
+        "onResume watchdog did not interrupt its non-returning hook"
+    );
     assert!(
         slot.lock()
             .unwrap()

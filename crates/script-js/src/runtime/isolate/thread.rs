@@ -1124,6 +1124,7 @@ fn fire_compat_lifecycle_hook(
     if !begin_lifecycle_hook_execution(teardown, generation) {
         return;
     }
+    arm_execution_watchdog(runtime, teardown, out);
     let result = call_interruptible(runtime, teardown, |runtime| {
         runtime.call_function_immediate::<Option<String>>(None, function, json_args!())
     });
