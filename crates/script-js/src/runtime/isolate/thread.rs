@@ -855,9 +855,7 @@ fn finish_tick(
                 .to_string(),
         ));
     }
-    let Some(reason) = requested_stop(runtime) else {
-        return None;
-    };
+    let reason = requested_stop(runtime)?;
     let event = crate::events::NativeEvent::ScriptFinish {
         reason: reason.clone(),
     };
