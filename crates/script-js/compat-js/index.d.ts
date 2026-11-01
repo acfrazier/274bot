@@ -219,7 +219,7 @@ export const reader: {
     statsReady(): boolean;
     stat(index: number): StatSnapshot;
     varp(index: number): number;
-    chat(count: number): ChatLine[];
+    chat(count: number): readonly Readonly<ChatLine>[];
     playerCount(): number;
     npcCount(): number;
     /**
@@ -244,40 +244,58 @@ export const reader: {
         x: number;
         y: number;
     }[] | null;
-    npcs(): NpcSnapshot[];
+    npcs(): readonly Readonly<Omit<NpcSnapshot, "actions" | "tile"> & {
+        actions: readonly string[];
+        tile: Readonly<WorldTile>;
+    }>[];
     selfSlot(): number;
     selfFaceEntity(): number;
-    players(): PlayerSnapshot[];
+    players(): readonly Readonly<Omit<PlayerSnapshot, "actions" | "tile"> & {
+        actions: readonly string[];
+        tile: Readonly<WorldTile>;
+    }>[];
     inCombat(): boolean;
     takingDamage(): boolean;
-    locs(): LocSnapshot[];
-    groundItems(): GroundItemSnapshot[];
-    inventory(): InvItemSnapshot[];
+    locs(): readonly Readonly<Omit<LocSnapshot, "actions" | "tile"> & {
+        actions: readonly string[];
+        tile: Readonly<WorldTile>;
+    }>[];
+    groundItems(): readonly Readonly<Omit<GroundItemSnapshot, "actions" | "tile"> & {
+        actions: readonly string[];
+        tile: Readonly<WorldTile>;
+    }>[];
+    inventory(): readonly Readonly<Omit<InvItemSnapshot, "ops"> & {
+        ops: readonly (string | null)[];
+    }>[];
     objCatalog(): ObjRecord[];
     inventorySize(): number;
     inventorySnapshotReady(): boolean;
-    equipment(): InvItemSnapshot[];
+    equipment(): readonly Readonly<Omit<InvItemSnapshot, "ops"> & {
+        ops: readonly (string | null)[];
+    }>[];
     bankComId(): number;
     bankItems(): readonly Readonly<Omit<InvItemSnapshot, "ops"> & {
         ops: readonly (string | null)[];
     }>[];
-    bankSideItems(): InvItemSnapshot[];
+    bankSideItems(): readonly Readonly<Omit<InvItemSnapshot, "ops"> & {
+        ops: readonly (string | null)[];
+    }>[];
     bankSnapshotReady(): boolean;
     bankSideSnapshotReady(): boolean;
     bankSnapshotGeneration(): number;
     chatContinueComId(): number;
-    chatOptions(): {
+    chatOptions(): readonly Readonly<{
         comId: number;
         text: string;
-    }[];
-    makeProducts(): {
+    }>[];
+    makeProducts(): readonly Readonly<{
         obj: number;
         name: string;
-        buttons: {
+        buttons: readonly Readonly<{
             qty: number;
             comId: number;
-        }[];
-    }[];
+        }>[];
+    }>[];
     runControls(): {
         onComId: number;
         offComId: number;
@@ -311,34 +329,51 @@ export const reader: {
         chat: number;
     };
     countDialogOpen(): boolean;
-    shopInv(comId: number): InvItemSnapshot[];
+    shopInv(comId: number): readonly Readonly<Omit<InvItemSnapshot, "ops"> & {
+        ops: readonly (string | null)[];
+    }>[];
     puzzleBoardComId(): number;
-    puzzleBoard(): InvItemSnapshot[];
+    puzzleBoard(): readonly Readonly<Omit<InvItemSnapshot, "ops"> & {
+        ops: readonly (string | null)[];
+    }>[];
     puzzleBoardSize(): number;
-    duelOffers(): {
+    duelOffers(): Readonly<{
         ready: boolean;
-        mine: InvItemSnapshot[];
-        theirs: InvItemSnapshot[];
-    };
+        mine: readonly Readonly<Omit<InvItemSnapshot, "ops"> & {
+            ops: readonly (string | null)[];
+        }>[];
+        theirs: readonly Readonly<Omit<InvItemSnapshot, "ops"> & {
+            ops: readonly (string | null)[];
+        }>[];
+    }>;
     tradeOfferOpen(): boolean;
     tradeConfirmOpen(): boolean;
-    tradeMyOffer(): InvItemSnapshot[];
-    tradeTheirOffer(): InvItemSnapshot[];
-    tradeSidePack(): InvItemSnapshot[];
+    tradeMyOffer(): readonly Readonly<Omit<InvItemSnapshot, "ops"> & {
+        ops: readonly (string | null)[];
+    }>[];
+    tradeTheirOffer(): readonly Readonly<Omit<InvItemSnapshot, "ops"> & {
+        ops: readonly (string | null)[];
+    }>[];
+    tradeSidePack(): readonly Readonly<Omit<InvItemSnapshot, "ops"> & {
+        ops: readonly (string | null)[];
+    }>[];
     tradePartner(): string | null;
-    tradeConfirmOffers(): {
-        mine: InvItemSnapshot[];
-        theirs: InvItemSnapshot[];
-    };
+    tradeConfirmOffers(): Readonly<{
+        mine: readonly Readonly<Omit<InvItemSnapshot, "ops"> & {
+            ops: readonly (string | null)[];
+        }>[];
+        theirs: readonly Readonly<Omit<InvItemSnapshot, "ops"> & {
+            ops: readonly (string | null)[];
+        }>[];
+    }>;
     tradeConfirmReady(): boolean;
     closeButtonComId(rootComId: number): number;
     activeSideTab(): number;
     ifText(comId: number): string | null;
-    mainModalTexts(): string[];
-    chatModalTexts(): string[];
+    mainModalTexts(): readonly string[];
+    chatModalTexts(): readonly string[];
     ifModelObjId(comId: number): number | null;
-    /** Every button under a modal root, with its caption, its menu word and whether a layer above it is hiding it. */
-    modalButtons(rootComId: number): ModalButton[];
+    modalButtons(rootComId: number): readonly Readonly<ModalButton>[];
     buttonByText(rootComId: number, label: string): number;
     /**
      * Find a clickable main-modal button nearest a text label (substring match).
@@ -347,14 +382,16 @@ export const reader: {
     mainModalButtonNearText(label: string): number;
     targetButtonByBase(rootComId: number, base: string): number;
     selectButtonByVarp(rootComId: number, varp: number, value: number): number;
-    selectButtonLabelsByVarp(rootComId: number, varp: number): SelectButtonLabel[];
-    mainSkillMultiItems(): InvItemSnapshot[];
+    selectButtonLabelsByVarp(rootComId: number, varp: number): readonly Readonly<SelectButtonLabel>[];
+    mainSkillMultiItems(): readonly Readonly<Omit<InvItemSnapshot, "ops"> & {
+        ops: readonly (string | null)[];
+    }>[];
     sideTabInterface(tab: number): number;
-    questStatuses(): {
+    questStatuses(): readonly Readonly<{
         comId: number;
         name: string;
         colour: number;
-    }[];
+    }>[];
     /**
      * Raw item icon pixels for the loadout picker. Null whenever the cache is not loaded or the id has no sprite.
      * Why: DOM belongs to src/bot/panel/, so canvas and data-URL conversion lives there rather than here.
@@ -2427,7 +2464,7 @@ import { InvItem } from "*api/inventory/Inventory.js";
  * @see docs/reference/api-items.md
  */
 export const Equipment: {
-    items(): InvItem[];
+    items(): readonly Readonly<InvItem>[];
     contains(name: string): boolean;
     equip(name: string): Promise<boolean>;
     unequip(name: string): Promise<boolean>;
@@ -2675,7 +2712,9 @@ import * as ______adapter_ClientAdapter_js from "*adapter/ClientAdapter.js";
 import { InvItemSnapshot } from "*adapter/ClientAdapter.js";
 import { Loc } from "*api/model/Loc.js";
 import { Npc } from "*api/model/Npc.js";
-export function backpackSnapshots(): InvItemSnapshot[];
+export function backpackSnapshots(): readonly Readonly<Omit<InvItemSnapshot, "ops"> & {
+    ops: readonly (string | null)[];
+}>[];
 export function backpackCapacity(): number;
 export class InvItem {
     readonly name: string | null;
@@ -2694,7 +2733,7 @@ export class InvItem {
  * @see docs/reference/api-items.md
  */
 export const Inventory: {
-    items(): InvItem[];
+    items(): readonly Readonly<InvItem>[];
     first(name: string): InvItem | null;
     contains(name: string): boolean;
     used(): number;
@@ -3625,8 +3664,8 @@ export const Trade: {
      * (`Trading With: <name>`). Returns null while the label has not filled.
      */
     partner(): string | null;
-    myOffer(): TradeItem[];
-    theirOffer(): TradeItem[];
+    myOffer(): readonly Readonly<TradeItem>[];
+    theirOffer(): readonly Readonly<TradeItem>[];
     request(playerName: string): Promise<boolean>;
     offerAll(itemName: string, pick?: (i: {
         count: number;
@@ -3688,11 +3727,10 @@ export type QuestStatus = 'notStarted' | 'inProgress' | 'complete' | 'unknown';
  * @see docs/reference/api-quests.md
  */
 export const Quests: {
-    /** Every quest-list row: display name + colour-derived status. */
-    all(): {
+    all(): readonly Readonly<{
         name: string;
         status: QuestStatus;
-    }[];
+    }>[];
     /** Coarse status from the quest-list name colour (red / yellow / green); yellow covers every in-progress stage. */
     status(name: string): QuestStatus;
     /**
@@ -3906,8 +3944,8 @@ export function resolveWorldNumber(host: string, params: URLSearchParams): 1 | 2
 
 declare module '*client/shell/Skill.js' {
 export default class Skill {
-    static readonly names: string[];
-    static readonly used: boolean[];
+    static readonly names: readonly string[];
+    static readonly used: readonly boolean[];
 }
 
 }

@@ -6,12 +6,211 @@ use api::game_data::SelectedGameData;
 use api::snapshot::WorldTile;
 use rustyscript::Runtime;
 use std::cell::RefCell;
+use std::collections::HashMap;
+use std::rc::Rc;
 use std::sync::atomic::AtomicBool;
 use std::sync::{Arc, Weak};
 #[path = "client_adapter_v8.rs"]
 mod client_adapter_v8;
 
 const PENDING: &str = "__pending__";
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(super) struct ReaderListStamp {
+    generations: [u64; 10],
+    parameters: [i64; 2],
+}
+
+impl ReaderListStamp {
+    pub(super) fn new(generations: [u64; 10], parameters: [i64; 2]) -> Self {
+        Self {
+            generations,
+            parameters,
+        }
+    }
+}
+
+struct CachedReaderList {
+    stamp: ReaderListStamp,
+    value: v8::Global<v8::Value>,
+}
+
+#[derive(Default)]
+struct ReaderListCache {
+    entries: HashMap<&'static str, CachedReaderList>,
+}
+
+pub(super) fn install_reader_list_cache(runtime: &mut Runtime) -> Result<(), String> {
+    if runtime
+        .deno_runtime()
+        .v8_isolate()
+        .get_slot::<Rc<RefCell<ReaderListCache>>>()
+        .is_some()
+    {
+        return Ok(());
+    }
+    let cache = Rc::new(RefCell::new(ReaderListCache::default()));
+    if runtime.deno_runtime().v8_isolate().set_slot(cache) {
+        Ok(())
+    } else {
+        Err("ClientAdapter reader list cache already installed".to_string())
+    }
+}
+
+pub(super) fn reader_list_cache_get<'s>(
+    scope: &mut v8::HandleScope<'s>,
+    name: &'static str,
+    stamp: ReaderListStamp,
+) -> Result<Option<v8::Local<'s, v8::Value>>, String> {
+    let cache = scope
+        .get_slot::<Rc<RefCell<ReaderListCache>>>()
+        .cloned()
+        .ok_or_else(|| "ClientAdapter reader list cache is not installed".to_string())?;
+    let cache = cache.borrow();
+    let Some(entry) = cache.entries.get(name) else {
+        return Ok(None);
+    };
+    if entry.stamp != stamp {
+        return Ok(None);
+    }
+    Ok(Some(v8::Local::new(scope, &entry.value)))
+}
+
+pub(super) fn reader_list_cache_put(
+    scope: &mut v8::HandleScope<'_>,
+    name: &'static str,
+    stamp: ReaderListStamp,
+    value: v8::Local<v8::Value>,
+) -> Result<(), String> {
+    let cache = scope
+        .get_slot::<Rc<RefCell<ReaderListCache>>>()
+        .cloned()
+        .ok_or_else(|| "ClientAdapter reader list cache is not installed".to_string())?;
+    cache.borrow_mut().entries.insert(
+        name,
+        CachedReaderList {
+            stamp,
+            value: v8::Global::new(scope, value),
+        },
+    );
+    Ok(())
+}
+
+pub(super) fn cached_reader_list<'s, F>(
+    scope: &mut v8::HandleScope<'s>,
+    name: &'static str,
+    stamp: Option<ReaderListStamp>,
+    build: F,
+) -> Result<v8::Local<'s, v8::Value>, String>
+where
+    F: FnOnce(&mut v8::HandleScope<'s>) -> Result<v8::Local<'s, v8::Value>, String>,
+{
+    let Some(stamp) = stamp else {
+        return build(scope);
+    };
+    if let Some(value) = reader_list_cache_get(scope, name, stamp)? {
+        return Ok(value);
+    }
+    let value = build(scope)?;
+    freeze_reader_list(scope, value)?;
+    reader_list_cache_put(scope, name, stamp, value)?;
+    Ok(value)
+}
+
+pub(super) fn cached_reader_list_with_error<'s, F, E, M>(
+    scope: &mut v8::HandleScope<'s>,
+    name: &'static str,
+    stamp: Option<ReaderListStamp>,
+    build: F,
+    mut map_error: M,
+) -> Result<v8::Local<'s, v8::Value>, E>
+where
+    F: FnOnce(&mut v8::HandleScope<'s>) -> Result<v8::Local<'s, v8::Value>, E>,
+    M: FnMut(&mut v8::HandleScope<'s>, String) -> E,
+{
+    let Some(stamp) = stamp else {
+        return build(scope);
+    };
+    if let Some(value) =
+        reader_list_cache_get(scope, name, stamp).map_err(|error| map_error(scope, error))?
+    {
+        return Ok(value);
+    }
+    let value = build(scope)?;
+    freeze_reader_list(scope, value).map_err(|error| map_error(scope, error))?;
+    reader_list_cache_put(scope, name, stamp, value).map_err(|error| map_error(scope, error))?;
+    Ok(value)
+}
+
+pub(super) fn freeze_reader_list(
+    scope: &mut v8::HandleScope<'_>,
+    value: v8::Local<v8::Value>,
+) -> Result<(), String> {
+    if let Ok(array) = v8::Local::<v8::Array>::try_from(value) {
+        freeze_reader_array(scope, array)
+    } else if value.is_object() {
+        freeze_nested_reader_arrays(scope, value)?;
+        freeze_reader_object(scope, value)
+    } else {
+        Ok(())
+    }
+}
+
+fn freeze_reader_array(
+    scope: &mut v8::HandleScope<'_>,
+    array: v8::Local<v8::Array>,
+) -> Result<(), String> {
+    for index in 0..array.length() {
+        let row = array
+            .get_index(scope, index)
+            .ok_or_else(|| PENDING.to_string())?;
+        if row.is_object() {
+            if row.is_array() {
+                let nested = v8::Local::<v8::Array>::try_from(row)
+                    .map_err(|_| "ClientAdapter nested reader array is invalid".to_string())?;
+                freeze_reader_array(scope, nested)?;
+            } else {
+                freeze_nested_reader_arrays(scope, row)?;
+            }
+            freeze_reader_object(scope, row)?;
+        }
+    }
+    freeze_reader_object(scope, array.into())
+}
+
+fn freeze_nested_reader_arrays(
+    scope: &mut v8::HandleScope<'_>,
+    value: v8::Local<v8::Value>,
+) -> Result<(), String> {
+    let object = v8::Local::<v8::Object>::try_from(value)
+        .map_err(|_| "ClientAdapter reader row is not an object".to_string())?;
+    for field in ["ops", "buttons", "mine", "theirs"] {
+        let key = v8::String::new(scope, field).ok_or_else(|| PENDING.to_string())?;
+        let Some(child) = object.get(scope, key.into()) else {
+            return Err(PENDING.to_string());
+        };
+        if let Ok(array) = v8::Local::<v8::Array>::try_from(child) {
+            freeze_reader_array(scope, array)?;
+        }
+    }
+    Ok(())
+}
+
+fn freeze_reader_object(
+    scope: &mut v8::HandleScope<'_>,
+    value: v8::Local<v8::Value>,
+) -> Result<(), String> {
+    let object = v8::Local::<v8::Object>::try_from(value)
+        .map_err(|_| "ClientAdapter reader value is not an object".to_string())?;
+    if object
+        .set_integrity_level(scope, v8::IntegrityLevel::Frozen)
+        .unwrap_or(false)
+    {
+        Ok(())
+    } else {
+        Err("ClientAdapter reader value could not be frozen".to_string())
+    }
+}
 
 struct CachedObjRecords {
     data: Weak<SelectedGameData>,

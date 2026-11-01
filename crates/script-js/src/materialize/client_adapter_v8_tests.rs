@@ -14,6 +14,9 @@ const HEAP_TEST_NAME: &str =
 const STYLE_CHILD_ENV: &str = "SCRIPT_CLIENT_ADAPTER_STYLE_FILTER_TEST_CHILD";
 const STYLE_TEST_NAME: &str =
     "selected_facts_v8::client_adapter_v8::tests::combat_style_labels_filter_on_both_tab_paths";
+const CACHE_CHILD_ENV: &str = "SCRIPT_CLIENT_ADAPTER_CACHE_TEST_CHILD";
+const CACHE_TEST_NAME: &str =
+    "selected_facts_v8::client_adapter_v8::tests::generation_backed_lists_reuse_frozen_identity_across_posts_and_generation_moves";
 
 const SETUP: &str = r#"
 // r289 decodes the active NPC list length from an unsigned 8-bit field.
@@ -25,6 +28,19 @@ const itemRows = (count, idBase = 100) => Array.from({ length: count }, (_, slot
     count: slot + 1,
     component_id: 3214,
     ops: ['Use', 'Drop'],
+}));
+const PLAYER_SCENE_CAP = 2047;
+const LOC_SCENE_CAP = 104 * 104 * 4;
+const GROUND_SCENE_ROWS = 2048;
+const entityRows = (count, idBase) => Array.from({ length: count }, (_, index) => ({
+    id: idBase + index,
+    index,
+    name: `Entity ${index}`,
+    x: 3200 + (index % 104),
+    z: 3200 + Math.floor(index / 104),
+    level: 0,
+    distance: index % 20,
+    ops: ['Talk-to', 'Examine'],
 }));
 const styleNames = [
     { mode: 1, label: '(Accurate)' },
@@ -92,10 +108,10 @@ const widgets = [
     ...questWidgets,
     ...styleWidgets,
     widgetItems(700, 40),
-    widgetItems(3542, 12),
-    widgetItems(3538, 12),
-    widgetItems(3532, 12),
-    widgetItems(3539, 12),
+    widgetItems(3542, 14),
+    widgetItems(3538, 14),
+    widgetItems(3532, 14),
+    widgetItems(3539, 14),
     { ...widgetItems(6669, 28), inventory_ready: true },
     { ...widgetItems(6670, 28), inventory_ready: true },
     { component_id: 3557, root_component_id: 100, parent_id: 100, text: 'Ready' },
@@ -121,6 +137,10 @@ globalThis.__rs2b0t_host = {
         ingame: true,
         here: { x: 3200, z: 3200, level: 0 },
         hint_tile: { x: 3201, z: 3202 },
+        npcs: entityRows(NPC_SCENE_CAP, 10000),
+        players: entityRows(PLAYER_SCENE_CAP, 20000),
+        locs: entityRows(LOC_SCENE_CAP, 30000),
+        ground: entityRows(GROUND_SCENE_ROWS, 40000),
         inv: itemRows(28),
         inv_size: 28,
         bank: itemRows(288),
@@ -128,6 +148,12 @@ globalThis.__rs2b0t_host = {
         equipment: itemRows(14),
         trade_mine: itemRows(28),
         trade_theirs: itemRows(28),
+        shop_open: true,
+        shop_stock: itemRows(40, 5000),
+        quest_statuses: Array.from({ length: 69 }, (_, index) => ({
+            name: `Quest ${index}`,
+            status: index === 0 ? '' : 'complete',
+        })),
         trade_side: itemRows(28),
         main_make_items: itemRows(28),
         puzzle_board: { component_id: 7000, size: 28, items: itemRows(28) },
@@ -140,7 +166,7 @@ globalThis.__rs2b0t_host = {
             index,
             points: Array.from({ length: 8 }, (_, point) => ({ x: point * 2, y: point * 2 + 1 })),
         })),
-        chat_options: Array.from({ length: 5 }, (_, index) => ({
+        chat_options: Array.from({ length: 288 }, (_, index) => ({
             text: `Option ${index}`,
             comId: 400 + index,
         })),
@@ -155,8 +181,10 @@ globalThis.__rs2b0t_host = {
         side_tab_ifaces: [{ index: 0, id: 900 }, { index: 2, id: 200 }],
         combat_styles: styleNames.map(({ mode, label }) => ({ mode, label })),
         make_products: products,
-        chat_modal_texts: { root: 123, texts: ['Chat'] },
-        main_modal_texts: { root: 6575, texts: ['Main'] },
+        main_modal_texts: {
+            root: 6575,
+            texts: Array.from({ length: 288 }, (_, index) => `Main ${index}`),
+        },
         client_adapter: {
             attached: true,
             session_generation: 7,
@@ -167,6 +195,27 @@ globalThis.__rs2b0t_host = {
             bank_com_id: 1,
             bank_open: true,
             bank_snapshot_generation: 10,
+            chat_modal_texts: {
+                root: 123,
+                texts: Array.from({ length: 288 }, (_, index) => `Chat ${index}`),
+            },
+            read_generations: {
+                npc: 1,
+                player: 1,
+                inv: 1,
+                varp: 1,
+                stat: 1,
+                chat: 1,
+                scene: 1,
+                iface: 1,
+                camera: 1,
+                map_flag: 1,
+                world: 1,
+                player_info: 1,
+                npc_info: 1,
+                session: 1,
+                invalidations: 1,
+            },
             widgets,
             last_walk_path_local: path,
             server_tile: { level: 0 },
@@ -209,13 +258,26 @@ const rowsFast = (method, expected, ...args) => {
     const rows = read(method, ...args);
     return Array.isArray(rows) && rows.length === expected && rows.every(fastObject);
 };
+const TestInvItem = function(row) {
+    this.id = row.id;
+    this.slot = row.slot;
+    this.name = row.name;
+    this.count = row.count;
+};
+const inventoryItems = () => __rs2b0t_inventory(2, TestInvItem);
+const equipmentItems = () => __rs2b0t_inventory(11);
+const rowsFastValue = (rows, expected) =>
+    Array.isArray(rows) && rows.length === expected && rows.every(fastObject);
 globalThis.__clientAdapterStylePaths = () => {
     const facts = globalThis.__rs2b0t_host.snapshot.client_adapter;
     const shown = read('selectButtonLabelsByVarp', 900, 43);
     const widgets = facts.widgets;
+    const interfaceGeneration = facts.read_generations.iface;
     facts.widgets = widgets.filter((row) => row.root_component_id !== 900);
+    facts.read_generations.iface = interfaceGeneration + 1;
     const hidden = read('selectButtonLabelsByVarp', 900, 43);
     facts.widgets = widgets;
+    facts.read_generations.iface = interfaceGeneration + 2;
     return { shown, hidden };
 };
 globalThis.__clientAdapterFast = () => {
@@ -225,6 +287,10 @@ globalThis.__clientAdapterFast = () => {
         ['bankItems', 288],
         ['equipment', 14],
         ['tradeMyOffer', 28],
+        ['npcs', NPC_SCENE_CAP],
+        ['locs', LOC_SCENE_CAP],
+        ['players', PLAYER_SCENE_CAP],
+        ['groundItems', GROUND_SCENE_ROWS],
         ['tradeTheirOffer', 28],
         ['tradeSidePack', 28],
         ['shopInv', 40, 700],
@@ -233,9 +299,22 @@ globalThis.__clientAdapterFast = () => {
     ];
     const itemChecks = itemRows.map(([method, count, ...args]) =>
         rowsFast(method, count, ...args));
+    const facadeRows = [
+        ['compatQuestsAll', 69],
+        ['compatShopStock', 40],
+        ['compatTradeMyOffer', 28],
+        ['compatTradeTheirOffer', 28],
+    ];
+    const facadeChecks = facadeRows.map(([method, count]) => rowsFast(method, count));
     const stats = Array.from({ length: read('skillCount') }, (_, index) =>
         read('stat', index));
     const chat = read('chat', 100);
+    const inventoryList = inventoryItems();
+    const equipmentList = equipmentItems();
+    const skillNames = read('skillNames');
+    const skillUsed = read('skillUsedMask');
+    const chatTexts = read('chatModalTexts');
+    const mainTexts = read('mainModalTexts');
     const npcBox = read('npcBox', NPC_SCENE_CAP - 1);
     const options = read('chatOptions');
     const buttons = read('modalButtons', 100);
@@ -251,10 +330,11 @@ globalThis.__clientAdapterFast = () => {
     const close = read('modalCloseObservation');
     const checks = {
         items: itemChecks.every(Boolean),
+        facadeLists: facadeChecks.every(Boolean),
         stats: stats.length === 25 && stats.length === read('skillCount')
             && stats.length > 0 && stats.every(fastObject),
         modals: fastObject(read('modals')),
-        chatOptions: options.length === 5 && options.every(fastObject),
+        chatOptions: options.length === 288 && options.every(fastObject),
         npcBox: npcBox.length === 8 && npcBox.every(fastObject),
         npcBoxInput: globalThis.__rs2b0t_host.snapshot.npc_boxes.length === NPC_SCENE_CAP,
         chat: chat.length === 100 && chat.every(fastObject),
@@ -266,10 +346,15 @@ globalThis.__clientAdapterFast = () => {
         lastWalkPath: lastPath.length === 104 * 104 && lastPath.every(fastObject),
         shownStyles: stylePaths.shown.length === 4 && stylePaths.shown.every(fastObject),
         hiddenStyles: stylePaths.hidden.length === 4 && stylePaths.hidden.every(fastObject),
-        modalButtons: buttons.length === 288 && buttons.every(fastObject),
+        inventoryItems: rowsFastValue(inventoryList, 28),
+        equipmentItems: rowsFastValue(equipmentList, 14),
+        skillNames: skillNames.length === 25 && Object.isFrozen(skillNames),
+        skillUsed: skillUsed.length === 25 && Object.isFrozen(skillUsed),
+        chatModalTexts: chatTexts.length === 288 && Object.isFrozen(chatTexts),
+        mainModalTexts: mainTexts.length === 288 && Object.isFrozen(mainTexts),
         tradeConfirmOffers: fastObject(trade)
-            && trade.mine.length === 24 && trade.mine.every(fastObject)
-            && trade.theirs.length === 24 && trade.theirs.every(fastObject),
+            && trade.mine.length === 28 && trade.mine.every(fastObject)
+            && trade.theirs.length === 28 && trade.theirs.every(fastObject),
         duelOffers: fastObject(duel)
             && duel.mine.length === 28 && duel.mine.every(fastObject)
             && duel.theirs.length === 28 && duel.theirs.every(fastObject),
@@ -294,6 +379,14 @@ globalThis.__clientAdapterFast = () => {
         counts: {
             inventory: 28,
             bank: 288,
+            inventoryItems: inventoryList.length,
+            equipmentItems: equipmentList.length,
+            sceneNpcs: read('npcs').length,
+            scenePlayers: read('players').length,
+            sceneLocs: read('locs').length,
+            sceneGroundItems: read('groundItems').length,
+            chatModalTexts: chatTexts.length,
+            mainModalTexts: mainTexts.length,
             chat: chat.length,
             statCount: stats.length,
             npcBoxPoints: npcBox.length,
@@ -301,10 +394,182 @@ globalThis.__clientAdapterFast = () => {
             chatOptions: options.length,
             widgetButtons: buttons.length,
             questStatuses: quests.length,
+            questFacadeRows: read('compatQuestsAll').length,
+            shopStockFacadeRows: read('compatShopStock').length,
+            tradeMyOfferFacadeRows: read('compatTradeMyOffer').length,
+            tradeTheirOfferFacadeRows: read('compatTradeTheirOffer').length,
             products: products.length,
             makeButtons: productButtons.length,
             lastPath: lastPath.length,
         },
+    });
+};
+globalThis.__clientAdapterCacheInvariants = () => {
+    let snapshot = globalThis.__rs2b0t_host.snapshot;
+    const arraysAndObjects = (value) => {
+        const arrays = [];
+        const objects = [];
+        const seen = new Set();
+        const visit = (item) => {
+            if (item === null || typeof item !== 'object' || seen.has(item)) return;
+            seen.add(item);
+            if (Array.isArray(item)) {
+                arrays.push(item);
+                for (const child of item) visit(child);
+            } else {
+                objects.push(item);
+                for (const key of Object.keys(item)) visit(item[key]);
+            }
+        };
+        visit(value);
+        return { arrays, objects };
+    };
+    const deepFrozen = (value, seen = new Set()) => {
+        if (value === null || typeof value !== 'object' || seen.has(value)) return true;
+        seen.add(value);
+        if (!Object.isFrozen(value)) return false;
+        return Object.keys(value).every((key) => deepFrozen(value[key], seen));
+    };
+    const strictWritesThrow = new Function('arrays', 'objects', `
+        'use strict';
+        const attempt = (operation) => {
+            try { operation(); return false; }
+            catch (error) { return error instanceof TypeError; }
+        };
+        return {
+            push: arrays.length > 0 && arrays.every((list) => attempt(() => list.push(null))),
+            index: arrays.length > 0 && arrays.every((list) => attempt(() => { list[0] = null; })),
+            sort: arrays.length > 0 && arrays.every((list) => attempt(() => list.sort(() => 0))),
+            rowField: objects.length === 0 || objects.every((row) => attempt(() => { row.count = 5; })),
+            ops: objects.filter((row) => Array.isArray(row.ops))
+                .every((row) => attempt(() => row.ops.push('x'))),
+            cert: objects.length === 0 || objects.every((row) => attempt(() => { row.cert = 1; })),
+        };
+    `);
+    const writesThrow = (value) => {
+        const { arrays, objects } = arraysAndObjects(value);
+        return Object.values(strictWritesThrow(arrays, objects)).every(Boolean);
+    };
+    const sameIdentity = (left, right) => {
+        const leftArrays = arraysAndObjects(left).arrays;
+        const rightArrays = arraysAndObjects(right).arrays;
+        return left === right
+            && leftArrays.length > 0
+            && leftArrays.length === rightArrays.length
+            && leftArrays.every((list, index) => list === rightArrays[index]);
+    };
+    const clonePost = (value) => {
+        if (Array.isArray(value)) return value.map(clonePost);
+        if (
+            value !== null &&
+            typeof value === 'object' &&
+            Object.getPrototypeOf(value) === Object.prototype
+        ) {
+            const copy = {};
+            for (const [key, child] of Object.entries(value)) copy[key] = clonePost(child);
+            return copy;
+        }
+        return value;
+    };
+    const cases = [
+        ['reader.inventory', () => read('inventory'), ['inv', 'iface']],
+        ['reader.bankSideItems', () => read('bankSideItems'), ['inv', 'iface']],
+        ['reader.bankItems', () => read('bankItems'), ['inv', 'iface']],
+        ['reader.npcs', () => read('npcs'), ['npc', 'npc_info', 'player', 'player_info', 'scene', 'world']],
+        ['reader.players', () => read('players'), ['player', 'player_info', 'scene', 'world']],
+        ['reader.locs', () => read('locs'), ['scene', 'map_flag', 'world', 'player', 'player_info', 'npc_info']],
+        ['reader.groundItems', () => read('groundItems'), ['scene', 'world', 'player', 'player_info', 'map_flag']],
+        ['reader.equipment', () => read('equipment'), ['inv', 'iface']],
+        ['reader.chatOptions', () => read('chatOptions'), ['iface', 'chat']],
+        ['reader.chatModalTexts', () => read('chatModalTexts'), ['iface', 'chat']],
+        ['reader.chat(100)', () => read('chat', 100), ['chat']],
+        ['reader.shopInv(700)', () => read('shopInv', 700), ['iface', 'inv']],
+        ['reader.puzzleBoard', () => read('puzzleBoard'), ['iface', 'inv']],
+        ['reader.duelOffers', () => read('duelOffers'), ['iface', 'inv']],
+        ['reader.tradeMyOffer', () => read('tradeMyOffer'), ['iface', 'inv']],
+        ['reader.tradeTheirOffer', () => read('tradeTheirOffer'), ['iface', 'inv']],
+        ['reader.tradeSidePack', () => read('tradeSidePack'), ['iface', 'inv']],
+        ['reader.tradeConfirmOffers', () => read('tradeConfirmOffers'), ['iface', 'inv']],
+        ['reader.mainModalTexts', () => read('mainModalTexts'), ['iface']],
+        ['reader.modalButtons(100)', () => read('modalButtons', 100), ['iface']],
+        ['reader.selectButtonLabelsByVarp', () => read('selectButtonLabelsByVarp', 900, 43), ['iface', 'varp']],
+        ['reader.mainSkillMultiItems', () => read('mainSkillMultiItems'), ['iface', 'inv']],
+        ['reader.questStatuses', () => read('questStatuses'), ['iface', 'varp']],
+        ['reader.makeProducts', () => read('makeProducts'), ['iface', 'chat']],
+        ['Inventory.items', () => inventoryItems(), ['inv']],
+        ['Equipment.items', () => equipmentItems(), ['inv']],
+        ['Quests.all', () => read('compatQuestsAll'), ['iface', 'varp']],
+        ['Shop.stock', () => read('compatShopStock'), ['iface', 'inv']],
+        ['Trade.myOffer', () => read('compatTradeMyOffer'), ['iface', 'inv']],
+        ['Trade.theirOffer', () => read('compatTradeTheirOffer'), ['iface', 'inv']],
+    ];
+    const results = cases.map(([name, get, families]) => {
+        const first = get();
+        const again = get();
+        return {
+            name,
+            get,
+            families,
+            first,
+            sameArray: sameIdentity(first, again),
+            frozen: deepFrozen(first),
+            writesThrow: writesThrow(first),
+        };
+    });
+    const staticCases = ['skillNames', 'skillUsedMask'].map((method) => {
+        const first = read(method);
+        const again = read(method);
+        return {
+            method,
+            first,
+            sameArray: sameIdentity(first, again),
+            frozen: deepFrozen(first),
+            writesThrow: writesThrow(first),
+        };
+    });
+
+    // A later posted snapshot with fresh row arrays but unchanged generations
+    // must reuse each reader's exact cached V8 identity.
+    snapshot = clonePost(snapshot);
+    globalThis.__rs2b0t_host.snapshot = snapshot;
+    for (const result of results) {
+        result.sameAcrossPost = sameIdentity(result.first, result.get());
+    }
+    for (const result of staticCases) {
+        result.sameAcrossPost = sameIdentity(result.first, read(result.method));
+    }
+    for (const result of results) {
+        for (const family of result.families) {
+            snapshot.client_adapter.read_generations[family] += 1;
+        }
+        result.newAfterGenerationMove = result.get() !== result.first;
+    }
+
+    const dynamicResults = results.map((result) => ({
+        name: result.name,
+        sameArray: result.sameArray,
+        sameAcrossPost: result.sameAcrossPost,
+        frozen: result.frozen,
+        writesThrow: result.writesThrow,
+        newAfterGenerationMove: result.newAfterGenerationMove,
+    }));
+    const staticLists = staticCases.map((result) => ({
+        name: `reader.${result.method}`,
+        sameArray: result.sameArray,
+        sameAcrossPost: result.sameAcrossPost,
+        frozen: result.frozen,
+        writesThrow: result.writesThrow,
+        source: 'static skill catalogue; no game generation',
+    }));
+    const failures = [...dynamicResults, ...staticLists].filter((result) =>
+        !result.sameArray || !result.sameAcrossPost || !result.frozen || !result.writesThrow
+            || ('newAfterGenerationMove' in result && !result.newAfterGenerationMove));
+    return JSON.stringify({
+        ok: failures.length === 0,
+        failures,
+        count: dynamicResults.length,
+        names: dynamicResults.map((result) => result.name),
+        staticLists,
     });
 };
 globalThis.__clientAdapterRepeat = (count) => {
@@ -314,6 +579,10 @@ globalThis.__clientAdapterRepeat = (count) => {
         kept += read('bankSideItems').length;
         kept += read('bankItems').length;
         kept += read('equipment').length;
+        kept += read('npcs').length;
+        kept += read('players').length;
+        kept += read('locs').length;
+        kept += read('groundItems').length;
         kept += read('tradeMyOffer').length;
         kept += read('tradeTheirOffer').length;
         kept += read('tradeSidePack').length;
@@ -322,10 +591,20 @@ globalThis.__clientAdapterRepeat = (count) => {
         kept += read('mainSkillMultiItems').length;
         kept += read('chat', 100).length;
         kept += read('chatOptions').length;
-        kept += read('npcBox', NPC_SCENE_CAP - 1).length;
+        kept += read('chatModalTexts').length;
+        kept += read('mainModalTexts').length;
         kept += read('modalButtons', 100).length;
+        kept += read('selectButtonLabelsByVarp', 900, 43).length;
         kept += read('questStatuses').length;
         kept += read('makeProducts').length;
+        kept += read('compatQuestsAll').length;
+        kept += read('compatShopStock').length;
+        kept += read('compatTradeMyOffer').length;
+        kept += read('compatTradeTheirOffer').length;
+        kept += read('skillNames').length;
+        kept += read('skillUsedMask').length;
+        kept += inventoryItems().length;
+        kept += equipmentItems().length;
         kept += read('lastWalkPathWorld').length;
         kept += read('stat', iteration % read('skillCount')).effective;
         kept += read('modals').main;
@@ -340,8 +619,6 @@ globalThis.__clientAdapterRepeat = (count) => {
         kept += read('projectAreaGameWorld', 3222, 3222, 0).x;
         kept += read('locBox', { x: 3222, z: 3222, id: 900 }).length;
         kept += read('itemIconPixels', 999999).width;
-        kept += __clientAdapterStylePaths().shown.length;
-        kept += __clientAdapterStylePaths().hidden.length;
     }
     return kept;
 };
@@ -369,6 +646,7 @@ fn setup() -> (Runtime, Arc<Cache>) {
         Arc::new(std::sync::atomic::AtomicBool::new(false)),
     )
     .unwrap();
+    crate::inventory_v8::install(&mut runtime).unwrap();
     let cache = seed_item_icon();
     runtime.eval::<()>(SETUP).unwrap();
     (runtime, cache)
@@ -414,6 +692,14 @@ fn client_adapter_objects_have_fast_properties() {
         "ClientAdapter native objects and maximum row fixtures must be fast: {diagnostics}"
     );
     assert_eq!(diagnostics["counts"]["inventory"], 28);
+    assert_eq!(diagnostics["counts"]["inventoryItems"], 28);
+    assert_eq!(diagnostics["counts"]["equipmentItems"], 14);
+    assert_eq!(diagnostics["counts"]["sceneNpcs"], 255);
+    assert_eq!(diagnostics["counts"]["scenePlayers"], 2047);
+    assert_eq!(diagnostics["counts"]["sceneLocs"], 104 * 104 * 4);
+    assert_eq!(diagnostics["counts"]["sceneGroundItems"], 2048);
+    assert_eq!(diagnostics["counts"]["chatModalTexts"], 288);
+    assert_eq!(diagnostics["counts"]["mainModalTexts"], 288);
     assert_eq!(diagnostics["counts"]["bank"], 288);
     assert_eq!(diagnostics["counts"]["chat"], 100);
     assert_eq!(diagnostics["counts"]["npcBoxPoints"], 8);
@@ -424,6 +710,30 @@ fn client_adapter_objects_have_fast_properties() {
     assert_eq!(diagnostics["counts"]["products"], 28);
     assert_eq!(diagnostics["counts"]["makeButtons"], 112);
     assert_eq!(diagnostics["counts"]["lastPath"], 104 * 104);
+    assert_eq!(diagnostics["counts"]["questFacadeRows"], 69);
+    assert_eq!(diagnostics["counts"]["shopStockFacadeRows"], 40);
+    assert_eq!(diagnostics["counts"]["tradeMyOfferFacadeRows"], 28);
+    assert_eq!(diagnostics["counts"]["tradeTheirOfferFacadeRows"], 28);
+}
+
+#[test]
+fn generation_backed_lists_reuse_frozen_identity_across_posts_and_generation_moves() {
+    if !run_in_child(CACHE_CHILD_ENV, CACHE_TEST_NAME) {
+        return;
+    }
+    let (mut runtime, _cache) = setup();
+    let diagnostics: Value = serde_json::from_str(
+        &runtime
+            .eval::<String>("__clientAdapterCacheInvariants()")
+            .unwrap(),
+    )
+    .expect("reader list cache diagnostics");
+    assert_eq!(
+        diagnostics["ok"],
+        json!(true),
+        "cached reader arrays must be shared and frozen only for one generation: {diagnostics}"
+    );
+    assert_eq!(diagnostics["count"], 30);
 }
 
 #[test]
@@ -446,7 +756,8 @@ fn client_adapter_objects_have_bounded_v8_heap() {
     println!(
         "ClientAdapter collected V8 heap rows/iteration: inventory=28 bank=288 \
          scene-npcs=255 npc-box-points=8 chat=100 modal-buttons=288 \
-         quests=69 products=28x4 path=10816 repeats={REPEATS}; \
+         facade-quests=69 shop-stock=40 trade-mine=28 trade-theirs=28 \
+         products=28x4 path=10816 repeats={REPEATS}; \
          baseline={baseline} after={after} growth={growth} limit={limit}"
     );
     assert!(

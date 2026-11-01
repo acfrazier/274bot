@@ -11,10 +11,7 @@ function rows() {
 
 export const Quests = proxy('Quests', {
     all() {
-        return rows().map((q) => ({
-            name: q.name,
-            status: q.status || 'unknown',
-        }));
+        return globalThis.__rs2b0t_selected_facts('client-adapter-reader', 'compatQuestsAll');
     },
     status(name) {
         const want = String(name).toLowerCase();

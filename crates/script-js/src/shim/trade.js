@@ -4,18 +4,6 @@
 // transfer.
 import { snap, notImpl, runMachine } from '../../shim/_kernel.js';
 
-function rowList(key) {
-    return snap()[key] || [];
-}
-
-function nameCountRows(key) {
-    return rowList(key).map((row) => ({
-        id: row?.id ?? 0,
-        name: row?.name ?? null,
-        count: row?.count ?? 0,
-    }));
-}
-
 async function run(kind, name, n, pick) {
     const out = await runMachine(
         'trade',
@@ -47,10 +35,10 @@ export const Trade = new Proxy(
             return typeof p === 'string' && p.length > 0 ? p : null;
         },
         myOffer() {
-            return nameCountRows('trade_mine');
+            return globalThis.__rs2b0t_selected_facts('client-adapter-reader', 'compatTradeMyOffer');
         },
         theirOffer() {
-            return nameCountRows('trade_theirs');
+            return globalThis.__rs2b0t_selected_facts('client-adapter-reader', 'compatTradeTheirOffer');
         },
         request(playerName) {
             return run('request', String(playerName ?? ''), 0);
