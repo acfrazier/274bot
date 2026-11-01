@@ -412,25 +412,29 @@ fn movement_labels(
         let cur = at(cells[node]);
         let mut out = Vec::new();
         for d in DIRS {
-            let (step, from) = if reverse {
-                let next = WorldTile {
+            // Reverse edges are incoming steps: the other tile is `cur + d`,
+            // walking `-d` onto `cur`. Using `dest = from + step` here
+            // collapses that other tile back to `cur` and makes every
+            // standable tile its own component.
+            let (from, step, other) = if reverse {
+                let pred = WorldTile {
                     x: cur.x + d.0,
                     z: cur.z + d.1,
                     level: cur.level,
                 };
-                ((-d.0, -d.1), next)
+                (pred, (-d.0, -d.1), pred)
             } else {
-                (d, cur)
-            };
-            let dest = WorldTile {
-                x: from.x + step.0,
-                z: from.z + step.1,
-                level: from.level,
+                let dest = WorldTile {
+                    x: cur.x + d.0,
+                    z: cur.z + d.1,
+                    level: cur.level,
+                };
+                (cur, d, dest)
             };
             if !step_ok(collision, from, step) {
                 continue;
             }
-            let Some(di) = idx(dest) else {
+            let Some(di) = idx(other) else {
                 continue;
             };
             let id = dense[di];
@@ -562,6 +566,15 @@ fn closures_from_adj(adj: &[BTreeSet<u32>]) -> Result<ClosureTables, PackError> 
     let cells = n
         .checked_mul(words)
         .ok_or_else(|| PackError::BadLength("atlas closure bitset overflows".into()))?;
+    // n² bitsets are only for a small component DAG. Millions of isolated
+    // stands would try to allocate terabytes.
+    const MAX_BITSET_BYTES: usize = 512 * 1024 * 1024;
+    if cells
+        .checked_mul(8)
+        .is_none_or(|bytes| bytes > MAX_BITSET_BYTES)
+    {
+        return closures_from_adj_sparse(adj);
+    }
     let mut reach = vec![0u64; cells];
     match dag_reverse_topo(adj) {
         Some(order) => {
@@ -596,6 +609,53 @@ fn closures_from_adj(adj: &[BTreeSet<u32>]) -> Result<ClosureTables, PackError> 
         }
     }
     bitsets_to_closure_runs(&reach, n, words)
+}
+
+fn closures_from_adj_sparse(adj: &[BTreeSet<u32>]) -> Result<ClosureTables, PackError> {
+    let n = adj.len() as u32;
+    let mut offsets = vec![0u32];
+    let mut runs = Vec::new();
+    for seed in 0..n {
+        let mut reachable = BTreeSet::from([seed]);
+        let mut stack = vec![seed];
+        while let Some(node) = stack.pop() {
+            for &next in &adj[node as usize] {
+                if reachable.insert(next) {
+                    stack.push(next);
+                }
+            }
+        }
+        let mut first = None;
+        let mut count = 0u32;
+        for id in reachable {
+            match first {
+                Some(start) if start + count == id => count += 1,
+                Some(start) => {
+                    runs.push(ClosureRun {
+                        first: start,
+                        count,
+                    });
+                    first = Some(id);
+                    count = 1;
+                }
+                None => {
+                    first = Some(id);
+                    count = 1;
+                }
+            }
+        }
+        if let Some(start) = first {
+            runs.push(ClosureRun {
+                first: start,
+                count,
+            });
+        }
+        offsets.push(
+            u32::try_from(runs.len())
+                .map_err(|_| PackError::BadLength("atlas closure run count exceeds u32".into()))?,
+        );
+    }
+    Ok((offsets.into_boxed_slice(), runs.into_boxed_slice()))
 }
 
 fn dag_reverse_topo(adj: &[BTreeSet<u32>]) -> Option<Vec<usize>> {
@@ -1001,6 +1061,55 @@ mod closure_tests {
         assert_eq!(
             runs_for(adj),
             vec![vec![(0, 1), (2, 1)], vec![(1, 1)], vec![(2, 1)]]
+        );
+    }
+
+    #[test]
+    fn adjacent_walkable_tiles_share_one_movement_component() {
+        let flags = vec![0u32; 8];
+        let (walk, blocked) = nav_planner::collision::pack_walk(&flags);
+        let collision = nav_planner::collision::WorldCollision {
+            origin: WorldTile {
+                x: 3200,
+                z: 3200,
+                level: 0,
+            },
+            width: 2,
+            height: 1,
+            walk,
+            blocked,
+            flags: Some(flags),
+        };
+        let dir = std::env::temp_dir().join(format!("atlas-adj-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let atlas = bake_atlas(
+            &collision,
+            &nav_planner::transport::TransportGraph::default(),
+            &dir,
+            &LocDefs::default(),
+        )
+        .unwrap();
+        let _ = std::fs::remove_dir_all(&dir);
+        let left = atlas
+            .base_at(WorldTile {
+                x: 3200,
+                z: 3200,
+                level: 0,
+            })
+            .unwrap();
+        let right = atlas
+            .base_at(WorldTile {
+                x: 3201,
+                z: 3200,
+                level: 0,
+            })
+            .unwrap();
+        assert_eq!(left, right);
+        assert!(left.is_some());
+        assert!(
+            atlas.base_count() <= 4,
+            "each plane is one open component, got {}",
+            atlas.base_count()
         );
     }
 }

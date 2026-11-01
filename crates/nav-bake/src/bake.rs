@@ -1553,15 +1553,15 @@ pub fn bake_world(request: &BakeRequest<'_>) -> Result<BakedNav, crate::Generati
 
     // The raw baked flags ride in the sidecar; the v16 pack carries only
     // the packed walk surface (the router's resident form).
+    let multiway_path = request.maps_dir.join("multiway.csv");
+    graph.multiway = produce_multiway_keys_from_path(&multiway_path)?;
+    let atlas = crate::reachability::bake_atlas(&collision, &graph, request.maps_dir, &loc_defs)?;
     let flags = collision
         .flags
         .take()
         .expect("bake_from_maps always stamps raw flags");
     let flags_bytes =
         encode_flags_sidecar(collision.origin, collision.width, collision.height, &flags);
-    let multiway_path = request.maps_dir.join("multiway.csv");
-    graph.multiway = produce_multiway_keys_from_path(&multiway_path)?;
-    let atlas = crate::reachability::bake_atlas(&collision, &graph, request.maps_dir, &loc_defs)?;
     notes.push(format!(
         "atlas: unmatched joins {}, exceptional landings {}, unmatched teleports {}, unmatched sessions {}",
         atlas.unmatched_join_count(),
