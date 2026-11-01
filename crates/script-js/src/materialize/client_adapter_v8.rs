@@ -81,12 +81,9 @@ fn object_template(
     let template = v8::ObjectTemplate::new(scope);
     let placeholder: v8::Local<v8::Data> = v8::undefined(scope).into();
     for field in fields {
-        let key = v8::String::new_from_utf8(
-            scope,
-            field.as_bytes(),
-            v8::NewStringType::Internalized,
-        )
-        .ok_or_else(|| format!("ClientAdapter object shape key `{field}`"))?;
+        let key =
+            v8::String::new_from_utf8(scope, field.as_bytes(), v8::NewStringType::Internalized)
+                .ok_or_else(|| format!("ClientAdapter object shape key `{field}`"))?;
         template.set(key.into(), placeholder);
     }
     Ok(v8::Global::new(scope, template))
@@ -1376,9 +1373,7 @@ fn select_button_labels_by_varp<'s>(
                 .ok_or_else(|| PENDING.to_string())?;
             let mode = object_i32(scope, style, "mode")?.unwrap_or(0);
             let label = property(scope, style, "label")?;
-            if !label.is_string()
-                || !is_combat_style_label(&label.to_rust_string_lossy(scope))
-            {
+            if !label.is_string() || !is_combat_style_label(&label.to_rust_string_lossy(scope)) {
                 continue;
             }
             let item = new_object(scope, ClientAdapterObjectShape::SelectButtonLabel)?;

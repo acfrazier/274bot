@@ -347,7 +347,6 @@ globalThis.__clientAdapterRepeat = (count) => {
 };
 "#;
 
-
 fn seed_item_icon() -> Arc<Cache> {
     let cache = Arc::new(Cache::default());
     api::snapshot::set_client_adapter_cache_for_tests(Arc::clone(&cache));
@@ -433,9 +432,7 @@ fn client_adapter_objects_have_bounded_v8_heap() {
         return;
     }
     let (mut runtime, _cache) = setup();
-    let warmup = runtime
-        .eval::<usize>("__clientAdapterRepeat(5)")
-        .unwrap();
+    let warmup = runtime.eval::<usize>("__clientAdapterRepeat(5)").unwrap();
     assert!(warmup > 0);
     let baseline = collected_used_heap(&mut runtime);
     const REPEATS: usize = 20;
@@ -477,5 +474,8 @@ fn combat_style_labels_filter_on_both_tab_paths() {
         { "mode": 4, "label": "(Defensive)" },
     ]);
     assert_eq!(paths["shown"], accepted, "shown-tab widgets filter Punch");
-    assert_eq!(paths["hidden"], accepted, "hidden-tab fallback filters Punch");
+    assert_eq!(
+        paths["hidden"], accepted,
+        "hidden-tab fallback filters Punch"
+    );
 }

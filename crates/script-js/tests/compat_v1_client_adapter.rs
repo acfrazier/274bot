@@ -403,7 +403,6 @@ fn reader_catalog() -> &'static Value {
         punch_label.y = 360;
         punch_label.height = 20;
 
-
         let mut pause_button = widget(22, 100, 100);
         pause_button.button_type = 6;
         pause_button.button_text = Some("Pause");
