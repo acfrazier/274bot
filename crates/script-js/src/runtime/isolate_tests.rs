@@ -996,15 +996,20 @@ loop() {
     iso.on_game_tick(1);
     assert_eq!(iso.probe("__frames").unwrap(), 0);
     const FRAMES: i64 = 16;
-    let mut first: Option<*const ()> = None;
+    // Keep every handle alive: a fresh allocation per frame could otherwise
+    // reuse the address of the previous frame's dropped handle.
+    let mut handles: Vec<Arc<dyn script::surface::ClientFrameDispatch>> = Vec::new();
     for _ in 0..FRAMES {
         let dispatch = iso
             .begin_client_frame()
             .expect("a registered listener receives the frame");
-        let at = Arc::as_ptr(&dispatch) as *const ();
-        assert_eq!(*first.get_or_insert(at), at, "a frame built a new dispatch handle");
         assert!(dispatch.wait_for_ack(), "the isolate acknowledges the frame");
+        if let Some(first) = handles.first() {
+            assert!(Arc::ptr_eq(first, &dispatch), "a frame built a new dispatch handle");
+        }
+        handles.push(dispatch);
     }
+    drop(handles);
     assert_eq!(iso.probe("__frames").unwrap(), FRAMES);
     iso.join();
 }
