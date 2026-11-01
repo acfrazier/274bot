@@ -440,8 +440,9 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.8` 
   broader route checks. The checks stop at a shared search limit, instead of
   continuing through each full search allowance. Scorpion Catcher reports
   the missing Dusty key. Boat-fare and Shantay-pass recovery keep their missing
-  item results. If the cause remains unknown, the result says how many places
-  the route check examined. The Quester keeps its existing bounded walk retries.
+  item results. If the check reaches the limit before it finds the cause, the
+  result says how many places it examined. The Quester keeps its existing
+  bounded walk retries.
 
 - Bots now wait and try again when another player is using a shortcut,
   instead of giving up. The Yanille dungeon ledge ("The ledge is being

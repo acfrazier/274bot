@@ -2771,8 +2771,8 @@ impl CooperativeJob for RouteJob {
                     }
                 }
                 RouteJobStage::BeginDiagnostics => {
-                    // Item diagnosis uses the goal-side region, which is small
-                    // for gated rooms. Do it before mainland-wide policy checks.
+                    // A concrete item shortfall is the most actionable cause.
+                    // Look for it before mainland-wide policy checks.
                     self.schedule_search(RouteSearchPurpose::MissingCarry);
                     continue;
                 }
