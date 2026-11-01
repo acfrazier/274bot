@@ -2093,3 +2093,54 @@ globalThis.__observation = () => {
     assert_eq!(iso.probe("__observation()").unwrap(), Value::Null);
     iso.join();
 }
+
+/// Operator ruling (2026-11-01, "demand plus early raise"): a card whose code
+/// or a sibling it loads names a projection reader has the projection demand
+/// raised at start, before its first tick, so its first read sees a built
+/// scene. A card that names none keeps the scene unbuilt.
+#[test]
+fn naming_a_projection_reader_raises_the_demand_before_the_first_tick() {
+    const NAMES: &str = r#"
+import { reader } from '../../adapter/ClientAdapter.js';
+export default class ProjectionNamer extends LoopingBot {
+    async loop() { globalThis.__box = reader.locBox(1, 2); }
+}
+"#;
+    const SIBLING_NAMES: &str = r#"
+import './Paint.js';
+export default class SiblingNamer extends LoopingBot {
+    async loop() {}
+}
+"#;
+    const SIBLING: &str = r#"
+import { reader } from '../../adapter/ClientAdapter.js';
+export const paint = (x, z) => reader.overlayPosWorld(x, z, 0, 0.5, 0.5);
+"#;
+    const SILENT: &str = r#"
+export default class Silent extends LoopingBot {
+    async loop() { globalThis.__locBoxes = 1; }
+}
+"#;
+    let wanted = |js: &str, siblings: Vec<(String, String)>| {
+        let iso = LoadIsolate::spawn(js.to_string(), LoadShape::CompatClass, siblings)
+            .expect("spawn projection probe");
+        let raised = iso.loc_projection_wanted_for_test();
+        iso.join();
+        raised
+    };
+    assert!(wanted(NAMES, vec![]), "the card names locBox");
+    assert!(
+        wanted(
+            SIBLING_NAMES,
+            vec![(
+                "/rs2b0t/bot/scripts/bot/Paint.js".to_string(),
+                SIBLING.to_string()
+            )]
+        ),
+        "a loaded sibling names overlayPosWorld"
+    );
+    assert!(
+        !wanted(SILENT, vec![]),
+        "an identifier that only contains a reader name is not a reader"
+    );
+}
