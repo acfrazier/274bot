@@ -4046,7 +4046,7 @@ const SYNC_FIRST_TABLE_INITIAL_SETTLES: usize = 6;
 /// of 3 let Dijkstra "use" a door through a fence (Lumbridge cow pen:
 /// inside tile to the north-west road gate) and the walker then walked
 /// into the wall. The approach is derived at expansion time, never baked.
-const INTERACT_RADIUS: i32 = 1;
+pub const INTERACT_RADIUS: i32 = 1;
 
 /// The eight step deltas (client coordinates: +x east, +z north).
 const STEPS: [(i32, i32); 8] = [
@@ -7524,10 +7524,6 @@ impl<'a> GoalSet<'a> {
         steps: usize,
         reachable_budget: usize,
     ) -> Result<(), SearchCursorError> {
-        if gates.graph.has_reachability {
-            self.budget = self.budget.max(reachable_budget);
-            return Ok(());
-        }
         match self.proof.run_to(gates, self.seeds, steps).await? {
             Some(ReverseProof::Reachable) => self.budget = self.budget.max(reachable_budget),
             Some(ReverseProof::Unreachable) => self.close(RouteError::NoPath),
@@ -7890,9 +7886,6 @@ impl<'a> ReverseRun<'a> {
     ) -> Result<Option<ReverseProof>, SearchCursorError> {
         if !self.started {
             self.started = true;
-            if gates.graph.has_reachability {
-                return Ok(None);
-            }
             let mut closure = ReverseClosure::new(gates).await?;
             for &seed in seeds {
                 work_unit().await;

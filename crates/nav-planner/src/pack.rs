@@ -586,7 +586,6 @@ fn decode_pack_body<R: PackRead>(
     graph.zones = zone_table;
     graph.multiway = multiway::decode_multiway_keys(&mut r)?;
     let atlas = reach::decode_atlas_sections(&mut r)?;
-    graph.has_reachability = atlas.base_count() > 0;
     let collision = WorldCollision {
         origin,
         width,
@@ -613,6 +612,7 @@ fn decode_pack_body<R: PackRead>(
         }
     }
     graph.rebuild_index(&collision);
+    atlas.validate(&collision, &graph)?;
     Ok((collision, graph, banks, atlas))
 }
 

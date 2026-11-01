@@ -2,6 +2,8 @@
 //! Runtime code borrows compressed labels and tables; it never expands a
 //! dense component array.
 
+mod validate;
+
 use api::snapshot::WorldTile;
 
 use crate::collision::WorldCollision;
@@ -196,8 +198,8 @@ impl ReachabilityAtlas {
         Ok(atlas)
     }
 
-    /// Atlas with matching geometry and no covered tiles. Synthetic tests
-    /// keep the legacy reverse-proof path when no standable tile is labelled.
+    /// Atlas with matching geometry and no covered tiles, for synthetic worlds
+    /// and tests that do not bake components.
     pub fn unlabeled(collision: &WorldCollision) -> Result<Self, PackError> {
         let width = u32::try_from(collision.width)
             .map_err(|_| PackError::BadLength("atlas width exceeds u32".into()))?;
@@ -311,21 +313,6 @@ impl ReachabilityAtlas {
         Ok(Some(label - 1))
     }
 
-    /// Whether every standable collision tile has a component or coverage row.
-    pub fn covers_collision(&self, collision: &WorldCollision) -> bool {
-        if collision.origin.x != self.geometry.origin_x
-            || collision.origin.z != self.geometry.origin_z
-            || collision.width as u32 != self.geometry.width
-            || collision.height as u32 != self.geometry.height
-        {
-            return false;
-        }
-        if self.base_to_condensed.is_empty() {
-            return false;
-        }
-        true
-    }
-
     pub fn base_count(&self) -> u32 {
         u32::try_from(self.base_to_condensed.len()).unwrap_or(u32::MAX)
     }
@@ -338,12 +325,73 @@ impl ReachabilityAtlas {
             .map_or(0, |id| id.saturating_add(1))
     }
 
+    /// Condensed component that holds `base`, or `None` past the base count.
+    pub fn condensed_of(&self, base: u32) -> Option<u32> {
+        self.base_to_condensed.get(base as usize).copied()
+    }
+
+    /// Base components reachable from `base` by directed movement, itself
+    /// included, in ascending order. `None` past the base count.
+    pub fn movement_closure(&self, base: u32) -> Option<impl Iterator<Item = u32> + '_> {
+        closure_ids(&self.movement_offsets, &self.movement_runs, base)
+    }
+
+    /// Condensed components reachable from `condensed` by movement and
+    /// unconditional transport arcs, itself included, in ascending order.
+    /// `None` past the condensed count.
+    pub fn transport_closure(&self, condensed: u32) -> Option<impl Iterator<Item = u32> + '_> {
+        closure_ids(&self.transport_offsets, &self.transport_runs, condensed)
+    }
+
+    /// Bytes the atlas tables hold in memory. The row strides equal the wire
+    /// strides, so this tracks the serialized payload without the section
+    /// directories. One atlas lives once per loaded pack, never per bot.
+    pub fn resident_bytes(&self) -> usize {
+        use std::mem::size_of_val;
+        size_of_val(&*self.chunks)
+            + size_of_val(&*self.palette)
+            + size_of_val(&*self.indexes)
+            + size_of_val(&*self.coverage)
+            + size_of_val(&*self.exceptional)
+            + size_of_val(&*self.legacy_paint)
+            + size_of_val(&*self.scatter)
+            + size_of_val(&*self.base_to_condensed)
+            + size_of_val(&*self.base_sizes)
+            + size_of_val(&*self.movement_offsets)
+            + size_of_val(&*self.movement_runs)
+            + size_of_val(&*self.transport_offsets)
+            + size_of_val(&*self.transport_runs)
+            + size_of_val(&*self.conditional_offsets)
+            + size_of_val(&*self.conditional_joins)
+            + size_of_val(&*self.teleports)
+            + size_of_val(&*self.sessions)
+            + size_of_val(&*self.placements)
+            + size_of_val(&*self.stands)
+    }
+
     /// Transport edges that never joined a labelled component.
     pub fn unmatched_join_count(&self) -> usize {
         self.coverage
             .iter()
             .filter(|row| row.reason == COVERAGE_UNMATCHED_JOIN)
             .count()
+    }
+
+    /// Transport edges with no admissible takeoff in a labelled component, as
+    /// `(anchor, landing, local edge index)`. The landing names the goals the
+    /// edge would have served: a negative proof for a goal near it is not
+    /// complete.
+    pub fn unmatched_joins(&self) -> impl Iterator<Item = (WorldTile, WorldTile, u32)> + '_ {
+        self.exceptional
+            .iter()
+            .filter(|row| row.reason == COVERAGE_UNMATCHED_JOIN)
+            .filter_map(|row| {
+                Some((
+                    unpack_tile_key(row.source).ok()?,
+                    unpack_tile_key(row.destination).ok()?,
+                    row.edge,
+                ))
+            })
     }
 
     /// Joined takeoffs whose landings sit off the labelled walk surface.
@@ -399,6 +447,21 @@ impl ReachabilityAtlas {
             .get(start..end)
             .ok_or_else(|| PackError::BadLength("placement stand range is out of bounds".into()))
     }
+}
+
+/// Component ids named by one CSR row of closure runs.
+fn closure_ids<'a>(
+    offsets: &'a [u32],
+    runs: &'a [ClosureRun],
+    row: u32,
+) -> Option<impl Iterator<Item = u32> + 'a> {
+    let start = *offsets.get(row as usize)? as usize;
+    let end = *offsets.get(row as usize + 1)? as usize;
+    Some(
+        runs.get(start..end)?
+            .iter()
+            .flat_map(|run| run.first..run.first.saturating_add(run.count)),
+    )
 }
 
 fn extract_index(indexes: &[u8], chunk: &Chunk, cell: usize) -> Result<u32, PackError> {

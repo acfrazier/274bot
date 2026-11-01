@@ -221,9 +221,6 @@ pub struct TransportGraph {
     /// Empty on legacy grids and synthetic graphs that did not consume a
     /// revision's `maps/multiway.csv`.
     pub multiway: Box<[u32]>,
-    /// True when the loaded pack carried a labelled reachability atlas.
-    /// Synthetic unlabeled worlds keep the legacy reverse-proof path.
-    pub has_reachability: bool,
 }
 
 impl TransportGraph {

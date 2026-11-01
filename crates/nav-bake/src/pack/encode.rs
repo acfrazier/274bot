@@ -196,6 +196,7 @@ fn encoded_size(
             collision.blocked.len()
         )));
     }
+    atlas.validate(collision, graph)?;
 
     let edge_count = graph
         .edges

@@ -2818,3 +2818,87 @@ fn encode_returns_errors_for_invalid_edge_model_data() {
         Err(PackError::BadLength(_))
     ));
 }
+
+fn narrow_collision() -> WorldCollision {
+    let (walk, blocked) = pack_walk(&[0u32; 4 * 2]);
+    WorldCollision {
+        origin: WorldTile {
+            x: 0,
+            z: 0,
+            level: 0,
+        },
+        width: 2,
+        height: 1,
+        walk,
+        blocked,
+        flags: None,
+    }
+}
+
+/// An atlas built for another collision grid is a malformed pack. The
+/// producer refuses it with a typed error, so no writer output reaches the
+/// reader's `has_reachability` check with the wrong geometry.
+#[test]
+fn encoder_refuses_an_atlas_built_for_another_grid() {
+    let atlas = ReachabilityAtlas::unlabeled(&narrow_collision()).unwrap();
+    let (walk, blocked) = pack_walk(&[0u32; 4 * 3]);
+    let wider = WorldCollision {
+        origin: WorldTile {
+            x: 0,
+            z: 0,
+            level: 0,
+        },
+        width: 3,
+        height: 1,
+        walk,
+        blocked,
+        flags: None,
+    };
+    let error = crate::pack::encode_with_atlas(&wider, &TransportGraph::default(), &[], &atlas)
+        .unwrap_err();
+    assert!(
+        matches!(&error, PackError::BadLength(message) if message.contains("geometry")),
+        "{error}"
+    );
+}
+
+/// The reader refuses a pack whose atlas geometry names another grid than the
+/// pack's own collision (here the atlas width field says 3, the grid is 2).
+#[test]
+fn decoder_refuses_an_atlas_for_another_grid() {
+    let collision = narrow_collision();
+    let atlas = ReachabilityAtlas::unlabeled(&collision).unwrap();
+    let tail = encode_atlas_sections(&atlas).unwrap().len();
+    let mut bytes = encode(&collision, &TransportGraph::default(), &[]).unwrap();
+    assert!(decode(&bytes).is_ok());
+    // Labels payload: 4-byte length prefix, a 132-byte directory (count plus
+    // eight 16-byte entries), then the geometry row (x, z, then width).
+    let width_at = bytes.len() - tail + 4 + 132 + 8;
+    assert_eq!(&bytes[width_at..width_at + 4], &2u32.to_le_bytes());
+    bytes[width_at..width_at + 4].copy_from_slice(&3u32.to_le_bytes());
+    let error = decode(&bytes).unwrap_err();
+    assert!(
+        matches!(&error, PackError::BadLength(message) if message.contains("geometry")),
+        "{error}"
+    );
+}
+
+/// A table directory whose stride differs from the schema is refused, even
+/// when the table bytes happen to parse.
+#[test]
+fn decoder_refuses_a_directory_with_the_wrong_stride() {
+    let collision = narrow_collision();
+    let atlas = ReachabilityAtlas::unlabeled(&collision).unwrap();
+    let tail = encode_atlas_sections(&atlas).unwrap().len();
+    let mut bytes = encode(&collision, &TransportGraph::default(), &[]).unwrap();
+    // Directory entry 8 (scatter runs, kind 8, stride 8): the entry starts at
+    // 4 + 7 * 16 inside the labels payload; its stride is the last field.
+    let stride_at = bytes.len() - tail + 4 + 4 + 7 * 16 + 12;
+    assert_eq!(&bytes[stride_at..stride_at + 4], &8u32.to_le_bytes());
+    bytes[stride_at..stride_at + 4].copy_from_slice(&4u32.to_le_bytes());
+    let error = decode(&bytes).unwrap_err();
+    assert!(
+        matches!(&error, PackError::BadLength(message) if message.contains("stride")),
+        "{error}"
+    );
+}

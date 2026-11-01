@@ -21,6 +21,7 @@ use nav_planner::reachability::{
     COVERAGE_UNMATCHED_JOIN, COVERAGE_UNSUPPORTED_GEOMETRY, PLACEMENT_COMPLETE,
     PLACEMENT_UNSUPPORTED_GEOMETRY, SESSION_ESSENCE_EXIT, TRIGGER_OP,
 };
+use nav_planner::router::INTERACT_RADIUS;
 use nav_planner::transport::{TransportEdge, TransportGraph};
 
 use crate::pack::{parse_loc_fields, parse_map_line, section, SQUARE};
@@ -157,7 +158,10 @@ fn bake_atlas_inner(
 
     let mut coverage = Vec::new();
     let mut exceptional = Vec::new();
-    let mut uncond_adj = vec![BTreeSet::<u32>::new(); base_count as usize];
+    // Condensed components condense movement and unconditional transport arcs
+    // together (contract "Graph payload"): a one-way step between two movement
+    // components is a directed arc of the condensed level too.
+    let mut uncond_adj = movement_adj.clone();
     let mut conditional = Vec::<(u32, ConditionalJoin)>::new();
     for (edge_index, edge) in graph.edges.iter().enumerate() {
         let joined = join_edge(
@@ -171,6 +175,16 @@ fn bake_atlas_inner(
         )?;
         match joined {
             JoinResult::Missing => {
+                // No admissible takeoff reaches a labelled component. Name the
+                // edge's landing as well as its anchor, so a consumer can limit
+                // "no complete negative" to the goals the landing serves.
+                let landing = edge.landing_from(edge.at).unwrap_or(edge.to);
+                exceptional.push(ExceptionalTransition {
+                    source: pack_tile_key(edge.at)?,
+                    destination: pack_tile_key(landing)?,
+                    edge: edge_index as u32,
+                    reason: COVERAGE_UNMATCHED_JOIN,
+                });
                 coverage.push(CoverageRow {
                     tile: pack_tile_key(edge.at)?,
                     reason: COVERAGE_UNMATCHED_JOIN,
@@ -235,51 +249,48 @@ fn bake_atlas_inner(
         conditional_offsets.push(conditional_joins.len() as u32);
     }
 
+    // Templates name base components (`landing_base`, `source_base`), as the
+    // contract's tables do. Consumers map them through the base-to-condensed
+    // table.
     let mut teleports = Vec::new();
     for (i, edge) in graph.teleports.iter().enumerate() {
         let landing = edge.landing_from(edge.at).unwrap_or(edge.to);
-        let reason = match idx(landing).and_then(|i| label_of(&labels, i)) {
-            Some(base) => {
-                teleports.push(TeleportTemplate {
-                    teleport: i as u32,
-                    landing_base: condensed[base as usize],
-                    reason: 0,
-                });
-                continue;
-            }
-            None => COVERAGE_UNMATCHED_JOIN,
+        let (landing_base, reason) = match idx(landing).and_then(|i| label_of(&labels, i)) {
+            Some(base) => (base, 0),
+            None => (0, COVERAGE_UNMATCHED_JOIN),
         };
         teleports.push(TeleportTemplate {
             teleport: i as u32,
-            landing_base: 0,
+            landing_base,
             reason,
         });
     }
 
+    // Each essence-mine portal is a session source (see `portal_sources`).
     let mut sessions = Vec::new();
     for &portal in ESSENCE_MINE_PORTALS {
-        let source_base = idx(portal).and_then(|i| label_of(&labels, i)).unwrap_or(0);
+        let sources = portal_sources(portal, &labels, &idx);
         for npc in [553, 300, 462, 844, 171] {
             let Some(session) = essence_session_for_wizard(npc) else {
                 continue;
             };
-            let landing_base = idx(session.return_tile)
-                .and_then(|i| label_of(&labels, i))
-                .unwrap_or(0);
-            let reason = if source_base == 0 || landing_base == 0 {
-                COVERAGE_UNMATCHED_JOIN
-            } else {
-                0
-            };
-            sessions.push(SessionTemplate {
-                kind: SESSION_ESSENCE_EXIT,
-                source_base: condensed.get(source_base as usize).copied().unwrap_or(0),
-                landing_base: condensed.get(landing_base as usize).copied().unwrap_or(0),
-                source_tile: pack_tile_key(portal)?,
-                landing_tile: pack_tile_key(session.return_tile)?,
-                selector: npc as u32,
-                reason,
-            });
+            let landing_base = idx(session.return_tile).and_then(|i| label_of(&labels, i));
+            for &source_base in &sources {
+                let reason = if source_base.is_none() || landing_base.is_none() {
+                    COVERAGE_UNMATCHED_JOIN
+                } else {
+                    0
+                };
+                sessions.push(SessionTemplate {
+                    kind: SESSION_ESSENCE_EXIT,
+                    source_base: source_base.unwrap_or(0),
+                    landing_base: landing_base.unwrap_or(0),
+                    source_tile: pack_tile_key(portal)?,
+                    landing_tile: pack_tile_key(session.return_tile)?,
+                    selector: npc as u32,
+                    reason,
+                });
+            }
         }
     }
 
@@ -300,7 +311,7 @@ fn bake_atlas_inner(
     let scatter = scatter_runs(collision, &reach_bits, n, &at);
 
     let (chunks, palette, indexes) = encode_labels(collision, &labels)?;
-    ReachabilityAtlas::from_bake(
+    let atlas = ReachabilityAtlas::from_bake(
         collision,
         chunks,
         palette,
@@ -321,12 +332,49 @@ fn bake_atlas_inner(
         sessions.into_boxed_slice(),
         placements,
         stands,
-    )
+    )?;
+    // The reader refuses an atlas that breaks these invariants, so the baker
+    // refuses to publish one.
+    atlas.validate(collision, graph)?;
+    Ok(atlas)
 }
 
+/// The base component of a dense cell: label 0 is "no component", label `n`
+/// names component `n - 1`. Label 0 must not reach the subtraction: the
+/// dev profile checks overflow, and the host-play build script bakes in it.
 fn label_of(labels: &[u32], cell: usize) -> Option<u32> {
-    let label = *labels.get(cell)?;
-    (label > 0).then_some(label - 1)
+    labels.get(cell)?.checked_sub(1)
+}
+
+/// Components a portal can be operated from. The portal loc blocks its own
+/// tile, so that tile has no label. The router relaxes the hop from every
+/// standable tile within `INTERACT_RADIUS` of the portal
+/// (`ReverseClosure::admit_takeoffs`), so the sources are the distinct
+/// labelled components among those tiles. `[None]` means no neighbour is
+/// labelled: the template is then an unmatched session, not a source of 0.
+fn portal_sources(
+    portal: WorldTile,
+    labels: &[u32],
+    idx: &impl Fn(WorldTile) -> Option<usize>,
+) -> Vec<Option<u32>> {
+    let mut sources = BTreeSet::new();
+    for dx in -INTERACT_RADIUS..=INTERACT_RADIUS {
+        for dz in -INTERACT_RADIUS..=INTERACT_RADIUS {
+            let near = WorldTile {
+                x: portal.x + dx,
+                z: portal.z + dz,
+                level: portal.level,
+            };
+            if let Some(base) = idx(near).and_then(|i| label_of(labels, i)) {
+                sources.insert(base);
+            }
+        }
+    }
+    if sources.is_empty() {
+        vec![None]
+    } else {
+        sources.into_iter().map(Some).collect()
+    }
 }
 
 fn is_unconditional(edge: &TransportEdge) -> bool {
@@ -557,7 +605,20 @@ fn scc_ids(adj: &[BTreeSet<u32>]) -> Vec<u32> {
     scc
 }
 
+/// n² bitsets are only for a small component DAG. Millions of isolated
+/// stands would try to allocate terabytes.
+const MAX_BITSET_BYTES: usize = 512 * 1024 * 1024;
+
 fn closures_from_adj(adj: &[BTreeSet<u32>]) -> Result<ClosureTables, PackError> {
+    closures_from_adj_within(adj, MAX_BITSET_BYTES)
+}
+
+/// Closures by bitset when the n² table fits `max_bitset_bytes`, else by one
+/// bounded walk per component. Both forms produce the same tables.
+fn closures_from_adj_within(
+    adj: &[BTreeSet<u32>],
+    max_bitset_bytes: usize,
+) -> Result<ClosureTables, PackError> {
     let n = adj.len();
     if n == 0 {
         return Ok((Box::from([0u32]), Box::from([])));
@@ -566,12 +627,9 @@ fn closures_from_adj(adj: &[BTreeSet<u32>]) -> Result<ClosureTables, PackError> 
     let cells = n
         .checked_mul(words)
         .ok_or_else(|| PackError::BadLength("atlas closure bitset overflows".into()))?;
-    // n² bitsets are only for a small component DAG. Millions of isolated
-    // stands would try to allocate terabytes.
-    const MAX_BITSET_BYTES: usize = 512 * 1024 * 1024;
     if cells
         .checked_mul(8)
-        .is_none_or(|bytes| bytes > MAX_BITSET_BYTES)
+        .is_none_or(|bytes| bytes > max_bitset_bytes)
     {
         return closures_from_adj_sparse(adj);
     }
@@ -893,7 +951,6 @@ fn bake_placements(
                         continue;
                     }
                     let flags = collision.walkable_word(from.x, from.z, from.level) as i32;
-                    let can_step = step_ok(collision, from, (origin.x - from.x, origin.z - from.z));
                     match loc_can_operate(LocOperateQuery {
                         origin,
                         from,
@@ -903,7 +960,6 @@ fn bake_placements(
                         length: def.length,
                         force_approach: def.force_approach,
                         flags,
-                        can_step_into_origin: can_step,
                     }) {
                         None => coverage = PLACEMENT_UNSUPPORTED_GEOMETRY,
                         Some(false) => {}
@@ -1064,52 +1120,224 @@ mod closure_tests {
         );
     }
 
-    #[test]
-    fn adjacent_walkable_tiles_share_one_movement_component() {
-        let flags = vec![0u32; 8];
-        let (walk, blocked) = nav_planner::collision::pack_walk(&flags);
-        let collision = nav_planner::collision::WorldCollision {
-            origin: WorldTile {
-                x: 3200,
-                z: 3200,
-                level: 0,
-            },
-            width: 2,
+    use nav_planner::collision::pack_walk;
+    use nav_planner::transport::TransportKind;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    const BLOCKED: u32 = client::dash3d::CollisionFlag::SQ_BLOCKED as u32;
+
+    fn tile(x: i32) -> WorldTile {
+        WorldTile {
+            x,
+            z: 3200,
+            level: 0,
+        }
+    }
+
+    /// One row of tiles on plane 0; planes 1 to 3 are open rows.
+    fn row_collision(plane0: &[u32]) -> WorldCollision {
+        let width = plane0.len();
+        let mut flags = vec![0u32; width * 4];
+        flags[..width].copy_from_slice(plane0);
+        let (walk, blocked) = pack_walk(&flags);
+        WorldCollision {
+            origin: tile(3200),
+            width,
             height: 1,
             walk,
             blocked,
             flags: Some(flags),
-        };
-        let dir = std::env::temp_dir().join(format!("atlas-adj-{}", std::process::id()));
+        }
+    }
+
+    fn door(at: i32, to: i32) -> TransportEdge {
+        TransportEdge {
+            takeoff: None,
+            worn_all_req: Vec::new(),
+            forbidden_held: Vec::new(),
+            forbidden_worn: Vec::new(),
+            kind: TransportKind::Door,
+            player_delta: None,
+            at: tile(at),
+            to: tile(to),
+            loc_id: 1,
+            option: 1,
+            ticks: 1,
+            dir: None,
+            open_loc_id: None,
+            skill_req: Vec::new(),
+            item_req: Vec::new(),
+            consumed_req: Vec::new(),
+            item_returns: Vec::new(),
+            quest_req: Vec::new(),
+            varp_req: Vec::new(),
+            worn_req: Vec::new(),
+            members_req: false,
+            wildy_cap: None,
+            quest_gates: None,
+        }
+    }
+
+    fn bake(collision: &WorldCollision, edges: Vec<TransportEdge>) -> ReachabilityAtlas {
+        static NEXT: AtomicUsize = AtomicUsize::new(0);
+        let dir = std::env::temp_dir().join(format!(
+            "atlas-bake-{}-{}",
+            std::process::id(),
+            NEXT.fetch_add(1, Ordering::Relaxed)
+        ));
         std::fs::create_dir_all(&dir).unwrap();
-        let atlas = bake_atlas(
-            &collision,
-            &nav_planner::transport::TransportGraph::default(),
-            &dir,
-            &LocDefs::default(),
-        )
-        .unwrap();
+        let graph = TransportGraph {
+            edges,
+            ..TransportGraph::default()
+        };
+        let atlas = bake_atlas(collision, &graph, &dir, &LocDefs::default());
         let _ = std::fs::remove_dir_all(&dir);
-        let left = atlas
-            .base_at(WorldTile {
-                x: 3200,
-                z: 3200,
-                level: 0,
-            })
-            .unwrap();
-        let right = atlas
-            .base_at(WorldTile {
-                x: 3201,
-                z: 3200,
-                level: 0,
-            })
-            .unwrap();
+        atlas.unwrap()
+    }
+
+    #[test]
+    fn adjacent_walkable_tiles_share_one_movement_component() {
+        let atlas = bake(&row_collision(&[0, 0]), Vec::new());
+        let left = atlas.base_at(tile(3200)).unwrap();
+        let right = atlas.base_at(tile(3201)).unwrap();
         assert_eq!(left, right);
         assert!(left.is_some());
-        assert!(
-            atlas.base_count() <= 4,
-            "each plane is one open component, got {}",
-            atlas.base_count()
+        assert_eq!(
+            atlas.base_count(),
+            4,
+            "each of the four open planes is one component"
         );
+    }
+
+    /// Label 0 is "no component". The dev profile checks overflow and the
+    /// host-play build script bakes in it, so `label - 1` on label 0 aborted
+    /// the default bake (`BOT_NAV_BUILD=require`).
+    #[test]
+    fn label_zero_is_no_component() {
+        assert_eq!(label_of(&[0, 1, 5], 0), None);
+        assert_eq!(label_of(&[0, 1, 5], 1), Some(0));
+        assert_eq!(label_of(&[0, 1, 5], 2), Some(4));
+        assert_eq!(label_of(&[0, 1, 5], 3), None);
+    }
+
+    /// The landing tile is blocked, so it has label 0. The dev-profile bake
+    /// records an exceptional transition. It does not panic.
+    #[test]
+    fn a_landing_on_a_blocked_tile_is_an_exceptional_transition() {
+        let atlas = bake(&row_collision(&[0, BLOCKED, 0]), vec![door(3200, 3201)]);
+        assert_eq!(atlas.exceptional_landing_count(), 1);
+        assert_eq!(atlas.unmatched_join_count(), 0);
+        assert_eq!(atlas.base_at(tile(3201)).unwrap(), None);
+    }
+
+    /// Both takeoff tiles are blocked, so no admissible takeoff joins a
+    /// component. The row names the landing as well as the anchor.
+    #[test]
+    fn an_unmatched_join_names_its_landing() {
+        let atlas = bake(&row_collision(&[BLOCKED, BLOCKED, 0]), vec![door(3200, 3202)]);
+        assert_eq!(atlas.unmatched_join_count(), 1);
+        let joins: Vec<_> = atlas.unmatched_joins().collect();
+        assert_eq!(joins, vec![(tile(3200), tile(3202), 0)]);
+        assert!(atlas.base_at(joins[0].1).unwrap().is_some());
+    }
+
+    /// Tile 3201 has a wall face on its west side: a step east into it is
+    /// refused, a step west out of it is allowed. The two movement components
+    /// are joined by one directed arc, and that arc is part of the condensed
+    /// closure: from the one-way side the other side is reachable.
+    #[test]
+    fn a_one_way_movement_step_is_a_condensed_closure_arc() {
+        let atlas = bake(&row_collision(&[0, client::dash3d::CollisionFlag::W_W as u32]), Vec::new());
+        let west = atlas.base_at(tile(3200)).unwrap().unwrap();
+        let east = atlas.base_at(tile(3201)).unwrap().unwrap();
+        assert_ne!(west, east, "the one-way step separates the components");
+        let movement_from_east: Vec<u32> = atlas.movement_closure(east).unwrap().collect();
+        let movement_from_west: Vec<u32> = atlas.movement_closure(west).unwrap().collect();
+        assert!(movement_from_east.contains(&west));
+        assert!(!movement_from_west.contains(&east));
+        let east_condensed = atlas.condensed_of(east).unwrap();
+        let west_condensed = atlas.condensed_of(west).unwrap();
+        let transport_from_east: Vec<u32> =
+            atlas.transport_closure(east_condensed).unwrap().collect();
+        let transport_from_west: Vec<u32> =
+            atlas.transport_closure(west_condensed).unwrap().collect();
+        assert!(transport_from_east.contains(&west_condensed));
+        assert!(!transport_from_west.contains(&east_condensed));
+    }
+
+    #[test]
+    fn portal_sources_are_the_neighbour_components_not_the_blocked_portal_tile() {
+        // Portal at 3201 (blocked); 3200 and 3202 are open and separate
+        // components because the portal row between them is blocked.
+        let collision = row_collision(&[0, BLOCKED, 0]);
+        let atlas = bake(&collision, Vec::new());
+        let labels_of = |x: i32| atlas.base_at(tile(x)).unwrap().map(|base| base + 1);
+        let cells = [
+            labels_of(3200).unwrap_or(0),
+            labels_of(3201).unwrap_or(0),
+            labels_of(3202).unwrap_or(0),
+        ];
+        let idx = |t: WorldTile| {
+            (t.level == 0 && t.z == 3200 && (3200..3203).contains(&t.x))
+                .then(|| (t.x - 3200) as usize)
+        };
+        let sources = portal_sources(tile(3201), &cells, &idx);
+        let west = atlas.base_at(tile(3200)).unwrap().unwrap();
+        let east = atlas.base_at(tile(3202)).unwrap().unwrap();
+        assert_ne!(west, east);
+        assert_eq!(sources, vec![Some(west), Some(east)]);
+        let none = portal_sources(tile(3301), &cells, &idx);
+        assert_eq!(none, vec![None]);
+    }
+
+    fn closure_tables(adj: &[BTreeSet<u32>], limit: usize) -> Vec<Vec<(u32, u32)>> {
+        let (offsets, runs) = closures_from_adj_within(adj, limit).unwrap();
+        (0..adj.len())
+            .map(|i| {
+                runs[offsets[i] as usize..offsets[i + 1] as usize]
+                    .iter()
+                    .map(|run| (run.first, run.count))
+                    .collect()
+            })
+            .collect()
+    }
+
+    /// The per-seed walk that replaces the n² bitsets above the memory limit
+    /// gives the tables the bitset form gives: a DAG, a cycle, and scattered
+    /// arcs. A broken labelling would reach it with millions of singleton
+    /// components, so the equality is what keeps its answers honest.
+    #[test]
+    fn sparse_closures_equal_bitset_closures() {
+        let mut graphs: Vec<Vec<BTreeSet<u32>>> = Vec::new();
+        let mut chain = vec![BTreeSet::new(); 70];
+        for i in 0..69 {
+            chain[i].insert(i as u32 + 1);
+        }
+        graphs.push(chain);
+        let mut cycle = vec![BTreeSet::new(); 5];
+        for i in 0..5 {
+            cycle[i].insert((i as u32 + 1) % 5);
+        }
+        graphs.push(cycle);
+        let mut state = 0x2545_f491_4f6c_dd1du64;
+        let mut scattered = vec![BTreeSet::new(); 150];
+        for _ in 0..400 {
+            state = state
+                .wrapping_mul(6364136223846793005)
+                .wrapping_add(1442695040888963407);
+            let from = (state >> 33) as usize % 150;
+            let to = (state >> 13) as u32 % 150;
+            scattered[from].insert(to);
+        }
+        graphs.push(scattered);
+        graphs.push(vec![BTreeSet::new(); 3]);
+        for adj in &graphs {
+            assert_eq!(
+                closure_tables(adj, usize::MAX),
+                closure_tables(adj, 0),
+                "{} components",
+                adj.len()
+            );
+        }
     }
 }

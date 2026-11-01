@@ -348,10 +348,9 @@ pub struct LocOperateQuery {
     pub width: i32,
     pub length: i32,
     pub force_approach: i32,
-    /// Stand tile collision word (`PL_WALK_*` for walls, raw `W_*` for footprints).
+    /// Collision word of the stand tile (`from`): the client `CollisionFlag`
+    /// layout, so `PL_WALK_*` and `W_*` masks read it directly.
     pub flags: i32,
-    /// Engine along-wall open-step test.
-    pub can_step_into_origin: bool,
 }
 
 /// Whether `query.from` can operate the placed loc using the engine size-1
@@ -383,76 +382,84 @@ pub fn loc_can_operate(query: LocOperateQuery) -> Option<bool> {
             query.from,
             query.shape,
             query.angle,
-            query.can_step_into_origin,
+            query.flags,
         )),
     }
 }
 
-fn wall_can_operate(origin: WorldTile, from: WorldTile, shape: u8, angle: u8, flags: i32) -> bool {
+/// One neighbour of the placed origin: `(dx, dz, mask)` of the stand tile
+/// relative to the origin. The stand is legal when `flags & mask` is clear;
+/// mask `0` means the neighbour needs no flag test.
+type ReachSide = (i32, i32, i32);
+
+/// Engine `ReachStrategy.reachWall1` (`ReachStrategy.ts:98-173`): the
+/// stand-tile neighbours of a size-1 wall. The engine masks `BLOCK_NORTH`,
+/// `BLOCK_EAST`, `BLOCK_SOUTH` and `BLOCK_WEST` are the client `PL_WALK_S`,
+/// `PL_WALK_W`, `PL_WALK_N` and `PL_WALK_E` (same wall bit, same `LOC`
+/// bit). Shapes 1 and 3 (diagonal and square corners) have no branch in the
+/// engine: only the origin tile reaches them.
+fn wall_sides(shape: u8, angle: u8) -> &'static [ReachSide] {
+    const S: i32 = CollisionFlag::PL_WALK_S;
+    const W: i32 = CollisionFlag::PL_WALK_W;
+    const N: i32 = CollisionFlag::PL_WALK_N;
+    const E: i32 = CollisionFlag::PL_WALK_E;
+    match (shape, angle) {
+        (0, 0) => &[(-1, 0, 0), (0, 1, S), (0, -1, N)],
+        (0, 1) => &[(0, 1, 0), (-1, 0, E), (1, 0, W)],
+        (0, 2) => &[(1, 0, 0), (0, 1, S), (0, -1, N)],
+        (0, 3) => &[(0, -1, 0), (-1, 0, E), (1, 0, W)],
+        (2, 0) => &[(-1, 0, 0), (0, 1, 0), (1, 0, W), (0, -1, N)],
+        (2, 1) => &[(-1, 0, E), (0, 1, 0), (1, 0, 0), (0, -1, N)],
+        (2, 2) => &[(-1, 0, E), (0, 1, S), (1, 0, 0), (0, -1, 0)],
+        (2, 3) => &[(-1, 0, 0), (0, 1, S), (1, 0, W), (0, -1, 0)],
+        (9, _) => &[
+            (0, 1, CollisionFlag::W_S),
+            (0, -1, CollisionFlag::W_N),
+            (-1, 0, CollisionFlag::W_E),
+            (1, 0, CollisionFlag::W_W),
+        ],
+        _ => &[],
+    }
+}
+
+/// Engine `ReachStrategy.reachWallDecor1` (`ReachStrategy.ts:254-280`). Shapes
+/// 4 and 5 (straight decorations) have no branch: only the origin tile
+/// reaches them. Shapes 6 and 7 test two tiles chosen by the rotation, shape
+/// 7 after `alteredRotation` (`angle + 2`). Shape 8 tests all four sides.
+fn wall_decor_sides(shape: u8, angle: u8) -> &'static [ReachSide] {
+    const NORTH_SIDE: i32 = CollisionFlag::W_N;
+    const EAST_SIDE: i32 = CollisionFlag::W_E;
+    const SOUTH_SIDE: i32 = CollisionFlag::W_S;
+    const WEST_SIDE: i32 = CollisionFlag::W_W;
+    let angle = if shape == 7 { (angle + 2) & 3 } else { angle };
+    match (shape, angle) {
+        (6 | 7, 0) => &[(1, 0, WEST_SIDE), (0, -1, NORTH_SIDE)],
+        (6 | 7, 1) => &[(-1, 0, EAST_SIDE), (0, -1, NORTH_SIDE)],
+        (6 | 7, 2) => &[(-1, 0, EAST_SIDE), (0, 1, SOUTH_SIDE)],
+        (6 | 7, 3) => &[(1, 0, WEST_SIDE), (0, 1, SOUTH_SIDE)],
+        (8, _) => &[
+            (0, 1, SOUTH_SIDE),
+            (0, -1, NORTH_SIDE),
+            (-1, 0, EAST_SIDE),
+            (1, 0, WEST_SIDE),
+        ],
+        _ => &[],
+    }
+}
+
+fn sides_allow(sides: &[ReachSide], origin: WorldTile, from: WorldTile, flags: i32) -> bool {
     if from == origin {
         return true;
     }
     let dx = from.x - origin.x;
     let dz = from.z - origin.z;
-    let open = |mask: i32| flags & mask == CollisionFlag::_OPEN;
-    match shape {
-        0 => match angle {
-            0 => {
-                (dx == -1 && dz == 0)
-                    || (dx == 0 && dz == 1 && open(CollisionFlag::PL_WALK_S))
-                    || (dx == 0 && dz == -1 && open(CollisionFlag::PL_WALK_N))
-            }
-            1 => {
-                (dx == 0 && dz == 1)
-                    || (dx == -1 && dz == 0 && open(CollisionFlag::PL_WALK_E))
-                    || (dx == 1 && dz == 0 && open(CollisionFlag::PL_WALK_W))
-            }
-            2 => {
-                (dx == 1 && dz == 0)
-                    || (dx == 0 && dz == 1 && open(CollisionFlag::PL_WALK_S))
-                    || (dx == 0 && dz == -1 && open(CollisionFlag::PL_WALK_N))
-            }
-            _ => {
-                (dx == 0 && dz == -1)
-                    || (dx == -1 && dz == 0 && open(CollisionFlag::PL_WALK_E))
-                    || (dx == 1 && dz == 0 && open(CollisionFlag::PL_WALK_W))
-            }
-        },
-        2 => match angle {
-            0 => {
-                (dx == -1 && dz == 0)
-                    || (dx == 0 && dz == 1)
-                    || (dx == 1 && dz == 0 && open(CollisionFlag::PL_WALK_W))
-                    || (dx == 0 && dz == -1 && open(CollisionFlag::PL_WALK_N))
-            }
-            1 => {
-                (dx == -1 && dz == 0 && open(CollisionFlag::PL_WALK_E))
-                    || (dx == 0 && dz == 1)
-                    || (dx == 1 && dz == 0)
-                    || (dx == 0 && dz == -1 && open(CollisionFlag::PL_WALK_N))
-            }
-            2 => {
-                (dx == -1 && dz == 0 && open(CollisionFlag::PL_WALK_E))
-                    || (dx == 0 && dz == 1 && open(CollisionFlag::PL_WALK_S))
-                    || (dx == 1 && dz == 0)
-                    || (dx == 0 && dz == -1)
-            }
-            _ => {
-                (dx == -1 && dz == 0)
-                    || (dx == 0 && dz == 1 && open(CollisionFlag::PL_WALK_S))
-                    || (dx == 1 && dz == 0 && open(CollisionFlag::PL_WALK_W))
-                    || (dx == 0 && dz == -1)
-            }
-        },
-        9 => {
-            (dx == 0 && dz == 1 && open(CollisionFlag::W_S))
-                || (dx == 0 && dz == -1 && open(CollisionFlag::W_N))
-                || (dx == -1 && dz == 0 && open(CollisionFlag::W_E))
-                || (dx == 1 && dz == 0 && open(CollisionFlag::W_W))
-        }
-        1 | 3 => dx.abs() + dz.abs() == 1,
-        _ => false,
-    }
+    sides
+        .iter()
+        .any(|&(sx, sz, mask)| sx == dx && sz == dz && flags & mask == CollisionFlag::_OPEN)
+}
+
+fn wall_can_operate(origin: WorldTile, from: WorldTile, shape: u8, angle: u8, flags: i32) -> bool {
+    sides_allow(wall_sides(shape, angle), origin, from, flags)
 }
 
 fn wall_decor_can_operate(
@@ -460,24 +467,9 @@ fn wall_decor_can_operate(
     from: WorldTile,
     shape: u8,
     angle: u8,
-    can_step_into_origin: bool,
+    flags: i32,
 ) -> bool {
-    if from == origin {
-        return true;
-    }
-    let dx = from.x - origin.x;
-    let dz = from.z - origin.z;
-    let facing = match angle {
-        0 => dx == -1 && dz == 0,
-        1 => dx == 0 && dz == 1,
-        2 => dx == 1 && dz == 0,
-        _ => dx == 0 && dz == -1,
-    };
-    match shape {
-        4 | 5 => facing,
-        6..=8 => facing || can_step_into_origin,
-        _ => false,
-    }
+    sides_allow(wall_decor_sides(shape, angle), origin, from, flags)
 }
 
 /// Candidate tiles to test for a size-1 interaction, including the origin.

@@ -34,6 +34,9 @@ pub enum MultiwayError {
     /// A local mapsquare coordinate is outside `0..64`.
     #[error("multiway line {line}: {token:?} has a local coordinate outside 0..64")]
     LocalInvalid { line: usize, token: String },
+    /// A mapsquare coordinate expands past the 32-bit tile range.
+    #[error("multiway line {line}: {token:?} expands outside the 32-bit tile range")]
+    CoordinateOverflow { line: usize, token: String },
     /// Packing the resolved game tile failed bounds checks.
     #[error("multiway line {line}: {source}")]
     Pack {
@@ -117,9 +120,18 @@ fn parse_content_coord(line: usize, token: &str) -> Result<WorldTile, MultiwayEr
             token: token.to_owned(),
         });
     }
+    // `i32::MAX * 64` would wrap in release and panic in the dev profile.
+    let expand = |map: i32, local: i32| {
+        map.checked_mul(SQUARE)
+            .and_then(|base| base.checked_add(local))
+            .ok_or_else(|| MultiwayError::CoordinateOverflow {
+                line,
+                token: token.to_owned(),
+            })
+    };
     Ok(WorldTile {
-        x: map_x * SQUARE + local_x,
-        z: map_z * SQUARE + local_z,
+        x: expand(map_x, local_x)?,
+        z: expand(map_z, local_z)?,
         level,
     })
 }
@@ -201,6 +213,23 @@ mod tests {
                 component: "mapX",
                 ..
             }
+        ));
+        for token in [
+            "0_67108914_0_0_0",
+            "0_2147483647_0_0_0",
+            "0_0_2147483647_0_0",
+        ] {
+            assert!(
+                matches!(
+                    produce_multiway_keys(token).unwrap_err(),
+                    MultiwayError::CoordinateOverflow { line: 1, .. }
+                ),
+                "{token}"
+            );
+        }
+        assert!(matches!(
+            produce_multiway_keys("0_256_0_0_0").unwrap_err(),
+            MultiwayError::Pack { line: 1, .. }
         ));
     }
 

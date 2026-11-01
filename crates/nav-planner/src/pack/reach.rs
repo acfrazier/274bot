@@ -12,6 +12,10 @@ use super::{read_u32, PackError, PackRead};
 const LABELS_KINDS: [u32; 8] = [1, 2, 3, 4, 5, 6, 7, 8];
 const GRAPH_KINDS: [u32; 10] = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10];
 const ONE_KIND: [u32; 1] = [1];
+const LABELS_STRIDES: [u32; 8] = [24, 20, 4, 1, 8, 16, 8, 8];
+const GRAPH_STRIDES: [u32; 10] = [4, 4, 4, 8, 4, 8, 4, 8, 12, 28];
+const PLACEMENT_STRIDE: [u32; 1] = [24];
+const STAND_STRIDE: [u32; 1] = [8];
 
 #[derive(Clone, Copy)]
 struct DirEnt {
@@ -135,7 +139,11 @@ fn encode_section(kinds: &[u32], tables: &[(u32, Vec<u8>)]) -> Result<Vec<u8>, P
     Ok(out)
 }
 
-fn decode_directory(payload: &[u8], expected: &[u32]) -> Result<(Vec<DirEnt>, usize), PackError> {
+fn decode_directory(
+    payload: &[u8],
+    expected: &[u32],
+    expected_strides: &[u32],
+) -> Result<(Vec<DirEnt>, usize), PackError> {
     if payload.len() < 4 {
         return Err(PackError::Truncated);
     }
@@ -174,8 +182,11 @@ fn decode_directory(payload: &[u8], expected: &[u32]) -> Result<(Vec<DirEnt>, us
             )));
         }
         seen.push(kind);
-        if stride == 0 {
-            return Err(PackError::BadLength("reach table stride is zero".into()));
+        if stride != expected_strides[i] {
+            return Err(PackError::BadLength(format!(
+                "reach table {i} has stride {stride}, expected {}",
+                expected_strides[i]
+            )));
         }
         ents.push(DirEnt {
             offset,
@@ -283,7 +294,7 @@ fn encode_labels(atlas: &ReachabilityAtlas) -> Result<Vec<u8>, PackError> {
 }
 
 fn decode_labels(payload: &[u8]) -> Result<ReachabilityAtlas, PackError> {
-    let (ents, _) = decode_directory(payload, &LABELS_KINDS)?;
+    let (ents, _) = decode_directory(payload, &LABELS_KINDS, &LABELS_STRIDES)?;
     let geometry = table_bytes(payload, ents[0])?;
     if geometry.len() != 24 {
         return Err(PackError::BadLength(
@@ -433,12 +444,12 @@ fn read_coverage(bytes: &[u8]) -> Result<Box<[CoverageRow]>, PackError> {
         let tile = u32_at(row, 0)?;
         unpack_tile_key(tile)?;
         let reason = u32_at(row, 4)?;
-        if last.is_some_and(|prev| tile <= prev) {
+        if last.is_some_and(|prev| (tile, reason) <= prev) {
             return Err(PackError::BadLength(
-                "atlas coverage rows must be sorted unique tiles".into(),
+                "atlas coverage rows must be sorted unique tile/reason pairs".into(),
             ));
         }
-        last = Some(tile);
+        last = Some((tile, reason));
         rows.push(CoverageRow { tile, reason });
     }
     Ok(rows.into_boxed_slice())
@@ -556,7 +567,7 @@ fn decode_u32_table(bytes: &[u8]) -> Result<Box<[u32]>, PackError> {
 }
 
 fn decode_graph(payload: &[u8], atlas: &mut ReachabilityAtlas) -> Result<(), PackError> {
-    let (ents, _) = decode_directory(payload, &GRAPH_KINDS)?;
+    let (ents, _) = decode_directory(payload, &GRAPH_KINDS, &GRAPH_STRIDES)?;
     atlas.base_to_condensed = decode_u32_table(table_bytes(payload, ents[0])?)?;
     atlas.base_sizes = decode_u32_table(table_bytes(payload, ents[1])?)?;
     if atlas.base_to_condensed.len() != atlas.base_sizes.len() {
@@ -709,7 +720,7 @@ fn encode_placements(atlas: &ReachabilityAtlas) -> Result<Vec<u8>, PackError> {
 }
 
 fn decode_placements(payload: &[u8], atlas: &mut ReachabilityAtlas) -> Result<(), PackError> {
-    let (ents, _) = decode_directory(payload, &ONE_KIND)?;
+    let (ents, _) = decode_directory(payload, &ONE_KIND, &PLACEMENT_STRIDE)?;
     let bytes = table_bytes(payload, ents[0])?;
     let mut rows = Vec::with_capacity(bytes.len() / 24);
     let mut last = None;
@@ -757,7 +768,7 @@ fn encode_stands(atlas: &ReachabilityAtlas) -> Result<Vec<u8>, PackError> {
 }
 
 fn decode_stands(payload: &[u8], atlas: &mut ReachabilityAtlas) -> Result<(), PackError> {
-    let (ents, _) = decode_directory(payload, &ONE_KIND)?;
+    let (ents, _) = decode_directory(payload, &ONE_KIND, &STAND_STRIDE)?;
     let bytes = table_bytes(payload, ents[0])?;
     let mut rows = Vec::with_capacity(bytes.len() / 8);
     for row in bytes.as_chunks::<8>().0 {

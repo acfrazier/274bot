@@ -214,7 +214,6 @@ fn completed_prince_ali_rescue_waives_only_the_real_alkharid_toll() {
         quest_family: None,
         zones: None,
         multiway: Box::from([]),
-        has_reachability: false,
     };
     let from = WorldTile {
         x: 2 * at.x - toll.to.x,

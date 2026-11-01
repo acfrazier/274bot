@@ -199,11 +199,19 @@ possible goal under any permitted remedy. Unknown facts are not negative proofs.
 Atlas-positive and incomplete queries immediately preflight the ordinary full
 bounded forward scratch budget. They do not wait for the smaller First cap or a
 static reverse flood. Preferred/fallback sets retain independent proof states.
-A better undecided tier cannot silently lose to a lower tier. Pack-bound v18
-production and diagnosis never start `ReverseClosure`. Synthetic test worlds may
-retain the bounded legacy path. Zones, wilderness admission, avoids, cumulative
-supplies, and dynamic collision still require exact routing. Budget, deadline,
-and storage stops remain `Undecided`, never exhaustive negatives.
+A better undecided tier cannot silently lose to a lower tier. Zones, wilderness
+admission, avoids, cumulative supplies, and dynamic collision still require
+exact routing. Budget, deadline, and storage stops remain `Undecided`, never
+exhaustive negatives.
+
+Status at `274V18` (round 2 of BR2-S3): the planner does not yet mint an atlas
+negative from the closures. Until it does, every query, pack-bound or not, keeps
+the bounded `ReverseClosure` proof that v17 ran. An unreachable goal set is
+refused by that proof in the same bounded work as before, and zone diagnosis
+keeps its own `ReverseClosure`. No code skips the proof because an atlas is
+present. The atlas proof that replaces `ReverseClosure` is a later slice. It
+removes the reverse proof only together with a test that refuses the same
+unreachable goals in bounded work from the atlas.
 
 ## Picker and pass-end results
 

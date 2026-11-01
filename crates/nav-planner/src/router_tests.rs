@@ -3040,6 +3040,45 @@ fn sewer_web_stands_are_proven_then_reached_with_the_banked_knife_on_real_289_pa
     );
 }
 
+/// A pack-bound query keeps the bounded reverse proof. With nothing owned,
+/// Lumbridge to the Entrana dock side has no route; the proof refuses the
+/// goal after 7,228 settles on the v17 pack, not after the 199,930-node
+/// flood that skipping the proof costs. Falador, a reachable goal, settles
+/// the same nodes with or without the proof.
+#[test]
+fn entrana_goal_is_refused_by_the_reverse_proof_in_bounded_work_on_real_289_pack() {
+    let Some(world) = crate::world::NavWorld::load_default_pack_or_skip() else {
+        return;
+    };
+    let opts = FindOptions {
+        zones: ZoneExempt::all(),
+        ..FindOptions::default()
+    };
+    let empty = WorldState::empty();
+    let lumbridge = tile(3222, 3218, 0);
+    let entrana = find_first_with(
+        &world.collision,
+        &world.graph,
+        lumbridge,
+        &[tile(2834, 3335, 0)],
+        opts,
+        &empty,
+    );
+    assert_eq!(entrana.route().err(), Some(RouteError::NoPath));
+    assert_eq!(entrana.proof(), ReverseProof::Unreachable);
+    assert_eq!(entrana.settled(), 7_228);
+    let falador = find_first_with(
+        &world.collision,
+        &world.graph,
+        lumbridge,
+        &[tile(2965, 3379, 0)],
+        opts,
+        &empty,
+    );
+    assert!(falador.route().is_ok());
+    assert_eq!(falador.settled(), 75_140);
+}
+
 fn validate_real_route(
     collision: &WorldCollision,
     graph: &TransportGraph,

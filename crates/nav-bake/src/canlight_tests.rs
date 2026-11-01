@@ -97,6 +97,31 @@ data=coord_pair,0_50_53_53_33,0_50_53_53_35
     ));
 }
 
+/// A source map coordinate that overflows the 32-bit expansion is a typed
+/// error. It does not panic (dev profile) or wrap into another tile (release).
+#[test]
+fn packed_coordinate_expansion_never_panics_or_wraps() {
+    for token in [
+        "0_67108914_0_0_0",
+        "0_2147483647_0_0_0",
+        "0_0_2147483647_0_0",
+        "0_0_67108914_0_0",
+        "0_256_0_0_0",
+        "0_0_256_0_0",
+        "0_-1_0_0_0",
+    ] {
+        assert!(
+            matches!(
+                unpack_packed_coord(token).unwrap_err(),
+                crate::GenerationError::Canlight(CanlightError::PackedCoordinateOutOfRange { .. })
+            ),
+            "{token}"
+        );
+    }
+    let last = unpack_packed_coord("3_255_255_63_63").unwrap();
+    assert_eq!((last.x, last.z, last.level), (16383, 16383, 3));
+}
+
 #[test]
 fn equal_pack_inputs_with_different_active_loc_masks_have_different_identities() {
     let fix = FixtureDir::new("identity-mask");
