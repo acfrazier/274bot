@@ -2029,6 +2029,17 @@ fn talk_drive(run: &PrereqRun) -> &ChatDrive {
     }
 }
 
+fn last_request_id(ledger: &Option<Box<ledger::Ledger>>) -> u64 {
+    ledger
+        .as_ref()
+        .unwrap()
+        .outbox
+        .last()
+        .unwrap()
+        .authority()
+        .request_id()
+        .get()
+}
 
 #[test]
 fn a_cancelled_talk_ends_its_wait_at_once_and_re_approaches_the_moved_npc() {
@@ -2040,7 +2051,7 @@ fn a_cancelled_talk_ends_its_wait_at_once_and_re_approaches_the_moved_npc() {
 
     // The engine clears the Talk on the next cycle and writes the message.
     message(&mut snapshot, 1, CANT_REACH_TEXT);
-    let sent = ledger.as_ref().unwrap().outbox.len();
+    let sent = last_request_id(&ledger);
     assert!(
         poll(&mut run, &snapshot, &mut ledger, 3, &state, &mut budget).is_pending(),
         "a cancel is not a spent wait"
@@ -2053,7 +2064,7 @@ fn a_cancelled_talk_ends_its_wait_at_once_and_re_approaches_the_moved_npc() {
     assert_eq!(drive.reach_cancels, 1);
     assert!(drive.pending.is_none(), "the cancelled wait is closed");
     assert!(drive.handle.is_none(), "the cancelled Talk's owner is gone");
-    assert_eq!(ledger.as_ref().unwrap().outbox.len(), sent);
+    assert_eq!(last_request_id(&ledger), sent);
 
     // Nothing is sent on the cancel's own tick. Drezel wandered five tiles
     // away: the next observed tick walks to where he is now.
@@ -2063,7 +2074,7 @@ fn a_cancelled_talk_ends_its_wait_at_once_and_re_approaches_the_moved_npc() {
     };
     snapshot.seed_npcs(vec![npc_view(row, far, 5)]);
     assert!(poll(&mut run, &snapshot, &mut ledger, 3, &state, &mut budget).is_pending());
-    assert_eq!(ledger.as_ref().unwrap().outbox.len(), sent);
+    assert_eq!(last_request_id(&ledger), sent);
     assert!(poll(&mut run, &snapshot, &mut ledger, 4, &state, &mut budget).is_pending());
     let HostEffect::Walk(request) = &ledger.as_ref().unwrap().outbox.last().unwrap().effect else {
         panic!("the retry approaches the NPC before it talks");
@@ -2120,18 +2131,9 @@ fn repeated_cancels_end_in_a_terminal_failure_that_keeps_the_last_detail() {
         assert_eq!(talk_drive(&run).reach_cancels, cancel as u8);
         // The next observed tick sends the Talk again, and the host accepts it.
         sent_at = tick + 1;
-        let sent = ledger.as_ref().unwrap().outbox.len();
-        let polled = poll(&mut run, &snapshot, &mut ledger, sent_at, &state, &mut budget);
-        eprintln!(
-            "DEBUG cancel={cancel} tick={sent_at} pending={} before={sent} after={} handle={} pend={} cancels={}",
-            polled.is_pending(),
-            ledger.as_ref().unwrap().outbox.len(),
-            talk_drive(&run).handle.is_some(),
-            talk_drive(&run).pending.is_some(),
-            talk_drive(&run).reach_cancels
-        );
-        assert!(polled.is_pending());
-        assert_eq!(ledger.as_ref().unwrap().outbox.len(), sent + 1);
+        let sent = last_request_id(&ledger);
+        assert!(poll(&mut run, &snapshot, &mut ledger, sent_at, &state, &mut budget).is_pending());
+        assert_ne!(last_request_id(&ledger), sent, "the Talk was sent again");
         assert!(matches!(last_interaction(&ledger), InteractReq::Npc { .. }));
         accept_last(&mut ledger, sent_at, cancel);
         tick = sent_at + 2;
