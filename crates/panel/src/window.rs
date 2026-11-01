@@ -2054,9 +2054,12 @@ struct ImguiState {
 
 struct AppWindow {
     // Kept alive to ensure the surface outlives its instance on all backends.
-    #[expect(
-        dead_code,
-        reason = "kept alive so the surface outlives its instance on all backends"
+    #[cfg_attr(
+        not(test),
+        expect(
+            dead_code,
+            reason = "kept alive so the surface outlives its instance on all backends"
+        )
     )]
     instance: wgpu::Instance,
     device: wgpu::Device,
