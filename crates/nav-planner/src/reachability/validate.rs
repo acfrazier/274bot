@@ -293,7 +293,7 @@ impl ReachabilityAtlas {
         self.check_rows(graph, base_count)?;
         check_placement_rows(&self.placements)?;
         check_stand_rows(&self.stands, base_count)?;
-        self.check_placements(base_count)
+        self.check_placements()
     }
 
     fn check_geometry(&self, collision: &WorldCollision) -> Result<(), PackError> {
@@ -407,7 +407,7 @@ impl ReachabilityAtlas {
         Ok(())
     }
 
-    fn check_placements(&self, base_count: usize) -> Result<(), PackError> {
+    fn check_placements(&self) -> Result<(), PackError> {
         for row in self.placements.iter() {
             if row.coverage > PLACEMENT_UNKNOWN_CONTENT || row.trigger > TRIGGER_CONTENT_STATE {
                 return Err(bad("atlas placement coverage or trigger is out of range"));
