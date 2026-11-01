@@ -1103,47 +1103,7 @@ export function isUnmatched(item: SortableItem): boolean;
 
 declare module '*api/bot/Bot.js' {
 import * as ______adapter_ClientAdapter_js from "*adapter/ClientAdapter.js";
-import { ChatLine } from "*adapter/ClientAdapter.js";
 import * as ______geometry_Tile_js from "*geometry/Tile.js";
-interface SkillXpEvent {
-    skill: number;
-    name: string;
-    xp: number;
-    delta: number;
-}
-interface SkillLevelEvent {
-    skill: number;
-    name: string;
-    level: number;
-    previous: number;
-}
-interface InventoryChangedEvent {
-    slot: number;
-    id: number;
-    name: string | null;
-    count: number;
-    previousId: number;
-    previousCount: number;
-}
-interface VarpChangedEvent {
-    index: number;
-    value: number;
-    previous: number;
-}
-interface TickEvent {
-    tick: number;
-}
-interface EventMap {
-    'script.finish': {
-        reason: string;
-    };
-    tick: TickEvent;
-    'chat.message': ChatLine;
-    'skill.xp': SkillXpEvent;
-    'skill.level': SkillLevelEvent;
-    'inventory.changed': InventoryChangedEvent;
-    'varp.changed': VarpChangedEvent;
-}
 /** How the runner schedules the next `loop()` after one finishes. */
 export type LoopCadence = {
     kind: 'frame';
@@ -1161,11 +1121,6 @@ export interface SettingsView {
     tile(name: string, fallback?: undefined): ______geometry_Tile_js.default | null;
     tile<F extends ______adapter_ClientAdapter_js.WorldTile | null>(name: string, fallback: F): ______geometry_Tile_js.default | F;
     list(name: string, fallback?: string[]): string[];
-}
-export interface PostedEventMap extends Omit<EventMap, "chat.message"> {
-    "chat.message": Omit<EventMap["chat.message"], "username"> & {
-        username: string | undefined;
-    };
 }
 export class AbstractBot {
     loopDelay: number;
@@ -1220,6 +1175,37 @@ export type TreeNode = BranchTask | LeafTask;
 export abstract class TreeBot extends LoopingBot {
     lastSceneWaitLogAt: number;
     abstract root(): TreeNode;
+}
+export interface PostedEventMap {
+    "script.finish": {
+        reason: string;
+    };
+    tick: {
+        tick: number;
+    };
+    "chat.message": Omit<______adapter_ClientAdapter_js.ChatLine, "username"> & {
+        username: string | undefined;
+    };
+    "skill.xp": {
+        skill: number;
+        name: string;
+        xp: number;
+        delta: number;
+    };
+    "skill.level": {
+        skill: number;
+        name: string;
+        level: number;
+        previous: number;
+    };
+    "inventory.changed": {
+        slot: number;
+        id: number;
+        name: string | null;
+        count: number;
+        previousId: number;
+        previousCount: number;
+    };
 }
 
 }

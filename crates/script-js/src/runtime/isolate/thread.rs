@@ -201,8 +201,10 @@ pub(super) fn isolate_main(
     paint_generation: std::sync::Arc<std::sync::atomic::AtomicU64>,
     teardown: std::sync::Arc<Mutex<TeardownState>>,
     frame_interest: std::sync::Arc<std::sync::atomic::AtomicUsize>,
+    frame_ready: std::sync::Arc<std::sync::atomic::AtomicBool>,
     loc_projection_interest: std::sync::Arc<std::sync::atomic::AtomicBool>,
     frame_ack_tx: std::sync::mpsc::SyncSender<()>,
+    terminate_cell: std::sync::Arc<std::sync::OnceLock<v8::IsolateHandle>>,
     proof: std::sync::Arc<TeardownProofInner>,
     execution: Option<api::identity::ExecutionId>,
     local_state: Option<std::sync::Arc<script::local_state::SlotState>>,
@@ -235,6 +237,7 @@ pub(super) fn isolate_main(
     _runtime_lifetime = RuntimeLifetime::enter();
     let terminate = runtime.deno_runtime().v8_isolate().thread_safe_handle();
     let setup_handle = terminate.clone();
+    let _ = terminate_cell.set(setup_handle.clone());
     let setup_failed = setup.send(SetupMessage::Interrupt(terminate)).is_err();
     {
         let st = teardown.lock().unwrap();
@@ -302,6 +305,7 @@ pub(super) fn isolate_main(
             Ok(Some(2))
         );
     let _ = super::super::lineage_v8::eval::<serde_json::Value>(&mut runtime, INSTALL_HOST_HOOKS);
+    frame_ready.store(true, std::sync::atomic::Ordering::Release);
     let _ = setup.send(SetupMessage::Ready(Ok(())));
     tick_loop(
         runtime,
@@ -857,33 +861,39 @@ fn finish_tick(
                 .to_string(),
         ));
     }
-    let reason = requested_stop(runtime)?;
-    let event = crate::events::NativeEvent::ScriptFinish {
-        reason: reason.clone(),
-    };
-    if let Err(message) = super::super::snapshot::dispatch_native_events(runtime, &[event]) {
-        let _ = out.send(ThreadMsg::Log(format!("script.finish dispatch: {message}")));
-    } else {
-        let flush = call_interruptible(runtime, teardown, |runtime| {
-            runtime.call_function_immediate::<()>(
-                None,
-                "__rs2b0t_flush_native_events",
-                json_args!(),
-            )
-        });
-        if let Err(message) = flush {
-            let _ = out.send(ThreadMsg::Log(format!("script.finish flush: {message}")));
-        } else {
-            pump_event_loop(runtime, out, n, generation, teardown);
+    if let Some((reason, request_finish)) = requested_stop(runtime) {
+        if request_finish {
+            let event = crate::events::NativeEvent::ScriptFinish {
+                reason: reason.clone(),
+            };
+            if let Err(message) = super::super::snapshot::dispatch_native_events(runtime, &[event])
+            {
+                let _ = out.send(ThreadMsg::Log(format!("script.finish dispatch: {message}")));
+            } else {
+                let flush = call_interruptible(runtime, teardown, |runtime| {
+                    runtime.call_function_immediate::<()>(
+                        None,
+                        "__rs2b0t_flush_native_events",
+                        json_args!(),
+                    )
+                });
+                if let Err(message) = flush {
+                    let _ = out.send(ThreadMsg::Log(format!("script.finish flush: {message}")));
+                } else {
+                    pump_event_loop(runtime, out, n, generation, teardown);
+                }
+            }
         }
+        Some(reason)
+    } else {
+        None
     }
-    Some(reason)
 }
 
-/// ScriptRunner.stop's flag and bounded reason, read off the host handle
-/// through V8 (no script).
-fn requested_stop(runtime: &mut Runtime) -> Option<String> {
-    super::super::lineage_v8::enter_root(runtime, |runtime| {
+/// Read stop reason and whether AbstractBot.requestFinish requested the
+/// stop. ScriptRunner.stop shares the stop flag but does not emit script.finish.
+fn requested_stop(runtime: &mut Runtime) -> Option<(String, bool)> {
+    let requested = super::super::lineage_v8::enter_root(runtime, |runtime| {
         let scope = &mut runtime.deno_runtime().handle_scope();
         let global = scope.get_current_context().global(scope);
         let host_key = key_string(scope, "__rs2b0t_host").ok()?;
@@ -898,8 +908,15 @@ fn requested_stop(runtime: &mut Runtime) -> Option<String> {
             .filter(|reason| reason.is_string())
             .map(|reason| reason.to_rust_string_lossy(scope))
             .unwrap_or_default();
-        Some(bounded_stop_reason(reason))
-    })
+        let request_finish = key_string(scope, "requestFinishRequested")
+            .ok()
+            .and_then(|key| host.get(scope, key.into()))
+            .is_some_and(|requested| requested.boolean_value(scope));
+        Some((bounded_stop_reason(reason), request_finish))
+    })?;
+    // Isolates may be reused for another Load after a clean stop.
+    let _ = set_host_field(runtime, "requestFinishRequested", HostValue::Null);
+    Some(requested)
 }
 
 /// The settle promise of a compat method invoker or a v1 native tick: it

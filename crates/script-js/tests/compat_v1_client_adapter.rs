@@ -2116,6 +2116,12 @@ export default class SiblingNamer extends LoopingBot {
 import { reader } from '../../adapter/ClientAdapter.js';
 export const paint = (x, z) => reader.overlayPosWorld(x, z, 0, 0.5, 0.5);
 "#;
+    const AREA: &str = r#"
+import { reader } from '../../adapter/ClientAdapter.js';
+export default class AreaNamer extends LoopingBot {
+    async loop() { globalThis.__p = reader.projectAreaGameWorld(1, 2, 0, 0.5, 0.5); }
+}
+"#;
     const SILENT: &str = r#"
 export default class Silent extends LoopingBot {
     async loop() { globalThis.__locBoxes = 1; }
@@ -2139,6 +2145,7 @@ export default class Silent extends LoopingBot {
         ),
         "a loaded sibling names overlayPosWorld"
     );
+    assert!(wanted(AREA, vec![]), "the card names projectAreaGameWorld");
     assert!(
         !wanted(SILENT, vec![]),
         "an identifier that only contains a reader name is not a reader"

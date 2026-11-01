@@ -1456,6 +1456,7 @@ fn select_button_labels_by_varp<'s>(
     }
     Ok(output.into())
 }
+
 fn is_combat_style_label(label: &str) -> bool {
     let label = label.trim();
     ["(accurate)", "(aggressive)", "(controlled)", "(defensive)"]

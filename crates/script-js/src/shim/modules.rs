@@ -128,9 +128,8 @@ globalThis.LoopingBot = class LoopingBot {
         h.log.push(String(message));
     }
     // Frozen AbstractBot finish: a bound sink (a delegating parent)
-    // hears the reason; otherwise the host ends this script cleanly
-    // with it, the same flag ScriptRunner.stop sets. Rust owns the
-    // teardown, the bounded reason and the Stopped receipt.
+    // hears the reason; otherwise only requestFinish marks the clean host
+    // stop that emits script.finish. ScriptRunner.stop remains silent.
     requestFinish(reason) {
         if (this._finishSink) {
             this._finishSink(reason);
@@ -138,6 +137,7 @@ globalThis.LoopingBot = class LoopingBot {
         }
         const h = globalThis.__rs2b0t_host;
         h.stopRequested = true;
+        h.requestFinishRequested = true;
         if (typeof reason === 'string') h.stopReason = reason;
     }
     bindFinish(sink) {

@@ -456,6 +456,8 @@ pub(crate) fn script_observe_cached_with_channels(
     service_arm: Option<&SlotArm>,
     statuses: Option<&Arc<Mutex<Vec<crate::SlotStatus>>>>,
 ) -> ScriptObservation {
+    #[cfg(not(feature = "js"))]
+    let _ = guardian_active_event;
     if let Some(inp) = slot_input {
         inp.set_host_consume_allowed(up && !hold);
         if let Some(snapshot) = snapshot {

@@ -346,6 +346,8 @@ pub struct LoadIsolate {
     /// dispatch stays pending until its late receipt is drained, so the host
     /// never queues frames behind an isolate that is still handling one.
     frame_ack_state: Arc<Mutex<FrameAckState>>,
+    frame_dispatch: Arc<FrameDispatch>,
+    frame_ready: Arc<std::sync::atomic::AtomicBool>,
     stopped: std::sync::atomic::AtomicBool,
     /// One bounded, non-consuming terminal receipt for ScriptRunner.stop.
     script_stop: Mutex<Option<ScriptStopReceipt>>,
@@ -399,7 +401,7 @@ pub struct LoadIsolate {
     /// setup finish. The terminate stays armed until the isolate thread
     /// has returned from the tick and clears it there (a cancel from this
     /// side would race the interrupt and make it a no-op).
-    terminate: OnceLock<v8::IsolateHandle>,
+    terminate: Arc<OnceLock<v8::IsolateHandle>>,
     /// Setup receiver plus deadline; resolved from the slot observe.
     setup: Mutex<SetupState>,
     /// The tick currently being dispatched and when it was sent; the
@@ -443,22 +445,26 @@ enum SetupState {
 }
 struct FrameAckState {
     receiver: Receiver<()>,
-    next_id: u64,
-    pending: Option<u64>,
+    pending: bool,
     disconnected: bool,
 }
 
 struct FrameDispatch {
     state: Arc<Mutex<FrameAckState>>,
-    id: u64,
     watchdog: FrameWatchdog,
 }
 
 struct FrameWatchdog {
     teardown: Arc<Mutex<TeardownState>>,
-    terminate: Option<v8::IsolateHandle>,
+    terminate: Arc<OnceLock<v8::IsolateHandle>>,
     logs: Arc<Mutex<Vec<String>>>,
-    ready: bool,
+    ready: Arc<std::sync::atomic::AtomicBool>,
+}
+
+impl FrameDispatch {
+    fn handle(self: &Arc<Self>) -> Arc<dyn script::surface::ClientFrameDispatch> {
+        Arc::clone(self) as Arc<dyn script::surface::ClientFrameDispatch>
+    }
 }
 
 impl script::surface::ClientFrameDispatch for FrameDispatch {
@@ -469,7 +475,7 @@ impl script::surface::ClientFrameDispatch for FrameDispatch {
             Err(std::sync::TryLockError::Poisoned(error)) => error.into_inner(),
             Err(std::sync::TryLockError::WouldBlock) => return false,
         };
-        if state.pending != Some(self.id) {
+        if !state.pending {
             return false;
         }
         loop {
@@ -482,11 +488,11 @@ impl script::surface::ClientFrameDispatch for FrameDispatch {
                 .recv_timeout(remaining.min(CLIENT_FRAME_ACK_POLL))
             {
                 Ok(()) => {
-                    state.pending = None;
+                    state.pending = false;
                     return true;
                 }
                 Err(mpsc::RecvTimeoutError::Disconnected) => {
-                    state.pending = None;
+                    state.pending = false;
                     state.disconnected = true;
                     return false;
                 }
@@ -502,9 +508,9 @@ impl FrameWatchdog {
     fn interrupt_slow_execution(&self) {
         interrupt_slow_execution_shared(
             &self.teardown,
-            self.terminate.as_ref(),
+            self.terminate.get(),
             &self.logs,
-            self.ready,
+            self.ready.load(std::sync::atomic::Ordering::Acquire),
         );
     }
 }
@@ -887,10 +893,14 @@ impl LoadIsolate {
         let (frame_ack_tx, frame_ack_rx) = mpsc::sync_channel(1);
         let frame_ack_state = Arc::new(Mutex::new(FrameAckState {
             receiver: frame_ack_rx,
-            next_id: 0,
-            pending: None,
+            pending: false,
             disconnected: false,
         }));
+        let frame_ready = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let thread_frame_ready = Arc::clone(&frame_ready);
+        let terminate = Arc::new(OnceLock::new());
+        let thread_terminate = Arc::clone(&terminate);
+        let logs = Arc::new(Mutex::new(Vec::new()));
         let queued = std::sync::Arc::new(AtomicUsize::new(0));
         let thread_queued = queued.clone();
         let walking_ownership = std::sync::Arc::new(crate::machine::WalkingOwnership::default());
@@ -920,8 +930,10 @@ impl LoadIsolate {
                     thread_paint_generation,
                     thread_teardown,
                     thread_frame_interest,
+                    thread_frame_ready,
                     thread_loc_projection_interest,
                     frame_ack_tx,
+                    thread_terminate,
                     thread_proof,
                     execution,
                     local_state,
@@ -943,14 +955,24 @@ impl LoadIsolate {
             paint_generation,
             frame_interest,
             loc_projection_interest,
-            frame_ack_state,
+            frame_ack_state: Arc::clone(&frame_ack_state),
+            frame_dispatch: Arc::new(FrameDispatch {
+                state: frame_ack_state,
+                watchdog: FrameWatchdog {
+                    teardown: Arc::clone(&teardown),
+                    terminate: Arc::clone(&terminate),
+                    logs: Arc::clone(&logs),
+                    ready: Arc::clone(&frame_ready),
+                },
+            }),
+            frame_ready,
             stopped: std::sync::atomic::AtomicBool::new(false),
             script_stop: Mutex::new(None),
             tx,
             queued,
             snapshot_refused: AtomicBool::new(false),
             rx: Mutex::new(msg_rx),
-            logs: Arc::new(Mutex::new(Vec::new())),
+            logs,
             tick_errors: Mutex::new(HashMap::new()),
             tick_outcomes: Mutex::new(Vec::new()),
             tick_outcome_error_generation: Mutex::new(None),
@@ -964,7 +986,7 @@ impl LoadIsolate {
             paint: Mutex::new(None),
             ignored_randoms: Mutex::new(Vec::new()),
             handle: Some(handle),
-            terminate: OnceLock::new(),
+            terminate,
             setup: Mutex::new(SetupState::Pending {
                 rx: setup_rx,
                 deadline: Instant::now() + SETUP_TIMEOUT,
@@ -1036,12 +1058,12 @@ impl LoadIsolate {
             Err(std::sync::TryLockError::Poisoned(error)) => error.into_inner(),
             Err(std::sync::TryLockError::WouldBlock) => return None,
         };
-        if state.pending.is_some() {
+        if state.pending {
             match state.receiver.try_recv() {
-                Ok(()) => state.pending = None,
+                Ok(()) => state.pending = false,
                 Err(mpsc::TryRecvError::Empty) => return None,
                 Err(mpsc::TryRecvError::Disconnected) => {
-                    state.pending = None;
+                    state.pending = false;
                     state.disconnected = true;
                     return None;
                 }
@@ -1057,23 +1079,13 @@ impl LoadIsolate {
         {
             return None;
         }
-        let ready = self.poll_ready() == Ready::Ready;
+        let _ = self.poll_ready();
         if !self.send(IsolateCmd::ClientFrame) {
             return None;
         }
-        let id = state.next_id;
-        state.next_id = state.next_id.wrapping_add(1);
-        state.pending = Some(id);
-        Some(Arc::new(FrameDispatch {
-            state: Arc::clone(&self.frame_ack_state),
-            id,
-            watchdog: FrameWatchdog {
-                teardown: Arc::clone(&self.teardown),
-                terminate: self.terminate.get().cloned(),
-                logs: Arc::clone(&self.logs),
-                ready,
-            },
-        }))
+        state.pending = true;
+        drop(state);
+        Some(self.frame_dispatch.handle())
     }
 
     /// Deliver one host-owned client-loop frame without queueing another
@@ -1781,6 +1793,8 @@ impl LoadIsolate {
                     // A tick queued before setup finished starts running
                     // now: measure its budget from actual V8 readiness, not
                     // from the send time.
+                    self.frame_ready
+                        .store(true, std::sync::atomic::Ordering::Release);
                     if let Some(entry) = lock_after_isolate_failure(&self.in_flight).as_mut() {
                         entry.2 = Instant::now();
                     }
