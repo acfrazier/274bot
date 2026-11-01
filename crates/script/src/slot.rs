@@ -1515,17 +1515,24 @@ impl SlotScript {
     /// Deliver one client-loop frame to a live surface. This is independent
     /// of game ticks and remains gated by the slot-owned lifecycle.
     pub fn on_client_frame(&mut self) -> bool {
+        self.begin_client_frame()
+            .is_some_and(|dispatch| dispatch.wait_for_ack())
+    }
+    /// Queue a live surface's client frame without waiting for its isolate.
+    /// The caller must release the slot lock before waiting on the returned
+    /// dispatch.
+    pub fn begin_client_frame(
+        &mut self,
+    ) -> Option<Arc<dyn crate::surface::ClientFrameDispatch>> {
         if !matches!(
             self.state,
             RunState::Starting | RunState::Running | RunState::Paused
         ) {
-            return false;
+            return None;
         }
-        if let Some(surface) = self.surface.as_deref_mut() {
-            surface.on_client_frame()
-        } else {
-            false
-        }
+        self.surface
+            .as_deref_mut()
+            .and_then(SurfaceRun::begin_client_frame)
     }
     /// Whether the current surface has requested projection locs.
     pub fn loc_projection_wanted(&self) -> bool {

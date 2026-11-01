@@ -1031,6 +1031,120 @@ fn report_interrupted_execution(
     let _ = out.send(ThreadMsg::ScriptCut);
 }
 
+fn arm_execution_watchdog(
+    runtime: &mut Runtime,
+    teardown: &std::sync::Arc<Mutex<TeardownState>>,
+    out: &Sender<ThreadMsg>,
+) {
+    let (id, at) = {
+        let mut state = teardown.lock().unwrap();
+        let Some(started) = state.execution_started else {
+            return;
+        };
+        if state.phase != TeardownPhase::Running
+            || !state.execution_active
+            || state.execution_interrupt.is_some()
+            || state.execution_deadline_armed
+        {
+            return;
+        }
+        if state.execution_deadline_owner.is_none() {
+            state.execution_deadline_owner = Some(ExecutionInterrupt::Watchdog);
+        }
+        state.execution_deadline_armed = true;
+        (
+            state.execution_id,
+            started + EXECUTION_WATCHDOG_HORIZON,
+        )
+    };
+    let handle = runtime
+        .deno_runtime()
+        .v8_isolate()
+        .thread_safe_handle();
+    if let Err(error) = super::register_execution_deadline(
+        teardown,
+        handle.clone(),
+        id,
+        ExecutionInterrupt::Watchdog,
+        at,
+    ) {
+        let reason = match error {
+            super::LoadIsolateError::SupervisorCapacity => DeadlineRefusal::Capacity,
+            _ => DeadlineRefusal::Stopped,
+        };
+        let mut state = teardown.lock().unwrap();
+        if state.phase == TeardownPhase::Running
+            && state.execution_active
+            && state.execution_id == id
+            && state.execution_interrupt.is_none()
+        {
+            state.execution_interrupt = Some(InterruptedExecution {
+                owner: ExecutionInterrupt::NoDeadline(reason),
+                consumed: true,
+            });
+            handle.terminate_execution();
+        }
+        let _ = out.send(ThreadMsg::Log(error.to_string()));
+    }
+}
+
+fn report_interrupted_lifecycle_hook(
+    interrupt: Option<InterruptedExecution>,
+    out: &Sender<ThreadMsg>,
+    hook: &str,
+) {
+    let Some(interrupt) = interrupt.filter(|interrupt| interrupt.consumed) else {
+        return;
+    };
+    let reason = match interrupt.owner {
+        ExecutionInterrupt::Watchdog => "runaway execution interrupted by watchdog",
+        ExecutionInterrupt::Pause => "runaway execution interrupted by Pause deadline",
+        ExecutionInterrupt::SessionReset => {
+            "runaway execution interrupted by session-reset deadline"
+        }
+        ExecutionInterrupt::NoDeadline(DeadlineRefusal::Capacity) => {
+            "execution interrupted: JS deadline supervisor is at capacity"
+        }
+        ExecutionInterrupt::NoDeadline(DeadlineRefusal::Stopped) => {
+            "execution interrupted: JS deadline supervisor worker stopped"
+        }
+    };
+    let _ = out.send(ThreadMsg::Log(format!("{hook} interrupted: {reason}")));
+    let _ = out.send(ThreadMsg::ScriptCut);
+}
+
+fn fire_compat_lifecycle_hook(
+    runtime: &mut Runtime,
+    teardown: &std::sync::Arc<Mutex<TeardownState>>,
+    out: &Sender<ThreadMsg>,
+    generation: u64,
+    hook: &str,
+    function: &str,
+) {
+    if !begin_lifecycle_hook_execution(teardown, generation) {
+        return;
+    }
+    arm_execution_watchdog(runtime, teardown, out);
+    let result = call_interruptible(runtime, teardown, |runtime| {
+        runtime.call_function_immediate::<Option<String>>(None, function, json_args!())
+    });
+    let interrupt = finish_interruptible_execution(runtime, teardown);
+    let was_cut = interrupt.is_some_and(|interrupt| interrupt.consumed);
+    report_interrupted_lifecycle_hook(interrupt, out, hook);
+    if !was_cut {
+        match result {
+            Ok(Some(message)) => {
+                let _ = out.send(ThreadMsg::Log(format!("{hook} threw: {message}")));
+            }
+            Ok(None) => {}
+            Err(error) => {
+                let _ = out.send(ThreadMsg::Log(format!("{hook} failed: {error}")));
+            }
+        }
+        drain_bot_log(runtime, out);
+    }
+}
+
 fn fire_tick_listeners(runtime: &mut Runtime, teardown: &Mutex<TeardownState>) {
     let _ = call_interruptible(runtime, teardown, |runtime| {
         crate::bindings::event_callbacks::emit_no_args(
@@ -2510,22 +2624,15 @@ fn tick_loop(
                 sync_work_freeze(&mut work_frozen, true);
                 clear_unconsumed_paint_click(&mut runtime);
                 if compat && just_paused {
-                    match runtime.call_function_immediate::<Option<String>>(
-                        None,
+                    let generation = work_generation.load(std::sync::atomic::Ordering::Acquire);
+                    fire_compat_lifecycle_hook(
+                        &mut runtime,
+                        &teardown,
+                        &out,
+                        generation,
+                        "onPause",
                         "__rs2b0t_compat_on_pause",
-                        json_args!(),
-                    ) {
-                        Ok(Some(message)) => {
-                            let _ = out.send(ThreadMsg::Log(format!("onPause threw: {message}")));
-                        }
-                        Ok(None) => {}
-                        Err(error) => {
-                            let _ = out.send(ThreadMsg::Log(format!("onPause failed: {error}")));
-                        }
-                    }
-                    // Ticks are parked while paused, so the hook's `this.log`
-                    // rows go out now, as upstream's log writes at once.
-                    drain_bot_log(&mut runtime, &out);
+                    );
                 }
             }
             IsolateCmd::ManualWalkTakeover(seq) => {
@@ -2537,20 +2644,15 @@ fn tick_loop(
                 let _ = event_producer.set_paused(false);
                 sync_work_freeze(&mut work_frozen, session_held);
                 if compat && was_paused {
-                    match runtime.call_function_immediate::<Option<String>>(
-                        None,
+                    let generation = work_generation.load(std::sync::atomic::Ordering::Acquire);
+                    fire_compat_lifecycle_hook(
+                        &mut runtime,
+                        &teardown,
+                        &out,
+                        generation,
+                        "onResume",
                         "__rs2b0t_compat_on_resume",
-                        json_args!(),
-                    ) {
-                        Ok(Some(message)) => {
-                            let _ = out.send(ThreadMsg::Log(format!("onResume threw: {message}")));
-                        }
-                        Ok(None) => {}
-                        Err(error) => {
-                            let _ = out.send(ThreadMsg::Log(format!("onResume failed: {error}")));
-                        }
-                    }
-                    drain_bot_log(&mut runtime, &out);
+                    );
                 }
             }
             IsolateCmd::PaintClick { id, generation } => {
