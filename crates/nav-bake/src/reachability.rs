@@ -2,6 +2,7 @@
 
 use std::collections::{BTreeSet, HashSet};
 use std::path::Path;
+use std::time::Instant;
 
 use api::obj_names::LocDefs;
 use api::query::loc_approach::{
@@ -89,6 +90,8 @@ fn bake_atlas_inner(
         }
     };
 
+    let started = Instant::now();
+    eprintln!("nav-pack: atlas: scanning {n} cells");
     let mut dense = vec![u32::MAX; n];
     let mut cells = Vec::new();
     for (i, slot) in dense.iter_mut().enumerate() {
@@ -97,8 +100,17 @@ fn bake_atlas_inner(
             cells.push(i);
         }
     }
+    eprintln!(
+        "nav-pack: atlas: {} walkable tiles in {:?}",
+        cells.len(),
+        started.elapsed()
+    );
     let labels = movement_labels(collision, &cells, &dense, &at, idx)?;
     let base_count = labels.iter().copied().max().unwrap_or(0);
+    eprintln!(
+        "nav-pack: atlas: {base_count} movement components in {:?}",
+        started.elapsed()
+    );
     let mut base_sizes = vec![0u32; base_count as usize];
     for &label in &labels {
         if label > 0 {
@@ -132,7 +144,16 @@ fn bake_atlas_inner(
             }
         }
     }
+    eprintln!(
+        "nav-pack: atlas: computing movement closures for {} components after {:?}",
+        movement_adj.len(),
+        started.elapsed()
+    );
     let (movement_offsets, movement_runs) = closures_from_adj(&movement_adj)?;
+    eprintln!(
+        "nav-pack: atlas: movement closures done in {:?}",
+        started.elapsed()
+    );
 
     let mut coverage = Vec::new();
     let mut exceptional = Vec::new();
@@ -187,7 +208,16 @@ fn bake_atlas_inner(
             }
         }
     }
+    eprintln!(
+        "nav-pack: atlas: computing transport closures for {} condensed components after {:?}",
+        condensed_adj.len(),
+        started.elapsed()
+    );
     let (transport_offsets, transport_runs) = closures_from_adj(&condensed_adj)?;
+    eprintln!(
+        "nav-pack: atlas: transport closures done in {:?}",
+        started.elapsed()
+    );
     let mut cond_by_src = vec![Vec::<ConditionalJoin>::new(); condensed_count as usize];
     for (src_base, join) in conditional {
         let src = condensed[src_base as usize];
@@ -253,7 +283,17 @@ fn bake_atlas_inner(
         }
     }
 
+    eprintln!(
+        "nav-pack: atlas: baking placements after {:?}",
+        started.elapsed()
+    );
     let (placements, stands) = bake_placements(collision, maps_dir, loc_defs, &labels, idx)?;
+    eprintln!(
+        "nav-pack: atlas: {} placements, {} stands in {:?}",
+        placements.len(),
+        stands.len(),
+        started.elapsed()
+    );
 
     let reach_bits = bake_reach(collision, graph);
     let legacy_paint = bit_runs(&reach_bits, n);
@@ -469,15 +509,19 @@ fn scc_ids(adj: &[BTreeSet<u32>]) -> Vec<u32> {
             continue;
         }
         seen[seed] = true;
-        let mut stack = vec![(seed, 0usize)];
-        while let Some((node, next)) = stack.last_mut() {
-            let dests: Vec<usize> = adj[*node].iter().map(|&d| d as usize).collect();
+        let mut stack = vec![(
+            seed,
+            adj[seed].iter().map(|&d| d as usize).collect::<Vec<_>>(),
+            0usize,
+        )];
+        while let Some((node, dests, next)) = stack.last_mut() {
             if *next < dests.len() {
                 let n = dests[*next];
                 *next += 1;
                 if !seen[n] {
                     seen[n] = true;
-                    stack.push((n, 0));
+                    let child = adj[n].iter().map(|&d| d as usize).collect::<Vec<_>>();
+                    stack.push((n, child, 0));
                 }
             } else {
                 order.push(*node);
@@ -510,35 +554,115 @@ fn scc_ids(adj: &[BTreeSet<u32>]) -> Vec<u32> {
 }
 
 fn closures_from_adj(adj: &[BTreeSet<u32>]) -> Result<ClosureTables, PackError> {
-    let n = adj.len() as u32;
-    let mut offsets = vec![0u32];
-    let mut runs = Vec::new();
-    for seed in 0..n {
-        let mut reachable = BTreeSet::from([seed]);
-        let mut stack = vec![seed];
-        while let Some(node) = stack.pop() {
-            for &next in &adj[node as usize] {
-                if reachable.insert(next) {
-                    stack.push(next);
+    let n = adj.len();
+    if n == 0 {
+        return Ok((Box::from([0u32]), Box::from([])));
+    }
+    let words = n.div_ceil(64);
+    let cells = n
+        .checked_mul(words)
+        .ok_or_else(|| PackError::BadLength("atlas closure bitset overflows".into()))?;
+    let mut reach = vec![0u64; cells];
+    match dag_reverse_topo(adj) {
+        Some(order) => {
+            for u in order {
+                let base = u * words;
+                reach[base + u / 64] |= 1u64 << (u % 64);
+                for &v in &adj[u] {
+                    let vb = v as usize * words;
+                    for w in 0..words {
+                        reach[base + w] |= reach[vb + w];
+                    }
                 }
             }
         }
+        None => {
+            for seed in 0..n {
+                let base = seed * words;
+                let mut stack = vec![seed];
+                reach[base + seed / 64] |= 1u64 << (seed % 64);
+                while let Some(node) = stack.pop() {
+                    for &next in &adj[node] {
+                        let next = next as usize;
+                        let word = &mut reach[base + next / 64];
+                        let bit = 1u64 << (next % 64);
+                        if *word & bit == 0 {
+                            *word |= bit;
+                            stack.push(next);
+                        }
+                    }
+                }
+            }
+        }
+    }
+    bitsets_to_closure_runs(&reach, n, words)
+}
+
+fn dag_reverse_topo(adj: &[BTreeSet<u32>]) -> Option<Vec<usize>> {
+    let n = adj.len();
+    let mut indeg = vec![0usize; n];
+    for dests in adj {
+        for &dst in dests {
+            indeg[dst as usize] += 1;
+        }
+    }
+    let mut ready: Vec<usize> = indeg
+        .iter()
+        .enumerate()
+        .filter_map(|(i, &d)| (d == 0).then_some(i))
+        .collect();
+    let mut topo = Vec::with_capacity(n);
+    while let Some(u) = ready.pop() {
+        topo.push(u);
+        for &v in &adj[u] {
+            let v = v as usize;
+            indeg[v] -= 1;
+            if indeg[v] == 0 {
+                ready.push(v);
+            }
+        }
+    }
+    if topo.len() != n {
+        return None;
+    }
+    topo.reverse();
+    Some(topo)
+}
+
+fn bitsets_to_closure_runs(
+    reach: &[u64],
+    n: usize,
+    words: usize,
+) -> Result<ClosureTables, PackError> {
+    let mut offsets = vec![0u32];
+    let mut runs = Vec::new();
+    for u in 0..n {
+        let base = u * words;
         let mut first = None;
         let mut count = 0u32;
-        for id in reachable {
-            match first {
-                Some(start) if start + count == id => count += 1,
-                Some(start) => {
-                    runs.push(ClosureRun {
-                        first: start,
-                        count,
-                    });
-                    first = Some(id);
-                    count = 1;
+        for w in 0..words {
+            let mut word = reach[base + w];
+            while word != 0 {
+                let bit = word.trailing_zeros();
+                word &= word - 1;
+                let id = (w * 64 + bit as usize) as u32;
+                if id as usize >= n {
+                    continue;
                 }
-                None => {
-                    first = Some(id);
-                    count = 1;
+                match first {
+                    Some(start) if start + count == id => count += 1,
+                    Some(start) => {
+                        runs.push(ClosureRun {
+                            first: start,
+                            count,
+                        });
+                        first = Some(id);
+                        count = 1;
+                    }
+                    None => {
+                        first = Some(id);
+                        count = 1;
+                    }
                 }
             }
         }
@@ -552,9 +676,6 @@ fn closures_from_adj(adj: &[BTreeSet<u32>]) -> Result<ClosureTables, PackError> 
             u32::try_from(runs.len())
                 .map_err(|_| PackError::BadLength("atlas closure run count exceeds u32".into()))?,
         );
-    }
-    if n == 0 {
-        offsets = vec![0];
     }
     Ok((offsets.into_boxed_slice(), runs.into_boxed_slice()))
 }
@@ -835,4 +956,51 @@ fn scatter_runs(
         })
         .collect();
     bit_runs(&words, plane)
+}
+
+#[cfg(test)]
+mod closure_tests {
+    use super::*;
+
+    fn runs_for(adj: Vec<BTreeSet<u32>>) -> Vec<Vec<(u32, u32)>> {
+        let (offsets, runs) = closures_from_adj(&adj).unwrap();
+        (0..adj.len())
+            .map(|i| {
+                let start = offsets[i] as usize;
+                let end = offsets[i + 1] as usize;
+                runs[start..end]
+                    .iter()
+                    .map(|run| (run.first, run.count))
+                    .collect()
+            })
+            .collect()
+    }
+
+    #[test]
+    fn empty_graph_has_no_closure_runs() {
+        let (offsets, runs) = closures_from_adj(&[]).unwrap();
+        assert_eq!(&*offsets, &[0]);
+        assert!(runs.is_empty());
+    }
+
+    #[test]
+    fn chain_closure_covers_self_and_descendants() {
+        let mut adj = vec![BTreeSet::new(); 3];
+        adj[0].insert(1);
+        adj[1].insert(2);
+        assert_eq!(
+            runs_for(adj),
+            vec![vec![(0, 3)], vec![(1, 2)], vec![(2, 1)]]
+        );
+    }
+
+    #[test]
+    fn disconnected_ids_encode_separate_runs() {
+        let mut adj = vec![BTreeSet::new(); 3];
+        adj[0].insert(2);
+        assert_eq!(
+            runs_for(adj),
+            vec![vec![(0, 1), (2, 1)], vec![(1, 1)], vec![(2, 1)]]
+        );
+    }
 }
