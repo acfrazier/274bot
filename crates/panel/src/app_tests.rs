@@ -1058,7 +1058,10 @@ fn deferred_startup_redraw_is_limited_to_instrumented_builds() {
     );
     assert_eq!(
         startup.needs_redraw(true),
-        cfg!(any(feature = "render-diagnostics", feature = "render-test-hooks")),
+        cfg!(any(
+            feature = "render-diagnostics",
+            feature = "render-test-hooks"
+        )),
         "only diagnostic or test-hook builds request a second startup frame"
     );
     assert!(!StartupPreparation::new(None).needs_redraw(false));

@@ -2055,7 +2055,7 @@ struct ImguiState {
 struct AppWindow {
     // Kept alive to ensure the surface outlives its instance on all backends.
     #[cfg_attr(
-        not(test),
+        any(not(test), feature = "render-diagnostics"),
         expect(
             dead_code,
             reason = "kept alive so the surface outlives its instance on all backends"
