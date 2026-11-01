@@ -8992,8 +8992,9 @@ mod diagnostic_tests {
             assert!(job.native_failure.is_none());
             job.handle_search(SearchOutcome::UnresolvedQuestGates(Ok(None)), 0)
                 .unwrap();
-            assert_eq!(job.search_purpose, RouteSearchPurpose::MissingCarry);
-            assert_eq!(job.native_failure, Some(script::native::WalkEnd::Failed));
+            assert_eq!(job.search_purpose, RouteSearchPurpose::Unresolved);
+            assert!(matches!(job.stage, RouteJobStage::Diagnostics));
+            assert_eq!(job.native_failure, Some(script::native::WalkEnd::NoPath));
         }
     }
 
@@ -9006,7 +9007,9 @@ mod diagnostic_tests {
         job.search_purpose = RouteSearchPurpose::Blocking;
         job.handle_search(SearchOutcome::BlockingZones(None), 0)
             .unwrap();
-        assert_eq!(job.search_purpose, RouteSearchPurpose::MissingCarry);
+        assert_eq!(job.search_purpose, RouteSearchPurpose::Blocking);
+        assert!(matches!(job.stage, RouteJobStage::Diagnostics));
+        assert!(job.native_failure.is_none());
     }
 
     #[test]

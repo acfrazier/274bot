@@ -1982,8 +1982,8 @@ fn eligible_ordinary_group_walk_without_snapshot_uses_validated_status_origin() 
 
 #[test]
 fn catalog_gated_group_walk_without_snapshot_cannot_start_a_prerequisite() {
-    use nav_planner::quest_gates::{QuestEvidence, QuestGates};
-    use nav_planner::test_support::{family, stamp};
+    use nav_planner::quest_gates::{QuestEvidence, QuestFamilyId, QuestGates};
+    use nav_planner::test_support::stamp;
 
     struct ClosedGate;
     impl api::quest_progress::EvidenceProvider for ClosedGate {
@@ -2000,8 +2000,13 @@ fn catalog_gated_group_walk_without_snapshot_cannot_start_a_prerequisite() {
     }
 
     let selected = api::game_data::for_revision(api::selected::ClientRevision::R289).unwrap();
-    let catalog = api::selected::FamilyPreparation::run(move |worker| {
-        selected.prepare_prereq_steps(worker).unwrap()
+    let (catalog, quest_family) = api::selected::FamilyPreparation::run(move |worker| {
+        selected.prepare_quests(worker).unwrap();
+        let catalog = selected.prepare_prereq_steps(worker).unwrap();
+        let identity = selected
+            .quest_family_identity()
+            .expect("prepared quests have a verified family identity");
+        (catalog, QuestFamilyId::new(identity.sha256, identity.schema))
     })
     .unwrap()
     .join()
@@ -2059,13 +2064,13 @@ fn catalog_gated_group_walk_without_snapshot_cannot_start_a_prerequisite() {
     gate_edge.takeoff = Some(crossing.takeoff);
     gate_edge.quest_gates = Some(
         QuestGates::new(
-            family(7),
+            quest_family,
             [api::selected::QuestGate::Window(row.establishes.clone())],
         )
         .unwrap(),
     );
     let mut graph = TransportGraph {
-        quest_family: Some(family(7)),
+        quest_family: Some(quest_family),
         ..TransportGraph::default()
     };
     graph.at.insert(crossing.takeoff, vec![0]);
@@ -2086,7 +2091,7 @@ fn catalog_gated_group_walk_without_snapshot_cannot_start_a_prerequisite() {
     state.establishable = Some(catalog.establishable_windows());
     state.quest_evidence = Some(QuestEvidence::new(
         Arc::new(ClosedGate),
-        family(7),
+        quest_family,
         stamp(1),
     ));
     assert!(

@@ -6092,8 +6092,8 @@ fn s2b_admission_per_bot_layouts() {
     // Prerequisite hop tracking and captured logical-walk ownership add 240 B
     // to NavBot, including 24 B for physical takeoff/destination identity;
     // the slot's manual-run alias and exact bank policy add 32 B.
-    // Linux x86_64 measured 4056 B / 1656 B on this branch. The batch owns
-    // the corresponding macOS pre-FLOOR and Linux/Windows memory lanes.
+    // Linux x86_64 actually measures 4056 B / 1576 B in the composed tree.
+    // The macOS tuple must be measured separately; pre-FLOOR and memory A/B remain owed.
     #[cfg(all(
         target_os = "macos",
         target_arch = "aarch64",
@@ -6121,7 +6121,7 @@ fn s2b_admission_per_bot_layouts() {
             std::mem::size_of::<script::combat::Combat>(),
             std::mem::size_of::<script::combat::WalkGuard>()
         ),
-        (4056, 1656, 520, 264)
+        (4056, 1576, 520, 264)
     );
     // Combat is 520 B with bounded approach retries; retain 8 B of headroom.
     assert!(std::mem::size_of::<script::combat::Combat>() <= 528);
