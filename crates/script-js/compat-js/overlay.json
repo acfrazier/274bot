@@ -537,7 +537,7 @@
     "module": "api/equipment/Equipment.js",
     "selector": "Equipment.items",
     "reason": "The native equipment facade reuses its deeply frozen item instances while the posted inventory and interface generations stay unchanged; audited consumers only inspect or filter them.",
-    "runtime": "crates/script-js/src/materialize/inventory_v8.rs:910",
+    "runtime": "crates/script-js/src/materialize/inventory_v8.rs:917",
     "declaration": "items(): readonly Readonly<InvItem>[];"
   },
   {
