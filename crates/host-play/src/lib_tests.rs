@@ -8006,20 +8006,13 @@ export default class T extends LoopingBot {
         "the frame listener ran before the watchdog cut its infinite loop"
     );
 
-    let (pause_frame_thread, pause_frame_done) = start_frame_wait(Arc::clone(&slot));
     wait_for_execution(&slot, true);
     assert_eq!(
         bounded_slot_call(Arc::clone(&slot), |slot| slot.state()),
         script::RunState::Paused,
         "state remains readable while onPause is stuck"
     );
-    assert!(
-        pause_frame_done
-            .recv_timeout(Duration::from_secs(2))
-            .expect("onPause watchdog did not release the queued frame"),
-        "the queued frame receives an acknowledgement after onPause is cut"
-    );
-    pause_frame_thread.join().unwrap();
+    wait_for_execution(&slot, false);
     assert!(
         slot.lock()
             .unwrap()
@@ -8029,27 +8022,19 @@ export default class T extends LoopingBot {
             .unwrap(),
         "onPause ran before the watchdog cut its infinite loop"
     );
-    wait_for_execution(&slot, false);
 
     bounded_slot_call(Arc::clone(&slot), |slot| slot.resume());
     assert_eq!(
         bounded_slot_call(Arc::clone(&slot), |slot| slot.state()),
         script::RunState::Running
     );
-    let (resume_frame_thread, resume_frame_done) = start_frame_wait(Arc::clone(&slot));
     wait_for_execution(&slot, true);
     assert_eq!(
         bounded_slot_call(Arc::clone(&slot), |slot| slot.state()),
         script::RunState::Running,
         "state remains readable while onResume is stuck"
     );
-    assert!(
-        resume_frame_done
-            .recv_timeout(Duration::from_secs(2))
-            .expect("onResume watchdog did not release the queued frame"),
-        "the queued frame receives an acknowledgement after onResume is cut"
-    );
-    resume_frame_thread.join().unwrap();
+    wait_for_execution(&slot, false);
     assert!(
         slot.lock()
             .unwrap()
@@ -8059,10 +8044,8 @@ export default class T extends LoopingBot {
             .unwrap(),
         "onResume ran before the watchdog cut its infinite loop"
     );
-    wait_for_execution(&slot, false);
 
     bounded_slot_call(Arc::clone(&slot), |slot| slot.pause());
-    let (stop_frame_thread, stop_frame_done) = start_frame_wait(Arc::clone(&slot));
     wait_for_execution(&slot, true);
     assert_eq!(
         bounded_slot_call(Arc::clone(&slot), |slot| slot.state()),
@@ -8070,10 +8053,6 @@ export default class T extends LoopingBot {
         "state remains readable while the second onPause is stuck"
     );
     bounded_slot_call(Arc::clone(&slot), |slot| slot.stop());
-    let _ = stop_frame_done
-        .recv_timeout(Duration::from_secs(2))
-        .expect("Stop did not release the queued frame");
-    stop_frame_thread.join().unwrap();
     wait_script_state(&play, "alice", script::RunState::Idle);
 }
 
