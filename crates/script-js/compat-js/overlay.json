@@ -307,5 +307,21 @@
     "reason": "The runtime registry shim exposes the upstream manifest registration helper at this module path.",
     "runtime": "crates/script-js/src/shim/script_registry.js:17",
     "declaration": "import type { BotManifestInput } from './defineBot.js';\nexport function registerScript(manifest: BotManifestInput, origin?: string): ScriptMeta;"
+  },
+  {
+    "id": "bank-items-readonly-snapshot",
+    "module": "api/bank/Bank.js",
+    "selector": "Bank.items",
+    "reason": "Bank.items shares the host's frozen bank-item snapshot; the upstream catalog reads the returned rows but does not mutate them.",
+    "runtime": "crates/script-js/src/shim/bank.js:47",
+    "declaration": "items(): readonly Readonly<Omit<InvItemSnapshot, 'ops'> & { ops: readonly (string | null)[] }>[];"
+  },
+  {
+    "id": "reader-bank-items-readonly-snapshot",
+    "module": "adapter/ClientAdapter.js",
+    "selector": "reader.bankItems",
+    "reason": "The native reader returns the same frozen rows for one bank session and item generation; upstream readers only inspect them.",
+    "runtime": "crates/script-js/src/shim/client_adapter.js:39",
+    "declaration": "bankItems(): readonly Readonly<Omit<InvItemSnapshot, 'ops'> & { ops: readonly (string | null)[] }>[];"
   }
 ]

@@ -416,7 +416,6 @@ fn bank_snapshot<'s>(
                         },
                     ))
                 }
-                "items" => bank_items(scope, rows),
                 "count" => {
                     // The public reduction starts at positive zero, even with no matches.
                     let name = name.as_deref().unwrap_or_default();
@@ -451,52 +450,6 @@ fn bank_snapshot<'s>(
     cb::finish(scope, rv, result);
 }
 
-fn bank_items<'s>(
-    scope: &mut v8::HandleScope<'s>,
-    rows: &[crate::observed::ItemRow],
-) -> JsResult<'s, v8::Local<'s, v8::Value>> {
-    let items = v8::Array::new(scope, 0);
-    for (index, row) in rows.iter().enumerate() {
-        let index = u32::try_from(index)
-            .map_err(|_| cb::type_error(scope, "bank items exceed the V8 array limit"))?;
-        let ops = v8::Array::new(scope, 0);
-        for (op_index, op) in row.ops.iter().enumerate() {
-            let op_index = u32::try_from(op_index)
-                .map_err(|_| cb::type_error(scope, "bank ops exceed the V8 array limit"))?;
-            let label = cb::string(scope, op);
-            if !cb::catching(scope, |s| ops.set_index(s, op_index, label))? {
-                return Err(cb::type_error(scope, "could not materialize bank item ops"));
-            }
-        }
-        let name = match row.name.as_deref() {
-            Some(name) => cb::string(scope, name),
-            None => v8::null(scope).into(),
-        };
-        let count = cb::num(scope, f64::from(row.count));
-        let id = cb::num(scope, f64::from(row.id));
-        let slot = cb::num(scope, f64::from(row.slot.unwrap_or(-1)));
-        let component_id = cb::num(scope, f64::from(row.component_id.unwrap_or(-1)));
-        let noted = v8::Boolean::new(scope, row.noted).into();
-        let cert = cb::num(scope, f64::from(row.cert));
-        let item = cb::object(
-            scope,
-            &[
-                ("name", name),
-                ("count", count),
-                ("id", id),
-                ("slot", slot),
-                ("comId", component_id),
-                ("ops", ops.into()),
-                ("noted", noted),
-                ("cert", cert),
-            ],
-        )?;
-        if !cb::catching(scope, |s| items.set_index(s, index, item))? {
-            return Err(cb::type_error(scope, "could not materialize bank items"));
-        }
-    }
-    Ok(items.into())
-}
 
 fn deposit_matcher<'s>(
     scope: &mut v8::HandleScope<'s>,

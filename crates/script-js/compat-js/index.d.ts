@@ -258,7 +258,9 @@ export const reader: {
     inventorySnapshotReady(): boolean;
     equipment(): InvItemSnapshot[];
     bankComId(): number;
-    bankItems(): InvItemSnapshot[];
+    bankItems(): readonly Readonly<Omit<InvItemSnapshot, "ops"> & {
+        ops: readonly (string | null)[];
+    }>[];
     bankSideItems(): InvItemSnapshot[];
     bankSnapshotReady(): boolean;
     bankSideSnapshotReady(): boolean;
@@ -779,7 +781,9 @@ export const Bank: {
     /** @internal */
     backpackReady(expected?: readonly BackpackItem[], log?: (msg: string) => void): Promise<boolean>;
     setNoteMode(on: boolean): Promise<void>;
-    items(): InvItemSnapshot[];
+    items(): readonly Readonly<Omit<InvItemSnapshot, "ops"> & {
+        ops: readonly (string | null)[];
+    }>[];
     count(name: string): number;
     countById(id: number): number;
     withdraw(name: string, op?: string): boolean | Promise<boolean>;
