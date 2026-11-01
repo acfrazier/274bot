@@ -356,6 +356,9 @@ fn inventory_reader_stamp<'s>(
 ) -> cb::JsResult<'s, Option<super::selected_facts_v8::ReaderListStamp>> {
     let snapshot = posted_snapshot(scope)?;
     let facts = cb::get(scope, snapshot, "client_adapter")?;
+    if facts.is_null() || facts.is_undefined() {
+        return Ok(None);
+    }
     let generations = cb::get(scope, facts, "read_generations")?;
     if generations.is_null() || generations.is_undefined() {
         return Ok(None);
