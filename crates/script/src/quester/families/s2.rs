@@ -766,6 +766,10 @@ impl StepPlan for MakePlan {
     }
 }
 
+#[expect(
+    clippy::large_enum_variant,
+    reason = "Keep the measured 248 B PrereqWalk inline in the 1176 B MakeRun; a box adds one heap allocation per running Make walk."
+)]
 enum MakeSmallHandle {
     Walk(PrereqWalk),
     UseOn(ActionHandle<super::UseOnAction>),

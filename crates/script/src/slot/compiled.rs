@@ -1144,6 +1144,10 @@ impl SlotScript {
         )
     }
 
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "Preserve private manual-handover/route lineage alongside captured navigation and compiled-start inputs without an artificial options object."
+    )]
     fn start_compiled_inner(
         &mut self,
         account: &str,
