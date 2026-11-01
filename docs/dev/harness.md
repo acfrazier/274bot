@@ -1035,7 +1035,7 @@ load another copy.
 
 | Setting | Meaning |
 |---|---|
-| `BOT_MEMORY_N` | Exactly 1, 10, 16, 32, 50 or 128; accepting a count is not a capacity guarantee. |
+| `BOT_MEMORY_N` | Exactly 1, 10 through 16, 32, 50 or 128; accepting a count is not a capacity guarantee. |
 | `BOT_MEMORY_WORKLOAD` | `idle`, `seeded-idle`, `active` or `lifecycle`; default `idle`. |
 | `BOT_MEMORY_SCENARIO` | Scenario for `active`/`lifecycle`; default `thiever`. `gatherer` uses the Draynor tree fixture; its multi-slot cells start the native Gatherer. Catalog cells include `moss_giant_bank_start` and `duel_arena`. |
 | `BOT_MEMORY_WARMUP_S` / `BOT_MEMORY_OBSERVE_S` | Positive seconds, defaults 120 / 600. |
@@ -1043,6 +1043,7 @@ load another copy.
 | `BOT_MEMORY_SUSTAIN=1` | Active/lifecycle Thiever only: four food initially, stock in the bank, target 22 food and restocking at three. Other scenarios reject this setting. |
 | `BOT_MEMORY_DIAGNOSTICS=1` | Optional bounded frames, logs, requests and per-script progress sidecar. |
 | `BOT_MEMORY_RENDER_POLICY` | Panel `rotating-all`, `fixed-one`, `focused-one`, `focused-plus-background`, `stress50` or `stress50-full`. `stress50` draws one of 50 slots; `stress50-full` draws all 50 at full rate. |
+| `BOT_MEMORY_RASTER_PLAN` | Optional comma-separated `cpu`/`gpu` entry for each slot, in minted-name order. Applied to generated profiles before workers start. No whitespace or omitted entries. Available only in `memory-profile` builds. |
 | `BOT_MEMORY_SINGLE_RENDERER=1` | Legacy fixed slot-zero rendering. |
 | `BOT_CPU=1` | CPU fallback for the panel's client renderer. |
 
@@ -1051,6 +1052,14 @@ without starting the catalog script. `active` starts the scenario's native or
 catalog script. `lifecycle` additionally alternates Stop and restart every 60
 observation seconds. After observation, scripts Stop and the harness remains
 open for `BOT_MEMORY_TEARDOWN_S`.
+
+With an explicit raster plan, every sample records `requested_raster_plan`.
+That request is not proof of the active backend. A `render-diagnostics` panel
+also samples the owner's real heads in `render_heads`; qualification must compare
+each observed backend with the corresponding requested entry. A missing head
+does not inherit its requested backend. For a fixed slot-zero focus, put the
+required focused backend first and distribute the other entries to retain the
+required CPU/GPU counts.
 
 Ingame readiness requires every slot to remain `ingame && scene_state == 2`
 for two seconds. A ready pulse before the mainland-hop reload does not latch.

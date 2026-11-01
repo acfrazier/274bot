@@ -563,12 +563,39 @@ pub fn parse_n(n: &str) -> Result<usize, String> {
     match n {
         "1" => Ok(1),
         "10" => Ok(10),
+        "11" => Ok(11),
+        "12" => Ok(12),
+        "13" => Ok(13),
+        "14" => Ok(14),
+        "15" => Ok(15),
         "16" => Ok(16),
         "32" => Ok(32),
         "50" => Ok(50),
         "128" => Ok(128),
-        _ => Err("BOT_MEMORY_N must be 1, 10, 16, 32, 50, or 128".into()),
+        _ => Err("BOT_MEMORY_N must be 1, 10 through 16, 32, 50, or 128".into()),
     }
+}
+
+fn parse_raster_plan(value: &str, n: usize) -> Result<Vec<vault::RasterMode>, String> {
+    let mut plan = Vec::with_capacity(n);
+    for entry in value.split(',') {
+        if plan.len() == n {
+            return Err(format!(
+                "BOT_MEMORY_RASTER_PLAN must contain exactly {n} entries"
+            ));
+        }
+        plan.push(match entry {
+            "cpu" => vault::RasterMode::Cpu,
+            "gpu" => vault::RasterMode::Gpu,
+            _ => return Err("BOT_MEMORY_RASTER_PLAN entries must be cpu or gpu".into()),
+        });
+    }
+    if plan.len() != n {
+        return Err(format!(
+            "BOT_MEMORY_RASTER_PLAN must contain exactly {n} entries"
+        ));
+    }
+    Ok(plan)
 }
 
 /// Requested panel render cell. Logged as requested metadata, not observed GPU proof.
@@ -1821,6 +1848,8 @@ pub struct Run {
     pub single_renderer: bool,
     /// Requested panel draw/focus cell; TUI leaves this at [`RenderPolicy::RotatingAll`].
     pub render_policy: RenderPolicy,
+    /// Explicit measurement-only slot plans, fixed before any worker starts.
+    raster_plan: Option<Vec<vault::RasterMode>>,
     diagnostic_output: Option<std::fs::File>,
     qualification_output: std::fs::File,
     /// Which slots have ever been ready; a fleet failure names the rest.
@@ -1908,6 +1937,13 @@ impl Run {
         mark_process_start();
         // Fail closed on panel-only / conflicting flags before minting vaults.
         let render_policy = parse_render_policy(frontend)?;
+        let raster_plan = match std::env::var("BOT_MEMORY_RASTER_PLAN") {
+            Ok(value) => Some(parse_raster_plan(&value, config.n)?),
+            Err(std::env::VarError::NotPresent) => None,
+            Err(std::env::VarError::NotUnicode(_)) => {
+                return Err("BOT_MEMORY_RASTER_PLAN must be valid UTF-8".into());
+            }
+        };
         let single_renderer = std::env::var("BOT_MEMORY_SINGLE_RENDERER").as_deref() == Ok("1");
         let sustain = std::env::var("BOT_MEMORY_SUSTAIN").as_deref() == Ok("1");
         let requested_scenario =
@@ -1961,6 +1997,9 @@ impl Run {
                     settings.raster = vault::RasterMode::Gpu;
                 }
                 _ => {}
+            }
+            if let Some(plan) = &raster_plan {
+                settings.raster = plan[i];
             }
             vault
                 .upsert(Profile {
@@ -2102,6 +2141,7 @@ impl Run {
             qualification_output,
             single_renderer,
             render_policy,
+            raster_plan,
             ready_latch,
             game_data: None,
             gameplay_phases,
@@ -2654,6 +2694,9 @@ impl Run {
             value["allocation_counting"] = (!cfg!(feature = "memory-profile-no-alloc")).into();
             value["diagnostic_sidecar"] = self.diagnostics.into();
             value["benchmark_scenario"] = self.scenario_name.clone().into();
+            if let Some(plan) = &self.raster_plan {
+                value["requested_raster_plan"] = serde_json::json!(plan);
+            }
             value["contention_qualification"] = (self.config.n > 1
                 && matches!(
                     self.scenario_name.as_deref(),
@@ -3003,6 +3046,7 @@ mod tests {
 
     #[test]
     fn benchmark_poll_deadline_advances_without_continuous_ui_frames() {
+        let _lock = ENV_LOCK.lock().unwrap();
         let mut run = Run::prepare_unseeded(unit_config(1, Workload::Idle), "unit").unwrap();
         let now = Instant::now();
         assert_eq!(run.next_poll_deadline(now), now + SAMPLE_INTERVAL);
@@ -3070,7 +3114,7 @@ mod tests {
 
     #[test]
     fn parse_n_accepts_campaign_and_legacy_sizes() {
-        for n in [1usize, 10, 16, 32, 50, 128] {
+        for n in [1usize, 10, 11, 12, 13, 14, 15, 16, 32, 50, 128] {
             assert_eq!(parse_n(&n.to_string()).unwrap(), n);
         }
     }
@@ -3080,6 +3124,61 @@ mod tests {
         for s in ["0", "2", "49", "51", "", "-1"] {
             assert!(parse_n(s).is_err(), "expected err for {s:?}");
         }
+    }
+
+    #[test]
+    fn raster_plan_accepts_only_exact_cpu_gpu_compositions() {
+        use vault::RasterMode::{Cpu, Gpu};
+        assert_eq!(parse_raster_plan("gpu,cpu,cpu", 3).unwrap(), [Gpu, Cpu, Cpu]);
+        assert_eq!(parse_raster_plan("cpu", 1).unwrap(), [Cpu]);
+        for (value, n) in [
+            ("", 1),
+            ("cpu", 2),
+            ("cpu,gpu", 1),
+            ("cpu,", 2),
+            ("Cpu,gpu", 2),
+            ("cpu, gpu", 2),
+            ("off", 1),
+        ] {
+            assert!(parse_raster_plan(value, n).is_err(), "{value:?}, n={n}");
+        }
+    }
+
+    #[test]
+    fn raster_composition_is_persisted_and_reported_before_warmup() {
+        let _lock = ENV_LOCK.lock().unwrap();
+        let _env = clear_phase_env();
+        let _plan_env = EnvGuard::clear(&["BOT_MEMORY_RASTER_PLAN"]);
+        std::env::set_var("BOT_MEMORY_RASTER_PLAN", "gpu,cpu,cpu");
+        let mut run = Run::prepare_unseeded(unit_config(3, Workload::Idle), "panel").unwrap();
+        let dir = run.vault.parent().unwrap().to_owned();
+        let vault = vault::Vault::unlock(&run.vault, &run.pass).unwrap();
+        for (name, expected) in run.names.iter().zip([
+            vault::RasterMode::Gpu,
+            vault::RasterMode::Cpu,
+            vault::RasterMode::Cpu,
+        ]) {
+            assert_eq!(vault.get(name).unwrap().settings.raster, expected);
+        }
+        assert!(run.all_ingame.is_none());
+        assert!(run.qualification_complete.is_none());
+        assert!(run.observing.is_none());
+
+        run.poll(&empty_play()).unwrap();
+        let samples = std::fs::read_to_string(dir.join("samples.jsonl")).unwrap();
+        let row: serde_json::Value = serde_json::from_str(samples.lines().next().unwrap()).unwrap();
+        assert_eq!(row["phase"], "seed");
+        assert_eq!(
+            row["requested_raster_plan"],
+            serde_json::json!(["gpu", "cpu", "cpu"])
+        );
+        assert!(
+            row.get("render_heads").is_none(),
+            "requested composition must not invent observed heads"
+        );
+        drop(run);
+        drop(vault);
+        std::fs::remove_dir_all(dir).unwrap();
     }
 
     fn clear_render_env() -> EnvGuard {
