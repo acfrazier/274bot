@@ -187,7 +187,6 @@ fn on<'s>(
                 | "skill.xp"
                 | "skill.level"
                 | "inventory.changed"
-                | "varp.changed"
                 | "script.finish"
                 | "tick"
                 | "frame"
@@ -465,6 +464,28 @@ globalThis.__frame_duplicate_id = globalThis.__rs2b0t_native_event_on('frame', c
         );
         clear_all();
     }
+
+    #[test]
+    fn unknown_event_subscriptions_are_refused() {
+        use std::sync::atomic::AtomicUsize;
+        use std::sync::Arc;
+
+        use rustyscript::{Runtime, RuntimeOptions};
+
+        use super::{clear_all, install};
+
+        crate::platform::bootstrap_test_v8_platform();
+        let mut runtime = Runtime::new(RuntimeOptions::default()).unwrap();
+        install(&mut runtime, Arc::new(AtomicUsize::new(0))).unwrap();
+        runtime.eval::<()>(crate::shim::PRELUDE).unwrap();
+        let message: String = runtime
+            .eval(
+                "(() => { try { __rs2b0t_native_event_on('varp.changed', () => {}); return ''; } catch (error) { return error.message; } })()",
+            )
+            .unwrap();
+        assert_eq!(message, "events.on: unsupported event name");
+        clear_all();
+    }
 }
 #[cfg(all(test, feature = "memory-profile"))]
 mod v8_tests {
@@ -520,18 +541,6 @@ mod v8_tests {
     }
 
     #[test]
-    fn unknown_event_subscriptions_are_refused() {
-        let mut runtime = setup();
-        let message: String = runtime
-            .eval(
-                "(() => { try { __rs2b0t_native_event_on('never.emitted', () => {}); return ''; } catch (error) { return error.message; } })()",
-            )
-            .unwrap();
-        assert_eq!(message, "events.on: unsupported event name");
-        clear_all();
-    }
-
-    #[test]
     fn event_payload_has_fast_properties() {
         if !in_child(FAST_CHILD, FAST_TEST) {
             return;
@@ -548,7 +557,7 @@ globalThis.__rs2b0t_native_event_batch_dispatch = (events) => {
     globalThis.__nativeEventRecords = events;
     globalThis.__rs2b0t_native_event_batch_dispatch_original(events);
 };
-for (const type of ['chat.message', 'skill.xp', 'skill.level', 'varp.changed', 'script.finish', 'inventory.changed']) {
+for (const type of ['chat.message', 'skill.xp', 'skill.level', 'script.finish', 'inventory.changed']) {
     globalThis.__rs2b0t_native_event_on(type, payload => {
         globalThis.__nativeEventPayloads.push(payload);
     });
@@ -595,12 +604,6 @@ globalThis.__nativeEventShapeFacts = () => {
                         "payloadKeys": ["skill", "name", "level", "previous"]
                     },
                     {
-                        "type": "varp.changed",
-                        "wrapperFast": true,
-                        "payloadFast": true,
-                        "payloadKeys": ["index", "value", "previous"]
-                    },
-                    {
                         "type": "script.finish",
                         "wrapperFast": true,
                         "payloadFast": true,
@@ -615,14 +618,14 @@ globalThis.__nativeEventShapeFacts = () => {
                         ]
                     }
                 ],
-                "payloadCount": 6
+                "payloadCount": 5
             }),
             "production native-event wrappers and payloads retain fixed V8 shapes"
         );
         clear_all();
     }
 
-    fn sample_events() -> [NativeEvent; 6] {
+    fn sample_events() -> [NativeEvent; 5] {
         [
             NativeEvent::ChatMessage {
                 type_: 0,
@@ -640,11 +643,6 @@ globalThis.__nativeEventShapeFacts = () => {
                 name: "prayer".into(),
                 level: 3,
                 previous: 2,
-            },
-            NativeEvent::VarpChanged {
-                index: 44,
-                value: 8,
-                previous: 7,
             },
             NativeEvent::ScriptFinish {
                 reason: "finished".into(),
@@ -678,7 +676,7 @@ globalThis.__nativeEventShapeFacts = () => {
             .eval::<()>(
                 r#"
 globalThis.__event_payload_count = 0;
-for (const type of ['chat.message', 'skill.xp', 'skill.level', 'varp.changed', 'script.finish', 'inventory.changed']) {
+for (const type of ['chat.message', 'skill.xp', 'skill.level', 'script.finish', 'inventory.changed']) {
     globalThis.__rs2b0t_native_event_on(type, () => {
         globalThis.__event_payload_count += 1;
     });
@@ -703,7 +701,7 @@ for (const type of ['chat.message', 'skill.xp', 'skill.level', 'varp.changed', '
         println!(
             "compat v1 Events V8 heap baseline={baseline} after={after} growth={growth} limit={limit}"
         );
-        assert_eq!(count, 6150, "every event reaches its listener once");
+        assert_eq!(count, 5 * 1025, "every event reaches its listener once");
         assert!(
             growth <= limit,
             "collected native-event heap grew {growth} bytes; limit {limit}"

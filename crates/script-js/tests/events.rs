@@ -5,7 +5,7 @@ use std::time::{Duration, Instant};
 
 use script_js::wire::{
     encode_snapshot, encode_snapshot_delta, ChatLineInput, ItemRowInput, ReachViewInput,
-    SnapshotInput, StatInput, VarpInput,
+    SnapshotInput, StatInput,
 };
 use script_js::{LoadIsolate, LoadShape};
 
@@ -394,8 +394,45 @@ export default class T extends LoopingBot {
 }
 
 #[test]
-fn script_finish_event_delivers_native_stop_reason() {
-    let src = r#"
+fn script_finish_event_is_request_finish_only() {
+    let request_src = r#"
+export default class T extends LoopingBot {
+    onStart() {
+        this.on('script.finish', event => { globalThis.__finishReason = event.reason; });
+    }
+    onStop() {
+        this.log(`finish:${globalThis.__finishReason}`);
+    }
+    loop() {
+        if (globalThis.__rs2b0t_host.tick === 2) {
+            this.requestFinish('finished by request');
+        }
+    }
+}
+"#;
+    let iso = spawn_ready(request_src.to_string(), LoadShape::CompatClass, vec![]);
+    let snap = base_snapshot();
+    post_snapshot_input(&iso, &snap);
+    iso.on_game_tick(1);
+    assert!(iso.probe("1").is_ok(), "first tick should remain active");
+    iso.on_game_tick(2);
+    let deadline = Instant::now() + Duration::from_secs(2);
+    let mut logs = Vec::new();
+    while !iso.stopped() && Instant::now() < deadline {
+        logs.extend(iso.drain_logs());
+        std::thread::sleep(Duration::from_millis(2));
+    }
+    assert!(
+        iso.stopped(),
+        "requestFinish did not stop the isolate: {logs:?}"
+    );
+    logs.extend(iso.join());
+    assert!(
+        logs.iter().any(|line| line == "finish:finished by request"),
+        "requestFinish did not dispatch script.finish: {logs:?}"
+    );
+
+    let stop_src = r#"
 import { ScriptRunner } from '../../runtime/ScriptRunner.js';
 export default class T extends LoopingBot {
     onStart() {
@@ -411,8 +448,7 @@ export default class T extends LoopingBot {
     }
 }
 "#;
-    let iso = spawn_ready(src.to_string(), LoadShape::CompatClass, vec![]);
-    let snap = base_snapshot();
+    let iso = spawn_ready(stop_src.to_string(), LoadShape::CompatClass, vec![]);
     post_snapshot_input(&iso, &snap);
     iso.on_game_tick(1);
     assert!(iso.probe("1").is_ok(), "first tick should remain active");
@@ -429,31 +465,25 @@ export default class T extends LoopingBot {
     );
     logs.extend(iso.join());
     assert!(
-        logs.iter().any(|line| line == "finish:finished by script"),
-        "script.finish listener did not receive and log the native stop reason: {logs:?}"
+        logs.iter().any(|line| line == "finish:undefined"),
+        "ScriptRunner.stop unexpectedly dispatched script.finish: {logs:?}"
     );
 }
 
 #[test]
-fn skill_level_and_varp_events_use_posted_snapshot_state() {
+fn skill_level_event_uses_posted_snapshot_state() {
     let src = r#"
 export default class T extends LoopingBot {
     onStart() {
         this.on('skill.level', event => { globalThis.__levelEvent = event; });
-        this.on('varp.changed', event => { globalThis.__varpEvent = event; });
     }
     loop() {}
 }
 "#;
     let iso = spawn_ready(src.to_string(), LoadShape::CompatClass, vec![]);
     let stats0 = [prayer(100)];
-    let varps0 = [VarpInput {
-        index: 44,
-        value: 7,
-    }];
     let mut snap = base_snapshot();
     snap.stats = &stats0;
-    snap.varps = &varps0;
     post_snapshot_input(&iso, &snap);
     iso.on_game_tick(1);
     let _ = iso.probe("1");
@@ -465,12 +495,7 @@ export default class T extends LoopingBot {
         base: 3,
         effective: 3,
     }];
-    let varps1 = [VarpInput {
-        index: 44,
-        value: 8,
-    }];
     snap.stats = &stats1;
-    snap.varps = &varps1;
     snap.tick = 2;
     post_snapshot_input(&iso, &snap);
     iso.on_game_tick(2);
@@ -478,10 +503,6 @@ export default class T extends LoopingBot {
     assert_eq!(
         iso.probe("globalThis.__levelEvent").unwrap(),
         serde_json::json!({"skill": 5, "name": "prayer", "level": 3, "previous": 2})
-    );
-    assert_eq!(
-        iso.probe("globalThis.__varpEvent").unwrap(),
-        serde_json::json!({"index": 44, "value": 8, "previous": 7})
     );
     iso.join();
 }
