@@ -474,6 +474,9 @@ impl Play {
         world: Option<Arc<NavWorld>>,
         wilderness_zones: Arc<[script::native::walk::WildernessZonePair]>,
     ) -> Play {
+        // Only the js Start path reads the zones.
+        #[cfg(not(feature = "js"))]
+        let _ = wilderness_zones;
         let obj_names = Arc::new(api::obj_names::ObjNames::from_objs(&cache.objs));
         let named_banks = world
             .as_deref()
@@ -556,6 +559,7 @@ impl Play {
             walk_globals: Arc::new(Mutex::new(super::WalkGlobals::default())),
             walk_globals_store: None,
             world,
+            #[cfg(feature = "js")]
             wilderness_zones,
             wakes: HashMap::new(),
             capacity: Arc::new(host::CapacityMonitor::new()),

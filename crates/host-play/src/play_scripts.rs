@@ -170,6 +170,7 @@ pub struct ScriptStartHandle {
     statuses: Arc<Mutex<Vec<crate::SlotStatus>>>,
     game_data: Option<Arc<api::game_data::SelectedGameData>>,
     named_banks: Arc<api::named_banks::NamedBankFacts>,
+    #[cfg(feature = "js")]
     wilderness_zones: Arc<[script::native::walk::WildernessZonePair]>,
     /// The Play's state composition: a Start without caller-owned loadouts
     /// leases the operator's rows from it. `None` for the legacy direct
@@ -1014,6 +1015,7 @@ impl Play {
             statuses: Arc::clone(&self.statuses),
             game_data: self.game_data.clone(),
             named_banks: Arc::clone(&self.named_banks),
+            #[cfg(feature = "js")]
             wilderness_zones: Arc::clone(&self.wilderness_zones),
             state: self.local_state.clone(),
         }

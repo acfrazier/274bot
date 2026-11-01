@@ -312,6 +312,7 @@ pub struct Play {
     /// pack loads, and `ctx.walk` then refuses to arm.
     world: Option<Arc<NavWorld>>,
     /// Selected collision-known wilderness zone pairs for this loaded world.
+    #[cfg(feature = "js")]
     wilderness_zones: Arc<[script::native::walk::WildernessZonePair]>,
     /// Per-slot control wake ends: [`SlotWake::wake`] kicks a parked slot
     /// thread (focus/draw/stop/spawn), which re-reads the shared state on
