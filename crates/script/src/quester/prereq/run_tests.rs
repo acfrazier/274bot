@@ -128,18 +128,16 @@ fn crossing_snapshot(crossing: &PrereqCrossing) -> GameSnapshot {
     crate::quester::families::tests::seed_prereq_crossing(&mut snapshot, row, &crossing.crossing);
     snapshot
 }
-fn npc_snapshot(row: &PrereqStep) -> GameSnapshot {
-    let at = row.target.anchor;
-    let mut snapshot = snapshot(at);
+fn npc_view(row: &PrereqStep, at: WorldTile, distance: i32) -> NpcView {
     let data = api::game_data::for_revision(ClientRevision::R289).unwrap();
     let name = data.npc_name(row.target.npc).unwrap().display.clone();
-    snapshot.seed_npcs(vec![NpcView {
+    NpcView {
         index: 7,
         r#type: Some(usize::try_from(row.target.npc).expect("nonnegative catalog NPC ID")),
         name,
         actions: vec![Some("Talk-to".into())],
         tile: at,
-        distance: 0,
+        distance,
         animation: -1,
         animation_frame: 0,
         pose_animation: -1,
@@ -161,7 +159,12 @@ fn npc_snapshot(row: &PrereqStep) -> GameSnapshot {
         x: 0,
         z: 0,
         yaw: 0,
-    }]);
+    }
+}
+fn npc_snapshot(row: &PrereqStep) -> GameSnapshot {
+    let at = row.target.anchor;
+    let mut snapshot = snapshot(at);
+    snapshot.seed_npcs(vec![npc_view(row, at, 0)]);
     snapshot
 }
 fn poll(
@@ -2011,6 +2014,227 @@ fn a_dialogue_deadline_keeps_its_reported_failure_without_inventing_a_cause() {
     assert_eq!(budget.talks, 1);
     assert_eq!(ledger.as_ref().unwrap().outbox.len(), sent);
     assert!(!ledger.as_ref().unwrap().test_owner_live());
+}
+
+const CANT_REACH_TEXT: &str = "I can't reach that!";
+
+fn talk_bound(row: &PrereqStep) -> u64 {
+    u64::from(row.target.leash + NPC_STEP_TICKS + OP_TICKS + SEND_SLACK_TICKS)
+}
+
+fn talk_drive(run: &PrereqRun) -> &ChatDrive {
+    match &run.phase {
+        Phase::Talk(drive) => drive,
+        _ => panic!("the runner is not in its Talk phase"),
+    }
+}
+
+
+#[test]
+fn a_cancelled_talk_ends_its_wait_at_once_and_re_approaches_the_moved_npc() {
+    let (_, row) = row(ConsentSwitch::PrereqDialogue);
+    let state = state();
+    let mut snapshot = npc_snapshot(row);
+    let (mut run, mut budget, mut ledger) = start_talk(row, &snapshot, &state);
+    let anchor = row.target.anchor;
+
+    // The engine clears the Talk on the next cycle and writes the message.
+    message(&mut snapshot, 1, CANT_REACH_TEXT);
+    let sent = ledger.as_ref().unwrap().outbox.len();
+    assert!(
+        poll(&mut run, &snapshot, &mut ledger, 3, &state, &mut budget).is_pending(),
+        "a cancel is not a spent wait"
+    );
+    assert!(
+        3 - 2 < talk_bound(row),
+        "the wait ended after one observed tick, far inside its bound"
+    );
+    let drive = talk_drive(&run);
+    assert_eq!(drive.reach_cancels, 1);
+    assert!(drive.pending.is_none(), "the cancelled wait is closed");
+    assert!(drive.handle.is_none(), "the cancelled Talk's owner is gone");
+    assert_eq!(ledger.as_ref().unwrap().outbox.len(), sent);
+
+    // Nothing is sent on the cancel's own tick. Drezel wandered five tiles
+    // away: the next observed tick walks to where he is now.
+    let far = WorldTile {
+        x: anchor.x + 5,
+        ..anchor
+    };
+    snapshot.seed_npcs(vec![npc_view(row, far, 5)]);
+    assert!(poll(&mut run, &snapshot, &mut ledger, 3, &state, &mut budget).is_pending());
+    assert_eq!(ledger.as_ref().unwrap().outbox.len(), sent);
+    assert!(poll(&mut run, &snapshot, &mut ledger, 4, &state, &mut budget).is_pending());
+    let HostEffect::Walk(request) = &ledger.as_ref().unwrap().outbox.last().unwrap().effect else {
+        panic!("the retry approaches the NPC before it talks");
+    };
+    assert_eq!(request.target, far, "the walk targets the observed tile");
+
+    // He walks back next to the player: the Talk is sent again and the page
+    // that follows it is acknowledged inside the ordinary bound.
+    arrive(&mut ledger, 5);
+    let near = WorldTile {
+        x: anchor.x + 1,
+        ..anchor
+    };
+    snapshot.seed_npcs(vec![npc_view(row, near, 1)]);
+    assert!(poll(&mut run, &snapshot, &mut ledger, 6, &state, &mut budget).is_pending());
+    assert!(matches!(last_interaction(&ledger), InteractReq::Npc { .. }));
+    accept_last(&mut ledger, 6, 1);
+    let branch = row
+        .talk
+        .branches
+        .iter()
+        .find(|branch| branch.outcome == BranchOutcome::Advice)
+        .unwrap();
+    page_snapshot(&mut snapshot, &branch.opener);
+    let mut tick = 7;
+    next_page_send(
+        &mut run,
+        &snapshot,
+        &mut ledger,
+        &mut tick,
+        &state,
+        &mut budget,
+    );
+    let drive = talk_drive(&run);
+    assert_eq!(drive.reach_cancels, 1, "the earlier cancel stays counted");
+    assert_eq!(budget.talks, 1, "a retried Talk is one Talk of the budget");
+}
+
+#[test]
+fn repeated_cancels_end_in_a_terminal_failure_that_keeps_the_last_detail() {
+    let (_, row) = row(ConsentSwitch::PrereqDialogue);
+    let state = state();
+    let mut snapshot = npc_snapshot(row);
+    let (mut run, mut budget, mut ledger) = start_talk(row, &snapshot, &state);
+    let anchor = row.target.anchor;
+    let mut tick = 3;
+    let mut sent_at = 2;
+    for cancel in 1..=i32::from(TALK_REACH_RETRIES) {
+        message(&mut snapshot, cancel, CANT_REACH_TEXT);
+        assert!(
+            poll(&mut run, &snapshot, &mut ledger, tick, &state, &mut budget).is_pending(),
+            "cancel {cancel} is retried"
+        );
+        assert_eq!(talk_drive(&run).reach_cancels, cancel as u8);
+        // The next observed tick sends the Talk again, and the host accepts it.
+        sent_at = tick + 1;
+        let sent = ledger.as_ref().unwrap().outbox.len();
+        assert!(poll(&mut run, &snapshot, &mut ledger, sent_at, &state, &mut budget).is_pending());
+        assert_eq!(ledger.as_ref().unwrap().outbox.len(), sent + 1);
+        assert!(matches!(last_interaction(&ledger), InteractReq::Npc { .. }));
+        accept_last(&mut ledger, sent_at, cancel);
+        tick = sent_at + 2;
+    }
+    // The cancel after the last retry is terminal. The detail is that
+    // cancel's: the player's and the NPC's tiles, and the wait it ended.
+    let last = i32::from(TALK_REACH_RETRIES) + 1;
+    message(&mut snapshot, last, CANT_REACH_TEXT);
+    let near = WorldTile {
+        x: anchor.x + 1,
+        ..anchor
+    };
+    snapshot.seed_npcs(vec![npc_view(row, near, 1)]);
+    let result = poll(&mut run, &snapshot, &mut ledger, tick, &state, &mut budget);
+    let Poll::Ready(Err(PrereqRefusal::StepFailed { why, .. })) = result else {
+        panic!("the budget is spent: expected a terminal failure");
+    };
+    let PrereqFailure::TalkUnreachable {
+        attempts,
+        since,
+        at,
+        from,
+        npc,
+    } = why
+    else {
+        panic!("expected TalkUnreachable, saw {why:?}");
+    };
+    assert_eq!(attempts, TALK_REACH_RETRIES + 1);
+    assert_eq!(at, tick);
+    assert_eq!(since, sent_at, "the wait it ended began at its receipt");
+    assert_eq!(from, Some(anchor));
+    assert_eq!(npc, Some(near));
+    assert_eq!(budget.talks, 1);
+    assert!(!ledger.as_ref().unwrap().test_owner_live());
+}
+
+#[test]
+fn a_cancel_message_older_than_the_send_does_not_end_the_wait() {
+    let (_, row) = row(ConsentSwitch::PrereqDialogue);
+    let state = state();
+    let mut snapshot = npc_snapshot(row);
+    let mut ledger = None;
+    let mut run = runner(row, &row.crossings[0], Truth::False);
+    let mut budget = PrereqBudget::default();
+    // An earlier interaction's refusal is already in the chat when the Talk
+    // is sent; the dispatch records that chat position.
+    message(&mut snapshot, 4, CANT_REACH_TEXT);
+    assert!(poll(&mut run, &snapshot, &mut ledger, 1, &state, &mut budget).is_pending());
+    arrive(&mut ledger, 1);
+    assert!(poll(&mut run, &snapshot, &mut ledger, 2, &state, &mut budget).is_pending());
+    assert!(matches!(last_interaction(&ledger), InteractReq::Npc { .. }));
+    accept_last(&mut ledger, 2, 4);
+    for tick in 3..=2 + talk_bound(row) {
+        assert!(
+            poll(&mut run, &snapshot, &mut ledger, tick, &state, &mut budget).is_pending(),
+            "tick {tick}"
+        );
+        assert_eq!(talk_drive(&run).reach_cancels, 0);
+    }
+}
+
+#[test]
+fn an_ordinary_talk_still_passes_inside_its_content_bound_and_fails_past_it() {
+    let (_, row) = row(ConsentSwitch::PrereqDialogue);
+    assert_eq!(talk_bound(row), 7, "the derived W5 bound is unchanged");
+    let advice = row
+        .talk
+        .branches
+        .iter()
+        .find(|branch| branch.outcome == BranchOutcome::Advice)
+        .unwrap();
+
+    // The page arrives as late as the bound allows: no failure.
+    let state = state();
+    let mut snapshot = npc_snapshot(row);
+    full_pack(&mut snapshot);
+    let (mut run, mut budget, mut ledger) = start_talk(row, &snapshot, &state);
+    for tick in 3..2 + talk_bound(row) {
+        assert!(poll(&mut run, &snapshot, &mut ledger, tick, &state, &mut budget).is_pending());
+    }
+    page_snapshot(&mut snapshot, &advice.opener);
+    let late = 2 + talk_bound(row);
+    assert!(poll(&mut run, &snapshot, &mut ledger, late, &state, &mut budget).is_pending());
+    assert_eq!(talk_drive(&run).reach_cancels, 0);
+
+    // No page and no cancel message by the next tick: the wait is spent.
+    let state = state();
+    let snapshot = npc_snapshot(row);
+    let (mut run, mut budget, mut ledger) = start_talk(row, &snapshot, &state);
+    for tick in 3..=2 + talk_bound(row) {
+        assert!(poll(&mut run, &snapshot, &mut ledger, tick, &state, &mut budget).is_pending());
+    }
+    let result = poll(
+        &mut run,
+        &snapshot,
+        &mut ledger,
+        3 + talk_bound(row),
+        &state,
+        &mut budget,
+    );
+    assert!(matches!(
+        result,
+        Poll::Ready(Err(PrereqRefusal::StepFailed {
+            why: PrereqFailure::WaitSpent {
+                wait: PrereqWaitName::W5,
+                since: 2,
+                bound: 7,
+                ..
+            },
+            ..
+        }))
+    ));
 }
 
 #[test]

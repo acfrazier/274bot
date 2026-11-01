@@ -1365,10 +1365,13 @@ fn first_chat_witness(snapshot: &GameSnapshot) -> Option<ChatWitness> {
     })
 }
 
+/// Waits that ended on their content signal. A Talk the engine cancelled
+/// ("I can't reach that!", `end=unreachable`) was sent again and is not a
+/// completed wait.
 fn completed_wait_count(logs: &[String], wait: &str) -> usize {
     let prefix = format!("prereq wait={wait} ");
     logs.iter()
-        .filter(|line| line.contains(prefix.as_str()))
+        .filter(|line| line.contains(prefix.as_str()) && !line.contains("end=unreachable"))
         .count()
 }
 

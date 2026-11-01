@@ -40,6 +40,11 @@ pub(crate) const SEND_SLACK_TICKS: u16 = 2;
 // quest_journal.rs2:1-55 has no delay. Retry only on the next observed tick
 // after the reader's five-tick window, never again within that same tick.
 const JOURNAL_TIMEOUT_RETRIES: u8 = 1;
+// A Talk the engine cancels ("I can't reach that!", Player.ts:1292-1295) is not a
+// slow page: the interaction is cleared, so waiting longer cannot recover it.
+// The runner re-approaches from the NPC's observed tile and sends the Talk again,
+// at most this many more times, then fails with the last cancel's detail.
+const TALK_REACH_RETRIES: u8 = 3;
 
 /// Repeated polls and scene changes cannot spend this wait: only observed ticks do.
 #[derive(Clone, Copy)]
@@ -1325,6 +1330,9 @@ impl PendingPage {
         } else {
             PAGE_TICKS + SEND_SLACK_TICKS
         };
+        if send.kind == DialogueSendKind::Talk {
+            talk_log(cx, row, "send", send.evidence.tick);
+        }
         Self {
             send,
             wait: TickWait {
@@ -1340,6 +1348,29 @@ impl PendingPage {
         }
     }
 }
+
+/// The nearest observed NPC of this type: its tile and distance from the player.
+fn nearest_npc(cx: &ActionContext<'_>, id: i32) -> Option<(WorldTile, i32)> {
+    let wanted = usize::try_from(id).ok()?;
+    cx.snapshot()
+        .npcs()?
+        .value
+        .iter()
+        .filter(|npc| npc.r#type == Some(wanted))
+        .min_by_key(|npc| npc.distance)
+        .map(|npc| (npc.tile, npc.distance))
+}
+
+fn talk_log(cx: &ActionContext<'_>, row: &PrereqStep, what: &str, tick: u64) {
+    api::host_log!(
+        api::hostlog::Category::NavEvent,
+        api::hostlog::Level::Info,
+        "prereq talk {what} npc_type={} tick={tick} from={:?} npc={:?}",
+        row.target.npc,
+        cx.snapshot().here().map(|here| here.value),
+        nearest_npc(cx, row.target.npc)
+    );
+}
 struct ChatDrive {
     handle: Option<ActionHandle<Dialogue>>,
     probe: bool,
@@ -1349,6 +1380,10 @@ struct ChatDrive {
     last_send: u64,
     effect_seen: bool,
     terminal_seen: bool,
+    /// Talks the engine cancelled with "I can't reach that!".
+    reach_cancels: u8,
+    /// A cancelled Talk is sent again only on a later observed tick.
+    retry_after: Option<u64>,
 }
 enum ChatDone {
     Close {
@@ -1371,6 +1406,8 @@ impl ChatDrive {
             last_send: 0,
             effect_seen: false,
             terminal_seen: false,
+            reach_cancels: 0,
+            retry_after: None,
         }
     }
     fn begin(
@@ -1438,6 +1475,36 @@ impl ChatDrive {
         self.handle = Some(handle);
         Ok(())
     }
+    /// The engine sent "I can't reach that!" and cleared the Talk
+    /// (`Player.ts:1292-1295`). The wait ends at once as a reach failure: a
+    /// cleared interaction never opens a page, so waiting longer cannot help.
+    /// The Talk is sent again from the NPC's observed tile, within
+    /// [`TALK_REACH_RETRIES`], and the last cancel's detail is kept.
+    fn talk_cancelled(
+        &mut self,
+        cx: &ActionContext<'_>,
+        row: &PrereqStep,
+    ) -> Poll<Result<ChatDone, PrereqFailure>> {
+        let pending = self.pending.take().expect("a pending Talk was cancelled");
+        let tick = cx.evidence().tick;
+        wait_log(pending.name, pending.wait, tick, "unreachable");
+        talk_log(cx, row, "cancelled", tick);
+        self.reach_cancels += 1;
+        if self.reach_cancels > TALK_REACH_RETRIES {
+            return Poll::Ready(Err(PrereqFailure::TalkUnreachable {
+                attempts: self.reach_cancels,
+                since: pending.wait.since,
+                at: tick,
+                from: cx.snapshot().here().map(|here| here.value),
+                npc: nearest_npc(cx, row.target.npc).map(|(tile, _)| tile),
+            }));
+        }
+        // Dropping the owner revokes the finished Talk's dialogue; the next
+        // `start` approaches from the tiles observed on a later tick.
+        self.handle = None;
+        self.retry_after = Some(tick);
+        Poll::Pending
+    }
     fn poll(
         &mut self,
         actions: &mut NativeActions,
@@ -1448,6 +1515,12 @@ impl ChatDrive {
         gate: &QuestGate,
     ) -> Poll<Result<ChatDone, PrereqFailure>> {
         if self.handle.is_none() {
+            if self
+                .retry_after
+                .is_some_and(|tick| cx.evidence().tick <= tick)
+            {
+                return Poll::Pending;
+            }
             match self.start(actions, cx, row) {
                 Ok(()) => {}
                 Err(ActionError::BudgetExhausted) => return Poll::Pending,
@@ -1520,6 +1593,14 @@ impl ChatDrive {
                         self.pending = None;
                     }
                 }
+            }
+            let cancelled = self.pending.as_ref().is_some_and(|pending| {
+                receipt.is_some()
+                    && pending.send.kind == DialogueSendKind::Talk
+                    && reach::saw_cant_reach(cx, pending.wait.chat_mark)
+            });
+            if cancelled {
+                return self.talk_cancelled(cx, row);
             }
             if let Some(pending) = &self.pending {
                 if pending.wait.spent(cx.evidence().tick) {

@@ -71,6 +71,18 @@ pub enum PrereqFailure {
         at: u64,
         bound: u16,
     },
+    /// The engine cancelled the Talk on every attempt of the budget: it sent
+    /// "I can't reach that!" and cleared the interaction
+    /// (`Player.ts:1292-1295`). Waiting longer cannot recover a cancelled
+    /// interaction. The tiles are the player's and the NPC's at the last
+    /// cancel.
+    TalkUnreachable {
+        attempts: u8,
+        since: u64,
+        at: u64,
+        from: Option<WorldTile>,
+        npc: Option<WorldTile>,
+    },
     /// Used only when the reused machine identifies the expiry cause.
     MachineEnded {
         machine: &'static str,
