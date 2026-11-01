@@ -1234,7 +1234,10 @@ mod closure_tests {
     /// component. The row names the landing as well as the anchor.
     #[test]
     fn an_unmatched_join_names_its_landing() {
-        let atlas = bake(&row_collision(&[BLOCKED, BLOCKED, 0]), vec![door(3200, 3202)]);
+        let atlas = bake(
+            &row_collision(&[BLOCKED, BLOCKED, 0]),
+            vec![door(3200, 3202)],
+        );
         assert_eq!(atlas.unmatched_join_count(), 1);
         let joins: Vec<_> = atlas.unmatched_joins().collect();
         assert_eq!(joins, vec![(tile(3200), tile(3202), 0)]);
@@ -1247,7 +1250,10 @@ mod closure_tests {
     /// closure: from the one-way side the other side is reachable.
     #[test]
     fn a_one_way_movement_step_is_a_condensed_closure_arc() {
-        let atlas = bake(&row_collision(&[0, client::dash3d::CollisionFlag::W_W as u32]), Vec::new());
+        let atlas = bake(
+            &row_collision(&[0, client::dash3d::CollisionFlag::W_W as u32]),
+            Vec::new(),
+        );
         let west = atlas.base_at(tile(3200)).unwrap().unwrap();
         let east = atlas.base_at(tile(3201)).unwrap().unwrap();
         assert_ne!(west, east, "the one-way step separates the components");

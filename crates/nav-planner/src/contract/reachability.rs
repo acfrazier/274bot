@@ -318,7 +318,10 @@ mod tests {
             stand_count: 1,
             detail: 0,
         }]);
-        atlas.stands = Box::from([StandRow { tile: origin, base: 0 }]);
+        atlas.stands = Box::from([StandRow {
+            tile: origin,
+            base: 0,
+        }]);
         let graph = crate::transport::TransportGraph::default();
         atlas
             .validate(&collision, &graph)
@@ -419,13 +422,17 @@ mod tests {
             .reachability()
             .placements
             .iter()
-            .find(|row| row.coverage == crate::reachability::PLACEMENT_COMPLETE && row.stand_count > 0)
+            .find(|row| {
+                row.coverage == crate::reachability::PLACEMENT_COMPLETE && row.stand_count > 0
+            })
             .expect("the real pack has a complete placement with stands");
         let origin = crate::pack::unpack_tile_key(row.origin).unwrap();
         let key = LocPlacementKey::new(origin, row.loc_id, row.shape, row.angle).unwrap();
         let measured = allocation_counter::measure(|| {
             let component = view.component_at(lumbridge);
-            let stands = view.loc_stands(key).expect("the chosen placement is covered");
+            let stands = view
+                .loc_stands(key)
+                .expect("the chosen placement is covered");
             assert!(component.is_ok());
             assert!(!stands.is_empty());
             let _ = std::hint::black_box((component, stands));

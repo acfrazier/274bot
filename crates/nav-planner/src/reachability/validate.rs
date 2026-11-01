@@ -20,7 +20,9 @@ fn bad(message: &str) -> PackError {
 
 /// The `row`-th slice of a CSR table, or a typed error when the offsets lie.
 fn csr_row<'a, T>(offsets: &[u32], items: &'a [T], row: usize) -> Result<&'a [T], PackError> {
-    let start = *offsets.get(row).ok_or_else(|| bad("atlas CSR row is missing"))?;
+    let start = *offsets
+        .get(row)
+        .ok_or_else(|| bad("atlas CSR row is missing"))?;
     let end = *offsets
         .get(row + 1)
         .ok_or_else(|| bad("atlas CSR row is missing"))?;
@@ -71,7 +73,9 @@ fn check_closures(
             }
             // A run that touches the previous one is not maximal.
             if previous_end.is_some_and(|prev| first <= prev) {
-                return Err(bad("atlas closure runs are not sorted, disjoint and maximal"));
+                return Err(bad(
+                    "atlas closure runs are not sorted, disjoint and maximal",
+                ));
             }
             previous_end = Some(end);
             includes_owner |= first <= owner as u64 && (owner as u64) < end;
@@ -142,7 +146,11 @@ impl ReachabilityAtlas {
     }
 
     fn check_labels(&self, base_count: usize) -> Result<(), PackError> {
-        if self.palette.iter().any(|&label| label as usize > base_count) {
+        if self
+            .palette
+            .iter()
+            .any(|&label| label as usize > base_count)
+        {
             return Err(bad("atlas palette names a component past the base count"));
         }
         Ok(())
@@ -165,10 +173,9 @@ impl ReachabilityAtlas {
                     return Err(bad("atlas conditional join names a missing transport edge"));
                 }
             }
-            if row
-                .windows(2)
-                .any(|pair| (pair[0].destination, pair[0].edge) >= (pair[1].destination, pair[1].edge))
-            {
+            if row.windows(2).any(|pair| {
+                (pair[0].destination, pair[0].edge) >= (pair[1].destination, pair[1].edge)
+            }) {
                 return Err(bad("atlas conditional joins must be sorted unique"));
             }
         }
@@ -176,7 +183,9 @@ impl ReachabilityAtlas {
     }
 
     fn check_rows(&self, graph: &TransportGraph, base_count: usize) -> Result<(), PackError> {
-        let known_reason = |reason: u32| (COVERAGE_UNKNOWN_CONTENT..=COVERAGE_EXCEPTIONAL_LANDING).contains(&reason);
+        let known_reason = |reason: u32| {
+            (COVERAGE_UNKNOWN_CONTENT..=COVERAGE_EXCEPTIONAL_LANDING).contains(&reason)
+        };
         let mut previous = None;
         for row in self.coverage.iter() {
             unpack_tile_key(row.tile)?;
@@ -184,7 +193,9 @@ impl ReachabilityAtlas {
                 return Err(bad("atlas coverage row has an unknown reason"));
             }
             if previous.is_some_and(|prev| (row.tile, row.reason) <= prev) {
-                return Err(bad("atlas coverage rows must be sorted unique tile/reason pairs"));
+                return Err(bad(
+                    "atlas coverage rows must be sorted unique tile/reason pairs",
+                ));
             }
             previous = Some((row.tile, row.reason));
         }
@@ -194,8 +205,7 @@ impl ReachabilityAtlas {
             if row.edge as usize >= graph.edges.len() {
                 return Err(bad("atlas exceptional transition names a missing edge"));
             }
-            if row.reason != COVERAGE_UNMATCHED_JOIN && row.reason != COVERAGE_EXCEPTIONAL_LANDING
-            {
+            if row.reason != COVERAGE_UNMATCHED_JOIN && row.reason != COVERAGE_EXCEPTIONAL_LANDING {
                 return Err(bad("atlas exceptional transition has an unknown reason"));
             }
         }
@@ -368,9 +378,7 @@ mod tests {
                 .contains("empty")
         );
         assert!(refused(|a| a.movement_offsets = Box::from([0, 0])).contains("CSR"));
-        assert!(
-            refused(|a| a.placements[0].coverage = 9).contains("coverage or trigger")
-        );
+        assert!(refused(|a| a.placements[0].coverage = 9).contains("coverage or trigger"));
         assert!(refused(|a| a.placements[0].trigger = 9).contains("coverage or trigger"));
         assert!(refused(|a| a.placements[0].detail = 3).contains("coverage detail"));
         assert!(refused(|a| a.placements[0].shape = 12).contains("unsupported shape"));
@@ -455,15 +463,27 @@ mod tests {
         .contains("unknown kind"));
         assert!(refused(|a| {
             a.coverage = Box::from([
-                CoverageRow { tile: key, reason: 3 },
-                CoverageRow { tile: key, reason: 2 },
+                CoverageRow {
+                    tile: key,
+                    reason: 3,
+                },
+                CoverageRow {
+                    tile: key,
+                    reason: 2,
+                },
             ]);
         })
         .contains("sorted unique"));
         let (collision, graph, mut atlas) = labelled();
         atlas.coverage = Box::from([
-            CoverageRow { tile: key, reason: 2 },
-            CoverageRow { tile: key, reason: 5 },
+            CoverageRow {
+                tile: key,
+                reason: 2,
+            },
+            CoverageRow {
+                tile: key,
+                reason: 5,
+            },
         ]);
         atlas
             .validate(&collision, &graph)

@@ -9917,7 +9917,8 @@ fn real_content_atlas_stands_match_the_client_reach_strategy() {
             .expect("the real content bakes an atlas");
         let mut map = CollisionMap::new();
         let mut seen: BTreeSet<(u8, u8)> = BTreeSet::new();
-        let (mut audited, mut illegal, mut missing, mut stand_total) = (0usize, 0usize, 0usize, 0usize);
+        let (mut audited, mut illegal, mut missing, mut stand_total) =
+            (0usize, 0usize, 0usize, 0usize);
         for row in atlas.placements() {
             if row.coverage != PLACEMENT_COMPLETE {
                 continue;
@@ -9959,11 +9960,16 @@ fn real_content_atlas_stands_match_the_client_reach_strategy() {
                         continue;
                     }
                     let (sx, sz) = ((50 + dx) as usize, (50 + dz) as usize);
-                    map.flags[sx][sz] = collision.walkable_word(stand.x, stand.z, stand.level) as i32;
+                    map.flags[sx][sz] =
+                        collision.walkable_word(stand.x, stand.z, stand.level) as i32;
                     let (cx, cz) = (50 + dx, 50 + dz);
                     let engine = match row.shape {
-                        4..=8 => map.test_w_decor(cx, cz, 50, 50, row.shape.into(), row.angle.into()),
-                        0..=3 | 9 => map.test_wall(cx, cz, 50, 50, row.shape.into(), row.angle.into()),
+                        4..=8 => {
+                            map.test_w_decor(cx, cz, 50, 50, row.shape.into(), row.angle.into())
+                        }
+                        0..=3 | 9 => {
+                            map.test_wall(cx, cz, 50, 50, row.shape.into(), row.angle.into())
+                        }
                         _ => map.test_loc(cx, cz, 50, 50, width, length, force),
                     };
                     let key = nav_planner::pack::pack_tile_key(stand).unwrap();

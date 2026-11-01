@@ -10,7 +10,7 @@
 //! `FLOOR` (`0x200000`), which are the only bits a standable tile can carry.
 
 use api::query::loc_approach::{
-    loc_candidate_stands, loc_can_operate, loc_reach_strategy, LocOperateQuery, LocReachStrategy,
+    loc_can_operate, loc_candidate_stands, loc_reach_strategy, LocOperateQuery, LocReachStrategy,
 };
 use api::snapshot::WorldTile;
 use client::dash3d::{CollisionFlag, CollisionMap};
@@ -196,9 +196,23 @@ fn walls_and_decorations_match_the_client_collision_map() {
                     for (_, client_flags) in flag_words() {
                         map.flags[(50 + sx) as usize][(50 + sz) as usize] = client_flags;
                         let expected = if (4..=8).contains(&shape) {
-                            map.test_w_decor(50 + sx, 50 + sz, 50, 50, i32::from(shape), i32::from(angle))
+                            map.test_w_decor(
+                                50 + sx,
+                                50 + sz,
+                                50,
+                                50,
+                                i32::from(shape),
+                                i32::from(angle),
+                            )
                         } else {
-                            map.test_wall(50 + sx, 50 + sz, 50, 50, i32::from(shape), i32::from(angle))
+                            map.test_wall(
+                                50 + sx,
+                                50 + sz,
+                                50,
+                                50,
+                                i32::from(shape),
+                                i32::from(angle),
+                            )
                         };
                         assert_eq!(
                             ours(shape, angle, sx, sz, client_flags),
@@ -240,7 +254,11 @@ fn straight_wall_decorations_have_only_the_origin_as_a_stand() {
             force_approach: 0,
             flags: open,
         };
-        assert_eq!(loc_can_operate(query(stand)), Some(false), "{origin:?} {stand:?}");
+        assert_eq!(
+            loc_can_operate(query(stand)),
+            Some(false),
+            "{origin:?} {stand:?}"
+        );
         assert_eq!(loc_can_operate(query(origin)), Some(true), "{origin:?}");
     }
 }
@@ -251,7 +269,11 @@ fn wall_corner_shapes_have_only_the_origin_as_a_stand() {
     for shape in [1u8, 3] {
         for angle in 0u8..4 {
             for (dx, dz) in [(-1, 0), (1, 0), (0, -1), (0, 1)] {
-                assert_eq!(ours(shape, angle, dx, dz, 0), Some(false), "{shape} {angle}");
+                assert_eq!(
+                    ours(shape, angle, dx, dz, 0),
+                    Some(false),
+                    "{shape} {angle}"
+                );
             }
             assert_eq!(ours(shape, angle, 0, 0, 0), Some(true));
         }
