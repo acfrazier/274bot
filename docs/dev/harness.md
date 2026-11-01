@@ -1061,6 +1061,13 @@ does not inherit its requested backend. For a fixed slot-zero focus, put the
 required focused backend first and distribute the other entries to retain the
 required CPU/GPU counts.
 
+The separate ignored `render_budget_content_census` test requires `ENGINE_DIR`
+to name the staged engine and `T44_CENSUS_RUNTIME_INPUT_MANIFEST` to name its
+frozen runtime-input manifest. It verifies engine/content hashes before it
+derives legal population bounds. Missing emitter, lifetime or static-map
+premises keep the census incomplete; a measured scene peak is not a legal
+content upper.
+
 Ingame readiness requires every slot to remain `ingame && scene_state == 2`
 for two seconds. A ready pulse before the mainland-hop reload does not latch.
 Samples report `all_bots_ingame_scene2_s` separately from

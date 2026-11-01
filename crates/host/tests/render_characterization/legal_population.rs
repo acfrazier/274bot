@@ -2244,7 +2244,7 @@ export const enum ScriptOpcode {
         record.push(0);
         append_u16(&mut record, 0);
         for (name, operand) in &instructions {
-            append_u16(&mut record, opcodes[name]);
+            append_u16(&mut record, opcodes[*name]);
             record.extend_from_slice(operand);
         }
         append_u32(&mut record, u32::try_from(instructions.len()).unwrap());

@@ -1738,16 +1738,12 @@ fn legal_population_receipt(
         );
         return None;
     };
-    let Some(manifest_path) = engine_root
-        .parent()
-        .map(|parent| parent.join("runtime-input-manifest.json"))
+    let Some(manifest_path) =
+        std::env::var_os("T44_CENSUS_RUNTIME_INPUT_MANIFEST").map(PathBuf::from)
     else {
         inputs.fail(
             "legal_population_manifest_unavailable",
-            format!(
-                "staged engine root has no sibling runtime-input-manifest.json: {}",
-                engine_root.display()
-            ),
+            "T44_CENSUS_RUNTIME_INPUT_MANIFEST must name the frozen runtime-input manifest",
         );
         return None;
     };
@@ -1841,6 +1837,9 @@ fn add_source_hashes(ledger: &mut InputLedger) -> BTreeMap<&'static str, Vec<u8>
                 | "vendor/fr-client-rust/crates/client/src/dash3d/client_entity.rs"
                 | "vendor/fr-client-rust/crates/client/src/dash3d/client_player.rs"
                 | "vendor/fr-client-rust/crates/client/src/client/client.rs"
+                | "vendor/fr-client-rust/crates/client/src/core/world.rs"
+                | "vendor/fr-client-rust/crates/client/src/render/world.rs"
+                | "vendor/fr-client-rust/crates/client/src/render/draw.rs"
                 | "crates/nav-planner/src/router.rs"
                 | "crates/nav-planner/src/paint.rs"
                 | "crates/panel/src/session.rs"
