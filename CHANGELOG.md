@@ -57,6 +57,9 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.8` 
 - The bank ownership probes finish only after observing the withdrawn rune.
   Their terminal recipe no longer repeats an already-settled wait until the
   no-progress guard fires.
+- The Duel Arena bank probe binds both real closed chest candidates before
+  Start. It rejects an already-open site and accepts only the same previously
+  closed lid opening without a bank session.
 
 ### Panel and terminal app
 

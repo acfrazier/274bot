@@ -1,11 +1,11 @@
 //! Focused Engine-Q proofs of Quester bank-close ownership.
 //!
-//! `quester_bank_duel_chest_owns_and_closes` exercises the selected Duel Arena
-//! chest from its naturally closed state: the closed lid's `Open` changes the
-//! loc but does not open a bank session; the open chest's `Bank` does, and the
-//! Quester-owned provision trip closes that session. The shared chest is never
-//! reset. The fixture waits for its content-defined 300-tick natural reset
-//! before Start, then refuses to start if the closed lid remains unavailable.
+//! `quester_bank_duel_chest_owns_and_closes` binds the selected Duel Arena
+//! site's naturally closed lids before Start and refuses any already-open
+//! chest. One exact bound lid's `Open` must change that loc without opening a
+//! bank session; the open chest's `Bank` does, and Quester closes its own
+//! provision session. No shared chest is reset. The fixture waits only for
+//! the content-defined 300-tick natural reset before binding the closed lids.
 //! `quester_bank_shilo_teller_owns_and_closes` proves the same owned close
 //! through Shilo's declared NPC banker, with only this account's prerequisite
 //! quest completed before Start.
@@ -82,6 +82,8 @@ const DUEL_BANK_STAND: WorldTile = WorldTile {
     z: 3269,
     level: 0,
 };
+const DUEL_CLOSED_CHEST_ID: i32 = 3193;
+const DUEL_OPEN_CHEST_ID: i32 = 3194;
 const SHILO_BANK_STAND: WorldTile = WorldTile {
     x: 2852,
     z: 2954,
@@ -114,12 +116,17 @@ struct BankStockSample {
     law_runes: i32,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize)]
+struct ClosedLid {
+    id: i32,
+    tile: WorldTile,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum ChestState {
-    Closed { id: i32, tile: WorldTile },
-    Open { id: i32, tile: WorldTile },
+    Closed { count: usize },
+    Open { count: usize },
     Missing,
-    Ambiguous,
 }
 
 #[derive(Default)]
@@ -132,7 +139,8 @@ struct BankTrace {
     start_bank_loaded: bool,
     start_bank_law_runes: Option<i32>,
     start_chest: Option<ChestState>,
-    saw_open_lid_without_bank: bool,
+    start_closed_lids: Vec<ClosedLid>,
+    opened_closed_lid: Option<ClosedLid>,
     provision_phases: Vec<String>,
     status_failure: Option<String>,
     gundai_talk_sent: bool,
@@ -203,34 +211,75 @@ fn near_bank_tile(loc: &LocView, bank: WorldTile) -> bool {
         && (loc.tile.z - bank.z).abs() <= 5
 }
 
-fn duel_chest_state(snapshot: &GameSnapshot) -> ChestState {
-    let mut closed = snapshot.locs().iter().filter(|loc| {
-        loc.name.as_deref() == Some("Closed chest")
-            && loc_has_action(loc, "Open")
-            && near_bank_tile(loc, DUEL_BANK_STAND)
-    });
-    let mut open = snapshot.locs().iter().filter(|loc| {
-        loc.name.as_deref() == Some("Open chest")
-            && loc_has_action(loc, "Bank")
-            && near_bank_tile(loc, DUEL_BANK_STAND)
-    });
-    match (closed.next(), open.next(), closed.next(), open.next()) {
-        (Some(loc), None, None, None) => ChestState::Closed {
-            id: loc.id,
-            tile: loc.tile,
-        },
-        (None, Some(loc), None, None) => ChestState::Open {
-            id: loc.id,
-            tile: loc.tile,
-        },
-        (None, None, None, None) => ChestState::Missing,
-        _ => ChestState::Ambiguous,
+fn closed_duel_lid(loc: &LocView) -> bool {
+    loc.id == DUEL_CLOSED_CHEST_ID
+        && loc.name.as_deref() == Some("Closed chest")
+        && loc_has_action(loc, "Open")
+        && near_bank_tile(loc, DUEL_BANK_STAND)
+}
+
+fn open_duel_lid(loc: &LocView) -> bool {
+    loc.id == DUEL_OPEN_CHEST_ID
+        && loc.name.as_deref() == Some("Open chest")
+        && loc_has_action(loc, "Bank")
+        && near_bank_tile(loc, DUEL_BANK_STAND)
+}
+
+fn duel_chest_rows_state(locs: &[LocView]) -> ChestState {
+    let mut closed = 0;
+    let mut open = 0;
+    for loc in locs {
+        if closed_duel_lid(loc) {
+            closed += 1;
+        } else if open_duel_lid(loc) {
+            open += 1;
+        }
+    }
+    if open != 0 {
+        ChestState::Open { count: open }
+    } else if closed != 0 {
+        ChestState::Closed { count: closed }
+    } else {
+        ChestState::Missing
     }
 }
 
-fn closed_lid_open_action(snapshot: &GameSnapshot, at: WorldTile) -> bool {
-    snapshot.locs().iter().any(|loc| {
-        loc.name.as_deref() == Some("Open chest") && loc.tile == at && loc_has_action(loc, "Bank")
+fn duel_chest_state(snapshot: &GameSnapshot) -> ChestState {
+    duel_chest_rows_state(snapshot.locs())
+}
+
+fn bind_closed_duel_lids(locs: &[LocView]) -> Result<Vec<ClosedLid>, String> {
+    let mut closed = Vec::new();
+    for loc in locs {
+        if open_duel_lid(loc) {
+            return Err("Duel Arena site already has an open chest before Start".to_owned());
+        }
+        if closed_duel_lid(loc) {
+            closed.push(ClosedLid {
+                id: loc.id,
+                tile: loc.tile,
+            });
+        }
+    }
+    if closed.is_empty() {
+        return Err("Duel Arena site has no observed closed lid before Start".to_owned());
+    }
+    Ok(closed)
+}
+
+fn opened_bound_lid(
+    closed: &[ClosedLid],
+    locs: &[LocView],
+    bank_open: bool,
+) -> Option<ClosedLid> {
+    if bank_open {
+        return None;
+    }
+    locs.iter().filter(|loc| open_duel_lid(loc)).find_map(|loc| {
+        closed
+            .iter()
+            .find(|candidate| candidate.tile == loc.tile)
+            .copied()
     })
 }
 
@@ -254,17 +303,9 @@ fn record_bank_snapshot(trace: &mut BankTrace, snapshot: &GameSnapshot, law_id: 
             trace.bank_stock.push(sample);
         }
     }
-    if trace
-        .start_chest
-        .is_some_and(|state| matches!(state, ChestState::Closed { .. }))
-        && matches!(duel_chest_state(snapshot), ChestState::Open { .. })
-        && !session.open
-    {
-        let ChestState::Closed { tile, .. } = trace.start_chest.expect("checked closed chest")
-        else {
-            unreachable!("closed chest state changed while checking its tile")
-        };
-        trace.saw_open_lid_without_bank |= closed_lid_open_action(snapshot, tile);
+    if trace.opened_closed_lid.is_none() && !trace.start_closed_lids.is_empty() {
+        trace.opened_closed_lid =
+            opened_bound_lid(&trace.start_closed_lids, snapshot.locs(), session.open);
     }
 }
 
@@ -327,7 +368,14 @@ fn completed(lifecycle: Option<&script::ScriptLifecycleReceipt>) -> bool {
 }
 
 fn own_close_predicate(trace: &BankTrace, lifecycle_completed: bool) -> bool {
-    trace.saw_open_lid_without_bank && owned_transfer_predicate(trace, lifecycle_completed)
+    matches!(
+        trace.start_chest,
+        Some(ChestState::Closed { count })
+            if count != 0 && count == trace.start_closed_lids.len()
+    ) && trace
+        .opened_closed_lid
+        .is_some_and(|lid| trace.start_closed_lids.contains(&lid))
+        && owned_transfer_predicate(trace, lifecycle_completed)
 }
 
 fn teller_close_predicate(trace: &BankTrace, lifecycle_completed: bool) -> bool {
@@ -413,7 +461,12 @@ fn trace_receipt(trace: &BankTrace) -> Value {
         "start_bank_loaded": trace.start_bank_loaded,
         "start_bank_law_runes": trace.start_bank_law_runes,
         "start_chest": trace.start_chest.map(|state| format!("{state:?}")),
-        "saw_open_lid_without_bank": trace.saw_open_lid_without_bank,
+        "start_closed_lids": &trace.start_closed_lids,
+        "opened_closed_lid_without_bank": trace.opened_closed_lid.map(|lid| json!({
+            "closed_id": lid.id,
+            "open_id": DUEL_OPEN_CHEST_ID,
+            "tile": [lid.tile.x, lid.tile.z, lid.tile.level],
+        })),
         "provision_phases": &trace.provision_phases,
         "status_failure": &trace.status_failure,
         "gundai_talk_sent": trace.gundai_talk_sent,
@@ -752,7 +805,11 @@ fn family_start(
             let witness = trace.lock().map_err(|_| "bank witness mutex poisoned")?;
             match guard {
                 StartGuard::DuelClosedChest => {
-                    if !matches!(witness.start_chest, Some(ChestState::Closed { .. })) {
+                    if !matches!(
+                        witness.start_chest,
+                        Some(ChestState::Closed { count })
+                            if count != 0 && count == witness.start_closed_lids.len()
+                    ) {
                         return Err(format!(
                             "Duel Arena shared chest was not closed at pre-Start: {:?}; classified without resetting world or dispatching a Quester action",
                             witness.start_chest
@@ -946,6 +1003,9 @@ fn build_bank_cell(
         witness.start_bank_loaded = bank_loaded;
         witness.start_bank_law_runes = bank_law;
         witness.start_chest = chest;
+        if matches!(guard, StartGuard::DuelClosedChest) {
+            witness.start_closed_lids = bind_closed_duel_lids(snapshot.locs())?;
+        }
         witness.start_teller_npc = teller_type.and_then(|id| {
             snapshot
                 .npcs()
@@ -961,21 +1021,16 @@ fn build_bank_cell(
             "bank_law_runes": bank_law,
             "inventory_law_runes": inventory_law,
             "duel_chest_state": chest.map(|state| format!("{state:?}")),
+            "start_closed_lids": &witness.start_closed_lids,
             "start_teller_npc": witness.start_teller_npc,
             "gundai_talk_sent": witness.gundai_talk_sent,
             "gundai_choice_sent": witness.gundai_choice_sent,
             "gundai_choice_text": witness.gundai_choice_text,
-            "classification": if matches!(chest, Some(ChestState::Open { .. })) {
-                "shared chest already open; no reset attempted"
-            } else if matches!(chest, Some(ChestState::Closed { .. })) {
-                "closed lid observed before Start"
-            } else if matches!(guard, StartGuard::PlayerOpenGundai) {
-                "player-opened Gundai bank observed before Start"
-            } else if matches!(guard, StartGuard::ShiloTeller) {
-                "Shilo teller access checked before Start"
-            } else {
-                "Duel Arena chest missing or ambiguous; no reset attempted"
-            }
+            "classification": match guard {
+                StartGuard::DuelClosedChest => "all observed candidate lids closed and bound before Start",
+                StartGuard::PlayerOpenGundai => "player-opened Gundai bank observed before Start",
+                StartGuard::ShiloTeller => "Shilo teller access checked before Start",
+            },
         }))
     });
     let start_guard = guard;
@@ -1226,7 +1281,89 @@ mod oracle_tests {
         }
     }
 
+    fn chest_loc(tile: WorldTile, open: bool) -> LocView {
+        let id = if open { DUEL_OPEN_CHEST_ID } else { DUEL_CLOSED_CHEST_ID };
+        LocView {
+            typecode: id,
+            info: 0,
+            id,
+            name: Some(if open { "Open chest" } else { "Closed chest" }.to_owned()),
+            description: None,
+            actions: vec![Some(if open { "Bank" } else { "Open" }.to_owned())],
+            tile,
+            distance: 1,
+            layer: api::snapshot::LocLayer::GroundDecoration,
+            shape: 0,
+            angle: 0,
+            width: 1,
+            length: 1,
+            footprint_width: 1,
+            footprint_length: 1,
+            block_walk: false,
+            block_range: false,
+            active: true,
+            animation: -1,
+            map_function: -1,
+            map_scene: -1,
+            force_approach: 0,
+        }
+    }
+
+    fn real_closed_duel_chests() -> Vec<LocView> {
+        let (selected, _) = live_data();
+        selected
+            .bank_placements()
+            .expect("selected real bank placements")
+            .rows
+            .iter()
+            .filter(|placement| placement.id == DUEL_CLOSED_CHEST_ID)
+            .map(|placement| {
+                chest_loc(
+                    WorldTile { x: placement.x, z: placement.z, level: placement.level },
+                    false,
+                )
+            })
+            .filter(|loc| near_bank_tile(loc, DUEL_BANK_STAND))
+            .collect()
+    }
+
+    #[test]
+    fn two_real_chests_bind_either_exact_closed_lid_but_not_a_wrong_lid() {
+        let rows = real_closed_duel_chests();
+        assert_eq!(rows.len(), 2);
+        assert_eq!(duel_chest_rows_state(&rows), ChestState::Closed { count: 2 });
+        let closed = bind_closed_duel_lids(&rows).unwrap();
+        for lid in &closed {
+            let observed: Vec<_> = rows
+                .iter()
+                .map(|loc| chest_loc(loc.tile, loc.tile == lid.tile))
+                .collect();
+            assert_eq!(opened_bound_lid(&closed, &observed, false), Some(*lid));
+            assert_eq!(opened_bound_lid(&closed, &observed, true), None);
+        }
+        let wrong_tile = WorldTile { x: 3383, z: 3270, level: 0 };
+        assert!(!closed.iter().any(|lid| lid.tile == wrong_tile));
+        assert_eq!(opened_bound_lid(&closed, &[chest_loc(wrong_tile, true)], false), None);
+        let mut wrong_id = chest_loc(closed[0].tile, true);
+        wrong_id.id += 1;
+        assert_eq!(opened_bound_lid(&closed, &[wrong_id], false), None);
+    }
+
+    #[test]
+    fn binding_refuses_a_preopened_two_chest_site_and_missing_lids() {
+        let mut rows = real_closed_duel_chests();
+        rows[0] = chest_loc(rows[0].tile, true);
+        assert_eq!(duel_chest_rows_state(&rows), ChestState::Open { count: 1 });
+        assert!(bind_closed_duel_lids(&rows).is_err());
+        rows[1] = chest_loc(rows[1].tile, true);
+        assert_eq!(duel_chest_rows_state(&rows), ChestState::Open { count: 2 });
+        assert!(bind_closed_duel_lids(&rows).is_err());
+        assert!(bind_closed_duel_lids(&[]).is_err());
+    }
+
     fn base_owned_trace() -> BankTrace {
+        let closed_lids = bind_closed_duel_lids(&real_closed_duel_chests()).unwrap();
+        let opened_lid = closed_lids[0];
         BankTrace {
             start_session: Some(SessionSample {
                 tick: 10,
@@ -1264,11 +1401,9 @@ mod oracle_tests {
             ],
             inventory_law_runes: Some(1),
             start_inventory_law_runes: Some(0),
-            start_chest: Some(ChestState::Closed {
-                id: 100,
-                tile: DUEL_BANK_STAND,
-            }),
-            saw_open_lid_without_bank: true,
+            start_chest: Some(ChestState::Closed { count: closed_lids.len() }),
+            start_closed_lids: closed_lids,
+            opened_closed_lid: Some(opened_lid),
             provision_phases: vec![
                 "Scanning".to_owned(),
                 "Withdrawing".to_owned(),
@@ -1301,14 +1436,25 @@ mod oracle_tests {
         assert!(!own_close_predicate(&no_lifecycle, false));
 
         let mut no_lid_evidence = base_owned_trace();
-        no_lid_evidence.saw_open_lid_without_bank = false;
+        no_lid_evidence.opened_closed_lid = None;
         assert!(!own_close_predicate(&no_lid_evidence, true));
+
+        let mut wrong_lid = base_owned_trace();
+        wrong_lid.opened_closed_lid = Some(ClosedLid {
+            id: DUEL_CLOSED_CHEST_ID,
+            tile: WorldTile { x: 3383, z: 3270, level: 0 },
+        });
+        assert!(!own_close_predicate(&wrong_lid, true));
+
+        let mut unbound = base_owned_trace();
+        unbound.start_closed_lids.clear();
+        assert!(!own_close_predicate(&unbound, true));
     }
 
     #[test]
     fn teller_oracle_requires_real_teller_and_ordered_stock_transfer() {
         let mut teller = base_owned_trace();
-        teller.saw_open_lid_without_bank = false;
+        teller.opened_closed_lid = None;
         assert!(!teller_close_predicate(&teller, true));
         teller.start_teller_npc = Some(7);
         assert!(teller_close_predicate(&teller, true));
