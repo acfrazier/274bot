@@ -311,6 +311,7 @@ fn reader_catalog() -> &'static Value {
             },
         ];
         let side_tabs = [
+            SideTabIfaceInput { index: 0, id: 900 },
             SideTabIfaceInput { index: 2, id: 200 },
             SideTabIfaceInput { index: 6, id: 6600 },
         ];
@@ -367,7 +368,7 @@ fn reader_catalog() -> &'static Value {
 
         let mut accurate_label = widget(19, 900, 901);
         accurate_label.type_ = 4;
-        accurate_label.text = Some("Accurate");
+        accurate_label.text = Some("(Accurate)");
         accurate_label.y = 300;
         accurate_label.height = 20;
 
@@ -383,9 +384,25 @@ fn reader_catalog() -> &'static Value {
 
         let mut aggressive_label = widget(21, 900, 901);
         aggressive_label.type_ = 4;
-        aggressive_label.text = Some("Aggressive");
+        aggressive_label.text = Some("(Aggressive)");
         aggressive_label.y = 330;
         aggressive_label.height = 20;
+        let mut punch_button = widget(23, 900, 901);
+        punch_button.button_type = 5;
+        punch_button.script_opcode = 5;
+        punch_button.script_varp = 43;
+        punch_button.script_value = 3;
+        punch_button.x = 10;
+        punch_button.y = 360;
+        punch_button.width = 20;
+        punch_button.height = 20;
+
+        let mut punch_label = widget(24, 900, 901);
+        punch_label.type_ = 4;
+        punch_label.text = Some("Punch");
+        punch_label.y = 360;
+        punch_label.height = 20;
+
 
         let mut pause_button = widget(22, 100, 100);
         pause_button.button_type = 6;
@@ -419,6 +436,8 @@ fn reader_catalog() -> &'static Value {
             accurate_label,
             aggressive_button,
             aggressive_label,
+            punch_button,
+            punch_label,
             pause_button,
             shop_widget,
             mine_small_widget,
@@ -1381,7 +1400,7 @@ reader_contract!(
     {
         assert_eq!(
             value,
-            &json!([{"mode": 1, "label": "Accurate"}, {"mode": 2, "label": "Aggressive"}])
+            &json!([{"mode": 1, "label": "(Accurate)"}, {"mode": 2, "label": "(Aggressive)"}])
         );
     }
 );

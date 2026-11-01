@@ -11,6 +11,9 @@ const FAST_TEST_NAME: &str =
 const HEAP_CHILD_ENV: &str = "SCRIPT_CLIENT_ADAPTER_HEAP_SHAPE_TEST_CHILD";
 const HEAP_TEST_NAME: &str =
     "selected_facts_v8::client_adapter_v8::tests::client_adapter_objects_have_bounded_v8_heap";
+const STYLE_CHILD_ENV: &str = "SCRIPT_CLIENT_ADAPTER_STYLE_FILTER_TEST_CHILD";
+const STYLE_TEST_NAME: &str =
+    "selected_facts_v8::client_adapter_v8::tests::combat_style_labels_filter_on_both_tab_paths";
 
 const SETUP: &str = r#"
 const itemRows = (count, idBase = 100) => Array.from({ length: count }, (_, slot) => ({
@@ -257,8 +260,8 @@ globalThis.__clientAdapterFast = () => {
         toLocal: fastObject(read('toLocal', 3201, 3202)),
         mapBuildBase: fastObject(read('mapBuildBase')),
         lastWalkPath: lastPath.length === 104 * 104 && lastPath.every(fastObject),
-        shownStyles: stylePaths.shown.length === 5 && stylePaths.shown.every(fastObject),
-        hiddenStyles: stylePaths.hidden.length === 5 && stylePaths.hidden.every(fastObject),
+        shownStyles: stylePaths.shown.length === 4 && stylePaths.shown.every(fastObject),
+        hiddenStyles: stylePaths.hidden.length === 4 && stylePaths.hidden.every(fastObject),
         modalButtons: buttons.length === 288 && buttons.every(fastObject),
         tradeConfirmOffers: fastObject(trade)
             && trade.mine.length === 24 && trade.mine.every(fastObject)
@@ -450,3 +453,25 @@ fn client_adapter_objects_have_bounded_v8_heap() {
     );
 }
 
+
+#[test]
+fn combat_style_labels_filter_on_both_tab_paths() {
+    if !run_in_child(STYLE_CHILD_ENV, STYLE_TEST_NAME) {
+        return;
+    }
+    let (mut runtime, _cache) = setup();
+    let paths: Value = serde_json::from_str(
+        &runtime
+            .eval::<String>("JSON.stringify(__clientAdapterStylePaths())")
+            .unwrap(),
+    )
+    .expect("combat style label paths");
+    let accepted = json!([
+        { "mode": 1, "label": "(Accurate)" },
+        { "mode": 2, "label": "(Aggressive)" },
+        { "mode": 3, "label": "(Controlled)" },
+        { "mode": 4, "label": "(Defensive)" },
+    ]);
+    assert_eq!(paths["shown"], accepted, "shown-tab widgets filter Punch");
+    assert_eq!(paths["hidden"], accepted, "hidden-tab fallback filters Punch");
+}

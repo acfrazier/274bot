@@ -1376,7 +1376,9 @@ fn select_button_labels_by_varp<'s>(
                 .ok_or_else(|| PENDING.to_string())?;
             let mode = object_i32(scope, style, "mode")?.unwrap_or(0);
             let label = property(scope, style, "label")?;
-            if !label.is_string() {
+            if !label.is_string()
+                || !is_combat_style_label(&label.to_rust_string_lossy(scope))
+            {
                 continue;
             }
             let item = new_object(scope, ClientAdapterObjectShape::SelectButtonLabel)?;
@@ -1428,7 +1430,7 @@ fn select_button_labels_by_varp<'s>(
                 continue;
             }
             let label = text.to_rust_string_lossy(scope);
-            if label.trim().is_empty() {
+            if !is_combat_style_label(&label) {
                 continue;
             }
             let text_y = f64::from(object_i32(scope, *candidate, "y")?.unwrap_or(0));
@@ -1459,6 +1461,13 @@ fn select_button_labels_by_varp<'s>(
     }
     Ok(output.into())
 }
+fn is_combat_style_label(label: &str) -> bool {
+    let label = label.trim();
+    ["(accurate)", "(aggressive)", "(controlled)", "(defensive)"]
+        .iter()
+        .any(|style| label.eq_ignore_ascii_case(style))
+}
+
 
 
 fn main_modal_button_near_text<'s>(
