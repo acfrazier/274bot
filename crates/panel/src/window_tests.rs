@@ -2682,3 +2682,344 @@ fn lost_record_frame_leaves_no_png_failure_behind() {
     assert!(shots.record_done.is_empty());
     assert_eq!(shots.status(RECORD_LABEL), ShotStatus::Missing);
 }
+
+#[cfg(feature = "render-diagnostics")]
+#[test]
+fn window_diagnostic_lifecycle_rows_keep_identity_order_status_and_scope() {
+    use super::window_diagnostics::WindowDiagnostics;
+
+    let mut diagnostics = WindowDiagnostics::new();
+    let [birth, scope] =
+        diagnostics.record_window_created_at("WindowId(17)".to_owned(), "Wait", 10);
+    assert_eq!(birth["schema"], "render-s5-window-churn-v2");
+    assert_eq!(birth["record"], "window_lifecycle");
+    assert_eq!(birth["kind"], "birth");
+    assert_eq!(birth["event_order"], 1);
+    assert_eq!(birth["elapsed_ns"], 10);
+    let clock_origin = birth["clock_origin_unix_ns"]
+        .as_u64()
+        .expect("the system clock has a Unix-epoch origin");
+    assert_eq!(birth["window_id"], "WindowId(17)");
+    assert_eq!(birth["status"], "success");
+    assert_eq!(birth["redraw_mode"], "Wait");
+
+    assert_eq!(scope["schema"], "render-s5-window-churn-v2");
+    assert_eq!(scope["record"], "scope");
+    assert_eq!(scope["event_order"], 2);
+    assert_eq!(scope["elapsed_ns"], 10);
+    assert_eq!(scope["clock_origin_unix_ns"], clock_origin);
+    assert_eq!(scope["status"], "observed");
+    assert_eq!(scope["window_id"], "WindowId(17)");
+    assert_eq!(
+        scope["pump_id"],
+        "ApplicationHandler::about_to_wait"
+    );
+    assert_eq!(
+        scope["surfaces"],
+        serde_json::json!([
+            { "surface_id": "main_view", "role": "main_view" },
+            { "surface_id": "sidecar_rail", "role": "sidecar_rail" }
+        ])
+    );
+
+    let error = diagnostics.record_error_at("surface_creation", 25);
+    assert_eq!(error["schema"], "render-s5-window-churn-v2");
+    assert_eq!(error["record"], "window_lifecycle");
+    assert_eq!(error["kind"], "error");
+    assert_eq!(error["event_order"], 3);
+    assert_eq!(error["elapsed_ns"], 25);
+    assert_eq!(error["clock_origin_unix_ns"], clock_origin);
+    assert_eq!(error["window_id"], "WindowId(17)");
+    assert_eq!(error["status"], "error");
+    assert_eq!(error["error_kind"], "surface_creation");
+
+    let close = diagnostics
+        .record_close_at("close_requested", 30)
+        .expect("an active window has one close row");
+    assert_eq!(close["schema"], "render-s5-window-churn-v2");
+    assert_eq!(close["record"], "window_lifecycle");
+    assert_eq!(close["kind"], "close");
+    assert_eq!(close["event_order"], 4);
+    assert_eq!(close["elapsed_ns"], 30);
+    assert_eq!(close["clock_origin_unix_ns"], clock_origin);
+    assert_eq!(close["window_id"], "WindowId(17)");
+    assert_eq!(close["status"], "closed");
+    assert_eq!(close["reason"], "close_requested");
+    assert!(diagnostics.record_close_at("duplicate", 31).is_none());
+
+    let encoded = serde_json::to_string(&[birth, scope, error, close])
+        .expect("lifecycle observations are JSON serializable");
+    let decoded: serde_json::Value =
+        serde_json::from_str(&encoded).expect("serialized rows remain structured JSON");
+    assert_eq!(decoded.as_array().unwrap().len(), 4);
+}
+
+#[cfg(feature = "render-diagnostics")]
+#[test]
+fn window_diagnostic_samples_separate_built_and_submitted_surfaces() {
+    use super::window_diagnostics::{UiPaintObservation, WindowDiagnostics};
+
+    let mut diagnostics = WindowDiagnostics::new();
+    let [birth, _scope] =
+        diagnostics.record_window_created_at("WindowId(17)".to_owned(), "WaitUntil", 0);
+    let clock_origin = birth["clock_origin_unix_ns"]
+        .as_u64()
+        .expect("the system clock has a Unix-epoch origin");
+    assert_eq!(birth["redraw_mode"], "WaitUntil");
+    let mut paints = UiPaintObservation::default();
+    paints.note_main_view_build(true);
+    paints.note_rail_presence(true);
+    paints.note_rail_build(true);
+    assert_eq!(paints.main_view_built, Some(true));
+    assert_eq!(paints.rail_present, Some(true));
+    assert_eq!(paints.rail_built, Some(true));
+
+    diagnostics.record_ui_frame_at(paints, 100);
+    assert!(diagnostics.record_native_paint_at(Some(1), 200).is_none());
+    diagnostics.record_ui_frame_at(paints, 1_000_000_100);
+    let rows = diagnostics
+        .record_native_paint_at(Some(2), 1_000_000_200)
+        .expect("one second and two native paints yield bounded samples");
+    assert!(rows[0].is_none());
+    let main = rows[1].as_ref().expect("main-view paint has its own row");
+    let rail = rows[2].as_ref().expect("rail paint has its own row");
+
+    assert_eq!(main["schema"], "render-s5-window-churn-v2");
+    assert_eq!(main["record"], "sample");
+    assert_eq!(main["series"], "ui_paint");
+    assert_eq!(main["event_order"], 3);
+    assert_eq!(main["window_id"], "WindowId(17)");
+    assert_eq!(main["surface_id"], "main_view");
+    assert_eq!(main["role"], "main_view");
+    assert_eq!(main["start_ns"], 0);
+    assert_eq!(main["end_ns"], 1_000_000_200_u64);
+    assert_eq!(main["clock_origin_unix_ns"], clock_origin);
+    assert_eq!(main["status"], "success");
+    assert_eq!(main["built_paint_count_start"], 0);
+    assert_eq!(main["built_paint_count_end"], 2);
+    assert_eq!(main["submitted_paint_count_start"], 0);
+    assert_eq!(main["submitted_paint_count_end"], 2);
+    assert_eq!(main["rail_present_start"], serde_json::Value::Null);
+    assert_eq!(main["rail_present_end"], serde_json::Value::Null);
+    assert_eq!(main["rail_present_frame_count_start"], serde_json::Value::Null);
+    assert_eq!(main["rail_present_frame_count_end"], serde_json::Value::Null);
+    assert_eq!(main["last_built_start"], serde_json::Value::Null);
+    assert_eq!(main["last_built_end"], true);
+    assert_eq!(main["frame_count_start"], 0);
+    assert_eq!(main["frame_count_end"], 2);
+    assert_eq!(main["native_paint_count_start"], 0);
+    assert_eq!(main["native_paint_count_end"], 2);
+    assert_eq!(main["native_sequence_start"], serde_json::Value::Null);
+    assert_eq!(main["native_sequence_end"], 2);
+    assert_eq!(main["last_ui_frame_monotonic_ns"], 1_000_000_100_u64);
+    assert_eq!(main["last_submitted_ui_frame_count"], 2);
+
+    assert_eq!(rail["schema"], "render-s5-window-churn-v2");
+    assert_eq!(rail["record"], "sample");
+    assert_eq!(rail["series"], "ui_paint");
+    assert_eq!(rail["event_order"], 4);
+    assert_eq!(rail["window_id"], "WindowId(17)");
+    assert_eq!(rail["surface_id"], "sidecar_rail");
+    assert_eq!(rail["role"], "sidecar_rail");
+    assert_eq!(rail["start_ns"], 0);
+    assert_eq!(rail["end_ns"], 1_000_000_200_u64);
+    assert_eq!(rail["clock_origin_unix_ns"], clock_origin);
+    assert_eq!(rail["status"], "success");
+    assert_eq!(rail["built_paint_count_start"], 0);
+    assert_eq!(rail["built_paint_count_end"], 2);
+    assert_eq!(rail["submitted_paint_count_start"], 0);
+    assert_eq!(rail["submitted_paint_count_end"], 2);
+    assert_eq!(rail["rail_present_start"], serde_json::Value::Null);
+    assert_eq!(rail["rail_present_end"], true);
+    assert_eq!(rail["rail_present_frame_count_start"], 0);
+    assert_eq!(rail["rail_present_frame_count_end"], 2);
+    assert_eq!(rail["last_built_start"], serde_json::Value::Null);
+    assert_eq!(rail["last_built_end"], true);
+    assert_eq!(rail["frame_count_start"], 0);
+    assert_eq!(rail["frame_count_end"], 2);
+    assert_eq!(rail["native_paint_count_start"], 0);
+    assert_eq!(rail["native_paint_count_end"], 2);
+    assert_eq!(rail["native_sequence_start"], serde_json::Value::Null);
+    assert_eq!(rail["native_sequence_end"], 2);
+    assert_eq!(rail["last_ui_frame_monotonic_ns"], 1_000_000_100_u64);
+    assert_eq!(rail["last_submitted_ui_frame_count"], 2);
+    let close = diagnostics
+        .record_close_at("test_complete", 1_000_000_201)
+        .expect("the final lifecycle row follows both paint samples");
+    assert_eq!(close["event_order"], 5);
+    assert_eq!(close["elapsed_ns"], 1_000_000_201_u64);
+    assert_eq!(close["clock_origin_unix_ns"], clock_origin);
+    assert_eq!(close["status"], "closed");
+
+    let encoded = serde_json::to_string(&rows).expect("samples remain JSON serializable");
+    let decoded: serde_json::Value =
+        serde_json::from_str(&encoded).expect("serialized samples remain structured JSON");
+    assert_eq!(decoded.as_array().unwrap().len(), 3);
+}
+
+#[cfg(feature = "render-diagnostics")]
+#[test]
+fn window_diagnostic_pump_samples_report_real_pump_interval_and_progress() {
+    use super::window_diagnostics::WindowDiagnostics;
+
+    let mut diagnostics = WindowDiagnostics::new();
+    let [birth, _scope] =
+        diagnostics.record_window_created_at("WindowId(22)".to_owned(), "Poll", 0);
+    let clock_origin = birth["clock_origin_unix_ns"]
+        .as_u64()
+        .expect("the system clock has a Unix-epoch origin");
+    assert!(diagnostics.record_pump_at(10).is_none());
+    assert!(diagnostics.record_pump_at(30).is_none());
+    assert!(diagnostics.record_pump_at(75).is_none());
+    let rows = diagnostics
+        .record_pump_at(1_000_000_075)
+        .expect("one second of pump progress yields a sample");
+    let pump = rows[0].as_ref().expect("pump has a distinct sample");
+    assert!(rows[1].is_none());
+    assert!(rows[2].is_none());
+    assert_eq!(pump["schema"], "render-s5-window-churn-v2");
+    assert_eq!(pump["record"], "sample");
+    assert_eq!(pump["series"], "window_pump");
+    assert_eq!(pump["event_order"], 3);
+    assert_eq!(pump["window_id"], "WindowId(22)");
+    assert_eq!(pump["pump_id"], "ApplicationHandler::about_to_wait");
+    assert_eq!(pump["start_ns"], 0);
+    assert_eq!(pump["end_ns"], 1_000_000_075_u64);
+    assert_eq!(pump["clock_origin_unix_ns"], clock_origin);
+    assert_eq!(pump["status"], "success");
+    assert_eq!(pump["redraw_mode"], "Poll");
+    assert_eq!(pump["about_to_wait_count_start"], 0);
+    assert_eq!(pump["about_to_wait_count_end"], 4);
+    assert_eq!(pump["max_interval_ns_start"], serde_json::Value::Null);
+    assert_eq!(pump["max_interval_ns_end"], 1_000_000_000_u64);
+    assert_eq!(pump["last_interval_ns"], 1_000_000_000_u64);
+    assert_eq!(pump["last_pump_monotonic_ns"], 1_000_000_075_u64);
+    assert_eq!(pump["native_paint_count_start"], 0);
+    assert_eq!(pump["native_paint_count_end"], 0);
+    assert_eq!(pump["native_sequence_start"], serde_json::Value::Null);
+    assert_eq!(pump["native_sequence_end"], serde_json::Value::Null);
+}
+
+#[cfg(feature = "render-diagnostics")]
+#[test]
+fn window_diagnostic_absent_rail_is_an_explicit_observation() {
+    use super::window_diagnostics::{UiPaintObservation, WindowDiagnostics};
+
+    let mut diagnostics = WindowDiagnostics::new();
+    let _ = diagnostics.record_window_created_at("WindowId(23)".to_owned(), "Wait", 0);
+    let mut paints = UiPaintObservation::default();
+    paints.note_main_view_build(true);
+    paints.note_rail_presence(false);
+    assert_eq!(paints.rail_present, Some(false));
+    assert_eq!(paints.rail_built, Some(false));
+    diagnostics.record_ui_frame_at(paints, 1_000_000_000);
+    let rows = diagnostics
+        .record_native_paint_at(None, 1_000_000_100)
+        .expect("the sampled UI frame progresses");
+    let rail = rows[2].as_ref().expect("absence is distinct from no observation");
+    assert_eq!(rail["rail_present_start"], serde_json::Value::Null);
+    assert_eq!(rail["rail_present_end"], false);
+    assert_eq!(rail["rail_present_frame_count_start"], 0);
+    assert_eq!(rail["rail_present_frame_count_end"], 0);
+    assert_eq!(rail["last_built_start"], serde_json::Value::Null);
+    assert_eq!(rail["last_built_end"], false);
+    assert_eq!(rail["built_paint_count_start"], 0);
+    assert_eq!(rail["built_paint_count_end"], 0);
+    assert_eq!(rail["submitted_paint_count_start"], 0);
+    assert_eq!(rail["submitted_paint_count_end"], 0);
+    assert_eq!(rail["frame_count_start"], 0);
+    assert_eq!(rail["frame_count_end"], 1);
+    assert_eq!(rail["native_paint_count_start"], 0);
+    assert_eq!(rail["native_paint_count_end"], 1);
+    assert_eq!(rail["native_sequence_end"], serde_json::Value::Null);
+}
+
+#[cfg(not(feature = "render-diagnostics"))]
+#[test]
+fn noninstrumented_window_layout_matches_the_frozen_pre_diagnostics_shape() {
+    use std::mem::size_of;
+
+    #[allow(dead_code)]
+    struct PreDiagnosticsGpu<'a> {
+        device: &'a wgpu::Device,
+        queue: &'a wgpu::Queue,
+        renderer: &'a mut imgui_wgpu::WgpuRenderer,
+    }
+
+    #[allow(dead_code)]
+    struct PreDiagnosticsAppWindow {
+        instance: wgpu::Instance,
+        device: wgpu::Device,
+        queue: wgpu::Queue,
+        window: std::sync::Arc<Window>,
+        surface_desc: wgpu::SurfaceConfiguration,
+        surface: wgpu::Surface<'static>,
+        imgui: ImguiState,
+        clear_color: wgpu::Color,
+        offscreen: Option<wgpu::Texture>,
+        pending_capture: Option<PendingCapture>,
+        paint_sequence: u64,
+    }
+
+    #[allow(dead_code)]
+    struct PreDiagnosticsApp<F> {
+        cfg: PanelConfig,
+        window: Option<AppWindow>,
+        pending: Option<PendingGpu>,
+        lifecycle: Lifecycle,
+        ui_frame: F,
+        on_gpu_shutdown: Box<dyn FnMut(&mut Gpu)>,
+        shots: std::sync::Arc<std::sync::Mutex<ShotState>>,
+        last_wake: Instant,
+        failure: Option<PanelError>,
+    }
+
+    type LayoutFrame = for<'a> fn(&imgui::Ui, &mut Gpu<'a>) -> bool;
+
+    assert_eq!(size_of::<Gpu>(), size_of::<PreDiagnosticsGpu<'_>>());
+    assert_eq!(
+        size_of::<AppWindow>(),
+        size_of::<PreDiagnosticsAppWindow>()
+    );
+    assert_eq!(
+        size_of::<App<LayoutFrame>>(),
+        size_of::<PreDiagnosticsApp<LayoutFrame>>()
+    );
+}
+
+#[cfg(feature = "render-diagnostics")]
+#[test]
+fn window_diagnostic_preserves_present_but_unbuilt_surface_states() {
+    use super::window_diagnostics::{UiPaintObservation, WindowDiagnostics};
+
+    let mut diagnostics = WindowDiagnostics::new();
+    let _ = diagnostics.record_window_created_at("WindowId(24)".to_owned(), "WaitUntil", 0);
+    let mut paints = UiPaintObservation::default();
+    paints.note_main_view_build(false);
+    paints.note_rail_presence(true);
+    paints.note_rail_build(false);
+    assert_eq!(paints.main_view_built, Some(false));
+    assert_eq!(paints.rail_present, Some(true));
+    assert_eq!(paints.rail_built, Some(false));
+    diagnostics.record_ui_frame_at(paints, 1_000_000_000);
+    let rows = diagnostics
+        .record_native_paint_at(None, 1_000_000_100)
+        .expect("a real UI frame progresses even without a surface build");
+    let main = rows[1]
+        .as_ref()
+        .expect("the main view has a distinct observation");
+    let rail = rows[2]
+        .as_ref()
+        .expect("the present rail has a distinct observation");
+    assert_eq!(main["last_built_start"], serde_json::Value::Null);
+    assert_eq!(main["last_built_end"], false);
+    assert_eq!(main["built_paint_count_end"], 0);
+    assert_eq!(main["submitted_paint_count_end"], 0);
+    assert_eq!(rail["rail_present_start"], serde_json::Value::Null);
+    assert_eq!(rail["rail_present_end"], true);
+    assert_eq!(rail["rail_present_frame_count_end"], 1);
+    assert_eq!(rail["last_built_start"], serde_json::Value::Null);
+    assert_eq!(rail["last_built_end"], false);
+    assert_eq!(rail["built_paint_count_end"], 0);
+    assert_eq!(rail["submitted_paint_count_end"], 0);
+}

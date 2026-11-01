@@ -23,8 +23,14 @@ use std::io::{BufWriter, Write as _};
 use std::path::{Path, PathBuf};
 use std::process::{Child, ChildStdin, Command, ExitStatus, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
+#[cfg(feature = "render-diagnostics")]
+use std::sync::atomic::{AtomicU64, AtomicUsize};
 use std::sync::mpsc::{sync_channel, Receiver, SyncSender, TryRecvError};
+#[cfg(feature = "render-diagnostics")]
+use std::sync::mpsc::TrySendError;
 use std::sync::{Arc, Mutex};
+#[cfg(feature = "render-diagnostics")]
+use std::sync::TryLockError;
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
@@ -665,6 +671,423 @@ enum EncoderMessage {
     Setting(BoundedText<4096>),
 }
 
+#[cfg(feature = "render-diagnostics")]
+static NEXT_RECORDER_DIAGNOSTIC_ID: AtomicU64 = AtomicU64::new(1);
+
+#[cfg(feature = "render-diagnostics")]
+const NO_FINALIZATION_REQUEST: u64 = u64::MAX;
+
+#[cfg(feature = "render-diagnostics")]
+#[derive(Clone, Copy)]
+enum DiagnosticMessageKind {
+    Frame,
+    Setting,
+}
+
+#[cfg(feature = "render-diagnostics")]
+impl DiagnosticMessageKind {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Frame => "Frame",
+            Self::Setting => "Setting",
+        }
+    }
+}
+
+#[cfg(feature = "render-diagnostics")]
+#[derive(Clone, Copy)]
+enum QueueSendStatus {
+    Accepted,
+    Full,
+    Disconnected,
+    LockContended,
+    LockPoisoned,
+    NoSender,
+    WriterNotReady,
+}
+
+#[cfg(feature = "render-diagnostics")]
+impl QueueSendStatus {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Accepted => "accepted",
+            Self::Full => "full",
+            Self::Disconnected => "disconnected",
+            Self::LockContended => "lock_contended",
+            Self::LockPoisoned => "lock_poisoned",
+            Self::NoSender => "no_sender",
+            Self::WriterNotReady => "writer_not_ready",
+        }
+    }
+
+    fn event_kind(self) -> &'static str {
+        match self {
+            Self::Accepted => "send_accepted",
+            Self::Full => "send_full",
+            Self::Disconnected => "send_disconnected",
+            Self::LockContended => "send_lock_contended",
+            Self::LockPoisoned => "send_lock_poisoned",
+            Self::NoSender => "send_no_sender",
+            Self::WriterNotReady => "setting_writer_not_ready",
+        }
+    }
+}
+
+#[cfg(feature = "render-diagnostics")]
+#[derive(Clone, Copy)]
+struct RecorderEventStamp {
+    event_order: u64,
+    elapsed_ns: u64,
+}
+
+#[cfg(feature = "render-diagnostics")]
+struct QueueSendTicket {
+    stamp: RecorderEventStamp,
+    receive_sequence: Option<u64>,
+    queue_occupancy: Option<usize>,
+    frame_identity: Option<u64>,
+}
+
+#[cfg(feature = "render-diagnostics")]
+struct JsonOptional<T>(Option<T>);
+
+#[cfg(feature = "render-diagnostics")]
+impl<T: std::fmt::Display> std::fmt::Display for JsonOptional<T> {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match &self.0 {
+            Some(value) => write!(formatter, "{value}"),
+            None => formatter.write_str("null"),
+        }
+    }
+}
+
+#[cfg(feature = "render-diagnostics")]
+struct JsonOptionalString(Option<&'static str>);
+
+#[cfg(feature = "render-diagnostics")]
+impl std::fmt::Display for JsonOptionalString {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self.0 {
+            Some(value) => write!(formatter, "\"{value}\""),
+            None => formatter.write_str("null"),
+        }
+    }
+}
+
+/// Atomic-only observations for one recorder session. The occupancy counter
+/// includes in-flight send reservations so a fast receiver cannot underflow
+/// it. Queue-full events come only from the channel's actual Full result.
+#[cfg(feature = "render-diagnostics")]
+struct RecorderDiagnostics {
+    recorder_id: u64,
+    started: Instant,
+    event_order: AtomicU64,
+    queue_capacity: usize,
+    queue_occupancy: AtomicUsize,
+    send_sequence: AtomicU64,
+    receive_sequence: AtomicU64,
+    finalization_requested_ns: AtomicU64,
+}
+
+#[cfg(feature = "render-diagnostics")]
+impl RecorderDiagnostics {
+    fn new(queue_capacity: usize) -> Self {
+        let diagnostics = Self {
+            recorder_id: NEXT_RECORDER_DIAGNOSTIC_ID
+                .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |value| value.checked_add(1))
+                .unwrap_or(0),
+            started: Instant::now(),
+            event_order: AtomicU64::new(1),
+            queue_capacity,
+            queue_occupancy: AtomicUsize::new(0),
+            send_sequence: AtomicU64::new(0),
+            receive_sequence: AtomicU64::new(0),
+            finalization_requested_ns: AtomicU64::new(NO_FINALIZATION_REQUEST),
+        };
+        let stamp = diagnostics.next_event_stamp();
+        diagnostics.emit(
+            stamp,
+            "recorder_started",
+            Some(0),
+            None,
+            None,
+            format_args!(""),
+        );
+        diagnostics
+    }
+
+    fn next_event_stamp(&self) -> RecorderEventStamp {
+        let event_order = self.event_order
+            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |value| value.checked_add(1))
+            .unwrap_or(0);
+        RecorderEventStamp {
+            event_order,
+            elapsed_ns: self.started.elapsed().as_nanos().min(u128::from(u64::MAX)) as u64,
+        }
+    }
+
+    fn emit(
+        &self,
+        stamp: RecorderEventStamp,
+        kind: &'static str,
+        queue_occupancy: Option<usize>,
+        message_kind: Option<DiagnosticMessageKind>,
+        frame_identity: Option<u64>,
+        fields: std::fmt::Arguments<'_>,
+    ) {
+        log_diagnostic(
+            api::hostlog::Level::Info,
+            format_args!(
+                "{{\"record\":\"event\",\"schema\":\"headed_record_diagnostics.v1\",\"recorder_id\":{},\"event_order\":{},\"elapsed_ns\":{},\"kind\":\"{}\",\"queue_occupancy\":{},\"queue_capacity\":{},\"message_kind\":{},\"frame_identity\":{}{fields}}}",
+                self.recorder_id,
+                stamp.event_order,
+                stamp.elapsed_ns,
+                kind,
+                JsonOptional(queue_occupancy),
+                self.queue_capacity,
+                JsonOptionalString(message_kind.map(DiagnosticMessageKind::as_str)),
+                JsonOptional(frame_identity),
+            ),
+        );
+    }
+
+    fn begin_send(&self, frame_identity: Option<u64>) -> QueueSendTicket {
+        self.send_sequence.fetch_add(1, Ordering::SeqCst);
+        let receive_before = self.receive_sequence.load(Ordering::SeqCst);
+        let stamp = self.next_event_stamp();
+        let queue_occupancy = self
+            .queue_occupancy
+            .fetch_add(1, Ordering::SeqCst)
+            .saturating_add(1);
+        let receive_after = self.receive_sequence.load(Ordering::SeqCst);
+        let receive_sequence = (receive_before == receive_after && receive_before % 2 == 0)
+            .then_some(receive_before);
+        QueueSendTicket {
+            stamp,
+            receive_sequence,
+            queue_occupancy: receive_sequence.map(|_| queue_occupancy),
+            frame_identity,
+        }
+    }
+
+    fn finish_send(
+        &self,
+        ticket: QueueSendTicket,
+        kind: DiagnosticMessageKind,
+        status: QueueSendStatus,
+    ) {
+        if !matches!(status, QueueSendStatus::Accepted) {
+            self.queue_occupancy.fetch_sub(1, Ordering::SeqCst);
+        }
+        self.send_sequence.fetch_add(1, Ordering::SeqCst);
+
+        let queue_occupancy = match status {
+            QueueSendStatus::Accepted => {
+                let receive_after = self.receive_sequence.load(Ordering::SeqCst);
+                ticket
+                    .receive_sequence
+                    .filter(|sequence| *sequence == receive_after && receive_after % 2 == 0)
+                    .and(ticket.queue_occupancy)
+            }
+            QueueSendStatus::Full => Some(self.queue_capacity),
+            QueueSendStatus::Disconnected
+            | QueueSendStatus::LockContended
+            | QueueSendStatus::LockPoisoned
+            | QueueSendStatus::NoSender
+            | QueueSendStatus::WriterNotReady => None,
+        };
+        self.emit(
+            ticket.stamp,
+            status.event_kind(),
+            queue_occupancy,
+            Some(kind),
+            ticket.frame_identity,
+            format_args!(",\"status\":\"{}\"", status.as_str()),
+        );
+    }
+
+    fn record_unattempted_send(
+        &self,
+        kind: DiagnosticMessageKind,
+        status: QueueSendStatus,
+        frame_identity: Option<u64>,
+    ) {
+        let stamp = self.next_event_stamp();
+        let queue_occupancy = match status {
+            QueueSendStatus::LockContended | QueueSendStatus::LockPoisoned => {
+                self.queue_depth_if_stable()
+            }
+            QueueSendStatus::NoSender | QueueSendStatus::Disconnected => None,
+            QueueSendStatus::Accepted
+            | QueueSendStatus::Full
+            | QueueSendStatus::WriterNotReady => None,
+        };
+        self.emit(
+            stamp,
+            status.event_kind(),
+            queue_occupancy,
+            Some(kind),
+            frame_identity,
+            format_args!(",\"status\":\"{}\"", status.as_str()),
+        );
+    }
+
+    fn begin_receive(&self) {
+        self.receive_sequence.fetch_add(1, Ordering::SeqCst);
+    }
+
+    fn record_dequeued(&self, kind: DiagnosticMessageKind, frame_identity: Option<u64>) {
+        self.queue_occupancy.fetch_sub(1, Ordering::SeqCst);
+        let queue_occupancy = self.queue_depth_if_send_stable();
+        let stamp = self.next_event_stamp();
+        self.emit(
+            stamp,
+            "dequeued",
+            queue_occupancy,
+            Some(kind),
+            frame_identity,
+            format_args!(",\"status\":\"dequeued\""),
+        );
+    }
+
+    fn finish_receive(&self) {
+        self.receive_sequence.fetch_add(1, Ordering::SeqCst);
+    }
+
+    fn queue_depth_if_send_stable(&self) -> Option<usize> {
+        let before = self.send_sequence.load(Ordering::SeqCst);
+        if before % 2 != 0 {
+            return None;
+        }
+        let queue_occupancy = self.queue_occupancy.load(Ordering::SeqCst);
+        let after = self.send_sequence.load(Ordering::SeqCst);
+        (before == after && after % 2 == 0).then_some(queue_occupancy)
+    }
+
+    fn queue_depth_if_stable(&self) -> Option<usize> {
+        let send_before = self.send_sequence.load(Ordering::SeqCst);
+        let receive_before = self.receive_sequence.load(Ordering::SeqCst);
+        if send_before % 2 != 0 || receive_before % 2 != 0 {
+            return None;
+        }
+        let queue_occupancy = self.queue_occupancy.load(Ordering::SeqCst);
+        let receive_after = self.receive_sequence.load(Ordering::SeqCst);
+        let send_after = self.send_sequence.load(Ordering::SeqCst);
+        (send_before == send_after
+            && receive_before == receive_after
+            && send_after % 2 == 0
+            && receive_after % 2 == 0)
+            .then_some(queue_occupancy)
+    }
+
+    fn begin_finalization_request(&self) -> RecorderEventStamp {
+        let stamp = self.next_event_stamp();
+        let _ = self.finalization_requested_ns.compare_exchange(
+            NO_FINALIZATION_REQUEST,
+            stamp.elapsed_ns,
+            Ordering::SeqCst,
+            Ordering::SeqCst,
+        );
+        stamp
+    }
+
+    fn finish_finalization_request(
+        &self,
+        stamp: RecorderEventStamp,
+        control_status: &'static str,
+    ) {
+        self.emit(
+            stamp,
+            "drain_requested",
+            self.queue_depth_if_stable(),
+            None,
+            None,
+            format_args!(",\"control_status\":\"{control_status}\""),
+        );
+    }
+
+    fn finalization_finished(
+        &self,
+        status: RecordFinish,
+        writer_state: &'static str,
+        writer_result: &'static str,
+        child_state: &'static str,
+        child_exit_code: Option<i32>,
+    ) {
+        let stamp = self.next_event_stamp();
+        let request_ns = self.finalization_requested_ns.load(Ordering::SeqCst);
+        let is_drain = request_ns != NO_FINALIZATION_REQUEST;
+        let queue_occupancy = (status == RecordFinish::Complete)
+            .then(|| self.queue_depth_if_stable())
+            .flatten()
+            .filter(|queue_occupancy| *queue_occupancy == 0);
+        let kind = if is_drain {
+            "drain_completed"
+        } else {
+            "recorder_finished"
+        };
+        if is_drain {
+            self.emit(
+                stamp,
+                kind,
+                queue_occupancy,
+                None,
+                None,
+                format_args!(
+                    ",\"record_finish\":\"{}\",\"finish_request_elapsed_ns\":{},\"lifetime_ns\":{},\"writer_state\":\"{}\",\"writer_result\":\"{}\",\"child_state\":\"{}\",\"child_exit_code\":{}",
+                    record_finish_name(status),
+                    request_ns,
+                    stamp.elapsed_ns.saturating_sub(request_ns),
+                    writer_state,
+                    writer_result,
+                    child_state,
+                    JsonOptional(child_exit_code)
+                ),
+            );
+        } else {
+            self.emit(
+                stamp,
+                kind,
+                queue_occupancy,
+                None,
+                None,
+                format_args!(
+                    ",\"record_finish\":\"{}\",\"finish_request_elapsed_ns\":null,\"lifetime_ns\":null,\"writer_state\":\"{}\",\"writer_result\":\"{}\",\"child_state\":\"{}\",\"child_exit_code\":{}",
+                    record_finish_name(status),
+                    writer_state,
+                    writer_result,
+                    child_state,
+                    JsonOptional(child_exit_code)
+                ),
+            );
+        }
+    }
+}
+
+#[cfg(feature = "render-diagnostics")]
+fn record_finish_name(status: RecordFinish) -> &'static str {
+    match status {
+        RecordFinish::Idle => "Idle",
+        RecordFinish::Finalizing => "Finalizing",
+        RecordFinish::Complete => "Complete",
+        RecordFinish::TimedOut => "TimedOut",
+        RecordFinish::Failed => "Failed",
+    }
+}
+
+#[cfg(feature = "render-diagnostics")]
+impl EncoderMessage {
+    fn diagnostic_identity(&self) -> (DiagnosticMessageKind, Option<u64>) {
+        match self {
+            Self::Frame(frame) => {
+                let RecordingStamp::Window { paint_sequence } = frame.stamp;
+                (DiagnosticMessageKind::Frame, Some(paint_sequence))
+            }
+            Self::Setting(_) => (DiagnosticMessageKind::Setting, None),
+        }
+    }
+}
+
 enum EncoderControl {
     Finish { deadline: Option<Instant> },
 }
@@ -774,10 +1197,13 @@ struct ActiveRecording {
     queued: u64,
     dropped: u64,
     size_mismatch: u64,
+    #[cfg(feature = "render-diagnostics")]
+    diagnostics: Arc<RecorderDiagnostics>,
 }
 
 impl ActiveRecording {
     /// Queue one already-validated frame without waiting for the writer.
+    #[cfg(not(feature = "render-diagnostics"))]
     fn push(&mut self, frame: EncoderFrame) -> bool {
         let sent = match self.sender.try_lock() {
             Ok(sender) => sender
@@ -793,6 +1219,78 @@ impl ActiveRecording {
         sent
     }
 
+    /// Queue one already-validated frame and record the actual channel result.
+    #[cfg(feature = "render-diagnostics")]
+    fn push(&mut self, frame: EncoderFrame) -> bool {
+        let RecordingStamp::Window { paint_sequence } = frame.stamp;
+        let sent = match self.sender.try_lock() {
+            Ok(sender) => match sender.as_ref() {
+                Some(sender) => {
+                    let ticket = self.diagnostics.begin_send(Some(paint_sequence));
+                    match sender.try_send(EncoderMessage::Frame(frame)) {
+                        Ok(()) => {
+                            self.diagnostics.finish_send(
+                                ticket,
+                                DiagnosticMessageKind::Frame,
+                                QueueSendStatus::Accepted,
+                            );
+                            true
+                        }
+                        Err(TrySendError::Full(message)) => {
+                            drop(message);
+                            self.diagnostics.finish_send(
+                                ticket,
+                                DiagnosticMessageKind::Frame,
+                                QueueSendStatus::Full,
+                            );
+                            false
+                        }
+                        Err(TrySendError::Disconnected(message)) => {
+                            drop(message);
+                            self.diagnostics.finish_send(
+                                ticket,
+                                DiagnosticMessageKind::Frame,
+                                QueueSendStatus::Disconnected,
+                            );
+                            false
+                        }
+                    }
+                }
+                None => {
+                    self.diagnostics.record_unattempted_send(
+                        DiagnosticMessageKind::Frame,
+                        QueueSendStatus::NoSender,
+                        Some(paint_sequence),
+                    );
+                    false
+                }
+            },
+            Err(TryLockError::WouldBlock) => {
+                self.diagnostics.record_unattempted_send(
+                    DiagnosticMessageKind::Frame,
+                    QueueSendStatus::LockContended,
+                    Some(paint_sequence),
+                );
+                false
+            }
+            Err(TryLockError::Poisoned(_)) => {
+                self.diagnostics.record_unattempted_send(
+                    DiagnosticMessageKind::Frame,
+                    QueueSendStatus::LockPoisoned,
+                    Some(paint_sequence),
+                );
+                false
+            }
+        };
+        if sent {
+            self.queued = self.queued.saturating_add(1);
+        } else {
+            self.dropped = self.dropped.saturating_add(1);
+        }
+        sent
+    }
+
+    #[cfg(not(feature = "render-diagnostics"))]
     fn push_setting(&mut self, line: BoundedText<4096>) -> bool {
         if self.width == 0 {
             self.settings_incomplete.store(true, Ordering::Release);
@@ -810,8 +1308,92 @@ impl ActiveRecording {
         sent
     }
 
+    #[cfg(feature = "render-diagnostics")]
+    fn push_setting(&mut self, line: BoundedText<4096>) -> bool {
+        if self.width == 0 {
+            self.settings_incomplete.store(true, Ordering::Release);
+            self.diagnostics.record_unattempted_send(
+                DiagnosticMessageKind::Setting,
+                QueueSendStatus::WriterNotReady,
+                None,
+            );
+            return false;
+        }
+        let sent = match self.sender.try_lock() {
+            Ok(sender) => match sender.as_ref() {
+                Some(sender) => {
+                    let ticket = self.diagnostics.begin_send(None);
+                    match sender.try_send(EncoderMessage::Setting(line)) {
+                        Ok(()) => {
+                            self.diagnostics.finish_send(
+                                ticket,
+                                DiagnosticMessageKind::Setting,
+                                QueueSendStatus::Accepted,
+                            );
+                            true
+                        }
+                        Err(TrySendError::Full(message)) => {
+                            drop(message);
+                            self.diagnostics.finish_send(
+                                ticket,
+                                DiagnosticMessageKind::Setting,
+                                QueueSendStatus::Full,
+                            );
+                            false
+                        }
+                        Err(TrySendError::Disconnected(message)) => {
+                            drop(message);
+                            self.diagnostics.finish_send(
+                                ticket,
+                                DiagnosticMessageKind::Setting,
+                                QueueSendStatus::Disconnected,
+                            );
+                            false
+                        }
+                    }
+                }
+                None => {
+                    self.diagnostics.record_unattempted_send(
+                        DiagnosticMessageKind::Setting,
+                        QueueSendStatus::NoSender,
+                        None,
+                    );
+                    false
+                }
+            },
+            Err(TryLockError::WouldBlock) => {
+                self.diagnostics.record_unattempted_send(
+                    DiagnosticMessageKind::Setting,
+                    QueueSendStatus::LockContended,
+                    None,
+                );
+                false
+            }
+            Err(TryLockError::Poisoned(_)) => {
+                self.diagnostics.record_unattempted_send(
+                    DiagnosticMessageKind::Setting,
+                    QueueSendStatus::LockPoisoned,
+                    None,
+                );
+                false
+            }
+        };
+        if !sent {
+            self.settings_incomplete.store(true, Ordering::Release);
+        }
+        sent
+    }
+
     #[cfg(test)]
-    fn for_test(sender: SyncSender<EncoderMessage>, fps: f64) -> Self {
+    fn for_test(
+        sender: SyncSender<EncoderMessage>,
+        fps: f64,
+        queue_capacity: usize,
+    ) -> Self {
+        #[cfg(feature = "render-diagnostics")]
+        let diagnostics = Arc::new(RecorderDiagnostics::new(queue_capacity));
+        #[cfg(not(feature = "render-diagnostics"))]
+        let _ = queue_capacity;
         let (control, control_receiver) = sync_channel(1);
         drop(control_receiver);
         Self {
@@ -831,6 +1413,8 @@ impl ActiveRecording {
             queued: 0,
             dropped: 0,
             size_mismatch: 0,
+            #[cfg(feature = "render-diagnostics")]
+            diagnostics,
         }
     }
 }
@@ -1132,6 +1716,10 @@ impl HeadedRecord {
         let permit = RecorderPermit::try_acquire()?;
         let (frame_sender, frame_receiver) = sync_channel::<EncoderMessage>(RECORD_QUEUE);
         let (control_sender, control_receiver) = sync_channel::<EncoderControl>(1);
+        #[cfg(feature = "render-diagnostics")]
+        let diagnostics = Arc::new(RecorderDiagnostics::new(RECORD_QUEUE));
+        #[cfg(feature = "render-diagnostics")]
+        let supervisor_diagnostics = Arc::clone(&diagnostics);
         let sender = Arc::new(Mutex::new(Some(frame_sender)));
         let supervisor_sender = Arc::clone(&sender);
         let outcome = Arc::new(Mutex::new(RecordFinish::Idle));
@@ -1144,7 +1732,7 @@ impl HeadedRecord {
         let task_mp4_path = Arc::clone(&mp4_path);
         let task_sidecar_path = sidecar_path;
         let task_settings_path = settings_path;
-        let supervisor = thread::Builder::new()
+        let supervisor = match thread::Builder::new()
             .name("headed-record-supervisor".to_string())
             .spawn(move || {
                 run_supervisor(
@@ -1161,10 +1749,24 @@ impl HeadedRecord {
                     supervisor_outcome,
                     supervisor_settings_incomplete,
                     supervisor_failure,
+                    #[cfg(feature = "render-diagnostics")]
+                    supervisor_diagnostics,
                     permit,
                 )
-            })
-            .map_err(|_| RecordError::WorkerStart)?;
+            }) {
+            Ok(supervisor) => supervisor,
+            Err(_) => {
+                #[cfg(feature = "render-diagnostics")]
+                diagnostics.finalization_finished(
+                    RecordFinish::Failed,
+                    "not_started",
+                    "not_started",
+                    "not_started",
+                    None,
+                );
+                return Err(RecordError::WorkerStart);
+            }
+        };
         log_diagnostic(
             api::hostlog::Level::Info,
             format_args!(
@@ -1189,6 +1791,8 @@ impl HeadedRecord {
             queued: 0,
             dropped: 0,
             size_mismatch: 0,
+            #[cfg(feature = "render-diagnostics")]
+            diagnostics,
         });
         Ok(())
     }
@@ -1351,7 +1955,21 @@ impl HeadedRecord {
                 *outcome = RecordFinish::Finalizing;
             }
         }
-        let _ = active.control.try_send(EncoderControl::Finish { deadline });
+        #[cfg(feature = "render-diagnostics")]
+        let request_stamp = active.diagnostics.begin_finalization_request();
+        let control_result = active.control.try_send(EncoderControl::Finish { deadline });
+        #[cfg(feature = "render-diagnostics")]
+        {
+            let control_status = match &control_result {
+                Ok(()) => "accepted",
+                Err(TrySendError::Full(_)) => "full",
+                Err(TrySendError::Disconnected(_)) => "disconnected",
+            };
+            active
+                .diagnostics
+                .finish_finalization_request(request_stamp, control_status);
+        }
+        let _ = control_result;
         self.finalizing = Some(FinalizingRecording {
             outcome: active.outcome,
             supervisor: active.supervisor.take(),
@@ -1744,6 +2362,8 @@ fn run_writer(
     header: BoundedText<4096>,
     settings_header: BoundedText<4096>,
     settings_incomplete: &AtomicBool,
+    #[cfg(feature = "render-diagnostics")]
+    diagnostics: Arc<RecorderDiagnostics>,
 ) -> Result<EncoderOutcome, RecordFailure> {
     let files = (|| {
         if let Some(parent) = sidecar_path
@@ -1779,7 +2399,21 @@ fn run_writer(
 
     let mut stdin = None;
     let mut frames_written = 0u64;
-    while let Ok(message) = receiver.recv() {
+    loop {
+        #[cfg(feature = "render-diagnostics")]
+        diagnostics.begin_receive();
+        let message = receiver.recv();
+        #[cfg(feature = "render-diagnostics")]
+        {
+            if let Ok(message) = &message {
+                let (kind, frame_identity) = message.diagnostic_identity();
+                diagnostics.record_dequeued(kind, frame_identity);
+            }
+            diagnostics.finish_receive();
+        }
+        let Ok(message) = message else {
+            break;
+        };
         match message {
             EncoderMessage::Frame(frame) => {
                 if stdin.is_none() {
@@ -1847,6 +2481,8 @@ fn run_supervisor(
     outcome: Arc<Mutex<RecordFinish>>,
     settings_incomplete: Arc<AtomicBool>,
     forced_failure: Arc<AtomicBool>,
+    #[cfg(feature = "render-diagnostics")]
+    diagnostics: Arc<RecorderDiagnostics>,
     _permit: RecorderPermit,
 ) {
     let (ready_sender, ready_receiver) = sync_channel(1);
@@ -1855,6 +2491,8 @@ fn run_supervisor(
     let writer_sidecar_path = Arc::clone(&sidecar_path);
     let writer_settings_path = Arc::clone(&settings_path);
     let writer_settings_incomplete = Arc::clone(&settings_incomplete);
+    #[cfg(feature = "render-diagnostics")]
+    let writer_diagnostics = Arc::clone(&diagnostics);
     let writer = match thread::Builder::new()
         .name("headed-record-writer".to_string())
         .spawn(move || {
@@ -1868,6 +2506,8 @@ fn run_supervisor(
                 header,
                 settings_header,
                 &writer_settings_incomplete,
+                #[cfg(feature = "render-diagnostics")]
+                writer_diagnostics,
             )
         }) {
         Ok(writer) => writer,
@@ -1878,6 +2518,14 @@ fn run_supervisor(
                 format_args!("headed record: writer spawn failed: {error}"),
             );
             set_finish_status(&outcome, RecordFinish::Failed);
+            #[cfg(feature = "render-diagnostics")]
+            diagnostics.finalization_finished(
+                RecordFinish::Failed,
+                "not_started",
+                "not_started",
+                "not_started",
+                None,
+            );
             return;
         }
     };
@@ -2060,43 +2708,59 @@ fn run_supervisor(
 
         if let Some(writer_result) = writer_result.as_ref() {
             if child.is_none() {
-                if !timed_out {
-                    let completed =
-                        writer_result.is_ok() && !failed && !forced_failure.load(Ordering::Acquire);
+                let completed =
+                    writer_result.is_ok() && !failed && !forced_failure.load(Ordering::Acquire);
+                let record_finish = if timed_out {
+                    RecordFinish::TimedOut
+                } else if completed {
+                    RecordFinish::Complete
+                } else {
+                    RecordFinish::Failed
+                };
+                if record_finish == RecordFinish::Complete {
                     #[cfg(feature = "render-diagnostics")]
-                    if completed {
-                        record_finish_completion(disconnected_at);
-                    }
-                    set_finish_status(
-                        &outcome,
-                        if completed {
-                            RecordFinish::Complete
-                        } else {
-                            RecordFinish::Failed
-                        },
-                    );
+                    record_finish_completion(disconnected_at);
                 }
+                if !timed_out {
+                    set_finish_status(&outcome, record_finish);
+                }
+                #[cfg(feature = "render-diagnostics")]
+                diagnostics.finalization_finished(
+                    record_finish,
+                    "exited",
+                    if writer_result.is_ok() { "ok" } else { "error" },
+                    "not_started",
+                    None,
+                );
                 return;
             }
             if child_status.is_some() {
-                if !timed_out {
-                    let completed = child_status.is_some_and(|status| status.success())
-                        && writer_result.is_ok()
-                        && !failed
-                        && !forced_failure.load(Ordering::Acquire);
+                let completed = child_status.is_some_and(|status| status.success())
+                    && writer_result.is_ok()
+                    && !failed
+                    && !forced_failure.load(Ordering::Acquire);
+                let record_finish = if timed_out {
+                    RecordFinish::TimedOut
+                } else if completed {
+                    RecordFinish::Complete
+                } else {
+                    RecordFinish::Failed
+                };
+                if record_finish == RecordFinish::Complete {
                     #[cfg(feature = "render-diagnostics")]
-                    if completed {
-                        record_finish_completion(disconnected_at);
-                    }
-                    set_finish_status(
-                        &outcome,
-                        if completed {
-                            RecordFinish::Complete
-                        } else {
-                            RecordFinish::Failed
-                        },
-                    );
+                    record_finish_completion(disconnected_at);
                 }
+                if !timed_out {
+                    set_finish_status(&outcome, record_finish);
+                }
+                #[cfg(feature = "render-diagnostics")]
+                diagnostics.finalization_finished(
+                    record_finish,
+                    "exited",
+                    if writer_result.is_ok() { "ok" } else { "error" },
+                    "exited",
+                    child_status.as_ref().and_then(|status| status.code()),
+                );
                 if let Ok(encoder) = writer_result {
                     log_diagnostic(
                         api::hostlog::Level::Info,
@@ -2126,6 +2790,97 @@ fn display_record_failure(error: &RecordFailure) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(feature = "render-diagnostics")]
+    #[test]
+    fn recorder_order_cannot_invent_elapsed_time_or_wrap() {
+        let diagnostics = RecorderDiagnostics::new(1);
+        let distant_order = 1_u64 << 60;
+        diagnostics.event_order.store(distant_order, Ordering::Relaxed);
+        let before = diagnostics.started.elapsed().as_nanos();
+        let stamp = diagnostics.next_event_stamp();
+        let after = diagnostics.started.elapsed().as_nanos();
+        assert_eq!(stamp.event_order, distant_order);
+        assert!((before..=after).contains(&u128::from(stamp.elapsed_ns)));
+        diagnostics.event_order.store(u64::MAX, Ordering::Relaxed);
+        assert_eq!(diagnostics.next_event_stamp().event_order, 0);
+        assert_eq!(diagnostics.next_event_stamp().event_order, 0);
+    }
+
+    #[cfg(not(feature = "render-diagnostics"))]
+    #[allow(dead_code)]
+    struct NonDiagnosticActiveRecordingLayout {
+        sender: Arc<Mutex<Option<SyncSender<EncoderMessage>>>>,
+        control: SyncSender<EncoderControl>,
+        supervisor: Option<JoinHandle<()>>,
+        outcome: Arc<Mutex<RecordFinish>>,
+        mp4_path: Arc<PathBuf>,
+        fps: f64,
+        width: u32,
+        height: u32,
+        started: Instant,
+        settings: SettingsTracker,
+        settings_incomplete: Arc<AtomicBool>,
+        failure: Arc<AtomicBool>,
+        finish_timeout: Option<Duration>,
+        queued: u64,
+        dropped: u64,
+        size_mismatch: u64,
+    }
+
+    #[cfg(not(feature = "render-diagnostics"))]
+    #[allow(dead_code)]
+    struct NonDiagnosticHeadedRecordLayout {
+        config: HeadedRecordConfig,
+        pacer: RecordPacer,
+        gated: bool,
+        active: Option<ActiveRecording>,
+        legacy_active: Option<LegacyActiveRecording>,
+        finalizing: Option<FinalizingRecording>,
+        done: bool,
+    }
+
+    #[cfg(not(feature = "render-diagnostics"))]
+    #[test]
+    fn noninstrumented_recorder_keeps_baseline_layout_and_queue_path() {
+        use std::mem::size_of;
+
+        assert_eq!(
+            size_of::<ActiveRecording>(),
+            size_of::<NonDiagnosticActiveRecordingLayout>(),
+            "noninstrumented ActiveRecording has no diagnostic storage"
+        );
+        assert_eq!(
+            size_of::<HeadedRecord>(),
+            size_of::<NonDiagnosticHeadedRecordLayout>(),
+            "noninstrumented HeadedRecord has no diagnostic storage"
+        );
+
+        let (sender, receiver) = sync_channel::<EncoderMessage>(2);
+        let mut active = ActiveRecording::for_test(sender, DEFAULT_FPS, 2);
+        assert!(active.push(encoder_frame(1, 1)));
+        assert!(matches!(
+            receiver.recv().expect("ordinary production queue send"),
+            EncoderMessage::Frame(_)
+        ));
+        let mut setting = BoundedText::default();
+        setting.write_str("ordinary setting path").unwrap();
+        assert!(active.push_setting(setting));
+        assert!(matches!(
+            receiver.recv().expect("ordinary setting queue send"),
+            EncoderMessage::Setting(_)
+        ));
+        println!(
+            "noninstrumented_recorder_layout_receipt={}",
+            serde_json::json!({
+                "active_recording_bytes": size_of::<ActiveRecording>(),
+                "active_recording_baseline_bytes": size_of::<NonDiagnosticActiveRecordingLayout>(),
+                "headed_record_bytes": size_of::<HeadedRecord>(),
+                "headed_record_baseline_bytes": size_of::<NonDiagnosticHeadedRecordLayout>(),
+                "render_diagnostics": false
+            })
+        );
+    }
 
     #[cfg(all(feature = "render-test-hooks", unix))]
     fn bounded_recorder_fixed_layout_receipt() {
@@ -2190,6 +2945,190 @@ mod tests {
             sidecar_line: bounded_sidecar_line(0.0, 0, 0, 1, 0, stamp, "test").unwrap(),
             stamp,
         }
+    }
+
+    #[cfg(feature = "render-diagnostics")]
+    fn recorder_diagnostic_events(recorder_id: u64) -> Vec<serde_json::Value> {
+        use frontend_core::log::{global, LogScope, LogView};
+
+        let log = global();
+        let mut view = LogView::new(LogScope::Process);
+        view.edit_filter(|filter| filter.set_text("headed_record_diagnostics.v1"));
+        log.refresh(&mut view);
+        let mut events: Vec<_> = view
+            .rows()
+            .iter()
+            .filter_map(|row| {
+                let message = row.message();
+                let json_start = message.find('{')?;
+                serde_json::from_str::<serde_json::Value>(&message[json_start..]).ok()
+            })
+            .filter(|event| {
+                event.get("recorder_id").and_then(serde_json::Value::as_u64) == Some(recorder_id)
+            })
+            .collect();
+        events.sort_by_key(|event| event["event_order"].as_u64().unwrap_or_default());
+        events
+    }
+
+    #[cfg(feature = "render-diagnostics")]
+    fn assert_full_drain_diagnostics(recorder_id: u64) {
+        let events = recorder_diagnostic_events(recorder_id);
+        assert!(!events.is_empty(), "recorder event JSON is retained in logs");
+        let event_orders: Vec<_> = events
+            .iter()
+            .map(|event| {
+                assert_eq!(event["record"].as_str(), Some("event"));
+                assert_eq!(
+                    event["schema"].as_str(),
+                    Some("headed_record_diagnostics.v1")
+                );
+                assert_eq!(
+                    event["recorder_id"].as_u64(),
+                    Some(recorder_id),
+                    "the event is bound to its recorder session"
+                );
+                assert_eq!(
+                    event["queue_capacity"].as_u64(),
+                    Some(RECORD_QUEUE as u64),
+                    "every record carries the bounded channel's actual capacity"
+                );
+                event["event_order"]
+                    .as_u64()
+                    .expect("every event has an order")
+            })
+            .collect();
+        assert!(event_orders.windows(2).all(|pair| pair[0] < pair[1]));
+        let elapsed_times: Vec<_> = events
+            .iter()
+            .map(|event| event["elapsed_ns"].as_u64().expect("every event has elapsed time"))
+            .collect();
+        assert!(elapsed_times.windows(2).all(|pair| pair[0] < pair[1]));
+
+        let started = events
+            .iter()
+            .find(|event| event["kind"].as_str() == Some("recorder_started"))
+            .expect("session start is observed");
+        assert_eq!(started["queue_capacity"].as_u64(), Some(RECORD_QUEUE as u64));
+        assert_eq!(started["queue_occupancy"].as_u64(), Some(0));
+
+        let accepted: Vec<_> = events
+            .iter()
+            .filter(|event| {
+                event["kind"].as_str() == Some("send_accepted")
+                    && event["message_kind"].as_str() == Some("Frame")
+            })
+            .collect();
+        assert_eq!(accepted.len(), RECORD_QUEUE);
+        let mut frame_identities = Vec::with_capacity(RECORD_QUEUE);
+        for event in accepted {
+            let identity = event["frame_identity"]
+                .as_u64()
+                .expect("accepted Frame carries its paint sequence");
+            assert_eq!(event["status"].as_str(), Some("accepted"));
+            assert_eq!(event["queue_occupancy"].as_u64(), Some(identity + 1));
+            frame_identities.push(identity);
+        }
+        frame_identities.sort_unstable();
+        assert_eq!(
+            frame_identities,
+            (0..RECORD_QUEUE as u64).collect::<Vec<_>>(),
+            "eight distinct Frame identities occupied the bounded queue"
+        );
+
+        let full = events
+            .iter()
+            .find(|event| event["kind"].as_str() == Some("send_full"))
+            .expect("the channel returned TrySendError::Full");
+        assert_eq!(
+            events
+                .iter()
+                .filter(|event| event["kind"].as_str() == Some("send_full"))
+                .count(),
+            1
+        );
+        assert_eq!(full["status"].as_str(), Some("full"));
+        assert_eq!(
+            full["queue_capacity"].as_u64(),
+            Some(RECORD_QUEUE as u64)
+        );
+        assert_eq!(
+            full["queue_occupancy"].as_u64(),
+            Some(RECORD_QUEUE as u64)
+        );
+        assert_eq!(
+            full["frame_identity"].as_u64(),
+            Some(RECORD_QUEUE as u64)
+        );
+        let request = events
+            .iter()
+            .find(|event| event["kind"].as_str() == Some("drain_requested"))
+            .expect("finalization request is observed");
+        assert_eq!(request["control_status"].as_str(), Some("accepted"));
+        assert_eq!(
+            request["queue_occupancy"].as_u64(),
+            Some(RECORD_QUEUE as u64)
+        );
+        assert!(
+            full["event_order"].as_u64() < request["event_order"].as_u64(),
+            "full observation precedes finalization"
+        );
+
+        let dequeued: Vec<_> = events
+            .iter()
+            .filter(|event| event["kind"].as_str() == Some("dequeued"))
+            .collect();
+        assert_eq!(dequeued.len(), RECORD_QUEUE);
+        for (index, event) in dequeued.iter().enumerate() {
+            assert!(
+                request["event_order"].as_u64() < event["event_order"].as_u64(),
+                "queue drain follows the finish request"
+            );
+            assert_eq!(event["message_kind"].as_str(), Some("Frame"));
+            assert_eq!(event["status"].as_str(), Some("dequeued"));
+            assert_eq!(event["frame_identity"].as_u64(), Some(index as u64));
+            assert_eq!(
+                event["queue_occupancy"].as_u64(),
+                Some((RECORD_QUEUE - index - 1) as u64)
+            );
+        }
+
+        let completed = events
+            .iter()
+            .find(|event| event["kind"].as_str() == Some("drain_completed"))
+            .expect("supervisor emits observed finalization outcome");
+        assert_eq!(completed["record_finish"].as_str(), Some("Complete"));
+        assert_eq!(completed["writer_state"].as_str(), Some("exited"));
+        assert_eq!(completed["writer_result"].as_str(), Some("ok"));
+        assert_eq!(completed["child_state"].as_str(), Some("exited"));
+        assert_eq!(completed["child_exit_code"].as_i64(), Some(0));
+        assert_eq!(
+            completed["queue_occupancy"].as_u64(),
+            Some(0),
+            "final zero is reported only from a stable observed queue count"
+        );
+        let request_elapsed_ns = request["elapsed_ns"]
+            .as_u64()
+            .expect("drain request has a monotonic timestamp");
+        let completed_elapsed_ns = completed["elapsed_ns"]
+            .as_u64()
+            .expect("completion has a monotonic timestamp");
+        assert_eq!(
+            completed["finish_request_elapsed_ns"].as_u64(),
+            Some(request_elapsed_ns)
+        );
+        assert_eq!(
+            completed["lifetime_ns"].as_u64(),
+            Some(completed_elapsed_ns.saturating_sub(request_elapsed_ns))
+        );
+        let last_dequeue_order = dequeued
+            .last()
+            .and_then(|event| event["event_order"].as_u64())
+            .expect("the completed drain has observed dequeues");
+        let completed_order = completed["event_order"]
+            .as_u64()
+            .expect("completion has an event order");
+        assert!(last_dequeue_order < completed_order);
     }
 
     fn settings_lines(
@@ -2357,7 +3296,7 @@ mod tests {
             },
             pacer: RecordPacer::new(Duration::from_millis(500)),
             gated: false,
-            active: Some(ActiveRecording::for_test(sender, 2.0)),
+            active: Some(ActiveRecording::for_test(sender, 2.0, RECORD_QUEUE)),
             legacy_active: None,
             finalizing: None,
             done: false,
@@ -2424,7 +3363,7 @@ mod tests {
     #[test]
     fn full_queue_drops_instead_of_stalling() {
         let (sender, receiver) = sync_channel::<EncoderMessage>(1);
-        let mut active = ActiveRecording::for_test(sender, 2.0);
+        let mut active = ActiveRecording::for_test(sender, 2.0, 1);
         assert!(active.push(encoder_frame(1, 1)));
         assert!(!active.push(encoder_frame(2, 2)));
         assert!(!active.push(encoder_frame(3, 3)));
@@ -2440,10 +3379,313 @@ mod tests {
     fn dead_encoder_counts_as_drops() {
         let (sender, receiver) = sync_channel::<EncoderMessage>(4);
         drop(receiver);
-        let mut active = ActiveRecording::for_test(sender, 2.0);
+        let mut active = ActiveRecording::for_test(sender, 2.0, 4);
         assert!(!active.push(encoder_frame(1, 1)));
         assert_eq!(active.queued, 0);
         assert_eq!(active.dropped, 1);
+    }
+
+    #[cfg(feature = "render-diagnostics")]
+    #[test]
+    fn recorder_diagnostics_prove_full_queue_then_real_drain() {
+        let (sender, receiver) = sync_channel::<EncoderMessage>(RECORD_QUEUE);
+        let mut active = ActiveRecording::for_test(sender, DEFAULT_FPS, RECORD_QUEUE);
+        let diagnostics = Arc::clone(&active.diagnostics);
+        let recorder_id = diagnostics.recorder_id;
+
+        for identity in 0..RECORD_QUEUE as u64 {
+            assert!(active.push(encoder_frame(identity as u8, identity)));
+        }
+        assert_eq!(
+            diagnostics.queue_occupancy.load(Ordering::SeqCst),
+            RECORD_QUEUE
+        );
+        assert!(!active.push(encoder_frame(255, RECORD_QUEUE as u64)));
+        assert_eq!(
+            diagnostics.queue_occupancy.load(Ordering::SeqCst),
+            RECORD_QUEUE,
+            "a full refusal does not add a phantom queued item"
+        );
+
+        let before_drain = recorder_diagnostic_events(recorder_id);
+        let mut accepted_identities: Vec<_> = before_drain
+            .iter()
+            .filter(|event| {
+                event["kind"].as_str() == Some("send_accepted")
+                    && event["message_kind"].as_str() == Some("Frame")
+            })
+            .map(|event| {
+                assert_eq!(
+                    event["queue_occupancy"].as_u64(),
+                    Some(
+                        event["frame_identity"]
+                            .as_u64()
+                            .expect("accepted Frame retains its paint sequence")
+                            + 1
+                    )
+                );
+                event["frame_identity"]
+                    .as_u64()
+                    .expect("accepted Frame retains its paint sequence")
+            })
+            .collect();
+        accepted_identities.sort_unstable();
+        assert_eq!(
+            accepted_identities,
+            (0..RECORD_QUEUE as u64).collect::<Vec<_>>()
+        );
+        let full = before_drain
+            .iter()
+            .find(|event| event["kind"].as_str() == Some("send_full"))
+            .expect("the actual bounded channel reported Full");
+        assert_eq!(full["status"].as_str(), Some("full"));
+        assert_eq!(
+            full["queue_occupancy"].as_u64(),
+            Some(RECORD_QUEUE as u64)
+        );
+        assert_eq!(
+            full["queue_capacity"].as_u64(),
+            Some(RECORD_QUEUE as u64)
+        );
+        assert_eq!(
+            full["frame_identity"].as_u64(),
+            Some(RECORD_QUEUE as u64)
+        );
+
+        for identity in 0..RECORD_QUEUE as u64 {
+            diagnostics.begin_receive();
+            let message = receiver.recv().expect("real receiver drains accepted frame");
+            let (kind, frame_identity) = message.diagnostic_identity();
+            assert!(matches!(kind, DiagnosticMessageKind::Frame));
+            assert_eq!(frame_identity, Some(identity));
+            diagnostics.record_dequeued(kind, frame_identity);
+            diagnostics.finish_receive();
+        }
+        assert_eq!(
+            diagnostics.queue_occupancy.load(Ordering::SeqCst),
+            0,
+            "the observed drain returns occupancy to zero"
+        );
+        assert_eq!(diagnostics.send_sequence.load(Ordering::SeqCst) % 2, 0);
+        assert_eq!(diagnostics.receive_sequence.load(Ordering::SeqCst) % 2, 0);
+
+        let drained = recorder_diagnostic_events(recorder_id);
+        let dequeued: Vec<_> = drained
+            .iter()
+            .filter(|event| event["kind"].as_str() == Some("dequeued"))
+            .collect();
+        assert_eq!(dequeued.len(), RECORD_QUEUE);
+        for (index, event) in dequeued.iter().enumerate() {
+            assert_eq!(event["message_kind"].as_str(), Some("Frame"));
+            assert_eq!(event["frame_identity"].as_u64(), Some(index as u64));
+            assert_eq!(
+                event["queue_occupancy"].as_u64(),
+                Some((RECORD_QUEUE - index - 1) as u64)
+            );
+        }
+    }
+
+    #[cfg(feature = "render-diagnostics")]
+    #[test]
+    fn recorder_diagnostics_fail_closed_during_dequeue_send_race() {
+        let (sender, receiver) = sync_channel::<EncoderMessage>(1);
+        let diagnostics = RecorderDiagnostics::new(1);
+
+        let first_ticket = diagnostics.begin_send(Some(100));
+        assert!(matches!(
+            sender.try_send(EncoderMessage::Frame(encoder_frame(1, 100))),
+            Ok(())
+        ));
+        diagnostics.finish_send(
+            first_ticket,
+            DiagnosticMessageKind::Frame,
+            QueueSendStatus::Accepted,
+        );
+
+        diagnostics.begin_receive();
+        let first = receiver.recv().expect("receiver removes first frame");
+        let (kind, identity) = first.diagnostic_identity();
+        assert_eq!(identity, Some(100));
+
+        let raced_ticket = diagnostics.begin_send(Some(101));
+        assert!(matches!(
+            sender.try_send(EncoderMessage::Frame(encoder_frame(2, 101))),
+            Ok(())
+        ));
+        diagnostics.finish_send(
+            raced_ticket,
+            DiagnosticMessageKind::Frame,
+            QueueSendStatus::Accepted,
+        );
+        diagnostics.record_dequeued(kind, identity);
+        diagnostics.finish_receive();
+        assert_eq!(
+            diagnostics.queue_occupancy.load(Ordering::SeqCst),
+            1,
+            "dequeue completion leaves the concurrently accepted frame"
+        );
+
+        let events = recorder_diagnostic_events(diagnostics.recorder_id);
+        let raced_accept = events
+            .iter()
+            .find(|event| {
+                event["kind"].as_str() == Some("send_accepted")
+                    && event["frame_identity"].as_u64() == Some(101)
+            })
+            .expect("second real send is observed as accepted");
+        assert_eq!(
+            raced_accept["queue_occupancy"],
+            serde_json::Value::Null,
+            "overlapping dequeue makes the post-send occupancy unknown"
+        );
+        assert!(
+            events.iter().all(|event| {
+                event["kind"].as_str() != Some("send_full")
+                    || event["frame_identity"].as_u64() != Some(101)
+            }),
+            "a transient reservation count cannot invent Full"
+        );
+
+        diagnostics.begin_receive();
+        let second = receiver.recv().expect("receiver drains accepted raced frame");
+        let (kind, identity) = second.diagnostic_identity();
+        assert_eq!(identity, Some(101));
+        diagnostics.record_dequeued(kind, identity);
+        diagnostics.finish_receive();
+        assert_eq!(diagnostics.queue_occupancy.load(Ordering::SeqCst), 0);
+    }
+
+    #[cfg(feature = "render-diagnostics")]
+    #[test]
+    fn recorder_diagnostics_distinguish_lock_sender_and_disconnect_refusals() {
+        let (sender, _receiver) = sync_channel::<EncoderMessage>(RECORD_QUEUE);
+        let mut contended = ActiveRecording::for_test(sender, DEFAULT_FPS, RECORD_QUEUE);
+        let contended_id = contended.diagnostics.recorder_id;
+        let shared_sender = Arc::clone(&contended.sender);
+        let locked_sender = shared_sender.lock().unwrap();
+        assert!(!contended.push(encoder_frame(1, 1)));
+        drop(locked_sender);
+        let contended_events = recorder_diagnostic_events(contended_id);
+        let lock_event = contended_events
+            .iter()
+            .find(|event| event["kind"].as_str() == Some("send_lock_contended"))
+            .expect("try_lock contention is distinct from channel refusal");
+        assert_eq!(lock_event["status"].as_str(), Some("lock_contended"));
+        assert_eq!(lock_event["queue_occupancy"].as_u64(), Some(0));
+
+        let (sender, _receiver) = sync_channel::<EncoderMessage>(RECORD_QUEUE);
+        let mut missing_sender = ActiveRecording::for_test(sender, DEFAULT_FPS, RECORD_QUEUE);
+        let missing_id = missing_sender.diagnostics.recorder_id;
+        missing_sender.sender.lock().unwrap().take();
+        assert!(!missing_sender.push(encoder_frame(2, 2)));
+        let missing_event = recorder_diagnostic_events(missing_id)
+            .into_iter()
+            .find(|event| event["kind"].as_str() == Some("send_no_sender"))
+            .expect("missing sender does not masquerade as full");
+        assert_eq!(missing_event["status"].as_str(), Some("no_sender"));
+        assert!(missing_event["queue_occupancy"].is_null());
+
+        let (sender, receiver) = sync_channel::<EncoderMessage>(RECORD_QUEUE);
+        drop(receiver);
+        let mut disconnected = ActiveRecording::for_test(sender, DEFAULT_FPS, RECORD_QUEUE);
+        let disconnected_id = disconnected.diagnostics.recorder_id;
+        assert!(!disconnected.push(encoder_frame(3, 3)));
+        let disconnected_event = recorder_diagnostic_events(disconnected_id)
+            .into_iter()
+            .find(|event| event["kind"].as_str() == Some("send_disconnected"))
+            .expect("the actual channel disconnection is distinct");
+        assert_eq!(disconnected_event["status"].as_str(), Some("disconnected"));
+        assert!(disconnected_event["queue_occupancy"].is_null());
+
+        let (sender, _receiver) = sync_channel::<EncoderMessage>(RECORD_QUEUE);
+        let mut unready = ActiveRecording::for_test(sender, DEFAULT_FPS, RECORD_QUEUE);
+        let unready_id = unready.diagnostics.recorder_id;
+        unready.width = 0;
+        assert!(!unready.push_setting(BoundedText::default()));
+        assert!(unready.settings_incomplete.load(Ordering::Acquire));
+        let unready_event = recorder_diagnostic_events(unready_id)
+            .into_iter()
+            .find(|event| event["kind"].as_str() == Some("setting_writer_not_ready"))
+            .expect("pre-writer setting refusal is not a queue-full observation");
+        assert_eq!(
+            unready_event["message_kind"].as_str(),
+            Some("Setting")
+        );
+        assert!(unready_event["queue_occupancy"].is_null());
+    }
+
+    #[cfg(feature = "render-diagnostics")]
+    #[test]
+    fn recorder_diagnostics_observe_setting_acceptance_and_dequeue() {
+        use std::fmt::Write as _;
+
+        let (sender, receiver) = sync_channel::<EncoderMessage>(2);
+        let mut active = ActiveRecording::for_test(sender, DEFAULT_FPS, 2);
+        let recorder_id = active.diagnostics.recorder_id;
+        let mut line = BoundedText::default();
+        line.write_str("setting transition").unwrap();
+        assert!(active.push_setting(line));
+
+        active.diagnostics.begin_receive();
+        let message = receiver.recv().expect("setting is actually dequeued");
+        let (kind, frame_identity) = message.diagnostic_identity();
+        assert!(matches!(kind, DiagnosticMessageKind::Setting));
+        assert_eq!(frame_identity, None);
+        active.diagnostics.record_dequeued(kind, frame_identity);
+        active.diagnostics.finish_receive();
+        assert_eq!(active.diagnostics.queue_occupancy.load(Ordering::SeqCst), 0);
+
+        let events = recorder_diagnostic_events(recorder_id);
+        let accepted = events
+            .iter()
+            .find(|event| event["kind"].as_str() == Some("send_accepted"))
+            .expect("setting send acceptance is observed");
+        assert_eq!(accepted["message_kind"].as_str(), Some("Setting"));
+        assert!(accepted["frame_identity"].is_null());
+        assert_eq!(accepted["queue_occupancy"].as_u64(), Some(1));
+        let dequeued = events
+            .iter()
+            .find(|event| event["kind"].as_str() == Some("dequeued"))
+            .expect("setting dequeue is observed");
+        assert_eq!(dequeued["message_kind"].as_str(), Some("Setting"));
+        assert!(dequeued["frame_identity"].is_null());
+        assert_eq!(dequeued["queue_occupancy"].as_u64(), Some(0));
+    }
+
+    #[cfg(feature = "render-diagnostics")]
+    #[test]
+    fn recorder_diagnostics_count_setting_against_shared_frame_capacity() {
+        use std::fmt::Write as _;
+
+        let (sender, receiver) = sync_channel::<EncoderMessage>(1);
+        let mut active = ActiveRecording::for_test(sender, DEFAULT_FPS, 1);
+        let recorder_id = active.diagnostics.recorder_id;
+        assert!(active.push(encoder_frame(1, 7)));
+
+        let mut line = BoundedText::default();
+        line.write_str("setting transition").unwrap();
+        assert!(!active.push_setting(line));
+        assert!(active.settings_incomplete.load(Ordering::Acquire));
+
+        let events = recorder_diagnostic_events(recorder_id);
+        let full = events
+            .iter()
+            .find(|event| event["kind"].as_str() == Some("send_full"))
+            .expect("Setting sees the shared Frame queue at actual capacity");
+        assert_eq!(full["status"].as_str(), Some("full"));
+        assert_eq!(full["message_kind"].as_str(), Some("Setting"));
+        assert!(full["frame_identity"].is_null());
+        assert_eq!(full["queue_occupancy"].as_u64(), Some(1));
+        assert_eq!(full["queue_capacity"].as_u64(), Some(1));
+
+        active.diagnostics.begin_receive();
+        let message = receiver.recv().expect("drain the accepted Frame");
+        let (kind, frame_identity) = message.diagnostic_identity();
+        assert!(matches!(kind, DiagnosticMessageKind::Frame));
+        assert_eq!(frame_identity, Some(7));
+        active.diagnostics.record_dequeued(kind, frame_identity);
+        active.diagnostics.finish_receive();
+        assert_eq!(active.diagnostics.queue_occupancy.load(Ordering::SeqCst), 0);
     }
 
     /// Bounded recording preserves fixed geometry and drops malformed frames.
@@ -2459,7 +3701,7 @@ mod tests {
             },
             pacer: RecordPacer::new(Duration::from_millis(500)),
             gated: true,
-            active: Some(ActiveRecording::for_test(sender, 2.0)),
+            active: Some(ActiveRecording::for_test(sender, 2.0, RECORD_QUEUE)),
             legacy_active: None,
             finalizing: None,
             done: false,
@@ -2522,7 +3764,7 @@ mod tests {
             },
             pacer: RecordPacer::new(Duration::from_millis(500)),
             gated: true,
-            active: Some(ActiveRecording::for_test(sender, 2.0)),
+            active: Some(ActiveRecording::for_test(sender, 2.0, 1)),
             legacy_active: None,
             finalizing: None,
             done: false,
@@ -3030,6 +4272,16 @@ mod tests {
         bounded_recorder_fixed_layout_receipt();
     }
 
+    #[cfg(all(
+        feature = "render-test-hooks",
+        feature = "render-diagnostics",
+        unix
+    ))]
+    #[test]
+    fn record_queue_diagnostics_capture_real_full_drain_and_encoder_exit() {
+        run_isolated_recorder_fixture("queue-drain");
+    }
+
     #[cfg(all(feature = "render-test-hooks", unix))]
     #[test]
     fn legacy_render_fixture_gate_off_keeps_all_three_outputs() {
@@ -3239,6 +4491,13 @@ mod tests {
                 record
                     .arm(&output_dir, "failed encoder")
                     .expect("arm failing encoder");
+                #[cfg(feature = "render-diagnostics")]
+                let recorder_id = record
+                    .active
+                    .as_ref()
+                    .expect("record is active")
+                    .diagnostics
+                    .recorder_id;
                 let step = StepInfo {
                     step: 0,
                     total: 1,
@@ -3262,6 +4521,25 @@ mod tests {
                         "failing encoder did not terminate"
                     );
                     thread::yield_now();
+                }
+                #[cfg(feature = "render-diagnostics")]
+                {
+                    let events = recorder_diagnostic_events(recorder_id);
+                    let finished = events
+                        .iter()
+                        .find(|event| event["kind"].as_str() == Some("recorder_finished"))
+                        .expect("failed child has an observed terminal event");
+                    assert_eq!(finished["record_finish"].as_str(), Some("Failed"));
+                    assert_eq!(finished["writer_state"].as_str(), Some("exited"));
+                    assert!(matches!(
+                        finished["writer_result"].as_str(),
+                        Some("ok" | "error")
+                    ));
+                    assert_eq!(finished["child_state"].as_str(), Some("exited"));
+                    assert_eq!(finished["child_exit_code"].as_i64(), Some(23));
+                    assert!(finished["finish_request_elapsed_ns"].is_null());
+                    assert!(finished["lifetime_ns"].is_null());
+                    assert!(finished["queue_occupancy"].is_null());
                 }
                 let failure = Mutex::new(None);
                 assert!(crate::app::finish_recording_for_exit(&mut record, &failure));
@@ -3316,7 +4594,7 @@ mod tests {
                 );
                 drop(RecorderPermit::try_acquire().expect("reaped recorder releases permit"));
             }
-            "sidecar-block" | "queue" => {
+            "sidecar-block" | "queue" | "queue-drain" => {
                 let output_dir = fixture_dir.join(format!("{mode} output"));
                 std::fs::create_dir_all(&output_dir).expect("create FIFO fixture directory");
                 let sidecar_path = output_dir.join(RECORD_SIDECAR_NAME);
@@ -3351,7 +4629,7 @@ mod tests {
                     "full try-send queue drops without growing another backlog"
                 );
 
-                if mode == "queue" {
+                if matches!(mode, "queue" | "queue-drain") {
                     // This recorder-local assertion covers the queue and pacer; it does not
                     // stand in for the parent's live panel/UI tick proof.
                     let start = Instant::now();
@@ -3364,45 +4642,72 @@ mod tests {
                         "recording opportunities remain bounded after overflow"
                     );
                 }
-                record.request_finish(Instant::now());
-                assert_eq!(
-                    wait_for_finish_status(
-                        &mut record,
-                        RecordFinish::TimedOut,
-                        Duration::from_secs(5)
-                    ),
-                    RecordFinish::TimedOut
-                );
-                assert!(
-                    record.is_finalizing(),
-                    "timed-out writer remains quarantined while the FIFO is blocked"
-                );
-                let failure = Mutex::new(None);
-                assert!(crate::app::finish_recording_for_exit(&mut record, &failure));
-                assert!(failure
-                    .lock()
-                    .unwrap()
+                #[cfg(feature = "render-diagnostics")]
+                let recorder_id = record
+                    .active
                     .as_ref()
-                    .is_some_and(|error| error.to_string().contains("TimedOut")));
-                assert!(
-                    record.is_finalizing(),
-                    "live exit does not join the blocked writer"
-                );
-                if mode == "sidecar-block" {
-                    let mut retry = configured_fixture_record();
+                    .expect("record remains active")
+                    .diagnostics
+                    .recorder_id;
+                record.request_finish(Instant::now());
+                if mode == "queue-drain" {
+                    use std::io::Read as _;
+
+                    let mut fifo_reader =
+                        File::open(&sidecar_path).expect("release and read the blocked sidecar");
+                    let mut sidecar_contents = Vec::new();
+                    fifo_reader
+                        .read_to_end(&mut sidecar_contents)
+                        .expect("read the fully drained writer sidecar");
+                    assert!(!sidecar_contents.is_empty());
                     assert_eq!(
-                        retry.arm(&output_dir.join("retry"), "retry"),
-                        Err(RecordError::RecorderBusy),
-                        "a blocked sidecar writer retains the process-wide permit"
+                        wait_for_finalized(&mut record, Duration::from_secs(5)),
+                        RecordFinish::Complete
                     );
+                    #[cfg(feature = "render-diagnostics")]
+                    assert_full_drain_diagnostics(recorder_id);
+                    drop(fifo_reader);
+                    drop(RecorderPermit::try_acquire().expect("successful drain releases permit"));
+                } else {
+                    assert_eq!(
+                        wait_for_finish_status(
+                            &mut record,
+                            RecordFinish::TimedOut,
+                            Duration::from_secs(5)
+                        ),
+                        RecordFinish::TimedOut
+                    );
+                    assert!(
+                        record.is_finalizing(),
+                        "timed-out writer remains quarantined while the FIFO is blocked"
+                    );
+                    let failure = Mutex::new(None);
+                    assert!(crate::app::finish_recording_for_exit(&mut record, &failure));
+                    assert!(failure
+                        .lock()
+                        .unwrap()
+                        .as_ref()
+                        .is_some_and(|error| error.to_string().contains("TimedOut")));
+                    assert!(
+                        record.is_finalizing(),
+                        "live exit does not join the blocked writer"
+                    );
+                    if mode == "sidecar-block" {
+                        let mut retry = configured_fixture_record();
+                        assert_eq!(
+                            retry.arm(&output_dir.join("retry"), "retry"),
+                            Err(RecordError::RecorderBusy),
+                            "a blocked sidecar writer retains the process-wide permit"
+                        );
+                    }
+                    let fifo_reader = release_fifo(&sidecar_path);
+                    assert_eq!(
+                        wait_for_finalized(&mut record, Duration::from_secs(5)),
+                        RecordFinish::TimedOut
+                    );
+                    drop(fifo_reader);
+                    drop(RecorderPermit::try_acquire().expect("released writer frees permit"));
                 }
-                let fifo_reader = release_fifo(&sidecar_path);
-                assert_eq!(
-                    wait_for_finalized(&mut record, Duration::from_secs(5)),
-                    RecordFinish::TimedOut
-                );
-                drop(fifo_reader);
-                drop(RecorderPermit::try_acquire().expect("released writer frees permit"));
             }
             "geometry" => {
                 assert_eq!(checked_raw_frame_bytes(0, 64), None);

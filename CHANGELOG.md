@@ -45,6 +45,11 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.8` 
   It separates the shared vertex cap from its replacement charge.
   The diagnostic mailbox accounts for its added latency, skip and focus scalars.
   These calibration paths do not activate fairness in normal builds.
+- Diagnostic render builds now identify the one native pump, separate main
+  view and docked-rail paints, exact recorder queue and drain transitions,
+  retained-frame lifetimes, and real byte-budget refusals. Head samples also
+  count actual CPU scene rebuilds. These observations do not add a window,
+  change normal rendering, or activate the experimental policy.
 - Memory-only render diagnostics report native allocator statistics separately
   from requested Rust bytes, V8 heaps and logical GPU storage. Native allocator
   values can overlap those domains and are not an RSS total.

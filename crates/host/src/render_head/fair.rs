@@ -446,6 +446,12 @@ fn fair_process_static_bytes() -> usize {
         + std::mem::size_of::<OnceLock<CalibrationConfig>>()
         + std::mem::size_of::<OnceLock<Option<CalibrationConfig>>>()
         + std::mem::size_of::<OnceLock<Option<client::render::budget::RenderBudget>>>()
+        + {
+            #[cfg(feature = "render-diagnostics")]
+            { client::render::budget::diagnostic_static_storage_bytes() }
+            #[cfg(not(feature = "render-diagnostics"))]
+            { 0 }
+        }
 }
 
 #[cfg(feature = "render-test-hooks")]
@@ -592,6 +598,8 @@ pub struct HeadFairStats {
     granted_paints: u64,
     granted_paint_time: Duration,
     scene_consumes: u64,
+    #[cfg(feature = "render-diagnostics")]
+    rebuilt_scenes: u64,
     last_scene_consume_at: Option<Instant>,
     max_scene_consume_gap: Duration,
     scene_gap_window_start: Option<Instant>,
@@ -643,6 +651,19 @@ impl HeadFairStats {
     }
     pub fn busy_paints(&self) -> u64 {
         self.busy_paints
+    }
+
+    #[cfg(feature = "render-diagnostics")]
+    pub fn rebuilt_scenes(&self) -> u64 {
+        self.rebuilt_scenes
+    }
+
+    #[cfg(feature = "render-diagnostics")]
+    fn observe_scene_progress(&mut self, progress: SceneProgress) {
+        self.scene_progress = progress;
+        if self.backend == BackendKind::Cpu && progress == SceneProgress::Rebuilt {
+            self.rebuilt_scenes = self.rebuilt_scenes.saturating_add(1);
+        }
     }
     pub fn busy_paint_time(&self) -> Duration {
         self.busy_paint_time
@@ -798,6 +819,8 @@ impl FairHead {
                 granted_paints: 0,
                 granted_paint_time: Duration::ZERO,
                 scene_consumes: 0,
+                #[cfg(feature = "render-diagnostics")]
+                rebuilt_scenes: 0,
                 last_scene_consume_at: None,
                 max_scene_consume_gap: Duration::ZERO,
                 scene_gap_window_start: None,
@@ -1233,7 +1256,10 @@ pub(super) fn paint(head: &mut Head, client: &mut Client) -> FrameOutput {
         }
     }
     head.fair.stats.has_valid_scene = head.renderer.has_valid_scene();
-    head.fair.stats.scene_progress = head.renderer.scene_progress();
+    #[cfg(feature = "render-diagnostics")]
+    head.fair.stats.observe_scene_progress(head.renderer.scene_progress());
+    #[cfg(not(feature = "render-diagnostics"))]
+    { head.fair.stats.scene_progress = head.renderer.scene_progress(); }
     head.fair.stats.retained_storage_allocations = head.renderer.retained_storage_allocations();
     head.fair.stats.retained_storage_bytes = head.renderer.retained_storage_bytes();
     head.output.publish_fair_stats(head.fair.stats);
@@ -1501,6 +1527,23 @@ mod tests {
             output.fair_stats().unwrap().last_scene_consume_at(),
             sample.last_scene_consume_at()
         );
+    }
+
+    #[cfg(feature = "render-diagnostics")]
+    #[test]
+    fn cpu_scene_observations_count_only_real_rebuilds_of_that_head() {
+        let (_service, _pump, lease) = local_heads();
+        let mut cpu = FairHead::new(lease.identity(), BackendKind::Cpu).stats;
+        cpu.observe_scene_progress(SceneProgress::Rebuilt);
+        cpu.observe_scene_progress(SceneProgress::Retained);
+        cpu.observe_scene_progress(SceneProgress::NoScene);
+        assert_eq!(cpu.rebuilt_scenes(), 1);
+        cpu.observe_scene_progress(SceneProgress::Rebuilt);
+        assert_eq!(cpu.rebuilt_scenes(), 2);
+        let mut gpu = FairHead::new(lease.identity(), BackendKind::Gpu).stats;
+        gpu.observe_scene_progress(SceneProgress::Rebuilt);
+        assert_eq!(gpu.rebuilt_scenes(), 0);
+        assert_eq!(FairHead::new(lease.identity(), BackendKind::Cpu).stats.rebuilt_scenes(), 0);
     }
 
     #[test]

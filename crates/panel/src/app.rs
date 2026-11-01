@@ -1536,6 +1536,8 @@ fn game_window(ui: &Ui, gpu: &mut Gpu, state: &mut PanelState, title: &str) {
             game_pane(ui, gpu, state, avail);
         }
     });
+    #[cfg(feature = "render-diagnostics")]
+    gpu.note_main_view_build(built.is_some());
     let open = built.is_some();
     state.session.set_game_pane_open(open);
     if !open {
@@ -5752,7 +5754,7 @@ const RAIL_TILES_MIN_H: f32 = 120.0;
 /// and the 1 Hz resource card.
 fn rail_window(ui: &Ui, gpu: &mut Gpu, state: &mut PanelState) {
     let mut open = true;
-    ui.window(format!(
+    let built = ui.window(format!(
         "{}-rail###{RAIL_WINDOW}",
         state.session.app_title()
     ))
@@ -5780,6 +5782,10 @@ fn rail_window(ui: &Ui, gpu: &mut Gpu, state: &mut PanelState) {
                 }
             });
     });
+    #[cfg(feature = "render-diagnostics")]
+    gpu.note_rail_build(built.is_some());
+    #[cfg(not(feature = "render-diagnostics"))]
+    let _ = built;
     if !open {
         state.session.set_multibox(false);
     }
@@ -9034,6 +9040,8 @@ fn ui_frame(
             }
         }
     }
+    #[cfg(feature = "render-diagnostics")]
+    gpu.note_rail_presence(state.session.multibox && !state.session.wall.grid);
     if state.session.multibox && !state.session.wall.grid {
         ui.set_next_window_class(&rail_window_class());
         rail_window(ui, gpu, state);

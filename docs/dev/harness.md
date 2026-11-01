@@ -1237,6 +1237,21 @@ overflow count, observation-window mean and the maximum of the interval maxima
 rather than presenting 250 ms as an exact slow-frame duration. Requested
 rendering metadata does not prove the observed backend or cadence.
 
+Fair-render qualification uses one native panel window and one shared native
+pump. The sidecar is its docked ImGui rail, not a second operating-system
+window. Record main-view and rail paint surfaces separately. A policy name
+does not prove that the rail was visible or painted.
+
+In `render-diagnostics` builds, `render_heads` entries identify the actual
+slot incarnation and head generation. GPU `scene_consumes` and CPU
+`rebuilt_scenes` count real scene work; mailbox generation counts published
+frames. Busy and granted paint counters do not form a total overlay-paint
+count. Join the original memory and diagnostic sidecar rows by their shared
+run clock. Use the existing process epoch and run-start offset to compare
+them with native-window events. Bind every original log to one source-bound
+execution receipt and retain its complete hash.
+
+
 Every sample row also carries run metadata, each field a JSON `null` when it does
 not apply (a headless `tui-play` has no adapter or panel frames):
 

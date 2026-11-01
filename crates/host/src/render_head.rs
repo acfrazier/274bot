@@ -365,6 +365,20 @@ impl fmt::Debug for SlotRender {
     }
 }
 
+
+#[cfg(feature = "render-diagnostics")]
+struct BudgetObservationClock(Instant);
+
+#[cfg(feature = "render-diagnostics")]
+impl BudgetObservationClock {
+    fn due(&mut self, now: Instant) -> bool {
+        if now.saturating_duration_since(self.0) < std::time::Duration::from_secs(1) {
+            return false;
+        }
+        self.0 = now;
+        true
+    }
+}
 /// One attached head: its service lease and the per-slot `Renderer` that
 /// draws it.
 pub(crate) struct Head {
@@ -384,6 +398,8 @@ pub(crate) struct Head {
     fair: fair::FairHead,
     #[cfg(any(feature = "render-diagnostics", feature = "render-test-hooks"))]
     budget: Option<client::render::budget::RenderBudget>,
+    #[cfg(feature = "render-diagnostics")]
+    budget_observation_clock: BudgetObservationClock,
 }
 
 impl Head {
@@ -424,6 +440,8 @@ impl Head {
             let fair = fair.with_control(render.test_control.clone());
             fair
         };
+        #[cfg(feature = "render-diagnostics")]
+        emit_budget_samples(budget.as_ref(), identity, "initial");
         Ok(Self {
             lease: Some(lease),
             identity,
@@ -437,6 +455,8 @@ impl Head {
             fair,
             #[cfg(any(feature = "render-diagnostics", feature = "render-test-hooks"))]
             budget,
+            #[cfg(feature = "render-diagnostics")]
+            budget_observation_clock: BudgetObservationClock(Instant::now()),
         })
     }
 
@@ -543,6 +563,10 @@ impl Head {
                 ),
             );
         }
+        #[cfg(feature = "render-diagnostics")]
+        if self.budget_observation_clock.due(Instant::now()) {
+            emit_budget_samples(self.budget.as_ref(), self.identity, "periodic");
+        }
         frame
     }
 
@@ -618,6 +642,25 @@ impl Drop for Head {
     fn drop(&mut self) {
         self.retire();
         self.output.release_head(self.identity);
+        #[cfg(feature = "render-diagnostics")]
+        emit_budget_samples(self.budget.as_ref(), self.identity, "final");
+    }
+}
+
+#[cfg(feature = "render-diagnostics")]
+fn emit_budget_samples(
+    budget: Option<&client::render::budget::RenderBudget>,
+    identity: HeadIdentity,
+    stage: &'static str,
+) {
+    if let Some(budget) = budget {
+        for sample in budget.diagnostic_snapshots() {
+            sample.emit(
+                stage,
+                identity.slot().incarnation().get(),
+                identity.generation().get(),
+            );
+        }
     }
 }
 
@@ -900,12 +943,47 @@ fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
 
 #[cfg(test)]
 mod tests {
+    #[cfg(feature = "render-diagnostics")]
+    #[test]
+    fn budget_observation_clock_never_repeats_or_advances_before_its_boundary() {
+        let start = Instant::now();
+        let mut clock = super::BudgetObservationClock(start);
+        assert!(!clock.due(start - std::time::Duration::from_secs(1)));
+        assert!(!clock.due(start + std::time::Duration::from_millis(999)));
+        assert!(clock.due(start + std::time::Duration::from_secs(1)));
+        assert!(!clock.due(start + std::time::Duration::from_secs(1)));
+        assert!(!clock.due(start + std::time::Duration::from_millis(1999)));
+        assert!(clock.due(start + std::time::Duration::from_secs(2)));
+    }
+
     use std::panic::{catch_unwind, AssertUnwindSafe};
     use std::sync::atomic::AtomicBool;
     use std::thread;
 
     use super::*;
     use crate::render::ReservationState;
+
+    #[cfg(not(feature = "render-diagnostics"))]
+    #[test]
+    fn non_diagnostic_head_preserves_its_baseline_owner_layout() {
+        #[allow(dead_code)]
+        struct BaselineHead {
+            lease: Option<HeadLease>,
+            identity: HeadIdentity,
+            wake: Arc<HeadWake>,
+            output: Arc<FrameBuf>,
+            scenes: u64,
+            renderer: Renderer,
+            prefer_cpu: bool,
+            lowmem: bool,
+            #[cfg(feature = "render-test-hooks")]
+            fair: fair::FairHead,
+            #[cfg(feature = "render-test-hooks")]
+            budget: Option<client::render::budget::RenderBudget>,
+        }
+        assert_eq!(std::mem::size_of::<Head>(), std::mem::size_of::<BaselineHead>());
+        assert_eq!(std::mem::align_of::<Head>(), std::mem::align_of::<BaselineHead>());
+    }
 
     /// The F0 fixture lifetime: short enough for a stalled grant to expire
     /// inside a test.

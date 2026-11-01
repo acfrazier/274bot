@@ -234,6 +234,8 @@ pub fn sample_render_head<Io>(
     let wake = core.play()?.slot_wake_snapshot(name)?;
     Some(serde_json::json!({
         "identity": format!("{:?}", stats.identity()),
+        "slot": stats.identity().slot().incarnation().get(),
+        "head_generation": stats.identity().generation().get(),
         "identity_matches": mailbox.head() == Some(stats.identity()),
         "backend": format!("{:?}", stats.backend()),
         "mailbox_generation": mailbox.generation(),
@@ -246,6 +248,7 @@ pub fn sample_render_head<Io>(
         "busy_paints": stats.busy_paints(),
         "granted_paints": stats.granted_paints(),
         "scene_consumes": stats.scene_consumes(),
+        "rebuilt_scenes": stats.rebuilt_scenes(),
         "scene_releases": stats.scene_releases(),
         "has_valid_scene": stats.has_valid_scene(),
         "scene_progress": format!("{:?}", stats.scene_progress()),

@@ -164,6 +164,34 @@ mod tests {
     use super::{CalibrationError, Inputs};
     use std::collections::HashMap;
 
+    #[test]
+    #[ignore = "manual boundary proof; requires all thirteen explicit T44_RENDER_BUDGET_LIMITS_JSON ceilings"]
+    fn explicit_byte_ceiling_refusals_leave_every_live_owner_unchanged() {
+        use client::render::budget::RenderBudget;
+        let raw = std::env::var("T44_RENDER_BUDGET_LIMITS_JSON")
+            .expect("the refusal proof requires the same explicit ceilings as the live run");
+        let limits: super::ByteLimits = serde_json::from_str(&raw).expect("thirteen positive ceilings");
+        let budgets = RenderBudget::new(limits.limits());
+        for initial in budgets.diagnostic_snapshots() {
+            let budget = budgets.for_resource(initial.resource).unwrap();
+            let requested = initial.maximum.checked_add(1).expect("ceiling permits a boundary probe");
+            let refused = match budget.reserve(requested) {
+                Err(limit) => limit,
+                Ok(_) => panic!("an oversized reservation was admitted"),
+            };
+            assert_eq!(refused.resource(), initial.resource);
+            assert_eq!(refused.requested(), requested);
+            assert_eq!(refused.maximum(), initial.maximum);
+            let after = budget.diagnostic_snapshot();
+            assert_eq!(after.budget_id, initial.budget_id);
+            assert_eq!(after.live, initial.live);
+            assert_eq!(after.peak, initial.peak);
+            assert_eq!(after.limit_actions, initial.limit_actions + 1);
+            assert_eq!(after.maximum_failed_request, requested);
+            assert!(after.event_order > initial.event_order);
+        }
+    }
+
     fn explicit_values() -> HashMap<&'static str, String> {
         HashMap::from([
             ("M3_FAIR_PROBE", "1".into()),

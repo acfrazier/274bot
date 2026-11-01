@@ -50,6 +50,12 @@ pub(crate) use work_area::{fit_window_in, FitTarget, WorkArea};
 mod ime;
 use ime::attach_platform;
 
+#[cfg(feature = "render-diagnostics")]
+#[path = "window_diagnostics.rs"]
+mod window_diagnostics;
+#[cfg(feature = "render-diagnostics")]
+use window_diagnostics::{UiPaintObservation, WindowDiagnostics};
+
 /// What the panel window needs from the graphics stack, appended to the
 /// startup errors a missing driver produces. `BOT_CPU=1` selects the game
 /// view's CPU rasterizer; the window itself always presents through wgpu.
@@ -1945,6 +1951,8 @@ pub struct Gpu<'a> {
     device: &'a wgpu::Device,
     queue: &'a wgpu::Queue,
     renderer: &'a mut imgui_wgpu::WgpuRenderer,
+    #[cfg(feature = "render-diagnostics")]
+    window_paints: UiPaintObservation,
 }
 
 impl<'a> Gpu<'a> {
@@ -1957,7 +1965,29 @@ impl<'a> Gpu<'a> {
             device,
             queue,
             renderer,
+            #[cfg(feature = "render-diagnostics")]
+            window_paints: UiPaintObservation::default(),
         }
+    }
+
+    #[cfg(feature = "render-diagnostics")]
+    pub(crate) fn note_main_view_build(&mut self, built: bool) {
+        self.window_paints.note_main_view_build(built);
+    }
+
+    #[cfg(feature = "render-diagnostics")]
+    pub(crate) fn note_rail_presence(&mut self, present: bool) {
+        self.window_paints.note_rail_presence(present);
+    }
+
+    #[cfg(feature = "render-diagnostics")]
+    pub(crate) fn note_rail_build(&mut self, built: bool) {
+        self.window_paints.note_rail_build(built);
+    }
+
+    #[cfg(feature = "render-diagnostics")]
+    fn window_paint_observation(&self) -> UiPaintObservation {
+        self.window_paints
     }
 
     /// Access the WGPU device
@@ -2283,7 +2313,11 @@ impl AppWindow {
     /// Create the OS window and surface, then hand adapter/device creation
     /// to a worker. [`AppWindow::finish`] completes the stack on the UI
     /// thread once the worker answers.
-    fn start(event_loop: &ActiveEventLoop, cfg: &PanelConfig) -> Result<PendingGpu, PanelError> {
+    fn start(
+        event_loop: &ActiveEventLoop,
+        cfg: &PanelConfig,
+        #[cfg(feature = "render-diagnostics")] diagnostics: &mut WindowDiagnostics,
+    ) -> Result<PendingGpu, PanelError> {
         let window = {
             let size = LogicalSize::new(cfg.window_size.0, cfg.window_size.1);
             Arc::new(
@@ -2296,6 +2330,8 @@ impl AppWindow {
                     .map_err(PanelError::WindowCreation)?,
             )
         };
+        #[cfg(feature = "render-diagnostics")]
+        diagnostics.window_created(window.id(), cfg.redraw);
         // Launch fit (M-003): shrink a launch size that exceeds this
         // work area, and pull a centered or off-screen origin back inside
         // it, before GPU bring-up shows the frame.
@@ -2555,6 +2591,7 @@ impl AppWindow {
         gui: &mut F,
         docking: &DockingConfig,
         shots: &Mutex<ShotState>,
+        #[cfg(feature = "render-diagnostics")] diagnostics: &mut WindowDiagnostics,
     ) -> Result<bool, PanelError>
     where
         F: FnMut(&imgui::Ui, &mut Gpu) -> bool,
@@ -2598,6 +2635,8 @@ impl AppWindow {
             shots.lock().unwrap().reset_actor_display_confirmation();
         }
         let exit_requested = gui(ui, &mut gpu);
+        #[cfg(feature = "render-diagnostics")]
+        diagnostics.record_ui_frame(gpu.window_paint_observation(), Instant::now());
         // Keep OS cursor/IME state in sync with Dear ImGui's per-frame intent.
         self.imgui.platform.prepare_render_with_ui(ui, &self.window);
         let draw_data = self.imgui.context.render();
@@ -2705,6 +2744,8 @@ impl AppWindow {
                 #[cfg(feature = "render-test-hooks")]
                 test_hooks::note_submitted_paint();
             }
+            #[cfg(feature = "render-diagnostics")]
+            diagnostics.submitted_native_paint(next_paint_sequence, Instant::now());
         }
         if reconfigure_after_present {
             self.surface.configure(&self.device, &self.surface_desc);
@@ -3325,6 +3366,8 @@ where
     /// scenario sink's requests) and the render readback.
     shots: Arc<Mutex<ShotState>>,
     last_wake: Instant,
+    #[cfg(feature = "render-diagnostics")]
+    diagnostics: WindowDiagnostics,
     /// Why the loop stopped without a window (creation or rebuild failed);
     /// [`run`] returns it, so the process exits non-zero.
     failure: Option<PanelError>,
@@ -3355,6 +3398,8 @@ where
             on_gpu_shutdown: Box::new(on_gpu_shutdown),
             shots,
             last_wake: Instant::now(),
+            #[cfg(feature = "render-diagnostics")]
+            diagnostics: WindowDiagnostics::new(),
             failure: None,
         }
     }
@@ -3370,18 +3415,30 @@ where
         }
     }
 
-    fn close_window(&mut self, event_loop: &ActiveEventLoop) {
+    fn close_window(&mut self, event_loop: &ActiveEventLoop, reason: &'static str) {
         self.drop_window();
         self.pending = None;
+        #[cfg(feature = "render-diagnostics")]
+        self.diagnostics.close(reason);
         event_loop.exit();
     }
 
     /// Create the window and start its GPU bring-up; the loop keeps pumping
     /// until [`App::poll_gpu`] completes it.
     fn start_gpu(&mut self, event_loop: &ActiveEventLoop) {
-        match AppWindow::start(event_loop, &self.cfg) {
+        #[cfg(feature = "render-diagnostics")]
+        let start = AppWindow::start(event_loop, &self.cfg, &mut self.diagnostics);
+        #[cfg(not(feature = "render-diagnostics"))]
+        let start = AppWindow::start(event_loop, &self.cfg);
+        match start {
             Ok(pending) => self.pending = Some(pending),
             Err(e) => {
+                #[cfg(feature = "render-diagnostics")]
+                {
+                    self.diagnostics
+                        .error(window_diagnostics::error_kind(&e));
+                    self.diagnostics.close("window_start_failed");
+                }
                 self.failure = Some(e);
                 event_loop.exit();
             }
@@ -3411,13 +3468,18 @@ where
                 self.window = Some(window);
             }
             Err(e) => {
+                #[cfg(feature = "render-diagnostics")]
+                {
+                    self.diagnostics
+                        .error(window_diagnostics::error_kind(&e));
+                    self.diagnostics.close("gpu_initialization_failed");
+                }
                 self.failure = Some(e);
                 event_loop.exit();
             }
         }
         false
     }
-}
 
 fn current_os_window_id(
     window: &Option<AppWindow>,
@@ -3461,10 +3523,10 @@ where
                 if current_os_window_id(&self.window, &self.pending) != Some(window_id) {
                     return;
                 }
-                self.close_window(event_loop);
+                self.close_window(event_loop, "destroyed");
             }
             WindowEvent::CloseRequested => {
-                self.close_window(event_loop);
+                self.close_window(event_loop, "close_requested");
             }
             WindowEvent::RedrawRequested => {
                 // Render and, on fatal errors, attempt a full GPU/window rebuild.
@@ -3480,14 +3542,26 @@ where
                         &full_event,
                     );
 
-                    match window.render(&mut self.ui_frame, &self.cfg.docking, self.shots.as_ref())
-                    {
+                    #[cfg(feature = "render-diagnostics")]
+                    let render = window.render(
+                        &mut self.ui_frame,
+                        &self.cfg.docking,
+                        self.shots.as_ref(),
+                        &mut self.diagnostics,
+                    );
+                    #[cfg(not(feature = "render-diagnostics"))]
+                    let render =
+                        window.render(&mut self.ui_frame, &self.cfg.docking, self.shots.as_ref());
+                    match render {
                         Ok(true) => event_loop.exit(),
                         Ok(false) if matches!(self.cfg.redraw, RedrawMode::Poll) => {
                             window.window.request_redraw();
                         }
                         Ok(false) => {}
                         Err(e) => {
+                            #[cfg(feature = "render-diagnostics")]
+                            self.diagnostics
+                                .error(window_diagnostics::error_kind(&e));
                             eprintln!(
                                 "Render error: {e}; attempting to recover by recreating GPU state"
                             );
@@ -3500,6 +3574,8 @@ where
                     // Release owner textures while the old renderer is live,
                     // then rebuild the same GPU/window stack as startup.
                     self.drop_window();
+                    #[cfg(feature = "render-diagnostics")]
+                    self.diagnostics.close("render_error");
                     self.start_gpu(event_loop);
                 }
             }
@@ -3556,6 +3632,8 @@ where
 
     fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
         if event_loop.exiting() {
+            #[cfg(feature = "render-diagnostics")]
+            self.diagnostics.about_to_wait(Instant::now());
             return;
         }
         // The independent render pump runs on every loop turn, and the loop
@@ -3563,6 +3641,8 @@ where
         // consuming expires on time even when no frame is drawn. It never
         // renders on this thread.
         let pump_now = Instant::now();
+        #[cfg(feature = "render-diagnostics")]
+        self.diagnostics.about_to_wait(pump_now);
         let render_due = frontend_core::surface::pump_render(pump_now);
         if self.poll_gpu(event_loop) {
             event_loop.set_control_flow(ControlFlow::WaitUntil(earliest(
@@ -3677,6 +3757,16 @@ pub fn run<F>(
 where
     F: FnMut(&imgui::Ui, &mut Gpu) -> bool + 'static,
 {
+    #[cfg(feature = "render-diagnostics")]
+    let event_loop = match EventLoop::new() {
+        Ok(event_loop) => event_loop,
+        Err(error) => {
+            let mut diagnostics = WindowDiagnostics::new();
+            diagnostics.error("event_loop");
+            return Err(error.into());
+        }
+    };
+    #[cfg(not(feature = "render-diagnostics"))]
     let event_loop = EventLoop::new()?;
     match cfg.redraw {
         RedrawMode::Poll => event_loop.set_control_flow(ControlFlow::Poll),
@@ -3691,6 +3781,12 @@ where
     let run_result = event_loop.run_app(&mut app);
     app.drop_window();
     app.pending = None;
+    #[cfg(feature = "render-diagnostics")]
+    if run_result.is_err() {
+        app.diagnostics.error("event_loop");
+    }
+    #[cfg(feature = "render-diagnostics")]
+    app.diagnostics.close("event_loop_returned");
     run_result?;
     // A window that could not be created (or rebuilt after a GPU error)
     // ends the loop; report it so the process exits non-zero.

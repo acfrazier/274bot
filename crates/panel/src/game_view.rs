@@ -23,6 +23,22 @@ use frontend_core::surface::{FrameStamp, PresentedFrame};
 pub const APPLET_W: u32 = 765;
 pub const APPLET_H: u32 = 503;
 
+#[cfg(feature = "render-diagnostics")]
+fn registration_binding(
+    registration: u64,
+    slot: u64,
+    head_generation: u64,
+    mailbox_sequence: u64,
+) -> serde_json::Value {
+    serde_json::json!({
+        "schema": "render-present-binding-v1",
+        "registration": registration,
+        "slot": slot,
+        "head_generation": head_generation,
+        "mailbox_sequence": mailbox_sequence,
+    })
+}
+
 /// The panel window's GPU calls the game-view texture paths need, abstracted
 /// so the consume path is unit-testable without a full ImGui renderer (the
 /// `Texture`-frame tests drive a recording registrar on a headless device).
@@ -234,6 +250,18 @@ impl GameView {
         {
             self.capture_registration = None;
             self.capture_registration = Some((stamp, handle.try_register_consumer()?));
+            #[cfg(feature = "render-diagnostics")]
+            if let Some((registered, registration)) = self.capture_registration.as_ref() {
+                eprintln!(
+                    "render_present_binding={}",
+                    registration_binding(
+                        registration.diagnostic_key(),
+                        registered.head().slot().incarnation().get(),
+                        registered.head().generation().get(),
+                        registered.mailbox_sequence(),
+                    ),
+                );
+            }
             return Err(ReadbackError::Busy);
         }
         let (_, registration) = self

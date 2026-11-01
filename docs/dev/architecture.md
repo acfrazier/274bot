@@ -444,6 +444,28 @@ times. The resource permit retains its byte charge through registration
 failure and draining. Live totals require quiescent producers for an exact
 phase-boundary comparison.
 
+With `render-diagnostics`, `render_present_binding=` binds an actual consumer
+registration to its slot incarnation, head generation and registration-time
+mailbox sequence. That sequence is not a GPU present token.
+`render_present_lifetime=` records the actual registration, held token,
+later producer token, retirement, unregistration and release transitions.
+Unknown held or registered state is JSON null. A final `resource_released`
+event follows the real retained-resource permit drop; a release request alone
+does not prove that the resource drained.
+
+The same diagnostic feature emits `render_budget_sample=` for all thirteen
+real byte-budget owners after head attachment, periodically, and at head
+drop. Budget identities distinguish head-local owners and deduplicate the
+six process-shared pools. Samples contain independent atomic live, peak,
+ceiling and refusal observations, not a renderer allocation census.
+`render_budget_limit=` records actual refused requests and snapshots before
+and after the refusal counter update. Other threads can change a shared
+pool between those snapshots. A final head sample does not assert zero live
+bytes while other owners remain. Diagnostic state and output are absent
+without this feature; release scalar receipts include their real storage
+when the feature is enabled.
+
+
 The mailbox moves `PresentedFrame` output, ROI and `FrameStamp` together.
 The stamp contains the exact head, checked mailbox sequence, scene validity
 and GPU present token. Actor capture accepts that stamp and freezes its
