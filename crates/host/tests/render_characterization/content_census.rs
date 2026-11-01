@@ -1845,6 +1845,7 @@ fn add_source_hashes(ledger: &mut InputLedger) -> BTreeMap<&'static str, Vec<u8>
                 | "crates/nav-planner/src/router.rs"
                 | "crates/nav-planner/src/paint.rs"
                 | "crates/panel/src/session.rs"
+        ) {
             if let Some(bytes) = bytes {
                 selected.insert(*relative, bytes);
             }

@@ -3129,7 +3129,10 @@ mod tests {
     #[test]
     fn raster_plan_accepts_only_exact_cpu_gpu_compositions() {
         use vault::RasterMode::{Cpu, Gpu};
-        assert_eq!(parse_raster_plan("gpu,cpu,cpu", 3).unwrap(), [Gpu, Cpu, Cpu]);
+        assert_eq!(
+            parse_raster_plan("gpu,cpu,cpu", 3).unwrap(),
+            [Gpu, Cpu, Cpu]
+        );
         assert_eq!(parse_raster_plan("cpu", 1).unwrap(), [Cpu]);
         for (value, n) in [
             ("", 1),
