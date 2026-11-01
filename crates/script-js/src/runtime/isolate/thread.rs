@@ -860,8 +860,7 @@ fn finish_tick(
             let event = crate::events::NativeEvent::ScriptFinish {
                 reason: reason.clone(),
             };
-            if let Err(message) =
-                super::super::snapshot::dispatch_native_events(runtime, &[event])
+            if let Err(message) = super::super::snapshot::dispatch_native_events(runtime, &[event])
             {
                 let _ = out.send(ThreadMsg::Log(format!("script.finish dispatch: {message}")));
             } else {
@@ -913,7 +912,6 @@ fn requested_stop(runtime: &mut Runtime) -> Option<(String, bool)> {
     let _ = set_host_field(runtime, "requestFinishRequested", HostValue::Null);
     Some(requested)
 }
-
 
 /// The settle promise of a compat method invoker or a v1 native tick: it
 /// fulfils `null` on success or the error text, and never rejects.

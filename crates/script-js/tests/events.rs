@@ -422,7 +422,10 @@ export default class T extends LoopingBot {
         logs.extend(iso.drain_logs());
         std::thread::sleep(Duration::from_millis(2));
     }
-    assert!(iso.stopped(), "requestFinish did not stop the isolate: {logs:?}");
+    assert!(
+        iso.stopped(),
+        "requestFinish did not stop the isolate: {logs:?}"
+    );
     logs.extend(iso.join());
     assert!(
         logs.iter().any(|line| line == "finish:finished by request"),
@@ -456,7 +459,10 @@ export default class T extends LoopingBot {
         logs.extend(iso.drain_logs());
         std::thread::sleep(Duration::from_millis(2));
     }
-    assert!(iso.stopped(), "ScriptRunner.stop did not stop the isolate: {logs:?}");
+    assert!(
+        iso.stopped(),
+        "ScriptRunner.stop did not stop the isolate: {logs:?}"
+    );
     logs.extend(iso.join());
     assert!(
         logs.iter().any(|line| line == "finish:undefined"),

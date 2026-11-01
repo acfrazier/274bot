@@ -540,7 +540,6 @@ mod v8_tests {
         isolate.get_heap_statistics().used_heap_size()
     }
 
-
     #[test]
     fn event_payload_has_fast_properties() {
         if !in_child(FAST_CHILD, FAST_TEST) {

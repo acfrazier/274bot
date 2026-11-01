@@ -296,7 +296,6 @@ fn collect_xp(snap: &Snapshot<'_>) -> Vec<XpState> {
         .collect()
 }
 
-
 fn diff_xp(last: &[XpState], current: &[XpState]) -> Vec<NativeEvent> {
     let mut events = Vec::new();
     for cur in current {
@@ -321,7 +320,6 @@ fn diff_xp(last: &[XpState], current: &[XpState]) -> Vec<NativeEvent> {
     }
     events
 }
-
 
 fn merge_xp(last: &mut Vec<XpState>, current: &[XpState]) {
     for cur in current {
