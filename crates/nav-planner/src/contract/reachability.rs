@@ -395,10 +395,11 @@ mod tests {
         );
     }
 
-    /// Upper bound on the real 289 atlas tables in memory. The v18 289 pack
-    /// measured 6,202,456 serialized bytes (section directories included);
-    /// growth past this limit is a new per-process cost to review.
-    const REAL_ATLAS_RESIDENT_LIMIT: usize = 6_500_000;
+    /// Upper bound on the real 289 atlas tables in memory. The v18 289 tables
+    /// hold about 6.20 MB (the pack grew 6,216,880 bytes over v17, minus the
+    /// multiway keys and section directories). Growth past this limit is a
+    /// new once-per-process cost to review, not a per-bot cost.
+    const REAL_ATLAS_RESIDENT_LIMIT: usize = 6_300_000;
 
     #[test]
     fn real_289_atlas_stays_inside_its_size_tripwire_and_lookups_do_not_allocate() {
@@ -406,11 +407,27 @@ mod tests {
             return;
         };
         let bytes = world.reachability().resident_bytes();
+        eprintln!("real 289 atlas tables hold {bytes} bytes");
+        let started = std::time::Instant::now();
+        world
+            .reachability()
+            .validate(&world.collision, &world.graph)
+            .expect("the decoded real atlas validates again");
+        eprintln!("real 289 atlas validation took {:?}", started.elapsed());
         assert!(
             bytes > 1_000_000 && bytes <= REAL_ATLAS_RESIDENT_LIMIT,
             "atlas tables hold {bytes} bytes"
         );
         let world = Arc::new(world);
+        // The host binds a bot with `producer::lease(&world)`. A hundred of
+        // them add a hundred world handles and no atlas copy.
+        let leases: Vec<_> = (0..100)
+            .map(|_| crate::producer::lease(&world).expect("the real pack leases"))
+            .collect();
+        assert_eq!(Arc::strong_count(&world), 101);
+        assert!(leases
+            .iter()
+            .all(|lease| std::ptr::eq(lease.reachability().atlas, world.reachability())));
         let lease = NavLease::wrap(Arc::clone(&world), PackDigest::of(b"real-atlas")).unwrap();
         let view = lease.reachability();
         let lumbridge = WorldTile {
