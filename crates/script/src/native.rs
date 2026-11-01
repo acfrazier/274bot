@@ -1450,22 +1450,26 @@ mod walk_receipt_tests {
             generation: 1,
             reason: Arc::clone(&risk_reason),
         });
-        let receipt = WalkReceipt { request_id: 7,
-        evidence: EvidenceStamp {
-            run: RunKey {
-                slot: 1,
-                run: 1,
-                session: 1,
+        let receipt = WalkReceipt {
+            request_id: 7,
+            evidence: EvidenceStamp {
+                run: RunKey {
+                    slot: 1,
+                    run: 1,
+                    session: 1,
+                },
+                tick: 1,
+                sequence: 1,
             },
-            tick: 1,
-            sequence: 1,
-        },
-        goal: None,
-        end: WalkEnd::RouteEnded,
-        blocked: None,
-        detail: None,
-        refusal: None,
-        assessment: Some(assessment), escape: None, prereq_allow: None };
+            goal: None,
+            end: WalkEnd::RouteEnded,
+            blocked: None,
+            detail: None,
+            refusal: None,
+            assessment: Some(assessment),
+            escape: None,
+            prereq_allow: None,
+        };
         assert_eq!(
             receipt
                 .assessment
@@ -2007,24 +2011,28 @@ mod walk_permission_tests {
         let detail: Arc<str> = Arc::from(
             "search_result=BudgetExhausted nodes_settled=unavailable (incomplete search)",
         );
-        let receipt = WalkReceipt { goal: None,
-        request_id: 7,
-        evidence: EvidenceStamp {
-            run: RunKey {
-                slot: 1,
-                run: 1,
-                session: 1,
+        let receipt = WalkReceipt {
+            goal: None,
+            request_id: 7,
+            evidence: EvidenceStamp {
+                run: RunKey {
+                    slot: 1,
+                    run: 1,
+                    session: 1,
+                },
+                tick: 1,
+                sequence: 1,
             },
-            tick: 1,
-            sequence: 1,
-        },
-        end: WalkEnd::Refused,
-        blocked: None,
-        detail: Some(Arc::clone(&detail)),
-        refusal: Some(WalkRefusal::SearchIncomplete {
-            nodes_settled: None,
-        }),
-        assessment: None, escape: None, prereq_allow: None };
+            end: WalkEnd::Refused,
+            blocked: None,
+            detail: Some(Arc::clone(&detail)),
+            refusal: Some(WalkRefusal::SearchIncomplete {
+                nodes_settled: None,
+            }),
+            assessment: None,
+            escape: None,
+            prereq_allow: None,
+        };
         assert_eq!(
             receipt.into_arrival(),
             Err(ActionError::Blocked(detail)),

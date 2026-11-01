@@ -524,14 +524,18 @@ fn default_fight_card_uses_the_shared_stand_retry_cap_and_classifier() {
                 sequence: tick,
             };
             ledger.outbox.clear();
-            ledger.walk = Some(WalkReceipt { request_id,
-            evidence,
-            goal: None,
-            end: WalkEnd::NoPath,
-            blocked: None,
-            detail: Some(Arc::from(detail)),
-            refusal,
-            assessment: None, escape: None, prereq_allow: None });
+            ledger.walk = Some(WalkReceipt {
+                request_id,
+                evidence,
+                goal: None,
+                end: WalkEnd::NoPath,
+                blocked: None,
+                detail: Some(Arc::from(detail)),
+                refusal,
+                assessment: None,
+                escape: None,
+                prereq_allow: None,
+            });
             let flow = harness.tick(tick + 1);
             assert!(harness.outbox().is_empty(), "a failed walk never attacks");
             assert!(harness.ledger.as_ref().unwrap().outbox.is_empty());

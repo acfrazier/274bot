@@ -4440,14 +4440,18 @@ fn return_to_stand_bounds_each_retryable_class_and_retains_last_failure() {
         ] {
             let result = with_step_context(&snapshot, &mut ledger, tick, |cx| {
                 run.on_return_walk(
-                    WalkReceipt { goal: None,
-                    request_id,
-                    evidence: cx.tick.cx.evidence(),
-                    end: end.clone(),
-                    blocked: None,
-                    detail: Some(Arc::from(detail)),
-                    refusal: None,
-                    assessment: None, escape: None, prereq_allow: None },
+                    WalkReceipt {
+                        goal: None,
+                        request_id,
+                        evidence: cx.tick.cx.evidence(),
+                        end: end.clone(),
+                        blocked: None,
+                        detail: Some(Arc::from(detail)),
+                        refusal: None,
+                        assessment: None,
+                        escape: None,
+                        prereq_allow: None,
+                    },
                     cx,
                 )
             });
@@ -4545,14 +4549,18 @@ fn return_to_stand_stops_for_each_terminal_class() {
         .is_pending());
         let request_id = last_walk(&ledger).request_id;
         with_step_context(&snapshot, &mut ledger, 13, |cx| {
-            let receipt = WalkReceipt { goal: None,
-            request_id,
-            evidence: cx.tick.cx.evidence(),
-            end,
-            blocked,
-            detail: Some(Arc::from("terminal return failure")),
-            refusal,
-            assessment: None, escape: None, prereq_allow: None };
+            let receipt = WalkReceipt {
+                goal: None,
+                request_id,
+                evidence: cx.tick.cx.evidence(),
+                end,
+                blocked,
+                detail: Some(Arc::from("terminal return failure")),
+                refusal,
+                assessment: None,
+                escape: None,
+                prereq_allow: None,
+            };
             let expected = receipt.clone().into_arrival().unwrap_err();
             let Poll::Ready(Err(error)) = run.on_return_walk(receipt, cx) else {
                 panic!("{expected:?} must end the first return walk");
@@ -5006,14 +5014,18 @@ fn return_to_stand_route_ended_at_network_tile_is_arrival() {
     snapshot.seed_local_player(local);
     let result = with_step_context(&snapshot, &mut ledger, 13, |cx| {
         run.on_return_walk(
-            WalkReceipt { goal: None,
-            request_id,
-            evidence: cx.tick.cx.evidence(),
-            end: WalkEnd::RouteEnded,
-            blocked: None,
-            detail: Some(Arc::from("first route ended short")),
-            refusal: None,
-            assessment: None, escape: None, prereq_allow: None },
+            WalkReceipt {
+                goal: None,
+                request_id,
+                evidence: cx.tick.cx.evidence(),
+                end: WalkEnd::RouteEnded,
+                blocked: None,
+                detail: Some(Arc::from("first route ended short")),
+                refusal: None,
+                assessment: None,
+                escape: None,
+                prereq_allow: None,
+            },
             cx,
         )
     });

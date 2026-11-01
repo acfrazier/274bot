@@ -807,18 +807,22 @@ pub(crate) fn post_walk_receipt_with(
             .expect("walk request must be queued");
         (action.request_id.get(), action.run())
     };
-    ledger.as_mut().expect("ledger must remain present").walk = Some(crate::native::WalkReceipt { goal: None,
-    request_id,
-    evidence: EvidenceStamp {
-        run,
-        tick,
-        sequence: tick,
-    },
-    end,
-    blocked,
-    detail: detail.map(Arc::from),
-    refusal,
-    assessment: None, escape: None, prereq_allow: None });
+    ledger.as_mut().expect("ledger must remain present").walk = Some(crate::native::WalkReceipt {
+        goal: None,
+        request_id,
+        evidence: EvidenceStamp {
+            run,
+            tick,
+            sequence: tick,
+        },
+        end,
+        blocked,
+        detail: detail.map(Arc::from),
+        refusal,
+        assessment: None,
+        escape: None,
+        prereq_allow: None,
+    });
     request_id
 }
 
@@ -1299,7 +1303,10 @@ fn prereq_walk_ordinary_failures_keep_bounded_retries_and_last_detail() {
     with_tick(&snapshot, &mut ledger, 1, |tick| {
         with_step(tick, |cx| run.begin_walk(cx).unwrap())
     });
-    let _: &PrereqWalk = run.handle.as_ref().expect("the real prerequisite walk owns the route");
+    let _: &PrereqWalk = run
+        .handle
+        .as_ref()
+        .expect("the real prerequisite walk owns the route");
     let mut submissions = vec![latest_walk_request(&ledger).0];
     for (index, end) in [WalkEnd::NoPath, WalkEnd::RouteEnded, WalkEnd::Failed]
         .into_iter()
@@ -1324,7 +1331,11 @@ fn prereq_walk_ordinary_failures_keep_bounded_retries_and_last_detail() {
                 with_step(tick, |cx| run.poll(cx))
             })
             .is_pending());
-            assert_eq!(latest_walk_request(&ledger).0, request, "no same-tick retry");
+            assert_eq!(
+                latest_walk_request(&ledger).0,
+                request,
+                "no same-tick retry"
+            );
             assert!(with_tick(&snapshot, &mut ledger, failure_tick + 1, |tick| {
                 with_step(tick, |cx| run.poll(cx))
             })
@@ -1341,7 +1352,10 @@ fn prereq_walk_ordinary_failures_keep_bounded_retries_and_last_detail() {
             assert!(run.take_trace_event().is_none());
         }
     }
-    assert_eq!(submissions.len(), usize::from(crate::native::QUEST_WALK_MAX_ATTEMPTS));
+    assert_eq!(
+        submissions.len(),
+        usize::from(crate::native::QUEST_WALK_MAX_ATTEMPTS)
+    );
     let terminal_requests = walk_request_count(&ledger);
     assert!(matches!(
         with_tick(&snapshot, &mut ledger, 7, |tick| {
@@ -1349,7 +1363,11 @@ fn prereq_walk_ordinary_failures_keep_bounded_retries_and_last_detail() {
         }),
         Poll::Ready(Err(ActionError::Stale))
     ));
-    assert_eq!(walk_request_count(&ledger), terminal_requests, "no fourth request");
+    assert_eq!(
+        walk_request_count(&ledger),
+        terminal_requests,
+        "no fourth request"
+    );
 }
 
 #[test]

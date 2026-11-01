@@ -1065,8 +1065,7 @@ fn walk_to_earns_the_fare_at_the_plantation_then_takes_the_boat() {
 
 #[test]
 fn walk_to_retries_a_failed_luthas_approach_and_completes() {
-    let (h, mut world, first, again) =
-        earn_the_fare(Some(RetryPoint::InitialTalk), (None, None));
+    let (h, mut world, first, again) = earn_the_fare(Some(RetryPoint::InitialTalk), (None, None));
     assert_eq!(machine::take(h), Take::Pending);
     world.here = PORT_SARIM;
     world.post();
@@ -1077,8 +1076,7 @@ fn walk_to_retries_a_failed_luthas_approach_and_completes() {
 
 #[test]
 fn walk_to_retries_a_failed_post_fill_luthas_approach_and_completes() {
-    let (h, mut world, first, again) =
-        earn_the_fare(Some(RetryPoint::PostFillTalk), (None, None));
+    let (h, mut world, first, again) = earn_the_fare(Some(RetryPoint::PostFillTalk), (None, None));
     assert_eq!(machine::take(h), Take::Pending);
     world.here = PORT_SARIM;
     world.post();

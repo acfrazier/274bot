@@ -2604,24 +2604,28 @@ mod tests {
         let detail: Arc<str> = Arc::from(
             "search_result=BudgetExhausted nodes_settled=unavailable (incomplete search)",
         );
-        let receipt = WalkReceipt { goal: None,
-        request_id: 1,
-        evidence: api::quest_progress::EvidenceStamp {
-            run: RunKey {
-                slot: 1,
-                run: 1,
-                session: 1,
+        let receipt = WalkReceipt {
+            goal: None,
+            request_id: 1,
+            evidence: api::quest_progress::EvidenceStamp {
+                run: RunKey {
+                    slot: 1,
+                    run: 1,
+                    session: 1,
+                },
+                tick: 1,
+                sequence: 1,
             },
-            tick: 1,
-            sequence: 1,
-        },
-        end: WalkEnd::Refused,
-        blocked: None,
-        detail: Some(Arc::clone(&detail)),
-        refusal: Some(WalkRefusal::SearchIncomplete {
-            nodes_settled: None,
-        }),
-        assessment: None, escape: None, prereq_allow: None };
+            end: WalkEnd::Refused,
+            blocked: None,
+            detail: Some(Arc::clone(&detail)),
+            refusal: Some(WalkRefusal::SearchIncomplete {
+                nodes_settled: None,
+            }),
+            assessment: None,
+            escape: None,
+            prereq_allow: None,
+        };
         assert_eq!(
             walk_failure_message(&receipt),
             format!("walk search incomplete: {detail}"),

@@ -61,7 +61,8 @@ fn begin_approach_walk(
     cx: &mut StepContext<'_, '_>,
 ) -> Poll<Result<PrereqWalk, ActionError>> {
     let now = cx.tick.cx.evidence().tick;
-    match crate::native::defer_budget(PrereqWalk::begin(request, cx.tick.actions, &mut cx.tick.cx)) {
+    match crate::native::defer_budget(PrereqWalk::begin(request, cx.tick.actions, &mut cx.tick.cx))
+    {
         Poll::Pending => {
             retry.defer_until_next_tick(now);
             Poll::Pending

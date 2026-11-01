@@ -387,7 +387,7 @@ fn trade_run_retries_a_failed_approach_on_the_next_tick() {
             tick.actions,
             &mut tick.cx,
         )
-            .unwrap()
+        .unwrap()
     });
     let port = Arc::new(Port::default());
     let mut walk_retry = crate::native::WalkRetryState::default();
