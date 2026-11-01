@@ -864,7 +864,18 @@ fn finish_tick(
     if let Err(message) = super::super::snapshot::dispatch_native_events(runtime, &[event]) {
         let _ = out.send(ThreadMsg::Log(format!("script.finish dispatch: {message}")));
     } else {
-        pump_event_loop(runtime, out, n, generation, teardown);
+        let flush = call_interruptible(runtime, teardown, |runtime| {
+            runtime.call_function_immediate::<()>(
+                None,
+                "__rs2b0t_flush_native_events",
+                json_args!(),
+            )
+        });
+        if let Err(message) = flush {
+            let _ = out.send(ThreadMsg::Log(format!("script.finish flush: {message}")));
+        } else {
+            pump_event_loop(runtime, out, n, generation, teardown);
+        }
     }
     Some(reason)
 }
