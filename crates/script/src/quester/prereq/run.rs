@@ -41,9 +41,14 @@ pub(crate) const SEND_SLACK_TICKS: u16 = 2;
 // after the reader's five-tick window, never again within that same tick.
 const JOURNAL_TIMEOUT_RETRIES: u8 = 1;
 // A Talk the engine cancels ("I can't reach that!", Player.ts:1292-1295) is not a
-// slow page: the interaction is cleared, so waiting longer cannot recover it.
-// The runner re-approaches from the NPC's observed tile and sends the Talk again,
-// at most this many more times, then fails with the last cancel's detail.
+// slow page: the engine clears the interaction in the cycle after the send, so
+// waiting longer cannot recover it. The runner reads both tiles again on a later
+// observed tick (Drezel starts a wander on one tick in eight, Npc.ts:723, range 5,
+// NpcType.ts:101,110; the wait of a cancelled Talk ends after one tick), walks to
+// the NPC if it is more than two tiles away, and sends the Talk again. The budget
+// is three more sends: with the first, four, the same cap `PrereqBudget` puts on
+// the Talks of one step (`talks >= 4`). An allowance, not a content guarantee. Then
+// the step fails with the last cancel's detail (`PrereqFailure::TalkUnreachable`).
 const TALK_REACH_RETRIES: u8 = 3;
 
 /// Repeated polls and scene changes cannot spend this wait: only observed ticks do.
