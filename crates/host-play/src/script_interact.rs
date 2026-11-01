@@ -768,6 +768,7 @@ where
                 avoid,
                 cross,
                 request_id,
+                max_expansions,
             } => {
                 let from = WorldTile {
                     x: from_x,
@@ -828,6 +829,7 @@ where
                         zones,
                         avoid: rects,
                         request_id,
+                        max_expansions,
                         invalid_args,
                     },
                 );

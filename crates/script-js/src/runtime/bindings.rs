@@ -208,6 +208,7 @@ pub(super) fn wire_runtime(
     siblings: &[(String, String)],
     game_data: Option<std::sync::Arc<api::game_data::SelectedGameData>>,
     named_banks: std::sync::Arc<api::named_banks::NamedBankFacts>,
+    wilderness_zones: std::sync::Arc<[script::native::walk::WildernessZonePair]>,
     local_state: Option<std::sync::Arc<script::local_state::SlotState>>,
     frame_interest: std::sync::Arc<std::sync::atomic::AtomicUsize>,
     loc_projection_interest: std::sync::Arc<std::sync::atomic::AtomicBool>,
@@ -338,6 +339,106 @@ pub(super) fn wire_runtime(
             ))
         })
         .map_err(|e| format!("register inspect: {e}"))?;
+    runtime
+        .register_function("__rs2b0t_walk_api", move |args: &[serde_json::Value]| {
+            let op = args
+                .first()
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or("");
+            match op {
+                "resolve-destination" => {
+                    let index = args
+                        .get(1)
+                        .and_then(serde_json::Value::as_str)
+                        .and_then(script::native::walk::resolve_destination)
+                        .and_then(|resolved| {
+                            script::native::walk::walk_destinations()
+                                .iter()
+                                .position(|destination| std::ptr::eq(destination, resolved))
+                        });
+                    Ok(serde_json::json!(index))
+                }
+                "wilderness-level-at" => {
+                    let level = json_tile(args.get(1)).map_or(0, |tile| {
+                        script::native::walk::wilderness_level_at(&wilderness_zones, tile)
+                    });
+                    Ok(serde_json::json!(level))
+                }
+                "in-ess-mine" => Ok(serde_json::json!(json_i32(args.get(1))
+                    .zip(json_i32(args.get(2)))
+                    .is_some_and(|(x, z)| script::native::walk::in_ess_mine(x, z)))),
+                "is-openable-barrier" => {
+                    let name = args.get(1).and_then(serde_json::Value::as_str);
+                    let ops = args
+                        .get(2)
+                        .and_then(serde_json::Value::as_array)
+                        .into_iter()
+                        .flatten()
+                        .map(serde_json::Value::as_str);
+                    Ok(serde_json::json!(
+                        script::native::walk::is_openable_barrier(name, ops)
+                    ))
+                }
+                "is-open-barrier-leaf" => {
+                    let name = args.get(1).and_then(serde_json::Value::as_str);
+                    let ops = args
+                        .get(2)
+                        .and_then(serde_json::Value::as_array)
+                        .into_iter()
+                        .flatten()
+                        .map(serde_json::Value::as_str);
+                    Ok(serde_json::json!(
+                        script::native::walk::is_open_barrier_leaf(name, ops)
+                    ))
+                }
+                "remaining" => Ok(serde_json::json!(crate::walk_wait::remaining())),
+                "request-repath" => {
+                    crate::walk_wait::request_repath();
+                    Ok(serde_json::Value::Null)
+                }
+                "last-outcome" => Ok(serde_json::json!(crate::walk::last_outcome())),
+                "set-last-outcome" => {
+                    let value = match args.get(1) {
+                        None | Some(serde_json::Value::Null) => None,
+                        Some(serde_json::Value::String(value)) => Some(value.as_str()),
+                        _ => {
+                            return Err(rustyscript::Error::Runtime(
+                                "lastOutcome must be a valid string or null".into(),
+                            ));
+                        }
+                    };
+                    crate::walk::set_last_outcome_name(value)
+                        .map_err(|error| rustyscript::Error::Runtime(error.into()))?;
+                    Ok(serde_json::Value::Null)
+                }
+                "last-missing-gate-items" => {
+                    if crate::walk::last_outcome() != Some("unreachable") {
+                        return Ok(serde_json::Value::Array(Vec::new()));
+                    }
+                    let rows = crate::observed::with(|scene| {
+                        scene
+                            .latest()
+                            .walk_missing_carry()
+                            .map(|rows| {
+                                rows.iter()
+                                    .map(|row| {
+                                        serde_json::json!({
+                                            "name": row.name.as_deref(),
+                                            "count": row.count,
+                                        })
+                                    })
+                                    .collect::<Vec<_>>()
+                            })
+                            .unwrap_or_default()
+                    });
+                    Ok(serde_json::Value::Array(rows))
+                }
+                _ => Err(rustyscript::Error::Runtime(format!(
+                    "unsupported walking API operation: {op}"
+                ))),
+            }
+        })
+        .map_err(|e| format!("register walking API: {e}"))?;
     runtime
         .register_function(
             "__rs2b0t_selected_loadout",
@@ -798,6 +899,8 @@ pub(super) fn wire_runtime(
     super::chatbox_v8::install(runtime).map_err(|e| format!("chatbox v8: {e}"))?;
     super::gathering_v8::install(runtime).map_err(|e| format!("gathering locations v8: {e}"))?;
     super::gather_catalog_v8::install(runtime).map_err(|e| format!("gather catalog v8: {e}"))?;
+    super::walk_destinations_v8::install(runtime)
+        .map_err(|e| format!("walk destinations v8: {e}"))?;
     super::skills_v8::install(runtime).map_err(|e| format!("skills v8: {e}"))?;
     super::inventory_v8::install(runtime).map_err(|e| format!("inventory v8: {e}"))?;
     super::shop_ops_v8::install(runtime).map_err(|e| format!("shop ops v8: {e}"))?;
@@ -1009,7 +1112,7 @@ const OPTIONAL = {
   'open-stand': ['name','stand_op','choose'],
   'walk': ['allow_teleports','allow_wilderness','allow_bank_fetch','request_id'],
   'walk-near': ['allow_teleports','allow_wilderness','allow_bank_fetch','request_id'],
-  'inspect-route': ['allow_teleports','allow_wilderness','allow_bank_fetch','avoid','request_id'],
+  'inspect-route': ['allow_teleports','allow_wilderness','allow_bank_fetch','avoid','request_id','max_expansions'],
 };
 const host = globalThis.__rs2b0t_seat_host;
 const snapshotRootCache = new WeakMap();
@@ -1146,6 +1249,7 @@ const api = {
       allow_bank_fetch: o.allow_bank_fetch === true,
       avoid: o.avoid || [],
       request_id: token,
+      max_expansions: o.max_expansions === undefined ? o.maxExpansions : o.max_expansions,
     });
     return token;
   },

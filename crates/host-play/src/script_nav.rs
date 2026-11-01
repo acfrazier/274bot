@@ -3905,6 +3905,11 @@ pub(crate) struct PostedWalkOutcome {
     pub(crate) allow_teleports: bool,
     /// The settled route end is frozen `'blocked'`.
     pub(crate) blocked: bool,
+    /// The host proved no route for this outcome.
+    pub(crate) no_path: bool,
+    /// Current Traveller request id and remaining walk-hop tiles.
+    pub(crate) remaining_request_id: u64,
+    pub(crate) remaining: u64,
     pub(crate) cancel_reason: script::native::WalkCancelReason,
     pub(crate) user_move_intent_seq: u64,
 }
@@ -4132,8 +4137,9 @@ pub(crate) struct NavBot {
     /// The published route end is frozen `'blocked'`
     /// ([`nav_executor::HopFailure::EndBlocked`]).
     pub(crate) walk_outcome_blocked: bool,
+    /// The host proved no route for this outcome.
+    pub(crate) walk_outcome_no_path: bool,
     pub(crate) walk_outcome_cancel_reason: script::native::WalkCancelReason,
-    /// UI-only cancellation detail, cleared by a subsequent arm or outcome.
     pub(crate) manual_walk_cancelled_detail: bool,
     /// Every qualifying human gesture, including when no route exists.
     pub(crate) user_move_intent_seq: u64,
@@ -6359,7 +6365,14 @@ impl NavBot {
         }
         if let Some((to, radius, allow_teleports, ..)) = self.requested_route {
             if self.armed_outcome_may_publish(request_id) {
-                self.note_failure(generation, request_id, to, radius, allow_teleports);
+                if matches!(
+                    native_failure.as_ref(),
+                    Some(script::native::WalkEnd::NoPath)
+                ) {
+                    self.note_no_path(generation, request_id, to, radius, allow_teleports);
+                } else {
+                    self.note_failure(generation, request_id, to, radius, allow_teleports);
+                }
             }
         }
         self.note_missing_carry(generation, request_id, missing);
@@ -6586,7 +6599,6 @@ impl NavBot {
             }
         }
     }
-
     pub(crate) fn note_failure(
         &mut self,
         generation: u64,
@@ -6595,8 +6607,30 @@ impl NavBot {
         radius: i32,
         allow_teleports: bool,
     ) {
-        // Legacy request id 0 never settles a wait. Do not replace a live
-        // nonzero refusal with it before the isolate can observe the refusal.
+        self.note_failure_kind(generation, request_id, to, radius, allow_teleports, false);
+    }
+
+    /// Publish a failure whose route search proved NoPath.
+    pub(crate) fn note_no_path(
+        &mut self,
+        generation: u64,
+        request_id: u64,
+        to: WorldTile,
+        radius: i32,
+        allow_teleports: bool,
+    ) {
+        self.note_failure_kind(generation, request_id, to, radius, allow_teleports, true);
+    }
+
+    fn note_failure_kind(
+        &mut self,
+        generation: u64,
+        request_id: u64,
+        to: WorldTile,
+        radius: i32,
+        allow_teleports: bool,
+        no_path: bool,
+    ) {
         if request_id == 0 && self.walk_live_refusal_id != 0 {
             log_walk_arm_bot(|| {
                 format!(
@@ -6620,6 +6654,7 @@ impl NavBot {
         self.walk_outcome_request_id = request_id;
         self.walk_outcome_failed = true;
         self.walk_outcome_blocked = false;
+        self.walk_outcome_no_path = no_path;
         self.walk_outcome_cancel_reason = script::native::WalkCancelReason::None;
         self.walk_outcome_x = to.x;
         self.walk_outcome_z = to.z;
@@ -6665,6 +6700,7 @@ impl NavBot {
         self.walk_outcome_request_id = request_id;
         self.walk_outcome_failed = false;
         self.walk_outcome_blocked = blocked;
+        self.walk_outcome_no_path = false;
         self.walk_outcome_cancel_reason = script::native::WalkCancelReason::None;
         self.walk_outcome_x = to.x;
         self.walk_outcome_z = to.z;
@@ -6692,6 +6728,7 @@ impl NavBot {
         self.bump_walk_outcome_seq();
         self.walk_outcome_failed = false;
         self.walk_outcome_blocked = false;
+        self.walk_outcome_no_path = false;
         self.walk_outcome_generation = self.route_generation;
         self.walk_outcome_request_id = 0;
         self.walk_outcome_x = 0;
@@ -6810,6 +6847,7 @@ impl NavBot {
             self.walk_outcome_request_id = request_id;
             self.walk_outcome_failed = true;
             self.walk_outcome_blocked = false;
+            self.walk_outcome_no_path = false;
             self.walk_outcome_cancel_reason = script::native::WalkCancelReason::UserInput;
             self.walk_outcome_x = to.x;
             self.walk_outcome_z = to.z;
@@ -6908,7 +6946,7 @@ impl NavBot {
                 });
                 if let Some((to, radius, allow_teleports, ..)) = self.requested_route {
                     if self.armed_outcome_may_publish(request_id) {
-                        self.note_failure(generation, request_id, to, radius, allow_teleports);
+                        self.note_no_path(generation, request_id, to, radius, allow_teleports);
                     }
                 }
                 // The retained route belongs to the previous request. A later

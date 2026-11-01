@@ -39,6 +39,7 @@ fn start() -> SurfaceStart {
         game_data: None,
         named_banks: Arc::new(api::named_banks::NamedBankFacts::default()),
         loadouts: Arc::from([]),
+        wilderness_zones: std::sync::Arc::from([]),
     }
 }
 
@@ -343,7 +344,7 @@ fn slot_size_stays_within_the_full_build_parent_layout() {
     let actual = std::mem::size_of::<SlotScript>();
     println!("S0d SlotScript layout: {actual} bytes");
     assert_eq!(
-        actual, 1624,
+        actual, 1640,
         "the surface slot changed from its measured size"
     );
 }

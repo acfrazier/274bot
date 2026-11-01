@@ -64,12 +64,9 @@
 //!   probe, and every host search of the walk keeps out of them; a catalog
 //!   zone id (not a host table) is refused loud, not dropped. `bankItemCounts` is only the bank-plan input; the
 //!   host bank fetch reads the bank itself (FENCE 2026-09-18). `maxBudget`
-//!   bounds the frozen PathFinder's probe and big-budget rebake; the host
-//!   router is a different, stronger search with its own bound
-//!   (the router's node budget, 4,000,000 expansions) that never searches
-//!   less than a frozen caller asked, and has no `budget` outcome, so the
-//!   option is accepted and there is no big-budget rebake
-//!   (`walkLadder.ts:73–75`).
+//!   bounds frozen PathFinder work. The host verify route carries that
+//!   requested expansion cap, bounded again by `NODE_BUDGET`; it does not add
+//!   a separate big-budget rebake or a `budget` outcome.
 
 //! - Frozen `WalkExecutor.lastOutcome === 'blocked'` returns true
 //!   (`Traversal.ts:171–174`): the host follow ends `EndBlocked` next to a
@@ -88,6 +85,90 @@ use serde::Deserialize;
 use serde_json::json;
 use std::collections::VecDeque;
 use std::time::{Duration, Instant};
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum WalkExecutorOutcome {
+    Arrived,
+    Closest,
+    Blocked,
+    Budget,
+    Interrupted,
+    Failed,
+    Unreachable,
+}
+
+impl WalkExecutorOutcome {
+    pub(crate) const fn as_str(self) -> &'static str {
+        match self {
+            Self::Arrived => "arrived",
+            Self::Closest => "closest",
+            Self::Blocked => "blocked",
+            Self::Budget => "budget",
+            Self::Interrupted => "interrupted",
+            Self::Failed => "failed",
+            Self::Unreachable => "unreachable",
+        }
+    }
+
+    fn parse(value: &str) -> Option<Self> {
+        match value {
+            "arrived" => Some(Self::Arrived),
+            "closest" => Some(Self::Closest),
+            "blocked" => Some(Self::Blocked),
+            "budget" => Some(Self::Budget),
+            "interrupted" => Some(Self::Interrupted),
+            "failed" => Some(Self::Failed),
+            "unreachable" => Some(Self::Unreachable),
+            _ => None,
+        }
+    }
+}
+
+thread_local! {
+    static LAST_OUTCOME: std::cell::Cell<Option<WalkExecutorOutcome>> =
+        const { std::cell::Cell::new(None) };
+}
+
+pub(crate) fn last_outcome() -> Option<&'static str> {
+    LAST_OUTCOME.with(|outcome| outcome.get().map(WalkExecutorOutcome::as_str))
+}
+
+pub(crate) fn set_last_outcome(outcome: Option<WalkExecutorOutcome>) {
+    LAST_OUTCOME.with(|last| last.set(outcome));
+}
+
+pub(crate) fn set_last_outcome_name(value: Option<&str>) -> Result<(), &'static str> {
+    let outcome = match value {
+        None => None,
+        Some(value) => Some(WalkExecutorOutcome::parse(value).ok_or("invalid walk outcome")?),
+    };
+    set_last_outcome(outcome);
+    Ok(())
+}
+pub(crate) fn reset_executor_status() {
+    set_last_outcome(None);
+}
+
+pub(crate) fn outcome_for_walk(
+    result: bool,
+    blocked: bool,
+    no_path: bool,
+    dest: WorldTile,
+    radius: i32,
+) -> WalkExecutorOutcome {
+    if blocked {
+        WalkExecutorOutcome::Blocked
+    } else if !result {
+        if no_path {
+            WalkExecutorOutcome::Unreachable
+        } else {
+            WalkExecutorOutcome::Failed
+        }
+    } else if crate::reach_query::arrived(dest, radius) {
+        WalkExecutorOutcome::Arrived
+    } else {
+        WalkExecutorOutcome::Closest
+    }
+}
 
 /// Frozen `opts.timeoutMs ?? 90000` (`Traversal.ts:107`).
 pub(crate) const BAKED_TIMEOUT_MS: u64 = 90_000;
@@ -104,6 +185,8 @@ const UNREACHABLE_PASSES: u32 = 3;
 /// Frozen `PATH_REQUEST_TIMEOUT_MS` (`WalkExecutor.ts:95`), the bound of
 /// the verify probe's path request.
 const PROBE_TIMEOUT_MS: u64 = 30_000;
+/// Frozen `Traversal.DEFAULT_MAX_BUDGET` (`Traversal.ts:38`).
+const DEFAULT_MAX_BUDGET: u64 = 1_200_000;
 const BACKOFF_MIN: u32 = 2;
 const BACKOFF_MAX: u32 = 16;
 /// Frozen `tryNearbyDoor` wait (`doorCrossing.ts:369–380`).
@@ -201,6 +284,8 @@ struct WalkResilientOpts {
     attempts: Option<u32>,
     #[serde(default)]
     timeout_ms: Option<u64>,
+    #[serde(default)]
+    max_budget: Option<u64>,
     #[serde(default)]
     scene_radius: Option<i32>,
     #[serde(default)]
@@ -813,10 +898,10 @@ impl Walk {
         compat_tile_intent: bool,
         cx: &mut Cx<'_>,
     ) -> Result<Self, bool> {
+        walk_wait::take_repath();
         if here().is_none() {
             return Err(false);
         }
-
         if crate::reach_query::arrived(dest, radius) {
             return Err(true);
         }
@@ -848,6 +933,35 @@ impl Walk {
         cx.emit(walk.request());
         cx.clock().arm(timeout_ms);
         Ok(walk)
+    }
+    /// Stop the old follow and submit a fresh route request while preserving
+    /// the walk's overall deadline.
+    pub(crate) fn repath(&mut self, cx: &mut Cx<'_>) -> bool {
+        if here().is_none() {
+            return false;
+        }
+        let WorldTile { x, z, level } = self.dest;
+        let token = walk_wait::dispatch(&json!({
+            "op": "begin",
+            "x": x,
+            "z": z,
+            "level": level,
+            "radius": self.radius,
+            "allow_teleports": self.allow_teleports,
+            "intent_baseline": cx.user_move_intent_baseline(),
+        }))
+        .as_u64()
+        .unwrap_or(0);
+        if token == 0 {
+            return false;
+        }
+        let previous = self.token;
+        self.token = token;
+        cx.emit(InteractReq::AbortWalk {
+            request_id: previous,
+        });
+        cx.emit(self.request());
+        true
     }
 
     /// `Some(settled)` once the walk wait settled or timed out. A timeout
@@ -923,6 +1037,11 @@ impl Walk {
         }
     }
 
+    pub(crate) fn no_path(&self) -> bool {
+        walk_wait::dispatch(&json!({ "op": "no-path", "token": self.token }))
+            .as_bool()
+            .unwrap_or(false)
+    }
     /// The settled walk ended frozen `'blocked'`: the host follow stood next
     /// to a route end the live scene refuses (`WalkExecutor.ts:1092–1094`).
     pub(crate) fn blocked(&self) -> bool {
@@ -979,6 +1098,7 @@ pub(crate) struct Resilient {
     scene_radius: i32,
     timeout_ms: u64,
     attempts: Option<u32>,
+    max_expansions: u64,
     allow_teleports: bool,
     teleport_min_span: i32,
     phase: Phase,
@@ -1017,6 +1137,7 @@ impl Resilient {
             scene_radius: radius.saturating_add(1),
             timeout_ms,
             attempts,
+            max_expansions: DEFAULT_MAX_BUDGET,
             allow_teleports,
             teleport_min_span: 0,
             phase: Phase::NeedWalk,
@@ -1047,6 +1168,10 @@ impl Resilient {
     }
     pub(crate) fn with_cross(mut self, cross: Vec<String>) -> Self {
         self.cross = cross.into_boxed_slice();
+        self
+    }
+    fn with_max_expansions(mut self, max_expansions: u64) -> Self {
+        self.max_expansions = max_expansions;
         self
     }
 
@@ -1108,6 +1233,7 @@ impl Resilient {
         // Frozen: EventSignal.pending before isArrived (Traversal.ts:131,
         // walkLadder.ts:48–52).
         if interrupted(cx) {
+            set_last_outcome(Some(WalkExecutorOutcome::Interrupted));
             if let Some(stop) = self.release() {
                 cx.emit(stop);
             }
@@ -1116,10 +1242,12 @@ impl Resilient {
             return Some(false);
         }
         if arrived(self.dest, self.radius) {
+            set_last_outcome(Some(WalkExecutorOutcome::Arrived));
             return Some(true);
         }
         if let Some(max) = self.attempts {
             if self.no_progress >= max {
+                set_last_outcome(Some(WalkExecutorOutcome::Budget));
                 self.logs.push_back(format!(
                     "walkResilient: {max} passes made no progress — stopping (bounded caller)"
                 ));
@@ -1202,17 +1330,32 @@ impl Resilient {
                     self.kick_walk(cx)
                 }
             }
-            Phase::Walking(walk) => {
+            Phase::Walking(mut walk) => {
+                if walk_wait::take_repath() && !walk.repath(cx) {
+                    walk_wait::request_repath();
+                }
                 let owns_wait = walk_wait::owns(walk.token);
                 match walk.step(cx) {
                     None => {
                         self.phase = Phase::Walking(walk);
                         None
                     }
-                    // Frozen `outcome === 'blocked'` returns true
-                    // (`Traversal.ts:171–174`).
-                    Some(_) if owns_wait && walk.blocked() => Some(true),
-                    Some(_) if owns_wait => self.after_baked(cx),
+                    Some(value) if owns_wait => {
+                        let blocked = walk.blocked();
+                        let no_path = walk.no_path();
+                        set_last_outcome(Some(outcome_for_walk(
+                            value,
+                            blocked,
+                            no_path,
+                            self.dest,
+                            self.radius,
+                        )));
+                        if blocked {
+                            Some(true)
+                        } else {
+                            self.after_baked(cx)
+                        }
+                    }
                     Some(_) => self.after_displaced_walk(cx),
                 }
             }
@@ -1264,7 +1407,14 @@ impl Resilient {
                 self.phase = Phase::Walking(walk);
                 None
             }
-            Err(done) => Some(done),
+            Err(done) => {
+                set_last_outcome(Some(if done {
+                    WalkExecutorOutcome::Arrived
+                } else {
+                    WalkExecutorOutcome::Failed
+                }));
+                Some(done)
+            }
         }
     }
 
@@ -1312,11 +1462,13 @@ impl Resilient {
     fn after_baked(&mut self, cx: &mut Cx<'_>) -> Option<bool> {
         // Frozen next-loop order: pending, then withinRadius (N5/N6).
         if interrupted(cx) {
+            set_last_outcome(Some(WalkExecutorOutcome::Interrupted));
             self.logs
                 .push_back("walk interrupted by a runtime event — yielding to the runtime".into());
             return Some(false);
         }
         if arrived(self.dest, self.radius) {
+            set_last_outcome(Some(WalkExecutorOutcome::Arrived));
             return Some(true);
         }
         if self.recover {
@@ -1474,6 +1626,7 @@ impl Resilient {
             "avoid": self.avoid,
             "cross": self.cross.as_ref(),
             "timeout_ms": PROBE_TIMEOUT_MS,
+            "max_expansions": self.max_expansions,
         }))
         .as_u64()
         .unwrap_or(0);
@@ -1487,6 +1640,7 @@ impl Resilient {
             allow_teleports: false,
             allow_wilderness: true,
             allow_bank_fetch: false,
+            max_expansions: Some(self.max_expansions),
             avoid: self.avoid.clone(),
             cross: self.cross.to_vec(),
             request_id: token,
@@ -1527,6 +1681,7 @@ impl Resilient {
                 "walkResilient: ({},{},{}) unreachable from here — stopping (best {} tiles)",
                 self.dest.x, self.dest.z, self.dest.level, self.best_dist
             ));
+            set_last_outcome(Some(WalkExecutorOutcome::Unreachable));
             self.unreachable = true;
             return Some(false);
         }
@@ -1556,23 +1711,29 @@ impl Family for WalkResilient {
     type Args = WalkResilientArgs;
     type Output = bool;
 
-    fn begin(args: WalkResilientArgs, _cx: &mut Cx<'_>) -> Begin<Self> {
+    fn begin(args: WalkResilientArgs, cx: &mut Cx<'_>) -> Begin<Self> {
+        reset_executor_status();
         let opts = args.opts;
         if let Some(reason) = avoid_refusal(&opts.avoid_zones) {
+            set_last_outcome(Some(WalkExecutorOutcome::Failed));
             return Begin::Refuse(reason);
         }
         if opts.cross_zones.len() > 8 {
+            set_last_outcome(Some(WalkExecutorOutcome::Failed));
             return Begin::Refuse("crossZones: more than 8 zone ids".into());
         }
-        if interrupted(_cx) {
+        if interrupted(cx) {
+            set_last_outcome(Some(WalkExecutorOutcome::Interrupted));
             return Begin::Done(false);
         }
         let dest = args.tile.world();
         let radius = opts.radius;
-        let Some(_) = here() else {
+        if here().is_none() {
+            set_last_outcome(Some(WalkExecutorOutcome::Failed));
             return Begin::Done(false);
-        };
+        }
         if arrived(dest, radius) {
+            set_last_outcome(Some(WalkExecutorOutcome::Arrived));
             return Begin::Done(true);
         }
         let drive = Resilient::new(
@@ -1584,6 +1745,7 @@ impl Family for WalkResilient {
         )
         .with_scene_radius(opts.scene_radius.unwrap_or(radius.saturating_add(1)))
         .with_teleport_min_span(opts.policy.distance_before_teleport.unwrap_or(0))
+        .with_max_expansions(opts.max_budget.unwrap_or(DEFAULT_MAX_BUDGET))
         .with_cross(opts.cross_zones)
         .with_avoid(opts.avoid_zones);
         Begin::Run(Self {
@@ -1600,12 +1762,14 @@ impl Family for WalkResilient {
 
     fn step(&mut self, cx: &mut Cx<'_>) -> Step<bool> {
         if cx.user_move_intent_interrupted() {
+            set_last_outcome(Some(WalkExecutorOutcome::Interrupted));
             if let Some(stop) = self.drive.release() {
                 cx.emit(stop);
             }
             return Step::Done(false);
         }
         if let Some(Reply::Threw(thrown)) = cx.reply() {
+            set_last_outcome(Some(WalkExecutorOutcome::Failed));
             return Step::Fail(thrown);
         }
         loop {
@@ -1635,7 +1799,24 @@ impl Family for WalkResilient {
                 });
             }
             match self.drive.step(cx) {
-                Some(result) => self.result = Some(result),
+                Some(result) => {
+                    if result {
+                        if last_outcome() != Some("blocked") {
+                            set_last_outcome(Some(
+                                if crate::reach_query::arrived(self.drive.dest, self.drive.radius) {
+                                    WalkExecutorOutcome::Arrived
+                                } else {
+                                    WalkExecutorOutcome::Closest
+                                },
+                            ));
+                        }
+                    } else if self.drive.unreachable {
+                        set_last_outcome(Some(WalkExecutorOutcome::Unreachable));
+                    } else if !matches!(last_outcome(), Some("interrupted" | "budget")) {
+                        set_last_outcome(Some(WalkExecutorOutcome::Failed));
+                    }
+                    self.result = Some(result);
+                }
                 None if self.drive.logs.is_empty() => {
                     self.pumped = false;
                     return Step::Wait;
@@ -2144,6 +2325,7 @@ pub(crate) mod tests {
                     radius,
                     allow_teleports: false,
                     blocked: false,
+                    ..WalkOutcome::default()
                 });
         });
     }
@@ -2457,11 +2639,36 @@ pub(crate) mod tests {
         assert_eq!(requests.len(), 1);
         let probe = requests.get(0);
         assert_eq!(probe.op(), Some("inspect-route"));
+        assert_eq!(probe.max_expansions(), Some(DEFAULT_MAX_BUDGET));
         let cross = probe
             .cross()
             .map(|names| names.iter().collect::<Vec<_>>())
             .unwrap_or_default();
         assert_eq!(cross, vec!["test-barrier"]);
+    }
+
+    #[test]
+    fn stalled_verify_probe_preserves_max_budget_over_flatbuffer() {
+        reset();
+        post_here(0, 0);
+        let budget = 123_456;
+        let h = start_with(json!({ "radius": 0, "maxBudget": budget }));
+        no_progress_passes(h, 1, UNREACHABLE_PASSES);
+
+        let ops = machine::merge_ops(Vec::new());
+        assert!(matches!(
+            ops.as_slice(),
+            [InteractReq::InspectRoute {
+                max_expansions: Some(123_456),
+                ..
+            }]
+        ));
+        let bytes = crate::wire::encode_interact_batch(&ops);
+        let batch = crate::wire::InteractBatch::from_bytes(&bytes)
+            .expect("the bounded verify route encodes");
+        let requests = batch.reqs().expect("one verify request");
+        assert_eq!(requests.len(), 1);
+        assert_eq!(requests.get(0).max_expansions(), Some(budget));
     }
 
     #[test]
@@ -2679,6 +2886,7 @@ pub(crate) mod tests {
                     radius: 0,
                     allow_teleports: false,
                     blocked: true,
+                    ..WalkOutcome::default()
                 });
         });
         machine::step(&mut NoJs);
@@ -2883,6 +3091,8 @@ pub(crate) mod tests {
                     radius: 0,
                     allow_teleports: false,
                     blocked: false,
+                    no_path: true,
+                    ..WalkOutcome::default()
                 });
         });
         machine::step(&mut NoJs);

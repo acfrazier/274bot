@@ -65,6 +65,7 @@ export { FISHING_SHOP_COSTS, GERRANT_ONLY_FISHING, fishingVendorFor, fishingShop
 export { ROCK_OPTIONS, ROCK_TYPES, GAS_ROCK_IDS, GAS_ROCK_TICKS, BROKEN_PICKAXE, resolveRockIds } from '*data/miningRocks.js';
 export { COW_LOCATIONS, COW_LOCATION_OPTIONS, AL_KHARID_BANK, TOLL_COIN_TARGET, isCowFieldLootTile, resolveCowLocation, nearestCowLocation, needsTollCoins, shouldBootstrapTollCoins } from '*data/cowKillerLocations.js';
 export { RUNES, RUNE_OPTIONS, DEFAULT_RUNE } from '*data/runeCraftLocations.js';
+export { WALK_DESTINATIONS, WALK_OPTIONS, resolveDestination } from '*api/map/WalkDestinations.js';
 export const AXE_BAR_FOR: never;
 export const AXE_SHOP_COSTS: never;
 export const AXE_SMITH_LEVEL: never;
@@ -82,8 +83,6 @@ export const TOOL_ACQUIRE_OPTIONS: never;
 export const TOOL_ACQUIRE_SETTING: never;
 export const VARROCK_ANVIL_BANK: never;
 export const VARROCK_ANVIL_STAND: never;
-export const WALK_DESTINATIONS: never;
-export const WALK_OPTIONS: never;
 export function acquireKeepNames(...args: unknown[]): never;
 export const apiVersion: 1;
 export function axeShopOffers(...args: unknown[]): never;
@@ -101,7 +100,6 @@ export function planAxeAcquire(...args: unknown[]): never;
 export function planBrokenToolRepair(...args: unknown[]): never;
 export function planGatherToolAcquire(...args: unknown[]): never;
 export function planPickaxeAcquire(...args: unknown[]): never;
-export function resolveDestination(...args: unknown[]): never;
 }
 
 declare module '*adapter/ClientAdapter.js' {
@@ -2832,6 +2830,24 @@ export const Autocast: {
 
 }
 
+declare module '*api/map/regions.js' {
+/** Rune essence mine, the instanced region Aubury and the Varrock portal teleport into. */
+export function inEssMine(x: number, z: number): boolean;
+
+}
+
+declare module '*api/map/WalkDestinations.js' {
+import Tile from "*geometry/Tile.js";
+export interface WalkDestination {
+    name: string;
+    tile: Tile;
+}
+export const WALK_DESTINATIONS: WalkDestination[];
+export const WALK_OPTIONS: string[];
+export function resolveDestination(name: string): WalkDestination | null;
+
+}
+
 declare module '*api/market/catalog.js' {
 import { ObjRecord } from "*adapter/ClientAdapter.js";
 /** Customer alias and the shop's display label. */
@@ -3789,51 +3805,8 @@ export const Reach: {
 
 declare module '*api/walking/Traversal.js' {
 import { WorldTile } from "*adapter/ClientAdapter.js";
-interface DangerZoneRect {
-    minX: number;
-    maxX: number;
-    minZ: number;
-    maxZ: number;
-    /** Only this level is forbidden; omit to apply on every level (caves + surface). */
-    level?: number;
-}
-interface PathFollowOverrides {
-    stallTicks?: number;
-    deviationChebyshev?: number;
-    transportApproachChebyshev?: number;
-    doorStepTicks?: number;
-}
-/** Planner preferences (2004-sized toggles). */
-interface PathPolicy {
-    /** When false, all kind==='teleport' edges are excluded. Default true when unset. */
-    useTeleports?: boolean;
-    /** Min Chebyshev distance (start to goal, or remaining estimate) before a teleport edge may be used. */
-    distanceBeforeTeleport?: number;
-    /** Only these teleportId values are admissible (e.g. `['varrock']` for wildy escape); empty means all that pass requires. */
-    allowTeleportIds?: readonly string[];
-    /** Teleport ids suppressed for this plan (server rejected mid-walk); applied after the allowlist. */
-    denyTeleportIds?: readonly string[];
-    useShips?: boolean;
-    useShortcuts?: boolean;
-}
-export interface WalkOptions {
-    radius?: number;
-    timeoutMs?: number;
-    log?: (msg: string) => void;
-    maxExpansions?: number;
-    /** Path policy (tele toggles, distanceBeforeTeleport, deny lists). */
-    policy?: PathPolicy;
-    /** Include spell/jewellery tele edges in A*. */
-    useTeleportCatalog?: boolean;
-    /** Known bank item counts for the bank planner (tests, or when the bank is not open). */
-    bankItemCounts?: Record<string, number>;
-    /** Danger / no-go zones the pathfinder must not enter (idea credit: @lolwut). */
-    avoidZones?: readonly (string | DangerZoneRect)[];
-    /** Path stickiness (stall / deviation). */
-    pathFollow?: PathFollowOverrides;
-    /** Force a full repath for this walk (scripts that know the route is stale). */
-    forceRepath?: boolean;
-}
+import { WalkOptions } from "*event/webwalk/WalkExecutor.js";
+export { type WalkOptions } from "*event/webwalk/WalkExecutor.js";
 /**
  * Options for a walk behind the escalation ladder.
  * @see docs/reference/nav-walker.md#when-it-gets-stuck
@@ -3900,10 +3873,10 @@ export const Traversal: {
     teleportsEnabled(): boolean;
     walkTo(dest: WorldTile, opts?: WalkOptions): Promise<boolean>;
     /** Force the active (or next) world walk to repath without waiting for a stall or deviation; see path stickiness on WalkExecutor. */
-    requestRepath(reason?: string): never;
+    requestRepath(reason?: string): void;
     walkResilient(dest: WorldTile, opts?: WalkResilientOptions): Promise<boolean>;
     preload(): void;
-    remaining(): never;
+    remaining(): number;
 };
 
 }
@@ -4383,6 +4356,8 @@ export const Reachability: {
     /** Whether the server's sight ray from `from` reaches a body of `size` whose south-west tile is `to`. */
     lineOfSight(from: WorldTile, to: WorldTile, size?: number): boolean;
     walkable(dest: WorldTile): boolean;
+    /** Whether selected collision evidence is present for this same-plane scene tile. */
+    probeable(dest: WorldTile): boolean;
 };
 
 }
@@ -4513,6 +4488,63 @@ export default Navigator;
 
 }
 
+declare module '*event/webwalk/WalkExecutor.js' {
+import { WorldTile } from "*adapter/ClientAdapter.js";
+interface DangerZoneRect {
+    minX: number;
+    maxX: number;
+    minZ: number;
+    maxZ: number;
+    /** Only this level is forbidden; omit to apply on every level (caves + surface). */
+    level?: number;
+}
+interface PathFollowOverrides {
+    stallTicks?: number;
+    deviationChebyshev?: number;
+    transportApproachChebyshev?: number;
+    doorStepTicks?: number;
+}
+/** Planner preferences (2004-sized toggles). */
+interface PathPolicy {
+    /** When false, all kind==='teleport' edges are excluded. Default true when unset. */
+    useTeleports?: boolean;
+    /** Min Chebyshev distance (start to goal, or remaining estimate) before a teleport edge may be used. */
+    distanceBeforeTeleport?: number;
+    /** Only these teleportId values are admissible (e.g. `['varrock']` for wildy escape); empty means all that pass requires. */
+    allowTeleportIds?: readonly string[];
+    /** Teleport ids suppressed for this plan (server rejected mid-walk); applied after the allowlist. */
+    denyTeleportIds?: readonly string[];
+    useShips?: boolean;
+    useShortcuts?: boolean;
+}
+export interface WalkOptions {
+    radius?: number;
+    timeoutMs?: number;
+    log?: (msg: string) => void;
+    maxExpansions?: number;
+    /** Path policy (tele toggles, distanceBeforeTeleport, deny lists). */
+    policy?: PathPolicy;
+    /** Include spell/jewellery tele edges in A*. */
+    useTeleportCatalog?: boolean;
+    /** Known bank item counts for the bank planner (tests, or when the bank is not open). */
+    bankItemCounts?: Record<string, number>;
+    /** Danger / no-go zones the pathfinder must not enter (idea credit: @lolwut). */
+    avoidZones?: readonly (string | DangerZoneRect)[];
+    /** Path stickiness (stall / deviation). */
+    pathFollow?: PathFollowOverrides;
+    /** Force a full repath for this walk (scripts that know the route is stale). */
+    forceRepath?: boolean;
+}
+export const WalkExecutor: {
+    lastOutcome: 'arrived' | 'closest' | 'blocked' | 'budget' | 'interrupted' | 'failed' | 'unreachable' | null;
+    probeDest(dest: WorldTile, maxExpansions: number): Promise<{
+        ok: boolean;
+        terminal: WorldTile | null;
+    }>;
+};
+
+}
+
 declare module '*event/webwalk/walkOpening.js' {
 import { WorldTile } from "*adapter/ClientAdapter.js";
 import Tile from "*geometry/Tile.js";
@@ -4535,6 +4567,17 @@ export function towardDest(door: WorldTile, here: WorldTile, dest: WorldTile): b
  * @see docs/reference/nav-doors.md
  */
 export function walkOpening(dest: Tile, radius: number, obstacles: string[], log?: (m: string) => void, opts?: WalkOpeningOptions): Promise<boolean>;
+
+}
+
+declare module '*event/webwalk/wilderness.js' {
+export interface WildTile {
+    x: number;
+    z: number;
+    level?: number;
+}
+/** Wilderness combat level at a tile, or 0 outside wild zones. */
+export function wildernessLevelAt(tile: WildTile): number;
 
 }
 

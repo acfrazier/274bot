@@ -65,6 +65,7 @@ thread_local! {
     /// The last queued walk discarded by a kept reconnect must be requested
     /// again by its live wait, not replayed from the old host queue.
     static REARM_DISCARDED: Cell<u64> = const { Cell::new(0) };
+    static FORCE_REPATH: Cell<bool> = const { Cell::new(false) };
 }
 
 /// The host's last published outcome, or the empty one before any.
@@ -78,6 +79,7 @@ fn posted(scene: &Scene) -> HostOutcome {
             request_id: o.request_id,
             failed: o.failed,
             blocked: o.blocked,
+            no_path: o.no_path,
             key: WalkKey {
                 tile: WorldTile {
                     x: o.tile.x,
@@ -143,6 +145,7 @@ pub(crate) fn on_reset() {
     SLOT.with(|slot| slot.borrow_mut().reset());
     INTENT_BASELINE.with(|baseline| baseline.set((0, 0)));
     REARM_DISCARDED.with(|token| token.set(0));
+    FORCE_REPATH.with(|pending| pending.set(false));
 }
 
 pub(crate) fn on_pause() {}
@@ -169,6 +172,34 @@ pub(crate) fn take_rearm(token: u64) -> bool {
 /// has replaced its wait.
 pub(crate) fn owns(token: u64) -> bool {
     SLOT.with(|slot| slot.borrow().owns(token))
+}
+/// The remaining route tiles for this isolate's active walk, never a retained
+/// count from a completed or replaced token.
+pub(crate) fn remaining() -> u64 {
+    let token = SLOT.with(|slot| {
+        let slot = slot.borrow();
+        slot.current_token().filter(|token| slot.pending(*token))
+    });
+    let Some(token) = token else {
+        return 0;
+    };
+    observed::with(|scene| {
+        scene
+            .latest()
+            .walk_outcome()
+            .filter(|outcome| outcome.remaining_request_id == token)
+            .map_or(0, |outcome| outcome.remaining)
+    })
+}
+
+/// Mark the active walk for a native re-plan on its next family step.
+pub(crate) fn request_repath() {
+    FORCE_REPATH.with(|pending| pending.set(true));
+}
+
+/// Consume one forced re-plan request.
+pub(crate) fn take_repath() -> bool {
+    FORCE_REPATH.with(|pending| pending.replace(false))
 }
 
 /// Refresh the outer baseline after an uncancelled operator pause resumes.
@@ -234,6 +265,7 @@ pub(crate) fn dispatch(input: &Value) -> Value {
             }
             "value" => json!(slot.value(json_u64(input.get("token")))),
             "blocked" => json!(slot.blocked(json_u64(input.get("token")))),
+            "no-path" => json!(slot.no_path(json_u64(input.get("token")))),
             _ => Value::Null,
         }
     })
@@ -446,6 +478,8 @@ mod tests {
                 radius: 1,
                 allow_teleports: false,
                 blocked: false,
+                no_path: true,
+                ..crate::observed::WalkOutcome::default()
             });
         });
         assert!(

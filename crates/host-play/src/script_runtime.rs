@@ -169,7 +169,7 @@ pub(super) fn script_slot_or_insert(wall: &ScriptWall, name: &str) -> ScriptSlot
 #[cfg(feature = "js")]
 fn shared_js_surface_factory() -> Arc<script_js::surface::JsSurfaceFactory> {
     static FACTORY: std::sync::LazyLock<Arc<script_js::surface::JsSurfaceFactory>> =
-        std::sync::LazyLock::new(|| Arc::new(script_js::surface::JsSurfaceFactory::default()));
+        std::sync::LazyLock::new(|| Arc::new(script_js::surface::JsSurfaceFactory));
     Arc::clone(&FACTORY)
 }
 
@@ -196,13 +196,32 @@ pub(super) fn js_start_card(
     })
 }
 
-#[cfg(feature = "js")]
+#[cfg(all(test, feature = "js"))]
 pub(super) fn js_surface_start(
     card: Arc<script_js::surface::JsStartCard>,
     settings_bag: Option<Arc<script::native::SettingsBag>>,
     game_data: Option<Arc<api::game_data::SelectedGameData>>,
     named_banks: Arc<api::named_banks::NamedBankFacts>,
     loadouts: Arc<[api::loadout::Loadout]>,
+) -> script::surface::SurfaceStart {
+    js_surface_start_with_wilderness(
+        card,
+        settings_bag,
+        game_data,
+        named_banks,
+        loadouts,
+        Arc::from([]),
+    )
+}
+
+#[cfg(feature = "js")]
+pub(super) fn js_surface_start_with_wilderness(
+    card: Arc<script_js::surface::JsStartCard>,
+    settings_bag: Option<Arc<script::native::SettingsBag>>,
+    game_data: Option<Arc<api::game_data::SelectedGameData>>,
+    named_banks: Arc<api::named_banks::NamedBankFacts>,
+    loadouts: Arc<[api::loadout::Loadout]>,
+    wilderness_zones: Arc<[script::native::walk::WildernessZonePair]>,
 ) -> script::surface::SurfaceStart {
     let card: Arc<dyn script::surface::SurfaceCard> = card;
     script::surface::SurfaceStart {
@@ -211,6 +230,7 @@ pub(super) fn js_surface_start(
         game_data,
         named_banks,
         loadouts,
+        wilderness_zones,
     }
 }
 

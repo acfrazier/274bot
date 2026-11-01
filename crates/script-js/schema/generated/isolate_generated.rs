@@ -8750,6 +8750,11 @@ impl<'a> Snapshot<'a> {
   pub const VT_CLIENT_ADAPTER: ::flatbuffers::VOffsetT = 304;
   pub const VT_TAKING_DAMAGE: ::flatbuffers::VOffsetT = 306;
   pub const VT_GUARDIAN_ACTIVE_EVENT: ::flatbuffers::VOffsetT = 308;
+  pub const VT_WALK_OUTCOME_NO_PATH: ::flatbuffers::VOffsetT = 310;
+  pub const VT_WALK_REMAINING_REQUEST_ID: ::flatbuffers::VOffsetT = 312;
+  pub const VT_WALK_REMAINING: ::flatbuffers::VOffsetT = 314;
+  pub const VT_ROUTE_INSPECT_TERMINAL: ::flatbuffers::VOffsetT = 316;
+  pub const VT_ROUTE_INSPECT_PREV_TERMINAL: ::flatbuffers::VOffsetT = 318;
 
   #[inline]
   pub unsafe fn init_from_table(table: ::flatbuffers::Table<'a>) -> Self {
@@ -8761,6 +8766,8 @@ impl<'a> Snapshot<'a> {
     args: &'args SnapshotArgs<'args>
   ) -> ::flatbuffers::WIPOffset<Snapshot<'bldr>> {
     let mut builder = SnapshotBuilder::new(_fbb);
+    builder.add_walk_remaining(args.walk_remaining);
+    builder.add_walk_remaining_request_id(args.walk_remaining_request_id);
     if let Some(x) = args.mirror_revokes_consumed { builder.add_mirror_revokes_consumed(x); }
     builder.add_chat_page_fingerprint(args.chat_page_fingerprint);
     builder.add_user_move_intent_seq(args.user_move_intent_seq);
@@ -8792,6 +8799,8 @@ impl<'a> Snapshot<'a> {
     builder.add_withdraw_x_result_seq(args.withdraw_x_result_seq);
     builder.add_bank_generation(args.bank_generation);
     builder.add_tick(args.tick);
+    if let Some(x) = args.route_inspect_prev_terminal { builder.add_route_inspect_prev_terminal(x); }
+    if let Some(x) = args.route_inspect_terminal { builder.add_route_inspect_terminal(x); }
     if let Some(x) = args.guardian_active_event { builder.add_guardian_active_event(x); }
     if let Some(x) = args.client_adapter { builder.add_client_adapter(x); }
     if let Some(x) = args.seat_results { builder.add_seat_results(x); }
@@ -8875,6 +8884,7 @@ impl<'a> Snapshot<'a> {
     builder.add_inv_size(args.inv_size);
     if let Some(x) = args.inv { builder.add_inv(x); }
     if let Some(x) = args.here { builder.add_here(x); }
+    builder.add_walk_outcome_no_path(args.walk_outcome_no_path);
     if let Some(x) = args.taking_damage { builder.add_taking_damage(x); }
     builder.add_stats_ready(args.stats_ready);
     builder.add_bank_side_ready(args.bank_side_ready);
@@ -9974,6 +9984,41 @@ impl<'a> Snapshot<'a> {
     // which contains a valid value in this slot
     unsafe { self._tab.get::<::flatbuffers::ForwardsUOffset<&str>>(Snapshot::VT_GUARDIAN_ACTIVE_EVENT, None)}
   }
+  #[inline]
+  pub fn walk_outcome_no_path(&self) -> bool {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<bool>(Snapshot::VT_WALK_OUTCOME_NO_PATH, Some(false)).unwrap()}
+  }
+  #[inline]
+  pub fn walk_remaining_request_id(&self) -> u64 {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<u64>(Snapshot::VT_WALK_REMAINING_REQUEST_ID, Some(0)).unwrap()}
+  }
+  #[inline]
+  pub fn walk_remaining(&self) -> u64 {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<u64>(Snapshot::VT_WALK_REMAINING, Some(0)).unwrap()}
+  }
+  #[inline]
+  pub fn route_inspect_terminal(&self) -> Option<Tile<'a>> {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<::flatbuffers::ForwardsUOffset<Tile>>(Snapshot::VT_ROUTE_INSPECT_TERMINAL, None)}
+  }
+  #[inline]
+  pub fn route_inspect_prev_terminal(&self) -> Option<Tile<'a>> {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<::flatbuffers::ForwardsUOffset<Tile>>(Snapshot::VT_ROUTE_INSPECT_PREV_TERMINAL, None)}
+  }
 }
 
 impl ::flatbuffers::Verifiable for Snapshot<'_> {
@@ -10133,6 +10178,11 @@ impl ::flatbuffers::Verifiable for Snapshot<'_> {
      .visit_field::<::flatbuffers::ForwardsUOffset<ClientAdapterFacts>>("client_adapter", Self::VT_CLIENT_ADAPTER, false)?
      .visit_field::<bool>("taking_damage", Self::VT_TAKING_DAMAGE, false)?
      .visit_field::<::flatbuffers::ForwardsUOffset<&str>>("guardian_active_event", Self::VT_GUARDIAN_ACTIVE_EVENT, false)?
+     .visit_field::<bool>("walk_outcome_no_path", Self::VT_WALK_OUTCOME_NO_PATH, false)?
+     .visit_field::<u64>("walk_remaining_request_id", Self::VT_WALK_REMAINING_REQUEST_ID, false)?
+     .visit_field::<u64>("walk_remaining", Self::VT_WALK_REMAINING, false)?
+     .visit_field::<::flatbuffers::ForwardsUOffset<Tile>>("route_inspect_terminal", Self::VT_ROUTE_INSPECT_TERMINAL, false)?
+     .visit_field::<::flatbuffers::ForwardsUOffset<Tile>>("route_inspect_prev_terminal", Self::VT_ROUTE_INSPECT_PREV_TERMINAL, false)?
      .finish();
     Ok(())
   }
@@ -10289,6 +10339,11 @@ pub struct SnapshotArgs<'a> {
     pub client_adapter: Option<::flatbuffers::WIPOffset<ClientAdapterFacts<'a>>>,
     pub taking_damage: Option<bool>,
     pub guardian_active_event: Option<::flatbuffers::WIPOffset<&'a str>>,
+    pub walk_outcome_no_path: bool,
+    pub walk_remaining_request_id: u64,
+    pub walk_remaining: u64,
+    pub route_inspect_terminal: Option<::flatbuffers::WIPOffset<Tile<'a>>>,
+    pub route_inspect_prev_terminal: Option<::flatbuffers::WIPOffset<Tile<'a>>>,
 }
 impl<'a> Default for SnapshotArgs<'a> {
   #[inline]
@@ -10445,6 +10500,11 @@ impl<'a> Default for SnapshotArgs<'a> {
       client_adapter: None,
       taking_damage: None,
       guardian_active_event: None,
+      walk_outcome_no_path: false,
+      walk_remaining_request_id: 0,
+      walk_remaining: 0,
+      route_inspect_terminal: None,
+      route_inspect_prev_terminal: None,
     }
   }
 }
@@ -11059,6 +11119,26 @@ impl<'a: 'b, 'b, A: ::flatbuffers::Allocator + 'a> SnapshotBuilder<'a, 'b, A> {
     self.fbb_.push_slot_always::<::flatbuffers::WIPOffset<_>>(Snapshot::VT_GUARDIAN_ACTIVE_EVENT, guardian_active_event);
   }
   #[inline]
+  pub fn add_walk_outcome_no_path(&mut self, walk_outcome_no_path: bool) {
+    self.fbb_.push_slot::<bool>(Snapshot::VT_WALK_OUTCOME_NO_PATH, walk_outcome_no_path, false);
+  }
+  #[inline]
+  pub fn add_walk_remaining_request_id(&mut self, walk_remaining_request_id: u64) {
+    self.fbb_.push_slot::<u64>(Snapshot::VT_WALK_REMAINING_REQUEST_ID, walk_remaining_request_id, 0);
+  }
+  #[inline]
+  pub fn add_walk_remaining(&mut self, walk_remaining: u64) {
+    self.fbb_.push_slot::<u64>(Snapshot::VT_WALK_REMAINING, walk_remaining, 0);
+  }
+  #[inline]
+  pub fn add_route_inspect_terminal(&mut self, route_inspect_terminal: ::flatbuffers::WIPOffset<Tile<'b >>) {
+    self.fbb_.push_slot_always::<::flatbuffers::WIPOffset<Tile>>(Snapshot::VT_ROUTE_INSPECT_TERMINAL, route_inspect_terminal);
+  }
+  #[inline]
+  pub fn add_route_inspect_prev_terminal(&mut self, route_inspect_prev_terminal: ::flatbuffers::WIPOffset<Tile<'b >>) {
+    self.fbb_.push_slot_always::<::flatbuffers::WIPOffset<Tile>>(Snapshot::VT_ROUTE_INSPECT_PREV_TERMINAL, route_inspect_prev_terminal);
+  }
+  #[inline]
   pub fn new(_fbb: &'b mut ::flatbuffers::FlatBufferBuilder<'a, A>) -> SnapshotBuilder<'a, 'b, A> {
     let start = _fbb.start_table();
     SnapshotBuilder {
@@ -11227,6 +11307,11 @@ impl ::core::fmt::Debug for Snapshot<'_> {
       ds.field("client_adapter", &self.client_adapter());
       ds.field("taking_damage", &self.taking_damage());
       ds.field("guardian_active_event", &self.guardian_active_event());
+      ds.field("walk_outcome_no_path", &self.walk_outcome_no_path());
+      ds.field("walk_remaining_request_id", &self.walk_remaining_request_id());
+      ds.field("walk_remaining", &self.walk_remaining());
+      ds.field("route_inspect_terminal", &self.route_inspect_terminal());
+      ds.field("route_inspect_prev_terminal", &self.route_inspect_prev_terminal());
       ds.finish()
   }
 }
@@ -14607,6 +14692,7 @@ impl<'a> Interact<'a> {
   pub const VT_MIRROR_OWNER: ::flatbuffers::VOffsetT = 94;
   pub const VT_PROGRESS_JOURNAL_ONLY: ::flatbuffers::VOffsetT = 96;
   pub const VT_TARGET_ID: ::flatbuffers::VOffsetT = 98;
+  pub const VT_MAX_EXPANSIONS: ::flatbuffers::VOffsetT = 100;
 
   #[inline]
   pub unsafe fn init_from_table(table: ::flatbuffers::Table<'a>) -> Self {
@@ -14618,6 +14704,7 @@ impl<'a> Interact<'a> {
     args: &'args InteractArgs<'args>
   ) -> ::flatbuffers::WIPOffset<Interact<'bldr>> {
     let mut builder = InteractBuilder::new(_fbb);
+    if let Some(x) = args.max_expansions { builder.add_max_expansions(x); }
     builder.add_mirror_owner(args.mirror_owner);
     builder.add_lineage(args.lineage);
     builder.add_seq(args.seq);
@@ -14990,6 +15077,13 @@ impl<'a> Interact<'a> {
     // which contains a valid value in this slot
     unsafe { self._tab.get::<i32>(Interact::VT_TARGET_ID, None)}
   }
+  #[inline]
+  pub fn max_expansions(&self) -> Option<u64> {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<u64>(Interact::VT_MAX_EXPANSIONS, None)}
+  }
 }
 
 impl ::flatbuffers::Verifiable for Interact<'_> {
@@ -15044,6 +15138,7 @@ impl ::flatbuffers::Verifiable for Interact<'_> {
      .visit_field::<u64>("mirror_owner", Self::VT_MIRROR_OWNER, false)?
      .visit_field::<bool>("progress_journal_only", Self::VT_PROGRESS_JOURNAL_ONLY, false)?
      .visit_field::<i32>("target_id", Self::VT_TARGET_ID, false)?
+     .visit_field::<u64>("max_expansions", Self::VT_MAX_EXPANSIONS, false)?
      .finish();
     Ok(())
   }
@@ -15095,6 +15190,7 @@ pub struct InteractArgs<'a> {
     pub mirror_owner: u64,
     pub progress_journal_only: bool,
     pub target_id: Option<i32>,
+    pub max_expansions: Option<u64>,
 }
 impl<'a> Default for InteractArgs<'a> {
   #[inline]
@@ -15146,6 +15242,7 @@ impl<'a> Default for InteractArgs<'a> {
       mirror_owner: 0,
       progress_journal_only: false,
       target_id: None,
+      max_expansions: None,
     }
   }
 }
@@ -15340,6 +15437,10 @@ impl<'a: 'b, 'b, A: ::flatbuffers::Allocator + 'a> InteractBuilder<'a, 'b, A> {
     self.fbb_.push_slot_always::<i32>(Interact::VT_TARGET_ID, target_id);
   }
   #[inline]
+  pub fn add_max_expansions(&mut self, max_expansions: u64) {
+    self.fbb_.push_slot_always::<u64>(Interact::VT_MAX_EXPANSIONS, max_expansions);
+  }
+  #[inline]
   pub fn new(_fbb: &'b mut ::flatbuffers::FlatBufferBuilder<'a, A>) -> InteractBuilder<'a, 'b, A> {
     let start = _fbb.start_table();
     InteractBuilder {
@@ -15403,6 +15504,7 @@ impl ::core::fmt::Debug for Interact<'_> {
       ds.field("mirror_owner", &self.mirror_owner());
       ds.field("progress_journal_only", &self.progress_journal_only());
       ds.field("target_id", &self.target_id());
+      ds.field("max_expansions", &self.max_expansions());
       ds.finish()
   }
 }

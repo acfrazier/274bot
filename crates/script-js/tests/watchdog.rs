@@ -25,7 +25,7 @@ fn wait_slot_state(slot: &mut SlotScript, want: script::RunState) {
 }
 
 fn bind_js_surface_factory(slot: &mut SlotScript) {
-    slot.bind_surface_factory(Arc::new(script_js::surface::JsSurfaceFactory::default()));
+    slot.bind_surface_factory(Arc::new(script_js::surface::JsSurfaceFactory));
 }
 
 fn new_js_slot() -> SlotScript {
@@ -56,6 +56,7 @@ fn test_surface_start(
         game_data: None,
         named_banks: Arc::new(api::named_banks::NamedBankFacts::empty()),
         loadouts: Arc::from(Vec::<api::loadout::Loadout>::new()),
+        wilderness_zones: std::sync::Arc::from([]),
     }
 }
 

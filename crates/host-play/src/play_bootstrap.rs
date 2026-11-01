@@ -185,6 +185,7 @@ pub struct SharedClientTemplate {
     ifaces_mut: Arc<Vec<Option<Arc<IfTypeMut>>>>,
     world: Option<Arc<NavWorld>>,
     scatter: std::sync::OnceLock<Vec<WorldTile>>,
+    wilderness_zones: std::sync::OnceLock<Arc<[script::native::walk::WildernessZonePair]>>,
 }
 
 /// One-use ordering ticket for Play construction. Resource identities are
@@ -278,6 +279,7 @@ impl SharedClientTemplate {
             ifaces_mut: Arc::new(ifaces_mut),
             world,
             scatter: std::sync::OnceLock::new(),
+            wilderness_zones: std::sync::OnceLock::new(),
         }))
     }
 
@@ -289,6 +291,16 @@ impl SharedClientTemplate {
     }
     pub fn world(&self) -> Option<Arc<NavWorld>> {
         self.world.clone()
+    }
+    pub fn wilderness_zones(&self) -> Arc<[script::native::walk::WildernessZonePair]> {
+        self.wilderness_zones
+            .get_or_init(|| {
+                self.world.as_deref().map_or_else(
+                    || Arc::from([]),
+                    |world| script::native::walk::wilderness_zone_pairs(&world.graph.wilderness),
+                )
+            })
+            .clone()
     }
 
     /// Return the consuming handoff required by [`run_prepared_template`].
@@ -421,17 +433,24 @@ impl Play {
         );
         let (cache, ifaces, ifaces_mut_template) = load_template(&options.cache_dir);
         let cache = Arc::new(cache);
+        let world = NavWorld::load_pack(&default_pack_path()).ok().map(Arc::new);
+        let wilderness_zones = world.as_deref().map_or_else(
+            || Arc::from([]),
+            |world| script::native::walk::wilderness_zone_pairs(&world.graph.wilderness),
+        );
         Self::assemble(
             PlayConnection::Direct(options.clone()),
             None,
             cache,
             Arc::new(ifaces),
             Arc::new(ifaces_mut_template),
-            NavWorld::load_pack(&default_pack_path()).ok().map(Arc::new),
+            world,
+            wilderness_zones,
         )
     }
 
     pub(super) fn from_template(template: Arc<SharedClientTemplate>, mainland: bool) -> Play {
+        let wilderness_zones = template.wilderness_zones();
         Self::assemble(
             PlayConnection::Bound {
                 template: Arc::clone(&template),
@@ -442,6 +461,7 @@ impl Play {
             Arc::clone(&template.ifaces),
             Arc::clone(&template.ifaces_mut),
             template.world.clone(),
+            wilderness_zones,
         )
     }
 
@@ -452,6 +472,7 @@ impl Play {
         ifaces: Arc<Vec<Option<Box<IfType>>>>,
         ifaces_mut_template: Arc<Vec<Option<Arc<IfTypeMut>>>>,
         world: Option<Arc<NavWorld>>,
+        wilderness_zones: Arc<[script::native::walk::WildernessZonePair]>,
     ) -> Play {
         let obj_names = Arc::new(api::obj_names::ObjNames::from_objs(&cache.objs));
         let named_banks = world
@@ -535,6 +556,7 @@ impl Play {
             walk_globals: Arc::new(Mutex::new(super::WalkGlobals::default())),
             walk_globals_store: None,
             world,
+            wilderness_zones,
             wakes: HashMap::new(),
             capacity: Arc::new(host::CapacityMonitor::new()),
             local_state,

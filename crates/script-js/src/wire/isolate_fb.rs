@@ -554,6 +554,9 @@ impl<'a> Snapshot<'a> {
         has_bank_selection_kind => VT_BANK_SELECTION_KIND,
         has_self_anim => VT_SELF_ANIM,
         has_walk_outcome_blocked => VT_WALK_OUTCOME_BLOCKED,
+        has_walk_outcome_no_path => VT_WALK_OUTCOME_NO_PATH,
+        has_walk_remaining_request_id => VT_WALK_REMAINING_REQUEST_ID,
+        has_walk_remaining => VT_WALK_REMAINING,
         has_bank_snapshot_generation => VT_BANK_SNAPSHOT_GENERATION,
         has_api_gather => VT_API_GATHER,
         has_api_gather_outcome => VT_API_GATHER_OUTCOME,
@@ -1119,6 +1122,9 @@ pub struct SnapshotFingerprint {
     pub walk_outcome_allow_teleports: bool,
     pub walk_outcome_request_id: u64,
     pub walk_outcome_blocked: bool,
+    pub walk_outcome_no_path: bool,
+    pub walk_remaining_request_id: u64,
+    pub walk_remaining: u64,
     pub walk_outcome_cancel_reason: WalkCancelReason,
     /// The walk outcome's named shorts. Part of that family: a list that moved
     /// without a scalar moving still re-posts the family, so a clear is never
@@ -1173,6 +1179,7 @@ pub struct RouteInspectTerminalFp {
     pub reason: String,
     pub bank_planned: bool,
     pub ticks_bits: u64,
+    pub terminal: Option<(i32, i32, i32)>,
     pub hops: Vec<InspectHopFp>,
 }
 
@@ -1480,6 +1487,9 @@ impl SnapshotFingerprint {
             walk_outcome_allow_teleports: native.walk_outcome_allow_teleports,
             walk_outcome_request_id: native.walk_outcome_request_id,
             walk_outcome_blocked: native.walk_outcome_blocked,
+            walk_outcome_no_path: native.walk_outcome_no_path,
+            walk_remaining_request_id: native.walk_remaining_request_id,
+            walk_remaining: native.walk_remaining,
             walk_outcome_cancel_reason: input.walk_outcome_cancel_reason.into(),
             walk_missing_carry: native
                 .walk_missing_carry
@@ -1536,6 +1546,7 @@ fn route_inspect_terminal_fp(t: &RouteInspectTerminalInput<'_>) -> RouteInspectT
         reason: t.reason.unwrap_or("").to_string(),
         bank_planned: t.bank_planned,
         ticks_bits: t.ticks.to_bits(),
+        terminal: t.terminal.map(|tile| (tile.x, tile.z, tile.level)),
         hops: t.hops.iter().map(inspect_hop_fp).collect(),
     }
 }
@@ -1892,6 +1903,9 @@ impl DeltaMask {
                 || next.walk_outcome_allow_teleports != last.walk_outcome_allow_teleports
                 || next.walk_outcome_request_id != last.walk_outcome_request_id
                 || next.walk_outcome_blocked != last.walk_outcome_blocked
+                || next.walk_outcome_no_path != last.walk_outcome_no_path
+                || next.walk_remaining_request_id != last.walk_remaining_request_id
+                || next.walk_remaining != last.walk_remaining
                 || next.walk_outcome_cancel_reason != last.walk_outcome_cancel_reason
                 || next.walk_missing_carry != last.walk_missing_carry,
             route_inspect: next.route_inspect != last.route_inspect,
@@ -2637,6 +2651,24 @@ fn encode_snapshot_masked_into(
     } else {
         None
     };
+    let inspect_terminal_off = if mask.route_inspect {
+        native
+            .route_inspect
+            .latest
+            .terminal
+            .map(|tile| tile_off(b, tile))
+    } else {
+        None
+    };
+    let inspect_prev_terminal_off = if mask.route_inspect {
+        native
+            .route_inspect
+            .prev
+            .terminal
+            .map(|tile| tile_off(b, tile))
+    } else {
+        None
+    };
     let inspect_hops_off = if mask.route_inspect {
         let offs = native
             .route_inspect
@@ -3001,6 +3033,9 @@ fn encode_snapshot_masked_into(
         table.add_walk_outcome_allow_teleports(native.walk_outcome_allow_teleports);
         table.add_walk_outcome_request_id(native.walk_outcome_request_id);
         table.add_walk_outcome_blocked(native.walk_outcome_blocked);
+        table.add_walk_outcome_no_path(native.walk_outcome_no_path);
+        table.add_walk_remaining_request_id(native.walk_remaining_request_id);
+        table.add_walk_remaining(native.walk_remaining);
         table.add_walk_outcome_cancel_reason(input.walk_outcome_cancel_reason.into());
         // the observed "no named short", so a clear is never omitted. Only a
         // caller that supplied no list at all omits the slot.
@@ -3019,6 +3054,9 @@ fn encode_snapshot_masked_into(
         }
         table.add_route_inspect_bank_planned(facts.latest.bank_planned);
         table.add_route_inspect_ticks(facts.latest.ticks);
+        if let Some(off) = inspect_terminal_off {
+            table.add_route_inspect_terminal(off);
+        }
         if let Some(off) = inspect_hops_off {
             table.add_route_inspect_hops(off);
         }
@@ -3031,6 +3069,9 @@ fn encode_snapshot_masked_into(
         }
         table.add_route_inspect_prev_bank_planned(facts.prev.bank_planned);
         table.add_route_inspect_prev_ticks(facts.prev.ticks);
+        if let Some(off) = inspect_prev_terminal_off {
+            table.add_route_inspect_prev_terminal(off);
+        }
         if let Some(off) = inspect_prev_hops_off {
             table.add_route_inspect_prev_hops(off);
         }
@@ -5545,6 +5586,7 @@ fn decode_interact_rows<'a>(
                     .map(|names| names.iter().map(str::to_string).collect())
                     .unwrap_or_default(),
                 request_id: row.request_id(),
+                max_expansions: row.max_expansions(),
             }),
             "inspect-ack" => out.push(script::shim::InteractReq::InspectAck {
                 seq: row.inspect_ack_seq(),
@@ -6839,6 +6881,7 @@ fn interact_off<'b>(
             allow_wilderness,
             allow_bank_fetch,
             request_id,
+            max_expansions,
             ..
         } => {
             table.add_x(*x);
@@ -6855,6 +6898,9 @@ fn interact_off<'b>(
             }
             if *allow_bank_fetch {
                 table.add_allow_bank_fetch(true);
+            }
+            if let Some(max_expansions) = max_expansions {
+                table.add_max_expansions(*max_expansions);
             }
             if *request_id != 0 {
                 table.add_request_id(*request_id);

@@ -9,24 +9,6 @@
     "async": false
   },
   {
-    "id": "not-impl:api/walking/Traversal.js:Traversal.remaining",
-    "module": "api/walking/Traversal.js",
-    "selector": "Traversal.remaining",
-    "operation": "not-impl",
-    "reason": "Unconditional not-impl: no arguments are inspected and no successful result is produced.",
-    "runtime": "crates/script-js/src/shim/traversal.js:93",
-    "async": false
-  },
-  {
-    "id": "not-impl:api/walking/Traversal.js:Traversal.requestRepath",
-    "module": "api/walking/Traversal.js",
-    "selector": "Traversal.requestRepath",
-    "operation": "not-impl",
-    "reason": "Unconditional not-impl: no arguments are inspected and no successful result is produced.",
-    "runtime": "crates/script-js/src/shim/traversal.js:99",
-    "async": false
-  },
-  {
     "id": "not-impl:api/ai/quests/exec/primitives.js:gotoNpc",
     "module": "api/ai/quests/exec/primitives.js",
     "selector": "gotoNpc",

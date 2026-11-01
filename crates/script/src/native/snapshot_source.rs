@@ -375,6 +375,11 @@ pub struct NativeFactsInput<'a> {
     /// The settled route end is frozen `'blocked'`: the player stands next
     /// to a last tile the live scene refuses. Part of the walk outcome.
     pub walk_outcome_blocked: bool,
+    /// The host proved no route for this outcome.
+    pub walk_outcome_no_path: bool,
+    /// Active Traveller token and remaining walk-hop tiles; zero when idle.
+    pub walk_remaining_request_id: u64,
+    pub walk_remaining: u64,
     /// The walk outcome's navigator-named gate shorts. ALWAYS supplied — an
     /// empty slice is the observed "this outcome names no short", and the pack
     /// posts it with the family above in the same buffer, so a clear is never
@@ -479,6 +484,7 @@ pub struct RouteInspectTerminalInput<'a> {
     pub reason: Option<&'a str>,
     pub bank_planned: bool,
     pub ticks: f64,
+    pub terminal: Option<TileInput>,
     pub hops: &'a [InspectHopInput<'a>],
 }
 

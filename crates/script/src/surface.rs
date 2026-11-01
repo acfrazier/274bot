@@ -60,7 +60,7 @@ pub trait SurfaceCard: Any + Send + Sync + std::fmt::Debug {
 
 /// Shared values that the slot retains when it restarts a run.
 ///
-/// Cloning this value clones its five `Arc`s. It does not copy their contents.
+/// Cloning this value clones its six `Arc`s. It does not copy their contents.
 #[derive(Clone, Debug)]
 pub struct SurfaceStart {
     /// The surface-owned card.
@@ -71,6 +71,8 @@ pub struct SurfaceStart {
     pub game_data: Option<Arc<api::game_data::SelectedGameData>>,
     /// Immutable named-bank facts for this start.
     pub named_banks: Arc<api::named_banks::NamedBankFacts>,
+    /// Selected wilderness-zone pairs for synchronous read-only queries.
+    pub wilderness_zones: Arc<[crate::native::walk::WildernessZonePair]>,
     /// Shared loadouts for this start.
     pub loadouts: Arc<[api::loadout::Loadout]>,
 }

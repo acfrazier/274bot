@@ -833,6 +833,9 @@ pub(crate) fn script_observe_cached_with_channels(
                     walk_radius,
                     walk_allow_teleports,
                     walk_blocked,
+                    walk_no_path,
+                    walk_remaining_request_id,
+                    walk_remaining,
                     walk_cancel_reason,
                     user_move_intent_seq,
                     walk_missing_carry,
@@ -854,6 +857,9 @@ pub(crate) fn script_observe_cached_with_channels(
                                 b.walk_outcome_radius,
                                 b.walk_outcome_allow_teleports,
                                 b.walk_outcome_blocked,
+                                b.walk_outcome_no_path,
+                                b.walk_request_id,
+                                b.traveller.remaining() as u64,
                                 b.walk_outcome_cancel_reason,
                                 b.user_move_intent_seq,
                                 b.walk_missing_carry.clone(),
@@ -877,6 +883,9 @@ pub(crate) fn script_observe_cached_with_channels(
                             0,
                             false,
                             false,
+                            false,
+                            0,
+                            0,
                             script::native::WalkCancelReason::None,
                             0,
                             Vec::new(),
@@ -937,6 +946,9 @@ pub(crate) fn script_observe_cached_with_channels(
                         radius: walk_radius,
                         allow_teleports: walk_allow_teleports,
                         blocked: walk_blocked,
+                        no_path: walk_no_path,
+                        remaining_request_id: walk_remaining_request_id,
+                        remaining: walk_remaining,
                         cancel_reason: walk_cancel_reason,
                         user_move_intent_seq,
                     },
@@ -2060,7 +2072,9 @@ fn deliver_native_walk_end(slot: &mut script::SlotScript, bot: &mut NavBot, tick
         .filter(|(request, _)| *request == request_id)
         .map(|(_, end)| end.clone());
     let end = typed_failure.unwrap_or({
-        if bot.walk_outcome_blocked {
+        if bot.walk_outcome_no_path {
+            script::native::WalkEnd::NoPath
+        } else if bot.walk_outcome_blocked {
             script::native::WalkEnd::Blocked
         } else if bot.walk_outcome_failed {
             script::native::WalkEnd::Failed

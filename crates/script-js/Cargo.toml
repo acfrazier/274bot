@@ -122,6 +122,8 @@ name = "return_to_anchor"
 [[test]]
 name = "walk_options"
 [[test]]
+name = "compat_v1_walking"
+[[test]]
 name = "quest_journal"
 [[test]]
 name = "shop"

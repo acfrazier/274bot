@@ -133,6 +133,8 @@ const MODULE_RULES = [
     ['shim/gathering_locations.js', { id: 'gathering', nav: false }],
     ['shim/fishing_gear.js', { id: 'fishing', nav: false }],
     ['shim/', { id: 'compat-runtime', nav: false }],
+    ['api/map/WalkDestinations.js', { id: 'walking', nav: true }],
+    ['api/map/regions.js', { id: 'walking', nav: true }],
 ];
 
 

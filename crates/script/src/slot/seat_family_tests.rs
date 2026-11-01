@@ -33,6 +33,7 @@ fn load_slot(incarnation: u64) -> SlotScript {
         game_data: Some(selected()),
         named_banks: Arc::default(),
         loadouts: Arc::default(),
+        wilderness_zones: std::sync::Arc::from([]),
     })
     .unwrap();
     factory

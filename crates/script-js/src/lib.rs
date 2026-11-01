@@ -239,6 +239,8 @@ mod trade;
 mod wait_clock;
 #[path = "compat/walk.rs"]
 mod walk;
+#[path = "materialize/walk_destinations_v8.rs"]
+mod walk_destinations_v8;
 #[path = "materialize/walk_opening_v8.rs"]
 mod walk_opening_v8;
 #[path = "scene/walk_wait.rs"]

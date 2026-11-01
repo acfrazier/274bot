@@ -274,7 +274,7 @@ export default class T extends LoopingBot {
         globalThis.__gatheringMapSquare = api.MAP_SQUARE;
         globalThis.__probe = await Promise.all([
             use(() => String(api.COINS)),
-            use(() => Object.prototype.toString.call(api.WALK_OPTIONS)),
+            use(() => Object.prototype.toString.call(api.GERRANT_VENDOR)),
             use(() => api.AXE_SHOP_COSTS.map((c) => c)),
             use(() => api.coinsToWithdraw()),
         ]);

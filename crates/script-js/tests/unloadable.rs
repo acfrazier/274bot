@@ -264,12 +264,9 @@ fn hash_bot_shop_remaps() {
 }
 
 #[test]
-fn walk_executor_stays_unloadable() {
-    let src = "import x from '../../event/webwalk/WalkExecutor.js'; export default class T extends LoopingBot { loop() {} }";
-    assert_eq!(
-        script_js::first_unloadable_specifier(src).as_deref(),
-        Some("../../event/webwalk/WalkExecutor.js")
-    );
+fn walk_executor_module_is_loadable() {
+    let src = "import { WalkExecutor } from '../../event/webwalk/WalkExecutor.js'; export default class T extends LoopingBot { loop() {} }";
+    assert_eq!(script_js::first_unloadable_specifier(src), None);
 }
 
 #[test]

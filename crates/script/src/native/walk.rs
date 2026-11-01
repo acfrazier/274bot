@@ -3,10 +3,100 @@ use super::walk_wait::{HostOutcome, Observation, WalkKey, WalkSlot};
 use super::{ActionContext, ActionError, NativeMachine, WalkEnd, WalkReceipt, WalkRequest};
 use api::quest_progress::EvidenceStamp;
 use api::snapshot::SnapshotView;
+use api::snapshot::WorldTile;
 use nav_planner::contract::ArrivalKind;
+use nav_planner::transport::{WildernessRules, WildernessZone};
+use nav_planner::walk_destinations::{WalkDestination, WALK_DESTINATIONS};
 use std::num::NonZeroU64;
+use std::sync::Arc;
 use std::task::Poll;
 use std::time::Duration;
+
+/// One selected wilderness coordinate pair with its packed level formula.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct WildernessZonePair {
+    pub zone: WildernessZone,
+    pub divisor: i32,
+    pub offset: i32,
+}
+
+/// Share the selected world’s wilderness pairs with read-only script queries.
+pub fn wilderness_zone_pairs(rules: &WildernessRules) -> Arc<[WildernessZonePair]> {
+    rules
+        .zones
+        .iter()
+        .copied()
+        .map(|zone| WildernessZonePair {
+            zone,
+            divisor: rules.divisor,
+            offset: rules.offset,
+        })
+        .collect::<Vec<_>>()
+        .into()
+}
+
+/// Level at a tile under the selected pack’s inclusive wilderness zones.
+pub fn wilderness_level_at(pairs: &[WildernessZonePair], tile: WorldTile) -> i32 {
+    pairs
+        .iter()
+        .find(|pair| pair.zone.contains(tile))
+        .filter(|pair| pair.divisor > 0)
+        .map_or(0, |pair| {
+            (tile.z - pair.zone.origin_z) / pair.divisor + pair.offset
+        })
+}
+
+/// Whether the tile belongs to the contract Rune Essence mine square.
+pub const fn in_ess_mine(x: i32, z: i32) -> bool {
+    x >> 6 == 45 && z >> 6 == 75
+}
+
+/// The selected named walk destinations in their user-visible order.
+pub fn walk_destinations() -> &'static [WalkDestination] {
+    WALK_DESTINATIONS
+}
+
+/// Resolve a trimmed, case-insensitive destination name.
+pub fn resolve_destination(name: &str) -> Option<&'static WalkDestination> {
+    let key = name.trim();
+    WALK_DESTINATIONS
+        .iter()
+        .find(|destination| destination.name.eq_ignore_ascii_case(key))
+}
+
+fn is_barrier_name(name: &str) -> bool {
+    let bytes = name.as_bytes();
+    bytes
+        .windows(4)
+        .any(|part| part.eq_ignore_ascii_case(b"door"))
+        || bytes
+            .windows(4)
+            .any(|part| part.eq_ignore_ascii_case(b"gate"))
+}
+
+fn has_operation_prefix<'a>(ops: impl IntoIterator<Item = Option<&'a str>>, prefix: &str) -> bool {
+    ops.into_iter().flatten().any(|op| {
+        op.as_bytes()
+            .get(..prefix.len())
+            .is_some_and(|part| part.eq_ignore_ascii_case(prefix.as_bytes()))
+    })
+}
+
+/// Whether a named loc is a closed door or gate with an `Open` operation.
+pub fn is_openable_barrier<'a>(
+    name: Option<&str>,
+    ops: impl IntoIterator<Item = Option<&'a str>>,
+) -> bool {
+    name.is_some_and(is_barrier_name) && has_operation_prefix(ops, "open")
+}
+
+/// Whether a named loc is an open door or gate with a `Close` operation.
+pub fn is_open_barrier_leaf<'a>(
+    name: Option<&str>,
+    ops: impl IntoIterator<Item = Option<&'a str>>,
+) -> bool {
+    name.is_some_and(is_barrier_name) && has_operation_prefix(ops, "close")
+}
 
 /// Eligible time a native walk may stay unsettled before it ends `Failed`
 /// and revokes its host follow. The host owes every walk a terminal receipt;
@@ -183,6 +273,7 @@ impl NativeMachine for Walk {
                 WalkEnd::Arrived | WalkEnd::RouteEnded | WalkEnd::Blocked
             ),
             blocked: receipt.end == WalkEnd::Blocked,
+            no_path: receipt.end == WalkEnd::NoPath,
             key: self.key,
         });
         let frame = Frame {
@@ -240,6 +331,23 @@ mod tests {
     use api::quest_progress::EvidenceStamp;
     use api::selected::RunKey;
     use api::snapshot::{GameSnapshot, WorldTile};
+
+    #[test]
+    fn barrier_detection_matches_name_and_operation_prefix_contract() {
+        assert!(is_openable_barrier(
+            Some("WOODEN GATE"),
+            [Some("Examine"), Some("Open-quietly")]
+        ));
+        assert!(!is_openable_barrier(Some("Wardrobe"), [Some("Open")]));
+        assert!(!is_openable_barrier(Some("Door"), [None, Some("Close")]));
+        assert!(!is_openable_barrier(None, [Some("Open")]));
+        assert!(is_open_barrier_leaf(
+            Some("Large door"),
+            [None, Some("Close-quietly")]
+        ));
+        assert!(!is_open_barrier_leaf(Some("Chest"), [Some("Close")]));
+        assert!(!is_open_barrier_leaf(Some("Gate"), [Some("Open")]));
+    }
 
     #[test]
     fn moving_radius_arrival_uses_network_origin_and_rejects_stale_flood() {

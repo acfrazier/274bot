@@ -170,6 +170,7 @@ pub struct ScriptStartHandle {
     statuses: Arc<Mutex<Vec<crate::SlotStatus>>>,
     game_data: Option<Arc<api::game_data::SelectedGameData>>,
     named_banks: Arc<api::named_banks::NamedBankFacts>,
+    wilderness_zones: Arc<[script::native::walk::WildernessZonePair]>,
     /// The Play's state composition: a Start without caller-owned loadouts
     /// leases the operator's rows from it. `None` for the legacy direct
     /// connection, whose Starts post no operator rows.
@@ -392,15 +393,16 @@ impl ScriptStartHandle {
                         None => self.operator_loadouts(name).map(Arc::from),
                     });
                 match resolved_loadouts {
-                    Ok(loadouts) => {
-                        slot.start_surface_with_settings(script_runtime::js_surface_start(
+                    Ok(loadouts) => slot.start_surface_with_settings(
+                        script_runtime::js_surface_start_with_wilderness(
                             script_runtime::js_start_card(source, shape, siblings),
                             bag.map(Arc::new),
                             self.game_data.clone(),
                             Arc::clone(&self.named_banks),
                             loadouts,
-                        ))
-                    }
+                            Arc::clone(&self.wilderness_zones),
+                        ),
+                    ),
                     Err(error) => Err(Refused(error)),
                 }
             }
@@ -1012,6 +1014,7 @@ impl Play {
             statuses: Arc::clone(&self.statuses),
             game_data: self.game_data.clone(),
             named_banks: Arc::clone(&self.named_banks),
+            wilderness_zones: Arc::clone(&self.wilderness_zones),
             state: self.local_state.clone(),
         }
     }

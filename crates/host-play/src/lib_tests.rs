@@ -4910,7 +4910,10 @@ fn posted_from_bot(bot: &NavBot) -> PostedWalkOutcome {
         level: bot.walk_outcome_level,
         radius: bot.walk_outcome_radius,
         allow_teleports: bot.walk_outcome_allow_teleports,
-        blocked: false,
+        blocked: bot.walk_outcome_blocked,
+        no_path: bot.walk_outcome_no_path,
+        remaining_request_id: bot.walk_request_id,
+        remaining: bot.traveller.remaining() as u64,
         cancel_reason: bot.walk_outcome_cancel_reason,
         user_move_intent_seq: bot.user_move_intent_seq,
     }

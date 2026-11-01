@@ -664,6 +664,10 @@ const REEXPORTS: &[Reexport] = &[
         names: &["RUNES", "RUNE_OPTIONS", "DEFAULT_RUNE"],
         line: "export { RUNES, RUNE_OPTIONS, DEFAULT_RUNE } from '../../data/runeCraftLocations.js';",
     },
+    Reexport {
+        names: &["WALK_DESTINATIONS", "WALK_OPTIONS", "resolveDestination"],
+        line: "export { WALK_DESTINATIONS, WALK_OPTIONS, resolveDestination } from '../../api/map/WalkDestinations.js';",
+    },
 ];
 
 /// Generate the `@rs2b0t/api` surface: re-export the names a shim module

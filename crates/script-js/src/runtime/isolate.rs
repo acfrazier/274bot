@@ -425,20 +425,21 @@ pub(crate) struct GameplayFactory;
 impl GameplayFactory {
     #[cfg(test)]
     pub(crate) fn spawn_with_content(
-        &self,
         js: String,
         shape: LoadShape,
         siblings: Vec<(String, String)>,
         game_data: Option<std::sync::Arc<api::game_data::SelectedGameData>>,
         named_banks: std::sync::Arc<api::named_banks::NamedBankFacts>,
+        wilderness_zones: std::sync::Arc<[script::native::walk::WildernessZonePair]>,
         execution: Option<api::identity::ExecutionId>,
     ) -> Result<LoadIsolate, LoadIsolateError> {
-        self.spawn_with_content_and_state(
+        Self::spawn_with_content_and_state(
             js,
             shape,
             siblings,
             game_data,
             named_banks,
+            wilderness_zones,
             execution,
             None,
         )
@@ -446,12 +447,12 @@ impl GameplayFactory {
 
     #[allow(clippy::too_many_arguments)] // the slot's per-run inputs plus its local state
     pub(crate) fn spawn_with_content_and_state(
-        &self,
         js: String,
         shape: LoadShape,
         siblings: Vec<(String, String)>,
         game_data: Option<std::sync::Arc<api::game_data::SelectedGameData>>,
         named_banks: std::sync::Arc<api::named_banks::NamedBankFacts>,
+        wilderness_zones: std::sync::Arc<[script::native::walk::WildernessZonePair]>,
         execution: Option<api::identity::ExecutionId>,
         local_state: Option<std::sync::Arc<script::local_state::SlotState>>,
     ) -> Result<LoadIsolate, LoadIsolateError> {
@@ -461,6 +462,7 @@ impl GameplayFactory {
             siblings,
             game_data,
             named_banks,
+            wilderness_zones,
             execution,
             local_state,
         )
@@ -485,6 +487,26 @@ impl LoadIsolate {
             siblings,
             None,
             std::sync::Arc::new(api::named_banks::NamedBankFacts::empty()),
+            std::sync::Arc::from([]),
+            None,
+            None,
+        )
+    }
+    /// Spawn with selected wilderness geometry for read-only contract tests.
+    #[cfg(any(test, feature = "test-hooks"))]
+    pub fn spawn_with_wilderness(
+        js: String,
+        shape: LoadShape,
+        siblings: Vec<(String, String)>,
+        wilderness_zones: std::sync::Arc<[script::native::walk::WildernessZonePair]>,
+    ) -> Result<Self, LoadIsolateError> {
+        Self::spawn_inner(
+            js,
+            shape,
+            siblings,
+            None,
+            std::sync::Arc::new(api::named_banks::NamedBankFacts::empty()),
+            wilderness_zones,
             None,
             None,
         )
@@ -504,6 +526,7 @@ impl LoadIsolate {
             siblings,
             None,
             std::sync::Arc::new(api::named_banks::NamedBankFacts::empty()),
+            std::sync::Arc::from([]),
             Some(execution),
             None,
         )
@@ -523,6 +546,7 @@ impl LoadIsolate {
             siblings,
             Some(game_data),
             std::sync::Arc::new(api::named_banks::NamedBankFacts::empty()),
+            std::sync::Arc::from([]),
             None,
             None,
         )
@@ -537,7 +561,16 @@ impl LoadIsolate {
         game_data: Option<std::sync::Arc<api::game_data::SelectedGameData>>,
         named_banks: std::sync::Arc<api::named_banks::NamedBankFacts>,
     ) -> Result<Self, LoadIsolateError> {
-        Self::spawn_inner(js, shape, siblings, game_data, named_banks, None, None)
+        Self::spawn_inner(
+            js,
+            shape,
+            siblings,
+            game_data,
+            named_banks,
+            std::sync::Arc::from([]),
+            None,
+            None,
+        )
     }
 
     /// Spawn a test isolate with the same slot-owned local-state capability
@@ -555,6 +588,7 @@ impl LoadIsolate {
             siblings,
             None,
             std::sync::Arc::new(api::named_banks::NamedBankFacts::empty()),
+            std::sync::Arc::from([]),
             None,
             Some(local_state),
         )
@@ -568,12 +602,14 @@ impl LoadIsolate {
         validation::validate_batch(cards)
     }
 
+    #[allow(clippy::too_many_arguments)] // the isolate's per-run inputs
     fn spawn_inner(
         js: String,
         shape: LoadShape,
         siblings: Vec<(String, String)>,
         game_data: Option<std::sync::Arc<api::game_data::SelectedGameData>>,
         named_banks: std::sync::Arc<api::named_banks::NamedBankFacts>,
+        wilderness_zones: std::sync::Arc<[script::native::walk::WildernessZonePair]>,
         execution: Option<api::identity::ExecutionId>,
         local_state: Option<std::sync::Arc<script::local_state::SlotState>>,
     ) -> Result<Self, LoadIsolateError> {
@@ -622,6 +658,7 @@ impl LoadIsolate {
                     siblings,
                     game_data,
                     named_banks,
+                    wilderness_zones,
                     runtime_handle,
                     CmdQueue {
                         rx,

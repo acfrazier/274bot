@@ -410,6 +410,16 @@ fn required(name: &str) -> Result<String, String> {
     std::env::var(name).map_err(|_| format!("{name} is required"))
 }
 
+fn catalog_port(name: &str, default: u16) -> Result<u16, String> {
+    match std::env::var(name) {
+        Ok(value) => value
+            .parse()
+            .map_err(|_| format!("{name} must be a valid TCP port")),
+        Err(std::env::VarError::NotPresent) => Ok(default),
+        Err(error) => Err(format!("read {name}: {error}")),
+    }
+}
+
 fn selected_profile(
     revision: u16,
     nav_pack: PathBuf,
@@ -421,8 +431,14 @@ fn selected_profile(
         revision: Some(revision.to_string()),
         host: Some("127.0.0.1".into()),
         asset_host: Some("127.0.0.1".into()),
-        port: Some(if revision == 289 { 44594 } else { 43594 }),
-        http_port: Some(if revision == 289 { 1080 } else { 80 }),
+        port: Some(catalog_port(
+            "CATALOG_GAME_PORT",
+            if revision == 289 { 44594 } else { 43594 },
+        )?),
+        http_port: Some(catalog_port(
+            "CATALOG_HTTP_PORT",
+            if revision == 289 { 1080 } else { 80 },
+        )?),
         nav_pack: Some(nav_pack),
         nav_flags: std::env::var_os("CATALOG_NAV_FLAGS").map(PathBuf::from),
         engine_dir: std::env::var_os("CATALOG_ENGINE_DIR").map(PathBuf::from),
@@ -2958,7 +2974,7 @@ export default class NativeStop extends LoopingBot {{
 "#
         );
         let mut slot = script::SlotScript::new();
-        slot.bind_surface_factory(Arc::new(script_js::surface::JsSurfaceFactory::default()));
+        slot.bind_surface_factory(Arc::new(script_js::surface::JsSurfaceFactory));
         let family = script_js::resolve_api_family(&source)
             .ok()
             .map(|(_, family)| family);
@@ -2973,6 +2989,7 @@ export default class NativeStop extends LoopingBot {{
             game_data: None,
             named_banks: Arc::new(api::named_banks::NamedBankFacts::empty()),
             loadouts: Arc::from([]),
+            wilderness_zones: std::sync::Arc::from([]),
         })
         .unwrap();
         let mut client = client::client::Client::new(client::client::ClientConfig {

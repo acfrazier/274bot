@@ -120,6 +120,9 @@ pub enum InteractReq {
         cross: Vec<String>,
         #[serde(default)]
         request_id: u64,
+        /// Optional bounded expansion count for route inspection.
+        #[serde(default)]
+        max_expansions: Option<u64>,
     },
     /// Isolate-applied inspect consume-ack. Not a public JS request.
     /// Host rejects generation mismatch, seq 0, and seq above the posted ring.

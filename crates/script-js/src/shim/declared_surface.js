@@ -43,6 +43,7 @@ export { FISHING_SHOP_COSTS, GERRANT_ONLY_FISHING, fishingVendorFor, fishingShop
 export { ROCK_OPTIONS, ROCK_TYPES, GAS_ROCK_IDS, GAS_ROCK_TICKS, BROKEN_PICKAXE, resolveRockIds } from '../../data/miningRocks.js';
 export { COW_LOCATIONS, COW_LOCATION_OPTIONS, AL_KHARID_BANK, TOLL_COIN_TARGET, isCowFieldLootTile, resolveCowLocation, nearestCowLocation, needsTollCoins, shouldBootstrapTollCoins } from '../../data/cowKillerLocations.js';
 export { RUNES, RUNE_OPTIONS, DEFAULT_RUNE } from '../../data/runeCraftLocations.js';
+export { WALK_DESTINATIONS, WALK_OPTIONS, resolveDestination } from '../../api/map/WalkDestinations.js';
 
 export const AXE_BAR_FOR = notImplValue('AXE_BAR_FOR');
 export const AXE_SHOP_COSTS = notImplValue('AXE_SHOP_COSTS');
@@ -65,8 +66,6 @@ export const TOOL_ACQUIRE_OPTIONS = notImplValue('TOOL_ACQUIRE_OPTIONS');
 export const TOOL_ACQUIRE_SETTING = notImplValue('TOOL_ACQUIRE_SETTING');
 export const VARROCK_ANVIL_BANK = notImplValue('VARROCK_ANVIL_BANK');
 export const VARROCK_ANVIL_STAND = notImplValue('VARROCK_ANVIL_STAND');
-export const WALK_DESTINATIONS = notImplValue('WALK_DESTINATIONS');
-export const WALK_OPTIONS = notImplValue('WALK_OPTIONS');
 export function acquireKeepNames() { throw notImpl('acquireKeepNames'); }
 export const apiVersion = 1;
 export function axeShopOffers() { throw notImpl('axeShopOffers'); }
@@ -87,4 +86,3 @@ export function planAxeAcquire() { throw notImpl('planAxeAcquire'); }
 export function planBrokenToolRepair() { throw notImpl('planBrokenToolRepair'); }
 export function planGatherToolAcquire() { throw notImpl('planGatherToolAcquire'); }
 export function planPickaxeAcquire() { throw notImpl('planPickaxeAcquire'); }
-export function resolveDestination() { throw notImpl('resolveDestination'); }

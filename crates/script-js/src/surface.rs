@@ -48,9 +48,7 @@ impl SurfaceCard for JsStartCard {
 
 /// Creates gameplay isolates for JavaScript cards.
 #[derive(Default)]
-pub struct JsSurfaceFactory {
-    gameplay: GameplayFactory,
-}
+pub struct JsSurfaceFactory;
 
 impl JsSurfaceFactory {
     fn spawn_inner(
@@ -65,18 +63,17 @@ impl JsSurfaceFactory {
             .as_any()
             .downcast_ref::<JsStartCard>()
             .ok_or(SurfaceError::ForeignCard(SurfaceKind::Js))?;
-        let isolate = self
-            .gameplay
-            .spawn_with_content_and_state(
-                card.source.to_string(),
-                card.shape,
-                card.siblings.iter().cloned().collect(),
-                start.game_data.clone(),
-                Arc::clone(&start.named_banks),
-                Some(execution),
-                local_state,
-            )
-            .map_err(|error| SurfaceError::Spawn(error.to_string()))?;
+        let isolate = GameplayFactory::spawn_with_content_and_state(
+            card.source.to_string(),
+            card.shape,
+            card.siblings.iter().cloned().collect(),
+            start.game_data.clone(),
+            Arc::clone(&start.named_banks),
+            Arc::clone(&start.wilderness_zones),
+            Some(execution),
+            local_state,
+        )
+        .map_err(|error| SurfaceError::Spawn(error.to_string()))?;
         isolate.post_loadouts(&start.loadouts);
         isolate.post_recovery_hints(recovery_hints);
         if let Some(bag) = start.settings_bag.as_deref() {
@@ -468,16 +465,16 @@ pub(crate) mod tests {
     use std::time::Duration;
 
     fn run(source: &str) -> JsSurfaceRun {
-        let isolate = GameplayFactory
-            .spawn_with_content(
-                source.into(),
-                LoadShape::NativeTick,
-                Vec::new(),
-                None,
-                Arc::default(),
-                None,
-            )
-            .expect("gameplay isolate");
+        let isolate = GameplayFactory::spawn_with_content(
+            source.into(),
+            LoadShape::NativeTick,
+            Vec::new(),
+            None,
+            Arc::default(),
+            Arc::from([]),
+            None,
+        )
+        .expect("gameplay isolate");
         isolate.post_loadouts(&[]);
         isolate.post_recovery_hints(Arc::new(RecoveryHintsCell::new()));
         let run = JsSurfaceRun {

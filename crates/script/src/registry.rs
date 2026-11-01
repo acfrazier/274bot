@@ -480,6 +480,7 @@ mod tests {
                 game_data: None,
                 named_banks: Arc::default(),
                 loadouts: Arc::default(),
+                wilderness_zones: std::sync::Arc::from([]),
             })
             .unwrap();
         factory

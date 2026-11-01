@@ -540,7 +540,7 @@ pub struct CarryRow {
     pub name: Option<Text>,
 }
 
-/// The host's last published walk outcome.
+/// The host's last published walk outcome and current matching route progress.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct WalkOutcome {
     pub seq: u64,
@@ -552,6 +552,11 @@ pub struct WalkOutcome {
     pub allow_teleports: bool,
     /// The settled route end is frozen `'blocked'`.
     pub blocked: bool,
+    /// The host proved that no route exists.
+    pub no_path: bool,
+    /// Request id for the current Traveller progress value, or 0 when idle.
+    pub remaining_request_id: u64,
+    pub remaining: u64,
 }
 
 /// The latest posted live Gatherer page, retained only for request identity.
@@ -1686,6 +1691,9 @@ impl Scene {
                 radius: snap.walk_outcome_radius(),
                 allow_teleports: snap.walk_outcome_allow_teleports(),
                 blocked: snap.walk_outcome_blocked(),
+                no_path: snap.walk_outcome_no_path(),
+                remaining_request_id: snap.walk_remaining_request_id(),
+                remaining: snap.walk_remaining(),
             });
             p.walk_outcome_cancel_reason(snap.walk_outcome_cancel_reason());
         }

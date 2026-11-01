@@ -18,6 +18,7 @@ pub struct HostOutcome {
     pub request_id: u64,
     pub failed: bool,
     pub blocked: bool,
+    pub no_path: bool,
     pub key: WalkKey,
 }
 
@@ -29,6 +30,7 @@ impl HostOutcome {
             request_id: 0,
             failed: false,
             blocked: false,
+            no_path: false,
             key: WalkKey {
                 tile: WorldTile {
                     x: 0,
@@ -59,6 +61,7 @@ struct Wait {
     seq_at_begin: u64,
     matched: Option<bool>,
     blocked: bool,
+    no_path: bool,
 }
 
 #[derive(Default)]
@@ -78,12 +81,41 @@ impl WalkSlot {
     pub fn owns(&self, token: u64) -> bool {
         self.wait.as_ref().is_some_and(|wait| wait.token == token)
     }
+    pub fn current_token(&self) -> Option<u64> {
+        self.wait.as_ref().map(|wait| wait.token)
+    }
+
+    pub fn pending(&self, token: u64) -> bool {
+        self.wait
+            .as_ref()
+            .is_some_and(|wait| wait.token == token && wait.settled.is_none())
+    }
+
+    pub fn no_path(&self, token: u64) -> bool {
+        self.wait
+            .as_ref()
+            .is_some_and(|wait| wait.token == token && wait.no_path)
+    }
+
+    pub fn failed(&self, token: u64) -> bool {
+        self.wait
+            .as_ref()
+            .is_some_and(|wait| wait.token == token && wait.matched == Some(false))
+    }
+
+    pub fn settled(&self, token: u64) -> Option<bool> {
+        self.wait
+            .as_ref()
+            .filter(|wait| wait.token == token)
+            .and_then(|wait| wait.settled)
+    }
 
     pub fn observe_outcome(&mut self, outcome: HostOutcome) {
         if let Some(wait) = self.wait.as_mut() {
             if Self::outcome_matches(outcome, wait) {
                 wait.matched = Some(wait.matched.unwrap_or(true) && !outcome.failed);
                 wait.blocked = wait.matched == Some(true) && outcome.blocked;
+                wait.no_path = outcome.no_path;
             }
         }
     }
@@ -98,6 +130,7 @@ impl WalkSlot {
             seq_at_begin: outcome.seq,
             matched: None,
             blocked: false,
+            no_path: false,
         });
     }
 
@@ -139,8 +172,10 @@ impl WalkSlot {
             if Self::outcome_matches(outcome, wait) {
                 wait.matched = Some(!outcome.failed);
                 wait.blocked = !outcome.failed && outcome.blocked;
+                wait.no_path = outcome.no_path;
             }
         }
+
         if let Some(value) = wait.matched {
             if !value || wait.blocked || observation.moving() == Some(false) {
                 wait.settled = Some(value);
@@ -186,6 +221,7 @@ mod permission_tests {
             request_id: 7,
             failed: false,
             blocked: false,
+            no_path: false,
             key: key(allow_teleports),
         }
     }
@@ -198,6 +234,7 @@ mod permission_tests {
             seq_at_begin: 0,
             matched: None,
             blocked: false,
+            no_path: false,
         }
     }
 
@@ -257,6 +294,7 @@ mod tests {
             request_id: 9,
             failed,
             blocked,
+            no_path: false,
             key: WalkKey {
                 tile: WorldTile {
                     x: 3200,

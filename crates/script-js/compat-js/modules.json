@@ -514,5 +514,21 @@
   {
     "module": "runtime/ScriptActivity.js",
     "shim": "script_activity.js"
+  },
+  {
+    "module": "api/map/WalkDestinations.js",
+    "shim": "walk_destinations.js"
+  },
+  {
+    "module": "api/map/regions.js",
+    "shim": "regions.js"
+  },
+  {
+    "module": "event/webwalk/wilderness.js",
+    "shim": "wilderness.js"
+  },
+  {
+    "module": "event/webwalk/WalkExecutor.js",
+    "shim": "walk_executor.js"
   }
 ]

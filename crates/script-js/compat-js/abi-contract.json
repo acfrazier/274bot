@@ -3930,7 +3930,7 @@
       "name": "WalkOptions",
       "kind": "interface",
       "section": "movement",
-      "source_module": "api/walking/Traversal.js",
+      "source_module": null,
       "runtime": false,
       "signatures": [],
       "members": [
@@ -4042,7 +4042,8 @@
       "bases": [],
       "family_id": "walking",
       "source_modules": [
-        "api/walking/Traversal.js"
+        "api/walking/Traversal.js",
+        "event/webwalk/WalkExecutor.js"
       ],
       "nav_consuming": true
     },
@@ -9242,7 +9243,7 @@
       "name": "WalkDestination",
       "kind": "interface",
       "section": "world catalogs (data tables and pure helpers)",
-      "source_module": null,
+      "source_module": "api/map/WalkDestinations.js",
       "runtime": false,
       "signatures": [],
       "members": [
@@ -9275,40 +9276,46 @@
       ],
       "bases": [],
       "family_id": "walking",
-      "source_modules": [],
+      "source_modules": [
+        "api/map/WalkDestinations.js"
+      ],
       "nav_consuming": true
     },
     {
       "name": "WALK_DESTINATIONS",
       "kind": "value",
       "section": "world catalogs (data tables and pure helpers)",
-      "source_module": null,
+      "source_module": "api/map/WalkDestinations.js",
       "runtime": true,
       "signatures": [],
       "members": [],
       "family_id": "walking",
       "declaration_type": "WalkDestination[]",
-      "source_modules": [],
+      "source_modules": [
+        "api/map/WalkDestinations.js"
+      ],
       "nav_consuming": true
     },
     {
       "name": "WALK_OPTIONS",
       "kind": "value",
       "section": "world catalogs (data tables and pure helpers)",
-      "source_module": null,
+      "source_module": "api/map/WalkDestinations.js",
       "runtime": true,
       "signatures": [],
       "members": [],
       "family_id": "walking",
       "declaration_type": "string[]",
-      "source_modules": [],
+      "source_modules": [
+        "api/map/WalkDestinations.js"
+      ],
       "nav_consuming": true
     },
     {
       "name": "resolveDestination",
       "kind": "function",
       "section": "world catalogs (data tables and pure helpers)",
-      "source_module": null,
+      "source_module": "api/map/WalkDestinations.js",
       "runtime": true,
       "signatures": [
         {
@@ -9319,7 +9326,9 @@
       ],
       "members": [],
       "family_id": "walking",
-      "source_modules": [],
+      "source_modules": [
+        "api/map/WalkDestinations.js"
+      ],
       "nav_consuming": true
     },
     {
@@ -11568,6 +11577,45 @@
       "mapping_kind": "re-export"
     },
     {
+      "public_name": "WALK_DESTINATIONS",
+      "source_name": "WALK_DESTINATIONS",
+      "module": "api/map/WalkDestinations.js",
+      "family_id": "walking",
+      "shim": "walk_destinations.js",
+      "nav_consuming": true,
+      "source_modules": [
+        "api/map/WalkDestinations.js"
+      ],
+      "is_alias": false,
+      "mapping_kind": "re-export"
+    },
+    {
+      "public_name": "WALK_OPTIONS",
+      "source_name": "WALK_OPTIONS",
+      "module": "api/map/WalkDestinations.js",
+      "family_id": "walking",
+      "shim": "walk_destinations.js",
+      "nav_consuming": true,
+      "source_modules": [
+        "api/map/WalkDestinations.js"
+      ],
+      "is_alias": false,
+      "mapping_kind": "re-export"
+    },
+    {
+      "public_name": "resolveDestination",
+      "source_name": "resolveDestination",
+      "module": "api/map/WalkDestinations.js",
+      "family_id": "walking",
+      "shim": "walk_destinations.js",
+      "nav_consuming": true,
+      "source_modules": [
+        "api/map/WalkDestinations.js"
+      ],
+      "is_alias": false,
+      "mapping_kind": "re-export"
+    },
+    {
       "public_name": "AXE_BAR_FOR",
       "source_name": "AXE_BAR_FOR",
       "module": null,
@@ -11761,28 +11809,6 @@
       "mapping_kind": "direct-value"
     },
     {
-      "public_name": "WALK_DESTINATIONS",
-      "source_name": "WALK_DESTINATIONS",
-      "module": null,
-      "shim": null,
-      "source_modules": [],
-      "family_id": "walking",
-      "nav_consuming": true,
-      "is_alias": false,
-      "mapping_kind": "direct-value"
-    },
-    {
-      "public_name": "WALK_OPTIONS",
-      "source_name": "WALK_OPTIONS",
-      "module": null,
-      "shim": null,
-      "source_modules": [],
-      "family_id": "walking",
-      "nav_consuming": true,
-      "is_alias": false,
-      "mapping_kind": "direct-value"
-    },
-    {
       "public_name": "acquireKeepNames",
       "source_name": "acquireKeepNames",
       "module": null,
@@ -11965,17 +11991,6 @@
       "shim": null,
       "source_modules": [],
       "family_id": "acquisition",
-      "nav_consuming": true,
-      "is_alias": false,
-      "mapping_kind": "direct-function"
-    },
-    {
-      "public_name": "resolveDestination",
-      "source_name": "resolveDestination",
-      "module": null,
-      "shim": null,
-      "source_modules": [],
-      "family_id": "walking",
       "nav_consuming": true,
       "is_alias": false,
       "mapping_kind": "direct-function"
@@ -12289,6 +12304,16 @@
       "nav_consuming": false
     },
     {
+      "module": "api/map/regions.js",
+      "family_id": "walking",
+      "nav_consuming": true
+    },
+    {
+      "module": "api/map/WalkDestinations.js",
+      "family_id": "walking",
+      "nav_consuming": true
+    },
+    {
       "module": "api/market/catalog.js",
       "family_id": "market",
       "nav_consuming": false
@@ -12549,7 +12574,17 @@
       "nav_consuming": true
     },
     {
+      "module": "event/webwalk/WalkExecutor.js",
+      "family_id": "walking",
+      "nav_consuming": true
+    },
+    {
       "module": "event/webwalk/walkOpening.js",
+      "family_id": "walking",
+      "nav_consuming": true
+    },
+    {
+      "module": "event/webwalk/wilderness.js",
       "family_id": "walking",
       "nav_consuming": true
     },
@@ -13287,7 +13322,7 @@
         "opts"
       ],
       "reason": "Native walker defaults its options while retaining the frozen typed option fields.",
-      "runtime": "crates/script-js/src/shim/traversal.js:51",
+      "runtime": "crates/script-js/src/shim/traversal.js:52",
       "family_id": "walking",
       "nav_consuming": true
     },
@@ -13319,7 +13354,7 @@
       "module": "event/webwalk/Navigator.js",
       "selector": "$add",
       "reason": "Host additionally exports its Navigator value as default.",
-      "runtime": "crates/script-js/src/shim/navigator.js:54",
+      "runtime": "crates/script-js/src/shim/navigator.js:55",
       "declaration": "export default Navigator;",
       "family_id": "walking",
       "nav_consuming": true
@@ -13501,6 +13536,17 @@
       "nav_consuming": false
     },
     {
+      "id": "reachability-native-probeable",
+      "module": "event/webwalk/geometry/Reachability.js",
+      "selector": "Reachability.probeable",
+      "add": true,
+      "reason": "The compatibility wrapper reads selected collision presence without path search, so blocked same-plane tiles remain probeable while absent planes and scene cells do not.",
+      "runtime": "crates/script-js/src/shim/reachability.js:29",
+      "declaration": "/** Whether selected collision evidence is present for this same-plane scene tile. */\nprobeable(dest: WorldTile): boolean;",
+      "family_id": "walking",
+      "nav_consuming": true
+    },
+    {
       "id": "scene-row-common-posted-shape",
       "module": "adapter/ClientAdapter.js",
       "selector": "$add",
@@ -13660,28 +13706,6 @@
       "runtime": "crates/script-js/src/shim/shop.js:64",
       "async": false,
       "family_id": "shop",
-      "nav_consuming": true
-    },
-    {
-      "id": "not-impl:api/walking/Traversal.js:Traversal.remaining",
-      "module": "api/walking/Traversal.js",
-      "selector": "Traversal.remaining",
-      "operation": "not-impl",
-      "reason": "Unconditional not-impl: no arguments are inspected and no successful result is produced.",
-      "runtime": "crates/script-js/src/shim/traversal.js:93",
-      "async": false,
-      "family_id": "walking",
-      "nav_consuming": true
-    },
-    {
-      "id": "not-impl:api/walking/Traversal.js:Traversal.requestRepath",
-      "module": "api/walking/Traversal.js",
-      "selector": "Traversal.requestRepath",
-      "operation": "not-impl",
-      "reason": "Unconditional not-impl: no arguments are inspected and no successful result is produced.",
-      "runtime": "crates/script-js/src/shim/traversal.js:99",
-      "async": false,
-      "family_id": "walking",
       "nav_consuming": true
     },
     {
@@ -23116,26 +23140,6 @@
       "overlay_id": "not-impl:api/shop/Shop.js:Shop.buyById"
     },
     {
-      "family_id": "walking",
-      "member": "remaining",
-      "selector": "Traversal.remaining",
-      "module": "api/walking/Traversal.js",
-      "state": "not-impl",
-      "source": "crates/script-js/src/shim/traversal.js:93",
-      "reason": "Unconditional not-impl: no arguments are inspected and no successful result is produced.",
-      "overlay_id": "not-impl:api/walking/Traversal.js:Traversal.remaining"
-    },
-    {
-      "family_id": "walking",
-      "member": "requestRepath",
-      "selector": "Traversal.requestRepath",
-      "module": "api/walking/Traversal.js",
-      "state": "not-impl",
-      "source": "crates/script-js/src/shim/traversal.js:99",
-      "reason": "Unconditional not-impl: no arguments are inspected and no successful result is produced.",
-      "overlay_id": "not-impl:api/walking/Traversal.js:Traversal.requestRepath"
-    },
-    {
       "family_id": "quests",
       "member": "gotoNpc",
       "selector": "gotoNpc",
@@ -23932,24 +23936,6 @@
       "reason": "The current compatibility name map unconditionally refuses this declared member."
     },
     {
-      "family_id": "walking",
-      "member": "WALK_DESTINATIONS",
-      "selector": "WALK_DESTINATIONS",
-      "module": null,
-      "state": "not-impl",
-      "source": "declared_surface.js",
-      "reason": "The current compatibility name map unconditionally refuses this declared member."
-    },
-    {
-      "family_id": "walking",
-      "member": "WALK_OPTIONS",
-      "selector": "WALK_OPTIONS",
-      "module": null,
-      "state": "not-impl",
-      "source": "declared_surface.js",
-      "reason": "The current compatibility name map unconditionally refuses this declared member."
-    },
-    {
       "family_id": "acquisition",
       "member": "acquireKeepNames",
       "selector": "acquireKeepNames",
@@ -24079,15 +24065,6 @@
       "family_id": "acquisition",
       "member": "planPickaxeAcquire",
       "selector": "planPickaxeAcquire",
-      "module": null,
-      "state": "not-impl",
-      "source": "declared_surface.js",
-      "reason": "The current compatibility name map unconditionally refuses this declared member."
-    },
-    {
-      "family_id": "walking",
-      "member": "resolveDestination",
-      "selector": "resolveDestination",
       "module": null,
       "state": "not-impl",
       "source": "declared_surface.js",
@@ -24573,7 +24550,7 @@
       "type_aliases": 0,
       "name_aliases": 0,
       "callbacks": 15,
-      "not_impl_debt": 5
+      "not_impl_debt": 0
     },
     {
       "family_id": "woodcutting",
