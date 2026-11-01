@@ -865,8 +865,9 @@ impl RecorderDiagnostics {
             .fetch_add(1, Ordering::SeqCst)
             .saturating_add(1);
         let receive_after = self.receive_sequence.load(Ordering::SeqCst);
-        let receive_sequence = (receive_before == receive_after && receive_before.is_multiple_of(2))
-            .then_some(receive_before);
+        let receive_sequence = (receive_before == receive_after
+            && receive_before.is_multiple_of(2))
+        .then_some(receive_before);
         QueueSendTicket {
             stamp,
             receive_sequence,
@@ -891,7 +892,9 @@ impl RecorderDiagnostics {
                 let receive_after = self.receive_sequence.load(Ordering::SeqCst);
                 ticket
                     .receive_sequence
-                    .filter(|sequence| *sequence == receive_after && receive_after.is_multiple_of(2))
+                    .filter(|sequence| {
+                        *sequence == receive_after && receive_after.is_multiple_of(2)
+                    })
                     .and(ticket.queue_occupancy)
             }
             QueueSendStatus::Full => Some(self.queue_capacity),
@@ -982,7 +985,7 @@ impl RecorderDiagnostics {
             && receive_before == receive_after
             && send_after.is_multiple_of(2)
             && receive_after.is_multiple_of(2))
-            .then_some(queue_occupancy)
+        .then_some(queue_occupancy)
     }
 
     fn begin_finalization_request(&self) -> RecorderEventStamp {
