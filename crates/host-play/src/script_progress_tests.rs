@@ -732,7 +732,11 @@ fn compat_journal_read_to_read_hand_off_takes_a_fresh_hold() {
         generation: 3,
         deadline: start + bound,
     }));
-    assert_eq!(sample(&mut slot, start, 1), (None, true), "the first read holds");
+    assert_eq!(
+        sample(&mut slot, start, 1),
+        (None, true),
+        "the first read holds"
+    );
     // The first read is still reported after its own bound (a stuck read):
     // the host ends that hold as a logged failure.
     let late = start + bound;

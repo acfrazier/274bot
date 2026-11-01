@@ -888,7 +888,8 @@ fn compat_journal_twice_cell() {
     let mut logs = Vec::new();
     wait_for(&play, &account, &fixture, Duration::from_secs(60), |play| {
         take_logs(play, &account, &mut logs);
-        logs.iter().any(|line| line.starts_with("compat journal 2: "))
+        logs.iter()
+            .any(|line| line.starts_with("compat journal 2: "))
             || logs
                 .iter()
                 .any(|line| line.contains(" begin: ") && line.contains("\"ok\":false"))

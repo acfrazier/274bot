@@ -46,7 +46,10 @@ impl ActionContext<'_> {
     /// The owner armed a new window for its quiet read.
     pub fn renew_quiet_read(&mut self, lease: &QuietReadLease, deadline: WaitDeadline) {
         if let Some(ledger) = self.ledger.as_mut() {
-            if ledger.quiet_since.is_some_and(|(_, id, _)| id == lease.lease_id) {
+            if ledger
+                .quiet_since
+                .is_some_and(|(_, id, _)| id == lease.lease_id)
+            {
                 ledger.quiet_deadline = Some((lease.lease_id, deadline));
             }
         }
