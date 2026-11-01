@@ -8954,7 +8954,7 @@ fn chooser_row_load_still_focuses_the_member() {
 }
 
 #[test]
-#[ignore = "LIVE=1 Engine A: 5-bot Load all while one is focused"]
+#[ignore = "LIVE=1 and a local 289 engine at WORLD_GAME_PORT/WORLD_HTTP_PORT (Engine A 44594/1080 by default): 5-bot Load all while one is focused"]
 fn live_load_all_keeps_focus_on_engine_a() {
     assert_eq!(std::env::var("LIVE").as_deref(), Ok("1"));
     assert_eq!(std::env::var("BOT_CPU").as_deref(), Ok("1"));
@@ -8985,8 +8985,8 @@ fn live_load_all_keeps_focus_on_engine_a() {
         revision: Some("289".into()),
         host: Some("127.0.0.1".into()),
         asset_host: Some("127.0.0.1".into()),
-        port: Some(44594),
-        http_port: Some(1080),
+        port: Some(host_play::live_ports::game_port()),
+        http_port: Some(host_play::live_ports::http_port()),
         engine_dir: Some(engine),
         nav_pack: Some(nav_pack.clone()),
         nav_flags: Some(nav_pack.with_extension("navflags")),

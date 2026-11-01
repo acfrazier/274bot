@@ -1781,8 +1781,8 @@ fn run_live_w1(mode: W1Mode, food: Option<bool>) {
     );
     let mut options = profile_options(&home_path).expect("W1 live prerequisites");
     if food.is_some() {
-        options.port = Some(44_594);
-        options.http_port = Some(1_080);
+        options.port = Some(crate::live_ports::game_port());
+        options.http_port = Some(crate::live_ports::http_port());
     }
     let template = options
         .resolve(None)

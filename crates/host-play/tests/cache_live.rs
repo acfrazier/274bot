@@ -97,8 +97,14 @@ fn cache_live() {
         revision: Some(revision.to_string()),
         host: Some("127.0.0.1".into()),
         asset_host: Some("127.0.0.1".into()),
-        port: Some(if revision == 289 { 44594 } else { 43594 }),
-        http_port: Some(if revision == 289 { 1080 } else { 80 }),
+        port: Some(host_play::live_ports::env_port(
+            "WORLD_GAME_PORT",
+            if revision == 289 { 44594 } else { 43594 },
+        )),
+        http_port: Some(host_play::live_ports::env_port(
+            "WORLD_HTTP_PORT",
+            if revision == 289 { 1080 } else { 80 },
+        )),
         cache_dir: Some(cache.clone()),
         unpack_dir: Some(unpack.clone()),
         engine_dir: std::env::var_os("BOT_CACHE_LIVE_ENGINE_DIR").map(PathBuf::from),

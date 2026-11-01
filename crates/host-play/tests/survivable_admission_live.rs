@@ -255,8 +255,8 @@ fn selected_template() -> (Arc<host_play::ServerProfile>, Arc<SharedClientTempla
         revision: Some("289".into()),
         host: Some("127.0.0.1".into()),
         asset_host: Some("127.0.0.1".into()),
-        port: Some(44594),
-        http_port: Some(1080),
+        port: Some(host_play::live_ports::game_port()),
+        http_port: Some(host_play::live_ports::http_port()),
         engine_dir: Some(PathBuf::from(
             std::env::var_os("WORLD_ENGINE_DIR").expect("engine path"),
         )),
@@ -279,7 +279,7 @@ fn selected_template() -> (Arc<host_play::ServerProfile>, Arc<SharedClientTempla
 }
 
 #[test]
-#[ignore = "requires LIVE=1, BOT_CPU=1, BOT_LIVE_NAME_PREFIX, WORLD_ENGINE_DIR, BOT_CACHE_DIR (per-run clone), BOT_UNPACK_DIR, LIVE_EVIDENCE_DIR; Engine A 44594/1080"]
+#[ignore = "requires LIVE=1, BOT_CPU=1, BOT_LIVE_NAME_PREFIX, WORLD_ENGINE_DIR, BOT_CACHE_DIR (per-run clone), BOT_UNPACK_DIR, LIVE_EVIDENCE_DIR; a local 289 engine at WORLD_GAME_PORT/WORLD_HTTP_PORT (Engine A 44594/1080 by default)"]
 fn real_unknown_poison_explicit_forbid_then_opt_in_and_default_escape() {
     assert_eq!(std::env::var("LIVE").as_deref(), Ok("1"));
     assert_eq!(std::env::var("BOT_CPU").as_deref(), Ok("1"));
@@ -454,7 +454,7 @@ fn real_unknown_poison_explicit_forbid_then_opt_in_and_default_escape() {
     assert_eq!(snapshot.tile(), Some((origin.x, origin.z, origin.level)));
     assert_eq!(detail, assessment.reason.as_ref());
     let mut receipt = json!({"cell": "S2b-real-admission", "account": name,
-        "engine": "127.0.0.1:44594", "nav": identity.nav_sha256,
+        "engine": format!("127.0.0.1:{}", host_play::live_ports::game_port()), "nav": identity.nav_sha256,
         "origin": [origin.x, origin.z, origin.level], "destination": [destination.x, destination.z, destination.level],
         "refused": {"verdict": format!("{:?}", assessment.verdict), "reason": detail,
             "route_armed": false, "crossings": assessment.plan.intervals.len(), "hp": input.hp,
@@ -873,7 +873,7 @@ export default class S2bCompat extends LoopingBot {{
 
 #[cfg(feature = "js")]
 #[test]
-#[ignore = "requires LIVE=1, BOT_CPU=1, BOT_LIVE_NAME_PREFIX, WORLD_ENGINE_DIR, per-run BOT_CACHE_DIR/BOT_UNPACK_DIR and LIVE_EVIDENCE_DIR; Engine A 44594/1080"]
+#[ignore = "requires LIVE=1, BOT_CPU=1, BOT_LIVE_NAME_PREFIX, WORLD_ENGINE_DIR, per-run BOT_CACHE_DIR/BOT_UNPACK_DIR and LIVE_EVIDENCE_DIR; a local 289 engine at WORLD_GAME_PORT/WORLD_HTTP_PORT (Engine A 44594/1080 by default)"]
 fn real_compat_v1_crossing_and_own_sustain_at_45_and_14_hp() {
     assert_eq!(std::env::var("LIVE").as_deref(), Ok("1"));
     assert_eq!(std::env::var("BOT_CPU").as_deref(), Ok("1"));
@@ -1063,7 +1063,7 @@ fn real_compat_v1_crossing_and_own_sustain_at_45_and_14_hp() {
                 "compat must not run an escape: {logs:?}"
             );
             json!({"request": "SURVIVABLE-NAV-S2B", "account": name,
-                "engine": "127.0.0.1:44594", "nav": profile.nav_identity().expect("nav identity").nav_sha256,
+                "engine": format!("127.0.0.1:{}", host_play::live_ports::game_port()), "nav": profile.nav_identity().expect("nav identity").nav_sha256,
                 "baseline": state.baseline, "assessment": seen_risk.expect("real assessment"),
                 "terminal": terminal, "observed_frames": state.frames, "hostlog": logs,
                 "final_hp": input.hp, "final_food": food, "final_tile": state.snapshot.tile()})
