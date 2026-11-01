@@ -87,6 +87,12 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.7` 
 
 ### Scripting
 
+- The script loader evaluates gated compatibility shims only when the bot,
+  a sibling script, or another always-loaded shim imports them. If it cannot
+  resolve an import, it keeps every gated shim. The public `@rs2b0t/api`
+  barrels are gated too, so their `WalkDestinations` catalog is built only
+  for scripts that import the public API or the catalog directly.
+
 - `Bank.items()` and `reader.bankItems()` now reuse frozen snapshots for a
   bank session and item generation. Their arrays, rows, and nested `ops`
   lists are read-only; `Bank.ready()` still returns a boolean.

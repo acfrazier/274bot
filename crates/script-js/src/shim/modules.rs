@@ -1,13 +1,7 @@
-use std::{
-    borrow::Cow,
-    collections::{HashMap, HashSet, VecDeque},
-    path::Path,
-    sync::LazyLock,
-};
+use std::{borrow::Cow, collections::VecDeque, path::Path, sync::LazyLock};
 
-use deno_ast::swc::ast::{CallExpr, Callee, Expr, Lit};
-use deno_ast::swc::ecma_visit::{Visit, VisitWith};
-use deno_ast::{MediaType, ParseParams, ProgramRef};
+use deno_ast::swc::parser::token::{BinOpToken, IdentLike, Keyword, Token, Word};
+use deno_ast::{LexedItem, MediaType, TokenOrComment};
 use rustyscript::Module;
 
 /// Canonical path of the user's bot module. Fixed for every card so
@@ -531,12 +525,15 @@ globalThis.document = {
 /// the only cross-root projections are `src/client/config/worlds.ts` and
 /// `src/client/shell/Skill.ts`, which AccountLeveler imports. No other client
 /// modules are served.
+const DECLARED_SURFACE_MODULE: &str = "/rs2b0t/bot/scripts/bot/declared_surface.js";
+const RS2B0T_API_MODULE: &str = "/rs2b0t/bot/scripts/bot/rs2b0t-api.js";
 const WALK_DESTINATIONS_MODULE: &str = "/rs2b0t/bot/api/map/WalkDestinations.js";
 const REGIONS_MODULE: &str = "/rs2b0t/bot/api/map/regions.js";
 const WILDERNESS_MODULE: &str = "/rs2b0t/bot/event/webwalk/wilderness.js";
 const WALK_EXECUTOR_MODULE: &str = "/rs2b0t/bot/event/webwalk/WalkExecutor.js";
 const STOCK_MODEL_MODULE: &str = "/rs2b0t/bot/api/shop/StockModel.js";
 const SHOP_PRICE_MODULE: &str = "/rs2b0t/bot/api/shop/shopPrice.js";
+#[cfg(test)]
 const WAVE_THREE_MODULE_PATHS: [&str; 6] = [
     WALK_DESTINATIONS_MODULE,
     REGIONS_MODULE,
@@ -545,7 +542,16 @@ const WAVE_THREE_MODULE_PATHS: [&str; 6] = [
     STOCK_MODEL_MODULE,
     SHOP_PRICE_MODULE,
 ];
-const GATED_MODULE_PATHS: &[&str] = &WAVE_THREE_MODULE_PATHS;
+const GATED_MODULE_PATHS: [&str; 8] = [
+    DECLARED_SURFACE_MODULE,
+    RS2B0T_API_MODULE,
+    WALK_DESTINATIONS_MODULE,
+    REGIONS_MODULE,
+    WILDERNESS_MODULE,
+    WALK_EXECUTOR_MODULE,
+    STOCK_MODEL_MODULE,
+    SHOP_PRICE_MODULE,
+];
 
 pub fn shim_modules() -> Vec<Module> {
     vec![
@@ -1007,13 +1013,10 @@ pub fn shim_modules() -> Vec<Module> {
             include_str!("walk_destinations.js"),
         ),
         Module::new(
-            "/rs2b0t/bot/scripts/bot/declared_surface.js",
+            DECLARED_SURFACE_MODULE,
             include_str!("declared_surface.js"),
         ),
-        Module::new(
-            "/rs2b0t/bot/scripts/bot/rs2b0t-api.js",
-            include_str!("rs2b0t_api.js"),
-        ),
+        Module::new(RS2B0T_API_MODULE, include_str!("rs2b0t_api.js")),
         Module::new(REGIONS_MODULE, include_str!("regions.js")),
         Module::new(WILDERNESS_MODULE, include_str!("wilderness.js")),
         Module::new(WALK_EXECUTOR_MODULE, include_str!("walk_executor.js")),
@@ -1024,15 +1027,15 @@ pub fn shim_modules() -> Vec<Module> {
 
 #[derive(Default)]
 struct ModuleEdges {
-    imports: Vec<String>,
-    dynamic_imports: Vec<String>,
+    imports: Vec<usize>,
+    dynamic_imports: Vec<usize>,
     has_unknown_dependency: bool,
 }
 
 #[derive(Default)]
 struct ShimImportGraph {
-    edges: HashMap<String, ModuleEdges>,
-    gated_urls: HashSet<String>,
+    edges: Vec<ModuleEdges>,
+    paths: Vec<std::path::PathBuf>,
     base_dir: Option<std::path::PathBuf>,
     complete: bool,
 }
@@ -1046,29 +1049,34 @@ fn build_shim_import_graph() -> ShimImportGraph {
     let Ok(current_dir) = std::env::current_dir() else {
         return ShimImportGraph::default();
     };
+    let modules = shim_modules();
     let mut graph = ShimImportGraph {
+        paths: modules
+            .iter()
+            .map(|module| module.filename().to_path_buf())
+            .collect(),
         base_dir: Some(current_dir.clone()),
         complete: true,
         ..ShimImportGraph::default()
     };
-    for module in shim_modules() {
+    for module in &modules {
         let Some(url) = module_specifier(module.filename(), &current_dir) else {
             graph.complete = false;
             continue;
         };
-        if GATED_MODULE_PATHS
-            .iter()
-            .any(|path| Path::new(path) == module.filename())
-        {
-            graph.gated_urls.insert(url.to_string());
-        }
-        let Some(edges) = module_edges(module.contents(), &url) else {
+        let Some(edges) = module_edges(module.contents(), &url, &modules) else {
             graph.complete = false;
             continue;
         };
-        graph.edges.insert(url.to_string(), edges);
+        graph.edges.push(edges);
     }
     graph
+}
+
+fn is_gated_module(path: &Path) -> bool {
+    GATED_MODULE_PATHS
+        .iter()
+        .any(|gated| Path::new(gated) == path)
 }
 
 fn module_specifier(path: &Path, current_dir: &Path) -> Option<deno_ast::ModuleSpecifier> {
@@ -1076,89 +1084,256 @@ fn module_specifier(path: &Path, current_dir: &Path) -> Option<deno_ast::ModuleS
     rustyscript::deno_core::url::Url::from_file_path(path.as_ref()).ok()
 }
 
-fn module_edges(source: &str, referrer: &deno_ast::ModuleSpecifier) -> Option<ModuleEdges> {
-    let mut edges = ModuleEdges::default();
-    for import in crate::module_imports::module_imports(source) {
-        if !import.is_runtime() {
-            continue;
-        }
-        match rustyscript::deno_core::resolve_import(&import.into_specifier(), referrer.as_str()) {
-            Ok(url) => edges.imports.push(url.to_string()),
-            Err(_) => edges.has_unknown_dependency = true,
-        }
+// Tokenize only the module-specifier syntax. An unknown import keeps all
+// gated modules, so this small scanner never needs to guess about reachability.
+fn module_edges(
+    source: &str,
+    referrer: &deno_ast::ModuleSpecifier,
+    modules: &[Module],
+) -> Option<ModuleEdges> {
+    let mut tokens = deno_ast::lex(source, MediaType::TypeScript);
+    if tokens.iter().any(|item| {
+        matches!(
+            &item.inner,
+            TokenOrComment::Token(Token::Error(_))
+        )
+    }) {
+        return None;
     }
-    for specifier in dynamic_import_specifiers(source)? {
-        let Some(specifier) = specifier else {
-            edges.has_unknown_dependency = true;
-            continue;
-        };
-        match rustyscript::deno_core::resolve_import(&specifier, referrer.as_str()) {
-            Ok(url) => edges.dynamic_imports.push(url.to_string()),
-            Err(_) => edges.has_unknown_dependency = true,
+    tokens.retain(|item| matches!(&item.inner, TokenOrComment::Token(_)));
+
+    let mut edges = ModuleEdges::default();
+    for index in 0..tokens.len() {
+        let token = token_at(&tokens, index)?;
+        if is_keyword(token, Keyword::Import) && !is_property_access(&tokens, index) {
+            let next = index + 1;
+            match token_at(&tokens, next) {
+                Some(Token::Dot) => continue,
+                Some(Token::LParen) => {
+                    if let Some(specifier) = dynamic_import_specifier(&tokens, next + 1) {
+                        add_import_edge(
+                            &mut edges.dynamic_imports,
+                            &mut edges.has_unknown_dependency,
+                            specifier,
+                            referrer,
+                            modules,
+                        );
+                    } else {
+                        edges.has_unknown_dependency = true;
+                    }
+                }
+                Some(Token::Str { value, .. }) => add_import_edge(
+                    &mut edges.imports,
+                    &mut edges.has_unknown_dependency,
+                    value.as_ref(),
+                    referrer,
+                    modules,
+                ),
+                _ if is_type_only_import(&tokens, index) => {}
+                _ => match from_specifier(&tokens, next) {
+                    Ok(Some(specifier)) => add_import_edge(
+                        &mut edges.imports,
+                        &mut edges.has_unknown_dependency,
+                        specifier,
+                        referrer,
+                        modules,
+                    ),
+                    Ok(None) | Err(()) => edges.has_unknown_dependency = true,
+                },
+            }
+        } else if is_keyword(token, Keyword::Export)
+            && !is_type_only_export(&tokens, index)
+            && (matches!(token_at(&tokens, index + 1), Some(Token::LBrace))
+                || is_multiplication_token(token_at(&tokens, index + 1))
+                || (is_word(token_at(&tokens, index + 1), "type")
+                    && (matches!(token_at(&tokens, index + 2), Some(Token::LBrace))
+                        || is_multiplication_token(token_at(&tokens, index + 2)))))
+        {
+            let from_start = if is_word(token_at(&tokens, index + 1), "type") {
+                index + 2
+            } else {
+                index + 1
+            };
+            match from_specifier(&tokens, from_start) {
+                Ok(Some(specifier)) => add_import_edge(
+                    &mut edges.imports,
+                    &mut edges.has_unknown_dependency,
+                    specifier,
+                    referrer,
+                    modules,
+                ),
+                Ok(None) => {}
+                Err(()) => edges.has_unknown_dependency = true,
+            }
         }
     }
     Some(edges)
 }
 
-fn dynamic_import_specifiers(source: &str) -> Option<Vec<Option<String>>> {
-    let specifier = deno_ast::ModuleSpecifier::parse("file:///module.ts").ok()?;
-    let parsed = deno_ast::parse_module(ParseParams {
-        specifier,
-        text: source.into(),
-        media_type: MediaType::TypeScript,
-        capture_tokens: false,
-        scope_analysis: false,
-        maybe_syntax: None,
-    })
-    .ok()?;
-    let mut visitor = DynamicImportVisitor::default();
-    match parsed.program_ref() {
-        ProgramRef::Module(module) => module.visit_with(&mut visitor),
-        ProgramRef::Script(script) => script.visit_with(&mut visitor),
+fn token_at(tokens: &[LexedItem], index: usize) -> Option<&Token> {
+    match &tokens.get(index)?.inner {
+        TokenOrComment::Token(token) => Some(token),
+        TokenOrComment::Comment { .. } => None,
     }
-    Some(visitor.specifiers)
 }
 
-#[derive(Default)]
-struct DynamicImportVisitor {
-    specifiers: Vec<Option<String>>,
+fn is_keyword(token: &Token, keyword: Keyword) -> bool {
+    matches!(token, Token::Word(Word::Keyword(found)) if *found == keyword)
 }
 
-impl Visit for DynamicImportVisitor {
-    fn visit_call_expr(&mut self, call: &CallExpr) {
-        if matches!(&call.callee, Callee::Import(_)) {
-            self.specifiers.push(
-                call.args
-                    .first()
-                    .filter(|argument| argument.spread.is_none())
-                    .and_then(|argument| match &*argument.expr {
-                        Expr::Lit(Lit::Str(specifier)) => Some(specifier.value.to_string()),
-                        Expr::Tpl(template) if template.exprs.is_empty() => template
-                            .quasis
-                            .first()
-                            .and_then(|part| part.cooked.as_ref())
-                            .map(ToString::to_string),
-                        _ => None,
-                    }),
-            );
+fn is_word(token: Option<&Token>, expected: &str) -> bool {
+    matches!(
+        token,
+        Some(Token::Word(Word::Ident(IdentLike::Known(found))))
+            if <&str>::from(*found) == expected
+    ) || matches!(
+        token,
+        Some(Token::Word(Word::Ident(IdentLike::Other(found))))
+            if found.as_ref() == expected
+    )
+}
+
+fn is_multiplication_token(token: Option<&Token>) -> bool {
+    matches!(token, Some(Token::BinOp(BinOpToken::Mul)))
+}
+
+fn is_property_access(tokens: &[LexedItem], index: usize) -> bool {
+    matches!(token_at(tokens, index.saturating_sub(1)), Some(Token::Dot))
+}
+
+fn is_type_only_import(tokens: &[LexedItem], index: usize) -> bool {
+    if is_word(token_at(tokens, index + 1), "type") {
+        return matches!(token_at(tokens, index + 2), Some(Token::LBrace))
+            || (matches!(
+                token_at(tokens, index + 2),
+                Some(Token::Word(Word::Ident(_)))
+            ) && !is_word(token_at(tokens, index + 2), "from"));
+    }
+    matches!(token_at(tokens, index + 1), Some(Token::LBrace))
+        && all_named_specifiers_type_only(tokens, index + 1)
+}
+
+fn is_type_only_export(tokens: &[LexedItem], index: usize) -> bool {
+    if is_word(token_at(tokens, index + 1), "type") {
+        return matches!(token_at(tokens, index + 2), Some(Token::LBrace))
+            || is_multiplication_token(token_at(tokens, index + 2));
+    }
+    matches!(token_at(tokens, index + 1), Some(Token::LBrace))
+        && all_named_specifiers_type_only(tokens, index + 1)
+}
+
+fn all_named_specifiers_type_only(tokens: &[LexedItem], open_brace: usize) -> bool {
+    let first_item = open_brace + 1;
+    let mut item_start = first_item;
+    let mut saw_type = false;
+    for index in first_item..tokens.len() {
+        match token_at(tokens, index) {
+            Some(Token::Comma) => {
+                if !named_specifier_is_type_only(tokens, item_start) {
+                    return false;
+                }
+                saw_type = true;
+                item_start = index + 1;
+            }
+            Some(Token::RBrace) => {
+                return if item_start == index {
+                    saw_type
+                } else {
+                    named_specifier_is_type_only(tokens, item_start)
+                };
+            }
+            _ => {}
         }
-        call.visit_children_with(self);
+    }
+    false
+}
+
+fn named_specifier_is_type_only(tokens: &[LexedItem], start: usize) -> bool {
+    is_word(token_at(tokens, start), "type")
+        && matches!(
+            token_at(tokens, start + 1),
+            Some(Token::Word(Word::Ident(_)))
+        )
+        && !is_word(token_at(tokens, start + 1), "as")
+}
+
+fn dynamic_import_specifier(tokens: &[LexedItem], index: usize) -> Option<&str> {
+    match token_at(tokens, index)? {
+        Token::Str { value, .. } => Some(value.as_ref()),
+        Token::BackQuote => match (token_at(tokens, index + 1)?, token_at(tokens, index + 2)?) {
+            (Token::Template { cooked: Ok(value), .. }, Token::BackQuote) => Some(value.as_ref()),
+            _ => None,
+        },
+        _ => None,
     }
 }
 
-fn enqueue_imports(
-    edges: &ModuleEdges,
-    module_urls: &HashMap<String, usize>,
-    pending: &mut VecDeque<String>,
-) -> bool {
+fn from_specifier(tokens: &[LexedItem], start: usize) -> Result<Option<&str>, ()> {
+    let mut brace_depth = 0usize;
+    let mut bracket_depth = 0usize;
+    let mut paren_depth = 0usize;
+    for index in start..tokens.len() {
+        let token = token_at(tokens, index).ok_or(())?;
+        match token {
+            Token::LBrace => brace_depth += 1,
+            Token::RBrace if brace_depth > 0 => brace_depth -= 1,
+            Token::LBracket => bracket_depth += 1,
+            Token::RBracket if bracket_depth > 0 => bracket_depth -= 1,
+            Token::LParen => paren_depth += 1,
+            Token::RParen if paren_depth > 0 => paren_depth -= 1,
+            Token::Semi if brace_depth == 0 && bracket_depth == 0 && paren_depth == 0 => {
+                return Ok(None);
+            }
+            Token::Word(Word::Keyword(Keyword::Import | Keyword::Export))
+                if brace_depth == 0 && bracket_depth == 0 && paren_depth == 0 =>
+            {
+                return Ok(None);
+            }
+            _ if brace_depth == 0
+                && bracket_depth == 0
+                && paren_depth == 0
+                && is_word(Some(token), "from") =>
+            {
+                return match token_at(tokens, index + 1) {
+                    Some(Token::Str { value, .. }) => Ok(Some(value.as_ref())),
+                    _ => Err(()),
+                };
+            }
+            _ => {}
+        }
+    }
+    Ok(None)
+}
+
+fn add_import_edge(
+    output: &mut Vec<usize>,
+    has_unknown_dependency: &mut bool,
+    specifier: &str,
+    referrer: &deno_ast::ModuleSpecifier,
+    modules: &[Module],
+) {
+    match rustyscript::deno_core::resolve_import(specifier, referrer.as_str()) {
+        Ok(url) => {
+            if let Ok(path) = url.to_file_path() {
+                if let Some(index) = modules
+                    .iter()
+                    .position(|module| module.filename() == path.as_path())
+                {
+                    output.push(index);
+                } else {
+                    *has_unknown_dependency = true;
+                }
+            }
+        }
+        Err(_) => *has_unknown_dependency = true,
+    }
+}
+
+fn enqueue_imports(edges: &ModuleEdges, pending: &mut VecDeque<usize>) -> bool {
     if edges.has_unknown_dependency {
         return false;
     }
-    for url in edges.imports.iter().chain(&edges.dynamic_imports) {
-        if module_urls.contains_key(url) {
-            pending.push_back(url.clone());
-        }
-    }
+    pending.extend(edges.imports.iter().chain(&edges.dynamic_imports).copied());
     true
 }
 
@@ -1169,87 +1344,89 @@ pub(crate) fn filter_gated_modules<'a>(
     roots: impl IntoIterator<Item = &'a str>,
 ) {
     let graph = shim_import_graph();
-    if !graph.complete {
+    if !graph.complete || graph.paths.len() > modules.len() {
         return;
     }
     let Ok(current_dir) = std::env::current_dir() else {
         return;
     };
-    if graph.base_dir.as_deref() != Some(current_dir.as_path()) {
+    if graph.base_dir.as_deref() != Some(current_dir.as_path())
+        || graph
+            .paths
+            .iter()
+            .zip(modules.iter())
+            .any(|(path, module)| module.filename() != path.as_path())
+    {
         return;
     }
-    let mut module_urls = HashMap::with_capacity(modules.len());
-    for (index, module) in modules.iter().enumerate() {
-        let Some(url) = module_specifier(module.filename(), &current_dir) else {
-            return;
-        };
-        module_urls.entry(url.to_string()).or_insert(index);
-    }
 
+    let gated = modules
+        .iter()
+        .map(|module| is_gated_module(module.filename()))
+        .collect::<Vec<_>>();
     let mut pending = VecDeque::with_capacity(modules.len());
     for root in roots {
-        let Some(url) = module_specifier(Path::new(root), &current_dir) else {
+        let Some(index) = modules
+            .iter()
+            .position(|module| module.filename() == Path::new(root))
+        else {
             return;
         };
-        let url = url.to_string();
-        if !module_urls.contains_key(&url) {
-            return;
-        }
-        pending.push_back(url);
+        pending.push_back(index);
     }
-
     // load_modules evaluates every supplied side module. Include all modules
     // that remain eager as roots, as well as the script and its siblings.
-    for module in modules.iter().filter(|module| {
-        !GATED_MODULE_PATHS
+    pending.extend(
+        gated
             .iter()
-            .any(|path| Path::new(path) == module.filename())
-    }) {
-        let Some(url) = module_specifier(module.filename(), &current_dir) else {
-            return;
-        };
-        pending.push_back(url.to_string());
-    }
-    let mut visited = HashSet::with_capacity(modules.len());
-    let mut needed = HashSet::with_capacity(GATED_MODULE_PATHS.len());
-    while let Some(url) = pending.pop_front() {
-        if !visited.insert(url.clone()) {
+            .enumerate()
+            .filter_map(|(index, &is_gated)| (!is_gated).then_some(index)),
+    );
+
+    let mut visited = vec![false; modules.len()];
+    let mut needed = vec![false; modules.len()];
+    while let Some(index) = pending.pop_front() {
+        if visited[index] {
             continue;
         }
-        if graph.gated_urls.contains(&url) {
-            needed.insert(url.clone());
+        visited[index] = true;
+        if gated[index] {
+            needed[index] = true;
         }
-        let Some(index) = module_urls.get(&url).copied() else {
-            continue;
-        };
-        if let Some(edges) = graph.edges.get(&url) {
-            if !enqueue_imports(edges, &module_urls, &mut pending) {
-                return;
-            }
+        let edges = if let Some(edges) = graph.edges.get(index) {
+            edges
         } else {
             let module = &modules[index];
             let Some(referrer) = module_specifier(module.filename(), &current_dir) else {
                 return;
             };
-            let Some(edges) = module_edges(module.contents(), &referrer) else {
+            let Some(edges) = module_edges(module.contents(), &referrer, modules) else {
                 return;
             };
-            if !enqueue_imports(&edges, &module_urls, &mut pending) {
+            if !enqueue_imports(&edges, &mut pending) {
                 return;
             }
+            continue;
+        };
+        if !enqueue_imports(edges, &mut pending) {
+            return;
         }
     }
 
-    modules.retain(|module| {
-        if !GATED_MODULE_PATHS
-            .iter()
-            .any(|path| Path::new(path) == module.filename())
-        {
-            return true;
-        }
-        module_specifier(module.filename(), &current_dir)
-            .is_some_and(|url| needed.contains(url.as_str()))
+    let mut index = 0;
+    modules.retain(|_| {
+        let current_index = index;
+        index += 1;
+        !gated[current_index] || needed[current_index]
     });
+}
+#[cfg(feature = "test-hooks")]
+#[doc(hidden)]
+pub fn filter_gated_modules_for_test<'a>(
+    modules: &mut Vec<Module>,
+    roots: impl IntoIterator<Item = &'a str>,
+) {
+    filter_gated_modules(modules, roots);
 }
 
 /// Rewrite bare `@rs2b0t/api` import specifiers (quoted) to
@@ -1308,11 +1485,11 @@ pub fn remap_catalog_imports(source: &str) -> String {
 mod wave_three_tests {
     use super::*;
 
-    fn retained_wave_three(source: &str) -> Vec<String> {
+    fn retained_gated(source: &str) -> Vec<String> {
         let mut modules = shim_modules();
         modules.push(Module::new(BOT_MODULE, source));
         filter_gated_modules(&mut modules, std::iter::once(BOT_MODULE));
-        WAVE_THREE_MODULE_PATHS
+        GATED_MODULE_PATHS
             .iter()
             .filter(|path| {
                 modules
@@ -1323,12 +1500,16 @@ mod wave_three_tests {
             .collect()
     }
 
+    fn retained_wave_three(source: &str) -> Vec<String> {
+        retained_gated(source)
+            .into_iter()
+            .filter(|path| WAVE_THREE_MODULE_PATHS.contains(&path.as_str()))
+            .collect()
+    }
+
     #[test]
     fn wave_three_modules_follow_static_import_and_reexport_closures() {
-        assert_eq!(
-            retained_wave_three("export default class T {}"),
-            [WALK_DESTINATIONS_MODULE]
-        );
+        assert!(retained_wave_three("export default class T {}").is_empty());
         assert_eq!(
             retained_wave_three("import '../../api/map/WalkDestinations.js';"),
             [WALK_DESTINATIONS_MODULE]
@@ -1340,7 +1521,22 @@ mod wave_three_tests {
     }
 
     #[test]
-    fn dynamic_imports_keep_their_wave_three_targets() {
+    fn importing_public_api_barrel_retains_both_barrels_and_walk_catalog() {
+        let source = remap_catalog_imports(
+            "import '@rs2b0t/api'; export default class T {}",
+        );
+        assert_eq!(
+            retained_gated(&source),
+            [
+                DECLARED_SURFACE_MODULE,
+                RS2B0T_API_MODULE,
+                WALK_DESTINATIONS_MODULE
+            ]
+        );
+    }
+
+    #[test]
+    fn dynamic_imports_keep_their_reachable_targets_and_unknowns_fail_closed() {
         assert_eq!(
             retained_wave_three(
                 "export async function load() { return import('../../api/map/WalkDestinations.js'); }"
@@ -1348,10 +1544,51 @@ mod wave_three_tests {
             [WALK_DESTINATIONS_MODULE]
         );
         assert_eq!(
-            retained_wave_three(
+            retained_gated(
                 "export async function load(specifier) { return import(specifier); }"
             ),
-            WAVE_THREE_MODULE_PATHS
+            GATED_MODULE_PATHS
+        );
+    }
+
+    #[test]
+    fn literal_template_imports_keep_their_wave_three_targets() {
+        assert_eq!(
+            retained_wave_three(
+                "export async function load() { return import(`../../api/map/regions.js`); }"
+            ),
+            [REGIONS_MODULE]
+        );
+    }
+
+    #[test]
+    fn comments_and_strings_do_not_create_import_edges() {
+        assert!(retained_wave_three(
+            r#"const source = "import('../../api/map/regions.js')"; // import '../../api/map/regions.js'
+export default class T {}"#
+        )
+        .is_empty());
+    }
+
+    #[test]
+    fn type_only_imports_do_not_keep_wave_three_modules() {
+        assert!(retained_wave_three(
+            "import type { Regions } from '../../api/map/regions.js'; export default class T {}"
+        )
+        .is_empty());
+        assert!(retained_wave_three(
+            "import { type Regions } from '../../api/map/regions.js'; export default class T {}"
+        )
+        .is_empty());
+        assert!(retained_wave_three(
+            "export type { Regions } from '../../api/map/regions.js'; export default class T {}"
+        )
+        .is_empty());
+        assert_eq!(
+            retained_wave_three(
+                "import { type Other, Regions } from '../../api/map/regions.js'; export default class T {}"
+            ),
+            [REGIONS_MODULE]
         );
     }
 
@@ -1375,7 +1612,33 @@ mod wave_three_tests {
                 })
                 .copied()
                 .collect::<Vec<_>>(),
-            [WALK_DESTINATIONS_MODULE, REGIONS_MODULE]
+            [REGIONS_MODULE]
         );
     }
+
+    #[test]
+    fn api_barrel_is_retained_when_a_sibling_imports_it() {
+        const SIBLING_MODULE: &str = "/rs2b0t/bot/scripts/bot/sibling.js";
+        let mut modules = shim_modules();
+        modules.push(Module::new(SIBLING_MODULE, "import './rs2b0t-api.js';"));
+        modules.push(Module::new(BOT_MODULE, "export default class T {}"));
+        filter_gated_modules(&mut modules, [BOT_MODULE, SIBLING_MODULE]);
+        assert_eq!(
+            GATED_MODULE_PATHS
+                .iter()
+                .filter(|path| {
+                    modules
+                        .iter()
+                        .any(|module| module.filename() == Path::new(path))
+                })
+                .copied()
+                .collect::<Vec<_>>(),
+            [
+                DECLARED_SURFACE_MODULE,
+                RS2B0T_API_MODULE,
+                WALK_DESTINATIONS_MODULE
+            ]
+        );
+    }
+
 }

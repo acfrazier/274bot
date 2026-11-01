@@ -153,33 +153,54 @@ fn repeated_reads_return_the_same_bounded_catalog() {
         .unwrap());
 }
 #[test]
-fn loaded_declared_surface_materializes_walk_catalog() {
+fn thiever_imports_skip_unused_catalog_but_public_api_import_materializes_it() {
     const TEST_NAME: &str =
-        "walk_destinations_v8::tests::loaded_declared_surface_materializes_walk_catalog";
+        "walk_destinations_v8::tests::thiever_imports_skip_unused_catalog_but_public_api_import_materializes_it";
     if std::env::var_os(CHILD_ENV).is_some() {
         crate::platform::bootstrap_test_v8_platform();
-        CALLBACK_COUNT.store(0, std::sync::atomic::Ordering::Relaxed);
-        let isolate = crate::LoadIsolate::spawn(
-            "export default class T extends LoopingBot { loop() {} }".into(),
-            crate::LoadShape::CompatClass,
-            vec![],
-        )
-        .unwrap();
-        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(15);
-        let ready = loop {
-            match isolate.poll_ready() {
-                crate::Ready::Pending if std::time::Instant::now() < deadline => {
-                    std::thread::sleep(std::time::Duration::from_millis(5));
+        let load_and_count = |source: &str| {
+            CALLBACK_COUNT.store(0, std::sync::atomic::Ordering::Relaxed);
+            let isolate = crate::LoadIsolate::spawn(
+                source.into(),
+                crate::LoadShape::CompatClass,
+                vec![],
+            )
+            .unwrap();
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(15);
+            let ready = loop {
+                match isolate.poll_ready() {
+                    crate::Ready::Pending if std::time::Instant::now() < deadline => {
+                        std::thread::sleep(std::time::Duration::from_millis(5));
+                    }
+                    ready => break ready,
                 }
-                ready => break ready,
-            }
+            };
+            let callbacks = CALLBACK_COUNT.load(std::sync::atomic::Ordering::Relaxed);
+            isolate.join();
+            assert_eq!(ready, crate::Ready::Ready);
+            callbacks
         };
-        let callbacks = CALLBACK_COUNT.load(std::sync::atomic::Ordering::Relaxed);
-        isolate.join();
-        assert_eq!(ready, crate::Ready::Ready);
         assert_eq!(
-            callbacks, 1,
-            "the always-loaded declared surface imports WalkDestinations"
+            load_and_count(
+                r#"import { TaskBot } from '../../api/bot/Bot.js';
+import { Execution } from '../../api/execution/Execution.js';
+import { Game } from '../../api/game/Game.js';
+import { Reachability } from '../../event/webwalk/geometry/Reachability.js';
+import Tile from '../../geometry/Tile.js';
+import { Bank } from '../../api/bank/Bank.js';
+import { Inventory } from '../../api/inventory/Inventory.js';
+import { Traversal } from '../../api/walking/Traversal.js';
+export default class T extends TaskBot { loop() {} }"#,
+            ),
+            0,
+            "unused Thiever imports must not materialize WalkDestinations"
+        );
+        assert_eq!(
+            load_and_count(
+                "import { LoopingBot } from '@rs2b0t/api'; export default class T extends LoopingBot { loop() {} }"
+            ),
+            1,
+            "the public API barrel must retain and evaluate WalkDestinations"
         );
         return;
     }
@@ -193,7 +214,7 @@ fn loaded_declared_surface_materializes_walk_catalog() {
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
         output.status.success(),
-        "isolated unused walk catalog test failed\nstdout: {stdout}\nstderr: {stderr}"
+        "isolated walk catalog retention test failed\nstdout: {stdout}\nstderr: {stderr}"
     );
     assert!(
         stdout.contains(&format!("test {TEST_NAME} ... ok")) && stdout.contains("1 passed"),
