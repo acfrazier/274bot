@@ -297,7 +297,7 @@
     "selector": "Shop.player",
     "add": true,
     "reason": "Host additionally exposes posted player sale rows with the same exact shape as stock rows.",
-    "runtime": "crates/script-js/src/shim/shop.js:40",
+    "runtime": "crates/script-js/src/shim/shop.js:35",
     "declaration": "player(): { name: string | null; count: number; slot: number }[];"
   },
   {
