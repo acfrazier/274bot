@@ -633,23 +633,22 @@ A `journal modal timeout` permits one retry on the first observed game tick
 after the timeout. Each read retains the journal owner's five-tick window.
 The run-on button closes modals once before enabling run
 (`player_controls.rs2:34-46`). The host keeps its run-on latch until energy
-reaches 0 or the session changes (`crates/host/src/lib.rs:1475-1481,1497-1507`). Energy
+reaches 0 or the session changes (`crates/host/src/lib.rs:1507-1514,1529-1539`). Energy
 recovery or a new session allows another press.
-After a script sends a game interaction, the host holds its auto-run press
-until a modal is observed open (the modal check then holds it until the modal
-closes) or three observed game ticks pass without one. The server reads the
-click in the input phase of the next cycle, or of the cycle after it when the
-click arrives late (`World.ts:355`), and the script queues its `if_openmain`
-in that cycle (`World.ts:378`). The output phase writes that cycle's
-`PLAYER_INFO` first (`NetworkPlayer.ts:286-288`, `World.ts:1110`) and the modal
-after it, as a separate message (`NetworkPlayer.ts:175`, `World.ts:1123`).
-The client decodes at most five packets per frame and stops at a packet that
-is not fully buffered (`client.rs:12798-12803`, `:5266-5268`, `:5303-5305`), so
-one drain can hold a cycle's `PLAYER_INFO` without its modal. The
-`PLAYER_INFO` of the next cycle follows the modal in the stream. The fence
-therefore ends on the third observed `PLAYER_INFO` after the click, not the
-second. The host counts its own observed ticks, one per `PLAYER_INFO`, and the
-count survives relogs.
+The host holds its auto-run press while a script waits for the result of its
+own interaction, and the script ends that hold itself. The journal reader holds
+it from before its click until it has read the page and seen it close. A
+dialogue holds it after each Talk, Continue or answer until it sees the result,
+and in the quiet gap after the chat closes. The hold also ends when the
+script's own bound for that wait expires and the script records the failure,
+when the script stops or is replaced, at a relog, and when a runner cancels
+its step after a death. While a modal is open, the modal check holds the
+press as before. An interaction that expects no page (for example a walk or an
+item action) takes no hold. The hold does not count packets or ticks after the
+click, so no packet order ends it early. The 274 protocol does not acknowledge
+client input, so only the script can know that its click's page has arrived or
+will not. A terminal safety limit of 25 observed game ticks per wait ends a
+hold that the script never ends, and the host logs that as a failure.
 The journal content opens the page without a delay (`quest_journal.rs2:1-55`).
 If the retry fails, the walk blocks with the terminal failure detail. The live
 proof receipt records each attempt, its start and terminal ticks, and its
@@ -666,10 +665,16 @@ page ever opens. The runner ends the Talk wait on that message at once, as a
 reach failure (`prereq wait=W5 … end=unreachable`), and not after the wait
 bound. It then reads the player's and the NPC's tiles again on a later
 observed game tick, walks to the NPC when it is more than two tiles away, and
-sends the Talk again. A step sends at most four Talks, the cap the runner
-already puts on one step. After the fourth cancel the step fails with
-`TalkUnreachable`, which keeps the attempt count, the wait's start and end
-ticks, and the player's and the NPC's tiles at the last cancel. The admission
+sends the Talk again. If that re-approach ends while the NPC is not ready to
+talk (its walk arrived at a tile the NPC has left, or the approach timed out),
+that is also a failed attempt, and the runner approaches again on a later tick.
+One conversation makes at most four attempts, so it sends at most four Talks.
+The limit is per conversation, not per step: the step's own Talk budget counts
+a conversation once, and a later conversation of the same step starts a new
+count. After the fourth failed attempt the step fails with `TalkUnreachable`,
+which keeps the attempt count, the cause of the last failure (a cancel, or an
+approach with its walk's end), its start and end ticks, and the player's and
+the NPC's tiles at that failure. The admission
 of a Talk is unchanged: the dialogue driver sends it when `NpcView.distance`
 is at most two (measured from the player's path head) and the NPC is
 reachable. The bound of a Talk that is not

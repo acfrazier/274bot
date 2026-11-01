@@ -94,16 +94,18 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.7` 
   handover is refused.
   Food from Drezel remains ordinary inventory and follows existing bank
   behavior. No prerequisite step drops it.
-- After a script sends a game interaction, the host holds its auto-run press
-  until the window the interaction opens is seen, or for three game ticks if
-  none opens. The server writes a cycle's player update before the window, so
-  the press waits for the next cycle's update. The run button no longer closes
-  a quest journal that a walk just opened.
+- While a script waits for the window its own action opens (a quest journal
+  page, or a conversation page), the host does not press the run button. The
+  script ends this wait when it sees the window, when its own time limit for
+  the window ends, or when the script stops. The run button no longer closes a
+  quest journal that a walk just opened, however late the page arrives. Actions
+  that open no window, such as walks, do not delay the run button.
 - A prerequisite conversation that the server cancels with "I can't reach
   that!" no longer waits out its page bound. The bot ends the wait at once,
-  walks to the NPC again if it is more than two tiles away, and talks again,
-  up to four times in all. If every talk is cancelled the step fails and
-  reports the last attempt's tiles.
+  walks to the NPC again if it is more than two tiles away, and talks again.
+  If that walk ends after the NPC has moved on, the bot walks to the NPC
+  again too. One conversation makes up to four attempts in all. If every
+  attempt fails, the step fails and reports the last attempt's cause and tiles.
 - Bots now wait and try again when another player is using a shortcut,
   instead of giving up. The Yanille dungeon ledge ("The ledge is being
   used") stays held for at most 9 game ticks after a refusal, so the bot

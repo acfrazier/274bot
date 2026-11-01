@@ -45,10 +45,13 @@ const JOURNAL_TIMEOUT_RETRIES: u8 = 1;
 // waiting longer cannot recover it. The runner reads both tiles again on a later
 // observed tick (Drezel starts a wander on one tick in eight, Npc.ts:723, range 5,
 // NpcType.ts:101,110; the wait of a cancelled Talk ends after one tick), walks to
-// the NPC if it is more than two tiles away, and sends the Talk again. The budget
-// is three more sends: with the first, four, the same cap `PrereqBudget` puts on
-// the Talks of one step (`talks >= 4`). An allowance, not a content guarantee. Then
-// the step fails with the last cancel's detail (`PrereqFailure::TalkUnreachable`).
+// the NPC if it is more than two tiles away, and sends the Talk again. A
+// re-approach that ends while the NPC is not ready to talk is a failed attempt
+// of the same budget. The budget is per conversation (one `ChatDrive`): the
+// first attempt and three more, so at most four Talks per conversation.
+// `PrereqBudget::talks` counts the conversation once, so a later conversation of
+// the same step starts a new count. An allowance, not a content guarantee. Then
+// the step fails with the last failure's detail (`PrereqFailure::TalkUnreachable`).
 const TALK_REACH_RETRIES: u8 = 3;
 
 /// Repeated polls and scene changes cannot spend this wait: only observed ticks do.
