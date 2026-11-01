@@ -2350,9 +2350,30 @@ export const enum ScriptOpcode {
         const RENDER_WORLD: &str = "vendor/fr-client-rust/crates/client/src/render/world.rs";
         const DRAW: &str = "vendor/fr-client-rust/crates/client/src/render/draw.rs";
         let mut sources = BTreeMap::from([
-            (CORE_WORLD, include_bytes!(concat!(env!("CARGO_MANIFEST_DIR"), "/../../vendor/fr-client-rust/crates/client/src/core/world.rs")).to_vec()),
-            (RENDER_WORLD, include_bytes!(concat!(env!("CARGO_MANIFEST_DIR"), "/../../vendor/fr-client-rust/crates/client/src/render/world.rs")).to_vec()),
-            (DRAW, include_bytes!(concat!(env!("CARGO_MANIFEST_DIR"), "/../../vendor/fr-client-rust/crates/client/src/render/draw.rs")).to_vec()),
+            (
+                CORE_WORLD,
+                include_bytes!(concat!(
+                    env!("CARGO_MANIFEST_DIR"),
+                    "/../../vendor/fr-client-rust/crates/client/src/core/world.rs"
+                ))
+                .to_vec(),
+            ),
+            (
+                RENDER_WORLD,
+                include_bytes!(concat!(
+                    env!("CARGO_MANIFEST_DIR"),
+                    "/../../vendor/fr-client-rust/crates/client/src/render/world.rs"
+                ))
+                .to_vec(),
+            ),
+            (
+                DRAW,
+                include_bytes!(concat!(
+                    env!("CARGO_MANIFEST_DIR"),
+                    "/../../vendor/fr-client-rust/crates/client/src/render/draw.rs"
+                ))
+                .to_vec(),
+            ),
         ]);
         let proof = verify_client_dynamic_sprite_capacity(&sources).unwrap();
         assert_eq!(proof["max_dynamic_sprites_per_client_world"], 5000);
