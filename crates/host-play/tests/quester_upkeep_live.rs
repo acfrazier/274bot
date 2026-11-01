@@ -1274,9 +1274,10 @@ fn c0_acceptance_oracle(receipt: &C0Receipt, logs: &[HostLog]) -> Result<(), Str
 
     let step_info = format!("step {CLIMB_STEP} (interact) player_info=");
     let mut found_step_info = false;
-    for line in logs.iter().filter(|line| {
-        line.source == "ScriptTrace" && line.message.contains(&step_info)
-    }) {
+    for line in logs
+        .iter()
+        .filter(|line| line.source == "ScriptTrace" && line.message.contains(&step_info))
+    {
         found_step_info = true;
         let tick = line
             .message
@@ -1844,9 +1845,7 @@ mod tests {
         let message = format!(
             "quester desertrescue: stage desertrescue:6 step {CLIMB_STEP} (interact) player_info={generation}"
         );
-        let logs = parse_quester_script_trace_stderr(&format!(
-            "[script-trace] {message}\n"
-        ));
+        let logs = parse_quester_script_trace_stderr(&format!("[script-trace] {message}\n"));
         assert_eq!(logs.len(), 1);
         assert_eq!(logs[0].source, "ScriptTrace");
         assert_eq!(logs[0].tick, None);

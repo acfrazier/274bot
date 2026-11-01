@@ -15,8 +15,8 @@ use api::condition::PoisonState;
 use api::hostlog::Level;
 use api::selected::{FactKey, Truth};
 use api::snapshot::{
-    ChatLineView, GameSnapshot, HitmarkView, HitmarksView, ItemActionFamily, ItemContainer, ItemView,
-    LocLayer, LocView, StatView, WorldStateView,
+    ChatLineView, GameSnapshot, HitmarkView, HitmarksView, ItemActionFamily, ItemContainer,
+    ItemView, LocLayer, LocView, StatView, WorldStateView,
 };
 use api::WorldTile;
 use client::client::{Client, ClientConfig};
@@ -386,7 +386,11 @@ fn assert_no_stale_hazard_eat(
         matches!(flow, ScriptFlow::Continue),
         "a low-HP poll after clearing a hazard must not stop the run"
     );
-    assert_eq!(eat_count(ledger, output), 0, "the old hazard must not raise the eat line");
+    assert_eq!(
+        eat_count(ledger, output),
+        0,
+        "the old hazard must not raise the eat line"
+    );
     assert!(
         script.survival_action.is_none(),
         "a cleared hazard must not start a survival action"
