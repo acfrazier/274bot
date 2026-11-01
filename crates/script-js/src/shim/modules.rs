@@ -1,3 +1,13 @@
+use std::{
+    borrow::Cow,
+    collections::{HashMap, HashSet, VecDeque},
+    path::Path,
+    sync::LazyLock,
+};
+
+use deno_ast::swc::ast::{CallExpr, Callee, Expr, Lit};
+use deno_ast::swc::ecma_visit::{Visit, VisitWith};
+use deno_ast::{MediaType, ParseParams, ProgramRef};
 use rustyscript::Module;
 
 /// Canonical path of the user's bot module. Fixed for every card so
@@ -521,6 +531,22 @@ globalThis.document = {
 /// the only cross-root projections are `src/client/config/worlds.ts` and
 /// `src/client/shell/Skill.ts`, which AccountLeveler imports. No other client
 /// modules are served.
+const WALK_DESTINATIONS_MODULE: &str = "/rs2b0t/bot/api/map/WalkDestinations.js";
+const REGIONS_MODULE: &str = "/rs2b0t/bot/api/map/regions.js";
+const WILDERNESS_MODULE: &str = "/rs2b0t/bot/event/webwalk/wilderness.js";
+const WALK_EXECUTOR_MODULE: &str = "/rs2b0t/bot/event/webwalk/WalkExecutor.js";
+const STOCK_MODEL_MODULE: &str = "/rs2b0t/bot/api/shop/StockModel.js";
+const SHOP_PRICE_MODULE: &str = "/rs2b0t/bot/api/shop/shopPrice.js";
+const WAVE_THREE_MODULE_PATHS: [&str; 6] = [
+    WALK_DESTINATIONS_MODULE,
+    REGIONS_MODULE,
+    WILDERNESS_MODULE,
+    WALK_EXECUTOR_MODULE,
+    STOCK_MODEL_MODULE,
+    SHOP_PRICE_MODULE,
+];
+const GATED_MODULE_PATHS: &[&str] = &WAVE_THREE_MODULE_PATHS;
+
 pub fn shim_modules() -> Vec<Module> {
     vec![
         // Exact cross-root client projections required by AccountLeveler.
@@ -977,7 +1003,7 @@ pub fn shim_modules() -> Vec<Module> {
             include_str!("script_activity.js"),
         ),
         Module::new(
-            "/rs2b0t/bot/api/map/WalkDestinations.js",
+            WALK_DESTINATIONS_MODULE,
             include_str!("walk_destinations.js"),
         ),
         Module::new(
@@ -988,24 +1014,242 @@ pub fn shim_modules() -> Vec<Module> {
             "/rs2b0t/bot/scripts/bot/rs2b0t-api.js",
             include_str!("rs2b0t_api.js"),
         ),
-        Module::new("/rs2b0t/bot/api/map/regions.js", include_str!("regions.js")),
-        Module::new(
-            "/rs2b0t/bot/event/webwalk/wilderness.js",
-            include_str!("wilderness.js"),
-        ),
-        Module::new(
-            "/rs2b0t/bot/event/webwalk/WalkExecutor.js",
-            include_str!("walk_executor.js"),
-        ),
-        Module::new(
-            "/rs2b0t/bot/api/shop/StockModel.js",
-            include_str!("stock_model.js"),
-        ),
-        Module::new(
-            "/rs2b0t/bot/api/shop/shopPrice.js",
-            include_str!("shop_price.js"),
-        ),
+        Module::new(REGIONS_MODULE, include_str!("regions.js")),
+        Module::new(WILDERNESS_MODULE, include_str!("wilderness.js")),
+        Module::new(WALK_EXECUTOR_MODULE, include_str!("walk_executor.js")),
+        Module::new(STOCK_MODEL_MODULE, include_str!("stock_model.js")),
+        Module::new(SHOP_PRICE_MODULE, include_str!("shop_price.js")),
     ]
+}
+
+#[derive(Default)]
+struct ModuleEdges {
+    imports: Vec<String>,
+    dynamic_imports: Vec<String>,
+    has_unknown_dependency: bool,
+}
+
+#[derive(Default)]
+struct ShimImportGraph {
+    edges: HashMap<String, ModuleEdges>,
+    gated_urls: HashSet<String>,
+    base_dir: Option<std::path::PathBuf>,
+    complete: bool,
+}
+
+fn shim_import_graph() -> &'static ShimImportGraph {
+    static GRAPH: LazyLock<ShimImportGraph> = LazyLock::new(build_shim_import_graph);
+    &GRAPH
+}
+
+fn build_shim_import_graph() -> ShimImportGraph {
+    let Ok(current_dir) = std::env::current_dir() else {
+        return ShimImportGraph::default();
+    };
+    let mut graph = ShimImportGraph {
+        base_dir: Some(current_dir.clone()),
+        complete: true,
+        ..ShimImportGraph::default()
+    };
+    for module in shim_modules() {
+        let Some(url) = module_specifier(module.filename(), &current_dir) else {
+            graph.complete = false;
+            continue;
+        };
+        if GATED_MODULE_PATHS
+            .iter()
+            .any(|path| Path::new(path) == module.filename())
+        {
+            graph.gated_urls.insert(url.to_string());
+        }
+        let Some(edges) = module_edges(module.contents(), &url) else {
+            graph.complete = false;
+            continue;
+        };
+        graph.edges.insert(url.to_string(), edges);
+    }
+    graph
+}
+
+fn module_specifier(path: &Path, current_dir: &Path) -> Option<deno_ast::ModuleSpecifier> {
+    let path = rustyscript::deno_core::normalize_path(Cow::Owned(current_dir.join(path)));
+    rustyscript::deno_core::url::Url::from_file_path(path.as_ref()).ok()
+}
+
+fn module_edges(source: &str, referrer: &deno_ast::ModuleSpecifier) -> Option<ModuleEdges> {
+    let mut edges = ModuleEdges::default();
+    for import in crate::module_imports::module_imports(source) {
+        if !import.is_runtime() {
+            continue;
+        }
+        match rustyscript::deno_core::resolve_import(&import.into_specifier(), referrer.as_str()) {
+            Ok(url) => edges.imports.push(url.to_string()),
+            Err(_) => edges.has_unknown_dependency = true,
+        }
+    }
+    for specifier in dynamic_import_specifiers(source)? {
+        let Some(specifier) = specifier else {
+            edges.has_unknown_dependency = true;
+            continue;
+        };
+        match rustyscript::deno_core::resolve_import(&specifier, referrer.as_str()) {
+            Ok(url) => edges.dynamic_imports.push(url.to_string()),
+            Err(_) => edges.has_unknown_dependency = true,
+        }
+    }
+    Some(edges)
+}
+
+fn dynamic_import_specifiers(source: &str) -> Option<Vec<Option<String>>> {
+    let specifier = deno_ast::ModuleSpecifier::parse("file:///module.ts").ok()?;
+    let parsed = deno_ast::parse_module(ParseParams {
+        specifier,
+        text: source.into(),
+        media_type: MediaType::TypeScript,
+        capture_tokens: false,
+        scope_analysis: false,
+        maybe_syntax: None,
+    })
+    .ok()?;
+    let mut visitor = DynamicImportVisitor::default();
+    match parsed.program_ref() {
+        ProgramRef::Module(module) => module.visit_with(&mut visitor),
+        ProgramRef::Script(script) => script.visit_with(&mut visitor),
+    }
+    Some(visitor.specifiers)
+}
+
+#[derive(Default)]
+struct DynamicImportVisitor {
+    specifiers: Vec<Option<String>>,
+}
+
+impl Visit for DynamicImportVisitor {
+    fn visit_call_expr(&mut self, call: &CallExpr) {
+        if matches!(&call.callee, Callee::Import(_)) {
+            self.specifiers.push(
+                call.args
+                    .first()
+                    .filter(|argument| argument.spread.is_none())
+                    .and_then(|argument| match &*argument.expr {
+                        Expr::Lit(Lit::Str(specifier)) => Some(specifier.value.to_string()),
+                        Expr::Tpl(template) if template.exprs.is_empty() => template
+                            .quasis
+                            .first()
+                            .and_then(|part| part.cooked.as_ref())
+                            .map(ToString::to_string),
+                        _ => None,
+                    }),
+            );
+        }
+        call.visit_children_with(self);
+    }
+}
+
+fn enqueue_imports(
+    edges: &ModuleEdges,
+    module_urls: &HashMap<String, usize>,
+    pending: &mut VecDeque<String>,
+) -> bool {
+    if edges.has_unknown_dependency {
+        return false;
+    }
+    for url in edges.imports.iter().chain(&edges.dynamic_imports) {
+        if module_urls.contains_key(url) {
+            pending.push_back(url.clone());
+        }
+    }
+    true
+}
+
+/// Keep gated modules only when the run can reach them through static or
+/// literal dynamic imports. Unresolved imports keep all gated modules.
+pub(crate) fn filter_gated_modules<'a>(
+    modules: &mut Vec<Module>,
+    roots: impl IntoIterator<Item = &'a str>,
+) {
+    let graph = shim_import_graph();
+    if !graph.complete {
+        return;
+    }
+    let Ok(current_dir) = std::env::current_dir() else {
+        return;
+    };
+    if graph.base_dir.as_deref() != Some(current_dir.as_path()) {
+        return;
+    }
+    let mut module_urls = HashMap::with_capacity(modules.len());
+    for (index, module) in modules.iter().enumerate() {
+        let Some(url) = module_specifier(module.filename(), &current_dir) else {
+            return;
+        };
+        module_urls.entry(url.to_string()).or_insert(index);
+    }
+
+    let mut pending = VecDeque::with_capacity(modules.len());
+    for root in roots {
+        let Some(url) = module_specifier(Path::new(root), &current_dir) else {
+            return;
+        };
+        let url = url.to_string();
+        if !module_urls.contains_key(&url) {
+            return;
+        }
+        pending.push_back(url);
+    }
+
+    // load_modules evaluates every supplied side module. Include all modules
+    // that remain eager as roots, as well as the script and its siblings.
+    for module in modules.iter().filter(|module| {
+        !GATED_MODULE_PATHS
+            .iter()
+            .any(|path| Path::new(path) == module.filename())
+    }) {
+        let Some(url) = module_specifier(module.filename(), &current_dir) else {
+            return;
+        };
+        pending.push_back(url.to_string());
+    }
+    let mut visited = HashSet::with_capacity(modules.len());
+    let mut needed = HashSet::with_capacity(GATED_MODULE_PATHS.len());
+    while let Some(url) = pending.pop_front() {
+        if !visited.insert(url.clone()) {
+            continue;
+        }
+        if graph.gated_urls.contains(&url) {
+            needed.insert(url.clone());
+        }
+        let Some(index) = module_urls.get(&url).copied() else {
+            continue;
+        };
+        if let Some(edges) = graph.edges.get(&url) {
+            if !enqueue_imports(edges, &module_urls, &mut pending) {
+                return;
+            }
+        } else {
+            let module = &modules[index];
+            let Some(referrer) = module_specifier(module.filename(), &current_dir) else {
+                return;
+            };
+            let Some(edges) = module_edges(module.contents(), &referrer) else {
+                return;
+            };
+            if !enqueue_imports(&edges, &module_urls, &mut pending) {
+                return;
+            }
+        }
+    }
+
+    modules.retain(|module| {
+        if !GATED_MODULE_PATHS
+            .iter()
+            .any(|path| Path::new(path) == module.filename())
+        {
+            return true;
+        }
+        module_specifier(module.filename(), &current_dir)
+            .is_some_and(|url| needed.contains(url.as_str()))
+    });
 }
 
 /// Rewrite bare `@rs2b0t/api` import specifiers (quoted) to
@@ -1059,4 +1303,79 @@ pub(crate) fn remap_hash_bot(source: &str) -> String {
 /// the bot (and any scripts-folder siblings).
 pub fn remap_catalog_imports(source: &str) -> String {
     remap_hash_bot(&remap_rs2b0t_api(source))
+}
+#[cfg(test)]
+mod wave_three_tests {
+    use super::*;
+
+    fn retained_wave_three(source: &str) -> Vec<String> {
+        let mut modules = shim_modules();
+        modules.push(Module::new(BOT_MODULE, source));
+        filter_gated_modules(&mut modules, std::iter::once(BOT_MODULE));
+        WAVE_THREE_MODULE_PATHS
+            .iter()
+            .filter(|path| {
+                modules
+                    .iter()
+                    .any(|module| module.filename() == Path::new(path))
+            })
+            .map(|path| (*path).to_string())
+            .collect()
+    }
+
+    #[test]
+    fn wave_three_modules_follow_static_import_and_reexport_closures() {
+        assert_eq!(
+            retained_wave_three("export default class T {}"),
+            [WALK_DESTINATIONS_MODULE]
+        );
+        assert_eq!(
+            retained_wave_three("import '../../api/map/WalkDestinations.js';"),
+            [WALK_DESTINATIONS_MODULE]
+        );
+        assert_eq!(
+            retained_wave_three("export { WALK_DESTINATIONS } from './declared_surface.js';"),
+            [WALK_DESTINATIONS_MODULE]
+        );
+    }
+
+    #[test]
+    fn dynamic_imports_keep_their_wave_three_targets() {
+        assert_eq!(
+            retained_wave_three(
+                "export async function load() { return import('../../api/map/WalkDestinations.js'); }"
+            ),
+            [WALK_DESTINATIONS_MODULE]
+        );
+        assert_eq!(
+            retained_wave_three(
+                "export async function load(specifier) { return import(specifier); }"
+            ),
+            WAVE_THREE_MODULE_PATHS
+        );
+    }
+
+    #[test]
+    fn wave_three_modules_follow_sibling_import_roots() {
+        const SIBLING_MODULE: &str = "/rs2b0t/bot/scripts/bot/sibling.js";
+        let mut modules = shim_modules();
+        modules.push(Module::new(
+            SIBLING_MODULE,
+            "import '../../api/map/regions.js';",
+        ));
+        modules.push(Module::new(BOT_MODULE, "export default class T {}"));
+        filter_gated_modules(&mut modules, [BOT_MODULE, SIBLING_MODULE]);
+        assert_eq!(
+            WAVE_THREE_MODULE_PATHS
+                .iter()
+                .filter(|path| {
+                    modules
+                        .iter()
+                        .any(|module| module.filename() == Path::new(path))
+                })
+                .copied()
+                .collect::<Vec<_>>(),
+            [WALK_DESTINATIONS_MODULE, REGIONS_MODULE]
+        );
+    }
 }

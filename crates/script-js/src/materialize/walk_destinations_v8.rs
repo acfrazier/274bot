@@ -4,10 +4,16 @@
 
 use super::callback_v8::{self as cb, JsResult};
 use rustyscript::Runtime;
+#[cfg(test)]
+use std::sync::atomic::{AtomicUsize, Ordering};
+
 use std::{cell::RefCell, rc::Rc};
 
 type Value<'s> = v8::Local<'s, v8::Value>;
 type Shared = Rc<RefCell<Catalog>>;
+
+#[cfg(test)]
+static CALLBACK_COUNT: AtomicUsize = AtomicUsize::new(0);
 
 #[derive(Default)]
 struct Catalog {
@@ -31,6 +37,8 @@ fn catalog_callback<'s>(
     args: v8::FunctionCallbackArguments<'s>,
     rv: v8::ReturnValue,
 ) {
+    #[cfg(test)]
+    CALLBACK_COUNT.fetch_add(1, Ordering::Relaxed);
     let result = materialize(scope, &args);
     cb::finish(scope, rv, result);
 }

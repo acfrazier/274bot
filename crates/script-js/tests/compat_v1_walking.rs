@@ -48,6 +48,20 @@ fn compat_v1_walking__walk_destinations__contract() {
 }
 
 #[test]
+fn walk_via_declared_surface_uses_imported_shim_closure() {
+    let source = format!(
+        "import {{ WALK_DESTINATIONS, WALK_OPTIONS, resolveDestination }} from './declared_surface.js';\n{}",
+        walking_class(
+            "globalThis.__surface = [WALK_DESTINATIONS.length, WALK_OPTIONS[0], resolveDestination('fALaDoR').tile.x];"
+        )
+    );
+    assert_eq!(
+        eval(&source, "globalThis.__surface"),
+        json!([12, "Lumbridge", 2965])
+    );
+}
+
+#[test]
 #[expect(non_snake_case, reason = "the census names this contract test")]
 fn compat_v1_walking__walk_options__contract() {
     let source = format!(

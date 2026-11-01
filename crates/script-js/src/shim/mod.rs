@@ -9,6 +9,7 @@ mod modules;
 mod rows;
 
 pub use content::content_json;
+pub(crate) use modules::filter_gated_modules;
 pub use modules::{remap_catalog_imports, shim_modules, BOT_MODULE, MAIN_MODULE, PRELUDE};
 #[allow(unused_imports)]
 pub(crate) use modules::{remap_hash_bot, remap_rs2b0t_api};
