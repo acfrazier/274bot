@@ -157,17 +157,18 @@ pub(crate) fn preferences_on_disk(
         Err(error) => panic!("read {}: {error}", path.display()),
     }
 }
-/// Retry a frontend-backed write while it reports the write queued past
-/// the frontend's bounded durability wait: under machine load a write
-/// stays queued past 5 s and settles later. Any other error returns at
-/// once, so refusals and genuine conflicts keep their fast verdict.
+/// Retry a frontend-backed fixture operation while its bounded read or
+/// write wait reports pending: the process writer can finish either stage
+/// later. Any other error returns at once, so refusals and genuine
+/// conflicts keep their fast verdict.
 pub(crate) fn patiently(mut attempt: impl FnMut() -> Result<(), String>) -> Result<(), String> {
     let start = std::time::Instant::now();
     loop {
         match attempt() {
             Ok(()) => return Ok(()),
             Err(error)
-                if error.contains("not durable within")
+                if (error.contains("not durable within")
+                    || error.contains("preferences is not ready"))
                     && start.elapsed() < std::time::Duration::from_secs(60) =>
             {
                 std::thread::yield_now();
@@ -176,6 +177,37 @@ pub(crate) fn patiently(mut attempt: impl FnMut() -> Result<(), String>) -> Resu
         }
     }
 }
+
+#[test]
+fn patiently_waits_for_fixture_readback_and_write_settlement() {
+    let mut results = [
+        Err("preferences: preferences is not ready (panel-ui.json)".to_string()),
+        Err("the write was not durable within 5s; it stays queued".to_string()),
+        Ok(()),
+    ]
+    .into_iter();
+    assert_eq!(
+        patiently(|| results.next().expect("unexpected extra attempt")),
+        Ok(())
+    );
+    assert!(results.next().is_none());
+}
+
+#[test]
+fn patiently_returns_other_failures_without_retry() {
+    for failure in ["preferences permissions refused", "preference conflict"] {
+        let mut attempts = 0;
+        assert_eq!(
+            patiently(|| {
+                attempts += 1;
+                Err(failure.to_string())
+            }),
+            Err(failure.to_string())
+        );
+        assert_eq!(attempts, 1);
+    }
+}
+
 /// A preferences write through a scratch service, retried past load-slow
 /// durability (see [`patiently`]). The update re-reads and re-applies its
 /// change on a conflict, so a retry after a late-landing write converges.
