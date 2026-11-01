@@ -971,6 +971,44 @@ fn warmed_client_frame_dispatch_handles_allocate_nothing_per_frame() {
     );
 }
 
+/// The host path: every delivered frame hands out the isolate's one
+/// dispatch handle, so a frame allocates no new `FrameDispatch`.
+#[test]
+fn begin_client_frame_reuses_one_dispatch_handle() {
+    let mut iso = LoadIsolate::spawn(
+        r#"
+import { BotHost } from '../../runtime/BotHost.js';
+export default class T extends LoopingBot {
+loop() {
+    if (globalThis.__subscribed) return;
+    globalThis.__subscribed = true;
+    globalThis.__frames = 0;
+    BotHost.addFrameListener(() => ++globalThis.__frames);
+}
+}
+"#
+        .into(),
+        LoadShape::CompatClass,
+        vec![],
+    )
+    .unwrap();
+    wait_ready(&iso);
+    iso.on_game_tick(1);
+    assert_eq!(iso.probe("__frames").unwrap(), 0);
+    const FRAMES: i64 = 16;
+    let mut first: Option<*const ()> = None;
+    for _ in 0..FRAMES {
+        let dispatch = iso
+            .begin_client_frame()
+            .expect("a registered listener receives the frame");
+        let at = Arc::as_ptr(&dispatch) as *const ();
+        assert_eq!(*first.get_or_insert(at), at, "a frame built a new dispatch handle");
+        assert!(dispatch.wait_for_ack(), "the isolate acknowledges the frame");
+    }
+    assert_eq!(iso.probe("__frames").unwrap(), FRAMES);
+    iso.join();
+}
+
 #[test]
 fn spawn_returns_before_setup_and_poll_ready_becomes_ready() {
     let t0 = Instant::now();
