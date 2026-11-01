@@ -7971,6 +7971,21 @@ export default class T extends LoopingBot {
         script::RunState::Running,
         "compat script did not finish setup"
     );
+    bounded_slot_call(Arc::clone(&slot), |slot| {
+        let mut driver = NavRec::default();
+        slot.on_game_tick(&mut script::ScriptCtx {
+            driver: &mut driver,
+            tick: 1,
+            here: None,
+            walk: None,
+            walk_with: None,
+            inv: None,
+            snapshot: None,
+            obj_names: None,
+            compiled: script::CompiledTick::default(),
+        });
+        slot.probe("true").expect("the first compat tick completes");
+    });
     slot.lock()
         .unwrap()
         .probe("globalThis.__hangFrame = true")
