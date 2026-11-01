@@ -122,12 +122,7 @@ impl WindowStats {
         })
     }
 
-    fn pump_sample_row(
-        &self,
-        event_order: u64,
-        start_ns: u64,
-        end_ns: u64,
-    ) -> Value {
+    fn pump_sample_row(&self, event_order: u64, start_ns: u64, end_ns: u64) -> Value {
         let start = self.baseline.counters;
         let end = self.counters;
         json!({
@@ -253,10 +248,7 @@ impl WindowDiagnostics {
         let wall_origin = SystemTime::now();
         let after = Instant::now();
         let origin = before + after.duration_since(before) / 2;
-        let clock_origin_unix_ns = wall_origin
-            .duration_since(UNIX_EPOCH)
-            .ok()
-            .map(duration_ns);
+        let clock_origin_unix_ns = wall_origin.duration_since(UNIX_EPOCH).ok().map(duration_ns);
         Self {
             origin,
             clock_origin_unix_ns,
@@ -326,9 +318,7 @@ impl WindowDiagnostics {
             let stats = self.active.as_mut()?;
             stats.counters.about_to_wait_count =
                 stats.counters.about_to_wait_count.saturating_add(1);
-            let interval = stats
-                .last_pump_ns
-                .map(|last| now_ns.saturating_sub(last));
+            let interval = stats.last_pump_ns.map(|last| now_ns.saturating_sub(last));
             stats.last_pump_interval_ns = interval;
             if let Some(interval_ns) = interval {
                 stats.counters.max_pump_interval_ns = Some(
@@ -383,8 +373,7 @@ impl WindowDiagnostics {
     ) -> Option<[Option<Value>; 3]> {
         let due = {
             let stats = self.active.as_mut()?;
-            stats.counters.native_paint_count =
-                stats.counters.native_paint_count.saturating_add(1);
+            stats.counters.native_paint_count = stats.counters.native_paint_count.saturating_add(1);
             stats.counters.native_paint_sequence = sequence;
             stats.last_native_paint_ui_frame = Some(stats.counters.ui_frame_count);
             if stats.last_ui_paints.main_view_built == Some(true) {
@@ -394,10 +383,8 @@ impl WindowDiagnostics {
                     .saturating_add(1);
             }
             if stats.last_ui_paints.rail_built == Some(true) {
-                stats.counters.submitted_rail_paint_count = stats
-                    .counters
-                    .submitted_rail_paint_count
-                    .saturating_add(1);
+                stats.counters.submitted_rail_paint_count =
+                    stats.counters.submitted_rail_paint_count.saturating_add(1);
             }
             now_ns.saturating_sub(stats.baseline.monotonic_ns) >= SAMPLE_INTERVAL_NS
         };
@@ -454,7 +441,10 @@ impl WindowDiagnostics {
     }
 
     fn sample_rows_at(&mut self, end_ns: u64) -> [Option<Value>; 3] {
-        let start = self.active.as_ref().expect("sample requires an active window");
+        let start = self
+            .active
+            .as_ref()
+            .expect("sample requires an active window");
         let start_counters = start.baseline.counters;
         let end_counters = start.counters;
         let include_pump = end_counters.about_to_wait_count > start_counters.about_to_wait_count;
@@ -467,15 +457,15 @@ impl WindowDiagnostics {
             include_main.then(|| self.next_event_order()),
             include_rail.then(|| self.next_event_order()),
         ];
-        let stats = self.active.as_mut().expect("sample requires an active window");
+        let stats = self
+            .active
+            .as_mut()
+            .expect("sample requires an active window");
         let rows = [
             orders[0].map(|order| stats.pump_sample_row(order, start_ns, end_ns)),
-            orders[1].map(|order| {
-                stats.ui_paint_sample_row(order, start_ns, end_ns, "main_view")
-            }),
-            orders[2].map(|order| {
-                stats.ui_paint_sample_row(order, start_ns, end_ns, "sidecar_rail")
-            }),
+            orders[1].map(|order| stats.ui_paint_sample_row(order, start_ns, end_ns, "main_view")),
+            orders[2]
+                .map(|order| stats.ui_paint_sample_row(order, start_ns, end_ns, "sidecar_rail")),
         ];
         stats.baseline = SampleBaseline {
             monotonic_ns: end_ns,

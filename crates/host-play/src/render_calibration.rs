@@ -170,11 +170,15 @@ mod tests {
         use client::render::budget::RenderBudget;
         let raw = std::env::var("T44_RENDER_BUDGET_LIMITS_JSON")
             .expect("the refusal proof requires the same explicit ceilings as the live run");
-        let limits: super::ByteLimits = serde_json::from_str(&raw).expect("thirteen positive ceilings");
+        let limits: super::ByteLimits =
+            serde_json::from_str(&raw).expect("thirteen positive ceilings");
         let budgets = RenderBudget::new(limits.limits());
         for initial in budgets.diagnostic_snapshots() {
             let budget = budgets.for_resource(initial.resource).unwrap();
-            let requested = initial.maximum.checked_add(1).expect("ceiling permits a boundary probe");
+            let requested = initial
+                .maximum
+                .checked_add(1)
+                .expect("ceiling permits a boundary probe");
             let refused = match budget.reserve(requested) {
                 Err(limit) => limit,
                 Ok(_) => panic!("an oversized reservation was admitted"),

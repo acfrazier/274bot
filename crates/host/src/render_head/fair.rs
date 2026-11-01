@@ -448,9 +448,13 @@ fn fair_process_static_bytes() -> usize {
         + std::mem::size_of::<OnceLock<Option<client::render::budget::RenderBudget>>>()
         + {
             #[cfg(feature = "render-diagnostics")]
-            { client::render::budget::diagnostic_static_storage_bytes() }
+            {
+                client::render::budget::diagnostic_static_storage_bytes()
+            }
             #[cfg(not(feature = "render-diagnostics"))]
-            { 0 }
+            {
+                0
+            }
         }
 }
 
@@ -1257,9 +1261,13 @@ pub(super) fn paint(head: &mut Head, client: &mut Client) -> FrameOutput {
     }
     head.fair.stats.has_valid_scene = head.renderer.has_valid_scene();
     #[cfg(feature = "render-diagnostics")]
-    head.fair.stats.observe_scene_progress(head.renderer.scene_progress());
+    head.fair
+        .stats
+        .observe_scene_progress(head.renderer.scene_progress());
     #[cfg(not(feature = "render-diagnostics"))]
-    { head.fair.stats.scene_progress = head.renderer.scene_progress(); }
+    {
+        head.fair.stats.scene_progress = head.renderer.scene_progress();
+    }
     head.fair.stats.retained_storage_allocations = head.renderer.retained_storage_allocations();
     head.fair.stats.retained_storage_bytes = head.renderer.retained_storage_bytes();
     head.output.publish_fair_stats(head.fair.stats);
@@ -1543,7 +1551,12 @@ mod tests {
         let mut gpu = FairHead::new(lease.identity(), BackendKind::Gpu).stats;
         gpu.observe_scene_progress(SceneProgress::Rebuilt);
         assert_eq!(gpu.rebuilt_scenes(), 0);
-        assert_eq!(FairHead::new(lease.identity(), BackendKind::Cpu).stats.rebuilt_scenes(), 0);
+        assert_eq!(
+            FairHead::new(lease.identity(), BackendKind::Cpu)
+                .stats
+                .rebuilt_scenes(),
+            0
+        );
     }
 
     #[test]

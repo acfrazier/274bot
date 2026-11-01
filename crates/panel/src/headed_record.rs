@@ -25,12 +25,12 @@ use std::process::{Child, ChildStdin, Command, ExitStatus, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
 #[cfg(feature = "render-diagnostics")]
 use std::sync::atomic::{AtomicU64, AtomicUsize};
-use std::sync::mpsc::{sync_channel, Receiver, SyncSender, TryRecvError};
 #[cfg(feature = "render-diagnostics")]
 use std::sync::mpsc::TrySendError;
-use std::sync::{Arc, Mutex};
+use std::sync::mpsc::{sync_channel, Receiver, SyncSender, TryRecvError};
 #[cfg(feature = "render-diagnostics")]
 use std::sync::TryLockError;
+use std::sync::{Arc, Mutex};
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
@@ -794,7 +794,9 @@ impl RecorderDiagnostics {
     fn new(queue_capacity: usize) -> Self {
         let diagnostics = Self {
             recorder_id: NEXT_RECORDER_DIAGNOSTIC_ID
-                .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |value| value.checked_add(1))
+                .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |value| {
+                    value.checked_add(1)
+                })
                 .unwrap_or(0),
             started: Instant::now(),
             event_order: AtomicU64::new(1),
@@ -817,8 +819,11 @@ impl RecorderDiagnostics {
     }
 
     fn next_event_stamp(&self) -> RecorderEventStamp {
-        let event_order = self.event_order
-            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |value| value.checked_add(1))
+        let event_order = self
+            .event_order
+            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |value| {
+                value.checked_add(1)
+            })
             .unwrap_or(0);
         RecorderEventStamp {
             event_order,
@@ -860,8 +865,8 @@ impl RecorderDiagnostics {
             .fetch_add(1, Ordering::SeqCst)
             .saturating_add(1);
         let receive_after = self.receive_sequence.load(Ordering::SeqCst);
-        let receive_sequence = (receive_before == receive_after && receive_before % 2 == 0)
-            .then_some(receive_before);
+        let receive_sequence =
+            (receive_before == receive_after && receive_before % 2 == 0).then_some(receive_before);
         QueueSendTicket {
             stamp,
             receive_sequence,
@@ -918,9 +923,9 @@ impl RecorderDiagnostics {
                 self.queue_depth_if_stable()
             }
             QueueSendStatus::NoSender | QueueSendStatus::Disconnected => None,
-            QueueSendStatus::Accepted
-            | QueueSendStatus::Full
-            | QueueSendStatus::WriterNotReady => None,
+            QueueSendStatus::Accepted | QueueSendStatus::Full | QueueSendStatus::WriterNotReady => {
+                None
+            }
         };
         self.emit(
             stamp,
@@ -991,11 +996,7 @@ impl RecorderDiagnostics {
         stamp
     }
 
-    fn finish_finalization_request(
-        &self,
-        stamp: RecorderEventStamp,
-        control_status: &'static str,
-    ) {
+    fn finish_finalization_request(&self, stamp: RecorderEventStamp, control_status: &'static str) {
         self.emit(
             stamp,
             "drain_requested",
@@ -1385,11 +1386,7 @@ impl ActiveRecording {
     }
 
     #[cfg(test)]
-    fn for_test(
-        sender: SyncSender<EncoderMessage>,
-        fps: f64,
-        queue_capacity: usize,
-    ) -> Self {
+    fn for_test(sender: SyncSender<EncoderMessage>, fps: f64, queue_capacity: usize) -> Self {
         #[cfg(feature = "render-diagnostics")]
         let diagnostics = Arc::new(RecorderDiagnostics::new(queue_capacity));
         #[cfg(not(feature = "render-diagnostics"))]
@@ -2362,8 +2359,7 @@ fn run_writer(
     header: BoundedText<4096>,
     settings_header: BoundedText<4096>,
     settings_incomplete: &AtomicBool,
-    #[cfg(feature = "render-diagnostics")]
-    diagnostics: Arc<RecorderDiagnostics>,
+    #[cfg(feature = "render-diagnostics")] diagnostics: Arc<RecorderDiagnostics>,
 ) -> Result<EncoderOutcome, RecordFailure> {
     let files = (|| {
         if let Some(parent) = sidecar_path
@@ -2481,8 +2477,7 @@ fn run_supervisor(
     outcome: Arc<Mutex<RecordFinish>>,
     settings_incomplete: Arc<AtomicBool>,
     forced_failure: Arc<AtomicBool>,
-    #[cfg(feature = "render-diagnostics")]
-    diagnostics: Arc<RecorderDiagnostics>,
+    #[cfg(feature = "render-diagnostics")] diagnostics: Arc<RecorderDiagnostics>,
     _permit: RecorderPermit,
 ) {
     let (ready_sender, ready_receiver) = sync_channel(1);
@@ -2796,7 +2791,9 @@ mod tests {
     fn recorder_order_cannot_invent_elapsed_time_or_wrap() {
         let diagnostics = RecorderDiagnostics::new(1);
         let distant_order = 1_u64 << 60;
-        diagnostics.event_order.store(distant_order, Ordering::Relaxed);
+        diagnostics
+            .event_order
+            .store(distant_order, Ordering::Relaxed);
         let before = diagnostics.started.elapsed().as_nanos();
         let stamp = diagnostics.next_event_stamp();
         let after = diagnostics.started.elapsed().as_nanos();
@@ -2974,7 +2971,10 @@ mod tests {
     #[cfg(feature = "render-diagnostics")]
     fn assert_full_drain_diagnostics(recorder_id: u64) {
         let events = recorder_diagnostic_events(recorder_id);
-        assert!(!events.is_empty(), "recorder event JSON is retained in logs");
+        assert!(
+            !events.is_empty(),
+            "recorder event JSON is retained in logs"
+        );
         let event_orders: Vec<_> = events
             .iter()
             .map(|event| {
@@ -3001,7 +3001,11 @@ mod tests {
         assert!(event_orders.windows(2).all(|pair| pair[0] < pair[1]));
         let elapsed_times: Vec<_> = events
             .iter()
-            .map(|event| event["elapsed_ns"].as_u64().expect("every event has elapsed time"))
+            .map(|event| {
+                event["elapsed_ns"]
+                    .as_u64()
+                    .expect("every event has elapsed time")
+            })
             .collect();
         assert!(elapsed_times.windows(2).all(|pair| pair[0] < pair[1]));
 
@@ -3009,7 +3013,10 @@ mod tests {
             .iter()
             .find(|event| event["kind"].as_str() == Some("recorder_started"))
             .expect("session start is observed");
-        assert_eq!(started["queue_capacity"].as_u64(), Some(RECORD_QUEUE as u64));
+        assert_eq!(
+            started["queue_capacity"].as_u64(),
+            Some(RECORD_QUEUE as u64)
+        );
         assert_eq!(started["queue_occupancy"].as_u64(), Some(0));
 
         let accepted: Vec<_> = events
@@ -3048,18 +3055,9 @@ mod tests {
             1
         );
         assert_eq!(full["status"].as_str(), Some("full"));
-        assert_eq!(
-            full["queue_capacity"].as_u64(),
-            Some(RECORD_QUEUE as u64)
-        );
-        assert_eq!(
-            full["queue_occupancy"].as_u64(),
-            Some(RECORD_QUEUE as u64)
-        );
-        assert_eq!(
-            full["frame_identity"].as_u64(),
-            Some(RECORD_QUEUE as u64)
-        );
+        assert_eq!(full["queue_capacity"].as_u64(), Some(RECORD_QUEUE as u64));
+        assert_eq!(full["queue_occupancy"].as_u64(), Some(RECORD_QUEUE as u64));
+        assert_eq!(full["frame_identity"].as_u64(), Some(RECORD_QUEUE as u64));
         let request = events
             .iter()
             .find(|event| event["kind"].as_str() == Some("drain_requested"))
@@ -3439,22 +3437,15 @@ mod tests {
             .find(|event| event["kind"].as_str() == Some("send_full"))
             .expect("the actual bounded channel reported Full");
         assert_eq!(full["status"].as_str(), Some("full"));
-        assert_eq!(
-            full["queue_occupancy"].as_u64(),
-            Some(RECORD_QUEUE as u64)
-        );
-        assert_eq!(
-            full["queue_capacity"].as_u64(),
-            Some(RECORD_QUEUE as u64)
-        );
-        assert_eq!(
-            full["frame_identity"].as_u64(),
-            Some(RECORD_QUEUE as u64)
-        );
+        assert_eq!(full["queue_occupancy"].as_u64(), Some(RECORD_QUEUE as u64));
+        assert_eq!(full["queue_capacity"].as_u64(), Some(RECORD_QUEUE as u64));
+        assert_eq!(full["frame_identity"].as_u64(), Some(RECORD_QUEUE as u64));
 
         for identity in 0..RECORD_QUEUE as u64 {
             diagnostics.begin_receive();
-            let message = receiver.recv().expect("real receiver drains accepted frame");
+            let message = receiver
+                .recv()
+                .expect("real receiver drains accepted frame");
             let (kind, frame_identity) = message.diagnostic_identity();
             assert!(matches!(kind, DiagnosticMessageKind::Frame));
             assert_eq!(frame_identity, Some(identity));
@@ -3547,7 +3538,9 @@ mod tests {
         );
 
         diagnostics.begin_receive();
-        let second = receiver.recv().expect("receiver drains accepted raced frame");
+        let second = receiver
+            .recv()
+            .expect("receiver drains accepted raced frame");
         let (kind, identity) = second.diagnostic_identity();
         assert_eq!(identity, Some(101));
         diagnostics.record_dequeued(kind, identity);
@@ -3607,10 +3600,7 @@ mod tests {
             .into_iter()
             .find(|event| event["kind"].as_str() == Some("setting_writer_not_ready"))
             .expect("pre-writer setting refusal is not a queue-full observation");
-        assert_eq!(
-            unready_event["message_kind"].as_str(),
-            Some("Setting")
-        );
+        assert_eq!(unready_event["message_kind"].as_str(), Some("Setting"));
         assert!(unready_event["queue_occupancy"].is_null());
     }
 
@@ -4272,11 +4262,7 @@ mod tests {
         bounded_recorder_fixed_layout_receipt();
     }
 
-    #[cfg(all(
-        feature = "render-test-hooks",
-        feature = "render-diagnostics",
-        unix
-    ))]
+    #[cfg(all(feature = "render-test-hooks", feature = "render-diagnostics", unix))]
     #[test]
     fn record_queue_diagnostics_capture_real_full_drain_and_encoder_exit() {
         run_isolated_recorder_fixture("queue-drain");

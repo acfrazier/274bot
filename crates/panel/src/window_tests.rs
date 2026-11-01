@@ -2710,10 +2710,7 @@ fn window_diagnostic_lifecycle_rows_keep_identity_order_status_and_scope() {
     assert_eq!(scope["clock_origin_unix_ns"], clock_origin);
     assert_eq!(scope["status"], "observed");
     assert_eq!(scope["window_id"], "WindowId(17)");
-    assert_eq!(
-        scope["pump_id"],
-        "ApplicationHandler::about_to_wait"
-    );
+    assert_eq!(scope["pump_id"], "ApplicationHandler::about_to_wait");
     assert_eq!(
         scope["surfaces"],
         serde_json::json!([
@@ -2801,8 +2798,14 @@ fn window_diagnostic_samples_separate_built_and_submitted_surfaces() {
     assert_eq!(main["submitted_paint_count_end"], 2);
     assert_eq!(main["rail_present_start"], serde_json::Value::Null);
     assert_eq!(main["rail_present_end"], serde_json::Value::Null);
-    assert_eq!(main["rail_present_frame_count_start"], serde_json::Value::Null);
-    assert_eq!(main["rail_present_frame_count_end"], serde_json::Value::Null);
+    assert_eq!(
+        main["rail_present_frame_count_start"],
+        serde_json::Value::Null
+    );
+    assert_eq!(
+        main["rail_present_frame_count_end"],
+        serde_json::Value::Null
+    );
     assert_eq!(main["last_built_start"], serde_json::Value::Null);
     assert_eq!(main["last_built_end"], true);
     assert_eq!(main["frame_count_start"], 0);
@@ -2916,7 +2919,9 @@ fn window_diagnostic_absent_rail_is_an_explicit_observation() {
     let rows = diagnostics
         .record_native_paint_at(None, 1_000_000_100)
         .expect("the sampled UI frame progresses");
-    let rail = rows[2].as_ref().expect("absence is distinct from no observation");
+    let rail = rows[2]
+        .as_ref()
+        .expect("absence is distinct from no observation");
     assert_eq!(rail["rail_present_start"], serde_json::Value::Null);
     assert_eq!(rail["rail_present_end"], false);
     assert_eq!(rail["rail_present_frame_count_start"], 0);
@@ -2977,10 +2982,7 @@ fn noninstrumented_window_layout_matches_the_frozen_pre_diagnostics_shape() {
     type LayoutFrame = for<'a> fn(&imgui::Ui, &mut Gpu<'a>) -> bool;
 
     assert_eq!(size_of::<Gpu>(), size_of::<PreDiagnosticsGpu<'_>>());
-    assert_eq!(
-        size_of::<AppWindow>(),
-        size_of::<PreDiagnosticsAppWindow>()
-    );
+    assert_eq!(size_of::<AppWindow>(), size_of::<PreDiagnosticsAppWindow>());
     assert_eq!(
         size_of::<App<LayoutFrame>>(),
         size_of::<PreDiagnosticsApp<LayoutFrame>>()

@@ -3435,8 +3435,7 @@ where
             Err(e) => {
                 #[cfg(feature = "render-diagnostics")]
                 {
-                    self.diagnostics
-                        .error(window_diagnostics::error_kind(&e));
+                    self.diagnostics.error(window_diagnostics::error_kind(&e));
                     self.diagnostics.close("window_start_failed");
                 }
                 self.failure = Some(e);
@@ -3470,8 +3469,7 @@ where
             Err(e) => {
                 #[cfg(feature = "render-diagnostics")]
                 {
-                    self.diagnostics
-                        .error(window_diagnostics::error_kind(&e));
+                    self.diagnostics.error(window_diagnostics::error_kind(&e));
                     self.diagnostics.close("gpu_initialization_failed");
                 }
                 self.failure = Some(e);
@@ -3561,8 +3559,7 @@ where
                         Ok(false) => {}
                         Err(e) => {
                             #[cfg(feature = "render-diagnostics")]
-                            self.diagnostics
-                                .error(window_diagnostics::error_kind(&e));
+                            self.diagnostics.error(window_diagnostics::error_kind(&e));
                             eprintln!(
                                 "Render error: {e}; attempting to recover by recreating GPU state"
                             );

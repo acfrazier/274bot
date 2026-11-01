@@ -5754,34 +5754,35 @@ const RAIL_TILES_MIN_H: f32 = 120.0;
 /// and the 1 Hz resource card.
 fn rail_window(ui: &Ui, gpu: &mut Gpu, state: &mut PanelState) {
     let mut open = true;
-    let built = ui.window(format!(
-        "{}-rail###{RAIL_WINDOW}",
-        state.session.app_title()
-    ))
-    .opened(&mut open)
-    .flags(WindowFlags::NO_COLLAPSE | WindowFlags::NO_RESIZE)
-    .build(|| {
-        rail_toolbar(ui, &mut state.session);
-        ui.separator();
-        let height = ui.content_region_avail()[1].max(scale_px(ui, RAIL_TILES_MIN_H));
-        ui.child_window("##rail-tiles")
-            .size([0.0, height])
-            .build(ui, || {
-                render_gate(ui, &mut state.session);
-                rail_tiles(ui, gpu, state);
-                add_bot_button(ui, state);
-                resource_card(ui, state.session.core.resources());
-                #[cfg(test)]
-                {
-                    let (pos, size) = (ui.window_pos(), ui.window_size());
-                    TEST_RAIL_TILES.set(Some(RailTilesRecord {
-                        scroll_y: ui.scroll_y(),
-                        scroll_max_y: ui.scroll_max_y(),
-                        rect: [pos[0], pos[1], pos[0] + size[0], pos[1] + size[1]],
-                    }));
-                }
-            });
-    });
+    let built = ui
+        .window(format!(
+            "{}-rail###{RAIL_WINDOW}",
+            state.session.app_title()
+        ))
+        .opened(&mut open)
+        .flags(WindowFlags::NO_COLLAPSE | WindowFlags::NO_RESIZE)
+        .build(|| {
+            rail_toolbar(ui, &mut state.session);
+            ui.separator();
+            let height = ui.content_region_avail()[1].max(scale_px(ui, RAIL_TILES_MIN_H));
+            ui.child_window("##rail-tiles")
+                .size([0.0, height])
+                .build(ui, || {
+                    render_gate(ui, &mut state.session);
+                    rail_tiles(ui, gpu, state);
+                    add_bot_button(ui, state);
+                    resource_card(ui, state.session.core.resources());
+                    #[cfg(test)]
+                    {
+                        let (pos, size) = (ui.window_pos(), ui.window_size());
+                        TEST_RAIL_TILES.set(Some(RailTilesRecord {
+                            scroll_y: ui.scroll_y(),
+                            scroll_max_y: ui.scroll_max_y(),
+                            rect: [pos[0], pos[1], pos[0] + size[0], pos[1] + size[1]],
+                        }));
+                    }
+                });
+        });
     #[cfg(feature = "render-diagnostics")]
     gpu.note_rail_build(built.is_some());
     #[cfg(not(feature = "render-diagnostics"))]

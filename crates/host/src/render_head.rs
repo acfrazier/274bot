@@ -365,7 +365,6 @@ impl fmt::Debug for SlotRender {
     }
 }
 
-
 #[cfg(feature = "render-diagnostics")]
 struct BudgetObservationClock(Instant);
 
@@ -981,8 +980,14 @@ mod tests {
             #[cfg(feature = "render-test-hooks")]
             budget: Option<client::render::budget::RenderBudget>,
         }
-        assert_eq!(std::mem::size_of::<Head>(), std::mem::size_of::<BaselineHead>());
-        assert_eq!(std::mem::align_of::<Head>(), std::mem::align_of::<BaselineHead>());
+        assert_eq!(
+            std::mem::size_of::<Head>(),
+            std::mem::size_of::<BaselineHead>()
+        );
+        assert_eq!(
+            std::mem::align_of::<Head>(),
+            std::mem::align_of::<BaselineHead>()
+        );
     }
 
     /// The F0 fixture lifetime: short enough for a stalled grant to expire
