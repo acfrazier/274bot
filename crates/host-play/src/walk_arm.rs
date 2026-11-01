@@ -95,14 +95,14 @@ impl WalkArm {
 /// TUI; [`arm_walk_on`] latches the picked route on the focused slot).
 pub type WalkArms = Arc<Mutex<HashMap<String, Arc<Mutex<WalkArm>>>>>;
 
-/// `arm_walk_on` no-path result: the picked dest has no route under the
-/// caller's nav options (the caller keeps its picked dest and shows a
-/// short error).
+/// `arm_walk_on` route failure: the picked dest has no route, or the strict
+/// search was incomplete. The caller keeps its picked dest and shows detail.
 #[derive(Debug)]
 pub struct NoPath {
     pub assessment: Option<Arc<RouteAssessment>>,
     pub refusal: Option<WalkRefusal>,
     pub detail: Option<Arc<str>>,
+    pub incomplete_search: bool,
 }
 
 /// A manual route and the same assessment returned by native admission.
@@ -206,8 +206,23 @@ pub fn arm_walk_on(
             )
         },
     );
+    let search_result = match &admitted.outcome {
+        RouteOutcome::IncompleteSearch { search_result } => Some(*search_result),
+        RouteOutcome::NoPath if !admitted.blocked.is_empty() => {
+            Some(crate::walk_plan::RouteSearchResultKind::Danger)
+        }
+        RouteOutcome::NoPath if admitted.refusal.is_some() => {
+            Some(crate::walk_plan::RouteSearchResultKind::Refusal)
+        }
+        RouteOutcome::NoPath => Some(crate::walk_plan::RouteSearchResultKind::NoPath),
+        RouteOutcome::Routed(_) | RouteOutcome::BankSession { .. } => None,
+    };
+    let incomplete_search = matches!(
+        search_result,
+        Some(crate::walk_plan::RouteSearchResultKind::BudgetExhausted { .. })
+    );
     let assessment = admitted.assessment;
-    let outcome = if admitted.refusal.is_some() {
+    let outcome = if admitted.refusal.is_some() || incomplete_search {
         RouteOutcome::NoPath
     } else {
         admitted.outcome
@@ -227,7 +242,7 @@ pub fn arm_walk_on(
                     ),
                     Some(pending),
                 ),
-                RouteOutcome::NoPath => unreachable!(),
+                RouteOutcome::IncompleteSearch { .. } | RouteOutcome::NoPath => unreachable!(),
             };
             replace_walk_arm(
                 travellers,
@@ -245,8 +260,8 @@ pub fn arm_walk_on(
                 assessment,
             })
         }
-        RouteOutcome::NoPath => {
-            let detail = admitted.refusal.map(|refusal| {
+        RouteOutcome::IncompleteSearch { .. } | RouteOutcome::NoPath => {
+            let refusal_detail = admitted.refusal.map(|refusal| {
                 assessment
                     .as_ref()
                     .map(|assessment| Arc::clone(&assessment.reason))
@@ -271,44 +286,61 @@ pub fn arm_walk_on(
                         })
                     })
             });
-            // A held (non-enforcing) NoPath stays the pre-S2b bare refusal:
-            // it neither creates an arm nor stops one already walking. Only
-            // an enforcing refusal or a live escape is retained on the arm.
-            let retain =
-                admission.enforce || admission.escape.is_some_and(crate::admission::escape_live);
-            if let Some(name) =
-                focused.filter(|_| retain && (assessment.is_some() || admitted.refusal.is_some()))
-            {
-                if let Some(assessment) = assessment.as_ref() {
-                    crate::admission::log(Some(name), assessment, false);
+            let detail = match search_result {
+                Some(search_result) => {
+                    let search_detail = format!("search_result={search_result}");
+                    Some(Arc::from(match refusal_detail {
+                        Some(refusal_detail) => {
+                            format!("{search_detail}; {refusal_detail}")
+                        }
+                        None => search_detail,
+                    }))
                 }
-                let arm = travellers
-                    .lock()
-                    .unwrap()
-                    .entry(name.to_string())
-                    .or_insert_with(|| Arc::new(Mutex::new(WalkArm::default())))
-                    .clone();
-                let mut arm = arm.lock().unwrap();
-                if let Some(assessment) = assessment.as_ref() {
-                    arm.last_assessment = Some(Arc::clone(assessment));
+                None => refusal_detail,
+            };
+            // An incomplete search cannot decide whether the held walk is
+            // invalid. Keep the existing arm unchanged.
+            if !incomplete_search {
+                // A held (non-enforcing) NoPath stays the pre-S2b bare refusal:
+                // it neither creates an arm nor stops one already walking. Only
+                // an enforcing refusal or a live escape is retained on the arm.
+                let retain = admission.enforce
+                    || admission.escape.is_some_and(crate::admission::escape_live);
+                if let Some(name) = focused
+                    .filter(|_| retain && (assessment.is_some() || admitted.refusal.is_some()))
+                {
+                    if let Some(assessment) = assessment.as_ref() {
+                        crate::admission::log(Some(name), assessment, false);
+                    }
+                    let arm = travellers
+                        .lock()
+                        .unwrap()
+                        .entry(name.to_string())
+                        .or_insert_with(|| Arc::new(Mutex::new(WalkArm::default())))
+                        .clone();
+                    let mut arm = arm.lock().unwrap();
+                    if let Some(assessment) = assessment.as_ref() {
+                        arm.last_assessment = Some(Arc::clone(assessment));
+                    }
+                    if !admission.escape.is_some_and(crate::admission::escape_live) {
+                        arm.traveller.clear();
+                        arm.route = None;
+                        arm.bank_fetch = None;
+                        arm.basis = None;
+                        arm.assessment = None;
+                        arm.admission = Some(Box::new(admission));
+                        arm.route_generation = admission.generation;
+                        arm.admission_pending = false;
+                    }
+                    arm.refusal = admitted.refusal;
+                    arm.refusal_detail = detail.clone();
                 }
-                if !admission.escape.is_some_and(crate::admission::escape_live) {
-                    arm.traveller.clear();
-                    arm.route = None;
-                    arm.bank_fetch = None;
-                    arm.basis = None;
-                    arm.assessment = None;
-                    arm.admission = Some(Box::new(admission));
-                    arm.route_generation = admission.generation;
-                    arm.admission_pending = false;
-                }
-                arm.refusal = admitted.refusal;
-                arm.refusal_detail = detail.clone();
             }
             Err(NoPath {
                 assessment,
                 refusal: admitted.refusal,
                 detail,
+                incomplete_search,
             })
         }
     }

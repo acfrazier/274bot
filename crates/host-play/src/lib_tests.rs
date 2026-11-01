@@ -32263,8 +32263,11 @@ export default class T extends LoopingBot {
         id
     }
 
-    fn compiled_sheep_walk(
+    fn compiled_sheep_step(
         selected: &Arc<api::game_data::SelectedGameData>,
+        kind: &str,
+        args: serde_json::Value,
+        settle: script::quester::path::PredicateDocument,
     ) -> Arc<script::quester::compile::CompiledPath> {
         use script::quester::path::{PathDocument, PredicateDocument};
 
@@ -32279,19 +32282,11 @@ export default class T extends LoopingBot {
             .find(|sequence| sequence.stage.0.as_ref() == "sheep:0")
             .expect("Sheep not-started sequence");
         let step = &mut sequence.steps[0];
-        step.kind = "walk".into();
-        step.args = serde_json::json!({
-            "tile": [3224, 3220, 0],
-            "source": "native Quester entrance-gate host test",
-            "radius": 0
-        });
+        step.kind = kind.into();
+        step.args = args;
         step.advances = Some(false);
         step.skip_if = PredicateDocument::Any(Vec::new());
-        step.settle = PredicateDocument::Fact {
-            kind: "near".into(),
-            version: 1,
-            args: serde_json::json!({"tile": [3224, 3220, 0], "radius": 0}),
-        };
+        step.settle = settle;
 
         let bytes = serde_json::to_vec(&document).expect("serialize modified Quester path");
         let quests = selected.try_quests().expect("selected quest catalog");
@@ -32321,9 +32316,34 @@ export default class T extends LoopingBot {
         .expect("compile native Quester path")
     }
 
-    fn quester_snapshot(
+    fn incomplete_budget_world(origin: api::snapshot::WorldTile) -> Arc<NavWorld> {
+        const WIDTH: usize = 2200;
+        const HEIGHT: usize = 2000;
+        const SPLIT_X: usize = 2050;
+        let cells = WIDTH * HEIGHT;
+        let mut blocked = vec![0u64; cells.div_ceil(64)];
+        for z in 0..HEIGHT {
+            let index = z * WIDTH + SPLIT_X;
+            blocked[index >> 6] |= 1 << (index & 63);
+        }
+        Arc::new(NavWorld::from_parts(
+            nav_planner::collision::WorldCollision {
+                origin,
+                width: WIDTH,
+                height: HEIGHT,
+                walk: vec![0; cells],
+                blocked,
+                flags: None,
+            },
+            nav_planner::transport::TransportGraph::default(),
+            Vec::new(),
+        ))
+    }
+
+    fn quester_snapshot_at(
         selected: &api::game_data::SelectedGameData,
         gate_quest: &api::selected::FactKey,
+        position: api::snapshot::WorldTile,
     ) -> GameSnapshot {
         let catalog = selected.try_quests().expect("selected quest catalog");
         let gate = catalog
@@ -32334,7 +32354,7 @@ export default class T extends LoopingBot {
             .iter()
             .find(|facts| facts.id.0.as_ref() == "sheep")
             .expect("selected Sheep Shearer fact");
-        let mut snapshot = nav_frame_at(3220, 3220);
+        let mut snapshot = nav_frame_at(position.x, position.z);
         snapshot.seed_inventory(Vec::new(), 28);
         snapshot.seed_equipment(Vec::new());
         snapshot.seed_quest_statuses(
@@ -32353,6 +32373,13 @@ export default class T extends LoopingBot {
             true,
         );
         snapshot
+    }
+
+    fn quester_snapshot(
+        selected: &api::game_data::SelectedGameData,
+        gate_quest: &api::selected::FactKey,
+    ) -> GameSnapshot {
+        quester_snapshot_at(selected, gate_quest, tile(3220, 3220))
     }
 
     struct QuesterWalkHarness {
@@ -32402,7 +32429,20 @@ export default class T extends LoopingBot {
         let selected = selected_r289();
         let quest = cook_quest(&selected);
         let quests = selected.try_quests().expect("selected quest catalog");
-        let path = compiled_sheep_walk(&selected);
+        let path = compiled_sheep_step(
+            &selected,
+            "walk",
+            serde_json::json!({
+                "tile": [3224, 3220, 0],
+                "source": "native Quester entrance-gate host test",
+                "radius": 0
+            }),
+            script::quester::path::PredicateDocument::Fact {
+                kind: "near".into(),
+                version: 1,
+                args: serde_json::json!({"tile": [3224, 3220, 0], "radius": 0}),
+            },
+        );
         let world = gatherer_world(tile(3224, 3220), family(&selected), quest.clone());
         let rig = nav_rig_with(Some(world));
         let slot = script_slot(&rig.scripts, "alice").expect("Quester slot");
@@ -32471,6 +32511,152 @@ export default class T extends LoopingBot {
             Truth::True,
             "the Quester route must use the captured Complete row"
         );
+    }
+    #[test]
+    fn native_quester_retries_wall_walk_after_real_budget_stop() {
+        let selected = selected_r289();
+        let quest = cook_quest(&selected);
+        let quests = selected.try_quests().expect("selected quest catalog");
+        let start = tile(1029, 3220);
+        let wall = tile(start.x + 2195, start.z);
+        let anchor = tile(wall.x - 1, wall.z);
+        let path = compiled_sheep_step(
+            &selected,
+            "interact",
+            serde_json::json!({
+                "target": {"loc": "death_harold_door"},
+                "op": "Open",
+                "anchor": {
+                    "tile": [anchor.x, anchor.z, anchor.level],
+                    "source": "native Quester route-budget fixture"
+                },
+                "radius": 6,
+                "settle_ms": 300000
+            }),
+            script::quester::path::PredicateDocument::Fact {
+                kind: "near".into(),
+                version: 1,
+                args: serde_json::json!({
+                    "tile": [anchor.x, anchor.z, anchor.level],
+                    "radius": 0
+                }),
+            },
+        );
+        let rig = nav_rig_with(Some(incomplete_budget_world(start)));
+        let slot = script_slot(&rig.scripts, "alice").expect("Quester slot");
+        let mut snapshot = quester_snapshot_at(&selected, &quest, start);
+        snapshot.seed_locs(vec![api::snapshot::LocView {
+            typecode: 0,
+            info: 0,
+            id: 3747,
+            name: Some("Death Harold Door".into()),
+            description: None,
+            actions: vec![Some("Open".into())],
+            tile: wall,
+            distance: wall.x - start.x,
+            layer: api::snapshot::LocLayer::Wall,
+            shape: 0,
+            angle: 0,
+            width: 1,
+            length: 1,
+            footprint_width: 1,
+            footprint_length: 1,
+            block_walk: true,
+            block_range: false,
+            active: true,
+            animation: -1,
+            map_function: -1,
+            map_scene: -1,
+            force_approach: 0,
+        }]);
+        let control = Arc::new(Mutex::new(None));
+        {
+            let mut slot = slot.lock().unwrap();
+            slot.stop();
+            slot.start_test_script(
+                Box::new(QuesterWalkHarness {
+                    control: Arc::clone(&control),
+                }),
+                Some(Arc::clone(&selected)),
+            )
+            .expect("start native Quester");
+            let run = slot.native_run().expect("native Quester run");
+            *control.lock().unwrap() = Some(script::quester::runner::Quester::new(
+                run,
+                Arc::clone(&path),
+                Arc::clone(&selected),
+                Arc::clone(&quests),
+                Arc::new(api::named_banks::NamedBankFacts::empty()),
+            ));
+        }
+
+        let mut driver = NavRec::default();
+        let requested_at = (1..=8).find(|tick| {
+            observe(
+                &rig,
+                &mut driver,
+                &snapshot,
+                *tick,
+                Some(nav_planner::WorldState::from_snapshot(&snapshot)),
+            );
+            rig.navs
+                .lock()
+                .unwrap()
+                .get("alice")
+                .is_some_and(|bot| bot.native_walk.is_some())
+        });
+        let requested_at = requested_at.expect("native Quester must request the wall walk");
+        let first_request = rig.navs.lock().unwrap()["alice"].walk_request_id;
+        assert!(
+            wait_for_route_work(&rig.navs, "alice", |bot| {
+                bot.walk_outcome_request_id == first_request && !bot.route_work_pending()
+            }),
+            "native Quester wall route must finish its real budget-bounded search"
+        );
+        {
+            let navs = rig.navs.lock().unwrap();
+            let bot = &navs["alice"];
+            assert!(matches!(
+                bot.native_walk_failure.as_ref(),
+                Some((request, script::native::WalkEnd::Refused)) if *request == first_request
+            ));
+            assert!(matches!(
+                bot.risk_refusal.as_deref(),
+                Some((request, script::native::WalkRefusal::SearchIncomplete {
+                    nodes_settled: Some(settled)
+                })) if *request == first_request && *settled > 0
+            ));
+            assert!(
+                bot.walk_outcome_detail
+                    .as_deref()
+                    .is_some_and(|detail| detail.contains("search_result=BudgetExhausted")),
+                "the real route result must identify its incomplete search"
+            );
+        }
+
+        let retry_request = (requested_at + 1..=requested_at + 4).find_map(|tick| {
+            observe(
+                &rig,
+                &mut driver,
+                &snapshot,
+                tick,
+                Some(nav_planner::WorldState::from_snapshot(&snapshot)),
+            );
+            let navs = rig.navs.lock().unwrap();
+            let bot = navs.get("alice")?;
+            (bot.walk_request_id != first_request && bot.native_walk.is_some())
+                .then_some(bot.walk_request_id)
+        });
+        let retry_request = retry_request
+            .expect("typed incomplete route must start the Quester's bounded wall fallback walk");
+        assert!(retry_request > first_request);
+        assert!(
+            wait_for_route_work(&rig.navs, "alice", |bot| {
+                bot.walk_outcome_request_id == retry_request && !bot.route_work_pending()
+            }),
+            "the bounded Quester fallback route must also settle its real search"
+        );
+        assert!(rig.navs.lock().unwrap()["alice"].walk_outcome_seq >= 2);
     }
 }
 #[cfg(feature = "js")]

@@ -444,6 +444,12 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.8` 
   result says how many places it examined. The Quester keeps its existing
   bounded walk retries.
 
+- Bots now find long walks to an area that the route planner gave up on
+  before, such as the walk to the Waterfall Quest start. When the planner
+  cannot tell early whether an area is reachable, it now keeps searching up
+  to its normal limit. A walk to a place that cannot be reached can take
+  longer to fail.
+
 - Bots now wait and try again when another player is using a shortcut,
   instead of giving up. The Yanille dungeon ledge ("The ledge is being
   used") stays held for at most 9 game ticks after a refusal, so the bot
@@ -455,6 +461,14 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.8` 
   Transport time limits now count game ticks instead of polls, so a burst
   of polls inside one tick no longer ends a crossing early, and a slow
   poll that misses several ticks no longer extends it.
+
+- Walk failure details and debug logs now name the search result. A walk
+  that stops at its node budget reports `search_result=BudgetExhausted`. Script
+  and native walks also report the settled-node count. When no more specific
+  cause is found, native walk receipts report `Refused` with a typed
+  `SearchIncomplete` refusal, not `NoPath`. An incomplete search does not
+  publish a missing-supply list. A complete `NoPath` can still report missing
+  supplies when an item-gated route was found.
 
 ### Scripts
 

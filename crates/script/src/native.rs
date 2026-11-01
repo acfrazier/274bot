@@ -976,6 +976,9 @@ pub struct WalkRequest {
 }
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum WalkRefusal {
+    SearchIncomplete {
+        nodes_settled: Option<usize>,
+    },
     NoRouteWithinBounds {
         tried: u8,
         last: Option<crate::combat::risk::Verdict>,
@@ -993,6 +996,12 @@ pub enum WalkRefusal {
 impl std::fmt::Display for WalkRefusal {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
+            Self::SearchIncomplete {
+                nodes_settled: Some(settled),
+            } => write!(f, "route search incomplete after {settled} settled nodes"),
+            Self::SearchIncomplete {
+                nodes_settled: None,
+            } => f.write_str("route search incomplete"),
             Self::NoRouteWithinBounds { tried, last } => {
                 write!(f, "no route within bounds after {tried} search attempts")?;
                 if let Some(last) = last {
@@ -1775,6 +1784,12 @@ mod walk_permission_tests {
     #[test]
     fn refusal_variants_preserve_distinct_typed_kinds() {
         let refusals = [
+            WalkRefusal::SearchIncomplete {
+                nodes_settled: Some(524_288),
+            },
+            WalkRefusal::SearchIncomplete {
+                nodes_settled: None,
+            },
             WalkRefusal::NoRouteWithinBounds {
                 tried: 2,
                 last: Some(crate::combat::risk::Verdict::Unsurvivable),
@@ -1821,6 +1836,38 @@ mod walk_permission_tests {
             Err(ActionError::Blocked(Arc::from(
                 "retreated from the danger zone"
             )))
+        );
+    }
+    #[test]
+    fn incomplete_search_stays_within_the_compat_blocked_result() {
+        let detail: Arc<str> = Arc::from(
+            "search_result=BudgetExhausted nodes_settled=unavailable (incomplete search)",
+        );
+        let receipt = WalkReceipt {
+            goal: None,
+            request_id: 7,
+            evidence: EvidenceStamp {
+                run: RunKey {
+                    slot: 1,
+                    run: 1,
+                    session: 1,
+                },
+                tick: 1,
+                sequence: 1,
+            },
+            end: WalkEnd::Refused,
+            blocked: None,
+            detail: Some(Arc::clone(&detail)),
+            refusal: Some(WalkRefusal::SearchIncomplete {
+                nodes_settled: None,
+            }),
+            assessment: None,
+            escape: None,
+        };
+        assert_eq!(
+            receipt.into_arrival(),
+            Err(ActionError::Blocked(detail)),
+            "script callers still receive the compat Blocked error variant",
         );
     }
 

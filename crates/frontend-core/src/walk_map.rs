@@ -101,6 +101,7 @@ pub enum WalkActionErrorKind {
     Stale,
     NoNavigation,
     NoPath,
+    SearchIncomplete,
     BlockedByZones,
     InsufficientItems,
     RiskRefused,
@@ -137,6 +138,7 @@ impl WalkActionError {
             E::Stale => WalkActionErrorKind::Stale,
             E::NoNavigation => WalkActionErrorKind::NoNavigation,
             E::NoPath => WalkActionErrorKind::NoPath,
+            E::SearchIncomplete { .. } => WalkActionErrorKind::SearchIncomplete,
             E::BlockedByZones { .. } => WalkActionErrorKind::BlockedByZones,
             E::InsufficientItems { .. } => WalkActionErrorKind::InsufficientItems,
             E::RiskRefused { .. } => WalkActionErrorKind::RiskRefused,
@@ -158,6 +160,7 @@ impl WalkActionError {
         use host_play::walk_map::ActionError as E;
         match &self.0 {
             E::BlockedByZones { detail } => detail.as_deref(),
+            E::SearchIncomplete { detail } => Some(detail),
             E::InsufficientItems { detail } | E::RiskRefused { detail, .. } => Some(detail),
             _ => None,
         }
@@ -1266,4 +1269,21 @@ pub fn default_walk_nav_flags_path() -> PathBuf {
 /// Reap cache workers after all map-demand leases have been released.
 pub fn reap_walk_map_demand() {
     host_play::reap_map_demand();
+}
+#[cfg(test)]
+mod tests {
+    use super::{WalkActionError, WalkActionErrorKind};
+    use host_play::walk_map::ActionError;
+
+    #[test]
+    fn incomplete_search_has_a_distinct_frontend_kind_and_detail() {
+        let detail = "search_result=BudgetExhausted nodes_settled=unavailable (incomplete search)";
+        let error = WalkActionError::from_host(ActionError::SearchIncomplete {
+            detail: detail.to_owned(),
+        });
+
+        assert_eq!(error.kind(), WalkActionErrorKind::SearchIncomplete);
+        assert_eq!(error.short(), "route search incomplete");
+        assert_eq!(error.detail(), Some(detail));
+    }
 }

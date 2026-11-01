@@ -1724,6 +1724,118 @@ fn group_walk_reasons_label_stale_and_members_only_separately() {
 }
 
 #[test]
+fn incomplete_search_group_reason_is_not_a_risk_refusal() {
+    let detail = "search_result=BudgetExhausted nodes_settled=unavailable (incomplete search)";
+    let error = ActionError::SearchIncomplete {
+        detail: detail.to_owned(),
+    };
+    assert_eq!(error.short(), "route search incomplete");
+    assert_eq!(
+        WalkSlotOutcomeKind::Failed(error.clone()).reason(),
+        Some("route search incomplete"),
+    );
+    assert_eq!(
+        error.to_string(),
+        format!("Route search incomplete: {detail}"),
+    );
+}
+
+#[test]
+fn incomplete_search_does_not_clear_existing_walk_arm() {
+    const WIDTH: usize = 4003;
+    const HEIGHT: usize = 2001;
+    const SPLIT_X: usize = 2001;
+    let cells = WIDTH * HEIGHT * 4;
+    let mut blocked = vec![0u64; cells.div_ceil(64)];
+    for level in 0..4 {
+        for z in 0..HEIGHT {
+            let index = level * WIDTH * HEIGHT + z * WIDTH + SPLIT_X;
+            blocked[index >> 6] |= 1 << (index & 63);
+        }
+    }
+    let world = NavWorld::from_parts(
+        WorldCollision {
+            origin: wt(0, 0, 0),
+            width: WIDTH,
+            height: HEIGHT,
+            walk: vec![0; cells],
+            blocked,
+            flags: None,
+        },
+        TransportGraph::default(),
+        Vec::new(),
+    );
+    let from = wt(0, 1000, 0);
+    let nearby = wt(1, 1000, 0);
+    let destination = wt((WIDTH - 1) as i32, 1000, 0);
+    let state = WorldState::empty();
+    let route = Arc::new(
+        nav_planner::router::find_with(
+            &world.collision,
+            &world.graph,
+            from,
+            nearby,
+            FindOptions::default(),
+            &state,
+        )
+        .unwrap(),
+    );
+    let arm = crate::walk_arm::WalkArm {
+        route: Some(Arc::clone(&route)),
+        route_generation: 17,
+        refusal: Some(script::native::WalkRefusal::EscapeInProgress),
+        refusal_detail: Some(Arc::from("previous risk refusal")),
+        admission_pending: true,
+        ..Default::default()
+    };
+    let arms: crate::walk_arm::WalkArms = Arc::new(Mutex::new(HashMap::from([(
+        "alice".to_owned(),
+        Arc::new(Mutex::new(arm)),
+    )])));
+    let options = FindOptions {
+        zones: nav_planner::zones::ZoneExempt::all(),
+        ..FindOptions::default()
+    };
+    let admission = crate::admission::Admission::manual(
+        options,
+        Default::default(),
+        23,
+        crate::WalkGlobals::default(),
+    );
+    let failure = crate::arm_walk_on(
+        &world,
+        t(from.x, from.z, from.level),
+        t(destination.x, destination.z, destination.level),
+        options,
+        &state,
+        &BankRows::default(),
+        admission,
+        &arms,
+        Some("alice"),
+    )
+    .unwrap_err();
+    assert!(failure.incomplete_search);
+    assert!(matches!(
+        failure.refusal,
+        Some(script::native::WalkRefusal::SearchIncomplete { .. })
+    ));
+
+    let arms_guard = arms.lock().unwrap();
+    let arm = arms_guard["alice"].lock().unwrap();
+    assert!(arm
+        .route
+        .as_ref()
+        .is_some_and(|current| Arc::ptr_eq(current, &route)));
+    assert_eq!(arm.route_generation, 17);
+    assert_eq!(
+        arm.refusal,
+        Some(script::native::WalkRefusal::EscapeInProgress)
+    );
+    assert_eq!(arm.refusal_detail.as_deref(), Some("previous risk refusal"));
+    assert!(arm.admission_pending);
+}
+
+#[test]
 fn manual_walk_refuses_before_boarding_and_names_the_total_coin_shortfall() {
     let mut nav = world(t(0, 0, 0), 1, &[]);
     for level in 0..2 {

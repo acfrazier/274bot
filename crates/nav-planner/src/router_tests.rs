@@ -25,7 +25,7 @@ use crate::router::{
     find_on_grid, find_unresolved_quest_gates, find_with, find_with_avoid, find_with_avoid_bounded,
     find_with_model, local_step_component, missing_item_reqs, AvoidRect, CostModel, FallbackRoute,
     FindOptions, GridLeg, Leg, MissingReq, ReverseProof, RouteError, TargetError,
-    BANK_TARGET_BUDGET, FIRST_TARGET_BUDGET, PER_STEP_WALK,
+    BANK_TARGET_BUDGET, FIRST_TARGET_BUDGET, PER_STEP_WALK, REVERSE_PROOF_BUDGET,
 };
 use crate::test_support::{
     family as gate_family, range as gate_range, stamp, tbwt_evidence, window as gate_window,
@@ -37,6 +37,9 @@ use crate::transport::{
 };
 use crate::world_state::WorldState;
 use crate::zones::{Zone, ZoneClass, ZoneExempt, ZoneFilterOwned, ZoneKey, ZoneKind, ZoneTable};
+
+#[path = "first_goal_area_tests.rs"]
+mod first_goal_area;
 
 #[test]
 fn synchronous_driver_skips_suspension_and_restores_cooperative_mode() {
@@ -1924,11 +1927,11 @@ fn first_goal_diagnosis_names_the_chosen_goals_missing_facts() {
 
 /// Neither side decides: the start's corridor and the stand's backward
 /// corridor are disjoint and longer than both budgets, as on the 289 bake
-/// when a stand is fed by the unstamped upper planes. The search stops at
-/// its budget instead of flooding the start's corridor, and a fallback goal
-/// out of reach gets no second budget-limited search.
+/// when a stand is fed by the unstamped upper planes. This test injects equal
+/// unproven and hard caps so it continues to specify the hard-cap behavior
+/// independently of the production default.
 #[test]
-fn first_target_search_stops_at_its_budget_when_the_proof_cannot_decide() {
+fn first_target_search_stops_at_its_explicit_hard_cap_when_the_proof_cannot_decide() {
     let len = FIRST_TARGET_BUDGET + FIRST_TARGET_BUDGET / 4;
     let walls: Vec<_> = (0..len as i32)
         .flat_map(|x| {
@@ -1939,7 +1942,7 @@ fn first_target_search_stops_at_its_budget_when_the_proof_cannot_decide() {
         })
         .collect();
     let wc = bake(len, 2, &walls);
-    let search = find_first_with_fallback(
+    let search = super::first_search(
         &wc,
         &TransportGraph::default(),
         tile(0, 0, 0),
@@ -1947,6 +1950,10 @@ fn first_target_search_stops_at_its_budget_when_the_proof_cannot_decide() {
         &[tile(len as i32 - 2, 1, 0)],
         FindOptions::default(),
         &WorldState::empty(),
+        super::Relax::Strict,
+        &[],
+        FIRST_TARGET_BUDGET,
+        FIRST_TARGET_BUDGET,
     );
 
     assert_eq!(search.route().err(), Some(RouteError::BudgetExhausted));
@@ -1959,9 +1966,54 @@ fn first_target_search_stops_at_its_budget_when_the_proof_cannot_decide() {
         search.fallback(),
         Some(&FallbackRoute::Failed(RouteError::BudgetExhausted))
     );
-    assert!(search.settled() <= FIRST_TARGET_BUDGET);
+    assert_eq!(search.settled(), FIRST_TARGET_BUDGET);
     let scratch = search.scratch_capacities();
     assert!(scratch.reverse < len, "{scratch:?}");
+}
+
+/// A connected area-goal corridor farther than the reverse-proof cap must
+/// still route: the proof abandons before the forward search settles either
+/// endpoint, and the global node budget remains the hard ceiling.
+#[test]
+fn first_target_area_routes_past_the_unproven_budget_after_reverse_abandons() {
+    let len = FIRST_TARGET_BUDGET + REVERSE_PROOF_BUDGET + 1_024;
+    let wc = bake(1, len, &[]);
+    let targets = [tile(0, len as i32 - 2, 0), tile(0, len as i32 - 1, 0)];
+    let world = Arc::new(crate::world::NavWorld::from_parts(
+        wc,
+        TransportGraph::default(),
+        Vec::new(),
+    ));
+    let lease = crate::producer::lease(&world).expect("connected corridor lease");
+    let state = WorldState::empty();
+    let completion = advance_real_route_completion(
+        crate::router::SearchRequest::First {
+            from: tile(0, 0, 0),
+            targets: targets.to_vec().into_boxed_slice(),
+            fallback: Box::new([]),
+            options: FindOptions::default(),
+            avoid: Box::new([]),
+            max_settles: super::NODE_BUDGET,
+        },
+        &lease,
+        &state,
+    );
+    let forward_settled = completion.forward_settled();
+    let crate::router::SearchOutcome::First { search } = completion.into_parts().0 else {
+        panic!("cooperative first-goal search returned the wrong result shape");
+    };
+
+    assert_eq!(search.proof(), ReverseProof::Abandoned);
+    assert_eq!(
+        search
+            .route()
+            .expect("an abandoned reverse proof leaves the route to forward search")
+            .destination(),
+        targets[0]
+    );
+    assert!(search.settled() > FIRST_TARGET_BUDGET);
+    assert!(search.settled() <= super::NODE_BUDGET);
+    assert_eq!(forward_settled, search.settled());
 }
 
 /// A reachable preferred goal wins over a cheaper fallback goal, and the
@@ -2070,16 +2122,10 @@ fn first_target_proof_of_reachability_lifts_the_unproven_budget() {
     }
 }
 
-/// R6-B1: a fallback set keeps its own proof when the preferred budget stops
-/// the search. On a 1024² plane the preferred goal lies on a plane no move
-/// reaches, too large for its proof to close, so the stands stop at the
-/// unproven budget. The radius tile sits in a sealed room whose only way in
-/// is a teleport dearer than walking the whole plane: its proof meets the
-/// landing at once, but it settles only after the plane, past the stands'
-/// budget. It is left undecided rather than failed, and the search over it
-/// alone, under the budget its proof lifts, routes to it.
+/// A preferred proof that abandons no longer stops the shared flood early.
+/// Its reachable fallback routes before the preferred search completes.
 #[test]
-fn fallback_proven_reachable_past_the_preferred_budget_still_routes() {
+fn fallback_proven_reachable_routes_after_the_preferred_proof_abandons() {
     const SIZE: i32 = 1024;
     let mut ring = Vec::new();
     for x in 600..=604 {
@@ -2101,9 +2147,13 @@ fn fallback_proven_reachable_past_the_preferred_budget_still_routes() {
     let state = WorldState::empty();
 
     let shared = find_first_with_fallback(&wc, &graph, from, &stands, &fallback, opts, &state);
-    assert_eq!(shared.route().err(), Some(RouteError::BudgetExhausted));
-    assert_eq!(shared.settled(), FIRST_TARGET_BUDGET);
-    assert_eq!(shared.fallback(), Some(&FallbackRoute::Undecided));
+    assert_eq!(shared.proof(), ReverseProof::Abandoned);
+    assert_eq!(shared.route().err(), Some(RouteError::NoPath));
+    assert!(shared.settled() > FIRST_TARGET_BUDGET);
+    let Some(FallbackRoute::Routed(route)) = shared.fallback() else {
+        panic!("the reachable fallback must route: {:?}", shared.fallback());
+    };
+    assert_eq!(route.dest, fallback[0]);
 
     let alone = find_first_with(&wc, &graph, from, &fallback, opts, &state);
     assert_eq!(alone.proof(), ReverseProof::Reachable);
@@ -3022,11 +3072,11 @@ fn first_target_stands_past_the_old_scene_cap_route_on_real_289_pack() {
 }
 
 /// Tree Gnome Stronghold middle booth: its south stand is an 11-tile pocket,
-/// proven unreachable at once; its north stand's backward region climbs
-/// ladders into the unstamped upper planes, so the budget alone bounds the
-/// pair, far below the 2,901,702-node flood of everything reachable.
+/// proven unreachable at once; the north stand's backward region climbs
+/// ladders into unstamped upper planes, so that proof abandons. The search
+/// completes its bounded forward flood and reports the correct NoPath result.
 #[test]
-fn stronghold_middle_booth_search_is_bounded_on_real_289_pack() {
+fn stronghold_middle_booth_search_finishes_after_its_real_pack_proof_abandons() {
     let Some(mut world) = crate::world::NavWorld::load_default_pack_or_skip() else {
         return;
     };
@@ -3045,8 +3095,10 @@ fn stronghold_middle_booth_search_is_bounded_on_real_289_pack() {
 
     let stands = [south, north];
     let search = find_first_with(&world.collision, &world.graph, from, &stands, opts, &state);
-    assert_eq!(search.route().err(), Some(RouteError::BudgetExhausted));
-    assert!(search.settled() <= FIRST_TARGET_BUDGET);
+    assert_eq!(search.proof(), ReverseProof::Abandoned);
+    assert_eq!(search.route().err(), Some(RouteError::NoPath));
+    assert!(search.settled() > FIRST_TARGET_BUDGET);
+    assert!(search.settled() <= super::NODE_BUDGET);
 }
 
 /// The Varrock-sewer web: the strict search proves the stands behind the web

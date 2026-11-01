@@ -5,7 +5,7 @@ use crate::gatherer::WorkArea;
 use crate::ground_take::FailureLedger;
 use crate::native::{
     defer_budget, walk::Walk, ActionContext, ActionError, NativeMachine, WalkEnd, WalkReceipt,
-    WalkRequest,
+    WalkRefusal, WalkRequest,
 };
 use crate::reach_route as route;
 use crate::shim::InteractReq;
@@ -1564,7 +1564,7 @@ pub fn loc_walk_request(
 }
 
 /// A straight-wall approach that targets its facing tile may retry from the
-/// wall tile, once, if the native route planner explicitly reports no route.
+/// wall tile, once, when routing reports no path or an incomplete search.
 pub(super) fn loc_wall_fallback_tile(
     loc: &api::snapshot::LocView,
     initial: &WalkRequest,
@@ -1579,6 +1579,8 @@ pub(super) fn loc_wall_fallback_tile(
 
 pub(super) fn loc_wall_route_failed(receipt: &WalkReceipt) -> bool {
     receipt.end == WalkEnd::NoPath
+        || (receipt.end == WalkEnd::Refused
+            && matches!(receipt.refusal, Some(WalkRefusal::SearchIncomplete { .. })))
 }
 
 pub fn last_chat_seq(cx: &ActionContext<'_>) -> i32 {

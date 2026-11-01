@@ -4163,16 +4163,11 @@ pub fn find_with_avoid_bounded(
 /// Native bank-search cap: 500,000 non-goal expansions precede an accepted
 /// goal, which has 1-based settle ordinal 500,001.
 pub const BANK_TARGET_BUDGET: usize = 500_001;
-/// Settles a first-goal search's goal set keeps the search going while the
-/// set's backward proof has not shown any of its goals reachable. A proof of
-/// reachability lifts the set to [`find_with`]'s full budget; a proof of
-/// unreachability stops it at once.
-/// Only a goal set unreachable from a large region whose own backward region
-/// is also large spends all of it: on the 289 bake, stands fed through
-/// ladders by the unstamped upper planes. Measured reachable in-scene stands
-/// need at most ~347,000 settles (a 599-tick Wilderness detour; ~279,000
-/// with every teleport usable), and 2^19 settles hold about 90 MB of search
-/// tables.
+/// Initial first-goal settle cap while the backward proof is open.
+/// A reachable goal or an abandoned proof lifts this to the caller's full
+/// budget (normally [`NODE_BUDGET`]). Only a completed proof of
+/// unreachability stops the search early. The reverse proof has its own
+/// bounded scratch and cannot rule out a route merely by reaching its cap.
 pub const FIRST_TARGET_BUDGET: usize = 1 << 19;
 /// Tiles the backward proof may admit before it leaves the answer to the
 /// forward search alone. It takes one step per settled node, so this only
@@ -4247,10 +4242,9 @@ pub enum FallbackRoute {
     /// No fallback goal can settle: the set's own proof shows it
     /// unreachable, or everything reachable settled
     /// ([`RouteError::NoPath`]); or a settle past its own budget exists
-    /// without its proof showing a goal reachable
     /// ([`RouteError::BudgetExhausted`]).
     Failed(RouteError),
-    /// Only more settles could decide it: its proof shows a goal reachable,
+    /// Only more settles could decide it: its proof permits the full budget,
     /// or the preferred proof stopped the search within the fallback's
     /// budget. A search over the fallback set alone decides it.
     Undecided,
@@ -4316,8 +4310,8 @@ impl FirstRouteSearch {
 /// closure from the targets ([`ReverseProof`]) runs one step per settled
 /// node: a goal set sealed in a small region (a dead-end pocket, a gated
 /// room) is proven unreachable after about twice that region's size. The
-/// search spends at most [`FIRST_TARGET_BUDGET`] settles unless the closure
-/// proves a goal reachable, and then keeps [`find_with`]'s full budget.
+/// search initially allows [`FIRST_TARGET_BUDGET`] settles. A reachable goal
+/// or an abandoned closure keeps [`find_with`]'s full [`NODE_BUDGET`] bound.
 /// Small goal sets are scanned inline without allocation; larger fallback
 /// sets build one membership map instead of scanning every target for every
 /// settled node.
@@ -4345,7 +4339,7 @@ pub fn find_first_with_avoid(
     find_first_with_fallback_avoid(collision, graph, from, targets, &[], opts, state, avoid)
 }
 
-/// First-goal search with explicit unproven and reachable settle caps.
+/// First-goal search with explicit initial and full settle caps.
 #[expect(
     clippy::too_many_arguments,
     reason = "The first-goal route inputs plus the two explicit settle caps."
@@ -4387,11 +4381,9 @@ pub(crate) fn find_first_with_avoid_budgets(
 /// or the preferred set stops without a goal, caught up to one step per
 /// settle spent (so a fallback goal within that budget, or a preferred goal,
 /// costs it nothing, and only one proof's scratch is live at a time). A
-/// goal settling past the budget counts only if the proof showed a goal
-/// reachable within it; proven unreachable, or past its budget without
-/// proving a goal reachable, the set has failed; otherwise it is
-/// [`FallbackRoute::Undecided`] for the caller to search alone. Of the two
-/// searches, at most one then stops at the unproven budget.
+/// reachable goal or abandoned proof permits the caller's full budget. A
+/// proven unreachable set, or one past that full budget, has failed;
+/// otherwise it is [`FallbackRoute::Undecided`] for the caller to search alone.
 pub fn find_first_with_fallback(
     collision: &WorldCollision,
     graph: &TransportGraph,
@@ -4845,8 +4837,8 @@ fn merge_fallback(current: &mut Option<FallbackRoute>, candidate: FallbackRoute)
 /// (strict gates) and the single-target diagnoses ([`Relax`]). The
 /// backward closures honor the same gates as the
 /// forward search, so a strict proof never hides a relaxed route. Each goal
-/// set's `budget` holds until its own proof shows it reachable, then
-/// `reachable_budget` applies ([`FirstGoals`]).
+/// set's `budget` holds while its proof is open. A reachable goal or an
+/// abandoned proof permits `reachable_budget` ([`FirstGoals`]).
 #[expect(
     clippy::too_many_arguments,
     reason = "Keeps collision, transports, targets, policy, and search limits separate."
@@ -5941,11 +5933,11 @@ pub fn find_missing_item_reqs_with_avoid_bounded(
 /// fallback alone only when the shared search leaves it
 /// [`FallbackRoute::Undecided`]. The diagnosis is the chosen route's: the
 /// cheapest preferred goal's when one routes relaxed, else the fallback
-/// set's. The searches keep the strict first-goal budgets
-/// ([`FIRST_TARGET_BUDGET`] unless the backward proof shows a goal
-/// reachable), so a goal set costs what its strict search may, never one
-/// diagnosis per goal. The `Unknown` stage-gate retry and the `None` cases
-/// are [`find_missing_item_reqs`]'s.
+/// set's. Each relaxed search keeps the strict first-goal budget policy:
+/// an unreachable proof stops it early, while a reachable goal or abandoned
+/// proof permits the full caller budget. A goal set costs what its strict
+/// search may, never one diagnosis per goal. The `Unknown` stage-gate retry
+/// and the `None` cases are [`find_missing_item_reqs`]'s.
 #[expect(
     clippy::too_many_arguments,
     reason = "Keeps collision, transports, targets, policy, and search limits separate."
@@ -7428,8 +7420,8 @@ struct GoalSet<'a> {
     found: Option<(WorldTile, TargetCost)>,
     ordered: bool,
     found_rank: Option<usize>,
-    /// The unproven budget until the proof shows a goal reachable, then the
-    /// reachable budget.
+    /// The initial budget while the proof is open, then the full budget
+    /// after reachability or abandonment.
     budget: usize,
     proof: ReverseRun<'a>,
     /// Why no goal of the set can settle within its budget.
@@ -7497,8 +7489,8 @@ impl<'a> GoalSet<'a> {
         true
     }
 
-    /// Runs the proof to one backward step per settle so far: reachability
-    /// lifts the budget, unreachability closes the set.
+    /// Run one backward step per settle so far. Reachability or abandonment
+    /// permits the full bounded search. Only unreachability closes the set.
     async fn prove_to(
         &mut self,
         gates: ProofGates<'a>,
@@ -7506,7 +7498,9 @@ impl<'a> GoalSet<'a> {
         reachable_budget: usize,
     ) -> Result<(), SearchCursorError> {
         match self.proof.run_to(gates, self.seeds, steps).await? {
-            Some(ReverseProof::Reachable) => self.budget = self.budget.max(reachable_budget),
+            Some(ReverseProof::Reachable | ReverseProof::Abandoned) => {
+                self.budget = self.budget.max(reachable_budget);
+            }
             Some(ReverseProof::Unreachable) => self.close(RouteError::NoPath),
             _ => {}
         }
@@ -7618,10 +7612,9 @@ impl<'a> FirstGoals<'a> {
     /// Decides the fallback set, where that needs no further settle, after
     /// `spent` settles with settle ordinal `known` known to exist. Its proof
     /// is caught up to one step per settle spent, up to its budget, as a
-    /// search over it alone would have stepped it: shown unreachable, the
-    /// set has failed; not shown reachable while a settle past its budget
-    /// exists, that search stopped at the budget. Otherwise it stays
-    /// undecided.
+    /// search over it alone would have stepped it. A proof of unreachability
+    /// fails the set. A settle past its applicable budget also fails it.
+    /// Otherwise it stays undecided.
     async fn decide_fallback(
         &mut self,
         spent: usize,

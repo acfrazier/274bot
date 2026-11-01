@@ -30,15 +30,15 @@ use nav_planner::producer::{lease as nav_lease, OwnerResultLedger, OwnerResultRe
 use nav_planner::router::find_missing_item_reqs_with_avoid;
 use nav_planner::router::{
     AvoidRect, BlockerDiagnosis, CompactFallbackRoute, CompactRoute, CursorStep, FindOptions,
-    MissingReqView, MissingRequirements, Route, SearchCursor, SearchOutcome, SearchPreflight,
-    SearchRequest, SearchRequestShape, FIRST_TARGET_BUDGET, NODE_BUDGET,
+    MissingReqView, MissingRequirements, Route, RouteError, SearchCursor, SearchOutcome,
+    SearchPreflight, SearchRequest, SearchRequestShape, FIRST_TARGET_BUDGET, NODE_BUDGET,
 };
 use nav_planner::world::NavWorld;
 use nav_planner::zones::{ZoneExempt, ZoneFilterOwned, ZoneKey};
 use nav_planner::WorldState;
 use script::work_admission::{cancellation::WorkCancellation, WorkService};
 
-use crate::walk_plan::{PendingBankFetch, RouteOutcome, RoutePath};
+use crate::walk_plan::{PendingBankFetch, RouteOutcome, RoutePath, RouteSearchResultKind};
 
 // The real v17 Dusty-key diagnosis needs 679,226 settlements before it
 // finds the actionable item. Two first-goal allowances retain that result
@@ -862,7 +862,14 @@ fn route_output_detail_bound(
         } else {
             supply_bytes.checked_add(2)?
         })?;
-    let detail_len = detail_len.max("candidate_goal_tier=preferred".len());
+    let search_result_bytes = "search_result="
+        .len()
+        .checked_add("BudgetExhausted nodes_settled=".len())?
+        .checked_add(usize::MAX.ilog10() as usize + 1)?
+        .checked_add(" (incomplete search)".len())?;
+    let detail_len = detail_len
+        .max("candidate_goal_tier=preferred".len())
+        .checked_add(search_result_bytes.checked_add(2)?)?;
     detail_len.checked_add(arc_slice_heap_bytes::<u8>(detail_len)?)
 }
 
@@ -1113,6 +1120,7 @@ pub(crate) struct RouteJob {
     diagnostic_settled: usize,
     #[cfg(test)]
     diagnostic_budget: usize,
+    budget_settled: Option<usize>,
     outcome: Option<RouteJobOutcome>,
     assessment_future: Option<RouteAssessmentFuture>,
     assessment: Option<Arc<script::combat::risk::RouteAssessment>>,
@@ -1251,6 +1259,7 @@ impl RouteJob {
             diagnostic_settled: 0,
             #[cfg(test)]
             diagnostic_budget: DIAGNOSTIC_BUDGET,
+            budget_settled: None,
             outcome: None,
             assessment_future: None,
             assessment: None,
@@ -1831,11 +1840,23 @@ impl RouteJob {
         self.stage = RouteJobStage::Search;
     }
 
+    fn record_budget_stop(&mut self, settled: usize) {
+        self.budget_settled = Some(
+            self.budget_settled
+                .unwrap_or_default()
+                .saturating_add(settled),
+        );
+    }
+
     fn begin_diagnostics(&mut self) {
         self.outcome = Some(RouteJobOutcome::NoPath);
         self.diagnostics_started = true;
         self.stage = RouteJobStage::BeginDiagnostics;
-        self.native_failure = Some(script::native::WalkEnd::NoPath);
+        self.native_failure = Some(if self.budget_settled.is_some() {
+            script::native::WalkEnd::Refused
+        } else {
+            script::native::WalkEnd::NoPath
+        });
     }
 
     fn diagnostic_budget(&self) -> usize {
@@ -1869,43 +1890,95 @@ impl RouteJob {
         self.stage = RouteJobStage::Diagnostics;
     }
 
-    fn handle_search(&mut self, search: SearchOutcome) -> Result<(), RouteJobError> {
+    fn first_search_stopped_on_budget(
+        preferred: &Result<CompactRoute, RouteError>,
+        fallback: &Option<CompactFallbackRoute>,
+    ) -> bool {
+        matches!(preferred, Err(RouteError::BudgetExhausted))
+            || matches!(
+                fallback,
+                Some(CompactFallbackRoute::Failed(RouteError::BudgetExhausted))
+            )
+    }
+
+    fn handle_strict_first_search(
+        &mut self,
+        preferred: Result<CompactRoute, RouteError>,
+        fallback: Option<CompactFallbackRoute>,
+        settled: usize,
+    ) -> Result<(), RouteJobError> {
+        if Self::first_search_stopped_on_budget(&preferred, &fallback) {
+            self.record_budget_stop(settled);
+        }
+        if let Ok(route) = preferred {
+            self.outcome = Some(RouteJobOutcome::Route(route));
+            self.stage = RouteJobStage::Assess;
+            return Ok(());
+        }
+        if let Some(CompactFallbackRoute::Routed(route)) = fallback {
+            self.strict_fallback = Some(route);
+        }
+        if self
+            .request
+            .candidate_goals
+            .as_ref()
+            .is_some_and(|goals| !goals.fallback().is_empty())
+        {
+            return self.prepare_goal_copy(
+                RouteGoalCopy::CandidateFallback,
+                RouteSearchPurpose::CandidateFallback,
+            );
+        }
+        self.begin_fetchable_first()
+    }
+
+    fn schedule_carry_diagnostics(&mut self) -> Result<(), RouteJobError> {
+        if self.budget_settled.is_some() {
+            self.prepare_goal_copy(RouteGoalCopy::Diagnostics, RouteSearchPurpose::Entrance)
+        } else {
+            self.schedule_search(RouteSearchPurpose::MissingCarry);
+            Ok(())
+        }
+    }
+
+    fn handle_search(
+        &mut self,
+        search: SearchOutcome,
+        settled: usize,
+    ) -> Result<(), RouteJobError> {
         match (self.search_purpose, search) {
-            (RouteSearchPurpose::Strict, SearchOutcome::Single { route }) => {
-                if let Ok(route) = route {
+            (RouteSearchPurpose::Strict, SearchOutcome::Single { route }) => match route {
+                Ok(route) => {
                     self.outcome = Some(RouteJobOutcome::Route(route));
                     self.stage = RouteJobStage::Assess;
-                } else if self.request.opts.allow_bank_fetch {
-                    self.schedule_search(RouteSearchPurpose::MissingTarget);
-                } else {
-                    self.finish_strict_searches();
                 }
-            }
+                Err(RouteError::BudgetExhausted) => {
+                    self.record_budget_stop(settled);
+                    if self.request.opts.allow_bank_fetch {
+                        self.schedule_search(RouteSearchPurpose::MissingTarget);
+                    } else {
+                        self.finish_strict_searches();
+                    }
+                }
+                Err(RouteError::NoPath) if self.request.opts.allow_bank_fetch => {
+                    self.schedule_search(RouteSearchPurpose::MissingTarget);
+                }
+                Err(RouteError::NoPath) => self.finish_strict_searches(),
+            },
             (RouteSearchPurpose::StrictFirst, SearchOutcome::First { search }) => {
                 let (preferred, fallback) = search.into_routes();
-                if let Ok(route) = preferred {
-                    self.outcome = Some(RouteJobOutcome::Route(route));
-                    self.stage = RouteJobStage::Assess;
-                } else {
-                    if self
-                        .request
-                        .candidate_goals
-                        .as_ref()
-                        .is_some_and(|goals| !goals.fallback().is_empty())
-                    {
-                        return self.prepare_goal_copy(
-                            RouteGoalCopy::CandidateFallback,
-                            RouteSearchPurpose::CandidateFallback,
-                        );
-                    }
-                    if let Some(CompactFallbackRoute::Routed(route)) = fallback {
-                        self.strict_fallback = Some(route);
-                    }
-                    self.begin_fetchable_first()?;
-                }
+                self.handle_strict_first_search(preferred, fallback, settled)?;
             }
             (RouteSearchPurpose::CandidateFallback, SearchOutcome::First { search }) => {
-                self.strict_fallback = search.into_routes().0.ok();
+                let (preferred, fallback) = search.into_routes();
+                if preferred.is_err() && Self::first_search_stopped_on_budget(&preferred, &fallback)
+                {
+                    self.record_budget_stop(settled);
+                }
+                self.strict_fallback = preferred.ok().or_else(|| match fallback {
+                    Some(CompactFallbackRoute::Routed(route)) => Some(route),
+                    _ => None,
+                });
                 self.begin_fetchable_first()?;
             }
             (RouteSearchPurpose::MissingTarget, SearchOutcome::MissingItemReqs(missing)) => {
@@ -2035,6 +2108,7 @@ impl RouteJob {
                     Ok(Some(gates)) if !gates.is_empty() => {
                         script::native::WalkEnd::NeedsEvidence(Arc::from(gates))
                     }
+                    Ok(_) if self.budget_settled.is_some() => script::native::WalkEnd::Refused,
                     Ok(_) => script::native::WalkEnd::NoPath,
                     Err(_) => script::native::WalkEnd::Refused,
                 });
@@ -2277,9 +2351,61 @@ impl RouteJob {
         Ok(())
     }
 
+    fn search_result_kind(&self) -> RouteSearchResultKind {
+        if let Some(settled) = self.budget_settled {
+            RouteSearchResultKind::BudgetExhausted {
+                settled: Some(settled),
+            }
+        } else if !self.blocked.is_empty()
+            || matches!(
+                self.native_failure.as_ref(),
+                Some(script::native::WalkEnd::Blocked)
+            )
+        {
+            RouteSearchResultKind::Danger
+        } else if !self.missing.is_empty() {
+            RouteSearchResultKind::Supply
+        } else if self.refusal.is_some()
+            || matches!(
+                self.native_failure.as_ref(),
+                Some(script::native::WalkEnd::Refused | script::native::WalkEnd::NeedsEvidence(_))
+            )
+        {
+            RouteSearchResultKind::Refusal
+        } else {
+            RouteSearchResultKind::NoPath
+        }
+    }
+
     fn finish(&mut self) -> RouteJobOutput {
         let outcome = self.outcome.take().unwrap_or(RouteJobOutcome::NoPath);
+        if let Some(settled) = self.budget_settled {
+            if matches!(&outcome, RouteJobOutcome::NoPath)
+                && matches!(
+                    self.refusal.as_ref(),
+                    None | Some(script::native::WalkRefusal::NoRouteWithinBounds { .. })
+                )
+            {
+                self.refusal = Some(script::native::WalkRefusal::SearchIncomplete {
+                    nodes_settled: Some(settled),
+                });
+            }
+        }
+        // A relaxed missing-item search can run after a strict budget stop.
+        // Its requirements do not prove that a supply-gated route exists.
+        if self.budget_settled.is_some() {
+            self.missing.clear();
+        }
+        let search_result =
+            matches!(&outcome, RouteJobOutcome::NoPath).then(|| self.search_result_kind());
         let mut detail = self.detail.take();
+        if let Some(search_result) = search_result {
+            let search_detail = format!("search_result={search_result}");
+            detail = Some(match detail {
+                Some(detail) => format!("{search_detail}; {detail}"),
+                None => search_detail,
+            });
+        }
         let final_goal = match &outcome {
             RouteJobOutcome::Route(route)
             | RouteJobOutcome::Bank {
@@ -2339,7 +2465,7 @@ impl RouteJob {
                     None => context,
                 });
             }
-            if !self.missing.is_empty() {
+            if self.budget_settled.is_none() && !self.missing.is_empty() {
                 if let Some(shortfall) = crate::walk_map::route_supply_shortfall_detail(
                     &self.request.world,
                     &self.state,
@@ -2389,6 +2515,7 @@ impl RouteJob {
             compat_v1: self.request.admission.compat_v1,
             quest_evidence: self.state.quest_evidence.clone(),
             outcome,
+            search_result,
             assessment: self.assessment.take(),
             refusal: self.refusal.take(),
             blocked: std::mem::take(&mut self.blocked),
@@ -2773,7 +2900,9 @@ impl CooperativeJob for RouteJob {
                 RouteJobStage::BeginDiagnostics => {
                     // A concrete item shortfall is the most actionable cause.
                     // Look for it before mainland-wide policy checks.
-                    self.schedule_search(RouteSearchPurpose::MissingCarry);
+                    if let Err(error) = self.schedule_carry_diagnostics() {
+                        return StepOutcome::Failed(error);
+                    }
                     continue;
                 }
                 RouteJobStage::Diagnostics => {
@@ -2841,8 +2970,9 @@ impl CooperativeJob for RouteJob {
                                     .saturating_add(completion.forward_settled());
                             }
                             self.search_cursor = None;
+                            let settled = completion.forward_settled();
                             let (search, _state) = completion.into_parts();
-                            if let Err(error) = self.handle_search(search) {
+                            if let Err(error) = self.handle_search(search, settled) {
                                 return StepOutcome::Failed(error);
                             }
                             if self.diagnostics_started
@@ -2940,6 +3070,7 @@ pub(crate) struct RouteJobOutput {
     compat_v1: bool,
     quest_evidence: Option<nav_planner::quest_gates::QuestEvidence>,
     outcome: RouteJobOutcome,
+    search_result: Option<RouteSearchResultKind>,
     assessment: Option<Arc<script::combat::risk::RouteAssessment>>,
     refusal: Option<script::native::WalkRefusal>,
     blocked: Box<[ZoneKey]>,
@@ -3578,6 +3709,14 @@ fn apply_route_output(
     reservation: Option<OwnerResultReservation>,
 ) {
     let _completion = output.completion;
+    if let Some(search_result) = output.search_result {
+        log_walk_arm_bot(|| {
+            format!(
+                "route_search search_result={search_result} generation={} request_id={}",
+                output.generation, output.request_id
+            )
+        });
+    }
     match output.kind {
         RouteDemandKind::Advisory {
             authority,
@@ -3598,6 +3737,15 @@ fn apply_route_output(
                 .or_else(|| {
                     no_path.then(|| Arc::from("No route within the request's hard constraints"))
                 });
+            let detail = match (output.search_result, detail) {
+                (Some(search_result), Some(detail)) => Some(Arc::from(format!(
+                    "search_result={search_result}; {detail}"
+                ))),
+                (Some(search_result), None) => {
+                    Some(Arc::from(format!("search_result={search_result}")))
+                }
+                (None, detail) => detail,
+            };
             let refusal = output.refusal.take().or_else(|| {
                 no_path.then_some(script::native::WalkRefusal::NoRouteWithinBounds {
                     tried: 0,
@@ -4359,6 +4507,7 @@ fn walk_arm_outcome_tag(outcome: &RouteOutcome) -> &'static str {
     match outcome {
         RouteOutcome::Routed(_) => "Routed",
         RouteOutcome::BankSession { .. } => "BankSession",
+        RouteOutcome::IncompleteSearch { .. } => "IncompleteSearch",
         RouteOutcome::NoPath => "NoPath",
     }
 }
@@ -6268,73 +6417,60 @@ impl ScriptRouteRequest {
         }
     }
 
-    fn drive_route_job_output_for_test(self) -> (RouteJobOutput, Vec<WorldTile>, Arc<NavWorld>) {
-        self.drive_route_job_output_with_diagnostic_budget_for_test(DIAGNOSTIC_BUDGET)
+    fn route_test_identity(index: u64) -> WorkIdentity {
+        WorkIdentity::new(
+            RequestId::from_raw(RequestId::HOST_FIRST + index)
+                .expect("test route identity is valid"),
+            api::identity::ProcessIncarnation::from_start_nonce(
+                std::num::NonZeroU64::new(1).expect("test incarnation is nonzero"),
+            ),
+            Scope::Slot(
+                api::identity::SlotKey::from_incarnation(1)
+                    .expect("test slot incarnation is valid"),
+            ),
+            None,
+        )
+        .expect("test route identity is valid")
     }
 
-    fn drive_route_job_output_with_diagnostic_budget_for_test(
-        self,
-        diagnostic_budget: usize,
-    ) -> (RouteJobOutput, Vec<WorldTile>, Arc<NavWorld>) {
-        fn identity(index: u64) -> WorkIdentity {
-            WorkIdentity::new(
-                RequestId::from_raw(RequestId::HOST_FIRST + index)
-                    .expect("test route identity is valid"),
-                api::identity::ProcessIncarnation::from_start_nonce(
-                    std::num::NonZeroU64::new(1).expect("test incarnation is nonzero"),
-                ),
-                Scope::Slot(
-                    api::identity::SlotKey::from_incarnation(1)
-                        .expect("test slot incarnation is valid"),
-                ),
-                None,
-            )
-            .expect("test route identity is valid")
-        }
+    fn drive_route_stage_for_test(worker: &mut RouteWorkJob) -> RouteStageResult {
+        use api::identity::Deadline;
+        use api::work::{MonotonicClock, SharedCancellation, SliceBudget, SystemClock};
 
-        fn drive_stage(worker: &mut RouteWorkJob) -> RouteStageResult {
-            use api::identity::Deadline;
-            use api::work::{MonotonicClock, SharedCancellation, SliceBudget, SystemClock};
-
-            let clock = SystemClock;
-            let cancellation = SharedCancellation::new();
-            // Keep production's 64-unit yields, including in the real-pack
-            // parity driver. Its finite 4M-settlement queries need more slices.
-            for _ in 0..25_000_000 {
-                let budget = SliceBudget::new(
-                    std::num::NonZeroU32::new(script::work_admission::WORK_UNITS_PER_SLICE)
-                        .expect("slice budget is nonzero"),
-                    Deadline::after(clock.now(), script::work_admission::WORK_SLICE),
-                );
-                let mut context = StepContext::new(&clock, budget, &cancellation);
-                match worker.step(&mut context) {
-                    StepOutcome::Yielded => {}
-                    StepOutcome::Completed(result) => return result,
-                    StepOutcome::Failed(error) => panic!("route stage failed: {error}"),
-                }
+        let clock = SystemClock;
+        let cancellation = SharedCancellation::new();
+        // Keep production's 64-unit yields, including in the real-pack
+        // parity driver. Its finite 4M-settlement queries need more slices.
+        for _ in 0..25_000_000 {
+            let budget = SliceBudget::new(
+                std::num::NonZeroU32::new(script::work_admission::WORK_UNITS_PER_SLICE)
+                    .expect("slice budget is nonzero"),
+                Deadline::after(clock.now(), script::work_admission::WORK_SLICE),
+            );
+            let mut context = StepContext::new(&clock, budget, &cancellation);
+            match worker.step(&mut context) {
+                StepOutcome::Yielded => {}
+                StepOutcome::Completed(result) => return result,
+                StepOutcome::Failed(error) => panic!("route stage failed: {error}"),
             }
-            panic!("route stage exceeded the bounded slice count");
         }
+        panic!("route stage exceeded the bounded slice count");
+    }
 
-        let world = Arc::clone(&self.world);
-        let mut job = RouteJob::prepare(
-            "route-rule-test",
-            Box::new(self),
-            RouteDemandKind::Walk { authority: None },
-        )
-        .expect("test route request prepares");
-        job.diagnostic_budget = diagnostic_budget;
-        job.identity = Some(identity(0));
+    fn drive_prepared_route_job_for_test(
+        job: RouteJob,
+        world: Arc<NavWorld>,
+    ) -> (RouteJobOutput, Vec<WorldTile>, Arc<NavWorld>) {
         let mut next = Some(Box::new(job));
         for stage_index in 0..64u64 {
             let job = next.take().expect("the prior route stage continued");
             let mut worker = RouteWorkJob::new(job);
-            match drive_stage(&mut worker) {
+            match Self::drive_route_stage_for_test(&mut worker) {
                 RouteStageResult::Continue(mut job) => {
                     assert!(job.search_cursor.is_none());
                     job.prepare_continuation()
                         .expect("test route continuation prepares");
-                    job.identity = Some(identity(stage_index + 1));
+                    job.identity = Some(Self::route_test_identity(stage_index + 1));
                     next = Some(job);
                 }
                 RouteStageResult::Complete(output) => {
@@ -6349,6 +6485,26 @@ impl ScriptRouteRequest {
             }
         }
         panic!("route job exceeded the bounded stage count");
+    }
+
+    fn drive_route_job_output_for_test(self) -> (RouteJobOutput, Vec<WorldTile>, Arc<NavWorld>) {
+        self.drive_route_job_output_with_diagnostic_budget_for_test(DIAGNOSTIC_BUDGET)
+    }
+
+    fn drive_route_job_output_with_diagnostic_budget_for_test(
+        self,
+        diagnostic_budget: usize,
+    ) -> (RouteJobOutput, Vec<WorldTile>, Arc<NavWorld>) {
+        let world = Arc::clone(&self.world);
+        let mut job = RouteJob::prepare(
+            "route-rule-test",
+            Box::new(self),
+            RouteDemandKind::Walk { authority: None },
+        )
+        .expect("test route request prepares");
+        job.diagnostic_budget = diagnostic_budget;
+        job.identity = Some(Self::route_test_identity(0));
+        Self::drive_prepared_route_job_for_test(job, world)
     }
 
     /// Drive admission through the production route job and preserve its output.
@@ -7157,11 +7313,18 @@ impl NavBot {
                 });
                 (Arc::new(route), Some(pending))
             }
-            RouteOutcome::NoPath => {
+            outcome @ (RouteOutcome::NoPath | RouteOutcome::IncompleteSearch { .. }) => {
                 log_walk_arm_bot(|| {
+                    let search_result = match &outcome {
+                        RouteOutcome::NoPath => RouteSearchResultKind::NoPath,
+                        RouteOutcome::IncompleteSearch { search_result } => *search_result,
+                        RouteOutcome::Routed(_) | RouteOutcome::BankSession { .. } => {
+                            unreachable!()
+                        }
+                    };
                     format!(
-                        "publish_route NoPath request_id={request_id} walk_request_id={} \
-                         may_publish={}",
+                        "publish_route search_result={search_result} request_id={request_id} \
+                         walk_request_id={} may_publish={}",
                         self.walk_request_id,
                         self.armed_outcome_may_publish(request_id)
                     )
@@ -7546,6 +7709,263 @@ mod diagnostic_tests {
             completion: Default::default(),
         })
     }
+    fn first_goal_probe_world(
+        width: usize,
+        height: usize,
+        split_x: usize,
+        target_x: i32,
+        with_item_gate: bool,
+    ) -> (Arc<NavWorld>, WorldTile, WorldTile) {
+        let cells = width * height * 4;
+        let mut blocked = vec![0u64; cells.div_ceil(64)];
+        for level in 0..4 {
+            for z in 0..height {
+                let index = level * width * height + z * width + split_x;
+                blocked[index >> 6] |= 1 << (index & 63);
+            }
+        }
+        let from = WorldTile {
+            x: (split_x / 2) as i32,
+            z: (height / 2) as i32,
+            level: 0,
+        };
+        let to = WorldTile {
+            x: target_x,
+            z: from.z,
+            level: 0,
+        };
+        let mut graph = nav_planner::transport::TransportGraph::default();
+        if with_item_gate {
+            let edge = nav_planner::transport::TransportEdge {
+                takeoff: None,
+                worn_all_req: Vec::new(),
+                forbidden_held: Vec::new(),
+                forbidden_worn: Vec::new(),
+                kind: nav_planner::transport::TransportKind::Ladder,
+                player_delta: None,
+                at: from,
+                to,
+                loc_id: 1,
+                option: 1,
+                ticks: 1,
+                dir: None,
+                open_loc_id: None,
+                skill_req: Vec::new(),
+                item_req: vec![(995, 1)],
+                consumed_req: Vec::new(),
+                item_returns: Vec::new(),
+                quest_req: Vec::new(),
+                varp_req: Vec::new(),
+                worn_req: Vec::new(),
+                members_req: false,
+                wildy_cap: None,
+                quest_gates: None,
+            };
+            let index = graph.edges.len();
+            graph.at.entry(from).or_default().push(index);
+            graph.edges.push(edge);
+        }
+        let world = Arc::new(NavWorld::from_parts(
+            nav_planner::collision::WorldCollision {
+                origin: WorldTile {
+                    x: 0,
+                    z: 0,
+                    level: 0,
+                },
+                width,
+                height,
+                walk: vec![0; cells],
+                blocked,
+                flags: None,
+            },
+            graph,
+            Vec::new(),
+        ));
+        (world, from, to)
+    }
+
+    fn first_goal_area_request(
+        world: Arc<NavWorld>,
+        from: WorldTile,
+        to: WorldTile,
+    ) -> Box<ScriptRouteRequest> {
+        let mut request = stage_request(world);
+        request.from = from;
+        request.to = to;
+        request.arrival = ArrivalKind::Area;
+        request.candidate_goals = Some(script::native::WalkGoals::new(vec![to]).unwrap());
+        request.opts = FindOptions::default();
+        request.admission = crate::admission::Admission::manual(
+            request.opts,
+            Default::default(),
+            1,
+            crate::WalkGlobals::default(),
+        );
+        request.state = Some(WorldState::empty());
+        request
+    }
+
+    #[test]
+    fn budget_exhausted_strict_search_keeps_non_supply_diagnostics() {
+        let mut job = RouteJob::prepare(
+            "test",
+            stage_request(Arc::new(NavWorld::from_parts(
+                nav_planner::collision::WorldCollision {
+                    origin: WorldTile {
+                        x: 0,
+                        z: 0,
+                        level: 0,
+                    },
+                    width: 4,
+                    height: 4,
+                    walk: vec![0; 4 * 4 * 4],
+                    blocked: vec![0; (4usize * 4 * 4).div_ceil(64)],
+                    flags: None,
+                },
+                nav_planner::transport::TransportGraph::default(),
+                Vec::new(),
+            ))),
+            RouteDemandKind::Walk { authority: None },
+        )
+        .unwrap();
+        job.targets.push(job.request.to);
+
+        job.handle_search(
+            SearchOutcome::Single {
+                route: Err(nav_planner::router::RouteError::BudgetExhausted),
+            },
+            524_288,
+        )
+        .unwrap();
+
+        assert!(job.diagnostics_started);
+        assert!(matches!(job.stage, RouteJobStage::BeginDiagnostics));
+        assert_eq!(job.budget_settled, Some(524_288));
+        assert!(job.refusal.is_none());
+        job.missing.push(MissingCarry { id: 954, count: 1 });
+        job.identity = Some(stage_identity(1));
+        let output = job.finish();
+        assert_eq!(
+            output.search_result,
+            Some(RouteSearchResultKind::BudgetExhausted {
+                settled: Some(524_288)
+            })
+        );
+        let detail = output.detail.expect("incomplete search has a detail");
+        assert!(detail.contains("search_result=BudgetExhausted nodes_settled=524288"));
+        assert!(!detail.contains("Insufficient route supplies"));
+        assert!(
+            output.missing.is_empty(),
+            "an incomplete search publishes no missing-supply list"
+        );
+    }
+    #[test]
+    fn first_goal_area_complete_abandoned_flood_keeps_supply_diagnosis() {
+        let (world, from, to) = first_goal_probe_world(1537, 769, 400, 1300, true);
+        let search = nav_planner::router::find_first_with(
+            &world.collision,
+            &world.graph,
+            from,
+            &[to],
+            FindOptions::default(),
+            &WorldState::empty(),
+        );
+        assert!(matches!(search.route(), Err(RouteError::NoPath)));
+        assert_eq!(search.proof(), nav_planner::router::ReverseProof::Abandoned);
+        assert_eq!(search.settled(), 400 * 769);
+
+        let request = first_goal_area_request(Arc::clone(&world), from, to);
+        let (output, _, _) = (*request).drive_route_job_output_for_test();
+        assert_eq!(output.search_result, Some(RouteSearchResultKind::Supply));
+        assert_eq!(output.missing.len(), 1);
+        assert!(
+            output
+                .detail
+                .as_deref()
+                .is_some_and(|detail| detail.contains("Insufficient route supplies")),
+            "a complete first-goal NoPath must keep its relaxed supply diagnosis",
+        );
+    }
+
+    #[test]
+    fn first_goal_area_budget_stop_does_not_publish_supply_diagnosis() {
+        let (world, from, to) = first_goal_probe_world(2200, 2000, 2050, 2199, true);
+        let search = nav_planner::router::find_first_with(
+            &world.collision,
+            &world.graph,
+            from,
+            &[to],
+            FindOptions::default(),
+            &WorldState::empty(),
+        );
+        assert!(matches!(search.route(), Err(RouteError::BudgetExhausted)));
+        assert_eq!(search.proof(), nav_planner::router::ReverseProof::Abandoned);
+        let settled = search.settled();
+
+        let mut request = first_goal_area_request(Arc::clone(&world), from, to);
+        request.opts.allow_bank_fetch = true;
+        request.bank_origin = Origin::Hint;
+        request.admission = crate::admission::Admission::manual(
+            request.opts,
+            Default::default(),
+            1,
+            crate::WalkGlobals::default(),
+        );
+        let mut job = RouteJob::prepare(
+            "first-goal-budget-test",
+            request,
+            RouteDemandKind::Walk { authority: None },
+        )
+        .unwrap();
+        job.identity = Some(stage_identity(0));
+        assert!(matches!(job.search_mode, RouteSearchMode::First));
+        job.handle_strict_first_search(Err(RouteError::BudgetExhausted), None, settled)
+            .unwrap();
+        assert_eq!(job.budget_settled, Some(settled));
+        let (output, _, _) =
+            ScriptRouteRequest::drive_prepared_route_job_for_test(job, Arc::clone(&world));
+
+        assert_eq!(
+            output.search_result,
+            Some(RouteSearchResultKind::BudgetExhausted {
+                settled: Some(settled),
+            }),
+        );
+        assert_eq!(
+            output.refusal,
+            Some(script::native::WalkRefusal::SearchIncomplete {
+                nodes_settled: Some(settled),
+            }),
+        );
+        assert!(
+            output.missing.is_empty(),
+            "incomplete bank planning must not publish a relaxed supply list",
+        );
+        assert!(!output
+            .detail
+            .as_deref()
+            .unwrap_or_default()
+            .contains("Insufficient route supplies"),);
+
+        let bot = NavBot {
+            route_generation: output.generation,
+            walk_request_id: output.request_id,
+            walk_outcome_generation: output.generation,
+            walk_outcome_request_id: output.request_id,
+            requested_route: Some((to, 0, false, false, true, ZoneExempt::NONE)),
+            ..NavBot::default()
+        };
+        let navs = Arc::new(Mutex::new(HashMap::from([(
+            "first-goal-budget-test".to_owned(),
+            bot,
+        )])));
+        apply_route_output(&navs, "first-goal-budget-test", output, None);
+        let navs = navs.lock().unwrap();
+        assert!(
+            navs["first-goal-budget-test"].walk_missing_carry.is_empty(),
+            "budget-stopped route must not post walk_missing_carry",
+        );
+    }
 
     pub(super) fn tiny_stage_request() -> Box<ScriptRouteRequest> {
         let origin = WorldTile {
@@ -7703,10 +8123,12 @@ mod diagnostic_tests {
     }
 
     #[test]
-    #[ignore = "bounded 524288-settle failure-cost measurement"]
-    fn candidate_preferred_failure_cost_stays_within_the_existing_first_goal_budget() {
-        // Both components exceed the backward proof's 262144-tile cap.
-        // The preferred proof must abandon, rather than cheaply close.
+    #[ignore = "bounded NODE_BUDGET failure-cost measurement"]
+    fn candidate_preferred_failure_completes_within_the_node_budget() {
+        // Both components exceed the backward proof's 262144-tile cap, so the
+        // proof abandons. An abandoned proof no longer stops the forward search
+        // at FIRST_TARGET_BUDGET: it settles the start component and returns a
+        // complete NoPath, still within NODE_BUDGET.
         let (width, height) = (1537usize, 769usize);
         let cells = width * height * 4;
         let mut blocked = vec![0u64; cells.div_ceil(64)];
@@ -7745,12 +8167,10 @@ mod diagnostic_tests {
             &WorldState::empty(),
         );
         let elapsed = started.elapsed();
-        assert_eq!(
-            search.route(),
-            Err(nav_planner::router::RouteError::BudgetExhausted)
-        );
+        assert_eq!(search.route(), Err(nav_planner::router::RouteError::NoPath));
         assert_eq!(search.proof(), nav_planner::router::ReverseProof::Abandoned);
-        assert!(search.settled() <= nav_planner::router::FIRST_TARGET_BUDGET + 1);
+        assert!(search.settled() > nav_planner::router::FIRST_TARGET_BUDGET);
+        assert!(search.settled() <= nav_planner::router::NODE_BUDGET);
         let fallback = nav_planner::router::find_first_with(
             &collision,
             &graph,
@@ -7763,10 +8183,10 @@ mod diagnostic_tests {
         .expect("the separate fallback tier must retain the zero-cost origin");
         assert_eq!(fallback.dest, from);
         let record = serde_json::json!({
-            "preferred_failure": "BudgetExhausted",
+            "preferred_failure": "NoPath",
             "proof": "Abandoned",
             "forward_settles": search.settled(),
-            "unproven_settle_budget": nav_planner::router::FIRST_TARGET_BUDGET,
+            "settle_budget": nav_planner::router::NODE_BUDGET,
             "elapsed_ms": elapsed.as_millis(),
             "fallback": fallback.dest,
             "fallback_ticks": fallback.ticks,

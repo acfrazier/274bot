@@ -8950,6 +8950,97 @@ fn approach_danger_refusals_park_without_a_retry() {
 }
 
 #[test]
+fn anchored_interact_wall_retries_typed_incomplete_route() {
+    compile_context_test(|cx| {
+        let wall_tile = tile(3167, 3308);
+        let network = tile(wall_tile.x + 3, wall_tile.z);
+        let rendered = tile(wall_tile.x - 3, wall_tile.z);
+        let (mut snapshot, mut wall, _) = use_on_footprint_fixture(cx, network);
+        wall.id = resolve_loc(cx, "death_harold_door").unwrap();
+        wall.actions = vec![Some("Open".into())];
+        wall.layer = LocLayer::Wall;
+        wall.shape = 0;
+        wall.angle = 2;
+        wall.distance = 3;
+        snapshot.seed_local_player(local_player_with_network(rendered, network));
+        snapshot.seed_locs(vec![wall]);
+        let plan = compile_interact(
+            test_args::<InteractArgs>(serde_json::json!({
+                "target": {"loc": "death_harold_door"},
+                "op": "Open",
+                "anchor": {"tile": [3166, 3308, 0], "source": "network tile fixture"},
+                "radius": 6
+            })),
+            cx,
+        )
+        .unwrap();
+        let mut ledger = None;
+        let mut run = with_tick(&snapshot, &mut ledger, 1, |tick| {
+            with_step(tick, |step| plan.begin(step).unwrap())
+        });
+        assert!(with_tick(&snapshot, &mut ledger, 2, |tick| {
+            with_step(tick, |step| run.poll(step))
+        })
+        .is_pending());
+        let first_request_id = ledger
+            .as_ref()
+            .unwrap()
+            .outbox
+            .last()
+            .expect("the first walk request is queued")
+            .request_id
+            .get();
+
+        post_user_input_walk_receipt(&mut ledger, 3);
+        {
+            let receipt = ledger.as_mut().unwrap().walk.as_mut().unwrap();
+            receipt.end = WalkEnd::Refused;
+            receipt.refusal = Some(crate::native::WalkRefusal::SearchIncomplete {
+                nodes_settled: Some(524_288),
+            });
+            receipt.detail = Some(Arc::from(
+                "search_result=BudgetExhausted nodes_settled=524288",
+            ));
+        }
+        assert!(with_tick(&snapshot, &mut ledger, 3, |tick| {
+            with_step(tick, |step| run.poll(step))
+        })
+        .is_pending());
+        assert!(with_tick(&snapshot, &mut ledger, 4, |tick| {
+            with_step(tick, |step| run.poll(step))
+        })
+        .is_pending());
+        assert!(with_tick(&snapshot, &mut ledger, 5, |tick| {
+            with_step(tick, |step| run.poll(step))
+        })
+        .is_pending());
+        assert!(matches!(
+            ledger.as_ref().unwrap().outbox.last().map(|entry| &entry.effect),
+            Some(HostEffect::Walk(request))
+                if request.target == wall_tile && request.radius == 1
+        ));
+        let fallback_request_id = ledger
+            .as_ref()
+            .unwrap()
+            .outbox
+            .last()
+            .expect("the fallback walk request is queued")
+            .request_id
+            .get();
+        assert_ne!(
+            fallback_request_id, first_request_id,
+            "the incomplete first walk starts a new bounded fallback walk",
+        );
+        assert!(!ledger
+            .as_ref()
+            .unwrap()
+            .outbox
+            .iter()
+            .any(|entry| matches!(&entry.effect, HostEffect::Interaction(_))));
+    });
+}
+
+#[test]
 fn anchored_use_on_loc_starts_the_settle_window_after_its_initial_stand_approach() {
     compile_context_test(|cx| {
         let origin = tile(3167, 3308);
@@ -9718,7 +9809,7 @@ fn loc_walk_request_picks_the_wall_side_by_half_plane_for_every_angle() {
 }
 
 #[test]
-fn loc_wall_fallback_requires_typed_no_path() {
+fn loc_wall_fallback_accepts_typed_incomplete_search_not_text() {
     assert!(reach::loc_wall_route_failed(&mapped_walk_receipt(
         WalkEnd::NoPath,
         None,
@@ -9727,6 +9818,17 @@ fn loc_wall_fallback_requires_typed_no_path() {
         WalkEnd::NoPath,
         Some(Arc::from("a changed host diagnostic")),
     )));
+
+    let detail = Arc::from("search_result=BudgetExhausted nodes_settled=unavailable");
+    let mut incomplete = mapped_walk_receipt(WalkEnd::Refused, Some(Arc::clone(&detail)));
+    incomplete.refusal = Some(crate::native::WalkRefusal::SearchIncomplete {
+        nodes_settled: None,
+    });
+    assert!(reach::loc_wall_route_failed(&incomplete));
+    assert!(
+        !reach::loc_wall_route_failed(&mapped_walk_receipt(WalkEnd::Refused, Some(detail),)),
+        "diagnostic text alone cannot trigger the bounded wall retry",
+    );
 
     for end in [
         WalkEnd::RouteEnded,

@@ -200,7 +200,12 @@ fn real_search(
         avoid,
     ) {
         Ok(route) => crate::RouteOutcome::Routed(route),
-        Err(RouteError::NoPath | RouteError::BudgetExhausted) => crate::RouteOutcome::NoPath,
+        Err(RouteError::BudgetExhausted) => crate::RouteOutcome::IncompleteSearch {
+            search_result: crate::walk_plan::RouteSearchResultKind::BudgetExhausted {
+                settled: None,
+            },
+        },
+        Err(RouteError::NoPath) => crate::RouteOutcome::NoPath,
     }
 }
 
@@ -228,10 +233,11 @@ fn routed(result: &RouteAdmission) -> &Route {
         crate::RouteOutcome::Routed(route) | crate::RouteOutcome::BankSession { route, .. } => {
             route
         }
-        crate::RouteOutcome::NoPath => panic!("expected a real router route"),
+        crate::RouteOutcome::IncompleteSearch { .. } | crate::RouteOutcome::NoPath => {
+            panic!("expected a real router route")
+        }
     }
 }
-
 #[test]
 fn unavailable_snapshots_preserve_missing_facts_without_inventing_events() {
     for map_members in [false, true] {
@@ -303,6 +309,60 @@ fn u6_three_zone_witness_runs_one_real_named_retry_and_counts_kernels() {
     );
     assert_eq!(result.refusal, None);
     assert_eq!(routed(&result).dest, to);
+}
+
+#[test]
+fn complete_no_path_zone_retry_replaces_an_incomplete_first_search() {
+    let world = known_corridor(&[3]);
+    let from = tile(0, 1);
+    let to = tile(23, 1);
+    let state = WorldState::default();
+    let avoid = [];
+    let options = FindOptions::default();
+    let mut admission = make_admission(
+        RiskPolicy::Inherit,
+        RiskInput {
+            prayer: 99,
+            prayer_base: 99,
+            ..input(99)
+        },
+    );
+    admission.allow.prayer = true;
+    let mut searches = Vec::new();
+    let result = route(
+        &world,
+        &admission,
+        options,
+        |opts| {
+            searches.push(opts);
+            if searches.len() == 1 {
+                crate::RouteOutcome::IncompleteSearch {
+                    search_result: crate::walk_plan::RouteSearchResultKind::BudgetExhausted {
+                        settled: Some(524_288),
+                    },
+                }
+            } else {
+                crate::RouteOutcome::NoPath
+            }
+        },
+        || real_witness(&world, from, to, options, &state, &avoid),
+    );
+
+    assert_eq!(searches.len(), 2, "one complete named-zone retry runs");
+    assert_eq!(searches[0].zones, ZoneExempt::NONE);
+    assert_eq!(
+        searches[1].zones,
+        ZoneExempt::named(&[ZoneKey::Zone(0)]).unwrap()
+    );
+    assert_eq!(result.tried, 1);
+    assert!(matches!(result.outcome, crate::RouteOutcome::NoPath));
+    assert_eq!(
+        result.refusal,
+        Some(WalkRefusal::NoRouteWithinBounds {
+            tried: 1,
+            last: None
+        })
+    );
 }
 
 #[cfg(feature = "test-support")]
@@ -711,7 +771,7 @@ fn witness_verdicts_through_the_kind_view_match_the_round_two_rule() {
 
 #[cfg(feature = "test-support")]
 #[test]
-fn u6_real_budget_one_corridor_exhausts_the_named_retry_after_a_real_witness() {
+fn u6_real_budget_one_corridor_still_runs_witness_and_named_retry() {
     const BUDGET: usize = 1;
     const WIDTH: usize = 160;
     const WITNESS_X: i32 = 80;
@@ -748,8 +808,16 @@ fn u6_real_budget_one_corridor_exhausts_the_named_retry_after_a_real_witness() {
                 BUDGET,
             ) {
                 Ok(found) => crate::RouteOutcome::Routed(found),
-                Err(error) => {
-                    observed_errors.push(error);
+                Err(RouteError::BudgetExhausted) => {
+                    observed_errors.push(RouteError::BudgetExhausted);
+                    crate::RouteOutcome::IncompleteSearch {
+                        search_result: crate::walk_plan::RouteSearchResultKind::BudgetExhausted {
+                            settled: None,
+                        },
+                    }
+                }
+                Err(RouteError::NoPath) => {
+                    observed_errors.push(RouteError::NoPath);
                     crate::RouteOutcome::NoPath
                 }
             },
@@ -773,15 +841,14 @@ fn u6_real_budget_one_corridor_exhausts_the_named_retry_after_a_real_witness() {
     );
     assert_eq!(
         kernels, 5,
-        "both bounded seam searches and the full witness diagnosis use real kernels"
+        "the incomplete search still runs the witness and one named retry"
     );
     assert_eq!(result.tried, 1);
-    assert_eq!(result.blocked.as_ref(), &[ZoneKey::Zone(0)]);
+    assert_eq!(result.blocked.len(), 1);
     assert_eq!(
         result.refusal,
-        Some(WalkRefusal::NoRouteWithinBounds {
-            tried: 1,
-            last: None
+        Some(WalkRefusal::SearchIncomplete {
+            nodes_settled: None
         })
     );
     assert!(result.assessment.is_none());

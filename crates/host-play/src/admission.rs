@@ -136,39 +136,53 @@ pub(crate) fn route(
     };
     let mut outcome = search(options);
     let mut tried = 0;
-    let blocked = if matches!(outcome, crate::RouteOutcome::NoPath)
-        && !admission.compat_v1
+    let blocked = if matches!(
+        &outcome,
+        crate::RouteOutcome::NoPath | crate::RouteOutcome::IncompleteSearch { .. }
+    ) && !admission.compat_v1
         && admission.policy != RiskPolicy::Proceed
     {
         witness().unwrap_or_default()
     } else {
         Vec::new()
     };
-    if matches!(outcome, crate::RouteOutcome::NoPath)
-        && admission.policy == RiskPolicy::Inherit
+    if matches!(
+        &outcome,
+        crate::RouteOutcome::NoPath | crate::RouteOutcome::IncompleteSearch { .. }
+    ) && admission.policy == RiskPolicy::Inherit
         && witness_admissible(world, &admission.input, &blocked)
     {
         if let Ok(zones) = ZoneExempt::named(&blocked).and_then(|named| options.zones.union(named))
         {
             tried = 1;
-            outcome = search(FindOptions { zones, ..options });
+            let retry = search(FindOptions { zones, ..options });
+            outcome = retry;
         }
     }
     let route = match &outcome {
         crate::RouteOutcome::Routed(route) | crate::RouteOutcome::BankSession { route, .. } => {
             Some(route)
         }
-        crate::RouteOutcome::NoPath => None,
+        crate::RouteOutcome::IncompleteSearch { .. } | crate::RouteOutcome::NoPath => None,
     };
     let assessment = route.map(|route| assess(route, world, admission));
-    let refusal = match route.zip(assessment.as_ref()) {
-        Some((route, assessment)) if !permits(route, world, admission, assessment) => {
-            Some(verdict_refusal(assessment.verdict))
+    let refusal = match &outcome {
+        crate::RouteOutcome::IncompleteSearch { search_result } => {
+            let nodes_settled = match search_result {
+                crate::walk_plan::RouteSearchResultKind::BudgetExhausted { settled } => *settled,
+                _ => None,
+            };
+            Some(WalkRefusal::SearchIncomplete { nodes_settled })
         }
-        None if !blocked.is_empty() || admission.policy == RiskPolicy::Inherit => {
-            Some(WalkRefusal::NoRouteWithinBounds { tried, last: None })
-        }
-        _ => None,
+        _ => match route.zip(assessment.as_ref()) {
+            Some((route, assessment)) if !permits(route, world, admission, assessment) => {
+                Some(verdict_refusal(assessment.verdict))
+            }
+            None if !blocked.is_empty() || admission.policy == RiskPolicy::Inherit => {
+                Some(WalkRefusal::NoRouteWithinBounds { tried, last: None })
+            }
+            _ => None,
+        },
     };
     let blocked = if blocked.is_empty() && refusal.is_some() {
         assessment

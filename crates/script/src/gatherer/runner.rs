@@ -23,7 +23,7 @@ use crate::native::walk::Walk;
 use crate::native::{
     ActionError, ActionHandle, ConfigError, Interrupt, NativePhase, NativeTick, PreparedConfig,
     ReturnStallRecovery, Script, ScriptFailure, ScriptFlow, SettingsApply, StopReason, WalkBit,
-    WalkEnd, WalkOptions, WalkReceipt, WalkRequest,
+    WalkEnd, WalkOptions, WalkReceipt, WalkRefusal, WalkRequest,
 };
 use api::game_data::GatherForbiddenState;
 use api::gather_methods::known_rows;
@@ -128,6 +128,12 @@ enum TripStep {
 }
 
 fn walk_failure_message(receipt: &WalkReceipt) -> String {
+    if matches!(receipt.refusal, Some(WalkRefusal::SearchIncomplete { .. })) {
+        return match receipt.failure_detail().filter(|detail| !detail.is_empty()) {
+            Some(detail) => format!("walk search incomplete: {detail}"),
+            None => "walk search incomplete".to_owned(),
+        };
+    }
     match receipt.failure_detail().filter(|detail| !detail.is_empty()) {
         Some(detail) => format!("walk ended with {:?}: {detail}", receipt.end),
         None => format!("walk ended with {:?}", receipt.end),
@@ -2578,6 +2584,38 @@ mod switch_tests;
 mod tests {
     use super::*;
     use std::mem::size_of;
+
+    #[test]
+    fn gatherer_names_incomplete_search_as_non_risk_failure() {
+        let detail: Arc<str> = Arc::from(
+            "search_result=BudgetExhausted nodes_settled=unavailable (incomplete search)",
+        );
+        let receipt = WalkReceipt {
+            goal: None,
+            request_id: 1,
+            evidence: api::quest_progress::EvidenceStamp {
+                run: RunKey {
+                    slot: 1,
+                    run: 1,
+                    session: 1,
+                },
+                tick: 1,
+                sequence: 1,
+            },
+            end: WalkEnd::Refused,
+            blocked: None,
+            detail: Some(Arc::clone(&detail)),
+            refusal: Some(WalkRefusal::SearchIncomplete {
+                nodes_settled: None,
+            }),
+            assessment: None,
+            escape: None,
+        };
+        assert_eq!(
+            walk_failure_message(&receipt),
+            format!("walk search incomplete: {detail}"),
+        );
+    }
 
     #[test]
     fn gatherer_resource_validation_uses_effective_level() {
