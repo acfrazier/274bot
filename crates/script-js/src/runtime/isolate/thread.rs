@@ -855,33 +855,40 @@ fn finish_tick(
                 .to_string(),
         ));
     }
-    let reason = requested_stop(runtime)?;
-    let event = crate::events::NativeEvent::ScriptFinish {
-        reason: reason.clone(),
-    };
-    if let Err(message) = super::super::snapshot::dispatch_native_events(runtime, &[event]) {
-        let _ = out.send(ThreadMsg::Log(format!("script.finish dispatch: {message}")));
-    } else {
-        let flush = call_interruptible(runtime, teardown, |runtime| {
-            runtime.call_function_immediate::<()>(
-                None,
-                "__rs2b0t_flush_native_events",
-                json_args!(),
-            )
-        });
-        if let Err(message) = flush {
-            let _ = out.send(ThreadMsg::Log(format!("script.finish flush: {message}")));
-        } else {
-            pump_event_loop(runtime, out, n, generation, teardown);
+    if let Some((reason, request_finish)) = requested_stop(runtime) {
+        if request_finish {
+            let event = crate::events::NativeEvent::ScriptFinish {
+                reason: reason.clone(),
+            };
+            if let Err(message) =
+                super::super::snapshot::dispatch_native_events(runtime, &[event])
+            {
+                let _ = out.send(ThreadMsg::Log(format!("script.finish dispatch: {message}")));
+            } else {
+                let flush = call_interruptible(runtime, teardown, |runtime| {
+                    runtime.call_function_immediate::<()>(
+                        None,
+                        "__rs2b0t_flush_native_events",
+                        json_args!(),
+                    )
+                });
+                if let Err(message) = flush {
+                    let _ = out.send(ThreadMsg::Log(format!("script.finish flush: {message}")));
+                } else {
+                    pump_event_loop(runtime, out, n, generation, teardown);
+                }
+            }
         }
+        Some(reason)
+    } else {
+        None
     }
-    Some(reason)
 }
 
-/// ScriptRunner.stop's flag and bounded reason, read off the host handle
-/// through V8 (no script).
-fn requested_stop(runtime: &mut Runtime) -> Option<String> {
-    super::super::lineage_v8::enter_root(runtime, |runtime| {
+/// Read stop reason and whether AbstractBot.requestFinish requested the
+/// stop. ScriptRunner.stop shares the stop flag but does not emit script.finish.
+fn requested_stop(runtime: &mut Runtime) -> Option<(String, bool)> {
+    let requested = super::super::lineage_v8::enter_root(runtime, |runtime| {
         let scope = &mut runtime.deno_runtime().handle_scope();
         let global = scope.get_current_context().global(scope);
         let host_key = key_string(scope, "__rs2b0t_host").ok()?;
@@ -896,9 +903,17 @@ fn requested_stop(runtime: &mut Runtime) -> Option<String> {
             .filter(|reason| reason.is_string())
             .map(|reason| reason.to_rust_string_lossy(scope))
             .unwrap_or_default();
-        Some(bounded_stop_reason(reason))
-    })
+        let request_finish = key_string(scope, "requestFinishRequested")
+            .ok()
+            .and_then(|key| host.get(scope, key.into()))
+            .is_some_and(|requested| requested.boolean_value(scope));
+        Some((bounded_stop_reason(reason), request_finish))
+    })?;
+    // Isolates may be reused for another Load after a clean stop.
+    let _ = set_host_field(runtime, "requestFinishRequested", HostValue::Null);
+    Some(requested)
 }
+
 
 /// The settle promise of a compat method invoker or a v1 native tick: it
 /// fulfils `null` on success or the error text, and never rejects.

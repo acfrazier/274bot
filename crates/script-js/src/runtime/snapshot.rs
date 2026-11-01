@@ -1232,18 +1232,6 @@ fn native_event_object<'s>(
             let previous_value = num(scope, *previous as f64);
             set(scope, payload, "previous", previous_value)?;
         }
-        crate::events::NativeEvent::VarpChanged {
-            index,
-            value,
-            previous,
-        } => {
-            let index_value = num(scope, *index as f64);
-            set(scope, payload, "index", index_value)?;
-            let value_value = num(scope, *value as f64);
-            set(scope, payload, "value", value_value)?;
-            let previous_value = num(scope, *previous as f64);
-            set(scope, payload, "previous", previous_value)?;
-        }
         crate::events::NativeEvent::ScriptFinish { reason } => {
             let reason_value = js_string(scope, reason)?;
             set(scope, payload, "reason", reason_value)?;

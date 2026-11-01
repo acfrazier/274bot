@@ -35,11 +35,6 @@ struct XpState {
     level: i32,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
-struct VarpState {
-    index: i32,
-    value: i32,
-}
 /// One public event to deliver on a gated tick.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum NativeEvent {
@@ -58,11 +53,6 @@ pub enum NativeEvent {
         skill: i32,
         name: String,
         level: i32,
-        previous: i32,
-    },
-    VarpChanged {
-        index: i32,
-        value: i32,
         previous: i32,
     },
     ScriptFinish {
@@ -84,7 +74,6 @@ impl NativeEvent {
             NativeEvent::ChatMessage { .. } => "chat.message",
             NativeEvent::SkillXp { .. } => "skill.xp",
             NativeEvent::SkillLevel { .. } => "skill.level",
-            NativeEvent::VarpChanged { .. } => "varp.changed",
             NativeEvent::ScriptFinish { .. } => "script.finish",
             NativeEvent::InventoryChanged { .. } => "inventory.changed",
         }
@@ -107,11 +96,9 @@ pub struct NativeEventProducer {
     last_inv: Option<Vec<SlotState>>,
     last_inv_size: i32,
     last_xp: Option<Vec<XpState>>,
-    last_varps: Option<Vec<VarpState>>,
     current_inv: Option<Vec<SlotState>>,
     current_inv_size: i32,
     current_xp: Option<Vec<XpState>>,
-    current_varps: Option<Vec<VarpState>>,
     chat_seeded: bool,
     last_chat_seq: Option<i32>,
     current_chat: Option<(i32, i32, Option<String>, String)>,
@@ -139,9 +126,6 @@ impl NativeEventProducer {
     /// Invalidation (offline, inv_size 0, invalid slots) resets that family
     /// immediately, including during Pause, so a later valid table seeds.
     pub fn observe(&mut self, snap: &Snapshot<'_>) -> ObserveResult {
-        if snap.has_varps() {
-            self.current_varps = Some(collect_varps(snap));
-        }
         if snap.has_ingame() && !snap.ingame() {
             self.offline = true;
             let last_chat_seq = self.last_chat_seq;
@@ -273,14 +257,6 @@ impl NativeEventProducer {
             (None, Some(cur)) => self.last_inv = Some(cur.clone()),
             _ => {}
         }
-        match (&self.last_varps, &self.current_varps) {
-            (Some(last), Some(current)) if last != current => {
-                events.extend(diff_varps(last, current));
-                self.last_varps = Some(current.clone());
-            }
-            (None, Some(current)) => self.last_varps = Some(current.clone()),
-            _ => {}
-        }
         ObserveResult {
             events,
             diagnostic: None,
@@ -293,8 +269,6 @@ impl NativeEventProducer {
         self.last_xp = None;
         self.reset_inv_family();
         self.current_xp = None;
-        self.last_varps = None;
-        self.current_varps = None;
         self.chat_seeded = false;
         self.last_chat_seq = None;
         self.current_chat = None;
@@ -322,17 +296,6 @@ fn collect_xp(snap: &Snapshot<'_>) -> Vec<XpState> {
         .collect()
 }
 
-fn collect_varps(snap: &Snapshot<'_>) -> Vec<VarpState> {
-    snap.varps()
-        .into_iter()
-        .flat_map(|rows| rows.iter())
-        .filter(|v| (0..300).contains(&v.index()))
-        .map(|v| VarpState {
-            index: v.index(),
-            value: v.value(),
-        })
-        .collect()
-}
 
 fn diff_xp(last: &[XpState], current: &[XpState]) -> Vec<NativeEvent> {
     let mut events = Vec::new();
@@ -359,20 +322,6 @@ fn diff_xp(last: &[XpState], current: &[XpState]) -> Vec<NativeEvent> {
     events
 }
 
-fn diff_varps(last: &[VarpState], current: &[VarpState]) -> Vec<NativeEvent> {
-    current
-        .iter()
-        .filter_map(|cur| {
-            last.iter()
-                .find(|prev| prev.index == cur.index && prev.value != cur.value)
-                .map(|prev| NativeEvent::VarpChanged {
-                    index: cur.index,
-                    value: cur.value,
-                    previous: prev.value,
-                })
-        })
-        .collect()
-}
 
 fn merge_xp(last: &mut Vec<XpState>, current: &[XpState]) {
     for cur in current {
