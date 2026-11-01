@@ -211,10 +211,10 @@ declare const manifest: BotManifestInput;
 
 registerScript(manifest);
 
-const moduleRows: readonly Readonly<Omit<InvItemSnapshot, 'ops'> & { ops: readonly (string | null)[] }>[] = backpackSnapshots();
+const moduleRows: InvItemSnapshot[] = backpackSnapshots();
 const moduleCapacity: number = backpackCapacity();
-const moduleItems: readonly ModuleInvItem[] = ModuleInventory.items();
-const rootItems: readonly RootInvItem[] = RootInventory.items();
+const moduleItems: ModuleInvItem[] = ModuleInventory.items();
+const rootItems: RootInvItem[] = RootInventory.items();
 const moduleFirst: ModuleInvItem | null = ModuleInventory.first('Shark');
 const rootFirst: RootInvItem | null = RootInventory.first('Shark');
 const moduleContains: boolean = ModuleInventory.contains('Shark');
@@ -229,8 +229,8 @@ const rootCount: number = RootInventory.count('Shark');
 const rootCountById: number = RootInventory.countById(385);
 const rootFull: boolean = RootInventory.isFull();
 const rootFree: number = RootInventory.free();
-const moduleEquipmentItems: readonly ModuleInvItem[] = ModuleEquipment.items();
-const rootEquipmentItems: readonly RootInvItem[] = RootEquipment.items();
+const moduleEquipmentItems: ModuleInvItem[] = ModuleEquipment.items();
+const rootEquipmentItems: RootInvItem[] = RootEquipment.items();
 const equipmentContains: boolean = ModuleEquipment.contains('Shark');
 const rootEquipmentContains: boolean = RootEquipment.contains('Shark');
 const equip: Promise<boolean> = ModuleEquipment.equip('Shark');

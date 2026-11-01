@@ -11,7 +11,10 @@ function rows() {
 
 export const Quests = proxy('Quests', {
     all() {
-        return globalThis.__rs2b0t_selected_facts('client-adapter-reader', 'compatQuestsAll');
+        return rows().map((q) => ({
+            name: q.name,
+            status: q.status || 'unknown',
+        }));
     },
     status(name) {
         const want = String(name).toLowerCase();

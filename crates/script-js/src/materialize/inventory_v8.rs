@@ -10,7 +10,6 @@ use rustyscript::Runtime;
 use script::bank::ops::side_observation;
 
 pub(super) fn install(runtime: &mut Runtime) -> Result<(), String> {
-    super::selected_facts_v8::install_reader_list_cache(runtime)?;
     cb::install(runtime, "__rs2b0t_inventory", inventory_callback)?;
     cb::install(runtime, "__rs2b0t_pack_rules", pack_rules_callback)
 }
@@ -302,35 +301,26 @@ fn backpack_snapshot_array<'s>(
 fn backpack_rows<'s>(
     scope: &mut v8::HandleScope<'s>,
 ) -> cb::JsResult<'s, v8::Local<'s, v8::Value>> {
-    let stamp = inventory_reader_stamp(scope)?;
-    super::selected_facts_v8::cached_reader_list_with_error(
-        scope,
-        "Inventory.backpackSnapshots",
-        stamp,
-        |scope| {
-            observed::with(|scene| {
-                let view = scene.since_login();
-                let bank_open = view
-                    .bank_open()
-                    .ok_or_else(|| cb::not_impl(scope, "backpackSnapshots"))?;
-                if bank_open {
-                    let rows = view
-                        .bank_side()
-                        .ok_or_else(|| cb::not_impl(scope, "backpackSnapshots"))?;
-                    let side_root = view.side_modal_id().unwrap_or(-1);
-                    let side = side_observation(true, side_root, rows)
-                        .ok_or_else(|| cb::not_impl(scope, "backpackSnapshots"))?;
-                    backpack_snapshot_array(scope, side)
-                } else {
-                    let rows = view
-                        .inv()
-                        .ok_or_else(|| cb::not_impl(scope, "backpackSnapshots"))?;
-                    backpack_snapshot_array(scope, rows)
-                }
-            })
-        },
-        |scope, error| cb::type_error(scope, &error),
-    )
+    observed::with(|scene| {
+        let view = scene.since_login();
+        let bank_open = view
+            .bank_open()
+            .ok_or_else(|| cb::not_impl(scope, "backpackSnapshots"))?;
+        if bank_open {
+            let rows = view
+                .bank_side()
+                .ok_or_else(|| cb::not_impl(scope, "backpackSnapshots"))?;
+            let side_root = view.side_modal_id().unwrap_or(-1);
+            let side = side_observation(true, side_root, rows)
+                .ok_or_else(|| cb::not_impl(scope, "backpackSnapshots"))?;
+            backpack_snapshot_array(scope, side)
+        } else {
+            let rows = view
+                .inv()
+                .ok_or_else(|| cb::not_impl(scope, "backpackSnapshots"))?;
+            backpack_snapshot_array(scope, rows)
+        }
+    })
 }
 
 fn posted_snapshot<'s>(
@@ -349,38 +339,6 @@ fn posted_snapshot<'s>(
     } else {
         v8::Object::new(scope).into()
     })
-}
-
-fn inventory_reader_stamp<'s>(
-    scope: &mut v8::HandleScope<'s>,
-) -> cb::JsResult<'s, Option<super::selected_facts_v8::ReaderListStamp>> {
-    let snapshot = posted_snapshot(scope)?;
-    let facts = cb::get(scope, snapshot, "client_adapter")?;
-    if facts.is_null() || facts.is_undefined() {
-        return Ok(None);
-    }
-    let generations = cb::get(scope, facts, "read_generations")?;
-    if generations.is_null() || generations.is_undefined() {
-        return Ok(None);
-    }
-    let mut values = [0; 10];
-    for (index, field) in ["session", "invalidations", "inv", "iface"]
-        .iter()
-        .enumerate()
-    {
-        let value = cb::get(scope, generations, field)?;
-        let Some(value) = value.number_value(scope) else {
-            return Ok(None);
-        };
-        if !value.is_finite() || value < 0.0 || value.fract() != 0.0 || value > u64::MAX as f64 {
-            return Ok(None);
-        }
-        values[index] = value as u64;
-    }
-    Ok(Some(super::selected_facts_v8::ReaderListStamp::new(
-        values,
-        [0, 0],
-    )))
 }
 
 fn posted_rows<'s>(
@@ -469,22 +427,11 @@ fn inventory_items<'s>(
     scope: &mut v8::HandleScope<'s>,
     constructor: v8::Local<'s, v8::Value>,
 ) -> cb::JsResult<'s, v8::Local<'s, v8::Value>> {
-    let stamp = inventory_reader_stamp(scope)?;
-    super::selected_facts_v8::cached_reader_list_with_error(
-        scope,
-        "Inventory.items",
-        stamp,
-        |scope| {
-            let rows = inventory_rows(scope)?;
-            let predicate =
-                callback_without_data(scope, inventory_named_row, 1, "Inventory.items filter")?;
-            let filtered = array_filter(scope, rows, predicate, "filter")?;
-            let mapper =
-                callback_function(scope, construct_inventory_item, constructor, 1, "InvItem")?;
-            array_map(scope, filtered, mapper, "map")
-        },
-        |scope, error| cb::type_error(scope, &error),
-    )
+    let rows = inventory_rows(scope)?;
+    let predicate = callback_without_data(scope, inventory_named_row, 1, "Inventory.items filter")?;
+    let filtered = array_filter(scope, rows, predicate, "filter")?;
+    let mapper = callback_function(scope, construct_inventory_item, constructor, 1, "InvItem")?;
+    array_map(scope, filtered, mapper, "map")
 }
 
 fn inventory_named_row<'s>(
@@ -911,21 +858,11 @@ fn inventory_use_on<'s>(
 fn equipment_items<'s>(
     scope: &mut v8::HandleScope<'s>,
 ) -> cb::JsResult<'s, v8::Local<'s, v8::Value>> {
-    let stamp = inventory_reader_stamp(scope)?;
-    super::selected_facts_v8::cached_reader_list_with_error(
-        scope,
-        "Equipment.items",
-        stamp,
-        |scope| {
-            let rows = equipment_rows(scope)?;
-            let predicate =
-                callback_without_data(scope, inventory_named_row, 1, "Equipment.items filter")?;
-            let filtered = array_filter(scope, rows, predicate, "filter")?;
-            let mapper = callback_without_data(scope, equipment_item, 1, "Equipment.items map")?;
-            array_map(scope, filtered, mapper, "map")
-        },
-        |scope, error| cb::type_error(scope, &error),
-    )
+    let rows = equipment_rows(scope)?;
+    let predicate = callback_without_data(scope, inventory_named_row, 1, "Equipment.items filter")?;
+    let filtered = array_filter(scope, rows, predicate, "filter")?;
+    let mapper = callback_without_data(scope, equipment_item, 1, "Equipment.items map")?;
+    array_map(scope, filtered, mapper, "map")
 }
 
 fn equipment_item<'s>(
@@ -1143,41 +1080,10 @@ mod allocation_tests {
     use crate::observed::{ItemRow, Ops, Text};
     use rustyscript::{Runtime, RuntimeOptions};
 
-    const BACKPACK_CACHE_CHILD_ENV: &str = "SCRIPT_INVENTORY_BACKPACK_CACHE_CHILD";
-    const BACKPACK_CACHE_TEST_NAME: &str =
-        "inventory_v8::allocation_tests::backpack_snapshots_cache_across_same_generation_posts_and_throw_on_writes";
-
-    fn run_backpack_cache_test_child() -> bool {
-        if std::env::var_os(BACKPACK_CACHE_CHILD_ENV).is_some() {
-            return true;
-        }
-        let output = std::process::Command::new(std::env::current_exe().expect("test executable"))
-            .args(["--exact", BACKPACK_CACHE_TEST_NAME, "--nocapture"])
-            .env(BACKPACK_CACHE_CHILD_ENV, "1")
-            .output()
-            .expect("run isolated V8-native-syntax test");
-        let stdout = String::from_utf8_lossy(&output.stdout);
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        assert!(
-            output.status.success() && stdout.contains("1 passed"),
-            "isolated V8 test failed\nstdout: {stdout}\nstderr: {stderr}"
-        );
-        print!("{stdout}");
-        false
-    }
-
     const INVENTORY_SETUP: &str = r#"
 const postedRow = { name: 'Apple', count: 2, id: 10, slot: 0, noted: false, cert: -1, ops: ['Eat'] };
 globalThis.__rs2b0t_host = {
-    invSize: 28,
-    snapshot: {
-        inv: [postedRow],
-        inv_size: 28,
-        equipment: [postedRow],
-        client_adapter: {
-            read_generations: { session: 1, invalidations: 1, inv: 1, iface: 1 },
-        },
-    },
+    invSize: 28, snapshot: { inv: [postedRow], inv_size: 28, equipment: [postedRow] },
 };
 const identity = Symbol('inventoryIdentity');
 const sourceRow = Symbol('inventoryRow');
@@ -1250,125 +1156,6 @@ globalThis.checkInventory = () => {
     }
 
     #[test]
-    fn backpack_snapshots_cache_across_same_generation_posts_and_throw_on_writes() {
-        if !run_backpack_cache_test_child() {
-            return;
-        }
-        v8::V8::set_flags_from_string("--allow-natives-syntax");
-        observed::on_reset();
-        let mut runtime = setup();
-        let rows = (0..28)
-            .map(|slot| ItemRow {
-                id: 10 + slot,
-                count: 2 + slot,
-                name: Some(Text::from("Apple")),
-                ops: Ops::from(vec![Text::from("Eat")]),
-                noted: false,
-                cert: -1,
-                component_id: Some(503),
-                slot: Some(slot),
-            })
-            .collect::<Vec<_>>();
-        observed::replace(2, true, |post| {
-            post.inv(rows.clone())
-                .inv_size(28)
-                .bank_open(false)
-                .bank_side(rows.clone())
-                .equipment(rows.clone())
-                .side_modal_id(700);
-        });
-        runtime
-            .eval::<()>("globalThis.__backpackFirst = __rs2b0t_inventory(0);")
-            .unwrap();
-        assert_eq!(runtime.eval::<usize>("__backpackFirst.length").unwrap(), 28);
-        assert!(
-            runtime
-                .eval::<bool>(
-                    "const fast = new Function('value', 'return %HasFastProperties(value)'); \
-                     Array.isArray(__backpackFirst) && Object.isFrozen(__backpackFirst) \
-                     && __backpackFirst.every((row) => fast(row) && Object.isFrozen(row) \
-                         && Object.isFrozen(row.ops))",
-                )
-                .unwrap(),
-            "maximum backpack snapshot rows retain fast properties and freeze deeply"
-        );
-        let writes: String = runtime
-            .eval(
-                r#"JSON.stringify((() => {
-    'use strict';
-    const t = (f) => {
-        try { f(); return 'no-throw'; }
-        catch (e) { return e instanceof TypeError ? 'TypeError' : String(e); }
-    };
-    return {
-        push: t(() => __backpackFirst.push(1)),
-        index: t(() => { __backpackFirst[0] = null; }),
-        sort: t(() => __backpackFirst.sort(() => 0)),
-        row: t(() => { __backpackFirst[0].count = 5; }),
-        ops: t(() => __backpackFirst[0].ops.push('Drop')),
-        cert: t(() => { __backpackFirst[0].cert = 1; }),
-    };
-})())"#,
-            )
-            .unwrap();
-        assert_eq!(
-            writes,
-            r#"{"push":"TypeError","index":"TypeError","sort":"TypeError","row":"TypeError","ops":"TypeError","cert":"TypeError"}"#
-        );
-
-        observed::replace(3, true, |post| {
-            post.inv(rows.clone())
-                .inv_size(28)
-                .bank_open(false)
-                .bank_side(rows.clone())
-                .equipment(rows.clone())
-                .side_modal_id(700);
-        });
-        runtime
-            .eval::<()>(
-                "(() => { const s = __rs2b0t_host.snapshot; \
-                 __rs2b0t_host.snapshot = { ...s, client_adapter: { ...s.client_adapter, \
-                     read_generations: { ...s.client_adapter.read_generations } } }; })();",
-            )
-            .unwrap();
-        assert!(
-            runtime
-                .eval::<bool>("__backpackFirst === __rs2b0t_inventory(0)")
-                .unwrap(),
-            "a new observed and posted snapshot with unchanged generations reuses the array"
-        );
-        runtime
-            .eval::<()>("__rs2b0t_host.snapshot.client_adapter.read_generations.inv += 1;")
-            .unwrap();
-        assert!(
-            runtime
-                .eval::<bool>("__backpackFirst !== __rs2b0t_inventory(0)")
-                .unwrap(),
-            "a moved inventory generation produces a new snapshot array"
-        );
-
-        let used_heap = |runtime: &mut Runtime| {
-            let isolate = runtime.deno_runtime().v8_isolate();
-            isolate.low_memory_notification();
-            isolate.get_heap_statistics().used_heap_size()
-        };
-        runtime
-            .eval::<()>("for (let i = 0; i < 1000; i++) __rs2b0t_inventory(0);")
-            .unwrap();
-        let baseline = used_heap(&mut runtime);
-        runtime
-            .eval::<()>("for (let i = 0; i < 1000; i++) __rs2b0t_inventory(0);")
-            .unwrap();
-        let growth = used_heap(&mut runtime).saturating_sub(baseline);
-        println!("backpackSnapshots rows=28 repeated1000 collected heap growth={growth}");
-        assert!(
-            growth <= 16 * 1024,
-            "backpackSnapshots retained {growth} bytes after repeated generation-stable reads"
-        );
-        observed::on_reset();
-    }
-
-    #[test]
     fn first_bridge_read_is_attributed_and_warmed_local_batches_allocate_nothing() {
         let mut runtime = setup();
         let context = runtime.deno_runtime().main_context();
@@ -1387,14 +1174,14 @@ globalThis.checkInventory = () => {
             }
         });
         println!("Inventory local-read callbacks cold={cold:?}; warm1000={warm:?}");
-        // One cached-list entry is allocated on the first generation-backed
-        // read; the nested-scope control measures its own chain separately.
-        assert!(cold.count_total <= 4);
-        assert!(cold.count_current <= 4);
-        assert!(cold.count_max <= 4);
-        assert!(cold.bytes_total <= 868);
-        assert!(cold.bytes_current <= 868);
-        assert!(cold.bytes_max <= 868);
+        // The raw five-scope control below attributes these cache cells without
+        // calling Inventory or pack-rule policy.
+        assert!(cold.count_total <= 3);
+        assert!(cold.count_current <= 3);
+        assert!(cold.count_max <= 3);
+        assert!(cold.bytes_total <= 336);
+        assert!(cold.bytes_current <= 336);
+        assert!(cold.bytes_max <= 336);
         assert_eq!(warm, allocation_counter::AllocationInfo::default());
     }
 
@@ -1489,14 +1276,7 @@ globalThis.checkInventory = () => {
         );
         assert_eq!(
             inventory_after_control,
-            allocation_counter::AllocationInfo {
-                count_total: 1,
-                count_current: 1,
-                count_max: 1,
-                bytes_total: 532,
-                bytes_current: 532,
-                bytes_max: 532,
-            }
+            allocation_counter::AllocationInfo::default()
         );
         assert_eq!(
             extra_depth,

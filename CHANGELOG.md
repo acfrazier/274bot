@@ -87,15 +87,9 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.7` 
 
 ### Scripting
 
-- Generation-backed ClientAdapter list readers and `Inventory.items()`,
-  `Equipment.items()`, `Inventory.backpackSnapshots()`, `Quests.all()`,
-  `Shop.stock()`, `Trade.myOffer()` and `Trade.theirOffer()` now reuse deeply
-  frozen results while their source generations stay unchanged. Their arrays,
-  rows and nested lists are read-only; `Skill.names` and `Skill.used` are
-  static frozen lists. The separate `Bank.items()` and `reader.bankItems()`
-  projections reuse rows only under their distinct source-generation keys.
-  `Bank.ready()` remains a boolean. `Query.results()` and `Npcs.all()` remain
-  fresh and mutable because callers sort them.
+- `Bank.items()` and `reader.bankItems()` now reuse frozen snapshots for a
+  bank session and item generation. Their arrays, rows, and nested `ops`
+  lists are read-only; `Bank.ready()` still returns a boolean.
 
 - Bank opening now waits for its own walk to finish. A completed walk from
   a script could reuse the bank walk's request number and end the bank walk

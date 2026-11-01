@@ -29,9 +29,6 @@ enum ClientAdapterObjectShape {
     ModalCloseState,
     ModalCloseObservation,
     ItemIconPixels,
-    QuestFacadeRow,
-    ShopFacadeRow,
-    TradeFacadeRow,
 }
 
 const OBJECT_SHAPE_FIELDS: &[&[&str]] = &[
@@ -55,9 +52,6 @@ const OBJECT_SHAPE_FIELDS: &[&[&str]] = &[
     &["session_generation", "token"],
     &["session", "generation"],
     &["width", "height", "data"],
-    &["name", "status"],
-    &["name", "count", "slot"],
-    &["id", "name", "count"],
 ];
 
 struct ClientAdapterObjectShapes {
@@ -65,7 +59,6 @@ struct ClientAdapterObjectShapes {
 }
 
 pub(super) fn install(runtime: &mut Runtime) -> Result<(), String> {
-    super::install_reader_list_cache(runtime)?;
     let shapes = {
         let mut scope = runtime.deno_runtime().handle_scope();
         let templates = OBJECT_SHAPE_FIELDS
@@ -132,14 +125,8 @@ pub(super) fn read<'s>(
             return Ok(v8::Integer::new(scope, api::snapshot::stat_count() as i32).into())
         }
         "skillUsed" => return skill_used(scope, arg0),
-        "skillNames" => {
-            let stamp = super::ReaderListStamp::new([0; 10], [0, 0]);
-            return cached_reader_list(scope, "reader.skillNames", Some(stamp), skill_names);
-        }
-        "skillUsedMask" => {
-            let stamp = super::ReaderListStamp::new([0; 10], [0, 0]);
-            return cached_reader_list(scope, "reader.skillUsedMask", Some(stamp), skill_used_mask);
-        }
+        "skillNames" => return skill_names(scope),
+        "skillUsedMask" => return skill_used_mask(scope),
         _ => {}
     }
     let snapshot = snapshot(scope)?;
@@ -149,107 +136,32 @@ pub(super) fn read<'s>(
         "serverTile" => property(scope, facts, "server_tile"),
         "selfSlot" => number_property(scope, snapshot, "self_slot", -1),
         "inventorySize" => number_property(scope, snapshot, "inv_size", 0),
-        "inventory" => {
-            let stamp = reader_stamp(scope, facts, &["inv", "iface"], [0, 0])?;
-            cached_reader_list(scope, "reader.inventory", stamp, |scope| {
-                item_rows_property(scope, snapshot, "inv")
-            })
-        }
-        "bankSideItems" => {
-            let stamp = reader_stamp(scope, facts, &["inv", "iface"], [0, 0])?;
-            cached_reader_list(scope, "reader.bankSideItems", stamp, |scope| {
-                item_rows_property(scope, snapshot, "bank_side")
-            })
-        }
+        "inventory" => item_rows_property(scope, snapshot, "inv"),
+        "bankSideItems" => item_rows_property(scope, snapshot, "bank_side"),
         "bankItems" => {
             let component = object_i32(scope, facts, "bank_com_id")?.unwrap_or(-1);
-            let stamp = reader_stamp(scope, facts, &["inv", "iface"], [i64::from(component), 0])?;
-            cached_reader_list(scope, "reader.bankItems", stamp, |scope| {
-                if component >= 0 {
-                    item_rows_property(scope, snapshot, "bank")
-                } else {
-                    Ok(empty_array(scope).into())
-                }
-            })
+            if component >= 0 {
+                item_rows_property(scope, snapshot, "bank")
+            } else {
+                Ok(empty_array(scope).into())
+            }
         }
         "sceneState" => number_property(scope, snapshot, "scene_state", 0),
         "ingame" => bool_property_value(scope, snapshot, "ingame"),
-        "npcs" => {
-            let stamp = reader_stamp(
-                scope,
-                facts,
-                &["npc", "npc_info", "player", "player_info", "scene", "world"],
-                [0, 0],
-            )?;
-            cached_reader_list(scope, "reader.npcs", stamp, |scope| {
-                property(scope, snapshot, "npcs")
-            })
-        }
-        "locs" => {
-            let stamp = reader_stamp(
-                scope,
-                facts,
-                &[
-                    "scene",
-                    "map_flag",
-                    "world",
-                    "player",
-                    "player_info",
-                    "npc_info",
-                ],
-                [0, 0],
-            )?;
-            cached_reader_list(scope, "reader.locs", stamp, |scope| {
-                property(scope, snapshot, "locs")
-            })
-        }
-        "players" => {
-            let stamp = reader_stamp(
-                scope,
-                facts,
-                &["player", "player_info", "scene", "world"],
-                [0, 0],
-            )?;
-            cached_reader_list(scope, "reader.players", stamp, |scope| {
-                property(scope, snapshot, "players")
-            })
-        }
-        "groundItems" => {
-            let stamp = reader_stamp(
-                scope,
-                facts,
-                &["scene", "world", "player", "player_info", "map_flag"],
-                [0, 0],
-            )?;
-            cached_reader_list(scope, "reader.groundItems", stamp, |scope| {
-                property(scope, snapshot, "ground")
-            })
-        }
-        "equipment" => {
-            let stamp = reader_stamp(scope, facts, &["inv", "iface"], [0, 0])?;
-            cached_reader_list(scope, "reader.equipment", stamp, |scope| {
-                item_rows_property(scope, snapshot, "equipment")
-            })
-        }
+        "npcs" => property(scope, snapshot, "npcs"),
+        "locs" => property(scope, snapshot, "locs"),
+        "players" => property(scope, snapshot, "players"),
+        "groundItems" => property(scope, snapshot, "ground"),
+        "equipment" => item_rows_property(scope, snapshot, "equipment"),
         "modals" => modals(scope, snapshot),
         "chatContinueComId" => number_property(scope, facts, "chat_continue_component_id", -1),
-        "chatOptions" => {
-            let stamp = reader_stamp(scope, facts, &["iface", "chat"], [0, 0])?;
-            cached_reader_list(scope, "reader.chatOptions", stamp, |scope| {
-                chat_options(scope, snapshot)
-            })
-        }
-        "chatModalTexts" => {
-            let stamp = reader_stamp(scope, facts, &["iface", "chat"], [0, 0])?;
-            cached_reader_list(scope, "reader.chatModalTexts", stamp, |scope| {
-                modal_texts(
-                    scope,
-                    facts,
-                    "chat_modal_texts",
-                    Some((snapshot, "chat_modal_id")),
-                )
-            })
-        }
+        "chatOptions" => chat_options(scope, snapshot),
+        "chatModalTexts" => modal_texts(
+            scope,
+            facts,
+            "chat_modal_texts",
+            Some((snapshot, "chat_modal_id")),
+        ),
         "activeSideTab" => number_property(scope, snapshot, "side_tab", -1),
         "localPlayerName" => nullable_string_property(scope, snapshot, "my_name"),
         "combatLevel" => combat_level(scope, snapshot),
@@ -265,13 +177,7 @@ pub(super) fn read<'s>(
         "stat" => stat(scope, snapshot, arg0),
         "statsReady" => bool_property_value(scope, snapshot, "stats_ready"),
         "weight" => number_property(scope, snapshot, "weight", 0),
-        "chat" => {
-            let limit = chat_limit(scope, arg0);
-            let stamp = reader_stamp(scope, facts, &["chat"], [i64::from(limit), 0])?;
-            cached_reader_list(scope, "reader.chat", stamp, |scope| {
-                chat(scope, snapshot, arg0)
-            })
-        }
+        "chat" => chat(scope, snapshot, arg0),
         "playerCount" => number_property(scope, facts, "player_count", 0),
         "npcCount" => number_property(scope, facts, "npc_count", 0),
         "cameraYaw" => camera_yaw(scope, snapshot),
@@ -289,141 +195,44 @@ pub(super) fn read<'s>(
         "lastWalkPathWorld" => last_walk_path_world(scope, facts, snapshot),
         "loginMessage" => string_property(scope, facts, "login_message"),
         "menuEntries" => string_array_property(scope, facts, "menu_entries"),
-        "shopInv" => {
-            let component = js_i32(scope, arg0)?.unwrap_or(-1);
-            let stamp = reader_stamp(scope, facts, &["iface", "inv"], [i64::from(component), 0])?;
-            cached_reader_list(scope, "reader.shopInv", stamp, |scope| {
-                shop_inventory(scope, facts, arg0)
-            })
-        }
-        "compatShopStock" => {
-            let open = bool_property(scope, snapshot, "shop_open")?;
-            let stamp = reader_stamp(scope, facts, &["iface", "inv"], [i64::from(open), 0])?;
-            cached_reader_list(scope, "facade.Shop.stock", stamp, |scope| {
-                shop_stock_rows(scope, snapshot, open)
-            })
-        }
+        "shopInv" => shop_inventory(scope, facts, arg0),
         "puzzleBoardComId" => puzzle_board_field(scope, snapshot, "component_id", -1),
-        "puzzleBoard" => {
-            let stamp = reader_stamp(scope, facts, &["iface", "inv"], [0, 0])?;
-            cached_reader_list(scope, "reader.puzzleBoard", stamp, |scope| {
-                puzzle_board_items(scope, snapshot)
-            })
-        }
+        "puzzleBoard" => puzzle_board_items(scope, snapshot),
         "puzzleBoardSize" => puzzle_board_field(scope, snapshot, "size", 0),
-        "duelOffers" => {
-            let stamp = reader_stamp(scope, facts, &["iface", "inv"], [0, 0])?;
-            cached_reader_list(scope, "reader.duelOffers", stamp, |scope| {
-                duel_offers(scope, snapshot, facts)
-            })
-        }
+        "duelOffers" => duel_offers(scope, snapshot, facts),
         "tradeOfferOpen" => bool_property_value(scope, snapshot, "trade_offer_open"),
         "tradeConfirmOpen" => bool_property_value(scope, snapshot, "trade_confirm_open"),
-        "tradeMyOffer" => {
-            let stamp = reader_stamp(scope, facts, &["iface", "inv"], [0, 0])?;
-            cached_reader_list(scope, "reader.tradeMyOffer", stamp, |scope| {
-                item_rows_property(scope, snapshot, "trade_mine")
-            })
-        }
-        "tradeTheirOffer" => {
-            let stamp = reader_stamp(scope, facts, &["iface", "inv"], [0, 0])?;
-            cached_reader_list(scope, "reader.tradeTheirOffer", stamp, |scope| {
-                item_rows_property(scope, snapshot, "trade_theirs")
-            })
-        }
-        "compatTradeMyOffer" => {
-            let stamp = reader_stamp(scope, facts, &["iface", "inv"], [0, 0])?;
-            cached_reader_list(scope, "facade.Trade.myOffer", stamp, |scope| {
-                trade_facade_rows(scope, snapshot, "trade_mine")
-            })
-        }
-        "compatTradeTheirOffer" => {
-            let stamp = reader_stamp(scope, facts, &["iface", "inv"], [0, 0])?;
-            cached_reader_list(scope, "facade.Trade.theirOffer", stamp, |scope| {
-                trade_facade_rows(scope, snapshot, "trade_theirs")
-            })
-        }
-        "tradeSidePack" => {
-            let stamp = reader_stamp(scope, facts, &["iface", "inv"], [0, 0])?;
-            cached_reader_list(scope, "reader.tradeSidePack", stamp, |scope| {
-                item_rows_property(scope, snapshot, "trade_side")
-            })
-        }
+        "tradeMyOffer" => item_rows_property(scope, snapshot, "trade_mine"),
+        "tradeTheirOffer" => item_rows_property(scope, snapshot, "trade_theirs"),
+        "tradeSidePack" => item_rows_property(scope, snapshot, "trade_side"),
         "tradePartner" => nullable_string_property(scope, snapshot, "trade_partner"),
-        "tradeConfirmOffers" => {
-            let stamp = reader_stamp(scope, facts, &["iface", "inv"], [0, 0])?;
-            cached_reader_list(scope, "reader.tradeConfirmOffers", stamp, |scope| {
-                trade_confirm_offers(scope, facts)
-            })
-        }
+        "tradeConfirmOffers" => trade_confirm_offers(scope, facts),
         "tradeConfirmReady" => trade_confirm_ready(scope, facts),
         "closeButtonComId" => close_button(scope, facts, arg0),
-        "mainModalTexts" => {
-            let stamp = reader_stamp(scope, facts, &["iface"], [0, 0])?;
-            cached_reader_list(scope, "reader.mainModalTexts", stamp, |scope| {
-                modal_texts(
-                    scope,
-                    snapshot,
-                    "main_modal_texts",
-                    Some((snapshot, "main_modal_id")),
-                )
-            })
-        }
+        "mainModalTexts" => modal_texts(
+            scope,
+            snapshot,
+            "main_modal_texts",
+            Some((snapshot, "main_modal_id")),
+        ),
         "ifModelObjId" => if_model_obj_id(scope, facts, arg0),
-        "modalButtons" => {
-            let root = js_i32(scope, arg0)?.unwrap_or(-1);
-            let stamp = reader_stamp(scope, facts, &["iface"], [i64::from(root), 0])?;
-            cached_reader_list(scope, "reader.modalButtons", stamp, |scope| {
-                modal_buttons(scope, facts, arg0)
-            })
-        }
+        "modalButtons" => modal_buttons(scope, facts, arg0),
         "buttonByText" => button_by_text(scope, facts, arg0, arg1),
         "targetButtonByBase" => target_button_by_base(scope, facts, arg0, arg1),
         "selectButtonByVarp" => select_button_by_varp(scope, snapshot, facts, arg0, arg1, arg2),
         "selectButtonLabelsByVarp" => {
-            let root = js_i32(scope, arg0)?.unwrap_or(-1);
-            let varp = js_i32(scope, arg1)?.unwrap_or(i32::MIN);
-            let stamp = reader_stamp(
-                scope,
-                facts,
-                &["iface", "varp"],
-                [i64::from(root), i64::from(varp)],
-            )?;
-            cached_reader_list(scope, "reader.selectButtonLabelsByVarp", stamp, |scope| {
-                select_button_labels_by_varp(scope, snapshot, facts, arg0, arg1)
-            })
+            select_button_labels_by_varp(scope, snapshot, facts, arg0, arg1)
         }
         "mainModalButtonNearText" => main_modal_button_near_text(scope, snapshot, facts, arg0),
-        "mainSkillMultiItems" => {
-            let stamp = reader_stamp(scope, facts, &["iface", "inv"], [0, 0])?;
-            cached_reader_list(scope, "reader.mainSkillMultiItems", stamp, |scope| {
-                main_skill_multi_items(scope, snapshot)
-            })
-        }
-        "questStatuses" => {
-            let stamp = reader_stamp(scope, facts, &["iface", "varp"], [0, 0])?;
-            cached_reader_list(scope, "reader.questStatuses", stamp, |scope| {
-                quest_statuses(scope, snapshot, facts)
-            })
-        }
-        "compatQuestsAll" => {
-            let stamp = reader_stamp(scope, facts, &["iface", "varp"], [0, 0])?;
-            cached_reader_list(scope, "facade.Quests.all", stamp, |scope| {
-                quest_facade_rows(scope, snapshot)
-            })
-        }
+        "mainSkillMultiItems" => main_skill_multi_items(scope, snapshot),
+        "questStatuses" => quest_statuses(scope, snapshot, facts),
         "sideTabInterface" => side_tab_interface(scope, snapshot, arg0),
         "attached" => bool_property_value(scope, facts, "attached"),
         "mapBuildBase" => map_build_base(scope, facts),
         "modalCloseObservation" => modal_close_observation(scope, snapshot, facts),
         "ifText" => if_text(scope, snapshot, arg0),
         "countDialogOpen" => bool_property_value(scope, snapshot, "count_dialog_open"),
-        "makeProducts" => {
-            let stamp = reader_stamp(scope, facts, &["iface", "chat"], [0, 0])?;
-            cached_reader_list(scope, "reader.makeProducts", stamp, |scope| {
-                make_products(scope, snapshot)
-            })
-        }
+        "makeProducts" => make_products(scope, snapshot),
         // The host builds the projection scene (height and link grids, loc
         // list) only for a run that asked for it: building it for every bot
         // cost about 0.3 MiB of Rust memory per bot and, for the loc list, a
@@ -464,49 +273,6 @@ fn snapshot<'s>(scope: &mut v8::HandleScope<'s>) -> Result<v8::Local<'s, v8::Val
     let global: v8::Local<v8::Value> = context.global(scope).into();
     let host = property(scope, global, "__rs2b0t_host")?;
     property(scope, host, "snapshot")
-}
-
-fn reader_stamp<'s>(
-    scope: &mut v8::HandleScope<'s>,
-    facts: v8::Local<'s, v8::Value>,
-    families: &[&str],
-    parameters: [i64; 2],
-) -> Result<Option<super::ReaderListStamp>, String> {
-    let generations = property(scope, facts, "read_generations")?;
-    if generations.is_null() || generations.is_undefined() {
-        return Ok(None);
-    }
-    let mut values = [0; 10];
-    for (index, field) in ["session", "invalidations"]
-        .iter()
-        .chain(families.iter())
-        .enumerate()
-    {
-        let Some(slot) = values.get_mut(index) else {
-            return Err("ClientAdapter reader generation stamp is too wide".to_string());
-        };
-        let value = property(scope, generations, field)?;
-        let Some(value) = value.number_value(scope) else {
-            return Ok(None);
-        };
-        if !value.is_finite() || value < 0.0 || value.fract() != 0.0 || value > u64::MAX as f64 {
-            return Ok(None);
-        }
-        *slot = value as u64;
-    }
-    Ok(Some(super::ReaderListStamp::new(values, parameters)))
-}
-
-fn cached_reader_list<'s, F>(
-    scope: &mut v8::HandleScope<'s>,
-    name: &'static str,
-    stamp: Option<super::ReaderListStamp>,
-    build: F,
-) -> Result<v8::Local<'s, v8::Value>, String>
-where
-    F: FnOnce(&mut v8::HandleScope<'s>) -> Result<v8::Local<'s, v8::Value>, String>,
-{
-    super::cached_reader_list(scope, name, stamp, build)
 }
 
 fn world_tile<'s>(
@@ -1035,23 +801,19 @@ fn skill_used_mask<'s>(
     Ok(output.into())
 }
 
-fn chat_limit(scope: &mut v8::HandleScope<'_>, count: v8::Local<v8::Value>) -> u32 {
-    let count = count.number_value(scope).unwrap_or(f64::NAN);
-    if count.is_nan() || count <= 0.0 {
-        0
-    } else if count.is_infinite() || count >= 100.0 {
-        100
-    } else {
-        count.ceil() as u32
-    }
-}
-
 fn chat<'s>(
     scope: &mut v8::HandleScope<'s>,
     snapshot: v8::Local<'s, v8::Value>,
     count: v8::Local<'s, v8::Value>,
 ) -> Result<v8::Local<'s, v8::Value>, String> {
-    let limit = chat_limit(scope, count);
+    let count = count.number_value(scope).unwrap_or(f64::NAN);
+    let limit = if count.is_nan() || count <= 0.0 {
+        0
+    } else if count.is_infinite() || count >= 100.0 {
+        100
+    } else {
+        count.ceil() as u32
+    };
     let lines = property(scope, snapshot, "chat_lines")?;
     let Some(lines) = array(lines) else {
         return Ok(empty_array(scope).into());
@@ -1965,125 +1727,6 @@ fn quest_statuses<'s>(
         set_i32(scope, row, "colour", colour);
         output
             .set_index(scope, index as u32, row.into())
-            .ok_or_else(|| PENDING.to_string())?;
-    }
-    Ok(output.into())
-}
-
-fn quest_facade_rows<'s>(
-    scope: &mut v8::HandleScope<'s>,
-    snapshot: v8::Local<'s, v8::Value>,
-) -> Result<v8::Local<'s, v8::Value>, String> {
-    let source = property(scope, snapshot, "quest_statuses")?;
-    let Some(source) = array(source) else {
-        return Err("not impl: Quests".to_string());
-    };
-    let output = v8::Array::new(scope, source.length() as i32);
-    for index in 0..source.length() {
-        let source_row = source
-            .get_index(scope, index)
-            .ok_or_else(|| PENDING.to_string())?;
-        let name = property(scope, source_row, "name")?;
-        let status = property(scope, source_row, "status")?;
-        let status = if status.boolean_value(scope) {
-            status
-        } else {
-            v8_str(scope, "unknown")?
-        };
-        let row = new_object(scope, ClientAdapterObjectShape::QuestFacadeRow)?;
-        set_key(scope, row, "name", name);
-        set_key(scope, row, "status", status);
-        output
-            .set_index(scope, index, row.into())
-            .ok_or_else(|| PENDING.to_string())?;
-    }
-    Ok(output.into())
-}
-
-fn shop_stock_rows<'s>(
-    scope: &mut v8::HandleScope<'s>,
-    snapshot: v8::Local<'s, v8::Value>,
-    open: bool,
-) -> Result<v8::Local<'s, v8::Value>, String> {
-    if !open {
-        return Ok(empty_array(scope).into());
-    }
-    let source = property(scope, snapshot, "shop_stock")?;
-    let Some(source) = array(source) else {
-        return Ok(empty_array(scope).into());
-    };
-    let output = v8::Array::new(scope, source.length() as i32);
-    for index in 0..source.length() {
-        let source_row = source
-            .get_index(scope, index)
-            .ok_or_else(|| PENDING.to_string())?;
-        let name = property(scope, source_row, "name")?;
-        let name = if name.is_null() || name.is_undefined() {
-            v8::null(scope).into()
-        } else {
-            name
-        };
-        let count = property(scope, source_row, "count")?;
-        let count = if count.is_null() || count.is_undefined() {
-            v8::Integer::new(scope, 0).into()
-        } else {
-            count
-        };
-        let slot = property(scope, source_row, "slot")?;
-        let slot = if slot.is_null() || slot.is_undefined() {
-            v8::Integer::new(scope, -1).into()
-        } else {
-            slot
-        };
-        let row = new_object(scope, ClientAdapterObjectShape::ShopFacadeRow)?;
-        set_key(scope, row, "name", name);
-        set_key(scope, row, "count", count);
-        set_key(scope, row, "slot", slot);
-        output
-            .set_index(scope, index, row.into())
-            .ok_or_else(|| PENDING.to_string())?;
-    }
-    Ok(output.into())
-}
-
-fn trade_facade_rows<'s>(
-    scope: &mut v8::HandleScope<'s>,
-    snapshot: v8::Local<'s, v8::Value>,
-    field: &str,
-) -> Result<v8::Local<'s, v8::Value>, String> {
-    let source = property(scope, snapshot, field)?;
-    let Some(source) = array(source) else {
-        return Ok(empty_array(scope).into());
-    };
-    let output = v8::Array::new(scope, source.length() as i32);
-    for index in 0..source.length() {
-        let source_row = source
-            .get_index(scope, index)
-            .ok_or_else(|| PENDING.to_string())?;
-        let id = property(scope, source_row, "id")?;
-        let id = if id.is_null() || id.is_undefined() {
-            v8::Integer::new(scope, 0).into()
-        } else {
-            id
-        };
-        let name = property(scope, source_row, "name")?;
-        let name = if name.is_null() || name.is_undefined() {
-            v8::null(scope).into()
-        } else {
-            name
-        };
-        let count = property(scope, source_row, "count")?;
-        let count = if count.is_null() || count.is_undefined() {
-            v8::Integer::new(scope, 0).into()
-        } else {
-            count
-        };
-        let row = new_object(scope, ClientAdapterObjectShape::TradeFacadeRow)?;
-        set_key(scope, row, "id", id);
-        set_key(scope, row, "name", name);
-        set_key(scope, row, "count", count);
-        output
-            .set_index(scope, index, row.into())
             .ok_or_else(|| PENDING.to_string())?;
     }
     Ok(output.into())

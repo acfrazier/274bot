@@ -30,7 +30,12 @@ export const Shop = new Proxy(
             return snap().shop_open === true;
         },
         stock() {
-            return globalThis.__rs2b0t_selected_facts('client-adapter-reader', 'compatShopStock');
+            if (!Shop.isOpen()) return [];
+            return (snap().shop_stock || []).map((row) => ({
+                name: row?.name ?? null,
+                count: row?.count ?? 0,
+                slot: row?.slot ?? -1,
+            }));
         },
         player() {
             if (!Shop.isOpen()) return [];
