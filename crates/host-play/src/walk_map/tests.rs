@@ -2006,7 +2006,10 @@ fn catalog_gated_group_walk_without_snapshot_cannot_start_a_prerequisite() {
         let identity = selected
             .quest_family_identity()
             .expect("prepared quests have a verified family identity");
-        (catalog, QuestFamilyId::new(identity.sha256, identity.schema))
+        (
+            catalog,
+            QuestFamilyId::new(identity.sha256, identity.schema),
+        )
     })
     .unwrap()
     .join()
