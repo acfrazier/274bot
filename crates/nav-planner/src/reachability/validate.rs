@@ -72,9 +72,8 @@ pub(crate) fn check_geometry_constants(g: &AtlasGeometry) -> Result<(), PackErro
 pub(crate) fn check_geometry_shape(g: &AtlasGeometry, chunks: usize) -> Result<(), PackError> {
     check_geometry_constants(g)?;
     let side = u64::from(CHUNK_SIDE);
-    let expected_chunks = KEY_LEVELS as u64
-        * u64::from(g.height).div_ceil(side)
-        * u64::from(g.width).div_ceil(side);
+    let expected_chunks =
+        KEY_LEVELS as u64 * u64::from(g.height).div_ceil(side) * u64::from(g.width).div_ceil(side);
     if chunks as u64 != expected_chunks {
         return Err(bad("atlas chunk directory count does not match geometry"));
     }
@@ -87,7 +86,9 @@ pub(crate) fn check_geometry_shape(g: &AtlasGeometry, chunks: usize) -> Result<(
 pub(crate) fn check_chunk(chunk: &Chunk, palette: &[u32], indexes: &[u8]) -> Result<(), PackError> {
     let want = palette_bit_width(chunk.palette_count)?;
     if chunk.bit_width != want {
-        return Err(bad("atlas chunk bit width is not the minimum for its palette"));
+        return Err(bad(
+            "atlas chunk bit width is not the minimum for its palette",
+        ));
     }
     let pal_end = chunk
         .palette_start
@@ -118,7 +119,9 @@ pub(crate) fn check_chunk(chunk: &Chunk, palette: &[u32], indexes: &[u8]) -> Res
             .checked_mul(usize::from(chunk.bit_width))
             .ok_or_else(|| bad("atlas index bits overflow"))?;
         if chunk.index_len as usize != bits.div_ceil(8) {
-            return Err(bad("atlas chunk index length is not exact for its bit width"));
+            return Err(bad(
+                "atlas chunk index length is not exact for its bit width",
+            ));
         }
         let unused = chunk.index_len as usize * 8 - bits;
         if unused > 0 {
@@ -193,9 +196,7 @@ pub(crate) fn check_placement_rows(rows: &[PlacementRow]) -> Result<(), PackErro
         if row.angle > 3 {
             return Err(bad("placement angle is outside 0..3"));
         }
-        let key = (
-            tile.level, tile.x, tile.z, row.loc_id, row.shape, row.angle,
-        );
+        let key = (tile.level, tile.x, tile.z, row.loc_id, row.shape, row.angle);
         if last.is_some_and(|prev| key <= prev) {
             return Err(bad("placements must be sorted unique"));
         }

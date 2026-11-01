@@ -879,7 +879,12 @@ mod tests {
             ),
             (
                 "stand component past the base count",
-                |a| a.stands = Box::from([StandRow { tile: key(), base: 5 }]),
+                |a| {
+                    a.stands = Box::from([StandRow {
+                        tile: key(),
+                        base: 5,
+                    }])
+                },
                 "stand component is out of range",
             ),
             (
@@ -890,8 +895,14 @@ mod tests {
                         ..placement()
                     }]);
                     a.stands = Box::from([
-                        StandRow { tile: key(), base: 0 },
-                        StandRow { tile: key(), base: 0 },
+                        StandRow {
+                            tile: key(),
+                            base: 0,
+                        },
+                        StandRow {
+                            tile: key(),
+                            base: 0,
+                        },
                     ]);
                 },
                 "placement stands must be sorted unique tiles",
@@ -923,7 +934,10 @@ mod tests {
             let Err(produced_message) = &produced else {
                 panic!("{name}: validate accepted a table the reader refuses ({read:?})");
             };
-            assert!(produced_message.contains(wanted), "{name}: {produced_message}");
+            assert!(
+                produced_message.contains(wanted),
+                "{name}: {produced_message}"
+            );
             assert_eq!(produced, read, "{name}");
         }
     }
