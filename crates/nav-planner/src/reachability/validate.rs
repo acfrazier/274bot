@@ -6,12 +6,12 @@
 use api::query::loc_approach::{loc_reach_strategy, LocReachStrategy};
 
 use super::{
-    ClosureRun, ReachabilityAtlas, COVERAGE_EXCEPTIONAL_LANDING, COVERAGE_UNKNOWN_CONTENT,
-    COVERAGE_UNMATCHED_JOIN, PLACEMENT_COMPLETE, PLACEMENT_UNKNOWN_CONTENT, SESSION_ESSENCE_EXIT,
-    TRIGGER_CONTENT_STATE,
+    ClosureRun, ReachabilityAtlas, CHUNK_SIDE, COVERAGE_EXCEPTIONAL_LANDING,
+    COVERAGE_UNKNOWN_CONTENT, COVERAGE_UNMATCHED_JOIN, PLACEMENT_COMPLETE,
+    PLACEMENT_UNKNOWN_CONTENT, SESSION_ESSENCE_EXIT, TRIGGER_CONTENT_STATE,
 };
 use crate::collision::WorldCollision;
-use crate::pack::{unpack_tile_key, PackError};
+use crate::pack::{unpack_tile_key, PackError, KEY_LEVELS};
 use crate::transport::TransportGraph;
 
 fn bad(message: &str) -> PackError {
@@ -130,6 +130,21 @@ impl ReachabilityAtlas {
             return Err(bad(
                 "atlas geometry does not match the collision grid it ships with",
             ));
+        }
+        if g.planes != KEY_LEVELS as u32 || g.chunk_side != CHUNK_SIDE {
+            return Err(bad("atlas geometry planes must be 4 and chunk side 64"));
+        }
+        if g.width == 0 || g.height == 0 {
+            return Err(bad("atlas geometry is empty"));
+        }
+        // The reader requires exactly one directory row per plane and chunk.
+        // An empty or short directory is a pack its own reader refuses.
+        let side = u64::from(CHUNK_SIDE);
+        let expected_chunks = KEY_LEVELS as u64
+            * u64::from(g.height).div_ceil(side)
+            * u64::from(g.width).div_ceil(side);
+        if self.chunks.len() as u64 != expected_chunks {
+            return Err(bad("atlas chunk directory count does not match geometry"));
         }
         let plane = u64::from(g.width) * u64::from(g.height);
         for run in self.legacy_paint.iter() {
@@ -364,6 +379,26 @@ mod tests {
             atlas.validate(&wider, &graph),
             Err(PackError::BadLength(message)) if message.contains("geometry")
         ));
+    }
+
+    /// The reader wants one directory row per plane and chunk, so a baked
+    /// atlas with none (or with too few) is a pack its own reader refuses.
+    #[test]
+    fn an_empty_or_short_chunk_directory_is_refused() {
+        assert!(refused(|a| a.chunks = Box::from([])).contains("chunk directory"));
+        let (_, _, whole) = labelled();
+        let mut short = whole.chunks.to_vec();
+        short.pop();
+        assert!(refused(|a| a.chunks = short.into_boxed_slice()).contains("chunk directory"));
+        let mut long = whole.chunks.to_vec();
+        long.push(long[0]);
+        assert!(refused(|a| a.chunks = long.into_boxed_slice()).contains("chunk directory"));
+    }
+
+    #[test]
+    fn a_wrong_plane_count_or_chunk_side_is_refused() {
+        assert!(refused(|a| a.geometry.planes = 3).contains("planes"));
+        assert!(refused(|a| a.geometry.chunk_side = 32).contains("chunk side"));
     }
 
     #[test]

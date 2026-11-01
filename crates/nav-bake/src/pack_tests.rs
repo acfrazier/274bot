@@ -2837,7 +2837,7 @@ fn narrow_collision() -> WorldCollision {
 
 /// An atlas built for another collision grid is a malformed pack. The
 /// producer refuses it with a typed error, so no writer output reaches the
-/// reader's `has_reachability` check with the wrong geometry.
+/// reader with the wrong geometry.
 #[test]
 fn encoder_refuses_an_atlas_built_for_another_grid() {
     let atlas = ReachabilityAtlas::unlabeled(&narrow_collision()).unwrap();
@@ -2858,6 +2858,43 @@ fn encoder_refuses_an_atlas_built_for_another_grid() {
         .unwrap_err();
     assert!(
         matches!(&error, PackError::BadLength(message) if message.contains("geometry")),
+        "{error}"
+    );
+}
+
+/// A baked atlas with an empty chunk directory is a pack the reader refuses
+/// (`atlas chunk directory count does not match geometry`). The writer
+/// refuses it first, with the same typed error.
+#[test]
+fn encoder_refuses_an_atlas_with_an_empty_chunk_directory() {
+    let collision = narrow_collision();
+    let atlas = ReachabilityAtlas::from_bake(
+        &collision,
+        Box::from([]),
+        Box::from([0]),
+        Box::from([]),
+        Box::from([]),
+        Box::from([]),
+        Box::from([]),
+        Box::from([]),
+        Box::from([]),
+        Box::from([]),
+        Box::from([0]),
+        Box::from([]),
+        Box::from([0]),
+        Box::from([]),
+        Box::from([0]),
+        Box::from([]),
+        Box::from([]),
+        Box::from([]),
+        Box::from([]),
+        Box::from([]),
+    )
+    .unwrap();
+    let error = crate::pack::encode_with_atlas(&collision, &TransportGraph::default(), &[], &atlas)
+        .unwrap_err();
+    assert!(
+        matches!(&error, PackError::BadLength(message) if message.contains("chunk directory")),
         "{error}"
     );
 }
