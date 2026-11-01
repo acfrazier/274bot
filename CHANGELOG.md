@@ -49,7 +49,8 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.8` 
   from requested Rust bytes, V8 heaps and logical GPU storage. Native allocator
   values can overlap those domains and are not an RSS total.
   Linux samples accept complete `malloc_info` output with or without the
-  removed fastbin totals. Partial or mixed schemas still return no sample. A common
+  removed fastbin totals; an absent fastbin total is JSON null.
+  Partial or mixed schemas still return no sample. A common
   drawing-memory case selector records the same owner fields on both comparison
   sources without replacing either renderer or changing the timing binaries.
   Its full and focus1 memory phases use the shared cadence input.

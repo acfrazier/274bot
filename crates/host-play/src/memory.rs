@@ -193,6 +193,7 @@ struct GlibcAllocatorStats {
     arena_count: u64,
     arena_in_use_bytes: u64,
     arena_free_bytes: u64,
+    fastbin_free_bytes: Option<u64>,
     arena_system_bytes: u64,
     arena_aspace_total_bytes: u64,
     arena_aspace_mprotect_bytes: u64,
@@ -215,6 +216,7 @@ impl GlibcAllocatorStats {
             "glibc_arena_count": self.arena_count,
             "glibc_arena_in_use_bytes": self.arena_in_use_bytes,
             "glibc_arena_free_bytes": self.arena_free_bytes,
+            "glibc_fastbin_free_bytes": self.fastbin_free_bytes,
             "glibc_arena_system_bytes": self.arena_system_bytes,
             "glibc_arena_aspace_total_bytes": self.arena_aspace_total_bytes,
             "glibc_arena_aspace_mprotect_bytes": self.arena_aspace_mprotect_bytes,
@@ -391,13 +393,16 @@ fn parse_glibc_malloc_info(xml: &str) -> Option<GlibcAllocatorStats> {
     if !root_started || !root_closed || in_heap || arena_count == 0 {
         return None;
     }
-    let fast_free = match (fast_free, fast_arena_count) {
-        (Some(free), count) if count == arena_count => free,
-        (None, 0) => 0,
+    let fastbin_free_bytes = match (fast_free, fast_arena_count) {
+        (Some(free), count) if count == arena_count => Some(free),
+        (None, 0) => None,
         _ => return None,
     };
     let rest_free = rest_free?;
-    let arena_free_bytes = fast_free.checked_add(rest_free)?;
+    let arena_free_bytes = match fastbin_free_bytes {
+        Some(free) => free.checked_add(rest_free)?,
+        None => rest_free,
+    };
     let arena_system_bytes = arena_system_bytes?;
     let arena_in_use_bytes = arena_system_bytes.checked_sub(arena_free_bytes)?;
 
@@ -405,6 +410,7 @@ fn parse_glibc_malloc_info(xml: &str) -> Option<GlibcAllocatorStats> {
         arena_count,
         arena_in_use_bytes,
         arena_free_bytes,
+        fastbin_free_bytes,
         arena_system_bytes,
         arena_aspace_total_bytes: arena_aspace_total_bytes?,
         arena_aspace_mprotect_bytes: arena_aspace_mprotect_bytes?,
@@ -3369,6 +3375,7 @@ mod tests {
                 arena_count: 2,
                 arena_in_use_bytes: 540,
                 arena_free_bytes: 228,
+                fastbin_free_bytes: Some(80),
                 arena_system_bytes: 768,
                 arena_aspace_total_bytes: 12_288,
                 arena_aspace_mprotect_bytes: 768,
@@ -3385,6 +3392,7 @@ mod tests {
             .contains("All glibc arenas"));
         assert_eq!(receipt["glibc_arena_in_use_bytes"], 540);
         assert_eq!(receipt["glibc_arena_free_bytes"], 228);
+        assert_eq!(receipt["glibc_fastbin_free_bytes"], 80);
         assert_eq!(receipt["glibc_arena_system_bytes"], 768);
         assert_eq!(receipt["glibc_arena_aspace_total_bytes"], 12_288);
         assert_eq!(receipt["glibc_mmap_bytes"], 700);
@@ -3407,9 +3415,11 @@ mod tests {
         let stats = parse_glibc_malloc_info(&xml).expect("complete no-fastbins malloc_info");
         assert_eq!(stats.arena_count, 2);
         assert_eq!(stats.arena_free_bytes, 148);
+        assert_eq!(stats.fastbin_free_bytes, None);
         assert_eq!(stats.arena_in_use_bytes, 620);
         assert_eq!(stats.mmap_bytes, 700);
         assert_eq!(stats.mmap_regions, 7);
+        assert!(stats.to_json()["glibc_fastbin_free_bytes"].is_null());
     }
 
     #[test]
