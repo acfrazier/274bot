@@ -68,6 +68,10 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.8` 
   follows the real Tramp/Katrine dialogue. No report or goal items are seeded.
   Both roles use their own explicit starting varp, and the normal regression
   invokes each role's stateful Start observer.
+- Quester's bank ownership probe selects the session that actually transferred
+  its rune. Stock and inventory must move in that same generation, followed by
+  Quester's Closing phase and Close. An earlier failed session no longer hides
+  a later successful owned withdrawal.
 
 ### Panel and terminal app
 

@@ -117,6 +117,15 @@ struct BankStockSample {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize)]
+struct BankObservation {
+    generation: u64,
+    open: bool,
+    bank_law_runes: Option<i32>,
+    inventory_law_runes: i32,
+    closing: bool,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize)]
 struct ClosedLid {
     id: i32,
     tile: WorldTile,
@@ -134,6 +143,7 @@ struct BankTrace {
     start_session: Option<SessionSample>,
     sessions: Vec<SessionSample>,
     bank_stock: Vec<BankStockSample>,
+    observations: Vec<BankObservation>,
     inventory_law_runes: Option<i32>,
     start_inventory_law_runes: Option<i32>,
     start_bank_loaded: bool,
@@ -291,15 +301,23 @@ fn record_session(trace: &mut BankTrace, sample: SessionSample) {
     }
 }
 
-fn record_bank_snapshot(trace: &mut BankTrace, snapshot: &GameSnapshot, law_id: i32) {
+fn record_bank_observation(
+    trace: &mut BankTrace,
+    snapshot: &GameSnapshot,
+    status: Option<&ScriptStatus>,
+    law_id: i32,
+) {
     let session = SessionSample::from_snapshot(snapshot);
     record_session(trace, session);
-    trace.inventory_law_runes = Some(count_item(snapshot.inventory(), law_id));
-    if session.open && snapshot.bank_loaded() {
+    let inventory_law_runes = count_item(snapshot.inventory(), law_id);
+    trace.inventory_law_runes = Some(inventory_law_runes);
+    let bank_law_runes =
+        (session.open && snapshot.bank_loaded()).then(|| count_item(snapshot.bank(), law_id));
+    if let Some(law_runes) = bank_law_runes {
         let sample = BankStockSample {
             tick: snapshot.tick(),
             generation: session.generation,
-            law_runes: count_item(snapshot.bank(), law_id),
+            law_runes,
         };
         if trace.bank_stock.last().copied() != Some(sample) {
             trace.bank_stock.push(sample);
@@ -308,6 +326,17 @@ fn record_bank_snapshot(trace: &mut BankTrace, snapshot: &GameSnapshot, law_id: 
     if trace.opened_closed_lid.is_none() && !trace.start_closed_lids.is_empty() {
         trace.opened_closed_lid =
             opened_bound_lid(&trace.start_closed_lids, snapshot.locs(), session.open);
+    }
+    record_status(trace, status);
+    let observation = BankObservation {
+        generation: session.generation,
+        open: session.open,
+        bank_law_runes,
+        inventory_law_runes,
+        closing: status.is_some_and(|status| status_text(status, "provision") == Some("Closing")),
+    };
+    if trace.observations.last().copied() != Some(observation) {
+        trace.observations.push(observation);
     }
 }
 
@@ -344,7 +373,45 @@ fn stock_transfer_seen(trace: &BankTrace, generation: u64) -> bool {
         })
 }
 
-fn owned_open_then_close(trace: &BankTrace) -> Option<(u64, u64)> {
+fn qualified_session_transfer(trace: &BankTrace, opened: u64, closed: u64) -> bool {
+    let Some(open_index) = trace
+        .observations
+        .iter()
+        .position(|sample| sample.open && sample.generation == opened)
+    else {
+        return false;
+    };
+    let observations = &trace.observations[open_index..];
+    let Some(close_index) = observations
+        .iter()
+        .position(|sample| !sample.open || sample.generation != opened)
+    else {
+        return false;
+    };
+    let close = &observations[close_index];
+    if close.open || close.generation != closed {
+        return false;
+    }
+    let session = &observations[..close_index];
+    let Some(before_index) = session
+        .iter()
+        .position(|sample| sample.bank_law_runes == Some(1) && sample.inventory_law_runes == 0)
+    else {
+        return false;
+    };
+    let after = &session[before_index + 1..];
+    let Some(transfer_index) = after
+        .iter()
+        .position(|sample| sample.bank_law_runes == Some(0) && sample.inventory_law_runes == 1)
+    else {
+        return false;
+    };
+    // Closing is the active Quester-owned closer. It must follow the
+    // transfer while this same bank is still open, then observe the Close.
+    after[transfer_index..].iter().any(|sample| sample.closing)
+}
+
+fn qualified_owned_open_then_close(trace: &BankTrace) -> Option<(u64, u64)> {
     let start = trace.start_session?;
     if start.open {
         return None;
@@ -358,6 +425,9 @@ fn owned_open_then_close(trace: &BankTrace) -> Option<(u64, u64)> {
             .iter()
             .skip(open_index + 1)
             .find(|sample| !sample.open && sample.generation != opened.generation)
+            .filter(|closed| {
+                qualified_session_transfer(trace, opened.generation, closed.generation)
+            })
         {
             return Some((opened.generation, closed.generation));
         }
@@ -385,7 +455,7 @@ fn teller_close_predicate(trace: &BankTrace, lifecycle_completed: bool) -> bool 
 }
 
 fn owned_transfer_predicate(trace: &BankTrace, lifecycle_completed: bool) -> bool {
-    let Some((open_generation, close_generation)) = owned_open_then_close(trace) else {
+    let Some((open_generation, close_generation)) = qualified_owned_open_then_close(trace) else {
         return false;
     };
     lifecycle_completed
@@ -521,6 +591,7 @@ fn trace_receipt(trace: &BankTrace) -> Value {
         })),
         "bank_sessions": sessions,
         "bank_stock": bank_stock,
+        "bank_observations": &trace.observations,
         "inventory_law_runes": trace.inventory_law_runes,
         "start_inventory_law_runes": trace.start_inventory_law_runes,
         "start_bank_loaded": trace.start_bank_loaded,
@@ -1107,7 +1178,7 @@ fn build_bank_cell(
                 .find(|npc| npc.r#type == usize::try_from(id).ok())
                 .map(|npc| npc.index)
         });
-        record_bank_snapshot(&mut witness, snapshot, law_id);
+        record_bank_observation(&mut witness, snapshot, None, law_id);
         Ok(json!({
             "fixture": seed_receipt,
             "bank_session": {"tick": sample.tick, "open": sample.open, "generation": sample.generation},
@@ -1167,8 +1238,7 @@ fn observe_own_close(cell: BankCell, guard: StartGuard) -> Value {
         let mut witness = observe_trace
             .lock()
             .map_err(|_| "bank witness mutex poisoned")?;
-        record_bank_snapshot(&mut witness, snapshot, law_rune_id);
-        record_status(&mut witness, status);
+        record_bank_observation(&mut witness, snapshot, status, law_rune_id);
         if lifecycle.is_some_and(|receipt| receipt.state != script::ScriptTerminalState::Completed)
         {
             return Err(format!(
@@ -1183,7 +1253,7 @@ fn observe_own_close(cell: BankCell, guard: StartGuard) -> Value {
                 StartGuard::PlayerOpenGundai => false,
             };
             if proved {
-                let (open_generation, close_generation) = owned_open_then_close(&witness)
+                let (open_generation, close_generation) = qualified_owned_open_then_close(&witness)
                     .expect("successful close predicate has bank generations");
                 return Ok(Some(json!({
                     "proof_predicate": match guard {
@@ -1219,8 +1289,7 @@ fn observe_player_open(cell: BankCell) -> Value {
         let mut witness = observe_trace
             .lock()
             .map_err(|_| "bank witness mutex poisoned")?;
-        record_bank_snapshot(&mut witness, snapshot, law_rune_id);
-        record_status(&mut witness, status);
+        record_bank_observation(&mut witness, snapshot, status, law_rune_id);
         if lifecycle.is_some_and(|receipt| receipt.state != script::ScriptTerminalState::Completed)
         {
             return Err(format!(
@@ -1607,6 +1676,31 @@ mod oracle_tests {
         assert!(!gundai_start_bound(&witness));
     }
 
+    fn open_bank_observation(
+        generation: u64,
+        bank: i32,
+        inventory: i32,
+        closing: bool,
+    ) -> BankObservation {
+        BankObservation {
+            generation,
+            open: true,
+            bank_law_runes: Some(bank),
+            inventory_law_runes: inventory,
+            closing,
+        }
+    }
+
+    fn closed_bank_observation(generation: u64, inventory: i32) -> BankObservation {
+        BankObservation {
+            generation,
+            open: false,
+            bank_law_runes: None,
+            inventory_law_runes: inventory,
+            closing: false,
+        }
+    }
+
     fn base_owned_trace() -> BankTrace {
         let closed_lids = bind_closed_duel_lids(&real_closed_duel_chests()).unwrap();
         let opened_lid = closed_lids[0];
@@ -1645,6 +1739,12 @@ mod oracle_tests {
                     law_runes: 0,
                 },
             ],
+            observations: vec![
+                open_bank_observation(5, 1, 0, false),
+                open_bank_observation(5, 0, 1, false),
+                open_bank_observation(5, 0, 1, true),
+                closed_bank_observation(6, 1),
+            ],
             inventory_law_runes: Some(1),
             start_inventory_law_runes: Some(0),
             start_chest: Some(ChestState::Closed {
@@ -1659,6 +1759,117 @@ mod oracle_tests {
             ],
             ..BankTrace::default()
         }
+    }
+
+    #[test]
+    fn owned_close_rejects_a_completed_session_without_a_transfer() {
+        let mut trace = base_owned_trace();
+        trace.bank_stock.truncate(1);
+        trace.inventory_law_runes = Some(0);
+        trace.observations = vec![
+            open_bank_observation(5, 1, 0, false),
+            open_bank_observation(5, 1, 0, true),
+            closed_bank_observation(6, 0),
+        ];
+        assert_eq!(qualified_owned_open_then_close(&trace), None);
+        assert!(!own_close_predicate(&trace, true));
+    }
+
+    #[test]
+    fn owned_close_selects_the_qualified_transfer_after_a_failed_preliminary_session() {
+        let mut trace = base_owned_trace();
+        trace.start_session.as_mut().unwrap().generation = 0;
+        trace.sessions[0].generation = 0;
+        trace.sessions.splice(
+            1..1,
+            [
+                SessionSample {
+                    tick: 10,
+                    open: true,
+                    generation: 1,
+                },
+                SessionSample {
+                    tick: 10,
+                    open: false,
+                    generation: 2,
+                },
+            ],
+        );
+        trace.bank_stock.insert(
+            0,
+            BankStockSample {
+                tick: 10,
+                generation: 1,
+                law_runes: 1,
+            },
+        );
+        trace.observations.splice(
+            0..0,
+            [
+                open_bank_observation(1, 1, 0, false),
+                closed_bank_observation(2, 0),
+            ],
+        );
+        assert_eq!(qualified_owned_open_then_close(&trace), Some((5, 6)));
+        assert!(own_close_predicate(&trace, true));
+        trace.start_teller_npc = Some(7);
+        assert!(teller_close_predicate(&trace, true));
+    }
+
+    #[test]
+    fn owned_close_rejects_a_transfer_split_across_bank_generations() {
+        let mut trace = base_owned_trace();
+        trace.sessions.extend([
+            SessionSample {
+                tick: 13,
+                open: true,
+                generation: 7,
+            },
+            SessionSample {
+                tick: 14,
+                open: false,
+                generation: 8,
+            },
+        ]);
+        trace.bank_stock[1].generation = 7;
+        trace.observations = vec![
+            open_bank_observation(5, 1, 0, false),
+            closed_bank_observation(6, 0),
+            open_bank_observation(7, 0, 1, true),
+            closed_bank_observation(8, 1),
+        ];
+        assert_eq!(qualified_owned_open_then_close(&trace), None);
+        assert!(!own_close_predicate(&trace, true));
+    }
+
+    #[test]
+    fn owned_close_requires_a_qualified_observed_transfer() {
+        let mut trace = base_owned_trace();
+        trace.observations.clear();
+        assert_eq!(qualified_owned_open_then_close(&trace), None);
+        assert!(!own_close_predicate(&trace, true));
+    }
+
+    #[test]
+    fn owned_close_rejects_inventory_arriving_only_after_the_bank_closed() {
+        let mut trace = base_owned_trace();
+        trace.observations = vec![
+            open_bank_observation(5, 1, 0, false),
+            open_bank_observation(5, 0, 0, false),
+            open_bank_observation(5, 0, 0, true),
+            closed_bank_observation(6, 1),
+        ];
+        assert_eq!(qualified_owned_open_then_close(&trace), None);
+        assert!(!own_close_predicate(&trace, true));
+    }
+
+    #[test]
+    fn owned_close_requires_closing_after_transfer_and_before_close() {
+        let mut trace = base_owned_trace();
+        trace.observations[2].closing = false;
+        assert!(!own_close_predicate(&trace, true));
+        trace.observations[0].closing = true;
+        assert!(!own_close_predicate(&trace, true));
     }
 
     #[test]
