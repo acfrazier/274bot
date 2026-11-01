@@ -66,10 +66,9 @@ pub(crate) enum QualifiedUnit {
     QuesterProgressCompile,
 }
 
-/// The shared background worker staying inside one step this long makes
-/// background work unavailable. A request step this long only logs a warning.
-/// Healthy disk I/O can stall for seconds (a 6.1 s fsync was measured).
-/// The sticky latch catches a lost worker, not a slow one.
+/// Report an active step once after this diagnostic interval. The measured
+/// 60.02 s cache-fill stall shows that elapsed time cannot prove worker loss.
+/// This is a warning cadence, never an admission or cancellation deadline.
 pub const WORKER_STALL_LIMIT: Duration = Duration::from_secs(60);
 /// Maximum time shutdown waits for the worker to return and be joined.
 const WORKER_SHUTDOWN_LIMIT: Duration = Duration::from_secs(5);
@@ -246,12 +245,7 @@ impl WorkService {
                 // The unavailable service keeps its process identity and
                 // typed condition so every later caller receives the frozen
                 // restart-required refusal, never a transient Full/start error.
-                latch_outage(
-                    &shared,
-                    ConditionCause::StartFailed,
-                    shared.clock.now(),
-                    None,
-                );
+                latch_outage(&shared, ConditionCause::StartFailed, shared.clock.now());
                 None
             }
         };
@@ -366,16 +360,19 @@ impl WorkService {
     /// Explicitly observe worker health without waiting for worker progress.
     pub fn observe_health(&self) {
         let now = self.shared.clock.now();
-        let active = *self.shared.active.lock();
-        if let Some(active) = active.filter(|active| !active.returned) {
-            let elapsed = now.saturating_duration_since(active.started);
-            if elapsed >= WORKER_STALL_LIMIT {
-                latch_outage(
-                    &self.shared,
-                    ConditionCause::ProgressLost,
-                    now,
-                    Some(elapsed),
-                );
+        {
+            let mut active = self.shared.active.lock();
+            if let Some(active) = active.as_mut().filter(|active| !active.returned) {
+                let elapsed = now.saturating_duration_since(active.started);
+                if elapsed >= WORKER_STALL_LIMIT && !active.stall_warned {
+                    active.stall_warned = true;
+                    api::host_log!(
+                        api::hostlog::Category::Lifecycle,
+                        api::hostlog::Level::Warn,
+                        "background work is slow: step has not returned after {elapsed:?} job={:?}",
+                        active.entry,
+                    );
+                }
             }
         }
         for entry in self.jobs.values() {
@@ -436,10 +433,7 @@ impl WorkService {
                 }
                 let remaining = deadline.saturating_duration_since(Instant::now());
                 if remaining.is_zero() {
-                    return Err(WorkShutdownError::ThreadsNotReturned {
-                        background_worker: !service.worker_joined,
-                        request_threads: service.request_threads.len(),
-                    });
+                    return Err(service.shutdown_deadline_error());
                 }
                 (
                     Arc::clone(&service.shared.notifier),
@@ -448,6 +442,22 @@ impl WorkService {
             };
             let remaining = deadline.saturating_duration_since(Instant::now());
             notifier.wait_for_change(epoch, remaining.min(Duration::from_millis(10)));
+        }
+    }
+
+    // Only shutdown can declare an unreturned worker unavailable by time.
+    // Admission is already stopped, so a late return cannot poison later work.
+    fn shutdown_deadline_error(&self) -> WorkShutdownError {
+        if !self.worker_joined && !self.shared.exited.load(Ordering::Acquire) {
+            latch_outage(
+                &self.shared,
+                ConditionCause::ProgressLost,
+                self.shared.clock.now(),
+            );
+        }
+        WorkShutdownError::ThreadsNotReturned {
+            background_worker: !self.worker_joined,
+            request_threads: self.request_threads.len(),
         }
     }
 
@@ -659,12 +669,11 @@ impl Drop for WorkService {
             }
             let remaining = deadline.saturating_duration_since(Instant::now());
             if remaining.is_zero() {
+                let error = self.shutdown_deadline_error();
                 api::host_log!(
                     api::hostlog::Category::Lifecycle,
                     api::hostlog::Level::Error,
-                    "WorkAdmission shutdown deadline: background_worker={} request_threads={}",
-                    !self.worker_joined,
-                    self.request_threads.len(),
+                    "{error}",
                 );
                 // Dropping a handle detaches it. Its thread still owns the
                 // shared ledger and exact job custody until actual return.
@@ -834,26 +843,15 @@ struct ServiceNotifier {
     epoch: AtomicU64,
     gate: Mutex<()>,
     changed: Condvar,
-    #[cfg(test)]
-    wait_hook: Mutex<Option<std::sync::mpsc::Sender<()>>>,
 }
 
 impl ServiceNotifier {
     fn wait_for_change(&self, observed: u64, timeout: Duration) -> bool {
         let mut gate = self.gate.lock();
         if self.epoch.load(Ordering::Acquire) == observed {
-            #[cfg(test)]
-            if let Some(wait_hook) = self.wait_hook.lock().take() {
-                let _ = wait_hook.send(());
-            }
             self.changed.wait_for(&mut gate, timeout);
         }
         self.epoch.load(Ordering::Acquire) != observed
-    }
-
-    #[cfg(test)]
-    fn hook_next_wait(&self, hook: std::sync::mpsc::Sender<()>) {
-        *self.wait_hook.lock() = Some(hook);
     }
 
     fn signal_change(&self) {
@@ -1189,14 +1187,16 @@ fn worker_thread(shared: Arc<WorkerShared>) {
     let result = catch_unwind(AssertUnwindSafe(|| worker_loop(&shared)));
     if result.is_err() {
         let now = shared.clock.now();
-        latch_outage(&shared, ConditionCause::Panicked, now, None);
-        if let Some(active) = *shared.active.lock() {
-            if let Some(entry) = shared
+        latch_outage(&shared, ConditionCause::Panicked, now);
+        let active = *shared.active.lock();
+        if let Some(active) = active {
+            let entry = shared
                 .registry
                 .lock()
                 .get(&active.entry)
-                .and_then(Weak::upgrade)
-            {
+                .and_then(Weak::upgrade);
+            if let Some(entry) = entry {
+                // Retiring a consumed terminal re-locks the registry.
                 mark_returned(&shared, &entry);
             }
         }
@@ -1638,12 +1638,7 @@ fn request_cancel(
     outcome
 }
 
-fn latch_outage(
-    shared: &Arc<WorkerShared>,
-    cause: ConditionCause,
-    now: Instant,
-    stalled_elapsed: Option<Duration>,
-) {
+fn latch_outage(shared: &Arc<WorkerShared>, cause: ConditionCause, now: Instant) {
     let condition_id = ConditionId::new(
         shared.incarnation,
         ProcessServiceCode::WorkAdmissionUnavailable,
@@ -1672,13 +1667,12 @@ fn latch_outage(
         (queue.jobs.drain(..).collect::<Vec<_>>(), newly_latched)
     };
     if newly_latched {
-        if let Some(elapsed) = stalled_elapsed {
-            api::host_log!(
-                api::hostlog::Category::Lifecycle,
-                api::hostlog::Level::Warn,
-                "background work worker stalled after {elapsed:?}. The service is unavailable.",
-            );
-        }
+        api::host_log!(
+            api::hostlog::Category::Lifecycle,
+            api::hostlog::Level::Warn,
+            "background work unavailable condition={condition_id:?} cause={cause:?} detected_at={:?}. Restart the application process.",
+            shared.origin.elapsed(now),
+        );
     }
     let condition = shared
         .health
