@@ -1132,23 +1132,6 @@ fn talk_reachable(cx: &ActionContext<'_>, tile: api::WorldTile) -> bool {
     })
 }
 
-/// Chebyshev distance between the player's and the NPC's rendered tiles in the
-/// current frame. `NpcView.distance` is measured from the player's path head
-/// (`decode.rs:1361-1366`), which a running player's rendered tile trails by
-/// several tiles. The live receipts (`closure-r3/diag`, first Talk of each
-/// `host.prereq-both-gates` run) show a view distance of 0 to 2 beside rendered
-/// separations of 3 to 5 tiles, so the Talk went out while the player was
-/// still running toward the NPC.
-fn talk_distance(cx: &ActionContext<'_>, npc: &api::snapshot::NpcView) -> i32 {
-    cx.snapshot().here().map_or(npc.distance, |here| {
-        let here = here.value;
-        if here.level != npc.tile.level {
-            return i32::MAX;
-        }
-        (here.x - npc.tile.x).abs().max((here.z - npc.tile.z).abs())
-    })
-}
-
 fn nearest_talk<'a>(cx: &'a ActionContext<'_>, wanted: i32) -> Option<TalkTarget<'a>> {
     let npcs = cx.snapshot().npcs()?.value;
     npcs.iter()
@@ -1165,7 +1148,7 @@ fn nearest_talk<'a>(cx: &'a ActionContext<'_>, wanted: i32) -> Option<TalkTarget
                 index: npc.index as i32,
                 action,
                 tile: npc.tile,
-                distance: talk_distance(cx, npc),
+                distance: npc.distance,
             })
         })
         .min_by_key(|target| target.distance)

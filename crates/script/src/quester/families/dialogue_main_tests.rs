@@ -934,11 +934,9 @@ fn spend_tick_interaction(tick: &mut crate::native::NativeTick<'_>) {
         .unwrap();
 }
 
-/// An NPC `distance` tiles east of the player at (5, 5): the admission reads
-/// the rendered tiles of the frame, so the tile carries the distance.
 fn dialogue_npc(distance: i32) -> api::snapshot::NpcView {
     let tile = api::WorldTile {
-        x: 5 + distance,
+        x: 7,
         z: 5,
         level: 0,
     };
@@ -1043,72 +1041,6 @@ fn dialogue_answer_after_same_tick_talk_defers_and_retries() {
         last_interaction(&ledger),
         InteractReq::Answer { option: 1 }
     ));
-}
-
-fn npc_requests(ledger: &Option<Box<ledger::Ledger>>) -> (usize, usize) {
-    let outbox = &ledger.as_ref().unwrap().outbox;
-    (
-        outbox
-            .iter()
-            .filter(|entry| {
-                matches!(
-                    &entry.effect,
-                    HostEffect::Interaction(InteractReq::Npc { .. })
-                )
-            })
-            .count(),
-        outbox
-            .iter()
-            .filter(|entry| matches!(&entry.effect, HostEffect::Walk(_)))
-            .count(),
-    )
-}
-
-#[test]
-fn talk_admission_reads_the_rendered_tiles_not_the_cached_view_distance() {
-    let at = api::WorldTile {
-        x: 5,
-        z: 5,
-        level: 0,
-    };
-    // The view's distance is measured from the path head when the NPC packet
-    // arrives. A running player's rendered tile trails it, so the view can say
-    // 0 for an NPC that is five tiles away on the frame (live receipts: view
-    // distance 0 to 2 beside rendered separations of 3 to 5).
-    let mut far = snapshot();
-    far.seed_local_player(super::tests::local_player(at));
-    let mut stale_near = dialogue_npc(5);
-    stale_near.distance = 0;
-    far.seed_npcs(vec![stale_near]);
-    let mut ledger = None;
-    let _far_handle = with_tick(&far, &mut ledger, 1, |tick| {
-        tick.actions
-            .begin::<Dialogue>(npc_args(), &mut tick.cx)
-            .unwrap()
-    });
-    assert_eq!(
-        npc_requests(&ledger),
-        (0, 1),
-        "five rendered tiles away: approach first, no Talk"
-    );
-
-    // The opposite error: a cached distance of 5 for an NPC one tile away.
-    let mut near = snapshot();
-    near.seed_local_player(super::tests::local_player(at));
-    let mut stale_far = dialogue_npc(1);
-    stale_far.distance = 5;
-    near.seed_npcs(vec![stale_far]);
-    let mut ledger = None;
-    let _near_handle = with_tick(&near, &mut ledger, 1, |tick| {
-        tick.actions
-            .begin::<Dialogue>(npc_args(), &mut tick.cx)
-            .unwrap()
-    });
-    assert_eq!(
-        npc_requests(&ledger),
-        (1, 0),
-        "one rendered tile away: Talk, no walk"
-    );
 }
 
 #[test]
