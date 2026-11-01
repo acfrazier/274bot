@@ -340,7 +340,10 @@ impl Dialogue {
         Ok(())
     }
 
-    fn poll_phase(&mut self, cx: &mut ActionContext<'_>) -> Poll<Result<DialogueOutcome, ActionError>> {
+    fn poll_phase(
+        &mut self,
+        cx: &mut ActionContext<'_>,
+    ) -> Poll<Result<DialogueOutcome, ActionError>> {
         let now = cx.active_now().as_millis() as u64;
         if self.phase == Phase::Failed {
             return Poll::Ready(Ok(DialogueOutcome::Failed));

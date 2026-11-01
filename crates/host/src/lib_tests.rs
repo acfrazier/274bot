@@ -962,14 +962,20 @@ fn script_wait_holds_the_press_through_any_packet_order_until_the_script_ends_it
     slot.apply_auto_run(&mut client);
     observe_ticks(&mut slot, &mut client, 5);
     slot.apply_auto_run(&mut client);
-    assert_eq!(slot.run_sends, 0, "full five-packet drains without the page");
+    assert_eq!(
+        slot.run_sends, 0,
+        "full five-packet drains without the page"
+    );
     observe_without_tick(&mut slot, &mut client);
     slot.apply_auto_run(&mut client);
     assert_eq!(slot.run_sends, 0, "a drain with no PLAYER_INFO");
     assert_eq!(client.out.pos, 0, "no press was written");
     slot.run_policy.observe_script_wait(None);
     slot.apply_auto_run(&mut client);
-    assert_eq!(slot.run_sends, 1, "the script ended its wait: the press goes out");
+    assert_eq!(
+        slot.run_sends, 1,
+        "the script ended its wait: the press goes out"
+    );
 }
 
 #[test]
@@ -985,8 +991,14 @@ fn script_wait_hold_ends_at_the_safety_bound_once_per_key() {
     observe_ticks(&mut slot, &mut client, 1);
     slot.run_policy.observe_script_wait(Some(9));
     slot.apply_auto_run(&mut client);
-    assert_eq!(slot.run_sends, 1, "the bound ends a wait the script never ended");
-    assert!(!slot.run_policy.should_defer_auto_run(), "that key holds no more");
+    assert_eq!(
+        slot.run_sends, 1,
+        "the bound ends a wait the script never ended"
+    );
+    assert!(
+        !slot.run_policy.should_defer_auto_run(),
+        "that key holds no more"
+    );
     slot.run_policy.observe_script_wait(Some(10));
     assert!(
         slot.run_policy.should_defer_auto_run(),

@@ -581,7 +581,10 @@ fn auto_run_hold_survives_full_five_packet_drains() {
 fn auto_run_hold_ends_when_the_script_wait_expires() {
     let mut rig = HoldRig::new();
     let mut frames = vec![click_frame(1, -1)];
-    frames.extend(std::iter::repeat_n(frame(1, -1), PAGE_WAIT_TICKS as usize + 1));
+    frames.extend(std::iter::repeat_n(
+        frame(1, -1),
+        PAGE_WAIT_TICKS as usize + 1,
+    ));
     let presses = rig.run(&frames);
     let expiry = PAGE_WAIT_TICKS as usize;
     assert!(

@@ -84,12 +84,9 @@ impl Owner {
     }
 
     pub fn release_modal_wait(&self, lease: NonZeroU64) {
-        let _ = self.modal_wait.compare_exchange(
-            lease.get(),
-            0,
-            Ordering::AcqRel,
-            Ordering::Acquire,
-        );
+        let _ =
+            self.modal_wait
+                .compare_exchange(lease.get(), 0, Ordering::AcqRel, Ordering::Acquire);
     }
 
     /// The live modal-wait lease id, if any.

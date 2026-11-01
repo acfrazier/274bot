@@ -2220,7 +2220,10 @@ fn a_failed_re_approach_is_retried_inside_the_budget_and_the_talk_still_passes()
         "a failed re-approach is not terminal while the budget lasts"
     );
     let drive = talk_drive(&run);
-    assert_eq!(drive.reach_failures, 2, "the failed approach used one attempt");
+    assert_eq!(
+        drive.reach_failures, 2,
+        "the failed approach used one attempt"
+    );
     assert!(drive.handle.is_none(), "the failed attempt's owner is gone");
 
     // The next tick approaches his new tile.
@@ -2228,7 +2231,10 @@ fn a_failed_re_approach_is_retried_inside_the_budget_and_the_talk_still_passes()
     let HostEffect::Walk(request) = &ledger.as_ref().unwrap().outbox.last().unwrap().effect else {
         panic!("the next attempt approaches the NPC again");
     };
-    assert_eq!(request.target, second, "the walk targets the newly observed tile");
+    assert_eq!(
+        request.target, second,
+        "the walk targets the newly observed tile"
+    );
 
     // He stands next to the player now: the Talk goes out and its page passes.
     arrive(&mut ledger, 7);
@@ -2300,7 +2306,14 @@ fn failed_re_approaches_end_in_a_terminal_failure_that_keeps_the_approach_detail
             away.abs(),
         )]);
         arrive(&mut ledger, tick + 1);
-        result = poll(&mut run, &snapshot, &mut ledger, tick + 1, &state, &mut budget);
+        result = poll(
+            &mut run,
+            &snapshot,
+            &mut ledger,
+            tick + 1,
+            &state,
+            &mut budget,
+        );
         if attempt <= TALK_REACH_RETRIES {
             assert!(result.is_pending(), "attempt {attempt} is retried");
             assert_eq!(talk_drive(&run).reach_failures, attempt);
@@ -2364,11 +2377,19 @@ fn a_talk_holds_the_auto_run_wait_only_while_its_own_send_awaits_a_page() {
     let anchor = row.target.anchor;
     let talk = modal_wait(&ledger).expect("the sent Talk waits for its page");
     assert!(poll(&mut run, &snapshot, &mut ledger, 3, &state, &mut budget).is_pending());
-    assert_eq!(modal_wait(&ledger), Some(talk), "no page yet: the wait holds");
+    assert_eq!(
+        modal_wait(&ledger),
+        Some(talk),
+        "no page yet: the wait holds"
+    );
 
     message(&mut snapshot, 1, CANT_REACH_TEXT);
     assert!(poll(&mut run, &snapshot, &mut ledger, 4, &state, &mut budget).is_pending());
-    assert_eq!(modal_wait(&ledger), None, "the cancel ends the wait at once");
+    assert_eq!(
+        modal_wait(&ledger),
+        None,
+        "the cancel ends the wait at once"
+    );
 
     let far = WorldTile {
         x: anchor.x + 5,
@@ -2418,7 +2439,11 @@ fn a_talk_holds_the_auto_run_wait_only_while_its_own_send_awaits_a_page() {
         _ => panic!("the runner is not in its Talk phase"),
     };
     drop(handle);
-    assert_eq!(modal_wait(&ledger), None, "a dropped dialogue ends its wait");
+    assert_eq!(
+        modal_wait(&ledger),
+        None,
+        "a dropped dialogue ends its wait"
+    );
 }
 
 #[test]
