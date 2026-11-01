@@ -529,7 +529,7 @@
     "module": "api/inventory/Inventory.js",
     "selector": "Inventory.items",
     "reason": "The native inventory facade reuses its deeply frozen item instances while the posted inventory and interface generations stay unchanged; audited consumers only inspect or filter them.",
-    "runtime": "crates/script-js/src/materialize/inventory_v8.rs:469",
+    "runtime": "crates/script-js/src/materialize/inventory_v8.rs:475",
     "declaration": "items(): readonly Readonly<InvItem>[];"
   },
   {
@@ -545,7 +545,7 @@
     "module": "api/inventory/Inventory.js",
     "selector": "backpackSnapshots",
     "reason": "The native module helper reuses deeply frozen backpack snapshots while posted inventory and interface generations stay unchanged; audited consumers read them or make filtered copies.",
-    "runtime": "crates/script-js/src/materialize/inventory_v8.rs:302",
+    "runtime": "crates/script-js/src/materialize/inventory_v8.rs:308",
     "declaration": "export function backpackSnapshots(): readonly Readonly<Omit<InvItemSnapshot, \"ops\"> & { ops: readonly (string | null)[] }>[];"
   },
   {

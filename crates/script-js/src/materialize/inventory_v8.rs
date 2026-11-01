@@ -1142,6 +1142,31 @@ mod allocation_tests {
     use crate::observed::{ItemRow, Ops, Text};
     use rustyscript::{Runtime, RuntimeOptions};
 
+    const BACKPACK_CACHE_CHILD_ENV: &str = "SCRIPT_INVENTORY_BACKPACK_CACHE_CHILD";
+    const BACKPACK_CACHE_TEST_NAME: &str =
+        "inventory_v8::allocation_tests::backpack_snapshots_cache_across_same_generation_posts_and_throw_on_writes";
+
+    fn run_backpack_cache_test_child() -> bool {
+        if std::env::var_os(BACKPACK_CACHE_CHILD_ENV).is_some() {
+            return true;
+        }
+        let output = std::process::Command::new(
+            std::env::current_exe().expect("test executable"),
+        )
+        .args(["--exact", BACKPACK_CACHE_TEST_NAME, "--nocapture"])
+        .env(BACKPACK_CACHE_CHILD_ENV, "1")
+        .output()
+        .expect("run isolated V8-native-syntax test");
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(
+            output.status.success() && stdout.contains("1 passed"),
+            "isolated V8 test failed\nstdout: {stdout}\nstderr: {stderr}"
+        );
+        print!("{stdout}");
+        false
+    }
+
     const INVENTORY_SETUP: &str = r#"
 const postedRow = { name: 'Apple', count: 2, id: 10, slot: 0, noted: false, cert: -1, ops: ['Eat'] };
 globalThis.__rs2b0t_host = {
@@ -1227,6 +1252,9 @@ globalThis.checkInventory = () => {
 
     #[test]
     fn backpack_snapshots_cache_across_same_generation_posts_and_throw_on_writes() {
+        if !run_backpack_cache_test_child() {
+            return;
+        }
         v8::V8::set_flags_from_string("--allow-natives-syntax");
         observed::on_reset();
         let mut runtime = setup();
