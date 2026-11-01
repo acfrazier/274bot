@@ -1292,7 +1292,8 @@ fn quest_walk_step_blocks_after_three_failures_with_the_last_detail() {
 
 #[test]
 fn prereq_walk_ordinary_failures_keep_bounded_retries_and_last_detail() {
-    let snapshot = ready();
+    let mut snapshot = ready();
+    snapshot.seed_local_player(local_player(tile(3190, 3200)));
     let mut ledger = None;
     let mut run = WalkRun {
         plan: walk_retry_plan(tile(3200, 3200)),

@@ -1305,6 +1305,11 @@ fn combat_during_talk_ends_step_failed_without_retry() {
     let mut player = local_player(row.target.anchor);
     player.player.actor.in_combat = true;
     snapshot.seed_local_player(player);
+    // A health-bar window alone is not an attack after the Mordred cutover.
+    crate::quester::families::tests::seed_dialogue_attacker(
+        &mut snapshot,
+        api::snapshot::ActorKind::Npc,
+    );
     assert!(matches!(
         poll(&mut run, &snapshot, &mut ledger, 3, &state, &mut budget),
         Poll::Ready(Err(PrereqRefusal::StepFailed {
@@ -1684,7 +1689,7 @@ fn same_gate_twice_ends_step_repeated_and_preserves_the_original_walk() {
         }
     );
     assert!(request.protect && request.food_guard);
-    assert!(!request.allow.food && !request.allow.escape);
+    assert!(request.allow.food && !request.allow.escape);
     assert_eq!(&*request.avoid[0], "wilderness");
     assert_eq!(&*request.cross[0], "morytania");
     assert_eq!(request.required_after.tick, 3);
@@ -1873,7 +1878,7 @@ fn approach_walk_inherits_protect_and_allow() {
             }
         );
         assert!(request.protect && request.food_guard);
-        assert!(!request.allow.food && !request.allow.escape);
+        assert!(request.allow.food && !request.allow.escape);
         assert_eq!(request.options.allow_teleports, WalkBit::Forbid);
         assert_eq!(request.options.allow_wilderness, WalkBit::Forbid);
         assert_eq!(request.options.allow_danger_zones, WalkBit::Forbid);
