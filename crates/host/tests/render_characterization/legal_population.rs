@@ -1618,7 +1618,6 @@ pub fn derive_population(
     let environment = inputs.source_text("src/util/Environment.ts")?;
     let world_config = inputs.source_text("src/util/WorldConfig.ts")?;
     let entity_list = inputs.source_text("src/engine/entity/EntityList.ts")?;
-    let npc_list = inputs.source_text("src/engine/entity/NpcList.ts")?;
     let game_map = inputs.source_text("src/engine/GameMap.ts")?;
     let zone = inputs.source_text("src/engine/zone/Zone.ts")?;
     let npc_ops = inputs.source_text("src/engine/script/handlers/NpcOps.ts")?;
@@ -1668,12 +1667,9 @@ pub fn derive_population(
     require_markers(
         &entity_list,
         "src/engine/entity/EntityList.ts",
-        &["if (!this.free.size)", "this.free.delete(index);"],
-    )?;
-    require_markers(
-        &npc_list,
-        "src/engine/entity/NpcList.ts",
         &[
+            "if (!this.free.size)",
+            "this.free.delete(index);",
             "export class NpcList extends EntityList<Npc>",
             "super(size, 0);",
         ],
@@ -1827,8 +1823,7 @@ pub fn derive_population(
                 "per_zone_count_reason": "Zone uses linked lists. The global player and NPC limits bound total live actors.",
                 "source_files": [
                     {"path":"src/engine/World.ts","lines":[117,118,1269,1272,1661,1668,1757,1758]},
-                    {"path":"src/engine/entity/EntityList.ts","lines":[14,17,62,68,71,74]},
-                    {"path":"src/engine/entity/NpcList.ts","lines":[101,104]},
+                    {"path":"src/engine/entity/EntityList.ts","lines":[14,17,62,67,71,74,101,104]},
                     {"path":"src/util/Environment.ts","lines":[5,9]},
                     {"path":"src/util/WorldConfig.ts","lines":[151,160,178,186]},
                     {"path":"src/engine/GameMap.ts","lines":[135,141,153,154]},
