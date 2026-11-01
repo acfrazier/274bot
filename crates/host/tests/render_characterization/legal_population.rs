@@ -561,9 +561,9 @@ fn inventory_emitters_from_sources(
 fn emitter_inventory(inputs: &VerifiedEngineInputs) -> Result<Vec<Value>, String> {
     let mut sources = BTreeMap::new();
     for spec in EMITTERS {
-        sources
-            .entry(spec.path)
-            .or_insert(inputs.source_text(spec.path)?);
+        if let std::collections::btree_map::Entry::Vacant(entry) = sources.entry(spec.path) {
+            entry.insert(inputs.source_text(spec.path)?);
+        }
     }
     inventory_emitters_from_sources(&sources)
 }
@@ -946,7 +946,7 @@ fn script_opcode_member_lines(
     let (prefix, body) = source
         .split_once("export const enum ScriptOpcode {")
         .ok_or_else(|| "ScriptOpcode enum declaration is absent".to_string())?;
-    let first_line = prefix.lines().count();
+    let first_line = prefix.bytes().filter(|byte| *byte == b'\n').count() + 1;
     let mut lines = BTreeMap::new();
     let mut closed = false;
     for (offset, line) in body.lines().enumerate() {
@@ -2159,7 +2159,10 @@ mod tests {
                 .iter()
                 .map(|marker| format!("{marker}\n"))
                 .collect::<String>();
-            sources.insert(spec.path, text);
+            sources
+                .entry(spec.path)
+                .or_insert_with(String::new)
+                .push_str(&text);
         }
         let inventory = inventory_emitters_from_sources(&sources).unwrap();
         assert_eq!(inventory.len(), EMITTERS.len());
@@ -2198,6 +2201,11 @@ export const enum ScriptOpcode {
         let member_lines = script_opcode_member_lines(source, &["GOSUB", "LOC_ADD"]).unwrap();
         assert_eq!(member_lines["GOSUB"], 6);
         assert_eq!(member_lines["LOC_ADD"], 10);
+        let inline = "  export const enum ScriptOpcode {\nGOSUB,\n}";
+        assert_eq!(
+            script_opcode_member_lines(inline, &["GOSUB"]).unwrap()["GOSUB"],
+            2
+        );
     }
 
     #[test]
