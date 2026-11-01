@@ -296,6 +296,7 @@ impl StateComposition {
 
     /// Ready the box-scoped settings file before a synchronous JS Start.
     /// An absent file is ready; read failures and timeouts refuse the Start.
+    #[cfg(feature = "js")]
     pub(crate) fn prepare_script_runtime_settings(&self, username: &str) -> Result<(), String> {
         let identity = self
             .identity(LocalStateDomain::ScriptRuntimeSettings, username)
