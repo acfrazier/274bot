@@ -382,6 +382,7 @@ export default class T extends LoopingBot {
     iso.on_game_tick(2);
     let _ = iso.probe("1");
     assert_eq!(probe_i64(&iso, "globalThis.__xp2||0"), 112);
+    assert_eq!(iso.probe("__inv").unwrap(), serde_json::Value::Bool(true));
     let logs = iso.drain_logs();
     assert_eq!(
         logs.iter()
