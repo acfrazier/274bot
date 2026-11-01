@@ -3,6 +3,24 @@ use super::*;
 const RAW_289: &[u8] = include_bytes!("../data/game-data/289.json");
 
 #[test]
+fn generated_game_data_gzip_preserves_every_source_byte() {
+    for (revision, compressed, source) in [
+        (
+            274,
+            REVISION_274,
+            include_bytes!("../data/game-data/274.json").as_slice(),
+        ),
+        (289, REVISION_289, RAW_289),
+    ] {
+        let mut decoded = Vec::new();
+        GzDecoder::new(compressed)
+            .read_to_end(&mut decoded)
+            .unwrap();
+        assert_eq!(decoded, source, "revision {revision} generated gzip");
+    }
+}
+
+#[test]
 fn selected_pin_is_shared_and_unbound_facts_fail_closed() {
     let data = for_revision(ClientRevision::R289).unwrap();
     let first = data.selected_pin().unwrap();
