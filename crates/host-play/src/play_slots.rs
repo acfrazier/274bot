@@ -135,10 +135,7 @@ pub(crate) fn script_state_builds_nav_facts(script_state: Option<script::RunStat
 
 /// Queue one host-owned client frame under the slot lock, then wait for its
 /// isolate receipt after releasing that lock.
-pub(crate) fn dispatch_client_frame(
-    slot: &Arc<Mutex<script::SlotScript>>,
-    _name: &str,
-) -> bool {
+pub(crate) fn dispatch_client_frame(slot: &Arc<Mutex<script::SlotScript>>, _name: &str) -> bool {
     #[cfg(feature = "memory-profile")]
     memory::frame_dispatch_begin(_name);
     let dispatch = {

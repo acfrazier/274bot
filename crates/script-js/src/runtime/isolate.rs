@@ -635,7 +635,6 @@ fn interrupt_slow_execution_shared(
     }
 }
 
-
 /// The only production gameplay construction path is the slot-owned factory.
 /// UI and control callers cannot create an isolate with this crate-private type.
 #[derive(Default)]
@@ -1170,12 +1169,7 @@ impl LoadIsolate {
     /// never the cadence of later host dispatches. If it is still inside its
     /// horizon, arm one execution-scoped sleeper for the remaining time.
     fn interrupt_slow_execution(&self, ready: bool) {
-        interrupt_slow_execution_shared(
-            &self.teardown,
-            self.terminate.get(),
-            &self.logs,
-            ready,
-        );
+        interrupt_slow_execution_shared(&self.teardown, self.terminate.get(), &self.logs, ready);
     }
 
     /// Arm the independent process supervisor against the execution's original
@@ -1771,7 +1765,6 @@ impl LoadIsolate {
             handle.terminate_execution();
         }
     }
-
 
     /// Terminate setup/tick failure while it is still before Hook.
     fn fire_before_hook(&self) {

@@ -1521,9 +1521,7 @@ impl SlotScript {
     /// Queue a live surface's client frame without waiting for its isolate.
     /// The caller must release the slot lock before waiting on the returned
     /// dispatch.
-    pub fn begin_client_frame(
-        &mut self,
-    ) -> Option<Arc<dyn crate::surface::ClientFrameDispatch>> {
+    pub fn begin_client_frame(&mut self) -> Option<Arc<dyn crate::surface::ClientFrameDispatch>> {
         if !matches!(
             self.state,
             RunState::Starting | RunState::Running | RunState::Paused

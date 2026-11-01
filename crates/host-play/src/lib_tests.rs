@@ -7914,10 +7914,7 @@ fn client_frame_and_lifecycle_hooks_do_not_hold_slot_and_are_watchdog_bounded() 
 
     fn start_frame_wait(
         slot: Arc<Mutex<script::SlotScript>>,
-    ) -> (
-        thread::JoinHandle<()>,
-        std::sync::mpsc::Receiver<bool>,
-    ) {
+    ) -> (thread::JoinHandle<()>, std::sync::mpsc::Receiver<bool>) {
         let (tx, rx) = std::sync::mpsc::channel();
         let worker = thread::spawn(move || {
             tx.send(crate::play_slots::dispatch_client_frame(&slot, "alice"))

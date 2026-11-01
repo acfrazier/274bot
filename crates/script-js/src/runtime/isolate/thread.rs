@@ -1052,15 +1052,9 @@ fn arm_execution_watchdog(
             state.execution_deadline_owner = Some(ExecutionInterrupt::Watchdog);
         }
         state.execution_deadline_armed = true;
-        (
-            state.execution_id,
-            started + EXECUTION_WATCHDOG_HORIZON,
-        )
+        (state.execution_id, started + EXECUTION_WATCHDOG_HORIZON)
     };
-    let handle = runtime
-        .deno_runtime()
-        .v8_isolate()
-        .thread_safe_handle();
+    let handle = runtime.deno_runtime().v8_isolate().thread_safe_handle();
     if let Err(error) = super::register_execution_deadline(
         teardown,
         handle.clone(),
