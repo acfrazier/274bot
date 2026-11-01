@@ -307,6 +307,24 @@ fn with_journal_only_hero(check: impl FnOnce(&QuestSource<'_>)) {
     });
 }
 
+fn with_non_authoritative_hero(check: impl FnOnce(&QuestSource<'_>)) {
+    let selected =
+        api::game_data::for_revision(client::io::ClientRevision::R289).expect("selected revision");
+    let (mut facts, identity) = selected.quest_identity_for_bake().expect("verified family");
+    let row = facts
+        .rows
+        .iter_mut()
+        .find(|row| row.varp == "heroquest")
+        .unwrap();
+    row.colour_authoritative = false;
+    row.stage_domain = None;
+    row.transmission = api::quest_facts::Transmission::NotTransmitted;
+    check(&QuestSource {
+        family: nav_planner::quest_gates::QuestFamilyId::new(identity.sha256, identity.schema),
+        facts: &facts,
+    });
+}
+
 #[test]
 fn nonzero_stage_door_keeps_started_window_in_both_directions() {
     // Mort Myre's refusal-before-open shape. The progress-only write follows
@@ -2145,6 +2163,23 @@ p_teleport(0_44_53_5_46);
             );
         });
     }
+}
+
+#[test]
+fn non_authoritative_completion_without_stage_domain_does_not_authorize_door() {
+    let fx = plain_opener_fixture(
+        "[oploc1,plain_door]\n\
+         if (%heroquest >= ^hero_complete) {\n\
+           ~open_and_close_door(loc_1535, ~check_axis(coord, loc_coord, loc_angle), false);\n\
+         }\n",
+    );
+    with_non_authoritative_hero(|quests| {
+        let (graph, _) = derive_stage_with_quests(&fx, &[900], quests);
+        assert!(
+            !graph.edges.iter().any(|edge| edge.loc_id == 900),
+            "non-authoritative completion cannot be encoded as a Complete gate"
+        );
+    });
 }
 
 #[test]

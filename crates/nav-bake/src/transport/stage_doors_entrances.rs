@@ -522,12 +522,21 @@ impl Motion<'_> {
                         quest_family: Some(quest_family),
                         ..Needs::default()
                     }
-                } else if input.complete {
+                } else if input.complete
+                    && self
+                        .base
+                        .src
+                        .quest_stage
+                        .get(quest_varp)
+                        .is_some_and(|facts| facts.colour_authoritative)
+                {
                     Needs {
                         quests: vec![api::selected::QuestGate::Complete(quest.clone())],
                         quest_family: self.base.src.quest_family,
                         ..Needs::default()
                     }
+                } else if input.complete {
+                    return Some(Cond::unknown());
                 } else {
                     Needs::default()
                 };
