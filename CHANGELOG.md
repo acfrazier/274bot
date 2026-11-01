@@ -72,6 +72,9 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.8` 
   its rune. Stock and inventory must move in that same generation, followed by
   Quester's Closing phase and Close. An earlier failed session no longer hides
   a later successful owned withdrawal.
+- Contributors can run the same checks as GitHub CI with
+  `cargo run --locked -p xtask -- ci --all`. The command writes a log and exit
+  code for each step.
 
 ### Panel and terminal app
 
@@ -83,6 +86,19 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.8` 
   refuses logout because combat is still active, fixture teardown teleports only
   that account to the safe mainland tile, waits 16 observed game ticks after
   arrival, then retries logout within the original fixed 30-second deadline.
+- Profiles and Fleet now share one saved order. The **Profiles** window
+  lists your profiles in your saved Load order (not alphabetically), and
+  dragging a row there changes the same order as a Fleet drag in the panel
+  or **Alt-Up** / **Alt-Down** in the terminal app. A Profiles drag also
+  works while the Fleet is sorted by Name or Status, and leaves that sort
+  alone. While an order change saves, the Profiles list and the Fleet
+  table show **Saving…**; if the save fails, both show the reason and
+  your last saved order comes back. A line on the row under your drag
+  marks where the profile will land, and a name too long for its row is
+  cut with a "…" (hover shows the whole name). Importing rs2b0t
+  profiles now keeps the export file's order: new profiles join the end
+  of your saved order in the file's sequence, and a profile you already
+  have keeps its place.
 
 ### Grinch
 
@@ -311,6 +327,7 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.8` 
   click unsent, the guide sends it again. When the host refuses the click,
   the guide stops at once with `expected dialogue did not open`, the NPC, the
   tick of the refusal and the last game message.
+
 ### Fixed (panel)
 
 - **Profiles** now closes when you press its ✕ or **Close**, also when you
@@ -319,11 +336,6 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.8` 
   still asks **Discard** or **Keep editing** first.
 
 ## [0.2.8] — 2026-10-29 — Beta 2
-### Developer tooling
-
-- Contributors can run the same checks as GitHub CI with
-  `cargo run --locked -p xtask -- ci --all`. The command writes a log and exit
-  code for each step.
 
 ### Panel and terminal app
 
@@ -367,19 +379,6 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.8` 
   can be scrolled on an 80x24 terminal. Before, the panel's Browse window could
   save its category order again on every frame after a failure and show
   "Saving…" without end.
-- Profiles and Fleet now share one saved order. The **Profiles** window
-  lists your profiles in your saved Load order (not alphabetically), and
-  dragging a row there changes the same order as a Fleet drag in the panel
-  or **Alt-Up** / **Alt-Down** in the terminal app. A Profiles drag also
-  works while the Fleet is sorted by Name or Status, and leaves that sort
-  alone. While an order change saves, the Profiles list and the Fleet
-  table show **Saving…**; if the save fails, both show the reason and
-  your last saved order comes back. A line on the row under your drag
-  marks where the profile will land, and a name too long for its row is
-  cut with a "…" (hover shows the whole name). Importing rs2b0t
-  profiles now keeps the export file's order: new profiles join the end
-  of your saved order in the file's sequence, and a profile you already
-  have keeps its place.
 
 ### Combat
 
