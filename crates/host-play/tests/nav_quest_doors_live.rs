@@ -1129,7 +1129,7 @@ fn journal_attempt_receipt(
     let (event, attempt, failure) = if current > previous {
         ("started", current, None)
     } else if let Some(error) = error {
-        if before.is_some_and(|attempt| attempt.owner_active) {
+        if after.is_none() {
             ("failed", started, Some(error))
         } else {
             ("begin_failed", started + 1, Some(error))
@@ -1216,6 +1216,21 @@ fn journal_attempt_receipts_keep_timeout_retry_and_last_error() {
     .unwrap();
     assert_eq!(begin_failed["event"], "begin_failed");
     assert_eq!(begin_failed["attempt"], 2);
+    let revoked = JournalAttempt {
+        owner_active: false,
+        ..second
+    };
+    let cancelled = journal_attempt_receipt(
+        Some(revoked),
+        None,
+        stamp(8),
+        Some("the native action was cancelled"),
+        false,
+    )
+    .unwrap();
+    assert_eq!(cancelled["event"], "failed");
+    assert_eq!(cancelled["attempt"], 2);
+    assert_eq!(cancelled["failure"], "the native action was cancelled");
     let completed = journal_attempt_receipt(Some(second), None, stamp(9), None, true).unwrap();
     assert_eq!(completed["event"], "completed");
     assert_eq!(completed["attempt"], 2);
