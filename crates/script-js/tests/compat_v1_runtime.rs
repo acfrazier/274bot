@@ -172,7 +172,7 @@ try {
 globalThis.__facts = {
     candidates,
     error,
-    callbackType: typeof globalThis.rustyscript.functions.__rs2b0t_step_off_candidates,
+    callbackType: typeof globalThis.__rs2b0t_step_off_candidates,
     inputUnchanged: JSON.stringify(from) === before,
 };
 "#,
