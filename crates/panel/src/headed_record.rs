@@ -865,8 +865,8 @@ impl RecorderDiagnostics {
             .fetch_add(1, Ordering::SeqCst)
             .saturating_add(1);
         let receive_after = self.receive_sequence.load(Ordering::SeqCst);
-        let receive_sequence =
-            (receive_before == receive_after && receive_before % 2 == 0).then_some(receive_before);
+        let receive_sequence = (receive_before == receive_after && receive_before.is_multiple_of(2))
+            .then_some(receive_before);
         QueueSendTicket {
             stamp,
             receive_sequence,
@@ -891,7 +891,7 @@ impl RecorderDiagnostics {
                 let receive_after = self.receive_sequence.load(Ordering::SeqCst);
                 ticket
                     .receive_sequence
-                    .filter(|sequence| *sequence == receive_after && receive_after % 2 == 0)
+                    .filter(|sequence| *sequence == receive_after && receive_after.is_multiple_of(2))
                     .and(ticket.queue_occupancy)
             }
             QueueSendStatus::Full => Some(self.queue_capacity),
@@ -961,18 +961,18 @@ impl RecorderDiagnostics {
 
     fn queue_depth_if_send_stable(&self) -> Option<usize> {
         let before = self.send_sequence.load(Ordering::SeqCst);
-        if before % 2 != 0 {
+        if !before.is_multiple_of(2) {
             return None;
         }
         let queue_occupancy = self.queue_occupancy.load(Ordering::SeqCst);
         let after = self.send_sequence.load(Ordering::SeqCst);
-        (before == after && after % 2 == 0).then_some(queue_occupancy)
+        (before == after && after.is_multiple_of(2)).then_some(queue_occupancy)
     }
 
     fn queue_depth_if_stable(&self) -> Option<usize> {
         let send_before = self.send_sequence.load(Ordering::SeqCst);
         let receive_before = self.receive_sequence.load(Ordering::SeqCst);
-        if send_before % 2 != 0 || receive_before % 2 != 0 {
+        if !send_before.is_multiple_of(2) || !receive_before.is_multiple_of(2) {
             return None;
         }
         let queue_occupancy = self.queue_occupancy.load(Ordering::SeqCst);
@@ -980,8 +980,8 @@ impl RecorderDiagnostics {
         let send_after = self.send_sequence.load(Ordering::SeqCst);
         (send_before == send_after
             && receive_before == receive_after
-            && send_after % 2 == 0
-            && receive_after % 2 == 0)
+            && send_after.is_multiple_of(2)
+            && receive_after.is_multiple_of(2))
             .then_some(queue_occupancy)
     }
 
