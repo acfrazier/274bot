@@ -141,10 +141,8 @@ pub(crate) fn dispatch_client_frame(
 ) -> bool {
     #[cfg(feature = "memory-profile")]
     memory::frame_dispatch_begin(_name);
-    let dispatch = {
-        let mut slot = slot.lock().unwrap();
-        slot.begin_client_frame()
-    };
+    let mut slot = slot.lock().unwrap();
+    let dispatch = slot.begin_client_frame();
     let delivered = dispatch.is_some_and(|dispatch| dispatch.wait_for_ack());
     #[cfg(feature = "memory-profile")]
     memory::frame_dispatch_end(_name, delivered);
