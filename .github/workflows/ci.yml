@@ -52,13 +52,19 @@ jobs:
         with:
           shared-key: fmt-ubuntu-24.04
       - name: Check formatting
-        run: |
-          cargo fmt --all -- --check
-          cargo fmt --all --manifest-path vendor/fr-client-rust/Cargo.toml -- --check
+        run: cargo run --locked -p xtask -- ci fmt
+      - name: Check formatting
+        run: cargo run --locked -p xtask -- ci fmt-client
       - name: Lint suppression ratchet
-        run: |
-          python3 -B tools/lint-ratchet/lint_ratchet.py --self-test
-          python3 -B tools/lint-ratchet/lint_ratchet.py
+        run: cargo run --locked -p xtask -- ci ratchet-selftest
+      - name: Lint suppression ratchet
+        run: cargo run --locked -p xtask -- ci ratchet
+      - name: Docs check
+        run: cargo run --locked -p xtask -- ci docs-check-selftest
+      - name: Docs check
+        run: cargo run --locked -p xtask -- ci docs-check
+      - name: ci-self-check
+        run: cargo run --locked -p xtask -- ci ci-self-check
 
   clippy:
     name: clippy
@@ -91,26 +97,39 @@ jobs:
             . -> target
             vendor/fr-client-rust -> target
       - name: Navigation action deny-list coverage
-        run: python3 -B tools/architecture/nav_clippy.py --check
+        run: cargo run --locked -p xtask -- ci nav-clippy
       - name: Clippy
-        run: |
-          cargo clippy --workspace --all-targets --no-deps -- -D warnings -D clippy::todo -D clippy::unimplemented
-          cargo clippy --manifest-path vendor/fr-client-rust/Cargo.toml --workspace --all-targets --no-deps -- -D warnings
-          cargo clippy -p host --all-targets --no-deps --features performance-profile -- -D warnings -D clippy::todo -D clippy::unimplemented
-          cargo clippy -p host --all-targets --no-deps --features render-diagnostics -- -D warnings -D clippy::todo -D clippy::unimplemented
-          cargo clippy -p panel --all-targets --no-deps --features memory-profile -- -D warnings -D clippy::todo -D clippy::unimplemented
-          cargo clippy -p panel --all-targets --no-deps --features render-diagnostics -- -D warnings -D clippy::todo -D clippy::unimplemented
-          cargo clippy -p host-play --all-targets --no-deps --features memory-profile -- -D warnings -D clippy::todo -D clippy::unimplemented
-          cargo clippy -p host-play --all-targets --no-deps --features memory-profile-no-alloc -- -D warnings -D clippy::todo -D clippy::unimplemented
-          cargo clippy -p tui --all-targets --no-deps --features memory-profile -- -D warnings -D clippy::todo -D clippy::unimplemented
-          cargo clippy -p script --no-default-features --all-targets --no-deps -- -D warnings -D clippy::todo -D clippy::unimplemented
-          cargo clippy -p host-play --no-default-features --all-targets --no-deps -- -D warnings -D clippy::todo -D clippy::unimplemented
-          cargo clippy --manifest-path vendor/fr-client-rust/Cargo.toml --workspace --all-targets --no-deps --features render-test-hooks -- -D warnings
-          cargo clippy -p host --all-targets --no-deps --features render-test-hooks -- -D warnings -D clippy::todo -D clippy::unimplemented
+        run: cargo run --locked -p xtask -- ci clippy-1
+      - name: Clippy
+        run: cargo run --locked -p xtask -- ci clippy-2
+      - name: Clippy
+        run: cargo run --locked -p xtask -- ci clippy-3
+      - name: Clippy
+        run: cargo run --locked -p xtask -- ci clippy-4
+      - name: Clippy
+        run: cargo run --locked -p xtask -- ci clippy-5
+      - name: Clippy
+        run: cargo run --locked -p xtask -- ci clippy-6
+      - name: Clippy
+        run: cargo run --locked -p xtask -- ci clippy-7
+      - name: Clippy
+        run: cargo run --locked -p xtask -- ci clippy-8
+      - name: Clippy
+        run: cargo run --locked -p xtask -- ci clippy-9
+      - name: Clippy
+        run: cargo run --locked -p xtask -- ci clippy-10
+      - name: Clippy
+        run: cargo run --locked -p xtask -- ci clippy-11
+      - name: Clippy
+        run: cargo run --locked -p xtask -- ci clippy-12
+      - name: Clippy
+        run: cargo run --locked -p xtask -- ci clippy-13
 
   architecture:
     name: architecture
     runs-on: ubuntu-24.04
+    env:
+      ARCH_RUST_ANALYZER_URL: ${{ vars.ARCH_RUST_ANALYZER_URL }}
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
         with:
@@ -128,56 +147,18 @@ jobs:
           test "$(git config --no-includes -f .gitmodules --get-all submodule.vendor/fr-client-rust.url)" = "https://github.com/acfrazier/FR-client-bothost.git"
           test "$(git config --no-includes -f .gitmodules --get-all submodule.vendor/fr-client-rust.branch)" = "multirev-bh-modular"
           GIT_ALLOW_PROTOCOL=https git submodule update --init -- vendor/fr-client-rust
+      - uses: dtolnay/rust-toolchain@1.98.1
       - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
         with:
           python-version: "3.14.8"
           check-latest: false
-      - name: Install hash-pinned rust-analyzer
-        env:
-          ARCH_RUST_ANALYZER_URL: ${{ vars.ARCH_RUST_ANALYZER_URL }}
-        run: |
-          set -euo pipefail
-          : "${ARCH_RUST_ANALYZER_URL:?publish the pinned rust-analyzer artifact and set ARCH_RUST_ANALYZER_URL}"
-          parser_dir="$RUNNER_TEMP/f0-rust-analyzer"
-          mkdir -p "$parser_dir"
-          curl --fail --location --retry 3 --output "$parser_dir/rust-analyzer.gz" "$ARCH_RUST_ANALYZER_URL"
-          echo "040cab4e2abc490fadd95c3f6cbc60b941a78761dbc3acf0ec66fd7a97f31db3  $parser_dir/rust-analyzer.gz" | sha256sum --check -
-          gzip -dc "$parser_dir/rust-analyzer.gz" > "$parser_dir/rust-analyzer"
-          echo "fd89304c85f6c1996b036ea8f2c9ad9d3e25a197dbd713661c7fe51ec9dc8e49  $parser_dir/rust-analyzer" | sha256sum --check -
-          chmod 0755 "$parser_dir/rust-analyzer"
-          echo "$parser_dir" >> "$GITHUB_PATH"
-          test "$("$parser_dir/rust-analyzer" --version)" = "rust-analyzer 0.3.3081-standalone"
-      - name: Install pinned flatc
-        env:
-          FLATC_URL: https://github.com/google/flatbuffers/releases/download/v25.12.19/Linux.flatc.binary.g%2B%2B-13.zip
-          FLATC_SHA256: 9f87066dc5dfa7fe02090b55bab5f3e55df03e32c9b0cdf229004ade7d091039
-        run: |
-          curl --fail --location --retry 3 --output /tmp/flatc.zip "$FLATC_URL"
-          echo "$FLATC_SHA256  /tmp/flatc.zip" | sha256sum --check -
-          unzip -q /tmp/flatc.zip -d /tmp/flatc
-          sudo install -m 0755 /tmp/flatc/flatc /usr/local/bin/flatc
-          cargo_flatbuffers="$(grep -F 'flatbuffers = { version = ' crates/script-js/Cargo.toml | cut -d '"' -f2)"
-          cargo_flatbuffers="${cargo_flatbuffers#=}"
-          test -n "$cargo_flatbuffers"
-          test "$(flatc --version)" = "flatc version $cargo_flatbuffers"
       - name: Run operator-owned architecture check
-        run: |
-          set -euo pipefail
-          checker_root="$RUNNER_TEMP/274bot-arch"
-          git clone --depth 1 --branch main https://github.com/acfrazier/274bot-arch.git "$checker_root"
-          parser="$(command -v rust-analyzer)"
-          printf '%s  %s\n' \
-            fd89304c85f6c1996b036ea8f2c9ad9d3e25a197dbd713661c7fe51ec9dc8e49 \
-            "$parser" | sha256sum --check --status
-          test "$("$parser" --version)" = "rust-analyzer 0.3.3081-standalone"
-          python3 -B "$checker_root/check.py" --self-test
-          python3 -B "$checker_root/check.py" --root "$GITHUB_WORKSPACE"
+        run: cargo run --locked -p xtask -- ci arch-selftest
+      - name: Run operator-owned architecture check
+        run: cargo run --locked -p xtask -- ci arch
       - name: Check FlatBuffer bindings
-        run: |
-          generated="$(mktemp -d)"
-          trap 'rm -rf "$generated"' EXIT
-          flatc --rust -o "$generated" crates/script-js/schema/isolate.fbs
-          diff -ru crates/script-js/schema/generated "$generated"
+        run: cargo run --locked -p xtask -- ci flatbuffers
+
   test_lanes:
     name: test (${{ matrix.lane }})
     if: ${{ github.event_name == 'pull_request' || github.ref == 'refs/heads/main' || github.ref == 'refs/heads/dev' || startsWith(github.ref, 'refs/heads/release/') }}
@@ -191,94 +172,80 @@ jobs:
             save_cache: true
             real_nav_pack: true
             os: ubuntu-24.04
-            command: "cargo test --workspace"
           - lane: vendor
             free_disk: false
             cache_key: vendor
             save_cache: true
             os: ubuntu-24.04
-            command: "cargo test --manifest-path vendor/fr-client-rust/Cargo.toml --workspace"
           - lane: script-load
             free_disk: false
             cache_key: workspace
             save_cache: false
             real_nav_pack: true
             os: ubuntu-24.04
-            command: "cargo test -p script-js --tests"
           - lane: script-no-default
             free_disk: false
             cache_key: workspace
             save_cache: false
             real_nav_pack: true
             os: ubuntu-24.04
-            command: "cargo test -p script --no-default-features"
           - lane: native-only
             free_disk: false
             cache_key: workspace
             save_cache: false
             real_nav_pack: true
             os: ubuntu-24.04
-            command: "cargo build -p panel --no-default-features && cargo build -p tui --no-default-features && cargo build -p host-play --no-default-features && cargo test -p host-play --no-default-features --lib && python3 -B tools/architecture/native_dependencies.py --self-test && python3 -B tools/architecture/native_dependencies.py"
           - lane: grinch-oracles
             free_disk: false
             cache_key: workspace
             save_cache: false
             os: ubuntu-24.04
-            command: "cargo test -p host-play --features live-harness,test-support --test grinch_live"
           - lane: host-play-memory
             free_disk: false
             cache_key: workspace
             save_cache: false
             os: ubuntu-24.04
-            command: "cargo test -p host-play --features memory-profile"
           - lane: host-play-memory-no-alloc
             free_disk: false
             cache_key: workspace
             save_cache: false
             os: ubuntu-24.04
-            command: "cargo test -p host-play --features memory-profile-no-alloc --lib"
           - lane: host-performance
             free_disk: false
             cache_key: workspace
             save_cache: false
             os: ubuntu-24.04
-            command: "cargo test -p host --features performance-profile"
           - lane: panel-memory
             free_disk: false
             cache_key: workspace
             save_cache: false
+            real_nav_pack: true
             os: ubuntu-24.04
-            command: "cargo test -p panel --features memory-profile && xvfb-run -a cargo test -p panel --features memory-profile --test ime_frame"
           - lane: panel-render-diagnostics
             free_disk: false
             cache_key: workspace
             save_cache: false
             os: ubuntu-24.04
-            command: "cargo test -p panel --features render-diagnostics --lib"
           - lane: tui-memory
             free_disk: false
             cache_key: workspace
             save_cache: false
             os: ubuntu-24.04
-            command: "cargo test -p tui --features memory-profile"
           - lane: host-play-memory-26.04
             os: ubuntu-26.04
             free_disk: false
             cache_key: workspace
             save_cache: true
-            command: "cargo test -p host-play --features memory-profile"
           - lane: vendor-render-test-hooks
             free_disk: false
             cache_key: vendor
             save_cache: true
             os: ubuntu-24.04
-            command: "cargo test --manifest-path vendor/fr-client-rust/Cargo.toml --workspace --features render-test-hooks"
           - lane: host-render-test-hooks
             free_disk: false
             cache_key: workspace
             save_cache: false
             os: ubuntu-24.04
-            command: "cargo test -p host --features render-test-hooks"
     runs-on: ${{ matrix.os }}
     env:
       SKIP_GPU: "1"
@@ -339,7 +306,7 @@ jobs:
           echo "WORLD_NAV_PACK=$RUNNER_TEMP/nav-289/274bot-289-v17.navpack" >> "$GITHUB_ENV"
           echo "NAV_ARRIVAL_PACK=$RUNNER_TEMP/nav-289/274bot-289-v17.navpack" >> "$GITHUB_ENV"
       - name: Test ${{ matrix.lane }}
-        run: ${{ matrix.command }}
+        run: cargo run --locked -p xtask -- ci test-${{ matrix.lane }}
 
   # Preserve the required `test` status while the expensive commands fan out.
   test:

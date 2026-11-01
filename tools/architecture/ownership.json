@@ -6351,6 +6351,14 @@
       "owner": "T1"
     },
     {
+      "path": "tools/xtask/src/ci.rs",
+      "owner": "T1"
+    },
+    {
+      "path": "tools/xtask/src/main.rs",
+      "owner": "T1"
+    },
+    {
       "path": "vendor/fr-client-rust/crates/client-play/src/main.rs",
       "owner": "T1"
     },
