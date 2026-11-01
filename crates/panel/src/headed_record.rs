@@ -4615,7 +4615,7 @@ mod tests {
                     "full try-send queue drops without growing another backlog"
                 );
 
-                if matches!(mode, "queue" | "queue-drain") {
+                if matches!(mode.as_str(), "queue" | "queue-drain") {
                     // This recorder-local assertion covers the queue and pacer; it does not
                     // stand in for the parent's live panel/UI tick proof.
                     let start = Instant::now();
