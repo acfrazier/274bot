@@ -21,7 +21,7 @@ use nav_planner::pack::{
     BankStand, PackError, MAGIC_FLAGS, MAX_GRID, VERSION, VERSION_FLAGS,
 };
 use nav_planner::quest_gates::{QuestFamilyId, QuestGates};
-use nav_planner::reachability::ReachabilityAtlas;
+use nav_planner::reachability::{CellRun, Chunk, ReachabilityAtlas};
 use nav_planner::router::AvoidRect;
 use nav_planner::tile::Tile;
 use nav_planner::transport::{
@@ -2942,4 +2942,122 @@ fn decoder_refuses_a_directory_with_the_wrong_stride() {
         matches!(&error, PackError::BadLength(message) if message.contains("stride")),
         "{error}"
     );
+}
+
+/// An atlas on `narrow_collision` with the given chunk directory and legacy
+/// paint runs, and every other table empty. Each case below is one the
+/// reader refuses, built through the same entry the baker uses.
+fn atlas_with_chunks_and_paint(
+    collision: &WorldCollision,
+    chunks: Box<[Chunk]>,
+    paint: Box<[CellRun]>,
+) -> ReachabilityAtlas {
+    ReachabilityAtlas::from_bake(
+        collision,
+        chunks,
+        Box::from([0]),
+        Box::from([]),
+        Box::from([]),
+        Box::from([]),
+        paint,
+        Box::from([]),
+        Box::from([]),
+        Box::from([]),
+        Box::from([0]),
+        Box::from([]),
+        Box::from([0]),
+        Box::from([]),
+        Box::from([0]),
+        Box::from([]),
+        Box::from([]),
+        Box::from([]),
+        Box::from([]),
+        Box::from([]),
+    )
+    .unwrap()
+}
+
+/// The producer must refuse `atlas` with exactly `message`, both when it
+/// validates the atlas and when the writer encodes it, and the reader must
+/// refuse the same table with the same message. The reader is fed the
+/// unchecked section bytes spliced into a good pack.
+fn assert_producer_refuses(collision: &WorldCollision, atlas: &ReachabilityAtlas, message: &str) {
+    let graph = TransportGraph::default();
+    let validation = atlas.validate(collision, &graph);
+    assert!(
+        matches!(&validation, Err(PackError::BadLength(got)) if got == message),
+        "validate: {validation:?}"
+    );
+    let written = crate::pack::encode_with_atlas(collision, &graph, &[], atlas);
+    assert!(
+        matches!(&written, Err(PackError::BadLength(got)) if got == message),
+        "writer: {written:?}"
+    );
+    let good_tail = encode_atlas_sections(&ReachabilityAtlas::unlabeled(collision).unwrap())
+        .unwrap()
+        .len();
+    let mut bytes = encode(collision, &graph, &[]).unwrap();
+    bytes.truncate(bytes.len() - good_tail);
+    bytes.extend_from_slice(&encode_atlas_sections(atlas).unwrap());
+    let read = decode(&bytes);
+    assert!(
+        matches!(&read, Err(PackError::BadLength(got)) if got == message),
+        "reader: {:?}",
+        read.err()
+    );
+}
+
+fn uniform_chunk() -> Chunk {
+    Chunk {
+        palette_start: 0,
+        palette_count: 1,
+        index_start: 0,
+        index_len: 0,
+        bit_width: 0,
+    }
+}
+
+/// A uniform palette with a nonzero bit width is not minimal: the reader
+/// refuses it, so the producer must.
+#[test]
+fn producer_refuses_a_chunk_bit_width_that_is_not_minimal() {
+    let collision = narrow_collision();
+    let chunk = Chunk {
+        bit_width: 1,
+        ..uniform_chunk()
+    };
+    let atlas = atlas_with_chunks_and_paint(&collision, Box::from([chunk; 4]), Box::from([]));
+    assert_producer_refuses(
+        &collision,
+        &atlas,
+        "atlas chunk bit width is not the minimum for its palette",
+    );
+}
+
+/// A chunk whose palette range runs past the palette table.
+#[test]
+fn producer_refuses_a_chunk_palette_range_past_the_palette() {
+    let collision = narrow_collision();
+    let chunk = Chunk {
+        palette_start: 1,
+        ..uniform_chunk()
+    };
+    let atlas = atlas_with_chunks_and_paint(&collision, Box::from([chunk; 4]), Box::from([]));
+    assert_producer_refuses(
+        &collision,
+        &atlas,
+        "atlas chunk palette range is out of bounds",
+    );
+}
+
+/// A legacy paint run with a zero count.
+#[test]
+fn producer_refuses_a_zero_count_paint_run() {
+    let collision = narrow_collision();
+    let atlas = atlas_with_chunks_and_paint(
+        &collision,
+        Box::from([uniform_chunk(); 4]),
+        Box::from([CellRun { first: 0, count: 0 }]),
+    );
+    assert_producer_refuses(&collision, &atlas, "atlas run count is zero");
 }
