@@ -550,6 +550,24 @@ cells = [
   "host.script-progress-journal|LIVE=1 BOT_LIVE_NAME_PREFIX=${BOT_LIVE_NAME_PREFIX:?} BOT_CPU=1 BOT_NAV_BUILD=skip BOT_GAME_PORT=44594 BOT_HTTP_PORT=1080 WORLD_ENGINE_DIR=${ENGINE_A_DIR:?} WORLD_NAV_PACK=${NAV_PACK_289:?} NAV_PACK=${NAV_PACK_289:?} NAV_FLAGS=${NAV_FLAGS_289:?} BOT_CACHE_DIR=${BOT_CACHE_DIR:?} BOT_EVIDENCE_DIR=${LIVE_EVIDENCE_DIR:?} ${ISOHOME:?} nice -n 10 cargo test --locked -p host-play --features live-harness,test-support,live-probe --test script_api_live -- --ignored --exact script_api_progress_journal --nocapture --test-threads=1",
 ]
 
+# The compatibility journal (`api.questJournalBegin`/`questJournalRun`) reads
+# the real Romeo & Juliet journal twice in a row; each read owns its own
+# auto-run hold (its token and work generation are the hold's key). The
+# fixture seeds only this account's `rjquest` varp.
+[[cover]]
+globs = [
+  "crates/script-js/src/compat/quest_journal/isolate.rs",
+  "crates/script-js/src/runtime/isolate.rs",
+  "crates/script-js/src/surface.rs",
+  "crates/script/src/slot.rs",
+  "crates/script/src/surface.rs",
+  "crates/host/src/lib.rs",
+  "crates/host-play/src/script_observe.rs",
+]
+cells = [
+  "host.script-compat-journal-twice|LIVE=1 BOT_LIVE_NAME_PREFIX=${BOT_LIVE_NAME_PREFIX:?} BOT_CPU=1 BOT_NAV_BUILD=skip BOT_GAME_PORT=44594 BOT_HTTP_PORT=1080 WORLD_ENGINE_DIR=${ENGINE_A_DIR:?} WORLD_NAV_PACK=${NAV_PACK_289:?} NAV_PACK=${NAV_PACK_289:?} NAV_FLAGS=${NAV_FLAGS_289:?} BOT_CACHE_DIR=${BOT_CACHE_DIR:?} BOT_EVIDENCE_DIR=${LIVE_EVIDENCE_DIR:?} ${ISOHOME:?} nice -n 10 cargo test --locked -p host-play --features live-harness,test-support,live-probe --test script_api_live -- --ignored --exact script_api_compat_journal_twice --nocapture --test-threads=1",
+]
+
 # Held-box claim refresh crosses the real Load cache and native Guardian.
 # The fixture seeds only this account's Strange box inventory state.
 [[cover]]
