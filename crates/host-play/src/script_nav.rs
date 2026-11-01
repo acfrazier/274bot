@@ -7859,6 +7859,40 @@ mod diagnostic_tests {
             "an incomplete search publishes no missing-supply list"
         );
     }
+
+    #[test]
+    fn strict_budget_stop_stays_incomplete_when_diagnostics_reach_their_shared_limit() {
+        let request = tiny_stage_request();
+        let world = Arc::clone(&request.world);
+        let mut job =
+            RouteJob::prepare("test", request, RouteDemandKind::Walk { authority: None }).unwrap();
+        job.targets.push(job.request.to);
+        job.diagnostic_budget = 1;
+        job.handle_search(
+            SearchOutcome::Single {
+                route: Err(RouteError::BudgetExhausted),
+            },
+            524_288,
+        )
+        .unwrap();
+        job.identity = Some(stage_identity(0));
+
+        let (output, _, _) = ScriptRouteRequest::drive_prepared_route_job_for_test(job, world);
+        assert!(matches!(output.outcome, RouteJobOutcome::NoPath));
+        assert_eq!(output.native_failure, Some(script::native::WalkEnd::Refused));
+        assert!(matches!(
+            output.refusal,
+            Some(script::native::WalkRefusal::SearchIncomplete {
+                nodes_settled: Some(524_288)
+            })
+        ));
+        assert!(output.missing.is_empty());
+        assert!(output
+            .detail
+            .as_deref()
+            .unwrap()
+            .contains("route check stopped after"));
+    }
     #[test]
     fn first_goal_area_complete_abandoned_flood_keeps_supply_diagnosis() {
         let (world, from, to) = first_goal_probe_world(1537, 769, 400, 1300, true);
