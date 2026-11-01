@@ -131,8 +131,8 @@ where
     let Some(stamp) = stamp else {
         return build(scope);
     };
-    if let Some(value) = reader_list_cache_get(scope, name, stamp)
-        .map_err(|error| map_error(scope, error))?
+    if let Some(value) =
+        reader_list_cache_get(scope, name, stamp).map_err(|error| map_error(scope, error))?
     {
         return Ok(value);
     }

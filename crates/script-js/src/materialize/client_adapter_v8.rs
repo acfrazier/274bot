@@ -163,12 +163,7 @@ pub(super) fn read<'s>(
         }
         "bankItems" => {
             let component = object_i32(scope, facts, "bank_com_id")?.unwrap_or(-1);
-            let stamp = reader_stamp(
-                scope,
-                facts,
-                &["inv", "iface"],
-                [i64::from(component), 0],
-            )?;
+            let stamp = reader_stamp(scope, facts, &["inv", "iface"], [i64::from(component), 0])?;
             cached_reader_list(scope, "reader.bankItems", stamp, |scope| {
                 if component >= 0 {
                     item_rows_property(scope, snapshot, "bank")
@@ -186,16 +181,27 @@ pub(super) fn read<'s>(
                 &["npc", "npc_info", "player", "player_info", "scene", "world"],
                 [0, 0],
             )?;
-            cached_reader_list(scope, "reader.npcs", stamp, |scope| property(scope, snapshot, "npcs"))
+            cached_reader_list(scope, "reader.npcs", stamp, |scope| {
+                property(scope, snapshot, "npcs")
+            })
         }
         "locs" => {
             let stamp = reader_stamp(
                 scope,
                 facts,
-                &["scene", "map_flag", "world", "player", "player_info", "npc_info"],
+                &[
+                    "scene",
+                    "map_flag",
+                    "world",
+                    "player",
+                    "player_info",
+                    "npc_info",
+                ],
                 [0, 0],
             )?;
-            cached_reader_list(scope, "reader.locs", stamp, |scope| property(scope, snapshot, "locs"))
+            cached_reader_list(scope, "reader.locs", stamp, |scope| {
+                property(scope, snapshot, "locs")
+            })
         }
         "players" => {
             let stamp = reader_stamp(
@@ -285,24 +291,14 @@ pub(super) fn read<'s>(
         "menuEntries" => string_array_property(scope, facts, "menu_entries"),
         "shopInv" => {
             let component = js_i32(scope, arg0)?.unwrap_or(-1);
-            let stamp = reader_stamp(
-                scope,
-                facts,
-                &["iface", "inv"],
-                [i64::from(component), 0],
-            )?;
+            let stamp = reader_stamp(scope, facts, &["iface", "inv"], [i64::from(component), 0])?;
             cached_reader_list(scope, "reader.shopInv", stamp, |scope| {
                 shop_inventory(scope, facts, arg0)
             })
         }
         "compatShopStock" => {
             let open = bool_property(scope, snapshot, "shop_open")?;
-            let stamp = reader_stamp(
-                scope,
-                facts,
-                &["iface", "inv"],
-                [i64::from(open), 0],
-            )?;
+            let stamp = reader_stamp(scope, facts, &["iface", "inv"], [i64::from(open), 0])?;
             cached_reader_list(scope, "facade.Shop.stock", stamp, |scope| {
                 shop_stock_rows(scope, snapshot, open)
             })
@@ -376,12 +372,7 @@ pub(super) fn read<'s>(
         "ifModelObjId" => if_model_obj_id(scope, facts, arg0),
         "modalButtons" => {
             let root = js_i32(scope, arg0)?.unwrap_or(-1);
-            let stamp = reader_stamp(
-                scope,
-                facts,
-                &["iface"],
-                [i64::from(root), 0],
-            )?;
+            let stamp = reader_stamp(scope, facts, &["iface"], [i64::from(root), 0])?;
             cached_reader_list(scope, "reader.modalButtons", stamp, |scope| {
                 modal_buttons(scope, facts, arg0)
             })
@@ -517,7 +508,6 @@ where
 {
     super::cached_reader_list(scope, name, stamp, build)
 }
-
 
 fn world_tile<'s>(
     scope: &mut v8::HandleScope<'s>,

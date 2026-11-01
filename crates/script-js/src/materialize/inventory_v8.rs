@@ -479,7 +479,8 @@ fn inventory_items<'s>(
             let predicate =
                 callback_without_data(scope, inventory_named_row, 1, "Inventory.items filter")?;
             let filtered = array_filter(scope, rows, predicate, "filter")?;
-            let mapper = callback_function(scope, construct_inventory_item, constructor, 1, "InvItem")?;
+            let mapper =
+                callback_function(scope, construct_inventory_item, constructor, 1, "InvItem")?;
             array_map(scope, filtered, mapper, "map")
         },
         |scope, error| cb::type_error(scope, &error),
@@ -1150,13 +1151,11 @@ mod allocation_tests {
         if std::env::var_os(BACKPACK_CACHE_CHILD_ENV).is_some() {
             return true;
         }
-        let output = std::process::Command::new(
-            std::env::current_exe().expect("test executable"),
-        )
-        .args(["--exact", BACKPACK_CACHE_TEST_NAME, "--nocapture"])
-        .env(BACKPACK_CACHE_CHILD_ENV, "1")
-        .output()
-        .expect("run isolated V8-native-syntax test");
+        let output = std::process::Command::new(std::env::current_exe().expect("test executable"))
+            .args(["--exact", BACKPACK_CACHE_TEST_NAME, "--nocapture"])
+            .env(BACKPACK_CACHE_CHILD_ENV, "1")
+            .output()
+            .expect("run isolated V8-native-syntax test");
         let stdout = String::from_utf8_lossy(&output.stdout);
         let stderr = String::from_utf8_lossy(&output.stderr);
         assert!(
@@ -1339,9 +1338,7 @@ globalThis.checkInventory = () => {
             "a new observed and posted snapshot with unchanged generations reuses the array"
         );
         runtime
-            .eval::<()>(
-                "__rs2b0t_host.snapshot.client_adapter.read_generations.inv += 1;",
-            )
+            .eval::<()>("__rs2b0t_host.snapshot.client_adapter.read_generations.inv += 1;")
             .unwrap();
         assert!(
             runtime
