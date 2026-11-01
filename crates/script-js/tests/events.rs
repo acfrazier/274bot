@@ -412,10 +412,9 @@ export default class T extends LoopingBot {
     let snap = base_snapshot();
     post_snapshot_input(&iso, &snap);
     iso.on_game_tick(1);
-    iso.join();
+    let logs = iso.join();
     assert!(
-        iso.drain_logs()
-            .iter()
+        logs.iter()
             .any(|line| line == "finish:finished by script"),
         "script.finish listener did not receive and log the native stop reason"
     );
