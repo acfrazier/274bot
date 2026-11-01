@@ -857,6 +857,7 @@ impl LoadIsolate {
         let frame_ready = Arc::new(std::sync::atomic::AtomicBool::new(false));
         let thread_frame_ready = Arc::clone(&frame_ready);
         let terminate = Arc::new(OnceLock::new());
+        let thread_terminate = Arc::clone(&terminate);
         let logs = Arc::new(Mutex::new(Vec::new()));
         let queued = std::sync::Arc::new(AtomicUsize::new(0));
         let thread_queued = queued.clone();
@@ -889,6 +890,7 @@ impl LoadIsolate {
                     thread_frame_ready,
                     thread_loc_projection_interest,
                     frame_ack_tx,
+                    thread_terminate,
                     thread_proof,
                     execution,
                     local_state,
