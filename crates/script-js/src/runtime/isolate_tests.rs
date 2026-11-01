@@ -971,7 +971,6 @@ fn warmed_client_frame_dispatch_handles_allocate_nothing_per_frame() {
     );
 }
 
-
 #[test]
 fn spawn_returns_before_setup_and_poll_ready_becomes_ready() {
     let t0 = Instant::now();
