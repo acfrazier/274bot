@@ -420,7 +420,7 @@ export default class T extends LoopingBot {
     assert!(
         logs.iter()
             .any(|line| line == "finish:finished by script"),
-        "script.finish listener did not receive and log the native stop reason"
+        "script.finish listener did not receive and log the native stop reason: {logs:?}"
     );
 }
 
