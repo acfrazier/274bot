@@ -336,6 +336,12 @@ impl Ledger {
         })
     }
 
+    /// The live foreground owner's modal-wait lease id: it waits for the page
+    /// its own interaction opens. Revocation clears it.
+    pub fn modal_wait(&self) -> Option<NonZeroU64> {
+        self.owner.as_ref()?.modal_wait()
+    }
+
     pub fn revoke_foreground(&mut self) {
         if let Some(owner) = self.owner.take() {
             owner.revoke();

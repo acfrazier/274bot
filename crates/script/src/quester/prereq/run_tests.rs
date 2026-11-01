@@ -2343,6 +2343,84 @@ fn failed_re_approaches_end_in_a_terminal_failure_that_keeps_the_approach_detail
     assert!(!ledger.as_ref().unwrap().test_owner_live());
 }
 
+fn modal_wait(ledger: &Option<Box<ledger::Ledger>>) -> Option<u64> {
+    ledger
+        .as_ref()
+        .unwrap()
+        .modal_wait()
+        .map(std::num::NonZeroU64::get)
+}
+
+/// The script-owned auto-run hold of a prerequisite Talk: the dialogue holds a
+/// modal-wait lease while it waits for the result of its own send, holds
+/// none while it approaches or drives an open page, and takes a new lease for
+/// each send. A cancel drops the attempt's owner and its lease at once.
+#[test]
+fn a_talk_holds_the_auto_run_wait_only_while_its_own_send_awaits_a_page() {
+    let (_, row) = row(ConsentSwitch::PrereqDialogue);
+    let state = state();
+    let mut snapshot = npc_snapshot(row);
+    let (mut run, mut budget, mut ledger) = start_talk(row, &snapshot, &state);
+    let anchor = row.target.anchor;
+    let talk = modal_wait(&ledger).expect("the sent Talk waits for its page");
+    assert!(poll(&mut run, &snapshot, &mut ledger, 3, &state, &mut budget).is_pending());
+    assert_eq!(modal_wait(&ledger), Some(talk), "no page yet: the wait holds");
+
+    message(&mut snapshot, 1, CANT_REACH_TEXT);
+    assert!(poll(&mut run, &snapshot, &mut ledger, 4, &state, &mut budget).is_pending());
+    assert_eq!(modal_wait(&ledger), None, "the cancel ends the wait at once");
+
+    let far = WorldTile {
+        x: anchor.x + 5,
+        ..anchor
+    };
+    snapshot.seed_npcs(vec![npc_view(row, far, 5)]);
+    assert!(poll(&mut run, &snapshot, &mut ledger, 5, &state, &mut budget).is_pending());
+    assert!(matches!(
+        ledger.as_ref().unwrap().outbox.last().unwrap().effect,
+        HostEffect::Walk(_)
+    ));
+    assert_eq!(modal_wait(&ledger), None, "an approach expects no page");
+
+    arrive(&mut ledger, 6);
+    let near = WorldTile {
+        x: anchor.x + 1,
+        ..anchor
+    };
+    snapshot.seed_npcs(vec![npc_view(row, near, 1)]);
+    assert!(poll(&mut run, &snapshot, &mut ledger, 7, &state, &mut budget).is_pending());
+    assert!(matches!(last_interaction(&ledger), InteractReq::Npc { .. }));
+    let retry = modal_wait(&ledger).expect("the new Talk waits for its page");
+    assert_ne!(retry, talk, "each wait has its own key");
+    accept_last(&mut ledger, 7, 1);
+
+    let branch = row
+        .talk
+        .branches
+        .iter()
+        .find(|branch| branch.outcome == BranchOutcome::Advice)
+        .unwrap();
+    page_snapshot(&mut snapshot, &branch.opener);
+    let mut tick = 8;
+    next_page_send(
+        &mut run,
+        &snapshot,
+        &mut ledger,
+        &mut tick,
+        &state,
+        &mut budget,
+    );
+    let advance = modal_wait(&ledger).expect("the Continue waits for its result");
+    assert_ne!(advance, retry, "a new send takes a new lease");
+
+    let handle = match &mut run.phase {
+        Phase::Talk(drive) => drive.handle.take(),
+        _ => panic!("the runner is not in its Talk phase"),
+    };
+    drop(handle);
+    assert_eq!(modal_wait(&ledger), None, "a dropped dialogue ends its wait");
+}
+
 #[test]
 fn a_cancel_message_older_than_the_send_does_not_end_the_wait() {
     let (_, row) = row(ConsentSwitch::PrereqDialogue);

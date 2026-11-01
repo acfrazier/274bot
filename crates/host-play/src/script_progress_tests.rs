@@ -101,8 +101,9 @@ impl script::native::Script for QueueBankButton {
     }
 }
 
-#[test]
-fn script_button_action_fences_auto_run_until_a_modal_or_the_bound() {
+/// Run one observe with a fresh policy and report whether the host would hold
+/// its press after the script's interaction of that frame.
+fn holds_after_one_interaction(script: Box<dyn script::native::Script>) -> bool {
     let scripts: ScriptWall = Arc::new(Mutex::new(HashMap::new()));
     let cheats: Arc<Mutex<HashMap<String, VecDeque<String>>>> =
         Arc::new(Mutex::new(HashMap::new()));
@@ -114,7 +115,7 @@ fn script_button_action_fences_auto_run_until_a_modal_or_the_bound() {
     script_slot_or_insert(&scripts, "alice")
         .lock()
         .unwrap()
-        .start_test_script(Box::new(QueueBankButton), None)
+        .start_test_script(script, None)
         .expect("native script starts");
 
     let cache = Arc::clone(&client.cache);
@@ -150,15 +151,19 @@ fn script_button_action_fences_auto_run_until_a_modal_or_the_bound() {
         client.out.data()[0],
         client::io::ClientProt::IF_BUTTON.id as u8
     );
+    run_policy.should_defer_auto_run()
+}
+
+#[test]
+fn an_interaction_without_a_wait_never_holds_auto_run() {
     assert!(
-        run_policy.should_defer_auto_run(false),
-        "the interaction fences the host's press until the page or the bound"
+        !holds_after_one_interaction(Box::new(QueueBankButton)),
+        "a raw script interaction that expects no modal takes no hold"
     );
     assert!(
-        !run_policy.should_defer_auto_run(true),
-        "an observed modal ends the fence; the modal check holds the press"
+        !holds_after_one_interaction(Box::new(QueueNativeButton { handle: None })),
+        "a native interaction without a page wait takes no hold"
     );
-    assert!(!run_policy.should_defer_auto_run(false));
 }
 
 struct QueueNativeButton {
@@ -203,75 +208,59 @@ impl script::native::Script for QueueNativeButton {
     }
 }
 
-#[test]
-fn native_script_button_action_fences_auto_run_until_a_modal_or_the_bound() {
-    let scripts: ScriptWall = Arc::new(Mutex::new(HashMap::new()));
-    let cheats: Arc<Mutex<HashMap<String, VecDeque<String>>>> =
-        Arc::new(Mutex::new(HashMap::new()));
-    let (navs, world) = empty_nav();
-    let mut client = bank_fetch_client();
-    let mut snapshot = GameSnapshot::new();
-    snapshot.rebuild(&client);
-    let names = Arc::new(api::obj_names::ObjNames::from_objs(&client.cache.objs));
-    script_slot_or_insert(&scripts, "alice")
-        .lock()
-        .unwrap()
-        .start_test_script(Box::new(QueueNativeButton { handle: None }), None)
-        .expect("native script starts");
+/// The script's own content-timed bound for its page, in observed ticks.
+/// When it expires, the wait fails and the script records the failure.
+const PAGE_WAIT_TICKS: u64 = 12;
 
-    let cache = Arc::clone(&client.cache);
-    let inv: [(i32, i32); 0] = [];
-    let mut run_policy = host::ScriptRunPolicy::default();
-    script_observe_cached(
-        &mut client,
-        "alice",
-        true,
-        true,
-        1,
-        Some((3205, 3205, 0)),
-        Some(&inv),
-        None,
-        Some(&snapshot),
-        None,
-        Some(names.as_ref()),
-        &scripts,
-        &cheats,
-        &navs,
-        &world,
-        false,
-        false,
-        None,
-        None,
-        Some(cache),
-        Some(Arc::clone(&names)),
-        Some(&mut run_policy),
-    );
-
-    assert!(
-        client.out.pos > 0,
-        "the native script sends its interface action"
-    );
-    assert_eq!(
-        client.out.data()[0],
-        client::io::ClientProt::IF_BUTTON.id as u8
-    );
-    assert!(
-        run_policy.should_defer_auto_run(false),
-        "the interaction fences the host's press until the page or the bound"
-    );
-    assert!(
-        !run_policy.should_defer_auto_run(true),
-        "an observed modal ends the fence; the modal check holds the press"
-    );
-    assert!(!run_policy.should_defer_auto_run(false));
+/// A journal-style click on the production path: one `IfButton`, and a
+/// modal-wait lease from the click until the script observes its page or its
+/// own bound expires. Afterwards it stays pending, as the journal machine
+/// does while it closes the page.
+struct PageClickMachine {
+    page: Arc<AtomicBool>,
+    wait: Option<script::native::ModalWaitLease>,
+    deadline: u64,
 }
 
-/// The native-ledger click is the journal machine's own path
-/// (`script_observe.rs`, the ledger arm of `note_script_interaction`): the
-/// script begins a machine that emits one `IfButton`, when armed.
+impl script::native::NativeMachine for PageClickMachine {
+    type Args = Arc<AtomicBool>;
+    type Output = ();
+
+    fn begin(
+        page: Self::Args,
+        cx: &mut script::native::ActionContext<'_>,
+    ) -> Result<Self, script::native::ActionError> {
+        cx.emit(script::shim::InteractReq::IfButton { component_id: 601 })?;
+        Ok(Self {
+            page,
+            wait: Some(cx.begin_modal_wait()?),
+            deadline: cx.evidence().tick + PAGE_WAIT_TICKS,
+        })
+    }
+
+    fn poll(
+        &mut self,
+        cx: &mut script::native::ActionContext<'_>,
+    ) -> std::task::Poll<Result<Self::Output, script::native::ActionError>> {
+        if self.wait.is_some() && self.page.load(Ordering::Relaxed) {
+            // The script observed its page: its wait ends here.
+            self.wait = None;
+        }
+        if self.wait.is_some() && cx.evidence().tick >= self.deadline {
+            return std::task::Poll::Ready(Err(script::native::ActionError::Failed(Arc::from(
+                "page wait expired",
+            ))));
+        }
+        std::task::Poll::Pending
+    }
+}
+
+/// The script clicks once when armed and polls its machine on each tick.
 struct ClickWhenArmed {
-    armed: Arc<std::sync::atomic::AtomicBool>,
-    handle: Option<script::native::ActionHandle<NativeButtonMachine>>,
+    armed: Arc<AtomicBool>,
+    page: Arc<AtomicBool>,
+    expired: Arc<AtomicBool>,
+    handle: Option<script::native::ActionHandle<PageClickMachine>>,
 }
 
 impl script::native::Script for ClickWhenArmed {
@@ -279,10 +268,18 @@ impl script::native::Script for ClickWhenArmed {
         &mut self,
         ctx: &mut script::native::NativeTick<'_>,
     ) -> Result<script::native::ScriptFlow, script::native::ScriptFailure> {
+        if let Some(handle) = &self.handle {
+            if let std::task::Poll::Ready(result) = ctx.actions.poll(handle, &mut ctx.cx) {
+                if result.is_err() {
+                    self.expired.store(true, Ordering::Relaxed);
+                }
+                self.handle = None;
+            }
+        }
         if self.handle.is_none() && self.armed.swap(false, Ordering::Relaxed) {
             self.handle = Some(
                 ctx.actions
-                    .begin::<NativeButtonMachine>((), &mut ctx.cx)
+                    .begin::<PageClickMachine>(Arc::clone(&self.page), &mut ctx.cx)
                     .expect("native action starts"),
             );
         }
@@ -318,22 +315,23 @@ fn click_frame(drain: u32, modal: i32) -> Frame {
 }
 
 /// The production pairing: `Host::run_client` owns the host snapshot and the
-/// auto-run decision, and `script_observe_cached` gets host-play's own
-/// `script_tick`, one increment per drain with PLAYER_INFO that survives
-/// relogs (`play_slots.rs`, the slot thread's `script_tick`).
-struct FenceRig {
+/// auto-run decision, and `script_observe_cached` runs the script, reads its
+/// wait and hands it to the host policy in the same frame, before the press.
+struct HoldRig {
     scripts: ScriptWall,
     cheats: Arc<Mutex<HashMap<String, VecDeque<String>>>>,
     navs: EmptyNav,
     names: Arc<api::obj_names::ObjNames>,
     snapshot: Arc<GameSnapshot>,
     client: Client,
-    armed: Arc<std::sync::atomic::AtomicBool>,
+    armed: Arc<AtomicBool>,
+    page: Arc<AtomicBool>,
+    expired: Arc<AtomicBool>,
     script_tick: Arc<std::sync::atomic::AtomicU64>,
     run_policy: Option<host::ScriptRunPolicy>,
 }
 
-impl FenceRig {
+impl HoldRig {
     fn new() -> Self {
         let scripts: ScriptWall = Arc::new(Mutex::new(HashMap::new()));
         let cheats = Arc::new(Mutex::new(HashMap::new()));
@@ -341,6 +339,8 @@ impl FenceRig {
         // The script's own view is the fixture's: the click's component (601)
         // is visible only under the fixture's bank. The host reads the
         // client's modal roots, which the rig then clears and drives itself.
+        // The script observes the page through `page`, set from the same
+        // frame's modal.
         let mut snapshot = GameSnapshot::new();
         snapshot.rebuild(&client);
         client.main_modal_id = -1;
@@ -348,13 +348,17 @@ impl FenceRig {
         client.side_modal_id = -1;
         client.runenergy = 20;
         let names = Arc::new(api::obj_names::ObjNames::from_objs(&client.cache.objs));
-        let armed = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let armed = Arc::new(AtomicBool::new(false));
+        let page = Arc::new(AtomicBool::new(false));
+        let expired = Arc::new(AtomicBool::new(false));
         script_slot_or_insert(&scripts, "alice")
             .lock()
             .unwrap()
             .start_test_script(
                 Box::new(ClickWhenArmed {
                     armed: Arc::clone(&armed),
+                    page: Arc::clone(&page),
+                    expired: Arc::clone(&expired),
                     handle: None,
                 }),
                 None,
@@ -368,6 +372,8 @@ impl FenceRig {
             snapshot: Arc::new(snapshot),
             client,
             armed,
+            page,
+            expired,
             script_tick: Arc::new(std::sync::atomic::AtomicU64::new(0)),
             run_policy: Some(host::ScriptRunPolicy::default()),
         }
@@ -386,7 +392,7 @@ impl FenceRig {
         );
         let index = Arc::new(std::sync::atomic::AtomicUsize::new(0));
         let seen: Arc<Mutex<Vec<u32>>> = Arc::new(Mutex::new(Vec::new()));
-        let tick_edge = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let tick_edge = Arc::new(AtomicBool::new(false));
 
         let observe_seen = Arc::clone(&seen);
         let observe_index = Arc::clone(&index);
@@ -403,6 +409,7 @@ impl FenceRig {
         let probe_index = Arc::clone(&index);
         let probe_edge = Arc::clone(&tick_edge);
         let probe_armed = Arc::clone(&self.armed);
+        let probe_page = Arc::clone(&self.page);
 
         let run_policy = Host::run_client(
             &mut self.client,
@@ -460,6 +467,7 @@ impl FenceRig {
                     c.gens.player += 1;
                 }
                 c.main_modal_id = step.modal;
+                probe_page.store(step.modal != -1, Ordering::Relaxed);
                 probe_edge.store(step.drain > 0, Ordering::Relaxed);
                 probe_armed.store(step.click, Ordering::Relaxed);
                 false
@@ -474,9 +482,7 @@ impl FenceRig {
         seen[1..].to_vec()
     }
 
-    /// A relog: the same client and policy, a new session and a new loop. The
-    /// client starts the new session's packet counts from its own watermark
-    /// (`session_start_gens`, zero here), so the counts restart.
+    /// A relog: the same client and policy, a new session and a new loop.
     fn relog(&mut self) {
         self.client.gens = client::client::ClientGens {
             session: self.client.gens.session.wrapping_add(1),
@@ -484,11 +490,19 @@ impl FenceRig {
         };
         self.client.main_modal_id = -1;
     }
+
+    fn stop_script(&mut self) {
+        script_slot(&self.scripts, "alice")
+            .unwrap()
+            .lock()
+            .unwrap()
+            .stop();
+    }
 }
 
 #[test]
-fn auto_run_press_waits_for_the_journal_page_and_its_close() {
-    let mut rig = FenceRig::new();
+fn auto_run_hold_waits_for_the_page_and_its_close() {
+    let mut rig = HoldRig::new();
     let presses = rig.run(&[
         click_frame(1, -1),
         frame(1, JOURNAL_ROOT),
@@ -499,122 +513,111 @@ fn auto_run_press_waits_for_the_journal_page_and_its_close() {
     assert_eq!(
         presses,
         [0, 0, 0, 1, 1],
-        "no press while the click's result is unobserved or the page is up; one after the close"
+        "no press while the script waits or the page is up; one after the close"
     );
 }
 
+/// R3-1: several updates queue before the click's page. The hold counts no
+/// updates, so it lasts until the script sees its page.
 #[test]
-fn auto_run_press_waits_for_a_page_that_arrives_a_cycle_late() {
-    let mut rig = FenceRig::new();
+fn auto_run_hold_survives_queued_updates_before_the_page() {
+    let mut rig = HoldRig::new();
     let presses = rig.run(&[
         click_frame(1, -1),
         frame(1, -1),
-        frame(1, JOURNAL_ROOT),
+        frame(1, -1),
+        frame(1, -1),
+        frame(1, -1),
+        frame(1, -1),
+        frame(1, -1),
         frame(1, JOURNAL_ROOT),
         frame(1, -1),
     ]);
     assert_eq!(
         presses,
-        [0, 0, 0, 0, 1],
-        "the second observed tick has no page yet, and the press still waits for it"
+        [0, 0, 0, 0, 0, 0, 0, 0, 1],
+        "six updates without the page do not release the press"
     );
 }
 
+/// R2-2 with queued history: the modal arrives in a later drain than its
+/// cycle's PLAYER_INFO, after three updates without it.
 #[test]
-fn auto_run_press_waits_for_a_modal_that_follows_the_second_player_info_in_a_later_drain() {
-    // A click one cycle late: the engine writes cycle t + 2 as PLAYER_INFO,
-    // then the modal, as two messages (`NetworkPlayer.ts:286-288`, `:175`).
-    // The client decodes five packets per frame, so the drain that holds the
-    // second PLAYER_INFO can end before the modal (`client.rs:12798-12803`).
-    // The modal arrives in the next drain, with no PLAYER_INFO.
-    let mut rig = FenceRig::new();
+fn auto_run_hold_survives_a_modal_in_a_later_drain_than_its_player_info() {
+    let mut rig = HoldRig::new();
     let presses = rig.run(&[
         click_frame(1, -1),
+        frame(1, -1),
         frame(1, -1),
         frame(1, -1),
         frame(0, JOURNAL_ROOT),
         frame(1, JOURNAL_ROOT),
         frame(1, -1),
-        frame(1, -1),
     ]);
     assert_eq!(
         presses,
-        [0, 0, 0, 0, 0, 1, 1],
-        "no press at the second PLAYER_INFO without its modal, none while the page is up, one after the close"
+        [0, 0, 0, 0, 0, 0, 1],
+        "no press before the modal's drain, none while the page is up, one after the close"
     );
 }
 
+/// The client decodes five packets per frame: a long queue arrives as full
+/// five-packet drains. They do not release the press.
 #[test]
-fn auto_run_press_goes_out_after_the_bound_when_no_page_opens() {
-    let mut rig = FenceRig::new();
+fn auto_run_hold_survives_full_five_packet_drains() {
+    let mut rig = HoldRig::new();
     let presses = rig.run(&[
         click_frame(1, -1),
-        frame(1, -1),
-        frame(1, -1),
-        frame(1, -1),
-        frame(1, -1),
+        frame(5, -1),
+        frame(5, -1),
+        frame(0, JOURNAL_ROOT),
+        frame(5, JOURNAL_ROOT),
+        frame(5, -1),
     ]);
-    assert_eq!(
-        presses,
-        [0, 0, 0, 1, 1],
-        "three observed ticks without a page end the fence"
-    );
+    assert_eq!(presses, [0, 0, 0, 0, 0, 1]);
 }
 
 #[test]
-fn auto_run_fence_counts_each_packet_of_a_multi_packet_drain() {
-    let mut rig = FenceRig::new();
-    let presses = rig.run(&[
-        click_frame(1, -1),
-        frame(2, JOURNAL_ROOT),
-        frame(1, -1),
-        frame(1, -1),
-    ]);
-    assert_eq!(
-        presses,
-        [0, 0, 1, 1],
-        "the page was in the two-packet drain"
+fn auto_run_hold_ends_when_the_script_wait_expires() {
+    let mut rig = HoldRig::new();
+    let mut frames = vec![click_frame(1, -1)];
+    frames.extend(std::iter::repeat_n(frame(1, -1), PAGE_WAIT_TICKS as usize + 1));
+    let presses = rig.run(&frames);
+    let expiry = PAGE_WAIT_TICKS as usize;
+    assert!(
+        presses[..expiry].iter().all(|&count| count == 0),
+        "held until the script's own bound: {presses:?}"
     );
-
-    let mut rig = FenceRig::new();
-    let presses = rig.run(&[click_frame(1, -1), frame(2, -1), frame(1, -1)]);
     assert_eq!(
-        presses,
-        [0, 0, 1],
-        "two packets in one drain are two observed ticks, one short of the bound"
-    );
-
-    let mut rig = FenceRig::new();
-    let presses = rig.run(&[click_frame(1, -1), frame(3, -1), frame(1, -1)]);
-    assert_eq!(
-        presses,
-        [0, 1, 1],
-        "three packets are three observed ticks: the bound is spent in one drain"
-    );
-}
-
-#[test]
-fn auto_run_fence_uses_the_same_clock_after_a_relog() {
-    let mut rig = FenceRig::new();
-    // A long first session: host-play's `script_tick` is now far ahead of
-    // the next session's snapshot tick.
-    let first = rig.run(&[frame(1, -1); 9]);
-    assert_eq!(first[0], 1, "the first session presses once");
-    rig.relog();
-    let presses = rig.run(&[
-        click_frame(1, -1),
-        frame(1, -1),
-        frame(1, -1),
-        frame(1, -1),
-        frame(1, -1),
-    ]);
-    assert_eq!(
-        presses,
-        [0, 0, 0, 1, 1],
-        "the new session's fence lasts three of its own observed ticks"
+        presses[expiry], 1,
+        "the expired wait ends the hold on its own frame"
     );
     assert!(
-        rig.script_tick.load(Ordering::Relaxed) >= 14,
-        "host-play's counter was carried across the relog, as in production"
+        rig.expired.load(Ordering::Relaxed),
+        "the script recorded its failed wait"
+    );
+}
+
+#[test]
+fn auto_run_hold_ends_when_the_script_is_stopped() {
+    let mut rig = HoldRig::new();
+    assert_eq!(rig.run(&[click_frame(1, -1), frame(1, -1)]), [0, 0]);
+    rig.stop_script();
+    assert_eq!(
+        rig.run(&[frame(1, -1)]),
+        [1],
+        "a dropped owner releases the hold on the next frame"
+    );
+}
+
+#[test]
+fn auto_run_hold_ends_at_a_relog() {
+    let mut rig = HoldRig::new();
+    assert_eq!(rig.run(&[click_frame(1, -1), frame(1, -1)]), [0, 0]);
+    rig.relog();
+    assert_eq!(
+        rig.run(&[frame(1, -1)]),
+        [1],
+        "no page of the old session can arrive"
     );
 }

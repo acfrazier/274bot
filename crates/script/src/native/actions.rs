@@ -39,6 +39,18 @@ impl ActionContext<'_> {
         drop(lease);
     }
 
+    /// Begin one wait for the page this owner's own interaction opens. A newer
+    /// lease of the same owner replaces the older one.
+    pub fn begin_modal_wait(&mut self) -> Result<ModalWaitLease, ActionError> {
+        let owner = self.owner()?;
+        let ledger = self.ledger.as_mut().expect("owner checked");
+        let lease_id = ledger.next_id()?;
+        if !owner.set_modal_wait(lease_id) {
+            return Err(ActionError::Cancelled);
+        }
+        Ok(ModalWaitLease { owner, lease_id })
+    }
+
     pub fn charge_transition(&mut self) -> bool {
         self.eligible && self.budget.transition()
     }
@@ -600,6 +612,12 @@ impl QuietReadLease {
 impl Drop for QuietReadLease {
     fn drop(&mut self) {
         self.owner.release_quiet(self.lease_id);
+    }
+}
+
+impl Drop for ModalWaitLease {
+    fn drop(&mut self) {
+        self.owner.release_modal_wait(self.lease_id);
     }
 }
 

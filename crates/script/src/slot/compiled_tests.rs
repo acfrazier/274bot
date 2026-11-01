@@ -3616,6 +3616,72 @@ fn terminal_native_blocked_stops_cleans_up_and_preserves_reason() {
     }
 }
 
+/// A machine that waits for the page of its own interaction until dropped.
+struct ModalWaitWork {
+    _wait: crate::native::ModalWaitLease,
+}
+
+impl crate::native::NativeMachine for ModalWaitWork {
+    type Args = ();
+    type Output = ();
+
+    fn begin(_: (), cx: &mut ActionContext<'_>) -> Result<Self, crate::native::ActionError> {
+        Ok(Self {
+            _wait: cx.begin_modal_wait()?,
+        })
+    }
+
+    fn poll(
+        &mut self,
+        _: &mut ActionContext<'_>,
+    ) -> std::task::Poll<Result<(), crate::native::ActionError>> {
+        std::task::Poll::Pending
+    }
+}
+
+struct HoldsModalWait {
+    work: Option<crate::native::ActionHandle<ModalWaitWork>>,
+}
+
+impl Script for HoldsModalWait {
+    fn tick(&mut self, tick: &mut NativeTick<'_>) -> Result<ScriptFlow, ScriptFailure> {
+        if self.work.is_none() {
+            self.work = Some(
+                tick.actions
+                    .begin::<ModalWaitWork>((), &mut tick.cx)
+                    .expect("the machine takes its wait"),
+            );
+        }
+        Ok(ScriptFlow::Continue)
+    }
+}
+
+/// The host holds auto-run only while a script wait has an owner: Stop and a
+/// session boundary revoke the native owner, so the next read is `None`.
+#[test]
+fn a_script_interaction_wait_ends_at_stop_and_at_a_session_boundary() {
+    for session_boundary in [false, true] {
+        let mut slot = SlotScript::new();
+        slot.start_test_script(Box::new(HoldsModalWait { work: None }), Some(selected()))
+            .unwrap();
+        tick(&mut slot);
+        assert!(
+            slot.script_interaction_wait(Instant::now()).is_some(),
+            "the machine's wait is the host's hold"
+        );
+        if session_boundary {
+            slot.reconnect_session_work();
+        } else {
+            slot.stop();
+        }
+        assert_eq!(
+            slot.script_interaction_wait(Instant::now()),
+            None,
+            "a dropped owner releases the hold at once (session boundary: {session_boundary})"
+        );
+    }
+}
+
 #[test]
 fn native_waiting_keeps_running_until_its_own_terminal_bound() {
     let stops = Arc::new(AtomicU64::new(0));

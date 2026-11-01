@@ -3,7 +3,9 @@
 
 use super::reach;
 use crate::dialogue_outcome::DialogueOutcome;
-use crate::native::{ActionContext, ActionError, ActionHandle, NativeActions, NativeMachine};
+use crate::native::{
+    ActionContext, ActionError, ActionHandle, ModalWaitLease, NativeActions, NativeMachine,
+};
 use crate::shim::InteractReq;
 use api::snapshot::{chat_page_fingerprint, WidgetRoot, WidgetView};
 use std::hash::{DefaultHasher, Hash, Hasher};
@@ -209,6 +211,28 @@ enum Phase {
     Failed,
 }
 
+impl Phase {
+    /// The phase waits for the result of this dialogue's own send, or for a
+    /// page that can still arrive: the Talk's first page (or a continuation
+    /// page), a Continue or choice acknowledgement, a Main page forward or
+    /// close, or the end gap after the chat closed. The host holds its
+    /// auto-run press meanwhile: the run button's script begins with
+    /// `if_close` (`player_controls.rs2:34-35`). The approach, an open page
+    /// being driven, and the settle ticks of an open page wait for none of
+    /// these; the host's modal check holds the press while a page is open.
+    fn awaits_page(self) -> bool {
+        matches!(
+            self,
+            Phase::Open
+                | Phase::WaitContinueAck
+                | Phase::WaitChoiceAck
+                | Phase::WaitMainForwardAck
+                | Phase::WaitMainCloseAck
+                | Phase::WaitGap
+        )
+    }
+}
+
 pub struct Dialogue {
     args: DialogueArgs,
     phase: Phase,
@@ -232,6 +256,10 @@ pub struct Dialogue {
     chat_page_owned: bool,
     chat_advance_request_id: Option<u64>,
     last_send: Option<DialogueSend>,
+    /// The wait for the page of the current send; see [`Phase::awaits_page`].
+    modal_wait: Option<ModalWaitLease>,
+    /// `steps` when `modal_wait` was taken: each new send takes a new lease.
+    modal_wait_step: u32,
 }
 
 impl NativeMachine for Dialogue {
@@ -274,12 +302,42 @@ impl NativeMachine for Dialogue {
             chat_page_owned: false,
             chat_advance_request_id: None,
             last_send: None,
+            modal_wait: None,
+            modal_wait_step: 0,
         };
         dialogue.open(cx)?;
+        dialogue.sync_modal_wait(cx)?;
         Ok(dialogue)
     }
 
     fn poll(&mut self, cx: &mut ActionContext<'_>) -> Poll<Result<Self::Output, ActionError>> {
+        let result = self.poll_phase(cx);
+        if result.is_pending() {
+            if let Err(error) = self.sync_modal_wait(cx) {
+                return Poll::Ready(Err(error));
+            }
+        }
+        result
+    }
+
+    fn cancel(&mut self) {}
+}
+
+impl Dialogue {
+    /// Hold one modal-wait lease while the phase waits for a page, and none
+    /// otherwise. A new send (a new `steps` count) takes a new lease, so each
+    /// wait has its own key. Completing or dropping the machine releases it.
+    fn sync_modal_wait(&mut self, cx: &mut ActionContext<'_>) -> Result<(), ActionError> {
+        if !self.phase.awaits_page() {
+            self.modal_wait = None;
+        } else if self.modal_wait.is_none() || self.modal_wait_step != self.steps {
+            self.modal_wait = Some(cx.begin_modal_wait()?);
+            self.modal_wait_step = self.steps;
+        }
+        Ok(())
+    }
+
+    fn poll_phase(&mut self, cx: &mut ActionContext<'_>) -> Poll<Result<DialogueOutcome, ActionError>> {
         let now = cx.active_now().as_millis() as u64;
         if self.phase == Phase::Failed {
             return Poll::Ready(Ok(DialogueOutcome::Failed));
@@ -537,8 +595,6 @@ impl NativeMachine for Dialogue {
             | Phase::Failed => Poll::Ready(Ok(DialogueOutcome::Failed)),
         }
     }
-
-    fn cancel(&mut self) {}
 }
 
 impl Dialogue {

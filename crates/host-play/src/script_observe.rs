@@ -496,6 +496,9 @@ pub(crate) fn script_observe_cached_with_channels(
     let mut channel_active = false;
     let mut policy_runtime_generation = None;
     let mut run_policy_update = None;
+    // The script's own wait for the result of its own interaction, read after
+    // this frame's script tick; the host holds its auto-run press meanwhile.
+    let mut script_wait = None;
     'script_slot: {
         let Some(slot) = observed_slot.as_ref() else {
             break 'script_slot;
@@ -1318,12 +1321,14 @@ pub(crate) fn script_observe_cached_with_channels(
         .then_some(slot.runtime_generation());
         has_native_actions = slot.has_native_actions();
         journal_paint_hidden = journal_wall_now.is_some_and(|now| slot.journal_paint_hidden(now));
+        script_wait = slot.script_interaction_wait(journal_wall_now.unwrap_or_else(Instant::now));
     }
     if let Some(run_policy) = run_policy.as_deref_mut() {
         run_policy.sync_runtime(policy_runtime_generation);
         if let Some(update) = run_policy_update {
             update.apply(run_policy);
         }
+        run_policy.observe_script_wait(script_wait);
     }
     #[cfg(feature = "js")]
     if let Some(channels) = channels {
@@ -1352,11 +1357,6 @@ pub(crate) fn script_observe_cached_with_channels(
                 channel_reqs.into_iter().map(|queued| queued.req).collect(),
             );
             deliver_channel_events(scripts, deliveries);
-        }
-    }
-    if !interact.is_empty() {
-        if let Some(run_policy) = run_policy.as_deref_mut() {
-            run_policy.note_script_interaction();
         }
     }
     // Dispatch the shim's interact requests through the slot's own Driver
@@ -1591,13 +1591,6 @@ pub(crate) fn script_observe_cached_with_channels(
                                         [request],
                                     )
                                 };
-                                // Native ledger interactions bypass `interact`, but can open a
-                                // modal before the host sees it; apply the same observed-tick fence.
-                                if accepted {
-                                    if let Some(run_policy) = run_policy.as_deref_mut() {
-                                        run_policy.note_script_interaction();
-                                    }
-                                }
                                 let mut emitted_packets = 0;
                                 let mut opcode = None;
                                 if let Some(checkpoint) = packet_trace {

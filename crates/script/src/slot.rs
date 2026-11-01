@@ -2228,6 +2228,30 @@ impl SlotScript {
         }
     }
 
+    /// The script's own wait for the result of its own interaction, read once
+    /// per host frame. While it is `Some`, the host holds its auto-run press.
+    /// The key changes with each new wait. Three owner-fenced leases count: a
+    /// native modal wait (`Dialogue`), the native quiet read (the journal
+    /// machine, from before its click to its observed close) and the
+    /// compatibility journal. Stop, replacement and a session boundary revoke
+    /// the native leases; both journal leases end after 10 s of wall time.
+    pub fn script_interaction_wait(&mut self, now: std::time::Instant) -> Option<u64> {
+        if let Some(ledger) = self.native_runtime.ledger.as_mut() {
+            if let Some(lease) = ledger.modal_wait() {
+                return Some(lease.get());
+            }
+            if let Some(quiet) = ledger.quiet_read(now) {
+                return Some(quiet.request_id.get());
+            }
+        }
+        // Native ids count up from one, so this key never equals one of them.
+        const COMPAT_JOURNAL_KEY: u64 = u64::MAX;
+        self.surface
+            .as_ref()
+            .is_some_and(|surface| surface.journal_paint_hidden(now))
+            .then_some(COMPAT_JOURNAL_KEY)
+    }
+
     /// Live walk ownership, not a retained destination or reconnect carry.
     pub fn live_walking_operation(&self) -> bool {
         if self.native_runtime.ledger.as_ref().is_some_and(|ledger| {

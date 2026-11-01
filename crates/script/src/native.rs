@@ -877,6 +877,16 @@ pub struct QuietReadLease {
     lease_id: NonZeroU64,
 }
 
+/// The owner waits for the page its own interaction opens. While one is live
+/// the host holds its auto-run press (the run button's script begins with
+/// `if_close`, `player_controls.rs2:34-35`). Dropping the lease, completing
+/// or dropping the machine, and revoking the owner all release it.
+/// Revocable owner identity; no caller can mint a lease.
+pub struct ModalWaitLease {
+    owner: Arc<owner::Owner>,
+    lease_id: NonZeroU64,
+}
+
 /// Owner allowances for a followed walk. Prayer must be allowed or
 /// [`crate::combat::WalkGuard::begin`] refuses with `PrayerDisallowed`;
 /// food and escape default to allowed.

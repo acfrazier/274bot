@@ -10,6 +10,9 @@ pub(crate) struct Owner {
     pub id: NonZeroU64,
     revoked: AtomicBool,
     quiet: AtomicU64,
+    /// The live modal-wait lease: the owner waits for the page its own
+    /// interaction opens, and the host holds its auto-run press meanwhile.
+    modal_wait: AtomicU64,
     walk: AtomicU64,
     interaction: AtomicU64,
     batch: [AtomicU64; 5],
@@ -24,6 +27,7 @@ impl Owner {
             id,
             revoked: AtomicBool::new(false),
             quiet: AtomicU64::new(0),
+            modal_wait: AtomicU64::new(0),
             walk: AtomicU64::new(0),
             interaction: AtomicU64::new(0),
             batch: std::array::from_fn(|_| AtomicU64::new(0)),
@@ -39,6 +43,7 @@ impl Owner {
     pub fn revoke(&self) {
         self.revoked.store(true, Ordering::Release);
         self.quiet.store(0, Ordering::Release);
+        self.modal_wait.store(0, Ordering::Release);
         self.walk.store(0, Ordering::Release);
         self.interaction.store(0, Ordering::Release);
         for slot in &self.batch {
@@ -62,6 +67,37 @@ impl Owner {
 
     pub fn quiet(&self, request: NonZeroU64) -> bool {
         self.live() && self.quiet.load(Ordering::Acquire) == request.get()
+    }
+
+    /// A newer wait replaces an older one of the same owner.
+    pub fn set_modal_wait(&self, lease: NonZeroU64) -> bool {
+        if !self.live() {
+            return false;
+        }
+        self.modal_wait.store(lease.get(), Ordering::Release);
+        // A revocation that raced the store wins.
+        if !self.live() {
+            self.modal_wait.store(0, Ordering::Release);
+            return false;
+        }
+        true
+    }
+
+    pub fn release_modal_wait(&self, lease: NonZeroU64) {
+        let _ = self.modal_wait.compare_exchange(
+            lease.get(),
+            0,
+            Ordering::AcqRel,
+            Ordering::Acquire,
+        );
+    }
+
+    /// The live modal-wait lease id, if any.
+    pub fn modal_wait(&self) -> Option<NonZeroU64> {
+        if !self.live() {
+            return None;
+        }
+        NonZeroU64::new(self.modal_wait.load(Ordering::Acquire))
     }
 
     pub fn set_walk(&self, request: NonZeroU64) {

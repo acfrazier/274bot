@@ -126,50 +126,47 @@ const WATCH_PARK_MS: Duration = Duration::from_secs(1);
 /// Host: spawns and owns per-client slot threads.
 pub struct Host;
 
-/// Game ticks the host holds its auto-run press after a script interaction
-/// unless the content's own signal ends the hold sooner (a modal opening).
+/// Terminal safety limit, in observed game ticks (one per `PLAYER_INFO`), on
+/// one script-owned auto-run hold ([`ScriptRunPolicy::observe_script_wait`]).
 ///
-/// The click is sent after the host observes `PLAYER_INFO` number `t`. The
-/// server reads it in the input phase of cycle `t + 1` (`World.ts:355`), or
-/// one cycle later when it arrives after that phase. The script queues its
-/// `if_openmain` in that cycle (`World.ts:378` players), and the output phase
-/// then writes two separate messages in this order: `PLAYER_INFO`
-/// (`NetworkPlayer.ts:286-288`, called at `World.ts:1110`), then the modal
-/// (`NetworkPlayer.ts:175`, from `encodeOut` at `World.ts:1123`). Each message
-/// is sent on its own (`NetworkPlayer.ts:226`), and the client decodes at
-/// most five packets per frame and stops at a packet that is not fully
-/// buffered (`client.rs:12798-12803`, `:5266-5268`, `:5303-5305`). One drain
-/// can therefore observe cycle `c`'s `PLAYER_INFO` and not yet cycle `c`'s
-/// modal, so the observed `PLAYER_INFO` of cycle `c` does not show that the
-/// output of cycle `c` is complete. The `PLAYER_INFO` of cycle `c + 1` does:
-/// the stream is ordered, so the client has decoded the modal of cycle `c`
-/// before it decodes that packet.
-///
-/// The latest cycle that can hold the click's result is `t + 2`. The hold
-/// therefore lasts until the `PLAYER_INFO` of cycle `t + 3` is observed, three
-/// observed ticks after the click. A press that goes out after that follows an
-/// observed modal or an interaction that opened none.
-pub const SCRIPT_INTERACTION_FENCE_TICKS: u32 = 3;
+/// The script ends its hold itself: when it observes the page its own
+/// interaction opened, when its own content-timed bound ends the wait with a
+/// logged failure, or when it is dropped. This limit is never the normal
+/// release. It is longer than every wait that holds: the quiet-read and
+/// compatibility journal leases end after 10 s of wall time
+/// (`script/src/native/ledger.rs`, `script-js/src/compat/quest_journal/
+/// isolate.rs`), and a dialogue waits at most 8 s for a page
+/// (`DIALOGUE_OPEN_MS`). 25 ticks are 15 s. A hold that reaches it is a
+/// failure: the host logs it and stops holding for that wait.
+pub const SCRIPT_WAIT_SAFETY_TICKS: u32 = 25;
 
 /// Host-owned script auto-run overlay. Host-play identifies the active script
 /// run and applies only generation-matched FlatBuffer updates through this
 /// sink; script Stop/replacement clears the value, while relogs preserve it.
 ///
-/// A script interaction also holds the next host press. The hold is counted on
-/// this policy's own observed-tick clock, the only clock the fence reads or
-/// writes: the host advances it once per `PLAYER_INFO` and it survives relogs,
-/// so no caller supplies a tick that could come from another counter. It ends
-/// when a modal opens or after [`SCRIPT_INTERACTION_FENCE_TICKS`] observed
-/// ticks, the first count that proves the last possible result cycle was
-/// fully drained.
+/// The script also holds the host press while it waits for the result of its
+/// own interaction ([`Self::observe_script_wait`]). The hold follows the
+/// script's own state, not packets or tick counts: no packet order can end it
+/// before the script has seen its page or ended its wait. Only the terminal
+/// [`SCRIPT_WAIT_SAFETY_TICKS`] limit is counted, on this policy's own
+/// observed-tick clock, which the host advances once per `PLAYER_INFO`.
 #[derive(Debug, Default)]
 pub struct ScriptRunPolicy {
     runtime_generation: Option<u64>,
     policy_override: Option<RunPolicyOverride>,
     /// Observed game ticks (one per `PLAYER_INFO`) across the slot's logins.
     observed_ticks: u32,
-    /// The observed tick of the latest script interaction still being fenced.
-    interaction_tick: Option<u32>,
+    /// The script's current wait, if any.
+    script_wait: Option<ScriptWaitHold>,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct ScriptWaitHold {
+    key: u64,
+    /// Observed tick on which this wait was first seen.
+    since: u32,
+    /// A session boundary or the safety limit ended the hold for this key.
+    released: bool,
 }
 
 impl ScriptRunPolicy {
@@ -179,7 +176,7 @@ impl ScriptRunPolicy {
         if self.runtime_generation != runtime_generation {
             self.runtime_generation = runtime_generation;
             self.policy_override = None;
-            self.interaction_tick = None;
+            self.script_wait = None;
         }
     }
 
@@ -196,29 +193,64 @@ impl ScriptRunPolicy {
         self.observed_ticks = self.observed_ticks.wrapping_add(ticks);
     }
 
-    /// Mark a script game interaction sent on the current observed tick.
-    pub fn note_script_interaction(&mut self) {
-        self.interaction_tick = Some(self.observed_ticks);
+    /// Read the script's own wait once per frame, after the script tick and
+    /// before the press decision. `None` ends the hold at once. A new key
+    /// starts a new hold.
+    pub fn observe_script_wait(&mut self, key: Option<u64>) {
+        let next = match (key, self.script_wait) {
+            (None, _) => None,
+            (Some(key), Some(hold)) if hold.key == key => Some(hold),
+            (Some(key), _) => Some(ScriptWaitHold {
+                key,
+                since: self.observed_ticks,
+                released: false,
+            }),
+        };
+        let before = self.script_wait.map(|hold| hold.key);
+        let after = next.map(|hold| hold.key);
+        if before != after {
+            host_log!(
+                Category::InteractTrace,
+                Level::Debug,
+                "auto-run hold key={after:?} was={before:?} observed_tick={}",
+                self.observed_ticks
+            );
+        }
+        self.script_wait = next;
     }
 
-    /// True while the host must not press run: after a script interaction,
-    /// until a modal is observed open (the press is then held by the modal
-    /// check until it closes) or [`SCRIPT_INTERACTION_FENCE_TICKS`] observed
-    /// ticks have passed with none.
-    pub fn should_defer_auto_run(&mut self, modal_open: bool) -> bool {
-        let Some(sent) = self.interaction_tick else {
+    /// True while the host must not press run: the script waits for the
+    /// result of its own interaction. The modal check holds the press
+    /// separately while a modal is open.
+    pub fn should_defer_auto_run(&mut self) -> bool {
+        let observed = self.observed_ticks;
+        let Some(hold) = self.script_wait.as_mut() else {
             return false;
         };
-        let held =
-            !modal_open && self.observed_ticks.wrapping_sub(sent) < SCRIPT_INTERACTION_FENCE_TICKS;
-        if !held {
-            self.interaction_tick = None;
+        if hold.released {
+            return false;
         }
-        held
+        let ticks = observed.wrapping_sub(hold.since);
+        if ticks >= SCRIPT_WAIT_SAFETY_TICKS {
+            hold.released = true;
+            host_log!(
+                Category::InteractTrace,
+                Level::Warn,
+                "auto-run hold safety bound spent key={} ticks={ticks}: the script did not end its wait",
+                hold.key
+            );
+            return false;
+        }
+        true
     }
 
-    fn clear_auto_run_defer(&mut self) {
-        self.interaction_tick = None;
+    /// A session boundary ends the current hold: no page of the old session
+    /// can arrive. A wait that outlives the boundary holds again only with a
+    /// new key.
+    fn release_at_session_boundary(&mut self) {
+        if let Some(hold) = self.script_wait.as_mut() {
+            hold.released = true;
+        }
     }
 
     fn resolved(&self) -> RunPolicy {
@@ -1478,7 +1510,7 @@ impl SlotLoop {
             self.guardian = Guardian::new();
             self.guardian_status = RandomStatus::default();
             self.run_on = false;
-            self.run_policy.clear_auto_run_defer();
+            self.run_policy.release_at_session_boundary();
         }
         let ticks_before = self.snapshot.tick();
         publish_snapshot(&mut self.snapshot, client, result);
@@ -1511,7 +1543,7 @@ impl SlotLoop {
             client.chat_modal_id,
             client.side_modal_id,
         );
-        let defer_auto_run = self.run_policy.should_defer_auto_run(!modal_free);
+        let defer_auto_run = self.run_policy.should_defer_auto_run();
         if self.snapshot.local_player().is_some()
             && auto_run_ready(client.ingame, client.scene_state)
             && modal_free
