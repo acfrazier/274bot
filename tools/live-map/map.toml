@@ -667,7 +667,7 @@ cells = [
 [[cover]]
 globs = ["crates/script-js/src/compat/dialog.rs"]
 cells = [
-  "compat.dialog-combat-close-adapter|${ISOHOME:?} nice -n 10 cargo test --release --locked -p script-js --features test-hooks --lib compat::dialog::tests::combat_close_requires_visible_actor_targeting_local_player -- --exact --nocapture --test-threads=1",
+  "compat.dialog-combat-close-adapter|${ISOHOME:?} nice -n 10 cargo test --release --locked -p script-js --features test-hooks --lib dialog::tests::combat_close_requires_visible_actor_targeting_local_player -- --exact --nocapture --test-threads=1",
 ]
 
 # "adapter proof, not a game witness": no catalog script reaches these
@@ -677,5 +677,5 @@ cells = [
 [[cover]]
 globs = ["crates/script-js/src/compat/production.rs"]
 cells = [
-  "compat.make-x-clock-adapter|${ISOHOME:?} nice -n 10 cargo test --release --locked -p script-js --features test-hooks --lib compat::production::compat::tests::make_x_adapter_keeps_the_frozen_count_and_menu_waits -- --exact --nocapture --test-threads=1",
+  "compat.make-x-clock-adapter|${ISOHOME:?} nice -n 10 cargo test --release --locked -p script-js --features test-hooks --lib production::compat::tests::make_x_adapter_keeps_the_frozen_count_and_menu_waits -- --exact --nocapture --test-threads=1",
 ]

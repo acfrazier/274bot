@@ -343,6 +343,11 @@ Do not hide a whole production file in `not_live` for such a change.
 4. Add test-only files to `[not_live]`, not `[live]`.
 5. Run the tool on the change. Confirm that it lists the new cell and no changed live path remains uncovered.
 
+Use the Rust module names from `cargo test ... -- --list` for exact selectors.
+A `#[path = "compat/dialog.rs"] mod dialog` declaration names `dialog::...`,
+not `compat::dialog::...`. The source directory is not a module prefix.
+A zero-test selector is not proof, even when Cargo exits successfully.
+
 An explicit exception in `not_live.exceptions` keeps a path live only when it
 also matches a live glob. Add the cover row for that path.
 
