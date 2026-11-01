@@ -1605,7 +1605,7 @@ mod smoke_tests {
         assert!(seeds.extra_items.is_empty());
         assert!(seeds.before_relog.is_empty());
         let row = smoke_row("blackarmgang").unwrap();
-        let pair = arrav_smoke_pair(
+        let mut pair = arrav_smoke_pair(
             row,
             &seeds,
             seeds.fixture_loadout().unwrap(),
@@ -1623,7 +1623,7 @@ mod smoke_tests {
         assert_eq!(expect[1][1], "b:2");
         assert_eq!(pair.roles[0].start_settings["gang"], "phoenix");
         assert_eq!(pair.roles[1].start_settings["gang"], "blackarm");
-        for (cell, stand) in pair.roles.iter().zip([
+        for (cell, stand) in pair.roles.iter_mut().zip([
             WorldTile {
                 x: 3046,
                 z: 3287,
@@ -1657,7 +1657,7 @@ mod smoke_tests {
                     })
                     .collect(),
             );
-            let observed = cell.observe_start.as_ref().unwrap()(&snapshot).unwrap();
+            let observed = cell.observe_start.as_mut().unwrap()(&snapshot).unwrap();
             assert_eq!(observed["inventory"], serde_json::json!([]));
             assert_eq!(observed["equipment"], serde_json::json!([]));
         }

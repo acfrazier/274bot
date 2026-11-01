@@ -610,10 +610,6 @@ fn fact(kind: &str, args: Value) -> PredicateDocument {
     }
 }
 
-fn empty_any() -> PredicateDocument {
-    PredicateDocument::Any(Vec::new())
-}
-
 fn bank_path(bank: WorldTile, bank_required: bool) -> PathDocument {
     let mut document: PathDocument =
         serde_json::from_str(COOK_PATH_JSON).expect("decode released Cook Path envelope");
