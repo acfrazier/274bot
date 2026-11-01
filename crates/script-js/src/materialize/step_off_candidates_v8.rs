@@ -6,8 +6,9 @@ use rustyscript::Runtime;
 const FIELDS: [&str; 3] = ["x", "z", "level"];
 
 pub(crate) fn install(runtime: &mut Runtime) -> Result<(), String> {
+    let context = runtime.deno_runtime().main_context();
     let mut scope = runtime.deno_runtime().handle_scope();
-    let factory_template = v8::FunctionTemplate::new(&mut scope, |_, _, _| {});
+    let factory_template = v8::FunctionTemplate::new(&mut scope, row_factory);
     let shape = factory_template.instance_template(&mut scope);
     let placeholder: v8::Local<v8::Data> = v8::undefined(&mut scope).into();
     for field in FIELDS {
@@ -22,7 +23,6 @@ pub(crate) fn install(runtime: &mut Runtime) -> Result<(), String> {
         .data(factory.into())
         .build(&mut scope)
         .ok_or_else(|| "step-off candidates: callback".to_string())?;
-    let context = runtime.deno_runtime().main_context();
     let global = context.open(&mut scope).global(&mut scope);
     let name = v8::String::new(&mut scope, "__rs2b0t_step_off_candidates")
         .ok_or_else(|| "step-off candidates: name".to_string())?;
@@ -50,6 +50,13 @@ fn int_arg<'s>(
         return Err(callback_v8::type_error(scope, &format!("stepOffCandidates: invalid {name}")));
     }
     Ok(number as i32)
+}
+
+fn row_factory<'s>(
+    _: &mut v8::HandleScope<'s>,
+    _: v8::FunctionCallbackArguments<'s>,
+    _: v8::ReturnValue,
+) {
 }
 
 fn step_off_candidates<'s>(
@@ -85,9 +92,8 @@ fn step_off_candidates<'s>(
                     return Err(callback_v8::type_error(scope, "stepOffCandidates: row property"));
                 }
             }
-            let index = v8::Integer::new_from_unsigned(scope, index as u32);
             if !rows
-                .create_data_property(scope, index.into(), row.into())
+                .set_index(scope, index as u32, row.into())
                 .ok_or_else(|| callback_v8::type_error(scope, "stepOffCandidates: array row"))?
             {
                 return Err(callback_v8::type_error(scope, "stepOffCandidates: array row"));
