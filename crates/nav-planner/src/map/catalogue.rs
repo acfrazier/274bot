@@ -102,7 +102,9 @@ const GAME_DATA_289_BOUNDS: GameDataSourceBounds = GameDataSourceBounds {
 
 const GAME_DATA_MANIFEST_BYTES: usize = 708_799;
 const GAME_DATA_READ_BUFFER_BYTES: usize = 64 * 1024;
-// flate2 1.1.10's private BufReader::new allocates a 32 KiB input buffer.
+// flate2 reads through a private BufReader with a 32 KiB input buffer in both
+// 1.1.9 (bufreader.rs:40) and 1.1.10 (bufreader.rs:42), so the earlier 8 KiB
+// charge undercounted the read; the dependency update did not grow it.
 const GZIP_READ_BUFFER_BYTES: usize = 32 * 1024;
 // miniz_oxide 0.9.1's boxed InflateState measured 43,296 bytes on x86_64.
 // Its 32 KiB dictionary and three lookup/Huffman tables fit this 64 KiB bound.
