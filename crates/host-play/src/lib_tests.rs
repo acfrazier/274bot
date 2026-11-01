@@ -8011,6 +8011,14 @@ export default class T extends LoopingBot {
         "the host receives the frame acknowledgement after the listener is cut"
     );
     frame_thread.join().unwrap();
+
+    wait_for_execution(&slot, true);
+    assert_eq!(
+        bounded_slot_call(Arc::clone(&slot), |slot| slot.state()),
+        script::RunState::Paused,
+        "state remains readable while onPause is stuck"
+    );
+    wait_for_execution(&slot, false);
     assert!(
         slot.lock()
             .unwrap()
@@ -8020,14 +8028,6 @@ export default class T extends LoopingBot {
             .unwrap(),
         "the frame listener ran before the watchdog cut its infinite loop"
     );
-
-    wait_for_execution(&slot, true);
-    assert_eq!(
-        bounded_slot_call(Arc::clone(&slot), |slot| slot.state()),
-        script::RunState::Paused,
-        "state remains readable while onPause is stuck"
-    );
-    wait_for_execution(&slot, false);
     assert!(
         slot.lock()
             .unwrap()
