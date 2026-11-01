@@ -16,6 +16,8 @@ const STYLE_TEST_NAME: &str =
     "selected_facts_v8::client_adapter_v8::tests::combat_style_labels_filter_on_both_tab_paths";
 
 const SETUP: &str = r#"
+// r289 decodes the active NPC list length from an unsigned 8-bit field.
+const NPC_SCENE_CAP = 255;
 const itemRows = (count, idBase = 100) => Array.from({ length: count }, (_, slot) => ({
     slot,
     id: idBase + slot,
@@ -134,10 +136,10 @@ globalThis.__rs2b0t_host = {
             base: index + 1,
             xp: (index + 1) * 100,
         })),
-        npc_boxes: [{
-            index: 7,
-            points: Array.from({ length: 8 }, (_, index) => ({ x: index * 2, y: index * 2 + 1 })),
-        }],
+        npc_boxes: Array.from({ length: NPC_SCENE_CAP }, (_, index) => ({
+            index,
+            points: Array.from({ length: 8 }, (_, point) => ({ x: point * 2, y: point * 2 + 1 })),
+        })),
         chat_options: Array.from({ length: 5 }, (_, index) => ({
             text: `Option ${index}`,
             comId: 400 + index,
@@ -234,7 +236,7 @@ globalThis.__clientAdapterFast = () => {
     const stats = Array.from({ length: read('skillCount') }, (_, index) =>
         read('stat', index));
     const chat = read('chat', 100);
-    const npcBox = read('npcBox', 7);
+    const npcBox = read('npcBox', NPC_SCENE_CAP - 1);
     const options = read('chatOptions');
     const buttons = read('modalButtons', 100);
     const trade = read('tradeConfirmOffers');
@@ -249,10 +251,12 @@ globalThis.__clientAdapterFast = () => {
     const close = read('modalCloseObservation');
     const checks = {
         items: itemChecks.every(Boolean),
-        stats: stats.length === read('skillCount') && stats.length > 0 && stats.every(fastObject),
+        stats: stats.length === 25 && stats.length === read('skillCount')
+            && stats.length > 0 && stats.every(fastObject),
         modals: fastObject(read('modals')),
         chatOptions: options.length === 5 && options.every(fastObject),
         npcBox: npcBox.length === 8 && npcBox.every(fastObject),
+        npcBoxInput: globalThis.__rs2b0t_host.snapshot.npc_boxes.length === NPC_SCENE_CAP,
         chat: chat.length === 100 && chat.every(fastObject),
         runControls: fastObject(read('runControls')),
         hintTile: fastObject(read('hintTile')),
@@ -291,7 +295,9 @@ globalThis.__clientAdapterFast = () => {
             inventory: 28,
             bank: 288,
             chat: chat.length,
+            statCount: stats.length,
             npcBoxPoints: npcBox.length,
+            npcBoxRows: globalThis.__rs2b0t_host.snapshot.npc_boxes.length,
             chatOptions: options.length,
             widgetButtons: buttons.length,
             questStatuses: quests.length,
@@ -316,7 +322,7 @@ globalThis.__clientAdapterRepeat = (count) => {
         kept += read('mainSkillMultiItems').length;
         kept += read('chat', 100).length;
         kept += read('chatOptions').length;
-        kept += read('npcBox', 7).length;
+        kept += read('npcBox', NPC_SCENE_CAP - 1).length;
         kept += read('modalButtons', 100).length;
         kept += read('questStatuses').length;
         kept += read('makeProducts').length;
@@ -412,6 +418,8 @@ fn client_adapter_objects_have_fast_properties() {
     assert_eq!(diagnostics["counts"]["bank"], 288);
     assert_eq!(diagnostics["counts"]["chat"], 100);
     assert_eq!(diagnostics["counts"]["npcBoxPoints"], 8);
+    assert_eq!(diagnostics["counts"]["statCount"], 25);
+    assert_eq!(diagnostics["counts"]["npcBoxRows"], 255);
     assert_eq!(diagnostics["counts"]["widgetButtons"], 288);
     assert_eq!(diagnostics["counts"]["questStatuses"], 69);
     assert_eq!(diagnostics["counts"]["products"], 28);
@@ -439,8 +447,9 @@ fn client_adapter_objects_have_bounded_v8_heap() {
     let growth = after.saturating_sub(baseline);
     let limit = 64 * 1024;
     println!(
-        "ClientAdapter collected V8 heap rows/iteration: inventory=28 bank=288 chat=100 \
-         modal-buttons=288 quests=69 products=28x4 path=10816 repeats={REPEATS}; \
+        "ClientAdapter collected V8 heap rows/iteration: inventory=28 bank=288 \
+         scene-npcs=255 npc-box-points=8 chat=100 modal-buttons=288 \
+         quests=69 products=28x4 path=10816 repeats={REPEATS}; \
          baseline={baseline} after={after} growth={growth} limit={limit}"
     );
     assert!(
