@@ -450,7 +450,6 @@ fn bank_snapshot<'s>(
     cb::finish(scope, rv, result);
 }
 
-
 fn deposit_matcher<'s>(
     scope: &mut v8::HandleScope<'s>,
     args: v8::FunctionCallbackArguments<'s>,

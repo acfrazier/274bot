@@ -165,10 +165,15 @@ fn freeze<'s>(
     scope: &mut v8::HandleScope<'s>,
     object: v8::Local<'s, v8::Object>,
 ) -> JsResult<'s, ()> {
-    if cb::catching(scope, |s| object.set_integrity_level(s, v8::IntegrityLevel::Frozen))? {
+    if cb::catching(scope, |s| {
+        object.set_integrity_level(s, v8::IntegrityLevel::Frozen)
+    })? {
         Ok(())
     } else {
-        Err(cb::type_error(scope, "bank item snapshot could not be frozen"))
+        Err(cb::type_error(
+            scope,
+            "bank item snapshot could not be frozen",
+        ))
     }
 }
 
@@ -209,4 +214,3 @@ fn normal_backpack_snapshot<'s>(
     });
     cb::finish(scope, rv, result);
 }
-

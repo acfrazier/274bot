@@ -99,7 +99,6 @@ fn post(tick: u64, rows: Vec<ItemRow>, size: i32, ready: bool, bank_open: bool) 
     });
 }
 
-
 fn collected_used_heap(runtime: &mut Runtime) -> usize {
     let isolate = runtime.deno_runtime().v8_isolate();
     isolate.low_memory_notification();
@@ -352,12 +351,16 @@ fn bank_items_project_open_bank_rows_and_refresh_by_generation() {
     runtime
         .eval::<()>("globalThis.__firstBankItems = __BankForTest.items()")
         .unwrap();
-    assert!(runtime.eval::<bool>("__BankForTest.items() === __firstBankItems").unwrap());
+    assert!(runtime
+        .eval::<bool>("__BankForTest.items() === __firstBankItems")
+        .unwrap());
     assert!(runtime
         .eval::<bool>("__ReaderForTest.bankItems() === __firstBankItems")
         .unwrap());
     post_bank(3, rows.clone(), true, 10, 21);
-    assert!(runtime.eval::<bool>("__BankForTest.items() !== __firstBankItems").unwrap());
+    assert!(runtime
+        .eval::<bool>("__BankForTest.items() !== __firstBankItems")
+        .unwrap());
     runtime
         .eval::<()>("globalThis.__newItemGeneration = __BankForTest.items()")
         .unwrap();
