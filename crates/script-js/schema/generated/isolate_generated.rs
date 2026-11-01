@@ -6515,6 +6515,7 @@ impl<'a> Snapshot<'a> {
   pub const VT_SEAT_LIVE: ::flatbuffers::VOffsetT = 292;
   pub const VT_SEAT_RESULTS: ::flatbuffers::VOffsetT = 294;
   pub const VT_MIRROR_REVOKES_CONSUMED: ::flatbuffers::VOffsetT = 296;
+  pub const VT_LOCAL_ATTACK_MARKS: ::flatbuffers::VOffsetT = 298;
 
   #[inline]
   pub unsafe fn init_from_table(table: ::flatbuffers::Table<'a>) -> Self {
@@ -6526,6 +6527,7 @@ impl<'a> Snapshot<'a> {
     args: &'args SnapshotArgs<'args>
   ) -> ::flatbuffers::WIPOffset<Snapshot<'bldr>> {
     let mut builder = SnapshotBuilder::new(_fbb);
+    if let Some(x) = args.local_attack_marks { builder.add_local_attack_marks(x); }
     if let Some(x) = args.mirror_revokes_consumed { builder.add_mirror_revokes_consumed(x); }
     builder.add_chat_page_fingerprint(args.chat_page_fingerprint);
     builder.add_user_move_intent_seq(args.user_move_intent_seq);
@@ -7691,6 +7693,13 @@ impl<'a> Snapshot<'a> {
     // which contains a valid value in this slot
     unsafe { self._tab.get::<u64>(Snapshot::VT_MIRROR_REVOKES_CONSUMED, None)}
   }
+  #[inline]
+  pub fn local_attack_marks(&self) -> Option<u64> {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<u64>(Snapshot::VT_LOCAL_ATTACK_MARKS, None)}
+  }
 }
 
 impl ::flatbuffers::Verifiable for Snapshot<'_> {
@@ -7844,6 +7853,7 @@ impl ::flatbuffers::Verifiable for Snapshot<'_> {
      .visit_field::<::flatbuffers::ForwardsUOffset<::flatbuffers::Vector<'_, ::flatbuffers::ForwardsUOffset<SeatLive>>>>("seat_live", Self::VT_SEAT_LIVE, false)?
      .visit_field::<::flatbuffers::ForwardsUOffset<::flatbuffers::Vector<'_, ::flatbuffers::ForwardsUOffset<SeatResult>>>>("seat_results", Self::VT_SEAT_RESULTS, false)?
      .visit_field::<u64>("mirror_revokes_consumed", Self::VT_MIRROR_REVOKES_CONSUMED, false)?
+     .visit_field::<u64>("local_attack_marks", Self::VT_LOCAL_ATTACK_MARKS, false)?
      .finish();
     Ok(())
   }
@@ -7994,6 +8004,7 @@ pub struct SnapshotArgs<'a> {
     pub seat_live: Option<::flatbuffers::WIPOffset<::flatbuffers::Vector<'a, ::flatbuffers::ForwardsUOffset<SeatLive<'a>>>>>,
     pub seat_results: Option<::flatbuffers::WIPOffset<::flatbuffers::Vector<'a, ::flatbuffers::ForwardsUOffset<SeatResult<'a>>>>>,
     pub mirror_revokes_consumed: Option<u64>,
+    pub local_attack_marks: Option<u64>,
 }
 impl<'a> Default for SnapshotArgs<'a> {
   #[inline]
@@ -8144,6 +8155,7 @@ impl<'a> Default for SnapshotArgs<'a> {
       seat_live: None,
       seat_results: None,
       mirror_revokes_consumed: None,
+      local_attack_marks: None,
     }
   }
 }
@@ -8734,6 +8746,10 @@ impl<'a: 'b, 'b, A: ::flatbuffers::Allocator + 'a> SnapshotBuilder<'a, 'b, A> {
     self.fbb_.push_slot_always::<u64>(Snapshot::VT_MIRROR_REVOKES_CONSUMED, mirror_revokes_consumed);
   }
   #[inline]
+  pub fn add_local_attack_marks(&mut self, local_attack_marks: u64) {
+    self.fbb_.push_slot_always::<u64>(Snapshot::VT_LOCAL_ATTACK_MARKS, local_attack_marks);
+  }
+  #[inline]
   pub fn new(_fbb: &'b mut ::flatbuffers::FlatBufferBuilder<'a, A>) -> SnapshotBuilder<'a, 'b, A> {
     let start = _fbb.start_table();
     SnapshotBuilder {
@@ -8896,6 +8912,7 @@ impl ::core::fmt::Debug for Snapshot<'_> {
       ds.field("seat_live", &self.seat_live());
       ds.field("seat_results", &self.seat_results());
       ds.field("mirror_revokes_consumed", &self.mirror_revokes_consumed());
+      ds.field("local_attack_marks", &self.local_attack_marks());
       ds.finish()
   }
 }

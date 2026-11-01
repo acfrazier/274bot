@@ -75,6 +75,9 @@ pub(super) const DIALOGUE_APPROACH_SLACK_TICKS: u32 = 2;
 /// one. An unanswered request uses the shared three-attempt approach budget.
 const DIALOGUE_ASSESS_TICKS: u64 = 8;
 pub const DRIVE_STEPS: u32 = 120;
+/// The most close-gap rearms one dialogue grants: one per drive step.
+const GAP_REARMS_MAX: u8 = 120;
+const _: () = assert!(GAP_REARMS_MAX as u32 == DRIVE_STEPS);
 /// Wall-clock bound that the Choice and Main-document acknowledgements still
 /// use. A Continue's acknowledgement counts observed ticks
 /// ([`PAGE_ACK_TICKS`]).
@@ -377,9 +380,9 @@ pub struct Dialogue {
     gap_inventory: Option<u64>,
     gap_position: Option<api::WorldTile>,
     gap_chat_mark: i32,
-    gap_rearms_left: u64,
-    /// The last close-gap rearm tick.
-    gap_rearm_tick: Option<u64>,
+    gap_rearms_left: u8,
+    /// The last close-gap rearm tick, as a [`tick_stamp`].
+    gap_rearm_tick: Option<u32>,
     /// The first tick the bot was observed beside the NPC after the Talk click.
     talk_arrival_tick: Option<u64>,
     /// The tick the NPC's first game message after the Talk click was observed.
@@ -416,12 +419,21 @@ pub struct Dialogue {
     chat_advanced: bool,
     chat_page_owned: bool,
     chat_advance_request_id: Option<u64>,
+    /// The local player's attack marks when this dialogue began
+    /// (`local_attack_marks`). A mark that differs from them reached the
+    /// player after the dialogue began. `None`: the snapshot carried no mark
+    /// data, so the combat guard keeps its earlier evidence rule.
+    attack_baseline: Option<api::snapshot::AttackMarks>,
 }
 // Keep retained per-action dialogue state within its reviewed size budget.
 // 400 B measured on x86_64 Linux (no headroom left). The approach round 3 fix
 // added the route plan (tile, radius, assessment request, retries) and a
 // separate Talk arrival and NPC-message tick: 56 B over the 336 B of round 2.
 // QUESTER-TALK-APPROACH-HOLD added the 12 B last seen NPC tile: 8 B over 392 B.
+// QUESTER-MORDRED-HANDOVER-R2 replaced the 4 B hit baseline with the 8 B
+// attack-marks baseline (408 B). It pays for the extra bytes by narrowing
+// `gap_rearms_left` from u32 to u8 (it never exceeds `DRIVE_STEPS`, 120) and
+// `gap_rearm_tick` from `Option<u64>` to `Option<u32>`.
 const _: () = assert!(std::mem::size_of::<Dialogue>() <= 400);
 
 impl NativeMachine for Dialogue {
@@ -447,16 +459,18 @@ impl NativeMachine for Dialogue {
             // Each held unit can be transferred once. Allow four additional
             // observed changes for batched rewards or server-driven movement,
             // but never let unrelated activity keep closed dialogue alive.
-            gap_rearms_left: cx
-                .snapshot()
-                .inventory()
-                .map_or(0, |inventory| {
-                    inventory.value.iter().fold(0u64, |count, item| {
-                        count.saturating_add(item.count.max(0) as u64)
+            gap_rearms_left: u8::try_from(
+                cx.snapshot()
+                    .inventory()
+                    .map_or(0, |inventory| {
+                        inventory.value.iter().fold(0u64, |count, item| {
+                            count.saturating_add(item.count.max(0) as u64)
+                        })
                     })
-                })
-                .saturating_add(4)
-                .min(DRIVE_STEPS as u64),
+                    .saturating_add(4)
+                    .min(u64::from(GAP_REARMS_MAX)),
+            )
+            .unwrap_or(GAP_REARMS_MAX),
             gap_rearm_tick: None,
             talk_arrival_tick: None,
             talk_message_tick: None,
@@ -491,6 +505,7 @@ impl NativeMachine for Dialogue {
             chat_advanced: false,
             chat_page_owned: false,
             chat_advance_request_id: None,
+            attack_baseline: local_attack_marks(cx),
         };
         dialogue.open(cx)?;
         Ok(dialogue)
@@ -597,10 +612,13 @@ impl NativeMachine for Dialogue {
                 }
             }
         }
-        // The local hit window also covers self-damage. Require visible or
-        // slot-owned attacker evidence before treating a closed chat as combat.
+        // The local hit window outlives a fight by 300 client cycles and also
+        // covers self-damage, and an NPC that only faces the player (the
+        // spared Mordred, Morgan at her first page) looks like an attacker.
+        // A closed chat counts as combat only with attacker evidence and a
+        // hit that landed after this dialogue began (`combat_closed`).
         // A visible Continue component is an active page even without a root.
-        if DialogueOutcome::combat_interrupted(obs.ready, obs.in_combat, obs.attacker_evidence) {
+        if self.combat_closed(cx, obs.ready, obs.in_combat, obs.attacker_evidence) {
             return Poll::Ready(Err(ActionError::CombatInterrupted));
         }
         match self.phase {
@@ -825,9 +843,11 @@ impl NativeMachine for Dialogue {
                         self.gap_inventory = inventory;
                         self.gap_position = position;
                         self.gap_chat_mark = chat_mark;
-                        if self.gap_rearms_left > 0 && self.gap_rearm_tick != Some(obs.tick) {
+                        if self.gap_rearms_left > 0
+                            && self.gap_rearm_tick != Some(tick_stamp(obs.tick))
+                        {
                             self.gap_rearms_left -= 1;
-                            self.gap_rearm_tick = Some(obs.tick);
+                            self.gap_rearm_tick = Some(tick_stamp(obs.tick));
                             self.due_tick = obs.tick.saturating_add(self.gap_ticks());
                         }
                     }
@@ -837,13 +857,13 @@ impl NativeMachine for Dialogue {
                             .local_player()
                             .is_some_and(|player| player.value.player.actor.animation >= 0);
                         if animation_active && self.gap_rearms_left > 0 {
-                            if self.gap_rearm_tick == Some(obs.tick) {
+                            if self.gap_rearm_tick == Some(tick_stamp(obs.tick)) {
                                 return Poll::Pending;
                             }
                             // Scripted work can close chat before its final page.
                             // Share the evidence-tick limit with changed evidence.
                             self.gap_rearms_left -= 1;
-                            self.gap_rearm_tick = Some(obs.tick);
+                            self.gap_rearm_tick = Some(tick_stamp(obs.tick));
                             self.due_tick = obs.tick.saturating_add(self.gap_ticks());
                             return Poll::Pending;
                         }
@@ -962,6 +982,48 @@ impl Dialogue {
         } else {
             ChatTransitionAck::Accepted
         }
+    }
+
+    /// The shared combat-close rule with this dialogue's attack gate. Three
+    /// facts together mean combat closed the chat: no page is open, the
+    /// local health-bar window is raised, and an attacker is present. The
+    /// attacker evidence counts only once an attack mark has reached the
+    /// player after this dialogue began (`attack_after`).
+    ///
+    /// Every attack handler in the pinned content sends at least one of these
+    /// marks in the cycle that it closes the chat: the defend animation
+    /// (melee, ranged), a spot animation (magic hit or splash), a projectile
+    /// (ranged, magic, breath) or a hitmark (melee hit or miss, poison). The
+    /// marks are written before the close (`PLAYER_INFO` precedes the
+    /// interface packets: `World.ts:1105-1122`). The citations are on
+    /// `api::snapshot::AttackMarks`. A hit is not required: a magic splash,
+    /// a magic miss and a melee swing on the default handler at 0 hitpoints
+    /// close the chat with no hitmark (`npc_combat_magic.rs2:148-161`,
+    /// `npc_combat_melee.rs2:36-43`). Two documented cases leave no such
+    /// mark, and there the interruption is seen only when the bounded
+    /// dialogue wait ends: an NPC at 0 hitpoints whose own handler sends no
+    /// defend animation (`shadow_spider.rs2:1-20` with
+    /// `npc_combat_melee.rs2:40-43`), and a player under persistent animation
+    /// protection (`Player.ts:1922-1932`). Outside those cases, a closed chat
+    /// with no new mark is the content's own close. Sir Mordred's spare
+    /// script is the case: it closes the fight page, spawns Morgan and opens
+    /// her first page in one cycle, and Mordred and Morgan then face the
+    /// player (`sir_mordred.rs2:7-27`). The health-bar window from the fight
+    /// lasts another 300 client cycles, so it can still be raised at the
+    /// first poll (before Morgan's page is visible) and at the close after
+    /// her last page.
+    fn combat_closed(
+        &self,
+        cx: &ActionContext<'_>,
+        page_open: bool,
+        in_combat: bool,
+        attacker_evidence: bool,
+    ) -> bool {
+        DialogueOutcome::combat_interrupted(
+            page_open,
+            in_combat,
+            attacker_evidence && attack_after(cx, self.attack_baseline),
+        )
     }
 
     /// Whether this driver's own Continue request was accepted by the host and
@@ -1431,7 +1493,7 @@ impl Dialogue {
         obs: &MainObs<'_>,
         now: u64,
     ) -> Poll<Result<DialogueOutcome, ActionError>> {
-        if DialogueOutcome::combat_interrupted(obs.open(), obs.in_combat, obs.attacker_evidence) {
+        if self.combat_closed(cx, obs.open(), obs.in_combat, obs.attacker_evidence) {
             return Poll::Ready(Err(ActionError::CombatInterrupted));
         }
         match self.phase {
@@ -1834,6 +1896,29 @@ pub(crate) fn page_open(cx: &ActionContext<'_>) -> bool {
             .is_some_and(|chat| chat_page_open(chat.value.root, chat.value.continue_component_id)))
         || observe_main(cx, selected_dialogue_ui(cx))
             .is_some_and(|main| matches!(main.kind, MainKind::Scroll | MainKind::Book))
+}
+
+/// The attack marks of the local player (`api::snapshot::AttackMarks`).
+fn local_attack_marks(cx: &ActionContext<'_>) -> Option<api::snapshot::AttackMarks> {
+    cx.snapshot().local_attack_marks().map(|marks| marks.value)
+}
+
+/// Whether an attack mark landed on the local player after `baseline`, the
+/// marks from this dialogue's start. With no baseline or no mark data the
+/// answer is `true`: the guard then keeps its earlier rule and a closed chat
+/// in combat with an attacker interrupts.
+fn attack_after(cx: &ActionContext<'_>, baseline: Option<api::snapshot::AttackMarks>) -> bool {
+    let Some(baseline) = baseline else {
+        return true;
+    };
+    local_attack_marks(cx).is_none_or(|marks| marks.after(baseline))
+}
+
+/// An observed tick as the 4 B stamp that `gap_rearm_tick` keeps. It is only
+/// compared for equality with the current tick, and a tick count reaches
+/// 2^32 after about 80 years at 600 ms, so the saturation never matters.
+fn tick_stamp(tick: u64) -> u32 {
+    u32::try_from(tick).unwrap_or(u32::MAX)
 }
 
 fn combat_attacker_evidence(cx: &ActionContext<'_>) -> bool {

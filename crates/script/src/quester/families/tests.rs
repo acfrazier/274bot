@@ -6298,6 +6298,88 @@ pub(crate) fn seed_dialogue_attacker(snapshot: &mut GameSnapshot, kind: api::sna
     }
 }
 
+/// Seed the local hitmark slots with one hit of `kind` (0 block, 1 damage, 2
+/// poison) whose expiry stamp is `stamp`. The client cycle is 1000, so a stamp
+/// of 1000 or less is an expired mark and a larger stamp is a live one.
+pub(crate) fn seed_dialogue_hit(snapshot: &mut GameSnapshot, kind: i32, stamp: i32) {
+    let empty = api::snapshot::HitmarkView {
+        value: 0,
+        kind: 0,
+        cycle: 0,
+    };
+    snapshot.seed_hitmarks(api::snapshot::HitmarksView {
+        marks: [
+            api::snapshot::HitmarkView {
+                value: 0,
+                kind,
+                cycle: stamp,
+            },
+            empty,
+            empty,
+            empty,
+        ],
+        loop_cycle: 1000,
+    });
+}
+
+/// One mark that an attack sends to the local player in the cycle that closes
+/// its chat (`api::snapshot::AttackMarks`).
+#[derive(Debug, Clone, Copy)]
+pub(crate) enum DialogueAttackMark {
+    /// A hitmark: `kind` 0 block, 1 damage, 2 poison, expiry `stamp`.
+    Hit { kind: i32, stamp: i32 },
+    /// A local animation instruction with reception `serial`.
+    Animation { serial: u32 },
+    /// A local spot animation with packet-cycle `stamp`.
+    Spot { stamp: i32 },
+    /// A projectile aimed at the local player that starts at `start`.
+    Projectile { start: i32 },
+    /// No projectile is live any more (the earlier one landed).
+    NoProjectile,
+}
+
+/// Seed one attack mark on the local player. The local player must be seeded
+/// first (`seed_dialogue_combat`).
+pub(crate) fn seed_dialogue_attack_mark(snapshot: &mut GameSnapshot, mark: DialogueAttackMark) {
+    match mark {
+        DialogueAttackMark::Hit { kind, stamp } => seed_dialogue_hit(snapshot, kind, stamp),
+        DialogueAttackMark::Animation { serial } => {
+            let mut player = snapshot
+                .local_player()
+                .expect("a seeded local player")
+                .clone();
+            player.animation_update = Some(api::snapshot::AnimationUpdateView {
+                serial,
+                sequence: 424,
+            });
+            snapshot.seed_local_player(player);
+        }
+        DialogueAttackMark::Spot { stamp } => {
+            let mut player = snapshot
+                .local_player()
+                .expect("a seeded local player")
+                .clone();
+            player.player.actor.spot_animation = 85;
+            player.player.actor.spot_animation_stamp = stamp;
+            snapshot.seed_local_player(player);
+        }
+        DialogueAttackMark::Projectile { start } => {
+            snapshot.seed_projectiles(vec![api::snapshot::ProjectileView {
+                spotanim: 11,
+                level: 0,
+                src: tile(3254, 3401),
+                target: Some(api::snapshot::ActorTargetView {
+                    kind: api::snapshot::ActorKind::Player,
+                    index: 0,
+                }),
+                t1: start,
+                t2: start + 40,
+            }]);
+        }
+        DialogueAttackMark::NoProjectile => snapshot.seed_projectiles(Vec::new()),
+    }
+}
+
 #[test]
 fn dialogue_self_damage_without_an_attacker_completes_after_the_close_gap() {
     use super::dialogue::Dialogue;

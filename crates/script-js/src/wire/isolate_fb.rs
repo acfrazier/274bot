@@ -555,6 +555,7 @@ impl<'a> Snapshot<'a> {
         has_api_combat_outcome => VT_API_COMBAT_OUTCOME,
         has_api_progress => VT_API_PROGRESS,
         has_chat_page_fingerprint => VT_CHAT_PAGE_FINGERPRINT,
+        has_local_attack_marks => VT_LOCAL_ATTACK_MARKS,
         has_side_modal_id => VT_SIDE_MODAL_ID,
         has_local_player_motion => VT_LOCAL_PLAYER_MOTION,
     }
@@ -1077,6 +1078,7 @@ pub struct SnapshotFingerprint {
     pub api_progress: Option<(u64, u8)>,
     pub bank_snapshot_generation: Option<i64>,
     pub chat_page_fingerprint: u64,
+    pub local_attack_marks: u64,
     pub side_modal_id: Option<i32>,
     seat_page: Option<SeatPageFingerprint>,
 }
@@ -1375,6 +1377,7 @@ impl SnapshotFingerprint {
             api_combat_outcome: native.api_combat_outcome.map(|end| end.token()),
             api_progress: native.api_progress.map(|page| (page.token(), page.kind())),
             chat_page_fingerprint: native.chat_page_fingerprint,
+            local_attack_marks: native.local_attack_marks,
             side_modal_id: native.side_modal_id,
             seat_page: native.seat_page.map(SeatPageFingerprint::from),
         }
@@ -1540,6 +1543,9 @@ pub struct DeltaMask {
     /// A progress page is replaced by the next request or cleared on teardown.
     pub api_progress: bool,
     pub chat_page_fingerprint: bool,
+    pub local_attack_marks: bool,
+    /// The mask is the keyframe's ([`DeltaMask::all`]), not a delta's.
+    pub keyframe: bool,
     /// The side modal root; written only when supplied.
     pub side_modal_id: bool,
     /// One bit for the seat live and retained-result pages, posted together.
@@ -1550,6 +1556,7 @@ impl DeltaMask {
     /// Every field: the full (keyframe) snapshot.
     fn all() -> DeltaMask {
         DeltaMask {
+            keyframe: true,
             here: true,
             ingame: true,
             inv: true,
@@ -1642,6 +1649,7 @@ impl DeltaMask {
             api_combat_outcome: true,
             api_progress: true,
             chat_page_fingerprint: true,
+            local_attack_marks: true,
             side_modal_id: true,
             seat_page: true,
         }
@@ -1657,6 +1665,7 @@ impl DeltaMask {
         force_banks: bool,
     ) -> DeltaMask {
         DeltaMask {
+            keyframe: false,
             here: next.here != last.here,
             ingame: next.ingame != last.ingame,
             inv: next.inv != last.inv,
@@ -1768,6 +1777,7 @@ impl DeltaMask {
                 && next.api_combat_outcome != last.api_combat_outcome,
             api_progress: next.api_progress.is_some() && next.api_progress != last.api_progress,
             chat_page_fingerprint: next.chat_page_fingerprint != last.chat_page_fingerprint,
+            local_attack_marks: next.local_attack_marks != last.local_attack_marks,
             side_modal_id: next.side_modal_id != last.side_modal_id,
             seat_page: next.seat_page != last.seat_page,
         }
@@ -1863,6 +1873,7 @@ impl DeltaMask {
             || self.api_gather_outcome
             || self.api_progress
             || self.chat_page_fingerprint
+            || self.local_attack_marks
             || self.side_modal_id
             || self.seat_page
             || (self.banks && next.banks != last.banks)
@@ -2903,6 +2914,12 @@ fn encode_snapshot_masked_into(
     }
     if mask.chat_page_fingerprint {
         table.add_chat_page_fingerprint(native.chat_page_fingerprint);
+    }
+    // A keyframe with no marks leaves the slot absent (no observation), so it
+    // stays byte-identical to one from before the field. A delta writes the
+    // value whenever it changed, an explicit 0 included.
+    if mask.local_attack_marks && (native.local_attack_marks != 0 || !mask.keyframe) {
+        table.add_local_attack_marks(native.local_attack_marks);
     }
     if let (true, Some(side)) = (mask.side_modal_id, native.side_modal_id) {
         table.add_side_modal_id(side);
@@ -6820,6 +6837,84 @@ pub(crate) mod tests {
             assert_eq!(scene.latest().chat_page_fingerprint(), Some(0));
             assert_eq!(scene.since_login().chat_page_fingerprint(), Some(0));
         });
+    }
+
+    #[test]
+    fn local_attack_marks_round_trip_as_a_delta_scalar_and_force_a_post() {
+        let native = |local_attack_marks| NativeFactsInput {
+            local_attack_marks,
+            ..NativeFactsInput::default()
+        };
+        crate::observed::on_reset();
+        let mut input = empty_input(1);
+        let (keyframe_bytes, fp) =
+            encode_snapshot_delta_with_native(None, &input, NativeFactsInput::default(), false);
+        let keyframe = decode_snapshot(&keyframe_bytes).expect("keyframe");
+        assert!(
+            !keyframe.has_local_attack_marks(),
+            "a keyframe with no marks leaves the slot absent, as before the field"
+        );
+        assert_eq!(keyframe.local_attack_marks(), None);
+        crate::observed::apply(&keyframe);
+
+        let marks = api::snapshot::AttackMarks::new(1100, 7, 640, 5200).to_wire();
+        input.tick = 2;
+        let mut buf = IsolateBuf::new();
+        let (changed_bytes, fp, evidence) = buf.encode_snapshot_delta_with_native_and_evidence(
+            Some(&fp),
+            &input,
+            native(marks),
+            false,
+        );
+        assert!(evidence, "a mark alone is a posted evidence change");
+        let changed = decode_snapshot(&changed_bytes).expect("changed delta");
+        assert!(changed.has_local_attack_marks());
+        assert_eq!(changed.local_attack_marks(), Some(marks));
+        crate::observed::apply(&changed);
+        crate::observed::with(|scene| {
+            assert_eq!(scene.latest().local_attack_marks(), Some(marks));
+            assert_eq!(scene.since_login().local_attack_marks(), Some(marks));
+        });
+
+        input.tick = 3;
+        let (unchanged_bytes, _) =
+            encode_snapshot_delta_with_native(Some(&fp), &input, native(marks), false);
+        let unchanged = decode_snapshot(&unchanged_bytes).expect("unchanged delta");
+        assert!(
+            !unchanged.has_local_attack_marks(),
+            "unchanged marks are omitted"
+        );
+        crate::observed::apply(&unchanged);
+        crate::observed::with(|scene| {
+            assert_eq!(
+                scene.since_login().local_attack_marks(),
+                Some(marks),
+                "omission retains the last observed marks"
+            );
+        });
+
+        input.tick = 4;
+        let (clear_bytes, _) =
+            encode_snapshot_delta_with_native(Some(&fp), &input, native(0), false);
+        let clear = decode_snapshot(&clear_bytes).expect("clear delta");
+        assert!(
+            clear.has_local_attack_marks(),
+            "a delta posts an explicit 0 when the marks go away"
+        );
+        assert_eq!(clear.local_attack_marks(), Some(0));
+        crate::observed::apply(&clear);
+        crate::observed::with(|scene| {
+            assert_eq!(scene.since_login().local_attack_marks(), Some(0));
+        });
+
+        let (marked_keyframe_bytes, _) =
+            encode_snapshot_delta_with_native(None, &input, native(marks), false);
+        let marked_keyframe = decode_snapshot(&marked_keyframe_bytes).expect("marked keyframe");
+        assert_eq!(
+            marked_keyframe.local_attack_marks(),
+            Some(marks),
+            "a keyframe with marks carries them"
+        );
     }
 
     #[test]

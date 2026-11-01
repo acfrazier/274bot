@@ -331,6 +331,26 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.8` 
   click unsent, the guide sends it again. When the host refuses the click,
   the guide stops at once with `expected dialogue did not open`, the NPC, the
   tick of the refusal and the last game message.
+- A Quester conversation that follows a fight no longer stops with "dialogue
+  interrupted by combat" when nothing attacked the bot during the
+  conversation. After a fight, the game keeps the health-bar window raised for
+  a few seconds, and an NPC that only faces the bot, such as the Sir Mordred
+  that the Merlin's Crystal guide spares, also looked like an attacker. The
+  Quester now counts a closed chat as combat only when an attack reaches the
+  bot after the conversation began. Almost every attack that closes a chat
+  sends the bot a mark in the same game cycle: a hit (also a miss or
+  poison), an animation, a spot animation (a magic splash) or a projectile
+  (a ranged attack or a breath). A hit is not required. There are two rare
+  exceptions: an attack by a monster that is already dying, whose own
+  handler sends no defend animation, and an attack whose animation the
+  bot's own protection discards. In those cases the attack is still
+  noticed, but only after a short wait. This fixes the Merlin's Crystal
+  guide, which could stop at Morgan Le Faye's first page or at her last
+  page. A real attack during a conversation still stops it. The scripting
+  compatibility layer's chat dialogue (`openDialogue`, `driveDialog`,
+  `talkThrough`) applies the same rule, so a script that talks to Sir Mordred
+  or Morgan Le Faye no longer gets `false` from a conversation that ended
+  normally.
 
 ### Fixed (panel)
 
@@ -504,9 +524,6 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.8` 
   fight ends `api.combat.fight` as `aborted` with reason `user-input`. The host
   has settled it that way since 0.2.4; the declarations and pages still
   described an `interrupted` result.
-- A continuation-only Quester dialogue now waits through content's close/open
-  handoff for its first page. A lingering local-player health-bar window no
-  longer interrupts the handoff.
 
 ### Not in this release
 

@@ -463,6 +463,19 @@ impl<'a> SnapshotView<'a> {
         })
     }
 
+    /// The local player's [`AttackMarks`] once the scene and player family
+    /// are ready and hit data has posted.
+    pub fn local_attack_marks(&self) -> Option<Observed<super::AttackMarks>> {
+        let snapshot = self.scene_ready()?;
+        if !snapshot.players_available {
+            return None;
+        }
+        Some(Observed {
+            value: snapshot.local_attack_marks()?,
+            stamp: self.stamp,
+        })
+    }
+
     /// Side-tab rows after their interface family has posted.
     pub fn side_tabs(&self) -> Option<Observed<&'a [SideTabView]>> {
         let snapshot = self.ingame()?;

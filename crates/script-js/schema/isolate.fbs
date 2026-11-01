@@ -596,6 +596,15 @@ table Snapshot {
   // Highest contiguous mirror revocation sequence applied by the host.
   // Optional so an omitted delta retains the previous acknowledgement.
   mirror_revokes_consumed: ulong = null;
+  // The local player's packed `api::snapshot::AttackMarks`: the newest hit,
+  // animation and spot animation marks folded into the low 32 bits and the
+  // newest start of a projectile aimed at the player in the high 32 bits.
+  // The compat chat dialog compares it against its own start. Absent means
+  // no observation (no local player or hit data, an old buffer, or a
+  // keyframe with none), so a keyframe without marks stays byte-identical to
+  // one from before this field. A delta carries it whenever it changes, and
+  // an explicit 0 clears it; the dialog reads 0 as no observation too.
+  local_attack_marks: ulong = null;
 }
 
 table Collision {

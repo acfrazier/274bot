@@ -5722,3 +5722,132 @@ fn session_ready_world_uses_current_build_without_waiting_for_world_packet() {
     snapshot.rebuild(&client);
     assert_eq!(snapshot.world().map_base_x, 3256);
 }
+
+/// A local animation instruction (the defend animation of a melee or ranged
+/// attack) moves the local attack marks, also when it repeats the sequence,
+/// and a read with none leaves them equal (`api::snapshot::AttackMarks`). The
+/// instruction is a real `PLAYER_INFO` ANIM mask.
+#[test]
+fn local_attack_marks_move_with_a_local_animation_instruction() {
+    let mut client = Client::new_with_revision(cfg(), client::client::ClientRevision::R289);
+    client.ingame = true;
+    client.scene_state = 2;
+    client.self_slot = 4;
+    client.local_player = Some(ClientPlayer::at(20, 12));
+    let mut snapshot = GameSnapshot::new();
+    let send_animation = |client: &mut Client| {
+        // Local mask-only (1/00), zero old players, 2047 new-player sentinel;
+        // ANIM mask 0x2, sequence 929, zero delay.
+        let bytes = vec![0x80, 0x1f, 0xfc, 2, 3, 0xa1, 0];
+        client.psize = bytes.len() as i32;
+        let mut packet = Packet::new(bytes);
+        packet.set_frame_end(client.psize as usize);
+        client.handle_packet(client::io::ServerProt289::PLAYER_INFO, &mut packet);
+    };
+    send_animation(&mut client);
+    snapshot.rebuild(&client);
+    let base = snapshot.local_attack_marks().expect("local marks");
+    snapshot.rebuild(&client);
+    assert!(
+        !snapshot.local_attack_marks().unwrap().after(base),
+        "a quiet read has no new mark"
+    );
+    send_animation(&mut client);
+    snapshot.rebuild(&client);
+    assert!(
+        snapshot.local_attack_marks().unwrap().after(base),
+        "the same sequence again is a new instruction"
+    );
+}
+
+/// A spot animation (a magic hit or a splash), a hitmark of any kind (poison
+/// included) and a projectile aimed at the local player each move the local
+/// attack marks; a projectile that landed or that targets someone else does not.
+#[test]
+fn local_attack_marks_move_with_each_other_mark_the_client_receives() {
+    let mut client = client_with_npc();
+    client.ingame = true;
+    client.scene_state = 2;
+    client.self_slot = 4;
+    client.loop_cycle = 1000;
+    client.map_build_base_x = 3200;
+    client.map_build_base_z = 3400;
+    client.local_player = Some(ClientPlayer::at(20, 12));
+    client.bump_gens(ServerProt::PLAYER_INFO);
+    let mut snapshot = GameSnapshot::new();
+    snapshot.rebuild(&client);
+    let marks = |snapshot: &GameSnapshot| snapshot.local_attack_marks().expect("local marks");
+
+    let base = marks(&snapshot);
+    snapshot.rebuild(&client);
+    assert!(
+        !marks(&snapshot).after(base),
+        "a quiet read has no new mark"
+    );
+
+    // A spot animation with no hit.
+    let base = marks(&snapshot);
+    let local = client.local_player.as_mut().unwrap();
+    local.entity.spotanim_id = 85;
+    local.entity.spotanim_last_cycle = 1092;
+    client.bump_gens(ServerProt::PLAYER_INFO);
+    snapshot.rebuild(&client);
+    assert!(marks(&snapshot).after(base), "a spot animation");
+
+    // A hitmark of any kind, poison included.
+    for kind in [0, 1, 2] {
+        let base = marks(&snapshot);
+        let entity = &mut client.local_player.as_mut().unwrap().entity;
+        entity.damage_values[0] = i32::from(kind == 1);
+        entity.damage_types[0] = kind;
+        entity.damage_cycles[0] = client.loop_cycle + 70;
+        snapshot.rebuild(&client);
+        assert!(marks(&snapshot).after(base), "a hitmark of kind {kind}");
+        client.loop_cycle += 40;
+    }
+
+    // A projectile aimed at the local player (slot 4), then its landing.
+    let base = marks(&snapshot);
+    let projectile = |target, t1| {
+        ClientProj::new(
+            77,
+            1,
+            12 * 128 + 64,
+            0,
+            34 * 128 + 64,
+            t1,
+            t1 + 40,
+            0,
+            0,
+            target,
+            0,
+        )
+    };
+    client
+        .projectiles
+        .push(projectile(-5, client.loop_cycle + 32));
+    snapshot.rebuild(&client);
+    assert!(
+        marks(&snapshot).after(base),
+        "a projectile aimed at the player"
+    );
+    let in_flight = marks(&snapshot);
+    client.projectiles.clear();
+    snapshot.rebuild(&client);
+    assert!(
+        !marks(&snapshot).after(in_flight),
+        "a projectile that landed is not a new mark"
+    );
+
+    // A projectile aimed at someone else is not an attack on the player.
+    let base = marks(&snapshot);
+    client
+        .projectiles
+        .push(projectile(-2, client.loop_cycle + 32));
+    snapshot.rebuild(&client);
+    assert!(!marks(&snapshot).after(base));
+
+    client.ingame = false;
+    snapshot.rebuild(&client);
+    assert!(snapshot.local_attack_marks().is_none());
+}

@@ -20127,6 +20127,105 @@ fn script_snapshot_fingerprints_modal_pages_not_chat_ring_lines() {
 }
 
 #[cfg(feature = "js")]
+#[test]
+fn script_snapshot_posts_the_local_attack_marks_when_they_change() {
+    let actor = api::snapshot::ActorView {
+        name: None,
+        actions: Vec::new(),
+        tile: api::WorldTile {
+            x: 3220,
+            z: 3220,
+            level: 0,
+        },
+        distance: 0,
+        animation: -1,
+        animation_frame: 0,
+        pose_animation: -1,
+        orientation: 0,
+        target_orientation: 0,
+        overhead_text: None,
+        spot_animation: -1,
+        spot_animation_stamp: 640,
+        health: 10,
+        total_health: 10,
+        face_entity: -1,
+        target: None,
+        moving: false,
+        running: false,
+        in_combat: false,
+    };
+    let player = api::snapshot::LocalPlayerView {
+        player: api::snapshot::PlayerView {
+            index: 0,
+            network: actor.tile,
+            actor,
+            combat_level: 3,
+            skill_level: 1,
+            headicons: 0,
+            weapon: None,
+        },
+        energy: 100,
+        weight: 0,
+        animation_update: Some(api::snapshot::AnimationUpdateView {
+            serial: 7,
+            sequence: 424,
+        }),
+    };
+    let hit = |kind, stamp| api::snapshot::HitmarksView {
+        marks: [
+            api::snapshot::HitmarkView {
+                value: 0,
+                kind,
+                cycle: stamp,
+            },
+            api::snapshot::HitmarkView {
+                value: 0,
+                kind: 0,
+                cycle: 0,
+            },
+            api::snapshot::HitmarkView {
+                value: 0,
+                kind: 0,
+                cycle: 0,
+            },
+            api::snapshot::HitmarkView {
+                value: 0,
+                kind: 0,
+                cycle: 0,
+            },
+        ],
+        loop_cycle: 1000,
+    };
+    let mut snapshot = GameSnapshot::new();
+    snapshot.seed_ingame(2);
+
+    // No local player or hit data: the keyframe leaves the slot absent.
+    let (keyframe, first) = publish_script_snapshot(None, 1, &snapshot);
+    let view = script_js::wire::decode_snapshot(&keyframe).unwrap();
+    assert!(!view.has_local_attack_marks());
+
+    snapshot.seed_local_player(player);
+    snapshot.seed_hitmarks(hit(1, 900));
+    let expected = api::snapshot::AttackMarks::new(900, 7, 640, 0);
+    let (marked, second) = publish_script_snapshot(Some(&first), 2, &snapshot);
+    let view = script_js::wire::decode_snapshot(&marked).unwrap();
+    assert_eq!(view.local_attack_marks(), Some(expected.to_wire()));
+
+    // The same marks are not posted again.
+    let (quiet, third) = publish_script_snapshot(Some(&second), 3, &snapshot);
+    let view = script_js::wire::decode_snapshot(&quiet).unwrap();
+    assert!(!view.has_local_attack_marks());
+
+    // A poison hit, which closes a chat with no other mark, moves them.
+    snapshot.seed_hitmarks(hit(2, 1100));
+    let (poisoned, _) = publish_script_snapshot(Some(&third), 4, &snapshot);
+    let view = script_js::wire::decode_snapshot(&poisoned).unwrap();
+    let moved = api::snapshot::AttackMarks::from_wire(view.local_attack_marks().unwrap())
+        .expect("posted marks are never zero");
+    assert!(moved.after(expected));
+}
+
+#[cfg(feature = "js")]
 fn posted_varp(view: &script_js::wire::Snapshot<'_>, index: i32) -> Option<i32> {
     view.varps()?
         .iter()

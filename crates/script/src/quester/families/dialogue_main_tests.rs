@@ -1052,6 +1052,334 @@ fn pending_first_continuation_requires_a_real_attacker_for_combat_interruption()
 }
 
 #[test]
+fn spared_mordred_handover_is_not_a_combat_close() {
+    use super::tests::{seed_dialogue_attacker, seed_dialogue_combat, seed_dialogue_hit};
+
+    // Sir Mordred's spare script (`sir_mordred.rs2:7-27`) closes the fight
+    // page, spawns Morgan and opens her first page in one cycle. Mordred and
+    // Morgan then face the player (attacker evidence), and the fight leaves
+    // the health-bar window raised for 300 client cycles. The last hit landed
+    // before the dialogue began: its stamp 900 is behind the client cycle
+    // 1000, and no hit follows it.
+    let mut snapshot = snapshot();
+    seed_dialogue_combat(&mut snapshot, true);
+    seed_dialogue_attacker(&mut snapshot, api::snapshot::ActorKind::Npc);
+    seed_dialogue_hit(&mut snapshot, 0, 900);
+    let mut ledger = None;
+    let handle = with_tick(&snapshot, &mut ledger, 1, |tick| {
+        tick.actions
+            .begin::<Dialogue>(continuation_args(), &mut tick.cx)
+            .unwrap()
+    });
+
+    // Morgan is visible, but the engine writes her page after `PLAYER_INFO`
+    // (`World.ts:1105-1122`), so the page shows one observed tick later.
+    assert!(with_tick(&snapshot, &mut ledger, 2, |tick| {
+        tick.actions.poll(&handle, &mut tick.cx)
+    })
+    .is_pending());
+    assert!(ledger.as_ref().unwrap().outbox.is_empty());
+
+    snapshot.seed_chat_modal(100, vec!["STOP! Please... spare my son.".into()]);
+    snapshot.seed_chat_options(vec![], 101);
+    assert!(with_tick(&snapshot, &mut ledger, 3, |tick| {
+        tick.actions.poll(&handle, &mut tick.cx)
+    })
+    .is_pending());
+    assert!(matches!(
+        last_interaction(&ledger),
+        InteractReq::ContinueDialog { component_id: None }
+    ));
+    complete_last_interaction(&mut ledger, 3, true);
+
+    // The script ends and closes the chat while the fight's window is still
+    // raised. The close is the content's own: no hit came after the dialogue
+    // began.
+    snapshot.seed_chat_modal(-1, vec![]);
+    snapshot.seed_chat_options(vec![], -1);
+    assert!(with_tick(&snapshot, &mut ledger, 4, |tick| {
+        tick.actions.poll(&handle, &mut tick.cx)
+    })
+    .is_pending());
+    assert!(matches!(
+        with_tick(&snapshot, &mut ledger, 5, |tick| {
+            tick.actions.poll(&handle, &mut tick.cx)
+        }),
+        Poll::Ready(Ok(DialogueOutcome::Completed))
+    ));
+}
+
+#[test]
+fn the_close_after_morgans_last_page_is_not_a_combat_close() {
+    use super::tests::{seed_dialogue_attacker, seed_dialogue_combat, seed_dialogue_hit};
+
+    // The dialogue began with Morgan's page already open (the failure at the
+    // close). Her last page is `~mesbox("Morgan Le Faye vanishes.")`
+    // (`sir_mordred.rs2:73-77`). The fight's health-bar window is still raised
+    // when the script ends and closes the chat, Mordred still faces the player,
+    // and no hit followed the one that was already behind the begin tick.
+    let mut snapshot = snapshot();
+    snapshot.seed_chat_modal(100, vec!["Morgan Le Faye vanishes.".into()]);
+    snapshot.seed_chat_options(vec![], 101);
+    seed_dialogue_combat(&mut snapshot, true);
+    seed_dialogue_attacker(&mut snapshot, api::snapshot::ActorKind::Npc);
+    seed_dialogue_hit(&mut snapshot, 0, 900);
+    let mut ledger = None;
+    let handle = with_tick(&snapshot, &mut ledger, 1, |tick| {
+        tick.actions
+            .begin::<Dialogue>(continuation_args(), &mut tick.cx)
+            .unwrap()
+    });
+    assert!(with_tick(&snapshot, &mut ledger, 2, |tick| {
+        tick.actions.poll(&handle, &mut tick.cx)
+    })
+    .is_pending());
+    assert!(matches!(
+        last_interaction(&ledger),
+        InteractReq::ContinueDialog { component_id: None }
+    ));
+    complete_last_interaction(&mut ledger, 2, true);
+
+    snapshot.seed_chat_modal(-1, vec![]);
+    snapshot.seed_chat_options(vec![], -1);
+    assert!(with_tick(&snapshot, &mut ledger, 3, |tick| {
+        tick.actions.poll(&handle, &mut tick.cx)
+    })
+    .is_pending());
+    assert!(matches!(
+        with_tick(&snapshot, &mut ledger, 4, |tick| {
+            tick.actions.poll(&handle, &mut tick.cx)
+        }),
+        Poll::Ready(Ok(DialogueOutcome::Completed))
+    ));
+}
+
+/// Where in a dialogue the chat closes.
+#[derive(Debug, Clone, Copy)]
+enum ChatClose {
+    /// The dialogue began with no page open (the handover) and the page never
+    /// comes.
+    BeforeTheFirstPage,
+    /// A page was open and acknowledged, then the chat closed.
+    AfterAPage,
+}
+
+/// Run a dialogue whose chat closes while the fight's health-bar window is
+/// raised and an NPC targets the player, with `baseline` marks in view from
+/// the begin tick and `marks` reaching the player in the close cycle. Report
+/// whether the poll that sees the close returns `CombatInterrupted`. When it
+/// does not, the dialogue must still be pending (never failed) at that poll.
+fn attack_interrupts(
+    baseline: &[super::tests::DialogueAttackMark],
+    marks: &[super::tests::DialogueAttackMark],
+    close: ChatClose,
+) -> bool {
+    use super::tests::{
+        seed_dialogue_attack_mark, seed_dialogue_attacker, seed_dialogue_combat, seed_dialogue_hit,
+    };
+
+    let mut snapshot = snapshot();
+    if matches!(close, ChatClose::AfterAPage) {
+        snapshot.seed_chat_modal(100, vec!["I will not let you pass.".into()]);
+        snapshot.seed_chat_options(vec![], 101);
+    }
+    seed_dialogue_combat(&mut snapshot, true);
+    seed_dialogue_attacker(&mut snapshot, api::snapshot::ActorKind::Npc);
+    seed_dialogue_hit(&mut snapshot, 1, 900);
+    for mark in baseline {
+        seed_dialogue_attack_mark(&mut snapshot, *mark);
+    }
+    let mut ledger = None;
+    let handle = with_tick(&snapshot, &mut ledger, 1, |tick| {
+        tick.actions
+            .begin::<Dialogue>(continuation_args(), &mut tick.cx)
+            .unwrap()
+    });
+    let mut tick_number = 2;
+    if matches!(close, ChatClose::AfterAPage) {
+        assert!(with_tick(&snapshot, &mut ledger, tick_number, |tick| {
+            tick.actions.poll(&handle, &mut tick.cx)
+        })
+        .is_pending());
+        assert!(matches!(
+            last_interaction(&ledger),
+            InteractReq::ContinueDialog { component_id: None }
+        ));
+        complete_last_interaction(&mut ledger, tick_number, true);
+        snapshot.seed_chat_modal(-1, vec![]);
+        snapshot.seed_chat_options(vec![], -1);
+        tick_number += 1;
+    }
+    for mark in marks {
+        seed_dialogue_attack_mark(&mut snapshot, *mark);
+    }
+    let result = with_tick(&snapshot, &mut ledger, tick_number, |tick| {
+        tick.actions.poll(&handle, &mut tick.cx)
+    });
+    match result {
+        Poll::Ready(Err(ActionError::CombatInterrupted)) => true,
+        Poll::Pending => false,
+        other => panic!("unexpected result {other:?} for {marks:?} at {close:?}"),
+    }
+}
+
+/// Every mark set below is what the engine sends in the cycle of a real NPC
+/// attack that closes the chat, and each must interrupt in both shapes.
+fn assert_attack_interrupts(attack: &str, marks: &[super::tests::DialogueAttackMark]) {
+    for close in [ChatClose::BeforeTheFirstPage, ChatClose::AfterAPage] {
+        assert!(
+            attack_interrupts(&[], marks, close),
+            "{attack} must interrupt {close:?}"
+        );
+    }
+}
+
+#[test]
+fn a_magic_splash_without_a_hit_interrupts() {
+    use super::tests::DialogueAttackMark::Spot;
+
+    // `npc_spell_fail` (`npc_combat_magic.rs2:148-161`): `if_close`, the splash
+    // spot animation on the player, a retaliation. It queues no damage, so no
+    // hitmark follows. A spell that the protect prayer stops takes this branch.
+    assert_attack_interrupts("magic splash", &[Spot { stamp: 1500 }]);
+}
+
+#[test]
+fn a_magic_cast_in_flight_interrupts_before_its_hit_lands() {
+    use super::tests::DialogueAttackMark::{Projectile, Spot};
+
+    // `npc_spell_cast` and `npc_spell_success` (`npc_combat_magic.rs2:91-120`):
+    // `if_close`, the projectile, the impact spot animation. The damage is
+    // queued for `duration / 30` ticks later.
+    assert_attack_interrupts(
+        "magic cast",
+        &[Projectile { start: 1040 }, Spot { stamp: 1500 }],
+    );
+}
+
+#[test]
+fn a_melee_swing_at_zero_hitpoints_without_a_hit_interrupts() {
+    use super::tests::DialogueAttackMark::Animation;
+
+    // `npc_default_attack` plays the player's defend animation before the
+    // swing (`npc_combat.rs2:70`). `playerhit_n_melee` closes the chat and
+    // returns for a melee NPC at 0 hitpoints (`npc_combat_melee.rs2:36-43`):
+    // no hit follows.
+    assert_attack_interrupts("0 hitpoint melee swing", &[Animation { serial: 6 }]);
+}
+
+#[test]
+fn a_melee_miss_and_a_melee_hit_interrupt() {
+    use super::tests::DialogueAttackMark::{Animation, Hit};
+
+    assert_attack_interrupts(
+        "melee miss",
+        &[
+            Animation { serial: 6 },
+            Hit {
+                kind: 0,
+                stamp: 1100,
+            },
+        ],
+    );
+    assert_attack_interrupts(
+        "melee hit",
+        &[
+            Animation { serial: 6 },
+            Hit {
+                kind: 1,
+                stamp: 1100,
+            },
+        ],
+    );
+}
+
+#[test]
+fn a_ranged_attack_in_flight_interrupts_before_its_hit_lands() {
+    use super::tests::DialogueAttackMark::{Animation, Projectile};
+
+    // `playerhit_n_ranged` and `npc_rangeattack` (`npc_combat_ranged.rs2:32-
+    // 53`): the projectile, `if_close`, the defend animation, and a hit
+    // queued for `duration / 30` ticks later.
+    assert_attack_interrupts(
+        "ranged attack",
+        &[Animation { serial: 6 }, Projectile { start: 1040 }],
+    );
+}
+
+#[test]
+fn a_breath_from_range_interrupts_on_its_projectile_alone() {
+    use super::tests::DialogueAttackMark::Projectile;
+
+    // `metal_dragon_dragonfire_far` (`metal_dragon.rs2:36-70`): `if_close`, a
+    // projectile and a delayed hit, with no animation or spot animation on the
+    // player.
+    assert_attack_interrupts("breath from range", &[Projectile { start: 1040 }]);
+}
+
+#[test]
+fn poison_interrupts_with_only_its_hitmark() {
+    use super::tests::DialogueAttackMark::Hit;
+
+    // `poison_damage` (`poison.rs2:32-40`) runs `if_close` and then sends a
+    // poison hitmark and nothing else.
+    assert_attack_interrupts(
+        "poison",
+        &[Hit {
+            kind: 2,
+            stamp: 1100,
+        }],
+    );
+    assert_attack_interrupts(
+        "block",
+        &[Hit {
+            kind: 0,
+            stamp: 1100,
+        }],
+    );
+    assert_attack_interrupts(
+        "damage",
+        &[Hit {
+            kind: 1,
+            stamp: 1100,
+        }],
+    );
+}
+
+#[test]
+fn marks_that_are_not_new_never_interrupt() {
+    use super::tests::DialogueAttackMark::{Animation, Hit, Projectile, Spot};
+
+    // The fight's old marks are in view from the begin tick. The same marks
+    // at the close are the content's own close, and an expired projectile
+    // is not a new one.
+    let baseline = [
+        Animation { serial: 3 },
+        Spot { stamp: 700 },
+        Projectile { start: 800 },
+    ];
+    for close in [ChatClose::BeforeTheFirstPage, ChatClose::AfterAPage] {
+        for marks in [
+            &[][..],
+            &[Hit {
+                kind: 1,
+                stamp: 900,
+            }][..],
+            &[Animation { serial: 3 }][..],
+            &[Spot { stamp: 700 }][..],
+            &[Projectile { start: 800 }][..],
+            &[Projectile { start: 700 }][..],
+            &[super::tests::DialogueAttackMark::NoProjectile][..],
+        ] {
+            assert!(
+                !attack_interrupts(&baseline, marks, close),
+                "{marks:?} at {close:?} is not a new attack"
+            );
+        }
+    }
+}
+
+#[test]
 fn owned_chat_waits_for_a_fresh_acceptance_before_draining_a_selected_scroll() {
     let ids = dialogue_ui();
     let mut snapshot = snapshot();

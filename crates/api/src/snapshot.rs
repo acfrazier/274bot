@@ -8,6 +8,8 @@ use client::config::if_type::{ButtonType, ComponentType, IfType, IfTypeView};
 use client::config::{Cache, ObjType};
 use client::dash3d::client_entity::ClientEntity;
 use serde::Serialize;
+mod attack_marks;
+pub use attack_marks::AttackMarks;
 mod views;
 pub use views::*;
 mod native;
@@ -844,6 +846,35 @@ impl GameSnapshot {
     /// player was available during that rebuild.
     pub fn hitmarks(&self) -> Option<&HitmarksView> {
         self.hitmarks.as_ref()
+    }
+
+    /// The local player's [`AttackMarks`] from the latest rebuild: the newest
+    /// hitmark (any kind), local animation serial, local spot animation
+    /// stamp and the newest live projectile aimed at the local player. `None`
+    /// without a local player or hit data: the caller then has no baseline
+    /// to order marks against.
+    pub fn local_attack_marks(&self) -> Option<AttackMarks> {
+        let local = self.local_player()?;
+        let hits = self.hitmarks()?;
+        let hit_stamp = hits.marks.iter().map(|mark| mark.cycle).max().unwrap_or(0);
+        let serial = local.animation_update.map_or(0, |update| update.serial);
+        let aimed_at_local = ActorTargetView {
+            kind: ActorKind::Player,
+            index: local.player.index,
+        };
+        let projectile_start = self
+            .projectiles()
+            .iter()
+            .filter(|projectile| projectile.target == Some(aimed_at_local))
+            .map(|projectile| projectile.t1)
+            .max()
+            .unwrap_or(0);
+        Some(AttackMarks::new(
+            hit_stamp,
+            serial,
+            local.player.actor.spot_animation_stamp,
+            projectile_start,
+        ))
     }
 
     /// All 25 skill slots from the last stat rebuild.

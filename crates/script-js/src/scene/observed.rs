@@ -679,6 +679,9 @@ scene_pages! {
         user_move_intent_seq: u64,
         /// Host-published fingerprint of the current chat-modal page.
         chat_page_fingerprint: u64,
+        /// The local player's packed `api::snapshot::AttackMarks`; 0 is no
+        /// observation.
+        local_attack_marks: u64,
         side_tab: i32,
         main_modal_id: i32,
         chat_modal_id: i32,
@@ -1198,6 +1201,9 @@ impl Scene {
         }
         if snap.has_chat_page_fingerprint() {
             p.chat_page_fingerprint(snap.chat_page_fingerprint());
+        }
+        if let Some(marks) = snap.local_attack_marks() {
+            p.local_attack_marks(marks);
         }
 
         if snap.has_self_target_index() {
