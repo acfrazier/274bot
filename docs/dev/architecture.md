@@ -388,8 +388,8 @@ The synchronous GPU workspace wait remains a T4.4 limitation.
 ### nav-bake
 
 This producer depends on the planner. Runtime planning never depends on this crate.
-The combined future v18 schema is in the [baked reachability contract](baked-reachability.md).
-BR1 retains v17 and makes one generator-identity change to `nav-bake-3`.
+The v18 schema is in the [baked reachability contract](baked-reachability.md).
+BR2 produces and reads v18 only.
 
 | module | owns (one reason to change) | notes |
 | --- | --- | --- |
@@ -1058,7 +1058,7 @@ host API run through the same isolate as JS API v2 ([`api/js-api-v2.md`](../api/
 
 ## Navigation pack and server profiles
 
-The nav pack is format v17 (magic `274V`). Decoding rejects v16 and older as
+The nav pack is format v18 (magic `274V`). Decoding rejects v17 and older as
 `BadVersion`: rebake custom packs with `nav-pack`. Three sidecars ride beside
 the pack: raw flags (`274F`/1), paint-reach (`274R`/1) and static canlight
 (`274L`/1); `274bot.navpois` (`274P`/1) is the fourth. Application builds bake

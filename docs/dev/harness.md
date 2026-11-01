@@ -349,7 +349,7 @@ inventory tab to become available.
 ```sh
 ENGINE_DIR=<engine-dir> BOT_LIVE_NAME_PREFIX=ge BOT_CPU=1 BOT_NAV_BUILD=skip \
   isohome target/release/tui-play --profile local-289 \
-  --nav-pack <274bot-289-v17.navpack> --nav-flags <274bot-289-v17.navflags> \
+  --nav-pack <274bot-289-v18.navpack> --nav-flags <274bot-289-v18.navflags> \
   --catalog <rs2b0t> --live script_guardian_skill_river_troll
 ```
 
@@ -406,7 +406,7 @@ it cannot register.
 Match `--profile` and the engine ports to the revision (274: `:43594`/`:80`;
 289: `:44594`/`:1080`).
 
-The nav pack is format v17 (magic `274V`); `decode` rejects v16 and older as
+The nav pack is format v18 (magic `274V`); `decode` rejects v17 and older as
 `BadVersion`. A new executable does not rewrite an existing override pack, so
 rebake override packs with `nav-pack` after updating.
 

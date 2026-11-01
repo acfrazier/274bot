@@ -3042,7 +3042,7 @@ fn sewer_web_stands_are_proven_then_reached_with_the_banked_knife_on_real_289_pa
 
 /// A pack-bound query keeps the bounded reverse proof. With nothing owned,
 /// Lumbridge to the Entrana dock side has no route; the proof refuses the
-/// goal after 7,228 settles on the v17 pack, not after the 199,930-node
+/// goal after 7,228 settles on the v18 pack, not after the 199,930-node
 /// flood that skipping the proof costs. Falador, a reachable goal, settles
 /// the same nodes with or without the proof.
 #[test]
@@ -6623,7 +6623,7 @@ fn reviewed_real_packs_have_exact_carry_and_worn_row_counts() {
     ];
     for (path, expected_carry, expected_worn) in packs {
         let world = crate::world::NavWorld::load_pack(&path)
-            .expect("load the reviewed v17 pack from its real content");
+            .expect("load the reviewed v18 pack from its real content");
         let envelope = crate::contract::SearchGraphEnvelope::from_graph(&world.graph);
         assert!(envelope.is_representable());
         assert_eq!(

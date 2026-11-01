@@ -159,7 +159,9 @@ Both decoding forms and the sizing path implement this complete layout.
 Malformed lengths, keys, geometry, palettes, ids, ranges, references, or ordering
 produce typed `PackError`. Decode never constructs labels or floods connectivity.
 `ReachabilityAtlas::validate` checks, for the decoders, the sizing path and the
-baker alike: the atlas geometry equals the collision grid; every table stride
+baker alike: the atlas geometry equals the collision grid and has 4 planes and
+chunk side 64; the chunk directory has exactly one row per plane and chunk
+(an empty or short directory is refused); every table stride
 equals the schema; palette labels name existing components; closure runs are in
 bounds, sorted, disjoint, maximal and include their owner; conditional joins,
 exceptional rows, teleport templates and session templates name existing graph

@@ -3024,7 +3024,7 @@ fn real_content_inspection_world() -> Option<(Arc<NavWorld>, Arc<Cache>, Arc<Obj
     use sha2::Digest as _;
     let pack = script::ctx::test_support::local_asset_path(
         "WORLD_NAV_PACK",
-        "/Volumes/dev-scratch/274bot-evidence/NAV-GATED-ENTRANCES/reference-v17/274bot-289-v17.navpack",
+        "/Volumes/dev-scratch/274bot-evidence/NAV-GATED-ENTRANCES/reference-v18/274bot-289-v18.navpack",
         "reviewed real 289 navpack",
     )?;
     let snapshot_root = script::ctx::test_support::local_asset_path(

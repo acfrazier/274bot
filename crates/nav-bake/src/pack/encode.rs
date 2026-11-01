@@ -48,7 +48,7 @@ pub fn encode_grid(g: &StepGrid) -> Vec<u8> {
 }
 
 /// Serialize the whole-world collision + transport graph + bank stand and
-/// zone tables to the v17 pack byte format. The graph's `at` index is not
+/// zone tables to the v18 pack byte format. The graph's `at` index is not
 /// stored; [`nav_planner::pack::decode`] rebuilds it from the edges and collision. Teleports
 /// (kind-4 edges) are written after ordinary edges and always carry absent
 /// approach geometry. The raw flags are not on the wire (see the flags

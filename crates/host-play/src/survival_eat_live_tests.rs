@@ -3,15 +3,15 @@
 //! published poison condition and the actions captured from the live host.
 //!
 //! Run each ignored cell three times with separate accounts. Use Engine A at
-//! its normal 600 ms tick, a throwaway HOME (`isohome`), the v17 reference nav
+//! its normal 600 ms tick, a throwaway HOME (`isohome`), the v18 reference nav
 //! pack, and the accepted read-only 1.1 cache inputs:
 //!
 //! ```sh
 //! LIVE=1 BOT_CPU=1 BOT_LIVE_NAME_PREFIX=<unique-prefix> \
 //!   GATHERER_GAME_PORT=44594 GATHERER_HTTP_PORT=1080 \
 //!   GATHERER_ENGINE_DIR=/Users/acfrazier/experiments/lostcity-289/engine \
-//!   GATHERER_NAV_PACK=/Volumes/dev-scratch/274bot-evidence/NAV-GATED-ENTRANCES/reference-v17/274bot-289-v17.navpack \
-//!   GATHERER_NAV_FLAGS=/Volumes/dev-scratch/274bot-evidence/NAV-GATED-ENTRANCES/reference-v17/274bot-289-v17.navflags \
+//!   GATHERER_NAV_PACK=/Volumes/dev-scratch/274bot-evidence/NAV-GATED-ENTRANCES/reference-v18/274bot-289-v18.navpack \
+//!   GATHERER_NAV_FLAGS=/Volumes/dev-scratch/274bot-evidence/NAV-GATED-ENTRANCES/reference-v18/274bot-289-v18.navflags \
 //!   GATHERER_CATALOG_ROOT=<catalog-root> \
 //!   BOT_CACHE_DIR=/Volumes/dev-scratch/274bot-evidence/SURVIVAL-1.1/live-cache/6dcb7c4ad1b85372 \
 //!   CLIENT_UNPACK_DIR=/Volumes/dev-scratch/274bot-evidence/SURVIVAL-1.1/client-home/.274bot/unpack \
