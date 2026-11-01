@@ -1067,6 +1067,10 @@ frozen runtime-input manifest. It verifies engine/content hashes before it
 derives legal population bounds. Missing emitter, lifetime or static-map
 premises keep the census incomplete; a measured scene peak is not a legal
 content upper.
+The location-change preflight parses the pinned Rust source and checks each
+call's enclosing tile/shape guard. Unrelated guarded paths cannot hide an
+unguarded location-change call. The NPC-list capacity comes from its actual
+declaration in the verified `EntityList.ts` file.
 
 Ingame readiness requires every slot to remain `ingame && scene_state == 2`
 for two seconds. A ready pulse before the mainland-hop reload does not latch.

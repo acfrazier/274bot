@@ -592,6 +592,58 @@ fn first_call_arguments(source: &str, call: &str) -> Result<Vec<String>, String>
     Ok(arguments)
 }
 
+fn verify_location_change_guards(source: &str) -> Result<(), String> {
+    use syn::visit::Visit;
+
+    let syntax = syn::parse_file(source)
+        .map_err(|error| format!("cannot parse client location-change authority: {error}"))?;
+    let expected_guard: syn::Expr = syn::parse_str(
+        "shape < LOC_SHAPE_TO_LAYER.len() as i32 && x >= 0 && z >= 0 && x < BuildArea::SIZE && z < BuildArea::SIZE",
+    )
+    .expect("location-change guard is valid Rust");
+    struct Calls<'a> {
+        expected_guard: &'a syn::Expr,
+        guarded: bool,
+        total: usize,
+        unguarded: usize,
+    }
+    impl<'ast> Visit<'ast> for Calls<'_> {
+        fn visit_expr_if(&mut self, node: &'ast syn::ExprIf) {
+            self.visit_expr(&node.cond);
+            let previous = self.guarded;
+            self.guarded |= node.cond.as_ref() == self.expected_guard;
+            self.visit_block(&node.then_branch);
+            self.guarded = previous;
+            if let Some((_, branch)) = &node.else_branch {
+                self.visit_expr(branch);
+            }
+        }
+
+        fn visit_expr_method_call(&mut self, node: &'ast syn::ExprMethodCall) {
+            if node.method == "loc_change_create" {
+                self.total += 1;
+                self.unguarded += usize::from(!self.guarded);
+            }
+            syn::visit::visit_expr_method_call(self, node);
+        }
+    }
+    let mut calls = Calls {
+        expected_guard: &expected_guard,
+        guarded: false,
+        total: 0,
+        unguarded: 0,
+    };
+    calls.visit_file(&syntax);
+    if calls.total != 3 || calls.unguarded != 0 {
+        return Err(format!(
+            "client location-change guards cover {} of {} calls; expected three guarded calls",
+            calls.total - calls.unguarded,
+            calls.total
+        ));
+    }
+    Ok(())
+}
+
 fn verify_client_authorities(
     sources: &BTreeMap<&'static str, Vec<u8>>,
     location_shape_layers: &[i32],
@@ -672,18 +724,7 @@ fn verify_client_authorities(
             "client.rs location-change callers do not all use minusedlevel: {build_calls:?}"
         ));
     }
-    if client_build.matches("self.loc_change_create(").count() != 3
-        || client_build
-            .matches("if shape < LOC_SHAPE_TO_LAYER.len() as i32")
-            .count()
-            != 3
-        || client_build.matches("&& x >= 0").count() != 3
-        || client_build.matches("&& z >= 0").count() != 3
-        || client_build.matches("&& x < BuildArea::SIZE").count() != 3
-        || client_build.matches("&& z < BuildArea::SIZE").count() != 3
-    {
-        return Err("client.rs location-change call sites no longer have the three checked tile/shape paths".to_string());
-    }
+    verify_location_change_guards(client_build)?;
     require_markers(
         client_zone,
         "vendor/fr-client-rust/crates/client/src/client/zone_289.rs",
@@ -2288,15 +2329,17 @@ export const enum ScriptOpcode {
         const ACTOR: &str = "vendor/fr-client-rust/crates/client/src/client/actor_289.rs";
         const ENTITY: &str = "vendor/fr-client-rust/crates/client/src/dash3d/client_entity.rs";
         let mut sources = BTreeMap::new();
-        sources.insert(
-            BUILD,
-            b"pub loc_changes: LinkList<LocChange>\npub projectiles: LinkList<ClientProj>\npub spotanims: LinkList<MapSpotAnim>\nself.projectiles.push(proj);\nself.spotanims.push(MapSpotAnim::new(\nself.minusedlevel = buf.gbit(2);\nif loc.level == self.minusedlevel && loc.x == x && loc.z == z && loc.layer == layer\nself.loc_changes.push(loc);\nif shape < LOC_SHAPE_TO_LAYER.len() as i32\n&& x >= 0\n&& z >= 0\n&& x < BuildArea::SIZE\n&& z < BuildArea::SIZE\nself.loc_change_create(self.minusedlevel, x, z, layer, id, shape, rotate, 0, -1);\nif shape < LOC_SHAPE_TO_LAYER.len() as i32\n&& x >= 0\n&& z >= 0\n&& x < BuildArea::SIZE\n&& z < BuildArea::SIZE\nself.loc_change_create(self.minusedlevel, x, z, layer, id, shape, rotate, 0, -1);\nif shape < LOC_SHAPE_TO_LAYER.len() as i32\n&& x >= 0\n&& z >= 0\n&& x < BuildArea::SIZE\n&& z < BuildArea::SIZE\nself.loc_change_create(self.minusedlevel, x, z, layer, id, shape, rotate, 0, -1);"
-                .to_vec(),
+        let guard = "if shape < LOC_SHAPE_TO_LAYER.len() as i32 && x >= 0 && z >= 0 && x < BuildArea::SIZE && z < BuildArea::SIZE";
+        let mut build = String::from(
+            "struct Client {\npub loc_changes: LinkList<LocChange>,\npub projectiles: LinkList<ClientProj>,\npub spotanims: LinkList<MapSpotAnim>,\n}\nimpl Client {\nfn loc_change_create(&mut self) {}\nfn zone_packet(&mut self) {\nself.projectiles.push(proj);\nself.spotanims.push(MapSpotAnim::new());\nself.minusedlevel = buf.gbit(2);\nif loc.level == self.minusedlevel && loc.x == x && loc.z == z && loc.layer == layer { self.loc_changes.push(loc); }\n",
         );
-        sources
-            .get_mut(BUILD)
-            .unwrap()
-            .extend_from_slice(b"\nfn loc_change_create(\n");
+        for _ in 0..3 {
+            build.push_str(guard);
+            build.push_str(" { self.loc_change_create(self.minusedlevel, x, z, layer, id, shape, rotate, 0, -1); }\n");
+        }
+        build.push_str(guard);
+        build.push_str(" { let unrelated_guard = true; }\n} }\n");
+        sources.insert(BUILD, build.as_bytes().to_vec());
         sources.insert(
             DRAW,
             b"let count = if add_self { 1 } else { client.player_count };\nclient.local_player.as_mut()\nclient.loop_cycle > proj.t2\nspot.anim_complete"
@@ -2342,6 +2385,10 @@ export const enum ScriptOpcode {
             verify_client_authorities(&sources, &[0, 1, 2, 3]).unwrap(),
             4
         );
+        let bad_guard = build.replacen("&& x >= 0", "&& x >= 1", 1);
+        sources.insert(BUILD, bad_guard.into_bytes());
+        let error = verify_client_authorities(&sources, &[0, 1, 2, 3]).unwrap_err();
+        assert!(error.contains("guards cover 2 of 3 calls"));
         sources.insert(
             BUILD,
             b"client loc changes have an unexplained count".to_vec(),
