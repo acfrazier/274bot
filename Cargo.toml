@@ -59,8 +59,13 @@ opt-level = 3
 # for panics and backtraces; third-party crates carry none and are lightly
 # optimized (they rarely rebuild, and unoptimized wgpu/deno make debug runs
 # and tests slow and memory-hungry).
+# Incremental compilation is off: its caches were about a third of each
+# worktree's `target/` (102 GB to 70 GB for three lab clones, test results
+# identical; BUILD-DISK-TRIAL-2, operator 2026-10-30). The test profile
+# inherits it from dev.
 [profile.dev]
 debug = "line-tables-only"
+incremental = false
 
 [profile.dev.package."*"]
 debug = false
