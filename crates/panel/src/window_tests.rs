@@ -2960,14 +2960,12 @@ fn window_diagnostic_absent_rail_is_an_explicit_observation() {
 fn noninstrumented_window_layout_matches_the_frozen_pre_diagnostics_shape() {
     use std::mem::size_of;
 
-    #[allow(dead_code)]
     struct PreDiagnosticsGpu<'a> {
         device: &'a wgpu::Device,
         queue: &'a wgpu::Queue,
         renderer: &'a mut imgui_wgpu::WgpuRenderer,
     }
 
-    #[allow(dead_code)]
     struct PreDiagnosticsAppWindow {
         instance: wgpu::Instance,
         device: wgpu::Device,
@@ -2982,7 +2980,6 @@ fn noninstrumented_window_layout_matches_the_frozen_pre_diagnostics_shape() {
         paint_sequence: u64,
     }
 
-    #[allow(dead_code)]
     struct PreDiagnosticsApp<F> {
         cfg: PanelConfig,
         window: Option<AppWindow>,
@@ -3002,6 +2999,71 @@ fn noninstrumented_window_layout_matches_the_frozen_pre_diagnostics_shape() {
     assert_eq!(
         size_of::<App<LayoutFrame>>(),
         size_of::<PreDiagnosticsApp<LayoutFrame>>()
+    );
+
+    assert_eq!(
+        [
+            std::mem::offset_of!(Gpu<'_>, device),
+            std::mem::offset_of!(Gpu<'_>, queue),
+            std::mem::offset_of!(Gpu<'_>, renderer),
+        ],
+        [
+            std::mem::offset_of!(PreDiagnosticsGpu<'_>, device),
+            std::mem::offset_of!(PreDiagnosticsGpu<'_>, queue),
+            std::mem::offset_of!(PreDiagnosticsGpu<'_>, renderer),
+        ]
+    );
+    assert_eq!(
+        [
+            std::mem::offset_of!(AppWindow, instance),
+            std::mem::offset_of!(AppWindow, device),
+            std::mem::offset_of!(AppWindow, queue),
+            std::mem::offset_of!(AppWindow, window),
+            std::mem::offset_of!(AppWindow, surface_desc),
+            std::mem::offset_of!(AppWindow, surface),
+            std::mem::offset_of!(AppWindow, imgui),
+            std::mem::offset_of!(AppWindow, clear_color),
+            std::mem::offset_of!(AppWindow, offscreen),
+            std::mem::offset_of!(AppWindow, pending_capture),
+            std::mem::offset_of!(AppWindow, paint_sequence),
+        ],
+        [
+            std::mem::offset_of!(PreDiagnosticsAppWindow, instance),
+            std::mem::offset_of!(PreDiagnosticsAppWindow, device),
+            std::mem::offset_of!(PreDiagnosticsAppWindow, queue),
+            std::mem::offset_of!(PreDiagnosticsAppWindow, window),
+            std::mem::offset_of!(PreDiagnosticsAppWindow, surface_desc),
+            std::mem::offset_of!(PreDiagnosticsAppWindow, surface),
+            std::mem::offset_of!(PreDiagnosticsAppWindow, imgui),
+            std::mem::offset_of!(PreDiagnosticsAppWindow, clear_color),
+            std::mem::offset_of!(PreDiagnosticsAppWindow, offscreen),
+            std::mem::offset_of!(PreDiagnosticsAppWindow, pending_capture),
+            std::mem::offset_of!(PreDiagnosticsAppWindow, paint_sequence),
+        ]
+    );
+    assert_eq!(
+        [
+            std::mem::offset_of!(App<LayoutFrame>, cfg),
+            std::mem::offset_of!(App<LayoutFrame>, window),
+            std::mem::offset_of!(App<LayoutFrame>, pending),
+            std::mem::offset_of!(App<LayoutFrame>, lifecycle),
+            std::mem::offset_of!(App<LayoutFrame>, ui_frame),
+            std::mem::offset_of!(App<LayoutFrame>, on_gpu_shutdown),
+            std::mem::offset_of!(App<LayoutFrame>, shots),
+            std::mem::offset_of!(App<LayoutFrame>, last_wake),
+            std::mem::offset_of!(App<LayoutFrame>, failure),
+        ],
+        [
+            std::mem::offset_of!(PreDiagnosticsApp<LayoutFrame>, cfg),
+            std::mem::offset_of!(PreDiagnosticsApp<LayoutFrame>, window),
+            std::mem::offset_of!(PreDiagnosticsApp<LayoutFrame>, pending),
+            std::mem::offset_of!(PreDiagnosticsApp<LayoutFrame>, lifecycle),
+            std::mem::offset_of!(PreDiagnosticsApp<LayoutFrame>, ui_frame),
+            std::mem::offset_of!(PreDiagnosticsApp<LayoutFrame>, on_gpu_shutdown),
+            std::mem::offset_of!(PreDiagnosticsApp<LayoutFrame>, shots),
+            std::mem::offset_of!(PreDiagnosticsApp<LayoutFrame>, last_wake),
+            std::mem::offset_of!(PreDiagnosticsApp<LayoutFrame>, failure),
+        ]
     );
 }
 

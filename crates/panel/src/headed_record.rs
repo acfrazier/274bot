@@ -2808,7 +2808,6 @@ mod tests {
     }
 
     #[cfg(not(feature = "render-diagnostics"))]
-    #[allow(dead_code)]
     struct NonDiagnosticActiveRecordingLayout {
         sender: Arc<Mutex<Option<SyncSender<EncoderMessage>>>>,
         control: SyncSender<EncoderControl>,
@@ -2829,7 +2828,6 @@ mod tests {
     }
 
     #[cfg(not(feature = "render-diagnostics"))]
-    #[allow(dead_code)]
     struct NonDiagnosticHeadedRecordLayout {
         config: HeadedRecordConfig,
         pacer: RecordPacer,
@@ -2854,6 +2852,65 @@ mod tests {
             size_of::<HeadedRecord>(),
             size_of::<NonDiagnosticHeadedRecordLayout>(),
             "noninstrumented HeadedRecord has no diagnostic storage"
+        );
+
+        assert_eq!(
+            [
+                std::mem::offset_of!(ActiveRecording, sender),
+                std::mem::offset_of!(ActiveRecording, control),
+                std::mem::offset_of!(ActiveRecording, supervisor),
+                std::mem::offset_of!(ActiveRecording, outcome),
+                std::mem::offset_of!(ActiveRecording, mp4_path),
+                std::mem::offset_of!(ActiveRecording, fps),
+                std::mem::offset_of!(ActiveRecording, width),
+                std::mem::offset_of!(ActiveRecording, height),
+                std::mem::offset_of!(ActiveRecording, started),
+                std::mem::offset_of!(ActiveRecording, settings),
+                std::mem::offset_of!(ActiveRecording, settings_incomplete),
+                std::mem::offset_of!(ActiveRecording, failure),
+                std::mem::offset_of!(ActiveRecording, finish_timeout),
+                std::mem::offset_of!(ActiveRecording, queued),
+                std::mem::offset_of!(ActiveRecording, dropped),
+                std::mem::offset_of!(ActiveRecording, size_mismatch),
+            ],
+            [
+                std::mem::offset_of!(NonDiagnosticActiveRecordingLayout, sender),
+                std::mem::offset_of!(NonDiagnosticActiveRecordingLayout, control),
+                std::mem::offset_of!(NonDiagnosticActiveRecordingLayout, supervisor),
+                std::mem::offset_of!(NonDiagnosticActiveRecordingLayout, outcome),
+                std::mem::offset_of!(NonDiagnosticActiveRecordingLayout, mp4_path),
+                std::mem::offset_of!(NonDiagnosticActiveRecordingLayout, fps),
+                std::mem::offset_of!(NonDiagnosticActiveRecordingLayout, width),
+                std::mem::offset_of!(NonDiagnosticActiveRecordingLayout, height),
+                std::mem::offset_of!(NonDiagnosticActiveRecordingLayout, started),
+                std::mem::offset_of!(NonDiagnosticActiveRecordingLayout, settings),
+                std::mem::offset_of!(NonDiagnosticActiveRecordingLayout, settings_incomplete),
+                std::mem::offset_of!(NonDiagnosticActiveRecordingLayout, failure),
+                std::mem::offset_of!(NonDiagnosticActiveRecordingLayout, finish_timeout),
+                std::mem::offset_of!(NonDiagnosticActiveRecordingLayout, queued),
+                std::mem::offset_of!(NonDiagnosticActiveRecordingLayout, dropped),
+                std::mem::offset_of!(NonDiagnosticActiveRecordingLayout, size_mismatch),
+            ]
+        );
+        assert_eq!(
+            [
+                std::mem::offset_of!(HeadedRecord, config),
+                std::mem::offset_of!(HeadedRecord, pacer),
+                std::mem::offset_of!(HeadedRecord, gated),
+                std::mem::offset_of!(HeadedRecord, active),
+                std::mem::offset_of!(HeadedRecord, legacy_active),
+                std::mem::offset_of!(HeadedRecord, finalizing),
+                std::mem::offset_of!(HeadedRecord, done),
+            ],
+            [
+                std::mem::offset_of!(NonDiagnosticHeadedRecordLayout, config),
+                std::mem::offset_of!(NonDiagnosticHeadedRecordLayout, pacer),
+                std::mem::offset_of!(NonDiagnosticHeadedRecordLayout, gated),
+                std::mem::offset_of!(NonDiagnosticHeadedRecordLayout, active),
+                std::mem::offset_of!(NonDiagnosticHeadedRecordLayout, legacy_active),
+                std::mem::offset_of!(NonDiagnosticHeadedRecordLayout, finalizing),
+                std::mem::offset_of!(NonDiagnosticHeadedRecordLayout, done),
+            ]
         );
 
         let (sender, receiver) = sync_channel::<EncoderMessage>(2);

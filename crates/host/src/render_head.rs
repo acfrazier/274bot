@@ -965,7 +965,6 @@ mod tests {
     #[cfg(not(feature = "render-diagnostics"))]
     #[test]
     fn non_diagnostic_head_preserves_its_baseline_owner_layout() {
-        #[allow(dead_code)]
         struct BaselineHead {
             lease: Option<HeadLease>,
             identity: HeadIdentity,
@@ -987,6 +986,40 @@ mod tests {
         assert_eq!(
             std::mem::align_of::<Head>(),
             std::mem::align_of::<BaselineHead>()
+        );
+
+        assert_eq!(
+            [
+                std::mem::offset_of!(Head, lease),
+                std::mem::offset_of!(Head, identity),
+                std::mem::offset_of!(Head, wake),
+                std::mem::offset_of!(Head, output),
+                std::mem::offset_of!(Head, scenes),
+                std::mem::offset_of!(Head, renderer),
+                std::mem::offset_of!(Head, prefer_cpu),
+                std::mem::offset_of!(Head, lowmem),
+            ],
+            [
+                std::mem::offset_of!(BaselineHead, lease),
+                std::mem::offset_of!(BaselineHead, identity),
+                std::mem::offset_of!(BaselineHead, wake),
+                std::mem::offset_of!(BaselineHead, output),
+                std::mem::offset_of!(BaselineHead, scenes),
+                std::mem::offset_of!(BaselineHead, renderer),
+                std::mem::offset_of!(BaselineHead, prefer_cpu),
+                std::mem::offset_of!(BaselineHead, lowmem),
+            ]
+        );
+        #[cfg(feature = "render-test-hooks")]
+        assert_eq!(
+            [
+                std::mem::offset_of!(Head, fair),
+                std::mem::offset_of!(Head, budget),
+            ],
+            [
+                std::mem::offset_of!(BaselineHead, fair),
+                std::mem::offset_of!(BaselineHead, budget),
+            ]
         );
     }
 
