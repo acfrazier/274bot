@@ -943,14 +943,14 @@ fn wait_ready(iso: &LoadIsolate) {
 #[test]
 fn warmed_client_frame_dispatches_allocate_nothing_per_frame() {
     let mut iso = LoadIsolate::spawn(
-        "globalThis.__rs2b0t_native_event_on('frame', () => {}); export function tick(api) {}".into(),
+        "export function tick(api) {}".into(),
         LoadShape::NativeTick,
         vec![],
     )
     .unwrap();
     wait_ready(&iso);
-    iso.frame_interest
-        .store(1, std::sync::atomic::Ordering::Release);
+    iso.probe("__rs2b0t_native_event_on('frame', () => {})")
+        .unwrap();
     for _ in 0..8 {
         assert!(iso.on_client_frame());
     }
