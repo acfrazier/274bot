@@ -335,6 +335,19 @@ Classify compiler-only or test-only changed hunks in the task report when
 they have no game behavior to exercise. Keep their compile or test proof.
 Do not hide a whole production file in `not_live` for such a change.
 
+Exact core rows use named headless commands for workspace registration,
+selected-cache facts and controlled host scheduling states. Those commands
+are not game witnesses. In particular, revision-274 quest facts do not prove
+revision-274 gameplay.
+
+`host.quest-watch-seed-engine-q` proves only the unstarted seed, bank, relog
+and final logout. It does not start or qualify the campaign quest. Its speed
+helpers have controlled tests; Engine Q speed changes remain forbidden.
+
+The navigation positive cells must use a pack with the matching nonempty
+quest-family identity. A stale or unbound pack cannot substitute for those
+positive runs.
+
 ## Add a cell
 
 1. Write and run the live cell against real game content. Do not seed the target resource or entity.

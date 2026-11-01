@@ -679,3 +679,168 @@ globs = ["crates/script-js/src/compat/production.rs"]
 cells = [
   "compat.make-x-clock-adapter|${ISOHOME:?} nice -n 10 cargo test --release --locked -p script-js --features test-hooks --lib production::compat::tests::make_x_adapter_keeps_the_frozen_count_and_menu_waits -- --exact --nocapture --test-threads=1",
 ]
+
+# Exact core classifications approved by Main.
+# Controlled headless proof is not a game witness.
+
+# No gameplay can exercise workspace membership or its lock entry. Full calculator targets prove the registered tool, without pretending a game witness.
+# Controlled proof, not a game witness: seed-calc.headless.
+[[cover]]
+globs = ["Cargo.lock"]
+cells = [
+  "seed-calc.headless|${ISOHOME:?} nice -n 10 cargo test --locked -p seed-calc --all-targets -- --nocapture --test-threads=1|--locked -p seed-calc --all-targets --",
+]
+
+# No gameplay can exercise workspace membership or its lock entry. Full calculator targets prove the registered tool, without pretending a game witness.
+# Controlled proof, not a game witness: seed-calc.headless.
+[[cover]]
+globs = ["Cargo.toml"]
+cells = [
+  "seed-calc.headless|${ISOHOME:?} nice -n 10 cargo test --locked -p seed-calc --all-targets -- --nocapture --test-threads=1|--locked -p seed-calc --all-targets --",
+]
+
+# Exact verified selected-family values are offline catalog facts. No 274 engine/pack has been authorized in this lane; native Quester itself refuses 274. New test pins both revisions, raw IDs10/131, signals and completion8/9.
+# Controlled proof, not a game witness: api.quest-facts-headless.
+# Limit: Not 274 gameplay proof; full API suite remains mandatory after D6.
+[[cover]]
+globs = ["crates/api/data/game-data/274/quests.json"]
+cells = [
+  "api.quest-facts-headless|${ISOHOME:?} nice -n 10 cargo test --locked -p api --lib quest_facts:: -- --nocapture --test-threads=1|--locked -p api --lib quest_facts:: --",
+]
+
+# The reexport has no game action. Its actual verifier is checked against the bake, on both selected revisions.
+# Controlled proof, not a game witness: api.quest-facts-headless.
+[[cover]]
+globs = ["crates/api/src/quest_facts.rs"]
+cells = [
+  "api.quest-facts-headless|${ISOHOME:?} nice -n 10 cargo test --locked -p api --lib quest_facts:: -- --nocapture --test-threads=1|--locked -p api --lib quest_facts:: --",
+]
+
+# Wrong/absent identity must be refused before gameplay, so controlled typed identity tests prove it; real gate cell also loads the valid selected pack.
+# Controlled proof, not a game witness: api.quest-facts-headless, nav.quest-family-admission-headless.
+# Owed live positives: host.nav-quest-doors; require the matching W3 quest-bound pack named in wave-1.md.
+# Limit: Live positive must use the final matching quest-bound pack; a stale or unbound pack is not a matching Some(family) positive.
+[[cover]]
+globs = ["crates/api/src/quest_facts/cache.rs"]
+cells = [
+  "api.quest-facts-headless|${ISOHOME:?} nice -n 10 cargo test --locked -p api --lib quest_facts:: -- --nocapture --test-threads=1|--locked -p api --lib quest_facts:: --",
+  "nav.quest-family-admission-headless|${ISOHOME:?} nice -n 10 cargo test --locked -p nav-planner --lib quest_gates::tests:: -- --nocapture --test-threads=1|--locked -p nav-planner --lib quest_gates::tests:: --",
+  "host.nav-quest-doors|LIVE=1 BOT_LIVE_NAME_PREFIX=${BOT_LIVE_NAME_PREFIX:?} BOT_CPU=1 BOT_NAV_BUILD=skip BOT_CACHE_DIR=${BOT_CACHE_DIR:?} BOT_NAV_SNAPSHOT_ROOT=${NAV_SNAPSHOT_ROOT_289:?} WORLD_ENGINE_DIR=${ENGINE_A_DIR:?} WORLD_NAV_PACK=${NAV_PACK_289:?} NAV_QUEST_DOORS_EVIDENCE=${LIVE_EVIDENCE_DIR:?} ${ISOHOME:?} nice -n 10 cargo test --locked -p host-play --features live-harness,test-support,live-probe --test nav_quest_doors_live -- --ignored --exact live_fortress_disguise_and_secret_wall_use_content_navigation --nocapture --test-threads=1|--locked -p host-play --features live-harness,test-support,live-probe --test nav_quest_doors_live -- --ignored --exact live_fortress_disguise_and_secret_wall_use_content_navigation",
+]
+
+# Canonical signal/bounds tests and controlled quest-list colours cover exact range semantics and unknown evidence; existing live journal cell covers ordinary observed progress flow.
+# Controlled proof, not a game witness: api.quest-facts-headless, api.quest-list-bounds-headless.
+# Limit: Controlled bounds are not an exhaustive gameplay witness.
+[[cover]]
+globs = ["crates/api/src/quest_facts/catalog.rs"]
+cells = [
+  "api.quest-facts-headless|${ISOHOME:?} nice -n 10 cargo test --locked -p api --lib quest_facts:: -- --nocapture --test-threads=1|--locked -p api --lib quest_facts:: --",
+  "api.quest-list-bounds-headless|${ISOHOME:?} nice -n 10 cargo test --locked -p api --lib quest_progress::quest_list_tests:: -- --nocapture --test-threads=1|--locked -p api --lib quest_progress::quest_list_tests:: --",
+  "host.script-progress-journal|LIVE=1 BOT_LIVE_NAME_PREFIX=${BOT_LIVE_NAME_PREFIX:?} BOT_CPU=1 BOT_NAV_BUILD=skip BOT_GAME_PORT=44594 BOT_HTTP_PORT=1080 WORLD_ENGINE_DIR=${ENGINE_A_DIR:?} WORLD_NAV_PACK=${NAV_PACK_289:?} NAV_PACK=${NAV_PACK_289:?} NAV_FLAGS=${NAV_FLAGS_289:?} BOT_CACHE_DIR=${BOT_CACHE_DIR:?} BOT_EVIDENCE_DIR=${LIVE_EVIDENCE_DIR:?} ${ISOHOME:?} nice -n 10 cargo test --locked -p host-play --features live-harness,test-support,live-probe --test script_api_live -- --ignored --exact script_api_progress_journal --nocapture --test-threads=1|--locked -p host-play --features live-harness,test-support,live-probe --test script_api_live -- --ignored --exact script_api_progress_journal",
+]
+
+# The changed declaration ships no runtime code. Its real driver is nevertheless exercised by the exact watch seed cell.
+# Live primitive proof only: Engine Q untouched seed/bank/relog/final logout; no quest-body witness.
+[[cover]]
+globs = ["crates/host-play/src/lib.rs"]
+cells = [
+  "host.quest-watch-seed-engine-q|LIVE=1 BOT_LIVE_NAME_PREFIX=${BOT_LIVE_NAME_PREFIX:?} BOT_CPU=1 BOT_NAV_BUILD=skip BOT_GAME_PORT=44694 BOT_HTTP_PORT=1180 BOT_ENGINE_DIR=${ENGINE_Q_DIR:?} BOT_NAV_PACK=${NAV_PACK_289:?} LIVE_EVIDENCE_DIR=${LIVE_EVIDENCE_DIR:?} QUEST_WATCH_ACCOUNT=${BOT_LIVE_NAME_PREFIX:?}qw QUEST_WATCH_PASSWORD=test QUEST_WATCH_SCENARIO=quest_watch_seed QUEST_WATCH_SEED=${PWD}/crates/host-play/tests/fixtures/quest-watch/priest.json ${ISOHOME:?} env -u QUESTER_TICK_MS -u QUESTER_SPEED_RESTORE nice -n 10 cargo test --locked -p host-play --features live-harness,test-support,live-probe --lib -- --ignored --exact quest_watch_live_tests::live_quest_watch_seed --nocapture --test-threads=1|--locked -p host-play --features live-harness,test-support,live-probe --lib -- --ignored --exact quest_watch_live_tests::live_quest_watch_seed",
+]
+
+# Existing catalog-start cells traverse JS and compiled catalog starts, not a disconnected load-only proxy.
+# Controlled proof, not a game witness: host.catalog-start-headless.
+# Limit: Game cells provide normal catalog-start integration. The exact consumed JS failure is a controlled real Start-handle regression, not a deterministic gameplay failure.
+[[cover]]
+globs = ["crates/host-play/src/live_start.rs"]
+cells = [
+  "tui.live-jive-kq|LIVE=1 BOT_LIVE_NAME_PREFIX=${BOT_LIVE_NAME_PREFIX:?} BOT_CPU=1 BOT_NAV_BUILD=skip BOT_GAME_PORT=44594 BOT_HTTP_PORT=1080 ENGINE_DIR=${ENGINE_A_DIR:?} NAV_PACK=${NAV_PACK_289:?} NAV_FLAGS=${NAV_FLAGS_289:?} WORLD_ENGINE_DIR=${ENGINE_A_DIR:?} WORLD_NAV_PACK=${NAV_PACK_289:?} RS2B0T=${CATALOG_ROOT:?} CATALOG_ROOT=${CATALOG_ROOT:?} LIVE_EVIDENCE_DIR=${LIVE_EVIDENCE_DIR:?} ${ISOHOME:?} nice -n 10 cargo run --release -p tui --bin tui-play -- --profile local-289 --revision 289 --host 127.0.0.1 --port 44594 --asset-host 127.0.0.1 --http-port 1080 --engine ${ENGINE_A_DIR:?} --nav-pack ${NAV_PACK_289:?} --nav-flags ${NAV_FLAGS_289:?} --catalog ${CATALOG_ROOT:?} --live script_jive_kq_four|--locked -p tui --lib bin::tests::live_prepare_jive_kq_stashes_four_starts_with_the_same_roster",
+  "scenario.quester-engine-q|LIVE=1 BOT_LIVE_NAME_PREFIX=${BOT_LIVE_NAME_PREFIX:?} BOT_CPU=1 BOT_NAV_BUILD=skip BOT_GAME_PORT=44694 BOT_HTTP_PORT=1180 ENGINE_DIR=${ENGINE_Q_DIR:?} NAV_PACK=${NAV_PACK_289:?} NAV_FLAGS=${NAV_FLAGS_289:?} WORLD_ENGINE_DIR=${ENGINE_Q_DIR:?} WORLD_NAV_PACK=${NAV_PACK_289:?} WORLD_NAV_FLAGS=${NAV_FLAGS_289:?} NAV_ARRIVAL_PACK=${NAV_PACK_289:?} RS2B0T=${CATALOG_ROOT:?} CATALOG_ROOT=${CATALOG_ROOT:?} LIVE_EVIDENCE_DIR=${LIVE_EVIDENCE_DIR:?} ${ISOHOME:?} env -u QUESTER_TICK_MS -u QUESTER_SPEED_RESTORE nice -n 10 cargo run --release -p tui --features frontend-core/test-support --bin tui-play -- --profile local-289 --revision 289 --host 127.0.0.1 --port 44694 --asset-host 127.0.0.1 --http-port 1180 --engine ${ENGINE_Q_DIR:?} --nav-pack ${NAV_PACK_289:?} --nav-flags ${NAV_FLAGS_289:?} --catalog ${CATALOG_ROOT:?} --live script_quester_cook|--locked -p scenario --lib scenarios::quester::tests::quester_stage_stands_after_the_relog",
+  "host.catalog-start-headless|${ISOHOME:?} nice -n 10 cargo test --locked -p host-play --features live-harness,test-support,live-probe --lib live_start::tests:: -- --nocapture --test-threads=1|--locked -p host-play --features live-harness,test-support,live-probe --lib live_start::tests:: --",
+]
+
+# Selected identity and mismatch refusal are controlled before-login proofs; existing gate cells provide valid-pack integration.
+# Controlled proof, not a game witness: api.quest-facts-headless, nav.quest-family-admission-headless.
+# Owed live positives: host.nav-quest-doors, host.nav-gated-entrances; require the matching W3 quest-bound pack named in wave-1.md.
+# Limit: Final live pack must carry a matching quest-family identity; legacy None skips this guard and is not sufficient proof.
+[[cover]]
+globs = ["crates/host-play/src/profile_binding.rs"]
+cells = [
+  "api.quest-facts-headless|${ISOHOME:?} nice -n 10 cargo test --locked -p api --lib quest_facts:: -- --nocapture --test-threads=1|--locked -p api --lib quest_facts:: --",
+  "nav.quest-family-admission-headless|${ISOHOME:?} nice -n 10 cargo test --locked -p nav-planner --lib quest_gates::tests:: -- --nocapture --test-threads=1|--locked -p nav-planner --lib quest_gates::tests:: --",
+  "host.nav-quest-doors|LIVE=1 BOT_LIVE_NAME_PREFIX=${BOT_LIVE_NAME_PREFIX:?} BOT_CPU=1 BOT_NAV_BUILD=skip BOT_CACHE_DIR=${BOT_CACHE_DIR:?} BOT_NAV_SNAPSHOT_ROOT=${NAV_SNAPSHOT_ROOT_289:?} WORLD_ENGINE_DIR=${ENGINE_A_DIR:?} WORLD_NAV_PACK=${NAV_PACK_289:?} NAV_QUEST_DOORS_EVIDENCE=${LIVE_EVIDENCE_DIR:?} ${ISOHOME:?} nice -n 10 cargo test --locked -p host-play --features live-harness,test-support,live-probe --test nav_quest_doors_live -- --ignored --exact live_fortress_disguise_and_secret_wall_use_content_navigation --nocapture --test-threads=1|--locked -p host-play --features live-harness,test-support,live-probe --test nav_quest_doors_live -- --ignored --exact live_fortress_disguise_and_secret_wall_use_content_navigation",
+  "host.nav-gated-entrances|LIVE=1 BOT_LIVE_NAME_PREFIX=${BOT_LIVE_NAME_PREFIX:?} BOT_CPU=1 BOT_NAV_BUILD=skip BOT_CACHE_DIR=${BOT_CACHE_DIR:?} BOT_NAV_SNAPSHOT_ROOT=${NAV_SNAPSHOT_ROOT_289:?} WORLD_ENGINE_DIR=${ENGINE_A_DIR:?} WORLD_NAV_PACK=${NAV_PACK_289:?} NAV_GATED_ENTRANCES_EVIDENCE=${LIVE_EVIDENCE_DIR:?} ${ISOHOME:?} nice -n 10 cargo test --locked -p host-play --features live-harness,test-support,live-probe --test nav_gated_entrances_live -- --ignored --exact live_grand_tree_mine_requires_quest_completion_and_reaches_resources --nocapture --test-threads=1|--locked -p host-play --features live-harness,test-support,live-probe --test nav_gated_entrances_live -- --ignored --exact live_grand_tree_mine_requires_quest_completion_and_reaches_resources",
+]
+
+# Existing real bank-return sessions traverse queue_bank and the replacement walk scope.
+[[cover]]
+globs = ["crates/host-play/src/script_bank.rs"]
+cells = [
+  "host.bank-fetch-session|LIVE=1 BOT_LIVE_NAME_PREFIX=${BOT_LIVE_NAME_PREFIX:?} BOT_CPU=1 BOT_NAV_BUILD=skip GATHERER_GAME_PORT=44594 GATHERER_HTTP_PORT=1080 GATHERER_NAV_PACK=${NAV_PACK_289:?} GATHERER_NAV_FLAGS=${NAV_FLAGS_289:?} GATHERER_ENGINE_DIR=${ENGINE_A_DIR:?} GATHERER_CATALOG_ROOT=${CATALOG_ROOT:?} BOT_CACHE_DIR=${BOT_CACHE_DIR:?} CLIENT_UNPACK_DIR=${CLIENT_UNPACK_DIR:?} LIVE_EVIDENCE_DIR=${LIVE_EVIDENCE_DIR:?} ${ISOHOME:?} nice -n 10 cargo test --locked -p host-play --features live-harness,test-support,live-probe --lib -- --ignored live_fetch_closed_session_port_sarim_to_karamja --nocapture --test-threads=1|--locked -p host-play --features live-harness,test-support,live-probe --lib -- --ignored live_fetch_closed_session_port_sarim_to_karamja",
+  "compat.bank-core-loop|LIVE=1 BOT_LIVE_NAME_PREFIX=${BOT_LIVE_NAME_PREFIX:?} BOT_CPU=1 BOT_NAV_BUILD=skip GATHERER_GAME_PORT=44594 GATHERER_HTTP_PORT=1080 GATHERER_NAV_PACK=${NAV_PACK_289:?} GATHERER_NAV_FLAGS=${NAV_FLAGS_289:?} GATHERER_ENGINE_DIR=${ENGINE_A_DIR:?} GATHERER_CATALOG_ROOT=${CATALOG_ROOT:?} BOT_CACHE_DIR=${BOT_CACHE_DIR:?} CLIENT_UNPACK_DIR=${CLIENT_UNPACK_DIR:?} LIVE_EVIDENCE_DIR=${LIVE_EVIDENCE_DIR:?} ${ISOHOME:?} nice -n 10 cargo test --locked -p host-play --features live-harness,test-support,live-probe --lib -- --ignored --exact bank_core_live::live_bank_core_compat_gathering_bank_loop_at_draynor --nocapture --test-threads=1|--locked -p host-play --features live-harness,test-support,live-probe --lib -- --ignored --exact bank_core_live::live_bank_core_compat_gathering_bank_loop_at_draynor",
+]
+
+# Real fixed-prefix watch cell proves empty exact seed, target unstarted, bank proof, relogs and saved logout. Builder tests cover malformed/unknown inputs and the exact seed-to-Start campaign construction. Controlled runner tests cover fresh speed acknowledgement/restoration; no speed game scenario is proposed.
+# Controlled proof, not a game witness: scenario.quest-watch-builder-headless, scenario.world-speed-headless.
+# Live primitive proof only: Engine Q untouched seed/bank/relog/final logout; no quest-body witness.
+# Limit: Do not run speed scenario: Engine Q speed changes are forbidden. Seed cell does not qualify a campaign quest; full draft runs remain campaign-owned.
+[[cover]]
+globs = ["crates/scenario/src/quest_watch.rs"]
+cells = [
+  "host.quest-watch-seed-engine-q|LIVE=1 BOT_LIVE_NAME_PREFIX=${BOT_LIVE_NAME_PREFIX:?} BOT_CPU=1 BOT_NAV_BUILD=skip BOT_GAME_PORT=44694 BOT_HTTP_PORT=1180 BOT_ENGINE_DIR=${ENGINE_Q_DIR:?} BOT_NAV_PACK=${NAV_PACK_289:?} LIVE_EVIDENCE_DIR=${LIVE_EVIDENCE_DIR:?} QUEST_WATCH_ACCOUNT=${BOT_LIVE_NAME_PREFIX:?}qw QUEST_WATCH_PASSWORD=test QUEST_WATCH_SCENARIO=quest_watch_seed QUEST_WATCH_SEED=${PWD}/crates/host-play/tests/fixtures/quest-watch/priest.json ${ISOHOME:?} env -u QUESTER_TICK_MS -u QUESTER_SPEED_RESTORE nice -n 10 cargo test --locked -p host-play --features live-harness,test-support,live-probe --lib -- --ignored --exact quest_watch_live_tests::live_quest_watch_seed --nocapture --test-threads=1|--locked -p host-play --features live-harness,test-support,live-probe --lib -- --ignored --exact quest_watch_live_tests::live_quest_watch_seed",
+  "scenario.quest-watch-builder-headless|${ISOHOME:?} nice -n 10 cargo test --locked -p scenario --lib quest_watch::tests:: -- --nocapture --test-threads=1|--locked -p scenario --lib quest_watch::tests:: --",
+  "scenario.world-speed-headless|${ISOHOME:?} nice -n 10 cargo test --locked -p scenario --lib world_speed -- --nocapture --test-threads=1|--locked -p scenario --lib world_speed --",
+]
+
+# A live world-speed mutation is forbidden on Engine Q. Controlled runner tests prove exactly one initial command, zero restoration after pass/failure, original terminal result, and unchanged default behavior.
+# Controlled proof, not a game witness: scenario.world-speed-headless.
+# Limit: No live speed-mutation witness; not a waiver to change Engine Q ticks.
+[[cover]]
+globs = ["crates/scenario/src/runner.rs"]
+cells = [
+  "scenario.world-speed-headless|${ISOHOME:?} nice -n 10 cargo test --locked -p scenario --lib world_speed -- --nocapture --test-threads=1|--locked -p scenario --lib world_speed --",
+]
+
+# Exact shortage and once-only status text require controlled inventory/bank evidence; real provisioning cells do not deterministically force both shortages.
+# Controlled proof, not a game witness: script.optional-provision-headless.
+# Limit: Headless proves both NoSupply/NoRoom and no per-poll repeated line, not a new NPC interaction.
+[[cover]]
+globs = ["crates/script/src/acquire/plan.rs"]
+cells = [
+  "script.optional-provision-headless|${ISOHOME:?} nice -n 10 cargo test --locked -p script --features test-hooks --lib quester::provision::tests:: -- --nocapture --test-threads=1|--locked -p script --features test-hooks --lib quester::provision::tests:: --",
+]
+
+# Held/refused host passes deliberately dispatch nothing. Controlled real-host observe passes and native hold-resume tests exercise unsent/drop/retry deterministically.
+# Controlled proof, not a game witness: host.unsent-talk-headless, script.held-resume-headless.
+# Limit: Not a game witness; injecting these host scheduling states would add a new fixture mechanism.
+[[cover]]
+globs = ["crates/script/src/native/owner.rs"]
+cells = [
+  "host.unsent-talk-headless|${ISOHOME:?} nice -n 10 cargo test --locked -p host-play --features live-harness,test-support,live-probe --lib tests::talk_dispatch:: -- --nocapture --test-threads=1|--locked -p host-play --features live-harness,test-support,live-probe --lib tests::talk_dispatch:: --",
+  "script.held-resume-headless|${ISOHOME:?} nice -n 10 cargo test --locked -p script --features test-hooks --lib quester::families::tests::hold_resume_tests:: -- --nocapture --test-threads=1|--locked -p script --features test-hooks --lib quester::families::tests::hold_resume_tests:: --",
+]
+
+# Controlled host envelope tests cover custody/refusal/retirement; existing real item-on-anvil family covers dispatched native production.
+# Controlled proof, not a game witness: host.server-ordered-headless.
+# Limit: Native production positive is not claimed as a forced host-drop game witness.
+[[cover]]
+globs = ["crates/script/src/native/server_ordered.rs"]
+cells = [
+  "host.server-ordered-headless|${ISOHOME:?} nice -n 10 cargo test --locked -p host-play --features live-harness,test-support,live-probe --lib tests::server_ordered:: -- --nocapture --test-threads=1|--locked -p host-play --features live-harness,test-support,live-probe --lib tests::server_ordered:: --",
+  "host.quester-bronze-wire-anvil-engine-q|LIVE=1 BOT_LIVE_NAME_PREFIX=${BOT_LIVE_NAME_PREFIX:?} BOT_CPU=1 BOT_NAV_BUILD=skip WORLD_GAME_PORT=44694 WORLD_HTTP_PORT=1180 WORLD_ENGINE_DIR=${ENGINE_Q_DIR:?} WORLD_NAV_PACK=${NAV_PACK_289:?} RS2B0T=${CATALOG_ROOT:?} BOT_CACHE_DIR=${BOT_CACHE_DIR:?} LIVE_EVIDENCE_DIR=${LIVE_EVIDENCE_DIR:?} ${ISOHOME:?} env -u QUESTER_TICK_MS -u QUESTER_SPEED_RESTORE nice -n 10 cargo test --locked -p host-play --features live-harness,test-support,live-probe --test quester_families_live -- --ignored --exact live_quester_families_bronze_bar_on_anvil_makes_wire --nocapture --test-threads=1|--locked -p host-play --features live-harness,test-support,live-probe --test quester_families_live -- --ignored --exact live_quester_families_bronze_bar_on_anvil_makes_wire",
+]
+
+# The existing distant-thieve route uses native walk correlation and its retained wait.
+[[cover]]
+globs = ["crates/script/src/native/walk_wait.rs"]
+cells = [
+  "host.quester-digsite-thieve-engine-q|LIVE=1 BOT_LIVE_NAME_PREFIX=${BOT_LIVE_NAME_PREFIX:?} BOT_CPU=1 BOT_NAV_BUILD=skip QUESTER_PATH=itexam QUESTER_SEEDS=${PWD}/crates/host-play/tests/fixtures/quester-path/itexam-thieve.json WORLD_GAME_PORT=44694 WORLD_HTTP_PORT=1180 WORLD_ENGINE_DIR=${ENGINE_Q_DIR:?} WORLD_NAV_PACK=${NAV_PACK_289:?} RS2B0T=${CATALOG_ROOT:?} BOT_CACHE_DIR=${BOT_CACHE_DIR:?} LIVE_EVIDENCE_DIR=${LIVE_EVIDENCE_DIR:?} ${ISOHOME:?} env -u QUESTER_TICK_MS -u QUESTER_SPEED_RESTORE nice -n 10 cargo test --locked -p host-play --features live-harness,test-support,live-probe --test quester_path_live -- --ignored --exact live_quester_path_smoke --nocapture --test-threads=1|--locked -p host-play --features live-harness,test-support,live-probe --test quester_path_live -- --ignored --exact live_quester_path_smoke",
+]
+
+# The diff is cfg(test) only. The real key handler and 80x24 TestBackend prove the complete refusal label and prevent readding/persisting a draft, without a game session.
+# Controlled proof, not a game witness: tui.draft-picker-headless.
+# Limit: This is controlled UI proof, not a gameplay witness.
+[[cover]]
+globs = ["crates/tui/src/script_params.rs"]
+cells = [
+  "tui.draft-picker-headless|${ISOHOME:?} nice -n 10 cargo test --locked -p tui --lib script_params::tests::draft_picks_and_priorities_are_refused_by_the_real_tui_picker -- --exact --nocapture --test-threads=1|--locked -p tui --lib script_params::tests::draft_picks_and_priorities_are_refused_by_the_real_tui_picker -- --exact",
+]
