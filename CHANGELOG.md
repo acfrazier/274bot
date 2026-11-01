@@ -20,9 +20,11 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.8` 
 - Pack-bound searches keep the bounded unreachable-goal proof until a
   reachability-atlas proof replaces it, so an unreachable goal is refused after
   the same few thousand nodes as with a `274V17` pack.
-- The pack baker and the pack reader now refuse an atlas with a missing or
-  short chunk directory, so the baker cannot write a pack that the reader
-  refuses. Developer and CI test packs use the `274V18` reference bake
+- The pack baker and the pack reader now check every atlas table with the same
+  functions, so the baker cannot write a pack that the reader refuses. This
+  includes a missing or short chunk directory, a chunk bit width above the
+  minimum for its palette, a chunk palette range past the palette, and an empty
+  paint run. Developer and CI test packs use the `274V18` reference bake
   (`nav-reference-v18`); the `274V17` reference is no longer read.
 
 ## [0.2.8] — 2026-10-29 — Beta 2

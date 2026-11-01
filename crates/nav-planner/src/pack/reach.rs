@@ -1,12 +1,14 @@
 //! v18 reachability section codec: labels, graph, placements, and stands.
 
 use crate::reachability::{
-    chunk_cells, chunk_side, palette_bit_width, AtlasGeometry, CellRun, Chunk, ClosureRun,
+    check_base_tables, check_cell_runs, check_chunk, check_closure_run, check_coverage_rows,
+    check_csr_shape, check_geometry_constants, check_geometry_shape, check_placement_rows,
+    check_stand_order, check_stand_rows, AtlasGeometry, CellRun, Chunk, ClosureRun,
     ConditionalJoin, CoverageRow, ExceptionalTransition, PlacementRow, ReachabilityAtlas,
     SessionTemplate, StandRow, TeleportTemplate,
 };
 
-use super::coord::{unpack_tile_key, KEY_LEVELS};
+use super::coord::unpack_tile_key;
 use super::{read_u32, PackError, PackRead};
 
 const LABELS_KINDS: [u32; 8] = [1, 2, 3, 4, 5, 6, 7, 8];
@@ -231,11 +233,7 @@ fn table_bytes(payload: &[u8], ent: DirEnt) -> Result<&[u8], PackError> {
 
 fn encode_labels(atlas: &ReachabilityAtlas) -> Result<Vec<u8>, PackError> {
     let g = &atlas.geometry;
-    if g.planes != KEY_LEVELS as u32 || g.chunk_side != chunk_side() {
-        return Err(PackError::BadLength(
-            "atlas geometry planes or chunk side is not v18".into(),
-        ));
-    }
+    check_geometry_constants(g)?;
     let mut geometry = Vec::with_capacity(24);
     geometry.extend_from_slice(&g.origin_x.to_le_bytes());
     geometry.extend_from_slice(&g.origin_z.to_le_bytes());
@@ -295,37 +293,23 @@ fn encode_labels(atlas: &ReachabilityAtlas) -> Result<Vec<u8>, PackError> {
 
 fn decode_labels(payload: &[u8]) -> Result<ReachabilityAtlas, PackError> {
     let (ents, _) = decode_directory(payload, &LABELS_KINDS, &LABELS_STRIDES)?;
-    let geometry = table_bytes(payload, ents[0])?;
-    if geometry.len() != 24 {
+    let row = table_bytes(payload, ents[0])?;
+    if row.len() != 24 {
         return Err(PackError::BadLength(
             "atlas geometry table must have one 24-byte row".into(),
         ));
     }
-    let origin_x = i32_at(geometry, 0)?;
-    let origin_z = i32_at(geometry, 4)?;
-    let width = u32_at(geometry, 8)?;
-    let height = u32_at(geometry, 12)?;
-    let planes = u32_at(geometry, 16)?;
-    let side = u32_at(geometry, 20)?;
-    if planes != KEY_LEVELS as u32 || side != chunk_side() {
-        return Err(PackError::BadLength(
-            "atlas geometry planes must be 4 and chunk side 64".into(),
-        ));
-    }
-    if width == 0 || height == 0 {
-        return Err(PackError::BadLength("atlas geometry is empty".into()));
-    }
+    let geometry = AtlasGeometry {
+        origin_x: i32_at(row, 0)?,
+        origin_z: i32_at(row, 4)?,
+        width: u32_at(row, 8)?,
+        height: u32_at(row, 12)?,
+        planes: u32_at(row, 16)?,
+        chunk_side: u32_at(row, 20)?,
+    };
     let chunk_bytes = table_bytes(payload, ents[1])?;
-    let expected_chunks = (KEY_LEVELS as u32)
-        .checked_mul(height.div_ceil(chunk_side()))
-        .and_then(|n| n.checked_mul(width.div_ceil(chunk_side())))
-        .ok_or_else(|| PackError::BadLength("atlas chunk count overflows".into()))?;
-    if ents[1].count != expected_chunks {
-        return Err(PackError::BadLength(
-            "atlas chunk directory count does not match geometry".into(),
-        ));
-    }
-    let mut chunks = Vec::with_capacity(expected_chunks as usize);
+    check_geometry_shape(&geometry, ents[1].count as usize)?;
+    let mut chunks = Vec::with_capacity(ents[1].count as usize);
     for row in chunk_bytes.as_chunks::<20>().0 {
         if row[17] != 0 || row[18] != 0 || row[19] != 0 {
             return Err(PackError::BadLength(
@@ -347,74 +331,10 @@ fn decode_labels(payload: &[u8]) -> Result<ReachabilityAtlas, PackError> {
     }
     let indexes = table_bytes(payload, ents[3])?.to_vec();
     for chunk in &chunks {
-        let want = palette_bit_width(chunk.palette_count)?;
-        if chunk.bit_width != want {
-            return Err(PackError::BadLength(
-                "atlas chunk bit width is not the minimum for its palette".into(),
-            ));
-        }
-        let pal_end = chunk
-            .palette_start
-            .checked_add(chunk.palette_count)
-            .ok_or_else(|| PackError::BadLength("atlas palette range overflows".into()))?;
-        if pal_end as usize > palette.len() {
-            return Err(PackError::BadLength(
-                "atlas chunk palette range is out of bounds".into(),
-            ));
-        }
-        if chunk.palette_count > 1 {
-            let slice = &palette[chunk.palette_start as usize..pal_end as usize];
-            if slice.windows(2).any(|pair| pair[0] >= pair[1]) {
-                return Err(PackError::BadLength(
-                    "atlas chunk palette is not sorted unique".into(),
-                ));
-            }
-        }
-        let index_end = chunk
-            .index_start
-            .checked_add(chunk.index_len)
-            .ok_or_else(|| PackError::BadLength("atlas index range overflows".into()))?;
-        if index_end as usize > indexes.len() {
-            return Err(PackError::BadLength(
-                "atlas chunk index range is out of bounds".into(),
-            ));
-        }
-        if chunk.bit_width == 0 {
-            if chunk.index_len != 0 {
-                return Err(PackError::BadLength(
-                    "uniform atlas chunk must have empty index payload".into(),
-                ));
-            }
-        } else {
-            let bits = chunk_cells()
-                .checked_mul(usize::from(chunk.bit_width))
-                .ok_or_else(|| PackError::BadLength("atlas index bits overflow".into()))?;
-            if chunk.index_len as usize != bits.div_ceil(8) {
-                return Err(PackError::BadLength(
-                    "atlas chunk index length is not exact for its bit width".into(),
-                ));
-            }
-            let unused = chunk.index_len as usize * 8 - bits;
-            if unused > 0 {
-                let last = indexes[index_end as usize - 1];
-                let mask = !0u8 << (8 - unused);
-                if last & mask != 0 {
-                    return Err(PackError::BadLength(
-                        "atlas index payload has unused high bits set".into(),
-                    ));
-                }
-            }
-        }
+        check_chunk(chunk, &palette, &indexes)?;
     }
     Ok(ReachabilityAtlas {
-        geometry: AtlasGeometry {
-            origin_x,
-            origin_z,
-            width,
-            height,
-            planes,
-            chunk_side: side,
-        },
+        geometry,
         chunks: chunks.into_boxed_slice(),
         palette: palette.into_boxed_slice(),
         indexes: indexes.into_boxed_slice(),
@@ -439,19 +359,13 @@ fn decode_labels(payload: &[u8]) -> Result<ReachabilityAtlas, PackError> {
 
 fn read_coverage(bytes: &[u8]) -> Result<Box<[CoverageRow]>, PackError> {
     let mut rows = Vec::with_capacity(bytes.len() / 8);
-    let mut last = None;
     for row in bytes.as_chunks::<8>().0 {
-        let tile = u32_at(row, 0)?;
-        unpack_tile_key(tile)?;
-        let reason = u32_at(row, 4)?;
-        if last.is_some_and(|prev| (tile, reason) <= prev) {
-            return Err(PackError::BadLength(
-                "atlas coverage rows must be sorted unique tile/reason pairs".into(),
-            ));
-        }
-        last = Some((tile, reason));
-        rows.push(CoverageRow { tile, reason });
+        rows.push(CoverageRow {
+            tile: u32_at(row, 0)?,
+            reason: u32_at(row, 4)?,
+        });
     }
+    check_coverage_rows(&rows)?;
     Ok(rows.into_boxed_slice())
 }
 
@@ -474,23 +388,13 @@ fn read_exceptional(bytes: &[u8]) -> Result<Box<[ExceptionalTransition]>, PackEr
 
 fn read_runs(bytes: &[u8]) -> Result<Box<[CellRun]>, PackError> {
     let mut rows = Vec::with_capacity(bytes.len() / 8);
-    let mut next = 0u64;
     for row in bytes.as_chunks::<8>().0 {
-        let first = u32_at(row, 0)?;
-        let count = u32_at(row, 4)?;
-        if count == 0 {
-            return Err(PackError::BadLength("atlas run count is zero".into()));
-        }
-        if u64::from(first) < next {
-            return Err(PackError::BadLength(
-                "atlas runs must be sorted disjoint maximal".into(),
-            ));
-        }
-        next = u64::from(first)
-            .checked_add(u64::from(count))
-            .ok_or_else(|| PackError::BadLength("atlas run end overflows".into()))?;
-        rows.push(CellRun { first, count });
+        rows.push(CellRun {
+            first: u32_at(row, 0)?,
+            count: u32_at(row, 4)?,
+        });
     }
+    check_cell_runs(&rows)?;
     Ok(rows.into_boxed_slice())
 }
 
@@ -570,11 +474,7 @@ fn decode_graph(payload: &[u8], atlas: &mut ReachabilityAtlas) -> Result<(), Pac
     let (ents, _) = decode_directory(payload, &GRAPH_KINDS, &GRAPH_STRIDES)?;
     atlas.base_to_condensed = decode_u32_table(table_bytes(payload, ents[0])?)?;
     atlas.base_sizes = decode_u32_table(table_bytes(payload, ents[1])?)?;
-    if atlas.base_to_condensed.len() != atlas.base_sizes.len() {
-        return Err(PackError::BadLength(
-            "atlas base map and size tables differ in length".into(),
-        ));
-    }
+    check_base_tables(&atlas.base_to_condensed, &atlas.base_sizes)?;
     atlas.movement_offsets = decode_u32_table(table_bytes(payload, ents[2])?)?;
     atlas.movement_runs = read_closure_runs(table_bytes(payload, ents[3])?)?;
     atlas.transport_offsets = decode_u32_table(table_bytes(payload, ents[4])?)?;
@@ -583,79 +483,38 @@ fn decode_graph(payload: &[u8], atlas: &mut ReachabilityAtlas) -> Result<(), Pac
     atlas.conditional_joins = read_joins(table_bytes(payload, ents[7])?)?;
     atlas.teleports = read_teleports(table_bytes(payload, ents[8])?)?;
     atlas.sessions = read_sessions(table_bytes(payload, ents[9])?)?;
-    let base_count = atlas.base_to_condensed.len() as u32;
-    let condensed = atlas.condensed_count();
-    check_csr(
+    let base_count = atlas.base_to_condensed.len();
+    let condensed = atlas.condensed_count() as usize;
+    check_csr_shape(
         &atlas.movement_offsets,
-        atlas.movement_runs.len() as u32,
+        atlas.movement_runs.len(),
         base_count,
         "movement",
     )?;
-    check_csr(
+    check_csr_shape(
         &atlas.transport_offsets,
-        atlas.transport_runs.len() as u32,
+        atlas.transport_runs.len(),
         condensed,
         "transport",
     )?;
-    check_csr(
+    check_csr_shape(
         &atlas.conditional_offsets,
-        atlas.conditional_joins.len() as u32,
+        atlas.conditional_joins.len(),
         condensed,
         "conditional",
     )?;
-    for &id in atlas.base_to_condensed.iter() {
-        if id >= condensed && condensed != 0 {
-            return Err(PackError::BadLength(
-                "base component maps to a missing condensed id".into(),
-            ));
-        }
-        if condensed == 0 && id != 0 {
-            return Err(PackError::BadLength(
-                "empty atlas has a nonzero condensed id".into(),
-            ));
-        }
-    }
-    Ok(())
-}
-
-fn check_csr(
-    offsets: &[u32],
-    target_count: u32,
-    row_count: u32,
-    what: &str,
-) -> Result<(), PackError> {
-    if offsets.len() != row_count as usize + 1 {
-        return Err(PackError::BadLength(format!(
-            "atlas {what} CSR offsets must be row_count + 1"
-        )));
-    }
-    if offsets.first().copied() != Some(0) {
-        return Err(PackError::BadLength(format!(
-            "atlas {what} CSR offsets must start at zero"
-        )));
-    }
-    if offsets.last().copied() != Some(target_count) {
-        return Err(PackError::BadLength(format!(
-            "atlas {what} CSR offsets must end at the target table count"
-        )));
-    }
-    if offsets.windows(2).any(|pair| pair[1] < pair[0]) {
-        return Err(PackError::BadLength(format!(
-            "atlas {what} CSR offsets must be monotonic"
-        )));
-    }
     Ok(())
 }
 
 fn read_closure_runs(bytes: &[u8]) -> Result<Box<[ClosureRun]>, PackError> {
     let mut rows = Vec::with_capacity(bytes.len() / 8);
     for row in bytes.as_chunks::<8>().0 {
-        let first = u32_at(row, 0)?;
-        let count = u32_at(row, 4)?;
-        if count == 0 {
-            return Err(PackError::BadLength("atlas closure run is empty".into()));
-        }
-        rows.push(ClosureRun { first, count });
+        let run = ClosureRun {
+            first: u32_at(row, 0)?,
+            count: u32_at(row, 4)?,
+        };
+        check_closure_run(&run)?;
+        rows.push(run);
     }
     Ok(rows.into_boxed_slice())
 }
@@ -723,30 +582,12 @@ fn decode_placements(payload: &[u8], atlas: &mut ReachabilityAtlas) -> Result<()
     let (ents, _) = decode_directory(payload, &ONE_KIND, &PLACEMENT_STRIDE)?;
     let bytes = table_bytes(payload, ents[0])?;
     let mut rows = Vec::with_capacity(bytes.len() / 24);
-    let mut last = None;
     for row in bytes.as_chunks::<24>().0 {
-        let origin = u32_at(row, 0)?;
-        let tile = unpack_tile_key(origin)?;
-        let loc_id = i32_at(row, 4)?;
-        let shape = row[8];
-        let angle = row[9];
-        if angle > 3 {
-            return Err(PackError::BadLength(
-                "placement angle is outside 0..3".into(),
-            ));
-        }
-        let key = (tile.level, tile.x, tile.z, loc_id, shape, angle);
-        if last.is_some_and(|prev| key <= prev) {
-            return Err(PackError::BadLength(
-                "placements must be sorted unique".into(),
-            ));
-        }
-        last = Some(key);
         rows.push(PlacementRow {
-            origin,
-            loc_id,
-            shape,
-            angle,
+            origin: u32_at(row, 0)?,
+            loc_id: i32_at(row, 4)?,
+            shape: row[8],
+            angle: row[9],
             coverage: row[10],
             trigger: row[11],
             stand_start: u32_at(row, 12)?,
@@ -754,6 +595,7 @@ fn decode_placements(payload: &[u8], atlas: &mut ReachabilityAtlas) -> Result<()
             detail: u32_at(row, 20)?,
         });
     }
+    check_placement_rows(&rows)?;
     atlas.placements = rows.into_boxed_slice();
     Ok(())
 }
@@ -772,31 +614,15 @@ fn decode_stands(payload: &[u8], atlas: &mut ReachabilityAtlas) -> Result<(), Pa
     let bytes = table_bytes(payload, ents[0])?;
     let mut rows = Vec::with_capacity(bytes.len() / 8);
     for row in bytes.as_chunks::<8>().0 {
-        let tile = u32_at(row, 0)?;
-        unpack_tile_key(tile)?;
-        let base = u32_at(row, 4)?;
-        if !atlas.base_to_condensed.is_empty() && base >= atlas.base_count() {
-            return Err(PackError::BadLength(
-                "stand component is out of range".into(),
-            ));
-        }
-        rows.push(StandRow { tile, base });
+        rows.push(StandRow {
+            tile: u32_at(row, 0)?,
+            base: u32_at(row, 4)?,
+        });
     }
+    check_stand_rows(&rows, atlas.base_to_condensed.len())?;
     atlas.stands = rows.into_boxed_slice();
     for place in atlas.placements.iter() {
-        let start = place.stand_start as usize;
-        let end = start
-            .checked_add(place.stand_count as usize)
-            .ok_or_else(|| PackError::BadLength("placement stand range overflows".into()))?;
-        let slice = atlas
-            .stands
-            .get(start..end)
-            .ok_or_else(|| PackError::BadLength("placement stand range is out of bounds".into()))?;
-        if slice.windows(2).any(|pair| pair[0].tile >= pair[1].tile) {
-            return Err(PackError::BadLength(
-                "placement stands must be sorted unique tiles".into(),
-            ));
-        }
+        check_stand_order(atlas.stands_for(place)?)?;
     }
     Ok(())
 }
@@ -805,7 +631,12 @@ fn decode_stands(payload: &[u8], atlas: &mut ReachabilityAtlas) -> Result<(), Pa
 mod tests {
     use super::{decode_atlas_sections, encode_atlas_sections};
     use crate::collision::{pack_walk, WorldCollision};
-    use crate::reachability::ReachabilityAtlas;
+    use crate::pack::{pack_tile_key, PackError};
+    use crate::reachability::{
+        CellRun, Chunk, ClosureRun, CoverageRow, PlacementRow, ReachabilityAtlas, StandRow,
+        PLACEMENT_COMPLETE, TRIGGER_OP,
+    };
+    use crate::transport::TransportGraph;
     use api::snapshot::WorldTile;
     use std::io::Cursor;
 
@@ -844,5 +675,256 @@ mod tests {
                 .unwrap(),
             None
         );
+    }
+
+    fn key() -> u32 {
+        pack_tile_key(WorldTile {
+            x: 3200,
+            z: 3200,
+            level: 0,
+        })
+        .unwrap()
+    }
+
+    /// One base component, no placements: the control both sides accept.
+    fn one_component() -> ReachabilityAtlas {
+        let mut atlas = ReachabilityAtlas::unlabeled(&tiny_collision()).unwrap();
+        atlas.base_to_condensed = Box::from([0]);
+        atlas.base_sizes = Box::from([1]);
+        atlas.movement_offsets = Box::from([0, 1]);
+        atlas.movement_runs = Box::from([ClosureRun { first: 0, count: 1 }]);
+        atlas.transport_offsets = Box::from([0, 1]);
+        atlas.transport_runs = Box::from([ClosureRun { first: 0, count: 1 }]);
+        atlas.conditional_offsets = Box::from([0, 0]);
+        atlas
+    }
+
+    fn placement() -> PlacementRow {
+        PlacementRow {
+            origin: key(),
+            loc_id: 42,
+            shape: 0,
+            angle: 0,
+            coverage: PLACEMENT_COMPLETE,
+            trigger: TRIGGER_OP,
+            stand_start: 0,
+            stand_count: 0,
+            detail: 0,
+        }
+    }
+
+    /// The atlas the producer validates and the reader decodes. A refusal
+    /// must carry the same message on both sides.
+    fn verdicts(atlas: &ReachabilityAtlas) -> (Result<(), String>, Result<(), String>) {
+        let message = |error: PackError| match error {
+            PackError::BadLength(message) => message,
+            other => format!("{other:?}"),
+        };
+        let produced = atlas
+            .validate(&tiny_collision(), &TransportGraph::default())
+            .map_err(message);
+        let bytes = encode_atlas_sections(atlas).unwrap();
+        let read = decode_atlas_sections(&mut Cursor::new(bytes.as_slice()))
+            .map(|_| ())
+            .map_err(message);
+        (produced, read)
+    }
+
+    /// Every table invariant the reader checks while it decodes is checked by
+    /// `validate` with the same message, so the writer (which calls
+    /// `validate`) cannot produce what the reader refuses. Each case breaks
+    /// exactly one invariant of a table the reader checks itself.
+    #[test]
+    fn validate_and_the_reader_refuse_the_same_tables() {
+        assert_eq!(verdicts(&one_component()), (Ok(()), Ok(())));
+        type Break = fn(&mut ReachabilityAtlas);
+        let cases: &[(&str, Break, &str)] = &[
+            (
+                "bit width above the minimum",
+                |a| a.chunks[0].bit_width = 1,
+                "bit width is not the minimum",
+            ),
+            (
+                "palette range past the palette",
+                |a| a.chunks[0].palette_start = 1,
+                "palette range is out of bounds",
+            ),
+            (
+                "unsorted palette",
+                |a| {
+                    a.palette = Box::from([1, 0]);
+                    a.indexes = vec![0; 512].into_boxed_slice();
+                    a.chunks[0] = Chunk {
+                        palette_start: 0,
+                        palette_count: 2,
+                        index_start: 0,
+                        index_len: 512,
+                        bit_width: 1,
+                    };
+                },
+                "palette is not sorted unique",
+            ),
+            (
+                "index range past the index table",
+                |a| {
+                    a.chunks[0] = Chunk {
+                        palette_start: 0,
+                        palette_count: 2,
+                        index_start: 0,
+                        index_len: 512,
+                        bit_width: 1,
+                    };
+                    a.palette = Box::from([0, 1]);
+                },
+                "index range is out of bounds",
+            ),
+            (
+                "uniform chunk with an index payload",
+                |a| {
+                    a.indexes = Box::from([0]);
+                    a.chunks[0].index_len = 1;
+                },
+                "uniform atlas chunk must have empty index payload",
+            ),
+            (
+                "inexact index length",
+                |a| {
+                    a.palette = Box::from([0, 1]);
+                    a.indexes = vec![0; 512].into_boxed_slice();
+                    a.chunks[0] = Chunk {
+                        palette_start: 0,
+                        palette_count: 2,
+                        index_start: 0,
+                        index_len: 511,
+                        bit_width: 1,
+                    };
+                },
+                "index length is not exact",
+            ),
+            (
+                "zero-count paint run",
+                |a| a.legacy_paint = Box::from([CellRun { first: 0, count: 0 }]),
+                "atlas run count is zero",
+            ),
+            (
+                "overlapping scatter runs",
+                |a| {
+                    a.scatter = Box::from([
+                        CellRun { first: 0, count: 2 },
+                        CellRun { first: 1, count: 1 },
+                    ]);
+                },
+                "sorted disjoint maximal",
+            ),
+            (
+                "unsorted coverage rows",
+                |a| {
+                    let tile = key();
+                    a.coverage = Box::from([
+                        CoverageRow { tile, reason: 3 },
+                        CoverageRow { tile, reason: 2 },
+                    ]);
+                },
+                "sorted unique tile/reason pairs",
+            ),
+            (
+                "unknown coverage reason",
+                |a| {
+                    a.coverage = Box::from([CoverageRow {
+                        tile: key(),
+                        reason: 9,
+                    }]);
+                },
+                "unknown reason",
+            ),
+            (
+                "base map and size tables differ",
+                |a| a.base_sizes = Box::from([]),
+                "differ in length",
+            ),
+            (
+                "movement offsets not from zero to the run count",
+                |a| a.movement_offsets = Box::from([0, 0]),
+                "movement CSR offsets",
+            ),
+            (
+                "transport offsets of the wrong length",
+                |a| a.transport_offsets = Box::from([0]),
+                "transport CSR offsets",
+            ),
+            (
+                "conditional offsets of the wrong length",
+                |a| a.conditional_offsets = Box::from([0]),
+                "conditional CSR offsets",
+            ),
+            (
+                "empty closure run",
+                |a| a.movement_runs = Box::from([ClosureRun { first: 0, count: 0 }]),
+                "closure run is empty",
+            ),
+            (
+                "placement angle past 3",
+                |a| {
+                    a.placements = Box::from([PlacementRow {
+                        angle: 4,
+                        ..placement()
+                    }]);
+                },
+                "angle is outside 0..3",
+            ),
+            (
+                "duplicate placements",
+                |a| a.placements = Box::from([placement(), placement()]),
+                "placements must be sorted unique",
+            ),
+            (
+                "stand component past the base count",
+                |a| a.stands = Box::from([StandRow { tile: key(), base: 5 }]),
+                "stand component is out of range",
+            ),
+            (
+                "duplicate stand tiles in one placement",
+                |a| {
+                    a.placements = Box::from([PlacementRow {
+                        stand_count: 2,
+                        ..placement()
+                    }]);
+                    a.stands = Box::from([
+                        StandRow { tile: key(), base: 0 },
+                        StandRow { tile: key(), base: 0 },
+                    ]);
+                },
+                "placement stands must be sorted unique tiles",
+            ),
+            (
+                "stand range past the stand table",
+                |a| {
+                    a.placements = Box::from([PlacementRow {
+                        stand_count: 1,
+                        ..placement()
+                    }]);
+                },
+                "stand range is out of bounds",
+            ),
+            (
+                "short chunk directory",
+                |a| {
+                    let mut chunks = a.chunks.to_vec();
+                    chunks.pop();
+                    a.chunks = chunks.into_boxed_slice();
+                },
+                "chunk directory count does not match geometry",
+            ),
+        ];
+        for (name, break_it, wanted) in cases {
+            let mut atlas = one_component();
+            break_it(&mut atlas);
+            let (produced, read) = verdicts(&atlas);
+            let Err(produced_message) = &produced else {
+                panic!("{name}: validate accepted a table the reader refuses ({read:?})");
+            };
+            assert!(produced_message.contains(wanted), "{name}: {produced_message}");
+            assert_eq!(produced, read, "{name}");
+        }
     }
 }

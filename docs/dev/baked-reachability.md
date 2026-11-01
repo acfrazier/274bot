@@ -119,7 +119,8 @@ to the goals that landing serves.
 
 CSR offsets start at zero, are monotonic, and end at the target table count.
 Each run is nonempty and in bounds. Closure runs are sorted, disjoint, maximal,
-and include the owning component. Every base id maps to an existing condensed id.
+and include the owning component. The condensed count is the largest condensed id
+plus one, so every base id maps to an existing condensed id.
 The empty world has zero base/condensed components and one zero CSR offset.
 Component sizes count covered tiles only. A component id is never a route cost.
 
@@ -158,17 +159,42 @@ test in `crates/nav-bake/src/transport_tests.rs` audits every baked placement.
 Both decoding forms and the sizing path implement this complete layout.
 Malformed lengths, keys, geometry, palettes, ids, ranges, references, or ordering
 produce typed `PackError`. Decode never constructs labels or floods connectivity.
-`ReachabilityAtlas::validate` checks, for the decoders, the sizing path and the
-baker alike: the atlas geometry equals the collision grid and has 4 planes and
-chunk side 64; the chunk directory has exactly one row per plane and chunk
-(an empty or short directory is refused); every table stride
-equals the schema; palette labels name existing components; closure runs are in
-bounds, sorted, disjoint, maximal and include their owner; conditional joins,
-exceptional rows, teleport templates and session templates name existing graph
-edges, teleports and components; coverage rows are sorted unique tile/reason
-pairs; placements keep known coverage and trigger values, and every stand
-component equals the labels lookup. The baker refuses to publish an atlas that
-fails, so the writer cannot produce what the reader refuses.
+
+Every table invariant has one definition, in
+`crates/nav-planner/src/reachability/validate.rs`. The reader calls those same
+`check_*` functions while it decodes each table, and `ReachabilityAtlas::validate`
+calls them again with the checks that need the collision grid or transport graph.
+The decoders, the sizing path and the baker all run `validate`, and the writer
+(`encode_with_atlas`) refuses an atlas that fails it, so the writer cannot produce
+a pack that the reader refuses. The table invariants are:
+
+- Geometry: 4 planes, chunk side 64, a nonempty extent, and one chunk directory
+  row per plane and chunk (an empty or short directory is refused).
+- Each chunk: bit width equal to the minimum for its palette count; palette range
+  in bounds and sorted unique; index range in bounds; index length exact for the
+  bit width (zero for a uniform chunk); no stray high bits in the last byte.
+- Legacy paint and scatter runs: nonempty, sorted, disjoint.
+- Coverage rows: valid tile keys, known reasons, sorted unique tile/reason pairs.
+- The component map and the size table have the same length. Each CSR offset
+  table has `rows + 1` monotonic offsets from zero to its run or join count.
+  Closure runs are nonempty.
+- Placements: valid origin keys, angles 0..3, sorted unique. Stand rows: valid
+  tile keys and an existing base component. Each placement's stand range is in
+  bounds, sorted by packed tile, and duplicate-free.
+
+Only `validate` has the checks that need other tables or the grid: the atlas
+geometry equals the collision grid; runs lie inside the grid; palette labels name
+existing components; closure runs are in bounds, sorted, disjoint, maximal and
+include their owner; conditional joins, exceptional rows, teleport templates and
+session templates name existing graph edges, teleports and components; session
+and teleport reasons are known; placements keep known coverage, trigger and
+detail values; and every stand component equals the labels lookup. The reader
+runs these too, through `validate`, after it decodes. The framing checks (the
+table directory kinds, strides, contiguity and length, reserved bytes) belong to
+the reader alone: the writer cannot emit them wrongly.
+The test `validate_and_the_reader_refuse_the_same_tables` in
+`crates/nav-planner/src/pack/reach.rs` breaks each table invariant in turn and
+requires `validate` and the reader to refuse it with the same message.
 A v17 pack receives the typed version failure after the BR2 cut. There is no
 v17-to-v18 runtime migration, partial reach-only pack, or straight-line fallback.
 The release bake publishes the combined pack and rebound manifest/sidecars once.

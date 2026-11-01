@@ -4,6 +4,12 @@
 
 mod validate;
 
+pub(crate) use validate::{
+    check_base_tables, check_cell_runs, check_chunk, check_closure_run, check_coverage_rows,
+    check_csr_shape, check_geometry_constants, check_geometry_shape, check_placement_rows,
+    check_stand_order, check_stand_rows,
+};
+
 use api::snapshot::WorldTile;
 
 use crate::collision::WorldCollision;

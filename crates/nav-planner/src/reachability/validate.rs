@@ -2,11 +2,18 @@
 //! transport graph it ships with. The baker checks its own atlas with
 //! [`ReachabilityAtlas::validate`] before it publishes one, and both decoders
 //! check the atlas they read. Every failure is a typed [`PackError`].
+//!
+//! One definition of each table invariant. The `check_*` functions below are
+//! `pub(crate)`: the pack reader (`pack::reach`) calls the same functions
+//! while it decodes each table that `validate` checks afterwards, so the
+//! writer cannot accept a table the reader refuses. A new reader refusal goes
+//! here, never into the reader alone.
 
 use api::query::loc_approach::{loc_reach_strategy, LocReachStrategy};
 
 use super::{
-    ClosureRun, ReachabilityAtlas, CHUNK_SIDE, COVERAGE_EXCEPTIONAL_LANDING,
+    chunk_cells, palette_bit_width, AtlasGeometry, CellRun, Chunk, ClosureRun, CoverageRow,
+    PlacementRow, ReachabilityAtlas, StandRow, CHUNK_SIDE, COVERAGE_EXCEPTIONAL_LANDING,
     COVERAGE_UNKNOWN_CONTENT, COVERAGE_UNMATCHED_JOIN, PLACEMENT_COMPLETE,
     PLACEMENT_UNKNOWN_CONTENT, SESSION_ESSENCE_EXIT, TRIGGER_CONTENT_STATE,
 };
@@ -31,11 +38,12 @@ fn csr_row<'a, T>(offsets: &[u32], items: &'a [T], row: usize) -> Result<&'a [T]
         .ok_or_else(|| bad("atlas CSR row is out of bounds"))
 }
 
-fn check_csr_shape(
+/// CSR offsets: `rows + 1` of them, from zero, monotonic, ending at the item count.
+pub(crate) fn check_csr_shape(
     offsets: &[u32],
     items: usize,
     rows: usize,
-    what: &'static str,
+    what: &str,
 ) -> Result<(), PackError> {
     if offsets.len() != rows + 1
         || offsets.first() != Some(&0)
@@ -45,6 +53,172 @@ fn check_csr_shape(
         return Err(PackError::BadLength(format!(
             "atlas {what} CSR offsets are not monotonic from zero to the table count"
         )));
+    }
+    Ok(())
+}
+
+/// Planes, chunk side and extent of the atlas geometry.
+pub(crate) fn check_geometry_constants(g: &AtlasGeometry) -> Result<(), PackError> {
+    if g.planes != KEY_LEVELS as u32 || g.chunk_side != CHUNK_SIDE {
+        return Err(bad("atlas geometry planes must be 4 and chunk side 64"));
+    }
+    if g.width == 0 || g.height == 0 {
+        return Err(bad("atlas geometry is empty"));
+    }
+    Ok(())
+}
+
+/// Planes, chunk side and extent, then exactly one directory row per plane and chunk.
+pub(crate) fn check_geometry_shape(g: &AtlasGeometry, chunks: usize) -> Result<(), PackError> {
+    check_geometry_constants(g)?;
+    let side = u64::from(CHUNK_SIDE);
+    let expected_chunks = KEY_LEVELS as u64
+        * u64::from(g.height).div_ceil(side)
+        * u64::from(g.width).div_ceil(side);
+    if chunks as u64 != expected_chunks {
+        return Err(bad("atlas chunk directory count does not match geometry"));
+    }
+    Ok(())
+}
+
+/// One chunk against the palette and index tables: minimum bit width, palette
+/// range in bounds and sorted unique, index range in bounds, exact index
+/// length, and no stray bits past the last cell.
+pub(crate) fn check_chunk(chunk: &Chunk, palette: &[u32], indexes: &[u8]) -> Result<(), PackError> {
+    let want = palette_bit_width(chunk.palette_count)?;
+    if chunk.bit_width != want {
+        return Err(bad("atlas chunk bit width is not the minimum for its palette"));
+    }
+    let pal_end = chunk
+        .palette_start
+        .checked_add(chunk.palette_count)
+        .ok_or_else(|| bad("atlas palette range overflows"))?;
+    if pal_end as usize > palette.len() {
+        return Err(bad("atlas chunk palette range is out of bounds"));
+    }
+    if chunk.palette_count > 1 {
+        let slice = &palette[chunk.palette_start as usize..pal_end as usize];
+        if slice.windows(2).any(|pair| pair[0] >= pair[1]) {
+            return Err(bad("atlas chunk palette is not sorted unique"));
+        }
+    }
+    let index_end = chunk
+        .index_start
+        .checked_add(chunk.index_len)
+        .ok_or_else(|| bad("atlas index range overflows"))?;
+    if index_end as usize > indexes.len() {
+        return Err(bad("atlas chunk index range is out of bounds"));
+    }
+    if chunk.bit_width == 0 {
+        if chunk.index_len != 0 {
+            return Err(bad("uniform atlas chunk must have empty index payload"));
+        }
+    } else {
+        let bits = chunk_cells()
+            .checked_mul(usize::from(chunk.bit_width))
+            .ok_or_else(|| bad("atlas index bits overflow"))?;
+        if chunk.index_len as usize != bits.div_ceil(8) {
+            return Err(bad("atlas chunk index length is not exact for its bit width"));
+        }
+        let unused = chunk.index_len as usize * 8 - bits;
+        if unused > 0 {
+            let last = indexes[index_end as usize - 1];
+            let mask = !0u8 << (8 - unused);
+            if last & mask != 0 {
+                return Err(bad("atlas index payload has unused high bits set"));
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Cell runs (legacy paint, scatter): nonempty, sorted and disjoint.
+pub(crate) fn check_cell_runs(runs: &[CellRun]) -> Result<(), PackError> {
+    let mut next = 0u64;
+    for run in runs {
+        if run.count == 0 {
+            return Err(bad("atlas run count is zero"));
+        }
+        if u64::from(run.first) < next {
+            return Err(bad("atlas runs must be sorted disjoint maximal"));
+        }
+        next = u64::from(run.first) + u64::from(run.count);
+    }
+    Ok(())
+}
+
+/// A closure run names at least one component.
+pub(crate) fn check_closure_run(run: &ClosureRun) -> Result<(), PackError> {
+    if run.count == 0 {
+        return Err(bad("atlas closure run is empty"));
+    }
+    Ok(())
+}
+
+/// The component map and the size table describe the same base components.
+pub(crate) fn check_base_tables(
+    base_to_condensed: &[u32],
+    base_sizes: &[u32],
+) -> Result<(), PackError> {
+    if base_to_condensed.len() != base_sizes.len() {
+        return Err(bad("atlas base map and size tables differ in length"));
+    }
+    Ok(())
+}
+
+/// Coverage rows: valid tile keys, known reasons, sorted unique tile/reason pairs.
+pub(crate) fn check_coverage_rows(rows: &[CoverageRow]) -> Result<(), PackError> {
+    let mut previous = None;
+    for row in rows {
+        unpack_tile_key(row.tile)?;
+        if !known_reason(row.reason) {
+            return Err(bad("atlas coverage row has an unknown reason"));
+        }
+        if previous.is_some_and(|prev| (row.tile, row.reason) <= prev) {
+            return Err(bad(
+                "atlas coverage rows must be sorted unique tile/reason pairs",
+            ));
+        }
+        previous = Some((row.tile, row.reason));
+    }
+    Ok(())
+}
+
+/// Placement rows: valid origin keys, angles 0..3, sorted unique by
+/// `(plane, x, z, loc id, shape, angle)`.
+pub(crate) fn check_placement_rows(rows: &[PlacementRow]) -> Result<(), PackError> {
+    let mut last = None;
+    for row in rows {
+        let tile = unpack_tile_key(row.origin)?;
+        if row.angle > 3 {
+            return Err(bad("placement angle is outside 0..3"));
+        }
+        let key = (
+            tile.level, tile.x, tile.z, row.loc_id, row.shape, row.angle,
+        );
+        if last.is_some_and(|prev| key <= prev) {
+            return Err(bad("placements must be sorted unique"));
+        }
+        last = Some(key);
+    }
+    Ok(())
+}
+
+/// Stand rows: valid tile keys, each naming an existing base component.
+pub(crate) fn check_stand_rows(rows: &[StandRow], base_count: usize) -> Result<(), PackError> {
+    for row in rows {
+        unpack_tile_key(row.tile)?;
+        if row.base as usize >= base_count {
+            return Err(bad("stand component is out of range"));
+        }
+    }
+    Ok(())
+}
+
+/// The stands of one placement are sorted by packed tile and duplicate-free.
+pub(crate) fn check_stand_order(stands: &[StandRow]) -> Result<(), PackError> {
+    if stands.windows(2).any(|pair| pair[0].tile >= pair[1].tile) {
+        return Err(bad("placement stands must be sorted unique tiles"));
     }
     Ok(())
 }
@@ -63,9 +237,7 @@ fn check_closures(
         let mut previous_end: Option<u64> = None;
         let mut includes_owner = false;
         for run in row {
-            if run.count == 0 {
-                return Err(bad("atlas closure run is empty"));
-            }
+            check_closure_run(run)?;
             let first = u64::from(run.first);
             let end = first + u64::from(run.count);
             if end > rows as u64 {
@@ -100,6 +272,7 @@ impl ReachabilityAtlas {
         graph: &TransportGraph,
     ) -> Result<(), PackError> {
         self.check_geometry(collision)?;
+        check_base_tables(&self.base_to_condensed, &self.base_sizes)?;
         let base_count = self.base_to_condensed.len();
         let condensed = self.condensed_count() as usize;
         self.check_labels(base_count)?;
@@ -117,6 +290,8 @@ impl ReachabilityAtlas {
         )?;
         self.check_joins(graph, condensed)?;
         self.check_rows(graph, base_count)?;
+        check_placement_rows(&self.placements)?;
+        check_stand_rows(&self.stands, base_count)?;
         self.check_placements(base_count)
     }
 
@@ -131,21 +306,9 @@ impl ReachabilityAtlas {
                 "atlas geometry does not match the collision grid it ships with",
             ));
         }
-        if g.planes != KEY_LEVELS as u32 || g.chunk_side != CHUNK_SIDE {
-            return Err(bad("atlas geometry planes must be 4 and chunk side 64"));
-        }
-        if g.width == 0 || g.height == 0 {
-            return Err(bad("atlas geometry is empty"));
-        }
-        // The reader requires exactly one directory row per plane and chunk.
-        // An empty or short directory is a pack its own reader refuses.
-        let side = u64::from(CHUNK_SIDE);
-        let expected_chunks = KEY_LEVELS as u64
-            * u64::from(g.height).div_ceil(side)
-            * u64::from(g.width).div_ceil(side);
-        if self.chunks.len() as u64 != expected_chunks {
-            return Err(bad("atlas chunk directory count does not match geometry"));
-        }
+        check_geometry_shape(g, self.chunks.len())?;
+        check_cell_runs(&self.legacy_paint)?;
+        check_cell_runs(&self.scatter)?;
         let plane = u64::from(g.width) * u64::from(g.height);
         for run in self.legacy_paint.iter() {
             if u64::from(run.first) + u64::from(run.count) > plane * 4 {
@@ -161,6 +324,9 @@ impl ReachabilityAtlas {
     }
 
     fn check_labels(&self, base_count: usize) -> Result<(), PackError> {
+        for chunk in self.chunks.iter() {
+            check_chunk(chunk, &self.palette, &self.indexes)?;
+        }
         if self
             .palette
             .iter()
@@ -198,22 +364,7 @@ impl ReachabilityAtlas {
     }
 
     fn check_rows(&self, graph: &TransportGraph, base_count: usize) -> Result<(), PackError> {
-        let known_reason = |reason: u32| {
-            (COVERAGE_UNKNOWN_CONTENT..=COVERAGE_EXCEPTIONAL_LANDING).contains(&reason)
-        };
-        let mut previous = None;
-        for row in self.coverage.iter() {
-            unpack_tile_key(row.tile)?;
-            if !known_reason(row.reason) {
-                return Err(bad("atlas coverage row has an unknown reason"));
-            }
-            if previous.is_some_and(|prev| (row.tile, row.reason) <= prev) {
-                return Err(bad(
-                    "atlas coverage rows must be sorted unique tile/reason pairs",
-                ));
-            }
-            previous = Some((row.tile, row.reason));
-        }
+        check_coverage_rows(&self.coverage)?;
         for row in self.exceptional.iter() {
             unpack_tile_key(row.source)?;
             unpack_tile_key(row.destination)?;
@@ -267,12 +418,14 @@ impl ReachabilityAtlas {
                         "atlas complete placement has a coverage detail or an unsupported shape",
                     ));
                 }
-            } else if !known_detail(row.detail) {
+            } else if !known_reason(row.detail) {
                 return Err(bad("atlas incomplete placement has no coverage detail"));
             }
-            for stand in self.stands_for(row)? {
+            let stands = self.stands_for(row)?;
+            check_stand_order(stands)?;
+            for stand in stands {
                 let tile = unpack_tile_key(stand.tile)?;
-                if stand.base as usize >= base_count || self.base_at(tile)? != Some(stand.base) {
+                if self.base_at(tile)? != Some(stand.base) {
                     return Err(bad("atlas stand component does not match the labels"));
                 }
             }
@@ -281,8 +434,8 @@ impl ReachabilityAtlas {
     }
 }
 
-fn known_detail(detail: u32) -> bool {
-    (COVERAGE_UNKNOWN_CONTENT..=COVERAGE_EXCEPTIONAL_LANDING).contains(&detail)
+fn known_reason(reason: u32) -> bool {
+    (COVERAGE_UNKNOWN_CONTENT..=COVERAGE_EXCEPTIONAL_LANDING).contains(&reason)
 }
 
 #[cfg(test)]
