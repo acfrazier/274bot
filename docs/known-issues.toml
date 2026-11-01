@@ -566,7 +566,7 @@ area = "Host"
 text = """Background work can stop for the rest of the session after one disk
   operation takes longer than 60 seconds. Restart 274bot to recover. A fix is
   planned for 0.2.9."""
-first = "0.2.6"
+first = "0.2.4"
 listed = "0.2.8"
 target = "0.2.9"
 severity = "medium"

@@ -89,6 +89,20 @@ preserves that typed error and abandons the unconsumed job. An already
 published terminal remains consumable without waiting. This refusal does
 not mark the service unavailable.
 
+G2b's WorkAdmission detector warns once when an active step has not returned
+for 60 seconds. Elapsed time alone does not make the service unavailable.
+A worker that never returns publishes `ProgressLost` only when the bounded
+shutdown wait expires, not while the application continues to run. Worker
+start failure and an uncontained worker panic still publish an immediate
+permanent condition. A late return never clears a published condition, and
+resource custody stays charged until actual return and terminal consumption.
+
+The slow-step warning is log-only. There is no persistent operator health
+banner for a worker that never returns; session file logging is optional.
+`WorkService::wait_terminal` and `PreparedTask::join` have no overall timeout
+for a pending preparation. Frontend callers check completion before joining,
+but a hung preparation can remain pending until process exit.
+
 `NativeTick` borrows the frame/evidence/pin/recovery views and the shared
 status/paint/log output. Native instances allocate no isolate. Status and paint
 are shared on change; focused detail retains rich status while fleet rows remain

@@ -78,6 +78,10 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.8` 
 
 ### Panel and terminal app
 
+- 274bot no longer shows "Background work is unavailable" and asks for a
+  restart when one disk operation takes longer than one minute. Background
+  work continues when that operation finishes.
+
 - Live catalog runs now report a JavaScript Start failure even if the
   frontend already read its result. A script that remains idle no longer
   counts as a settled Start. Start holds now log their reason once per

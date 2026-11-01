@@ -72,7 +72,7 @@ pub(crate) enum QualifiedUnit {
 pub const WORKER_STALL_LIMIT: Duration = Duration::from_secs(60);
 /// Maximum time shutdown waits for the worker to return and be joined.
 const WORKER_SHUTDOWN_LIMIT: Duration = Duration::from_secs(5);
-/// Interval between worker-health checks while waiting for work notifications.
+/// Interval between slow-step warning checks while waiting for notifications.
 const WORKER_HEALTH_RECHECK_INTERVAL: Duration = Duration::from_secs(1);
 /// Warn when one active step takes longer than this to return.
 const SLOW_STEP_WARNING_LIMIT: Duration = Duration::from_secs(5);
@@ -519,6 +519,11 @@ impl WorkService {
     /// Wait for a ticket's terminal from a non-pump context. The service
     /// mutex is released before each condition-variable wait. A wait for
     /// pending background work from this service's worker fails immediately.
+    ///
+    /// There is no overall timeout. Periodic checks warn about a slow step;
+    /// they do not declare an outage from elapsed time. A never-returning
+    /// preparation can remain pending until process exit. Pump callers check
+    /// completion before joining rather than waiting here.
     pub fn wait_terminal<F: WorkFamilySpec>(
         shared: &Arc<parking_lot::Mutex<Self>>,
         ticket: &WorkTicket<F>,
@@ -549,8 +554,8 @@ impl WorkService {
                 }
                 (Arc::clone(&service.shared.notifier), epoch)
             };
-            // Recheck health periodically, but never confuse a healthy busy
-            // queue with a worker that failed to return from its active step.
+            // Check for one slow-step warning periodically. Elapsed time does
+            // not settle the job or declare the background worker unavailable.
             notifier.wait_for_change(epoch, WORKER_HEALTH_RECHECK_INTERVAL);
         }
     }
