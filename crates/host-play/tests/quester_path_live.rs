@@ -214,7 +214,7 @@ fn arrav_smoke_pair(
             stage: Some("b:0"),
             loadout: None,
             extra_items: &[],
-            seed_vars: &[],
+            seed_vars: &[("blackarmgang", 0)],
             // blackarmgang.json b-tramp: maps/m50_52.jm2:8228.
             stand: WorldTile {
                 x: 3208,

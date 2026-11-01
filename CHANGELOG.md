@@ -66,7 +66,8 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.8` 
 - The Jonny stand smoke uses two real reciprocal Arrav accounts. Phoenix
   gathers its own fight food and advances through Jonny; its Black Arm partner
   follows the real Tramp/Katrine dialogue. No report or goal items are seeded.
-  Its normal regression also invokes each role's stateful Start observer.
+  Both roles use their own explicit starting varp, and the normal regression
+  invokes each role's stateful Start observer.
 
 ### Panel and terminal app
 
