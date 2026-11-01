@@ -189,6 +189,16 @@ pub struct Done {
     pub crossed: bool,
 }
 
+/// A read-only view for live proof receipts; no history is retained by the run.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct JournalAttempt {
+    /// Journal owners that began, including an owner that timed out.
+    pub attempts_started: u8,
+    pub owner_active: bool,
+    /// The observed tick of the retryable timeout, if one occurred.
+    pub retry_after: Option<u64>,
+}
+
 enum Phase {
     Resolve,
     Journal {
@@ -305,6 +315,25 @@ impl PrereqRun {
             Phase::Child { run, .. } => run.walk_handle(),
             _ => None,
         }
+    }
+    /// Observe this run's journal attempt without changing its owner or budget.
+    pub fn journal_attempt(&self) -> Option<JournalAttempt> {
+        let Phase::Journal {
+            handle,
+            retries_left,
+            retry_after,
+        } = &self.phase
+        else {
+            return None;
+        };
+        Some(JournalAttempt {
+            attempts_started: JOURNAL_TIMEOUT_RETRIES - retries_left
+                + u8::from(handle.is_some()),
+            owner_active: handle
+                .as_ref()
+                .is_some_and(|handle| handle.inspect(|_| ()).is_some()),
+            retry_after: *retry_after,
+        })
     }
     fn step(&self, row: &PrereqStep) -> PrereqStepIdentity {
         step_identity(row, &self.gate.crossing)

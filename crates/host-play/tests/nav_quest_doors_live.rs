@@ -31,7 +31,7 @@ use parking_lot::Mutex;
 use script::local_state::{SlotState, StatePort};
 use script::native::{NativeTick, PrereqAllow, Script, ScriptFailure, ScriptFlow};
 use script::quest_journal::{JournalMachine, ROOT_289, TITLE_289};
-use script::quester::prereq::run::{PrereqBudget, PrereqRun, RunEntry};
+use script::quester::prereq::run::{JournalAttempt, PrereqBudget, PrereqRun, RunEntry};
 use serde::Serialize;
 use serde_json::{json, Value};
 use vault::{Profile, ProfileSettings};
@@ -1113,10 +1113,123 @@ fn evidence_stamp_json(stamp: EvidenceStamp) -> Value {
     })
 }
 
+fn journal_attempt_receipt(
+    before: Option<JournalAttempt>,
+    after: Option<JournalAttempt>,
+    stamp: EvidenceStamp,
+    error: Option<&str>,
+    completed: bool,
+) -> Option<Value> {
+    if before.is_none() && after.is_none() {
+        return None;
+    }
+    let previous = before.map_or(0, |attempt| attempt.attempts_started);
+    let current = after.map_or(0, |attempt| attempt.attempts_started);
+    let started = previous.max(current);
+    let (event, attempt, failure) = if current > previous {
+        ("started", current, None)
+    } else if let Some(error) = error {
+        if before.is_some_and(|attempt| attempt.owner_active) {
+            ("failed", started, Some(error))
+        } else {
+            ("begin_failed", started + 1, Some(error))
+        }
+    } else if completed {
+        ("completed", started, None)
+    } else if before.is_some_and(|attempt| attempt.owner_active)
+        && after.is_some_and(|attempt| !attempt.owner_active && attempt.retry_after.is_some())
+    {
+        // The runner sets retry_after only for this exact native failure.
+        ("failed", started, Some("journal modal timeout"))
+    } else {
+        return None;
+    };
+    Some(json!({
+        "attempt": attempt,
+        "event": event,
+        "observed": evidence_stamp_json(stamp),
+        "failure": failure,
+        "retry_after_tick": after.and_then(|attempt| attempt.retry_after),
+    }))
+}
+
+#[test]
+fn journal_attempt_receipts_keep_timeout_retry_and_last_error() {
+    let stamp = |tick| EvidenceStamp {
+        run: api::selected::RunKey {
+            slot: 1,
+            run: 1,
+            session: 1,
+        },
+        tick,
+        sequence: tick,
+    };
+    let first = JournalAttempt {
+        attempts_started: 1,
+        owner_active: true,
+        retry_after: None,
+    };
+    let retry = JournalAttempt {
+        attempts_started: 1,
+        owner_active: false,
+        retry_after: Some(6),
+    };
+    let second = JournalAttempt {
+        attempts_started: 2,
+        owner_active: true,
+        retry_after: Some(6),
+    };
+    let started = journal_attempt_receipt(None, Some(first), stamp(1), None, false).unwrap();
+    assert_eq!(started["event"], "started");
+    assert_eq!(started["attempt"], 1);
+    let timeout =
+        journal_attempt_receipt(Some(first), Some(retry), stamp(6), None, false).unwrap();
+    assert_eq!(timeout["event"], "failed");
+    assert_eq!(timeout["failure"], "journal modal timeout");
+    assert_eq!(timeout["observed"]["tick"], 6);
+    assert!(
+        journal_attempt_receipt(Some(retry), Some(retry), stamp(6), None, false).is_none()
+    );
+    let restarted =
+        journal_attempt_receipt(Some(retry), Some(second), stamp(7), None, false).unwrap();
+    assert_eq!(restarted["event"], "started");
+    assert_eq!(restarted["attempt"], 2);
+    assert_eq!(restarted["retry_after_tick"], 6);
+    let failure = journal_attempt_receipt(
+        Some(second),
+        None,
+        stamp(8),
+        Some("the native action failed: journal click refused"),
+        false,
+    )
+    .unwrap();
+    assert_eq!(failure["event"], "failed");
+    assert_eq!(failure["attempt"], 2);
+    assert_eq!(
+        failure["failure"],
+        "the native action failed: journal click refused"
+    );
+    let begin_failed = journal_attempt_receipt(
+        Some(retry),
+        Some(retry),
+        stamp(7),
+        Some("journal facts are not prepared"),
+        false,
+    )
+    .unwrap();
+    assert_eq!(begin_failed["event"], "begin_failed");
+    assert_eq!(begin_failed["attempt"], 2);
+    let completed =
+        journal_attempt_receipt(Some(second), None, stamp(9), None, true).unwrap();
+    assert_eq!(completed["event"], "completed");
+    assert_eq!(completed["attempt"], 2);
+}
+
 #[derive(Default)]
 struct NativePrereqReport {
     finished: bool,
     attempts: Vec<Value>,
+    journal_attempts: Vec<Value>,
     unsupported: Vec<Value>,
     journal_pages: Vec<LiveJournalPage>,
     error: Option<String>,
@@ -1178,7 +1291,24 @@ impl Script for KitchenPrereqScript {
         };
 
         if let Some((gate, mut run)) = self.active.take() {
-            match run.poll(tick.actions, &mut tick.cx, Some(state), &mut self.budget) {
+            let before = run.journal_attempt();
+            let result = run.poll(tick.actions, &mut tick.cx, Some(state), &mut self.budget);
+            let after = run.journal_attempt();
+            let error = match &result {
+                Poll::Ready(Err(error)) => Some(format!("{error:?}")),
+                _ => None,
+            };
+            if let Some(mut receipt) = journal_attempt_receipt(
+                before,
+                after,
+                stamp,
+                error.as_deref(),
+                matches!(&result, Poll::Ready(Ok(_))),
+            ) {
+                receipt["gate"] = json!(&gate);
+                self.report.lock().journal_attempts.push(receipt);
+            }
+            match result {
                 Poll::Pending => {
                     self.active = Some((gate, run));
                     return Ok(ScriptFlow::Continue);
@@ -1199,10 +1329,10 @@ impl Script for KitchenPrereqScript {
                         return Ok(ScriptFlow::Complete);
                     }
                 }
-                Poll::Ready(Err(error)) => {
+                Poll::Ready(Err(_)) => {
                     let mut report = self.report.lock();
                     report.finished = true;
-                    report.error = Some(format!("{error:?}"));
+                    report.error = error;
                     report.current_stamp = Some(stamp);
                     report.unsupported = self.remaining.iter().map(|gate| json!(gate)).collect();
                     return Ok(ScriptFlow::Complete);
@@ -1771,6 +1901,7 @@ fn run_phoenix_native_and_crossing(
                 "partial": {
                     "driver": "script::quester::prereq::run::PrereqRun",
                     "attempts": &report_guard.attempts,
+                    "journal_attempts": &report_guard.journal_attempts,
                     "unsupported_gates": &report_guard.unsupported,
                     "session_memory": memory.facts().iter().map(fact_receipt).collect::<Vec<_>>(),
                     "journal_pages": report_guard.journal_pages.iter().map(page_receipt).collect::<Vec<_>>(),
@@ -1783,10 +1914,11 @@ fn run_phoenix_native_and_crossing(
             return Err("production prerequisite journal run timed out".into());
         }
         let lifecycle = play.script_lifecycle_receipt(account);
-        let (attempts, unsupported, pages, report_error, report_finished, current_stamp) = {
+        let (attempts, journal_attempts, unsupported, pages, report_error, report_finished, current_stamp) = {
             let report = report.lock();
             (
                 report.attempts.clone(),
+                report.journal_attempts.clone(),
                 report.unsupported.clone(),
                 report.journal_pages.clone(),
                 report.error.clone(),
@@ -1805,6 +1937,7 @@ fn run_phoenix_native_and_crossing(
             "driver": "script::quester::prereq::run::PrereqRun",
             "journal_machine": std::any::type_name::<JournalMachine>(),
             "attempts": &attempts,
+            "journal_attempts": &journal_attempts,
             "unsupported_gates": &unsupported,
             "session_memory": memory.facts().iter().map(fact_receipt).collect::<Vec<_>>(),
             "journal_pages": pages.iter().map(page_receipt).collect::<Vec<_>>(),

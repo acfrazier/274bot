@@ -630,6 +630,9 @@ reaches 0 or the session changes (`crates/host/src/lib.rs:1411-1439`), so one
 retry covers this login race.
 The journal content opens the page without a delay (`quest_journal.rs2:1-55`).
 If the retry fails, the walk blocks with the last failure's detail.
+The live kitchen proof receipt records each journal owner's start, timeout,
+completion or final failure in `journal_attempts`. Its `journal_pages` and
+`read_count` describe page acquisitions, not the number of attempted reads.
 Later walks in the same run retain the completed Phoenix proof. The Black
 Arm range widens conservatively after acquisition, so it never grants
 Phoenix membership. Neither this read nor the search starts a quest or

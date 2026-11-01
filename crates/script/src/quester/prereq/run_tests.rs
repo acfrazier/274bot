@@ -2305,7 +2305,16 @@ fn kitchen_journal_timeout_run() -> (
 #[test]
 fn kitchen_journal_timeout_retries_once_on_a_later_observed_tick_and_recovers() {
     let (mut run, mut snapshot, mut ledger, state, mut budget) = kitchen_journal_timeout_run();
+    assert_eq!(run.journal_attempt(), None);
     assert!(poll(&mut run, &snapshot, &mut ledger, 1, &state, &mut budget).is_pending());
+    assert_eq!(
+        run.journal_attempt(),
+        Some(JournalAttempt {
+            attempts_started: 1,
+            owner_active: true,
+            retry_after: None,
+        })
+    );
     accept_last(&mut ledger, 1, 0);
     let first_request = ledger.as_ref().unwrap().outbox[0].authority().request_id();
     // Inject the lost page by leaving the modal closed for the reader's five ticks.
@@ -2313,11 +2322,26 @@ fn kitchen_journal_timeout_retries_once_on_a_later_observed_tick_and_recovers() 
         assert!(poll(&mut run, &snapshot, &mut ledger, tick, &state, &mut budget).is_pending());
         assert!(state.prereq_snapshot().facts().is_empty());
     }
+    let timed_out = Some(JournalAttempt {
+        attempts_started: 1,
+        owner_active: false,
+        retry_after: Some(6),
+    });
+    assert_eq!(run.journal_attempt(), timed_out);
     for _ in 0..3 {
         assert!(poll(&mut run, &snapshot, &mut ledger, 6, &state, &mut budget).is_pending());
         assert_eq!(ledger.as_ref().unwrap().outbox.len(), 1);
+        assert_eq!(run.journal_attempt(), timed_out);
     }
     assert!(poll(&mut run, &snapshot, &mut ledger, 7, &state, &mut budget).is_pending());
+    assert_eq!(
+        run.journal_attempt(),
+        Some(JournalAttempt {
+            attempts_started: 2,
+            owner_active: true,
+            retry_after: Some(6),
+        })
+    );
     // Beginning the retry retires the first owner's queued actions.
     assert_eq!(ledger.as_ref().unwrap().outbox.len(), 1);
     assert_ne!(
@@ -2360,6 +2384,7 @@ fn kitchen_journal_timeout_retries_once_on_a_later_observed_tick_and_recovers() 
         poll(&mut run, &snapshot, &mut ledger, 9, &state, &mut budget),
         Poll::Ready(Ok(Done { crossed: false }))
     ));
+    assert_eq!(run.journal_attempt(), None);
     assert_eq!(state.prereq_snapshot().facts().len(), 1);
     assert_eq!(ledger.as_ref().unwrap().outbox.len(), 2);
 }
