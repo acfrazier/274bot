@@ -102,10 +102,10 @@ const GAME_DATA_289_BOUNDS: GameDataSourceBounds = GameDataSourceBounds {
 
 const GAME_DATA_MANIFEST_BYTES: usize = 708_799;
 const GAME_DATA_READ_BUFFER_BYTES: usize = 64 * 1024;
-// GzDecoder::new uses BufReader::new, whose current standard default is 8 KiB.
-const GZIP_READ_BUFFER_BYTES: usize = 8 * 1024;
-// miniz_oxide 0.8.9's boxed InflateState has a 32 KiB LZ dictionary, three
-// 10-bit lookup/576-entry Huffman tables, and fixed code-size/header state.
+// flate2 1.1.10's private BufReader::new allocates a 32 KiB input buffer.
+const GZIP_READ_BUFFER_BYTES: usize = 32 * 1024;
+// miniz_oxide 0.9.1's boxed InflateState measured 43,296 bytes on x86_64.
+// Its 32 KiB dictionary and three lookup/Huffman tables fit this 64 KiB bound.
 const GZIP_INFLATE_STATE_BOUND_BYTES: usize = 64 * 1024;
 // Every heap-stored object row in SelectedGameData is covered by this compiled
 // maximum; inline child objects are already part of their containing row or
