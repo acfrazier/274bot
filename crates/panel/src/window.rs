@@ -3480,6 +3480,7 @@ where
         }
         false
     }
+}
 
 fn current_os_window_id(
     window: &Option<AppWindow>,
