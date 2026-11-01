@@ -1136,7 +1136,7 @@ impl GameSnapshot {
     }
 
     fn publish_scene_from_client(&mut self, client: &Client) {
-        self.projection_scene_wanted = false;
+        self.projection_scene_wanted = self.projection_locs_wanted;
         if !client.ingame || client.scene_state != 2 {
             self.scene = SceneView::default();
             self.projection_scene = ProjectionSceneView::default();
@@ -1368,7 +1368,7 @@ impl GameSnapshot {
     }
 
     fn projection_locs_should_build(scene_available: bool, demanded: bool) -> bool {
-        scene_available
+        scene_available && demanded
     }
 
     fn rebuild_projection_locs(&mut self, client: &Client) {
