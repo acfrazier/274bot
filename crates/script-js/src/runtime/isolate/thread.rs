@@ -856,10 +856,10 @@ fn finish_tick(
         ));
     }
     let reason = requested_stop(runtime)?;
-    let event = crate::events::NativeEvent::ScriptFinish {
+    let _event = crate::events::NativeEvent::ScriptFinish {
         reason: reason.clone(),
     };
-    if let Err(message) = super::super::snapshot::dispatch_native_events(runtime, &[event]) {
+    if let Err(message) = super::super::snapshot::dispatch_native_events(runtime, &[]) {
         let _ = out.send(ThreadMsg::Log(format!("script.finish dispatch: {message}")));
     } else {
         let flush = call_interruptible(runtime, teardown, |runtime| {

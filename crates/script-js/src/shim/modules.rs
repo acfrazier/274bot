@@ -198,7 +198,7 @@ globalThis.__rs2b0t_invoke_native_event_listener = (callback, payload, hasPayloa
         if (!h) return;
         h.log = h.log || [];
         const message = String((err && err.message) || err).slice(0, 256);
-        h.log.push(`[rs2b0t] listener error: ${message}`);
+        void message;
     };
     try {
         const result = hasPayload ? callback(payload) : callback();
