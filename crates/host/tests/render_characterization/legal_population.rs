@@ -2164,8 +2164,19 @@ mod tests {
         );
         sources.insert(
             RENDER,
-            b"let Some(budget) = self.head_misc.as_ref() else {\nreturn Ok(());\n};\nif world.dynamic_count as usize >= crate::core::world::MAX_DYNAMIC_SPRITES {\nreturn Err(RenderLimit::new(\nworld.dynamic_sprites.resize(crate::core::world::MAX_DYNAMIC_SPRITES, None);"
-                .to_vec(),
+            br#"impl RenderWorld {
+fn prepare_dynamic_storage(&self, world: &mut World) -> Result<(), RenderLimit> {
+let Some(budget) = self.head_misc.as_ref() else {
+return Ok(());
+};
+if world.dynamic_count as usize >= crate::core::world::MAX_DYNAMIC_SPRITES {
+return Err(RenderLimit::new(RenderResource::HeadMisc, 0, 0));
+}
+world.dynamic_sprites.resize(crate::core::world::MAX_DYNAMIC_SPRITES, None);
+Ok(())
+}
+}"#
+            .to_vec(),
         );
         sources.insert(DRAW, VALID_DRAW.to_vec());
 
