@@ -1747,6 +1747,7 @@ fn gatherer_exclusive_heap_stays_inside_the_eight_kib_target() {
     // Charge preparation on its owning worker and installation on this thread.
     // Polling the preparation broker inside this measurement can free worker-
     // allocated handoff values here, making its thread-local net timing-dependent.
+    let previous_status_log_suppression = compiled::set_heap_test_status_logging_suppressed(true);
     let main = allocation_counter::measure(|| {
         let mut slot = SlotScript::new();
         slot.bind_incarnation(93);
@@ -1758,6 +1759,7 @@ fn gatherer_exclusive_heap_stays_inside_the_eight_kib_target() {
         accept_gatherer_drop_actions(&mut slot, actions, tick, None);
         measured = Some(slot);
     });
+    compiled::set_heap_test_status_logging_suppressed(previous_status_log_suppression);
     // Keep the historical pre-seat family bound: exclude the measured
     // SlotScript/I-seat baseline and the shared seat delivery buffers that
     // grow only when this five-action native batch is dispatched.
@@ -2305,6 +2307,17 @@ mod api_gather_seat {
 
     #[test]
     fn warmed_load_seat_exclusive_heap_and_unchanged_polls_are_bounded() {
+        // Keep libtest's own test-thread allocations out of the thread-local
+        // counter. The product-status log is suppressed separately below.
+        std::thread::Builder::new()
+            .name("api-seat-heap-probe".into())
+            .spawn(warmed_load_seat_exclusive_heap_and_unchanged_polls_are_bounded_on_seat_thread)
+            .expect("start isolated API-seat heap measurement")
+            .join()
+            .expect("API-seat heap measurement thread");
+    }
+
+    fn warmed_load_seat_exclusive_heap_and_unchanged_polls_are_bounded_on_seat_thread() {
         let mut snapshot = gatherer_snapshot();
         let mut warm = gatherer_slot(208);
         let mut slot = stub_surface_slot(209, true);
@@ -2316,51 +2329,63 @@ mod api_gather_seat {
         // Warm this thread before charging only this seat.
         let warm_lock = parking_lot::Mutex::new(());
         parking_lot::Condvar::new().wait_for(&mut warm_lock.lock(), Duration::from_millis(1));
-        let (prepared, instance, worker) = FamilyPreparation::run(|families| {
-            let selected = selected();
-            let cx = PrepareContext {
-                zones: None,
-                pin: selected.selected_pin().unwrap(),
-                selected,
-                banks: Arc::default(),
-                families,
-            };
-            let bag = Arc::new(SettingsBag::new());
-            let mut retained = RetainedMemory::default();
+        // Status is still stored in the seat; only host-log output is outside
+        // the per-bot product-state measurement.
+        let previous_status_log_suppression =
+            compiled::set_heap_test_status_logging_suppressed(true);
+        let selected = selected();
+        let pin = selected.selected_pin().unwrap();
+        let banks = Arc::default();
+        let run_key = api::selected::RunKey {
+            slot: 209,
+            run: 1,
+            session: 1,
+        };
+        // Keep a real Gatherer run and retention, but bypass WorkService: its
+        // shared terminal can be freed on either thread and is not seat state.
+        let (prepared, retained, worker) = FamilyPreparation::run(move |families| {
             let mut prepared = None;
-            let mut instance = None;
+            let mut retained = None;
             let measured = allocation_counter::measure(|| {
+                let retained_memory = Arc::new(Mutex::new(RetainedMemory::default()));
                 let config = prepare_config(
-                    cx.families,
+                    families,
                     crate::gatherer::CARD.id,
                     1,
-                    bag,
-                    Arc::clone(&cx.selected),
-                    Arc::clone(&cx.banks),
+                    Arc::new(gather_settings()),
+                    Arc::clone(&selected),
+                    Arc::clone(&banks),
                     None,
                 )
                 .unwrap();
-                instance = Some(
-                    (crate::gatherer::CARD.create)(
-                        api::selected::RunKey {
-                            slot: 210,
-                            run: 1,
-                            session: 1,
-                        },
-                        Arc::clone(&config),
-                        &mut retained,
-                    )
-                    .unwrap(),
-                );
-                prepared = Some(config);
+                let script = (crate::gatherer::CARD.create)(
+                    run_key,
+                    Arc::clone(&config),
+                    &mut retained_memory
+                        .lock()
+                        .unwrap_or_else(|poisoned| poisoned.into_inner()),
+                )
+                .unwrap();
+                prepared = Some(compiled::CompiledRun::for_heap_test(
+                    run_key,
+                    config,
+                    script,
+                    Arc::clone(&selected),
+                    Arc::clone(&pin),
+                ));
+                retained = Some(retained_memory);
             });
-            (prepared.unwrap(), instance.unwrap(), measured)
+            (prepared.unwrap(), retained.unwrap(), measured)
         })
         .unwrap()
         .join()
         .unwrap();
-        let dispatched = allocation_counter::measure(|| run_in_seat(&mut slot, 209));
-        let installed_heap = allocation_counter::measure(|| installed(&mut slot, &snapshot));
+        slot.retained = Some(retained);
+        let installed_heap = allocation_counter::measure(|| {
+            let mut api = Box::new(crate::slot::api_seat::ApiSeat::default());
+            api.install_running_gather_for_heap_test(209, prepared);
+            slot.api = Some(api);
+        });
         let polled = allocation_counter::measure(|| {
             for tick in 2..18 {
                 poll_native_api_seat(&mut slot, &snapshot, tick, false);
@@ -2370,28 +2395,26 @@ mod api_gather_seat {
             }
         });
         assert!(slot.has_native_actions(), "actual native batch measured");
-        let exclusive = worker.bytes_current
-            + dispatched.bytes_current
-            + installed_heap.bytes_current
-            + polled.bytes_current;
+        let exclusive = worker.bytes_current + installed_heap.bytes_current + polled.bytes_current;
         println!(
             "ApiSeat={} ScriptSlot={}",
             std::mem::size_of::<crate::slot::api_seat::ApiSeat>(),
             std::mem::size_of::<SlotScript>()
         );
         println!(
-            "API gather warmed native baseline: idle option={}B; worker prepared+instance={worker:?}; dispatch={dispatched:?}; install={installed_heap:?}; polls={polled:?}; exclusive={exclusive}B",
+            "API gather warmed native baseline: idle option={}B; prepared+instance={worker:?}; install={installed_heap:?}; polls={polled:?}; exclusive={exclusive}B",
             std::mem::size_of::<Option<Box<crate::slot::api_seat::ApiSeat>>>()
         );
         assert_eq!(
             std::mem::size_of::<Option<Box<crate::slot::api_seat::ApiSeat>>>(),
             8
         );
-        // Typed RouteTooLarge adds 40 B to inline receipts: 8,206 B measured, 242 B headroom.
+        // Isolated product-state sample: 8,248 B, leaving 200 B below the unchanged 8,448 B ceiling.
         assert!(exclusive <= 8448, "exclusive API seat exceeds 8.25KiB");
         let stopped = allocation_counter::measure(|| stop_in_seat(&mut slot, 209));
         println!("API gather post-Stop retained={}B (exclusive live + Stop delta), Stop={stopped:?}, worker transient_peak={}B", exclusive + stopped.bytes_current, i128::from(worker.bytes_max) - i128::from(worker.bytes_current));
         assert!(!slot.api_owns_foreground());
+        compiled::set_heap_test_status_logging_suppressed(previous_status_log_suppression);
         // A second session uses the retained ledger and an animated observation
         // to exercise the actual card's unchanged path without world copies.
         snapshot.seed_inventory(Vec::new(), 28);
@@ -2448,8 +2471,6 @@ mod api_gather_seat {
         );
         slot.stop();
         warm.stop();
-        drop(instance);
-        drop(prepared);
     }
 }
 

@@ -101,6 +101,23 @@ fn refusal(error: StartError) -> String {
 }
 
 impl ApiSeat {
+    #[cfg(test)]
+    pub(super) fn install_running_gather_for_heap_test(
+        &mut self,
+        token: u64,
+        run: compiled::CompiledRun,
+    ) {
+        self.gather = GatherSeat::Running {
+            token,
+            run: Box::new(run),
+        };
+        self.page = Some(Arc::new(GatherPage {
+            token,
+            phase: GatherPhase::Running,
+            status: None,
+        }));
+    }
+
     fn reap(&mut self) {
         let mut index = 0;
         while index < self.retiring.len() {

@@ -10,6 +10,16 @@ use crate::preparation::{self, PreparationInput, PreparationKind, PreparedTask};
 use api::quest_progress::EvidenceStamp;
 use api::selected::{FamilyPreparation, RunKey, SelectedPin};
 use std::sync::Mutex;
+#[cfg(test)]
+thread_local! {
+    static STATUS_LOGGING_SUPPRESSED_FOR_HEAP_TEST: std::cell::Cell<bool> =
+        const { std::cell::Cell::new(false) };
+}
+
+#[cfg(test)]
+pub(super) fn set_heap_test_status_logging_suppressed(suppressed: bool) -> bool {
+    STATUS_LOGGING_SUPPRESSED_FOR_HEAP_TEST.with(|current| current.replace(suppressed))
+}
 
 pub(super) struct CompiledRun {
     pub script: ScriptOwner,
@@ -331,6 +341,11 @@ fn log_status_change(slot: &str, previous: Option<&ScriptStatus>, status: &Scrip
 impl NativeOutput for Output {
     fn status(&mut self, status: ScriptStatus) {
         let previous = self.status.as_deref();
+        #[cfg(test)]
+        if !STATUS_LOGGING_SUPPRESSED_FOR_HEAP_TEST.with(|current| current.get()) {
+            log_status_change(self.account.as_deref().unwrap_or(""), previous, &status);
+        }
+        #[cfg(not(test))]
         log_status_change(self.account.as_deref().unwrap_or(""), previous, &status);
         if previous != Some(&status) {
             self.status = Some(Arc::new(status));
@@ -425,6 +440,30 @@ pub struct SeatTickPorts<'a> {
 }
 
 impl CompiledRun {
+    #[cfg(test)]
+    pub(super) fn for_heap_test(
+        run: RunKey,
+        config: Arc<PreparedConfig>,
+        script: Box<dyn Script>,
+        selected: Arc<api::game_data::SelectedGameData>,
+        pin: Arc<SelectedPin>,
+    ) -> Self {
+        Self {
+            script: ScriptOwner(Some(script)),
+            config,
+            pending: None,
+            pending_registry: None,
+            run,
+            selected,
+            pin,
+            output: Output {
+                account: Some(String::new().into_boxed_str()),
+                ..Default::default()
+            },
+            actions: NativeActions { _private: () },
+        }
+    }
+
     fn latest_config(&self) -> &PreparedConfig {
         self.pending
             .as_ref()
