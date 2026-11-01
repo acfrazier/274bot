@@ -1296,6 +1296,22 @@ path, including menu selection and blocked terrain; run
 open-world-menu dismissal followed by a minimap walk. The panel harness
 captures the live CPU game pane, not native window chrome.
 
+## Offline route and memory controls
+
+`cargo run --release -p nav-planner --example route_parity -- PACK OUTPUT_JSON`
+records the route corpus; it is not a timing benchmark. Its
+`stronghold_middle_booth_abandoned_no_path` case uses the real middle booth
+stands at `(2449,3480,1)` and `(2449,3482,1)`, from `(2452,3481,1)`, with
+members-only state, no teleports and no danger-zone table. The reverse proof
+abandons, but the forward flood can finish with `NoPath` after the old
+524,288-node backstop, within the unchanged full node limit.
+
+Use that same case as a separate FLOOR memory control. Apply the identical
+memory-only case-selector/fixture patch to comparator and candidate, and
+record its SHA-256 for each arm. Keep the timing binaries, timing corpus and
+pre-FLOOR five-case gate unchanged. A unit-test pass or an offline corpus row
+does not replace the committed-memory measurement.
+
 ## Live tests
 
 ```bash

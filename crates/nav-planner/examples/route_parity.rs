@@ -132,6 +132,10 @@ fn main() -> Result<(), String> {
         }
     }
     let empty = WorldState::empty();
+    let members = WorldState {
+        map_members: true,
+        ..WorldState::empty()
+    };
     let rich = rich_state();
     let mut low = rich_state();
     low.combat_level = Some(3);
@@ -201,6 +205,21 @@ fn main() -> Result<(), String> {
                 options: legacy,
                 state: &empty,
                 account: "empty",
+            },
+        ),
+        first(
+            &world,
+            Case {
+                name: "stronghold_middle_booth_abandoned_no_path",
+                from: tile(2452, 3481, 1),
+                goals: &[tile(2449, 3480, 1), tile(2449, 3482, 1)],
+                options: FindOptions {
+                    allow_wilderness: true,
+                    allow_bank_fetch: true,
+                    ..legacy
+                },
+                state: &members,
+                account: "members_empty",
             },
         ),
     ];
