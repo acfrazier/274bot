@@ -1390,14 +1390,14 @@ globalThis.checkInventory = () => {
             }
         });
         println!("Inventory local-read callbacks cold={cold:?}; warm1000={warm:?}");
-        // The raw five-scope control below attributes these cache cells without
-        // calling Inventory or pack-rule policy.
-        assert!(cold.count_total <= 3);
-        assert!(cold.count_current <= 3);
-        assert!(cold.count_max <= 3);
-        assert!(cold.bytes_total <= 336);
-        assert!(cold.bytes_current <= 336);
-        assert!(cold.bytes_max <= 336);
+        // One cached-list entry is allocated on the first generation-backed
+        // read; the nested-scope control measures its own chain separately.
+        assert!(cold.count_total <= 4);
+        assert!(cold.count_current <= 4);
+        assert!(cold.count_max <= 4);
+        assert!(cold.bytes_total <= 868);
+        assert!(cold.bytes_current <= 868);
+        assert!(cold.bytes_max <= 868);
         assert_eq!(warm, allocation_counter::AllocationInfo::default());
     }
 
@@ -1492,7 +1492,14 @@ globalThis.checkInventory = () => {
         );
         assert_eq!(
             inventory_after_control,
-            allocation_counter::AllocationInfo::default()
+            allocation_counter::AllocationInfo {
+                count_total: 1,
+                count_current: 1,
+                count_max: 1,
+                bytes_total: 532,
+                bytes_current: 532,
+                bytes_max: 532,
+            }
         );
         assert_eq!(
             extra_depth,

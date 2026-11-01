@@ -646,6 +646,7 @@ fn setup() -> (Runtime, Arc<Cache>) {
         Arc::new(std::sync::atomic::AtomicBool::new(false)),
     )
     .unwrap();
+    crate::inventory_v8::install(&mut runtime).unwrap();
     let cache = seed_item_icon();
     runtime.eval::<()>(SETUP).unwrap();
     (runtime, cache)

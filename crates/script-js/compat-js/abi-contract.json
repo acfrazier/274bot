@@ -13350,7 +13350,7 @@
       "module": "api/ui/questlog/Quests.js",
       "selector": "Quests.all",
       "reason": "The native facade reuses deeply frozen quest rows for the posted interface and varp generations; audited consumers only inspect them.",
-      "runtime": "crates/script-js/src/materialize/client_adapter_v8.rs:418",
+      "runtime": "crates/script-js/src/materialize/client_adapter_v8.rs:420",
       "declaration": "all(): readonly Readonly<{ name: string; status: QuestStatus }>[];",
       "family_id": "questlog",
       "nav_consuming": false
