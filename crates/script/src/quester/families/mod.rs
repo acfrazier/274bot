@@ -1661,10 +1661,9 @@ struct TalkRun {
     /// The retry of a step that failed with its dialogue page open: no anchor walk.
     open_page: bool,
 }
-// 640 B measured on x86_64 Linux, 56 B below the existing 696 B tripwire.
-// Inline Walk and Dialogue state includes approach retry, retained Walk replay,
-// and quest-window evidence.
-const _: [(); 1] = [(); (std::mem::size_of::<TalkRun>() <= 696) as usize];
+// TalkRun measures 856 B on x86_64 Linux, with 8 B headroom below 864 B.
+// NAV-PREREQ-RUNNER retains PrereqWalk plus Dialogue's last-send receipt.
+const _: [(); 1] = [(); (std::mem::size_of::<TalkRun>() <= 864) as usize];
 impl StepRun for TalkRun {
     fn poll(&mut self, cx: &mut StepContext<'_, '_>) -> Poll<Result<StepOutcome, ActionError>> {
         let now_tick = cx.tick.cx.evidence().tick;

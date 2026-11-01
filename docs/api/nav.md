@@ -641,6 +641,13 @@ Alfonse the password proves the eligible stage range without starting
 dialogue or changing quest progress. This keeps the kitchen available
 before Heroes' Quest completion as well as after it.
 
+Prerequisite-aware walks retain their original request and bounded step state.
+On x86_64 Linux, `Dialogue` measures 472 B, including its 72 B last-send receipt,
+and `TalkRun` measures 856 B, including its retained `PrereqWalk`.
+Their layout ceilings are 480 B and 864 B, each with 8 B of headroom.
+These are retained type sizes, not process memory or per-bot capacity.
+The separate installed API-seat heap ceiling remains 8,448 B.
+
 
 ## Router (`nav_planner::router`)
 

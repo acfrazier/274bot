@@ -477,9 +477,9 @@ mod tests {
     use api::snapshot::{GameSnapshot, WorldTile};
 
     /// The retained per-walk state: 88 B inline, including the quest-list
-    /// wait state, and one 112 B boxed replay. The replay keeps everything but
-    /// the target, radius and request id that the correlation core holds. A
-    /// walk the host dropped unsent in a guardian hold is sent again from it,
+    /// wait state, and one 128 B boxed replay: the incoming avoid list adds 16 B.
+    /// The correlation core keeps the target, radius and request id. A walk the
+    /// host dropped unsent in a guardian hold is sent again from the replay,
     /// field for field.
     #[test]
     fn a_walk_keeps_one_boxed_replay_and_resends_the_same_request_from_it() {
@@ -494,7 +494,7 @@ mod tests {
             std::mem::size_of::<Walk>() + std::mem::size_of::<WalkReplay>(),
         );
         assert_eq!(std::mem::size_of::<Walk>(), 88);
-        assert_eq!(std::mem::size_of::<WalkReplay>(), 112);
+        assert_eq!(std::mem::size_of::<WalkReplay>(), 128);
 
         let target = WorldTile {
             x: 3220,

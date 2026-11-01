@@ -443,15 +443,16 @@ pub struct Dialogue {
     last_send: Option<DialogueSend>,
 }
 // Keep retained per-action dialogue state within its reviewed size budget.
-// 400 B measured on x86_64 Linux (no headroom left). The approach round 3 fix
-// added the route plan (tile, radius, assessment request, retries) and a
-// separate Talk arrival and NPC-message tick: 56 B over the 336 B of round 2.
+// 472 B measured on x86_64 Linux, with 8 B headroom below the 480 B ceiling.
+// NAV-PREREQ-RUNNER adds the 72 B last-send receipt to the 400 B W1 state.
+// The approach round 3 fix added the route plan (tile, radius, assessment,
+// retries) and separate Talk arrival/message ticks: 56 B over round 2's 336 B.
 // QUESTER-TALK-APPROACH-HOLD added the 12 B last seen NPC tile: 8 B over 392 B.
 // QUESTER-MORDRED-HANDOVER-R2 replaced the 4 B hit baseline with the 8 B
 // attack-marks baseline (408 B). It pays for the extra bytes by narrowing
 // `gap_rearms_left` from u32 to u8 (it never exceeds `DRIVE_STEPS`, 120) and
 // `gap_rearm_tick` from `Option<u64>` to `Option<u32>`.
-const _: () = assert!(std::mem::size_of::<Dialogue>() <= 400);
+const _: () = assert!(std::mem::size_of::<Dialogue>() <= 480);
 
 impl NativeMachine for Dialogue {
     type Args = DialogueArgs;
