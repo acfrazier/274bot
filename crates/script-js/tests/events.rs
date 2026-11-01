@@ -403,8 +403,10 @@ export default class T extends LoopingBot {
         });
     }
     loop() {
-        globalThis.__rs2b0t_host.stopRequested = true;
-        globalThis.__rs2b0t_host.stopReason = 'finished by script';
+        if (globalThis.__rs2b0t_host.tick === 2) {
+            globalThis.__rs2b0t_host.stopRequested = true;
+            globalThis.__rs2b0t_host.stopReason = 'finished by script';
+        }
     }
 }
 "#;
@@ -412,6 +414,8 @@ export default class T extends LoopingBot {
     let snap = base_snapshot();
     post_snapshot_input(&iso, &snap);
     iso.on_game_tick(1);
+    assert!(iso.probe("1").is_ok(), "first tick should remain active");
+    iso.on_game_tick(2);
     let logs = iso.join();
     assert!(
         logs.iter()
