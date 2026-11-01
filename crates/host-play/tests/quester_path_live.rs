@@ -63,19 +63,19 @@
 //!
 //! `seed_vars` names the stage varp for Paths with no progress varp hint
 //! (released Cook); `before_relog` holds raw fixture cheats such as
-//! `givebank` stock and prerequisite quest flags. Only the tested account is
-//! seeded before Start: no NPCs, locs or chance-drop waits.
+//! `givebank` stock and prerequisite quest flags. Each real account is seeded
+//! only in its own state before Start: no NPCs, locs or chance-drop waits.
 #![cfg(all(feature = "live-harness", feature = "test-support"))]
 
 #[path = "common/quester_live.rs"]
 mod quester_live;
 
 use api::snapshot::WorldTile;
-use quester_live::{Cell, Mode, PathCell};
+use quester_live::{Cell, Mode, PairCell, PairMode, PathCell};
 use scenario::quester::{
     FixtureLoadout, QuestFixtureProfile, QuesterPathSeeds, QuesterStage, TestProfile,
 };
-use script::quester::registry;
+use script::quester::{pair::Gang, registry};
 use std::path::PathBuf;
 use std::time::Duration;
 
@@ -132,7 +132,7 @@ fn smoke_cell(
         before_relog: seeds.before_relog_steps(),
     };
     let mut cell = if row.quest == "blackarmgang" {
-        blackarmgang_role_smoke_cell(spec)?
+        arrav_role_smoke_cell(spec, Gang::Phoenix)?
     } else {
         quester_live::path_cell(spec)?
     };
@@ -140,9 +140,8 @@ fn smoke_cell(
     Ok(cell)
 }
 
-/// The early Phoenix Path stage is single-account even though the complete
-/// Shield of Arrav Path declares a partner role.
-fn blackarmgang_role_smoke_cell(spec: PathCell<'_>) -> Result<Cell, String> {
+/// Construct one real Arrav role; live smoke starts both through `run_pair`.
+fn arrav_role_smoke_cell(spec: PathCell<'_>, gang: Gang) -> Result<Cell, String> {
     let stage = spec
         .stage
         .ok_or("blackarmgang smoke needs an explicit role stage")?;
@@ -152,6 +151,10 @@ fn blackarmgang_role_smoke_cell(spec: PathCell<'_>) -> Result<Cell, String> {
         .quest_identity()
         .and_then(|facts| facts.rows.iter().find(|identity| identity.id == spec.quest))
         .ok_or_else(|| format!("no quest identity row for {}", spec.quest))?;
+    let stage_varp = match gang {
+        Gang::Phoenix => identity.varp.as_str(),
+        Gang::BlackArm => "blackarmgang",
+    };
     let mut fixture = scenario::quester::quester_role_stage(
         QuesterStage {
             name: spec.quest,
@@ -164,8 +167,8 @@ fn blackarmgang_role_smoke_cell(spec: PathCell<'_>) -> Result<Cell, String> {
             extra_items: spec.extra_items,
             stand: spec.stand,
         },
-        script::quester::pair::Gang::Phoenix,
-        &identity.varp,
+        gang,
+        stage_varp,
         spec.seed_vars,
     )?;
     if !spec.before_relog.is_empty() {
@@ -192,6 +195,47 @@ fn blackarmgang_role_smoke_cell(spec: PathCell<'_>) -> Result<Cell, String> {
     })
 }
 
+fn arrav_smoke_pair(
+    row: QuestFixtureProfile,
+    seeds: &QuesterPathSeeds,
+    loadout: Option<FixtureLoadout<'_>>,
+    extra_items: &[(&str, i32)],
+    seed_vars: &[(&str, i32)],
+) -> Result<PairCell, String> {
+    let mut phoenix = smoke_cell(row, seeds, loadout, extra_items, seed_vars)?;
+    let Mode::Stage { expect } = std::mem::replace(&mut phoenix.mode, Mode::Clean) else {
+        return Err("paired Arrav smoke needs an explicit stage target".into());
+    };
+    let mut blackarm = arrav_role_smoke_cell(
+        PathCell {
+            quest: row.quest,
+            display: row.display,
+            label: "path-smoke-blackarm-peer".to_owned(),
+            stage: Some("b:0"),
+            loadout: None,
+            extra_items: &[],
+            seed_vars: &[],
+            // blackarmgang.json b-tramp: maps/m50_52.jm2:8228.
+            stand: WorldTile {
+                x: 3208,
+                z: 3391,
+                level: 0,
+            },
+            // PairMode owns both real roles' stop conditions.
+            mode: Mode::Clean,
+            before_relog: Vec::new(),
+        },
+        Gang::BlackArm,
+    )?;
+    blackarm.scenario.settings.deadline = DEADLINE;
+    Ok(PairCell {
+        roles: [phoenix, blackarm],
+        mode: PairMode::Stage {
+            expect: [expect, vec!["b:1".to_owned(), "b:2".to_owned()]],
+        },
+    })
+}
+
 #[test]
 #[ignore = "requires LIVE=1 and an explicitly selected local 289 engine; see common/quester_live.rs"]
 fn live_quester_path_smoke() {
@@ -210,9 +254,15 @@ fn live_quester_path_smoke() {
         .unwrap_or_else(|error| panic!("{error}"));
     let extra_items = seeds.extra_item_refs();
     let seed_vars = seeds.seed_var_refs();
-    let cell = smoke_cell(row, &seeds, loadout, &extra_items, &seed_vars)
-        .unwrap_or_else(|error| panic!("build {quest} smoke cell from {source}: {error}"));
-    let result = quester_live::run_quester_path(cell);
+    let result = if row.quest == "blackarmgang" {
+        let pair = arrav_smoke_pair(row, &seeds, loadout, &extra_items, &seed_vars)
+            .unwrap_or_else(|error| panic!("build {quest} paired smoke from {source}: {error}"));
+        quester_live::run_pair(pair)
+    } else {
+        let cell = smoke_cell(row, &seeds, loadout, &extra_items, &seed_vars)
+            .unwrap_or_else(|error| panic!("build {quest} smoke cell from {source}: {error}"));
+        quester_live::run_quester_path(cell)
+    };
     println!("PATH-SMOKE {quest} ({source}): {:?}", result.is_ok());
     registry::set_source(before);
     result.unwrap();
@@ -1545,6 +1595,90 @@ mod smoke_tests {
             .steps
             .iter()
             .any(|step| step.name == "reset authored content stage"));
+    }
+
+    #[test]
+    fn jonny_smoke_constructs_two_real_roles_without_seeded_goal_items() {
+        let _registry_guard = PATH_REGISTRY_LOCK.lock().unwrap();
+        let seeds = parse_seeds(include_str!("fixtures/quester-path/blackarm-jonny.json")).unwrap();
+        assert_eq!(seeds.stage, "p:8");
+        assert!(seeds.extra_items.is_empty());
+        assert!(seeds.before_relog.is_empty());
+        let row = smoke_row("blackarmgang").unwrap();
+        let pair = arrav_smoke_pair(
+            row,
+            &seeds,
+            seeds.fixture_loadout().unwrap(),
+            &seeds.extra_item_refs(),
+            &seeds.seed_var_refs(),
+        )
+        .unwrap();
+        let PairMode::Stage { expect } = &pair.mode else {
+            panic!("Jonny smoke must prove both real role stages");
+        };
+        assert_eq!(expect[0].len(), 1);
+        assert_eq!(expect[0][0], "p:9");
+        assert_eq!(expect[1].len(), 2);
+        assert_eq!(expect[1][0], "b:1");
+        assert_eq!(expect[1][1], "b:2");
+        assert_eq!(pair.roles[0].start_settings["gang"], "phoenix");
+        assert_eq!(pair.roles[1].start_settings["gang"], "blackarm");
+        for (cell, stand) in pair.roles.iter().zip([
+            WorldTile {
+                x: 3046,
+                z: 3287,
+                level: 0,
+            },
+            WorldTile {
+                x: 3208,
+                z: 3391,
+                level: 0,
+            },
+        ]) {
+            assert_eq!(cell.quest, "blackarmgang");
+            assert_eq!(cell.scenario.settings.start_script, Some("Quester"));
+            assert_eq!(cell.scenario.settings.deadline, DEADLINE);
+            let mut snapshot = api::snapshot::GameSnapshot::new();
+            snapshot.seed_ingame(2);
+            snapshot.seed_tile(stand);
+            snapshot.seed_inventory(Vec::new(), 28);
+            snapshot.seed_equipment(Vec::new());
+            snapshot.seed_stats(
+                [40, 40, 40, 40, 40, 43, 40]
+                    .into_iter()
+                    .enumerate()
+                    .map(|(index, level)| api::snapshot::StatView {
+                        index: i32::try_from(index).unwrap(),
+                        name: String::new(),
+                        base: level,
+                        effective: level,
+                        xp: 0,
+                        used: true,
+                    })
+                    .collect(),
+            );
+            let observed = cell.observe_start.as_ref().unwrap()(&snapshot).unwrap();
+            assert_eq!(observed["inventory"], serde_json::json!([]));
+            assert_eq!(observed["equipment"], serde_json::json!([]));
+        }
+    }
+
+    #[test]
+    fn paired_arrav_smoke_refuses_non_stage_modes() {
+        let _registry_guard = PATH_REGISTRY_LOCK.lock().unwrap();
+        for mode in ["clean", "path_terminal"] {
+            let mut seeds =
+                parse_seeds(include_str!("fixtures/quester-path/blackarm-jonny.json")).unwrap();
+            seeds.mode = Some(mode.to_owned());
+            assert!(arrav_smoke_pair(
+                smoke_row("blackarmgang").unwrap(),
+                &seeds,
+                seeds.fixture_loadout().unwrap(),
+                &seeds.extra_item_refs(),
+                &seeds.seed_var_refs(),
+            )
+            .is_err());
+        }
     }
 
     #[test]

@@ -63,6 +63,9 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.8` 
 - The Gundai player-open bank probe checks the full seed before Talk-to and
   again at the stand reached by the real opening dialogue. A changed or forced
   stand is rejected without moving the player or closing the bank.
+- The Jonny stand smoke uses two real reciprocal Arrav accounts. Phoenix
+  gathers its own fight food and advances through Jonny; its Black Arm partner
+  follows the real Tramp/Katrine dialogue. No report or goal items are seeded.
 
 ### Panel and terminal app
 
