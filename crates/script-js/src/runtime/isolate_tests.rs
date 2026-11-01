@@ -948,7 +948,17 @@ fn warmed_client_frame_dispatches_allocate_nothing_per_frame() {
         vec![],
     )
     .unwrap();
-    wait_ready(&iso);
+    let ready_deadline = Instant::now() + Duration::from_secs(30);
+    loop {
+        match iso.poll_ready() {
+            Ready::Ready => break,
+            Ready::Failed(error) => panic!("setup failed: {error}"),
+            Ready::Pending if Instant::now() < ready_deadline => {
+                std::thread::sleep(Duration::from_millis(5));
+            }
+            Ready::Pending => panic!("setup timed out after 30 seconds"),
+        }
+    }
     iso.probe("__rs2b0t_native_event_on('frame', () => {})")
         .unwrap();
     for _ in 0..8 {
