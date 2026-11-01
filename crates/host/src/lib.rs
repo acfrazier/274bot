@@ -191,8 +191,6 @@ pub struct ScriptRunPolicy {
 #[derive(Debug, Clone, Copy)]
 struct ScriptWaitHold {
     key: u64,
-    /// The owner's latest reported deadline for this key.
-    deadline_tick: u64,
     /// A session boundary or the terminal release ended the hold for this key.
     released: bool,
 }
@@ -218,9 +216,10 @@ impl ScriptRunPolicy {
     /// Read the script's own wait once per frame, after the script tick and
     /// before the press decision. `tick` is the frame's observed game tick on
     /// the script's clock. `None` ends the hold at once. A new key starts a
-    /// new hold; the same key takes the owner's latest deadline. A hold still
-    /// live at `deadline_tick + SCRIPT_WAIT_MARGIN_TICKS` ends here, is logged
-    /// as a failure and is returned.
+    /// new hold. The deadline is the owner's latest, read on every frame, so a
+    /// renewed wait moves it. A hold still live at `deadline_tick +
+    /// SCRIPT_WAIT_MARGIN_TICKS` ends here, is logged as a failure and is
+    /// returned.
     pub fn observe_script_wait(
         &mut self,
         wait: Option<ScriptWait>,
@@ -229,13 +228,9 @@ impl ScriptRunPolicy {
         let before = self.script_wait.map(|hold| hold.key);
         self.script_wait = match (wait, self.script_wait) {
             (None, _) => None,
-            (Some(wait), Some(hold)) if hold.key == wait.key => Some(ScriptWaitHold {
-                deadline_tick: wait.deadline_tick,
-                ..hold
-            }),
+            (Some(wait), Some(hold)) if hold.key == wait.key => Some(hold),
             (Some(wait), _) => Some(ScriptWaitHold {
                 key: wait.key,
-                deadline_tick: wait.deadline_tick,
                 released: false,
             }),
         };
@@ -245,11 +240,13 @@ impl ScriptRunPolicy {
                 Category::InteractTrace,
                 Level::Debug,
                 "auto-run hold key={after:?} was={before:?} deadline_tick={:?} tick={tick}",
-                self.script_wait.map(|hold| hold.deadline_tick)
+                wait.map(|wait| wait.deadline_tick)
             );
         }
-        let hold = self.script_wait.as_mut()?;
-        if hold.released || tick < hold.deadline_tick.saturating_add(SCRIPT_WAIT_MARGIN_TICKS) {
+        let (Some(wait), Some(hold)) = (wait, self.script_wait.as_mut()) else {
+            return None;
+        };
+        if hold.released || tick < wait.deadline_tick.saturating_add(SCRIPT_WAIT_MARGIN_TICKS) {
             return None;
         }
         hold.released = true;
@@ -258,11 +255,11 @@ impl ScriptRunPolicy {
             Level::Warn,
             "auto-run hold ended after its deadline key={} deadline_tick={} tick={tick}: the script did not end its wait",
             hold.key,
-            hold.deadline_tick
+            wait.deadline_tick
         );
         Some(ScriptWaitExpired {
             key: hold.key,
-            deadline_tick: hold.deadline_tick,
+            deadline_tick: wait.deadline_tick,
             tick,
         })
     }
