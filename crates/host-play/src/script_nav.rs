@@ -7879,7 +7879,10 @@ mod diagnostic_tests {
 
         let (output, _, _) = ScriptRouteRequest::drive_prepared_route_job_for_test(job, world);
         assert!(matches!(output.outcome, RouteJobOutcome::NoPath));
-        assert_eq!(output.native_failure, Some(script::native::WalkEnd::Refused));
+        assert_eq!(
+            output.native_failure,
+            Some(script::native::WalkEnd::Refused)
+        );
         assert!(matches!(
             output.refusal,
             Some(script::native::WalkRefusal::SearchIncomplete {
