@@ -42,6 +42,9 @@ globs = [
   "crates/script-js/src/tooling/compat_dts.rs",
   "crates/host-play/src/bank_core_live.rs",
   "crates/host-play/src/bank_fetch_closed_live.rs",
+  # Test/live-harness only: host-play/src/lib.rs:634-635 gates this module
+  # with cfg(any(test, all(feature = "live-harness", feature = "test-support"))).
+  "crates/host-play/src/bank_npc_live.rs",
   "crates/host-play/src/bank_memory_live.rs",
   "crates/host-play/src/gather_bait_live.rs",
   "crates/host-play/src/gather_held_live.rs",
@@ -888,4 +891,27 @@ cells = [
   "scenario.boat-fare-retry-live|for fare_case in boat_fare_v1_ts boat_fare_far_start_v1_ts boat_fare_reconnect_v1_ts; do fare_evidence=${LIVE_EVIDENCE_DIR:?}/${fare_case}; LIVE=1 BOT_LIVE_NAME_PREFIX=${BOT_LIVE_NAME_PREFIX:?} BOT_CPU=1 BOT_NAV_BUILD=skip BOT_GAME_PORT=47594 BOT_HTTP_PORT=3080 ENGINE_DIR=${ENGINE_A_DIR:?} NAV_PACK=${NAV_PACK_289:?} NAV_FLAGS=${NAV_FLAGS_289:?} WORLD_ENGINE_DIR=${ENGINE_A_DIR:?} WORLD_NAV_PACK=${NAV_PACK_289:?} WORLD_NAV_FLAGS=${NAV_FLAGS_289:?} RS2B0T=${CATALOG_ROOT:?} CATALOG_ROOT=${CATALOG_ROOT:?} LIVE_EVIDENCE_DIR=${fare_evidence} BOT_EVIDENCE_DIR=${fare_evidence} ISOHOME_DIR=${fare_evidence}/home ${ISOHOME:?} nice -n 10 cargo run --release -p tui --bin tui-play -- --profile local-289 --revision 289 --host 127.0.0.1 --port 47594 --asset-host 127.0.0.1 --http-port 3080 --engine ${ENGINE_A_DIR:?} --nav-pack ${NAV_PACK_289:?} --nav-flags ${NAV_FLAGS_289:?} --catalog ${CATALOG_ROOT:?} --live script_${fare_case}; fare_rc=$?; if [ $fare_rc -ne 0 ]; then exit $fare_rc; fi; done|--locked -p script-js --lib boat_fare::tests::walk_to_retries_a_failed_luthas_approach_and_completes -- --exact",
   "script-js.boat-fare-compat-headless|${ISOHOME:?} nice -n 10 cargo test --locked -p script-js --lib boat_fare::tests::walk_to_retries_a_failed_luthas_approach_and_completes -- --exact --nocapture --test-threads=1|--locked -p script-js --lib boat_fare::tests::walk_to_retries_a_failed_luthas_approach_and_completes -- --exact",
   "script-js.reach-entity-headless|${ISOHOME:?} nice -n 10 cargo test --locked -p script-js --lib reach_entity::tests::npc_dialog_reach_reclicks_each_tick_after_a_timeout_for_eight_rounds -- --exact --nocapture --test-threads=1|--locked -p script-js --lib reach_entity::tests::npc_dialog_reach_reclicks_each_tick_after_a_timeout_for_eight_rounds -- --exact",
+]
+
+# Process logging I/O: a controlled failing writer, not game-world proof.
+[[cover]]
+globs = ["crates/api/src/hostlog.rs"]
+cells = [
+  "api.hostlog-write-headless|${ISOHOME:?} nice -n 10 cargo test --locked -p api --lib hostlog::tests::a_failed_debug_write_is_dropped_instead_of_panicking -- --exact --nocapture --test-threads=1|--locked -p api --lib hostlog::tests::a_failed_debug_write_is_dropped_instead_of_panicking -- --exact",
+]
+
+# The panel facade proves form-only refusal and no-form/clean-form window
+# close. Main's headed Profiles check remains separate.
+[[cover]]
+globs = ["crates/frontend-core/src/session/form.rs"]
+cells = [
+  "panel.profiles-close-headless|${ISOHOME:?} nice -n 10 cargo test --locked -p panel --lib session::tests::close_profiles_closes_with_no_form_and_with_a_clean_form -- --exact --nocapture --test-threads=1|--locked -p panel --lib session::tests::close_profiles_closes_with_no_form_and_with_a_clean_form -- --exact",
+]
+
+# This real admission cell reads both helpers at its profile boundary
+# (tests/survivable_admission_live.rs:258-259). The runner supplies WORLD_*.
+[[cover]]
+globs = ["crates/host-play/src/live_ports.rs"]
+cells = [
+  "host.survivable-admission|LIVE=1 BOT_LIVE_NAME_PREFIX=${BOT_LIVE_NAME_PREFIX:?} BOT_CPU=1 BOT_NAV_BUILD=skip BOT_GAME_PORT=44594 BOT_HTTP_PORT=1080 WORLD_ENGINE_DIR=${ENGINE_A_DIR:?} WORLD_NAV_PACK=${NAV_PACK_289:?} BOT_UNPACK_DIR=${BOT_UNPACK_DIR:?} BOT_CACHE_DIR=${BOT_CACHE_DIR:?} LIVE_EVIDENCE_DIR=${LIVE_EVIDENCE_DIR:?} ${ISOHOME:?} nice -n 10 cargo test --locked -p host-play --features live-harness,test-support,live-probe --test survivable_admission_live -- --ignored --exact real_unknown_poison_explicit_forbid_then_opt_in_and_default_escape --nocapture --test-threads=1",
 ]

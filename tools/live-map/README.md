@@ -466,6 +466,23 @@ summary table and writes `summary.txt`. The table lists `cell`, `pass`, `exit`, 
 `start_utc`, `end_utc`, and `log`, followed by one `command`, `start_utc`, and `end_utc`
 line per cell and pass. A non-zero exit means at least one cell failed.
 
+### Support proof boundaries
+
+`api.hostlog-write-headless` passes a failing writer to the logging sink. It
+checks that the write does not panic. This is process logging proof, not a
+game witness or a full API-suite pass.
+
+`panel.profiles-close-headless` drives the panel facade: Cancel without a
+form is refused and leaves the list open; window close with no form or a
+clean form succeeds. Main's headed Profiles check is still required.
+
+The existing `host.survivable-admission` cell covers the selected-port helper
+because its real profile reads both `live_ports` functions. Run it through
+the shared runner with the selected Engine L ports. `bank_npc_live.rs` is
+test-harness-only: `host-play/src/lib.rs:634-635` gates it to tests or both
+`live-harness` and `test-support`. Its endpoint assertion/receipt change is
+not shipped game behavior.
+
 ### BATCH-P proof scope
 
 The memory-profile cells are controlled contract tests, not live capacity
