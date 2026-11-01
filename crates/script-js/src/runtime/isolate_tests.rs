@@ -1003,9 +1003,15 @@ loop() {
         let dispatch = iso
             .begin_client_frame()
             .expect("a registered listener receives the frame");
-        assert!(dispatch.wait_for_ack(), "the isolate acknowledges the frame");
+        assert!(
+            dispatch.wait_for_ack(),
+            "the isolate acknowledges the frame"
+        );
         if let Some(first) = handles.first() {
-            assert!(Arc::ptr_eq(first, &dispatch), "a frame built a new dispatch handle");
+            assert!(
+                Arc::ptr_eq(first, &dispatch),
+                "a frame built a new dispatch handle"
+            );
         }
         handles.push(dispatch);
     }
