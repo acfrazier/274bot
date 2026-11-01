@@ -26,10 +26,10 @@ env:
   # outgrow the runner disk.
   CARGO_INCREMENTAL: "0"
   CARGO_PROFILE_DEV_DEBUG: "0"
-  # The reviewed v17 reference is published separately from application releases.
+  # The reviewed v18 reference is published separately from application releases.
   # Main and the operator publish these immutable assets before this CI cutover.
-  CI_NAV_PACK_RELEASE: "nav-reference-v17"
-  CI_NAV_PACK_SHA256: 4e8ab5af4694cf6722ed3836c3e1f42e9ac1be136d4d1127c7db698f4fc6500b
+  CI_NAV_PACK_RELEASE: "nav-reference-v18"
+  CI_NAV_PACK_SHA256: 81e5ca84568b4e3d9b0e7f428a2d43d5e945c73cd74910645db626c89bd4de36
   CI_NAV_FLAGS_SHA256: 67e4094dff06def5cf8abc172ce751f4ca8679532ba04c1ba15ab6bf668c7a4a
 
 # GitHub is a subset of local CI (see CONTRIBUTING.md): no LIVE=1, no GPU
@@ -328,16 +328,16 @@ jobs:
         run: |
           mkdir -p "$RUNNER_TEMP/nav-289"
           gh release download "$CI_NAV_PACK_RELEASE" -R "$GITHUB_REPOSITORY" \
-            -p "274bot-289-v17.navpack" -p "274bot-289-v17.navflags" \
+            -p "274bot-289-v18.navpack" -p "274bot-289-v18.navflags" \
             -D "$RUNNER_TEMP/nav-289"
       - name: Use the 289 nav pack
         if: ${{ matrix.real_nav_pack }}
         run: |
-          echo "$CI_NAV_PACK_SHA256  $RUNNER_TEMP/nav-289/274bot-289-v17.navpack" | sha256sum -c -
-          echo "$CI_NAV_FLAGS_SHA256  $RUNNER_TEMP/nav-289/274bot-289-v17.navflags" | sha256sum -c -
-          echo "NAV_PACK=$RUNNER_TEMP/nav-289/274bot-289-v17.navpack" >> "$GITHUB_ENV"
-          echo "WORLD_NAV_PACK=$RUNNER_TEMP/nav-289/274bot-289-v17.navpack" >> "$GITHUB_ENV"
-          echo "NAV_ARRIVAL_PACK=$RUNNER_TEMP/nav-289/274bot-289-v17.navpack" >> "$GITHUB_ENV"
+          echo "$CI_NAV_PACK_SHA256  $RUNNER_TEMP/nav-289/274bot-289-v18.navpack" | sha256sum -c -
+          echo "$CI_NAV_FLAGS_SHA256  $RUNNER_TEMP/nav-289/274bot-289-v18.navflags" | sha256sum -c -
+          echo "NAV_PACK=$RUNNER_TEMP/nav-289/274bot-289-v18.navpack" >> "$GITHUB_ENV"
+          echo "WORLD_NAV_PACK=$RUNNER_TEMP/nav-289/274bot-289-v18.navpack" >> "$GITHUB_ENV"
+          echo "NAV_ARRIVAL_PACK=$RUNNER_TEMP/nav-289/274bot-289-v18.navpack" >> "$GITHUB_ENV"
       - name: Test ${{ matrix.lane }}
         run: ${{ matrix.command }}
 
