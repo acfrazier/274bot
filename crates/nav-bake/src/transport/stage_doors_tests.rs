@@ -2175,9 +2175,10 @@ fn non_authoritative_completion_without_stage_domain_does_not_authorize_door() {
     );
     with_non_authoritative_hero(|quests| {
         let (graph, _) = derive_stage_with_quests(&fx, &[900], quests);
+        let edges: Vec<_> = graph.edges.iter().filter(|edge| edge.loc_id == 900).collect();
         assert!(
-            !graph.edges.iter().any(|edge| edge.loc_id == 900),
-            "non-authoritative completion cannot be encoded as a Complete gate"
+            edges.is_empty(),
+            "non-authoritative completion cannot be encoded as a Complete gate: {edges:?}"
         );
     });
 }
