@@ -2948,6 +2948,17 @@ impl Run {
         }
     }
 
+    /// Return the script-reported bank row count observed by a test run.
+    #[cfg(feature = "test-support")]
+    pub fn observed_script_bank_rows_for_test(&self, name: &str) -> Option<usize> {
+        FRAME_DELIVERY
+            .lock()
+            .unwrap()
+            .as_ref()
+            .and_then(|slots| slots.get(name))
+            .and_then(|counters| counters.bank_rows_from_script)
+    }
+
     /// Drive warmup/observe/lifecycle. `Ok(true)` when teardown finished. A
     /// failure is recorded per slot before it is returned, because both
     /// frontends exit on it.

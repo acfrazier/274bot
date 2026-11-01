@@ -2715,6 +2715,52 @@ mod tests {
         assert!(!snapshot.projection_locs_built);
     }
 
+    #[test]
+    fn projection_loc_list_is_built_only_when_a_ready_scene_is_demanded() {
+        let mut client = r289_client();
+        client.ingame = true;
+        client.scene_state = 2;
+        client.gens.scene = 1;
+        client.map_build_base_x = 3200;
+        client.map_build_base_z = 3200;
+        client.world.set_wall(
+            0,
+            3,
+            4,
+            0,
+            0,
+            0,
+            0x4000_0000 + (1 << 14) + 3 + (4 << 7),
+            1 << 6,
+            0,
+            0,
+            0,
+            0,
+        );
+
+        let mut snapshot = GameSnapshot::new();
+        // Keep this test on the same scene/loc rebuild seam as the full
+        // snapshot path, where the scene bundle may remain published while a
+        // run changes its projection-loc demand.
+        snapshot.loc_bits_prelude = Some((0, 0));
+        snapshot.set_loc_projection_wanted(true);
+        snapshot.rebuild_scene(&client);
+        assert!(snapshot.projection_scene().available);
+        assert!(snapshot.rebuild_loc(&client));
+        assert_eq!(snapshot.projection_scene().locs.len(), 1);
+
+        snapshot.set_loc_projection_wanted(false);
+        assert!(!snapshot.rebuild_loc(&client));
+        assert!(
+            snapshot.projection_scene().locs.is_empty(),
+            "a ready scene without a run requesting projection locs must publish none"
+        );
+
+        snapshot.set_loc_projection_wanted(true);
+        assert!(!snapshot.rebuild_loc(&client));
+        assert_eq!(snapshot.projection_scene().locs.len(), 1);
+    }
+
     /// The projection height and link grids (about 99 KB per scene) are built
     /// only while a reader asks for them, and a change of demand republishes
     /// the scene without a scene generation move.
