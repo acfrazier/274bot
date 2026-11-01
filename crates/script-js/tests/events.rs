@@ -423,15 +423,16 @@ export default class T extends LoopingBot {
         logs.extend(iso.drain_logs());
         std::thread::sleep(Duration::from_millis(2));
     }
-    assert!(iso.stopped(), "ScriptRunner.stop did not stop the isolate: {logs:?}");
+    assert!(
+        iso.stopped(),
+        "ScriptRunner.stop did not stop the isolate: {logs:?}"
+    );
     logs.extend(iso.join());
     assert!(
-        logs.iter()
-            .any(|line| line == "finish:finished by script"),
+        logs.iter().any(|line| line == "finish:finished by script"),
         "script.finish listener did not receive and log the native stop reason: {logs:?}"
     );
 }
-
 
 #[test]
 fn skill_level_and_varp_events_use_posted_snapshot_state() {
