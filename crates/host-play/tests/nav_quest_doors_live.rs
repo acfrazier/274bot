@@ -1130,6 +1130,9 @@ struct NativePrereqReport {
 struct KitchenPrereqScript {
     remaining: Vec<api::prereq_steps::ActionableGate>,
     active: Option<(api::prereq_steps::ActionableGate, PrereqRun)>,
+    /// PrereqRuns begun so far. Each run's journal attempts carry its number, so
+    /// a second run for the same gate never replaces the first run's records.
+    runs_started: usize,
     budget: PrereqBudget,
     report: Arc<Mutex<NativePrereqReport>>,
     open_page: Option<EvidenceStamp>,
@@ -1184,14 +1187,15 @@ impl Script for KitchenPrereqScript {
         if let Some((gate, mut run)) = self.active.take() {
             let result = run.poll(tick.actions, &mut tick.cx, Some(state), &mut self.budget);
             {
-                let gate_value = json!(&gate);
                 let mut report = self.report.lock();
+                let this_run = json!(self.runs_started);
                 report
                     .journal_attempts
-                    .retain(|record| record.get("gate") != Some(&gate_value));
+                    .retain(|record| record.get("run") != Some(&this_run));
                 report.journal_attempts.extend(run.journal_attempts().map(
                     |(attempt, started_tick, terminal_tick, failure)| {
                         json!({
+                            "run": self.runs_started,
                             "gate": &gate,
                             "attempt": attempt,
                             "started_tick": started_tick,
@@ -1242,6 +1246,7 @@ impl Script for KitchenPrereqScript {
             return Ok(ScriptFlow::Complete);
         };
         self.remaining.retain(|candidate| candidate != &gate);
+        self.runs_started += 1;
         self.active = Some((
             gate.clone(),
             PrereqRun::begin(gate, entry, PrereqAllow::default()),
@@ -1779,6 +1784,7 @@ fn run_phoenix_native_and_crossing(
                 Box::new(KitchenPrereqScript {
                     remaining: candidates,
                     active: None,
+                    runs_started: 0,
                     budget: PrereqBudget::default(),
                     report: Arc::clone(&report),
                     open_page: None,
