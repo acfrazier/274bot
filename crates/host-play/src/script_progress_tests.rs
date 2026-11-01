@@ -288,12 +288,14 @@ impl script::native::Script for ClickWhenArmed {
 }
 
 /// One host frame: `drain` PLAYER_INFO packets arrive with `modal` as the
-/// client's main modal, and the script clicks on this frame when `click`.
+/// client's main modal, the script clicks on this frame when `click`, and
+/// the operator stops the script before this frame when `stop`.
 #[derive(Clone, Copy)]
 struct Frame {
     drain: u32,
     modal: i32,
     click: bool,
+    stop: bool,
 }
 
 const JOURNAL_ROOT: i32 = 8134;
@@ -303,14 +305,21 @@ fn frame(drain: u32, modal: i32) -> Frame {
         drain,
         modal,
         click: false,
+        stop: false,
     }
 }
 
 fn click_frame(drain: u32, modal: i32) -> Frame {
     Frame {
-        drain,
-        modal,
         click: true,
+        ..frame(drain, modal)
+    }
+}
+
+fn stop_frame(drain: u32, modal: i32) -> Frame {
+    Frame {
+        stop: true,
+        ..frame(drain, modal)
     }
 }
 
@@ -410,6 +419,7 @@ impl HoldRig {
         let probe_edge = Arc::clone(&tick_edge);
         let probe_armed = Arc::clone(&self.armed);
         let probe_page = Arc::clone(&self.page);
+        let probe_scripts = Arc::clone(&self.scripts);
 
         let run_policy = Host::run_client(
             &mut self.client,
@@ -467,6 +477,13 @@ impl HoldRig {
                     c.gens.player += 1;
                 }
                 c.main_modal_id = step.modal;
+                if step.stop {
+                    script_slot(&probe_scripts, "alice")
+                        .unwrap()
+                        .lock()
+                        .unwrap()
+                        .stop();
+                }
                 probe_page.store(step.modal != -1, Ordering::Relaxed);
                 probe_edge.store(step.drain > 0, Ordering::Relaxed);
                 probe_armed.store(step.click, Ordering::Relaxed);
@@ -480,23 +497,6 @@ impl HoldRig {
         let seen = seen.lock().unwrap();
         assert_eq!(seen.len(), frames.len() + 1, "every frame was observed");
         seen[1..].to_vec()
-    }
-
-    /// A relog: the same client and policy, a new session and a new loop.
-    fn relog(&mut self) {
-        self.client.gens = client::client::ClientGens {
-            session: self.client.gens.session.wrapping_add(1),
-            ..client::client::ClientGens::default()
-        };
-        self.client.main_modal_id = -1;
-    }
-
-    fn stop_script(&mut self) {
-        script_slot(&self.scripts, "alice")
-            .unwrap()
-            .lock()
-            .unwrap()
-            .stop();
     }
 }
 
@@ -601,23 +601,15 @@ fn auto_run_hold_ends_when_the_script_wait_expires() {
 #[test]
 fn auto_run_hold_ends_when_the_script_is_stopped() {
     let mut rig = HoldRig::new();
-    assert_eq!(rig.run(&[click_frame(1, -1), frame(1, -1)]), [0, 0]);
-    rig.stop_script();
     assert_eq!(
-        rig.run(&[frame(1, -1)]),
-        [1],
-        "a dropped owner releases the hold on the next frame"
+        rig.run(&[click_frame(1, -1), frame(1, -1), frame(1, -1)]),
+        [0, 0, 0],
+        "the control: the hold lasts while the script waits"
     );
-}
-
-#[test]
-fn auto_run_hold_ends_at_a_relog() {
     let mut rig = HoldRig::new();
-    assert_eq!(rig.run(&[click_frame(1, -1), frame(1, -1)]), [0, 0]);
-    rig.relog();
     assert_eq!(
-        rig.run(&[frame(1, -1)]),
-        [1],
-        "no page of the old session can arrive"
+        rig.run(&[click_frame(1, -1), frame(1, -1), stop_frame(1, -1)]),
+        [0, 0, 1],
+        "a dropped owner releases the hold on its own frame"
     );
 }

@@ -1000,8 +1000,13 @@ fn a_session_change_releases_the_script_wait() {
     let mut slot = held_slot(&mut client, 5);
     slot.apply_auto_run(&mut client);
     assert_eq!(slot.run_sends, 0);
+    // The relog sequence of `auto_run_yields_to_script_action_and_recurs_after_energy_and_session_changes`.
+    client.ingame = false;
+    slot.after_drain(&mut client);
+    ingame_scene2(&mut client);
     client.gens.session = client.gens.session.wrapping_add(1);
-    observe_ticks(&mut slot, &mut client, 1);
+    client.runenergy = 20;
+    slot.after_drain(&mut client);
     slot.run_policy.observe_script_wait(Some(5));
     slot.apply_auto_run(&mut client);
     assert_eq!(
