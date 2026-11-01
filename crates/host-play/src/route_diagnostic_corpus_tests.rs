@@ -439,7 +439,13 @@ fn run_diagnostics(
     );
     let cutoff = detail
         .as_deref()
-        .is_some_and(|text| text.starts_with(cutoff_detail));
+        .is_some_and(|text| {
+            let diagnosis = text
+                .strip_prefix("search_result=")
+                .and_then(|rest| rest.split_once("; "))
+                .map_or(text, |(_, diagnosis)| diagnosis);
+            diagnosis.starts_with(cutoff_detail)
+        });
     let mut blocked_zone_ids: Vec<_> = blocked.iter().copied().map(zone_key_json).collect();
     blocked_zone_ids.sort_by_key(zone_json_sort_key);
     DiagnosticObservation {
@@ -1121,10 +1127,15 @@ fn diagnostic_budget_cutoff_publishes_no_path_and_the_cutoff_detail() {
             "no route found; the route check stopped after {} places before it found the cause",
             observation.diagnostic_settled
         );
-        assert!(observation
+        let diagnosis = observation
             .detail
             .as_deref()
-            .is_some_and(|detail| detail.starts_with(&expected)));
+            .and_then(|detail| detail.strip_prefix("search_result=NoPath; "));
+        assert!(
+            diagnosis.is_some(),
+            "cutoff detail must start with the exact search_result=NoPath prefix"
+        );
+        assert!(diagnosis.is_some_and(|detail| detail.starts_with(&expected)));
         assert!(
             observation.diagnostic_settled <= budget + 64,
             "the visible count includes the in-flight slice without hiding the cap overrun"
