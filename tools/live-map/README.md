@@ -539,3 +539,27 @@ cells rebake instead of using a given pack. `NIGHTLY_NAV_FIXTURE` supplies
 CI lanes, not those live CLI invocations. Until the nightly tool can use the
 selected pack, the fare map row calls the existing CLI directly. This is a
 validation-tool limit, not a change to the product's route behavior.
+
+### Map and snapshot coverage boundaries
+
+`frontend-core.map-walk-headless` runs the full frontend library with the
+selected pack, navflags and engine paths, with `LIVE` unset. Its real-seam
+test is `group_walk::tests::frontend_owned_map_staging_arms_the_real_profile_bound_play`:
+`OperatorSession::walk_map_context` creates the frontend context;
+`WalkMap::confirm_walk_plan` stages its selection; then
+`OperatorSession::confirm_marked_walk` calls `Play::map_walk_group`.
+The test uses a real profile-bound `Play` and verifies its actual walk arms.
+Only the game client is absent. The same suite checks typed incomplete-search
+details and retention of a failed walk's destination. This is controlled
+contract proof, not a real budget-exhausted live walk or an arrival witness.
+
+The snapshot, optional FlatBuffer field and native observation paths share
+the existing wire-shadow, runtime and dialog-close-adapter cells. Those
+declarations do not turn the adapter into a live combat-close witness.
+Actual changed dialogue cells and final three-pass coverage remain required.
+
+`crates/nav-planner/examples/route_parity.rs` is an offline real-pack
+diagnostic example, not a product runtime. Its exact `not_live` classification
+does not waive the release corpus, changed-route comparison or final combined-pack
+qualification.
+

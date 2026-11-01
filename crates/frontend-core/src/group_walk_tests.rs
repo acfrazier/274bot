@@ -387,3 +387,45 @@ fn a_refused_destination_fails_each_marked_bot_with_one_cause() {
     assert_eq!(report.done_count(), 0);
     assert!(f.arms.lock().unwrap().is_empty());
 }
+
+#[test]
+fn frontend_owned_map_staging_arms_the_real_profile_bound_play() {
+    let f = fixture_with_world(
+        &["alice", "bob"],
+        &[slot("alice", t(1, 1, 0)), slot("bob", t(2, 10, 0))],
+        world(12, &[]),
+    );
+    let world = f.core.play().unwrap().world().unwrap();
+    let context = f.core.walk_map_context(
+        None,
+        f.dest_context.nav,
+        f.dest_context.overlay,
+        f.dest_context.generation,
+    );
+    let mut map = crate::walk_map::WalkMap::default();
+    map.bind(context);
+    let destination = t(10, 10, 0);
+    assert_eq!(map.select_tile(&world, destination), Some(destination));
+    let staged = super::StagedMarkedWalk::new(
+        &mut map,
+        context,
+        FindOptions {
+            // This controlled fixture proves geometry, not missing risk facts.
+            zones: nav_planner::zones::ZoneExempt::all(),
+            ..FindOptions::default()
+        },
+    );
+    let report = f.core.confirm_marked_walk(&marks(&[1, 2]), staged);
+    let mut done = report.done();
+    assert_eq!(done.next(), Some("alice"));
+    assert_eq!(done.next(), Some("bob"));
+    assert_eq!(done.next(), None);
+    let arms = f.core.walk_arms();
+    let armed = arms.lock().unwrap();
+    for name in ["alice", "bob"] {
+        assert_eq!(
+            armed.get(name).unwrap().lock().unwrap().queued_tile(),
+            Some(destination)
+        );
+    }
+}

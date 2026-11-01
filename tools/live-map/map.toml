@@ -56,6 +56,9 @@ globs = [
   "**/*_tests.rs",
   "**/*_test.rs",
   "**/test_support/**",
+  # Offline real-pack diagnostic example, not a product runtime. Its release
+  # corpus and combined-pack qualification remain mandatory separate proofs.
+  "crates/nav-planner/examples/route_parity.rs",
   "crates/panel/src/test_support.rs",
   "**/fixtures/**",
   "**/tests.rs",
@@ -315,7 +318,7 @@ cells = [
 ]
 
 [[cover]]
-globs = ["crates/api/src/interact/**", "crates/api/src/lifecycle.rs", "crates/api/src/snapshot.rs", "crates/api/src/snapshot/**", "crates/host-play/src/script_interact.rs", "crates/script/src/slot/api.rs", "crates/script/src/native/actions.rs", "crates/script/src/native/ledger.rs", "crates/script/src/native/seat_rows.rs"]
+globs = ["crates/api/src/interact/**", "crates/api/src/lifecycle.rs", "crates/api/src/snapshot.rs", "crates/api/src/snapshot/**", "crates/host-play/src/script_interact.rs", "crates/script/src/slot/api.rs", "crates/script/src/native/actions.rs", "crates/script/src/native/ledger.rs", "crates/script/src/native/seat_rows.rs", "crates/host-play/src/script_snapshot.rs", "crates/script-js/schema/generated/isolate_generated.rs", "crates/script-js/schema/isolate.fbs", "crates/script-js/src/scene/observed.rs", "crates/script/src/native/snapshot_source.rs"]
 cells = [
   "host.api-gather-wire-shadow|LIVE=1 BOT_LIVE_NAME_PREFIX=${BOT_LIVE_NAME_PREFIX:?} BOT_CPU=1 BOT_NAV_BUILD=skip BOT_GAME_PORT=44594 BOT_HTTP_PORT=1080 GATHERER_NAV_PACK=${NAV_PACK_289:?} GATHERER_NAV_FLAGS=${NAV_FLAGS_289:?} GATHERER_ENGINE_DIR=${ENGINE_A_DIR:?} GATHERER_WC_TILE=3197,3209,0 BOT_CACHE_DIR=${BOT_CACHE_DIR:?} BOT_EVIDENCE_DIR=${LIVE_EVIDENCE_DIR:?} ${ISOHOME:?} nice -n 10 cargo test --locked -p host-play --features live-harness,test-support,live-probe,memory-profile --lib -- --ignored --exact api_gather_live_tests::live_gather_api_receipt_tracks_memory_reconnect_and_wire_shadow --nocapture --test-threads=1",
 ]
@@ -343,6 +346,11 @@ globs = [
   "crates/script/src/ctx.rs",
   "crates/script/src/interact.rs",
   "crates/script-js/src/wire/isolate_fb.rs",
+  "crates/host-play/src/script_snapshot.rs",
+  "crates/script-js/schema/generated/isolate_generated.rs",
+  "crates/script-js/schema/isolate.fbs",
+  "crates/script-js/src/scene/observed.rs",
+  "crates/script/src/native/snapshot_source.rs",
   "crates/script/src/keep_list.rs",
   "crates/script/src/lib.rs",
   "crates/script-js/src/machine/mod.rs",
@@ -441,7 +449,7 @@ cells = [
 ]
 
 [[cover]]
-globs = ["crates/host-play/src/admission.rs", "crates/host-play/src/play_slots.rs", "crates/host-play/src/play_status.rs", "crates/host-play/src/walk_arm.rs", "crates/host-play/src/walk_map/**"]
+globs = ["crates/host-play/src/admission.rs", "crates/host-play/src/play_slots.rs", "crates/host-play/src/play_status.rs", "crates/host-play/src/walk_arm.rs", "crates/host-play/src/walk_map/**", "crates/host-play/src/walk_plan.rs"]
 cells = [
   "host.survivable-admission|LIVE=1 BOT_LIVE_NAME_PREFIX=${BOT_LIVE_NAME_PREFIX:?} BOT_CPU=1 BOT_NAV_BUILD=skip BOT_GAME_PORT=44594 BOT_HTTP_PORT=1080 WORLD_ENGINE_DIR=${ENGINE_A_DIR:?} WORLD_NAV_PACK=${NAV_PACK_289:?} BOT_UNPACK_DIR=${BOT_UNPACK_DIR:?} BOT_CACHE_DIR=${BOT_CACHE_DIR:?} LIVE_EVIDENCE_DIR=${LIVE_EVIDENCE_DIR:?} ${ISOHOME:?} nice -n 10 cargo test --locked -p host-play --features live-harness,test-support,live-probe --test survivable_admission_live -- --ignored --exact real_unknown_poison_explicit_forbid_then_opt_in_and_default_escape --nocapture --test-threads=1",
 ]
@@ -689,7 +697,7 @@ cells = [
 # attacker-target combat-close branch in a fixed-deadline cell. The W6
 # report retains this live-proof limit; native Mordred is not a substitute.
 [[cover]]
-globs = ["crates/script-js/src/compat/dialog.rs"]
+globs = ["crates/script-js/src/compat/dialog.rs", "crates/host-play/src/script_snapshot.rs", "crates/script-js/schema/generated/isolate_generated.rs", "crates/script-js/schema/isolate.fbs", "crates/script-js/src/scene/observed.rs", "crates/script/src/native/snapshot_source.rs"]
 cells = [
   "compat.dialog-combat-close-adapter|${ISOHOME:?} nice -n 10 cargo test --release --locked -p script-js --features test-hooks --lib dialog::tests::combat_close_requires_visible_actor_targeting_local_player -- --exact --nocapture --test-threads=1",
 ]
@@ -933,4 +941,16 @@ cells = [
 globs = ["crates/host-play/src/live_ports.rs"]
 cells = [
   "host.survivable-admission|LIVE=1 BOT_LIVE_NAME_PREFIX=${BOT_LIVE_NAME_PREFIX:?} BOT_CPU=1 BOT_NAV_BUILD=skip BOT_GAME_PORT=44594 BOT_HTTP_PORT=1080 WORLD_ENGINE_DIR=${ENGINE_A_DIR:?} WORLD_NAV_PACK=${NAV_PACK_289:?} BOT_UNPACK_DIR=${BOT_UNPACK_DIR:?} BOT_CACHE_DIR=${BOT_CACHE_DIR:?} LIVE_EVIDENCE_DIR=${LIVE_EVIDENCE_DIR:?} ${ISOHOME:?} nice -n 10 cargo test --locked -p host-play --features live-harness,test-support,live-probe --test survivable_admission_live -- --ignored --exact real_unknown_poison_explicit_forbid_then_opt_in_and_default_escape --nocapture --test-threads=1",
+]
+
+# Controlled real Play/map proof, not a live incomplete-search witness.
+# The full frontend library includes group_walk::tests::
+# frontend_owned_map_staging_arms_the_real_profile_bound_play:
+# OperatorSession::walk_map_context -> WalkMap::confirm_walk_plan ->
+# OperatorSession::confirm_marked_walk -> Play::map_walk_group and real arms.
+# It also checks session/map destination retention and typed error projection.
+[[cover]]
+globs = ["crates/frontend-core/src/session/map.rs", "crates/frontend-core/src/walk_map.rs"]
+cells = [
+  "frontend-core.map-walk-headless|BOT_NAV_BUILD=skip NAV_PACK=${NAV_PACK_289:?} NAV_FLAGS=${NAV_FLAGS_289:?} WORLD_NAV_PACK=${NAV_PACK_289:?} WORLD_NAV_FLAGS=${NAV_FLAGS_289:?} WORLD_ENGINE_DIR=${ENGINE_A_DIR:?} ${ISOHOME:?} env -u LIVE nice -n 10 cargo test --locked -p frontend-core --lib",
 ]
