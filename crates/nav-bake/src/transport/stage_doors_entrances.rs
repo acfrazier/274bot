@@ -452,11 +452,14 @@ impl Motion<'_> {
                 let Some(Val::Int(threshold)) = self.value(rhs, env) else {
                     return Some(Cond::unknown());
                 };
+                let quest_stage = self.base.src.quest_stage.get(quest_varp).copied();
+                let colour_authoritative =
+                    quest_stage.is_some_and(|facts| facts.colour_authoritative);
                 let stage_domain = self
                     .base
                     .src
                     .quest_family
-                    .and_then(|_| self.base.src.quest_stage.get(quest_varp).copied())
+                    .and_then(|_| quest_stage)
                     .and_then(|facts| authoritative_stage_domain(facts, *complete));
                 let selected_stage = input
                     .stage_ranges
@@ -517,29 +520,23 @@ impl Motion<'_> {
                             values,
                             *complete,
                             domain_max,
-                            self.base.src.quest_stage[quest_varp].colour_authoritative,
+                            colour_authoritative,
                         )],
                         quest_family: Some(quest_family),
                         ..Needs::default()
                     }
-                } else if input.complete
-                    && self
-                        .base
-                        .src
-                        .quest_stage
-                        .get(quest_varp)
-                        .is_some_and(|facts| facts.colour_authoritative)
-                {
-                    Needs {
-                        quests: vec![api::selected::QuestGate::Complete(quest.clone())],
-                        quest_family: self.base.src.quest_family,
-                        ..Needs::default()
-                    }
-                } else if input.complete {
-                    return Some(Cond::unknown());
                 } else {
-                    Needs::default()
-                };
+                    match (input.complete, colour_authoritative) {
+                        (true, true) => Needs {
+                            quests: vec![api::selected::QuestGate::Complete(quest.clone())],
+                            quest_family: self.base.src.quest_family,
+                            ..Needs::default()
+                        },
+                        (true, false) => return Some(Cond::unknown()),
+                        (false, _) => Needs::default(),
+                    }
+                }
+;
                 return Some(Cond { value, needs });
             }
         }
@@ -1339,5 +1336,94 @@ mod stage_window_tests {
             ),
             None
         );
+    }
+    #[test]
+    fn non_authoritative_completion_without_stage_domain_is_unknown() {
+        let src = Sources {
+            oplocs: std::array::from_fn(|_| HashMap::new()),
+            oplocu: HashMap::new(),
+            quest_family: None,
+            quest_complete: HashMap::from([(
+                "heroquest".to_owned(),
+                (api::selected::FactKey::new("hero"), 15),
+            )]),
+            quest_stage: HashMap::from([(
+                "heroquest".to_owned(),
+                QuestStageFacts {
+                    colour_authoritative: false,
+                    stage_domain: None,
+                    transmission: api::quest_facts::Transmission::NotTransmitted,
+                },
+            )]),
+            quest_exact: HashSet::new(),
+            labels: HashMap::new(),
+            timers: HashMap::new(),
+            procs: HashMap::new(),
+            non_moving: std::cell::RefCell::new(HashMap::new()),
+            constants: HashMap::from([("hero_complete".to_owned(), 15)]),
+            varps: HashMap::from([("heroquest".to_owned(), 188)]),
+            objs: HashMap::new(),
+            ids: HashMap::new(),
+            worn_slots: HashMap::new(),
+        };
+        let supported = HashSet::new();
+        let loc_facts = LocFacts::default();
+        let facts = Facts::default();
+        let positions = HashMap::new();
+        let absent: [i32; 0] = [];
+        let npc_queries: [Expr; 0] = [];
+        let above_queries: [String; 0] = [];
+        let proofs = HashSet::new();
+        let selectors = HashMap::new();
+        let at = WorldTile {
+            x: 0,
+            z: 0,
+            level: 0,
+        };
+        let mut motion = Motion {
+            base: Eval {
+                src: &src,
+                supported: &supported,
+                at,
+                stand: Some(at),
+                angle: 0,
+                needs: Needs::default(),
+                relative_landing_safe: false,
+                jumps: 0,
+            },
+            facts: &loc_facts,
+            proofs: &proofs,
+            selectors: &selectors,
+            tool: None,
+            here: at,
+            loc_id: 900,
+            loc_modified: false,
+            shape: 0,
+            moved: false,
+            ticks: 1,
+            gate_read: false,
+            entrance: Some(Inputs {
+                facts: &facts,
+                positions: &positions,
+                absent: &absent,
+                npc_queries: &npc_queries,
+                npc_mask: 0,
+                complete: true,
+                stage_ranges: None,
+                above_queries: &above_queries,
+                above_mask: 0,
+            }),
+            returned: None,
+            value_query: false,
+            timer: None,
+        };
+        let lhs = Expr::Word("%heroquest".to_owned());
+        let rhs = Expr::Word("^hero_complete".to_owned());
+        let condition = motion
+            .entrance_compare(CmpOp::Ge, &lhs, &rhs, &Env::new())
+            .expect("quest comparison");
+
+        assert_eq!(condition.value, None);
+        assert!(condition.needs.quests.is_empty());
     }
 }
