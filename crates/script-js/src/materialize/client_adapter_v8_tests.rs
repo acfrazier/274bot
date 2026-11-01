@@ -390,6 +390,7 @@ fn run_in_child(environment: &str, test_name: &str) -> bool {
         output.status.success() && stdout.contains("1 passed"),
         "isolated V8 test failed\nstdout: {stdout}\nstderr: {stderr}"
     );
+    print!("{stdout}");
     false
 }
 
