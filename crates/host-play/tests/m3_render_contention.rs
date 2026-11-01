@@ -1468,18 +1468,22 @@ fn live_m3_render_contention() {
 #[test]
 #[ignore = "LIVE=1 final fairness path; requires isolated calibration timing build"]
 fn m3_fair_head_progress() {
-    assert!(
-        cfg!(feature = "render-diagnostics"),
-        "timing requires render-diagnostics"
-    );
-    assert!(
-        !cfg!(feature = "render-test-hooks"),
-        "test controls invalidate timing"
-    );
-    assert!(
-        !cfg!(feature = "draw-memory-profile"),
-        "drawing allocator invalidates timing"
-    );
+    for (valid, message) in [
+        (
+            cfg!(feature = "render-diagnostics"),
+            "timing requires render-diagnostics",
+        ),
+        (
+            !cfg!(feature = "render-test-hooks"),
+            "test controls invalidate timing",
+        ),
+        (
+            !cfg!(feature = "draw-memory-profile"),
+            "drawing allocator invalidates timing",
+        ),
+    ] {
+        assert!(valid, "{message}");
+    }
     #[cfg(feature = "render-diagnostics")]
     {
         assert!(

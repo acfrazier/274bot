@@ -204,7 +204,7 @@ struct GlibcAllocatorStats {
 const GLIBC_ALLOCATOR_SOURCE: &str = "glibc malloc_info(3)";
 
 #[cfg(any(test, all(target_os = "linux", target_env = "gnu")))]
-const GLIBC_ALLOCATOR_COVERAGE: &str = "All glibc arenas plus direct glibc mmap allocations. Arena in-use is system-current minus fast/rest free totals and can include thread-cache-held chunks and allocator bookkeeping; it is not application-requested live bytes. Rust System and some V8 allocations overlap. Direct VM mappings outside glibc malloc and GPU/driver allocations are excluded. Do not add these values to RSS or other allocator counters.";
+const GLIBC_ALLOCATOR_COVERAGE: &str = "All glibc arenas plus direct glibc mmap allocations. Arena in-use is system-current minus the reported free totals (rest and fast, when present) and can include thread-cache-held chunks and allocator bookkeeping; it is not application-requested live bytes. Rust System and some V8 allocations overlap. Direct VM mappings outside glibc malloc and GPU/driver allocations are excluded. Do not add these values to RSS or other allocator counters.";
 
 #[cfg(any(test, all(target_os = "linux", target_env = "gnu")))]
 impl GlibcAllocatorStats {
@@ -237,7 +237,7 @@ struct GlibcHeapFields {
 #[cfg(any(test, all(target_os = "linux", target_env = "gnu")))]
 impl GlibcHeapFields {
     fn complete(&self) -> bool {
-        self.fast && self.rest && self.system_current && self.aspace_total && self.aspace_mprotect
+        self.rest && self.system_current && self.aspace_total && self.aspace_mprotect
     }
 }
 
@@ -265,6 +265,8 @@ fn set_once(slot: &mut Option<u64>, value: u64) -> Option<()> {
 /// Parse the version-1 XML emitted by glibc `malloc_info`. Root totals cover
 /// every emitted heap; accepting only complete, consistent summaries keeps a
 /// changed/unsupported XML schema from becoming a plausible-looking zero.
+/// Glibc without fastbins omits `fast` totals in every heap and at the root.
+/// Reject mixed forms instead of treating a missing legacy total as zero.
 #[cfg(any(test, all(target_os = "linux", target_env = "gnu")))]
 fn parse_glibc_malloc_info(xml: &str) -> Option<GlibcAllocatorStats> {
     let mut root_started = false;
@@ -272,6 +274,7 @@ fn parse_glibc_malloc_info(xml: &str) -> Option<GlibcAllocatorStats> {
     let mut in_heap = false;
     let mut heap_fields = GlibcHeapFields::default();
     let mut arena_count = 0_u64;
+    let mut fast_arena_count = 0_u64;
     let mut fast_free = None;
     let mut rest_free = None;
     let mut arena_system_bytes = None;
@@ -316,6 +319,7 @@ fn parse_glibc_malloc_info(xml: &str) -> Option<GlibcAllocatorStats> {
             }
             in_heap = false;
             arena_count = arena_count.checked_add(1)?;
+            fast_arena_count = fast_arena_count.checked_add(u64::from(heap_fields.fast))?;
             continue;
         }
 
@@ -387,7 +391,11 @@ fn parse_glibc_malloc_info(xml: &str) -> Option<GlibcAllocatorStats> {
     if !root_started || !root_closed || in_heap || arena_count == 0 {
         return None;
     }
-    let fast_free = fast_free?;
+    let fast_free = match (fast_free, fast_arena_count) {
+        (Some(free), count) if count == arena_count => free,
+        (None, 0) => 0,
+        _ => return None,
+    };
     let rest_free = rest_free?;
     let arena_free_bytes = fast_free.checked_add(rest_free)?;
     let arena_system_bytes = arena_system_bytes?;
@@ -3387,10 +3395,39 @@ mod tests {
     }
 
     #[test]
+    fn glibc_malloc_info_accepts_the_complete_no_fastbins_schema() {
+        let mut xml = String::with_capacity(GLIBC_MALLOC_INFO_TWO_ARENAS.len());
+        for line in GLIBC_MALLOC_INFO_TWO_ARENAS
+            .lines()
+            .filter(|line| !line.contains("<total type=\"fast\""))
+        {
+            xml.push_str(line);
+            xml.push('\n');
+        }
+        let stats = parse_glibc_malloc_info(&xml).expect("complete no-fastbins malloc_info");
+        assert_eq!(stats.arena_count, 2);
+        assert_eq!(stats.arena_free_bytes, 148);
+        assert_eq!(stats.arena_in_use_bytes, 620);
+        assert_eq!(stats.mmap_bytes, 700);
+        assert_eq!(stats.mmap_regions, 7);
+    }
+
+    #[test]
     fn glibc_malloc_info_rejects_missing_or_inconsistent_totals() {
         let missing_mmap = GLIBC_MALLOC_INFO_TWO_ARENAS
             .replace("<total type=\"mmap\" count=\"7\" size=\"700\"/>", "");
         assert!(parse_glibc_malloc_info(&missing_mmap).is_none());
+
+        let missing_root_fast = GLIBC_MALLOC_INFO_TWO_ARENAS
+            .replace("<total type=\"fast\" count=\"5\" size=\"80\"/>", "");
+        assert!(parse_glibc_malloc_info(&missing_root_fast).is_none());
+
+        let missing_heap_fast = GLIBC_MALLOC_INFO_TWO_ARENAS.replacen(
+            "<total type=\"fast\"",
+            "<total type=\"unexpected-fast\"",
+            1,
+        );
+        assert!(parse_glibc_malloc_info(&missing_heap_fast).is_none());
 
         let free_exceeds_system = GLIBC_MALLOC_INFO_TWO_ARENAS.replace(
             "<system type=\"current\" size=\"768\"/>",

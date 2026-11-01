@@ -81,6 +81,10 @@ const RELEASE_BUNDLE: &str =
 
 /// Every reachable core entry point outside the by-class exclusions.
 const CORE: &[(&str, Decision)] = &[
+    (
+        "bench.rs::sample_render_head",
+        Excluded("reads render and wake counters for diagnostics; no operator decision"),
+    ),
     // fleet.rs: the session's fleet model, moved by the rows named.
     ("fleet.rs::Fleet::seed_running", Row(C::SetMultiBox(true))),
     ("fleet.rs::Fleet::add", Row(C::Load)),
@@ -227,6 +231,10 @@ const CORE: &[(&str, Decision)] = &[
     ("session/commands.rs::OperatorSession::stage_new_profile", Staged(C::CreateProfile)),
     ("session/commands.rs::OperatorSession::stage_guardian", Staged(C::SetGuardian)),
     ("session/commands.rs::OperatorSession::stage_survival", Staged(C::SetSurvival)),
+    (
+        "surface.rs::with_process_render_budget",
+        Excluded("scopes shared GPU initialization in the process render budget; no operator decision"),
+    ),
     (
         "surface.rs::SpawnProfile::set_lowmem",
         Excluded("a surface adjusts its disposable spawn copy (session-only memory override); never written back"),

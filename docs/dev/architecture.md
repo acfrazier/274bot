@@ -534,6 +534,9 @@ Memory samples also report native allocator observations separately from RSS,
 requested Rust live bytes, V8 and logical GPU storage. Linux GNU samples use
 `malloc_info` across all arenas and direct allocator mmap allocations. Arena
 in-use includes allocator bookkeeping and can include thread-cache chunks.
+Both complete `malloc_info` forms are supported: with fastbin totals, or with
+those totals absent from every arena and the root. Mixed or incomplete forms
+remain unavailable; missing totals are not silently replaced with zeros.
 macOS samples use the aggregate malloc-zone statistics. Unsupported samplers
 return null. These allocator domains overlap Rust `System` and some V8
 allocations; they exclude GPU/driver allocations outside that allocator and
