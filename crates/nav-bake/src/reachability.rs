@@ -1251,18 +1251,18 @@ mod closure_tests {
         let west = atlas.base_at(tile(3200)).unwrap().unwrap();
         let east = atlas.base_at(tile(3201)).unwrap().unwrap();
         assert_ne!(west, east, "the one-way step separates the components");
-        let movement_from_east: Vec<u32> = atlas.movement_closure(east).unwrap().collect();
-        let movement_from_west: Vec<u32> = atlas.movement_closure(west).unwrap().collect();
-        assert!(movement_from_east.contains(&west));
-        assert!(!movement_from_west.contains(&east));
+        assert!(atlas.movement_closure(east).unwrap().any(|id| id == west));
+        assert!(!atlas.movement_closure(west).unwrap().any(|id| id == east));
         let east_condensed = atlas.condensed_of(east).unwrap();
         let west_condensed = atlas.condensed_of(west).unwrap();
-        let transport_from_east: Vec<u32> =
-            atlas.transport_closure(east_condensed).unwrap().collect();
-        let transport_from_west: Vec<u32> =
-            atlas.transport_closure(west_condensed).unwrap().collect();
-        assert!(transport_from_east.contains(&west_condensed));
-        assert!(!transport_from_west.contains(&east_condensed));
+        assert!(atlas
+            .transport_closure(east_condensed)
+            .unwrap()
+            .any(|id| id == west_condensed));
+        assert!(!atlas
+            .transport_closure(west_condensed)
+            .unwrap()
+            .any(|id| id == east_condensed));
     }
 
     #[test]
@@ -1312,13 +1312,13 @@ mod closure_tests {
     fn sparse_closures_equal_bitset_closures() {
         let mut graphs: Vec<Vec<BTreeSet<u32>>> = Vec::new();
         let mut chain = vec![BTreeSet::new(); 70];
-        for i in 0..69 {
-            chain[i].insert(i as u32 + 1);
+        for (i, arcs) in chain.iter_mut().enumerate().take(69) {
+            arcs.insert(i as u32 + 1);
         }
         graphs.push(chain);
         let mut cycle = vec![BTreeSet::new(); 5];
-        for i in 0..5 {
-            cycle[i].insert((i as u32 + 1) % 5);
+        for (i, arcs) in cycle.iter_mut().enumerate() {
+            arcs.insert((i as u32 + 1) % 5);
         }
         graphs.push(cycle);
         let mut state = 0x2545_f491_4f6c_dd1du64;
