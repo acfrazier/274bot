@@ -449,7 +449,7 @@ pub(crate) fn script_observe_cached_with_channels(
     obj_names_arc: Option<Arc<api::obj_names::ObjNames>>,
     #[cfg(feature = "js")] channels: Option<&super::script_channels::SlotChannels>,
     #[cfg(feature = "js")] channel_world: super::script_channels::BrokerWorld,
-    mut run_policy: Option<&mut ScriptRunPolicy>,
+    run_policy: Option<&mut ScriptRunPolicy>,
     mut debug_replies: Option<&mut super::debug_replies::DebugReplies>,
     service_arm: Option<&SlotArm>,
     statuses: Option<&Arc<Mutex<Vec<crate::SlotStatus>>>>,
@@ -1323,7 +1323,7 @@ pub(crate) fn script_observe_cached_with_channels(
         journal_paint_hidden = journal_wall_now.is_some_and(|now| slot.journal_paint_hidden(now));
         script_wait = slot.script_interaction_wait(journal_wall_now.unwrap_or_else(Instant::now));
     }
-    if let Some(run_policy) = run_policy.as_deref_mut() {
+    if let Some(run_policy) = run_policy {
         run_policy.sync_runtime(policy_runtime_generation);
         if let Some(update) = run_policy_update {
             update.apply(run_policy);
