@@ -488,6 +488,7 @@ impl WindowDiagnostics {
 
 pub(super) fn error_kind(error: &PanelError) -> &'static str {
     match error {
+        PanelError::ServerProfile(_) => "server_profile",
         PanelError::WindowCreation(_) => "native_window_creation",
         PanelError::SurfaceCreation(_) => "surface_creation",
         PanelError::AdapterUnavailable(_) => "adapter_unavailable",

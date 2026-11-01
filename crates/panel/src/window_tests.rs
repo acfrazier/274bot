@@ -2685,6 +2685,22 @@ fn lost_record_frame_leaves_no_png_failure_behind() {
 
 #[cfg(feature = "render-diagnostics")]
 #[test]
+fn window_diagnostic_server_profile_errors_keep_their_category() {
+    use super::window_diagnostics::{error_kind, WindowDiagnostics};
+
+    let kind = error_kind(&PanelError::ServerProfile("invalid local world".to_owned()));
+    assert_eq!(kind, "server_profile");
+    let mut diagnostics = WindowDiagnostics::new();
+    let error = diagnostics.record_error_at(kind, 25);
+    assert_eq!(error["record"], "window_lifecycle");
+    assert_eq!(error["kind"], "error");
+    assert_eq!(error["status"], "error");
+    assert_eq!(error["error_kind"], "server_profile");
+    assert!(error["window_id"].is_null());
+}
+
+#[cfg(feature = "render-diagnostics")]
+#[test]
 fn window_diagnostic_lifecycle_rows_keep_identity_order_status_and_scope() {
     use super::window_diagnostics::WindowDiagnostics;
 
