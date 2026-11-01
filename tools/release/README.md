@@ -80,10 +80,9 @@ prepare removes its partial directory automatically.
 
 ### Builders and parameters
 
-The host and client pin Rust **1.99.1** with Clippy and rustfmt. Prepare that exact
-toolchain in each builder's Rustup home before a release build. Retain 1.98.1 and
-the builder's recorded default for rollback. Do not use unqualified `stable` to
-qualify a release.
+The host and client pin Rust **1.98.1** with Clippy and rustfmt. Prepare that exact
+toolchain in each builder's Rustup home before a release build. Do not use
+unqualified `stable` to qualify a release.
 
 - macOS arm64 builds locally. `--sign-identity` (or
   `RELEASE_SIGN_IDENTITY`) is required for a real release build. The macOS

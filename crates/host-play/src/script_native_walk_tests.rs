@@ -5890,7 +5890,7 @@ fn s2b_admission_per_bot_layouts() {
     // across resends): NavBot measures 3776 B, with no new heap payload and
     // no SlotScript growth.
     // SURVIVAL-1.4 adds one byte of cure_poison, padded to 8 by alignment: NavBot is 3784 B.
-    // Rust 1.99.1 is pinned for the workspace and CI. These are lib-test
+    // Rust 1.98.1 is pinned for the workspace and CI. These are lib-test
     // layouts: test-only inspection budgets and bank fixtures are included.
     // S0c moves the platform-specific isolate mutexes into the surface run.
     // The shared 64-bit slot layout no longer contains those mutexes.

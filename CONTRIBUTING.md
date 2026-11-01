@@ -24,7 +24,7 @@ a pull request or a doc.
 ## Build and run
 
 1. Install [Rust through rustup](https://rustup.rs). The repository pins Rust
-   **1.99.1** in `rust-toolchain.toml`, and rustup installs it for you.
+   **1.98.1** in `rust-toolchain.toml`, and rustup installs it for you.
 2. On Linux, install the audio and window headers CI uses:
 
    ```bash
