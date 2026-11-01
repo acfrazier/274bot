@@ -38,6 +38,7 @@ pub(super) fn install(
     {
         return Err("loc projection interest already installed".to_string());
     }
+    client_adapter_v8::install(runtime)?;
     let context = runtime.deno_runtime().main_context();
     let mut scope = runtime.deno_runtime().handle_scope();
     let global = context.open(&mut scope).global(&mut scope);
