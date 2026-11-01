@@ -62,7 +62,7 @@ use script::quester::runner::Quester;
 use serde_json::{json, Value};
 
 const COOK_PATH_JSON: &str = include_str!("../../script/paths/289/cook.json");
-const LAW_RUNE_ALIAS: &str = "law_rune";
+const LAW_RUNE_ALIAS: &str = "lawrune";
 const COOK_STAGE: &str = "cook:0";
 const COOK_VARP: &str = "cookquest";
 const COOK_DISPLAY: &str = "Cook's Assistant";
@@ -89,7 +89,6 @@ const SHILO_BANK_STAND: WorldTile = WorldTile {
 };
 const GUNDAI_CHOICE_NEEDLE: &str = "I'd like to access my bank account";
 const GUNDAI_CHOICE_TEXT: &str = "Cool, I'd like to access my bank account please.";
-const BANK_SEED_COMMAND: &str = "givebank law_rune 1";
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct SessionSample {
@@ -865,7 +864,7 @@ fn build_bank_cell(
     insert_account_seed(
         &mut fixture,
         "seed only this account's bank before the final relog",
-        BANK_SEED_COMMAND.to_owned(),
+        format!("givebank {LAW_RUNE_ALIAS} 1"),
     );
     let teller_type = if matches!(guard, StartGuard::ShiloTeller) {
         let prerequisite = selected
@@ -1161,6 +1160,48 @@ fn quester_bank_preserves_player_open_gundai_bank() {
 #[cfg(test)]
 mod oracle_tests {
     use super::*;
+
+    #[test]
+    fn all_bank_fixtures_construct_with_selected_item_aliases() {
+        let (selected, quests) = live_data();
+        let law_rune = selected.item_by_alias(LAW_RUNE_ALIAS).unwrap();
+        assert_eq!(law_rune.name.as_deref(), Some("Law rune"));
+
+        for (name, bank, required, stand, guard) in [
+            (
+                "live-quester-bank-duel-chest-owns-and-closes",
+                DUEL_BANK_STAND,
+                true,
+                DUEL_BANK_STAND,
+                StartGuard::DuelClosedChest,
+            ),
+            (
+                "live-quester-bank-shilo-teller-owns-and-closes",
+                SHILO_BANK_STAND,
+                true,
+                SHILO_BANK_STAND,
+                StartGuard::ShiloTeller,
+            ),
+            (
+                "live-quester-bank-preserves-player-open-gundai",
+                GUNDAI_BANK_TILE,
+                false,
+                GUNDAI_STAND,
+                StartGuard::PlayerOpenGundai,
+            ),
+        ] {
+            let cell = build_bank_cell(
+                name,
+                bank,
+                required,
+                stand,
+                guard,
+                Arc::clone(&selected),
+                Arc::clone(&quests),
+            );
+            assert_eq!(cell.law_rune_id, law_rune.id, "{name}");
+        }
+    }
 
     fn base_owned_trace() -> BankTrace {
         BankTrace {
