@@ -521,13 +521,43 @@ fn auto_run_press_waits_for_a_page_that_arrives_a_cycle_late() {
 }
 
 #[test]
-fn auto_run_press_goes_out_after_the_bound_when_no_page_opens() {
+fn auto_run_press_waits_for_a_modal_that_follows_the_second_player_info_in_a_later_drain() {
+    // A click one cycle late: the engine writes cycle t + 2 as PLAYER_INFO,
+    // then the modal, as two messages (`NetworkPlayer.ts:286-288`, `:175`).
+    // The client decodes five packets per frame, so the drain that holds the
+    // second PLAYER_INFO can end before the modal (`client.rs:12798-12803`).
+    // The modal arrives in the next drain, with no PLAYER_INFO.
     let mut rig = FenceRig::new();
-    let presses = rig.run(&[click_frame(1, -1), frame(1, -1), frame(1, -1), frame(1, -1)]);
+    let presses = rig.run(&[
+        click_frame(1, -1),
+        frame(1, -1),
+        frame(1, -1),
+        frame(0, JOURNAL_ROOT),
+        frame(1, JOURNAL_ROOT),
+        frame(1, -1),
+        frame(1, -1),
+    ]);
     assert_eq!(
         presses,
-        [0, 0, 1, 1],
-        "two observed ticks without a page end the fence"
+        [0, 0, 0, 0, 0, 1, 1],
+        "no press at the second PLAYER_INFO without its modal, none while the page is up, one after the close"
+    );
+}
+
+#[test]
+fn auto_run_press_goes_out_after_the_bound_when_no_page_opens() {
+    let mut rig = FenceRig::new();
+    let presses = rig.run(&[
+        click_frame(1, -1),
+        frame(1, -1),
+        frame(1, -1),
+        frame(1, -1),
+        frame(1, -1),
+    ]);
+    assert_eq!(
+        presses,
+        [0, 0, 0, 1, 1],
+        "three observed ticks without a page end the fence"
     );
 }
 
@@ -550,8 +580,16 @@ fn auto_run_fence_counts_each_packet_of_a_multi_packet_drain() {
     let presses = rig.run(&[click_frame(1, -1), frame(2, -1), frame(1, -1)]);
     assert_eq!(
         presses,
+        [0, 0, 1],
+        "two packets in one drain are two observed ticks, one short of the bound"
+    );
+
+    let mut rig = FenceRig::new();
+    let presses = rig.run(&[click_frame(1, -1), frame(3, -1), frame(1, -1)]);
+    assert_eq!(
+        presses,
         [0, 1, 1],
-        "two packets are two observed ticks: the bound is spent in one drain"
+        "three packets are three observed ticks: the bound is spent in one drain"
     );
 }
 
@@ -563,14 +601,20 @@ fn auto_run_fence_uses_the_same_clock_after_a_relog() {
     let first = rig.run(&[frame(1, -1); 9]);
     assert_eq!(first[0], 1, "the first session presses once");
     rig.relog();
-    let presses = rig.run(&[click_frame(1, -1), frame(1, -1), frame(1, -1), frame(1, -1)]);
+    let presses = rig.run(&[
+        click_frame(1, -1),
+        frame(1, -1),
+        frame(1, -1),
+        frame(1, -1),
+        frame(1, -1),
+    ]);
     assert_eq!(
         presses,
-        [0, 0, 1, 1],
-        "the new session's fence lasts two of its own observed ticks"
+        [0, 0, 0, 1, 1],
+        "the new session's fence lasts three of its own observed ticks"
     );
     assert!(
-        rig.script_tick.load(Ordering::Relaxed) >= 13,
+        rig.script_tick.load(Ordering::Relaxed) >= 14,
         "host-play's counter was carried across the relog, as in production"
     );
 }

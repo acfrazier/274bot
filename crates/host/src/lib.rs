@@ -129,13 +129,27 @@ pub struct Host;
 /// Game ticks the host holds its auto-run press after a script interaction
 /// unless the content's own signal ends the hold sooner (a modal opening).
 ///
-/// The server reads the click in the next cycle's input phase and queues its
-/// `if_openmain` in that cycle, ahead of the same flush as `PLAYER_INFO`
-/// (`World.ts:355` input, `:378` players, `:408` flush). The modal is therefore
-/// observed with the first later tick. One more tick covers a click that
-/// reaches the server one cycle late. A press that goes out after those two
-/// ticks follows an observed modal or an interaction that opened none.
-pub const SCRIPT_INTERACTION_FENCE_TICKS: u32 = 2;
+/// The click is sent after the host observes `PLAYER_INFO` number `t`. The
+/// server reads it in the input phase of cycle `t + 1` (`World.ts:355`), or
+/// one cycle later when it arrives after that phase. The script queues its
+/// `if_openmain` in that cycle (`World.ts:378` players), and the output phase
+/// then writes two separate messages in this order: `PLAYER_INFO`
+/// (`NetworkPlayer.ts:286-288`, called at `World.ts:1110`), then the modal
+/// (`NetworkPlayer.ts:175`, from `encodeOut` at `World.ts:1123`). Each message
+/// is sent on its own (`NetworkPlayer.ts:226`), and the client decodes at
+/// most five packets per frame and stops at a packet that is not fully
+/// buffered (`client.rs:12798-12803`, `:5266-5268`, `:5303-5305`). One drain
+/// can therefore observe cycle `c`'s `PLAYER_INFO` and not yet cycle `c`'s
+/// modal, so the observed `PLAYER_INFO` of cycle `c` does not show that the
+/// output of cycle `c` is complete. The `PLAYER_INFO` of cycle `c + 1` does:
+/// the stream is ordered, so the client has decoded the modal of cycle `c`
+/// before it decodes that packet.
+///
+/// The latest cycle that can hold the click's result is `t + 2`. The hold
+/// therefore lasts until the `PLAYER_INFO` of cycle `t + 3` is observed, three
+/// observed ticks after the click. A press that goes out after that follows an
+/// observed modal or an interaction that opened none.
+pub const SCRIPT_INTERACTION_FENCE_TICKS: u32 = 3;
 
 /// Host-owned script auto-run overlay. Host-play identifies the active script
 /// run and applies only generation-matched FlatBuffer updates through this
@@ -146,7 +160,8 @@ pub const SCRIPT_INTERACTION_FENCE_TICKS: u32 = 2;
 /// writes: the host advances it once per `PLAYER_INFO` and it survives relogs,
 /// so no caller supplies a tick that could come from another counter. It ends
 /// when a modal opens or after [`SCRIPT_INTERACTION_FENCE_TICKS`] observed
-/// ticks.
+/// ticks, the first count that proves the last possible result cycle was
+/// fully drained.
 #[derive(Debug, Default)]
 pub struct ScriptRunPolicy {
     runtime_generation: Option<u64>,

@@ -910,6 +910,13 @@ fn observe_ticks(slot: &mut SlotLoop, client: &mut Client, drain: u32) {
     slot.after_drain(client);
 }
 
+/// A drain that holds packets but no PLAYER_INFO: the rest of a cycle's
+/// output, such as the modal written after that cycle's PLAYER_INFO.
+fn observe_without_tick(slot: &mut SlotLoop, client: &mut Client) {
+    client.gens.player += 1;
+    slot.after_drain(client);
+}
+
 fn fenced_slot(client: &mut Client) -> SlotLoop {
     let mut slot = SlotLoop::new();
     ingame_scene2(client);
@@ -934,9 +941,12 @@ fn script_interaction_fence_ends_after_the_bound_when_no_modal_opens() {
     assert_eq!(slot.run_sends, 0, "held on the interaction's own tick");
     observe_ticks(&mut slot, &mut client, 1);
     slot.apply_auto_run(&mut client);
+    assert_eq!(slot.run_sends, 0, "held one tick later");
+    observe_ticks(&mut slot, &mut client, 1);
+    slot.apply_auto_run(&mut client);
     assert_eq!(
         slot.run_sends, 0,
-        "held one tick later: the click may be a cycle late"
+        "held two ticks later: the click may be a cycle late, and its modal follows that cycle's PLAYER_INFO"
     );
     observe_ticks(&mut slot, &mut client, 1);
     slot.apply_auto_run(&mut client);
@@ -955,7 +965,7 @@ fn script_interaction_fence_holds_until_the_page_appears_and_closes() {
         Arc::new(vec![]),
         Vec::new(),
     );
-    // A late click: no page on the first tick, the page on the second.
+    // A late click: the page is written after the PLAYER_INFO of cycle t + 2.
     let mut slot = fenced_slot(&mut client);
     slot.apply_auto_run(&mut client);
     observe_ticks(&mut slot, &mut client, 1);
@@ -966,6 +976,45 @@ fn script_interaction_fence_holds_until_the_page_appears_and_closes() {
     slot.apply_auto_run(&mut client);
     assert_eq!(slot.run_sends, 0, "the journal page is up: no press");
     assert_eq!(client.out.pos, 0);
+    client.main_modal_id = -1;
+    observe_ticks(&mut slot, &mut client, 1);
+    slot.apply_auto_run(&mut client);
+    assert_eq!(slot.run_sends, 1, "the press follows the observed close");
+}
+
+#[test]
+fn script_interaction_fence_waits_for_a_modal_written_after_the_second_player_info() {
+    let mut client = prepare_client(
+        cfg(),
+        1,
+        Arc::new(Cache::default()),
+        Arc::new(vec![]),
+        Vec::new(),
+    );
+    // A click one cycle late. The engine writes cycle t + 2 as PLAYER_INFO,
+    // then the modal (`NetworkPlayer.ts:286-288`, `:175`). The client reads
+    // five packets per frame, so one drain can end between the two.
+    let mut slot = fenced_slot(&mut client);
+    slot.apply_auto_run(&mut client);
+    observe_ticks(&mut slot, &mut client, 1);
+    slot.apply_auto_run(&mut client);
+    observe_ticks(&mut slot, &mut client, 1);
+    slot.apply_auto_run(&mut client);
+    assert_eq!(
+        slot.run_sends, 0,
+        "the second PLAYER_INFO is in the drain and its modal is not: the fence still holds"
+    );
+    assert_eq!(client.out.pos, 0);
+    // The next drain carries the modal and no PLAYER_INFO.
+    client.main_modal_id = 8134;
+    observe_without_tick(&mut slot, &mut client);
+    slot.apply_auto_run(&mut client);
+    assert_eq!(slot.run_sends, 0, "the page is up: no press");
+    assert_eq!(client.out.pos, 0);
+    // The next cycle's PLAYER_INFO arrives with the page still open.
+    observe_ticks(&mut slot, &mut client, 1);
+    slot.apply_auto_run(&mut client);
+    assert_eq!(slot.run_sends, 0, "the modal check holds the press");
     client.main_modal_id = -1;
     observe_ticks(&mut slot, &mut client, 1);
     slot.apply_auto_run(&mut client);
@@ -994,15 +1043,18 @@ fn script_interaction_fence_counts_every_packet_of_a_multi_packet_drain() {
     slot.apply_auto_run(&mut client);
     assert_eq!(slot.run_sends, 1);
 
-    // The same two packets without a page are the whole bound.
+    // Three packets without a page are the whole bound.
     client.out.pos = 0;
     slot.run_on = false;
     slot.run_policy.note_script_interaction();
     observe_ticks(&mut slot, &mut client, 2);
     slot.apply_auto_run(&mut client);
+    assert_eq!(slot.run_sends, 1, "two cycles in one drain do not end it");
+    observe_ticks(&mut slot, &mut client, 1);
+    slot.apply_auto_run(&mut client);
     assert_eq!(
         slot.run_sends, 2,
-        "two observed cycles with no page end the fence"
+        "three observed cycles with no page end the fence"
     );
 }
 
@@ -1057,9 +1109,12 @@ fn script_interaction_fence_survives_a_relog_on_one_clock() {
     assert_eq!(next.run_sends, 0);
     observe_ticks(&mut next, &mut client, 1);
     next.apply_auto_run(&mut client);
+    assert_eq!(next.run_sends, 0);
+    observe_ticks(&mut next, &mut client, 1);
+    next.apply_auto_run(&mut client);
     assert_eq!(
         next.run_sends, 1,
-        "a new session's fence ends after two of its own ticks, not the old session's count"
+        "a new session's fence ends after three of its own ticks, not the old session's count"
     );
 }
 

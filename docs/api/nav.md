@@ -633,15 +633,23 @@ A `journal modal timeout` permits one retry on the first observed game tick
 after the timeout. Each read retains the journal owner's five-tick window.
 The run-on button closes modals once before enabling run
 (`player_controls.rs2:34-46`). The host keeps its run-on latch until energy
-reaches 0 or the session changes (`crates/host/src/lib.rs:1460-1466,1482-1492`). Energy
+reaches 0 or the session changes (`crates/host/src/lib.rs:1475-1481,1497-1507`). Energy
 recovery or a new session allows another press.
 After a script sends a game interaction, the host holds its auto-run press
 until a modal is observed open (the modal check then holds it until the modal
-closes) or two observed game ticks pass without one. The server reads the
-click in the next cycle and flushes its `if_openmain` with that cycle's
-`PLAYER_INFO` (`World.ts:355,378,408`); the second tick covers a click one
-cycle late. Both sides count the host's own observed ticks, one per
-`PLAYER_INFO`, and the count survives relogs.
+closes) or three observed game ticks pass without one. The server reads the
+click in the input phase of the next cycle, or of the cycle after it when the
+click arrives late (`World.ts:355`), and the script queues its `if_openmain`
+in that cycle (`World.ts:378`). The output phase writes that cycle's
+`PLAYER_INFO` first (`NetworkPlayer.ts:286-288`, `World.ts:1110`) and the modal
+after it, as a separate message (`NetworkPlayer.ts:175`, `World.ts:1123`).
+The client decodes at most five packets per frame and stops at a packet that
+is not fully buffered (`client.rs:12798-12803`, `:5266-5268`, `:5303-5305`), so
+one drain can hold a cycle's `PLAYER_INFO` without its modal. The
+`PLAYER_INFO` of the next cycle follows the modal in the stream. The fence
+therefore ends on the third observed `PLAYER_INFO` after the click, not the
+second. The host counts its own observed ticks, one per `PLAYER_INFO`, and the
+count survives relogs.
 The journal content opens the page without a delay (`quest_journal.rs2:1-55`).
 If the retry fails, the walk blocks with the terminal failure detail. The live
 proof receipt records each attempt, its start and terminal ticks, and its

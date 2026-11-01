@@ -95,9 +95,10 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.7` 
   Food from Drezel remains ordinary inventory and follows existing bank
   behavior. No prerequisite step drops it.
 - After a script sends a game interaction, the host holds its auto-run press
-  until the window the interaction opens is seen, or for two game ticks if
-  none opens, so the run button no longer closes a quest journal that a walk
-  just opened.
+  until the window the interaction opens is seen, or for three game ticks if
+  none opens. The server writes a cycle's player update before the window, so
+  the press waits for the next cycle's update. The run button no longer closes
+  a quest journal that a walk just opened.
 - Bots now wait and try again when another player is using a shortcut,
   instead of giving up. The Yanille dungeon ledge ("The ledge is being
   used") stays held for at most 9 game ticks after a refusal, so the bot
