@@ -1998,11 +1998,10 @@ fn a_dialogue_deadline_keeps_its_reported_failure_without_inventing_a_cause() {
     let (mut run, mut budget, mut ledger) = start_talk(row, &snapshot, &state);
     let before = state.prereq_snapshot();
     let sent = ledger.as_ref().unwrap().outbox.len();
-    let result = with_tick(&snapshot, &mut ledger, 2, |native| {
-        native.cx.active_now =
-            Duration::from_millis(crate::quester::families::dialogue::DIALOGUE_OPEN_MS + 1);
-        run.poll(native.actions, &mut native.cx, Some(&state), &mut budget)
-    });
+    // The accepted Talk at tick 2 reaches its content trigger at observed tick 3.
+    assert!(poll(&mut run, &snapshot, &mut ledger, 3, &state, &mut budget).is_pending());
+    let deadline = 3 + crate::quester::families::dialogue::DIALOGUE_OPEN_TICKS;
+    let result = poll(&mut run, &snapshot, &mut ledger, deadline, &state, &mut budget);
     // The reused machine exposes this error, not a typed expiry cause.
     assert!(matches!(result, Poll::Ready(Err(PrereqRefusal::StepFailed {
         why: PrereqFailure::Action(reason), ..

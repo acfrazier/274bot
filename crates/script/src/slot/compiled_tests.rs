@@ -2371,8 +2371,9 @@ mod api_gather_seat {
             },
             0,
             &[],
+            None,
         );
-        let (_, rows, _) = slot.drain_host_interacts();
+        let (_, rows, _) = slot.drain_host_interacts(None);
         assert_eq!(rows.len(), 1);
         assert_eq!(rows[0].req, request);
         let seat = slot.seat.as_ref().expect("compat physical seat");

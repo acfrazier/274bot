@@ -531,7 +531,7 @@ fn default_fight_card_uses_the_shared_stand_retry_cap_and_classifier() {
                 end: WalkEnd::NoPath,
                 blocked: None,
                 detail: Some(Arc::from(detail)),
-                refusal,
+                refusal: refusal.clone(),
                 assessment: None,
                 escape: None,
                 prereq_allow: None,

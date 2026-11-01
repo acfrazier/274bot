@@ -1,4 +1,5 @@
 use super::*;
+use crate::native::walk::Walk;
 
 struct PreviousMakePlan {
     tile: WorldTile,

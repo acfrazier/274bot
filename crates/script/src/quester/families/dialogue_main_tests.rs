@@ -1893,7 +1893,7 @@ fn dialogue_no_route_retries_the_bounded_approach_budget() {
         tried: 0,
         last: None,
     });
-    let first = super::tests::post_assess_receipt(&mut ledger, 1, 0, no_route);
+    let first = super::tests::post_assess_receipt(&mut ledger, 1, 0, no_route.clone());
     assert!(with_tick(&before, &mut ledger, 2, |tick| {
         tick.actions.poll(&handle, &mut tick.cx)
     })
@@ -1916,7 +1916,7 @@ fn dialogue_no_route_retries_the_bounded_approach_budget() {
         first,
         "one fresh plan from the observed position"
     );
-    super::tests::post_assess_receipt(&mut ledger, 3, 0, no_route);
+    super::tests::post_assess_receipt(&mut ledger, 3, 0, no_route.clone());
     assert!(with_tick(&before, &mut ledger, 4, |tick| {
         tick.actions.poll(&handle, &mut tick.cx)
     })
@@ -2556,7 +2556,7 @@ fn dialogue_refusal_approach_failure_keeps_refusal_detail() {
         tried: 0,
         last: None,
     });
-    super::tests::post_assess_receipt(&mut ledger, 3, 0, no_route);
+    super::tests::post_assess_receipt(&mut ledger, 3, 0, no_route.clone());
     assert!(with_tick(&missing, &mut ledger, 4, |tick| {
         tick.actions.poll(&handle, &mut tick.cx)
     })
@@ -2569,7 +2569,7 @@ fn dialogue_refusal_approach_failure_keeps_refusal_detail() {
         super::tests::last_route_effect(&ledger),
         HostEffect::AssessWalk(request) if request.target == brundt_tile
     ));
-    super::tests::post_assess_receipt(&mut ledger, 5, 0, no_route);
+    super::tests::post_assess_receipt(&mut ledger, 5, 0, no_route.clone());
     assert!(with_tick(&missing, &mut ledger, 6, |tick| {
         tick.actions.poll(&handle, &mut tick.cx)
     })
@@ -2796,7 +2796,7 @@ fn dialogue_refusal_recovery_keeps_the_refusal_when_the_router_finds_no_route() 
         tried: 0,
         last: None,
     });
-    super::tests::post_assess_receipt(&mut ledger, 2, 0, no_route);
+    super::tests::post_assess_receipt(&mut ledger, 2, 0, no_route.clone());
     let poll_at = |ledger: &mut Option<Box<crate::native::ledger::Ledger>>, tick_number| {
         super::tests::with_tick_reach(&refused, &reach, ledger, tick_number, |tick| {
             tick.actions.poll(&handle, &mut tick.cx)
@@ -2804,7 +2804,7 @@ fn dialogue_refusal_recovery_keeps_the_refusal_when_the_router_finds_no_route() 
     };
     assert!(poll_at(&mut ledger, 3).is_pending());
     assert!(poll_at(&mut ledger, 4).is_pending());
-    super::tests::post_assess_receipt(&mut ledger, 4, 0, no_route);
+    super::tests::post_assess_receipt(&mut ledger, 4, 0, no_route.clone());
     assert!(poll_at(&mut ledger, 5).is_pending());
     assert!(poll_at(&mut ledger, 6).is_pending());
     super::tests::post_assess_receipt(&mut ledger, 6, 0, no_route);

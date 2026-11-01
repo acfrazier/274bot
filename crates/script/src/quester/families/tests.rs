@@ -443,6 +443,7 @@ pub(crate) fn with_tick_budget_output<R>(
         actions: &mut actions,
         cx: crate::native::ActionContext {
             stage_cross: None,
+            walk_prereq: Default::default(),
             condition: None,
             poison_unknown_pulse: u8::MAX,
             cure_poison: crate::survival::CurePoison::WhenNeeded,
@@ -573,8 +574,8 @@ pub(crate) fn post_assess_receipt(
             sequence: tick,
         },
         assessment: None,
+        detail: refusal.as_ref().map(|_| Arc::from("router found no route")),
         refusal,
-        detail: refusal.map(|_| Arc::from("router found no route")),
         route_ticks,
     });
     request_id
