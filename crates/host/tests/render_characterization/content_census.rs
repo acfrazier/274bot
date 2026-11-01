@@ -1751,8 +1751,8 @@ fn legal_population_receipt(
         );
         return None;
     };
-    let result = legal_population::verify_staged_engine(&engine_root, &manifest_path).and_then(
-        |verified| {
+    let result =
+        legal_population::verify_staged_engine(&engine_root, &manifest_path).and_then(|verified| {
             legal_population::derive_population(
                 &verified,
                 client_sources,
@@ -1760,8 +1760,7 @@ fn legal_population_receipt(
                 client::dash3d::collision_map::BuildArea::LEVELS as usize,
                 &LOC_SHAPE_TO_LAYER,
             )
-        },
-    );
+        });
     match result {
         Ok(receipt) => Some(receipt),
         Err(error) => {
@@ -3161,17 +3160,17 @@ fn resource_rows(
     vertex_content_upper_established: bool,
 ) -> Vec<Value> {
     let legal_vertex_capacity = if vertex_content_upper_established {
-        capture_bounds.and_then(|capture| {
-            vertex_capacity_bytes(capture.admitted.vertex_payload_bytes_upper)
-        })
+        capture_bounds
+            .and_then(|capture| vertex_capacity_bytes(capture.admitted.vertex_payload_bytes_upper))
     } else {
         None
     };
-    let vertex_device_support = legal_vertex_capacity
-        .zip(atlas_layout)
-        .and_then(|(capacity, atlas)| {
-            vertex_capacity_supported(capacity, atlas.max_storage_buffer_binding_size)
-        });
+    let vertex_device_support =
+        legal_vertex_capacity
+            .zip(atlas_layout)
+            .and_then(|(capacity, atlas)| {
+                vertex_capacity_supported(capacity, atlas.max_storage_buffer_binding_size)
+            });
     let vertex_device_rejected = vertex_device_support == Some(false);
     let model_trigger = families
         .get("base_models")
@@ -4583,13 +4582,16 @@ fn render_budget_content_census() {
     };
     let legal_population_complete = legal_population
         .as_ref()
-        .and_then(|population| population.pointer("/qualification/dynamic_population_bound_established"))
+        .and_then(|population| {
+            population.pointer("/qualification/dynamic_population_bound_established")
+        })
         .and_then(Value::as_bool)
         .unwrap_or(false);
     let legal_static_map_equivalence_established = legal_population
         .as_ref()
         .and_then(|population| {
-            population.pointer("/static_map_content/source_map_to_server_pack_equivalence_established")
+            population
+                .pointer("/static_map_content/source_map_to_server_pack_equivalence_established")
         })
         .and_then(Value::as_bool)
         .unwrap_or(false);
@@ -5343,14 +5345,8 @@ fn vertex_capacity_uses_minimum_power_of_two_without_a_ceiling() {
 fn vertex_growth_peak_and_device_support_use_the_full_capacity() {
     assert_eq!(vertex_growth_peak_bytes(1_048_576), Some(1_048_576));
     assert_eq!(vertex_growth_peak_bytes(2_097_152), Some(3_145_728));
-    assert_eq!(
-        vertex_capacity_supported(2_097_152, 2_097_151),
-        Some(false)
-    );
-    assert_eq!(
-        vertex_capacity_supported(2_097_152, 2_097_152),
-        Some(true)
-    );
+    assert_eq!(vertex_capacity_supported(2_097_152, 2_097_151), Some(false));
+    assert_eq!(vertex_capacity_supported(2_097_152, 2_097_152), Some(true));
 }
 #[test]
 fn census_reports_exact_nav_alignment_and_separate_vertex_replacement_charge() {

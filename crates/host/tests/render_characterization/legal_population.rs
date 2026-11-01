@@ -74,10 +74,9 @@ impl VerifiedEngineInputs {
     }
 
     fn read_verified_source(&self, relative: &str) -> Result<Vec<u8>, String> {
-        let record = self
-            .files
-            .get(relative)
-            .ok_or_else(|| format!("required engine source is absent from the manifest: {relative}"))?;
+        let record = self.files.get(relative).ok_or_else(|| {
+            format!("required engine source is absent from the manifest: {relative}")
+        })?;
         let bytes = fs::read(self.engine_root.join(relative))
             .map_err(|error| format!("cannot read engine source {relative}: {error}"))?;
         let digest = Sha256::digest(&bytes);
@@ -105,7 +104,9 @@ impl VerifiedEngineInputs {
             .filter_map(|(index, line)| line.contains(marker).then_some(index + 1))
             .collect::<Vec<_>>();
         if lines.is_empty() {
-            return Err(format!("engine marker {marker:?} is absent from {relative}"));
+            return Err(format!(
+                "engine marker {marker:?} is absent from {relative}"
+            ));
         }
         Ok(lines)
     }
@@ -124,7 +125,11 @@ fn safe_relative_path(path: &str) -> Result<String, String> {
                     .to_str()
                     .ok_or_else(|| "runtime manifest path is not UTF-8".to_string())?,
             ),
-            _ => return Err("runtime manifest contains a non-normal engine-relative path".to_string()),
+            _ => {
+                return Err(
+                    "runtime manifest contains a non-normal engine-relative path".to_string(),
+                )
+            }
         }
     }
     if components.is_empty() {
@@ -139,28 +144,50 @@ fn engine_relative_path(path: &str) -> Option<&str> {
 
 fn collect_files(root: &Path) -> Result<BTreeSet<String>, String> {
     fn visit(root: &Path, current: &Path, output: &mut BTreeSet<String>) -> Result<(), String> {
-        let entries = fs::read_dir(current)
-            .map_err(|error| format!("cannot enumerate staged engine path {}: {error}", current.display()))?;
+        let entries = fs::read_dir(current).map_err(|error| {
+            format!(
+                "cannot enumerate staged engine path {}: {error}",
+                current.display()
+            )
+        })?;
         for entry in entries {
             let entry = entry.map_err(|error| {
-                format!("cannot read staged engine directory {}: {error}", current.display())
+                format!(
+                    "cannot read staged engine directory {}: {error}",
+                    current.display()
+                )
             })?;
             let path = entry.path();
-            let metadata = fs::symlink_metadata(&path)
-                .map_err(|error| format!("cannot inspect staged engine path {}: {error}", path.display()))?;
+            let metadata = fs::symlink_metadata(&path).map_err(|error| {
+                format!(
+                    "cannot inspect staged engine path {}: {error}",
+                    path.display()
+                )
+            })?;
             if metadata.file_type().is_symlink() {
-                return Err(format!("staged engine input is a symlink: {}", path.display()));
+                return Err(format!(
+                    "staged engine input is a symlink: {}",
+                    path.display()
+                ));
             }
             if metadata.is_dir() {
                 visit(root, &path, output)?;
                 continue;
             }
             if !metadata.is_file() {
-                return Err(format!("staged engine input is not a regular file: {}", path.display()));
+                return Err(format!(
+                    "staged engine input is not a regular file: {}",
+                    path.display()
+                ));
             }
             let relative = path
                 .strip_prefix(root)
-                .map_err(|error| format!("cannot relativize staged engine path {}: {error}", path.display()))?
+                .map_err(|error| {
+                    format!(
+                        "cannot relativize staged engine path {}: {error}",
+                        path.display()
+                    )
+                })?
                 .to_str()
                 .ok_or_else(|| format!("staged engine path is not UTF-8: {}", path.display()))?
                 .replace('\\', "/");
@@ -172,10 +199,17 @@ fn collect_files(root: &Path) -> Result<BTreeSet<String>, String> {
         Ok(())
     }
 
-    let metadata = fs::symlink_metadata(root)
-        .map_err(|error| format!("cannot inspect staged engine root {}: {error}", root.display()))?;
+    let metadata = fs::symlink_metadata(root).map_err(|error| {
+        format!(
+            "cannot inspect staged engine root {}: {error}",
+            root.display()
+        )
+    })?;
     if metadata.file_type().is_symlink() || !metadata.is_dir() {
-        return Err(format!("staged engine root is not a real directory: {}", root.display()));
+        return Err(format!(
+            "staged engine root is not a real directory: {}",
+            root.display()
+        ));
     }
     let mut files = BTreeSet::new();
     visit(root, root, &mut files)?;
@@ -183,15 +217,22 @@ fn collect_files(root: &Path) -> Result<BTreeSet<String>, String> {
 }
 
 fn hash_file(path: &Path) -> Result<(u64, String), String> {
-    let mut file = File::open(path)
-        .map_err(|error| format!("cannot open staged engine input {}: {error}", path.display()))?;
+    let mut file = File::open(path).map_err(|error| {
+        format!(
+            "cannot open staged engine input {}: {error}",
+            path.display()
+        )
+    })?;
     let mut digest = Sha256::new();
     let mut bytes = 0u64;
     let mut buffer = [0u8; 64 * 1024];
     loop {
-        let count = file
-            .read(&mut buffer)
-            .map_err(|error| format!("cannot read staged engine input {}: {error}", path.display()))?;
+        let count = file.read(&mut buffer).map_err(|error| {
+            format!(
+                "cannot read staged engine input {}: {error}",
+                path.display()
+            )
+        })?;
         if count == 0 {
             break;
         }
@@ -207,8 +248,12 @@ pub fn verify_staged_engine(
     engine_root: &Path,
     manifest_path: &Path,
 ) -> Result<VerifiedEngineInputs, String> {
-    let manifest_bytes = fs::read(manifest_path)
-        .map_err(|error| format!("cannot read runtime input manifest {}: {error}", manifest_path.display()))?;
+    let manifest_bytes = fs::read(manifest_path).map_err(|error| {
+        format!(
+            "cannot read runtime input manifest {}: {error}",
+            manifest_path.display()
+        )
+    })?;
     let manifest_sha256 = format!("{:x}", Sha256::digest(&manifest_bytes));
     let manifest: Value = serde_json::from_slice(&manifest_bytes)
         .map_err(|error| format!("cannot parse runtime input manifest: {error}"))?;
@@ -260,13 +305,17 @@ pub fn verify_staged_engine(
         };
         let relative = safe_relative_path(relative)?;
         if !(relative.starts_with("src/") || relative.starts_with("data/")) {
-            return Err(format!("manifest engine artifact is outside src/ and data/: {relative}"));
+            return Err(format!(
+                "manifest engine artifact is outside src/ and data/: {relative}"
+            ));
         }
         if expected
             .insert(relative.clone(), (bytes, sha256.to_string()))
             .is_some()
         {
-            return Err(format!("runtime input manifest repeats engine artifact: {relative}"));
+            return Err(format!(
+                "runtime input manifest repeats engine artifact: {relative}"
+            ));
         }
     }
     if !expected.keys().any(|path| path.starts_with("src/")) {
@@ -279,12 +328,16 @@ pub fn verify_staged_engine(
     let actual = collect_files(engine_root)?;
     for path in expected.keys() {
         if !actual.contains(path) {
-            return Err(format!("manifest engine input is missing from stage: {path}"));
+            return Err(format!(
+                "manifest engine input is missing from stage: {path}"
+            ));
         }
     }
     for path in &actual {
         if !expected.contains_key(path) {
-            return Err(format!("staged engine input is absent from manifest: {path}"));
+            return Err(format!(
+                "staged engine input is absent from manifest: {path}"
+            ));
         }
     }
 
@@ -341,7 +394,9 @@ fn numeric_after(source: &str, marker: &str) -> Result<usize, String> {
         .filter(|&character| character != '_')
         .collect::<String>();
     if digits.is_empty() {
-        return Err(format!("source declaration has no integer value: {marker:?}"));
+        return Err(format!(
+            "source declaration has no integer value: {marker:?}"
+        ));
     }
     digits
         .parse::<usize>()
@@ -384,7 +439,9 @@ fn player_slot_capacity(world: &str) -> Result<(usize, usize, usize), String> {
 fn require_markers(source: &str, path: &str, markers: &[&str]) -> Result<(), String> {
     for marker in markers {
         if !source.contains(marker) {
-            return Err(format!("required source marker {marker:?} is absent from {path}"));
+            return Err(format!(
+                "required source marker {marker:?} is absent from {path}"
+            ));
         }
     }
     Ok(())
@@ -606,13 +663,20 @@ fn verify_client_authorities(
         ],
     )?;
     let build_calls = first_call_arguments(client_build, "self.loc_change_create(")?;
-    if build_calls.len() != 3 || build_calls.iter().any(|argument| argument != "self.minusedlevel") {
+    if build_calls.len() != 3
+        || build_calls
+            .iter()
+            .any(|argument| argument != "self.minusedlevel")
+    {
         return Err(format!(
             "client.rs location-change callers do not all use minusedlevel: {build_calls:?}"
         ));
     }
     if client_build.matches("self.loc_change_create(").count() != 3
-        || client_build.matches("if shape < LOC_SHAPE_TO_LAYER.len() as i32").count() != 3
+        || client_build
+            .matches("if shape < LOC_SHAPE_TO_LAYER.len() as i32")
+            .count()
+            != 3
         || client_build.matches("&& x >= 0").count() != 3
         || client_build.matches("&& z >= 0").count() != 3
         || client_build.matches("&& x < BuildArea::SIZE").count() != 3
@@ -640,7 +704,10 @@ fn verify_client_authorities(
     require_markers(
         client_build_area,
         "vendor/fr-client-rust/crates/client/src/dash3d/collision_map.rs",
-        &["pub const LEVELS: i32 = 4;", "pub const SIZE: i32 = 13 << 3;"],
+        &[
+            "pub const LEVELS: i32 = 4;",
+            "pub const SIZE: i32 = 13 << 3;",
+        ],
     )?;
     require_markers(
         client_actor,
@@ -683,9 +750,15 @@ fn verify_client_authorities(
     require_markers(
         client_arena,
         "vendor/fr-client-rust/crates/client/src/datastruct/linkable.rs",
-        &["pub struct Arena<T: LinkableTrait>", "self.nodes.push(Some(node));"],
+        &[
+            "pub struct Arena<T: LinkableTrait>",
+            "self.nodes.push(Some(node));",
+        ],
     )?;
-    let unique_location_layers = location_shape_layers.iter().copied().collect::<BTreeSet<_>>();
+    let unique_location_layers = location_shape_layers
+        .iter()
+        .copied()
+        .collect::<BTreeSet<_>>();
     let location_layers = unique_location_layers.len();
     if unique_location_layers.iter().any(|layer| *layer < 0) {
         return Err("client location-shape mapping contains a negative layer".to_string());
@@ -746,10 +819,7 @@ fn verify_client_dynamic_sprite_capacity(
         );
     }
     events.sort_unstable_by_key(|(offset, _)| *offset);
-    let event_order = events
-        .iter()
-        .map(|(_, event)| *event)
-        .collect::<Vec<_>>();
+    let event_order = events.iter().map(|(_, event)| *event).collect::<Vec<_>>();
     let expected_event_order = [
         "actor_preflight",
         "dynamic_add",
@@ -820,7 +890,6 @@ fn verify_client_dynamic_sprite_capacity(
     }))
 }
 
-
 fn parse_script_opcode_values(source: &str) -> Result<BTreeMap<String, u16>, String> {
     let (_, body) = source
         .split_once("export const enum ScriptOpcode {")
@@ -850,7 +919,11 @@ fn parse_script_opcode_values(source: &str) -> Result<BTreeMap<String, u16>, Str
                 .ok_or_else(|| format!("ScriptOpcode sequence is invalid at {code:?}"))?;
             (code, value)
         };
-        if name.is_empty() || !name.chars().all(|character| character.is_ascii_uppercase() || character == '_' || character.is_ascii_digit()) {
+        if name.is_empty()
+            || !name.chars().all(|character| {
+                character.is_ascii_uppercase() || character == '_' || character.is_ascii_digit()
+            })
+        {
             return Err(format!("invalid ScriptOpcode member {name:?}"));
         }
         let value = u16::try_from(value)
@@ -888,9 +961,7 @@ fn script_opcode_member_lines(
             closed = true;
             break;
         }
-        let name = code
-            .split_once('=')
-            .map_or(code, |(name, _)| name.trim());
+        let name = code.split_once('=').map_or(code, |(name, _)| name.trim());
         if names.contains(&name) {
             let line_number = first_line + offset;
             if lines.insert(name.to_string(), line_number).is_some() {
@@ -907,7 +978,9 @@ fn script_opcode_member_lines(
             .filter(|name| !lines.contains_key(**name))
             .copied()
             .collect::<Vec<_>>();
-        return Err(format!("ScriptOpcode source members are missing: {missing:?}"));
+        return Err(format!(
+            "ScriptOpcode source members are missing: {missing:?}"
+        ));
     }
     Ok(lines)
 }
@@ -1003,7 +1076,9 @@ fn decode_script_record(
             .ok_or_else(|| format!("script {id} has a truncated switch table"))?;
     }
     if trailer_cursor != bytes.len() - 2 {
-        return Err(format!("script {id} trailer does not end before its length field"));
+        return Err(format!(
+            "script {id} trailer does not end before its length field"
+        ));
     }
 
     let mut cursor = 0usize;
@@ -1114,15 +1189,21 @@ fn scan_script_pack(
     let push_constant_string = *opcode_values
         .get("PUSH_CONSTANT_STRING")
         .ok_or_else(|| "ScriptOpcode.PUSH_CONSTANT_STRING is absent".to_string())?;
-    let small_operand_opcodes = ["RETURN", "GOSUB", "JUMP", "POP_INT_DISCARD", "POP_STRING_DISCARD"]
-        .iter()
-        .map(|name| {
-            opcode_values
-                .get(*name)
-                .copied()
-                .ok_or_else(|| format!("ScriptOpcode.{name} is absent"))
-        })
-        .collect::<Result<BTreeSet<_>, _>>()?;
+    let small_operand_opcodes = [
+        "RETURN",
+        "GOSUB",
+        "JUMP",
+        "POP_INT_DISCARD",
+        "POP_STRING_DISCARD",
+    ]
+    .iter()
+    .map(|name| {
+        opcode_values
+            .get(*name)
+            .copied()
+            .ok_or_else(|| format!("ScriptOpcode.{name} is absent"))
+    })
+    .collect::<Result<BTreeSet<_>, _>>()?;
     let emitter_opcodes = SCRIPT_EMITTER_NAMES
         .iter()
         .map(|name| {
@@ -1402,8 +1483,14 @@ fn scan_script_content(inputs: &VerifiedEngineInputs) -> Result<Value, String> {
     object.insert(
         "script_data_files".to_string(),
         json!([
-            inputs.files.get("data/pack/server/script.dat").map(FileRecord::json),
-            inputs.files.get("data/pack/server/script.idx").map(FileRecord::json),
+            inputs
+                .files
+                .get("data/pack/server/script.dat")
+                .map(FileRecord::json),
+            inputs
+                .files
+                .get("data/pack/server/script.idx")
+                .map(FileRecord::json),
         ]),
     );
     object.insert(
@@ -1502,9 +1589,7 @@ fn map_spot_animation_population_is_bounded(
     per_cycle_emission_limit: Option<u64>,
 ) -> bool {
     instruction_occurrences == 0
-        || (operand_ids_resolved
-            && lifetime_bound_derived
-            && per_cycle_emission_limit.is_some())
+        || (operand_ids_resolved && lifetime_bound_derived && per_cycle_emission_limit.is_some())
 }
 
 fn all_dynamic_population_inputs_bounded(
@@ -1588,7 +1673,10 @@ pub fn derive_population(
     require_markers(
         &npc_list,
         "src/engine/entity/NpcList.ts",
-        &["export class NpcList extends EntityList<Npc>", "super(size, 0);"],
+        &[
+            "export class NpcList extends EntityList<Npc>",
+            "super(size, 0);",
+        ],
     )?;
     require_markers(
         &game_map,
@@ -1617,22 +1705,22 @@ pub fn derive_population(
         &["[ScriptOpcode.NPC_ADD]:", "World.addNpc(npc, duration);"],
     )?;
 
-
     let location_layers = verify_client_authorities(client_sources, location_shape_layers)?;
-    let renderer_dynamic_sprite_admission =
-        verify_client_dynamic_sprite_capacity(client_sources)?;
+    let renderer_dynamic_sprite_admission = verify_client_dynamic_sprite_capacity(client_sources)?;
     let nearby_players = numeric_after(&build, "static readonly PREFERRED_PLAYERS =")?;
     let nearby_npcs = numeric_after(&build, "static readonly PREFERRED_NPCS =")?;
     let view_distance = numeric_after(&build, "static readonly PREFERRED_VIEW_DISTANCE =")?;
     let view_actor_count = checked_actor_count(nearby_players, 1, nearby_npcs)?;
     let npc_limit = numeric_after(&environment, "maxNpcs:")?;
     let (first_player_slot, end_player_slot, login_player_slots) = player_slot_capacity(&world)?;
-    let configured_world: Value = serde_json::from_slice(
-        &inputs.read_verified_source("data/config/world.json")?,
-    )
-    .map_err(|error| format!("cannot parse staged world config: {error}"))?;
+    let configured_world: Value =
+        serde_json::from_slice(&inputs.read_verified_source("data/config/world.json")?)
+            .map_err(|error| format!("cannot parse staged world config: {error}"))?;
     if configured_world.get("runtime").is_some() {
-        return Err("staged world config contains a runtime override not covered by the checked schema".to_string());
+        return Err(
+            "staged world config contains a runtime override not covered by the checked schema"
+                .to_string(),
+        );
     }
     if !world_config.contains("const defaults = createDefaultWorldConfig()")
         || !world_config.contains("function mergeConfig<")
@@ -1640,7 +1728,8 @@ pub fn derive_population(
         return Err("WorldConfig default-merge behavior is not established".to_string());
     }
 
-    let location_overlay_slots_per_level = checked_loc_slots(scene_tiles_per_axis, 1, location_layers)?;
+    let location_overlay_slots_per_level =
+        checked_loc_slots(scene_tiles_per_axis, 1, location_layers)?;
     let location_overlay_slots = checked_loc_slots(scene_tiles_per_axis, planes, location_layers)?;
     let emitter_inventory = emitter_inventory(inputs)?;
     let script_content = scan_script_content(inputs)?;
@@ -1663,10 +1752,8 @@ pub fn derive_population(
             .ok_or_else(|| format!("compiled script inventory has no boolean {name:?}"))
     };
     let projectile_population_bound_established = projectile_opcode_count == 0;
-    let map_spot_operand_ids_resolved =
-        script_bool("map_spot_animation_operand_ids_resolved")?;
-    let map_spot_lifetime_bound_derived =
-        script_bool("map_spot_animation_lifetime_bound_derived")?;
+    let map_spot_operand_ids_resolved = script_bool("map_spot_animation_operand_ids_resolved")?;
+    let map_spot_lifetime_bound_derived = script_bool("map_spot_animation_lifetime_bound_derived")?;
     let map_spot_per_cycle_emission_limit = script_content
         .get("map_spot_animation_per_cycle_emission_limit")
         .and_then(Value::as_u64);
@@ -1681,8 +1768,8 @@ pub fn derive_population(
     let server_zone_event_count_per_cycle_cap = script_content
         .get("server_zone_event_count_per_cycle_cap")
         .and_then(Value::as_u64);
-    let server_zone_event_population_bound_established = global_cycle_invocation_limit_derived
-        || server_zone_event_count_per_cycle_cap.is_some();
+    let server_zone_event_population_bound_established =
+        global_cycle_invocation_limit_derived || server_zone_event_count_per_cycle_cap.is_some();
     let actor_population_bound_established = true;
     let location_change_population_bound_established = true;
     let transient_population_bound_established = projectile_population_bound_established
@@ -1702,8 +1789,9 @@ pub fn derive_population(
         .engine_root
         .parent()
         .map(|parent| parent.join("content/maps"));
-    let content_source_dir_present = content_source_dir.as_ref().is_some_and(|path| path.is_dir());
-
+    let content_source_dir_present = content_source_dir
+        .as_ref()
+        .is_some_and(|path| path.is_dir());
 
     Ok(json!({
         "engine_input_binding": engine_binding,
@@ -1898,10 +1986,7 @@ mod tests {
 
         fn write_manifest(&self) {
             let mut artifacts = Vec::new();
-            for relative in [
-                "src/network/rsbuf/build.ts",
-                "data/pack/maps-server.zip",
-            ] {
+            for relative in ["src/network/rsbuf/build.ts", "data/pack/maps-server.zip"] {
                 let bytes = fs::read(self.root.join(relative)).unwrap();
                 artifacts.push(json!({
                     "path": format!("/fixture/engine/{relative}"),
@@ -1936,11 +2021,30 @@ mod tests {
 
     #[test]
     fn map_spot_population_requires_operand_emission_and_lifetime_bounds() {
-        assert!(map_spot_animation_population_is_bounded(0, false, false, None));
-        assert!(!map_spot_animation_population_is_bounded(1, false, true, Some(1)));
-        assert!(!map_spot_animation_population_is_bounded(1, true, false, Some(1)));
-        assert!(!map_spot_animation_population_is_bounded(1, true, true, None));
-        assert!(map_spot_animation_population_is_bounded(1, true, true, Some(1)));
+        assert!(map_spot_animation_population_is_bounded(
+            0, false, false, None
+        ));
+        assert!(!map_spot_animation_population_is_bounded(
+            1,
+            false,
+            true,
+            Some(1)
+        ));
+        assert!(!map_spot_animation_population_is_bounded(
+            1,
+            true,
+            false,
+            Some(1)
+        ));
+        assert!(!map_spot_animation_population_is_bounded(
+            1, true, true, None
+        ));
+        assert!(map_spot_animation_population_is_bounded(
+            1,
+            true,
+            true,
+            Some(1)
+        ));
     }
 
     #[test]
@@ -1981,10 +2085,7 @@ mod tests {
             b"let Some(budget) = self.head_misc.as_ref() else {\nreturn Ok(());\n};\nif world.dynamic_count as usize >= crate::core::world::MAX_DYNAMIC_SPRITES {\nreturn Err(RenderLimit::new(\nworld.dynamic_sprites.resize(crate::core::world::MAX_DYNAMIC_SPRITES, None);"
                 .to_vec(),
         );
-        sources.insert(
-            DRAW,
-            VALID_DRAW.to_vec(),
-        );
+        sources.insert(DRAW, VALID_DRAW.to_vec());
 
         let report = verify_client_dynamic_sprite_capacity(&sources).unwrap();
         assert_eq!(
@@ -1995,7 +2096,10 @@ mod tests {
         assert_eq!(report["preflight_call_count"], 4);
         assert_eq!(report["draw_add_count"], 4);
         assert_eq!(report["draw_add2_count"], 1);
-        assert_eq!(report["indexed_client_source_entries_scanned_for_extra_insertions"], 2);
+        assert_eq!(
+            report["indexed_client_source_entries_scanned_for_extra_insertions"],
+            2
+        );
         assert_eq!(report["does_not_bound_client_transient_list_nodes"], true);
 
         sources.insert(
@@ -2195,7 +2299,10 @@ export const enum ScriptOpcode {
             b"let count = if add_self { 1 } else { client.player_count };\nclient.local_player.as_mut()\nclient.loop_cycle > proj.t2\nspot.anim_complete"
                 .to_vec(),
         );
-        sources.insert(SHAPE, b"pub const LOC_SHAPE_TO_LAYER: [i32; 23] = [".to_vec());
+        sources.insert(
+            SHAPE,
+            b"pub const LOC_SHAPE_TO_LAYER: [i32; 23] = [".to_vec(),
+        );
         sources.insert(
             SPOT,
             b"let Some(seq) = cache.spot(self.spotanim as usize).seq else {\nreturn;\nself.anim_complete = true;"
@@ -2206,13 +2313,19 @@ export const enum ScriptOpcode {
             b"pub struct LinkList<T: LinkableTrait>\npub fn push(&mut self, node: T)\nself.arena.alloc(node)"
                 .to_vec(),
         );
-        sources.insert(ARENA, b"pub struct Arena<T: LinkableTrait>\nself.nodes.push(Some(node));".to_vec());
+        sources.insert(
+            ARENA,
+            b"pub struct Arena<T: LinkableTrait>\nself.nodes.push(Some(node));".to_vec(),
+        );
         sources.insert(
             ZONE,
             b"let level = c.minusedlevel;\nfn tile(x: i32, z: i32) -> bool {\n(0..BuildArea::SIZE).contains(&x) && (0..BuildArea::SIZE).contains(&z)\nassert!(tile(x, z), \"invalid merge tile\");\nif tile(x, z) {\nc.loc_change_create(level, x, z, layer, id, shape, angle, 0, -1);\nc.loc_change_create(c.minusedlevel, x, z, layer, id, shape, angle, 0, -1);"
                 .to_vec(),
         );
-        sources.insert(BUILD_AREA, b"pub const LEVELS: i32 = 4;\npub const SIZE: i32 = 13 << 3;".to_vec());
+        sources.insert(
+            BUILD_AREA,
+            b"pub const LEVELS: i32 = 4;\npub const SIZE: i32 = 13 << 3;".to_vec(),
+        );
         sources.insert(
             ACTOR,
             b"frame.plane = Some(bit(p, 2));\nc.minusedlevel = plane;".to_vec(),
@@ -2222,8 +2335,14 @@ export const enum ScriptOpcode {
             b"pub spotanim_id: i32,\npub spotanim_frame: i32,\nspotanim_id: -1,\nspotanim_frame: 0,"
                 .to_vec(),
         );
-        assert_eq!(verify_client_authorities(&sources, &[0, 1, 2, 3]).unwrap(), 4);
-        sources.insert(BUILD, b"client loc changes have an unexplained count".to_vec());
+        assert_eq!(
+            verify_client_authorities(&sources, &[0, 1, 2, 3]).unwrap(),
+            4
+        );
+        sources.insert(
+            BUILD,
+            b"client loc changes have an unexplained count".to_vec(),
+        );
         let error = verify_client_authorities(&sources, &[0, 1, 2, 3]).unwrap_err();
         assert!(error.contains("pub loc_changes: LinkList<LocChange>"));
     }
