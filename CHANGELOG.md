@@ -54,6 +54,8 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.8` 
   drawing-memory case selector records the same owner fields on both comparison
   sources without replacing either renderer or changing the timing binaries.
   Its full and focus1 memory phases use the shared cadence input.
+  Architecture ownership now includes the memory case and process budget
+  regression sources. The memory sample fixture includes the optional fastbin field.
 
 ## [0.2.8] — 2026-10-29 — Beta 2
 

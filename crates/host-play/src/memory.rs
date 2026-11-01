@@ -3519,6 +3519,7 @@ mod tests {
                     arena_count: 2,
                     arena_in_use_bytes: 540,
                     arena_free_bytes: 228,
+                    fastbin_free_bytes: Some(80),
                     arena_system_bytes: 768,
                     arena_aspace_total_bytes: 12_288,
                     arena_aspace_mprotect_bytes: 768,

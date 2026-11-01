@@ -7693,6 +7693,22 @@
     {
       "path": "crates/panel/tests/t44_focus_wake.rs",
       "owner": "T4"
+    },
+    {
+      "path": "crates/host-play/tests/t44_memory_case.rs",
+      "owner": "T4"
+    },
+    {
+      "path": "crates/host/src/draw_memory_case.rs",
+      "owner": "T4"
+    },
+    {
+      "path": "vendor/fr-client-rust/crates/client/src/render/memory_case.rs",
+      "owner": "T4"
+    },
+    {
+      "path": "vendor/fr-client-rust/crates/client/tests/render_budget_scope.rs",
+      "owner": "T4"
     }
   ]
 }
