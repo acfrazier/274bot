@@ -2449,10 +2449,11 @@ impl InteractRun {
                 }
                 Poll::Ready(Err(error)) => return Poll::Ready(Err(error)),
                 Poll::Ready(Ok(receipt)) => {
-                    if self
-                        .walk_retry
-                        .observe_approach_failure(&receipt, cx.tick.cx.evidence().tick)
-                    {
+                    if self.walk_retry.observe_wall_approach_failure(
+                        &receipt,
+                        cx.tick.cx.evidence().tick,
+                        self.wall_fallback_tile.is_some(),
+                    ) {
                         if reach::loc_wall_route_failed(&receipt) {
                             self.wall_fallback_pending = self.wall_fallback_tile;
                         }
@@ -3415,10 +3416,11 @@ impl StepRun for UseOnRun {
                     Poll::Pending => return Poll::Pending,
                     Poll::Ready(Err(error)) => return Poll::Ready(Err(error)),
                     Poll::Ready(Ok(receipt)) => {
-                        if self
-                            .walk_retry
-                            .observe_approach_failure(&receipt, cx.tick.cx.evidence().tick)
-                        {
+                        if self.walk_retry.observe_wall_approach_failure(
+                            &receipt,
+                            cx.tick.cx.evidence().tick,
+                            self.wall_fallback_tile.is_some(),
+                        ) {
                             if reach::loc_wall_route_failed(&receipt) {
                                 self.wall_fallback_pending = self.wall_fallback_tile;
                             }

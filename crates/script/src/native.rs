@@ -1110,9 +1110,39 @@ impl WalkRetryState {
     }
 
     pub(crate) fn observe_approach_failure(&mut self, receipt: &WalkReceipt, tick: u64) -> bool {
-        if !self.observe_failure(receipt, tick) {
+        self.observe_approach_retry(receipt, tick, Self::retryable_receipt(receipt))
+    }
+
+    pub(crate) fn observe_wall_approach_failure(
+        &mut self,
+        receipt: &WalkReceipt,
+        tick: u64,
+        has_wall_fallback: bool,
+    ) -> bool {
+        let retryable = if has_wall_fallback
+            && receipt.end == WalkEnd::Refused
+            && matches!(receipt.refusal, Some(WalkRefusal::SearchIncomplete { .. }))
+        {
+            receipt
+                .blocked
+                .as_deref()
+                .is_none_or(|blocked| blocked.is_empty())
+        } else {
+            Self::retryable_receipt(receipt)
+        };
+        self.observe_approach_retry(receipt, tick, retryable)
+    }
+
+    fn observe_approach_retry(
+        &mut self,
+        receipt: &WalkReceipt,
+        tick: u64,
+        retryable: bool,
+    ) -> bool {
+        if !self.recovery.observe_retryable(retryable) {
             return false;
         }
+        self.retry_after_tick = tick;
         let attempt = self.retry_attempt_number();
         let detail = receipt.failure_detail();
         api::host_log!(

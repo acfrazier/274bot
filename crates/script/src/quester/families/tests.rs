@@ -8949,31 +8949,38 @@ fn approach_danger_refusals_park_without_a_retry() {
     });
 }
 
+fn anchored_interact_wall_fixture(
+    cx: &CompileContext<'_>,
+) -> (GameSnapshot, Arc<dyn StepPlan>, WorldTile) {
+    let wall_tile = tile(3167, 3308);
+    let network = tile(wall_tile.x + 3, wall_tile.z);
+    let rendered = tile(wall_tile.x - 3, wall_tile.z);
+    let (mut snapshot, mut wall, _) = use_on_footprint_fixture(cx, network);
+    wall.id = resolve_loc(cx, "death_harold_door").unwrap();
+    wall.actions = vec![Some("Open".into())];
+    wall.layer = LocLayer::Wall;
+    wall.shape = 0;
+    wall.angle = 2;
+    wall.distance = 3;
+    snapshot.seed_local_player(local_player_with_network(rendered, network));
+    snapshot.seed_locs(vec![wall]);
+    let plan = compile_interact(
+        test_args::<InteractArgs>(serde_json::json!({
+            "target": {"loc": "death_harold_door"},
+            "op": "Open",
+            "anchor": {"tile": [3166, 3308, 0], "source": "network tile fixture"},
+            "radius": 6
+        })),
+        cx,
+    )
+    .unwrap();
+    (snapshot, plan, wall_tile)
+}
+
 #[test]
 fn anchored_interact_wall_retries_typed_incomplete_route() {
     compile_context_test(|cx| {
-        let wall_tile = tile(3167, 3308);
-        let network = tile(wall_tile.x + 3, wall_tile.z);
-        let rendered = tile(wall_tile.x - 3, wall_tile.z);
-        let (mut snapshot, mut wall, _) = use_on_footprint_fixture(cx, network);
-        wall.id = resolve_loc(cx, "death_harold_door").unwrap();
-        wall.actions = vec![Some("Open".into())];
-        wall.layer = LocLayer::Wall;
-        wall.shape = 0;
-        wall.angle = 2;
-        wall.distance = 3;
-        snapshot.seed_local_player(local_player_with_network(rendered, network));
-        snapshot.seed_locs(vec![wall]);
-        let plan = compile_interact(
-            test_args::<InteractArgs>(serde_json::json!({
-                "target": {"loc": "death_harold_door"},
-                "op": "Open",
-                "anchor": {"tile": [3166, 3308, 0], "source": "network tile fixture"},
-                "radius": 6
-            })),
-            cx,
-        )
-        .unwrap();
+        let (snapshot, plan, wall_tile) = anchored_interact_wall_fixture(cx);
         let mut ledger = None;
         let mut run = with_tick(&snapshot, &mut ledger, 1, |tick| {
             with_step(tick, |step| plan.begin(step).unwrap())
@@ -9031,6 +9038,120 @@ fn anchored_interact_wall_retries_typed_incomplete_route() {
             fallback_request_id, first_request_id,
             "the incomplete first walk starts a new bounded fallback walk",
         );
+        assert!(!ledger
+            .as_ref()
+            .unwrap()
+            .outbox
+            .iter()
+            .any(|entry| matches!(&entry.effect, HostEffect::Interaction(_))));
+    });
+}
+
+#[test]
+fn incomplete_approach_refusals_require_a_wall_fallback_without_blocked_zones() {
+    compile_context_test(|cx| {
+        let (wall_snapshot, wall_plan, _) = anchored_interact_wall_fixture(cx);
+        let blocked: Arc<[nav_planner::contract::ZoneKey]> =
+            Arc::from([nav_planner::contract::ZoneKey::Zone(0)]);
+        let scenarios = [
+            (wall_plan, wall_snapshot, Some(blocked), "blocked wall"),
+            (
+                approach_retry_interact_plan(cx),
+                approach_retry_interact_snapshot(cx),
+                None,
+                "no wall fallback",
+            ),
+        ];
+        for (plan, snapshot, blocked, label) in scenarios {
+            let mut ledger = None;
+            let mut run = with_tick(&snapshot, &mut ledger, 1, |tick| {
+                with_step(tick, |step| plan.begin(step).unwrap())
+            });
+            assert!(with_tick(&snapshot, &mut ledger, 2, |tick| {
+                with_step(tick, |step| run.poll(step))
+            })
+            .is_pending());
+            let detail = format!("{label} incomplete route");
+            post_walk_receipt_with(
+                &mut ledger,
+                3,
+                WalkEnd::Refused,
+                Some(&detail),
+                Some(crate::native::WalkRefusal::SearchIncomplete {
+                    nodes_settled: Some(524_288),
+                }),
+                blocked,
+            );
+            assert!(
+                matches!(
+                    with_tick(&snapshot, &mut ledger, 3, |tick| {
+                        with_step(tick, |step| run.poll(step))
+                    }),
+                    Poll::Ready(Err(ActionError::Blocked(reason))) if reason.as_ref() == detail
+                ),
+                "{label} must not retry"
+            );
+            assert_eq!(walk_request_count(&ledger), 1, "{label}");
+        }
+    });
+}
+
+#[test]
+fn incomplete_wall_approach_exhausts_three_attempts_with_the_last_detail() {
+    compile_context_test(|cx| {
+        let (snapshot, plan, wall_tile) = anchored_interact_wall_fixture(cx);
+        let mut ledger = None;
+        let mut run = with_tick(&snapshot, &mut ledger, 1, |tick| {
+            with_step(tick, |step| plan.begin(step).unwrap())
+        });
+        assert!(with_tick(&snapshot, &mut ledger, 2, |tick| {
+            with_step(tick, |step| run.poll(step))
+        })
+        .is_pending());
+        let mut active_request = latest_walk_request(&ledger).0;
+        for attempt in 1u8..=3 {
+            let failure_tick = u64::from(attempt) * 2 + 1;
+            let detail = format!("incomplete wall route {attempt}");
+            assert_eq!(
+                post_walk_receipt_with(
+                    &mut ledger,
+                    failure_tick,
+                    WalkEnd::Refused,
+                    Some(&detail),
+                    Some(crate::native::WalkRefusal::SearchIncomplete {
+                        nodes_settled: Some(524_288),
+                    }),
+                    None,
+                ),
+                active_request
+            );
+            let result = with_tick(&snapshot, &mut ledger, failure_tick, |tick| {
+                with_step(tick, |step| run.poll(step))
+            });
+            if attempt < 3 {
+                assert!(result.is_pending());
+                assert_eq!(latest_walk_request(&ledger).0, active_request);
+                assert!(with_tick(&snapshot, &mut ledger, failure_tick, |tick| {
+                    with_step(tick, |step| run.poll(step))
+                })
+                .is_pending());
+                assert_eq!(latest_walk_request(&ledger).0, active_request);
+                assert!(with_tick(&snapshot, &mut ledger, failure_tick + 1, |tick| {
+                    with_step(tick, |step| run.poll(step))
+                })
+                .is_pending());
+                let (next_request, planned_after) = latest_walk_request(&ledger);
+                assert_ne!(next_request, active_request);
+                assert_eq!(planned_after, failure_tick + 1);
+                assert_eq!(latest_retry_walk_target(&ledger), wall_tile);
+                active_request = next_request;
+            } else {
+                assert!(
+                    matches!(result, Poll::Ready(Err(ActionError::Blocked(reason))) if reason.as_ref() == detail)
+                );
+            }
+        }
+        assert_eq!(walk_request_count(&ledger), 3);
         assert!(!ledger
             .as_ref()
             .unwrap()

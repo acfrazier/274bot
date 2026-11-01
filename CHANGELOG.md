@@ -470,6 +470,11 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.8` 
   publish a missing-supply list. A complete `NoPath` can still report missing
   supplies when an item-gated route was found.
 
+- After an incomplete route search, a straight-wall approach can try its
+  wall-side fallback within the Quester's existing three-attempt limit.
+  It still stops for blocked danger zones and does not retry an incomplete
+  search when that target has no wall-side fallback.
+
 ### Scripts
 
 - Bank opening now waits for its own walk to finish. Before, a walk that a
