@@ -2739,23 +2739,26 @@ mod tests {
         );
 
         let mut snapshot = GameSnapshot::new();
+        // Keep this test on the same scene/loc rebuild seam as the full
+        // snapshot path, where the scene bundle may remain published while a
+        // run changes its projection-loc demand.
+        snapshot.loc_bits_prelude = Some((0, 0));
+        snapshot.set_loc_projection_wanted(true);
         snapshot.rebuild_scene(&client);
         assert!(snapshot.projection_scene().available);
         assert!(snapshot.rebuild_loc(&client));
+        assert_eq!(snapshot.projection_scene().locs.len(), 1);
+
+        snapshot.set_loc_projection_wanted(false);
+        assert!(!snapshot.rebuild_loc(&client));
         assert!(
             snapshot.projection_scene().locs.is_empty(),
             "a ready scene without a run requesting projection locs must publish none"
         );
 
         snapshot.set_loc_projection_wanted(true);
-        snapshot.rebuild_scene(&client);
         assert!(!snapshot.rebuild_loc(&client));
         assert_eq!(snapshot.projection_scene().locs.len(), 1);
-
-        snapshot.set_loc_projection_wanted(false);
-        snapshot.rebuild_scene(&client);
-        assert!(!snapshot.rebuild_loc(&client));
-        assert!(snapshot.projection_scene().locs.is_empty());
     }
 
     /// The projection height and link grids (about 99 KB per scene) are built
