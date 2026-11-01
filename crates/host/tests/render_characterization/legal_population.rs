@@ -1536,13 +1536,13 @@ fn scan_script_content(inputs: &VerifiedEngineInputs) -> Result<Value, String> {
     require_marker_locations(
         &source_call_sites,
         "new MapAnim(",
-        "src/engine/entity/zone/Zone.ts",
+        "src/engine/zone/Zone.ts",
         1,
     )?;
     require_marker_locations(
         &source_call_sites,
         "new MapProjAnim(",
-        "src/engine/entity/zone/Zone.ts",
+        "src/engine/zone/Zone.ts",
         1,
     )?;
 
