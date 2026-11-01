@@ -2004,7 +2004,10 @@ fn run_quester_prereq_case(case: PrereqLiveCase, expected_failure: Option<&'stat
     let recipe = case.holy && case.mort.is_none();
     let mut document = prerequisite_path(case.goal, recipe);
     if expected_failure == Some("quest_start is not allowed") {
-        document.prereq.quest_start = Some(false);
+        // The accepted consent rule (`docs/scripting/quest-guides.md`, "Prerequisite
+        // switches") lets only a per-walk `false` forbid: a header `false` adds no
+        // grant and leaves the default-on global grant in place.
+        document.roles[0].sequences[0].steps[0].args["allow_quest_start"] = json!(false);
     }
     let start = family_start(document, Arc::clone(&selected), quests);
     let mut dialogue_seen = Vec::new();
