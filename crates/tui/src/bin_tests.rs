@@ -7621,8 +7621,8 @@ fn saved_order(session: &TuiSession) -> Vec<String> {
 
 /// The names of the fleet table's drawn rows, top to bottom. Only the
 /// table's own columns are read, so the detail pane never adds a name.
-fn drawn_fleet_names(app: &mut TuiApp, names: &[&str]) -> Vec<String> {
-    let rows = crate::test_support::draw(app, 120, 40);
+fn drawn_fleet_names(app: &mut TuiApp, names: &[&str], width: u16, height: u16) -> Vec<String> {
+    let rows = crate::test_support::draw(app, width, height);
     let region = app.regions.fleet_rows;
     (region.y..region.y + region.height)
         .filter_map(|y| {
@@ -7650,7 +7650,7 @@ fn settings_feedback_tui_load_order_says_saving_then_the_failure_on_the_message_
     let iso = IsolatedStores::enter("tui-s3-load-order");
     let names = ["alice", "bob", "carol"];
     let (mut session, mut app) = tui_with_profiles(&iso, &names);
-    drawn_fleet_names(&mut app, &names);
+    drawn_fleet_names(&mut app, &names, 120, 40);
     let disk = TuiDisk::install(&session);
     let action = app.on_key(alt_key(KeyCode::Down));
     dispatch(&mut session, &mut app, action);
@@ -7691,12 +7691,14 @@ fn settings_feedback_tui_load_order_says_saving_then_the_failure_on_the_message_
 /// Alt+Down and Alt+Up through the real key path change the saved Load
 /// order and the drawn fleet table; the cursor stays on the moved profile;
 /// Alt+Up on the top row does nothing.
+/// At both terminal sizes, the moved table is checked independently of the
+/// detail pane. TUI_CAPTURE_DIR also keeps those frames under fleet-order.
 #[test]
 fn alt_keys_reorder_the_saved_load_order_and_the_drawn_table() {
     let iso = IsolatedStores::enter("tui-reorder-keys");
     let names = ["alice", "bob", "carol", "dave"];
     let (mut session, mut app) = tui_with_profiles(&iso, &names);
-    drawn_fleet_names(&mut app, &names);
+    drawn_fleet_names(&mut app, &names, 120, 40);
     assert_eq!(app.key_focus, crate::layout::Pane::Fleet);
     assert_eq!(saved_order(&session), ["alice", "bob", "carol", "dave"]);
     let alice = session.core.profile_identity("alice").unwrap();
@@ -7714,11 +7716,35 @@ fn alt_keys_reorder_the_saved_load_order_and_the_drawn_table() {
     dispatch(&mut session, &mut app, action);
     session.core.flush_writes();
     assert_eq!(saved_order(&session), ["bob", "alice", "carol", "dave"]);
-    assert_eq!(
-        drawn_fleet_names(&mut app, &names),
-        ["bob", "alice", "carol", "dave"],
-        "the drawn table follows the saved order"
-    );
+    let captures = std::env::var_os("TUI_CAPTURE_DIR")
+        .map(|dir| std::path::PathBuf::from(dir).join("fleet-order"));
+    if let Some(dir) = captures.as_deref() {
+        std::fs::create_dir_all(dir).unwrap();
+    }
+    for (width, height) in SIZES {
+        let drawn = drawn_fleet_names(&mut app, &names, width, height);
+        assert_eq!(
+            drawn,
+            ["bob", "alice", "carol", "dave"],
+            "{width}x{height}: the drawn table follows the saved order"
+        );
+        if let Some(dir) = captures.as_deref() {
+            super::manual_click_live_tests::capture(
+                &mut app,
+                width,
+                height,
+                dir,
+                &format!("{width}x{height}"),
+                "alt-down",
+                &serde_json::json!({
+                    "key": "Alt+Down",
+                    "saved_order": saved_order(&session),
+                    "drawn_order": drawn,
+                }),
+            )
+            .unwrap();
+        }
+    }
     assert_eq!(
         app.fleet_model
             .identity(app.table.cursor_row(&app.fleet_model).unwrap()),
@@ -7740,7 +7766,7 @@ fn alt_keys_reorder_the_saved_load_order_and_the_drawn_table() {
     session.core.flush_writes();
     assert_eq!(saved_order(&session), ["alice", "bob", "carol", "dave"]);
     assert_eq!(
-        drawn_fleet_names(&mut app, &names),
+        drawn_fleet_names(&mut app, &names, 120, 40),
         ["alice", "bob", "carol", "dave"]
     );
 
@@ -7766,7 +7792,7 @@ fn a_profiles_list_move_is_the_order_the_tui_table_draws() {
     let iso = IsolatedStores::enter("tui-profiles-order");
     let names = ["alice", "bob", "carol"];
     let (mut session, mut app) = tui_with_profiles(&iso, &names);
-    drawn_fleet_names(&mut app, &names);
+    drawn_fleet_names(&mut app, &names, 120, 40);
     // The cursor sits on bob, by identity.
     let bob = session.core.profile_identity("bob").unwrap();
     app.table.cursor_to(1, &app.fleet_model);
@@ -7797,7 +7823,7 @@ fn a_profiles_list_move_is_the_order_the_tui_table_draws() {
     session.pump(&mut app);
     assert_eq!(saved_order(&session), ["carol", "alice", "bob"]);
     assert_eq!(
-        drawn_fleet_names(&mut app, &names),
+        drawn_fleet_names(&mut app, &names, 120, 40),
         ["carol", "alice", "bob"],
         "the TUI draws the Profiles move"
     );
@@ -7819,7 +7845,7 @@ fn alt_down_with_a_hidden_profile_between_lands_after_the_lower_shown_row() {
     let iso = IsolatedStores::enter("tui-reorder-hidden");
     let names = ["alpha-zq", "bob", "carol-zq", "dave"];
     let (mut session, mut app) = tui_with_profiles(&iso, &names);
-    drawn_fleet_names(&mut app, &names);
+    drawn_fleet_names(&mut app, &names, 120, 40);
     assert_eq!(
         saved_order(&session),
         ["alpha-zq", "bob", "carol-zq", "dave"]
@@ -7872,7 +7898,7 @@ fn reorder_run(label: &str, via_keys: bool) -> Vec<Vec<String>> {
     let iso = IsolatedStores::enter(label);
     let names = ["alice", "bob", "carol", "dave"];
     let (mut session, mut app) = tui_with_profiles(&iso, &names);
-    drawn_fleet_names(&mut app, &names);
+    drawn_fleet_names(&mut app, &names, 120, 40);
     let mut seen = Vec::new();
     for down in [true, true, true, false] {
         let action = match (via_keys, down) {
@@ -7908,7 +7934,7 @@ fn move_marked_to_top_leads_the_saved_order_with_the_marked_profiles() {
     let iso = IsolatedStores::enter("tui-reorder-marked");
     let names = ["alice", "bob", "carol", "dave"];
     let (mut session, mut app) = tui_with_profiles(&iso, &names);
-    drawn_fleet_names(&mut app, &names);
+    drawn_fleet_names(&mut app, &names, 120, 40);
     let before = app.run_command(crate::commands::Command::MoveMarkedToTop);
     assert!(
         matches!(&before, AppAction::Refused(refusal)
@@ -7931,7 +7957,7 @@ fn move_marked_to_top_leads_the_saved_order_with_the_marked_profiles() {
     session.core.flush_writes();
     assert_eq!(saved_order(&session), ["carol", "dave", "alice", "bob"]);
     assert_eq!(
-        drawn_fleet_names(&mut app, &names),
+        drawn_fleet_names(&mut app, &names, 120, 40),
         ["carol", "dave", "alice", "bob"]
     );
 }
@@ -7945,7 +7971,7 @@ fn reorder_is_unavailable_outside_load_order() {
     let iso = IsolatedStores::enter("tui-reorder-sorted");
     let names = ["alice", "bob", "carol", "dave"];
     let (mut session, mut app) = tui_with_profiles(&iso, &names);
-    drawn_fleet_names(&mut app, &names);
+    drawn_fleet_names(&mut app, &names, 120, 40);
     dispatch(
         &mut session,
         &mut app,

@@ -494,6 +494,13 @@ test-harness-only: `host-play/src/lib.rs:634-635` gates it to tests or both
 `live-harness` and `test-support`. Its endpoint assertion/receipt change is
 not shipped game behavior.
 
+For Fleet order captures, set `TUI_CAPTURE_DIR` while running the TUI test
+`bin::tests::alt_keys_reorder_the_saved_load_order_and_the_drawn_table`.
+It checks the moved table at 80x24 and 120x40 and writes text plus coloured-cell
+JSON under `<TUI_CAPTURE_DIR>/fleet-order`. The proof records the saved and
+drawn order after the real Alt+Down key path. This is controlled UI proof,
+not a game witness or a per-bot memory measurement.
+
 ### BATCH-P proof scope
 
 The memory-profile cells are controlled contract tests, not live capacity
