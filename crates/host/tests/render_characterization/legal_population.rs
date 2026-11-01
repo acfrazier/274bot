@@ -812,6 +812,8 @@ fn verify_client_authorities(
 fn verify_client_dynamic_sprite_capacity(
     sources: &BTreeMap<&'static str, Vec<u8>>,
 ) -> Result<Value, String> {
+    use syn::visit::Visit;
+
     const CORE_WORLD: &str = "vendor/fr-client-rust/crates/client/src/core/world.rs";
     const RENDER_WORLD: &str = "vendor/fr-client-rust/crates/client/src/render/world.rs";
     const DRAW: &str = "vendor/fr-client-rust/crates/client/src/render/draw.rs";
@@ -838,9 +840,35 @@ fn verify_client_dynamic_sprite_capacity(
             "let Some(budget) = self.head_misc.as_ref() else {",
             "if world.dynamic_count as usize >= crate::core::world::MAX_DYNAMIC_SPRITES {",
             "return Err(RenderLimit::new(",
-            "world.dynamic_sprites.resize(crate::core::world::MAX_DYNAMIC_SPRITES, None);",
         ],
     )?;
+    let render_syntax = syn::parse_file(render_world)
+        .map_err(|error| format!("cannot parse dynamic storage authority: {error}"))?;
+    let resize_expression: syn::Expr = syn::parse_str(
+        "world.dynamic_sprites.resize(crate::core::world::MAX_DYNAMIC_SPRITES, None)",
+    )
+    .expect("dynamic sprite resize is valid Rust");
+    struct ResizeCalls<'a> {
+        expected: &'a syn::Expr,
+        count: usize,
+    }
+    impl<'ast> Visit<'ast> for ResizeCalls<'_> {
+        fn visit_expr(&mut self, node: &'ast syn::Expr) {
+            self.count += usize::from(node == self.expected);
+            syn::visit::visit_expr(self, node);
+        }
+    }
+    let mut resize_calls = ResizeCalls {
+        expected: &resize_expression,
+        count: 0,
+    };
+    resize_calls.visit_file(&render_syntax);
+    if resize_calls.count != 1 {
+        return Err(format!(
+            "dynamic sprite storage has {} matching fixed-capacity resize calls; expected one",
+            resize_calls.count
+        ));
+    }
     let mut events = Vec::new();
     for (needle, event) in [
         (
@@ -2314,6 +2342,31 @@ export const enum ScriptOpcode {
         assert_eq!(inventory["map_spot_animation_instruction_occurrences"], 1);
         assert_eq!(inventory["map_spot_animation_script_count"], 1);
         assert_eq!(inventory["projectile_opcode_count"], 1);
+    }
+
+    #[test]
+    fn dynamic_sprite_authority_checks_real_formatted_source_and_resize_operand() {
+        const CORE_WORLD: &str = "vendor/fr-client-rust/crates/client/src/core/world.rs";
+        const RENDER_WORLD: &str = "vendor/fr-client-rust/crates/client/src/render/world.rs";
+        const DRAW: &str = "vendor/fr-client-rust/crates/client/src/render/draw.rs";
+        let mut sources = BTreeMap::from([
+            (CORE_WORLD, include_bytes!(concat!(env!("CARGO_MANIFEST_DIR"), "/../../vendor/fr-client-rust/crates/client/src/core/world.rs")).to_vec()),
+            (RENDER_WORLD, include_bytes!(concat!(env!("CARGO_MANIFEST_DIR"), "/../../vendor/fr-client-rust/crates/client/src/render/world.rs")).to_vec()),
+            (DRAW, include_bytes!(concat!(env!("CARGO_MANIFEST_DIR"), "/../../vendor/fr-client-rust/crates/client/src/render/draw.rs")).to_vec()),
+        ]);
+        let proof = verify_client_dynamic_sprite_capacity(&sources).unwrap();
+        assert_eq!(proof["max_dynamic_sprites_per_client_world"], 5000);
+        assert_eq!(proof["all_dynamic_draw_adds_preflighted"], true);
+        let changed = std::str::from_utf8(&sources[RENDER_WORLD])
+            .unwrap()
+            .replacen(
+                ".resize(crate::core::world::MAX_DYNAMIC_SPRITES, None)",
+                ".resize(1, None)",
+                1,
+            );
+        sources.insert(RENDER_WORLD, changed.into_bytes());
+        let error = verify_client_dynamic_sprite_capacity(&sources).unwrap_err();
+        assert!(error.contains("expected one"));
     }
 
     #[test]
