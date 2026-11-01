@@ -7930,6 +7930,7 @@ fn client_frame_and_lifecycle_hooks_do_not_hold_slot_and_are_watchdog_bounded() 
     play.script_start_load(
         "alice",
         r#"
+import { BotHost } from '../../runtime/BotHost.js';
 globalThis.__frameCalled = false;
 globalThis.__hangFrame = false;
 BotHost.addFrameListener(() => {
@@ -7957,8 +7958,19 @@ export default class T extends LoopingBot {
         vec![],
     )
     .unwrap();
-    wait_script_state(&play, "alice", script::RunState::Running);
     let slot = script_slot(&play.scripts, "alice").expect("script slot exists");
+    let startup_deadline = Instant::now() + Duration::from_secs(5);
+    while play.script_state("alice") != script::RunState::Running
+        && Instant::now() < startup_deadline
+    {
+        play.pump_script_lifecycle("alice");
+        thread::sleep(Duration::from_millis(5));
+    }
+    assert_eq!(
+        play.script_state("alice"),
+        script::RunState::Running,
+        "compat script did not finish setup"
+    );
     slot.lock()
         .unwrap()
         .probe("globalThis.__hangFrame = true")
