@@ -103,10 +103,12 @@ impl Script for NativeNoRouteScript {
                     allow_teleports: WalkBit::Allow,
                     allow_wilderness: WalkBit::Allow,
                     allow_danger_zones: WalkBit::Allow,
+                    ..WalkOptions::default()
                 },
                 required_after: tick.cx.evidence(),
                 evidence: None,
                 cross: Box::default(),
+                avoid: Box::default(),
                 protect: false,
                 food_guard: false,
                 allow: Default::default(),

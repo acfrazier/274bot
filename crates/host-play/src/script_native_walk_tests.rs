@@ -6700,6 +6700,7 @@ mod s2b_admission_contract {
                 required_after,
                 evidence: None,
                 cross: Box::new([]),
+                avoid: Box::new([]),
                 protect: false,
                 food_guard: false,
                 allow: Default::default(),

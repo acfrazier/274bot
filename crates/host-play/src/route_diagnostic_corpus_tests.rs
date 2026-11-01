@@ -76,6 +76,7 @@ impl DiagnosticCase {
             live_geometry: None,
             exclusions: None,
             compat_tile_intent: false,
+            prereq_catalog: None,
             completion: Default::default(),
         })
     }
@@ -134,6 +135,7 @@ impl Script for NativeWalkScript {
                 required_after: tick.cx.evidence(),
                 evidence: None,
                 cross: Box::default(),
+                avoid: Box::default(),
                 protect: false,
                 food_guard: false,
                 allow: script::native::WalkAllow::default(),
@@ -723,6 +725,7 @@ fn real_cases(world: Arc<NavWorld>) -> Vec<DiagnosticCase> {
         allow_teleports: script::native::WalkBit::Allow,
         allow_wilderness: script::native::WalkBit::Allow,
         allow_danger_zones: script::native::WalkBit::Allow,
+        ..script::native::WalkOptions::default()
     };
 
     let mut cases = vec![

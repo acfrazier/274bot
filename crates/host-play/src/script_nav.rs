@@ -8927,7 +8927,7 @@ mod diagnostic_tests {
         let mut job =
             RouteJob::prepare("test", request, RouteDemandKind::Walk { authority: None }).unwrap();
         job.search_purpose = RouteSearchPurpose::Blocking;
-        job.handle_search(SearchOutcome::BlockingZones(None))
+        job.handle_search(SearchOutcome::BlockingZones(None), 0)
             .unwrap();
         assert_eq!(job.search_purpose, RouteSearchPurpose::Actionable);
         let crossing = api::prereq_steps::CrossingId {
@@ -8958,9 +8958,10 @@ mod diagnostic_tests {
         };
         let expected = gate.clone();
 
-        job.handle_search(SearchOutcome::ActionableQuestGates(Ok(Some(Box::from([
-            gate,
-        ])))))
+        job.handle_search(
+            SearchOutcome::ActionableQuestGates(Ok(Some(Box::from([gate])))),
+            0,
+        )
         .unwrap();
 
         assert!(matches!(
@@ -8985,11 +8986,11 @@ mod diagnostic_tests {
                     .unwrap();
             assert!(job.preflights.actionable.is_none());
             job.search_purpose = RouteSearchPurpose::Blocking;
-            job.handle_search(SearchOutcome::BlockingZones(None))
+            job.handle_search(SearchOutcome::BlockingZones(None), 0)
                 .unwrap();
             assert_eq!(job.search_purpose, RouteSearchPurpose::Unresolved);
             assert!(job.native_failure.is_none());
-            job.handle_search(SearchOutcome::UnresolvedQuestGates(Ok(None)))
+            job.handle_search(SearchOutcome::UnresolvedQuestGates(Ok(None)), 0)
                 .unwrap();
             assert_eq!(job.search_purpose, RouteSearchPurpose::MissingCarry);
             assert_eq!(job.native_failure, Some(script::native::WalkEnd::Failed));
@@ -9003,7 +9004,7 @@ mod diagnostic_tests {
         let mut job =
             RouteJob::prepare("test", request, RouteDemandKind::Walk { authority: None }).unwrap();
         job.search_purpose = RouteSearchPurpose::Blocking;
-        job.handle_search(SearchOutcome::BlockingZones(None))
+        job.handle_search(SearchOutcome::BlockingZones(None), 0)
             .unwrap();
         assert_eq!(job.search_purpose, RouteSearchPurpose::MissingCarry);
     }
