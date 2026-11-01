@@ -48,10 +48,26 @@ pub enum NativeEvent {
         username: Option<String>,
         text: String,
     },
-    SkillXp { skill: i32, name: String, xp: i32, delta: i32 },
-    SkillLevel { skill: i32, name: String, level: i32, previous: i32 },
-    VarpChanged { index: i32, value: i32, previous: i32 },
-    ScriptFinish { reason: String },
+    SkillXp {
+        skill: i32,
+        name: String,
+        xp: i32,
+        delta: i32,
+    },
+    SkillLevel {
+        skill: i32,
+        name: String,
+        level: i32,
+        previous: i32,
+    },
+    VarpChanged {
+        index: i32,
+        value: i32,
+        previous: i32,
+    },
+    ScriptFinish {
+        reason: String,
+    },
     InventoryChanged {
         slot: i32,
         id: i32,
@@ -265,7 +281,10 @@ impl NativeEventProducer {
             (None, Some(current)) => self.last_varps = Some(current.clone()),
             _ => {}
         }
-        ObserveResult { events, diagnostic: None }
+        ObserveResult {
+            events,
+            diagnostic: None,
+        }
     }
 
     fn reset_baselines(&mut self) {
@@ -321,12 +340,18 @@ fn diff_xp(last: &[XpState], current: &[XpState]) -> Vec<NativeEvent> {
         if let Some(prev) = last.iter().find(|p| p.index == cur.index) {
             if cur.xp > prev.xp {
                 events.push(NativeEvent::SkillXp {
-                    skill: cur.index, name: cur.name.clone(), xp: cur.xp, delta: cur.xp - prev.xp,
+                    skill: cur.index,
+                    name: cur.name.clone(),
+                    xp: cur.xp,
+                    delta: cur.xp - prev.xp,
                 });
             }
             if prev.level > 0 && cur.level != prev.level {
                 events.push(NativeEvent::SkillLevel {
-                    skill: cur.index, name: cur.name.clone(), level: cur.level, previous: prev.level,
+                    skill: cur.index,
+                    name: cur.name.clone(),
+                    level: cur.level,
+                    previous: prev.level,
                 });
             }
         }
@@ -335,12 +360,18 @@ fn diff_xp(last: &[XpState], current: &[XpState]) -> Vec<NativeEvent> {
 }
 
 fn diff_varps(last: &[VarpState], current: &[VarpState]) -> Vec<NativeEvent> {
-    current.iter().filter_map(|cur| {
-        last.iter().find(|prev| prev.index == cur.index && prev.value != cur.value)
-            .map(|prev| NativeEvent::VarpChanged {
-                index: cur.index, value: cur.value, previous: prev.value,
-            })
-    }).collect()
+    current
+        .iter()
+        .filter_map(|cur| {
+            last.iter()
+                .find(|prev| prev.index == cur.index && prev.value != cur.value)
+                .map(|prev| NativeEvent::VarpChanged {
+                    index: cur.index,
+                    value: cur.value,
+                    previous: prev.value,
+                })
+        })
+        .collect()
 }
 
 fn merge_xp(last: &mut Vec<XpState>, current: &[XpState]) {

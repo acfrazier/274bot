@@ -194,7 +194,10 @@ fn on<'s>(
                 | "__rs2b0t_internal_tick__"
         )
     {
-        rv.set(callback_v8::type_error(scope, "events.on: unsupported event name"));
+        rv.set(callback_v8::type_error(
+            scope,
+            "events.on: unsupported event name",
+        ));
         return;
     }
     let id = add_callback(scope, event, args.get(1));

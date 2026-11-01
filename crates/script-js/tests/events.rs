@@ -431,7 +431,10 @@ export default class T extends LoopingBot {
 "#;
     let iso = spawn_ready(src.to_string(), LoadShape::CompatClass, vec![]);
     let stats0 = [prayer(100)];
-    let varps0 = [VarpInput { index: 44, value: 7 }];
+    let varps0 = [VarpInput {
+        index: 44,
+        value: 7,
+    }];
     let mut snap = base_snapshot();
     snap.stats = &stats0;
     snap.varps = &varps0;
@@ -446,7 +449,10 @@ export default class T extends LoopingBot {
         base: 3,
         effective: 3,
     }];
-    let varps1 = [VarpInput { index: 44, value: 8 }];
+    let varps1 = [VarpInput {
+        index: 44,
+        value: 8,
+    }];
     snap.stats = &stats1;
     snap.varps = &varps1;
     snap.tick = 2;
