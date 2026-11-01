@@ -71,23 +71,37 @@ pub enum PrereqFailure {
         at: u64,
         bound: u16,
     },
-    /// The engine cancelled the Talk on every attempt of the budget: it sent
-    /// "I can't reach that!" and cleared the interaction
-    /// (`Player.ts:1292-1295`). Waiting longer cannot recover a cancelled
-    /// interaction. The tiles are the player's and the NPC's at the last
-    /// cancel.
+    /// Every attempt of the conversation's reach budget failed. The engine
+    /// cancelled the first Talk: it sent "I can't reach that!" and cleared
+    /// the interaction (`Player.ts:1292-1295`), so waiting longer cannot
+    /// recover it. Each later attempt re-approached the NPC and either sent a
+    /// Talk that the engine also cancelled, or failed its approach. `cause`,
+    /// `since`, `at` and the tiles describe the last failure: the player's
+    /// and the NPC's tiles when it ended.
     TalkUnreachable {
         attempts: u8,
         since: u64,
         at: u64,
         from: Option<WorldTile>,
         npc: Option<WorldTile>,
+        cause: TalkReachCause,
     },
     /// Used only when the reused machine identifies the expiry cause.
     MachineEnded {
         machine: &'static str,
         reason: Arc<str>,
     },
+}
+
+/// Why one attempt of a prerequisite Talk did not reach the NPC.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum TalkReachCause {
+    /// The engine cancelled the Talk with "I can't reach that!".
+    Cancelled,
+    /// The re-approach ended while the NPC was not ready to talk: its walk
+    /// ended with `walk` (for example `Arrived` at the NPC's earlier tile),
+    /// or the approach deadline passed before a walk receipt (`None`).
+    Approach { walk: Option<WalkEnd> },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]

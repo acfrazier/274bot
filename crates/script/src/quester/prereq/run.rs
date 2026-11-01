@@ -5,7 +5,7 @@ use crate::native::walk::Walk;
 use crate::native::{
     ActionContext, ActionError, ActionHandle, NativeActions, NativeMachine, OuterWalk, PrereqAllow,
     PrereqFailure, PrereqMissing, PrereqRefusal, PrereqStepIdentity, PrereqSwitch, PrereqWaitName,
-    WalkAllow, WalkEnd, WalkGoals, WalkOptions, WalkRequest,
+    TalkReachCause, WalkAllow, WalkEnd, WalkGoals, WalkOptions, WalkRequest,
 };
 use crate::quest_journal::{JournalMachine, JournalRequest};
 use crate::quester::families::dialogue::{
@@ -1389,10 +1389,13 @@ struct ChatDrive {
     last_send: u64,
     effect_seen: bool,
     terminal_seen: bool,
-    /// Talks the engine cancelled with "I can't reach that!".
-    reach_cancels: u8,
-    /// A cancelled Talk is sent again only on a later observed tick.
+    /// Failed reach attempts of this conversation: Talks the engine cancelled
+    /// with "I can't reach that!", and failed re-approaches after a cancel.
+    reach_failures: u8,
+    /// A failed attempt is retried only on a later observed tick.
     retry_after: Option<u64>,
+    /// Observed tick on which the current dialogue began.
+    attempt_since: u64,
 }
 enum ChatDone {
     Close {
@@ -1415,8 +1418,9 @@ impl ChatDrive {
             last_send: 0,
             effect_seen: false,
             terminal_seen: false,
-            reach_cancels: 0,
+            reach_failures: 0,
             retry_after: None,
+            attempt_since: 0,
         }
     }
     fn begin(
@@ -1477,6 +1481,7 @@ impl ChatDrive {
             }
         };
         let handle = actions.begin::<Dialogue>(DialogueArgs { target, options }, cx)?;
+        self.attempt_since = cx.evidence().tick;
         if let Some(send) = handle.inspect(Dialogue::last_send).flatten() {
             self.last_send = send.request_id;
             self.pending = Some(PendingPage::new(send, cx, row, false, false));
@@ -1487,8 +1492,6 @@ impl ChatDrive {
     /// The engine sent "I can't reach that!" and cleared the Talk
     /// (`Player.ts:1292-1295`). The wait ends at once as a reach failure: a
     /// cleared interaction never opens a page, so waiting longer cannot help.
-    /// The Talk is sent again from the NPC's observed tile, within
-    /// [`TALK_REACH_RETRIES`], and the last cancel's detail is kept.
     fn talk_cancelled(
         &mut self,
         cx: &ActionContext<'_>,
@@ -1498,19 +1501,36 @@ impl ChatDrive {
         let tick = cx.evidence().tick;
         wait_log(pending.name, pending.wait, tick, "unreachable");
         talk_log(cx, row, "cancelled", tick);
-        self.reach_cancels += 1;
-        if self.reach_cancels > TALK_REACH_RETRIES {
+        self.reach_failed(cx, row, TalkReachCause::Cancelled, pending.wait.since)
+    }
+    /// One reach attempt failed: a cancelled Talk, or a re-approach that ended
+    /// while the NPC was not ready to talk. A failed walk is not terminal
+    /// until its bounded retries are spent (AGENTS.md): a new dialogue reads
+    /// both tiles again on a later observed tick, within
+    /// [`TALK_REACH_RETRIES`]. The last failure's detail is kept.
+    fn reach_failed(
+        &mut self,
+        cx: &ActionContext<'_>,
+        row: &PrereqStep,
+        cause: TalkReachCause,
+        since: u64,
+    ) -> Poll<Result<ChatDone, PrereqFailure>> {
+        let tick = cx.evidence().tick;
+        self.reach_failures += 1;
+        if self.reach_failures > TALK_REACH_RETRIES {
             return Poll::Ready(Err(PrereqFailure::TalkUnreachable {
-                attempts: self.reach_cancels,
-                since: pending.wait.since,
+                attempts: self.reach_failures,
+                since,
                 at: tick,
                 from: cx.snapshot().here().map(|here| here.value),
                 npc: nearest_npc(cx, row.target.npc).map(|(tile, _, _)| tile),
+                cause,
             }));
         }
-        // Dropping the owner revokes the finished Talk's dialogue; the next
+        // Dropping the owner revokes the finished attempt's dialogue; the next
         // `start` approaches from the tiles observed on a later tick.
         self.handle = None;
+        self.pending = None;
         self.retry_after = Some(tick);
         Poll::Pending
     }
@@ -1673,6 +1693,17 @@ impl ChatDrive {
                     }));
                 }
                 if !chat_open(cx) {
+                    // After a cancel, a failed re-approach is a reach failure
+                    // of the same budget, not the end of the conversation.
+                    // The walk receipt is read before the poll: a failed
+                    // machine is dropped with its walk request.
+                    let approach = if self.reach_failures > 0 {
+                        handle
+                            .inspect_in(cx, |dialogue, cx| dialogue.approach_walk(cx))
+                            .flatten()
+                    } else {
+                        None
+                    };
                     let result = actions.poll(handle, cx);
                     if let Some(send) = handle
                         .inspect(Dialogue::last_send)
@@ -1684,6 +1715,18 @@ impl ChatDrive {
                     }
                     match result {
                         Poll::Ready(Err(error)) => return Poll::Ready(Err(action_failure(error))),
+                        Poll::Ready(Ok(DialogueOutcome::Failed)) if approach.is_some() => {
+                            let walk = approach.flatten();
+                            let tick = cx.evidence().tick;
+                            talk_log(cx, row, &format!("approach-failed walk={walk:?}"), tick);
+                            let since = self.attempt_since;
+                            return self.reach_failed(
+                                cx,
+                                row,
+                                TalkReachCause::Approach { walk },
+                                since,
+                            );
+                        }
                         Poll::Ready(Ok(_)) => {
                             return Poll::Ready(Err(PrereqFailure::DialogueFailed))
                         }

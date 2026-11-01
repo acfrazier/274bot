@@ -546,6 +546,21 @@ impl Dialogue {
         self.last_send
     }
 
+    /// `Some` while this dialogue approaches its NPC: the end of its walk's
+    /// receipt, or `None` before the receipt. Read before a poll, because a
+    /// failed machine is dropped with its walk request.
+    pub(crate) fn approach_walk(
+        &self,
+        cx: &ActionContext<'_>,
+    ) -> Option<Option<crate::native::WalkEnd>> {
+        (self.phase == Phase::Approach).then(|| {
+            (self.walk_request_id != 0)
+                .then(|| cx.walk_receipt(self.walk_request_id))
+                .flatten()
+                .map(|receipt| receipt.end.clone())
+        })
+    }
+
     /// Quiet ticks this conversation waits after the chat closes, and after
     /// each re-arm signal.
     fn gap_ticks(&self) -> u64 {

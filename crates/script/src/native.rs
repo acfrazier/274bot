@@ -39,7 +39,7 @@ mod server_ordered;
 pub mod thieve;
 pub use prereq::{
     HandoverEntry, OuterIdentity, OuterWalk, PrereqAllow, PrereqFailure, PrereqMissing,
-    PrereqRefusal, PrereqStepIdentity, PrereqSwitch, PrereqWaitName, WalkHandover,
+    PrereqRefusal, PrereqStepIdentity, PrereqSwitch, PrereqWaitName, TalkReachCause, WalkHandover,
 };
 pub mod thieving_core;
 pub use server_ordered::ServerOrderedCompletion;
