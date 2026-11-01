@@ -2895,6 +2895,7 @@ fn prerequisite_live_paths_compile_with_provenance_and_one_pass_order() {
                 &quests,
                 worker,
                 &script::local_state::OperatorLoadouts::absent(),
+                None,
             )
         })
         .unwrap()
