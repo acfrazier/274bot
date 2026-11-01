@@ -397,7 +397,8 @@ mod tests {
 
     #[test]
     fn ordered_completion_memory_is_bounded_and_default_native_has_no_packet_buffer() {
-        assert_eq!(std::mem::size_of::<Owner>(), 112);
+        // The modal-wait lease slot (the script-owned auto-run hold) adds 8 B.
+        assert_eq!(std::mem::size_of::<Owner>(), 120);
         assert_eq!(std::mem::size_of::<Option<NonZeroU64>>(), 8);
         assert_eq!(
             std::mem::size_of::<Option<Box<ServerOrderedCompletion>>>(),
@@ -409,7 +410,8 @@ mod tests {
         assert_eq!(std::mem::size_of::<ServerOrderedDispatch>(), 32);
         // Frozen walk consent and aligned receipt storage add 24 B to the
         // existing native ledger allocation; ordered dispatch adds no buffer.
-        assert_eq!(std::mem::size_of::<Ledger>(), 936);
+        // The modal-wait lease sequence adds 8 B.
+        assert_eq!(std::mem::size_of::<Ledger>(), 944);
         let mut frame = Frame::new();
         assert!(frame.ledger.as_ref().unwrap().server_ordered.is_none());
         frame.with(|cx| cx.emit_server_ordered(request())).unwrap();

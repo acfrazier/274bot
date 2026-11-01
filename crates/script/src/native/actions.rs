@@ -40,11 +40,13 @@ impl ActionContext<'_> {
     }
 
     /// Begin one wait for the page this owner's own interaction opens. A newer
-    /// lease of the same owner replaces the older one.
+    /// lease of the same owner replaces the older one. Lease numbers come from
+    /// their own sequence, so request ids are unchanged.
     pub fn begin_modal_wait(&mut self) -> Result<ModalWaitLease, ActionError> {
         let owner = self.owner()?;
         let ledger = self.ledger.as_mut().expect("owner checked");
-        let lease_id = ledger.next_id()?;
+        ledger.modal_wait_seq = ledger.modal_wait_seq.wrapping_add(1);
+        let lease_id = NonZeroU64::new(ledger.modal_wait_seq).ok_or(ActionError::Cancelled)?;
         if !owner.set_modal_wait(lease_id) {
             return Err(ActionError::Cancelled);
         }

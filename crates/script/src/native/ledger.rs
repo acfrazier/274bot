@@ -218,6 +218,9 @@ pub struct Ledger {
     pub(crate) batch_receipts: [Option<InteractionReceipt>; 5],
     next_batch_receipt: usize,
     pub(crate) quiet_since: Option<(NonZeroU64, NonZeroU64, Instant)>,
+    /// Last modal-wait lease number. A separate sequence, so a lease does not
+    /// shift the request ids that receipts and traces carry.
+    pub(crate) modal_wait_seq: u64,
     /// The open bank session (login run, snapshot session generation) known
     /// to be in Item withdraw mode: a native machine opened it (the server
     /// resets `%bankcert` on open) or pressed Item in it. It outlives one
@@ -246,6 +249,7 @@ impl Default for Ledger {
             batch_receipts: std::array::from_fn(|_| None),
             next_batch_receipt: 0,
             quiet_since: None,
+            modal_wait_seq: 0,
             bank_item_session: None,
         }
     }

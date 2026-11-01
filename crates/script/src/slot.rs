@@ -2236,16 +2236,19 @@ impl SlotScript {
     /// compatibility journal. Stop, replacement and a session boundary revoke
     /// the native leases; both journal leases end after 10 s of wall time.
     pub fn script_interaction_wait(&mut self, now: std::time::Instant) -> Option<u64> {
+        // Modal-wait lease numbers and request ids are separate sequences that
+        // count up from one; the tag keeps their keys apart. The compatibility
+        // journal's key is above both.
+        const MODAL_WAIT_KEY_TAG: u64 = 1 << 62;
+        const COMPAT_JOURNAL_KEY: u64 = u64::MAX;
         if let Some(ledger) = self.native_runtime.ledger.as_mut() {
             if let Some(lease) = ledger.modal_wait() {
-                return Some(lease.get());
+                return Some(lease.get() | MODAL_WAIT_KEY_TAG);
             }
             if let Some(quiet) = ledger.quiet_read(now) {
                 return Some(quiet.request_id.get());
             }
         }
-        // Native ids count up from one, so this key never equals one of them.
-        const COMPAT_JOURNAL_KEY: u64 = u64::MAX;
         self.surface
             .as_ref()
             .is_some_and(|surface| surface.journal_paint_hidden(now))
