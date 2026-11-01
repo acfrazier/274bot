@@ -561,7 +561,7 @@
     "module": "api/shop/Shop.js",
     "selector": "Shop.stock",
     "reason": "The native facade reuses deeply frozen shop-stock rows for the posted interface and inventory generations; audited consumers only inspect them.",
-    "runtime": "crates/script-js/src/materialize/client_adapter_v8.rs:298",
+    "runtime": "crates/script-js/src/materialize/client_adapter_v8.rs:306",
     "declaration": "stock(): readonly Readonly<{ name: string | null; count: number; slot: number }>[];"
   },
   {
@@ -569,7 +569,7 @@
     "module": "api/trade/Trade.js",
     "selector": "Trade.myOffer",
     "reason": "The native facade reuses deeply frozen trade-offer rows for the posted interface and inventory generations; audited consumers only inspect them.",
-    "runtime": "crates/script-js/src/materialize/client_adapter_v8.rs:338",
+    "runtime": "crates/script-js/src/materialize/client_adapter_v8.rs:340",
     "declaration": "myOffer(): readonly Readonly<TradeItem>[];"
   },
   {
@@ -577,7 +577,7 @@
     "module": "api/trade/Trade.js",
     "selector": "Trade.theirOffer",
     "reason": "The native facade reuses deeply frozen trade-offer rows for the posted interface and inventory generations; audited consumers only inspect them.",
-    "runtime": "crates/script-js/src/materialize/client_adapter_v8.rs:344",
+    "runtime": "crates/script-js/src/materialize/client_adapter_v8.rs:346",
     "declaration": "theirOffer(): readonly Readonly<TradeItem>[];"
   }
 ]
