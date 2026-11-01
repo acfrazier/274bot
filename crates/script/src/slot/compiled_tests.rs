@@ -3123,7 +3123,7 @@ impl crate::native::NativeMachine for StopWork {
             target_item_id: None,
         })?;
         Ok(Self {
-            _quiet: cx.begin_quiet_read(41)?,
+            _quiet: cx.begin_quiet_read(41, crate::native::WaitDeadline::Tick(u64::MAX))?,
             cancels,
         })
     }
@@ -3627,7 +3627,7 @@ impl crate::native::NativeMachine for ModalWaitWork {
 
     fn begin(_: (), cx: &mut ActionContext<'_>) -> Result<Self, crate::native::ActionError> {
         Ok(Self {
-            _wait: cx.begin_modal_wait()?,
+            _wait: cx.begin_modal_wait(crate::native::WaitDeadline::Tick(u64::MAX))?,
         })
     }
 
@@ -3666,7 +3666,7 @@ fn a_script_interaction_wait_ends_at_stop_and_at_a_session_boundary() {
             .unwrap();
         tick(&mut slot);
         assert!(
-            slot.script_interaction_wait(Instant::now()).is_some(),
+            slot.script_interaction_wait(Instant::now(), 1).is_some(),
             "the machine's wait is the host's hold"
         );
         if session_boundary {
@@ -3675,7 +3675,7 @@ fn a_script_interaction_wait_ends_at_stop_and_at_a_session_boundary() {
             slot.stop();
         }
         assert_eq!(
-            slot.script_interaction_wait(Instant::now()),
+            slot.script_interaction_wait(Instant::now(), 1),
             None,
             "a dropped owner releases the hold at once (session boundary: {session_boundary})"
         );

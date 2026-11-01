@@ -214,27 +214,38 @@ const PAGE_WAIT_TICKS: u64 = 12;
 
 /// A journal-style click on the production path: one `IfButton`, and a
 /// modal-wait lease from the click until the script observes its page or its
-/// own bound expires. Afterwards it stays pending, as the journal machine
-/// does while it closes the page.
+/// own bound expires. The lease carries that bound. Afterwards it stays
+/// pending, as the journal machine does while it closes the page. A `hung`
+/// machine never checks its bound: its owner stopped running its wait.
 struct PageClickMachine {
     page: Arc<AtomicBool>,
     wait: Option<script::native::ModalWaitLease>,
     deadline: u64,
+    hung: bool,
+}
+
+#[derive(Clone)]
+struct PageClickArgs {
+    page: Arc<AtomicBool>,
+    wait_ticks: u64,
+    hung: bool,
 }
 
 impl script::native::NativeMachine for PageClickMachine {
-    type Args = Arc<AtomicBool>;
+    type Args = PageClickArgs;
     type Output = ();
 
     fn begin(
-        page: Self::Args,
+        args: Self::Args,
         cx: &mut script::native::ActionContext<'_>,
     ) -> Result<Self, script::native::ActionError> {
         cx.emit(script::shim::InteractReq::IfButton { component_id: 601 })?;
+        let deadline = cx.evidence().tick + args.wait_ticks;
         Ok(Self {
-            page,
-            wait: Some(cx.begin_modal_wait()?),
-            deadline: cx.evidence().tick + PAGE_WAIT_TICKS,
+            page: args.page,
+            wait: Some(cx.begin_modal_wait(script::native::WaitDeadline::Tick(deadline))?),
+            deadline,
+            hung: args.hung,
         })
     }
 
@@ -242,6 +253,9 @@ impl script::native::NativeMachine for PageClickMachine {
         &mut self,
         cx: &mut script::native::ActionContext<'_>,
     ) -> std::task::Poll<Result<Self::Output, script::native::ActionError>> {
+        if self.hung {
+            return std::task::Poll::Pending;
+        }
         if self.wait.is_some() && self.page.load(Ordering::Relaxed) {
             // The script observed its page: its wait ends here.
             self.wait = None;
@@ -258,7 +272,7 @@ impl script::native::NativeMachine for PageClickMachine {
 /// The script clicks once when armed and polls its machine on each tick.
 struct ClickWhenArmed {
     armed: Arc<AtomicBool>,
-    page: Arc<AtomicBool>,
+    args: PageClickArgs,
     expired: Arc<AtomicBool>,
     handle: Option<script::native::ActionHandle<PageClickMachine>>,
 }
@@ -279,7 +293,7 @@ impl script::native::Script for ClickWhenArmed {
         if self.handle.is_none() && self.armed.swap(false, Ordering::Relaxed) {
             self.handle = Some(
                 ctx.actions
-                    .begin::<PageClickMachine>(Arc::clone(&self.page), &mut ctx.cx)
+                    .begin::<PageClickMachine>(self.args.clone(), &mut ctx.cx)
                     .expect("native action starts"),
             );
         }
@@ -342,6 +356,12 @@ struct HoldRig {
 
 impl HoldRig {
     fn new() -> Self {
+        Self::with_wait(PAGE_WAIT_TICKS, false)
+    }
+
+    /// A rig whose click waits `wait_ticks` for its page; a `hung` owner
+    /// never checks that bound.
+    fn with_wait(wait_ticks: u64, hung: bool) -> Self {
         let scripts: ScriptWall = Arc::new(Mutex::new(HashMap::new()));
         let cheats = Arc::new(Mutex::new(HashMap::new()));
         let mut client = bank_fetch_client();
@@ -366,7 +386,11 @@ impl HoldRig {
             .start_test_script(
                 Box::new(ClickWhenArmed {
                     armed: Arc::clone(&armed),
-                    page: Arc::clone(&page),
+                    args: PageClickArgs {
+                        page: Arc::clone(&page),
+                        wait_ticks,
+                        hung,
+                    },
                     expired: Arc::clone(&expired),
                     handle: None,
                 }),
@@ -615,4 +639,129 @@ fn auto_run_hold_ends_when_the_script_is_stopped() {
         [0, 0, 1],
         "a dropped owner releases the hold on its own frame"
     );
+}
+
+/// R4S-1 on the production path: a valid 30-tick quiet wait (the longest
+/// authored end gap, `MAX_GAP_TICKS`) holds the press to its own deadline.
+/// A fixed host limit shorter than the wait (the old 25 ticks) fails here.
+#[test]
+fn auto_run_hold_lasts_a_thirty_tick_wait_to_its_deadline() {
+    const GAP_TICKS: u64 = 30;
+    let mut rig = HoldRig::with_wait(GAP_TICKS, false);
+    let mut frames = vec![click_frame(1, -1)];
+    frames.extend(std::iter::repeat_n(frame(1, -1), GAP_TICKS as usize));
+    let presses = rig.run(&frames);
+    let deadline = GAP_TICKS as usize;
+    assert!(
+        presses[..deadline].iter().all(|&count| count == 0),
+        "held for the whole valid wait: {presses:?}"
+    );
+    assert_eq!(
+        presses[deadline], 1,
+        "the script ends its wait on its deadline tick"
+    );
+}
+
+/// A lease whose owner stops checking its own bound is released one margin
+/// after its deadline, not before (the host logs that release as a failure;
+/// `host` `lib_tests.rs` checks the logged record).
+#[test]
+fn auto_run_hold_of_a_hung_owner_ends_after_its_deadline_plus_the_margin() {
+    let mut rig = HoldRig::with_wait(PAGE_WAIT_TICKS, true);
+    let mut frames = vec![click_frame(1, -1)];
+    frames.extend(std::iter::repeat_n(
+        frame(1, -1),
+        (PAGE_WAIT_TICKS + host::SCRIPT_WAIT_MARGIN_TICKS) as usize,
+    ));
+    let presses = rig.run(&frames);
+    let release = (PAGE_WAIT_TICKS + host::SCRIPT_WAIT_MARGIN_TICKS) as usize;
+    assert!(
+        presses[..release].iter().all(|&count| count == 0),
+        "held to the deadline and its margin: {presses:?}"
+    );
+    assert_eq!(presses[release], 1, "then the host ends the hung hold");
+    assert!(
+        !rig.expired.load(Ordering::Relaxed),
+        "the hung owner never ended its own wait"
+    );
+}
+
+/// R4S-2: each compatibility journal read has its own key (token and work
+/// generation). A read that begins at once after the previous one, with no
+/// host sample of a free lease between them, gets a fresh hold with its own
+/// deadline: it inherits neither the previous read's hold nor its release.
+/// A constant key for every read fails here.
+#[test]
+fn compat_journal_read_to_read_hand_off_takes_a_fresh_hold() {
+    use script::surface::JournalWait;
+    let mut slot = script::SlotScript::new();
+    slot.bind_incarnation(44);
+    let factory = Arc::new(script::surface::test_support::StubSurfaceFactory::new());
+    slot.bind_surface_factory(factory.clone());
+    slot.start_surface(script::surface::SurfaceStart {
+        card: Arc::new(script::surface::test_support::StubSurfaceCard),
+        settings_bag: None,
+        game_data: None,
+        named_banks: Arc::default(),
+        loadouts: Arc::default(),
+    })
+    .expect("start the compatibility surface");
+    let run = factory.last_run().expect("stub surface run");
+    run.set_readiness(script::surface::SurfaceReady::Ready);
+    assert_eq!(
+        slot.poll_start(),
+        script::StartPoll::Settled(script::StartOutcome::Ready)
+    );
+    let mut policy = host::ScriptRunPolicy::default();
+    // The production seam (`script_observe.rs`): the slot's wait, then the
+    // host policy, on the frame's tick.
+    let mut sample = |slot: &mut script::SlotScript, now: Instant, tick: u64| {
+        let wait = slot
+            .script_interaction_wait(now, tick)
+            .map(|wait| host::ScriptWait {
+                key: wait.key,
+                deadline_tick: wait.deadline_tick,
+            });
+        let expired = policy.observe_script_wait(wait, tick);
+        (expired, policy.should_defer_auto_run())
+    };
+    let start = Instant::now();
+    let bound = std::time::Duration::from_secs(10);
+    run.set_journal_wait(Some(JournalWait {
+        token: 1,
+        generation: 3,
+        deadline: start + bound,
+    }));
+    assert_eq!(sample(&mut slot, start, 1), (None, true), "the first read holds");
+    // The first read is still reported after its own bound (a stuck read):
+    // the host ends that hold as a logged failure.
+    let late = start + bound;
+    let (expired, held) = sample(&mut slot, late, 2);
+    assert!(expired.is_some() && !held, "the stuck read's hold ends");
+    // At once, with no free sample between, the next read begins.
+    run.set_journal_wait(Some(JournalWait {
+        token: 2,
+        generation: 3,
+        deadline: late + bound,
+    }));
+    for tick in 2..=40 {
+        assert_eq!(
+            sample(&mut slot, late, tick),
+            (None, true),
+            "the second read holds on tick {tick} with its own bound"
+        );
+    }
+    let (expired, held) = sample(&mut slot, late + bound, 41);
+    assert!(
+        expired.is_some() && !held,
+        "the second read's own bound ends it"
+    );
+    // A new work generation with the same token is also a new read.
+    run.set_journal_wait(Some(JournalWait {
+        token: 2,
+        generation: 4,
+        deadline: late + bound + bound,
+    }));
+    assert_eq!(sample(&mut slot, late + bound, 42), (None, true));
+    slot.stop();
 }

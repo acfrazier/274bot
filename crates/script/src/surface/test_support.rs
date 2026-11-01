@@ -290,6 +290,11 @@ impl StubSurfaceHandle {
             .store(hidden, Ordering::Release);
     }
 
+    /// Set the result returned by [`SurfaceRun::journal_wait`].
+    pub fn set_journal_wait(&self, wait: Option<super::JournalWait>) {
+        *lock(&self.state.journal_wait) = wait;
+    }
+
     /// Replace the queued log lines used by `stop`'s retirement completion.
     pub fn set_retirement_logs(&self, lines: impl IntoIterator<Item = String>) {
         *lock(&self.state.retirement_logs) = lines.into_iter().collect();
@@ -652,6 +657,10 @@ impl SurfaceRun for StubSurfaceRun {
         self.state.journal_paint_hidden.load(Ordering::Acquire)
     }
 
+    fn journal_wait(&self, _now: Instant) -> Option<super::JournalWait> {
+        *lock(&self.state.journal_wait)
+    }
+
     fn probe(&self, expr: &str) -> Result<serde_json::Value, SurfaceError> {
         record(
             &self.state,
@@ -824,6 +833,7 @@ struct StubSurfaceState {
     manual_walk_intent_sequence: AtomicU64,
     paint: Mutex<Option<Arc<ScriptPaint>>>,
     journal_paint_hidden: AtomicBool,
+    journal_wait: Mutex<Option<super::JournalWait>>,
     probe_response: Mutex<Result<serde_json::Value, String>>,
     ignored_randoms: Mutex<Vec<String>>,
     memory_metrics: Mutex<Option<serde_json::Value>>,
@@ -868,6 +878,7 @@ impl StubSurfaceState {
             manual_walk_intent_sequence: AtomicU64::new(0),
             paint: Mutex::new(None),
             journal_paint_hidden: AtomicBool::new(false),
+            journal_wait: Mutex::new(None),
             probe_response: Mutex::new(Ok(serde_json::Value::Null)),
             ignored_randoms: Mutex::new(Vec::new()),
             memory_metrics: Mutex::new(None),

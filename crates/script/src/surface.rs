@@ -174,6 +174,17 @@ pub enum SurfaceError {
     ForeignCard(SurfaceKind),
 }
 
+/// One live compatibility journal read. `token` counts every journal begin
+/// of the run; `generation` is the work generation it began in. Together they
+/// are the read's transaction identity: each new read has its own.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct JournalWait {
+    pub token: u64,
+    pub generation: u64,
+    /// The lease's own wall bound: the read stops hiding the page here.
+    pub deadline: Instant,
+}
+
 /// One running surface. The slot owns lifecycle transitions, and `stop`
 /// transfers the run to its retirement worker.
 pub trait SurfaceRun: Send {
@@ -271,6 +282,9 @@ pub trait SurfaceRun: Send {
     fn paint_select(&self, key: &str, name: &str);
     /// Return whether the compatibility journal paint is hidden at `now`.
     fn journal_paint_hidden(&self, now: Instant) -> bool;
+    /// Return the live compatibility journal read at `now`: its transaction
+    /// identity and its lease's own wall bound.
+    fn journal_wait(&self, now: Instant) -> Option<JournalWait>;
     /// Evaluate a probe expression.
     fn probe(&self, expr: &str) -> Result<serde_json::Value, SurfaceError>;
     /// Drain log lines.

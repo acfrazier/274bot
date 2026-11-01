@@ -594,6 +594,68 @@ fn grandtree_foreman_cutscene_rearms_the_authored_closed_chat_gap() {
     );
 }
 
+/// R4S-1: the longest authored quiet end gap (`MAX_GAP_TICKS` = 30,
+/// `mod.rs:1312`) is a valid wait. Its modal-wait lease, retained from the
+/// Continue's acknowledgement, reports the gap's own deadline from the tick
+/// the gap starts, holds to it, and ends on it.
+#[test]
+fn a_thirty_tick_quiet_end_gap_lease_reports_the_gap_deadline() {
+    let mut snapshot = snapshot();
+    snapshot.seed_local_player(super::tests::local_player(api::WorldTile {
+        x: 2955,
+        z: 3034,
+        level: 0,
+    }));
+    snapshot.seed_chat_modal(100, vec!["Follow me.".into()]);
+    snapshot.seed_chat_options(vec![], 101);
+    let mut ledger = None;
+    let wait = |ledger: &mut Option<Box<ledger::Ledger>>, tick| {
+        ledger
+            .as_mut()
+            .unwrap()
+            .modal_wait_tick(std::time::Instant::now(), tick)
+    };
+    let handle = with_tick(&snapshot, &mut ledger, 1, |tick| {
+        tick.actions
+            .begin::<Dialogue>(continuation_args_with_gap(30), &mut tick.cx)
+            .unwrap()
+    });
+    assert!(with_tick(&snapshot, &mut ledger, 2, |tick| {
+        tick.actions.poll(&handle, &mut tick.cx)
+    })
+    .is_pending());
+    let (continue_key, _) = wait(&mut ledger, 2).expect("the Continue waits for its result");
+    // The chat closes: the Continue is acknowledged and the end gap starts on
+    // tick 3, with its deadline on tick 3 + 30.
+    snapshot.seed_chat_modal(-1, vec![]);
+    snapshot.seed_chat_options(vec![], -1);
+    for game_tick in 3..33 {
+        assert!(
+            with_tick(&snapshot, &mut ledger, game_tick, |tick| {
+                tick.actions.poll(&handle, &mut tick.cx)
+            })
+            .is_pending(),
+            "the quiet gap is still open at tick {game_tick}"
+        );
+        assert_eq!(
+            wait(&mut ledger, game_tick),
+            Some((continue_key, 33)),
+            "the gap holds with its own deadline at tick {game_tick}"
+        );
+    }
+    assert!(matches!(
+        with_tick(&snapshot, &mut ledger, 33, |tick| {
+            tick.actions.poll(&handle, &mut tick.cx)
+        }),
+        Poll::Ready(Ok(DialogueOutcome::Completed))
+    ));
+    assert_eq!(
+        wait(&mut ledger, 33),
+        None,
+        "the gap ends on its deadline tick, before the host's sample of it"
+    );
+}
+
 #[test]
 fn level_up_page_after_owned_scroll_close_is_drained_as_continuation() {
     // Cook's hand-in (DIAG-COOK-HEADED report section 1): chat pages, then

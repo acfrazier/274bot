@@ -1250,6 +1250,16 @@ impl LoadIsolate {
         lease.live(generation, now)
     }
 
+    /// The live compatibility journal read with its transaction identity
+    /// (token and work generation) and its lease's own wall bound.
+    pub(crate) fn compat_journal_wait(&self, now: Instant) -> Option<script::surface::JournalWait> {
+        let lease = self.compat_journal.as_ref()?;
+        let generation = self
+            .work_generation
+            .load(std::sync::atomic::Ordering::Acquire);
+        lease.wait(generation, now)
+    }
+
     fn revoke_compat_journal(&self) {
         if let Some(lease) = &self.compat_journal {
             lease.revoke();

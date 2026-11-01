@@ -887,6 +887,52 @@ pub struct ModalWaitLease {
     lease_id: NonZeroU64,
 }
 
+/// The bound that the owner of a script wait enforces itself. The host ends
+/// its auto-run hold only when the owner ends the wait, or, as a logged
+/// failure, after this deadline plus a stated margin (an owner that stopped
+/// polling). A renewed wait carries its new deadline.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WaitDeadline {
+    /// The observed game tick (`ActionContext::evidence().tick`) on which
+    /// the owner ends the wait (`tick >= deadline`).
+    Tick(u64),
+    /// The wall time from which the owner ends the wait at its next poll.
+    /// An active-clock bound converts to wall time when it is set: the active
+    /// clock never runs faster than wall time, so this is never earlier.
+    Wall(Instant),
+}
+
+impl WaitDeadline {
+    /// The observed tick by which a polled owner has ended its wait, read in
+    /// the host sample of `tick`. The owner checks its bound in that frame's
+    /// poll, before the sample. A wall bound is not a tick until it has
+    /// passed: until then the answer is the current tick (not yet due), and
+    /// the first sample past it fixes the deadline at that tick. The owner's
+    /// poll in that frame read its clock before the sample, so it sees the
+    /// bound at its next poll; the host's margin covers that one tick.
+    pub fn owner_tick(&mut self, now: Instant, tick: u64) -> u64 {
+        match *self {
+            WaitDeadline::Tick(deadline) => deadline,
+            WaitDeadline::Wall(at) if now < at => tick,
+            WaitDeadline::Wall(_) => {
+                *self = WaitDeadline::Tick(tick);
+                tick
+            }
+        }
+    }
+
+    /// The observed tick for a lease that ends itself at the wall time `at`,
+    /// in the read itself. A live read before `at` is not yet due; a live
+    /// read after it is already past its deadline.
+    pub fn self_ending_tick(at: Instant, now: Instant, tick: u64) -> u64 {
+        if now < at {
+            tick
+        } else {
+            tick.saturating_sub(1)
+        }
+    }
+}
+
 /// Owner allowances for a followed walk. Prayer must be allowed or
 /// [`crate::combat::WalkGuard::begin`] refuses with `PrayerDisallowed`;
 /// food and escape default to allowed.

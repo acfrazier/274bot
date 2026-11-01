@@ -633,7 +633,7 @@ A `journal modal timeout` permits one retry on the first observed game tick
 after the timeout. Each read retains the journal owner's five-tick window.
 The run-on button closes modals once before enabling run
 (`player_controls.rs2:34-46`). The host keeps its run-on latch until energy
-reaches 0 or the session changes (`crates/host/src/lib.rs:1507-1514,1529-1539`). Energy
+reaches 0 or the session changes (`crates/host/src/lib.rs:1537-1544,1549-1559`). Energy
 recovery or a new session allows another press.
 The host holds its auto-run press while a script waits for the result of its
 own interaction, and the script ends that hold itself. The journal reader holds
@@ -647,8 +647,13 @@ press as before. An interaction that expects no page (for example a walk or an
 item action) takes no hold. The hold does not count packets or ticks after the
 click, so no packet order ends it early. The 274 protocol does not acknowledge
 client input, so only the script can know that its click's page has arrived or
-will not. A terminal safety limit of 25 observed game ticks per wait ends a
-hold that the script never ends, and the host logs that as a failure.
+will not. Each wait carries the deadline that its owner enforces, in observed
+game ticks: the dialogue's end gap tick, the journal reader's five-tick window
+(renewed at each phase), or the first tick after a page wait's own time bound.
+The host ends a hold that is still live one tick after that deadline (the
+owner checks its deadline before the host reads the wait in the same frame),
+and logs that as a failure. A new send, a re-armed gap or a new journal read
+has its own key and deadline.
 The journal content opens the page without a delay (`quest_journal.rs2:1-55`).
 If the retry fails, the walk blocks with the terminal failure detail. The live
 proof receipt records each attempt, its start and terminal ticks, and its

@@ -361,6 +361,10 @@ impl SurfaceRun for JsSurfaceRun {
         self.isolate.compat_journal_paint_hidden(now)
     }
 
+    fn journal_wait(&self, now: Instant) -> Option<script::surface::JournalWait> {
+        self.isolate.compat_journal_wait(now)
+    }
+
     fn probe(&self, expr: &str) -> Result<serde_json::Value, SurfaceError> {
         self.isolate.probe(expr).map_err(SurfaceError::Probe)
     }

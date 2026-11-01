@@ -129,14 +129,25 @@ impl CompatJournalLease {
     }
 
     pub fn live(&self, generation: u64, now: std::time::Instant) -> bool {
+        self.wait(generation, now).is_some()
+    }
+
+    /// The live read with its transaction identity (token and generation)
+    /// and its own wall bound. Each new read has its own identity, so the
+    /// host starts a new hold for it even when no sample saw the lease free.
+    pub fn wait(
+        &self,
+        generation: u64,
+        now: std::time::Instant,
+    ) -> Option<script::surface::JournalWait> {
         if !self.active.load(std::sync::atomic::Ordering::Acquire) {
-            return false;
+            return None;
         }
         let mut state = self.state.lock();
         let Some(active) = state.as_ref() else {
             self.active
                 .store(false, std::sync::atomic::Ordering::Release);
-            return false;
+            return None;
         };
         if active.key.generation != generation
             || self.generation() != generation
@@ -149,9 +160,13 @@ impl CompatJournalLease {
             *state = None;
             self.active
                 .store(false, std::sync::atomic::Ordering::Release);
-            return false;
+            return None;
         }
-        true
+        Some(script::surface::JournalWait {
+            token: active.key.token,
+            generation: active.key.generation,
+            deadline: active.since + COMPAT_PAINT_QUIET_TIMEOUT,
+        })
     }
 }
 
@@ -1003,5 +1018,41 @@ mod tests {
         on_stop();
         assert!(!lease.live(7, std::time::Instant::now()));
         let _ = stopped;
+    }
+
+    /// R4S-2: a read that begins at once after the previous read completed
+    /// has its own transaction identity and its own wall bound, with no free
+    /// sample of the lease in between.
+    #[test]
+    fn a_read_after_a_completed_read_has_its_own_identity_and_bound() {
+        reset_closed();
+        let lease = std::sync::Arc::new(CompatJournalLease::default());
+        lease.set_generation(7);
+        lease.set_host_generation(7);
+        bind_compat_runtime(std::sync::Arc::clone(&lease));
+
+        let first = begin("Cook's Assistant", 0)["token"].as_u64().unwrap();
+        let first_wait = lease.wait(7, std::time::Instant::now()).unwrap();
+        assert_eq!((first_wait.token, first_wait.generation), (first, 7));
+        post_tab(
+            8,
+            77,
+            &["@dre@The Cook's Quest"],
+            vec![cook_row(), waterfall_row()],
+        );
+        assert_eq!(call("next", first, 7)["kind"], "done");
+        assert_eq!(call("close", first, 7)["kind"], "close-modal");
+        post_tab(9, -1, &[], vec![cook_row(), waterfall_row()]);
+        assert_eq!(call("close", first, 7)["kind"], "done");
+        std::thread::sleep(std::time::Duration::from_millis(2));
+        // The next read begins before anyone samples the free lease.
+        let second = begin("Waterfall Quest", 0)["token"].as_u64().unwrap();
+        let second_wait = lease.wait(7, std::time::Instant::now()).unwrap();
+        assert_ne!(second, first);
+        assert_eq!((second_wait.token, second_wait.generation), (second, 7));
+        assert!(
+            second_wait.deadline > first_wait.deadline,
+            "the second read's bound starts at its own begin"
+        );
     }
 }

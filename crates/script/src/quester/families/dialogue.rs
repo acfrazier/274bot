@@ -5,6 +5,7 @@ use super::reach;
 use crate::dialogue_outcome::DialogueOutcome;
 use crate::native::{
     ActionContext, ActionError, ActionHandle, ModalWaitLease, NativeActions, NativeMachine,
+    WaitDeadline,
 };
 use crate::shim::InteractReq;
 use api::snapshot::{chat_page_fingerprint, WidgetRoot, WidgetView};
@@ -233,6 +234,32 @@ impl Phase {
     }
 }
 
+/// The deadline of the current page wait, as this machine checks it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum WaitBound {
+    /// The end gap ends on this observed tick (`obs.tick >= self.due_tick`).
+    Tick(u64),
+    /// A page or acknowledgement wait ends at this active-clock millisecond
+    /// (`now >= self.deadline_ms`).
+    ActiveMs(u64),
+}
+
+impl WaitBound {
+    fn deadline(self, cx: &ActionContext<'_>) -> WaitDeadline {
+        match self {
+            WaitBound::Tick(tick) => WaitDeadline::Tick(tick),
+            // The active clock never runs faster than wall time, so this wall
+            // deadline is never earlier than the machine's own.
+            WaitBound::ActiveMs(ms) => WaitDeadline::Wall(
+                cx.wall_now()
+                    + std::time::Duration::from_millis(
+                        ms.saturating_sub(cx.active_now().as_millis() as u64),
+                    ),
+            ),
+        }
+    }
+}
+
 pub struct Dialogue {
     args: DialogueArgs,
     phase: Phase,
@@ -261,6 +288,8 @@ pub struct Dialogue {
     /// `(steps, gap_rearms_left)` when `modal_wait` was taken: each new send
     /// and each re-armed end gap takes a new lease, so each wait is short.
     modal_wait_epoch: (u32, u64),
+    /// The bound the lease reports: the phase's own deadline.
+    modal_wait_bound: WaitBound,
 }
 
 impl NativeMachine for Dialogue {
@@ -305,6 +334,7 @@ impl NativeMachine for Dialogue {
             last_send: None,
             modal_wait: None,
             modal_wait_epoch: (0, 0),
+            modal_wait_bound: WaitBound::Tick(0),
         };
         dialogue.open(cx)?;
         dialogue.sync_modal_wait(cx)?;
@@ -327,15 +357,31 @@ impl NativeMachine for Dialogue {
 impl Dialogue {
     /// Hold one modal-wait lease while the phase waits for a page, and none
     /// otherwise. A new send (a new `steps` count) or a re-armed end gap takes
-    /// a new lease, so each wait has its own key and stays far inside the
-    /// host's safety bound. Completing or dropping the machine releases it.
+    /// a new lease, so each wait has its own key. The lease carries the
+    /// phase's own deadline, which this machine enforces: the end gap's
+    /// observed tick (`due_tick`), or the active-clock bound of a page or
+    /// acknowledgement wait (`deadline_ms`). A moved deadline renews the
+    /// lease. Completing or dropping the machine releases it.
     fn sync_modal_wait(&mut self, cx: &mut ActionContext<'_>) -> Result<(), ActionError> {
         let epoch = (self.steps, self.gap_rearms_left);
         if !self.phase.awaits_page() {
             self.modal_wait = None;
-        } else if self.modal_wait.is_none() || self.modal_wait_epoch != epoch {
-            self.modal_wait = Some(cx.begin_modal_wait()?);
+            return Ok(());
+        }
+        let bound = if self.phase == Phase::WaitGap {
+            WaitBound::Tick(self.due_tick)
+        } else {
+            WaitBound::ActiveMs(self.deadline_ms)
+        };
+        if self.modal_wait.is_none() || self.modal_wait_epoch != epoch {
+            self.modal_wait = Some(cx.begin_modal_wait(bound.deadline(cx))?);
             self.modal_wait_epoch = epoch;
+            self.modal_wait_bound = bound;
+        } else if self.modal_wait_bound != bound {
+            if let Some(lease) = &self.modal_wait {
+                cx.renew_modal_wait(lease, bound.deadline(cx));
+            }
+            self.modal_wait_bound = bound;
         }
         Ok(())
     }

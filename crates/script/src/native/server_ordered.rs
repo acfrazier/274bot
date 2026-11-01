@@ -410,8 +410,13 @@ mod tests {
         assert_eq!(std::mem::size_of::<ServerOrderedDispatch>(), 32);
         // Frozen walk consent and aligned receipt storage add 24 B to the
         // existing native ledger allocation; ordered dispatch adds no buffer.
-        // The modal-wait lease sequence adds 8 B.
-        assert_eq!(std::mem::size_of::<Ledger>(), 944);
+        // The modal-wait lease sequence adds 8 B. The two lease deadlines
+        // (the quiet read's window and the modal wait's bound, R4S-1) add one
+        // `(lease, WaitDeadline)` slot each.
+        assert_eq!(
+            std::mem::size_of::<Ledger>(),
+            944 + 2 * std::mem::size_of::<Option<(NonZeroU64, crate::native::WaitDeadline)>>()
+        );
         let mut frame = Frame::new();
         assert!(frame.ledger.as_ref().unwrap().server_ordered.is_none());
         frame.with(|cx| cx.emit_server_ordered(request())).unwrap();
