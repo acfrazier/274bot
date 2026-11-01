@@ -1260,7 +1260,7 @@ impl Dialogue {
             }
             return Poll::Pending;
         };
-        if let Some(refusal) = receipt.refusal {
+        if let Some(refusal) = &receipt.refusal {
             let detail = receipt
                 .detail
                 .clone()

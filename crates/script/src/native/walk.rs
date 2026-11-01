@@ -45,6 +45,7 @@ struct WalkReplay {
     options: super::WalkOptions,
     evidence: Option<Arc<dyn api::quest_progress::EvidenceProvider>>,
     cross: Box<[Arc<str>]>,
+    avoid: Box<[Arc<str>]>,
     protect: bool,
     food_guard: bool,
     allow: super::WalkAllow,
@@ -61,6 +62,7 @@ impl WalkReplay {
             options: request.options,
             evidence: request.evidence.clone(),
             cross: request.cross.clone(),
+            avoid: request.avoid.clone(),
             protect: request.protect,
             food_guard: request.food_guard,
             allow: request.allow,
@@ -83,6 +85,7 @@ impl WalkReplay {
             options: self.options,
             evidence: self.evidence.clone(),
             cross: self.cross.clone(),
+            avoid: self.avoid.clone(),
             protect: self.protect,
             food_guard: self.food_guard,
             allow: self.allow,
@@ -508,6 +511,7 @@ mod tests {
             request.loc_id = Some(1530);
             request.options.allow_wilderness = super::super::WalkBit::Allow;
             request.cross = Box::from([Arc::from("test-zone")]);
+            request.avoid = Box::from([Arc::from("avoided-zone")]);
             request.protect = true;
             request.allow.food = false;
             tick.actions.begin::<Walk>(request, &mut tick.cx).unwrap()
@@ -546,6 +550,7 @@ mod tests {
             super::super::WalkBit::Allow
         );
         assert_eq!(request.cross.as_ref(), [Arc::<str>::from("test-zone")]);
+        assert_eq!(request.avoid.as_ref(), [Arc::<str>::from("avoided-zone")]);
         assert!(request.protect);
         assert!(request.food_guard, "named consent retains its food guard");
         assert!(request.allow.food);
@@ -910,6 +915,7 @@ mod tests {
             );
             request.options.allow_wilderness = super::super::WalkBit::Allow;
             request.cross = Box::from([Arc::from("test-zone")]);
+            request.avoid = Box::from([Arc::from("avoided-zone")]);
             request.protect = true;
             request.allow.food = false;
             request.allow.escape = false;
@@ -950,6 +956,7 @@ mod tests {
                 super::super::WalkBit::Allow
             );
             assert_eq!(request.cross.as_ref(), [Arc::<str>::from("test-zone")]);
+            assert_eq!(request.avoid.as_ref(), [Arc::<str>::from("avoided-zone")]);
             assert!(request.protect);
             assert!(request.food_guard, "named consent retains its food guard");
             assert!(request.allow.food);
