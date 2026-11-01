@@ -60,7 +60,8 @@ globs = [
   "crates/host-play/src/test_support.rs",
   # Synthetic planner fixture builders, not runtime planner code.
   "crates/nav-planner/src/test_support.rs",
-  # Read-only pack-crossing export command; the runtime pack producer is separate.
+  # Developer bake command line. It writes the packs the nav cells consume; its
+  # derivation is `nav_bake::bake`, covered by the transport globs above.
   "crates/nav-bake/src/bin/nav-pack.rs",
   "**/tests/**",
   "**/benches/**",
@@ -116,7 +117,7 @@ cells = [
 # through the headless driver, the panel session and dialogs, and the terminal
 # app's popup at 120x40 and 80x24. See README.md "Saved settings".
 [[cover]]
-globs = ["crates/frontend-core/src/command.rs", "crates/frontend-core/src/log.rs", "crates/frontend-core/src/log_file.rs", "crates/frontend-core/src/map_bake.rs", "crates/frontend-core/src/nav_prefs.rs", "crates/frontend-core/src/prefs.rs", "crates/frontend-core/src/quester_paths.rs", "crates/frontend-core/src/session/prefs.rs", "crates/frontend-core/src/setting.rs", "crates/frontend-core/src/walk_permissions.rs", "crates/host-play/src/local_state.rs", "crates/host-play/src/local_state/files.rs", "crates/panel/src/fleet_toolbar.rs", "crates/panel/src/log_pane.rs", "crates/panel/src/nav_settings.rs", "crates/panel/src/picker.rs", "crates/panel/src/ui_state.rs", "crates/panel/src/wall.rs", "crates/tui/src/lib.rs", "crates/tui/src/script_params.rs", "crates/tui/src/settings.rs", "crates/tui/src/shell.rs"]
+globs = ["crates/frontend-core/src/command.rs", "crates/frontend-core/src/log.rs", "crates/frontend-core/src/log_file.rs", "crates/frontend-core/src/map_bake.rs", "crates/frontend-core/src/nav_prefs.rs", "crates/frontend-core/src/prefs.rs", "crates/frontend-core/src/quester_paths.rs", "crates/frontend-core/src/session/prefs.rs", "crates/frontend-core/src/setting.rs", "crates/frontend-core/src/walk_permissions.rs", "crates/host-play/src/local_state.rs", "crates/host-play/src/local_state/files.rs", "crates/host-play/src/local_state/frontend.rs", "crates/panel/src/fleet_toolbar.rs", "crates/panel/src/log_pane.rs", "crates/panel/src/nav_settings.rs", "crates/panel/src/picker.rs", "crates/panel/src/ui_state.rs", "crates/panel/src/wall.rs", "crates/tui/src/lib.rs", "crates/tui/src/script_params.rs", "crates/tui/src/settings.rs", "crates/tui/src/shell.rs"]
 cells = [
   "frontend-core.driver-command-headless|${ISOHOME:?} nice -n 10 cargo test --locked -p frontend-core --lib driver::tests::",
   "host-play.local-state-headless|${ISOHOME:?} nice -n 10 cargo test --locked -p host-play --lib local_state::",
@@ -335,6 +336,11 @@ cells = [
 ]
 
 [[cover]]
+globs = ["crates/host-play/src/script_observe.rs"]
+cells = [
+  "host.api-gather-wire-shadow|LIVE=1 BOT_LIVE_NAME_PREFIX=${BOT_LIVE_NAME_PREFIX:?} BOT_CPU=1 BOT_NAV_BUILD=skip BOT_GAME_PORT=44594 BOT_HTTP_PORT=1080 GATHERER_NAV_PACK=${NAV_PACK_289:?} GATHERER_NAV_FLAGS=${NAV_FLAGS_289:?} GATHERER_ENGINE_DIR=${ENGINE_A_DIR:?} GATHERER_WC_TILE=3197,3209,0 BOT_CACHE_DIR=${BOT_CACHE_DIR:?} BOT_EVIDENCE_DIR=${LIVE_EVIDENCE_DIR:?} ${ISOHOME:?} nice -n 10 cargo test --locked -p host-play --features live-harness,test-support,live-probe,memory-profile --lib -- --ignored --exact api_gather_live_tests::live_gather_api_receipt_tracks_memory_reconnect_and_wire_shadow --nocapture --test-threads=1",
+]
+[[cover]]
 # These cells collectively cover the runtime and its exact Core seams.
 # The runtime cell crosses JsSurfaceFactory::spawn and start/post/tick/stop.
 # Jive KQ also exercises catalog imports and registry/settings paths.
@@ -548,6 +554,7 @@ cells = [
 # The fixture seeds only this account's Strange box inventory state.
 [[cover]]
 globs = [
+  "crates/host/src/lib.rs",
   "crates/host/src/random.rs",
   "crates/host/src/random/guardian.rs",
   "crates/scenario/src/catalog.rs",
