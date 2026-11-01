@@ -465,3 +465,32 @@ when the cell stages a panel unpack. The runner prints a
 summary table and writes `summary.txt`. The table lists `cell`, `pass`, `exit`, `seconds`,
 `start_utc`, `end_utc`, and `log`, followed by one `command`, `start_utc`, and `end_utc`
 line per cell and pass. A non-zero exit means at least one cell failed.
+
+### BATCH-P proof scope
+
+The memory-profile cells are controlled contract tests, not live capacity
+measurements. The scatter test prepares ten slots and checks both active and
+idle workloads with `stress50` and `stress50-full`; it does not measure fifty
+running clients. The Chicken bank boundary and the twelve
+`chicken_bank_oracle_` cases are controlled proof. The separate
+`scenario.chicken-killer-bank-live` command must prove real combat, fresh
+loot and deposit, return, and further work.
+
+`scenario.boat-fare-retry-live` runs the same three real cases in order:
+`boat_fare_v1_ts`, `boat_fare_far_start_v1_ts`, and
+`boat_fare_reconnect_v1_ts`. Each uses the caller's explicit engine, pack and
+navflags, and its own `<LIVE_EVIDENCE_DIR>/<case>/home`. The first failing
+case stops the command. Export `ENGINE_A_DIR` for the selected Engine L root
+(the name is historical), and the matching `NAV_PACK_289` and
+`NAV_FLAGS_289`. Record the engine identity before the live command.
+
+### Queued tooling item: nightly supplied-pack reuse
+
+Status: **queued**; no nightly-runner change is part of this batch.
+
+`run_nightly.py` drops the inherited nav environment
+(`tools/nightly/run_nightly.py:1893-1898`, `tui_cmd:1992-1997`), so nightly
+cells rebake instead of using a given pack. `NIGHTLY_NAV_FIXTURE` supplies
+CI lanes, not those live CLI invocations. Until the nightly tool can use the
+selected pack, the fare map row calls the existing CLI directly. This is a
+validation-tool limit, not a change to the product's route behavior.
