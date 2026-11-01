@@ -669,12 +669,12 @@ observed game tick, walks to the NPC when it is more than two tiles away, and
 sends the Talk again. A step sends at most four Talks, the cap the runner
 already puts on one step. After the fourth cancel the step fails with
 `TalkUnreachable`, which keeps the attempt count, the wait's start and end
-ticks, and the player's and the NPC's tiles at the last cancel. The distance
-that admits a Talk is measured on the rendered tiles of the current frame,
-not on `NpcView.distance`, which is measured from the player's path head when
-the NPC packet arrives. The bound of a Talk that is not cancelled is
-unchanged: the row's leash plus two ticks of NPC movement, one operation tick
-and two ticks of send allowance, which is 7 for Drezel.
+ticks, and the player's and the NPC's tiles at the last cancel. The admission
+of a Talk is unchanged: the dialogue driver sends it when `NpcView.distance`
+is at most two (measured from the player's path head) and the NPC is
+reachable. The bound of a Talk that is not
+cancelled is unchanged: the row's leash plus two ticks of NPC movement, one
+operation tick and two ticks of send allowance, which is 7 for Drezel.
 
 The same page-source mechanism reads the Heroes' Quest journal when the
 required `heroquest >= 3` fact is unknown. The Phoenix text about giving

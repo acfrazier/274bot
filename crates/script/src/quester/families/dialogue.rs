@@ -626,15 +626,6 @@ impl Dialogue {
                 self.deadline_ms = cx.active_now().as_millis() as u64 + DIALOGUE_APPROACH_MS;
                 return Ok(());
             }
-            api::host_log!(
-                api::hostlog::Category::NavEvent,
-                api::hostlog::Level::Info,
-                "dialogue talk-admit npc_index={} npc_tile={:?} distance={} reachable={reachable} here={:?}",
-                target.index,
-                target.tile,
-                target.distance,
-                cx.snapshot().here().map(|here| here.value)
-            );
             self.npc_index = target.index;
             self.npc_action = Arc::from(target.action);
         }

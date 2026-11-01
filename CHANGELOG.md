@@ -102,9 +102,8 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.7` 
 - A prerequisite conversation that the server cancels with "I can't reach
   that!" no longer waits out its page bound. The bot ends the wait at once,
   walks to the NPC again if it is more than two tiles away, and talks again,
-  up to four times in all. The NPC must be within two tiles on the current
-  frame, not by the distance cached from the last NPC packet. If every talk is
-  cancelled the step fails and reports the last attempt's tiles.
+  up to four times in all. If every talk is cancelled the step fails and
+  reports the last attempt's tiles.
 - Bots now wait and try again when another player is using a shortcut,
   instead of giving up. The Yanille dungeon ledge ("The ledge is being
   used") stays held for at most 9 game ticks after a refusal, so the bot
