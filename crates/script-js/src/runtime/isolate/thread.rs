@@ -200,6 +200,7 @@ pub(super) fn isolate_main(
     paint_generation: std::sync::Arc<std::sync::atomic::AtomicU64>,
     teardown: std::sync::Arc<Mutex<TeardownState>>,
     frame_interest: std::sync::Arc<std::sync::atomic::AtomicUsize>,
+    frame_ready: std::sync::Arc<std::sync::atomic::AtomicBool>,
     loc_projection_interest: std::sync::Arc<std::sync::atomic::AtomicBool>,
     frame_ack_tx: std::sync::mpsc::SyncSender<()>,
     proof: std::sync::Arc<TeardownProofInner>,
@@ -300,6 +301,7 @@ pub(super) fn isolate_main(
             Ok(Some(2))
         );
     let _ = super::super::lineage_v8::eval::<serde_json::Value>(&mut runtime, INSTALL_HOST_HOOKS);
+    frame_ready.store(true, std::sync::atomic::Ordering::Release);
     let _ = setup.send(SetupMessage::Ready(Ok(())));
     tick_loop(
         runtime,

@@ -941,6 +941,35 @@ fn wait_ready(iso: &LoadIsolate) {
 }
 
 #[test]
+fn warmed_client_frame_dispatches_allocate_nothing_per_frame() {
+    let mut iso = LoadIsolate::spawn(
+        "globalThis.__rs2b0t_native_event_on('frame', () => {});".into(),
+        LoadShape::NativeTick,
+        vec![],
+    )
+    .unwrap();
+    wait_ready(&iso);
+    iso.frame_interest
+        .store(1, std::sync::atomic::Ordering::Release);
+    for _ in 0..8 {
+        assert!(iso.on_client_frame());
+    }
+
+    const FRAMES: usize = 128;
+    let allocations = allocation_counter::measure(|| {
+        for _ in 0..FRAMES {
+            assert!(iso.on_client_frame());
+        }
+    });
+    assert_eq!(
+        allocations,
+        allocation_counter::AllocationInfo::default(),
+        "{FRAMES} warmed frame dispatches allocated: {allocations:?}"
+    );
+    iso.join();
+}
+
+#[test]
 fn spawn_returns_before_setup_and_poll_ready_becomes_ready() {
     let t0 = Instant::now();
     let iso = LoadIsolate::spawn(
