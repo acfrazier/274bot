@@ -475,9 +475,9 @@ fn snapshot<'s>(scope: &mut v8::HandleScope<'s>) -> Result<v8::Local<'s, v8::Val
     property(scope, host, "snapshot")
 }
 
-fn reader_stamp(
-    scope: &mut v8::HandleScope<'_>,
-    facts: v8::Local<v8::Value>,
+fn reader_stamp<'s>(
+    scope: &mut v8::HandleScope<'s>,
+    facts: v8::Local<'s, v8::Value>,
     families: &[&str],
     parameters: [i64; 2],
 ) -> Result<Option<super::ReaderListStamp>, String> {
