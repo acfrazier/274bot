@@ -312,9 +312,9 @@
     "id": "bank-items-readonly-snapshot",
     "module": "api/bank/Bank.js",
     "selector": "Bank.items",
-    "reason": "Bank.items shares the host's frozen bank-item snapshot; the upstream catalog reads the returned rows but does not mutate them.",
+    "reason": "Bank.items preserves its legacy noted/cert projection, frozen and reused only with posted bank-session and item generations; audited consumers only read the rows.",
     "runtime": "crates/script-js/src/shim/bank.js:47",
-    "declaration": "items(): readonly Readonly<Omit<InvItemSnapshot, 'ops'> & { ops: readonly (string | null)[] }>[];"
+    "declaration": "items(): readonly Readonly<Omit<InvItemSnapshot, 'ops'> & { ops: readonly (string | null)[]; cert: number }>[];"
   },
   {
     "id": "reader-bank-items-readonly-snapshot",

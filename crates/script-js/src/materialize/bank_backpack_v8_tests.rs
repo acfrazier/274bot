@@ -49,6 +49,23 @@ globalThis.__bankRepeat = (count) => {
     for (let i = 0; i < count; i++) kept += __BankForTest.items().length;
     return kept;
 };
+globalThis.__readerBankFrozen = () => {
+    const rows = __ReaderForTest.bankItems();
+    return Array.isArray(rows) && Object.isFrozen(rows)
+        && rows.every((row) => Array.isArray(row.ops)
+            && Object.isFrozen(row) && Object.isFrozen(row.ops));
+};
+globalThis.__readerBankFast = () => {
+    const fast = new Function('value', 'return %HasFastProperties(value)');
+    const rows = __ReaderForTest.bankItems();
+    return Array.isArray(rows) && rows.length === 288
+        && __readerBankFrozen() && rows.every(fast);
+};
+globalThis.__readerBankRepeat = (count) => {
+    let kept = 0;
+    for (let i = 0; i < count; i++) kept += __ReaderForTest.bankItems().length;
+    return kept;
+};
 "#;
 
 fn load_bank_api(runtime: &mut Runtime) {
@@ -72,6 +89,8 @@ fn setup() -> Runtime {
     let mut runtime = Runtime::new(RuntimeOptions::default()).unwrap();
     cb::install_ops(&mut runtime).unwrap();
     install(&mut runtime).unwrap();
+    super::super::bank_tasks_v8::install(&mut runtime).unwrap();
+
     load_bank_api(&mut runtime);
     runtime.eval::<()>(SETUP).unwrap();
     runtime
@@ -255,8 +274,10 @@ fn bank_288_item_rows_have_fast_properties() {
     let mut runtime = setup();
     post_bank(1, full_bank(), true, 1, 1);
     assert!(
-        runtime.eval::<bool>("__bankFast()").unwrap(),
-        "288 frozen natively built bank rows with fast properties"
+        runtime
+            .eval::<bool>("__bankFast() && __readerBankFast()")
+            .unwrap(),
+        "288 frozen native bank rows have fast properties"
     );
     crate::observed::on_reset();
 }
@@ -270,16 +291,23 @@ fn bank_288_item_rows_have_bounded_v8_heap() {
     crate::observed::on_reset();
     let mut runtime = setup();
     post_bank(1, full_bank(), true, 1, 1);
-    assert_eq!(runtime.eval::<usize>("__bankRepeat(5)").unwrap(), 1_440);
+    assert_eq!(
+        runtime
+            .eval::<usize>("__bankRepeat(5) + __readerBankRepeat(5)")
+            .unwrap(),
+        2_880
+    );
     let baseline = collected_used_heap(&mut runtime);
     const REPEATS: usize = 20;
     let repeated = runtime
-        .eval::<usize>(&format!("__bankRepeat({REPEATS})"))
+        .eval::<usize>(&format!(
+            "__bankRepeat({REPEATS}) + __readerBankRepeat({REPEATS})"
+        ))
         .unwrap();
-    assert_eq!(repeated, 288 * REPEATS);
+    assert_eq!(repeated, 2 * 288 * REPEATS);
     let after = collected_used_heap(&mut runtime);
     let growth = after.saturating_sub(baseline);
-    // Repeated reads reuse the frozen array for this bank snapshot generation.
+    // Repeated reads reuse both frozen arrays for this bank snapshot generation.
     let limit = 16_384;
     println!(
         "bank items V8 heap rows=288 repeats={REPEATS} baseline={baseline} \
@@ -292,9 +320,10 @@ fn bank_288_item_rows_have_bounded_v8_heap() {
     crate::observed::on_reset();
 }
 
-/// `Bank.items` and `reader.bankItems`: open bank rows with their withdraw
-/// ops and component; a closed bank is an empty frozen list. Rows without a
-/// slot or with a negative id are omitted.
+/// `Bank.items()` keeps the legacy `noted`/`cert` projection; the client
+/// reader keeps its open-bank `InvItemSnapshot` projection. Both are frozen
+/// and reused by generation, while reader rows filter missing slots/negative
+/// ids and the legacy snapshot preserves every posted row.
 #[test]
 fn bank_items_project_open_bank_rows_and_refresh_by_generation() {
     crate::observed::on_reset();
@@ -306,14 +335,17 @@ fn bank_items_project_open_bank_rows_and_refresh_by_generation() {
             count: 1,
             name: Some(Rc::from("Key")),
             ops: Rc::clone(&ops),
+            noted: true,
+            cert: 105,
             slot: Some(0),
             component_id: Some(5382),
-            ..ItemRow::default()
         },
         ItemRow {
             id: 995,
             count: 40,
             name: None,
+            noted: false,
+            cert: 106,
             slot: Some(1),
             component_id: None,
             ..ItemRow::default()
@@ -333,51 +365,98 @@ fn bank_items_project_open_bank_rows_and_refresh_by_generation() {
     ];
     post_bank_without_snapshot_generation(1, rows.clone(), 10);
     runtime
-        .eval::<()>("globalThis.__unversionedBankItems = __BankForTest.items()")
+        .eval::<()>(
+            "globalThis.__unversionedBankItems = __BankForTest.items(); \
+             globalThis.__unversionedReaderBankItems = __ReaderForTest.bankItems()",
+        )
         .unwrap();
     assert!(runtime
-        .eval::<bool>("__BankForTest.items() !== __unversionedBankItems")
+        .eval::<bool>(
+            "__BankForTest.items() !== __unversionedBankItems \
+             && __ReaderForTest.bankItems() !== __unversionedReaderBankItems",
+        )
         .unwrap());
+
     post_bank(2, rows.clone(), true, 10, 20);
     assert_eq!(
         runtime
             .eval::<String>("JSON.stringify(__BankForTest.items())")
             .unwrap(),
-        r#"[{"slot":0,"id":2399,"name":"Key","count":1,"ops":["Withdraw-1"],"comId":5382},{"slot":1,"id":995,"name":null,"count":40,"ops":[],"comId":-1}]"#
+        r#"[{"name":"Key","count":1,"id":2399,"slot":0,"comId":5382,"ops":["Withdraw-1"],"noted":true,"cert":105},{"name":null,"count":40,"id":995,"slot":1,"comId":-1,"ops":[],"noted":false,"cert":106},{"name":null,"count":1,"id":1511,"slot":-1,"comId":-1,"ops":[],"noted":false,"cert":0},{"name":null,"count":1,"id":-1,"slot":3,"comId":-1,"ops":[],"noted":false,"cert":0}]"#
     );
-    assert!(
-        runtime.eval::<bool>("__bankFrozen()").unwrap(),
-        "bank items, rows, and ops are frozen"
+    assert_eq!(
+        runtime
+            .eval::<String>("JSON.stringify(__ReaderForTest.bankItems())")
+            .unwrap(),
+        r#"[{"slot":0,"id":2399,"name":"Key","count":1,"noted":true,"ops":["Withdraw-1"],"comId":5382},{"slot":1,"id":995,"name":null,"count":40,"noted":false,"ops":[],"comId":-1}]"#
     );
+    assert!(runtime
+        .eval::<bool>("__bankFrozen() && __readerBankFrozen()")
+        .unwrap());
+
     runtime
-        .eval::<()>("globalThis.__firstBankItems = __BankForTest.items()")
+        .eval::<()>(
+            "globalThis.__firstBankItems = __BankForTest.items(); \
+             globalThis.__firstReaderBankItems = __ReaderForTest.bankItems()",
+        )
         .unwrap();
     assert!(runtime
-        .eval::<bool>("__BankForTest.items() === __firstBankItems")
+        .eval::<bool>(
+            "__BankForTest.items() === __firstBankItems \
+             && __ReaderForTest.bankItems() === __firstReaderBankItems \
+             && __firstBankItems !== __firstReaderBankItems",
+        )
         .unwrap());
-    assert!(runtime
-        .eval::<bool>("__ReaderForTest.bankItems() === __firstBankItems")
-        .unwrap());
+
     post_bank(3, rows.clone(), true, 10, 21);
     assert!(runtime
-        .eval::<bool>("__BankForTest.items() !== __firstBankItems")
+        .eval::<bool>(
+            "__BankForTest.items() !== __firstBankItems \
+             && __ReaderForTest.bankItems() !== __firstReaderBankItems",
+        )
         .unwrap());
     runtime
-        .eval::<()>("globalThis.__newItemGeneration = __BankForTest.items()")
+        .eval::<()>(
+            "globalThis.__newBankItems = __BankForTest.items(); \
+             globalThis.__newReaderBankItems = __ReaderForTest.bankItems()",
+        )
         .unwrap();
-    post_bank(4, rows.clone(), true, 11, 21);
+
+    post_bank(4, rows, true, 11, 21);
     assert!(runtime
-        .eval::<bool>("__BankForTest.items() !== __newItemGeneration")
+        .eval::<bool>(
+            "__BankForTest.items() !== __newBankItems \
+             && __ReaderForTest.bankItems() !== __newReaderBankItems",
+        )
         .unwrap());
-    post_bank(5, rows, false, 12, -1);
+
+    post_bank(5, Vec::new(), false, 12, -1);
     assert_eq!(
         runtime
             .eval::<String>("JSON.stringify(__BankForTest.items())")
             .unwrap(),
         "[]"
     );
+    assert_eq!(
+        runtime
+            .eval::<String>("JSON.stringify(__ReaderForTest.bankItems())")
+            .unwrap(),
+        "[]"
+    );
     assert!(runtime
-        .eval::<bool>("Object.isFrozen(__BankForTest.items())")
+        .eval::<bool>("__bankFrozen() && __readerBankFrozen()")
+        .unwrap());
+    runtime
+        .eval::<()>(
+            "globalThis.__closedBankItems = __BankForTest.items(); \
+             globalThis.__closedReaderBankItems = __ReaderForTest.bankItems()",
+        )
+        .unwrap();
+    assert!(runtime
+        .eval::<bool>(
+            "__BankForTest.items() !== __closedBankItems \
+             && __ReaderForTest.bankItems() === __closedReaderBankItems",
+        )
         .unwrap());
     crate::observed::on_reset();
 }

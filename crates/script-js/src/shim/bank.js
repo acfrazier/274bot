@@ -45,7 +45,7 @@ export const Bank = new Proxy(
             return globalThis.__rs2b0t_bank_snapshot('ready');
         },
         items() {
-            return globalThis.__rs2b0t_bank_items();
+            return globalThis.__rs2b0t_bank_snapshot('items');
         },
         count(name) {
             return globalThis.__rs2b0t_bank_snapshot('count', String(name));

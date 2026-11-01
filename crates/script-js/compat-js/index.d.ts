@@ -783,6 +783,7 @@ export const Bank: {
     setNoteMode(on: boolean): Promise<void>;
     items(): readonly Readonly<Omit<InvItemSnapshot, "ops"> & {
         ops: readonly (string | null)[];
+        cert: number;
     }>[];
     count(name: string): number;
     countById(id: number): number;
