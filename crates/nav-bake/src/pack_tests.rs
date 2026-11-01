@@ -2876,7 +2876,9 @@ fn decoder_refuses_an_atlas_for_another_grid() {
     let width_at = bytes.len() - tail + 4 + 132 + 8;
     assert_eq!(&bytes[width_at..width_at + 4], &2u32.to_le_bytes());
     bytes[width_at..width_at + 4].copy_from_slice(&3u32.to_le_bytes());
-    let error = decode(&bytes).unwrap_err();
+    let Err(error) = decode(&bytes) else {
+        panic!("the wrong atlas geometry must be refused");
+    };
     assert!(
         matches!(&error, PackError::BadLength(message) if message.contains("geometry")),
         "{error}"
@@ -2896,7 +2898,9 @@ fn decoder_refuses_a_directory_with_the_wrong_stride() {
     let stride_at = bytes.len() - tail + 4 + 4 + 7 * 16 + 12;
     assert_eq!(&bytes[stride_at..stride_at + 4], &8u32.to_le_bytes());
     bytes[stride_at..stride_at + 4].copy_from_slice(&4u32.to_le_bytes());
-    let error = decode(&bytes).unwrap_err();
+    let Err(error) = decode(&bytes) else {
+        panic!("the wrong stride must be refused");
+    };
     assert!(
         matches!(&error, PackError::BadLength(message) if message.contains("stride")),
         "{error}"
