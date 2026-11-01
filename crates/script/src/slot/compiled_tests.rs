@@ -3023,8 +3023,8 @@ mod api_gather_seat {
             std::mem::size_of::<Option<Box<crate::slot::api_seat::ApiSeat>>>(),
             8
         );
-        // Isolated product-state sample: 8,248 B, leaving 200 B below the unchanged 8,448 B ceiling.
-        assert!(exclusive <= 8448, "exclusive API seat exceeds 8.25KiB");
+        // NAV-PREREQ: prepare2810→2818(+8), install816→824(+8), polls4694→4862(+168); measured8504 B +8 B headroom.
+        assert!(exclusive <= 8512, "exclusive API seat exceeds 8512 B");
         let stopped = allocation_counter::measure(|| stop_in_seat(&mut slot, 209));
         println!("API gather post-Stop retained={}B (exclusive live + Stop delta), Stop={stopped:?}, worker transient_peak={}B", exclusive + stopped.bytes_current, i128::from(worker.bytes_max) - i128::from(worker.bytes_current));
         assert!(!slot.api_owns_foreground());

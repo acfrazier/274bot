@@ -67,11 +67,10 @@ fn production_state_sizes_stay_within_explicit_bounds() {
         "MakePlan grew by {} bytes",
         plan.saturating_sub(previous_plan)
     );
-    // 928 B measured on x86_64 Linux: quester-approach-retry adds bounded retry
-    // state and a tagged small handle over the 904 B previous layout. No headroom.
-    assert!(run <= 928, "MakeRun grew to {run} bytes");
+    // 1176 B measured, 8 B headroom: retained PrereqWalk lives once per running Make step.
+    assert!(run <= 1184, "MakeRun grew to {run} bytes");
     assert!(
-        run <= previous_run + 24,
+        run <= previous_run + 280,
         "MakeRun grew by {} bytes",
         run.saturating_sub(previous_run)
     );

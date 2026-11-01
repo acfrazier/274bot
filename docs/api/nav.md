@@ -645,8 +645,13 @@ Prerequisite-aware walks retain their original request and bounded step state.
 On x86_64 Linux, `Dialogue` measures 472 B, including its 72 B last-send receipt,
 and `TalkRun` measures 856 B, including its retained `PrereqWalk`.
 Their layout ceilings are 480 B and 864 B, each with 8 B of headroom.
+A `MakeRun` measures 1,176 B once per running Make step, including its retained
+prerequisite walk. Its ceiling is 1,184 B, also with 8 B of headroom.
 These are retained type sizes, not process memory or per-bot capacity.
-The separate installed API-seat heap ceiling remains 8,448 B.
+In the default/test-hooks native-seat measurement, installed API-seat heap is
+8,504 B and its ceiling is 8,512 B. Compared with the pre-prerequisite input,
+preparation grows 2,810→2,818 B, installation 816→824 B and polls 4,694→4,862 B:
+184 B in total. No state is boxed to exclude it from this accounting.
 
 
 ## Router (`nav_planner::router`)
