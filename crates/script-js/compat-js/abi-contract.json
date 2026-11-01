@@ -13070,7 +13070,7 @@
       "module": "adapter/ClientAdapter.js",
       "selector": "reader.inventory",
       "reason": "The native reader reuses a deeply frozen inventory row list while inventory and interface generations stay unchanged; audited consumers only read or make filtered copies.",
-      "runtime": "crates/script-js/src/materialize/client_adapter_v8.rs:152",
+      "runtime": "crates/script-js/src/materialize/client_adapter_v8.rs:154",
       "declaration": "inventory(): readonly Readonly<Omit<InvItemSnapshot, \"ops\"> & { ops: readonly (string | null)[] }>[];",
       "family_id": "client-adapter",
       "nav_consuming": false
@@ -13080,7 +13080,7 @@
       "module": "adapter/ClientAdapter.js",
       "selector": "reader.bankSideItems",
       "reason": "The native reader reuses a deeply frozen backpack-side list while inventory and interface generations stay unchanged; audited consumers only read or make filtered copies.",
-      "runtime": "crates/script-js/src/materialize/client_adapter_v8.rs:158",
+      "runtime": "crates/script-js/src/materialize/client_adapter_v8.rs:160",
       "declaration": "bankSideItems(): readonly Readonly<Omit<InvItemSnapshot, \"ops\"> & { ops: readonly (string | null)[] }>[];",
       "family_id": "client-adapter",
       "nav_consuming": false
@@ -13090,7 +13090,7 @@
       "module": "adapter/ClientAdapter.js",
       "selector": "reader.npcs",
       "reason": "The native reader reuses deeply frozen NPC rows for the posted scene generations; audited consumers only inspect the rows or sort a fresh filtered copy.",
-      "runtime": "crates/script-js/src/materialize/client_adapter_v8.rs:182",
+      "runtime": "crates/script-js/src/materialize/client_adapter_v8.rs:184",
       "declaration": "npcs(): readonly Readonly<Omit<NpcSnapshot, \"actions\" | \"tile\"> & { actions: readonly string[]; tile: Readonly<WorldTile> }>[];",
       "family_id": "client-adapter",
       "nav_consuming": false
@@ -13100,7 +13100,7 @@
       "module": "adapter/ClientAdapter.js",
       "selector": "reader.locs",
       "reason": "The native reader reuses deeply frozen loc rows for the posted scene and map generations; audited consumers only inspect the rows.",
-      "runtime": "crates/script-js/src/materialize/client_adapter_v8.rs:191",
+      "runtime": "crates/script-js/src/materialize/client_adapter_v8.rs:202",
       "declaration": "locs(): readonly Readonly<Omit<LocSnapshot, \"actions\" | \"tile\"> & { actions: readonly string[]; tile: Readonly<WorldTile> }>[];",
       "family_id": "client-adapter",
       "nav_consuming": false
@@ -13110,7 +13110,7 @@
       "module": "adapter/ClientAdapter.js",
       "selector": "reader.players",
       "reason": "The native reader reuses deeply frozen player rows for the posted scene generations; audited consumers only inspect the rows.",
-      "runtime": "crates/script-js/src/materialize/client_adapter_v8.rs:200",
+      "runtime": "crates/script-js/src/materialize/client_adapter_v8.rs:213",
       "declaration": "players(): readonly Readonly<Omit<PlayerSnapshot, \"actions\" | \"tile\"> & { actions: readonly string[]; tile: Readonly<WorldTile> }>[];",
       "family_id": "client-adapter",
       "nav_consuming": false
@@ -13120,7 +13120,7 @@
       "module": "adapter/ClientAdapter.js",
       "selector": "reader.groundItems",
       "reason": "The native reader reuses deeply frozen ground-item rows for the posted scene generations; audited consumers only inspect the rows or sort fresh filtered copies.",
-      "runtime": "crates/script-js/src/materialize/client_adapter_v8.rs:211",
+      "runtime": "crates/script-js/src/materialize/client_adapter_v8.rs:224",
       "declaration": "groundItems(): readonly Readonly<Omit<GroundItemSnapshot, \"actions\" | \"tile\"> & { actions: readonly string[]; tile: Readonly<WorldTile> }>[];",
       "family_id": "client-adapter",
       "nav_consuming": false
@@ -13130,7 +13130,7 @@
       "module": "adapter/ClientAdapter.js",
       "selector": "reader.equipment",
       "reason": "The native reader reuses a deeply frozen equipment list while inventory and interface generations stay unchanged; audited consumers only read or make filtered copies.",
-      "runtime": "crates/script-js/src/materialize/client_adapter_v8.rs:222",
+      "runtime": "crates/script-js/src/materialize/client_adapter_v8.rs:230",
       "declaration": "equipment(): readonly Readonly<Omit<InvItemSnapshot, \"ops\"> & { ops: readonly (string | null)[] }>[];",
       "family_id": "client-adapter",
       "nav_consuming": false
@@ -13140,7 +13140,7 @@
       "module": "adapter/ClientAdapter.js",
       "selector": "reader.chatOptions",
       "reason": "The native reader reuses a deeply frozen chat-option list for the posted interface and chat generations; audited consumers only inspect it.",
-      "runtime": "crates/script-js/src/materialize/client_adapter_v8.rs:230",
+      "runtime": "crates/script-js/src/materialize/client_adapter_v8.rs:238",
       "declaration": "chatOptions(): readonly Readonly<{ comId: number; text: string }>[];",
       "family_id": "client-adapter",
       "nav_consuming": false
@@ -13150,7 +13150,7 @@
       "module": "adapter/ClientAdapter.js",
       "selector": "reader.chatModalTexts",
       "reason": "The native reader reuses a frozen text list for the posted interface and chat generations; audited consumers only read it.",
-      "runtime": "crates/script-js/src/materialize/client_adapter_v8.rs:236",
+      "runtime": "crates/script-js/src/materialize/client_adapter_v8.rs:244",
       "declaration": "chatModalTexts(): readonly string[];",
       "family_id": "client-adapter",
       "nav_consuming": false
@@ -13160,7 +13160,7 @@
       "module": "adapter/ClientAdapter.js",
       "selector": "reader.chat",
       "reason": "The native reader reuses deeply frozen chat rows for the posted chat generation and requested limit; audited consumers only inspect them.",
-      "runtime": "crates/script-js/src/materialize/client_adapter_v8.rs:262",
+      "runtime": "crates/script-js/src/materialize/client_adapter_v8.rs:271",
       "declaration": "chat(count: number): readonly Readonly<ChatLine>[];",
       "family_id": "client-adapter",
       "nav_consuming": false
@@ -13170,7 +13170,7 @@
       "module": "adapter/ClientAdapter.js",
       "selector": "reader.shopInv",
       "reason": "The native reader reuses a deeply frozen item list for the posted interface and inventory generations and component id; audited consumers only inspect it.",
-      "runtime": "crates/script-js/src/materialize/client_adapter_v8.rs:286",
+      "runtime": "crates/script-js/src/materialize/client_adapter_v8.rs:295",
       "declaration": "shopInv(comId: number): readonly Readonly<Omit<InvItemSnapshot, \"ops\"> & { ops: readonly (string | null)[] }>[];",
       "family_id": "client-adapter",
       "nav_consuming": false
@@ -13180,7 +13180,7 @@
       "module": "adapter/ClientAdapter.js",
       "selector": "reader.puzzleBoard",
       "reason": "The native reader reuses a deeply frozen puzzle item list for the posted interface and inventory generations; audited consumers only inspect it.",
-      "runtime": "crates/script-js/src/materialize/client_adapter_v8.rs:311",
+      "runtime": "crates/script-js/src/materialize/client_adapter_v8.rs:309",
       "declaration": "puzzleBoard(): readonly Readonly<Omit<InvItemSnapshot, \"ops\"> & { ops: readonly (string | null)[] }>[];",
       "family_id": "client-adapter",
       "nav_consuming": false
@@ -13190,7 +13190,7 @@
       "module": "adapter/ClientAdapter.js",
       "selector": "reader.duelOffers",
       "reason": "The native reader reuses a deeply frozen duel-offer record and nested rows for the posted interface and inventory generations; audited consumers only inspect them.",
-      "runtime": "crates/script-js/src/materialize/client_adapter_v8.rs:318",
+      "runtime": "crates/script-js/src/materialize/client_adapter_v8.rs:316",
       "declaration": "duelOffers(): Readonly<{ ready: boolean; mine: readonly Readonly<Omit<InvItemSnapshot, \"ops\"> & { ops: readonly (string | null)[] }>[]; theirs: readonly Readonly<Omit<InvItemSnapshot, \"ops\"> & { ops: readonly (string | null)[] }>[] }>;",
       "family_id": "client-adapter",
       "nav_consuming": false
@@ -13200,7 +13200,7 @@
       "module": "adapter/ClientAdapter.js",
       "selector": "reader.tradeMyOffer",
       "reason": "The native reader reuses a deeply frozen trade row list for the posted interface and inventory generations; audited consumers only inspect it.",
-      "runtime": "crates/script-js/src/materialize/client_adapter_v8.rs:326",
+      "runtime": "crates/script-js/src/materialize/client_adapter_v8.rs:324",
       "declaration": "tradeMyOffer(): readonly Readonly<Omit<InvItemSnapshot, \"ops\"> & { ops: readonly (string | null)[] }>[];",
       "family_id": "client-adapter",
       "nav_consuming": false
@@ -13210,7 +13210,7 @@
       "module": "adapter/ClientAdapter.js",
       "selector": "reader.tradeTheirOffer",
       "reason": "The native reader reuses a deeply frozen trade row list for the posted interface and inventory generations; audited consumers only inspect it.",
-      "runtime": "crates/script-js/src/materialize/client_adapter_v8.rs:332",
+      "runtime": "crates/script-js/src/materialize/client_adapter_v8.rs:330",
       "declaration": "tradeTheirOffer(): readonly Readonly<Omit<InvItemSnapshot, \"ops\"> & { ops: readonly (string | null)[] }>[];",
       "family_id": "client-adapter",
       "nav_consuming": false
@@ -13220,7 +13220,7 @@
       "module": "adapter/ClientAdapter.js",
       "selector": "reader.tradeSidePack",
       "reason": "The native reader reuses a deeply frozen backpack-side trade list for the posted interface and inventory generations; audited consumers only inspect it.",
-      "runtime": "crates/script-js/src/materialize/client_adapter_v8.rs:350",
+      "runtime": "crates/script-js/src/materialize/client_adapter_v8.rs:348",
       "declaration": "tradeSidePack(): readonly Readonly<Omit<InvItemSnapshot, \"ops\"> & { ops: readonly (string | null)[] }>[];",
       "family_id": "client-adapter",
       "nav_consuming": false
@@ -13230,7 +13230,7 @@
       "module": "adapter/ClientAdapter.js",
       "selector": "reader.tradeConfirmOffers",
       "reason": "The native reader reuses a deeply frozen trade-confirm record and nested rows for the posted interface and inventory generations; audited consumers only inspect them.",
-      "runtime": "crates/script-js/src/materialize/client_adapter_v8.rs:357",
+      "runtime": "crates/script-js/src/materialize/client_adapter_v8.rs:355",
       "declaration": "tradeConfirmOffers(): Readonly<{ mine: readonly Readonly<Omit<InvItemSnapshot, \"ops\"> & { ops: readonly (string | null)[] }>[]; theirs: readonly Readonly<Omit<InvItemSnapshot, \"ops\"> & { ops: readonly (string | null)[] }>[] }>;",
       "family_id": "client-adapter",
       "nav_consuming": false
@@ -13240,7 +13240,7 @@
       "module": "adapter/ClientAdapter.js",
       "selector": "reader.mainModalTexts",
       "reason": "The native reader reuses a frozen modal-text list for the posted interface generation; audited consumers only read it.",
-      "runtime": "crates/script-js/src/materialize/client_adapter_v8.rs:365",
+      "runtime": "crates/script-js/src/materialize/client_adapter_v8.rs:363",
       "declaration": "mainModalTexts(): readonly string[];",
       "family_id": "client-adapter",
       "nav_consuming": false
@@ -13250,7 +13250,7 @@
       "module": "adapter/ClientAdapter.js",
       "selector": "reader.modalButtons",
       "reason": "The native reader reuses deeply frozen modal-button rows for the posted interface generation and root id; audited consumers only inspect them.",
-      "runtime": "crates/script-js/src/materialize/client_adapter_v8.rs:377",
+      "runtime": "crates/script-js/src/materialize/client_adapter_v8.rs:376",
       "declaration": "modalButtons(rootComId: number): readonly Readonly<ModalButton>[];",
       "family_id": "client-adapter",
       "nav_consuming": false
@@ -13270,7 +13270,7 @@
       "module": "adapter/ClientAdapter.js",
       "selector": "reader.mainSkillMultiItems",
       "reason": "The native reader reuses a deeply frozen item list for the posted interface and inventory generations; audited consumers only inspect it.",
-      "runtime": "crates/script-js/src/materialize/client_adapter_v8.rs:406",
+      "runtime": "crates/script-js/src/materialize/client_adapter_v8.rs:399",
       "declaration": "mainSkillMultiItems(): readonly Readonly<Omit<InvItemSnapshot, \"ops\"> & { ops: readonly (string | null)[] }>[];",
       "family_id": "client-adapter",
       "nav_consuming": false
@@ -13280,7 +13280,7 @@
       "module": "adapter/ClientAdapter.js",
       "selector": "reader.questStatuses",
       "reason": "The native reader reuses deeply frozen quest-status rows for the posted interface and varp generations; audited consumers only inspect them.",
-      "runtime": "crates/script-js/src/materialize/client_adapter_v8.rs:412",
+      "runtime": "crates/script-js/src/materialize/client_adapter_v8.rs:405",
       "declaration": "questStatuses(): readonly Readonly<{ comId: number; name: string; colour: number }>[];",
       "family_id": "client-adapter",
       "nav_consuming": false
@@ -13290,7 +13290,7 @@
       "module": "adapter/ClientAdapter.js",
       "selector": "reader.makeProducts",
       "reason": "The native reader reuses deeply frozen make-product rows and buttons for the posted interface and chat generations; audited consumers only inspect them.",
-      "runtime": "crates/script-js/src/materialize/client_adapter_v8.rs:430",
+      "runtime": "crates/script-js/src/materialize/client_adapter_v8.rs:423",
       "declaration": "makeProducts(): readonly Readonly<{ obj: number; name: string; buttons: readonly Readonly<{ qty: number; comId: number }>[] }>[];",
       "family_id": "client-adapter",
       "nav_consuming": false
@@ -13300,7 +13300,7 @@
       "module": "client/shell/Skill.js",
       "selector": "Skill.names",
       "reason": "The host exposes one static frozen skill-name catalogue; it has no game generation and consumers treat it as read-only.",
-      "runtime": "crates/script-js/src/materialize/client_adapter_v8.rs:1014",
+      "runtime": "crates/script-js/src/materialize/client_adapter_v8.rs:1004",
       "declaration": "static readonly names: readonly string[];",
       "family_id": "client-adapter",
       "nav_consuming": false
@@ -13310,7 +13310,7 @@
       "module": "client/shell/Skill.js",
       "selector": "Skill.used",
       "reason": "The host exposes one static frozen skill-use mask; it has no game generation and consumers treat it as read-only.",
-      "runtime": "crates/script-js/src/materialize/client_adapter_v8.rs:1038",
+      "runtime": "crates/script-js/src/materialize/client_adapter_v8.rs:1020",
       "declaration": "static readonly used: readonly boolean[];",
       "family_id": "client-adapter",
       "nav_consuming": false
@@ -13350,7 +13350,7 @@
       "module": "api/ui/questlog/Quests.js",
       "selector": "Quests.all",
       "reason": "The native facade reuses deeply frozen quest rows for the posted interface and varp generations; audited consumers only inspect them.",
-      "runtime": "crates/script-js/src/materialize/client_adapter_v8.rs:420",
+      "runtime": "crates/script-js/src/materialize/client_adapter_v8.rs:411",
       "declaration": "all(): readonly Readonly<{ name: string; status: QuestStatus }>[];",
       "family_id": "questlog",
       "nav_consuming": false
@@ -13360,7 +13360,7 @@
       "module": "api/shop/Shop.js",
       "selector": "Shop.stock",
       "reason": "The native facade reuses deeply frozen shop-stock rows for the posted interface and inventory generations; audited consumers only inspect them.",
-      "runtime": "crates/script-js/src/materialize/client_adapter_v8.rs:306",
+      "runtime": "crates/script-js/src/materialize/client_adapter_v8.rs:302",
       "declaration": "stock(): readonly Readonly<{ name: string | null; count: number; slot: number }>[];",
       "family_id": "shop",
       "nav_consuming": true
@@ -13370,7 +13370,7 @@
       "module": "api/trade/Trade.js",
       "selector": "Trade.myOffer",
       "reason": "The native facade reuses deeply frozen trade-offer rows for the posted interface and inventory generations; audited consumers only inspect them.",
-      "runtime": "crates/script-js/src/materialize/client_adapter_v8.rs:340",
+      "runtime": "crates/script-js/src/materialize/client_adapter_v8.rs:336",
       "declaration": "myOffer(): readonly Readonly<TradeItem>[];",
       "family_id": "trade",
       "nav_consuming": false
@@ -13380,7 +13380,7 @@
       "module": "api/trade/Trade.js",
       "selector": "Trade.theirOffer",
       "reason": "The native facade reuses deeply frozen trade-offer rows for the posted interface and inventory generations; audited consumers only inspect them.",
-      "runtime": "crates/script-js/src/materialize/client_adapter_v8.rs:346",
+      "runtime": "crates/script-js/src/materialize/client_adapter_v8.rs:342",
       "declaration": "theirOffer(): readonly Readonly<TradeItem>[];",
       "family_id": "trade",
       "nav_consuming": false
