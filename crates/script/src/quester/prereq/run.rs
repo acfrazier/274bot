@@ -1349,8 +1349,9 @@ impl PendingPage {
     }
 }
 
-/// The nearest observed NPC of this type: its tile and distance from the player.
-fn nearest_npc(cx: &ActionContext<'_>, id: i32) -> Option<(WorldTile, i32)> {
+/// The nearest observed NPC of this type: its rendered tile and distance from
+/// the player, and its server-side (path-head) tile.
+fn nearest_npc(cx: &ActionContext<'_>, id: i32) -> Option<(WorldTile, i32, WorldTile)> {
     let wanted = usize::try_from(id).ok()?;
     cx.snapshot()
         .npcs()?
@@ -1358,16 +1359,19 @@ fn nearest_npc(cx: &ActionContext<'_>, id: i32) -> Option<(WorldTile, i32)> {
         .iter()
         .filter(|npc| npc.r#type == Some(wanted))
         .min_by_key(|npc| npc.distance)
-        .map(|npc| (npc.tile, npc.distance))
+        .map(|npc| (npc.tile, npc.distance, npc.network))
 }
 
 fn talk_log(cx: &ActionContext<'_>, row: &PrereqStep, what: &str, tick: u64) {
     api::host_log!(
         api::hostlog::Category::NavEvent,
         api::hostlog::Level::Info,
-        "prereq talk {what} npc_type={} tick={tick} from={:?} npc={:?}",
+        "prereq talk {what} npc_type={} tick={tick} from={:?} from_network={:?} npc(tile,distance,network)={:?}",
         row.target.npc,
         cx.snapshot().here().map(|here| here.value),
+        cx.snapshot()
+            .local_player()
+            .map(|player| player.value.player.network),
         nearest_npc(cx, row.target.npc)
     );
 }
@@ -1496,7 +1500,7 @@ impl ChatDrive {
                 since: pending.wait.since,
                 at: tick,
                 from: cx.snapshot().here().map(|here| here.value),
-                npc: nearest_npc(cx, row.target.npc).map(|(tile, _)| tile),
+                npc: nearest_npc(cx, row.target.npc).map(|(tile, _, _)| tile),
             }));
         }
         // Dropping the owner revokes the finished Talk's dialogue; the next
