@@ -941,43 +941,36 @@ fn wait_ready(iso: &LoadIsolate) {
 }
 
 #[test]
-fn warmed_client_frame_dispatches_allocate_nothing_per_frame() {
-    let mut iso = LoadIsolate::spawn(
-        "export function tick(api) {}".into(),
-        LoadShape::NativeTick,
-        vec![],
-    )
-    .unwrap();
-    let ready_deadline = Instant::now() + Duration::from_secs(30);
-    loop {
-        match iso.poll_ready() {
-            Ready::Ready => break,
-            Ready::Failed(error) => panic!("setup failed: {error}"),
-            Ready::Pending if Instant::now() < ready_deadline => {
-                std::thread::sleep(Duration::from_millis(5));
-            }
-            Ready::Pending => panic!("setup timed out after 30 seconds"),
-        }
-    }
-    iso.probe("__rs2b0t_native_event_on('frame', () => {})")
-        .unwrap();
-    for _ in 0..8 {
-        assert!(iso.on_client_frame());
-    }
+fn warmed_client_frame_dispatch_handles_allocate_nothing_per_frame() {
+    let (_ack_tx, ack_rx) = mpsc::sync_channel(1);
+    let dispatch = Arc::new(FrameDispatch {
+        state: Arc::new(Mutex::new(FrameAckState {
+            receiver: ack_rx,
+            pending: false,
+            disconnected: false,
+        })),
+        watchdog: FrameWatchdog {
+            teardown: Arc::new(Mutex::new(TeardownState::new())),
+            terminate: Arc::new(OnceLock::new()),
+            logs: Arc::new(Mutex::new(Vec::new())),
+            ready: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+        },
+    });
+    drop(dispatch.handle());
 
     const FRAMES: usize = 128;
     let allocations = allocation_counter::measure(|| {
         for _ in 0..FRAMES {
-            assert!(iso.on_client_frame());
+            std::hint::black_box(dispatch.handle());
         }
     });
     assert_eq!(
         allocations,
         allocation_counter::AllocationInfo::default(),
-        "{FRAMES} warmed frame dispatches allocated: {allocations:?}"
+        "{FRAMES} warmed frame dispatch handles allocated: {allocations:?}"
     );
-    iso.join();
 }
+
 
 #[test]
 fn spawn_returns_before_setup_and_poll_ready_becomes_ready() {

@@ -461,6 +461,12 @@ struct FrameWatchdog {
     ready: Arc<std::sync::atomic::AtomicBool>,
 }
 
+impl FrameDispatch {
+    fn handle(self: &Arc<Self>) -> Arc<dyn script::surface::ClientFrameDispatch> {
+        Arc::clone(self) as Arc<dyn script::surface::ClientFrameDispatch>
+    }
+}
+
 impl script::surface::ClientFrameDispatch for FrameDispatch {
     fn wait_for_ack(&self) -> bool {
         let deadline = Instant::now() + CLIENT_FRAME_ACK_TIMEOUT;
@@ -1042,7 +1048,7 @@ impl LoadIsolate {
         }
         state.pending = true;
         drop(state);
-        Some(Arc::clone(&self.frame_dispatch) as Arc<dyn script::surface::ClientFrameDispatch>)
+        Some(self.frame_dispatch.handle())
     }
 
     /// Deliver one host-owned client-loop frame without queueing another
