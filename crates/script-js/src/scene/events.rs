@@ -1,9 +1,7 @@
-//! Isolate-thread producer for `skill.xp` and `inventory.changed`.
+//! Isolate-thread producer for script-visible events derived from posted snapshots.
 //!
-//! Diffs posted FlatBuffer inv/stats after decode into bounded last/current
-//! tables. JS only stores `this.on` callbacks. `observe` never executes
-//! subscriptions; `take_eligible` is the only emit, called from a
-//! generation/pause/budget-gated tick.
+//! Diffs posted FlatBuffer inventory, stats and varps after decode into bounded
+//! last/current tables. JS only stores `this.on` callbacks.
 
 use crate::wire::{Row, Snapshot, Stat};
 
@@ -34,8 +32,14 @@ struct XpState {
     index: i32,
     name: String,
     xp: i32,
+    level: i32,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct VarpState {
+    index: i32,
+    value: i32,
+}
 /// One public event to deliver on a gated tick.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum NativeEvent {
@@ -44,12 +48,10 @@ pub enum NativeEvent {
         username: Option<String>,
         text: String,
     },
-    SkillXp {
-        skill: i32,
-        name: String,
-        xp: i32,
-        delta: i32,
-    },
+    SkillXp { skill: i32, name: String, xp: i32, delta: i32 },
+    SkillLevel { skill: i32, name: String, level: i32, previous: i32 },
+    VarpChanged { index: i32, value: i32, previous: i32 },
+    ScriptFinish { reason: String },
     InventoryChanged {
         slot: i32,
         id: i32,
@@ -65,6 +67,9 @@ impl NativeEvent {
         match self {
             NativeEvent::ChatMessage { .. } => "chat.message",
             NativeEvent::SkillXp { .. } => "skill.xp",
+            NativeEvent::SkillLevel { .. } => "skill.level",
+            NativeEvent::VarpChanged { .. } => "varp.changed",
+            NativeEvent::ScriptFinish { .. } => "script.finish",
             NativeEvent::InventoryChanged { .. } => "inventory.changed",
         }
     }
@@ -86,16 +91,17 @@ pub struct NativeEventProducer {
     last_inv: Option<Vec<SlotState>>,
     last_inv_size: i32,
     last_xp: Option<Vec<XpState>>,
+    last_varps: Option<Vec<VarpState>>,
     current_inv: Option<Vec<SlotState>>,
     current_inv_size: i32,
     current_xp: Option<Vec<XpState>>,
+    current_varps: Option<Vec<VarpState>>,
     chat_seeded: bool,
     last_chat_seq: Option<i32>,
     current_chat: Option<(i32, i32, Option<String>, String)>,
     paused: bool,
     offline: bool,
 }
-
 impl NativeEventProducer {
     pub fn new() -> Self {
         Self::default()
@@ -117,6 +123,9 @@ impl NativeEventProducer {
     /// Invalidation (offline, inv_size 0, invalid slots) resets that family
     /// immediately, including during Pause, so a later valid table seeds.
     pub fn observe(&mut self, snap: &Snapshot<'_>) -> ObserveResult {
+        if snap.has_varps() {
+            self.current_varps = Some(collect_varps(snap));
+        }
         if snap.has_ingame() && !snap.ingame() {
             self.offline = true;
             let last_chat_seq = self.last_chat_seq;
@@ -245,15 +254,18 @@ impl NativeEventProducer {
                 events.extend(diff_inv(last, cur));
                 self.last_inv = Some(cur.clone());
             }
-            (None, Some(cur)) => {
-                self.last_inv = Some(cur.clone());
-            }
+            (None, Some(cur)) => self.last_inv = Some(cur.clone()),
             _ => {}
         }
-        ObserveResult {
-            events,
-            diagnostic: None,
+        match (&self.last_varps, &self.current_varps) {
+            (Some(last), Some(current)) if last != current => {
+                events.extend(diff_varps(last, current));
+                self.last_varps = Some(current.clone());
+            }
+            (None, Some(current)) => self.last_varps = Some(current.clone()),
+            _ => {}
         }
+        ObserveResult { events, diagnostic: None }
     }
 
     fn reset_baselines(&mut self) {
@@ -262,6 +274,8 @@ impl NativeEventProducer {
         self.last_xp = None;
         self.reset_inv_family();
         self.current_xp = None;
+        self.last_varps = None;
+        self.current_varps = None;
         self.chat_seeded = false;
         self.last_chat_seq = None;
         self.current_chat = None;
@@ -284,6 +298,19 @@ fn collect_xp(snap: &Snapshot<'_>) -> Vec<XpState> {
             index: s.index(),
             name: s.name().unwrap_or_default().to_string(),
             xp: s.xp(),
+            level: s.base(),
+        })
+        .collect()
+}
+
+fn collect_varps(snap: &Snapshot<'_>) -> Vec<VarpState> {
+    snap.varps()
+        .into_iter()
+        .flat_map(|rows| rows.iter())
+        .filter(|v| (0..300).contains(&v.index()))
+        .map(|v| VarpState {
+            index: v.index(),
+            value: v.value(),
         })
         .collect()
 }
@@ -294,15 +321,26 @@ fn diff_xp(last: &[XpState], current: &[XpState]) -> Vec<NativeEvent> {
         if let Some(prev) = last.iter().find(|p| p.index == cur.index) {
             if cur.xp > prev.xp {
                 events.push(NativeEvent::SkillXp {
-                    skill: cur.index,
-                    name: cur.name.clone(),
-                    xp: cur.xp,
-                    delta: cur.xp - prev.xp,
+                    skill: cur.index, name: cur.name.clone(), xp: cur.xp, delta: cur.xp - prev.xp,
+                });
+            }
+            if prev.level > 0 && cur.level != prev.level {
+                events.push(NativeEvent::SkillLevel {
+                    skill: cur.index, name: cur.name.clone(), level: cur.level, previous: prev.level,
                 });
             }
         }
     }
     events
+}
+
+fn diff_varps(last: &[VarpState], current: &[VarpState]) -> Vec<NativeEvent> {
+    current.iter().filter_map(|cur| {
+        last.iter().find(|prev| prev.index == cur.index && prev.value != cur.value)
+            .map(|prev| NativeEvent::VarpChanged {
+                index: cur.index, value: cur.value, previous: prev.value,
+            })
+    }).collect()
 }
 
 fn merge_xp(last: &mut Vec<XpState>, current: &[XpState]) {

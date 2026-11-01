@@ -179,7 +179,25 @@ fn on<'s>(
     args: v8::FunctionCallbackArguments<'s>,
     mut rv: v8::ReturnValue,
 ) {
-    let id = add_callback(scope, args.get(0), args.get(1));
+    let event = args.get(0);
+    if !event.is_string()
+        || !matches!(
+            event.to_rust_string_lossy(scope).as_str(),
+            "chat.message"
+                | "skill.xp"
+                | "skill.level"
+                | "inventory.changed"
+                | "varp.changed"
+                | "script.finish"
+                | "tick"
+                | "frame"
+                | "__rs2b0t_internal_tick__"
+        )
+    {
+        rv.set(callback_v8::type_error(scope, "events.on: unsupported event name"));
+        return;
+    }
+    let id = add_callback(scope, event, args.get(1));
     rv.set(v8::Number::new(scope, f64::from(id)).into());
 }
 
@@ -500,6 +518,18 @@ mod v8_tests {
     }
 
     #[test]
+    fn unknown_event_subscriptions_are_refused() {
+        let mut runtime = setup();
+        let message: String = runtime
+            .eval(
+                "(() => { try { __rs2b0t_native_event_on('never.emitted', () => {}); return ''; } catch (error) { return error.message; } })()",
+            )
+            .unwrap();
+        assert_eq!(message, "events.on: unsupported event name");
+        clear_all();
+    }
+
+    #[test]
     fn event_payload_has_fast_properties() {
         if !in_child(FAST_CHILD, FAST_TEST) {
             return;
@@ -516,7 +546,7 @@ globalThis.__rs2b0t_native_event_batch_dispatch = (events) => {
     globalThis.__nativeEventRecords = events;
     globalThis.__rs2b0t_native_event_batch_dispatch_original(events);
 };
-for (const type of ['chat.message', 'skill.xp', 'inventory.changed']) {
+for (const type of ['chat.message', 'skill.xp', 'skill.level', 'varp.changed', 'script.finish', 'inventory.changed']) {
     globalThis.__rs2b0t_native_event_on(type, payload => {
         globalThis.__nativeEventPayloads.push(payload);
     });
@@ -557,6 +587,24 @@ globalThis.__nativeEventShapeFacts = () => {
                         "payloadKeys": ["skill", "name", "xp", "delta"]
                     },
                     {
+                        "type": "skill.level",
+                        "wrapperFast": true,
+                        "payloadFast": true,
+                        "payloadKeys": ["skill", "name", "level", "previous"]
+                    },
+                    {
+                        "type": "varp.changed",
+                        "wrapperFast": true,
+                        "payloadFast": true,
+                        "payloadKeys": ["index", "value", "previous"]
+                    },
+                    {
+                        "type": "script.finish",
+                        "wrapperFast": true,
+                        "payloadFast": true,
+                        "payloadKeys": ["reason"]
+                    },
+                    {
                         "type": "inventory.changed",
                         "wrapperFast": true,
                         "payloadFast": true,
@@ -565,14 +613,14 @@ globalThis.__nativeEventShapeFacts = () => {
                         ]
                     }
                 ],
-                "payloadCount": 3
+                "payloadCount": 6
             }),
             "production native-event wrappers and payloads retain fixed V8 shapes"
         );
         clear_all();
     }
 
-    fn sample_events() -> [NativeEvent; 3] {
+    fn sample_events() -> [NativeEvent; 6] {
         [
             NativeEvent::ChatMessage {
                 type_: 0,
@@ -584,6 +632,20 @@ globalThis.__nativeEventShapeFacts = () => {
                 name: "prayer".into(),
                 xp: 1000,
                 delta: 20,
+            },
+            NativeEvent::SkillLevel {
+                skill: 5,
+                name: "prayer".into(),
+                level: 3,
+                previous: 2,
+            },
+            NativeEvent::VarpChanged {
+                index: 44,
+                value: 8,
+                previous: 7,
+            },
+            NativeEvent::ScriptFinish {
+                reason: "finished".into(),
             },
             NativeEvent::InventoryChanged {
                 slot: 2,
@@ -614,7 +676,7 @@ globalThis.__nativeEventShapeFacts = () => {
             .eval::<()>(
                 r#"
 globalThis.__event_payload_count = 0;
-for (const type of ['chat.message', 'skill.xp', 'inventory.changed']) {
+for (const type of ['chat.message', 'skill.xp', 'skill.level', 'varp.changed', 'script.finish', 'inventory.changed']) {
     globalThis.__rs2b0t_native_event_on(type, () => {
         globalThis.__event_payload_count += 1;
     });
@@ -639,7 +701,7 @@ for (const type of ['chat.message', 'skill.xp', 'inventory.changed']) {
         println!(
             "compat v1 Events V8 heap baseline={baseline} after={after} growth={growth} limit={limit}"
         );
-        assert_eq!(count, 3075, "every event reaches its listener once");
+        assert_eq!(count, 6150, "every event reaches its listener once");
         assert!(
             growth <= limit,
             "collected native-event heap grew {growth} bytes; limit {limit}"

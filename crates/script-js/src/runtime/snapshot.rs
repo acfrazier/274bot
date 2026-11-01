@@ -1217,6 +1217,28 @@ fn native_event_object<'s>(
             let delta_v = num(scope, *delta as f64);
             set(scope, payload, "delta", delta_v)?;
         }
+        crate::events::NativeEvent::SkillLevel { skill, name, level, previous } => {
+            let skill_value = num(scope, *skill as f64);
+            set(scope, payload, "skill", skill_value)?;
+            let name_value = js_string(scope, name)?;
+            set(scope, payload, "name", name_value)?;
+            let level_value = num(scope, *level as f64);
+            set(scope, payload, "level", level_value)?;
+            let previous_value = num(scope, *previous as f64);
+            set(scope, payload, "previous", previous_value)?;
+        }
+        crate::events::NativeEvent::VarpChanged { index, value, previous } => {
+            let index_value = num(scope, *index as f64);
+            set(scope, payload, "index", index_value)?;
+            let value_value = num(scope, *value as f64);
+            set(scope, payload, "value", value_value)?;
+            let previous_value = num(scope, *previous as f64);
+            set(scope, payload, "previous", previous_value)?;
+        }
+        crate::events::NativeEvent::ScriptFinish { reason } => {
+            let reason_value = js_string(scope, reason)?;
+            set(scope, payload, "reason", reason_value)?;
+        }
         crate::events::NativeEvent::InventoryChanged {
             slot,
             id,
