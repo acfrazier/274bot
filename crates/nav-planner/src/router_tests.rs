@@ -5292,8 +5292,8 @@ fn refusal_attribution_reports_the_selected_witness_and_multi_goal_frontiers() {
         .expect("synthetic zone table")
         .zones()
         .len();
-    let diagnose = |diagnosis| {
-        let endpoints = [from, to];
+    let diagnose = |diagnosis, target| {
+        let endpoints = [from, target];
         let attribution_endpoints = match diagnosis {
             crate::router::BlockerDiagnosis::SingleTarget => endpoints.as_slice(),
             crate::router::BlockerDiagnosis::FirstGoal => &endpoints[..1],
@@ -5308,7 +5308,7 @@ fn refusal_attribution_reports_the_selected_witness_and_multi_goal_frontiers() {
         advance_real_route_cursor(
             crate::router::SearchRequest::BlockingZones {
                 from,
-                targets: vec![to].into_boxed_slice(),
+                targets: vec![target].into_boxed_slice(),
                 diagnosis,
                 options: opts,
                 avoid: Vec::new().into_boxed_slice(),
@@ -5320,7 +5320,7 @@ fn refusal_attribution_reports_the_selected_witness_and_multi_goal_frontiers() {
         )
     };
     let crate::router::SearchOutcome::BlockingZones(cooperative_single) =
-        diagnose(crate::router::BlockerDiagnosis::SingleTarget)
+        diagnose(crate::router::BlockerDiagnosis::SingleTarget, to)
     else {
         panic!("single-target blocker diagnosis returned the wrong result shape")
     };
@@ -5330,7 +5330,7 @@ fn refusal_attribution_reports_the_selected_witness_and_multi_goal_frontiers() {
         "cooperative single-target result matches the old single-target API"
     );
     let crate::router::SearchOutcome::BlockingZones(cooperative_first_goal) =
-        diagnose(crate::router::BlockerDiagnosis::FirstGoal)
+        diagnose(crate::router::BlockerDiagnosis::FirstGoal, to)
     else {
         panic!("first-goal blocker diagnosis returned the wrong result shape")
     };
@@ -5343,6 +5343,15 @@ fn refusal_attribution_reports_the_selected_witness_and_multi_goal_frontiers() {
         cooperative_single.as_deref(),
         cooperative_first_goal.as_deref(),
         "cooperative blocker modes must preserve their distinct witnesses"
+    );
+    let crate::router::SearchOutcome::BlockingZones(reachable) =
+        diagnose(crate::router::BlockerDiagnosis::FirstGoal, from)
+    else {
+        panic!("reachable first-goal diagnosis returned the wrong result shape")
+    };
+    assert!(
+        reachable.is_none(),
+        "the frontier itself rejects a reachable strict goal without a preliminary strict search"
     );
 }
 

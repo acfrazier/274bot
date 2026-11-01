@@ -67,6 +67,7 @@ All cells not listed below normally run on merlot. Engine A uses game port
 | `host.quester-path-engine-q`, `host.quester-sheep-spin-engine-q`, `host.quester-prince-smelt-wig-spin-engine-q`, `host.quester-qualified-priest-engine-q`, `host.quester-jonny-stand-engine-q`, `host.quester-mordred-continuation-engine-q`, `host.quester-digsite-thieve-engine-q`, `scenario.quester-engine-q` | Run on the Engine Q host at game port `44694` and HTTP port `1180`. Engine Q uses fixed 300 ms ticks. Leave `QUESTER_TICK_MS` unset. Do not send `::speed`. |
 | `host.quester-bank-teller-engine-q`, `host.quester-bank-player-open-engine-q`, `host.quester-bank-chest-engine-q` | Use the Engine Q endpoint and tick rules in the row above. |
 | `script.release-path-refusal` | Run on a build-enabled lab host with an isolated HOME and `LIVE_EVIDENCE_DIR`. It builds production release libraries but opens no game session. |
+| `host.walk-no-route-live` | Run on chardonnay against the 600 ms Engine L at `127.0.0.1:47594` and `127.0.0.1:3080`. The release command maps the read-only Engine L tree from `BOT_ENGINE_DIR` and uses the `NAV_PACK_289`, `NAV_FLAGS_289`, `BOT_CACHE_DIR`, and `CATALOG_ROOT` inputs for the local R289 client profile. It writes the test receipts under `LIVE_EVIDENCE_DIR`. |
 | `nav.essence-follow` | The orchestrator must start a 274 engine on the cell host at `127.0.0.1:43594`. The orchestrator supplies `ENGINE_274_DIR` and `NAV_PACK_274`. Do not run this cell until the orchestrator provides both inputs and starts the engine. |
 | `nav.essence-289-engine-a` | Run on merlot or chardonnay when that host has Engine A at `127.0.0.1:44594` and `127.0.0.1:1080`. Use chardonnay when merlot is measured or reserved. |
 | `panel.headed-render` | Run on merlot with its interactive GPU and display. The command removes `BOT_CPU` so the client uses the GPU renderer. |
@@ -144,8 +145,9 @@ Changes under `client/src/io/**` select both relog cells. The CPU headed cell
 sets `BOT_CPU=1`; the GPU cell removes it.
 
 The map lists test-only paths in `not_live.globs`. A path in
-`not_live.exceptions` stays live when it also matches a live glob. The
-ScriptWalkArm admission test is the only current exception.
+`not_live.exceptions` stays live when it also matches a live glob.
+The current exceptions are the ScriptWalkArm admission test and the Engine L
+no-route live test.
 Sherlock requires the inputs listed at `crates/host-play/tests/common/quester_live.rs:28-32,332-359`.
 Its profile reads `WORLD_GAME_PORT` and `WORLD_HTTP_PORT` at
 `crates/host-play/tests/common/quester_live.rs:358-359`.
@@ -156,7 +158,10 @@ It checks `LIVE=1` and writes receipts when `LIVE_EVIDENCE_DIR` is set at
 
 ## ScriptWalkArm call paths
 
-The `script_nav.rs` and `script_walk.rs` row selects five live cells: four scenario cells and the compat-v1 crossing cell.
+Six existing live cells select `script_nav.rs` and `script_walk.rs`: the five
+cells in the row below plus `panel.state-gap-stop-live` from the shared command
+row. The added `host.walk-no-route-live` cell also covers `script_nav.rs` and
+`crates/script/src/native/walk.rs`.
 A separate row maps `survivable_admission_live.rs` to both admission tests.
 
 | Cell | Call path |
@@ -165,6 +170,7 @@ A separate row maps `survivable_admission_live.rs` to both admission tests.
 | `host.gatherer-bank-cost-fallback` | The cell runs the live test at `crates/host-play/tests/gatherer_live.rs:7945-7949`.<br>`gatherer::runner::trip_walk` submits `Walk` at `crates/script/src/gatherer/runner.rs:445-472`.<br>`crates/host-play/src/script_observe.rs:1546-1572` creates `ScriptWalkArm` and calls `queue_native_route` at `crates/host-play/src/script_nav.rs:4567-4573`. |
 | `host.grinch-cross-region-return` | The live selector is at `crates/host-play/tests/grinch_live.rs:119-123`.<br>Return recovery submits `Walk` at `crates/script/src/grinch.rs:885-903`.<br>`crates/host-play/src/script_observe.rs:1546-1572` creates `ScriptWalkArm` and calls `queue_native_route` at `crates/host-play/src/script_nav.rs:4567-4573`. |
 | `host.sherlock-search-live` | The live cell starts compiled Sherlock at `crates/host-play/tests/clue_walk_arrive_live.rs:193-212`.<br>The walk-near step is at `crates/script-js/src/compat/clue/isolate.rs:1640-1653`.<br>`crates/host-play/src/script_interact.rs:529-585` creates `ScriptWalkArm` and calls `queue_route_in_snapshot_avoiding` at `crates/host-play/src/script_nav.rs:4932-4957`. |
+| `host.walk-no-route-live` | The ignored Engine L test starts a fresh account without a Dusty key and begins a native `Walk` request to the radius-5 Taverley gate cell (`crates/host-play/tests/walk_no_route_live.rs:289-322,406-421`). It records the origin, request/terminal game ticks, typed result and Quester arrival conversion, then asserts `WalkEnd::NoPath` retains the diagnosed gate or explicit diagnostic-budget reason and becomes `Blocked(detail)` (`:437-497`). |
 | `host.survivable-admission` | The live test checks refusal and opt-in at `crates/host-play/tests/survivable_admission_live.rs:283-286`. |
 | `host.survivable-compat-v1-crossing` | The live test loads a real compat-v1 class whose `Traversal.walkTo` call is at `crates/host-play/tests/survivable_admission_live.rs:837-870,943-950`. It asserts the live admission snapshot and crossing assessment at `:963-983`; the selector is `real_compat_v1_crossing_and_own_sustain_at_45_and_14_hp` (`:868-870`). |
 
@@ -290,20 +296,24 @@ does not replace or gate the 289 cell.
 
 ## Input values
 
-These are the 19 names reviewed in round 2. Three inputs are fixed in the map.
-The caller must not replace the gather tile, Path, or seeds file.
+The map has 22 named inputs, including the 19 reviewed in round 2. Five input
+values are fixed in the map.
+The caller must not replace the gather tile, Path, seeds file, or Engine L ports.
 
 | Name | Value or owner |
 |---|---|
 | `ISOHOME` | Use the absolute wrapper path on the host. Merlot: `/Users/acfrazier/experiments/274bot/.superpowers/bin/isohome`. Chardonnay: `/home/acfrazier/experiments/274bot/.superpowers/bin/isohome`. |
 | `BOT_LIVE_NAME_PREFIX` | Choose a unique prefix of 1 to 4 characters for each run. The Sherlock receipt in this round uses `l2r`. See `STANDING-RULINGS.md:33` and `crates/host-play/src/play_bootstrap.rs:67-75`. |
-| `LIVE_EVIDENCE_DIR` | Use a fresh directory outside the throwaway HOME. Merlot: `/Volumes/dev-scratch/274bot-evidence/LIVE-MAP-1023/fix-r2/live/<cell>`. Chardonnay: `/srv/dev/scratch/274bot-evidence/LIVE-MAP-1023/fix-r2/live/<cell>`. |
+| `LIVE_EVIDENCE_DIR` | For this task, use a fresh directory under `/Volumes/dev-scratch/274bot-evidence/WALK-NO-ROUTE/` for each cell and run. The no-route test creates its own timestamped subdirectory. |
 | `ENGINE_A_DIR` | Merlot: `/Users/acfrazier/experiments/lostcity-289/engine`. Chardonnay: `/home/acfrazier/experiments/lostcity-289/engine`. Keep the directory read-only. |
+| `BOT_ENGINE_DIR` | Set to the read-only local Engine L R289 client tree on chardonnay; the Engine L runner accepts it as an override (`COMBAT-PREP-ESCAPE/r3/live.sh:5`). |
 | `ENGINE_B_DIR` | For the chardonnay tunnel cell, use the local R289 client tree at `/home/acfrazier/experiments/lostcity-289/engine`. This optional client path is not the Engine B service. The service is the tunnel at `45594/2080`. |
 | `ENGINE_Q_DIR` | Use the Engine Q tree on its host. Merlot: `/Users/acfrazier/experiments/lostcity-289-q/engine`. Chardonnay: `/home/acfrazier/experiments/lostcity-289-q/engine`. |
 | `ENGINE_274_DIR` | The orchestrator supplies the 274 engine directory when it starts the 274 service. This value is not set in this map round. |
 | `NAV_PACK_289` | Use the CI reference v17 pack. Merlot: `/Volumes/dev-scratch/274bot-evidence/NAV-GATED-ENTRANCES/reference-v17/274bot-289-v17.navpack`. Chardonnay: `/srv/dev/scratch/274bot-evidence/NAV-GATED-ENTRANCES/reference-v17/274bot-289-v17.navpack`. See `STANDING-RULINGS.md:16`. |
 | `NAV_FLAGS_289` | Use the matching `274bot-289-v17.navflags` in the same reference-v17 directory as `NAV_PACK_289`. |
+| `WORLD_GAME_PORT` | The map fixes the no-route cell to Engine L's game port, `47594`, on chardonnay. |
+| `WORLD_HTTP_PORT` | The map fixes the no-route cell to Engine L's HTTP port, `3080`, on chardonnay. |
 | `NAV_SNAPSHOT_ROOT_289` | Use the read-only decoded snapshot that `isohome` exposes as `BOT_NAV_SNAPSHOT_ROOT`. The default paths are `/Users/acfrazier/.274bot/unpack-289` on merlot and `/home/acfrazier/.274bot/unpack-289` on chardonnay. See `AGENTS.md:149`. |
 | `BOT_CACHE_DIR` | Make a fresh copy of the selected engine's `data/pack/client` at `<LIVE_EVIDENCE_DIR>/cache-289`. The Quester helper copies this source into its isolated run cache. |
 | `CATALOG_ROOT` | Use the local `rs2b0t` checkout root. Merlot: `/Users/acfrazier/experiments/rs2b0t`. Chardonnay: `/home/acfrazier/experiments/rs2b0t`. |

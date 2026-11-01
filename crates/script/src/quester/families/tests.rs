@@ -8410,7 +8410,7 @@ fn anchored_use_on_wall_walk_uses_network_side_then_falls_back_once() {
         {
             let receipt = ledger.as_mut().unwrap().walk.as_mut().unwrap();
             receipt.end = WalkEnd::NoPath;
-            receipt.detail = None;
+            receipt.detail = Some(Arc::from("fallback route has no path"));
         }
         assert!(with_tick(&snapshot, &mut ledger, 6, |tick| {
             with_step(tick, |step| run.poll(step))
@@ -8461,7 +8461,7 @@ fn anchored_use_on_wall_walk_uses_network_side_then_falls_back_once() {
 }
 
 #[test]
-fn anchored_interact_wall_walk_falls_back_to_the_loc_tile_once() {
+fn anchored_interact_wall_walk_preserves_no_path_detail_at_deadline_after_one_fallback() {
     compile_context_test(|cx| {
         let wall_tile = tile(3167, 3308);
         let network = tile(wall_tile.x + 3, wall_tile.z);
@@ -8574,13 +8574,18 @@ fn anchored_interact_wall_walk_falls_back_to_the_loc_tile_once() {
         {
             let receipt = ledger.as_mut().unwrap().walk.as_mut().unwrap();
             receipt.end = WalkEnd::NoPath;
-            receipt.detail = None;
+            receipt.detail = Some(Arc::from("fallback route has no path"));
         }
         assert!(with_tick(&snapshot, &mut ledger, 6, |tick| {
             with_step(tick, |step| run.poll(step))
         })
         .is_pending());
+        let mut final_walk_deadline = Duration::ZERO;
         assert!(with_tick(&snapshot, &mut ledger, 7, |tick| {
+            final_walk_deadline = tick
+                .cx
+                .active_now
+                .saturating_add(crate::native::walk::WALK_DEADLINE);
             with_step(tick, |step| run.poll(step))
         })
         .is_pending());
@@ -8608,6 +8613,7 @@ fn anchored_interact_wall_walk_falls_back_to_the_loc_tile_once() {
             receipt.detail = Some(Arc::from("final fallback route failure"));
         }
         let result = with_tick(&snapshot, &mut ledger, 8, |tick| {
+            tick.cx.active_now = final_walk_deadline;
             with_step(tick, |step| run.poll(step))
         });
         assert!(matches!(

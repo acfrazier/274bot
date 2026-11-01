@@ -5719,26 +5719,6 @@ async fn blocking_cursor_search(
         )
         .await;
     }
-    let strict = first_cursor_search(
-        collision,
-        graph,
-        from,
-        targets,
-        &[],
-        options,
-        state,
-        Relax::Strict,
-        avoid,
-        FIRST_TARGET_BUDGET.min(budget),
-        budget,
-        progress,
-    )
-    .await?;
-    let mut forward_settled = strict.settled();
-    let (strict_preferred, _) = strict.into_routes();
-    if !matches!(strict_preferred, Err(RouteError::NoPath)) {
-        return Ok((None, forward_settled));
-    }
     let relaxed = FindOptions {
         zones: ZoneExempt::all(),
         ..options
@@ -5758,9 +5738,10 @@ async fn blocking_cursor_search(
         progress,
     )
     .await?;
-    forward_settled = forward_settled
-        .checked_add(relaxed_search.settled())
-        .ok_or(SearchCursorError::ResultNotRepresentable)?;
+    // The frontier below proves strict failure while collecting its blockers.
+    // Repeating the failed strict search first spends time and budget without
+    // adding evidence. A reachable strict goal makes that frontier return None.
+    let mut forward_settled = relaxed_search.settled();
     let (relaxed_preferred, _) = relaxed_search.into_routes();
     if relaxed_preferred.is_err() {
         return Ok((None, forward_settled));
@@ -7411,7 +7392,7 @@ impl Goals<'_> {
                 }
                 *remaining == 0
             }
-            Goals::Frontier { .. } => return Settle::Continue,
+            Goals::Frontier { targets, .. } => targets.contains(&tile),
         };
         if done {
             Settle::Stop

@@ -436,6 +436,13 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.8` 
 - When a walk needs quest evidence, the bot waits up to one game tick for
   the quest list. Once the needed rows arrive, it plans the route once more.
 
+- Failed walks now check for missing items and entrance requirements before
+  broader route checks. The checks stop at a shared search limit, instead of
+  continuing through each full search allowance. Scorpion Catcher reports
+  the missing Dusty key. Boat-fare and Shantay-pass recovery keep their missing
+  item results. If the cause remains unknown, the result says how many places
+  the route check examined. The Quester keeps its existing bounded walk retries.
+
 - Bots now wait and try again when another player is using a shortcut,
   instead of giving up. The Yanille dungeon ledge ("The ledge is being
   used") stays held for at most 9 game ticks after a refusal, so the bot

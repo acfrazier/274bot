@@ -31,7 +31,7 @@ use nav_planner::router::find_missing_item_reqs_with_avoid;
 use nav_planner::router::{
     AvoidRect, BlockerDiagnosis, CompactFallbackRoute, CompactRoute, CursorStep, FindOptions,
     MissingReqView, MissingRequirements, Route, SearchCursor, SearchOutcome, SearchPreflight,
-    SearchRequest, SearchRequestShape, NODE_BUDGET,
+    SearchRequest, SearchRequestShape, FIRST_TARGET_BUDGET, NODE_BUDGET,
 };
 use nav_planner::world::NavWorld;
 use nav_planner::zones::{ZoneExempt, ZoneFilterOwned, ZoneKey};
@@ -39,6 +39,11 @@ use nav_planner::WorldState;
 use script::work_admission::{cancellation::WorkCancellation, WorkService};
 
 use crate::walk_plan::{PendingBankFetch, RouteOutcome, RoutePath};
+
+// The real v17 Dusty-key diagnosis needs 679,226 settlements before it
+// finds the actionable item. Two first-goal allowances retain that result
+// while bounding all post-failure searches together (about 180 MB of tables).
+const DIAGNOSTIC_BUDGET: usize = 2 * FIRST_TARGET_BUDGET;
 
 #[derive(Default)]
 pub(crate) struct RouteCompletion {
@@ -814,8 +819,15 @@ fn route_output_detail_bound(
     let mut context = TextByteCounter(0);
     write!(
         &mut context,
-        "native walk route failed: {:?} arrival from {:?} to {:?} within radius {}",
-        request.arrival, request.from, request.to, request.radius
+        "native walk route failed: {:?} arrival from ({}, {}, {}) to ({}, {}, {}) within radius {}",
+        request.arrival,
+        request.from.x,
+        request.from.z,
+        request.from.level,
+        request.to.x,
+        request.to.z,
+        request.to.level,
+        request.radius
     )
     .ok()?;
     let blocked = if let Some(table) = request.world.graph.zones.as_ref() {
@@ -835,11 +847,21 @@ fn route_output_detail_bound(
     let supply_bytes = missing_capacity
         .checked_mul(supply_row_bytes)?
         .checked_add(missing_capacity.saturating_sub(1).checked_mul(2)?)?;
-    let detail_len = blocked_with_context.checked_add(if supply_bytes == 0 {
-        0
-    } else {
-        supply_bytes.checked_add(2)?
-    })?;
+    let mut diagnostic_limit = TextByteCounter(0);
+    write!(
+        &mut diagnostic_limit,
+        "no route found; the route check stopped after {} places before it found the cause",
+        usize::MAX
+    )
+    .ok()?;
+    let detail_len = blocked_with_context
+        .checked_add(2)?
+        .checked_add(diagnostic_limit.0)?
+        .checked_add(if supply_bytes == 0 {
+            0
+        } else {
+            supply_bytes.checked_add(2)?
+        })?;
     let detail_len = detail_len.max("candidate_goal_tier=preferred".len());
     detail_len.checked_add(arc_slice_heap_bytes::<u8>(detail_len)?)
 }
@@ -1088,6 +1110,9 @@ pub(crate) struct RouteJob {
     bank_avoid_copy: Vec<AvoidRect>,
     bank_avoid_index: usize,
     diagnostics_started: bool,
+    diagnostic_settled: usize,
+    #[cfg(test)]
+    diagnostic_budget: usize,
     outcome: Option<RouteJobOutcome>,
     assessment_future: Option<RouteAssessmentFuture>,
     assessment: Option<Arc<script::combat::risk::RouteAssessment>>,
@@ -1223,6 +1248,9 @@ impl RouteJob {
             bank_avoid_copy: Vec::new(),
             bank_avoid_index: 0,
             diagnostics_started: false,
+            diagnostic_settled: 0,
+            #[cfg(test)]
+            diagnostic_budget: DIAGNOSTIC_BUDGET,
             outcome: None,
             assessment_future: None,
             assessment: None,
@@ -1569,7 +1597,13 @@ impl RouteJob {
         let avoid = std::mem::take(&mut self.search_avoid).into_boxed_slice();
         self.search_avoid_started = false;
         let options = route_search_options(&self.request);
-        let max_settles = NODE_BUDGET;
+        let max_settles = if self.diagnostics_started {
+            self.diagnostic_budget()
+                .saturating_sub(self.diagnostic_settled)
+                .min(NODE_BUDGET)
+        } else {
+            NODE_BUDGET
+        };
         let single_preflight = if self.search_purpose == RouteSearchPurpose::PostBank {
             self.preflights.post_bank_single
         } else {
@@ -1801,6 +1835,38 @@ impl RouteJob {
         self.outcome = Some(RouteJobOutcome::NoPath);
         self.diagnostics_started = true;
         self.stage = RouteJobStage::BeginDiagnostics;
+        self.native_failure = Some(script::native::WalkEnd::NoPath);
+    }
+
+    fn diagnostic_budget(&self) -> usize {
+        // Diagnosis cannot change the failed strict route. Share one finite
+        // allowance across all post-failure searches.
+        #[cfg(test)]
+        {
+            self.diagnostic_budget
+        }
+        #[cfg(not(test))]
+        {
+            DIAGNOSTIC_BUDGET
+        }
+    }
+
+    fn finish_diagnostics_at_budget(&mut self) {
+        if let Some(cursor) = self.search_cursor.take() {
+            self.diagnostic_settled = self
+                .diagnostic_settled
+                .saturating_add(cursor.forward_settled());
+        }
+        let reason = format!(
+            "no route found; the route check stopped after {} places before it found the cause",
+            self.diagnostic_settled
+        );
+        self.detail = Some(match self.detail.take() {
+            Some(detail) => format!("{detail}; {reason}"),
+            None => reason,
+        });
+        // Preserve any gate, evidence or carry diagnosis that already finished.
+        self.stage = RouteJobStage::Diagnostics;
     }
 
     fn handle_search(&mut self, search: SearchOutcome) -> Result<(), RouteJobError> {
@@ -1958,10 +2024,10 @@ impl RouteJob {
                         )?;
                     } else {
                         self.native_failure = Some(script::native::WalkEnd::Refused);
-                        self.schedule_search(RouteSearchPurpose::MissingCarry);
+                        self.stage = RouteJobStage::Diagnostics;
                     }
                 } else {
-                    self.schedule_search(RouteSearchPurpose::MissingCarry);
+                    self.stage = RouteJobStage::Diagnostics;
                 }
             }
             (RouteSearchPurpose::Unresolved, SearchOutcome::UnresolvedQuestGates(result)) => {
@@ -1969,22 +2035,40 @@ impl RouteJob {
                     Ok(Some(gates)) if !gates.is_empty() => {
                         script::native::WalkEnd::NeedsEvidence(Arc::from(gates))
                     }
-                    Ok(_) => script::native::WalkEnd::Failed,
+                    Ok(_) => script::native::WalkEnd::NoPath,
                     Err(_) => script::native::WalkEnd::Refused,
                 });
-                self.schedule_search(RouteSearchPurpose::MissingCarry);
+                self.stage = RouteJobStage::Diagnostics;
             }
             (RouteSearchPurpose::MissingCarry, SearchOutcome::MissingItemReqs(missing)) => {
                 self.missing_requirements = missing;
                 self.missing_diag_index = 0;
-                self.prepare_goal_copy(RouteGoalCopy::Diagnostics, RouteSearchPurpose::Entrance)?;
+                if self
+                    .missing_requirements
+                    .as_ref()
+                    .is_some_and(|requirements| !requirements.is_empty())
+                {
+                    // A concrete item shortfall is actionable by both the user
+                    // and compat recovery. Broader searches add no useful cause.
+                    self.stage = RouteJobStage::Diagnostics;
+                } else {
+                    self.prepare_goal_copy(
+                        RouteGoalCopy::Diagnostics,
+                        RouteSearchPurpose::Entrance,
+                    )?;
+                }
             }
             (RouteSearchPurpose::Entrance, SearchOutcome::EntranceRequirements(requirement)) => {
                 if let Some(requirement) = requirement {
                     self.native_failure = Some(script::native::WalkEnd::Blocked);
                     self.detail = Some(requirement.to_string());
+                    self.stage = RouteJobStage::Diagnostics;
+                } else {
+                    self.prepare_goal_copy(
+                        RouteGoalCopy::Diagnostics,
+                        RouteSearchPurpose::Blocking,
+                    )?;
                 }
-                self.stage = RouteJobStage::Diagnostics;
             }
             _ => return Err(RouteJobError::ResultShape),
         }
@@ -2240,8 +2324,15 @@ impl RouteJob {
                 .is_some_and(|kind| matches!(kind, RouteDemandKind::Walk { authority: Some(_) }))
             {
                 let context = format!(
-                    "native walk route failed: {:?} arrival from {:?} to {:?} within radius {}",
-                    self.request.arrival, self.request.from, self.request.to, self.request.radius
+                    "native walk route failed: {:?} arrival from ({}, {}, {}) to ({}, {}, {}) within radius {}",
+                    self.request.arrival,
+                    self.request.from.x,
+                    self.request.from.z,
+                    self.request.from.level,
+                    self.request.to.x,
+                    self.request.to.z,
+                    self.request.to.level,
+                    self.request.radius
                 );
                 route_detail = Some(match route_detail {
                     Some(detail) => format!("{detail}; {context}"),
@@ -2269,6 +2360,18 @@ impl RouteJob {
                     None => route_detail,
                 });
             }
+        }
+        if matches!(&outcome, RouteJobOutcome::NoPath) && detail.is_none() {
+            detail = Some(format!(
+                "no route found from ({}, {}, {}) to ({}, {}, {}) within radius {}",
+                self.request.from.x,
+                self.request.from.z,
+                self.request.from.level,
+                self.request.to.x,
+                self.request.to.z,
+                self.request.to.level,
+                self.request.radius
+            ));
         }
         RouteJobOutput {
             candidate_goals: self.request.candidate_goals.is_some(),
@@ -2668,11 +2771,9 @@ impl CooperativeJob for RouteJob {
                     }
                 }
                 RouteJobStage::BeginDiagnostics => {
-                    if let Err(error) = self
-                        .prepare_goal_copy(RouteGoalCopy::Diagnostics, RouteSearchPurpose::Blocking)
-                    {
-                        return StepOutcome::Failed(error);
-                    }
+                    // Item diagnosis uses the goal-side region, which is small
+                    // for gated rooms. Do it before mainland-wide policy checks.
+                    self.schedule_search(RouteSearchPurpose::MissingCarry);
                     continue;
                 }
                 RouteJobStage::Diagnostics => {
@@ -2711,9 +2812,21 @@ impl CooperativeJob for RouteJob {
                         .expect("search cursor is present")
                         .advance(ctx);
                     match step {
-                        CursorStep::Yielded | CursorStep::Cancelled(_) => {
+                        CursorStep::Yielded => {
+                            if self.diagnostics_started
+                                && self.diagnostic_settled.saturating_add(
+                                    self.search_cursor
+                                        .as_ref()
+                                        .expect("search cursor is present")
+                                        .forward_settled(),
+                                ) >= self.diagnostic_budget()
+                            {
+                                self.finish_diagnostics_at_budget();
+                                continue;
+                            }
                             return StepOutcome::Yielded;
                         }
+                        CursorStep::Cancelled(_) => return StepOutcome::Yielded,
                         CursorStep::Failed(_) => return StepOutcome::Failed(RouteJobError::Search),
                         CursorStep::Complete(completion) => {
                             #[cfg(test)]
@@ -2722,10 +2835,21 @@ impl CooperativeJob for RouteJob {
                                 self.search_purpose,
                                 false,
                             );
+                            if self.diagnostics_started {
+                                self.diagnostic_settled = self
+                                    .diagnostic_settled
+                                    .saturating_add(completion.forward_settled());
+                            }
                             self.search_cursor = None;
                             let (search, _state) = completion.into_parts();
                             if let Err(error) = self.handle_search(search) {
                                 return StepOutcome::Failed(error);
+                            }
+                            if self.diagnostics_started
+                                && self.diagnostic_settled >= self.diagnostic_budget()
+                                && self.stage != RouteJobStage::Diagnostics
+                            {
+                                self.finish_diagnostics_at_budget();
                             }
                             self.boundary_ready = true;
                             return StepOutcome::Yielded;
@@ -6145,6 +6269,13 @@ impl ScriptRouteRequest {
     }
 
     fn drive_route_job_output_for_test(self) -> (RouteJobOutput, Vec<WorldTile>, Arc<NavWorld>) {
+        self.drive_route_job_output_with_diagnostic_budget_for_test(DIAGNOSTIC_BUDGET)
+    }
+
+    fn drive_route_job_output_with_diagnostic_budget_for_test(
+        self,
+        diagnostic_budget: usize,
+    ) -> (RouteJobOutput, Vec<WorldTile>, Arc<NavWorld>) {
         fn identity(index: u64) -> WorkIdentity {
             WorkIdentity::new(
                 RequestId::from_raw(RequestId::HOST_FIRST + index)
@@ -6167,10 +6298,13 @@ impl ScriptRouteRequest {
 
             let clock = SystemClock;
             let cancellation = SharedCancellation::new();
-            for _ in 0..250_000 {
+            // Keep production's 64-unit yields, including in the real-pack
+            // parity driver. Its finite 4M-settlement queries need more slices.
+            for _ in 0..25_000_000 {
                 let budget = SliceBudget::new(
-                    std::num::NonZeroU32::new(64).expect("slice budget is nonzero"),
-                    Deadline::after(clock.now(), std::time::Duration::from_millis(10)),
+                    std::num::NonZeroU32::new(script::work_admission::WORK_UNITS_PER_SLICE)
+                        .expect("slice budget is nonzero"),
+                    Deadline::after(clock.now(), script::work_admission::WORK_SLICE),
                 );
                 let mut context = StepContext::new(&clock, budget, &cancellation);
                 match worker.step(&mut context) {
@@ -6189,6 +6323,7 @@ impl ScriptRouteRequest {
             RouteDemandKind::Walk { authority: None },
         )
         .expect("test route request prepares");
+        job.diagnostic_budget = diagnostic_budget;
         job.identity = Some(identity(0));
         let mut next = Some(Box::new(job));
         for stage_index in 0..64u64 {
@@ -7281,6 +7416,10 @@ mod facade_tests;
 mod route_work_tests;
 
 #[cfg(test)]
+#[path = "route_diagnostic_corpus_tests.rs"]
+mod route_diagnostic_corpus_tests;
+
+#[cfg(test)]
 mod diagnostic_tests {
     use super::*;
 
@@ -7844,6 +7983,7 @@ mod diagnostic_tests {
     #[test]
     #[ignore = "requires BOT_ROUTE_PARITY_NAVPACK and BOT_ROUTE_PARITY_OUT; real 17-case per-goal corpus"]
     fn ordinary_and_single_candidate_routes_match_across_the_real_corpus() {
+        use sha2::Digest;
         use std::collections::{HashMap, HashSet};
 
         let pack = std::path::PathBuf::from(
@@ -8078,6 +8218,7 @@ mod diagnostic_tests {
             };
             let pair_count = selected.len();
             let mut routed = 0;
+            let mut route_digest = sha2::Sha256::new();
             for goal in selected.drain(..) {
                 let request = |candidate_goals| {
                     let mut request = stage_request(Arc::clone(&world));
@@ -8095,16 +8236,35 @@ mod diagnostic_tests {
                     request.candidate_goals = candidate_goals;
                     request
                 };
+                let (before, _, _) = request(None)
+                    .drive_route_job_output_with_diagnostic_budget_for_test(usize::MAX);
+                let before = ScriptRouteRequest::project_route_job_outcome(
+                    before.outcome,
+                    before.opts,
+                    before.bank_avoid_copy,
+                    &world,
+                );
                 let (ordinary, _) = request(None).drive_route_job_for_test();
                 let (candidate, _) =
                     request(Some(script::native::WalkGoals::new(vec![goal]).unwrap()))
                         .drive_route_job_for_test();
-                match (ordinary, candidate) {
-                    (RouteOutcome::Routed(ordinary), RouteOutcome::Routed(candidate)) => {
+                route_digest.update(goal.x.to_le_bytes());
+                route_digest.update(goal.z.to_le_bytes());
+                route_digest.update(goal.level.to_le_bytes());
+                match (before, ordinary, candidate) {
+                    (
+                        RouteOutcome::Routed(before),
+                        RouteOutcome::Routed(ordinary),
+                        RouteOutcome::Routed(candidate),
+                    ) => {
+                        assert_eq!(before, ordinary, "{name}: {from:?} -> {goal:?}");
                         assert_eq!(ordinary, candidate, "{name}: {from:?} -> {goal:?}");
+                        route_digest.update(format!("{ordinary:?}").as_bytes());
                         routed += 1;
                     }
-                    (RouteOutcome::NoPath, RouteOutcome::NoPath) => {}
+                    (RouteOutcome::NoPath, RouteOutcome::NoPath, RouteOutcome::NoPath) => {
+                        route_digest.update(b"NoPath");
+                    }
                     _ => panic!("{name}: route availability changed for {from:?} -> {goal:?}"),
                 }
             }
@@ -8114,6 +8274,8 @@ mod diagnostic_tests {
                 "arrival": "Area", "radius": 0,
                 "stride": if name.starts_with("radius_walk") { stride } else { 1 },
                 "routed_pairs": routed, "no_path_pairs": pair_count - routed,
+                "diagnostic_bound_routes_unchanged": true,
+                "routes_sha256": format!("{:x}", route_digest.finalize()),
                 "exact_path_and_cost_equal": true,
             });
             println!("{record}");

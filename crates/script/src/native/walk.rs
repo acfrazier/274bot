@@ -11,10 +11,10 @@ use std::sync::Arc;
 use std::task::Poll;
 use std::time::Duration;
 
-/// Eligible time a native walk may stay unsettled before it ends `Failed`
-/// and revokes its host follow. The host owes every walk a terminal receipt;
-/// this is the machine's backstop, measured on the active clock so pause,
-/// hold, not-ready and Blocked intervals do not spend it.
+/// Eligible time a native walk may stay unsettled without a host terminal
+/// receipt before it ends `Failed` and revokes its host follow. The backstop
+/// uses the active clock, so pause, hold, not-ready and Blocked intervals do
+/// not spend it.
 pub const WALK_DEADLINE: Duration = Duration::from_secs(10 * 60);
 /// Login's `initalltabs` opens the quest tab and calls `update_questlist`.
 /// Give unresolved gates one later tick for quest-list colour updates to
@@ -183,6 +183,21 @@ impl Observation for Frame<'_> {
             .map(|player| player.value.player.actor.moving)
     }
 }
+fn deadline_failure_receipt(request_id: u64, evidence: EvidenceStamp) -> WalkReceipt {
+    WalkReceipt {
+        goal: None,
+        request_id,
+        evidence,
+        end: WalkEnd::Failed,
+        blocked: None,
+        detail: Some(std::sync::Arc::from(
+            "walk receipt deadline expired before the host reported a terminal result",
+        )),
+        refusal: None,
+        assessment: None,
+        escape: None,
+    }
+}
 
 impl Walk {
     /// The current host walk request. Dropping the machine does not revoke
@@ -291,21 +306,11 @@ impl NativeMachine for Walk {
         {
             return Poll::Ready(Ok(receipt.clone()));
         }
-        if cx.active_now() >= self.deadline {
-            cx.cancel_request(request_id);
-            return Poll::Ready(Ok(WalkReceipt {
-                goal: None,
-                request_id,
-                evidence: cx.evidence(),
-                end: WalkEnd::Failed,
-                blocked: None,
-                detail: None,
-                refusal: None,
-                assessment: None,
-                escape: None,
-            }));
-        }
         if !cx.evidence().meets(self.replay.required_after) {
+            if cx.active_now() >= self.deadline {
+                cx.cancel_request(request_id);
+                return Poll::Ready(Ok(deadline_failure_receipt(request_id, cx.evidence())));
+            }
             return Poll::Pending;
         }
 
@@ -314,6 +319,10 @@ impl NativeMachine for Walk {
                 && matches!(&receipt.end, WalkEnd::NeedsEvidence(_))
         });
         if needs_quest_evidence {
+            if cx.active_now() >= self.deadline {
+                cx.cancel_request(request_id);
+                return Poll::Ready(Ok(deadline_failure_receipt(request_id, cx.evidence())));
+            }
             let receipt = cx
                 .walk_receipt(request_id)
                 .expect("quest-evidence receipt remains correlated")
@@ -392,6 +401,10 @@ impl NativeMachine for Walk {
             goal: receipt.and_then(|receipt| receipt.goal),
         };
         if !self.wait.poll(request_id, &frame) {
+            if cx.active_now() >= self.deadline {
+                cx.cancel_request(request_id);
+                return Poll::Ready(Ok(deadline_failure_receipt(request_id, cx.evidence())));
+            }
             return Poll::Pending;
         }
         if let Some(receipt) = receipt {
@@ -403,6 +416,10 @@ impl NativeMachine for Walk {
         // the next tick: this tick's locs can still be the old ones, and the
         // owner's next click would choose from them.
         if cx.entered_scene() {
+            if cx.active_now() >= self.deadline {
+                cx.cancel_request(request_id);
+                return Poll::Ready(Ok(deadline_failure_receipt(request_id, cx.evidence())));
+            }
             return Poll::Pending;
         }
 
@@ -422,6 +439,10 @@ impl NativeMachine for Walk {
         }
         match receipt {
             Some(receipt) => Poll::Ready(Ok(receipt.clone())),
+            None if cx.active_now() >= self.deadline => {
+                cx.cancel_request(request_id);
+                Poll::Ready(Ok(deadline_failure_receipt(request_id, cx.evidence())))
+            }
             None => Poll::Pending,
         }
     }
@@ -962,5 +983,210 @@ mod tests {
         .unwrap()
         .join()
         .unwrap()
+    }
+
+    #[test]
+    fn no_path_receipt_finishes_on_the_next_observation_with_host_detail() {
+        let run = RunKey {
+            slot: 1,
+            run: 1,
+            session: 1,
+        };
+        let target = WorldTile {
+            x: 3200,
+            z: 3200,
+            level: 0,
+        };
+        let required_after = EvidenceStamp {
+            run,
+            tick: 1,
+            sequence: 1,
+        };
+        let mut snapshot = GameSnapshot::new();
+        snapshot.seed_ingame(2);
+
+        let mut ledger = None;
+        let handle = with_tick(&snapshot, &mut ledger, 1, |tick| {
+            tick.actions
+                .begin::<Walk>(
+                    crate::quester::families::reach::walk_request(target, 1, None, required_after),
+                    &mut tick.cx,
+                )
+                .unwrap()
+        });
+        let request_id = post_user_input_walk_receipt(&mut ledger, 2);
+        let detail = "target is unreachable from this scene";
+        {
+            let receipt = ledger.as_mut().unwrap().walk.as_mut().unwrap();
+            receipt.end = WalkEnd::NoPath;
+            receipt.detail = Some(std::sync::Arc::from(detail));
+        }
+
+        let result = with_tick(&snapshot, &mut ledger, 2, |tick| {
+            tick.actions.poll(&handle, &mut tick.cx)
+        });
+        let Poll::Ready(Ok(receipt)) = result else {
+            panic!("the next observation must deliver the no-path receipt: {result:?}");
+        };
+        assert_eq!(receipt.request_id, request_id);
+        assert_eq!(receipt.end, WalkEnd::NoPath);
+        assert_eq!(receipt.failure_detail().as_deref(), Some(detail));
+        assert!(matches!(
+            receipt.into_arrival(),
+            Err(ActionError::Blocked(reason)) if reason.as_ref() == detail
+        ));
+    }
+
+    #[test]
+    fn host_no_path_receipt_takes_priority_over_the_deadline() {
+        let run = RunKey {
+            slot: 1,
+            run: 1,
+            session: 1,
+        };
+        let target = WorldTile {
+            x: 3200,
+            z: 3200,
+            level: 0,
+        };
+        let required_after = EvidenceStamp {
+            run,
+            tick: 1,
+            sequence: 1,
+        };
+        let mut snapshot = GameSnapshot::new();
+        snapshot.seed_ingame(2);
+
+        let mut ledger = None;
+        let handle = with_tick(&snapshot, &mut ledger, 1, |tick| {
+            tick.actions
+                .begin::<Walk>(
+                    crate::quester::families::reach::walk_request(target, 1, None, required_after),
+                    &mut tick.cx,
+                )
+                .unwrap()
+        });
+        let request_id = post_user_input_walk_receipt(&mut ledger, 1001);
+        let detail = "host proved that no route exists";
+        {
+            let receipt = ledger.as_mut().unwrap().walk.as_mut().unwrap();
+            receipt.end = WalkEnd::NoPath;
+            receipt.detail = Some(std::sync::Arc::from(detail));
+        }
+
+        let result = with_tick(&snapshot, &mut ledger, 1001, |tick| {
+            tick.actions.poll(&handle, &mut tick.cx)
+        });
+        let Poll::Ready(Ok(receipt)) = result else {
+            panic!("a host terminal receipt must take priority at the deadline: {result:?}");
+        };
+        assert_eq!(receipt.request_id, request_id);
+        assert_eq!(receipt.end, WalkEnd::NoPath);
+        assert_eq!(receipt.failure_detail().as_deref(), Some(detail));
+    }
+
+    #[test]
+    fn settled_wait_without_a_receipt_still_obeys_the_deadline() {
+        let required_after = EvidenceStamp {
+            run: RunKey {
+                slot: 1,
+                run: 1,
+                session: 1,
+            },
+            tick: 1,
+            sequence: 1,
+        };
+        let target = WorldTile {
+            x: 3200,
+            z: 3200,
+            level: 0,
+        };
+        let mut snapshot = GameSnapshot::new();
+        snapshot.seed_ingame(2);
+        let mut ledger = None;
+        let handle = with_tick(&snapshot, &mut ledger, 1, |tick| {
+            tick.actions
+                .begin::<Walk>(
+                    crate::quester::families::reach::walk_request(target, 1, None, required_after),
+                    &mut tick.cx,
+                )
+                .unwrap()
+        });
+        let mut arrived = GameSnapshot::new();
+        arrived.seed_ingame(2);
+        arrived.seed_local_player(local_player(target));
+        {
+            let mut retained = handle.machine.borrow_mut();
+            let machine = retained.as_mut().expect("the walk is active");
+            assert!(machine.wait.poll(
+                machine.request_id(),
+                &Frame {
+                    snapshot: SnapshotView::new(Some(&arrived), required_after),
+                    outcome: HostOutcome::empty(),
+                    loc_id: None,
+                    arrival: ArrivalKind::Reach,
+                    candidate_goals: false,
+                    goal: None,
+                },
+            ));
+        }
+        assert!(with_tick(&snapshot, &mut ledger, 2, |tick| {
+            tick.actions.poll(&handle, &mut tick.cx)
+        })
+        .is_pending());
+        let result = with_tick(&snapshot, &mut ledger, 1001, |tick| {
+            tick.actions.poll(&handle, &mut tick.cx)
+        });
+        let Poll::Ready(Ok(receipt)) = result else {
+            panic!("a settled wait without its receipt must expire: {result:?}");
+        };
+        assert_eq!(receipt.end, WalkEnd::Failed);
+        assert_eq!(
+            receipt.failure_detail().as_deref(),
+            Some("walk receipt deadline expired before the host reported a terminal result")
+        );
+    }
+
+    #[test]
+    fn deadline_failure_reports_why_the_host_receipt_is_missing() {
+        let run = RunKey {
+            slot: 1,
+            run: 1,
+            session: 1,
+        };
+        let target = WorldTile {
+            x: 3200,
+            z: 3200,
+            level: 0,
+        };
+        let required_after = EvidenceStamp {
+            run,
+            tick: 1,
+            sequence: 1,
+        };
+        let mut snapshot = GameSnapshot::new();
+        snapshot.seed_ingame(2);
+
+        let mut ledger = None;
+        let handle = with_tick(&snapshot, &mut ledger, 1, |tick| {
+            tick.actions
+                .begin::<Walk>(
+                    crate::quester::families::reach::walk_request(target, 1, None, required_after),
+                    &mut tick.cx,
+                )
+                .unwrap()
+        });
+
+        let result = with_tick(&snapshot, &mut ledger, 1001, |tick| {
+            tick.actions.poll(&handle, &mut tick.cx)
+        });
+        let Poll::Ready(Ok(receipt)) = result else {
+            panic!("the deadline must end a walk without a host receipt: {result:?}");
+        };
+        assert_eq!(receipt.end, WalkEnd::Failed);
+        assert_eq!(
+            receipt.failure_detail().as_deref(),
+            Some("walk receipt deadline expired before the host reported a terminal result")
+        );
     }
 }

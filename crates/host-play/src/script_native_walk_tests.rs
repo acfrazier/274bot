@@ -191,6 +191,75 @@ fn rig(world: Option<Arc<NavWorld>>, blocked: bool) -> Rig {
     }
 }
 
+#[test]
+#[ignore = "requires WORLD_NAV_PACK pointing to the v17 reference pack"]
+fn real_scorpcatcher_no_key_route_job_publishes_no_path_before_native_deadline() {
+    let pack = std::env::var_os("WORLD_NAV_PACK").expect("WORLD_NAV_PACK is required");
+    let world = Arc::new(NavWorld::load_pack(std::path::Path::new(&pack)).unwrap());
+    let from = WorldTile {
+        x: 2701,
+        z: 3475,
+        level: 0,
+    };
+    let target = WorldTile {
+        x: 2875,
+        z: 9799,
+        level: 0,
+    };
+    let mut rig = rig(Some(world), false);
+    {
+        let mut walker = rig.shared.lock();
+        walker.target = Some(target);
+        walker.radius = 5;
+        walker.options.allow_teleports = script::native::WalkBit::Allow;
+        walker.options.allow_wilderness = script::native::WalkBit::Allow;
+        walker.options.allow_danger_zones = script::native::WalkBit::Allow;
+    }
+    let started = std::time::Instant::now();
+    rig.observe_at(1, from);
+    assert!(
+        rig.navs.lock().unwrap()["alice"].route_work_pending(),
+        "the real native request must enter WorkAdmission"
+    );
+    assert!(
+        rig.wait_for_route(15_000, || !rig.navs.lock().unwrap()["alice"]
+            .route_work_pending()),
+        "the admitted unreachable route job did not publish its terminal"
+    );
+    println!("no-route-publication-ms={}", started.elapsed().as_millis());
+    {
+        let navs = rig.navs.lock().unwrap();
+        let bot = &navs["alice"];
+        assert!(bot.walk_outcome_failed);
+        assert_eq!(
+            bot.native_walk_failure.as_ref().map(|(_, end)| end),
+            Some(&WalkEnd::NoPath)
+        );
+        assert!(
+            bot.walk_outcome_detail
+                .as_deref()
+                .is_some_and(|detail| !detail.is_empty()),
+            "a no-route result must name its reason"
+        );
+        assert!(
+            bot.walk_missing_carry
+                .iter()
+                .any(|row| row.id == 1590 && row.count == 1),
+            "the admitted Scorpion route must publish the missing Dusty key row"
+        );
+        assert!(!bot.has_route());
+    }
+    rig.observe_at(2, from);
+    let shared = rig.shared.lock();
+    let receipt = shared.result.as_ref().unwrap().as_ref().unwrap();
+    assert_eq!(receipt.end, WalkEnd::NoPath);
+    assert!(receipt
+        .detail
+        .as_deref()
+        .is_some_and(|detail| !detail.is_empty()));
+    assert!(rig.driver.walked.is_none());
+}
+
 fn open_rig(blocked: bool) -> Rig {
     rig(Some(Arc::new(open_world(40, 1))), blocked)
 }
@@ -5363,7 +5432,13 @@ fn zero_radius_area_refuses_a_nonstandable_target() {
         .as_deref()
         .expect("NoPath diagnostic is owed");
     assert!(detail.contains("Area arrival"), "{detail}");
-    assert!(detail.contains(&format!("to {WATER_CENTER:?}")), "{detail}");
+    assert!(
+        detail.contains(&format!(
+            "to ({}, {}, {})",
+            WATER_CENTER.x, WATER_CENTER.z, WATER_CENTER.level
+        )),
+        "{detail}"
+    );
     assert!(detail.contains("within radius 0"), "{detail}");
 }
 
