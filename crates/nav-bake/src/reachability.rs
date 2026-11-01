@@ -1285,7 +1285,9 @@ mod closure_tests {
         let west = atlas.base_at(tile(3200)).unwrap().unwrap();
         let east = atlas.base_at(tile(3202)).unwrap().unwrap();
         assert_ne!(west, east);
-        assert_eq!(sources, vec![Some(west), Some(east)]);
+        let mut expected = vec![Some(west), Some(east)];
+        expected.sort();
+        assert_eq!(sources, expected);
         let none = portal_sources(tile(3301), &cells, &idx);
         assert_eq!(none, vec![None]);
     }

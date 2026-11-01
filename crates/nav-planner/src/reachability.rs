@@ -369,6 +369,11 @@ impl ReachabilityAtlas {
             + size_of_val(&*self.stands)
     }
 
+    /// Every placement row, sorted by `(plane, x, z, loc id, shape, angle)`.
+    pub fn placements(&self) -> &[PlacementRow] {
+        &self.placements
+    }
+
     /// Transport edges that never joined a labelled component.
     pub fn unmatched_join_count(&self) -> usize {
         self.coverage
