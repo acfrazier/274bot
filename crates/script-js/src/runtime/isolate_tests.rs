@@ -943,7 +943,7 @@ fn wait_ready(iso: &LoadIsolate) {
 #[test]
 fn warmed_client_frame_dispatches_allocate_nothing_per_frame() {
     let mut iso = LoadIsolate::spawn(
-        "globalThis.__rs2b0t_native_event_on('frame', () => {});".into(),
+        "globalThis.__rs2b0t_native_event_on('frame', () => {}); export function tick(api) {}".into(),
         LoadShape::NativeTick,
         vec![],
     )
