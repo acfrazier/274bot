@@ -6859,6 +6859,10 @@
       "owner": "T1"
     },
     {
+      "path": "vendor/fr-client-rust/crates/client/tests/cache_decode_differential.rs",
+      "owner": "T1"
+    },
+    {
       "path": "vendor/fr-client-rust/crates/client/tests/cache_prepare.rs",
       "owner": "T1"
     },
@@ -7060,6 +7064,10 @@
     },
     {
       "path": "vendor/fr-client-rust/crates/client/tests/midi_first_song_stall.rs",
+      "owner": "T1"
+    },
+    {
+      "path": "vendor/fr-client-rust/crates/client/tests/midi_pcm_differential.rs",
       "owner": "T1"
     },
     {
