@@ -200,10 +200,10 @@ fn feed_script_lines(run: &impl ScriptLineSink, lines: &[(String, String)]) {
 #[cfg(test)]
 mod tests {
     use super::{BenchConfig, BenchRun};
-    use crate::{launch::InstancePermit, session::OperatorSession};
+    use crate::session::OperatorSession;
     use host_play::{
         memory::{Config, Workload},
-        run_with_io, PlayOptions, Transport,
+        run_with_io, InstancePermit, PlayOptions, Transport,
     };
     use std::{
         fs,
