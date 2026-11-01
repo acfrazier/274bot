@@ -1050,15 +1050,16 @@ fn boot_is_deferred_and_maps_live_smoke_and_vault_pass() {
 }
 
 #[test]
-fn deferred_startup_requests_a_second_frame_before_any_job_exists() {
+fn deferred_startup_redraw_is_limited_to_instrumented_builds() {
     let startup = StartupPreparation::new(Some(Boot::Live(LiveBoot::Smoke)));
     assert!(
         !startup.in_flight(),
         "the first frame intentionally starts no work"
     );
-    assert!(
+    assert_eq!(
         startup.needs_redraw(true),
-        "Wait must reach deferred startup"
+        cfg!(any(feature = "render-diagnostics", feature = "render-test-hooks")),
+        "only diagnostic or test-hook builds request a second startup frame"
     );
     assert!(!StartupPreparation::new(None).needs_redraw(false));
 }
