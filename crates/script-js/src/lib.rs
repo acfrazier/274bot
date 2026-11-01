@@ -218,10 +218,10 @@ mod shop_ops_v8;
 mod skills_v8;
 #[path = "runtime/snapshot.rs"]
 mod snapshot;
-#[path = "materialize/step_off_candidates_v8.rs"]
-mod step_off_candidates_v8;
 #[path = "compat/special.rs"]
 mod special;
+#[path = "materialize/step_off_candidates_v8.rs"]
+mod step_off_candidates_v8;
 #[path = "scene/supply_v2.rs"]
 mod supply_v2;
 #[path = "materialize/supply_v8.rs"]

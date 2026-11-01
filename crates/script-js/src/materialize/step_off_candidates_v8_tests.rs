@@ -3,7 +3,8 @@ use rustyscript::deno_core::v8;
 use rustyscript::RuntimeOptions;
 
 const CHILD_ENV: &str = "SCRIPT_STEP_OFF_CANDIDATES_V8_TEST_CHILD";
-const TEST_NAME: &str = "step_off_candidates_v8::tests::rows_have_fast_properties_and_bounded_v8_heap";
+const TEST_NAME: &str =
+    "step_off_candidates_v8::tests::rows_have_fast_properties_and_bounded_v8_heap";
 const SETUP: &str = r#"
 globalThis.__stepRows = () => __rs2b0t_step_off_candidates(10, 20, 2, 6, 18);
 globalThis.__fastStepRows = () => {
@@ -56,10 +57,18 @@ fn rows_have_fast_properties_and_bounded_v8_heap() {
     // tiles, independent of the caller's distance or the coordinates.
     runtime.eval::<usize>("__repeatStepRows(1000)").unwrap();
     let baseline = collected_used_heap(&mut runtime);
-    assert_eq!(runtime.eval::<usize>("__repeatStepRows(1000)").unwrap(), 8_000);
+    assert_eq!(
+        runtime.eval::<usize>("__repeatStepRows(1000)").unwrap(),
+        8_000
+    );
     let after = collected_used_heap(&mut runtime);
     let growth = after.saturating_sub(baseline);
     let limit = 16_384;
-    println!("step-off V8 heap rows=8 baseline={baseline} after={after} growth={growth} limit={limit}");
-    assert!(growth <= limit, "collected V8 heap grew {growth} bytes; limit {limit}");
+    println!(
+        "step-off V8 heap rows=8 baseline={baseline} after={after} growth={growth} limit={limit}"
+    );
+    assert!(
+        growth <= limit,
+        "collected V8 heap grew {growth} bytes; limit {limit}"
+    );
 }
