@@ -1638,6 +1638,30 @@ assert.equal('display' in quest274.coverage[0] || 'complete' in quest274.coverag
 const quest289 = extractQuestIdentityFacts(questRoot, 289);
 assertQuestRows(quest289);
 assert.deepEqual(quest289.coverage, []);
+
+for (const [writer, expected] of [
+    ['^cook_complete', { min: 0, max: 2 }],
+    ['5', { min: 0, max: 5 }],
+    ['~runtime_cook_progress', null],
+] as const) {
+    const root = questFixture((files) => {
+        files['scripts/general/configs/quest.constant'] += '^cook_unrelated_bit = 21\n';
+        files['scripts/quests/quest_cook/scripts/quest_cook_progress.rs2'] = `[proc,quest_cook_progress]
+%cookquest = ${writer};
+%cook_bits = ^cook_unrelated_bit;
+`;
+    });
+    try {
+        const row = extractQuestIdentityFacts(root, 289).rows.find((entry) => entry.id === 'cook');
+        assert.deepEqual(
+            row?.stage_domain,
+            expected,
+            `progress domain follows its actual writer ${writer}, not another varp's bit index`,
+        );
+    } finally {
+        fs.rmSync(root, { recursive: true, force: true });
+    }
+}
 const questStarts = extractQuestStartFacts(questRoot, quest289.rows, 289, 'fixture-content');
 assert.equal(questStarts.schema, 1);
 assert.equal(questStarts.revision, 289);

@@ -470,7 +470,6 @@ function guardedIncrementBound(
 }
 
 function stageDomain(
-    quest: string,
     variable: string,
     complete: number,
     constants: Map<string, number | null>,
@@ -480,11 +479,8 @@ function stageDomain(
     let maximum = complete;
     let sawWriter = false;
     let safe = Number.isInteger(complete) && complete >= 0;
-    for (const [name, value] of constants) {
-        if (!name.startsWith(`${quest}_`) || name.endsWith('_questpoints')) continue;
-        if (value === null || value < 0) safe = false;
-        else maximum = Math.max(maximum, value);
-    }
+    // Quest-prefixed constants can be bit indices for a different varp.
+    // Only this progress varp's actual writers may extend its completion bound.
     for (const writer of writersByVariable.get(variable) ?? []) {
         sawWriter = true;
         const literal = /^(-?\d+)$/.exec(writer.right);
@@ -541,7 +537,7 @@ function progressMetadata(
     writersByVariable: Map<string, ProgressWriter[]>,
 ): ProgressMetadata {
     const transmission = varpTransmission(content, variable, sourceFiles);
-    const domain = stageDomain(quest, variable, complete, constants, writersByVariable);
+    const domain = stageDomain(variable, complete, constants, writersByVariable);
     const rows = calls.filter((call) => call.component === component);
     const direct = rows.length === 1
         && rows[0].progress === `%${variable}`

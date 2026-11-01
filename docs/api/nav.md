@@ -503,6 +503,11 @@ required_after))` attaches the caller's immutable `EvidenceProvider` snapshot,
 the family it was prepared from and its causal freshness floor. Snapshot varps
 and green quest rows never open a stage gate, and nav reads no journal.
 
+The producer starts a progress variable's legal upper bound at quest completion
+and extends it only from that variable's actual writers. An unsupported writer
+leaves the domain unknown. Other constants with the quest's name prefix, such as
+Underground Pass's `ibanmulti` bit indices, do not widen the progress bound.
+
 `WorldState::quest_gates(edge)` is three-valued. `True` (every value still
 possible lies inside every window) alone lets `find`/`find_with` take the edge.
 `False` (disjoint) and `Unknown` (no, stale or other-family evidence, or values
