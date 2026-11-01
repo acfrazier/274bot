@@ -9951,6 +9951,11 @@ fn close_profiles_closes_with_no_form_and_with_a_clean_form() {
 
     s.wall.chooser_open = true;
     assert!(!s.profile_editor.is_open());
+    assert!(
+        !s.request_cancel_edit(),
+        "form-only close is refused without an edit form"
+    );
+    assert!(s.wall.chooser_open, "the Profiles list is still open");
     assert!(s.request_close_profiles(), "no form: nothing to confirm");
     assert!(!s.wall.chooser_open);
 
