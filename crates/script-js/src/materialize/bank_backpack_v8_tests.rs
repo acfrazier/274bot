@@ -14,6 +14,7 @@ export function queue() { return {}; }
 export function proxy(_name, methods) { return methods; }
 "#;
 const BANK_ENTRY: &str = r#"
+import '/rs2b0t/bot/shim/_kernel.js';
 import { Bank } from '/rs2b0t/bot/api/bank/Bank.js';
 import { reader } from '/rs2b0t/bot/adapter/ClientAdapter.js';
 globalThis.__BankForTest = Bank;
