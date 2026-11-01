@@ -1847,6 +1847,24 @@ pub fn derive_population(
         map_spot_animation_population_bound_established,
         server_zone_event_population_bound_established,
     );
+    let mut unqualified_resources = vec!["Capture", "HeadModels", "MapSpotAnim", "Vertex"];
+    let mut unqualified_content_inputs = vec![
+        "map_spot_animation_emission_and_lifetime",
+        "server_zone_events_per_cycle",
+        "co_located_static_map_composition",
+    ];
+    let mut unresolved_inputs = vec![
+        format!("The pinned pack has {map_spot_animation_instruction_occurrences} SPOTANIM_MAP instructions in {map_spot_animation_script_count} scripts, but operand IDs, sequence reachability, maximum retained lifetime, and eligible per-cycle invocations are not derived. A missing sequence can leave a client map-spot animation active."),
+        "Zone stores events in a per-cycle Set with no count cap established here; a global per-cycle script-invocation bound is not derived.".to_string(),
+        "The staged server map ZIP is not directly reconciled with client maps.bin for co-located static scene faces.".to_string(),
+    ];
+    if !projectile_population_bound_established {
+        unqualified_resources.push("Projectile");
+        unqualified_content_inputs.push("projectile_emission_and_lifetime");
+        unresolved_inputs.push(format!(
+            "The pinned pack has {projectile_opcode_count} projectile instructions, but operand-dependent retained lifetimes and eligible per-cycle emissions are not derived."
+        ));
+    }
     let engine_binding = inputs.binding_json();
     let maps_zip = inputs.files.get("data/pack/.cache/maps-server.zip");
     let maps_manifest = inputs.files.get("data/pack/.cache/maps.manifest.json");
@@ -1937,7 +1955,11 @@ pub fn derive_population(
                 "pinned_script_projectile_opcode_count": projectile_opcode_count,
                 "pinned_compiled_content_producer_absent": projectile_opcode_count == 0,
                 "projectile_handler_source_call_sites": script_content["source_emitter_call_sites"]["World.mapProjAnim("],
-                "expiration": "Client list nodes expire by target cycle or level; the pinned complete script pack contains no projectile opcode, so these sources add no projectile nodes.",
+                "expiration": if projectile_population_bound_established {
+                    "Client list nodes expire by target cycle or level. The complete pinned pack has no projectile opcode, so these sources add no projectile nodes."
+                } else {
+                    "Client list nodes expire by target cycle or level. The complete pinned pack contains projectile opcodes, but their operand-dependent retained lifetimes and per-cycle emissions are not derived."
+                },
                 "source_files": [
                     {"path":"vendor/fr-client-rust/crates/client/src/client/client.rs","lines":[1104,10249]},
                     {"path":"vendor/fr-client-rust/crates/client/src/render/draw.rs","lines":[4567,4574,4616]},
@@ -1998,17 +2020,13 @@ pub fn derive_population(
             "server_zone_event_population_bound_established": server_zone_event_population_bound_established,
             "transient_population_bound_established": transient_population_bound_established,
             "dynamic_population_bound_established": dynamic_population_bound_established,
-            "unqualified_resources": ["Capture", "HeadModels", "MapSpotAnim", "Vertex"],
-            "unqualified_content_inputs": ["map_spot_animation_emission_and_lifetime", "server_zone_events_per_cycle", "co_located_static_map_composition"],
+            "unqualified_resources": unqualified_resources,
+            "unqualified_content_inputs": unqualified_content_inputs,
             "selection_behavior": format!(
-                "The client admits at most {} dynamic sprite indices in a client World. Keep workloads that require more unqualified; do not clamp or claim a transient-list count cap. Keep Capture, HeadModels, MapSpotAnim, and Vertex unqualified until map-spot lifetime/emission and co-located static-map inputs are resolved. When a legal content_upper_vertex_bytes is established, use B_vertex = checked_next_power_of_two(max(1048576, content_upper_vertex_bytes)) and reject any device whose max_storage_buffer_binding_size is below the full B_vertex.",
+                "The client admits at most {} dynamic sprite indices in a client World. Keep workloads that require more unqualified; do not clamp or claim a transient-list count cap. Keep dependent capture, model, transient, and vertex resources unqualified until population, lifetime, emission, and co-located static-map inputs are resolved. When a legal content_upper_vertex_bytes is established, use B_vertex = checked_next_power_of_two(max(1048576, content_upper_vertex_bytes)) and reject any device whose max_storage_buffer_binding_size is below the full B_vertex.",
                 renderer_dynamic_sprite_admission["max_dynamic_sprites_per_client_world"]
             ),
-            "unresolved_inputs": [
-                format!("The pinned pack has {map_spot_animation_instruction_occurrences} SPOTANIM_MAP instructions in {map_spot_animation_script_count} scripts, but operand IDs, sequence reachability, maximum retained lifetime, and eligible per-cycle invocations are not derived. A missing sequence can leave a client map-spot animation active."),
-                "Zone stores events in a per-cycle Set with no count cap established here; a global per-cycle script-invocation bound is not derived.",
-                "The staged server map ZIP is not directly reconciled with client maps.bin for co-located static scene faces.",
-            ],
+            "unresolved_inputs": unresolved_inputs,
         },
     }))
 }
