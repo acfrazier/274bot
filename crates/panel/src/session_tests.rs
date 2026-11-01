@@ -9935,6 +9935,33 @@ fn background_count_ignores_terminal_status_rows() {
     let _iso = iso;
 }
 
+/// Close Profiles (its Close button and its ✕) shuts the window whether or
+/// not an edit form is open; only a form whose save is still being written
+/// asks first. With no form open the command used to be refused as not
+/// applicable and Profiles stayed open.
+#[test]
+fn close_profiles_closes_with_no_form_and_with_a_clean_form() {
+    let path = tmp_vault("close-profiles.vault");
+    let mut s = Session::new();
+    hydrate_panel_preferences(&mut s);
+    s.core.set_spawn_workers(false);
+    let mut vault = VaultFixture::create(&path, "test-passphrase-01");
+    vault.put(profile("alice", "pw", 42));
+    install_vault(&mut s.core, vault);
+
+    s.wall.chooser_open = true;
+    assert!(!s.profile_editor.is_open());
+    assert!(s.request_close_profiles(), "no form: nothing to confirm");
+    assert!(!s.wall.chooser_open);
+
+    s.wall.chooser_open = true;
+    s.begin_edit_profile(Some("alice"));
+    assert!(s.profile_editor.is_open() && !s.edit_dirty());
+    assert!(s.request_close_profiles(), "a clean form closes at once");
+    assert!(!s.wall.chooser_open);
+    assert!(!s.profile_editor.is_open(), "the form went with the window");
+}
+
 #[test]
 fn a_profile_still_saving_cannot_be_selected_loaded_or_deleted_from_the_chooser() {
     let path = tmp_vault("saving-gate.vault");

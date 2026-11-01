@@ -6083,6 +6083,65 @@ fn the_profiles_list_adds_no_allocation_to_a_warm_frame() {
     ui.raw_frame();
 }
 
+/// Profiles opened with no edit form (the Profiles button, the dock tab)
+/// closes at once from `item` (its ✕ or Close). The close command used to be
+/// refused as "not applicable" while no form was open, so nothing closed
+/// (regressed in 0.2.5 by the command seam, 05658356f).
+fn assert_profiles_without_a_form_closes_from(label: &str, item: &str) {
+    let _guard = crate::test_support::imgui_context_guard();
+    let mut ui = ProfilesUi::new(label, &[("alice", "apass", 42)]);
+    let open = ui.frame();
+    assert!(
+        open.has("Close") && !open.has("Editing"),
+        "Profiles is open on its list: {}",
+        open.text
+    );
+    let closed = ui.click(At::Window, item);
+    assert!(closed.text.trim().is_empty(), "{item} shut Profiles");
+    assert!(!ui.session.wall.chooser_open, "{item} cleared the flag");
+}
+
+#[test]
+fn the_x_closes_profiles_with_no_form() {
+    assert_profiles_without_a_form_closes_from("profiles-close-noform-x", "#CLOSE");
+}
+
+#[test]
+fn close_closes_profiles_with_no_form() {
+    assert_profiles_without_a_form_closes_from("profiles-close-noform-button", "Close");
+}
+
+/// The same with a clean edit form open (nothing typed, nothing saving):
+/// `item` shuts Profiles and the form with it, with no prompt.
+fn assert_profiles_with_a_clean_form_closes_from(label: &str, item: &str) {
+    let _guard = crate::test_support::imgui_context_guard();
+    let mut ui = ProfilesUi::new(label, &[("alice", "apass", 42)]);
+    let editing = ui.click(At::List, "Edit##edit-alice");
+    assert!(editing.has("Editing alice"), "{}", editing.text);
+    assert!(!ui.session.edit_dirty(), "the form is clean");
+    let closed = ui.click(At::Window, item);
+    assert!(
+        closed.text.trim().is_empty(),
+        "{item} shut Profiles: {}",
+        closed.text
+    );
+    assert!(!ui.session.wall.chooser_open, "{item} cleared the flag");
+    assert!(
+        !ui.session.profile_editor.is_open(),
+        "the form closed with the window"
+    );
+}
+
+#[test]
+fn the_x_closes_profiles_with_a_clean_form() {
+    assert_profiles_with_a_clean_form_closes_from("profiles-close-clean-x", "#CLOSE");
+}
+
+#[test]
+fn close_closes_profiles_with_a_clean_form() {
+    assert_profiles_with_a_clean_form_closes_from("profiles-close-clean-button", "Close");
+}
+
 /// A save whose write fails after it was accepted shows in the form it came
 /// from, as well as on the banner: the form keeps its draft and its target,
 /// and Save retries.

@@ -311,6 +311,12 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.8` 
   click unsent, the guide sends it again. When the host refuses the click,
   the guide stops at once with `expected dialogue did not open`, the NPC, the
   tick of the refusal and the last game message.
+### Fixed (panel)
+
+- **Profiles** now closes when you press its ✕ or **Close**, also when you
+  have not opened a profile for editing. Before, it stayed open and could not
+  be closed. If a save of the open profile is still being written, the panel
+  still asks **Discard** or **Keep editing** first.
 
 ## [0.2.8] — 2026-10-29 — Beta 2
 

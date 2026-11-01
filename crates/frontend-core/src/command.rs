@@ -585,6 +585,7 @@ pub enum FormClose {
     /// Close the form; Profiles stays open (the form's Cancel).
     Form,
     /// Close Profiles and the form with it (its Close button and its ✕).
+    /// With no form open there is nothing to confirm: it completes at once.
     Window,
 }
 
