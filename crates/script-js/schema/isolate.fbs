@@ -960,6 +960,13 @@ table BankSeatArgs {
   category_overrides: [BankCategoryOverride];
 }
 
+// Shop.buyById adds a requested quantity of one exact stock id to the
+// currently open shop; the host returns the count actually observed.
+table ShopBuyByIdArgs {
+  item_id: double;
+  quantity: double;
+}
+
 table SeatArgs {
   gather_settings: [SettingRow];
   combat: CombatFight;
@@ -967,6 +974,7 @@ table SeatArgs {
   bank: BankSeatArgs;
   progress_journal_only: bool = false;
   cast_npc: CastNpcArgs;
+  shop: ShopBuyByIdArgs;
 }
 
 table NativeRequest {

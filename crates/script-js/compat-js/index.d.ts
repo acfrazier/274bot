@@ -3138,7 +3138,7 @@ export const Shop: {
     }[];
     buy(name: string, n: number): Promise<number>;
     /** Buy by exact object id, for stock whose display name is shared. */
-    buyById(id?: number, n?: number): never;
+    buyById(id: number, n: number): Promise<number>;
     sell(name: string, n: number, pick?: (i: {
         id: number;
         count: number;
@@ -3151,16 +3151,33 @@ export const Shop: {
         slot: number;
     }) => boolean): Promise<number>;
     close(): Promise<void>;
-    player(): {
-        name: string | null;
-        count: number;
-        slot: number;
-    }[];
 };
 /** How much one click of a stack sale asks for. */
 export const SELL_STACK_STEP = 10;
 /** Why: the engine drops extra user-event packets, so 25 must sell as 10+10+5 in one tick. */
 export function shopOpBatch(ops: (string | null)[], verb: 'buy' | 'sell', remaining: number): number[];
+
+}
+
+declare module '*api/shop/shopPrice.js' {
+/** The engine's own shop price curve, so a script can budget a buyout before it opens the counter.
+ *  Why: `calc_shop_value` raises the price with every one bought, `max(100, sell - clamp(-bought * delta, -5000, 1000))` scaled by the base cost, so a full shelf costs far more than stock times cost and a trip funded on that arithmetic comes home with change and no goods. */
+/** The `shop_sell_multiplier` and `shop_delta` a shopkeeper carries when its npc names neither. */
+export const SHOP_SELL_MULTIPLIER = 100;
+export const SHOP_DELTA = 10;
+/** What the next one costs once `bought` have left the shelf. */
+export function shopBuyPrice(baseCost: number, bought: number, sellMultiplier?: number, delta?: number): number;
+/** Coins a full shelf costs, summed one at a time. */
+export function buyoutCost(baseCost: number, stock: number, sellMultiplier?: number, delta?: number): number;
+
+}
+
+declare module '*api/shop/StockModel.js' {
+import { ShopItemDef } from '*api/shop/types.js';
+export function unitPrice(item: ShopItemDef, shop: {
+    sell: number;
+    delta: number;
+}, stock: number): number;
 
 }
 
@@ -3553,7 +3570,7 @@ interface DrivePartnerTradeOpts {
 }
 /** Which trade screen is up, for scripts that log hand-back diagnostics. */
 export function tradeScreenState(): string;
-export function stableClosedPoll(minMs?: number, nowFn?: () => number): never;
+export function stableClosedPoll(minMs?: number, nowFn?: () => number): () => boolean;
 /** Process one active-trade iteration from the task controlling the modal. Movement cancels the trade. */
 export function driveActivePartnerTrade(opts: DrivePartnerTradeOpts): Promise<void>;
 

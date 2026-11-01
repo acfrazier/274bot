@@ -991,6 +991,14 @@ pub fn shim_modules() -> Vec<Module> {
             "/rs2b0t/bot/event/webwalk/WalkExecutor.js",
             include_str!("walk_executor.js"),
         ),
+        Module::new(
+            "/rs2b0t/bot/api/shop/StockModel.js",
+            include_str!("stock_model.js"),
+        ),
+        Module::new(
+            "/rs2b0t/bot/api/shop/shopPrice.js",
+            include_str!("shop_price.js"),
+        ),
     ]
 }
 

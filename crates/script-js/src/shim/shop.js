@@ -1,7 +1,5 @@
-// Our Shop module. Open/buy/sell/close are one `shop` machine await each:
-// Rust presses Trade, batches the Buy/Sell ops, owns every wait and reports
-// the observed quantity. Rust calls `Shop.sell`'s optional pick callback over
-// the same-name shop player rows. Reads shape the posted shop pages.
+// Rust owns Shop open/buy/sell/close and exact-id buying. The shim forwards
+// one native request; only posted facts and argument coercion stay here.
 import { snap, notImpl, runMachine } from '../../shim/_kernel.js';
 
 // What a call ended by a reset or a newer shop call resolves to.
@@ -37,14 +35,6 @@ export const Shop = new Proxy(
                 slot: row?.slot ?? -1,
             }));
         },
-        player() {
-            if (!Shop.isOpen()) return [];
-            return (snap().shop_player || []).map((row) => ({
-                name: row?.name ?? null,
-                count: row?.count ?? 0,
-                slot: row?.slot ?? -1,
-            }));
-        },
         open(npcName) {
             return run('open', String(npcName ?? ''), 1);
         },
@@ -60,8 +50,10 @@ export const Shop = new Proxy(
         close() {
             return run('close', '', 1);
         },
-        buyById() {
-            throw notImpl('Shop.buyById');
+        async buyById(id, qty) {
+            const out = await runMachine('shop-buy-by-id', { id, quantity: Number(qty) });
+            if (out.kind === 'refused') throw notImpl('Shop.buyById', out.reason);
+            return out.kind === 'done' ? (out.value ?? 0) : 0;
         },
     },
     {

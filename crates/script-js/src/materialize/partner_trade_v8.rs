@@ -3,6 +3,7 @@
 
 use crate::partner_trade::{self as pt, MuleMode, OfferSlot, ReceiverOfferDecision};
 use rustyscript::Runtime;
+use script::trade_screen::{ScreenKind, StableClosedPoll};
 
 const PENDING: &str = "__pending__";
 
@@ -64,6 +65,7 @@ fn run<'s>(
             };
             v8_str(scope, pt::trade_screen_state(offer_open, confirm_open))?
         }
+        "stableClosedPoll" => stable_closed_poll(scope, args.get(1))?,
         "namesMatch" => {
             let a = js_string(scope, args.get(1))?;
             let b = js_string(scope, args.get(2))?;
@@ -111,6 +113,69 @@ fn run<'s>(
         _ => return Err(format!("not impl: PartnerTrade.{export}")),
     };
     Ok(value)
+}
+
+fn stable_closed_poll<'s>(
+    scope: &mut v8::HandleScope<'s>,
+    min_ms: v8::Local<'s, v8::Value>,
+) -> Result<v8::Local<'s, v8::Value>, String> {
+    let state = v8::Object::new(scope);
+    set_key(scope, state, "minMs", min_ms);
+    let inactive_since_ms = v8::Number::new(scope, -1.0).into();
+    set_key(scope, state, "inactiveSinceMs", inactive_since_ms);
+    let inactive_since_tick = v8::Number::new(scope, -1.0).into();
+    set_key(scope, state, "inactiveSinceTick", inactive_since_tick);
+    let function = v8::Function::builder(stable_closed_poll_callback)
+        .data(state.into())
+        .length(3)
+        .build(scope)
+        .ok_or_else(|| "could not create stableClosedPoll predicate".to_string())?;
+    let key_name = v8::String::new(scope, "rs2b0t.trade.stableClosedPoll.state")
+        .ok_or_else(|| "stableClosedPoll state key".to_string())?;
+    let key = v8::Private::for_api(scope, Some(key_name));
+    function
+        .set_private(scope, key, state.into())
+        .ok_or_else(|| "could not retain stableClosedPoll state".to_string())?;
+    Ok(function.into())
+}
+
+fn stable_closed_poll_callback<'s>(
+    scope: &mut v8::HandleScope<'s>,
+    args: v8::FunctionCallbackArguments<'s>,
+    mut rv: v8::ReturnValue,
+) {
+    let result = (|| {
+        let Some(state) = args.data().to_object(scope) else {
+            return Err("stableClosedPoll state is unavailable".to_string());
+        };
+        let min_ms = field(scope, state.into(), "minMs")?;
+        let inactive_since_ms_value = field(scope, state.into(), "inactiveSinceMs")?;
+        let inactive_since_ms = number(scope, inactive_since_ms_value);
+        let inactive_since_tick_value = field(scope, state.into(), "inactiveSinceTick")?;
+        let inactive_since_tick = number(scope, inactive_since_tick_value);
+        let mut poll = StableClosedPoll::from_baselines(inactive_since_ms, inactive_since_tick);
+        let active = args.get(0).is_true();
+        let explicit_clock = args.get(1).is_true();
+        let now = number(scope, args.get(2));
+        let closed = if active {
+            poll.reset();
+            false
+        } else if explicit_clock {
+            poll.poll_at(ScreenKind::Closed, now, number(scope, min_ms))
+        } else {
+            poll.poll_tick(ScreenKind::Closed, now)
+        };
+        let (inactive_since_ms, inactive_since_tick) = poll.baselines();
+        let inactive_since_ms = v8::Number::new(scope, inactive_since_ms).into();
+        set_key(scope, state, "inactiveSinceMs", inactive_since_ms);
+        let inactive_since_tick = v8::Number::new(scope, inactive_since_tick).into();
+        set_key(scope, state, "inactiveSinceTick", inactive_since_tick);
+        Ok(v8::Boolean::new(scope, closed).into())
+    })();
+    match result {
+        Ok(value) => rv.set(value),
+        Err(error) => throw_error(scope, &error),
+    }
 }
 
 /// `{ partnerHeader, partners, myOfferSlots, theirProductCount }` to the
@@ -319,3 +384,7 @@ fn throw_error(scope: &mut v8::HandleScope, message: &str) {
         scope.throw_exception(exc);
     }
 }
+
+#[cfg(test)]
+#[path = "partner_trade_v8_tests.rs"]
+mod tests;

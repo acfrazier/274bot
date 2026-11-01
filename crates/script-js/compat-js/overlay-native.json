@@ -292,15 +292,6 @@
     "declaration": "stock(): { name: string | null; count: number; slot: number }[];"
   },
   {
-    "id": "shop-posted-player-rows",
-    "module": "api/shop/Shop.js",
-    "selector": "Shop.player",
-    "add": true,
-    "reason": "Host additionally exposes posted player sale rows with the same exact shape as stock rows.",
-    "runtime": "crates/script-js/src/shim/shop.js:40",
-    "declaration": "player(): { name: string | null; count: number; slot: number }[];"
-  },
-  {
     "id": "hunting-prayer-site-advisory",
     "module": "api/combat/hunting/logic.js",
     "selector": "prayerFor",

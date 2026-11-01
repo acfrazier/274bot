@@ -13341,6 +13341,119 @@ impl ::core::fmt::Debug for BankSeatArgs<'_> {
       ds.finish()
   }
 }
+pub enum ShopBuyByIdArgsOffset {}
+#[derive(Copy, Clone, PartialEq)]
+
+pub struct ShopBuyByIdArgs<'a> {
+  pub _tab: ::flatbuffers::Table<'a>,
+}
+
+impl<'a> ::flatbuffers::Follow<'a> for ShopBuyByIdArgs<'a> {
+  type Inner = ShopBuyByIdArgs<'a>;
+  #[inline]
+  unsafe fn follow(buf: &'a [u8], loc: usize) -> Self::Inner {
+    Self { _tab: unsafe { ::flatbuffers::Table::new(buf, loc) } }
+  }
+}
+
+impl<'a> ShopBuyByIdArgs<'a> {
+  pub const VT_ITEM_ID: ::flatbuffers::VOffsetT = 4;
+  pub const VT_QUANTITY: ::flatbuffers::VOffsetT = 6;
+
+  #[inline]
+  pub unsafe fn init_from_table(table: ::flatbuffers::Table<'a>) -> Self {
+    ShopBuyByIdArgs { _tab: table }
+  }
+  #[allow(unused_mut)]
+  pub fn create<'bldr: 'args, 'args: 'mut_bldr, 'mut_bldr, A: ::flatbuffers::Allocator + 'bldr>(
+    _fbb: &'mut_bldr mut ::flatbuffers::FlatBufferBuilder<'bldr, A>,
+    args: &'args ShopBuyByIdArgsArgs
+  ) -> ::flatbuffers::WIPOffset<ShopBuyByIdArgs<'bldr>> {
+    let mut builder = ShopBuyByIdArgsBuilder::new(_fbb);
+    builder.add_quantity(args.quantity);
+    builder.add_item_id(args.item_id);
+    builder.finish()
+  }
+
+
+  #[inline]
+  pub fn item_id(&self) -> f64 {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<f64>(ShopBuyByIdArgs::VT_ITEM_ID, Some(0.0)).unwrap()}
+  }
+  #[inline]
+  pub fn quantity(&self) -> f64 {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<f64>(ShopBuyByIdArgs::VT_QUANTITY, Some(0.0)).unwrap()}
+  }
+}
+
+impl ::flatbuffers::Verifiable for ShopBuyByIdArgs<'_> {
+  #[inline]
+  fn run_verifier(
+    v: &mut ::flatbuffers::Verifier, pos: usize
+  ) -> Result<(), ::flatbuffers::InvalidFlatbuffer> {
+    v.visit_table(pos)?
+     .visit_field::<f64>("item_id", Self::VT_ITEM_ID, false)?
+     .visit_field::<f64>("quantity", Self::VT_QUANTITY, false)?
+     .finish();
+    Ok(())
+  }
+}
+pub struct ShopBuyByIdArgsArgs {
+    pub item_id: f64,
+    pub quantity: f64,
+}
+impl<'a> Default for ShopBuyByIdArgsArgs {
+  #[inline]
+  fn default() -> Self {
+    ShopBuyByIdArgsArgs {
+      item_id: 0.0,
+      quantity: 0.0,
+    }
+  }
+}
+
+pub struct ShopBuyByIdArgsBuilder<'a: 'b, 'b, A: ::flatbuffers::Allocator + 'a> {
+  fbb_: &'b mut ::flatbuffers::FlatBufferBuilder<'a, A>,
+  start_: ::flatbuffers::WIPOffset<::flatbuffers::TableUnfinishedWIPOffset>,
+}
+impl<'a: 'b, 'b, A: ::flatbuffers::Allocator + 'a> ShopBuyByIdArgsBuilder<'a, 'b, A> {
+  #[inline]
+  pub fn add_item_id(&mut self, item_id: f64) {
+    self.fbb_.push_slot::<f64>(ShopBuyByIdArgs::VT_ITEM_ID, item_id, 0.0);
+  }
+  #[inline]
+  pub fn add_quantity(&mut self, quantity: f64) {
+    self.fbb_.push_slot::<f64>(ShopBuyByIdArgs::VT_QUANTITY, quantity, 0.0);
+  }
+  #[inline]
+  pub fn new(_fbb: &'b mut ::flatbuffers::FlatBufferBuilder<'a, A>) -> ShopBuyByIdArgsBuilder<'a, 'b, A> {
+    let start = _fbb.start_table();
+    ShopBuyByIdArgsBuilder {
+      fbb_: _fbb,
+      start_: start,
+    }
+  }
+  #[inline]
+  pub fn finish(self) -> ::flatbuffers::WIPOffset<ShopBuyByIdArgs<'a>> {
+    let o = self.fbb_.end_table(self.start_);
+    ::flatbuffers::WIPOffset::new(o.value())
+  }
+}
+
+impl ::core::fmt::Debug for ShopBuyByIdArgs<'_> {
+  fn fmt(&self, f: &mut ::core::fmt::Formatter<'_>) -> ::core::fmt::Result {
+    let mut ds = f.debug_struct("ShopBuyByIdArgs");
+      ds.field("item_id", &self.item_id());
+      ds.field("quantity", &self.quantity());
+      ds.finish()
+  }
+}
 pub enum SeatArgsOffset {}
 #[derive(Copy, Clone, PartialEq)]
 
@@ -13363,6 +13476,7 @@ impl<'a> SeatArgs<'a> {
   pub const VT_BANK: ::flatbuffers::VOffsetT = 10;
   pub const VT_PROGRESS_JOURNAL_ONLY: ::flatbuffers::VOffsetT = 12;
   pub const VT_CAST_NPC: ::flatbuffers::VOffsetT = 14;
+  pub const VT_SHOP: ::flatbuffers::VOffsetT = 16;
 
   #[inline]
   pub unsafe fn init_from_table(table: ::flatbuffers::Table<'a>) -> Self {
@@ -13374,6 +13488,7 @@ impl<'a> SeatArgs<'a> {
     args: &'args SeatArgsArgs<'args>
   ) -> ::flatbuffers::WIPOffset<SeatArgs<'bldr>> {
     let mut builder = SeatArgsBuilder::new(_fbb);
+    if let Some(x) = args.shop { builder.add_shop(x); }
     if let Some(x) = args.cast_npc { builder.add_cast_npc(x); }
     if let Some(x) = args.bank { builder.add_bank(x); }
     if let Some(x) = args.progress_name { builder.add_progress_name(x); }
@@ -13426,6 +13541,13 @@ impl<'a> SeatArgs<'a> {
     // which contains a valid value in this slot
     unsafe { self._tab.get::<::flatbuffers::ForwardsUOffset<CastNpcArgs>>(SeatArgs::VT_CAST_NPC, None)}
   }
+  #[inline]
+  pub fn shop(&self) -> Option<ShopBuyByIdArgs<'a>> {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<::flatbuffers::ForwardsUOffset<ShopBuyByIdArgs>>(SeatArgs::VT_SHOP, None)}
+  }
 }
 
 impl ::flatbuffers::Verifiable for SeatArgs<'_> {
@@ -13440,6 +13562,7 @@ impl ::flatbuffers::Verifiable for SeatArgs<'_> {
      .visit_field::<::flatbuffers::ForwardsUOffset<BankSeatArgs>>("bank", Self::VT_BANK, false)?
      .visit_field::<bool>("progress_journal_only", Self::VT_PROGRESS_JOURNAL_ONLY, false)?
      .visit_field::<::flatbuffers::ForwardsUOffset<CastNpcArgs>>("cast_npc", Self::VT_CAST_NPC, false)?
+     .visit_field::<::flatbuffers::ForwardsUOffset<ShopBuyByIdArgs>>("shop", Self::VT_SHOP, false)?
      .finish();
     Ok(())
   }
@@ -13451,6 +13574,7 @@ pub struct SeatArgsArgs<'a> {
     pub bank: Option<::flatbuffers::WIPOffset<BankSeatArgs<'a>>>,
     pub progress_journal_only: bool,
     pub cast_npc: Option<::flatbuffers::WIPOffset<CastNpcArgs<'a>>>,
+    pub shop: Option<::flatbuffers::WIPOffset<ShopBuyByIdArgs<'a>>>,
 }
 impl<'a> Default for SeatArgsArgs<'a> {
   #[inline]
@@ -13462,6 +13586,7 @@ impl<'a> Default for SeatArgsArgs<'a> {
       bank: None,
       progress_journal_only: false,
       cast_npc: None,
+      shop: None,
     }
   }
 }
@@ -13496,6 +13621,10 @@ impl<'a: 'b, 'b, A: ::flatbuffers::Allocator + 'a> SeatArgsBuilder<'a, 'b, A> {
     self.fbb_.push_slot_always::<::flatbuffers::WIPOffset<CastNpcArgs>>(SeatArgs::VT_CAST_NPC, cast_npc);
   }
   #[inline]
+  pub fn add_shop(&mut self, shop: ::flatbuffers::WIPOffset<ShopBuyByIdArgs<'b >>) {
+    self.fbb_.push_slot_always::<::flatbuffers::WIPOffset<ShopBuyByIdArgs>>(SeatArgs::VT_SHOP, shop);
+  }
+  #[inline]
   pub fn new(_fbb: &'b mut ::flatbuffers::FlatBufferBuilder<'a, A>) -> SeatArgsBuilder<'a, 'b, A> {
     let start = _fbb.start_table();
     SeatArgsBuilder {
@@ -13519,6 +13648,7 @@ impl ::core::fmt::Debug for SeatArgs<'_> {
       ds.field("bank", &self.bank());
       ds.field("progress_journal_only", &self.progress_journal_only());
       ds.field("cast_npc", &self.cast_npc());
+      ds.field("shop", &self.shop());
       ds.finish()
   }
 }

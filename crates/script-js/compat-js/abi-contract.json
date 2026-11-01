@@ -12369,6 +12369,16 @@
       "nav_consuming": true
     },
     {
+      "module": "api/shop/shopPrice.js",
+      "family_id": "shop",
+      "nav_consuming": true
+    },
+    {
+      "module": "api/shop/StockModel.js",
+      "family_id": "shop",
+      "nav_consuming": true
+    },
+    {
       "module": "api/shop/types.js",
       "family_id": "shop",
       "nav_consuming": true
@@ -13455,17 +13465,6 @@
       "nav_consuming": true
     },
     {
-      "id": "shop-posted-player-rows",
-      "module": "api/shop/Shop.js",
-      "selector": "Shop.player",
-      "add": true,
-      "reason": "Host additionally exposes posted player sale rows with the same exact shape as stock rows.",
-      "runtime": "crates/script-js/src/shim/shop.js:40",
-      "declaration": "player(): { name: string | null; count: number; slot: number }[];",
-      "family_id": "shop",
-      "nav_consuming": true
-    },
-    {
       "id": "hunting-prayer-site-advisory",
       "module": "api/combat/hunting/logic.js",
       "selector": "prayerFor",
@@ -13698,17 +13697,6 @@
       "nav_consuming": false
     },
     {
-      "id": "not-impl:api/shop/Shop.js:Shop.buyById",
-      "module": "api/shop/Shop.js",
-      "selector": "Shop.buyById",
-      "operation": "not-impl",
-      "reason": "Unconditional not-impl: no arguments are inspected and no successful result is produced.",
-      "runtime": "crates/script-js/src/shim/shop.js:64",
-      "async": false,
-      "family_id": "shop",
-      "nav_consuming": true
-    },
-    {
       "id": "not-impl:api/ai/quests/exec/primitives.js:gotoNpc",
       "module": "api/ai/quests/exec/primitives.js",
       "selector": "gotoNpc",
@@ -13806,17 +13794,6 @@
       "async": false,
       "family_id": "clues",
       "nav_consuming": true
-    },
-    {
-      "id": "not-impl:api/trade/drivePartnerTrade.js:stableClosedPoll",
-      "module": "api/trade/drivePartnerTrade.js",
-      "selector": "stableClosedPoll",
-      "operation": "not-impl",
-      "reason": "Unconditional not-impl: rs2b0t's time-based trade-closure pacing is not carried into native compatibility.",
-      "runtime": "crates/script-js/src/shim/drive_partner_trade.js:59",
-      "async": false,
-      "family_id": "trade",
-      "nav_consuming": false
     },
     {
       "id": "not-impl:api/market/catalog.js:buildCatalog",
@@ -23130,16 +23107,6 @@
   ],
   "not_impl_debt": [
     {
-      "family_id": "shop",
-      "member": "buyById",
-      "selector": "Shop.buyById",
-      "module": "api/shop/Shop.js",
-      "state": "not-impl",
-      "source": "crates/script-js/src/shim/shop.js:64",
-      "reason": "Unconditional not-impl: no arguments are inspected and no successful result is produced.",
-      "overlay_id": "not-impl:api/shop/Shop.js:Shop.buyById"
-    },
-    {
       "family_id": "quests",
       "member": "gotoNpc",
       "selector": "gotoNpc",
@@ -23228,16 +23195,6 @@
       "source": "crates/script-js/src/shim/clue_duel_travel.js:10",
       "reason": "Unconditional not-impl: clue-duel search state remains a behavior family for the compat rearchitecture; no successful result is produced.",
       "overlay_id": "not-impl:api/ai/clues/duelTravel.js:resetClueDuelSearch"
-    },
-    {
-      "family_id": "trade",
-      "member": "stableClosedPoll",
-      "selector": "stableClosedPoll",
-      "module": "api/trade/drivePartnerTrade.js",
-      "state": "not-impl",
-      "source": "crates/script-js/src/shim/drive_partner_trade.js:59",
-      "reason": "Unconditional not-impl: rs2b0t's time-based trade-closure pacing is not carried into native compatibility.",
-      "overlay_id": "not-impl:api/trade/drivePartnerTrade.js:stableClosedPoll"
     },
     {
       "family_id": "market",
@@ -24490,7 +24447,7 @@
       "type_aliases": 0,
       "name_aliases": 0,
       "callbacks": 1,
-      "not_impl_debt": 1
+      "not_impl_debt": 0
     },
     {
       "family_id": "skills",
@@ -24538,7 +24495,7 @@
       "type_aliases": 0,
       "name_aliases": 0,
       "callbacks": 12,
-      "not_impl_debt": 1
+      "not_impl_debt": 0
     },
     {
       "family_id": "walking",

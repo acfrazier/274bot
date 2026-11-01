@@ -164,6 +164,7 @@ const BANK_LOG_CALLBACK: &[&str] = &["log"];
 const BANK_DEPOSIT_CALLBACKS: &[&str] = &["match", "log"];
 const BANK_NEAREST_CALLBACKS: &[&str] = &["deposit", "afterDeposit", "log"];
 
+const SHOP_BUY_BY_ID_FAMILY: &str = "shop-buy-by-id";
 pub(crate) const BANK_FAMILY_DESCRIPTORS: &[BankFamilyDescriptor] = &[
     BankFamilyDescriptor {
         name: "bank_op",
@@ -1549,6 +1550,7 @@ pub(crate) fn callbacks_of(family: &str) -> Option<&'static [&'static str]> {
                 .find(|entry| entry.name == family)
                 .map(|entry| entry.callbacks)
         })
+        .or_else(|| (family == SHOP_BUY_BY_ID_FAMILY).then_some(&[]))
 }
 
 /// Whether a live row of `family` is running (its begin returned
@@ -1733,6 +1735,7 @@ pub(crate) enum SeatStartPayload {
     },
     Bank(script::bank::request::BankSeatArgs),
     CastNpc(script::combat::CastNpcRequest),
+    Shop(script::native_shop::ShopBuyByIdArgs),
 }
 
 impl SeatStartPayload {
@@ -1749,6 +1752,7 @@ impl SeatStartPayload {
             }
             Self::Bank(args) => isolate_fb::SeatStartArgsRef::Bank(args),
             Self::CastNpc(request) => isolate_fb::SeatStartArgsRef::CastNpc(request),
+            Self::Shop(args) => isolate_fb::SeatStartArgsRef::Shop(args),
         }
     }
 }
@@ -3443,6 +3447,7 @@ fn native_kind_for_family(family: &str) -> Option<native::request::NativeKind> {
         "combat" => NativeKind::Combat,
         "quest-progress" => NativeKind::QuestProgress,
         "cast-npc" => NativeKind::CastNpc,
+        SHOP_BUY_BY_ID_FAMILY => NativeKind::Shop,
         "hunt-fight" | "hunt-hold" | "hunt-retreat" | "hunt-walkspot" | "hunt-enter" => {
             NativeKind::Hunt
         }
@@ -3676,6 +3681,85 @@ pub(crate) fn start(family: &str, args: Value, hooks: Vec<Hook>, at: usize) -> S
     start_with_parent(family, args, hooks, at, None)
 }
 
+fn start_shop_family(value: Value, hooks: Vec<Hook>, at: usize, parent: Option<Handle>) -> Started {
+    if IN_BEGIN.with(Cell::get) {
+        return Started::Refused("a machine begin may not start a machine".into());
+    }
+    if !hooks.is_empty() {
+        return Started::Refused("Shop.buyById does not accept callbacks".into());
+    }
+    let context = HOST.with(|host| host.borrow().start_context_for(parent));
+    if context.history_expired {
+        return Started::Refused("history expired".into());
+    }
+    if context.parent_revoked {
+        return Started::Refused("parent not live".into());
+    }
+    if !HOST.with(|host| host.borrow().execution.is_some()) {
+        return Started::Refused("native Shop seat requires an active execution".into());
+    }
+    if HOST.with(|host| host.borrow().pending_starts.len() >= MAX_PENDING_SEAT_STARTS) {
+        return Started::Refused("native seat start carry is full".into());
+    }
+    let args = match serde_json::from_value::<script::native_shop::ShopBuyByIdArgs>(value) {
+        Ok(args) => args,
+        Err(error) => return Started::Refused(format!("shop.buyById arguments: {error}")),
+    };
+    let Some(handle) = HOST.with(|host| host.borrow_mut().allocate_handle()) else {
+        return Started::Refused("machine handle exhausted".into());
+    };
+    let id = match RequestId::isolate(handle) {
+        Ok(id) => id,
+        Err(_) => return Started::Refused("native Shop seat identity exhausted".into()),
+    };
+    let hooks = hooks.into_iter().map(Rc::new).collect();
+    HOST.with(|host| {
+        let mut host = host.borrow_mut();
+        host.pending_starts.push(PendingSeatStart {
+            id,
+            parent: context.seat_parent,
+            local_parent: context.local_parent,
+            kind: native::request::NativeKind::Shop,
+            args: SeatStartPayload::Shop(args),
+        });
+        host.newest
+            .retain(|(group, _)| *group != SHOP_BUY_BY_ID_FAMILY);
+        host.newest.push((SHOP_BUY_BY_ID_FAMILY, handle));
+        host.abort_superseded(at);
+        let clock = host.fresh_clock();
+        let inherited_baseline = WALK_BASELINE.with(Cell::get);
+        let intent_baseline = inherited_baseline.unwrap_or_else(observed_user_move_intent_seq);
+        let carries_walk_baseline = inherited_baseline.is_some();
+        host.rows.push(Row {
+            handle,
+            family: SHOP_BUY_BY_ID_FAMILY,
+            exclusive: Some(SHOP_BUY_BY_ID_FAMILY),
+            sync_hooks: &[],
+            clock,
+            hooks,
+            calls: 0,
+            last_snapshot: None,
+            reply: None,
+            pending: None,
+            machine: Box::new(ShopSeatMachine),
+            seat_parent: context.seat_parent,
+            parent_row: context.parent_row,
+            native_kind: Some(native::request::NativeKind::Shop),
+            admitted: false,
+            awaiting_seat_terminal: false,
+            authority_revoked: false,
+            phase: native::NativePhase::Preparing,
+            manual_walk_event_sent: false,
+            intent_baseline,
+            carries_walk_baseline,
+            walking_operation: false,
+            rebaseline_on_resume: false,
+        });
+        host.publish_walking();
+        Started::Running(handle)
+    })
+}
+
 fn start_bank_family(
     family: &'static str,
     value: Value,
@@ -3842,6 +3926,32 @@ impl Machine for BankSeatMachine {
     }
 }
 
+struct ShopSeatMachine;
+
+impl Machine for ShopSeatMachine {
+    fn step(&mut self, _cx: &mut Cx<'_>) -> Step<Value> {
+        Step::Wait
+    }
+
+    fn snapshot_sensitive(&self) -> bool {
+        true
+    }
+
+    fn snapshot_step(&mut self, _cx: &mut Cx<'_>) -> Step<Value> {
+        Step::Wait
+    }
+
+    fn abort(&mut self, _why: AbortReason) {}
+
+    fn release(&self) -> Option<InteractReq> {
+        None
+    }
+
+    fn walking_operation(&self) -> bool {
+        false
+    }
+}
+
 pub(crate) fn start_with_parent(
     family: &str,
     args: Value,
@@ -3851,6 +3961,9 @@ pub(crate) fn start_with_parent(
 ) -> Started {
     if IN_BEGIN.with(Cell::get) {
         return Started::Refused("a machine begin may not start a machine".into());
+    }
+    if family == SHOP_BUY_BY_ID_FAMILY {
+        return start_shop_family(args, hooks, at, parent);
     }
     if let Some(descriptor) = bank_family_descriptor(family) {
         return start_bank_family(descriptor.name, args, hooks, at, parent);

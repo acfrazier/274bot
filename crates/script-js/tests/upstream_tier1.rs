@@ -405,7 +405,6 @@ import { bestHeldToolNames, surplusHeldToolNames } from '#/bot/api/acquisition/T
 import { resolveBankOpenRoute, NEARBY_BANK_RADIUS } from '#/bot/api/bank/Banking.js';
 import { RANDOM_EVENT_CASKET_ID as bankRulesCasket } from '#/bot/api/bank/bankRules.js';
 import { parseTradePartnerHeader } from '#/bot/api/trade/Trade.js';
-import { tradeScreenState, stableClosedPoll } from '#/bot/api/trade/drivePartnerTrade.js';
 import { shopOpBatch, SELL_STACK_STEP } from '#/bot/api/shop/Shop.js';
 import { resolveCombatStyle, parseInterfaceCombatStyle, CombatStyleController } from '#/bot/api/combat/CombatStyle.js';
 import { QUEST_ROCK_TYPES, GAS_ROCK_TICKS, BROKEN_PICKAXE } from '#/bot/data/miningRocks.js';
@@ -839,7 +838,6 @@ await refuses('Fight.hasChaseTarget', () => Fight.prototype.hasChaseTarget.call(
 await refuses('ClueDuelSearch.constructor', () => new ClueDuelSearch());
 await refuses('ClueDuelSearch.tick', () => ClueDuelSearch.prototype.tick.call({}));
 await refuses('resetClueDuelSearch', () => resetClueDuelSearch());
-await refuses('stableClosedPoll', () => stableClosedPoll());
 await refuses('buildCatalog', () => buildCatalog());
 await refuses('searchCatalog', () => searchCatalog());
 await refuses('resolveByName', () => resolveByName());

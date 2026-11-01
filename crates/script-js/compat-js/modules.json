@@ -530,5 +530,13 @@
   {
     "module": "event/webwalk/WalkExecutor.js",
     "shim": "walk_executor.js"
+  },
+  {
+    "module": "api/shop/StockModel.js",
+    "shim": "stock_model.js"
+  },
+  {
+    "module": "api/shop/shopPrice.js",
+    "shim": "shop_price.js"
   }
 ]

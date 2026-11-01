@@ -1,14 +1,5 @@
 [
   {
-    "id": "not-impl:api/shop/Shop.js:Shop.buyById",
-    "module": "api/shop/Shop.js",
-    "selector": "Shop.buyById",
-    "operation": "not-impl",
-    "reason": "Unconditional not-impl: no arguments are inspected and no successful result is produced.",
-    "runtime": "crates/script-js/src/shim/shop.js:64",
-    "async": false
-  },
-  {
     "id": "not-impl:api/ai/quests/exec/primitives.js:gotoNpc",
     "module": "api/ai/quests/exec/primitives.js",
     "selector": "gotoNpc",
@@ -87,15 +78,6 @@
     "operation": "not-impl",
     "reason": "Unconditional not-impl: clue-duel search state remains a behavior family for the compat rearchitecture; no successful result is produced.",
     "runtime": "crates/script-js/src/shim/clue_duel_travel.js:10",
-    "async": false
-  },
-  {
-    "id": "not-impl:api/trade/drivePartnerTrade.js:stableClosedPoll",
-    "module": "api/trade/drivePartnerTrade.js",
-    "selector": "stableClosedPoll",
-    "operation": "not-impl",
-    "reason": "Unconditional not-impl: rs2b0t's time-based trade-closure pacing is not carried into native compatibility.",
-    "runtime": "crates/script-js/src/shim/drive_partner_trade.js:59",
     "async": false
   },
   {

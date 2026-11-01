@@ -328,6 +328,8 @@ pub enum SeatStartArgs {
     Bank(crate::bank::request::BankSeatArgs),
     /// Decoded native spell cast on one exact NPC.
     CastNpc(crate::combat::CastNpcRequest),
+    /// Decoded typed Shop.buyById arguments.
+    Shop(crate::native_shop::ShopBuyByIdArgs),
 }
 
 /// One decoded decision answer.

@@ -940,7 +940,7 @@
         "callbacks": 1,
         "type_aliases": 0,
         "name_aliases": 0,
-        "not_impl_debt": 1
+        "not_impl_debt": 0
       }
     },
     {
@@ -1052,7 +1052,7 @@
         "callbacks": 12,
         "type_aliases": 0,
         "name_aliases": 0,
-        "not_impl_debt": 1
+        "not_impl_debt": 0
       }
     },
     {

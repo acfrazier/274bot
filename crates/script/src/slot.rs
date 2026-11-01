@@ -9,6 +9,8 @@ mod api_seat;
 mod bank_seat;
 pub mod compiled;
 mod pending;
+#[path = "slot/shop.rs"]
+mod shop_seat;
 use crate::native::{Interrupt, RetainedMemory, ScriptFailure, ScriptFlow, StopReason};
 pub use compiled::{prepare_config, CompiledDelivery};
 use compiled::{CompiledRun, Preparation};
@@ -486,6 +488,7 @@ pub struct SlotScript {
     held_channel_refusals: Vec<u64>,
     api: Option<Box<api_seat::ApiSeat>>,
     bank: Option<Box<bank_seat::BankSeat>>,
+    shop: Option<Box<shop_seat::ShopSeat>>,
     retained: Option<Arc<std::sync::Mutex<RetainedMemory>>>,
     native_runtime: crate::native::ledger::Runtime,
     quest_pairs: Option<Arc<dyn crate::quester::pair::QuestPairPort>>,
@@ -615,6 +618,7 @@ impl SlotScript {
             held_channel_refusals: Vec::new(),
             api: None,
             bank: None,
+            shop: None,
             retained: None,
             native_runtime: Default::default(),
             quest_pairs: None,
@@ -1172,6 +1176,7 @@ impl SlotScript {
     /// the runtime generation, so its respawn does not bump it again.
     fn spawn_surface(&mut self, start: SurfaceStart, bump: bool) -> Result<(), StartLoadError> {
         self.bank_runtime_boundary();
+        self.shop_runtime_boundary();
         let run_generation = self
             .runtime_generation
             .checked_add(u64::from(bump))
@@ -1598,6 +1603,7 @@ impl SlotScript {
         self.held_channel_refusals.clear();
         self.teardown_api(reason);
         self.bank_runtime_boundary();
+        self.shop_runtime_boundary();
         self.native_runtime.revoke();
         self.evidence_wait_run = None;
         self.retained = None;
@@ -1759,6 +1765,7 @@ impl SlotScript {
         self.seat_fence.revoke();
         self.api_session_boundary(reconnect);
         self.bank_session_boundary(reconnect);
+        self.shop_session_boundary(reconnect);
         if !self.surface_active() {
             // As with Stop, registered hooks run on the pump thread.
             // A connection boundary aborts live work but retains session
@@ -2079,6 +2086,10 @@ impl SlotScript {
             result_values_len +=
                 api.result_values(seat.results(), &mut result_values[result_values_len..]);
         }
+        if let (Some(shop), Some(seat)) = (self.shop.as_deref(), self.seat.as_ref()) {
+            result_values_len +=
+                shop.result_values(seat.results(), &mut result_values[result_values_len..]);
+        }
         if let (Some(seat), Some(details)) = (self.seat.as_ref(), details.as_ref()) {
             native.seat_page = Some(
                 crate::native::seat_rows::SeatPageInput::new(
@@ -2140,6 +2151,10 @@ impl SlotScript {
         if let (Some(api), Some(seat)) = (self.api.as_deref(), self.seat.as_ref()) {
             result_values_len +=
                 api.result_values(seat.results(), &mut result_values[result_values_len..]);
+        }
+        if let (Some(shop), Some(seat)) = (self.shop.as_deref(), self.seat.as_ref()) {
+            result_values_len +=
+                shop.result_values(seat.results(), &mut result_values[result_values_len..]);
         }
         if let (Some(seat), Some(details)) = (self.seat.as_ref(), details.as_ref()) {
             native.seat_page = Some(
@@ -2833,6 +2848,7 @@ impl SlotScript {
                         SeatStartArgs::Bank(request) => {
                             self.start_bank(start.id, request);
                         }
+                        SeatStartArgs::Shop(request) => self.start_shop(start.id, request),
                         SeatStartArgs::Empty => {}
                     }
                 }
@@ -3918,6 +3934,7 @@ impl SlotScript {
             isolate.on_snapshot_change_at(ctx.tick, input_identity);
             self.tick_api(ctx);
             self.tick_bank(ctx);
+            self.tick_shop(ctx);
             self.capture_native_seat_rows();
             self.settle_api_seat_terminals();
             return;
@@ -3961,6 +3978,7 @@ impl SlotScript {
             }
             self.tick_api(ctx);
             self.tick_bank(ctx);
+            self.tick_shop(ctx);
             self.capture_native_seat_rows();
             self.settle_api_seat_terminals();
             return;
