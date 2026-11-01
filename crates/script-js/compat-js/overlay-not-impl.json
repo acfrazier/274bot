@@ -5,7 +5,7 @@
     "selector": "Shop.buyById",
     "operation": "not-impl",
     "reason": "Unconditional not-impl: no arguments are inspected and no successful result is produced.",
-    "runtime": "crates/script-js/src/shim/shop.js:64",
+    "runtime": "crates/script-js/src/shim/shop.js:59",
     "async": false
   },
   {

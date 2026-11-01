@@ -13310,7 +13310,7 @@
       "module": "client/shell/Skill.js",
       "selector": "Skill.used",
       "reason": "The host exposes one static frozen skill-use mask; it has no game generation and consumers treat it as read-only.",
-      "runtime": "crates/script-js/src/materialize/client_adapter_v8.rs:1032",
+      "runtime": "crates/script-js/src/materialize/client_adapter_v8.rs:1038",
       "declaration": "static readonly used: readonly boolean[];",
       "family_id": "client-adapter",
       "nav_consuming": false
@@ -13997,7 +13997,7 @@
       "selector": "Shop.buyById",
       "operation": "not-impl",
       "reason": "Unconditional not-impl: no arguments are inspected and no successful result is produced.",
-      "runtime": "crates/script-js/src/shim/shop.js:64",
+      "runtime": "crates/script-js/src/shim/shop.js:59",
       "async": false,
       "family_id": "shop",
       "nav_consuming": true
@@ -23451,7 +23451,7 @@
       "selector": "Shop.buyById",
       "module": "api/shop/Shop.js",
       "state": "not-impl",
-      "source": "crates/script-js/src/shim/shop.js:64",
+      "source": "crates/script-js/src/shim/shop.js:59",
       "reason": "Unconditional not-impl: no arguments are inspected and no successful result is produced.",
       "overlay_id": "not-impl:api/shop/Shop.js:Shop.buyById"
     },

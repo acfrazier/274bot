@@ -521,7 +521,7 @@
     "module": "client/shell/Skill.js",
     "selector": "Skill.used",
     "reason": "The host exposes one static frozen skill-use mask; it has no game generation and consumers treat it as read-only.",
-    "runtime": "crates/script-js/src/materialize/client_adapter_v8.rs:1032",
+    "runtime": "crates/script-js/src/materialize/client_adapter_v8.rs:1038",
     "declaration": "static readonly used: readonly boolean[];"
   },
   {
