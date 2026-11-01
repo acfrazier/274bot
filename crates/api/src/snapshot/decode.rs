@@ -1367,9 +1367,9 @@ impl GameSnapshot {
         dirty
     }
 
-fn projection_locs_should_build(scene_available: bool, demanded: bool) -> bool {
-    scene_available && demanded
-}
+    fn projection_locs_should_build(scene_available: bool, demanded: bool) -> bool {
+        scene_available && demanded
+    }
 
     fn rebuild_projection_locs(&mut self, client: &Client) {
         if !Self::projection_locs_should_build(

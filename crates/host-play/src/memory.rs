@@ -2851,9 +2851,7 @@ impl Run {
     ) -> Option<usize> {
         match cell {
             Some(Q4FrameCell::Pause) if !pause_requested => Some(bot_count),
-            Some(Q4FrameCell::Pause)
-                if !pause_started || (resume_requested && !resume_counts) =>
-            {
+            Some(Q4FrameCell::Pause) if !pause_started || (resume_requested && !resume_counts) => {
                 None
             }
             Some(Q4FrameCell::Pause) if resume_counts => Some(bot_count),
@@ -3758,9 +3756,20 @@ mod tests {
     fn q4_expected_active_tracks_pause_resume_and_stop_confirmations() {
         let n = 3;
         let expected = Run::q4_expected_active_for;
-        assert_eq!(expected(None, n, false, false, false, false, false), Some(n));
         assert_eq!(
-            expected(Some(Q4FrameCell::Pause), n, false, false, false, false, false),
+            expected(None, n, false, false, false, false, false),
+            Some(n)
+        );
+        assert_eq!(
+            expected(
+                Some(Q4FrameCell::Pause),
+                n,
+                false,
+                false,
+                false,
+                false,
+                false
+            ),
             Some(n)
         );
         assert_eq!(
@@ -3780,7 +3789,15 @@ mod tests {
             Some(0)
         );
         assert_eq!(
-            expected(Some(Q4FrameCell::Stop), n, false, false, false, false, false),
+            expected(
+                Some(Q4FrameCell::Stop),
+                n,
+                false,
+                false,
+                false,
+                false,
+                false
+            ),
             Some(n)
         );
     }

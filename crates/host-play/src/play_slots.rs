@@ -2241,10 +2241,10 @@ pub(super) fn update_transfer_title(
     true
 }
 
-
 fn slot_busy_requires_tick(running: bool, frame_delivered: bool) -> bool {
     running || frame_delivered
 }
+
 #[cfg(test)]
 mod capacity_class_tests {
     use super::capacity_service_class;
