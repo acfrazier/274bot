@@ -1761,6 +1761,7 @@ impl LoadIsolate {
                     if let Some(entry) = lock_after_isolate_failure(&self.in_flight).as_mut() {
                         entry.2 = Instant::now();
                     }
+                    break Ready::Ready;
                 }
                 Ok(SetupMessage::Ready(Err(e))) => break Ready::Failed(e),
                 Err(true) => {
