@@ -213,6 +213,64 @@ pub(super) fn wire_runtime(
     frame_interest: std::sync::Arc<std::sync::atomic::AtomicUsize>,
     loc_projection_interest: std::sync::Arc<std::sync::atomic::AtomicBool>,
 ) -> Result<(), String> {
+    wire_runtime_impl(
+        runtime,
+        source,
+        shape,
+        siblings,
+        game_data,
+        named_banks,
+        wilderness_zones,
+        local_state,
+        frame_interest,
+        loc_projection_interest,
+        true,
+    )
+}
+
+#[cfg(test)]
+#[allow(clippy::too_many_arguments)] // test-only eager loader comparison
+pub(super) fn wire_runtime_eager(
+    runtime: &mut Runtime,
+    source: &str,
+    shape: LoadShape,
+    siblings: &[(String, String)],
+    game_data: Option<std::sync::Arc<api::game_data::SelectedGameData>>,
+    named_banks: std::sync::Arc<api::named_banks::NamedBankFacts>,
+    wilderness_zones: std::sync::Arc<[script::native::walk::WildernessZonePair]>,
+    local_state: Option<std::sync::Arc<script::local_state::SlotState>>,
+    frame_interest: std::sync::Arc<std::sync::atomic::AtomicUsize>,
+    loc_projection_interest: std::sync::Arc<std::sync::atomic::AtomicBool>,
+) -> Result<(), String> {
+    wire_runtime_impl(
+        runtime,
+        source,
+        shape,
+        siblings,
+        game_data,
+        named_banks,
+        wilderness_zones,
+        local_state,
+        frame_interest,
+        loc_projection_interest,
+        false,
+    )
+}
+
+#[allow(clippy::too_many_arguments)] // runtime wiring takes the isolate's per-run inputs
+fn wire_runtime_impl(
+    runtime: &mut Runtime,
+    source: &str,
+    shape: LoadShape,
+    siblings: &[(String, String)],
+    game_data: Option<std::sync::Arc<api::game_data::SelectedGameData>>,
+    named_banks: std::sync::Arc<api::named_banks::NamedBankFacts>,
+    wilderness_zones: std::sync::Arc<[script::native::walk::WildernessZonePair]>,
+    local_state: Option<std::sync::Arc<script::local_state::SlotState>>,
+    frame_interest: std::sync::Arc<std::sync::atomic::AtomicUsize>,
+    loc_projection_interest: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    apply_import_gate: bool,
+) -> Result<(), String> {
     if shape == LoadShape::Reject {
         return Err("not a bot shape".to_string());
     }
@@ -931,13 +989,15 @@ pub(super) fn wire_runtime(
     side.push(bot);
     // Keep gated modules if the bot, one of its siblings, or any other
     // always-loaded side module imports them.
-    crate::shim::filter_gated_modules(
-        &mut side,
-        siblings
-            .iter()
-            .map(|(url, _)| url.as_str())
-            .chain(std::iter::once(crate::shim::BOT_MODULE)),
-    );
+    if apply_import_gate {
+        crate::shim::filter_gated_modules(
+            &mut side,
+            siblings
+                .iter()
+                .map(|(url, _)| url.as_str())
+                .chain(std::iter::once(crate::shim::BOT_MODULE)),
+        );
+    }
     let side: Vec<&rustyscript::Module> = side.iter().collect();
     // Loading evaluates the modules, so a missing `tick`/default
     // export, an unresolvable import, or a syntax error surfaces

@@ -81,3 +81,31 @@ fn per_start_import_closure_allocation_is_bounded() {
         allocated.bytes_total
     );
 }
+
+#[test]
+fn missing_shim_import_error_names_module_path() {
+    const MISSING_PATH: &str = "/rs2b0t/bot/api/map/__cf029_missing_module.js";
+    let source = r#"
+import '../../api/map/__cf029_missing_module.js';
+export default class MissingShimModule extends LoopingBot {}
+"#;
+    let isolate = script_js::LoadIsolate::spawn(
+        source.to_owned(),
+        script_js::LoadShape::CompatClass,
+        Vec::new(),
+    )
+    .expect("spawn missing-module fixture");
+
+    // Probe waits for setup completion; the following read retains the exact
+    // loader diagnostic instead of reducing it to the probe channel failure.
+    let _ = isolate.probe("true");
+    let error = match isolate.poll_ready() {
+        script_js::Ready::Failed(error) => error,
+        other => panic!("missing shim import unexpectedly loaded: {other:?}"),
+    };
+    assert!(
+        error.contains("__cf029_missing_module.js"),
+        "missing shim import error must name {MISSING_PATH}: {error}"
+    );
+    isolate.join();
+}

@@ -542,15 +542,15 @@ const WAVE_THREE_MODULE_PATHS: [&str; 6] = [
     STOCK_MODEL_MODULE,
     SHOP_PRICE_MODULE,
 ];
-const GATED_MODULE_PATHS: [&str; 8] = [
-    DECLARED_SURFACE_MODULE,
-    RS2B0T_API_MODULE,
-    WALK_DESTINATIONS_MODULE,
-    REGIONS_MODULE,
-    WILDERNESS_MODULE,
-    WALK_EXECUTOR_MODULE,
-    STOCK_MODEL_MODULE,
-    SHOP_PRICE_MODULE,
+const EAGER_MODULE_PATHS: [&str; 4] = [
+    // Isolate and lifecycle code call Execution globals without an import.
+    "/rs2b0t/bot/api/execution/Execution.js",
+    // The prelude settings getter reads this helper through globalThis.
+    "/rs2b0t/bot/geometry/Tile.js",
+    // Native TreeBot code reads the BranchTask constructor through globalThis.
+    "/rs2b0t/bot/api/bot/Bot.js",
+    // Scheduler reads this context view through globalThis.
+    "/rs2b0t/bot/runtime/ScriptRunner.js",
 ];
 
 pub fn shim_modules() -> Vec<Module> {
@@ -1012,10 +1012,7 @@ pub fn shim_modules() -> Vec<Module> {
             WALK_DESTINATIONS_MODULE,
             include_str!("walk_destinations.js"),
         ),
-        Module::new(
-            DECLARED_SURFACE_MODULE,
-            include_str!("declared_surface.js"),
-        ),
+        Module::new(DECLARED_SURFACE_MODULE, include_str!("declared_surface.js")),
         Module::new(RS2B0T_API_MODULE, include_str!("rs2b0t_api.js")),
         Module::new(REGIONS_MODULE, include_str!("regions.js")),
         Module::new(WILDERNESS_MODULE, include_str!("wilderness.js")),
@@ -1036,6 +1033,7 @@ struct ModuleEdges {
 struct ShimImportGraph {
     edges: Vec<ModuleEdges>,
     paths: Vec<std::path::PathBuf>,
+    gated: Vec<bool>,
     base_dir: Option<std::path::PathBuf>,
     complete: bool,
 }
@@ -1055,6 +1053,10 @@ fn build_shim_import_graph() -> ShimImportGraph {
             .iter()
             .map(|module| module.filename().to_path_buf())
             .collect(),
+        gated: modules
+            .iter()
+            .map(|module| !is_eager_module(module.filename()))
+            .collect(),
         base_dir: Some(current_dir.clone()),
         complete: true,
         ..ShimImportGraph::default()
@@ -1073,10 +1075,10 @@ fn build_shim_import_graph() -> ShimImportGraph {
     graph
 }
 
-fn is_gated_module(path: &Path) -> bool {
-    GATED_MODULE_PATHS
+fn is_eager_module(path: &Path) -> bool {
+    EAGER_MODULE_PATHS
         .iter()
-        .any(|gated| Path::new(gated) == path)
+        .any(|eager| Path::new(eager) == path)
 }
 
 fn module_specifier(path: &Path, current_dir: &Path) -> Option<deno_ast::ModuleSpecifier> {
@@ -1092,12 +1094,10 @@ fn module_edges(
     modules: &[Module],
 ) -> Option<ModuleEdges> {
     let mut tokens = deno_ast::lex(source, MediaType::TypeScript);
-    if tokens.iter().any(|item| {
-        matches!(
-            &item.inner,
-            TokenOrComment::Token(Token::Error(_))
-        )
-    }) {
+    if tokens
+        .iter()
+        .any(|item| matches!(&item.inner, TokenOrComment::Token(Token::Error(_))))
+    {
         return None;
     }
     tokens.retain(|item| matches!(&item.inner, TokenOrComment::Token(_)));
@@ -1261,7 +1261,12 @@ fn dynamic_import_specifier(tokens: &[LexedItem], index: usize) -> Option<&str> 
     match token_at(tokens, index)? {
         Token::Str { value, .. } => Some(value.as_ref()),
         Token::BackQuote => match (token_at(tokens, index + 1)?, token_at(tokens, index + 2)?) {
-            (Token::Template { cooked: Ok(value), .. }, Token::BackQuote) => Some(value.as_ref()),
+            (
+                Token::Template {
+                    cooked: Ok(value), ..
+                },
+                Token::BackQuote,
+            ) => Some(value.as_ref()),
             _ => None,
         },
         _ => None,
@@ -1344,7 +1349,10 @@ pub(crate) fn filter_gated_modules<'a>(
     roots: impl IntoIterator<Item = &'a str>,
 ) {
     let graph = shim_import_graph();
-    if !graph.complete || graph.paths.len() > modules.len() {
+    if !graph.complete
+        || graph.paths.len() > modules.len()
+        || graph.gated.len() != graph.paths.len()
+    {
         return;
     }
     let Ok(current_dir) = std::env::current_dir() else {
@@ -1360,10 +1368,6 @@ pub(crate) fn filter_gated_modules<'a>(
         return;
     }
 
-    let gated = modules
-        .iter()
-        .map(|module| is_gated_module(module.filename()))
-        .collect::<Vec<_>>();
     let mut pending = VecDeque::with_capacity(modules.len());
     for root in roots {
         let Some(index) = modules
@@ -1377,7 +1381,8 @@ pub(crate) fn filter_gated_modules<'a>(
     // load_modules evaluates every supplied side module. Include all modules
     // that remain eager as roots, as well as the script and its siblings.
     pending.extend(
-        gated
+        graph
+            .gated
             .iter()
             .enumerate()
             .filter_map(|(index, &is_gated)| (!is_gated).then_some(index)),
@@ -1390,7 +1395,7 @@ pub(crate) fn filter_gated_modules<'a>(
             continue;
         }
         visited[index] = true;
-        if gated[index] {
+        if graph.gated.get(index).copied().unwrap_or(false) {
             needed[index] = true;
         }
         let edges = if let Some(edges) = graph.edges.get(index) {
@@ -1417,7 +1422,7 @@ pub(crate) fn filter_gated_modules<'a>(
     modules.retain(|_| {
         let current_index = index;
         index += 1;
-        !gated[current_index] || needed[current_index]
+        !graph.gated.get(current_index).copied().unwrap_or(false) || needed[current_index]
     });
 }
 #[cfg(feature = "test-hooks")]
@@ -1485,18 +1490,54 @@ pub fn remap_catalog_imports(source: &str) -> String {
 mod wave_three_tests {
     use super::*;
 
+    const THIEVER_IMPORTS: &str = r#"import '../../api/combat/food.js';
+import '../../api/tasks/Anchor.js';
+import '../../api/bot/Bot.js';
+import '../../api/execution/Execution.js';
+import '../../api/game/Game.js';
+import '../../event/webwalk/geometry/Reachability.js';
+import '../../geometry/Tile.js';
+import '../../api/ui/dialogue/ChatDialog.js';
+import '../../api/bank/Bank.js';
+import '../../api/bank/Banking.js';
+import '../../api/bank/BankLocations.js';
+import '../../event/webwalk/walkOpening.js';
+import '../../api/inventory/Inventory.js';
+import '../../api/skills/Skills.js';
+import '../../api/grounditems/GroundItems.js';
+import '../../api/npcs/Npcs.js';
+import '../../paint/Paint.js';
+import '../../paint/paintLogic.js';
+import '../../runtime/ScriptRunner.js';
+import '../../runtime/Settings.js';
+import '../../api/walking/Traversal.js';
+import '../../data/pickpocketTargets.js';
+import '../../api/thieving/targets.js';
+import '../../api/thieving/stealRules.js';
+import '../../api/loadout/loadoutPlan.js';
+import '../../api/loadout/loadoutSetting.js';
+export default class T {}"#;
+
+    fn gated_module_paths() -> Vec<String> {
+        shim_modules()
+            .iter()
+            .filter(|module| !is_eager_module(module.filename()))
+            .map(|module| module.filename().display().to_string())
+            .collect()
+    }
+
     fn retained_gated(source: &str) -> Vec<String> {
+        let gated_paths = gated_module_paths();
         let mut modules = shim_modules();
         modules.push(Module::new(BOT_MODULE, source));
         filter_gated_modules(&mut modules, std::iter::once(BOT_MODULE));
-        GATED_MODULE_PATHS
-            .iter()
+        gated_paths
+            .into_iter()
             .filter(|path| {
                 modules
                     .iter()
                     .any(|module| module.filename() == Path::new(path))
             })
-            .map(|path| (*path).to_string())
             .collect()
     }
 
@@ -1505,6 +1546,40 @@ mod wave_three_tests {
             .into_iter()
             .filter(|path| WAVE_THREE_MODULE_PATHS.contains(&path.as_str()))
             .collect()
+    }
+
+    #[test]
+    fn unimported_modules_keep_global_hooks_and_drop_unreferenced_shims() {
+        let mut modules = shim_modules();
+        modules.push(Module::new(BOT_MODULE, "export default class T {}"));
+        filter_gated_modules(&mut modules, std::iter::once(BOT_MODULE));
+
+        // These modules install globals that native or prelude code reads directly.
+        // ScriptRunner also imports _kernel, which imports Execution.
+        let mut retained_shims = modules
+            .iter()
+            .filter_map(|module| {
+                let path = module.filename().to_str()?;
+                (path.starts_with("/rs2b0t/bot/") && path != BOT_MODULE).then_some(path)
+            })
+            .collect::<Vec<_>>();
+        retained_shims.sort_unstable();
+        assert!(
+            modules
+                .iter()
+                .any(|module| module.filename() == Path::new(BOT_MODULE)),
+            "bot root should remain loaded"
+        );
+        assert_eq!(
+            retained_shims,
+            [
+                "/rs2b0t/bot/api/bot/Bot.js",
+                "/rs2b0t/bot/api/execution/Execution.js",
+                "/rs2b0t/bot/geometry/Tile.js",
+                "/rs2b0t/bot/runtime/ScriptRunner.js",
+                "/rs2b0t/bot/shim/_kernel.js",
+            ]
+        );
     }
 
     #[test]
@@ -1521,18 +1596,69 @@ mod wave_three_tests {
     }
 
     #[test]
-    fn importing_public_api_barrel_retains_both_barrels_and_walk_catalog() {
-        let source = remap_catalog_imports(
-            "import '@rs2b0t/api'; export default class T {}",
-        );
-        assert_eq!(
-            retained_gated(&source),
-            [
-                DECLARED_SURFACE_MODULE,
-                RS2B0T_API_MODULE,
-                WALK_DESTINATIONS_MODULE
-            ]
-        );
+    fn thiever_keeps_direct_imports_but_not_public_or_unrelated_catalogs() {
+        let retained = retained_gated(THIEVER_IMPORTS);
+        for path in [
+            "/rs2b0t/bot/api/combat/food.js",
+            "/rs2b0t/bot/api/tasks/Anchor.js",
+            "/rs2b0t/bot/api/game/Game.js",
+            "/rs2b0t/bot/event/webwalk/geometry/Reachability.js",
+            "/rs2b0t/bot/api/ui/dialogue/ChatDialog.js",
+            "/rs2b0t/bot/api/bank/Bank.js",
+            "/rs2b0t/bot/api/bank/Banking.js",
+            "/rs2b0t/bot/api/bank/BankLocations.js",
+            "/rs2b0t/bot/event/webwalk/walkOpening.js",
+            "/rs2b0t/bot/api/inventory/Inventory.js",
+            "/rs2b0t/bot/api/skills/Skills.js",
+            "/rs2b0t/bot/api/grounditems/GroundItems.js",
+            "/rs2b0t/bot/api/npcs/Npcs.js",
+            "/rs2b0t/bot/paint/Paint.js",
+            "/rs2b0t/bot/paint/paintLogic.js",
+            "/rs2b0t/bot/runtime/Settings.js",
+            "/rs2b0t/bot/api/walking/Traversal.js",
+            "/rs2b0t/bot/data/pickpocketTargets.js",
+            "/rs2b0t/bot/api/thieving/targets.js",
+            "/rs2b0t/bot/api/thieving/stealRules.js",
+            "/rs2b0t/bot/api/loadout/loadoutPlan.js",
+            "/rs2b0t/bot/api/loadout/loadoutSetting.js",
+        ] {
+            assert!(
+                retained.iter().any(|retained| retained == path),
+                "Thiever import closure omitted {path}"
+            );
+        }
+        for path in [
+            DECLARED_SURFACE_MODULE,
+            RS2B0T_API_MODULE,
+            WALK_DESTINATIONS_MODULE,
+            REGIONS_MODULE,
+            WILDERNESS_MODULE,
+            WALK_EXECUTOR_MODULE,
+            STOCK_MODEL_MODULE,
+            SHOP_PRICE_MODULE,
+        ] {
+            assert!(
+                retained.iter().all(|retained| retained != path),
+                "Thiever import closure retained unrelated module {path}"
+            );
+        }
+    }
+
+    #[test]
+    fn importing_public_api_barrel_retains_its_module_closure() {
+        let source = remap_catalog_imports("import '@rs2b0t/api'; export default class T {}");
+        let retained = retained_gated(&source);
+        for path in [
+            DECLARED_SURFACE_MODULE,
+            RS2B0T_API_MODULE,
+            "/rs2b0t/bot/api/bank/Bank.js",
+            WALK_DESTINATIONS_MODULE,
+        ] {
+            assert!(
+                retained.iter().any(|retained| retained == path),
+                "public API barrel closure omitted {path}"
+            );
+        }
     }
 
     #[test]
@@ -1544,10 +1670,8 @@ mod wave_three_tests {
             [WALK_DESTINATIONS_MODULE]
         );
         assert_eq!(
-            retained_gated(
-                "export async function load(specifier) { return import(specifier); }"
-            ),
-            GATED_MODULE_PATHS
+            retained_gated("export async function load(specifier) { return import(specifier); }"),
+            gated_module_paths()
         );
     }
 
@@ -1619,26 +1743,29 @@ export default class T {}"#
     #[test]
     fn api_barrel_is_retained_when_a_sibling_imports_it() {
         const SIBLING_MODULE: &str = "/rs2b0t/bot/scripts/bot/sibling.js";
+        let gated_paths = gated_module_paths();
         let mut modules = shim_modules();
         modules.push(Module::new(SIBLING_MODULE, "import './rs2b0t-api.js';"));
         modules.push(Module::new(BOT_MODULE, "export default class T {}"));
         filter_gated_modules(&mut modules, [BOT_MODULE, SIBLING_MODULE]);
-        assert_eq!(
-            GATED_MODULE_PATHS
-                .iter()
-                .filter(|path| {
-                    modules
-                        .iter()
-                        .any(|module| module.filename() == Path::new(path))
-                })
-                .copied()
-                .collect::<Vec<_>>(),
-            [
-                DECLARED_SURFACE_MODULE,
-                RS2B0T_API_MODULE,
-                WALK_DESTINATIONS_MODULE
-            ]
-        );
+        let retained = gated_paths
+            .into_iter()
+            .filter(|path| {
+                modules
+                    .iter()
+                    .any(|module| module.filename() == Path::new(path))
+            })
+            .collect::<Vec<_>>();
+        for path in [
+            DECLARED_SURFACE_MODULE,
+            RS2B0T_API_MODULE,
+            "/rs2b0t/bot/api/bank/Bank.js",
+            WALK_DESTINATIONS_MODULE,
+        ] {
+            assert!(
+                retained.iter().any(|retained| retained == path),
+                "sibling API barrel closure omitted {path}"
+            );
+        }
     }
-
 }

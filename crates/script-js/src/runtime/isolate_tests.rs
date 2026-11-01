@@ -3375,3 +3375,69 @@ fn paint_controls_helper_keeps_collected_v8_heap_flat() {
          (hint rows {hint_growth}, slack {SLACK})"
     );
 }
+
+fn public_api_export_keys(eager: bool) -> Vec<String> {
+    const SOURCE: &str = r#"
+import * as api from '@rs2b0t/api';
+globalThis.__rs2b0t_api_export_keys = Object.keys(api).sort();
+export default class T extends api.LoopingBot { loop() {} }
+"#;
+
+    let mut runtime = Runtime::new(RuntimeOptions::default()).unwrap();
+    super::super::lineage_v8::install(&mut runtime, false).unwrap();
+    super::super::lineage_v8::enter_root(&mut runtime, |runtime| {
+        let named_banks = Arc::new(api::named_banks::NamedBankFacts::empty());
+        let wilderness_zones: Arc<[script::native::walk::WildernessZonePair]> = Arc::from([]);
+        let frame_interest = Arc::new(AtomicUsize::new(0));
+        let loc_projection_interest = Arc::new(AtomicBool::new(false));
+        if eager {
+            super::super::bindings::wire_runtime_eager(
+                runtime,
+                SOURCE,
+                LoadShape::CompatClass,
+                &[],
+                None,
+                named_banks,
+                wilderness_zones,
+                None,
+                frame_interest,
+                loc_projection_interest,
+            )
+        } else {
+            wire_runtime(
+                runtime,
+                SOURCE,
+                LoadShape::CompatClass,
+                &[],
+                None,
+                named_banks,
+                wilderness_zones,
+                None,
+                frame_interest,
+                loc_projection_interest,
+            )
+        }
+    })
+    .unwrap();
+    runtime
+        .eval::<Vec<String>>("globalThis.__rs2b0t_api_export_keys")
+        .unwrap()
+}
+
+#[test]
+fn public_api_lazy_load_exports_match_eager_load() {
+    crate::platform::bootstrap_test_v8_platform();
+    let eager = public_api_export_keys(true);
+    let lazy = public_api_export_keys(false);
+    assert_eq!(lazy, eager);
+    for key in ["LoopingBot", "WALK_DESTINATIONS", "apiVersion"] {
+        assert!(
+            lazy.iter().any(|export| export == key),
+            "missing export {key}"
+        );
+    }
+    println!(
+        "public API lazy/eager export keys match: {} keys",
+        lazy.len()
+    );
+}

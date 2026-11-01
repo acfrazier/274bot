@@ -87,11 +87,14 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.7` 
 
 ### Scripting
 
-- The script loader evaluates gated compatibility shims only when the bot,
-  a sibling script, or another always-loaded shim imports them. If it cannot
-  resolve an import, it keeps every gated shim. The public `@rs2b0t/api`
-  barrels are gated too, so their `WalkDestinations` catalog is built only
-  for scripts that import the public API or the catalog directly.
+- The script loader builds a shim import graph once per process. For each
+  bot start, it loads the bot's static and literal dynamic import closure,
+  the sibling scripts' closure, and the closure of the few eager shims whose
+  globals the host reads directly. It scans only the bot and sibling sources.
+  If import analysis finds an unresolved dependency, the loader keeps every
+  gated shim. The public `@rs2b0t/api` barrels are gated too, so their
+  `WalkDestinations` catalog is built only for scripts that import the public
+  API or the catalog directly.
 
 - `Bank.items()` and `reader.bankItems()` now reuse frozen snapshots for a
   bank session and item generation. Their arrays, rows, and nested `ops`
