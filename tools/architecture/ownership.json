@@ -5979,6 +5979,10 @@
       "owner": "T3"
     },
     {
+      "path": "crates/tui/tests/audit_exception.rs",
+      "owner": "T3"
+    },
+    {
       "path": "crates/tui/tests/settings_notice_alloc.rs",
       "owner": "T3"
     },
