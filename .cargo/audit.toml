@@ -1,0 +1,3 @@
+[advisories]
+# RUSTSEC-2026-0009 is not reachable: ratatui-widgets calendar enables only alloc, std and local-offset, not parsing or formatting (calendar.rs:267-276).
+ignore = ["RUSTSEC-2026-0009"]

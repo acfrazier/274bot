@@ -501,3 +501,16 @@ listed = "0.2.8"
 target = "0.2.9"
 severity = "medium"
 owner = "host background work (WorkAdmission)"
+
+[[item]]
+id = "runtime-serialization-upgrade-held"
+kind = "not-in-release"
+area = "Source builds"
+text = """The serialization and date libraries retain compatibility versions
+  until the JavaScript runtime libraries can be updated together. The recorded
+  date-parser advisory is not reachable: the calendar dependency does not
+  enable date parsing or formatting."""
+first = "0.2.9"
+target = "0.3.0"
+severity = "low"
+owner = "runtime track: deno_ast >=0.50.2 needs a rustyscript move; lift the serde hold and RUSTSEC-2026-0009 exception"
