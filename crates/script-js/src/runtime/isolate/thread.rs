@@ -855,7 +855,27 @@ fn finish_tick(
                 .to_string(),
         ));
     }
-    requested_stop(runtime)
+    let reason = requested_stop(runtime)?;
+    let event = crate::events::NativeEvent::ScriptFinish {
+        reason: reason.clone(),
+    };
+    if let Err(message) = super::super::snapshot::dispatch_native_events(runtime, &[event]) {
+        let _ = out.send(ThreadMsg::Log(format!("script.finish dispatch: {message}")));
+    } else {
+        let flush = call_interruptible(runtime, teardown, |runtime| {
+            runtime.call_function_immediate::<()>(
+                None,
+                "__rs2b0t_flush_native_events",
+                json_args!(),
+            )
+        });
+        if let Err(message) = flush {
+            let _ = out.send(ThreadMsg::Log(format!("script.finish flush: {message}")));
+        } else {
+            pump_event_loop(runtime, out, n, generation, teardown);
+        }
+    }
+    Some(reason)
 }
 
 /// ScriptRunner.stop's flag and bounded reason, read off the host handle
