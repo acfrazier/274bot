@@ -2242,7 +2242,7 @@ pub(super) fn update_transfer_title(
 }
 
 fn slot_busy_requires_tick(running: bool, frame_delivered: bool) -> bool {
-    running || frame_delivered
+    running
 }
 
 #[cfg(test)]

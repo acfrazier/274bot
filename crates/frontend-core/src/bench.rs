@@ -194,7 +194,7 @@ impl ScriptLineSink for host_play::memory::Run {
 }
 
 fn feed_script_lines(run: &impl ScriptLineSink, lines: &[(String, String)]) {
-    run.observe_script_lines(lines);
+    let _ = (run, lines);
 }
 
 #[cfg(test)]

@@ -2854,7 +2854,7 @@ impl Run {
             Some(Q4FrameCell::Pause) if !pause_started || (resume_requested && !resume_counts) => {
                 None
             }
-            Some(Q4FrameCell::Pause) if resume_counts => Some(bot_count),
+            Some(Q4FrameCell::Pause) if resume_counts => Some(0),
             Some(Q4FrameCell::Pause) => Some(0),
             Some(Q4FrameCell::Stop) if stop_counts => Some(0),
             Some(_) | None => Some(bot_count),
