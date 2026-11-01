@@ -167,7 +167,7 @@ impl BenchRun {
     pub fn poll<Io>(&mut self, core: &OperatorSession<Io>) -> Result<bool, BenchError> {
         match core.play() {
             Some(play) => {
-                feed_script_lines(&self.0, core.script_lines());
+                feed_script_lines(self.0.as_ref(), core.script_lines());
                 self.0
                     .poll(play)
                     .map_err(|error| BenchError(BenchStep::Run(error)))
