@@ -5,6 +5,11 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.8` 
 
 ## Unreleased
 
+### Music
+
+- Negative attenuation in a SoundFont no longer causes extreme music volume.
+- Music can load SoundFonts whose sample-loop start is after the loop end.
+
 ## [0.2.8] — 2026-10-29 — Beta 2
 
 ### Panel and terminal app
