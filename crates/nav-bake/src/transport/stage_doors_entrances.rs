@@ -459,7 +459,7 @@ impl Motion<'_> {
                     .base
                     .src
                     .quest_family
-                    .and_then(|_| quest_stage)
+                    .and(quest_stage)
                     .and_then(|facts| authoritative_stage_domain(facts, *complete));
                 let selected_stage = input
                     .stage_ranges
