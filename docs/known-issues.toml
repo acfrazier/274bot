@@ -482,3 +482,17 @@ listed = "0.2.8"
 target = "0.2.9"
 severity = "low"
 owner = "upstream rs2b0t GnomeMagicChopper (rs2b2t/rs2b0t#897)"
+
+[[item]]
+id = "compat-reader-hidden-side-tab"
+kind = "known-issue"
+area = "Scripts"
+text = """`ClientAdapter` readers that search interface components see only the
+  side tab that is open. For example, `reader.selectButtonByVarp` finds
+  nothing on a side tab that is not open. Combat style reads
+  (`Game.combatStyles`, `Game.setCombatMode`) are not affected. Open the side
+  tab before you read it."""
+first = "0.2.9"
+target = "0.3.0"
+severity = "low"
+owner = "COMPAT-FINISH ClientAdapter"
