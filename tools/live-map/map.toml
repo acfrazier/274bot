@@ -56,6 +56,8 @@ globs = [
   "crates/host-play/src/bank_npc_live.rs",
   # Shared CPU replay fixture used only by the bank live-test modules.
   "crates/host-play/src/script_bank_harness.rs",
+  # `lib.rs` gates this shared fixture module with #[cfg(test)].
+  "crates/host-play/src/test_support.rs",
   # Synthetic planner fixture builders, not runtime planner code.
   "crates/nav-planner/src/test_support.rs",
   # Read-only pack-crossing export command; the runtime pack producer is separate.
