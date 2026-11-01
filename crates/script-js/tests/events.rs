@@ -416,7 +416,14 @@ export default class T extends LoopingBot {
     iso.on_game_tick(1);
     assert!(iso.probe("1").is_ok(), "first tick should remain active");
     iso.on_game_tick(2);
-    let logs = iso.join();
+    let deadline = Instant::now() + Duration::from_secs(2);
+    let mut logs = Vec::new();
+    while !iso.stopped() && Instant::now() < deadline {
+        logs.extend(iso.drain_logs());
+        std::thread::sleep(Duration::from_millis(2));
+    }
+    assert!(iso.stopped(), "ScriptRunner.stop did not stop the isolate: {logs:?}");
+    logs.extend(iso.join());
     assert!(
         logs.iter()
             .any(|line| line == "finish:finished by script"),
