@@ -2681,7 +2681,7 @@ impl<Io> OperatorSession<Io> {
         &self.script_lines
     }
 
-    #[cfg(test)]
+    #[cfg(all(test, feature = "memory-profile"))]
     pub(crate) fn set_script_lines_for_test(&mut self, lines: Vec<(String, String)>) {
         self.script_lines = lines;
     }
