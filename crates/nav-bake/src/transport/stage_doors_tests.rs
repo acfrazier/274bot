@@ -307,7 +307,6 @@ fn with_journal_only_hero(check: impl FnOnce(&QuestSource<'_>)) {
     });
 }
 
-
 #[test]
 fn nonzero_stage_door_keeps_started_window_in_both_directions() {
     // Mort Myre's refusal-before-open shape. The progress-only write follows
@@ -2147,7 +2146,6 @@ p_teleport(0_44_53_5_46);
         });
     }
 }
-
 
 #[test]
 fn completion_lower_bound_proves_an_earlier_threshold_without_claiming_its_exact_stage() {

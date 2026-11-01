@@ -560,6 +560,9 @@ standard bake verifies the selected `quests` family artifact before deriving
 content entrances and binds its digest and schema into the graph. Supported
 quest-complete predicates become canonical `QuestGate::Complete` requirements;
 an intermediate or exact hidden quest stage is not inferred from completion.
+An untransmitted completion varp does not create a `Complete` gate unless its
+selected quest-row colour is authoritative. Without that colour or an
+authoritative stage domain, the comparison stays unknown.
 
 ### Prerequisite crossing steps
 

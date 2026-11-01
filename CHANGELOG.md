@@ -76,6 +76,11 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.7` 
   before quest completion, without starting dialogue or a quest.
   If the page times out, the walker retries once on a later observed game
   tick. A failed retry keeps the gate closed and reports the terminal failure.
+
+- Navigation no longer emits a completed-quest gate from an untransmitted
+  varp when it has neither an authoritative stage domain nor an authoritative
+  quest-row colour. That comparison stays unknown.
+
 - Two default-on navigation settings allow prerequisite dialogue and quest
   starts. Global, script and guide-level `true` grants are additive. A
   guide-level `false` adds no grant; a per-walk `false` forbids it. Combat

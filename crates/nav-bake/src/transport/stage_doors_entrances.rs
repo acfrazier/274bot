@@ -535,8 +535,7 @@ impl Motion<'_> {
                         (true, false) => return Some(Cond::unknown()),
                         (false, _) => Needs::default(),
                     }
-                }
-;
+                };
                 return Some(Cond { value, needs });
             }
         }
@@ -1337,6 +1336,7 @@ mod stage_window_tests {
             None
         );
     }
+
     #[test]
     fn non_authoritative_completion_without_stage_domain_is_unknown() {
         let src = Sources {
