@@ -163,8 +163,9 @@ fn bank_item<'s>(
 
 fn freeze<'s>(
     scope: &mut v8::HandleScope<'s>,
-    object: v8::Local<'s, v8::Object>,
+    value: v8::Local<'s, v8::Value>,
 ) -> JsResult<'s, ()> {
+    let object = cb::catching(scope, |s| value.to_object(s))?;
     if cb::catching(scope, |s| {
         object.set_integrity_level(s, v8::IntegrityLevel::Frozen)
     })? {
