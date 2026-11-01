@@ -437,15 +437,13 @@ fn run_diagnostics(
         "{} diagnostic budget must never change the route outcome",
         case.name
     );
-    let cutoff = detail
-        .as_deref()
-        .is_some_and(|text| {
-            let diagnosis = text
-                .strip_prefix("search_result=")
-                .and_then(|rest| rest.split_once("; "))
-                .map_or(text, |(_, diagnosis)| diagnosis);
-            diagnosis.starts_with(cutoff_detail)
-        });
+    let cutoff = detail.as_deref().is_some_and(|text| {
+        let diagnosis = text
+            .strip_prefix("search_result=")
+            .and_then(|rest| rest.split_once("; "))
+            .map_or(text, |(_, diagnosis)| diagnosis);
+        diagnosis.starts_with(cutoff_detail)
+    });
     let mut blocked_zone_ids: Vec<_> = blocked.iter().copied().map(zone_key_json).collect();
     blocked_zone_ids.sort_by_key(zone_json_sort_key);
     DiagnosticObservation {
