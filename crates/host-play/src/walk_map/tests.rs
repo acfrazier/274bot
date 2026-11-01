@@ -1870,8 +1870,8 @@ fn eligible_ordinary_group_walk_without_snapshot_uses_validated_status_origin() 
 
 #[test]
 fn catalog_gated_group_walk_without_snapshot_cannot_start_a_prerequisite() {
+    use crate::test_support::{family, stamp};
     use nav_planner::quest_gates::{QuestEvidence, QuestGates};
-    use nav_planner::test_support::{family, stamp};
 
     struct ClosedGate;
     impl api::quest_progress::EvidenceProvider for ClosedGate {
