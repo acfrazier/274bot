@@ -1468,8 +1468,6 @@ fn is_combat_style_label(label: &str) -> bool {
         .any(|style| label.eq_ignore_ascii_case(style))
 }
 
-
-
 fn main_modal_button_near_text<'s>(
     scope: &mut v8::HandleScope<'s>,
     snapshot: v8::Local<'s, v8::Value>,
