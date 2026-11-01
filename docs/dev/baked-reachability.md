@@ -109,6 +109,13 @@ The session selector names the existing essence wizard/return-anchor identity.
 The bake covers all portal placements and return anchors. Runtime activates only
 the bound slot's live essence latch. No account latch or executable closure is
 serialized. Missing session coverage prevents a sealed-mine negative.
+Teleport and session templates name base component ids. A portal loc blocks its
+own tile, so a session template's source is each distinct component among the
+standable tiles within the interact radius (1) of the portal: one row per
+component. An edge with no admissible takeoff in a labelled component is an
+unmatched join. It adds a coverage row at its anchor and an exceptional row
+(reason 2) that names its landing, so a consumer limits "no complete negative"
+to the goals that landing serves.
 
 CSR offsets start at zero, are monotonic, and end at the target table count.
 Each run is nonempty and in bounds. Closure runs are sorted, disjoint, maximal,
@@ -137,12 +144,29 @@ Apply `game_plane`, including `link_below`, before recording placements or stand
 Reuse the shared engine reach primitive for walls, decorations, footprints,
 rotation, blocked sides, and exclusive entity rectangles. Never use a radius ring
 as an interaction proof. Live entities retain observed identities and geometry.
+The size-1 stand rules are the engine's (`ReachStrategy.ts:98-173` for walls,
+`:254-280` for wall decorations), as the client `CollisionMap::test_wall`,
+`test_w_decor` and `test_loc` also implement them. A wall corner (shapes 1 and
+3) and a straight wall decoration (shapes 4 and 5) have no neighbour stand:
+the origin tile is their only stand. Shape 7 tests the rotation plus two.
+`crates/api/tests/loc_approach_reach.rs` pins every shape, rotation and flag
+word against a transliteration of the engine code, and the ignored real-content
+test in `crates/nav-bake/src/transport_tests.rs` audits every baked placement.
 
 ### Decoder and publication requirements
 
 Both decoding forms and the sizing path implement this complete layout.
 Malformed lengths, keys, geometry, palettes, ids, ranges, references, or ordering
 produce typed `PackError`. Decode never constructs labels or floods connectivity.
+`ReachabilityAtlas::validate` checks, for the decoders, the sizing path and the
+baker alike: the atlas geometry equals the collision grid; every table stride
+equals the schema; palette labels name existing components; closure runs are in
+bounds, sorted, disjoint, maximal and include their owner; conditional joins,
+exceptional rows, teleport templates and session templates name existing graph
+edges, teleports and components; coverage rows are sorted unique tile/reason
+pairs; placements keep known coverage and trigger values, and every stand
+component equals the labels lookup. The baker refuses to publish an atlas that
+fails, so the writer cannot produce what the reader refuses.
 A v17 pack receives the typed version failure after the BR2 cut. There is no
 v17-to-v18 runtime migration, partial reach-only pack, or straight-line fallback.
 The release bake publishes the combined pack and rebound manifest/sidecars once.

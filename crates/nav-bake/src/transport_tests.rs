@@ -9993,6 +9993,16 @@ fn real_content_atlas_stands_match_the_client_reach_strategy() {
             atlas.placements().len()
         );
         assert_eq!((illegal, missing), (0, 0));
+        // Each unmatched join names its landing, so a consumer can limit "no
+        // complete negative" to the goals the landing serves.
+        let joins: Vec<_> = atlas.unmatched_joins().collect();
+        assert_eq!(joins.len(), atlas.unmatched_join_count());
+        for (anchor, landing, edge) in &joins {
+            eprintln!(
+                "unmatched join edge {edge} at {anchor:?} lands {landing:?} in component {:?}",
+                atlas.base_at(*landing).unwrap()
+            );
+        }
         // Shapes 6 to 8 (diagonal wall decorations) have no operable
         // placement in the 274 or 289 maps; the engine-oracle unit test in
         // `crates/api/tests/loc_approach_reach.rs` covers them. Every other
