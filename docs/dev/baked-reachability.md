@@ -193,8 +193,10 @@ runs these too, through `validate`, after it decodes. The framing checks (the
 table directory kinds, strides, contiguity and length, reserved bytes) belong to
 the reader alone: the writer cannot emit them wrongly.
 The test `validate_and_the_reader_refuse_the_same_tables` in
-`crates/nav-planner/src/pack/reach.rs` breaks each table invariant in turn and
-requires `validate` and the reader to refuse it with the same message.
+`crates/nav-planner/src/pack/reach.rs` breaks 21 selected table invariants, one
+at a time, and requires `validate` and the reader to refuse each with the same
+message. It is a sample, not every invariant: the parity itself comes from the
+shared `check_*` functions that both sides call.
 A v17 pack receives the typed version failure after the BR2 cut. There is no
 v17-to-v18 runtime migration, partial reach-only pack, or straight-line fallback.
 The release bake publishes the combined pack and rebound manifest/sidecars once.
