@@ -2209,7 +2209,7 @@ fn an_ordinary_talk_still_passes_inside_its_content_bound_and_fails_past_it() {
     assert_eq!(talk_drive(&run).reach_cancels, 0);
 
     // No page and no cancel message by the next tick: the wait is spent.
-    let state = state();
+    let state = self::state();
     let snapshot = npc_snapshot(row);
     let (mut run, mut budget, mut ledger) = start_talk(row, &snapshot, &state);
     for tick in 3..=2 + talk_bound(row) {
