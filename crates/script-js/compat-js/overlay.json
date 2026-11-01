@@ -313,7 +313,7 @@
     "module": "adapter/ClientAdapter.js",
     "selector": "reader.overlayPosWorld",
     "reason": "The host builds the projection scene only for a run that asks for it. A card whose code or loaded siblings name locBox, overlayPosWorld or projectAreaGameWorld raises the demand at start (operator ruling 2026-11-01); a read reached without that name in the text (for example a computed property) returns null until the next observed tick. Upstream reads the live client and never returns that null.",
-    "runtime": "crates/script-js/src/materialize/client_adapter_v8.rs:135",
+    "runtime": "crates/script-js/src/shim/client_adapter.js:121",
     "declaration": "/** Project a world-tile point onto the overlay; `u` and `v` are clamped tile fractions. 274bot builds the projection only for a script whose code names this reader; a call reached without the name (for example a computed property) returns null until the next game tick. */\noverlayPosWorld(x: number, z: number, height?: number, u?: number, v?: number): { x: number; y: number } | null;"
   },
   {
@@ -321,7 +321,7 @@
     "module": "adapter/ClientAdapter.js",
     "selector": "reader.projectAreaGameWorld",
     "reason": "The host builds the projection scene only for a run that asks for it. A card whose code or loaded siblings name locBox, overlayPosWorld or projectAreaGameWorld raises the demand at start (operator ruling 2026-11-01); a read reached without that name in the text (for example a computed property) returns null until the next observed tick. Upstream reads the live client and never returns that null.",
-    "runtime": "crates/script-js/src/materialize/client_adapter_v8.rs:139",
+    "runtime": "crates/script-js/src/shim/client_adapter.js:123",
     "declaration": "/** Project a world-tile corner into areaGame pixels while Pix2D is bound there. 274bot builds the projection only for a script whose code names this reader; a call reached without the name (for example a computed property) returns null until the next game tick. */\nprojectAreaGameWorld(x: number, z: number, height?: number, u?: number, v?: number): { x: number; y: number } | null;"
   },
   {
@@ -329,7 +329,7 @@
     "module": "adapter/ClientAdapter.js",
     "selector": "reader.locBox",
     "reason": "The host builds the projection scene only for a run that asks for it. A card whose code or loaded siblings name locBox, overlayPosWorld or projectAreaGameWorld raises the demand at start (operator ruling 2026-11-01); a read reached without that name in the text (for example a computed property) returns null until the next observed tick. Upstream reads the live client and never returns that null.",
-    "runtime": "crates/script-js/src/materialize/client_adapter_v8.rs:143",
+    "runtime": "crates/script-js/src/shim/client_adapter.js:125",
     "declaration": "/**\n * Loc object hull: eight corners of the object AABB in overlay pixels, or areaGame pixels when `areaGame`.\n * Centre comes from live scene placement; size from LocType, multi-tile footprint or model minY. Null when off-scene. 274bot builds the projection only for a script whose code names this reader; a call reached without the name returns null until the next game tick.\n */\nlocBox(opts: { id?: number; x: number; z: number; level?: number; name?: string }, areaGame?: boolean): { x: number; y: number }[] | null;"
   }
 ]
