@@ -331,5 +331,21 @@
     "reason": "The host builds the projection scene only for a run that asks for it. A card whose code or loaded siblings name locBox, overlayPosWorld or projectAreaGameWorld raises the demand at start (operator ruling 2026-11-01); a read reached without that name in the text (for example a computed property) returns null until the next observed tick. Upstream reads the live client and never returns that null.",
     "runtime": "crates/script-js/src/shim/client_adapter.js:125",
     "declaration": "/**\n * Loc object hull: eight corners of the object AABB in overlay pixels, or areaGame pixels when `areaGame`.\n * Centre comes from live scene placement; size from LocType, multi-tile footprint or model minY. Null when off-scene. 274bot builds the projection only for a script whose code names this reader; a call reached without the name returns null until the next game tick.\n */\nlocBox(opts: { id?: number; x: number; z: number; level?: number; name?: string }, areaGame?: boolean): { x: number; y: number }[] | null;"
+  },
+  {
+    "id": "bank-items-readonly-snapshot",
+    "module": "api/bank/Bank.js",
+    "selector": "Bank.items",
+    "reason": "Bank.items preserves its legacy noted/cert projection, frozen and reused only with posted bank-session and item generations; audited consumers only read the rows.",
+    "runtime": "crates/script-js/src/shim/bank.js:47",
+    "declaration": "items(): readonly Readonly<Omit<InvItemSnapshot, 'ops'> & { ops: readonly (string | null)[]; cert: number }>[];"
+  },
+  {
+    "id": "reader-bank-items-readonly-snapshot",
+    "module": "adapter/ClientAdapter.js",
+    "selector": "reader.bankItems",
+    "reason": "The native reader returns the same frozen rows for one bank session and item generation; upstream readers only inspect them.",
+    "runtime": "crates/script-js/src/shim/client_adapter.js:39",
+    "declaration": "bankItems(): readonly Readonly<Omit<InvItemSnapshot, 'ops'> & { ops: readonly (string | null)[] }>[];"
   }
 ]

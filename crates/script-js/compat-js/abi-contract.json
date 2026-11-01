@@ -13076,6 +13076,26 @@
       "nav_consuming": false
     },
     {
+      "id": "bank-items-readonly-snapshot",
+      "module": "api/bank/Bank.js",
+      "selector": "Bank.items",
+      "reason": "Bank.items preserves its legacy noted/cert projection, frozen and reused only with posted bank-session and item generations; audited consumers only read the rows.",
+      "runtime": "crates/script-js/src/shim/bank.js:47",
+      "declaration": "items(): readonly Readonly<Omit<InvItemSnapshot, 'ops'> & { ops: readonly (string | null)[]; cert: number }>[];",
+      "family_id": "bank",
+      "nav_consuming": true
+    },
+    {
+      "id": "reader-bank-items-readonly-snapshot",
+      "module": "adapter/ClientAdapter.js",
+      "selector": "reader.bankItems",
+      "reason": "The native reader returns the same frozen rows for one bank session and item generation; upstream readers only inspect them.",
+      "runtime": "crates/script-js/src/shim/client_adapter.js:39",
+      "declaration": "bankItems(): readonly Readonly<Omit<InvItemSnapshot, 'ops'> & { ops: readonly (string | null)[] }>[];",
+      "family_id": "client-adapter",
+      "nav_consuming": false
+    },
+    {
       "id": "native-gathering-helper-types",
       "module": "shim/gathering_locations.js",
       "selector": "$module",
