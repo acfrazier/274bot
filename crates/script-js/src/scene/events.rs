@@ -346,7 +346,7 @@ fn diff_xp(last: &[XpState], current: &[XpState]) -> Vec<NativeEvent> {
                     delta: cur.xp - prev.xp,
                 });
             }
-            if false && prev.level > 0 && cur.level != prev.level {
+            if prev.level > 0 && cur.level != prev.level {
                 events.push(NativeEvent::SkillLevel {
                     skill: cur.index,
                     name: cur.name.clone(),
@@ -359,8 +359,19 @@ fn diff_xp(last: &[XpState], current: &[XpState]) -> Vec<NativeEvent> {
     events
 }
 
-fn diff_varps(_last: &[VarpState], _current: &[VarpState]) -> Vec<NativeEvent> {
-    Vec::new()
+fn diff_varps(last: &[VarpState], current: &[VarpState]) -> Vec<NativeEvent> {
+    current
+        .iter()
+        .filter_map(|cur| {
+            last.iter()
+                .find(|prev| prev.index == cur.index && prev.value != cur.value)
+                .map(|prev| NativeEvent::VarpChanged {
+                    index: cur.index,
+                    value: cur.value,
+                    previous: prev.value,
+                })
+        })
+        .collect()
 }
 
 fn merge_xp(last: &mut Vec<XpState>, current: &[XpState]) {
