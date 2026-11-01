@@ -68,7 +68,22 @@ def release_artifact(messages: list[dict[str, Any]]) -> dict[str, Any]:
     libraries = [path for path in artifact.get("filenames", []) if path.endswith(".rlib")]
     if len(libraries) != 1:
         raise ProofError("the exact script artifact must name one rlib; no directory fallback is allowed")
+    metadata = [path for path in artifact.get("filenames", []) if path.endswith(".rmeta")]
+    if len(metadata) != 1:
+        raise ProofError("the exact script artifact must name one rmeta; no directory fallback is allowed")
     return artifact
+
+
+def refusal_compile_command(artifact: dict[str, Any], executable: Path) -> list[str]:
+    """Use only the library and dependency location named by the validated artifact."""
+    library = next(Path(path) for path in artifact["filenames"] if path.endswith(".rlib"))
+    metadata = next(Path(path) for path in artifact["filenames"] if path.endswith(".rmeta"))
+    return [
+        "rustc", "--edition=2021", "--crate-name", "release_path_refusal",
+        "-Dwarnings", "-Copt-level=3", str(SOURCE),
+        "-L", f"dependency={metadata.parent}", "--extern", f"script={library}",
+        "-o", str(executable),
+    ]
 
 
 def prove_release_refusal() -> int:
@@ -94,16 +109,10 @@ def prove_release_refusal() -> int:
         return result.returncode
     artifact = release_artifact(messages)
     print("release-refusal production artifact: " + json.dumps(artifact, sort_keys=True), flush=True)
-    library = next(Path(path) for path in artifact["filenames"] if path.endswith(".rlib"))
     with tempfile.TemporaryDirectory(prefix="release-refusal-", dir=evidence_dir) as temporary:
         executable = Path(temporary) / ("release-refusal.exe" if os.name == "nt" else "release-refusal")
         subprocess.run(
-            [
-                "rustc", "--edition=2021", "--crate-name", "release_path_refusal",
-                "-Dwarnings", "-Copt-level=3", str(SOURCE),
-                "-L", f"dependency={library.parent}", "--extern", f"script={library}",
-                "-o", str(executable),
-            ],
+            refusal_compile_command(artifact, executable),
             cwd=ROOT,
             check=True,
         )
@@ -118,7 +127,10 @@ class ReleaseRefusalTests(unittest.TestCase):
             "target": {"name": "script", "kind": ["lib"], "src_path": str(SCRIPT_SOURCE)},
             "features": [],
             "profile": {"test": False, "debug_assertions": False},
-            "filenames": ["/build/release/deps/libscript-exact.rlib"],
+            "filenames": [
+                "/build/release/libscript.rlib",
+                "/build/release/deps/libscript-exact.rmeta",
+            ],
         }
 
     def test_accepts_only_the_exact_production_artifact(self) -> None:
@@ -144,6 +156,28 @@ class ReleaseRefusalTests(unittest.TestCase):
         changed["filenames"] = []
         with self.assertRaises(ProofError):
             release_artifact([changed])
+
+    def test_cargo_root_library_uses_its_metadata_dependency_directory(self) -> None:
+        artifact = release_artifact([self.artifact()])
+        command = refusal_compile_command(artifact, Path("/proof/release-refusal"))
+        self.assertEqual(
+            command[command.index("-L") + 1],
+            f"dependency={Path('/build/release/deps')}",
+        )
+        self.assertEqual(
+            command[command.index("--extern") + 1],
+            f"script={Path('/build/release/libscript.rlib')}",
+        )
+
+    def test_refuses_missing_or_ambiguous_metadata(self) -> None:
+        for metadata in [
+            [],
+            ["/build/release/deps/libscript-first.rmeta", "/build/release/deps/libscript-second.rmeta"],
+        ]:
+            artifact = self.artifact()
+            artifact["filenames"] = ["/build/release/libscript.rlib", *metadata]
+            with self.subTest(metadata=metadata), self.assertRaises(ProofError):
+                release_artifact([artifact])
 
     def test_requires_exact_nonempty_draft_paths(self) -> None:
         def config(path: str) -> dict[str, Any]:

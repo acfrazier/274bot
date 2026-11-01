@@ -103,8 +103,11 @@ bodies or qualify them for release. Run its paired qualified-Priest live cell as
 well.
 
 The cell first builds `script` with `cargo build --release --locked --lib`.
-It selects the exact rlib from that invocation's Cargo artifact record and
-refuses a test artifact, debug assertions, `test-hooks`, or an ambiguous library.
+It selects the exact rlib and one rmeta from that invocation's Cargo artifact
+record. The rmeta's parent supplies the dependency search directory: Cargo can
+publish the rlib in `target/release` and its rmeta in `target/release/deps`.
+Missing or ambiguous metadata is refused, with no directory search or fallback.
+The test-artifact, debug-assertion, `test-hooks` and ambiguous-rlib checks remain.
 The external Rust consumer calls the public production queue entry point for
 each mapped draft, with both an explicit pick and an explicit priority. It
 requires the typed `UnqualifiedPath` reason and its complete display text, even
