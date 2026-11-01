@@ -230,6 +230,22 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.7` 
 - Removed the 274bot-only members `Game.autoRetaliate` (use
   `Game.autoRetaliateOn`), `EventSignal.ignoredRandoms` and
   `reader.selfTarget` (use `reader.selfFaceEntity`).
+- `Traversal.remaining` returns the distance left on the bot's current walk,
+  and `Traversal.requestRepath` asks the walk to plan its route again.
+  `WalkExecutor.lastOutcome` reports the result of the last walk, and
+  `WalkExecutor.probeDest` tests whether a route to a tile exists.
+- `WALK_DESTINATIONS`, `WALK_OPTIONS` and `resolveDestination` list the named
+  walk destinations and turn a name into its tile.
+- `Reachability.probeable` tells whether the bot has collision data for a
+  tile. `wildernessLevelAt` returns the Wilderness level at a tile, and
+  `inEssMine` tells whether a tile is in the Rune Essence mine.
+- `Shop.buyById` buys a quantity of one exact item from the open shop and
+  returns how many it bought. It stops when the shop closes, the stock runs
+  out, the inventory is full or you have too few coins.
+- `unitPrice`, `shopBuyPrice` and `buyoutCost` calculate shop prices.
+- `stableClosedPoll` waits until a trade window stays closed. It uses the
+  clock that you give it, or game ticks.
+- Removed `Shop.player`, which only reported `not impl`.
 
 ### Fixed during development
 
