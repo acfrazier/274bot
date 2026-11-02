@@ -1432,6 +1432,58 @@ record its SHA-256 for each arm. Keep the timing binaries, timing corpus and
 pre-FLOOR five-case gate unchanged. A unit-test pass or an offline corpus row
 does not replace the committed-memory measurement.
 
+### Separate NPR proof workload
+
+`tools/perf/npr-proof` is a benchmark-only adapter for the frozen NPR
+`proof/original` workload. It does not change `perf_corpus`, its five sensitive
+pre-FLOOR cases, or their gate. Report this workload as its own row.
+
+The standard five cases retain their pinned RC comparator. For the proof-only
+row, use the exact development base `3b4cb68ab` and its v17 reference pack only
+if it has a bound quest family and can run the same proof path. Then apply the
+existing PASS/MARGINAL/FAIL band rule. If that base has no family or no proof
+path, report candidate timing and committed scratch as an **absolute cost
+diagnostic, not an A/B or a gate**. Record the structural absence with source
+and receipt lines. Never synthesize a family, gates or permissions.
+
+Prepare one standalone package for each explicitly selected source/API arm:
+
+```bash
+python3 tools/perf/npr-proof/prepare.py --source-root /absolute/dev-base-source --api legacy --output /absolute/dev-base-proof
+python3 tools/perf/npr-proof/prepare.py --source-root /absolute/candidate-source --api observation --output /absolute/candidate-proof
+cargo test --manifest-path /absolute/candidate-proof/Cargo.toml
+cargo clippy --manifest-path /absolute/candidate-proof/Cargo.toml --all-targets -- -D warnings
+cargo fmt --manifest-path /absolute/candidate-proof/Cargo.toml --all -- --check
+cargo build --release --manifest-path /absolute/candidate-proof/Cargo.toml
+/absolute/candidate-proof/target/release/npr-proof --pack /absolute/candidate.navpack
+```
+
+Use the same preparation, checks and release build for the development-base
+package. Both depend on `crates/nav-planner`; `--api` selects only the real
+legacy or observation trait shape. A missing dependency or wrong API fails
+instead of selecting a fallback. Preparation seeds the standalone lockfile
+from that arm's committed workspace lockfile and records the source hashes.
+
+Each process runs all 299 frozen coordinate pairs in all three original option
+groups, in order: **897 searches**, with the original 4,000,000-node limit.
+The typed fixture supplies Priest in Peril stage 61 and Nature Spirit stage 1;
+unrelated quest evidence remains Unknown. These are explicit test facts, not
+live account observations. Each search clock excludes pack decoding, state
+cloning, provider attachment and output work. The reported p50/p95 describe a
+heterogeneous full-corpus pass, not repeated warm searches of one query.
+
+For a separate committed-memory process, set `MEMORY_WINDOW=1` and use the
+existing parent-controlled `MEMORY_BEFORE PID` / `MEMORY_AFTER PID` protocol.
+The parent must retain the Linux baseline/reset high-water measurement.
+On macOS, the adapter samples `TASK_VM_INFO.phys_footprint` at a nominal 1 ms,
+with its worker initialized before baseline. It keeps only peak/count/interval
+statistics, so the full long corpus cannot exhaust a retained-sample vector.
+The memory window includes per-search state clones and result-buffer commits;
+sorting and JSON serialization occur after it. Preserve both arms' source,
+pack, fixture, timing and memory receipts. A unit-test pass does not replace
+the paired measurement, and the adapter does not authorize a Mac window.
+
+
 ## Live tests
 
 ```bash

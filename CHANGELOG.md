@@ -50,6 +50,10 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.8` 
 
 ### Developer tools
 
+- A separate benchmark adapter records the full frozen NPR proof workload's
+  search-only timing and committed memory. It compares with the development
+  base only when that base has the proof path; otherwise it supplies an
+  absolute cost diagnostic. The published pre-FLOOR cases are unchanged.
 - `seed-calc` computes no-food fight seeds from revision-289 combat formulas.
   Consecutive-kill queries carry remaining Hitpoints without healing.
   It also finds crossing seeds through the product route planner and admission code.
