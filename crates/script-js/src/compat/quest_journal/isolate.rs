@@ -1202,3 +1202,7 @@ mod tests {
         );
     }
 }
+
+#[cfg(test)]
+#[path = "hold_conformance_tests.rs"]
+mod hold_conformance_tests;

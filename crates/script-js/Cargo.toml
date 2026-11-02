@@ -42,6 +42,9 @@ client = { workspace = true }
 nav-planner = { path = "../nav-planner" }
 script = { path = "../script", default-features = false, features = ["test-hooks"] }
 script-js = { path = ".", default-features = false, features = ["test-hooks"] }
+# The checked model of the auto-run hold; the compat lease conformance test
+# drives the real lease with its traces.
+hold-model = { path = "../../tools/hold-model" }
 
 [[test]]
 name = "v8_platform"

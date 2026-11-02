@@ -4167,6 +4167,10 @@
       "owner": "T2"
     },
     {
+      "path": "crates/script-js/src/compat/quest_journal/hold_conformance_tests.rs",
+      "owner": "T1"
+    },
+    {
       "path": "crates/script/src/quest_journal/native.rs",
       "owner": "T2"
     },
