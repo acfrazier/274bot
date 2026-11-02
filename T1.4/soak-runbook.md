@@ -53,9 +53,11 @@ These failures do not justify a transport threshold change.
 
 ## Workload route check
 
-The replacement fixture uses normal and oak logs from `woodcutting.falador_west.n`, with Falador West bank.
-Its outer bound is `x=2840..3065, z=3262..3527`.
-The static selection has sixteen normal trees and two oaks.
+The fixture uses normal logs from `woodcutting.falador_west.n` and oak logs
+from the distinct `woodcutting.falador_west.2` site, with Falador West bank.
+The second site starts at `(2925,3367,0)` with radius 12; the selected content
+has three oaks there (`crates/api/data/game-data/289.json:112059-112107`).
+The outer bound remains `x=2840..3065, z=3262..3527`.
 The selected workload audit must pass before the new diagnostics.
 The two earlier diagnostics did not complete thirty minutes and do not satisfy this requirement.
 
