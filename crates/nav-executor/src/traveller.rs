@@ -1846,6 +1846,8 @@ mod wait_status_tests {
         let mut run = empty_run();
         run.walk = Some(WalkHop {
             leg,
+            // This fixture's only leg starts at the route's first tile.
+            route_index_start: 0,
             cursor: 0,
             aim,
             aim_index: 1,
