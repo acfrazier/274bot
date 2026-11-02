@@ -473,7 +473,7 @@ pub(crate) mod tests {
             Vec::new(),
             None,
             Arc::default(),
-            Arc::from([]),
+            Arc::new(nav_planner::transport::WildernessRules::default()),
             None,
         )
         .expect("gameplay isolate");

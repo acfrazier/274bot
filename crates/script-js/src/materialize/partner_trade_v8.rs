@@ -147,13 +147,10 @@ fn stable_closed_poll<'s>(
     let state = v8::Object::new(scope);
     set_key(scope, state, "minMs", min_ms);
     set_key(scope, state, "nowFn", now_fn);
-    set_key(scope, state, "inactiveSinceMs", v8::Number::new(scope, -1.0).into());
-    set_key(
-        scope,
-        state,
-        "inactiveSinceTick",
-        v8::Number::new(scope, -1.0).into(),
-    );
+    let inactive_since_ms = v8::Number::new(scope, -1.0).into();
+    set_key(scope, state, "inactiveSinceMs", inactive_since_ms);
+    let inactive_since_tick = v8::Number::new(scope, -1.0).into();
+    set_key(scope, state, "inactiveSinceTick", inactive_since_tick);
     let context = scope.get_current_context();
     let global = context.global(scope);
     let name = v8::String::new(scope, "__rs2b0t_partner_trade")

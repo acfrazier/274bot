@@ -777,7 +777,7 @@ impl LoadIsolate {
             siblings,
             None,
             std::sync::Arc::new(api::named_banks::NamedBankFacts::empty()),
-            std::sync::Arc::from([]),
+            std::sync::Arc::new(nav_planner::transport::WildernessRules::default()),
             Some(execution),
             None,
         )
@@ -798,7 +798,7 @@ impl LoadIsolate {
             siblings,
             Some(game_data),
             std::sync::Arc::new(api::named_banks::NamedBankFacts::empty()),
-            std::sync::Arc::from([]),
+            std::sync::Arc::new(nav_planner::transport::WildernessRules::default()),
             None,
             None,
         )
@@ -820,7 +820,7 @@ impl LoadIsolate {
             siblings,
             game_data,
             named_banks,
-            std::sync::Arc::from([]),
+            std::sync::Arc::new(nav_planner::transport::WildernessRules::default()),
             None,
             None,
         )
@@ -842,7 +842,7 @@ impl LoadIsolate {
             siblings,
             None,
             std::sync::Arc::new(api::named_banks::NamedBankFacts::empty()),
-            std::sync::Arc::from([]),
+            std::sync::Arc::new(nav_planner::transport::WildernessRules::default()),
             None,
             Some(local_state),
         )

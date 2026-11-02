@@ -216,7 +216,7 @@ fn validate_one(
         siblings,
         None,
         std::sync::Arc::clone(&EMPTY_BANKS),
-        std::sync::Arc::from([]),
+        std::sync::Arc::new(nav_planner::transport::WildernessRules::default()),
         None,
         None,
     )
