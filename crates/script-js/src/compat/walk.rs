@@ -2363,20 +2363,24 @@ pub(crate) mod tests {
     }
 
     fn walk_token() -> u64 {
+        walk_token_for(10, 0)
+    }
+
+    fn walk_token_for(x: i32, z: i32) -> u64 {
         match machine::merge_ops(Vec::new()).as_slice() {
             [InteractReq::Walk {
-                x: 10,
-                z: 0,
+                x: actual_x,
+                z: actual_z,
                 request_id,
                 ..
             }]
             | [InteractReq::WalkNear {
-                x: 10,
-                z: 0,
+                x: actual_x,
+                z: actual_z,
                 request_id,
                 ..
-            }] => *request_id,
-            other => panic!("expected the walk, got {other:?}"),
+            }] if (*actual_x, *actual_z) == (x, z) => *request_id,
+            other => panic!("expected the walk to ({x},{z}), got {other:?}"),
         }
     }
 
@@ -2632,40 +2636,49 @@ pub(crate) mod tests {
 
     /// `passes` no-progress ladder passes (baked fail, scene, unstick),
     /// with the backoff between them. Returns the next walk-outcome seq.
-    fn no_progress_passes(h: machine::Handle, seq: u64, passes: u32) -> u64 {
-        ladder_no_progress_passes(h, seq, passes, 0)
+    fn ladder_no_progress_passes(
+        h: machine::Handle,
+        seq: u64,
+        passes: u32,
+        radius: i32,
+    ) -> u64 {
+        ladder_no_progress_passes_to(
+            h,
+            seq,
+            passes,
+            radius,
+            WorldTile {
+                x: 10,
+                z: 0,
+                level: 0,
+            },
+        )
     }
 
-    /// [`no_progress_passes`] for any row whose ladder walks from (0,0) to
-    /// (10,0) with walk `radius`: every baked walk fails where it began.
-    fn ladder_no_progress_passes(
+    fn ladder_no_progress_passes_to(
         h: machine::Handle,
         mut seq: u64,
         passes: u32,
         radius: i32,
+        dest: WorldTile,
     ) -> u64 {
         let here = WorldTile {
             x: 0,
             z: 0,
             level: 0,
         };
-        let dest = WorldTile {
-            x: 10,
-            z: 0,
-            level: 0,
-        };
         for pass in 0..passes {
             machine::step(&mut NoJs);
-            let token = walk_token();
+            let token = walk_token_for(dest.x, dest.z);
             post_walk_outcome(seq, token, here, dest, radius, true);
             seq += 1;
             machine::step(&mut NoJs);
             assert_eq!(
                 machine::merge_ops(Vec::new()),
                 vec![InteractReq::WalkTo {
-                    x: 10,
-                    z: 0,
-                    level: 0,
+                    x: dest.x,
+                    z: dest.z,
+                    level: dest.level,
                 }]
             );
             machine::age(h, SCENE_TIMEOUT_MS + 1);
@@ -2677,6 +2690,122 @@ pub(crate) mod tests {
             }
         }
         seq
+    }
+
+    #[test]
+    fn stalled_verify_probe_ignores_120k_caller_budget_for_long_route() {
+        use nav_planner::collision::{pack_walk, WorldCollision};
+        use nav_planner::router::{self, FindOptions};
+        use nav_planner::transport::TransportGraph;
+        use nav_planner::WorldState;
+
+        const WIDTH: usize = 512;
+        const HEIGHT: usize = 512;
+        const WALL_X: usize = WIDTH / 2;
+        reset();
+        let from = WorldTile {
+            x: 0,
+            z: 0,
+            level: 0,
+        };
+        let to = WorldTile {
+            x: WIDTH as i32 - 1,
+            z: 0,
+            level: 0,
+        };
+        post_here(from.x, from.z);
+        let h = start_with_tile(to, json!({ "radius": 0, "maxBudget": 120_000 }));
+        ladder_no_progress_passes_to(h, 1, UNREACHABLE_PASSES, 0, to);
+
+        let ops = machine::merge_ops(Vec::new());
+        let [InteractReq::InspectRoute {
+            x,
+            z,
+            level,
+            from_x,
+            from_z,
+            from_level,
+            allow_teleports,
+            allow_wilderness,
+            allow_bank_fetch,
+            avoid,
+            cross,
+            max_expansions,
+            ..
+        }] = ops.as_slice()
+        else {
+            panic!("expected the long-route verify probe, got {ops:?}");
+        };
+        assert_eq!(*max_expansions, None);
+        let bytes = crate::wire::encode_interact_batch(&ops);
+        let batch = crate::wire::InteractBatch::from_bytes(&bytes)
+            .expect("the long-route verify probe encodes");
+        let requests = batch.reqs().expect("one verify request");
+        assert_eq!(requests.len(), 1);
+        let wire_probe = requests.get(0);
+        assert_eq!(wire_probe.op(), Some("inspect-route"));
+        assert_eq!(wire_probe.max_expansions(), None);
+        assert!(avoid.is_empty());
+        assert!(cross.is_empty());
+        let request_from = WorldTile {
+            x: *from_x,
+            z: *from_z,
+            level: *from_level,
+        };
+        let request_to = WorldTile {
+            x: *x,
+            z: *z,
+            level: *level,
+        };
+        assert_eq!(request_from, from);
+        assert_eq!(request_to, to);
+
+        let mut flags = vec![0u32; WIDTH * HEIGHT * 4];
+        for z in 0..HEIGHT - 1 {
+            flags[z * WIDTH + WALL_X] = client::dash3d::CollisionFlag::SQ_BLOCKED as u32;
+        }
+        let (walk, blocked) = pack_walk(&flags);
+        let collision = WorldCollision {
+            origin: from,
+            width: WIDTH,
+            height: HEIGHT,
+            walk,
+            blocked,
+            flags: None,
+        };
+        let graph = TransportGraph::default();
+        let options = FindOptions {
+            allow_teleports: *allow_teleports,
+            allow_wilderness: *allow_wilderness,
+            allow_bank_fetch: *allow_bank_fetch,
+            ..FindOptions::default()
+        };
+        let state = WorldState::empty();
+        assert_eq!(
+            router::find_with_avoid_bounded(
+                &collision,
+                &graph,
+                request_from,
+                request_to,
+                options,
+                &state,
+                &[],
+                120_000,
+            ),
+            Err(router::RouteError::BudgetExhausted),
+            "the map requires more than the caller's 120,000 expansion budget"
+        );
+        let routed = router::find_with_avoid(
+            &collision,
+            &graph,
+            request_from,
+            request_to,
+            options,
+            &state,
+            &[],
+        )
+        .expect("the default router budget reaches the long-route destination");
+        assert_eq!(routed.dest, request_to);
     }
 
     /// Drive a row's (0,0) to (10,0) ladder with walk `radius` through every
@@ -2808,7 +2937,21 @@ pub(crate) mod tests {
     }
 
     fn start_with(opts: Value) -> machine::Handle {
-        let args = json!({ "tile": { "x": 10, "z": 0, "level": 0 }, "opts": opts });
+        start_with_tile(
+            WorldTile {
+                x: 10,
+                z: 0,
+                level: 0,
+            },
+            opts,
+        )
+    }
+
+    fn start_with_tile(tile: WorldTile, opts: Value) -> machine::Handle {
+        let args = json!({
+            "tile": { "x": tile.x, "z": tile.z, "level": tile.level },
+            "opts": opts,
+        });
         let Started::Running(h) = machine::start("walk-resilient", args, Vec::new(), 0) else {
             panic!("walk-resilient runs");
         };
