@@ -78,6 +78,9 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.8` 
   alias for both the item check and bank seed. The three real-bank fixtures
   also construct in the normal test suite, so a fixture alias error cannot
   remain hidden behind ignored live tests.
+- Admission regression tests distinguish an all-zone grant from endpoint
+  completion on a crossing with no on-foot exit. Covering every zone removes
+  only the no-exit refusal, not the probability-bound check.
 - The bank ownership probes finish only after observing the withdrawn rune.
   Their terminal recipe no longer repeats an already-settled wait until the
   no-progress guard fires.

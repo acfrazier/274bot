@@ -881,8 +881,8 @@ activation predicate, carves and stationary shapes. Pursuit continues through
 the engagement envelope, with transport holds and projectile tails included.
 Retreat stays in the same walk leg, and teleports are never credited as
 on-foot exits. A crossing with neither on-foot exit is `Unsurvivable` with
-`NoWayOut` in its reason unless every zone is explicitly named in `cross`.
-An implicit endpoint-completion grant never removes that refusal.
+`NoWayOut` in its reason unless the request covers every zone by name or by an
+all-zone exemption. An implicit endpoint-completion grant never removes that refusal.
 
 Live and estimated attackers are always summed, even when their identities may
 overlap. `attacker_count(live, estimated)` has no scene-cap parameter: a built,
@@ -991,9 +991,10 @@ recorded, including reverse-proof shortcuts.
 Named grants permit the router to enter zones; they do not omit attacks or
 bypass the death-bound check. `Estimate.grants` carries those names into the
 assessment solely to distinguish a deliberately named no-exit endpoint.
-Every zone explicitly named in a crossing, including zones covered by an
-all-zone exemption, counts as named for the NoWayOut exception. Router endpoint
-completion does not count as a named exemption.
+A crossing counts as named when the request's grants cover every zone in it,
+by name or by an all-zone exemption. Router endpoint completion does not count
+as a named exemption. Tests cover both cases on the same no-exit route and
+retain death-bound refusal when an all-zone grant covers a lethal crossing.
 
 Permission layers above the router stay separate: the global Danger routing level in Nav config, the WalkTo-only **Route through danger zones** checkbox (one admission for the current picker opening, never persisted), per-script Script prefs (**Allow teleports**, **Allow wilderness**, **Allow danger zones**, each granting that script's own walks when the global switch is off), and per-walk Path overrides (`cross` names, `guard`, `allow_*`). The prerequisite grants (Nav config **Allow dialogue steps on walks** and **Allow starting quests on walks**, both default on) compose the same way: the global switch or the script's own grant allows the step, and only a per-request Forbid narrows it.
 

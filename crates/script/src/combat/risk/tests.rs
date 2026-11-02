@@ -638,11 +638,41 @@ fn admission_endpoint_completion_grant_keeps_no_way_out_refusal() {
     let walk = transport_entering_walk(100, 101);
     let mut cx = context(&fx, &risk, &tables);
     cx.grants = Some(Grants::request(fx.none(), fx.wilderness()));
+    assert!(cx.grants.unwrap().endpoint.is_some());
 
     // Old: endpoint completion waived NoWayOut; new: only named zones waive it.
     let assessment = assess(fx.route(&walk), &cx, input(90, 90, 0, &tables));
+    assert_eq!(assessment.plan.crossings.len(), 1);
+    assert!(!assessment.plan.crossings[0].has_way_out());
     assert_eq!(assessment.verdict, Verdict::Unsurvivable);
     assert!(assessment.reason.contains("NoWayOut"));
+
+    cx.grants = Some(Grants::request(fx.exempt_all(), fx.wilderness()));
+    let covered = assess(fx.route(&walk), &cx, input(90, 90, 0, &tables));
+    assert_eq!(covered.verdict, Verdict::Survivable, "{}", covered.reason);
+    assert!(!covered.reason.contains("NoWayOut"));
+}
+
+#[test]
+fn admission_all_zone_grant_waives_no_way_out_but_not_the_death_bound() {
+    let tables = tables();
+    let fx = Fixture::new(one_zone(&tables, 100, 1), WildernessRules::default());
+    let risk = RiskTables::build(&tables);
+    let walk = transport_entering_walk(100, 101);
+    let mut cx = context(&fx, &risk, &tables);
+    cx.grants = Some(Grants::named(fx.exempt_all()));
+    assert!(cx.grants.unwrap().endpoint.is_none());
+
+    let covered = assess(fx.route(&walk), &cx, input(90, 90, 0, &tables));
+    assert_eq!(covered.plan.crossings.len(), 1);
+    assert!(!covered.plan.crossings[0].has_way_out());
+    assert_eq!(covered.verdict, Verdict::Survivable, "{}", covered.reason);
+    assert!(!covered.reason.contains("NoWayOut"));
+
+    let lethal = assess(fx.route(&walk), &cx, input(1, 1, 0, &tables));
+    assert_eq!(lethal.verdict, Verdict::Unsurvivable);
+    assert!(lethal.bound > consts::DEATH_BOUND);
+    assert!(!lethal.reason.contains("NoWayOut"));
 }
 
 #[test]
