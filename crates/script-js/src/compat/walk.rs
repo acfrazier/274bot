@@ -1687,6 +1687,8 @@ impl Family for WalkResilient {
     fn begin(args: WalkResilientArgs, cx: &mut Cx<'_>) -> Begin<Self> {
         reset_executor_status();
         let opts = args.opts;
+        // Keep the upstream pacing option in the ABI; this host router does not use it.
+        let _max_budget = opts.max_budget;
         if let Some(reason) = avoid_refusal(&opts.avoid_zones) {
             set_last_outcome(Some(WalkExecutorOutcome::Failed));
             return Begin::Refuse(reason);
@@ -2843,7 +2845,7 @@ pub(crate) mod tests {
             "radius": 0,
             "crossZones": ["test-barrier"],
         }));
-        no_progress_passes(h, 1, UNREACHABLE_PASSES);
+        ladder_no_progress_passes(h, 1, UNREACHABLE_PASSES, 0);
 
         let ops = machine::merge_ops(Vec::new());
         let bytes = crate::wire::encode_interact_batch(&ops);
@@ -2867,7 +2869,7 @@ pub(crate) mod tests {
         post_here(0, 0);
         let budget = 123_456;
         let h = start_with(json!({ "radius": 0, "maxBudget": budget }));
-        no_progress_passes(h, 1, UNREACHABLE_PASSES);
+        ladder_no_progress_passes(h, 1, UNREACHABLE_PASSES, 0);
 
         let ops = machine::merge_ops(Vec::new());
         assert!(matches!(
@@ -2890,7 +2892,7 @@ pub(crate) mod tests {
         reset();
         post_here(0, 0);
         let h = start(None);
-        let seq = no_progress_passes(h, 1, UNREACHABLE_PASSES);
+        let seq = ladder_no_progress_passes(h, 1, UNREACHABLE_PASSES, 0);
         let first = probe_token();
         assert_eq!(machine::take(h), Take::Pending, "verify waits on the probe");
         crate::inspect_wait::settle_for_tests(first, true);
@@ -2901,7 +2903,7 @@ pub(crate) mod tests {
             "a fresh probe is not unreachable"
         );
         machine::step(&mut NoJs);
-        no_progress_passes(h, seq, UNREACHABLE_PASSES);
+        ladder_no_progress_passes(h, seq, UNREACHABLE_PASSES, 0);
         let second = probe_token();
         crate::inspect_wait::settle_for_tests(second, true);
         machine::step(&mut NoJs);
@@ -2917,7 +2919,7 @@ pub(crate) mod tests {
         reset();
         post_here(0, 0);
         let h = start(None);
-        no_progress_passes(h, 1, UNREACHABLE_PASSES);
+        ladder_no_progress_passes(h, 1, UNREACHABLE_PASSES, 0);
         let probe = probe_token();
         crate::inspect_wait::settle_for_tests(probe, false);
         machine::step(&mut NoJs);
@@ -2929,7 +2931,7 @@ pub(crate) mod tests {
         reset();
         post_here(0, 0);
         let h = start(Some(UNREACHABLE_PASSES));
-        no_progress_passes(h, 1, UNREACHABLE_PASSES);
+        ladder_no_progress_passes(h, 1, UNREACHABLE_PASSES, 0);
         assert!(
             machine::merge_ops(Vec::new()).is_empty(),
             "attempts <= 3 ends before verify (Traversal.ts:149–153)"
