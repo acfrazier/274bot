@@ -314,14 +314,10 @@ fn complete_no_path_zone_retry_replaces_an_incomplete_first_search() {
     let state = WorldState::default();
     let avoid = [];
     let options = FindOptions::default();
-    let mut admission = make_admission(
-        RiskPolicy::Inherit,
-        RiskInput {
-            prayer: 99,
-            prayer_base: 99,
-            ..input(99)
-        },
-    );
+    let mut risk_input = input(99);
+    risk_input.prayer = 99;
+    risk_input.prayer_base = 99;
+    let mut admission = make_admission(RiskPolicy::Inherit, risk_input);
     admission.allow.prayer = true;
     let mut searches = Vec::new();
     let result = route(
