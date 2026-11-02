@@ -262,7 +262,8 @@ its 10 s wall bound runs in real seconds (the bound is the product's
 constant). The default run drives at most two such traces and prints how many
 it skipped; `HOLD_CONFORMANCE_SLOW_TRACES=N` raises the limit. A full run,
 `HOLD_CONFORMANCE_TRACES=100000 HOLD_CONFORMANCE_SLOW_TRACES=100000`, drives
-every shortest trace of every release.
+every shortest trace of every release: 519 native traces (none skipped) and 805
+compat traces, in about 6 minutes (HOLD-MODEL-NITS, chardonnay).
 
 Three tests run a counterexample of a retained mutation on the real code. The
 real code must decide like the head model at every frame, and each test
