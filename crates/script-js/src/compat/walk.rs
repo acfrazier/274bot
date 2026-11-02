@@ -63,10 +63,10 @@
 //!   walk). `avoidZones` rectangles ride the walk request and the verify
 //!   probe, and every host search of the walk keeps out of them; a catalog
 //!   zone id (not a host table) is refused loud, not dropped. `bankItemCounts` is only the bank-plan input; the
-//!   host bank fetch reads the bank itself (FENCE 2026-09-18). `maxBudget`
-//!   bounds frozen PathFinder work. The host verify route carries that
-//!   requested expansion cap, bounded again by `NODE_BUDGET`; it does not add
-//!   a separate big-budget rebake or a `budget` outcome.
+//!   host bank fetch reads the bank itself (FENCE 2026-09-18).
+//!   `maxBudget` remains part of the caller contract, but compat does not run
+//!   the upstream `PathFinder`. Verify probes leave `max_expansions` unset so
+//!   the Rust router uses its own `NODE_BUDGET`.
 
 //! - Frozen `WalkExecutor.lastOutcome === 'blocked'` returns true
 //!   (`Traversal.ts:171–174`): the host follow ends `EndBlocked` next to a
@@ -185,8 +185,6 @@ const UNREACHABLE_PASSES: u32 = 3;
 /// Frozen `PATH_REQUEST_TIMEOUT_MS` (`WalkExecutor.ts:95`), the bound of
 /// the verify probe's path request.
 const PROBE_TIMEOUT_MS: u64 = 30_000;
-/// Frozen `Traversal.DEFAULT_MAX_BUDGET` (`Traversal.ts:38`).
-const DEFAULT_MAX_BUDGET: u64 = 1_200_000;
 const BACKOFF_MIN: u32 = 2;
 const BACKOFF_MAX: u32 = 16;
 /// Frozen `tryNearbyDoor` wait (`doorCrossing.ts:369–380`).
@@ -284,6 +282,8 @@ struct WalkResilientOpts {
     attempts: Option<u32>,
     #[serde(default)]
     timeout_ms: Option<u64>,
+    /// Retained for the caller API; compat does not apply PathFinder's budget
+    /// to Rust routing.
     #[serde(default)]
     max_budget: Option<u64>,
     #[serde(default)]
@@ -1098,7 +1098,6 @@ pub(crate) struct Resilient {
     scene_radius: i32,
     timeout_ms: u64,
     attempts: Option<u32>,
-    max_expansions: u64,
     allow_teleports: bool,
     teleport_min_span: i32,
     phase: Phase,
@@ -1137,7 +1136,6 @@ impl Resilient {
             scene_radius: radius.saturating_add(1),
             timeout_ms,
             attempts,
-            max_expansions: DEFAULT_MAX_BUDGET,
             allow_teleports,
             teleport_min_span: 0,
             phase: Phase::NeedWalk,
@@ -1168,10 +1166,6 @@ impl Resilient {
     }
     pub(crate) fn with_cross(mut self, cross: Vec<String>) -> Self {
         self.cross = cross.into_boxed_slice();
-        self
-    }
-    fn with_max_expansions(mut self, max_expansions: u64) -> Self {
-        self.max_expansions = max_expansions;
         self
     }
 
@@ -1626,7 +1620,6 @@ impl Resilient {
             "avoid": self.avoid,
             "cross": self.cross.as_ref(),
             "timeout_ms": PROBE_TIMEOUT_MS,
-            "max_expansions": self.max_expansions,
         }))
         .as_u64()
         .unwrap_or(0);
@@ -1640,7 +1633,7 @@ impl Resilient {
             allow_teleports: false,
             allow_wilderness: true,
             allow_bank_fetch: false,
-            max_expansions: Some(self.max_expansions),
+            max_expansions: None,
             avoid: self.avoid.clone(),
             cross: self.cross.to_vec(),
             request_id: token,
@@ -1745,7 +1738,6 @@ impl Family for WalkResilient {
         )
         .with_scene_radius(opts.scene_radius.unwrap_or(radius.saturating_add(1)))
         .with_teleport_min_span(opts.policy.distance_before_teleport.unwrap_or(0))
-        .with_max_expansions(opts.max_budget.unwrap_or(DEFAULT_MAX_BUDGET))
         .with_cross(opts.cross_zones)
         .with_avoid(opts.avoid_zones);
         Begin::Run(Self {
@@ -2639,7 +2631,7 @@ pub(crate) mod tests {
         assert_eq!(requests.len(), 1);
         let probe = requests.get(0);
         assert_eq!(probe.op(), Some("inspect-route"));
-        assert_eq!(probe.max_expansions(), Some(DEFAULT_MAX_BUDGET));
+        assert_eq!(probe.max_expansions(), None);
         let cross = probe
             .cross()
             .map(|names| names.iter().collect::<Vec<_>>())
@@ -2648,7 +2640,7 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn stalled_verify_probe_preserves_max_budget_over_flatbuffer() {
+    fn stalled_verify_probe_does_not_apply_caller_max_budget() {
         reset();
         post_here(0, 0);
         let budget = 123_456;
@@ -2659,16 +2651,16 @@ pub(crate) mod tests {
         assert!(matches!(
             ops.as_slice(),
             [InteractReq::InspectRoute {
-                max_expansions: Some(123_456),
+                max_expansions: None,
                 ..
             }]
         ));
         let bytes = crate::wire::encode_interact_batch(&ops);
         let batch = crate::wire::InteractBatch::from_bytes(&bytes)
-            .expect("the bounded verify route encodes");
+            .expect("the default-budget verify route encodes");
         let requests = batch.reqs().expect("one verify request");
         assert_eq!(requests.len(), 1);
-        assert_eq!(requests.get(0).max_expansions(), Some(budget));
+        assert_eq!(requests.get(0).max_expansions(), None);
     }
 
     #[test]

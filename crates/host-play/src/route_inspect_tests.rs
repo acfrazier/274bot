@@ -409,6 +409,65 @@ fn bank_false_fare_is_nopath() {
     assert_eq!(term.reason, "NoPath");
     assert!(!term.bank_planned);
 }
+#[test]
+fn route_needing_more_than_120k_settles_succeeds_with_default_budget() {
+    const WIDTH: usize = 512;
+    const HEIGHT: usize = 512;
+    const WALL_X: usize = WIDTH / 2;
+    let mut flags = vec![0u32; WIDTH * HEIGHT * 4];
+    for z in 0..HEIGHT - 1 {
+        flags[z * WIDTH + WALL_X] = client::dash3d::CollisionFlag::SQ_BLOCKED as u32;
+    }
+    let (walk, blocked) = pack_walk(&flags);
+    let world = Arc::new(NavWorld::from_parts(
+        WorldCollision {
+            origin: tile(0, 0, 0),
+            width: WIDTH,
+            height: HEIGHT,
+            walk,
+            blocked,
+            flags: None,
+        },
+        TransportGraph::default(),
+        vec![],
+    ));
+    let from = tile(0, 0, 0);
+    let to = tile(WIDTH as i32 - 1, 0, 0);
+    let options = FindOptions {
+        allow_wilderness: true,
+        ..FindOptions::default()
+    };
+    let mut limited = capture(
+        Arc::clone(&world),
+        from,
+        to,
+        options.clone(),
+        101,
+        BankRows::default(),
+        None,
+        None,
+        None,
+    );
+    limited.max_expansions = 120_000;
+    let capped = calculate(&limited);
+    assert!(!capped.ok, "the route must exceed the caller's 120,000 cap");
+
+    let default_budget = capture(
+        world,
+        from,
+        to,
+        options,
+        102,
+        BankRows::default(),
+        None,
+        None,
+        None,
+    );
+    let routed = calculate(&default_budget);
+    assert!(routed.ok, "the default router bound must reach the destination");
+    assert_eq!(routed.terminal, Some(to));
+}
+
 
 #[test]
 fn pre_state_stand_proof_rejects_post_only_stand() {
