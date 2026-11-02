@@ -5,45 +5,16 @@ use api::quest_progress::EvidenceStamp;
 use api::snapshot::SnapshotView;
 use api::snapshot::WorldTile;
 use nav_planner::contract::ArrivalKind;
-use nav_planner::transport::{WildernessRules, WildernessZone};
+use nav_planner::transport::WildernessRules;
 use nav_planner::walk_destinations::{WalkDestination, WALK_DESTINATIONS};
 use std::num::NonZeroU64;
-use std::sync::Arc;
 use std::task::Poll;
 use std::time::Duration;
 
-/// One selected wilderness coordinate pair with its packed level formula.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct WildernessZonePair {
-    pub zone: WildernessZone,
-    pub divisor: i32,
-    pub offset: i32,
-}
-
-/// Share the selected world’s wilderness pairs with read-only script queries.
-pub fn wilderness_zone_pairs(rules: &WildernessRules) -> Arc<[WildernessZonePair]> {
-    rules
-        .zones
-        .iter()
-        .copied()
-        .map(|zone| WildernessZonePair {
-            zone,
-            divisor: rules.divisor,
-            offset: rules.offset,
-        })
-        .collect::<Vec<_>>()
-        .into()
-}
 
 /// Level at a tile under the selected pack’s inclusive wilderness zones.
-pub fn wilderness_level_at(pairs: &[WildernessZonePair], tile: WorldTile) -> i32 {
-    pairs
-        .iter()
-        .find(|pair| pair.zone.contains(tile))
-        .filter(|pair| pair.divisor > 0)
-        .map_or(0, |pair| {
-            (tile.z - pair.zone.origin_z) / pair.divisor + pair.offset
-        })
+pub fn wilderness_level_at(rules: &WildernessRules, tile: WorldTile) -> i32 {
+    rules.level(tile)
 }
 
 /// Whether the tile belongs to the contract Rune Essence mine square.

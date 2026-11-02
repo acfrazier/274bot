@@ -3677,64 +3677,71 @@ impl Drop for BeginGuard {
     }
 }
 
-#[cfg(test)]
-pub(crate) fn start(family: &str, args: Value, hooks: Vec<Hook>, at: usize) -> Started {
-    start_with_parent(family, args, hooks, at, None)
-}
-
-fn start_shop_family(value: Value, hooks: Vec<Hook>, at: usize, parent: Option<Handle>) -> Started {
-    if IN_BEGIN.with(Cell::get) {
-        return Started::Refused("a machine begin may not start a machine".into());
-    }
-    if !hooks.is_empty() {
-        return Started::Refused("Shop.buyById does not accept callbacks".into());
-    }
+fn native_seat_start_context(
+    parent: Option<Handle>,
+    family: &str,
+) -> Result<StartContext, Started> {
     let context = HOST.with(|host| host.borrow().start_context_for(parent));
     if context.history_expired {
-        return Started::Refused("history expired".into());
+        return Err(Started::Refused("history expired".into()));
     }
     if context.parent_revoked {
-        return Started::Refused("parent not live".into());
+        return Err(Started::Refused("parent not live".into()));
     }
     if !HOST.with(|host| host.borrow().execution.is_some()) {
-        return Started::Refused("native Shop seat requires an active execution".into());
+        return Err(Started::Refused(format!(
+            "native {family} seat requires an active execution"
+        )));
     }
+    Ok(context)
+}
+
+fn ensure_native_seat_start_capacity() -> Result<(), Started> {
     if HOST.with(|host| host.borrow().pending_starts.len() >= MAX_PENDING_SEAT_STARTS) {
-        return Started::Refused("native seat start carry is full".into());
+        Err(Started::Refused(
+            "native seat start carry is full".into(),
+        ))
+    } else {
+        Ok(())
     }
-    let args = match serde_json::from_value::<script::native_shop::ShopBuyByIdArgs>(value) {
-        Ok(args) => args,
-        Err(error) => return Started::Refused(format!("shop.buyById arguments: {error}")),
-    };
+}
+
+fn allocate_native_seat_identity(family: &str) -> Result<(Handle, RequestId), Started> {
     let Some(handle) = HOST.with(|host| host.borrow_mut().allocate_handle()) else {
-        return Started::Refused("machine handle exhausted".into());
+        return Err(Started::Refused("machine handle exhausted".into()));
     };
-    let id = match RequestId::isolate(handle) {
-        Ok(id) => id,
-        Err(_) => return Started::Refused("native Shop seat identity exhausted".into()),
-    };
+    let id = RequestId::isolate(handle).map_err(|_| {
+        Started::Refused(format!("native {family} seat identity exhausted"))
+    })?;
+    Ok((handle, id))
+}
+
+fn start_native_seat_row(
+    family: &'static str,
+    exclusive_group: Option<&'static str>,
+    handle: Handle,
+    context: StartContext,
+    kind: native::request::NativeKind,
+    hooks: Vec<Hook>,
+    machine: Box<dyn Machine>,
+    at: usize,
+) -> Started {
     let hooks = hooks.into_iter().map(Rc::new).collect();
     HOST.with(|host| {
         let mut host = host.borrow_mut();
-        host.pending_starts.push(PendingSeatStart {
-            id,
-            parent: context.seat_parent,
-            local_parent: context.local_parent,
-            kind: native::request::NativeKind::Shop,
-            args: SeatStartPayload::Shop(args),
-        });
-        host.newest
-            .retain(|(group, _)| *group != SHOP_BUY_BY_ID_FAMILY);
-        host.newest.push((SHOP_BUY_BY_ID_FAMILY, handle));
-        host.abort_superseded(at);
+        if let Some(group) = exclusive_group {
+            host.newest.retain(|(newest, _)| *newest != group);
+            host.newest.push((group, handle));
+            host.abort_superseded(at);
+        }
         let clock = host.fresh_clock();
         let inherited_baseline = WALK_BASELINE.with(Cell::get);
         let intent_baseline = inherited_baseline.unwrap_or_else(observed_user_move_intent_seq);
         let carries_walk_baseline = inherited_baseline.is_some();
         host.rows.push(Row {
             handle,
-            family: SHOP_BUY_BY_ID_FAMILY,
-            exclusive: Some(SHOP_BUY_BY_ID_FAMILY),
+            family,
+            exclusive: exclusive_group,
             sync_hooks: &[],
             clock,
             hooks,
@@ -3742,10 +3749,10 @@ fn start_shop_family(value: Value, hooks: Vec<Hook>, at: usize, parent: Option<H
             last_snapshot: None,
             reply: None,
             pending: None,
-            machine: Box::new(ShopSeatMachine),
+            machine,
             seat_parent: context.seat_parent,
             parent_row: context.parent_row,
-            native_kind: Some(native::request::NativeKind::Shop),
+            native_kind: Some(kind),
             admitted: false,
             awaiting_seat_terminal: false,
             authority_revoked: false,
@@ -3761,6 +3768,54 @@ fn start_shop_family(value: Value, hooks: Vec<Hook>, at: usize, parent: Option<H
     })
 }
 
+#[cfg(test)]
+pub(crate) fn start(family: &str, args: Value, hooks: Vec<Hook>, at: usize) -> Started {
+    start_with_parent(family, args, hooks, at, None)
+}
+
+fn start_shop_family(value: Value, hooks: Vec<Hook>, at: usize, parent: Option<Handle>) -> Started {
+    if IN_BEGIN.with(Cell::get) {
+        return Started::Refused("a machine begin may not start a machine".into());
+    }
+    if !hooks.is_empty() {
+        return Started::Refused("Shop.buyById does not accept callbacks".into());
+    }
+    let context = match native_seat_start_context(parent, "Shop") {
+        Ok(context) => context,
+        Err(started) => return started,
+    };
+    if let Err(started) = ensure_native_seat_start_capacity() {
+        return started;
+    }
+    let args = match serde_json::from_value::<script::native_shop::ShopBuyByIdArgs>(value) {
+        Ok(args) => args,
+        Err(error) => return Started::Refused(format!("shop.buyById arguments: {error}")),
+    };
+    let (handle, id) = match allocate_native_seat_identity("Shop") {
+        Ok(identity) => identity,
+        Err(started) => return started,
+    };
+    HOST.with(|host| {
+        host.borrow_mut().pending_starts.push(PendingSeatStart {
+            id,
+            parent: context.seat_parent,
+            local_parent: context.local_parent,
+            kind: native::request::NativeKind::Shop,
+            args: SeatStartPayload::Shop(args),
+        });
+    });
+    start_native_seat_row(
+        SHOP_BUY_BY_ID_FAMILY,
+        Some(SHOP_BUY_BY_ID_FAMILY),
+        handle,
+        context,
+        native::request::NativeKind::Shop,
+        hooks,
+        Box::new(ShopSeatMachine),
+        at,
+    )
+}
+
 fn start_bank_family(
     family: &'static str,
     value: Value,
@@ -3772,16 +3827,10 @@ fn start_bank_family(
     let Some(descriptor) = bank_family_descriptor(family) else {
         return Started::Refused(format!("unknown bank family {family:?}"));
     };
-    let context = HOST.with(|host| host.borrow().start_context_for(parent));
-    if context.history_expired {
-        return Started::Refused("history expired".into());
-    }
-    if context.parent_revoked {
-        return Started::Refused("parent not live".into());
-    }
-    if !HOST.with(|host| host.borrow().execution.is_some()) {
-        return Started::Refused("native bank seat requires an active execution".into());
-    }
+    let context = match native_seat_start_context(parent, "bank") {
+        Ok(context) => context,
+        Err(started) => return started,
+    };
     match bank_op_immediate_outcome(family, &value) {
         Ok(Some(outcome)) => return Started::Settled(outcome),
         Ok(None) => {}
@@ -3838,68 +3887,36 @@ fn start_bank_family(
     if let Err(error) = args.validate(descriptor.kind) {
         return Started::Refused(error.to_string());
     }
-    if HOST.with(|host| host.borrow().pending_starts.len() >= MAX_PENDING_SEAT_STARTS) {
-        return Started::Refused("native seat start carry is full".into());
+    if let Err(started) = ensure_native_seat_start_capacity() {
+        return started;
     }
-    let Some(handle) = HOST.with(|host| host.borrow_mut().allocate_handle()) else {
-        return Started::Refused("machine handle exhausted".into());
-    };
-    let id = match RequestId::isolate(handle) {
-        Ok(id) => id,
-        Err(_) => return Started::Refused("native bank seat identity exhausted".into()),
+    let (handle, id) = match allocate_native_seat_identity("bank") {
+        Ok(identity) => identity,
+        Err(started) => return started,
     };
     if let Err(error) = enqueue_bank_child(id, family, args, context) {
         return Started::Refused(error);
     }
-    let hooks = hooks.into_iter().map(Rc::new).collect();
-    HOST.with(|host| {
-        let mut host = host.borrow_mut();
-        if let Some(group) = descriptor.exclusive_group {
-            host.newest.retain(|(newest, _)| *newest != group);
-            host.newest.push((group, handle));
-            host.abort_superseded(at);
-        }
-        let clock = host.fresh_clock();
-        let inherited_baseline = WALK_BASELINE.with(Cell::get);
-        let intent_baseline = inherited_baseline.unwrap_or_else(observed_user_move_intent_seq);
-        let carries_walk_baseline = inherited_baseline.is_some();
-        host.rows.push(Row {
-            handle,
+    start_native_seat_row(
+        family,
+        descriptor.exclusive_group,
+        handle,
+        context,
+        descriptor.kind,
+        hooks,
+        Box::new(BankSeatMachine(NativeBankChild {
+            id,
             family,
-            exclusive: descriptor.exclusive_group,
-            sync_hooks: &[],
-            clock,
-            hooks,
-            calls: 0,
-            last_snapshot: None,
-            reply: None,
-            pending: None,
-            machine: Box::new(BankSeatMachine(NativeBankChild {
-                id,
-                family,
-                hook_indices,
-                seen_prompt: 0,
-                awaiting_reply: None,
-                cancel_on_drop: false,
-                finished: false,
-            })),
-            seat_parent: context.seat_parent,
-            parent_row: context.parent_row,
-            native_kind: Some(descriptor.kind),
-            admitted: false,
-            awaiting_seat_terminal: false,
-            authority_revoked: false,
-            phase: native::NativePhase::Preparing,
-            manual_walk_event_sent: false,
-            intent_baseline,
-            carries_walk_baseline,
-            walking_operation: false,
-            rebaseline_on_resume: false,
-        });
-        host.publish_walking();
-        Started::Running(handle)
-    })
+            hook_indices,
+            seen_prompt: 0,
+            awaiting_reply: None,
+            cancel_on_drop: false,
+            finished: false,
+        })),
+        at,
+    )
 }
+
 
 struct BankSeatMachine(NativeBankChild);
 
