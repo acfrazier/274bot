@@ -332,8 +332,14 @@ fn a_click_queued_before_a_stall_that_outlasts_its_hold_is_never_dispatched() {
         .as_mut()
         .unwrap()
         .quiet_read_wait(at(19.89), Duration::ZERO, 2);
-    assert_eq!(sampled.map(|(_, deadline)| deadline), Some(2 + WINDOW_TICKS));
-    assert!(authority.live(), "the click keeps its authority with the hold");
+    assert_eq!(
+        sampled.map(|(_, deadline)| deadline),
+        Some(2 + WINDOW_TICKS)
+    );
+    assert!(
+        authority.live(),
+        "the click keeps its authority with the hold"
+    );
     // The stall ends at the renewed bound. The sample releases the hold.
     let sampled = ledger
         .as_mut()
@@ -345,7 +351,12 @@ fn a_click_queued_before_a_stall_that_outlasts_its_hold_is_never_dispatched() {
         "the expired hold made the click stale: the host's fence drops it"
     );
     assert!(
-        ledger.as_ref().unwrap().outbox.iter().all(|action| !action.live()),
+        ledger
+            .as_ref()
+            .unwrap()
+            .outbox
+            .iter()
+            .all(|action| !action.live()),
         "no live action is left for the host to dispatch"
     );
     // The owner sees the expired interaction at its next poll and fails the

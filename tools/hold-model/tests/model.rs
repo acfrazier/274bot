@@ -367,7 +367,9 @@ fn the_earlier_ledger_fails_s6_in_the_quiet_profiles() {
         // The dispatched click without a hold is also S7, one step later: a
         // trace with the run already on.
         assert!(
-            found.iter().any(|(name, _)| *name == "S7-dispatch-without-hold"),
+            found
+                .iter()
+                .any(|(name, _)| *name == "S7-dispatch-without-hold"),
             "{name}: {found:?}"
         );
         assert_eq!(found.len(), 2, "{name}: {found:?}");
@@ -785,5 +787,9 @@ fn a_stall_never_strands_a_dialogue_verb() {
         Limits::default(),
         true,
     );
-    assert!(run.complete && run.failures.is_empty(), "{:?}", run.failures.iter().map(|(v, _)| v.name).collect::<Vec<_>>());
+    assert!(
+        run.complete && run.failures.is_empty(),
+        "{:?}",
+        run.failures.iter().map(|(v, _)| v.name).collect::<Vec<_>>()
+    );
 }

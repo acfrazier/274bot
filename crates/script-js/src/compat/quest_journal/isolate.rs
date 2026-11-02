@@ -1321,7 +1321,10 @@ mod tests {
         // one that matches, and only it.
         assert!(lease.drop_expired_verb(7, clicked_at + COMPAT_HOLD_BOUND, &mut batch));
         assert_eq!(
-            batch.iter().map(|queued| queued.req.clone()).collect::<Vec<_>>(),
+            batch
+                .iter()
+                .map(|queued| queued.req.clone())
+                .collect::<Vec<_>>(),
             vec![InteractReq::CloseModal],
             "the expired click is not dispatched"
         );

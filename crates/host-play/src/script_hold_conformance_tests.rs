@@ -15,6 +15,10 @@
 //! `JournalMachine` phase logic is not in this test. One model time unit is
 //! `UNIT_MS` of real time.
 //!
+//! The owner double sends the journal's click through the real interaction
+//! queue (`ActionContext::emit`), and the host dispatches it through the real
+//! dispatch fence, so a test can see whether a click goes out.
+//!
 //! The compat traces drive the same host through a stub compatibility
 //! surface: the model's compat lease output (its key and its wait) is what the
 //! surface reports at each frame. The real compat lease is covered by the
@@ -40,6 +44,9 @@ const UNIT_MS: u64 = 150;
 /// lease's wall bound is the product's 10 s, four model units.
 const WALL_UNIT_MS: u64 = 2500;
 
+/// Real time of one model stall: longer than the lease's 10 s wall bound.
+const STALL_MS: u64 = 10_500;
+
 /// What the owner double does at one poll, as the model chose it.
 #[derive(Clone, Copy, Debug)]
 enum Cmd {
@@ -58,9 +65,14 @@ enum Cmd {
     Rearm {
         deadline_tick: u64,
     },
+    /// The journal's window renews; with `send`, the owner also queues its
+    /// click (the poll of the real `JournalMachine` that arms a window).
     RenewQuiet {
         deadline_tick: u64,
+        send: bool,
     },
+    /// The owner polls and looks at its lease and its click's receipt.
+    Observe,
     /// The machine completes: its leases end.
     End,
     /// The script cancels its step: the handle drops.
@@ -75,12 +87,18 @@ struct Control {
     pending: Mutex<Option<Cmd>>,
     /// Real milliseconds that pass at the end of the script tick.
     drift_ms: AtomicU64,
+    /// Clicks that the owner saw dispatched: their receipt came back.
+    dispatched: AtomicU64,
+    /// Polls that found the owner's quiet read expired.
+    expired: AtomicU64,
 }
 
 struct DrivenMachine {
     control: Arc<Control>,
     modal: Option<ModalWaitLease>,
     quiet: Option<QuietReadLease>,
+    /// The click that the owner queued and has not seen dispatched.
+    click: Option<u64>,
 }
 
 #[derive(Clone)]
@@ -98,6 +116,7 @@ impl NativeMachine for DrivenMachine {
             control: args.control,
             modal: None,
             quiet: None,
+            click: None,
         };
         match args.begin {
             Cmd::BeginModal { page } => {
@@ -114,6 +133,21 @@ impl NativeMachine for DrivenMachine {
     }
 
     fn poll(&mut self, cx: &mut ActionContext<'_>) -> Poll<Result<(), ActionError>> {
+        // The owner's own checks, as `JournalMachine::poll` makes them: it
+        // reads its click's receipt, and its lease, which the host's sample
+        // ends at the wall bound.
+        if let Some(request) = self.click {
+            if cx.interaction_receipt(request).is_some() {
+                self.control.dispatched.fetch_add(1, Ordering::Relaxed);
+                self.click = None;
+            }
+        }
+        if self.quiet.as_ref().is_some_and(|lease| !lease.live()) {
+            self.control.expired.fetch_add(1, Ordering::Relaxed);
+            return Poll::Ready(Err(ActionError::Failed(Arc::from(
+                "journal quiet lease expired",
+            ))));
+        }
         let Some(cmd) = self.control.pending.lock().unwrap().take() else {
             return Poll::Pending;
         };
@@ -136,11 +170,21 @@ impl NativeMachine for DrivenMachine {
                     Err(error) => return Poll::Ready(Err(error)),
                 }
             }
-            Cmd::RenewQuiet { deadline_tick } => {
+            Cmd::RenewQuiet {
+                deadline_tick,
+                send,
+            } => {
+                if send {
+                    match cx.emit(script::shim::InteractReq::IfButton { component_id: 42 }) {
+                        Ok(request) => self.click = Some(request),
+                        Err(error) => return Poll::Ready(Err(error)),
+                    }
+                }
                 if let Some(lease) = &self.quiet {
                     cx.renew_quiet_read(lease, WaitDeadline::Tick(deadline_tick));
                 }
             }
+            Cmd::Observe => {}
             Cmd::End => {
                 self.modal = None;
                 if let Some(lease) = self.quiet.take() {
@@ -186,6 +230,9 @@ impl Script for DrivenScript {
                 // A revoked owner (Stop, a session boundary) fails its poll.
                 match result {
                     Ok(()) | Err(ActionError::Stale | ActionError::Cancelled) => {}
+                    // The expired read: the owner's own failure, which the
+                    // double counted.
+                    Err(ActionError::Failed(_)) if self.control.expired.load(Ordering::Relaxed) > 0 => {}
                     Err(error) => panic!("the owner double's command failed: {error:?}"),
                 }
                 self.handle = None;
@@ -572,10 +619,12 @@ fn frames_of(
                             (_, Lease::None) => Some(Cmd::End),
                             (Lease::Quiet(before), Lease::Quiet(after))
                                 if before.window != after.window
-                                    || before.hold_until != after.hold_until =>
+                                    || before.hold_until != after.hold_until
+                                    || info.emitted =>
                             {
                                 Some(Cmd::RenewQuiet {
                                     deadline_tick: u64::from(after.window),
+                                    send: info.emitted,
                                 })
                             }
                             _ => None,
@@ -611,7 +660,13 @@ fn frames_of(
                     modal: state.modal,
                     hold: state.hold,
                     cmd,
-                    drift_ms: if f.drift { unit_ms } else { 0 },
+                    drift_ms: if f.stall {
+                        STALL_MS
+                    } else if f.drift {
+                        unit_ms
+                    } else {
+                        0
+                    },
                     // The compat lease's output at this frame's sample.
                     journal: match info.wait {
                         Some((hold_model::Key::Compat { token, generation }, _)) => {
@@ -969,6 +1024,83 @@ fn the_journal_click_is_held_on_the_real_code_where_the_earlier_ledger_pressed()
     );
     check_trace(&head, trace)
         .unwrap_or_else(|report| panic!("the real code differs from the head model: {report}"));
+}
+
+/// Finding N1 of `HOLD-MODEL-AB` (S7). The owner polls, queues its click and
+/// renews its hold to its own wall time plus 10 s; then the process stalls
+/// (the owner double sleeps 10.5 s at the end of its tick: a suspended or
+/// sleeping machine) before the host reads the wall time. The sample ends the
+/// hold by expiry. The click is stale and the host must not dispatch it
+/// (`Mutation::N1ExpiredClickDispatched` is the product at `c2ca4cf66`, which
+/// dispatched it). The real code must decide like the head model at every
+/// frame; the click's receipt never comes back, and the owner's next poll
+/// finds its read expired and fails it. Two traces from the model: the
+/// shortest (the host presses after the expired hold: S6 on the earlier
+/// product) and the one where the run is already on, so that no press follows
+/// and only S7 sees the dispatch. The test fails on the earlier product: the
+/// click's receipt comes back. It runs in real seconds, about 11 s a trace.
+#[test]
+fn an_expired_hold_makes_the_queued_click_stale_on_the_real_code() {
+    let bounds = Bounds {
+        modal: false,
+        stall: true,
+        ..conformance_bounds()
+    };
+    let run = hold_model::explore_profile(
+        &hold_model::Profile {
+            name: "conformance-n1",
+            bounds,
+        },
+        Mutation::N1ExpiredClickDispatched,
+        Some(bounds.horizon),
+        hold_model::Limits::default(),
+        true,
+    );
+    let head = Model::new(bounds, Mutation::None);
+    let earlier = Model::new(bounds, Mutation::N1ExpiredClickDispatched);
+    for name in ["S6-press-after-send", "S7-dispatch-without-hold"] {
+        let (_, trace) = run
+            .failures
+            .iter()
+            .find(|(violation, _)| violation.name == name)
+            .unwrap_or_else(|| panic!("the earlier product fails {name}"));
+        let (mut frames, head_expected) = frames_of(&head, trace, WALL_UNIT_MS);
+        let (_, earlier_expected) = frames_of(&earlier, trace, WALL_UNIT_MS);
+        let last = head_expected.len() - 1;
+        assert!(
+            !head_expected[last].deferred && !earlier_expected[last].deferred,
+            "{name}: the sample ended the hold in both models"
+        );
+        assert_eq!(
+            head_expected[last].pressed, earlier_expected[last].pressed,
+            "{name}: the models differ in the click, not in the press"
+        );
+        // One more tick: the owner polls and looks at its click and its lease.
+        frames.push(RealFrame {
+            ops: Vec::new(),
+            tick: true,
+            wake: false,
+            modal: frames.last().is_some_and(|frame| frame.modal),
+            hold: false,
+            cmd: Some(Cmd::Observe),
+            drift_ms: 0,
+            journal: None,
+        });
+        let mut rig = Rig::new();
+        let real = rig.run(WALL_UNIT_MS, &frames);
+        compare(&head, trace, &real, &head_expected)
+            .unwrap_or_else(|report| panic!("{name}: the real code differs from the head model: {report}"));
+        assert_eq!(
+            rig.control.dispatched.load(Ordering::Relaxed),
+            0,
+            "{name}: the expired hold's click is never dispatched"
+        );
+        assert_eq!(
+            rig.control.expired.load(Ordering::Relaxed),
+            1,
+            "{name}: the owner finds its read expired and fails it"
+        );
+    }
 }
 
 /// Shortest compat traces per release in the default run. A compat trace takes
