@@ -341,3 +341,53 @@ fn every_lease_kind_reaches_its_releases() {
         }
     }
 }
+
+/// Phase 2: each earlier design of the hold is caught by a frozen invariant.
+/// The shortest trace has the length given.
+#[test]
+fn each_earlier_design_fails_a_frozen_invariant() {
+    let modal_only = Bounds {
+        quiet: false,
+        compat: false,
+        ..Bounds::standard()
+    };
+    let compat_only = Bounds {
+        modal: false,
+        quiet: false,
+        same_frame_begin: true,
+        ..Bounds::standard()
+    };
+    let cases = [
+        (Mutation::M1HoldTwoTicks, "S1-press-while-live", 3, modal_only),
+        (Mutation::M1HoldTwoTicks, "L-hold-outlives-deadline", 4, modal_only),
+        (Mutation::M2HoldThreeTicks, "S1-press-while-live", 4, modal_only),
+        (Mutation::M3FixedTerminal, "S3-early-terminal-release", 4, modal_only),
+        (Mutation::M3FixedTerminal, "S1-press-while-live", 4, modal_only),
+        (Mutation::M5ActiveToWall, "S1-press-while-live", 5, modal_only),
+        (Mutation::M5ActiveToWall, "S3-early-terminal-release", 6, modal_only),
+        (Mutation::M6CompatNoRenew, "S6-press-after-send", 4, compat_only),
+        (Mutation::M4CompatConstantKey, "S1-press-while-live", 3, compat_only),
+    ];
+    for (mutation, expected, steps, bounds) in cases {
+        let run = explore_profile(
+            &hold_model::Profile {
+                name: "phase2",
+                bounds,
+            },
+            mutation,
+            Some(steps),
+            Limits::default(),
+            true,
+        );
+        let found = run.failures.iter().find(|(v, _)| v.name == expected);
+        assert!(
+            found.is_some_and(|(_, trace)| trace.len() == steps),
+            "{} must fail {expected} in {steps} steps; found {:?}",
+            mutation.name(),
+            run.failures
+                .iter()
+                .map(|(v, t)| (v.name, t.len()))
+                .collect::<Vec<_>>()
+        );
+    }
+}
