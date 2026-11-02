@@ -2184,7 +2184,9 @@ p_teleport(0_44_53_5_46);
                 (None, None, api::selected::Truth::Unknown),
             ] {
                 assert_eq!(
-                    window.values.test(&api::selected::InclusiveRange { min, max }),
+                    window
+                        .values
+                        .test(&api::selected::InclusiveRange { min, max }),
                     expected
                 );
             }
