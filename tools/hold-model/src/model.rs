@@ -1020,7 +1020,13 @@ impl Model {
             (Some(w), _) => Some(HostHold {
                 key: w.key,
                 released: false,
-                start: s.tick,
+                // Only the earlier designs read the start tick; the head
+                // design keeps it at 0 so that its state space is unchanged.
+                start: if self.mutation == Mutation::M3FixedTerminal {
+                    s.tick
+                } else {
+                    0
+                },
             }),
         };
         let (Some(w), Some(h)) = (wait, s.hold_rec.as_mut()) else {
