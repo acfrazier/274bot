@@ -692,14 +692,17 @@ fn the_real_hold_matches_the_model_on_the_shortest_trace_of_each_release() {
     }
 }
 
-/// Finding F1 of the model at the head commit: an acknowledgement wait that
-/// the owner leaves unpolled past its bound is ended by the host, and the
-/// end gap that follows is the same lease renewed, so the host does not hold
-/// it. The model's counterexample ends in a press while the gap lease is
-/// live. The real code must decide the same at every frame, the press
-/// included. This test records the defect; it fails when the product ends it.
+/// Defect F1 of `HOLD-MODEL-AB`, fixed. An acknowledgement wait that the
+/// owner leaves unpolled past its bound is ended by the host, and the end gap
+/// that follows is the same lease renewed to a later deadline. The earlier
+/// host (`Mutation::F1RenewalKeepsRelease`, the product at `0a3e700f8`) did
+/// not hold that renewed wait: its counterexample ends in a press while the
+/// gap lease is live. The head host holds it. The real code must decide like
+/// the head model at every frame, and the trace must separate the two hosts
+/// at its last frame. The test fails on the earlier host code: the real code
+/// then presses where the head model holds.
 #[test]
-fn the_end_gap_hold_defect_of_the_model_reproduces_on_the_real_code() {
+fn the_renewed_end_gap_is_held_on_the_real_code_where_the_earlier_host_pressed() {
     let bounds = Bounds {
         quiet: false,
         ..conformance_bounds()
@@ -709,25 +712,33 @@ fn the_end_gap_hold_defect_of_the_model_reproduces_on_the_real_code() {
             name: "conformance-modal",
             bounds,
         },
-        Mutation::None,
+        Mutation::F1RenewalKeepsRelease,
         Some(bounds.horizon),
         hold_model::Limits::default(),
         true,
     );
-    let model = Model::new(bounds, Mutation::None);
+    let head = Model::new(bounds, Mutation::None);
+    let earlier = Model::new(bounds, Mutation::F1RenewalKeepsRelease);
     for name in ["S1-press-while-live", "S4-released-state-carried"] {
         let (_, trace) = run
             .failures
             .iter()
             .find(|(violation, _)| violation.name == name)
-            .unwrap_or_else(|| panic!("the model finds {name}"));
-        let (held, pressed) = check_trace(&model, trace).unwrap_or_else(|report| {
-            panic!("{name}: the real code differs from the model: {report}")
-        });
+            .unwrap_or_else(|| panic!("the earlier host fails {name}"));
+        let (_, head_expected) = frames_of(&head, trace, UNIT_MS);
+        let (_, earlier_expected) = frames_of(&earlier, trace, UNIT_MS);
+        let last = head_expected.len() - 1;
         assert!(
-            held > 0 && pressed > 0,
-            "{name}: the counterexample holds, then presses"
+            earlier_expected[last].pressed && !earlier_expected[last].deferred,
+            "{name}: the earlier host presses at the last frame"
         );
+        assert!(
+            head_expected[last].deferred && !head_expected[last].pressed,
+            "{name}: the head host holds the renewed wait at the last frame"
+        );
+        check_trace(&head, trace).unwrap_or_else(|report| {
+            panic!("{name}: the real code differs from the head model: {report}")
+        });
     }
 }
 

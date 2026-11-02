@@ -39,7 +39,11 @@ pub enum Mutation {
     CheckStopKeepsLease,
     /// The compat click does not take a fresh hold bound.
     CheckCompatClickNoRenew,
-    /// A new send keeps the key of the lease it replaces.
+    /// A new send keeps the key of the lease it replaces. The head host cannot
+    /// tell such a send from a renewal of the same key (both move the deadline
+    /// later), so this check runs on the earlier host
+    /// (`F1RenewalKeepsRelease`): it shows that S4 sees a released state
+    /// carried to a new transaction.
     CheckSendKeepsKey,
     /// The host keeps its hold when the sample returns no wait.
     CheckStaleHold,
@@ -1042,7 +1046,11 @@ impl Model {
     /// `ScriptRunPolicy::observe_script_wait`: the expiry it returns, as the
     /// key, the reported deadline and the tick.
     fn observe_wait(&self, s: &mut State, wait: Option<&Wait>) -> Option<(Key, u8, u8)> {
-        let f1 = self.mutation == Mutation::F1RenewalKeepsRelease;
+        // The host as it was at `0a3e700f8`: no re-arm at a renewal.
+        let f1 = matches!(
+            self.mutation,
+            Mutation::F1RenewalKeepsRelease | Mutation::CheckSendKeepsKey
+        );
         // Only the earlier designs read the start tick; the head design keeps
         // it at 0 so that its state space is unchanged.
         let start = if self.mutation == Mutation::M3FixedTerminal {
