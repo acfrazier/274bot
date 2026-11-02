@@ -46,9 +46,13 @@ mod keys;
 // - An `if` whose branches only print (or drop items) is skipped without
 //   reading its condition; of two operands that both decide an `|`/`&`,
 //   the one with the cheaper requirement is kept.
-// - Anything else on the path — a dialog, an NPC lookup, a key taken,
-//   a varp written, a queue, a random roll, a `switch`/`while`, an
-//   unknown proc — stops the evaluation and no crossing is emitted.
+// - A side-effect proc may precede the crossing only when its whole body
+//   matches a pinned passability proof. The Black Knights' aggro proc only
+//   selects NPCs, speaks and sets their attack target. It does not gate or
+//   move the player. Other NPC mode changes remain uncertified.
+// - Anything else on the path — a dialog, an unresolved NPC lookup, a key
+//   taken, a varp written, a queue, a random roll, a `switch`/`while`, or an
+//   unknown proc — stops evaluation and no crossing is emitted.
 // - After the terminal call the rest of the path may print or talk but
 //   must not move the player again or jump anywhere.
 //
@@ -79,6 +83,23 @@ struct OpenProc {
 /// A proc is modelled only while the content's body of it and of its whole
 /// call closure equals this text (comments and whitespace aside).
 pub(super) const ENGINE_DOOR_PROCS: &str = include_str!("engine_door_procs.rs2");
+
+/// `quest_blackknight/scripts/quest_blackknight.rs2:159-170`. Unlike the
+/// general non-moving proof, this exact body permits NPC aggression.
+/// `NpcOps.ts:206-248` changes the NPC's target, not player passability.
+/// The pack has no per-edge danger field, so this proof adds no metadata.
+const PASSABILITY_SIDE_EFFECT_PROCS: &str = r#"
+[proc,black_knights_aggro](coord $first_search_coord, coord $all_search_coord)
+if (npc_find($first_search_coord, aggressive_black_knight, 5, 0) = true) {
+    npc_say("Die intruder!!!");
+}
+npc_findall($all_search_coord, aggressive_black_knight, 5, 0);
+while (npc_findnext = true) {
+    if (npc_getmode ! opplayer2) {
+        npc_setmode(opplayer2);
+    }
+}
+"#;
 
 const fn single(name: &'static str) -> OpenProc {
     OpenProc {
@@ -439,6 +460,9 @@ struct Sources {
     quest_family: Option<nav_planner::quest_gates::QuestFamilyId>,
     quest_complete: HashMap<String, (api::selected::FactKey, i32)>,
     quest_stage: HashMap<String, QuestStageFacts>,
+    /// Selected quest identity for each unambiguous named progress signal,
+    /// including quests whose completion value is not positive.
+    quest_signals: HashMap<String, api::selected::FactKey>,
     /// Varp names whose every possible source write is bounded by completion.
     quest_exact: HashSet<String>,
     labels: HashMap<String, Vec<Option<Block>>>,
@@ -469,6 +493,21 @@ impl Sources {
         let mut timers: HashMap<String, Vec<Option<Block>>> = HashMap::new();
         let mut procs: HashMap<String, Vec<ProcDef>> = HashMap::new();
         let constants = script_constants(content_root);
+        let mut quest_signals = HashMap::new();
+        for row in quests
+            .into_iter()
+            .flat_map(|quests| &quests.facts.rows)
+            .filter(|row| !row.varp.is_empty() && row.varp_id >= 0)
+        {
+            quest_signals
+                .entry(row.varp.clone())
+                .and_modify(|identity| *identity = None)
+                .or_insert_with(|| Some(api::selected::FactKey::new(&row.id)));
+        }
+        let quest_signals = quest_signals
+            .into_iter()
+            .filter_map(|(signal, identity)| identity.map(|quest| (signal, quest)))
+            .collect();
         let quest_complete: HashMap<_, _> = quests
             .into_iter()
             .flat_map(|quests| &quests.facts.rows)
@@ -564,6 +603,7 @@ impl Sources {
             quest_family: quests.map(|quests| quests.family),
             quest_complete,
             quest_stage,
+            quest_signals,
             quest_exact,
             oplocu,
             labels,
@@ -578,9 +618,9 @@ impl Sources {
         }
     }
 
-    /// The [`ENGINE_DOOR_PROCS`] procs this content defines exactly once
-    /// with the pinned body, whose whole pinned call closure does too, and
-    /// how many it defines with a drifted body.
+    /// Pinned crossing and passability-side-effect procs this content defines
+    /// exactly once with the pinned body and full pinned call closure, plus
+    /// the count of definitions whose bodies have drifted.
     fn supported_procs(&self) -> (HashSet<String>, usize) {
         let pinned = pinned_procs();
         let matches = |name: &str| match (self.procs.get(name).map(Vec::as_slice), pinned.get(name))
@@ -696,7 +736,7 @@ impl Sources {
 /// this declaration agrees with the script's slot. Missing, unresolved or
 /// conflicting declarations prove nothing; secondary coverage slots do
 /// not contain the object and are deliberately not admitted.
-fn worn_slot_facts(
+pub(super) fn worn_slot_facts(
     content_root: &Path,
     objs: &HashMap<String, i32>,
     constants: &HashMap<String, i32>,
@@ -761,10 +801,11 @@ fn proc_identity(params: &[String], body: &str) -> String {
     format!("({}){}", params.join(","), normalized_body(body))
 }
 
-/// [`ENGINE_DOOR_PROCS`] as proc name → (identity, procs its body calls).
+/// Pinned movement and passability proofs, with their complete proc closure.
 fn pinned_procs() -> HashMap<String, (String, Vec<String>)> {
     header_blocks(ENGINE_DOOR_PROCS)
         .into_iter()
+        .chain(header_blocks(PASSABILITY_SIDE_EFFECT_PROCS))
         .filter(|(kind, ..)| kind == "proc")
         .map(|(_, name, params, body)| {
             let calls = lex(&body)
@@ -784,7 +825,7 @@ fn pinned_procs() -> HashMap<String, (String, Vec<String>)> {
 /// (`[oploc1,herodoor_l] @open_heroes_guild(^left);`) and parameter lists
 /// (`[label,open_legends_door](int $side)`), which `script_blocks` cannot
 /// see. Returns `(kind, name, parameter names, body)`.
-fn header_blocks(text: &str) -> Vec<(String, String, Vec<String>, String)> {
+pub(super) fn header_blocks(text: &str) -> Vec<(String, String, Vec<String>, String)> {
     super::script_text::collect_script_blocks(text, |line| {
         let Some(header) = super::script_text::parse_script_header(
             line,
@@ -1110,9 +1151,21 @@ impl Eval<'_> {
         }
     }
 
-    /// A `~proc(…)` statement: one of the supported crossing procs with
-    /// the entering flag this stand needs, or a refusal.
+    /// A supported crossing or pinned passability side effect.
+    /// Every other proc remains a refusal.
     fn open(&mut self, proc: &str, args: &[Expr], env: &Env) -> Flow {
+        if proc == "black_knights_aggro" {
+            return if self.supported.contains(proc)
+                && matches!(args, [first, all]
+                    if matches!(self.value(first, env), Some(Val::Coord(_)))
+                        && matches!(self.value(all, env), Some(Val::Coord(_))))
+            {
+                self.relative_landing_safe = false;
+                Flow::Next
+            } else {
+                Flow::Refused
+            };
+        }
         if proc == "climb_ladder" {
             return self.climb(args, env);
         }

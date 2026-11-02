@@ -3,8 +3,7 @@
 //! a possible refusal or different landing rejects that state alternative.
 use super::*;
 
-// The real camp gate reads 11 items, four independent NPC queries, and one
-// completion interval. Bound that complete Cartesian product at 2^16.
+// Bound the full item, NPC, quest-completion, and quest-stage product.
 const MAX_ALTERNATIVES: usize = 65_536;
 const MAX_READ_BLOCKS: usize = 64;
 
@@ -43,9 +42,12 @@ fn stage_dimensions(reads: &Reads, src: &Sources) -> Result<Option<Vec<StageDime
         let Some(varp_name) = varp.strip_prefix('%') else {
             return Ok(None);
         };
-        let Some((_, complete)) = src.quest_complete.get(varp_name) else {
+        let Some((quest, complete)) = src.quest_complete.get(varp_name) else {
             return Ok(None);
         };
+        if src.quest_signals.get(varp_name) != Some(quest) {
+            return Ok(None);
+        }
         let Some(facts) = src.quest_stage.get(varp_name).copied() else {
             return Ok(None);
         };
@@ -140,6 +142,8 @@ pub(super) struct Inputs<'a> {
     absent: &'a [i32],
     npc_queries: &'a [Expr],
     npc_mask: usize,
+    scenery_queries: &'a [Expr],
+    scenery_mask: usize,
     complete: bool,
     stage_ranges: Option<&'a [StagePartition]>,
     above_queries: &'a [String],
@@ -150,6 +154,7 @@ pub(super) struct Inputs<'a> {
 struct Reads {
     items: Vec<i32>,
     npc: Vec<Expr>,
+    scenery: Vec<Expr>,
     quests: HashSet<String>,
     stage_thresholds: HashMap<String, HashSet<i32>>,
     stage_partitionable: bool,
@@ -161,7 +166,9 @@ impl Reads {
     fn expression(&mut self, expr: &Expr, src: &Sources) {
         match expr {
             Expr::Word(name) if name.starts_with('%') => {
-                if src.quest_complete.contains_key(&name[1..]) {
+                if src.quest_complete.contains_key(&name[1..])
+                    || src.quest_signals.contains_key(&name[1..])
+                {
                     self.quests.insert(name.clone());
                     self.stage_partitionable = false;
                 }
@@ -179,6 +186,9 @@ impl Reads {
                 }
                 if name == "npc_find" && !self.npc.contains(expr) {
                     self.npc.push(expr.clone());
+                }
+                if name == "loc_find" && !self.scenery.contains(expr) {
+                    self.scenery.push(expr.clone());
                 }
                 if let Some(name) = name.strip_prefix('~') {
                     self.procedure(name, src);
@@ -339,6 +349,173 @@ pub(super) fn preserves_completion(stmt: &Stmt, src: &Sources) -> bool {
     !body.is_empty() && body.iter().all(|stmt| matches!(stmt, Stmt::Assign(names, value)
         if names.as_slice() == [varp.clone()] && scalar(value).is_some_and(|after| after < *complete)))
 }
+/// Prove the complete bounded scenery update used after scripted gate motion.
+/// This accepts only the two observed zone-search origins and the full
+/// loc-change/loc-add loop; it does not certify arbitrary loc lookups or loops.
+pub(super) fn scenery_tail(stmts: &[Stmt], src: &Sources) -> bool {
+    if !matches!(stmts.len(), 3 | 4) {
+        return false;
+    }
+    let [Stmt::Call(search, origin), Stmt::While(test, loop_body), ..] = stmts else {
+        return false;
+    };
+    if search != "loc_findallzone"
+        || !(matches!(origin.as_slice(), [Expr::Word(coord)] if coord == "coord")
+            || matches!(
+                origin.as_slice(),
+                [Expr::Call(name, args)]
+                    if name == "movecoord"
+                        && matches!(args.as_slice(), [Expr::Word(coord), Expr::Num(1), Expr::Num(0), Expr::Num(0)] if coord == "coord")
+            ))
+        || !matches!(test, Expr::Cmp(CmpOp::Eq, lhs, rhs)
+            if matches!(lhs.as_ref(), Expr::Word(name) if name == "loc_findnext")
+                && matches!(rhs.as_ref(), Expr::Word(value) if value == "true"))
+    {
+        return false;
+    }
+    let [Stmt::If(arms, None)] = loop_body.as_slice() else {
+        return false;
+    };
+    let [(category_test, category_body)] = arms.as_slice() else {
+        return false;
+    };
+    if !matches!(category_test, Expr::Cmp(CmpOp::Eq, lhs, rhs)
+        if matches!(lhs.as_ref(), Expr::Word(name) if name == "loc_category")
+            && matches!(rhs.as_ref(), Expr::Word(name) if !name.is_empty()))
+    {
+        return false;
+    }
+    let [Stmt::Def(central, Some(loc_coord)), Stmt::Def(angle, Some(loc_angle)), Stmt::Def(kind, Some(Expr::Word(loc_type))), Stmt::Call(change, change_args), Stmt::If(type_arms, None)] =
+        category_body.as_slice()
+    else {
+        return false;
+    };
+    if central != "$central_coord"
+        || !scenery_query(loc_coord, "loc_coord")
+        || angle != "$orig_angle"
+        || !scenery_query(loc_angle, "loc_angle")
+        || kind != "$type"
+        || loc_type != "loc_type"
+        || change != "loc_change"
+        || !matches!(
+            change_args.as_slice(),
+            [Expr::Word(name), Expr::Num(3)] if name == "inviswall" && src.ids.contains_key(name)
+        )
+    {
+        return false;
+    }
+    let [(type_test, additions)] = type_arms.as_slice() else {
+        return false;
+    };
+    if !matches!(type_test, Expr::Cmp(CmpOp::Eq, lhs, rhs)
+        if matches!(lhs.as_ref(), Expr::Word(name) if name == "$type")
+            && matches!(rhs.as_ref(), Expr::Word(name) if src.ids.contains_key(name)))
+    {
+        return false;
+    }
+    let [Stmt::Call(left_add, left_args), Stmt::Call(right_add, right_args)] = additions.as_slice()
+    else {
+        return false;
+    };
+    if left_add != "loc_add"
+        || right_add != "loc_add"
+        || !scenery_loc_add(left_args, "$central_coord", -1, src)
+        || !scenery_loc_add(right_args, "$central_coord", -2, src)
+    {
+        return false;
+    }
+    let finalizers = &stmts[2..];
+    match finalizers {
+        [Stmt::Call(delay, args)] => delay == "p_delay" && args.as_slice() == [Expr::Num(0)],
+        [Stmt::Call(sound, sound_args), Stmt::Call(delay, delay_args)] => {
+            sound == "sound_synth"
+                && matches!(
+                    sound_args.as_slice(),
+                    [Expr::Word(_), Expr::Num(1), Expr::Num(0)]
+                )
+                && delay == "p_delay"
+                && delay_args.as_slice() == [Expr::Num(0)]
+        }
+        _ => false,
+    }
+}
+
+fn scenery_query(expr: &Expr, query: &str) -> bool {
+    matches!(expr, Expr::Word(name) if name == query)
+        || matches!(expr, Expr::Call(name, args) if name == query && args.is_empty())
+}
+
+fn contains_scenery_tail(body: &[Stmt], src: &Sources) -> bool {
+    (0..body.len()).any(|start| scenery_tail(&body[start..], src))
+}
+
+fn contains_teleport(body: &[Stmt]) -> bool {
+    let mut calls = Vec::new();
+    body.iter().for_each(|stmt| stmt.calls(&mut calls));
+    calls.iter().any(|call| call == "p_teleport")
+}
+
+fn has_paired_teleport(stmt: &Stmt) -> bool {
+    let Stmt::If(arms, Some(otherwise)) = stmt else {
+        return false;
+    };
+    let [(_, entering)] = arms.as_slice() else {
+        return false;
+    };
+    contains_teleport(entering) && contains_teleport(otherwise)
+}
+
+fn calls_scenery_tail(body: &[Stmt], src: &Sources) -> bool {
+    let mut calls = Vec::new();
+    body.iter().for_each(|stmt| stmt.calls(&mut calls));
+    calls
+        .iter()
+        .filter_map(|call| call.strip_prefix('@'))
+        .any(|name| {
+            if let Lookup::Found(block) = Sources::one(&src.labels, name) {
+                contains_scenery_tail(&block.body, src)
+            } else {
+                false
+            }
+        })
+}
+
+fn has_paired_gate_tail(block: &Block, src: &Sources) -> bool {
+    block.body.iter().enumerate().any(|(index, stmt)| {
+        if !has_paired_teleport(stmt) {
+            return false;
+        }
+        let suffix = &block.body[index + 1..];
+        contains_scenery_tail(suffix, src) || calls_scenery_tail(suffix, src)
+    })
+}
+
+// Stage windows require the paired teleport and scenery-tail structure
+// evidenced by the shipyard and Varrock gate handlers.
+fn has_certified_paired_gate(handler: &Block, src: &Sources) -> bool {
+    let calls = reachable_calls(handler, src);
+    let mut blocks = vec![handler];
+    for call in &calls {
+        let Some(name) = call.strip_prefix('@') else {
+            continue;
+        };
+        if let Lookup::Found(block) = Sources::one(&src.labels, name) {
+            blocks.push(block);
+        }
+    }
+    blocks.iter().any(|block| has_paired_gate_tail(block, src))
+}
+
+fn scenery_loc_add(args: &[Expr], origin: &str, dx: i32, src: &Sources) -> bool {
+    matches!(
+        args,
+        [Expr::Call(name, coord_args), Expr::Word(loc), Expr::Num(3), Expr::Word(shape), Expr::Num(3)]
+            if name == "movecoord"
+                && matches!(coord_args.as_slice(), [Expr::Word(base), Expr::Num(offset), Expr::Num(0), Expr::Num(0)] if base == origin && *offset == dx)
+                && src.ids.contains_key(loc)
+                && shape == "loc_shape"
+    )
+}
 
 impl Motion<'_> {
     pub(super) fn entrance_value(&mut self, expr: &Expr, env: &Env) -> Option<Option<Val>> {
@@ -383,6 +560,15 @@ impl Motion<'_> {
                     .map(|index| Val::Bool(input.npc_mask & (1usize << index) != 0)),
             ),
             "loc_find" => Some((|| {
+                if self.obstacle == Some(obstacles::Class::Wall) {
+                    let index = input
+                        .scenery_queries
+                        .iter()
+                        .position(|query| query == expr)?;
+                    if input.scenery_mask & (1usize << index) == 0 {
+                        return Some(Val::Bool(false));
+                    }
+                }
                 let [coord, Expr::Word(name)] = args else {
                     return None;
                 };
@@ -449,6 +635,9 @@ impl Motion<'_> {
                 let Some((quest, complete)) = self.base.src.quest_complete.get(quest_varp) else {
                     return Some(Cond::unknown());
                 };
+                if self.base.src.quest_signals.get(quest_varp) != Some(quest) {
+                    return Some(Cond::unknown());
+                }
                 let Some(Val::Int(threshold)) = self.value(rhs, env) else {
                     return Some(Cond::unknown());
                 };
@@ -624,6 +813,17 @@ impl Motion<'_> {
     }
 
     pub(super) fn entrance_call(&mut self, name: &str, args: &[Expr], env: &Env) -> Option<End> {
+        if name == "npc_facesquare" {
+            // NpcOps.ts:103-106 changes only the selected NPC's facing tile.
+            return Some(
+                if matches!(args, [coord] if matches!(self.value(coord, env), Some(Val::Coord(_))))
+                {
+                    End::Continue
+                } else {
+                    End::Refused
+                },
+            );
+        }
         let proc = name.strip_prefix('~');
         if self.timer.is_some()
             && (matches!(
@@ -761,6 +961,8 @@ struct TrajectoryInputs<'a> {
     stand: WorldTile,
     absent: &'a [i32],
     npc: &'a [Expr],
+    scenery: &'a [Expr],
+    obstacle: Option<obstacles::Class>,
     above: &'a [String],
     complete: bool,
     stage_ranges: Option<&'a [StagePartition]>,
@@ -783,6 +985,8 @@ fn trajectory(input: TrajectoryInputs<'_>) -> Option<Trajectory> {
         absent,
         npc,
         above,
+        scenery,
+        obstacle,
         complete,
         stage_ranges: selected_stages,
         above_mask,
@@ -794,9 +998,11 @@ fn trajectory(input: TrajectoryInputs<'_>) -> Option<Trajectory> {
     };
     let mut result: Option<Trajectory> = None;
     let above = if complete { above } else { &[] };
-    // NPC presence is universally quantified within one typed progress
-    // alternative. Disjoint progress windows are admitted separately.
-    for npc_mask in 0..(1usize << npc.len()) {
+    // NPC and wall-scenery presence are universally quantified within one
+    // typed progress alternative. Disjoint progress windows stay separate.
+    for presence_mask in 0..(1usize << (npc.len() + scenery.len())) {
+        let npc_mask = presence_mask & ((1usize << npc.len()) - 1);
+        let scenery_mask = presence_mask >> npc.len();
         let mut motion = Motion {
             base: Eval {
                 src,
@@ -819,6 +1025,7 @@ fn trajectory(input: TrajectoryInputs<'_>) -> Option<Trajectory> {
             moved: false,
             ticks: 1,
             gate_read: false,
+            entry_modal_closed: true,
             entrance: Some(Inputs {
                 facts,
                 positions,
@@ -827,12 +1034,15 @@ fn trajectory(input: TrajectoryInputs<'_>) -> Option<Trajectory> {
                 npc_mask,
                 complete,
                 stage_ranges: selected_stages,
+                scenery_queries: scenery,
+                scenery_mask,
                 above_queries: above,
                 above_mask,
             }),
             returned: None,
             value_query: false,
             timer: None,
+            obstacle,
         };
         if motion.run(&handler.body, &mut Env::new()) == End::Refused
             || !motion.moved
@@ -904,9 +1114,6 @@ pub(super) fn edges(input: EntranceInputs<'_>) {
             continue;
         };
         for option in 1..=5 {
-            if covered.contains(&(id, option)) {
-                continue;
-            }
             let own: Vec<_> = src
                 .ids
                 .iter()
@@ -924,6 +1131,10 @@ pub(super) fn edges(input: EntranceInputs<'_>) {
                 },
                 _ => continue,
             };
+            let obstacle = obstacles::classify(handler, src);
+            if covered.contains(&(id, option)) && obstacle != Some(obstacles::Class::Ladder) {
+                continue;
+            }
             let calls = reachable_calls(handler, src);
             if !calls.iter().any(|call| {
                 matches!(
@@ -946,16 +1157,23 @@ pub(super) fn edges(input: EntranceInputs<'_>) {
                 ..Reads::default()
             };
             reads.body(&handler.body, src);
+            if obstacle != Some(obstacles::Class::Wall) {
+                reads.scenery.clear();
+            }
             reads.items.sort_unstable();
             reads.items.dedup();
+            let paired_gate = has_certified_paired_gate(handler, src);
             let mut above: Vec<_> = reads
                 .quests
                 .iter()
-                .filter(|name| {
-                    !src.quest_exact.contains(&name[1..])
-                        && src.quest_complete[&name[1..]].1 < i32::MAX
+                .filter_map(|name| {
+                    let varp = &name[1..];
+                    if src.quest_exact.contains(varp) {
+                        return None;
+                    }
+                    let (_, complete) = src.quest_complete.get(varp)?;
+                    (*complete < i32::MAX).then(|| name.clone())
                 })
-                .cloned()
                 .collect();
             above.sort_unstable();
             if !reads.valid {
@@ -995,6 +1213,7 @@ pub(super) fn edges(input: EntranceInputs<'_>) {
                 .items
                 .len()
                 .checked_add(reads.npc.len())
+                .and_then(|bits| bits.checked_add(reads.scenery.len()))
                 .and_then(|bits| {
                     bits.checked_add(if stage_dimensions.is_some() {
                         0
@@ -1052,6 +1271,9 @@ pub(super) fn edges(input: EntranceInputs<'_>) {
                             level: at.level,
                         },
                     ]);
+                } else if placement.shape == 4 && obstacle == Some(obstacles::Class::Window) {
+                    // Wall-decoration reach always permits the loc's own tile.
+                    stands.push(at);
                 } else if matches!(placement.shape, 10 | 11 | 22) {
                     let Some(approach) = LocApproach::from_loc_def(
                         def.width,
@@ -1106,13 +1328,17 @@ pub(super) fn edges(input: EntranceInputs<'_>) {
                             absent: &absent,
                             npc: &reads.npc,
                             above: &above,
+                            scenery: &reads.scenery,
+                            obstacle,
                             complete: true,
                             stage_ranges: None,
                             above_mask: 0,
                         };
                         {
                             let mut admit = |result: Trajectory| {
-                                if result.needs.quests.is_empty()
+                                if obstacle.is_none()
+                                    && !paired_gate
+                                    && result.needs.quests.is_empty()
                                     && result.needs.forbidden_held.is_empty()
                                     && result.needs.forbidden_worn.is_empty()
                                     && result.needs.items.is_empty()
@@ -1123,7 +1349,22 @@ pub(super) fn edges(input: EntranceInputs<'_>) {
                                 if !collision.standable(result.to) {
                                     return;
                                 }
-                                let mut edge = gated_edge(kind, id, at, result.to, result.needs);
+                                if covered.contains(&(id, option))
+                                    && graph.edges[..first_new_edge].iter().any(|edge| {
+                                        edge.loc_id == id
+                                            && edge.option == option
+                                            && edge.to == result.to
+                                    })
+                                {
+                                    return;
+                                }
+                                let mut edge = gated_edge(
+                                    obstacle.map_or(kind, obstacles::Class::kind),
+                                    id,
+                                    at,
+                                    result.to,
+                                    result.needs,
+                                );
                                 edge.takeoff = Some(stand);
                                 edge.option = option;
                                 edge.ticks = result.ticks;

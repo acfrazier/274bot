@@ -2459,3 +2459,102 @@ fn shared_journal_kitchen_door_requires_the_phoenix_signal_in_both_directions() 
         }
     }
 }
+
+#[path = "stage_doors_content_gates_tests.rs"]
+mod content_gates;
+#[path = "stage_doors_gates_tests.rs"]
+mod gates;
+#[path = "stage_doors_obstacles_tests.rs"]
+mod obstacles;
+
+const BLACK_KNIGHTS_AGGRO: &str = r#"
+[proc,black_knights_aggro](coord $first_search_coord, coord $all_search_coord)
+if (npc_find($first_search_coord, aggressive_black_knight, 5, 0) = true) {
+    npc_say("Die intruder!!!");
+}
+npc_findall($all_search_coord, aggressive_black_knight, 5, 0);
+while (npc_findnext = true) {
+    if (npc_getmode ! opplayer2) {
+        npc_setmode(opplayer2);
+    }
+}
+"#;
+
+fn fortress_door_fixture(proc: &str, call: &str) -> Fixture {
+    let fx = Fixture::new();
+    write_stage_engine(&fx);
+    fx.write(
+        "pack/loc.pack",
+        "2339=bkfortressdoor3\n2340=inacbkfortressdoor\n",
+    );
+    fx.write(
+        "scripts/quests/quest_blackknight/configs/blackknight.loc",
+        "[bkfortressdoor3]\nop1=Open\nparam=next_loc_stage,inacbkfortressdoor\n",
+    );
+    fx.write(
+        "scripts/quests/quest_blackknight/scripts/quest_blackknight.rs2",
+        &format!(
+            r#"
+[oploc1,bkfortressdoor3]
+def_boolean $is_outside = ~check_axis(coord, loc_coord, loc_angle);
+if ($is_outside = false) {{ {call} }}
+~open_and_close_door(loc_param(next_loc_stage), $is_outside, false);
+{proc}
+"#
+        ),
+    );
+    write_open_square(&fx, "0 5 46: 2339 0 2\n");
+    fx
+}
+
+/// The real west-going arm calls aggro before opening. Aggro changes NPC
+/// attack targets, not the player's ability to cross.
+#[test]
+fn fortress_aggro_door_crosses_both_ways_without_a_quest_or_item_gate() {
+    let fx = fortress_door_fixture(BLACK_KNIGHTS_AGGRO, "~black_knights_aggro(coord, coord);");
+    let (graph, _) = derive_stage(&fx, &[2339]);
+    assert_eq!(
+        door_crossings(&graph, 2339),
+        vec![
+            ((2821, 3438), 'E', (2822, 3438)),
+            ((2821, 3438), 'W', (2821, 3438)),
+        ]
+    );
+    for edge in graph.edges.iter().filter(|edge| edge.loc_id == 2339) {
+        assert!(edge.quest_req.is_empty());
+        assert!(edge.quest_gates.is_none());
+        assert!(edge.varp_req.is_empty());
+        assert!(edge.item_req.is_empty());
+        assert_eq!(edge.open_loc_id, Some(2340));
+    }
+}
+
+/// A known proc name is insufficient. Its whole body and coordinate
+/// arguments must retain the passability proof.
+#[test]
+fn fortress_aggro_door_refuses_drift_missing_duplicate_and_unknown_procs() {
+    let teleport = BLACK_KNIGHTS_AGGRO.replace(
+        "npc_setmode(opplayer2);",
+        "npc_setmode(opplayer2); p_teleport(loc_coord);",
+    );
+    let varp_write = BLACK_KNIGHTS_AGGRO.replace("npc_setmode(opplayer2);", "%plain_flag = 1;");
+    let duplicate = format!("{BLACK_KNIGHTS_AGGRO}\n{BLACK_KNIGHTS_AGGRO}");
+    for (proc, call) in [
+        (teleport.as_str(), "~black_knights_aggro(coord, coord);"),
+        (varp_write.as_str(), "~black_knights_aggro(coord, coord);"),
+        (duplicate.as_str(), "~black_knights_aggro(coord, coord);"),
+        ("", "~black_knights_aggro(coord, coord);"),
+        (BLACK_KNIGHTS_AGGRO, "~black_knights_aggro(coord);"),
+        (BLACK_KNIGHTS_AGGRO, "~black_knights_aggro(coord, 1);"),
+        (BLACK_KNIGHTS_AGGRO, "~unknown_aggro(coord, coord);"),
+        (BLACK_KNIGHTS_AGGRO, "npc_setmode(opplayer2);"),
+    ] {
+        let fx = fortress_door_fixture(proc, call);
+        let (graph, _) = derive_stage(&fx, &[2339]);
+        assert_eq!(
+            door_crossings(&graph, 2339),
+            vec![((2821, 3438), 'E', (2822, 3438))],
+            "{call}\n{proc}"
+        );
+    }
+}

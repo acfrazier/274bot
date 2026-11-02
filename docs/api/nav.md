@@ -417,9 +417,10 @@ Named quest/guild door and secret-wall openers are interpreted from their
 RuneScript control flow. The generic engine crossing helpers must match their
 pinned content bodies. Conjunctive worn checks become strict `worn_all_req`
 gates, including exact primary-slot `inv_getobj` checks; carrying the disguise
-does not authorize the crossing. An untransmitted quest varp is admitted only
-with its unique completed-journal proof. Hidden bitfields, intermediate quest
-windows, dialogue/NPC choices and unresolved conditions stay impassable.
+does not authorize the crossing. Named doors use a unique completed-journal proof
+for an untransmitted quest varp. The entrance proof below can instead use exact
+selected stage signals. Hidden bitfields, dialogue choices and unresolved
+conditions stay impassable.
 General item-on-loc unlocks go through the same certified door interpreter:
 an `oplocu` handler that checks the selected item (`last_useitem`) derives a
 carried-item requirement on an `option` 0 edge — never a free op — when its
@@ -434,6 +435,31 @@ side-effectful handlers that the interpreter cannot prove stay impassable:
 these producers cover the entrances content proves, not every locked door
 in the world.
 
+The door interpreter distinguishes passability from NPC side effects.
+`black_knights_aggro` may precede a crossing only while its complete body matches
+the pinned content proof. That proc selects Black Knights and starts their
+attack. It does not change the crossing condition or the player landing.
+An unknown or changed proc still rejects that crossing.
+The v17 edge format has no danger-side-effect field. This exception adds no
+danger metadata and does not claim that the crossing is safe.
+
+Paired gate entrances can carry existing `QuestGate::Window` conditions for
+unambiguous selected quest signals. Each NPC-state alternative must prove the
+same crossing under those conditions. A post-motion scenery loop is accepted
+only by the narrow paired-gate proof; an unknown loop still rejects the edge.
+The shipyard password dialogue and the Varrock guard-search dialogue are not
+skipped. Their unproved trajectories stay impassable. A direct shipyard entry
+requires Grand Tree progress at least 80 and Monkey Madness progress above 1;
+exit requires only the Grand Tree condition. These conditions do not mean that
+both quests must be complete.
+A proved paired-gate exit can have no quest or item condition. Its source
+membership guard still applies. This exception does not admit an unproved
+unguarded entrance.
+The direct shipyard arm can close an interface only as its first command,
+before any yield. The engine closes modals before it dispatches the loc op;
+this second close therefore cannot run a close trigger. A prior command or
+yield removes that proof. NPC facing changes do not move the player.
+
 Requirement-gated loc ops also derive deterministic force-walk and exact-move
 trajectories, following source proc/label calls, checked arithmetic, placement
 coordinates and scalar loc parameters. Each edge retains the actual menu op,
@@ -444,7 +470,8 @@ content tool selectors produce separate carried-tool and strictly-worn-tool
 variants with their source skill/use-level gates. The selected tool identity
 remains opaque, so priority-dependent tool choices cannot invent a trajectory.
 Unknown/random/choice gates, unmodelled writes, invalid motion, and trajectories
-without a real requirement are refused rather than emitted as free shortcuts.
+without a real requirement are refused. The reviewed obstacle rules below are
+the only exceptions for ungated movement and random failure branches.
 
 The pinned `agility_force_move` primitive shares this machine with exact
 movement. Death Plateau's east-side climbing rocks (`death_climbingrocks_top`
@@ -455,6 +482,48 @@ the ridge walk from Tenzing's stile to that destination does not use them.
 The content permits wearing climbing boots only after `death_equiproom`
 reaches quest completion, so Paths must not require this equipment before
 the pre-completion scouting walk.
+
+The obstacle rules share the loc-motion interpreter. They compare the complete
+parsed handler against reviewed content, including called labels. They do not
+store a table of crossing tiles. They derive each exact stand, final landing,
+delay, skill condition, and worn-item condition from that handler and placement.
+Changed handlers or movement primitives lose the proof. Pack format remains 17.
+
+| Content obstacle | Success condition | Content source |
+|---|---|---|
+| Death Plateau stile, loc 3730 | None | `quest_death/scripts/quest_death.rs2:103-117` |
+| Troll lower rocks, loc 3748 | Agility 15 and `troll_quest >= 10`. South-origin stands at z=3611 also require worn climbing boots 3105. | `quest_troll/scripts/quest_troll.rs2:1-19`; label `quest_upass/scripts/upass_obstacles.rs2:3-31` |
+| Troll upper rocks, locs 3790/3791 | Agility 15 | `quest_troll/scripts/quest_troll.rs2:21-72` |
+| West Ardougne wall gate, locs 2048/2049 | `biohazard = 16` | `area_ardougne_west/scripts/doors.rs2:15-16,24-54` |
+| Watch Tower window, loc 2299 | Agility 18 | `quest_itwatchtower/scripts/quest_itwatchtower.rs2:1-8` |
+| Watch Tower ladder, loc 2796, local destination | `itwatchtower < 13` | `quest_itwatchtower/scripts/quest_itwatchtower.rs2:261-266` |
+| Witch's House cellar gates, locs 2865/2866 | Worn leather gloves 1059 | `quest_ball/scripts/quest_ball.rs2:33-58` |
+
+The Ardougne label saves the operated leaf's coordinate before four scenery
+lookups. Each lookup can change the active loc. The interpreter checks every
+presence combination and requires one final landing. It does not treat these
+pre-motion writes as arbitrary cosmetic calls.
+The existing completed Watch Tower ladder destination stays unchanged.
+
+The rocks encode success paths, not guaranteed crossings. Format 17 has no
+failure-risk field. This table records the source risk without changing the wire:
+
+| Handler | Failed content roll | Failure result |
+|---|---|---|
+| Lower rocks | `stat_random(agility, 160, 300) = false` | The player stays on the origin side and receives 3 damage. |
+| Upper `_top` rocks | `stat_random(agility, 170, 253) = false` | The preceding exact move already reaches the destination. The player receives `floor(hitpoints * 5 / 100) + 1` damage. |
+| Upper `_bottom` rocks | `stat_random(agility, 170, 253) = false` | A reverse exact move returns the player two tiles to the origin. The player receives the same percentage damage. |
+
+These rules omit only those complete, reviewed failure branches. They do not
+admit other random tests or damage calls.
+Troll progress and the pre-completion ladder use typed `QuestGate::Window`
+conditions, not hidden snapshot varps or completed-quest substitutes.
+The ordinary runtime journal provider returns `Unknown` for windows.
+The Quester does not currently supply a stage provider with its walk requests.
+These window edges therefore wait for runtime stage evidence. The unconditional
+stile, skill-only upper rocks and window climb, worn-glove gates, and proven
+completed-Biohazard gate can operate with current runtime evidence.
+
 
 Footprint-backed loc transports use the same face/wall predicate as live
 `api::query::loc_approach` interactions. Their rotated rectangle and blocked

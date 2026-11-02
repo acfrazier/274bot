@@ -566,6 +566,15 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.8` 
   Transport time limits now count game ticks instead of polls, so a burst
   of polls inside one tick no longer ends a crossing early, and a slow
   poll that misses several ticks no longer extends it.
+- Navigation now maps both directions of the Legends Guild gate after the quest
+  starts. It also maps Kharazi jungle crossings. A jungle map or completed
+  Legends unlocks each crossing. The player must also have a machete and an
+  axe. Both tools can be carried. The player can also wear one tool in the right
+  hand and carry the other.
+  The script also uses a Woodcutting roll and a tree-depletion roll. The pack
+  records a successful crossing, but it does not model the chance of either
+  roll.
+
 
 - Walk failure details and debug logs now name the search result. A walk
   that stops at its node budget reports `search_result=BudgetExhausted`. Script
