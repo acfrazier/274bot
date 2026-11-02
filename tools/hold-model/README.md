@@ -1,8 +1,8 @@
 # hold-model
 
 A checked model of the auto-run hold. It is a developer tool. No product crate
-depends on it, except as a dev-dependency of the conformance test in
-`crates/host-play`.
+depends on it, except as a dev-dependency of the conformance tests in
+`crates/host-play` and `crates/script-js`.
 
 The model follows the product at commit `178a00200` and the fix of finding F1
 (`HOLD-MODEL-MERGE`: the host holds a renewed wait again). The explorer
@@ -171,6 +171,40 @@ earlier designs `m1-hold-two-ticks` to `m6-compat-no-renew` and
 | K1 | A wait that the owner bounds in ticks is not on the active clock. A paused owner loses its end-gap hold. |
 | K2 | The terminal release is only as good as the owner's polls. |
 | K3 | The compat read never gets a terminal release. |
+
+## Expected results of the profiles
+
+Release build on chardonnay, `--all-violations`, no cap reached (HOLD-MODEL-MERGE,
+2026-11-02). "S6 (6)" is finding F2 with a trace of 6 steps. No run shows a
+violation of S0 to S5 or L. A run that differs from this table is a finding.
+
+| Profile | Horizon | States | Time | Peak RSS | Result |
+|---|---|---|---|---|---|
+| `smoke` | 8 | 1 410 765 | 1.3 s | 0.13 GB | clean |
+| `modal` | 14 | 48 187 697 | 80.0 s | 4.01 GB | clean |
+| `quiet` | 14 | 79 665 442 | 135.3 s | 7.03 GB | S6 (6) |
+| `compat` | 14 | 78 047 719 | 121.3 s | 6.93 GB | clean |
+| `all` | 11 | 35 451 083 | 51.8 s | 3.46 GB | S6 (6) |
+| `alt` | 10 | 16 666 098 | 20.0 s | 1.74 GB | S6 (4) |
+| `handoff` | 11 | 40 156 047 | 50.3 s | 3.58 GB | S6 (6) |
+
+## Where the runs go
+
+- The model's tests and both conformance tests run in the existing lanes. CI
+  `cargo test --workspace` and the Windows nightly's `test-workspace` lane build and run
+  `hold-model`, the `host-play` library tests (`script_hold_conformance`) and
+  the `script-js` library tests (`hold_conformance_tests`). The same host-play
+  tests also run in `cargo test -p host-play --no-default-features --lib`.
+  Together they take about 27 s (host-play) and 8 s (script-js) after the
+  build.
+- The full profiles do not belong in those lanes: the longest needs 7 GB and
+  2 minutes, and the seven together about 8 minutes. `tools/nightly` has no
+  step for them. Its steps (`lanes`, `build`, `panel`, `tui`, `latency`) run
+  cargo lanes and live cells, and the Linux nightly box (`malbec`) has 15 GiB.
+  Run the profiles on chardonnay, one run at a time in a 16 GB scope, after a
+  change to the hold or to its model: the command in "Run it", once for each
+  row of the table, with the horizon of the row. Compare the result with the
+  table.
 
 Tests: `cargo test -p hold-model`.
 
