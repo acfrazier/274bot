@@ -214,6 +214,13 @@ pub struct Bounds {
     /// Offer drift only in frames where the owner polls. The conformance
     /// test uses this: the product's poll is where a test can pass time.
     pub drift_polls_only: bool,
+    /// Offer a begin in a frame whose session boundary revokes the owner's
+    /// lease: the product's hook resets the session before the poll, so an
+    /// owner can begin a new read in that same poll. The frozen model offers
+    /// the acts against the lease of the previous frame; this flag removes
+    /// that abstraction. Added in phase 2 (default off, the head runs are
+    /// unchanged).
+    pub same_frame_begin: bool,
 }
 
 impl Bounds {
@@ -240,6 +247,7 @@ impl Bounds {
             compat: true,
             env: Env::ALL,
             drift_polls_only: false,
+            same_frame_begin: false,
         }
     }
 }
@@ -846,7 +854,12 @@ impl Model {
         if s.hp_zero {
             return;
         }
-        match s.lease {
+        let lease = if b.same_frame_begin && s.session_pending {
+            Lease::None
+        } else {
+            s.lease
+        };
+        match lease {
             Lease::None => {
                 if s.next_id < b.max_ids {
                     if b.modal && !s.modal {

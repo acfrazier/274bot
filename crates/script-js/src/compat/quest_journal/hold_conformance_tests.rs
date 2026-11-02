@@ -261,3 +261,38 @@ fn the_real_compat_lease_matches_the_model_on_the_shortest_trace_of_each_release
         failures.join("\n---\n")
     );
 }
+
+/// Phase 2: the counterexample traces of the earlier compat designs (M4, a
+/// constant key; M6, no renewal at the click). The real lease must decide like
+/// the head model on them. The test fails on a lease that renews nothing at the
+/// click (M6): see `arm-r/report.md`.
+#[test]
+fn the_counterexamples_of_the_earlier_compat_designs_run_on_the_real_lease() {
+    let bounds = bounds();
+    let head = Model::new(bounds, Mutation::None);
+    let mut checked = 0;
+    for mutation in [Mutation::M6CompatNoRenew, Mutation::M4CompatConstantKey] {
+        let run = hold_model::explore_profile(
+            &hold_model::Profile {
+                name: "compat",
+                bounds,
+            },
+            mutation,
+            Some(bounds.horizon),
+            hold_model::Limits::default(),
+            true,
+        );
+        assert!(
+            !run.failures.is_empty(),
+            "{} has a counterexample",
+            mutation.name()
+        );
+        for (violation, trace) in &run.failures {
+            checked += 1;
+            if let Err(report) = check_trace(&head, trace) {
+                panic!("{} {}: {report}", mutation.name(), violation.name);
+            }
+        }
+    }
+    eprintln!("compat conformance: {checked} counterexample traces");
+}

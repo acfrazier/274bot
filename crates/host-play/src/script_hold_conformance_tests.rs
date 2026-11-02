@@ -730,3 +730,54 @@ fn the_end_gap_hold_defect_of_the_model_reproduces_on_the_real_code() {
         );
     }
 }
+
+/// Phase 2: the counterexample traces of the earlier designs. A mutation of
+/// the model finds each trace. The real head code must decide like the head
+/// model on it, so that the trace is a real event sequence and not a model
+/// artifact. The same traces fail on product code that has the earlier
+/// design: the demonstration is in `arm-r/report.md`.
+#[test]
+fn the_counterexamples_of_the_earlier_designs_run_on_the_real_code_like_the_head_model() {
+    let bounds = conformance_bounds();
+    let head = Model::new(bounds, Mutation::None);
+    let mut checked = 0;
+    let mut failures = Vec::new();
+    for mutation in [
+        Mutation::M1HoldTwoTicks,
+        Mutation::M2HoldThreeTicks,
+        Mutation::M3FixedTerminal,
+        Mutation::M5ActiveToWall,
+    ] {
+        let run = hold_model::explore_profile(
+            &hold_model::Profile {
+                name: "conformance",
+                bounds,
+            },
+            mutation,
+            Some(bounds.horizon),
+            hold_model::Limits::default(),
+            true,
+        );
+        assert!(
+            !run.failures.is_empty(),
+            "{} has a counterexample",
+            mutation.name()
+        );
+        for (violation, trace) in &run.failures {
+            if needs_wall_scale(&head, trace) {
+                continue;
+            }
+            checked += 1;
+            if let Err(report) = check_trace(&head, trace) {
+                failures.push(format!("{} {}: {report}", mutation.name(), violation.name));
+            }
+        }
+    }
+    eprintln!("conformance: {checked} counterexample traces of the earlier designs");
+    assert!(
+        failures.is_empty(),
+        "{} traces differ:\n{}",
+        failures.len(),
+        failures.join("\n---\n")
+    );
+}

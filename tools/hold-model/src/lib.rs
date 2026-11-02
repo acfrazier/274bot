@@ -77,6 +77,15 @@ pub fn profiles() -> Vec<Profile> {
                 ..all
             },
         },
+        // The owner may begin a new read in the frame that revokes the old one.
+        Profile {
+            name: "handoff",
+            bounds: Bounds {
+                same_frame_begin: true,
+                horizon: 11,
+                ..all
+            },
+        },
     ]
 }
 
