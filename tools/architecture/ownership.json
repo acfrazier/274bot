@@ -6303,6 +6303,10 @@
       "owner": "T1"
     },
     {
+      "path": "tools/hold-model/nightly.sh",
+      "owner": "T1"
+    },
+    {
       "path": "tools/hold-model/src/explorer.rs",
       "owner": "T1"
     },
