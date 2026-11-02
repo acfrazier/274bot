@@ -60,6 +60,10 @@ globs = [
   "crates/host-play/src/test_support.rs",
   # Synthetic planner fixture builders, not runtime planner code.
   "crates/nav-planner/src/test_support.rs",
+  # The stub surface run for tests: `surface.rs` gates this module with
+  # #[cfg(any(test, feature = "test-hooks"))]. Only dev-dependencies and the
+  # host-play `test-support` test-harness feature enable `test-hooks`.
+  "crates/script/src/surface/test_support.rs",
   # Developer bake command line. It writes the packs the nav cells consume; its
   # derivation is `nav_bake::bake`, covered by the transport globs above.
   "crates/nav-bake/src/bin/nav-pack.rs",
