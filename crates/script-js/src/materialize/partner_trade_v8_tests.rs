@@ -140,6 +140,10 @@ fn stable_closed_poll_reads_scene_and_calls_clock_once_per_closed_poll() {
         runtime.eval::<String>("__tradeScreenState()").unwrap(),
         "closed"
     );
+    assert_eq!(runtime.eval::<u32>("__nativePartnerCalls").unwrap(), 1);
+    runtime
+        .eval::<()>("globalThis.__nativePartnerCalls = 0")
+        .unwrap();
 
     post_trade_screen(30, false, false);
     runtime
