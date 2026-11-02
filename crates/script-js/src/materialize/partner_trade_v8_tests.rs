@@ -1,5 +1,5 @@
 use super::*;
-use rustyscript::RuntimeOptions;
+use rustyscript::{Module, RuntimeOptions};
 
 const CHILD_ENV: &str = "SCRIPT_STABLE_CLOSED_POLL_V8_TEST_CHILD";
 const TEST_NAME: &str =
@@ -8,10 +8,37 @@ const PRIVATE_STATE_KEY: &str = "rs2b0t.trade.stableClosedPoll.state";
 const CLOSURE_COUNT: usize = 512;
 const REPEAT_COUNT: usize = 1_000;
 
+fn load_trade_shim(runtime: &mut Runtime) {
+    let kernel = Module::new(
+        "/rs2b0t/bot/shim/_kernel.js",
+        include_str!("../shim/_kernel.js"),
+    );
+    let execution = Module::new(
+        "/rs2b0t/bot/api/execution/Execution.js",
+        "export function parkMachine() {}",
+    );
+    let drive = Module::new(
+        "/rs2b0t/bot/api/drive/drive_partner_trade.js",
+        include_str!("../shim/drive_partner_trade.js"),
+    );
+    let entry = Module::new(
+        "/rs2b0t/bot/api/drive/partner_trade_test.js",
+        r#"
+import { stableClosedPoll, tradeScreenState } from './drive_partner_trade.js';
+globalThis.__stableClosedPoll = stableClosedPoll;
+globalThis.__tradeScreenState = tradeScreenState;
+"#,
+    );
+    runtime
+        .load_modules(&entry, vec![&kernel, &execution, &drive])
+        .unwrap();
+}
+
 fn setup() -> Runtime {
     crate::platform::bootstrap_test_v8_platform();
     let mut runtime = Runtime::new(RuntimeOptions::default()).unwrap();
     install(&mut runtime).unwrap();
+    load_trade_shim(&mut runtime);
     runtime
         .eval::<()>(
             r#"
@@ -20,14 +47,80 @@ fn setup() -> Runtime {
                 () => __rs2b0t_partner_trade('stableClosedPoll', 600),
             );
             globalThis.__dropPredicates = () => { globalThis.__predicates = null; };
-            globalThis.__hasFastProperties = new Function(
-                'value',
-                'return %HasFastProperties(value)',
-            );
             "#,
         )
         .unwrap();
     runtime
+}
+
+fn post_trade_screen(tick: u64, offer: bool, confirm: bool) {
+    crate::observed::post(tick, |post| {
+        post.session(true)
+            .trade_offer_open(offer)
+            .trade_confirm_open(confirm);
+    });
+}
+
+#[test]
+fn stable_closed_poll_reads_scene_and_calls_clock_once_per_closed_poll() {
+    crate::observed::on_reset();
+    let mut runtime = setup();
+    post_trade_screen(10, true, false);
+    runtime
+        .eval::<()>(
+            r#"
+            globalThis.__nativePartnerTrade = globalThis.__rs2b0t_partner_trade;
+            globalThis.__nativePartnerCalls = 0;
+            globalThis.__rs2b0t_partner_trade = (...args) => {
+                globalThis.__nativePartnerCalls++;
+                return __nativePartnerTrade(...args);
+            };
+            globalThis.__clockCalls = 0;
+            globalThis.__clockNow = 1000;
+            globalThis.__poll = __stableClosedPoll(1200, () => {
+                globalThis.__clockCalls++;
+                return globalThis.__clockNow;
+            });
+            globalThis.__nativePartnerCalls = 0;
+            "#,
+        )
+        .unwrap();
+
+    assert_eq!(runtime.eval::<String>("__tradeScreenState()").unwrap(), "offer");
+    assert_eq!(runtime.eval::<u32>("__nativePartnerCalls").unwrap(), 1);
+    runtime.eval::<()>("globalThis.__nativePartnerCalls = 0").unwrap();
+    assert!(!runtime.eval::<bool>("__poll()").unwrap());
+    assert_eq!(runtime.eval::<u32>("__nativePartnerCalls").unwrap(), 1);
+    assert_eq!(runtime.eval::<u32>("__clockCalls").unwrap(), 0);
+
+    post_trade_screen(20, false, false);
+    runtime.eval::<()>("globalThis.__nativePartnerCalls = 0").unwrap();
+    assert!(!runtime.eval::<bool>("__poll()").unwrap());
+    assert_eq!(runtime.eval::<u32>("__nativePartnerCalls").unwrap(), 1);
+    runtime.eval::<()>("globalThis.__clockNow = 2100").unwrap();
+    assert!(!runtime.eval::<bool>("__poll()").unwrap());
+    runtime.eval::<()>("globalThis.__clockNow = 2200").unwrap();
+    assert!(runtime.eval::<bool>("__poll()").unwrap());
+    assert_eq!(runtime.eval::<u32>("__clockCalls").unwrap(), 3);
+
+    post_trade_screen(21, false, true);
+    assert_eq!(runtime.eval::<String>("__tradeScreenState()").unwrap(), "confirm");
+    assert!(!runtime.eval::<bool>("__poll()").unwrap());
+    assert_eq!(runtime.eval::<u32>("__clockCalls").unwrap(), 3);
+    post_trade_screen(22, false, false);
+    runtime.eval::<()>("globalThis.__clockNow = 5000").unwrap();
+    assert!(!runtime.eval::<bool>("__poll()").unwrap());
+    runtime.eval::<()>("globalThis.__clockNow = 6200").unwrap();
+    assert!(runtime.eval::<bool>("__poll()").unwrap());
+    assert_eq!(runtime.eval::<String>("__tradeScreenState()").unwrap(), "closed");
+
+    post_trade_screen(30, false, false);
+    runtime
+        .eval::<()>("globalThis.__tickPoll = __stableClosedPoll(600)")
+        .unwrap();
+    assert!(!runtime.eval::<bool>("__tickPoll()").unwrap());
+    post_trade_screen(31, false, false);
+    assert!(runtime.eval::<bool>("__tickPoll()").unwrap());
 }
 
 fn in_child(name: &str) -> bool {
@@ -74,6 +167,11 @@ fn stable_closed_poll_state_has_fast_properties_and_bounded_heap() {
     }
     v8::V8::set_flags_from_string("--allow-natives-syntax");
     let mut runtime = setup();
+    runtime
+        .eval::<()>(
+            "globalThis.__hasFastProperties = new Function('value', 'return %HasFastProperties(value)')",
+        )
+        .unwrap();
     let baseline = collected_used_heap(&mut runtime);
     runtime
         .eval::<()>("globalThis.__predicates = __makePredicates(512)")

@@ -1503,6 +1503,7 @@ const FAMILIES: &[Entry] = &[
     entry::<crate::reach_entity::LocOp>(),
     entry::<crate::reach_entity::WalkHops>(),
     entry::<crate::walk::WalkResilient>(),
+    entry::<crate::walk::ProbeDest>(),
     entry::<crate::walk::WalkOpening>(),
     entry::<crate::walk::DirectWalk>(),
     entry::<crate::walk::DirectClick>(),

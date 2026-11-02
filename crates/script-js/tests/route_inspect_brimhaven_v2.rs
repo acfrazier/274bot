@@ -398,6 +398,9 @@ export default class T extends LoopingBot {
         const startMachine = globalThis.__rs2b0t_machine_start;
         globalThis.__rs2b0t_machine_start = (family, args, hooks) => {
             if (family === 'walk-resilient') globalThis.__walkArgs = args;
+            if (family === 'walk-probe-dest') {
+                globalThis.__probeStartCount = (globalThis.__probeStartCount ?? 0) + 1;
+            }
             return startMachine(family, args, hooks);
         };
         globalThis.__walked = await Traversal.walkResilient(
@@ -408,6 +411,10 @@ export default class T extends LoopingBot {
         globalThis.__invalidProbe = await WalkExecutor.probeDest(
             { x: 2655, z: 3283, level: 0 },
             0,
+        );
+        globalThis.__invalidDest = await WalkExecutor.probeDest(
+            { x: '2655', z: 3283, level: 0 },
+            23,
         );
         globalThis.__probe = await WalkExecutor.probeDest(
             { x: 2655, z: 3283, level: 0 },
@@ -431,7 +438,16 @@ export default class T extends LoopingBot {
         iso.probe("globalThis.__invalidProbe").unwrap(),
         serde_json::json!({"ok": false, "terminal": null})
     );
+    assert_eq!(
+        iso.probe("globalThis.__invalidDest").unwrap(),
+        serde_json::json!({"ok": false, "terminal": null})
+    );
 
+    assert_eq!(
+        iso.probe("globalThis.__probeStartCount").unwrap(),
+        3,
+        "valid and invalid probe inputs are both validated in the Rust family"
+    );
     let requests = inspect_routes(&iso);
     let token = match requests.as_slice() {
         [InteractReq::InspectRoute {

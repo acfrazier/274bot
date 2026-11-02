@@ -81,8 +81,7 @@ use api::line_of_sight::CollisionQuery;
 use api::query::{SceneQuery, SceneReachOptions};
 use api::snapshot::{SceneView, WorldTile};
 use script::shim::{InspectAvoidWire, InteractReq};
-use serde::Deserialize;
-use serde_json::json;
+use serde_json::{json, Value};
 use std::collections::VecDeque;
 use std::time::{Duration, Instant};
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -1818,6 +1817,119 @@ impl Family for WalkResilient {
         }
     }
 }
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct ProbeDestArgs {
+    #[serde(default)]
+    dest: Value,
+    #[serde(default)]
+    max_expansions: Value,
+}
+
+const MAX_SAFE_JS_INTEGER: f64 = 9_007_199_254_740_991.0;
+
+fn probe_dest_integer(value: &Value) -> Option<i32> {
+    let number = value.as_f64()?;
+    (number.is_finite()
+        && number.fract() == 0.0
+        && (i32::MIN as f64..=i32::MAX as f64).contains(&number))
+    .then_some(number as i32)
+}
+
+fn probe_dest_tile(value: &Value) -> Option<WorldTile> {
+    let fields = value.as_object()?;
+    let x = probe_dest_integer(fields.get("x")?)?;
+    let z = probe_dest_integer(fields.get("z")?)?;
+    let level = fields
+        .get("level")
+        .filter(|value| !value.is_null())
+        .map_or(Some(0), probe_dest_integer)?;
+    Some(WorldTile { x, z, level })
+}
+
+fn probe_dest_max_expansions(value: &Value) -> Option<u64> {
+    let number = value.as_f64()?;
+    (number.is_finite()
+        && number.fract() == 0.0
+        && (1.0..=MAX_SAFE_JS_INTEGER).contains(&number))
+    .then_some(number as u64)
+}
+
+pub(crate) struct ProbeDest {
+    token: u64,
+}
+
+impl Family for ProbeDest {
+    const NAME: &'static str = "walk-probe-dest";
+    type Args = ProbeDestArgs;
+    type Output = Value;
+
+    fn begin(args: ProbeDestArgs, cx: &mut Cx<'_>) -> Begin<Self> {
+        let (Some(dest), Some(max_expansions), Some(from)) = (
+            probe_dest_tile(&args.dest),
+            probe_dest_max_expansions(&args.max_expansions),
+            here(),
+        ) else {
+            return Begin::Done(json!({"ok": false, "terminal": null}));
+        };
+        let token = crate::inspect_wait::dispatch(&json!({
+            "op": "begin",
+            "from": { "x": from.x, "z": from.z, "level": from.level },
+            "to": { "x": dest.x, "z": dest.z, "level": dest.level },
+            "allow_teleports": false,
+            "allow_wilderness": true,
+            "allow_bank_fetch": false,
+            "max_expansions": max_expansions,
+            "timeout_ms": PROBE_TIMEOUT_MS,
+        }))
+        .as_u64()
+        .unwrap_or(0);
+        if token == 0 {
+            return Begin::Done(json!({"ok": false, "terminal": null}));
+        }
+        cx.emit(InteractReq::InspectRoute {
+            x: dest.x,
+            z: dest.z,
+            level: dest.level,
+            from_x: from.x,
+            from_z: from.z,
+            from_level: from.level,
+            allow_teleports: false,
+            allow_wilderness: true,
+            allow_bank_fetch: false,
+            max_expansions: Some(max_expansions),
+            avoid: Vec::new(),
+            cross: Vec::new(),
+            request_id: token,
+        });
+        Begin::Run(Self { token })
+    }
+
+    fn step(&mut self, _cx: &mut Cx<'_>) -> Step<Value> {
+        let settled = crate::inspect_wait::dispatch(&json!({
+            "op": "settled",
+            "token": self.token,
+        }))
+        .as_bool()
+        .unwrap_or(false);
+        if !settled {
+            return Step::Wait;
+        }
+        let route = crate::inspect_wait::dispatch(&json!({
+            "op": "value",
+            "token": self.token,
+        }));
+        let ok = route.get("ok").and_then(Value::as_bool).unwrap_or(false);
+        let terminal = if ok {
+            route.get("terminal").cloned().unwrap_or(Value::Null)
+        } else {
+            Value::Null
+        };
+        Step::Done(json!({"ok": ok, "terminal": terminal}))
+    }
+}
+
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
