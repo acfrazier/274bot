@@ -36,6 +36,21 @@ The inputs are Pause, Resume, Stop, Start, a disconnect, a connect, a relog,
 a modal that opens, closes or changes page, a guardian hold, a prayer-cleanup
 hold, a death, a run echo, and the passing of time.
 
+### Where each model function comes from
+
+| Model function (`model.rs`) | Product code |
+|---|---|
+| `frame` | `host/src/lib.rs` `client_frame_observed` (`:739` observe, `:758` press), `script_observe.rs` |
+| `observe_wait`, `deferred` | `host::ScriptRunPolicy::observe_script_wait`, `should_defer_auto_run` (`host/src/lib.rs:225-274`) |
+| `sample` | `SlotScript::script_interaction_wait` (`script/src/slot.rs:2259-2294`) |
+| `sample`, Modal arm | `WaitDeadline::owner_tick` (`script/src/native.rs:922`), `Ledger::modal_wait_tick` |
+| `quiet_wall_release`, `sample`, Quiet arm | `Ledger::quiet_read`, `quiet_read_wait` (`script/src/native/ledger.rs:349-410`) |
+| `sample`, Compat arm, `poll`, Compat arm | `CompatJournalLease::wait`, `renew_hold` (`script-js/.../quest_journal/isolate.rs:146-190`), `JournalRuntime::click` |
+| `begin`, `send`, `to_gap`, `rearm` | `Dialogue::sync_modal_wait` (`dialogue.rs:361-380`), `ActionContext::begin_modal_wait`, `renew_modal_wait` |
+| `poll`, Quiet arm | `JournalMachine::poll`, `arm_window` (`quest_journal/native.rs`) |
+| the press in `frame` | `SlotLoop::apply_auto_run` (`host/src/lib.rs:1548-1588`) |
+| the boundary in `frame` | `SlotLoop::after_drain` (`host/src/lib.rs:1536-1546`), `SlotScript::session_boundary` |
+
 ## Properties
 
 Each property has a plain statement and an invariant in `model.rs`
