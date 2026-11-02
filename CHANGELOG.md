@@ -123,6 +123,10 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.7` 
 
 ### Fixed during development
 
+- Large temporary navigation search heaps on Unix release their virtual
+  mappings when a search finishes, rather than leaving freed pages resident in
+  glibc arenas. Search ordering and admission limits are unchanged.
+
 - The T1.4 transport soak uses western Falador normal and oak logs with
   Falador West bank, radius-five normal Starts, and one radius-twelve oak Start.
   Each account needs two eligible, reachable trees. Host-router reachability
