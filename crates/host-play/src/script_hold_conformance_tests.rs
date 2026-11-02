@@ -241,7 +241,8 @@ impl Script for DrivenScript {
                     Ok(()) | Err(ActionError::Stale | ActionError::Cancelled) => {}
                     // The expired read: the owner's own failure, which the
                     // double counted.
-                    Err(ActionError::Failed(_)) if self.control.expired.load(Ordering::Relaxed) > 0 => {}
+                    Err(ActionError::Failed(_))
+                        if self.control.expired.load(Ordering::Relaxed) > 0 => {}
                     Err(error) => panic!("the owner double's command failed: {error:?}"),
                 }
                 self.handle = None;
@@ -1097,8 +1098,9 @@ fn an_expired_hold_makes_the_queued_click_stale_on_the_real_code() {
         });
         let mut rig = Rig::new();
         let real = rig.run(WALL_UNIT_MS, &frames);
-        compare(&head, trace, &real, &head_expected)
-            .unwrap_or_else(|report| panic!("{name}: the real code differs from the head model: {report}"));
+        compare(&head, trace, &real, &head_expected).unwrap_or_else(|report| {
+            panic!("{name}: the real code differs from the head model: {report}")
+        });
         assert_eq!(
             rig.control.sent.load(Ordering::Relaxed),
             1,
