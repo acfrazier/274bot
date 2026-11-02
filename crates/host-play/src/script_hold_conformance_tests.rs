@@ -965,8 +965,10 @@ fn the_journal_click_is_held_on_the_real_code_where_the_earlier_ledger_pressed()
 }
 
 /// The bounds of the compat traces: the model's compat lease only, every
-/// event that a test can drive. A compat lease has no real-time dependence
-/// here: the model decides when its bound has passed.
+/// event that a test can drive, and a new read that may begin in the frame
+/// that revokes the old one (the product's hook resets the session before the
+/// poll). A compat lease has no real-time dependence here: the model decides
+/// when its bound has passed.
 fn compat_bounds() -> Bounds {
     Bounds {
         horizon: 9,
@@ -975,6 +977,7 @@ fn compat_bounds() -> Bounds {
         max_ids: 4,
         max_pages: 3,
         max_epochs: 1,
+        same_frame_begin: true,
         modal: false,
         quiet: false,
         env: Env {
@@ -1050,12 +1053,7 @@ fn the_real_host_decides_like_the_model_on_the_compat_traces() {
 /// keep a boundary release (no re-arm) and decide like the model's host.
 #[test]
 fn the_counterexamples_of_the_earlier_compat_designs_run_on_the_real_host() {
-    // M4 shows only when the owner begins a new read in the frame that revokes
-    // the old one (the product's hook resets the session before the poll).
-    let bounds = Bounds {
-        same_frame_begin: true,
-        ..compat_bounds()
-    };
+    let bounds = compat_bounds();
     let mut checked = 0;
     for mutation in [Mutation::M6CompatNoRenew, Mutation::M4CompatConstantKey] {
         let run = hold_model::explore_profile(
