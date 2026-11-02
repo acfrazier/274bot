@@ -112,6 +112,7 @@ fn legends_gate_requires_started_progress_and_crosses_each_leaf_both_ways() {
         &collision,
         None,
         Some(&quests),
+        None,
     );
 
     let gate_edges = graph
@@ -188,6 +189,7 @@ fn legends_gate_requires_started_progress_and_crosses_each_leaf_both_ways() {
         &collision,
         None,
         None,
+        None,
     );
     assert!(!without_quest
         .edges
@@ -220,6 +222,7 @@ fn every_mature_jungle_loc_has_map_or_completion_tool_and_takeoff_gates() {
         &collision,
         None,
         Some(&quests),
+        None,
     );
 
     for (index, loc_id) in JUNGLE_LOC_IDS.into_iter().enumerate() {
@@ -435,6 +438,7 @@ fn jungle_crossing_accepts_blocked_jungle_landing_only() {
         &collision,
         None,
         Some(&quests),
+        None,
     );
     let takeoff = WorldTile {
         x: 99,
@@ -483,6 +487,7 @@ fn jungle_crossing_accepts_blocked_jungle_landing_only() {
         &collision,
         None,
         Some(&quests),
+        None,
     );
     assert!(
         !graph.edges.iter().any(|edge| {
@@ -511,6 +516,7 @@ fn jungle_refuses_to_bake_when_a_required_tool_or_proven_map_is_missing() {
         &collision,
         None,
         Some(&quests),
+        None,
     );
     assert!(
         ready
@@ -547,6 +553,7 @@ fn jungle_refuses_to_bake_when_a_required_tool_or_proven_map_is_missing() {
             &collision,
             None,
             quest_source,
+            None,
         );
         assert!(
             !graph.edges.iter().any(|edge| {
@@ -592,6 +599,7 @@ fn legends_gate_engine_closure_follows_helpers_into_general_scripts() {
         &open_collision(2724, 3345, 12, 12),
         None,
         Some(&quests),
+        None,
     );
     assert_eq!(
         graph

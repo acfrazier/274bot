@@ -149,7 +149,7 @@ fn content_gate_graph(script: &str, shipyard: bool) -> TransportGraph {
         family: QuestFamilyId::new(identity.sha256, identity.schema),
         facts: &facts,
     };
-    derive_transports_with_audit(fx.path(), &defs, &collision, None, Some(&quests)).0
+    derive_transports_with_audit(fx.path(), &defs, &collision, None, Some(&quests), None).0
 }
 
 struct ExactSignals(Vec<(&'static str, &'static str, i32)>, EvidenceStamp);
