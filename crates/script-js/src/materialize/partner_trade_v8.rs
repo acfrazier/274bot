@@ -72,6 +72,7 @@ fn run<'s>(
         "tradeScreenState" => {
             let (screen, _) = observed_trade_screen_and_tick();
             v8_str(scope, screen.label())?
+        }
         "stableClosedPoll" => stable_closed_poll(scope, args.data(), args.get(1), args.get(2))?,
         "namesMatch" => {
             let a = js_string(scope, args.get(1))?;
