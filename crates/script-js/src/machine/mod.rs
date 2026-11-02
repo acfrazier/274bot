@@ -3713,7 +3713,7 @@ fn allocate_native_seat_identity(family: &str) -> Result<(Handle, RequestId), St
     Ok((handle, id))
 }
 
-fn start_native_seat_row(
+struct NativeSeatRowStart {
     family: &'static str,
     exclusive_group: Option<&'static str>,
     handle: Handle,
@@ -3722,7 +3722,19 @@ fn start_native_seat_row(
     hooks: Vec<Hook>,
     machine: Box<dyn Machine>,
     at: usize,
-) -> Started {
+}
+
+fn start_native_seat_row(start: NativeSeatRowStart) -> Started {
+    let NativeSeatRowStart {
+        family,
+        exclusive_group,
+        handle,
+        context,
+        kind,
+        hooks,
+        machine,
+        at,
+    } = start;
     let hooks = hooks.into_iter().map(Rc::new).collect();
     HOST.with(|host| {
         let mut host = host.borrow_mut();
@@ -3801,16 +3813,16 @@ fn start_shop_family(value: Value, hooks: Vec<Hook>, at: usize, parent: Option<H
             args: SeatStartPayload::Shop(args),
         });
     });
-    start_native_seat_row(
-        SHOP_BUY_BY_ID_FAMILY,
-        Some(SHOP_BUY_BY_ID_FAMILY),
+    start_native_seat_row(NativeSeatRowStart {
+        family: SHOP_BUY_BY_ID_FAMILY,
+        exclusive_group: Some(SHOP_BUY_BY_ID_FAMILY),
         handle,
         context,
-        native::request::NativeKind::Shop,
+        kind: native::request::NativeKind::Shop,
         hooks,
-        Box::new(ShopSeatMachine),
+        machine: Box::new(ShopSeatMachine),
         at,
-    )
+    })
 }
 
 fn start_bank_family(
@@ -3894,14 +3906,14 @@ fn start_bank_family(
     if let Err(error) = enqueue_bank_child(id, family, args, context) {
         return Started::Refused(error);
     }
-    start_native_seat_row(
+    start_native_seat_row(NativeSeatRowStart {
         family,
-        descriptor.exclusive_group,
+        exclusive_group: descriptor.exclusive_group,
         handle,
         context,
-        descriptor.kind,
+        kind: descriptor.kind,
         hooks,
-        Box::new(BankSeatMachine(NativeBankChild {
+        machine: Box::new(BankSeatMachine(NativeBankChild {
             id,
             family,
             hook_indices,
@@ -3911,7 +3923,7 @@ fn start_bank_family(
             finished: false,
         })),
         at,
-    )
+    })
 }
 
 struct BankSeatMachine(NativeBankChild);
