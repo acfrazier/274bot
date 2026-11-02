@@ -1039,8 +1039,14 @@ impl Combat {
             self.engaged_type(),
             &self.tables,
             carries_boost,
-        );
+        ) || (self.engaged.is_none()
+            && select::requested_worth(&self.request, &self.tables));
         if worth {
+            // A target picked after Prep handed off still earns its opening
+            // drink before Engage can issue the first attack.
+            if self.flags & BOOST_WORTH == 0 && self.phase == Phase::Engage {
+                self.phase = Phase::Prep;
+            }
             self.flags |= BOOST_WORTH;
         } else {
             self.flags &= !BOOST_WORTH;

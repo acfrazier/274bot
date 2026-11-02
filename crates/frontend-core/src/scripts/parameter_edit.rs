@@ -645,19 +645,29 @@ impl ParameterEdit {
     }
 }
 
-fn card_label_for_key(js: &script_js::JsLibrary, key: &ParameterEditKey) -> Option<String> {
+fn card_label_for_key(
+    #[cfg(feature = "js")] js: &script_js::JsLibrary,
+    key: &ParameterEditKey,
+) -> Option<String> {
     if let Some(name) = key.card.strip_prefix("compiled:") {
         return script::compiled_id(name)
             .and_then(script::compiled_card)
             .map(|card| card.name.to_owned());
     }
-    let (source, lookup) = key.card.split_once(':')?;
-    let source = script::parse_source_kind(source)?;
-    js.get(source, lookup).map(|card| card.name.clone())
+    #[cfg(feature = "js")]
+    {
+        let (source, lookup) = key.card.split_once(':')?;
+        let source = script::parse_source_kind(source)?;
+        js.get(source, lookup).map(|card| card.name.clone())
+    }
+    #[cfg(not(feature = "js"))]
+    {
+        None
+    }
 }
 
 fn setting_labels_for_selection(
-    js: &script_js::JsLibrary,
+    #[cfg(feature = "js")] js: &script_js::JsLibrary,
     selection: &script::ScriptSel,
     field: &str,
 ) -> Option<(String, String)> {
@@ -671,6 +681,7 @@ fn setting_labels_for_selection(
                 super::SettingView::new(field).display_label().to_owned(),
             ))
         }
+        #[cfg(feature = "js")]
         script::ScriptSel::Loaded(source, lookup) => {
             let card = js.get(*source, lookup)?;
             let setting = card
@@ -682,6 +693,8 @@ fn setting_labels_for_selection(
                 super::SettingView::new(setting).display_label().to_owned(),
             ))
         }
+        #[cfg(not(feature = "js"))]
+        script::ScriptSel::Loaded(..) => None,
     }
 }
 
@@ -804,6 +817,7 @@ impl Scripts {
         initial_text: &str,
         baseline_value: Option<Value>,
     ) -> &mut String {
+        #[cfg(feature = "js")]
         let js = &self.js;
         let edit = edit_mut_or_insert(
             &mut self.parameter_edits,
@@ -812,7 +826,11 @@ impl Scripts {
             &baseline_value,
         );
         if edit.card_label.is_empty() {
-            if let Some(card_label) = card_label_for_key(js, key) {
+            if let Some(card_label) = card_label_for_key(
+                #[cfg(feature = "js")]
+                js,
+                key,
+            ) {
                 edit.card_label = card_label;
             }
         }
@@ -838,6 +856,7 @@ impl Scripts {
         baseline_value: Option<Value>,
     ) -> &mut String {
         let selection = selection.as_script();
+        #[cfg(feature = "js")]
         let js = &self.js;
         let (cache, scope, edits) = (
             &mut self.parameter_key_cache,
@@ -847,9 +866,12 @@ impl Scripts {
         let key = cached_parameter_key(cache, scope, profile, selection, field);
         let edit = edit_mut_or_insert(edits, key, initial_text, &baseline_value);
         if edit.card_label.is_empty() || edit.field_label.is_empty() {
-            if let Some((card_label, field_label)) =
-                setting_labels_for_selection(js, selection, field)
-            {
+            if let Some((card_label, field_label)) = setting_labels_for_selection(
+                #[cfg(feature = "js")]
+                js,
+                selection,
+                field,
+            ) {
                 edit.remember_labels(&card_label, &field_label);
             }
         }
@@ -876,6 +898,7 @@ impl Scripts {
     ) -> Result<Value, String> {
         let def = def.def();
         let field_label = super::SettingView::new(def).display_label();
+        #[cfg(feature = "js")]
         let js = &self.js;
         let edit = edit_mut_or_insert(
             &mut self.parameter_edits,
@@ -884,8 +907,12 @@ impl Scripts {
             &baseline_value,
         );
         if edit.card_label.is_empty() {
-            let card_label =
-                card_label_for_key(js, key).unwrap_or_else(|| "Script settings".to_owned());
+            let card_label = card_label_for_key(
+                #[cfg(feature = "js")]
+                js,
+                key,
+            )
+            .unwrap_or_else(|| "Script settings".to_owned());
             edit.remember_labels(&card_label, field_label);
         } else if edit.field_label.is_empty() {
             edit.field_label.push_str(field_label);
@@ -905,6 +932,7 @@ impl Scripts {
         let def = def.def();
         let field_label = super::SettingView::new(def).display_label();
         let selection = selection.as_script();
+        #[cfg(feature = "js")]
         let js = &self.js;
         let (baseline_text, baseline_value) = baseline;
         let (cache, scope, edits) = (
@@ -915,7 +943,12 @@ impl Scripts {
         let key = cached_parameter_key(cache, scope, profile, selection, field);
         let edit = edit_mut_or_insert(edits, key, baseline_text, &baseline_value);
         if edit.card_label.is_empty() || edit.field_label.is_empty() {
-            if let Some((card_label, _)) = setting_labels_for_selection(js, selection, field) {
+            if let Some((card_label, _)) = setting_labels_for_selection(
+                #[cfg(feature = "js")]
+                js,
+                selection,
+                field,
+            ) {
                 edit.remember_labels(&card_label, field_label);
             } else {
                 edit.remember_labels("Script settings", field_label);
@@ -936,6 +969,7 @@ impl Scripts {
         }
         let key = staged.key;
         let field_label = super::SettingView::new(&staged.definition).display_label();
+        #[cfg(feature = "js")]
         let js = &self.js;
         let edit = edit_mut_or_insert(
             &mut self.parameter_edits,
@@ -944,9 +978,12 @@ impl Scripts {
             &staged.baseline_value,
         );
         if edit.card_label.is_empty() || edit.field_label.is_empty() {
-            if let Some((card_label, _)) =
-                setting_labels_for_selection(js, staged.selection.as_script(), &staged.field)
-            {
+            if let Some((card_label, _)) = setting_labels_for_selection(
+                #[cfg(feature = "js")]
+                js,
+                staged.selection.as_script(),
+                &staged.field,
+            ) {
                 edit.remember_labels(&card_label, field_label);
             } else {
                 edit.remember_labels("Script settings", field_label);
@@ -1019,7 +1056,12 @@ impl Scripts {
             .get(key)
             .is_none_or(|edit| edit.card_label.is_empty() || edit.field_label.is_empty());
         let labels = if labels_missing {
-            setting_labels_for_selection(&self.js, selection, field)
+            setting_labels_for_selection(
+                #[cfg(feature = "js")]
+                &self.js,
+                selection,
+                field,
+            )
         } else {
             None
         };
@@ -1054,6 +1096,7 @@ impl Scripts {
                     value.clone(),
                 )
                 .map(Some),
+            #[cfg(feature = "js")]
             (Some(profile), script::ScriptSel::Loaded(source, lookup)) => {
                 let card = self
                     .js
@@ -1073,6 +1116,7 @@ impl Scripts {
                     .map(Some)
                 })
             }
+            #[cfg(feature = "js")]
             (None, script::ScriptSel::Loaded(source, lookup)) => {
                 let Some(card) = self.js.get(*source, lookup).cloned() else {
                     return self.parameter_save_failed(key, "parameters unavailable");
@@ -1086,6 +1130,14 @@ impl Scripts {
                     value.clone(),
                 )
                 .map(|()| None)
+            }
+            #[cfg(not(feature = "js"))]
+            (_, script::ScriptSel::Loaded(..)) => {
+                return self.parameter_save_failed(
+                    key,
+                    &script::surface::SurfaceError::NoFactory(script::surface::SurfaceKind::Js)
+                        .to_string(),
+                );
             }
             (None, script::ScriptSel::Compiled(_)) => {
                 return self.parameter_save_failed(key, "parameters: select a profile first");
@@ -2055,6 +2107,7 @@ mod tests {
         }
     }
 
+    #[cfg(feature = "js")]
     #[test]
     fn spread_loadout_setting_resolves_as_selectable_loadout_choice_in_view_model() {
         let src = r#"
@@ -2101,6 +2154,7 @@ export const SETTINGS: SettingsSchema = {
         .expect("selectable loadout choice parses in frontend-core");
         assert_eq!(chosen, serde_json::json!("Scenario Rock Crab food"));
     }
+    #[cfg(feature = "js")]
     #[test]
     fn catalog_loadout_schema_survives_prepare_reload_and_drives_admission_for_all_ten_cards() {
         let unique = std::sync::atomic::AtomicU64::new(0);

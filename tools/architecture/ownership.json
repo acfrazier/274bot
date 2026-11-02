@@ -1623,6 +1623,10 @@
       "owner": "T1"
     },
     {
+      "path": "crates/host-play/tests/nav_busy_transport_live.rs",
+      "owner": "T1"
+    },
+    {
       "path": "crates/host-play/tests/nav_origin_live.rs",
       "owner": "T1"
     },
@@ -1924,6 +1928,10 @@
     },
     {
       "path": "crates/nav-executor/src/traveller/npc_hop_tests.rs",
+      "owner": "T5"
+    },
+    {
+      "path": "crates/nav-executor/src/traveller/occupied_tests.rs",
       "owner": "T5"
     },
     {
@@ -4315,6 +4323,10 @@
       "owner": "T2"
     },
     {
+      "path": "crates/script/src/quester/families/combat_escape.rs",
+      "owner": "T2"
+    },
+    {
       "path": "crates/script/src/quester/families/combat_tests.rs",
       "owner": "T2"
     },
@@ -6151,6 +6163,10 @@
       "owner": "T1"
     },
     {
+      "path": "tools/architecture/native_dependencies.py",
+      "owner": "T1"
+    },
+    {
       "path": "tools/architecture/nav_clippy.py",
       "owner": "T1"
     },
@@ -6220,6 +6236,10 @@
     },
     {
       "path": "tools/game-data/extractors/combat.ts",
+      "owner": "T2"
+    },
+    {
+      "path": "tools/game-data/extractors/duel.ts",
       "owner": "T2"
     },
     {

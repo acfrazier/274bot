@@ -940,7 +940,8 @@ mod tests {
 
     use crossterm::event::KeyCode;
     use frontend_core::scripts::CardSource;
-    use frontend_core::test_support::scripts::{unavailable_quest, TestSchema, TestStore};
+    use frontend_core::test_support::scripts::TestSchema;
+    use frontend_core::test_support::scripts::{unavailable_quest, TestStore};
     use ratatui::backend::TestBackend;
     use ratatui::layout::Rect;
     use ratatui::widgets::Paragraph;

@@ -1061,19 +1061,21 @@ fn render_combat_session(out: &mut String) {
     out.push_str("  antifireDoses: number;\n");
     out.push_str("  protectSwitches: number;\n");
     out.push_str("}\n\n");
-    out.push_str("/** How a session ended (the `value` of a `done` outcome). `fought`: Combat settled and reported. `interrupted`: the fight ended before Combat settled it (the bot first cleared only the prayers it raised; death needs no clearing). `refused`: the host refused the request after admission (a name it could not resolve, `busy`, the machine refusing to begin) and nothing was fought. `failed`: a machine error or card panic. */\n");
+    out.push_str("/** How a session ended (the `value` of a `done` outcome). `fought`: Combat settled and reported. `interrupted`: a Pause, a death or a reconnect ended the fight before Combat settled it (the bot first cleared only the prayers it raised; death needs no clearing). `refused`: the host refused the request after admission (a name it could not resolve, `busy`, the machine refusing to begin) and nothing was fought. `failed`: a machine error or card panic. Moving the bot by hand mid-fight is never `done`: the seat revokes the session after the same scoped prayer clear, and the promise settles `{ kind: 'aborted', reason: 'user-input' }`. */\n");
     out.push_str("export type CombatEnd =\n");
     out.push_str("  | { end: 'fought'; token: number; report: CombatReport }\n");
     out.push_str("  | { end: 'stopped'; token: number }\n");
-    out.push_str("  | { end: 'interrupted'; token: number; cause: 'pause' | 'user-input' | 'died' | 'reconnect' }\n");
+    out.push_str(
+        "  | { end: 'interrupted'; token: number; cause: 'pause' | 'died' | 'reconnect' }\n",
+    );
     out.push_str("  | { end: 'refused'; token: number; reason: string }\n");
     out.push_str("  | { end: 'failed'; token: number; reason: string };\n\n");
-    out.push_str("/** A top-level `refused` is a synchronous refusal before any session (`invalid-args`, `invalid-settings`, `invalid-setting:<field>:<code>`, `busy`); `done` with `end: 'refused'` is a host refusal after the session was admitted. */\n");
+    out.push_str("/** A top-level `refused` is a synchronous refusal before any session (`invalid-args`, `invalid-settings`, `invalid-setting:<field>:<code>`, `busy`); `done` with `end: 'refused'` is a host refusal after the session was admitted. `aborted` with reason `user-input` is a manual move that ended a live fight (and `reset`, `superseded`, `terminated` or `unknown` for the session-level aborts). */\n");
     out.push_str("export type CombatOutcome =\n");
     out.push_str("  | { kind: 'done'; value: CombatEnd }\n");
     out.push_str("  | { kind: 'refused'; reason: string }\n");
     out.push_str(
-        "  | { kind: 'aborted'; reason: 'reset' | 'superseded' | 'terminated' | 'unknown' };\n",
+        "  | { kind: 'aborted'; reason: 'reset' | 'superseded' | 'terminated' | 'user-input' | 'unknown' };\n",
     );
 }
 

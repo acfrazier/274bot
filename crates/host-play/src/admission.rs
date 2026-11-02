@@ -343,7 +343,7 @@ pub(crate) fn assess_route_path(
     world: &NavWorld,
     admission: &Admission,
 ) -> Arc<RouteAssessment> {
-    let Some(route) = route_path_view(route, world) else {
+    let Some(route) = route.view_in(world) else {
         return unknown_assessment(
             UnknownWhy::NavIdentity,
             "Route assessment unknown: navigation lease identity unavailable",
@@ -444,22 +444,13 @@ fn permits_view(
     .unwrap_or(false)
 }
 
-fn route_path_view<'a>(
-    route: &'a RoutePath,
-    world: &'a NavWorld,
-) -> Option<nav_planner::contract::RouteView<'a>> {
-    match route {
-        RoutePath::Legacy(route) => producer::route_view(world, route).ok(),
-        RoutePath::Compact { .. } => route.view(),
-    }
-}
 fn retained_bot_route_view<'a>(
     legacy: Option<&'a Route>,
     compact: Option<&'a RoutePath>,
     world: &'a NavWorld,
 ) -> Option<nav_planner::contract::RouteView<'a>> {
     compact
-        .and_then(RoutePath::view)
+        .and_then(|path| path.view_in(world))
         .or_else(|| legacy.and_then(|route| producer::route_view(world, route).ok()))
 }
 

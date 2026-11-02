@@ -1,13 +1,13 @@
- # Scripts (`crates/script`, `crates/script-js`)
+# Scripts (`crates/script`, `crates/script-js`)
 
- Script **kernel** (Core, `crates/script`) plus the **JS runtime** (`crates/script-js`)
- for the bot host. Compiled cards are rust-first on 274bot
- `api`. Catalog and external TypeScript/JavaScript bots load through a thin
- compatibility shim in `script-js`; **behavior, configuration, and fail-closed helpers are
- owned in Rust**. The shim does coercion and marshaling only. The only
- JS ↔ Rust isolate wire is **FlatBuffers** (codec in `script-js` as
- `src/wire/isolate_fb.rs`, schema at `crates/script-js/schema/isolate.fbs`) — there is no extra JSON host wire
- and no foreign JS policy runtime in-tree.
+Script **kernel** (Core, `crates/script`) plus the **JS runtime** (`crates/script-js`)
+for the bot host. Compiled cards are rust-first on 274bot
+`api`. Catalog and external TypeScript/JavaScript bots load through a thin
+compatibility shim in `script-js`; **behavior, configuration, and fail-closed helpers are
+owned in Rust**. The shim does coercion and marshaling only. The only
+JS ↔ Rust isolate wire is **FlatBuffers** (codec in `script-js` as
+`src/wire/isolate_fb.rs`, schema at `crates/script-js/schema/isolate.fbs`) — there is no extra JSON host wire
+and no foreign JS policy runtime in-tree.
 
 WalkTo is **host nav** (panel picker / TUI map), not a script card.
 `native::Script::on_random` is a rising-edge knock (`RandomClaim::Host` default).
@@ -36,10 +36,24 @@ and `requestRepath`, `EntityQuery.inside` and `nearestPreferLocal`, script
 events (`events.on`/`off`, `registerScript`), the task-tree classes
 (`AcquireTask`, `BranchTask`, `LeafTask`) and several
 gathering, fishing and banking data helpers. The generated
- `crates/script-js/src/shim/declared_surface.js` and
- `crates/script-js/compat-js/overlay-not-impl.json` list the unconditional ones. A
+`crates/script-js/src/shim/declared_surface.js` and
+`crates/script-js/compat-js/overlay-not-impl.json` list the unconditional ones. A
 helper that refuses one request at run time (for example `Traversal.walkTo`
 given `pathFollow`) raises the same `not impl` error with the reason.
+
+## Build modes
+
+The operator apps enable `js` by default. A product built with
+`--no-default-features` keeps the native Gatherer, Grinch and Quester, but
+does not include the JS runtime or offer Load, Reload, catalog or rs2b0t
+profile-import controls. Native settings, lifecycle and paint controls remain.
+See [building without JavaScript](../dev/build-from-source.md#builds-with-and-without-javascript)
+for the separate application build commands.
+
+Saved File and catalog selections use the same Core vocabulary in both
+builds. In a build without JS, Start returns the typed
+`SurfaceError::NoFactory(SurfaceKind::Js)` refusal. The saved identity is
+not rejected as malformed or replaced with another card.
 
 ## Native contract boundary
 
@@ -50,14 +64,14 @@ Browse, scenario Starts and Start handles all use that registry; there is no
 second parameter-default table or crate-root `Script` trait.
 The descriptor also defines its native request kind and optional lifecycle hooks.
 
- The built-in Core registry contains Gatherer, Grinch and Quester. Hosts install Sherlock
- with `script_js::install_cards()` before reading the
- registry. Sherlock is available only in builds with the JS runtime. Sherlock was meant
- to be native. In practice it became a port of the compatibility clue machine, so it needs
- the JS runtime build until the native clue rewrite replaces that machine. Sherlock itself
- never creates a V8 isolate. Reinstalling that canonical slice is idempotent. Duplicate card IDs
- reject the complete new slice. Each slot refreshes its cached slice on the first
- frame after a publication.
+The built-in Core registry contains Gatherer, Grinch and Quester. Hosts install Sherlock
+with `script_js::install_cards()` before reading the
+registry. Sherlock is available only in builds with the JS runtime. Sherlock was meant
+to be native. In practice it became a port of the compatibility clue machine, so it needs
+the JS runtime build until the native clue rewrite replaces that machine. Sherlock itself
+never creates a V8 isolate. Reinstalling that canonical slice is idempotent. Duplicate card IDs
+reject the complete new slice. Each slot refreshes its cached slice on the first
+frame after a publication.
 
 Start prepares settings and selected resources on a `FamilyPreparation`
 worker, then installs only if the captured slot/control generation is current.
@@ -106,10 +120,10 @@ Gather, Combat and progress own the foreground. Hunt does not.
 
 `native::divergence::DIVERGENCES` records every approved Q5 row and the open
 row 8a. Hunt activation waits for T2/T1 to extend and review its model rule.
- F0 changes neither current dispatch nor the isolate schema. T1.3 and I-family
- activation retain the real lifecycle, promise, encoder and family proof duties.
- Core `script` carries no JS dependencies (`deno_ast`, the V8 and isolate crates and the
- FlatBuffer wire live in `script-js`).
+F0 changes neither current dispatch nor the isolate schema. T1.3 and I-family
+activation retain the real lifecycle, promise, encoder and family proof duties.
+Core `script` carries no JS dependencies (`deno_ast`, the V8 and isolate crates and the
+FlatBuffer wire live in `script-js`).
 
 A native `ScriptFlow::Blocked` is terminal. So is a published
 `NativePhase::Blocked` carrying a failure, even if the tick returns `Continue`.
@@ -152,13 +166,13 @@ Not every begin is wrapped: a non-emitting begin can still exhaust the
 transition allowance unless its caller handles that error. Root Quester begin
 handles `BudgetExhausted` without counting an attempt. Dialogue gap rearms also
 spend their finite allowance at most once per observed tick, not once per drain.
- `ActionError::Unavailable` is a per-request refusal (for example a disposal
- that requires a slot-exact Drop). Sherlock retains its existing clue
- queue/dispatch behavior through one crate-private borrowed host frame (no raw
- driver). Sherlock lives in `script-js` and is available only in builds with the JS
- runtime. Sherlock was meant to be native. In practice it became a port of the
- compatibility clue machine, so it needs the JS runtime build until the native clue
- rewrite replaces that machine. Sherlock itself never creates a V8 isolate.
+`ActionError::Unavailable` is a per-request refusal (for example a disposal
+that requires a slot-exact Drop). Sherlock retains its existing clue
+queue/dispatch behavior through one crate-private borrowed host frame (no raw
+driver). Sherlock lives in `script-js` and is available only in builds with the JS
+runtime. Sherlock was meant to be native. In practice it became a port of the
+compatibility clue machine, so it needs the JS runtime build until the native clue
+rewrite replaces that machine. Sherlock itself never creates a V8 isolate.
 
 Compat machines opt in to evidence-only snapshot passes individually. The bank
 open and select families, `Bank.close`, `withdrawLoad`, the single-transfer bank
@@ -204,14 +218,14 @@ value applies; omission is not proof of no requirement.
 Idle = no isolate. Stop tears down V8. Pause / not `is_up` keeps the
 instance; `want_run` distinguishes operator Pause from offline.
 
- The process root calls `script_js::bootstrap_v8_platform()` on its main thread
+The process root calls `script_js::bootstrap_v8_platform()` on its main thread
 before creating any V8-using worker. A worker cannot bootstrap the protected
 platform after that point. One Tokio runtime bridges the per-bot isolate
 threads; one supervisor owns execution/hook deadlines and physical retirement.
 Dropping a Load handle does not release its process isolate reservation until
 the V8 thread exits. A bounded quarantine retains over-deadline threads; when
 all four credits are occupied, new JS is refused instead of silently detaching
- another worker. `script_js::isolate_capacity_status()` reports active
+another worker. `script_js::isolate_capacity_status()` reports active
 isolate reservations, unjoined retiring gameplay and validation rows, credited
 quarantine (including validators), and uncredited raw-drop rows. Retiring rows
 remain charged to their original admission until joined or credited transfer;
@@ -230,7 +244,7 @@ already-entered healthy work to finish, except when no independent deadline
 could be registered; an unbounded execution is never allowed to continue.
 Catalog refresh validation uses one serialized process seat with a bounded
 16-job queue (at most 256 cards / 16 MiB per batch). The product entry point
- is `script_js::LoadIsolate::validate_prepared_batch`, which returns an owning
+is `script_js::LoadIsolate::validate_prepared_batch`, which returns an owning
 `ValidationBatch` receipt. When that queue is full, the refresh owner retains
 its one pending batch on the receipt and retries non-blockingly on later
 polls (`ValidationBatch::try_recv`) instead of failing Reload; dropping the
@@ -916,20 +930,81 @@ If no engaged actor was recorded, or the engaged actor is no longer observed,
 retreat geometry uses the heaviest observed live attacker (the same shared
 threat predicate). Retreat direction compares packet-time network tiles (the
 player's and the attacker's), not interpolated rendered poses.
-An abort walk that fails or arrives while an attacker remains transfers into
-a guarded hold. The hold continues eating and permitted protection even at high
-HP, and ends only after three consecutive ticks without threat evidence.
-There is no tick-based hold timeout. If no food remains, protection is
-unavailable or disallowed, and an attacker is still live, the hold instead
-makes one unguarded escape walk away from that attacker before parking, when a
-destination can be formed. Without a live attacker it parks after the
-threat-free horizon instead. It does not retry that escape indefinitely.
+An abort walk names its goals. It does not pick one destination. The request
+lists exact Area goal tiles in tiers, and the host router chooses among them.
+The router owns reachability: it reads the baked collision and transports,
+applies the account's own limits, and takes the nearest reachable goal of the
+preferred tier before any goal of the fallback tier. Gatherer observation walks
+use the same request type (`WalkGoals`). The adapter runs no reachability
+search of its own, and a goal that the router cannot reach costs nothing.
+The tiers, best first:
+
+1. The step's authored `stand` and the standable tiles within one tile of it,
+   when the stand lies outside the attacker's chase envelope.
+2. Standable tiles beyond the chase envelope.
+3. Standable tiles inside the envelope that are farther from the attacker than
+   the player is.
+
+The chase envelope is `2 * maxrange + attackrange` tiles from the attacker's
+tile (`engine/src/engine/entity/Npc.ts:652-667`). Without a nav pack, every
+in-bounds tile is a candidate. Without a named attacker, only tier 1 exists.
+Each tier holds at most 512 tiles, so the two tiers of one request fit the
+router's limit of 1024 goals.
+A request names its first non-empty tier as preferred and the next non-empty
+tier as fallback. An abort walk that fails while an attacker is live is a
+failed route, not an end. The step plans again from the observed position, and
+the new request prefers the next tier down, under the same guard, so food
+upkeep continues. A pass makes one request for each non-empty tier: at most
+three requests, or two when the Path names no stand. The tiers can share tiles
+(a tile next to the stand can also lie beyond the chase envelope), so two
+requests of a pass can overlap. The count limit holds regardless. Three is the
+number of destination tiers that the content defines. It does not count compass
+directions. A request ends with its walk receipt. If no receipt comes, it ends
+when its observed-tick budget is spent. The step counts distinct game ticks,
+one for each `PLAYER_INFO`, never wall-clock time. The budget is the walking
+depth in steps to the nearest goal of the preferred tier in the live reach
+flood (of the fallback tier when no preferred goal is in the flood), plus 12
+ticks. The 12 ticks cover the engine's tick order and one dropped click that
+the nav executor re-sends after 5 idle ticks, twice. A walk to a goal moves
+at least one tile per game tick
+(`engine/src/engine/entity/PathingEntity.ts:144-149`), so the depth bounds
+its walking. The reach flood has no depth limit of its own, and the `script`
+crate reaches nav only through `nav_planner::contract`, so it has no router
+search bound to use. When no goal is in the flood (a route that needs a
+transport, or no live flood), the walk has no tick budget and no clock. It
+ends by its walk receipt or by the existing ten-minute active-clock deadline
+of the walk machine. When the budget is spent, the step cancels the walk
+and plans the next tier from the observed position, the same as for a failed
+route. An abort walk that arrives while an
+attacker remains, or a pass that spends its tiers, transfers into a guarded
+hold. The hold continues eating and permitted protection even at high HP, and
+ends only after three consecutive
+ticks without threat evidence. There is no tick-based hold timeout. If no food
+remains, protection is unavailable or disallowed, and an attacker is still
+live, the hold instead starts one more pass of unguarded escape requests,
+planned from the position the hold observed, before parking. Without a live
+attacker it parks after the threat-free horizon instead. The step never starts
+a third pass. An abort makes at most six requests with a stand and four
+without. When every request fails, the step ends with the last walk failure.
+No claim is made that a reachable escape exists. When no tier routes, the hold
+and its food are the last resort.
+A combat step whose target is `attacker` and whose report is
+`Aborted(Unattackable)` completes once the bot is safe: when a guarded escape
+walk arrives with no live attacker, when the hold ends threat-free, or when an
+unguarded escape walk arrives and the step observes that no attacker is live.
+The unguarded pass has neither prayer nor food, so arrival alone is not safety.
+If an attacker is live or unobserved on arrival, the step plans the next tier,
+and it ends with the failure "combat abort escape walk arrived without proof
+that the attacker is gone" when no tier is left. The step keeps its combat
+receipt, so `combat_end: aborted_unattackable` selects the caller's walk that
+follows. Every other abort still ends the step as a failure.
 Cancellation releases protection owned by the hold.
 
-**Known limit (retreat destination).** The retreat tile is a fixed distance
-away from the attacker. It does not avoid other aggressive NPCs, so an abort
-walk can end beside a new attacker (the guarded hold then handles it).
-Choosing destinations away from aggressive NPCs is not implemented.
+**Known limit (retreat destination).** The escape goals lie beyond one chase
+envelope of the attacker, or at least farther from it than the player is. They
+do not avoid other aggressive NPCs, so an abort walk can end beside a new
+attacker (the guarded hold then handles it). Choosing destinations away from
+aggressive NPCs is not implemented.
 
 **Known limit (WindDown gap).** Every `Aborted` combat end first enters
 WindDown, which turns all raised prayers off and reports only once they are
@@ -945,7 +1020,7 @@ live attacker to the abort walk or hold instead of sweeping them.
 Abort qualification records the step's prayer permission independently of the
 player's Prayer level. A protected hold must prevent HP loss; a food-only hold
 may take damage, but must keep HP positive and eat at the guard's food line while
-food remains. Exhaustion requires the single escape attempt, not an unguarded
+food remains. Exhaustion requires an escape pass, not an unguarded
 park under a live attacker. A safe hold terminal requires observed disengagement,
 and a verified no-threat abort is a separate outcome that does not qualify the
 live-threat cell.
@@ -1311,7 +1386,7 @@ unchanged.
 - **Load** registers a picker card tagged **File** from an absolute/relative
   path (`~/.274bot/js-scripts.json` remembers `{name, path}`). Same path
   overwrites; different paths stay distinct even when stems match.
- - Compiled registry cards are also in Browse: Gatherer (Gathering), Quester
+- Compiled registry cards are also in Browse: Gatherer (Gathering), Quester
    (Quests), and, in builds with the JS runtime, Sherlock, grouped under **Treasure Trails**
    and tagged **Compiled**. Sherlock is available only in builds with the JS runtime.
    Sherlock was meant to be native. In practice it became a port of the compatibility
@@ -1767,10 +1842,11 @@ A Load script's live `api.gather` or `api.combat` session and a built-in
 script's live native action are owned work even with no walk in flight.
 Manual movement reaches these owners through `note_manual_walk_takeover`
 (`SlotScript::manual_input_owner`). A Gatherer API session gathering in place
-blocks `manual-movement`; Combat settles `interrupted` / `user-input` after
-its scoped prayer clear. Browse-started native cards also receive takeover
-while a native action is live. With Pause off, other in-place native families
-can continue unless they handle takeover, as Quester fights do.
+blocks `manual-movement`; Combat's promise settles `aborted` with reason
+`user-input` after its scoped prayer clear. Browse-started native cards also
+receive takeover while a native action is live. With Pause off, other in-place
+native families can continue unless they handle takeover, as Quester fights
+do.
 
 The owner-pause preference is `nav.pause_script_on_manual_walk_abort`,
 displayed as “Pause script on manual movement,” and defaults to ON. With it

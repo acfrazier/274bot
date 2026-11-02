@@ -70,6 +70,7 @@ impl Rig {
         let mut session = Session::new();
         install_vault(&mut session.core, vault);
         session.persist_ui = false;
+        #[cfg(feature = "js")]
         session
             .scripts
             .use_library_at(dir.join("js-scripts.json"), dir.join("js-cache"));

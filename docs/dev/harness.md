@@ -42,6 +42,49 @@ Cells behind Cargo features do not build without them. `quester_dev_paths_live`,
 other `*_live*` modules) run under `cargo test`. Each cell file's header lists
 its own environment.
 
+The expected-combat Quester cell seeds Tourist Trap (`desertrescue`) at stage
+3. The loc-dialogue cell seeds Priest in Peril (`priestperil`) at stage 1.
+These permanent server variables are not transmitted to the client. After
+relog, each cell sends `getvar` before Start. Its oracle requires the exact
+fresh system reply. The fixture receipt records that reply, its message
+sequence, and the client-cache value as a diagnostic. An absent, stale,
+incorrect, or player-authored reply cannot prove the seed.
+The combat fixture also carries full waterskins. The real desert heat timer
+can otherwise damage the player and interrupt dialogue before combat starts.
+
+The loc-dialogue result uses the content's final dialogue line after its
+stage assignment, not the untransmitted varp. Neither cell sends cheats after
+Start. Family Paths use the released Cook Path's empty text-rule list and
+journal-colour fallback. Every colour selects the fixture's one authored
+stage. The fixture builder receives an explicit Cook stage-zero seed because
+the empty text-rule list supplies no seed hint.
+The held-item result requires the retained Completed lifecycle receipt.
+Native completion removes the live status, so the result does not depend on
+observing a temporary Complete status.
+The ground-use-on fixture seeds `cogquest`, which backs the content's
+`get_cog_progress` procedure. It requires a fresh `getvar cogquest` reply
+before Start. A procedure name is not a variable name for `setvar`.
+Its empty-bucket result prevents the sequence from repeating the cooling
+action after that action consumes the water.
+Before Start, it also waits for the real ground spawn within its content
+respawn interval plus the query budget. It never creates a ground item.
+
+The staged Imp hand-in cell requires a retained `Completed` lifecycle receipt
+and the actual green Imp quest row. Its receipt stores both in `m1_completion`.
+The slot removes the native run during completion, so later status polling
+cannot require a transient `imp:2` status. The cell still requires both wizard
+talks, valid dialogue packets, four seeded beads, and removal of those beads.
+The dialogue packet check accepts only `CLOSE_MODAL` for `CloseModal`, and
+only when the action snapshot shows the selected quest completion scroll as the
+open main modal and the close follows the final hand-in talk. Unknown
+operations and extra packets fail.
+
+The Sheep bank-loop cell proves withdrawal from the loaded bank, matching
+bank generation, empty stock, and exact received items. It accepts `Ready`
+as well as `Withdrawing` because the provisioner can finish before observation.
+The cell still requires spinning, twenty balls of wool, hand-in, green progress,
+and the retained `Completed` lifecycle receipt.
+
 The Quester Path smoke runs one content quest id from the embedded release
 index (or from `QUESTER_PATH_DIR`) under a fixed 45-minute deadline:
 

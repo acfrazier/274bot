@@ -402,6 +402,7 @@ fn native_follow_failure_preserves_hop_detail_in_receipt() {
             },
             why,
             tries: 3,
+            last_refusal: None,
         };
         {
             let mut navs = rig.navs.lock().unwrap();
@@ -435,6 +436,58 @@ fn native_follow_failure_preserves_hop_detail_in_receipt() {
         assert!(detail.contains("aiming"), "{detail}");
     }
 }
+
+#[test]
+fn native_follow_failure_names_the_last_crossing_refusal_in_the_receipt() {
+    let mut rig = open_rig(false);
+    rig.observe(1);
+    rig.wait_routed();
+    let at = WorldTile {
+        x: 0,
+        z: 0,
+        level: 0,
+    };
+    let aiming = WorldTile {
+        x: 4,
+        z: 0,
+        level: 0,
+    };
+    {
+        let mut navs = rig.navs.lock().unwrap();
+        super::apply_nav_follow_outcome(
+            navs.get_mut("alice").unwrap(),
+            Some(nav_executor::TravelOutcome::Stalled {
+                at,
+                aiming,
+                why: nav_executor::HopFailure::Dropped,
+                tries: 7,
+                last_refusal: Some(nav_executor::TransportRefusal::Busy(
+                    "The ledge is being used",
+                )),
+            }),
+            false,
+        );
+    }
+    rig.observe(2);
+    let shared = rig.shared.lock();
+    let receipt = shared.result.as_ref().unwrap().as_ref().unwrap();
+    assert_eq!(
+        receipt.end,
+        WalkEnd::Stalled(Arc::new(script::native::WalkStall {
+            at,
+            aiming,
+            why: script::native::WalkStallReason::Dropped,
+            tries: 7,
+        }))
+    );
+    let detail = receipt
+        .failure_detail()
+        .expect("the stall detail is owed to the caller");
+    assert!(detail.contains("Dropped"), "{detail}");
+    assert!(detail.contains("tries: 7"), "{detail}");
+    assert!(detail.contains("The ledge is being used"), "{detail}");
+}
+
 #[test]
 fn native_end_blocked_follow_preserves_typed_stall_in_receipt() {
     let mut rig = open_rig(false);
@@ -459,6 +512,7 @@ fn native_end_blocked_follow_preserves_typed_stall_in_receipt() {
                 aiming,
                 why: nav_executor::HopFailure::EndBlocked,
                 tries: 0,
+                last_refusal: None,
             }),
             false,
         );
@@ -492,6 +546,7 @@ fn stale_and_legacy_follow_failures_do_not_acquire_native_detail() {
         },
         why: nav_executor::HopFailure::Dropped,
         tries: 3,
+        last_refusal: None,
     };
 
     let mut rig = open_rig(false);
@@ -1111,7 +1166,7 @@ fn terminal_blocked_resets_all_navigation_once_per_generation() {
         let bot = navs.get_mut("alice").unwrap();
         bot.inspect.generation = 9;
         bot.inspect.pending_id = 17;
-        bot.bank_pick.posted = script_js::wire::BankSelectionInput {
+        bot.bank_pick.posted = script::native::snapshot_source::BankSelectionInput {
             request_id: 23,
             generation: 4,
             bank_index: 2,
@@ -1133,7 +1188,7 @@ fn terminal_blocked_resets_all_navigation_once_per_generation() {
         assert_eq!(bot.inspect.pending_id, 0);
         assert_eq!(
             bot.bank_pick.posted,
-            script_js::wire::BankSelectionInput::default()
+            script::native::snapshot_source::BankSelectionInput::default()
         );
         assert_eq!(bot.duel_offer_partner, None);
         assert!(!bot.walk_outcome_failed);
@@ -1143,7 +1198,7 @@ fn terminal_blocked_resets_all_navigation_once_per_generation() {
         assert!(bot.walk_guard_off.is_some());
         assert_eq!(bot.terminal_nav_reset_generation, Some(generation));
 
-        let sentinel = script_js::wire::BankSelectionInput {
+        let sentinel = script::native::snapshot_source::BankSelectionInput {
             request_id: 29,
             generation: 5,
             bank_index: 3,
@@ -1166,7 +1221,7 @@ fn terminal_blocked_resets_all_navigation_once_per_generation() {
     assert_eq!(bot.inspect.pending_id, 99);
     assert_eq!(
         bot.bank_pick.posted,
-        script_js::wire::BankSelectionInput {
+        script::native::snapshot_source::BankSelectionInput {
             request_id: 29,
             generation: 5,
             bank_index: 3,
@@ -3438,6 +3493,7 @@ fn native_protect_alone_does_not_grant_danger_and_invalid_cross_still_refuses() 
     }
 }
 
+#[cfg(feature = "js")]
 #[test]
 fn sherlock_bool_walk_inherits_committed_bits_while_isolate_wiring_stays_frozen() {
     script_js::install_cards().expect("install canonical Sherlock card for native walk test");
@@ -4007,6 +4063,7 @@ fn manual_takeover_of_carried_walk_keeps_its_receipt_identity() {
     }
 }
 
+#[cfg(feature = "js")]
 #[test]
 fn manual_click_terminal_resets_on_stop_before_the_next_load_snapshot() {
     let mut play = run_with_io(
@@ -4302,6 +4359,7 @@ fn takeover_is_refused_for_an_absent_revoked_or_completed_owner() {
     }
 }
 
+#[cfg(feature = "js")]
 fn in_place_load_rig() -> Rig {
     let mut rig = open_rig(false);
     rig.slot().lock().unwrap().stop();
@@ -4329,6 +4387,7 @@ fn in_place_load_rig() -> Rig {
     rig
 }
 
+#[cfg(feature = "js")]
 #[test]
 fn takeover_with_pause_on_pauses_a_load_script_without_a_walk() {
     let mut rig = in_place_load_rig();
@@ -4365,6 +4424,7 @@ fn takeover_with_pause_on_pauses_a_load_script_without_a_walk() {
     );
 }
 
+#[cfg(feature = "js")]
 #[test]
 fn takeover_with_pause_off_leaves_a_load_script_without_a_walk_alone() {
     let rig = in_place_load_rig();
@@ -5802,6 +5862,9 @@ fn s2b_admission_per_bot_layouts() {
     // S0c moves the platform-specific isolate mutexes into the surface run.
     // The shared 64-bit slot layout no longer contains those mutexes.
     // S0d adds a 16 B per-slot generation cache for lock-free compiled-card reads.
+    // NAV-BUSY-TRANSPORT adds 32 B to Traveller (busy-refusal retry state and
+    // the distinct-tick transport clock): NavBot is 3816 B. Lab memory A/B on
+    // the branch head passed (NAV-BUSY-TRANSPORT/mem-ab-r3).
     #[cfg(all(
         target_os = "macos",
         target_arch = "aarch64",
@@ -5814,7 +5877,7 @@ fn s2b_admission_per_bot_layouts() {
             std::mem::size_of::<script::combat::Combat>(),
             std::mem::size_of::<script::combat::WalkGuard>()
         ),
-        (3784, 1624, 512, 264)
+        (3816, 1624, 512, 264)
     );
     #[cfg(all(
         target_os = "linux",
@@ -5829,7 +5892,7 @@ fn s2b_admission_per_bot_layouts() {
             std::mem::size_of::<script::combat::Combat>(),
             std::mem::size_of::<script::combat::WalkGuard>()
         ),
-        (3784, 1624, 512, 264)
+        (3816, 1624, 512, 264)
     );
     assert!(std::mem::size_of::<script::combat::Combat>() <= 512);
     assert!(std::mem::size_of::<script::combat::WalkGuard>() <= 264);
@@ -6021,6 +6084,7 @@ mod s2b_admission_contract {
         );
     }
 
+    #[cfg(feature = "js")]
     #[test]
     fn real_v1_metadata_routes_across_derived_zones_with_boolean_only_and_no_host_guard() {
         for hp in [14, 45] {
@@ -6089,6 +6153,7 @@ mod s2b_admission_contract {
         }
     }
 
+    #[cfg(feature = "js")]
     /// FlourCollector (v1) walked out of Sinclair Mansion past the
     /// Highwayman and Wolf zones on its compiled Reach.locOp walk, then its
     /// Banking.open stand walk, a machine-owned native walk, was refused by
@@ -6419,6 +6484,7 @@ mod s2b_admission_contract {
     }
 
     #[test]
+    #[cfg(feature = "js")]
     fn frame_projection_freezes_an_armed_walk_through_script_start_pause_and_stop() {
         let scripts: ScriptWall = Arc::new(Mutex::new(HashMap::new()));
         let slot = crate::script_runtime::script_slot_or_insert(&scripts, "alice");
@@ -6496,6 +6562,7 @@ fn observe_full(rig: &mut Rig, tick: u64) -> crate::script_runtime::ScriptObserv
         None,
         Some(&rig.snapshot),
         None,
+        #[cfg(feature = "js")]
         None,
         None,
         &rig.scripts,
@@ -6509,7 +6576,9 @@ fn observe_full(rig: &mut Rig, tick: u64) -> crate::script_runtime::ScriptObserv
         None,
         None,
         None,
+        #[cfg(feature = "js")]
         None,
+        #[cfg(feature = "js")]
         crate::script_channels::BrokerWorld::Unavailable,
         None,
         None,

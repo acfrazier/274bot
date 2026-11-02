@@ -40,6 +40,7 @@ fn bank(name: &'static str, x: i32, z: i32) -> NamedBank {
     NamedBank::new(name, tile(x, z))
 }
 
+#[cfg(feature = "js")]
 #[test]
 fn bank_pick_v2_explicit_opt_ins_control_the_returned_bank_over_settings_defaults() {
     let catalog = api::named_banks::BANK_CATALOG;
@@ -2694,6 +2695,7 @@ mod bank_pick_capture {
     }
 }
 
+#[cfg(feature = "js")]
 #[test]
 #[ignore = "event-driven runtime endpoint (0.2.6): native answers must wake only their consumer and publish its next prompt without another game tick"]
 fn bank_callback_answers_progress_on_unchanged_host_frames_without_game_ticks() {

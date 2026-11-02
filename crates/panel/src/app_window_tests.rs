@@ -249,7 +249,10 @@ fn with_marked_bob(state: &mut PanelState) -> Option<map_fixture::MapFixture> {
 fn with_script_section(state: &mut PanelState) -> Option<map_fixture::MapFixture> {
     // The first-use catalog prompt was already answered this session:
     // Browse/Load never raise it again.
-    state.session.rs2b0t_browse_prompted = true;
+    #[cfg(feature = "js")]
+    {
+        state.session.rs2b0t_browse_prompted = true;
+    }
     state
         .session
         .ui
@@ -330,7 +333,7 @@ fn opener_cases() -> Vec<OpenerCase> {
         host: OPENER_HOST,
         label,
     };
-    vec![
+    let cases = vec![
         OpenerCase {
             name: "Profiles",
             target: PanelWindow::Profiles,
@@ -411,20 +414,6 @@ fn opener_cases() -> Vec<OpenerCase> {
             press: button("Browse…"),
         },
         OpenerCase {
-            name: "Load",
-            target: PanelWindow::LoadScript,
-            setup: with_script_section,
-            opener: script_section,
-            press: button("Load"),
-        },
-        OpenerCase {
-            name: "Import catalog…",
-            target: PanelWindow::ImportCatalog,
-            setup: no_setup,
-            opener: no_opener,
-            press: Press::Op(|s| s.open_rs2b0t_catalog_picker(false)),
-        },
-        OpenerCase {
             name: "Fleet toolbar Walk 1",
             target: PanelWindow::WalkTo,
             setup: with_marked_bob,
@@ -434,7 +423,26 @@ fn opener_cases() -> Vec<OpenerCase> {
                 label: "Walk 1###fleet-action-6",
             },
         },
-    ]
+    ];
+    #[cfg(feature = "js")]
+    let mut cases = cases;
+    #[cfg(feature = "js")]
+    cases.push(OpenerCase {
+        name: "Load",
+        target: PanelWindow::LoadScript,
+        setup: with_script_section,
+        opener: script_section,
+        press: button("Load"),
+    });
+    #[cfg(feature = "js")]
+    cases.push(OpenerCase {
+        name: "Import catalog…",
+        target: PanelWindow::ImportCatalog,
+        setup: no_setup,
+        opener: no_opener,
+        press: Press::Op(|s| s.open_rs2b0t_catalog_picker(false)),
+    });
+    cases
 }
 
 /// The window an operator clicks to press the case's opener.
@@ -465,7 +473,9 @@ fn each_opener_focuses_its_window_when_it_is_already_open() {
         // Open the target the ordinary way; it appears and has the focus.
         match case.target {
             PanelWindow::WalkTo => state.session.open_walkto_for_fleet(),
+            #[cfg(feature = "js")]
             PanelWindow::LoadScript => state.session.open_script_load_browser(),
+            #[cfg(feature = "js")]
             PanelWindow::ImportCatalog => state.session.open_rs2b0t_catalog_picker(false),
             target => {
                 state.session.open_window(target);
@@ -494,7 +504,10 @@ fn each_opener_focuses_its_window_when_it_is_already_open() {
         );
         // Dialog and draft state an already-open window must keep.
         state.session.loadouts_search = "keep".into();
-        state.session.script_dialog_search = "keep".into();
+        #[cfg(feature = "js")]
+        {
+            state.session.script_dialog_search = "keep".into();
+        }
 
         match case.press {
             Press::Button { host, label } => {
@@ -520,6 +533,7 @@ fn each_opener_focuses_its_window_when_it_is_already_open() {
             state.session.loadouts_search, "keep",
             "{name}: Loadouts draft kept"
         );
+        #[cfg(feature = "js")]
         assert_eq!(
             state.session.script_dialog_search, "keep",
             "{name}: dialog search kept"

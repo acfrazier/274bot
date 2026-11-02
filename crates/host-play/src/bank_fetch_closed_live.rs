@@ -34,6 +34,9 @@
 //!    walk pump runs the one verifying trip (30 coins of the 40 banked) and
 //!    the walk ends beside the target.
 //!
+//! The two manual WalkTo cells also compile without JS. Only the
+//! solid-radius Load cell requires the `js` feature.
+//!
 //! Evidence (JSON receipt and CPU-rendered PNG) lands below
 //! `LIVE_EVIDENCE_DIR`. Deadline: 10 minutes after the seed is posted.
 //!
@@ -116,6 +119,7 @@ fn standable_near(world: &NavWorld, around: WorldTile) -> WorldTile {
         .expect("a standable tile near Musa Point")
 }
 
+#[cfg(feature = "js")]
 /// The solid tile nearest `around` that something can stand beside and
 /// reach: a radius walk-near there takes the host's solid-target search.
 fn solid_near(world: &NavWorld, around: WorldTile) -> WorldTile {
@@ -134,6 +138,7 @@ fn solid_near(world: &NavWorld, around: WorldTile) -> WorldTile {
         .expect("a solid tile with an arrival stand near Musa Point")
 }
 
+#[cfg(feature = "js")]
 /// The Load script of the solid-radius cell: one isolate `walk-near` with
 /// BankBudget on, then it only keeps the slot's script running.
 fn solid_walk_script(target: WorldTile) -> String {
@@ -161,6 +166,7 @@ export function tick(api) {{
     )
 }
 
+#[cfg(feature = "js")]
 /// The solid-radius cell's walk-near radius.
 const SOLID_RADIUS: i32 = 1;
 
@@ -170,6 +176,7 @@ enum Variant {
     Session,
     /// The memory is the edited hint file, loaded by this new process.
     StaleNegative,
+    #[cfg(feature = "js")]
     /// The edited hint again, and a script `walk-near` to a solid tile.
     StaleSolidRadius,
 }
@@ -356,6 +363,7 @@ enum Stage {
     Arm {
         settled: Option<Instant>,
     },
+    #[cfg(feature = "js")]
     /// The solid-radius cell: the script's walk-near is routing off-pump.
     AwaitPlan {
         since: Instant,
@@ -435,32 +443,51 @@ fn status_tile(play: &super::Play, account: &str) -> Option<(bool, [i32; 3])> {
         })
 }
 
-/// A route's legs for the trace: walk spans and transport hops.
-fn leg_lines(route: &nav_planner::router::Route) -> Vec<String> {
+/// A route's legs for the trace: walk spans and transport hops. The view is
+/// the shape-agnostic one the product reads a route through, so a compact plan
+/// (the shape the route service publishes for a bank session) traces exactly
+/// as a legacy route does.
+fn leg_lines(route: nav_planner::contract::RouteView<'_>) -> Vec<String> {
     route
-        .legs
-        .iter()
+        .legs()
         .map(|leg| match leg {
-            nav_planner::router::Leg::Walk { tiles } => format!(
+            nav_planner::contract::LegView::Walk(tiles) => format!(
                 "walk {} tiles {:?} -> {:?}",
                 tiles.len(),
                 tiles.first(),
                 tiles.last()
             ),
-            nav_planner::router::Leg::Transport { edge } => format!(
-                "{:?} loc={} at={:?} to={:?} item_req={:?} consumed_req={:?} quest_req={:?}",
-                edge.kind,
-                edge.loc_id,
-                edge.at,
-                edge.to,
-                edge.item_req,
-                edge.consumed_req,
-                edge.quest_req
+            nav_planner::contract::LegView::Transport(edge) => format!(
+                "{:?} loc={} at={:?} to={:?} item_req={:?} consumed_req={:?} quest_gate={}",
+                edge.kind(),
+                edge.loc_id(),
+                edge.anchor(),
+                edge.landing(),
+                edge.held(),
+                edge.consumed(),
+                edge.has_quest_gate()
             ),
         })
         .collect()
 }
 
+/// A bank session's post-session route for the trace, read through the
+/// accessor the product's final-route step assesses it with
+/// ([`crate::walk_plan::RoutePath::view_in`]): a legacy route borrows its own
+/// legs and a compact plan resolves them through its lease. A route whose view
+/// cannot be produced is traced as unreadable instead of aborting the cell;
+/// the walk itself reports that failure.
+pub(crate) fn final_route_lines(
+    route: &crate::walk_plan::RoutePath,
+    world: &NavWorld,
+) -> Vec<String> {
+    route.view_in(world).map_or_else(
+        || vec![format!("final route unreadable: {route:?}")],
+        leg_lines,
+    )
+}
+
+#[cfg(feature = "js")]
 /// The slot's script walk as the host's own pump holds it (the solid-radius
 /// cell): the session's remaining steps and post-session route, whether a
 /// route is followed, and whether the walk ended failed.
@@ -471,20 +498,14 @@ struct ScriptWalk {
     failed: bool,
 }
 
-fn script_walk(play: &super::Play, account: &str) -> ScriptWalk {
+#[cfg(feature = "js")]
+fn script_walk(play: &super::Play, account: &str, world: &NavWorld) -> ScriptWalk {
     let navs = play.navs.lock().unwrap();
     let bot = navs.get(account);
     let pending = bot.and_then(|bot| bot.bank_fetch.as_ref());
     ScriptWalk {
         steps: pending.map(|pending| pending.steps.iter().cloned().collect()),
-        final_route: pending.map(|pending| {
-            leg_lines(
-                pending
-                    .final_route
-                    .legacy_route()
-                    .expect("legacy bank plan owns a legacy final route"),
-            )
-        }),
+        final_route: pending.map(|pending| final_route_lines(&pending.final_route, world)),
         routed: bot.is_some_and(|bot| bot.has_route() || bot.route_work_pending()),
         failed: bot.is_some_and(|bot| bot.walk_outcome_failed),
     }
@@ -586,7 +607,7 @@ fn run_cell(variant: Variant) {
     let home = std::env::var("HOME").expect("HOME is the throwaway isohome directory");
     let account = match variant {
         Variant::Session => super::mint_live_names(1).pop().expect("one live account"),
-        Variant::StaleNegative | Variant::StaleSolidRadius => std::env::var("S5_LIVE_ACCOUNT")
+        _ => std::env::var("S5_LIVE_ACCOUNT")
             .expect("S5_LIVE_ACCOUNT names the account the earlier cells left"),
     };
     let hint = hint_path(&account);
@@ -613,6 +634,7 @@ fn run_cell(variant: Variant) {
     let label = match variant {
         Variant::Session => "l-fetch-closed",
         Variant::StaleNegative => "l-fetch-closed-stale",
+        #[cfg(feature = "js")]
         Variant::StaleSolidRadius => "l-fetch-closed-solid",
     };
     let evidence_dir = root.join(format!("{label}_{account}_utc-{}Z", unix_now()));
@@ -642,7 +664,9 @@ fn run_cell(variant: Variant) {
     }
     let facts = Arc::clone(world.named_bank_facts().expect("named bank facts"));
     let karamja = standable_near(&world, KARAMJA);
+    #[cfg(feature = "js")]
     let solid = solid_near(&world, KARAMJA);
+    #[cfg(feature = "js")]
     if variant == Variant::StaleSolidRadius {
         assert!(
             !world.collision.standable(solid),
@@ -662,9 +686,10 @@ fn run_cell(variant: Variant) {
     );
     let seed: &'static [&'static str] = match variant {
         Variant::Session => SEED,
-        Variant::StaleNegative | Variant::StaleSolidRadius => &[],
+        _ => &[],
     };
     let request = match variant {
+        #[cfg(feature = "js")]
         Variant::StaleSolidRadius => serde_json::json!({
             "walk_near": [solid.x, solid.z, solid.level],
             "radius": SOLID_RADIUS,
@@ -746,16 +771,20 @@ fn run_cell(variant: Variant) {
     let mut stage = Stage::Prepare;
     // The solid-radius cell watches the slot's own script walk: the front
     // step it last traced, and whether a session was latched last poll.
+    #[cfg(feature = "js")]
     let mut script_front: Option<Option<BankStep>> = None;
+    #[cfg(feature = "js")]
     let mut script_session = false;
     // Where the walk must end: the exact Karamja tile, or (solid radius)
     // within the radius of the solid target on its level.
     let goal = match variant {
+        #[cfg(feature = "js")]
         Variant::StaleSolidRadius => solid,
         Variant::Session | Variant::StaleNegative => karamja,
     };
     let arrived = |tile: Option<[i32; 3]>| match (variant, tile) {
         (_, None) => false,
+        #[cfg(feature = "js")]
         (Variant::StaleSolidRadius, Some([x, z, level])) => {
             level == solid.level && (x - solid.x).abs().max((z - solid.z).abs()) <= SOLID_RADIUS
         }
@@ -824,7 +853,7 @@ fn run_cell(variant: Variant) {
                                     Err(error) => fail(format!("Play refused the script: {error}")),
                                 }
                             }
-                            Variant::StaleNegative | Variant::StaleSolidRadius => {
+                            _ => {
                                 let rows = play.bank_rows(&account);
                                 if rows.origin != Origin::Hint
                                     || rows.rows.iter().any(|&(id, _)| id == COINS)
@@ -908,6 +937,7 @@ fn run_cell(variant: Variant) {
                         ));
                         continue;
                     }
+                    #[cfg(feature = "js")]
                     if variant == Variant::StaleSolidRadius {
                         match play.script_start_load(
                             &account,
@@ -966,7 +996,12 @@ fn run_cell(variant: Variant) {
                             continue;
                         }
                     };
-                    trace.lock().route_legs = Some(leg_lines(&route));
+                    trace.lock().route_legs = Some(
+                        nav_planner::producer::route_view(world.as_ref(), &route).map_or_else(
+                            |error| vec![format!("route unreadable: {error}")],
+                            leg_lines,
+                        ),
+                    );
                     let steps: Vec<BankStep> = arms
                         .lock()
                         .unwrap()
@@ -997,8 +1032,9 @@ fn run_cell(variant: Variant) {
                         since: Instant::now(),
                     };
                 }
+                #[cfg(feature = "js")]
                 Stage::AwaitPlan { since } => {
-                    let walk = script_walk(&play, &account);
+                    let walk = script_walk(&play, &account, &world);
                     if let Some(steps) = walk.steps {
                         let (trip, withdraw) = fare_trip(&steps);
                         {
@@ -1026,8 +1062,9 @@ fn run_cell(variant: Variant) {
                     }
                 }
                 Stage::Walking { since } => {
+                    #[cfg(feature = "js")]
                     if variant == Variant::StaleSolidRadius {
-                        let walk = script_walk(&play, &account);
+                        let walk = script_walk(&play, &account, &world);
                         let (tile, held, loaded) = {
                             let guard = pump.lock();
                             (guard.tile, guard.held_coins, guard.bank_loaded)
@@ -1182,6 +1219,7 @@ fn live_fetch_closed_stale_negative_hint() {
     run_cell(Variant::StaleNegative);
 }
 
+#[cfg(feature = "js")]
 #[test]
 #[ignore = "requires LIVE=1, S5_LIVE_ACCOUNT after the stale cell under the same HOME, and a local 289 engine"]
 fn live_fetch_closed_stale_solid_radius() {

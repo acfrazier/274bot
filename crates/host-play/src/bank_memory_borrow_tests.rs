@@ -148,6 +148,7 @@ fn the_compiled_tick_borrow_is_released_before_queued_cheats_dispatch() {
         None,
         Some(&snapshot),
         Some(&memory),
+        #[cfg(feature = "js")]
         None,
         None,
         &scripts,
@@ -161,7 +162,9 @@ fn the_compiled_tick_borrow_is_released_before_queued_cheats_dispatch() {
         None,
         None,
         None,
+        #[cfg(feature = "js")]
         None,
+        #[cfg(feature = "js")]
         crate::script_channels::BrokerWorld::Unavailable,
         None,
         None,
@@ -228,6 +231,7 @@ fn without_a_memory_the_tick_sees_none_and_cheats_still_dispatch() {
         None,
         Some(&snapshot),
         None,
+        #[cfg(feature = "js")]
         None,
         None,
         &scripts,
@@ -241,7 +245,9 @@ fn without_a_memory_the_tick_sees_none_and_cheats_still_dispatch() {
         None,
         None,
         None,
+        #[cfg(feature = "js")]
         None,
+        #[cfg(feature = "js")]
         crate::script_channels::BrokerWorld::Unavailable,
         None,
         None,

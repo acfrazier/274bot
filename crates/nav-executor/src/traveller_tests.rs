@@ -28,6 +28,8 @@ mod n1_tests;
 mod door_expire_tests;
 #[path = "traveller/entrance_exclusion_tests.rs"]
 mod entrance_exclusion_tests;
+#[path = "traveller/occupied_tests.rs"]
+mod occupied_tests;
 
 // --- Task 14: pollable high-level follow (drive legs via interact+settle) ---
 
@@ -1664,12 +1666,17 @@ fn follow_agility_shortcut_waits_packed_ticks_after_landing() {
     );
     plant_player(&mut c, 2, 5);
     bump_rebuild(&mut c, &mut snap);
+    // The packed delay counts observed game ticks: polls that read one
+    // snapshot again add nothing.
     for i in 0..3 {
-        assert!(
-            t.follow(&mut rec, &snap, route.clone(), &mut options)
-                .is_none(),
-            "still on the anim delay after landing poll {i}"
-        );
+        for repeat in 0..4 {
+            assert!(
+                t.follow(&mut rec, &snap, route.clone(), &mut options)
+                    .is_none(),
+                "still on the anim delay at tick {i}, poll {repeat}"
+            );
+        }
+        bump_rebuild(&mut c, &mut snap);
     }
     match t.follow(&mut rec, &snap, route, &mut options) {
         Some(TravelOutcome::Arrived { at }) => assert_eq!(at, dest),
@@ -5990,7 +5997,7 @@ fn troll_open_door_progress_does_not_reverse_to_approach() {
         run.transport = Some(TransportHop {
             leg,
             to: edge.to,
-            ticks_waited: 0,
+            ticks_waited: super::TickCount::default(),
             sent_tile: None,
             arrival_footprint: None,
             tries: 0,
@@ -5999,6 +6006,7 @@ fn troll_open_door_progress_does_not_reverse_to_approach() {
             npc_recovery: super::NpcRecovery::default(),
             open_sent_tick: None,
             door_retry: super::DoorRetry::default(),
+            occupied: super::OccupiedRetry::default(),
             chat_seq: 0,
             dialog_page: None,
             approach: None,
@@ -6055,7 +6063,7 @@ fn troll_probes_crossing_after_open_once_the_snapshot_catches_up() {
     run.transport = Some(TransportHop {
         leg: run.next_leg().unwrap().into_transport(),
         to: edge.to,
-        ticks_waited: 0,
+        ticks_waited: super::TickCount::default(),
         sent_tile: None,
         arrival_footprint: None,
         tries: 0,
@@ -6064,6 +6072,7 @@ fn troll_probes_crossing_after_open_once_the_snapshot_catches_up() {
         npc_recovery: super::NpcRecovery::default(),
         open_sent_tick: None,
         door_retry: super::DoorRetry::default(),
+        occupied: super::OccupiedRetry::default(),
         chat_seq: 0,
         dialog_page: None,
         approach: None,
@@ -6261,7 +6270,7 @@ fn troll_does_not_reopen_a_door_behind_the_walker() {
         run.transport = Some(TransportHop {
             leg,
             to: edge.to,
-            ticks_waited: 0,
+            ticks_waited: super::TickCount::default(),
             sent_tile: None,
             arrival_footprint: None,
             tries: 0,
@@ -6270,6 +6279,7 @@ fn troll_does_not_reopen_a_door_behind_the_walker() {
             npc_recovery: super::NpcRecovery::default(),
             open_sent_tick: None,
             door_retry: super::DoorRetry::default(),
+            occupied: super::OccupiedRetry::default(),
             chat_seq: 0,
             dialog_page: None,
             approach: None,
@@ -7896,6 +7906,7 @@ fn follow_ends_blocked_when_the_adjacent_route_end_refuses_every_click() {
             },
             why: HopFailure::EndBlocked,
             tries: 0,
+            last_refusal: None,
         }),
         "the fifth distinct refused tick ends the follow"
     );
@@ -8145,7 +8156,7 @@ fn level_change_transport_requires_proximity_to_to() {
             level: 1,
         },
         arrival_footprint: None,
-        ticks_waited: 0,
+        ticks_waited: super::TickCount::default(),
         sent_tile: Some(WorldTile {
             x: 3200,
             z: 3200,
@@ -8157,6 +8168,7 @@ fn level_change_transport_requires_proximity_to_to() {
         npc_recovery: super::NpcRecovery::default(),
         open_sent_tick: None,
         door_retry: super::DoorRetry::default(),
+        occupied: super::OccupiedRetry::default(),
         chat_seq: 0,
         dialog_page: None,
         approach: None,
@@ -8247,7 +8259,7 @@ fn horizontal_climb_proves_translated_takeoff_without_widening_arrival() {
         leg,
         to: baked_to,
         arrival_footprint: None,
-        ticks_waited: 0,
+        ticks_waited: super::TickCount::default(),
         sent_tile: Some(WorldTile {
             x: 3200,
             z: 3203,
@@ -8259,6 +8271,7 @@ fn horizontal_climb_proves_translated_takeoff_without_widening_arrival() {
         npc_recovery: super::NpcRecovery::default(),
         open_sent_tick: None,
         door_retry: super::DoorRetry::default(),
+        occupied: super::OccupiedRetry::default(),
         chat_seq: 0,
         dialog_page: None,
         approach: None,
@@ -8313,8 +8326,11 @@ impl Out for Sink {
 #[test]
 fn executor_state_size_pins() {
     // +16 B: stall diagnostic: original send tile and tick across resends.
-    assert_eq!(std::mem::size_of::<Traveller>(), 816);
-    assert_eq!(std::mem::size_of::<FollowRun>(), 776);
+    // +32 B: the transport hop's distinct-tick clock (`TickCount`) and the
+    // occupied-crossing retry (`OccupiedRetry`): a refused ledge or rope
+    // swing is retried within the hop budget instead of ending the follow.
+    assert_eq!(std::mem::size_of::<Traveller>(), 848);
+    assert_eq!(std::mem::size_of::<FollowRun>(), 808);
 }
 const BLOCKED_DISPLAY_TILE: WorldTile = WorldTile {
     x: 12,

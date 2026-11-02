@@ -126,12 +126,15 @@ struct RunnerState {
     start_handle: Option<host_play::ScriptStartHandle>,
     catalog: Option<host_play::catalog_core::CoreWatch>,
     pair: Option<host_play::paired_core::PairWatch>,
+    #[cfg(feature = "js")]
     external: Option<host_play::external_loader::ExternalWatch>,
+    #[cfg(feature = "js")]
     external_reload_pending: Option<ExternalReloadPending>,
     live_timing: Option<host_play::live_gate::LiveTiming>,
     core_mode: Option<host_play::live_gate::LiveCore>,
 }
 
+#[cfg(feature = "js")]
 enum ExternalReloadPending {
     Unchanged,
     Changed {
@@ -209,9 +212,11 @@ impl ProofGate {
 pub struct WatchDecision {
     catalog: ProofGate,
     pair: ProofGate,
+    #[cfg(feature = "js")]
     external: ProofGate,
     catalog_record: Option<String>,
     pair_record: Option<String>,
+    #[cfg(feature = "js")]
     external_record: Option<String>,
 }
 
@@ -222,6 +227,7 @@ impl WatchDecision {
     pub fn pair(&self) -> &ProofGate {
         &self.pair
     }
+    #[cfg(feature = "js")]
     pub fn external(&self) -> &ProofGate {
         &self.external
     }
@@ -231,6 +237,7 @@ impl WatchDecision {
     pub fn pair_record(&self) -> Option<&str> {
         self.pair_record.as_deref()
     }
+    #[cfg(feature = "js")]
     pub fn external_record(&self) -> Option<&str> {
         self.external_record.as_deref()
     }
@@ -243,7 +250,10 @@ impl WatchDecision {
         grace_started: &mut Option<Instant>,
         now: Instant,
     ) -> PassHold {
-        if self.catalog.is_pending() || self.pair.is_pending() || self.external.is_pending() {
+        let pending = self.catalog.is_pending() || self.pair.is_pending();
+        #[cfg(feature = "js")]
+        let pending = pending || self.external.is_pending();
+        if pending {
             return PassHold {
                 kind: PassHoldKind::Core,
                 failure: None,
@@ -287,6 +297,7 @@ impl WatchDecision {
         for (tag, record) in [
             ("CATALOG_CORE", self.catalog_record.as_deref()),
             ("PAIRED_CORE", self.pair_record.as_deref()),
+            #[cfg(feature = "js")]
             ("EXTERNAL_LOADER", self.external_record.as_deref()),
         ] {
             if let Some(record) = record {
@@ -324,10 +335,11 @@ impl PassHold {
     }
 }
 
-/// An opaque collection of isolate Starts staged for a live scenario.
+/// An opaque collection of Starts staged for a live scenario.
 pub struct StartPlan(Vec<host_play::live_start::PendingCatalogStart>);
 
 impl StartPlan {
+    #[cfg(feature = "js")]
     /// Build Starts for each member of a scenario-owned fleet.
     pub fn fleet_catalog(
         scripts: &mut crate::Scripts,
@@ -346,6 +358,7 @@ impl StartPlan {
         .map(Self)
     }
 
+    #[cfg(feature = "js")]
     /// Build one loaded-JS Start, including an optional scenario companion.
     pub fn catalog_card(
         scripts: &mut crate::Scripts,
@@ -495,6 +508,7 @@ impl RunnerHandle {
         self.0.lock().unwrap().pair = watch;
     }
 
+    #[cfg(feature = "js")]
     /// Install an external-loader witness for a front-end integration test.
     #[cfg(feature = "test-support")]
     pub fn install_external_watch_for_test(
@@ -512,8 +526,11 @@ impl RunnerHandle {
         state.start_handle = None;
         state.catalog = None;
         state.pair = None;
-        state.external = None;
-        state.external_reload_pending = None;
+        #[cfg(feature = "js")]
+        {
+            state.external = None;
+            state.external_reload_pending = None;
+        }
         state.live_timing = None;
         state.core_mode = None;
     }
@@ -529,6 +546,7 @@ impl RunnerHandle {
         self.0.lock().unwrap().pending.clone()
     }
 
+    #[cfg(feature = "js")]
     /// Resolve a loaded card and stage its normal or pair-witness Starts.
     pub fn stage_loaded_card(
         &self,
@@ -652,6 +670,7 @@ impl RunnerHandle {
         let catalog =
             host_play::live_gate::catalog_core_gate(state.catalog.as_ref(), deadline, now);
         let pair = host_play::live_gate::pair_core_gate(state.pair.as_ref(), deadline, now);
+        #[cfg(feature = "js")]
         let external = host_play::live_gate::external_core_gate(state.external.as_ref());
         WatchDecision {
             catalog_record: host_play::live_gate::catalog_core_record(
@@ -659,12 +678,14 @@ impl RunnerHandle {
                 &catalog,
             ),
             pair_record: host_play::live_gate::pair_core_record(state.pair.as_ref(), &pair),
+            #[cfg(feature = "js")]
             external_record: host_play::live_gate::external_core_record(
                 state.external.as_ref(),
                 &external,
             ),
             catalog: proof_gate(catalog),
             pair: proof_gate(pair),
+            #[cfg(feature = "js")]
             external: proof_gate(external),
         }
     }
@@ -748,6 +769,7 @@ impl RunnerHandle {
         })
     }
 
+    #[cfg(feature = "js")]
     /// The external-loader account owned by the configured witness.
     pub fn external_loader_account(&self) -> Option<String> {
         self.0
@@ -759,6 +781,7 @@ impl RunnerHandle {
             .map(|watch| watch.account())
     }
 
+    #[cfg(feature = "js")]
     /// Feed the witness its account's newly polled script log lines.
     pub fn note_external_loader_logs(&self, lines: &[(String, String)]) {
         let state = self.0.lock().unwrap();
@@ -773,6 +796,7 @@ impl RunnerHandle {
         }
     }
 
+    #[cfg(feature = "js")]
     /// Configure the owned external-loader watch for this live account.
     pub fn configure_external_loader(&self, account: String, source: PathBuf) {
         let watch = host_play::external_loader::ExternalWatch::default();
@@ -784,6 +808,7 @@ impl RunnerHandle {
         self.0.lock().unwrap().external = Some(watch);
     }
 
+    #[cfg(feature = "js")]
     /// Whether the external-loader witness is configured.
     pub fn external_loader_configured(&self) -> bool {
         self.0
@@ -794,6 +819,7 @@ impl RunnerHandle {
             .is_some_and(host_play::external_loader::ExternalWatch::configured)
     }
 
+    #[cfg(feature = "js")]
     pub fn external_loader_cleanup_pending(&self) -> bool {
         self.0
             .lock()
@@ -803,6 +829,7 @@ impl RunnerHandle {
             .is_some_and(host_play::external_loader::ExternalWatch::cleanup_pending)
     }
 
+    #[cfg(feature = "js")]
     pub fn external_loader_needs_terminal_hold(&self) -> bool {
         self.0
             .lock()
@@ -812,6 +839,7 @@ impl RunnerHandle {
             .is_some_and(host_play::external_loader::ExternalWatch::needs_terminal_hold)
     }
 
+    #[cfg(feature = "js")]
     pub fn external_loader_terminal_capture_due(&self) -> bool {
         self.0
             .lock()
@@ -821,18 +849,21 @@ impl RunnerHandle {
             .is_some_and(host_play::external_loader::ExternalWatch::terminal_capture_due)
     }
 
+    #[cfg(feature = "js")]
     pub fn note_external_loader_capture_requested(&self) {
         if let Some(watch) = self.0.lock().unwrap().external.as_ref() {
             watch.note_capture_requested();
         }
     }
 
+    #[cfg(feature = "js")]
     pub fn fail_external_loader(&self, reason: &str) {
         if let Some(watch) = self.0.lock().unwrap().external.as_ref() {
             watch.fail(reason);
         }
     }
 
+    #[cfg(feature = "js")]
     /// Record a terminal prerequisite-runner result for the external proof.
     pub fn note_external_loader_prerequisite(&self) {
         let state = self.0.lock().unwrap();
@@ -846,6 +877,7 @@ impl RunnerHandle {
         }
     }
 
+    #[cfg(feature = "js")]
     /// Forward one failed Start for the external proof's owned account.
     pub fn fail_external_loader_start(&self, name: &str, reason: String) {
         if let Some(watch) = self.0.lock().unwrap().external.as_ref() {
@@ -855,6 +887,7 @@ impl RunnerHandle {
         }
     }
 
+    #[cfg(feature = "js")]
     pub(crate) fn pump_external_loader<Io>(
         &self,
         scripts: &mut crate::Scripts,
@@ -1168,6 +1201,7 @@ impl RunnerHandle {
         })
     }
 
+    #[cfg(feature = "js")]
     /// Exercise the installed Start handle without exposing its adapter type.
     #[cfg(feature = "test-support")]
     pub fn start_native_tick_for_test(
@@ -1538,6 +1572,7 @@ impl Scenario {
         scenario::is_registered(name)
     }
 
+    #[cfg(feature = "js")]
     /// Create the external-loader prerequisite scenario.
     pub fn external_loader_fixture() -> Self {
         use api::interact::cheat;
@@ -2009,6 +2044,7 @@ pub fn screen_name(input: &str) -> String {
     output
 }
 
+#[cfg(feature = "js")]
 /// Resolve a registered checked-in live file fixture and its identity stem.
 pub fn live_file_fixture(name: &str) -> Option<(PathBuf, String)> {
     Some((
@@ -2154,61 +2190,73 @@ pub fn write_shot(
     scenario::shot::write_shot(directory, label, rgba, width, height, snapshot_json)
 }
 
+#[cfg(feature = "js")]
 /// Resolve the scenario's shared external-loader name.
 pub fn external_loader_scenario_name() -> &'static str {
     host_play::external_loader::LIVE_SCENARIO
 }
 
+#[cfg(feature = "js")]
 /// Resolve the external-loader command-line scenario token.
 pub fn external_loader_live_name() -> &'static str {
     host_play::external_loader::LIVE_NAME
 }
 
+#[cfg(feature = "js")]
 /// Stable terminal screenshot label for the external-loader proof.
 pub fn external_loader_terminal_shot() -> &'static str {
     host_play::external_loader::TERMINAL_SHOT
 }
 
+#[cfg(feature = "js")]
 /// Stable prereq screenshot label for the external-loader proof.
 pub fn external_loader_prereq_shot() -> &'static str {
     host_play::external_loader::PREREQ_SHOT
 }
 
+#[cfg(feature = "js")]
 /// Read the remaining external-loader names and limits used by the panel.
 pub fn external_loader_script_name() -> &'static str {
     host_play::external_loader::SCRIPT_NAME
 }
 
+#[cfg(feature = "js")]
 /// External loader's successful unchanged-reload result text.
 pub fn external_loader_nothing_changed() -> &'static str {
     host_play::external_loader::NOTHING_CHANGED
 }
 
+#[cfg(feature = "js")]
 /// External loader's stable frozen source digest.
 pub fn external_loader_frozen_sha256() -> &'static str {
     host_play::external_loader::FROZEN_SHA256
 }
 
+#[cfg(feature = "js")]
 /// External loader's bones item id.
 pub fn external_loader_bones_id() -> i32 {
     host_play::external_loader::BONES_ID
 }
 
+#[cfg(feature = "js")]
 /// External loader's prayer stat id.
 pub fn external_loader_prayer_stat_id() -> i32 {
     host_play::external_loader::PRAYER_STAT_ID
 }
 
+#[cfg(feature = "js")]
 /// External loader's required carried-bones count.
 pub fn external_loader_bones_count() -> i32 {
     host_play::external_loader::BONES_COUNT
 }
 
+#[cfg(feature = "js")]
 /// Resolve the external-loader source used by the proof.
 pub fn resolve_external_loader_source(path: Option<&Path>) -> Result<PathBuf, String> {
     host_play::external_loader::resolve_source(path)
 }
 
+#[cfg(feature = "js")]
 /// Freeze the external-loader source into an owned run-local path.
 pub fn materialize_external_loader_source(path: &Path) -> Result<PathBuf, String> {
     host_play::external_loader::materialize_owned_source(path)
@@ -2263,6 +2311,7 @@ impl<Io> crate::OperatorSession<Io> {
         }
         runner
     }
+    #[cfg(feature = "js")]
     /// Resolve, freeze, and arm the external-loader source for one account.
     pub fn configure_live_external_loader(
         &self,
@@ -2275,6 +2324,7 @@ impl<Io> crate::OperatorSession<Io> {
         Ok(())
     }
 
+    #[cfg(feature = "js")]
     /// Pump one pending external-loader proof operation.
     pub fn pump_live_external_loader(
         &mut self,
@@ -2343,21 +2393,15 @@ mod tests {
             Some(started + std::time::Duration::from_secs(180)),
         ));
         let mut pending = vec![
-            host_play::live_start::PendingCatalogStart::load(
+            host_play::live_start::PendingCatalogStart::compiled(
                 "runner",
-                String::new(),
-                script_js::LoadShape::Reject,
-                None,
-                Vec::new(),
-                Vec::new(),
+                crate::scripts::CompiledCardId::QUESTER.to_script(),
+                serde_json::Map::new(),
             ),
-            host_play::live_start::PendingCatalogStart::load(
+            host_play::live_start::PendingCatalogStart::compiled(
                 "spinner",
-                String::new(),
-                script_js::LoadShape::Reject,
-                None,
-                Vec::new(),
-                Vec::new(),
+                crate::scripts::CompiledCardId::QUESTER.to_script(),
+                serde_json::Map::new(),
             ),
         ];
         let accepted = host_play::live_start::StartScriptPump::Continue;

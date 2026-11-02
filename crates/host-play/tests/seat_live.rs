@@ -24,6 +24,7 @@ const TREE_TILE: WorldTile = WorldTile {
 const AXE: i32 = 1351;
 static NEXT_UID: AtomicI32 = AtomicI32::new(274_279_104);
 
+#[cfg(feature = "js")]
 #[derive(Clone, Copy)]
 enum FixtureTrigger {
     Maze,
@@ -36,9 +37,13 @@ struct Fixture {
     ready: bool,
     error: Option<String>,
     tutorial_reseed: Option<scenario::tutorial::PostRelogTutorial>,
+    #[cfg(feature = "js")]
     trigger: Option<FixtureTrigger>,
+    #[cfg(feature = "js")]
     trigger_sent: bool,
+    #[cfg(feature = "js")]
     disconnect_offline: bool,
+    #[cfg(feature = "js")]
     reconnected: bool,
 }
 
@@ -88,6 +93,7 @@ fn fixture_frame(client: &mut Client, hold: bool, shared: &Mutex<Fixture>) {
     snapshot.rebuild(client);
 
     if state.ready {
+        #[cfg(feature = "js")]
         if let Some(trigger) = state.trigger {
             if !hold && client.ingame && client.scene_state == 2 {
                 match trigger {
@@ -108,6 +114,7 @@ fn fixture_frame(client: &mut Client, hold: bool, shared: &Mutex<Fixture>) {
                 }
             }
         }
+        #[cfg(feature = "js")]
         if state.trigger_sent
             && state.disconnect_offline
             && client.ingame
@@ -367,10 +374,12 @@ fn wait_until(
     }
 }
 
+#[cfg(feature = "js")]
 fn take_logs(live: &LiveCell, logs: &mut Vec<String>) {
     logs.extend(live.play.script_take_pending_logs(&live.account));
 }
 
+#[cfg(feature = "js")]
 fn logged(logs: &[String], prefix: &str) -> Value {
     let rows = logs
         .iter()
@@ -401,10 +410,12 @@ fn status_text(status: &ScriptStatus, key: &str) -> Option<String> {
         })
 }
 
+#[cfg(feature = "js")]
 fn api_probe(live: &LiveCell) -> Value {
     live.play.script_api_live_probe(&live.account)
 }
 
+#[cfg(feature = "js")]
 fn seat_probe(live: &LiveCell) -> script::slot::SeatProbe {
     live.play
         .script_seat_probe(&live.account)
@@ -432,6 +443,7 @@ fn save_receipt(name: &str, receipt: &Value) {
 
 const GATHER_SETTINGS_JSON: &str = r#"{"skill":"Woodcutting","woodcuttingResources":["normal"],"location":"Custom","customTile":{"x":3190,"z":3245,"level":0},"disposition":"Power","radius":12}"#;
 
+#[cfg(feature = "js")]
 const PROMISE_SOURCE: &str = r#"
 export const apiVersion = 2;
 const settings = { skill: 'Woodcutting', woodcuttingResources: ['normal'], location: 'Custom', customTile: { x: 3190, z: 3245, level: 0 }, disposition: 'Power', radius: 12 };
@@ -457,6 +469,7 @@ export function tick(api) {
 }
 "#;
 
+#[cfg(feature = "js")]
 const HOLD_SOURCE: &str = r#"
 export const apiVersion = 2;
 let started = false;
@@ -521,6 +534,7 @@ export async function tick(api) {
 }
 "#;
 
+#[cfg(feature = "js")]
 fn start_load(live: &LiveCell, source: &str) {
     live.play
         .script_start_load(
@@ -533,6 +547,7 @@ fn start_load(live: &LiveCell, source: &str) {
         .expect("start public Load v2 script");
 }
 
+#[cfg(feature = "js")]
 fn run_promise_cell() {
     let live = start_fixture(false);
     start_load(&live, PROMISE_SOURCE);
@@ -608,6 +623,7 @@ fn run_promise_cell() {
     );
 }
 
+#[cfg(feature = "js")]
 fn run_hold_cell(random_events: bool, trigger_maze: bool, reconnect: bool) {
     let live = start_fixture(random_events);
     start_load(&live, HOLD_SOURCE);
@@ -909,6 +925,7 @@ fn run_native_cell() {
     );
 }
 
+#[cfg(feature = "js")]
 fn run_world_switch_restart_cell() {
     let live = start_fixture(false);
     start_load(&live, HOLD_SOURCE);
@@ -1045,12 +1062,14 @@ fn run_world_switch_restart_cell() {
     );
 }
 
+#[cfg(feature = "js")]
 #[test]
 #[ignore = "requires LIVE=1, Engine A 127.0.0.1:44594, disposable HOME/cache, and real R289 assets"]
 fn seat_live_js_promise() {
     run_promise_cell();
 }
 
+#[cfg(feature = "js")]
 #[test]
 #[ignore = "requires LIVE=1, Engine A 127.0.0.1:44594, disposable HOME/cache, and real R289 assets"]
 fn seat_live_hook_callbacks() {
@@ -1063,18 +1082,21 @@ fn seat_live_native_card() {
     run_native_cell();
 }
 
+#[cfg(feature = "js")]
 #[test]
 #[ignore = "requires LIVE=1, Engine A 127.0.0.1:44594, disposable HOME/cache, and real R289 assets"]
 fn seat_live_guardian_hold() {
     run_hold_cell(true, true, false);
 }
 
+#[cfg(feature = "js")]
 #[test]
 #[ignore = "requires LIVE=1, Engine A 127.0.0.1:44594, disposable HOME/cache, and real R289 assets"]
 fn seat_live_kept_reconnect_and_stop() {
     run_hold_cell(false, false, true);
 }
 
+#[cfg(feature = "js")]
 #[test]
 #[ignore = "requires LIVE=1, Engine A 127.0.0.1:44594, disposable HOME/cache, and real R289 assets"]
 fn seat_live_world_switch_restart() {

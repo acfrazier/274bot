@@ -9,9 +9,10 @@ use crate::focus::draw_for_slot;
 use crate::picker::{
     format_walkto_status, walkto_actions_enabled, walkto_footer_labels, walkto_selection_caption,
 };
+#[cfg(feature = "js")]
+use crate::test_support::save_store_patiently;
 use crate::test_support::{
-    patiently, save_store_patiently, set_patiently, thread_preferences, thread_state_root, TestDir,
-    TestPath,
+    patiently, set_patiently, thread_preferences, thread_state_root, TestDir, TestPath,
 };
 use api::identity::Deadline;
 use api::snapshot::{GameSnapshot, WorldTile};
@@ -27,15 +28,18 @@ use frontend_core::launch::{
     InstanceKind, InstancePermit, ProfileArgs, ProfileClass, ProfileEnv, ProfileTemplate,
     ValidatedProfile, ValidationPending,
 };
-use frontend_core::scripts::{
-    CardSource, CompiledCardId, LoadShape, LoadStage, Loadouts, ScriptChoice, ScriptRunState,
-};
+use frontend_core::scripts::{CardSource, CompiledCardId, Loadouts, ScriptChoice, ScriptRunState};
+#[cfg(feature = "js")]
+use frontend_core::scripts::{LoadShape, LoadStage};
 use frontend_core::surface::InputSender;
 use frontend_core::surface::{FrameBuf, InputEv, SlotInput};
+#[cfg(feature = "js")]
 use frontend_core::test_support::session::{
-    assignment_key, clear_vault, core_vault_debug_rows, install_vault, vault_debug_rows,
-    vault_upsert, with_assignment, with_lamp_auto, with_lamp_skill, with_random_events,
-    with_settings_bag, with_tutorial_skipped,
+    assignment_key, core_vault_debug_rows, vault_debug_rows, with_settings_bag,
+};
+use frontend_core::test_support::session::{
+    clear_vault, install_vault, vault_upsert, with_assignment, with_lamp_auto, with_lamp_skill,
+    with_random_events, with_tutorial_skipped,
 };
 use frontend_core::test_support::{FixtureProfile, IsolatedStores, VaultFixture};
 use host_play as map_host;
@@ -445,6 +449,7 @@ fn runtime_profile_fixture(
 }
 
 fn preparation_only_session() -> Session {
+    #[cfg(feature = "js")]
     frontend_core::test_support::scripts::install_catalog_cards();
     let mut session = Session::new();
     session.core.set_spawn_workers(false);
@@ -514,6 +519,7 @@ fn explicit_profile_wins_saved_revision_and_bound_session_refuses_changes() {
         .expect("panel binding fixture starts Play network composition");
     session.bind_profile().unwrap();
     assert!(session.server_label().starts_with("local-274"));
+    #[cfg(feature = "js")]
     assert_eq!(session.catalog_root().unwrap(), None);
     assert!(session.set_server_revision(289).is_err());
     assert!(session.bind_profile().is_err());
@@ -626,6 +632,7 @@ fn validated_profile_unlock_uses_the_ticket_without_rebinding() {
     assert!(session.core.slots().is_empty());
 }
 
+#[cfg(feature = "js")]
 /// `start_play` builds the Play with a state composition of its own, at the
 /// profile's state root, and hands it this session's service before the
 /// Start handle is taken: a Start without caller-owned loadouts leases the
@@ -1060,6 +1067,7 @@ fn unbound_and_failed_profile_bind_hide_local_debug_capabilities() {
 
 /// `register_name` is the ScriptRegistry name; `folder` is the class
 /// file (`{folder}/{folder}.ts`) and the JS import binding.
+#[cfg(feature = "js")]
 fn write_looping_catalog(dir: &Path, cards: &[(&str, &str)]) -> PathBuf {
     let root = dir.join("rs2b0t");
     let scripts = root.join("src/bot/scripts");
@@ -1080,6 +1088,7 @@ fn write_looping_catalog(dir: &Path, cards: &[(&str, &str)]) -> PathBuf {
     root
 }
 
+#[cfg(feature = "js")]
 fn settle_catalog_work(session: &mut Session) {
     let deadline = Instant::now() + Duration::from_secs(60);
     while session.scripts.catalog_work_pending() && Instant::now() < deadline {
@@ -1095,6 +1104,7 @@ fn settle_catalog_work(session: &mut Session) {
     );
 }
 
+#[cfg(feature = "js")]
 fn settle_transpile_queue(session: &mut Session) {
     let deadline = Instant::now() + Duration::from_secs(60);
     while session.transpile_front().is_some() && Instant::now() < deadline {
@@ -1108,6 +1118,7 @@ fn settle_transpile_queue(session: &mut Session) {
     );
 }
 
+#[cfg(feature = "js")]
 #[test]
 fn explicit_catalog_default_allows_manual_import_and_preserves_custom_cards() {
     let _work_service_guard = crate::work_service_test_lock();
@@ -1161,6 +1172,7 @@ fn explicit_catalog_default_allows_manual_import_and_preserves_custom_cards() {
         .is_some());
 }
 
+#[cfg(feature = "js")]
 #[test]
 fn revision_and_binding_allow_already_loaded_scripts_and_source_edits() {
     let _composition =
@@ -3082,7 +3094,9 @@ fn unlock_defers_automatic_focus_until_preferences_are_ready() {
         session.quester_paths_folder_edit,
         folder_draft.to_string_lossy().into_owned()
     );
+    #[cfg(feature = "js")]
     assert_eq!(session.script_load_dir, load_dir);
+    #[cfg(feature = "js")]
     assert_eq!(session.rs2b0t_catalog_dir, catalog_dir);
     frontend_core::test_support::scripts::reset_quester_registry();
 }
@@ -3334,6 +3348,7 @@ fn multibox_profile_pick_restores_that_profiles_script_heading() {
         .is_none_or(|op| op.action() != frontend_core::ActionKind::ScriptStart));
 }
 
+#[cfg(feature = "js")]
 #[test]
 fn multibox_roundtrip_keeps_profile_assignments_and_settings_isolated() {
     let dir = TestDir::new("multibox-roundtrip");
@@ -5693,6 +5708,7 @@ fn live_prepare_script_boots_the_seed_profile_and_installs_runner() {
 /// catalog and selects it on the driven slot — Start waits for the
 /// `StartScript` step after seed. `$RS2B0T` is read here, and the
 /// card's source is what the isolate will spawn on that step.
+#[cfg(feature = "js")]
 #[test]
 fn live_prepare_bone_burier_starts_the_rs2b0t_card_on_the_driven_slot() {
     let iso = IsolatedStores::enter("bone-live");
@@ -5729,6 +5745,7 @@ fn live_prepare_bone_burier_starts_the_rs2b0t_card_on_the_driven_slot() {
     );
 }
 
+#[cfg(feature = "js")]
 #[test]
 fn live_prepare_bone_burier_v2_selects_each_example_by_identity() {
     use frontend_core::test_support::scripts::{file_identity, live_example_path};
@@ -5782,6 +5799,7 @@ fn live_prepare_bone_burier_v2_selects_each_example_by_identity() {
     }
 }
 
+#[cfg(feature = "js")]
 #[test]
 fn live_prepare_keeps_v1_catalog_and_tradebot_stem() {
     let iso = IsolatedStores::enter("bone-v1-trade");
@@ -5814,6 +5832,7 @@ fn live_prepare_keeps_v1_catalog_and_tradebot_stem() {
     );
 }
 
+#[cfg(feature = "js")]
 #[test]
 fn live_prepare_script_trade_loads_the_file_fixture_and_injects_partner() {
     let iso = IsolatedStores::enter("trade-live");
@@ -5872,6 +5891,7 @@ fn live_prepare_script_trade_loads_the_file_fixture_and_injects_partner() {
     assert!(s.multibox, "fleet opens the MultiBox wall");
 }
 
+#[cfg(feature = "js")]
 #[test]
 fn live_prepare_jive_kq_stashes_four_starts_with_the_same_roster() {
     let iso = IsolatedStores::enter("jive-kq-fleet");
@@ -5922,6 +5942,7 @@ fn live_prepare_jive_kq_stashes_four_starts_with_the_same_roster() {
 /// stops the object walk), so the card schema is empty. The live
 /// inject still has to post `target: Guard` or `str('target', 'Man')`
 /// camps Men.
+#[cfg(feature = "js")]
 #[test]
 fn live_prepare_thiever_posts_guard_target_when_schema_empty() {
     let iso = IsolatedStores::enter("thiever-bag");
@@ -5957,6 +5978,7 @@ fn live_prepare_thiever_posts_guard_target_when_schema_empty() {
     );
 }
 
+#[cfg(feature = "js")]
 #[test]
 fn live_prepare_script_sets_script_sel_for_catalog_start_script() {
     let iso = IsolatedStores::enter("alcher-sel");
@@ -5978,6 +6000,7 @@ fn live_prepare_script_sets_script_sel_for_catalog_start_script() {
     );
 }
 
+#[cfg(feature = "js")]
 #[test]
 fn live_prepare_sherlock_starts_the_compiled_card_without_catalog() {
     let iso = IsolatedStores::enter("sherlock-live");
@@ -8884,6 +8907,7 @@ fn script_pause_resume_stop_enable_rules() {
     assert!(!script_stop_enabled(ScriptRunState::Error));
 }
 
+#[cfg(feature = "js")]
 #[test]
 fn load_js_registers_card_selects_and_persists_to_the_session_store() {
     let dir = TestDir::new("session-load");
@@ -8943,6 +8967,7 @@ fn script_start_selected_refuses_without_selection_or_play() {
     assert_eq!(s.focused_script_state(), ScriptRunState::Idle);
 }
 
+#[cfg(feature = "js")]
 #[test]
 fn script_start_selected_refuses_unloadable_import() {
     let dir = TestDir::new("unloadable");
@@ -8979,6 +9004,7 @@ fn script_start_selected_refuses_unloadable_import() {
 /// the Browse card (`browse_script_card` paints `failed {stage}` plus the
 /// wrapped `named_line` on the selected card), even though the banner is
 /// cleared. Headless: no headed window.
+#[cfg(feature = "js")]
 #[test]
 fn bad_import_load_retains_the_full_failure_for_browse() {
     let dir = TestDir::new("unloadable-retained");
@@ -9017,6 +9043,7 @@ fn bad_import_load_retains_the_full_failure_for_browse() {
     );
 }
 
+#[cfg(feature = "js")]
 #[test]
 fn fill_rs2b0t_cards_once_happens_on_first_browse_not_session_new() {
     // `$RS2B0T` + HOME point at a fake catalog so the fill never
@@ -9065,6 +9092,7 @@ fn fill_rs2b0t_cards_once_happens_on_first_browse_not_session_new() {
     );
 }
 
+#[cfg(feature = "js")]
 fn fake_rs2b0t_tree(dir: &Path) -> PathBuf {
     let root = dir.join("rs2b0t");
     let scripts = root.join("src/bot/scripts");
@@ -9091,6 +9119,7 @@ ScriptRegistry.register({
     root
 }
 
+#[cfg(feature = "js")]
 #[test]
 fn load_then_browse_still_prompts_without_rs2b0t_root() {
     let iso = IsolatedStores::enter("load-browse");
@@ -9107,6 +9136,7 @@ fn load_then_browse_still_prompts_without_rs2b0t_root() {
     );
 }
 
+#[cfg(feature = "js")]
 #[test]
 fn defer_rs2b0t_catalog_leaves_no_path_and_zero_catalog_cards() {
     let iso = IsolatedStores::enter("defer");
@@ -9130,6 +9160,7 @@ fn defer_rs2b0t_catalog_leaves_no_path_and_zero_catalog_cards() {
     );
 }
 
+#[cfg(feature = "js")]
 #[test]
 fn import_rs2b0t_catalog_persists_path_and_registers_cards() {
     let _work_service_guard = crate::work_service_test_lock();
@@ -9156,6 +9187,7 @@ fn import_rs2b0t_catalog_persists_path_and_registers_cards() {
     assert_eq!(card.tags(), vec!["bones"]);
 }
 
+#[cfg(feature = "js")]
 #[test]
 fn on_script_browse_open_with_rs2b0t_env_still_fills_catalog() {
     let _work_service_guard = crate::work_service_test_lock();
@@ -9173,6 +9205,7 @@ fn on_script_browse_open_with_rs2b0t_env_still_fills_catalog() {
     assert!(iso.home().join(".274bot/rs2b0t-path").is_file());
 }
 
+#[cfg(feature = "js")]
 fn write_two_card_catalog(dir: &Path) -> PathBuf {
     write_looping_catalog(
         dir,
@@ -9180,6 +9213,7 @@ fn write_two_card_catalog(dir: &Path) -> PathBuf {
     )
 }
 
+#[cfg(feature = "js")]
 #[test]
 fn select_script_card_queues_only_that_card_through_worker() {
     let _work_service_guard = crate::work_service_test_lock();
@@ -9236,6 +9270,7 @@ fn select_script_card_queues_only_that_card_through_worker() {
         .is_empty());
 }
 
+#[cfg(feature = "js")]
 #[test]
 fn queue_transpile_all_uses_the_shared_worker_slot() {
     let _work_service_guard = crate::work_service_test_lock();
@@ -9274,6 +9309,7 @@ fn queue_transpile_all_uses_the_shared_worker_slot() {
     );
 }
 
+#[cfg(feature = "js")]
 #[test]
 fn select_script_card_queues_cached_output_through_worker() {
     let _work_service_guard = crate::work_service_test_lock();
@@ -9959,6 +9995,7 @@ fn a_refusal_before_submission_logs_once_and_the_resolving_action_clears_it() {
     }
 }
 
+#[cfg(feature = "js")]
 /// Whether the process log holds a refusal line containing `line`. The log
 /// redacts every registered password (the short ones other tests register
 /// too, such as "test"), wherever it appears: so a line that holds a path is
@@ -9981,6 +10018,7 @@ fn refusal_logged(line: &str) -> bool {
 /// and the banner shows the reason. The Refresh catalog button with no
 /// catalog configured, Load on a path that is not a file, and Use this
 /// folder on a folder with no catalog.
+#[cfg(feature = "js")]
 #[test]
 fn the_panels_own_refusals_log_at_the_command_boundary() {
     let iso = IsolatedStores::enter("psg-panel-own-refusals");

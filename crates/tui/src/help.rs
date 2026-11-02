@@ -90,6 +90,7 @@ const MAP_NAV: &[(&str, &str)] = &[
     ("Esc", "clear the selection, then leave the map"),
 ];
 
+#[cfg(feature = "js")]
 const SCRIPT_NAV: &[(&str, &str)] = &[
     ("Up Down j k", "move the Browse / Load / catalog list"),
     (
@@ -104,6 +105,13 @@ const SCRIPT_NAV: &[(&str, &str)] = &[
         "other keys",
         "ignored while Browse, Load or the catalog prompt is open",
     ),
+];
+
+#[cfg(not(feature = "js"))]
+const SCRIPT_NAV: &[(&str, &str)] = &[
+    ("Up Down j k", "move the Browse list"),
+    ("Enter / Esc", "close Browse; the pick stays"),
+    ("other keys", "ignored while Browse is open"),
 ];
 
 const CHAT_NAV: &[(&str, &str)] = &[

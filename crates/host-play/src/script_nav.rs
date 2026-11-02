@@ -3890,6 +3890,7 @@ fn harvest_route_terminal(
         (_, RouteReservation::Full) => unreachable!("full owner results keep the terminal"),
     }
 }
+#[cfg(feature = "js")]
 /// Host-published walk outcome copied onto the isolate snapshot.
 #[derive(Clone, Copy, Default)]
 pub(crate) struct PostedWalkOutcome {
@@ -6504,6 +6505,7 @@ impl NavBot {
                 aiming,
                 why,
                 tries,
+                ..
             } => Some(script::native::WalkEnd::Stalled(Arc::new(
                 script::native::WalkStall {
                     at: *at,
@@ -6546,6 +6548,19 @@ impl NavBot {
             .is_some_and(|owner| owner.live() && owner.request_id().get() == self.walk_request_id)
         {
             self.walk_outcome_detail = match outcome {
+                // The typed stall keeps its fields in the receipt. An agility
+                // crossing that was refused names that refusal in the detail,
+                // which the receipt prefers to the stall's own text.
+                nav_executor::TravelOutcome::Stalled {
+                    at,
+                    aiming,
+                    why,
+                    tries,
+                    last_refusal: Some(refusal),
+                } => Some(Arc::from(format!(
+                    "walk stalled ({why:?}) at {at:?}, aiming at {aiming:?}, tries: {tries}, \
+                     last refusal: {refusal}"
+                ))),
                 nav_executor::TravelOutcome::Stalled { .. } => None,
                 _ => Some(Arc::from(format!("native follow failed: {outcome:?}"))),
             };
@@ -6558,6 +6573,7 @@ impl NavBot {
         self.walk_live_refusal_id == 0 || request_id == self.walk_live_refusal_id
     }
 
+    #[cfg(any(test, feature = "js"))]
     /// A snapshot carrying outcome `posted_seq` reached the isolate. The
     /// live refusal guard is released only when that was the latest
     /// published outcome; a newer one stays guarded until it is posted.

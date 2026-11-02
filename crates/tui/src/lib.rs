@@ -32,6 +32,7 @@ pub mod map;
 pub mod new_profile;
 pub mod overlay;
 pub mod palette;
+#[cfg(feature = "js")]
 pub mod profile_import;
 pub mod script_params;
 pub mod script_shape;

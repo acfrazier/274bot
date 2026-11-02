@@ -49,6 +49,11 @@ pub fn lines(danger: Option<i32>, hp_max: i32) -> Lines {
     }
 }
 
+/// A durable NPC's hitpoints earn melee offensive prayers/boosts.
+fn durable_npc(npc_type: i32, tables: &CombatTables) -> bool {
+    tables.npc(npc_type).is_some_and(|row| row.hitpoints >= 40)
+}
+
 /// A request earns melee offensive prayers/boosts when it engages a player, a
 /// sufficiently durable NPC, or the Path explicitly packed a relevant boost.
 pub fn offensives_worth(
@@ -59,7 +64,17 @@ pub fn offensives_worth(
 ) -> bool {
     carries_boost
         || engaged.is_some_and(|actor| actor.kind == ActorKind::Player)
-        || tables.npc(npc_type).is_some_and(|row| row.hitpoints >= 40)
+        || durable_npc(npc_type, tables)
+}
+
+/// Worth resolved from the request's own NPC target before any actor is in
+/// range. Choosing a durable type is a decision to boost, so the opening Prep
+/// batch can wear and drink together even while the target is out of reach.
+pub fn requested_worth(request: &CombatRequest, tables: &CombatTables) -> bool {
+    match &request.target {
+        Target::Npc { types, .. } => types.iter().any(|ty| durable_npc(*ty, tables)),
+        _ => false,
+    }
 }
 
 /// G4b's FNV-1a identity hash, computed directly over a borrowed player name.

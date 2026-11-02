@@ -437,4 +437,57 @@ rss_ladder 1 acf   13u  IPv4 0x3      0t0  TCP 127.0.0.1:50002->127.0.0.1:43594 
         assert_eq!(parse_lsof_established(""), 0);
         assert_eq!(parse_lsof_established("COMMAND PID\n"), 0);
     }
+
+    #[cfg(all(
+        feature = "memory-profile",
+        any(target_os = "macos", target_os = "linux")
+    ))]
+    #[test]
+    #[ignore = "timing self-test of the process CPU counter: a loaded machine (CI, parallel suites) can starve the busy child; run it explicitly before a CPU-share measurement"]
+    fn process_cpu_counter_busy_loop_child() {
+        const CHILD: &str = "274BOT_PROCESS_CPU_COUNTER_SELFTEST_CHILD";
+        if std::env::var_os(CHILD).is_some() {
+            let before = process_cpu_user_kernel().expect("getrusage before busy loop");
+            let started = std::time::Instant::now();
+            let mut value = 0u64;
+            while started.elapsed() < std::time::Duration::from_secs(2) {
+                value = value.wrapping_add(1);
+                std::hint::black_box(value);
+            }
+            let wall_seconds = started.elapsed().as_secs_f64();
+            let after = process_cpu_user_kernel().expect("getrusage after busy loop");
+            let cpu_seconds = (after.0 + after.1) - (before.0 + before.1);
+            let cpu_cores = cpu_seconds / wall_seconds;
+            eprintln!(
+                "PROCESS_CPU_BUSY_LOOP cores={cpu_cores:.3}, cpu={cpu_seconds:.3}s, wall={wall_seconds:.3}s"
+            );
+            assert!(
+                (cpu_cores - 1.0).abs() <= 0.5,
+                "busy child used {cpu_cores:.3} CPU cores; expected 1.0 ±0.5"
+            );
+            return;
+        }
+
+        let output =
+            std::process::Command::new(std::env::current_exe().expect("current test executable"))
+                .arg("process_cpu_counter_busy_loop_child")
+                .arg("--nocapture")
+                .arg("--ignored")
+                .arg("--test-threads=1")
+                .env(CHILD, "1")
+                .output()
+                .expect("spawn isolated busy-loop child");
+        assert!(
+            output.status.success(),
+            "busy-loop child failed: stdout={} stderr={}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        let report = stderr
+            .lines()
+            .find(|line| line.contains("PROCESS_CPU_BUSY_LOOP"))
+            .unwrap_or("PROCESS_CPU_BUSY_LOOP result not printed");
+        println!("{report}");
+    }
 }

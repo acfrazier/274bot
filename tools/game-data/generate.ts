@@ -9,7 +9,8 @@ import { sha256, sourceFile, parseRows, parsePack, integer, parseParamDefinition
 import { extractGatheringFamily, compareCodepoint, gatherResources, gatherSites, hiddenSitesBytes, hiddenSitesRecord, HIDDEN_SITES_FILE, miningHazards, type GatherSiteWire, type HiddenSitesRecord } from './extractors/gathering.ts';
 import { extractQuestIdentityFacts, questIdentityContentFiles } from './extractors/quests.ts';
 import { extractQuestStartFacts, questStartContentFiles } from './extractors/quest-starts.ts';
-import { extractCombatStyleFacts, parseCombatScripts, buildSpellMaxHits } from './extractors/combat.ts';
+import { extractCombatStyleFacts, parseCombatScripts, buildSpellMaxHits, extractSpecialWeaponFacts, extractItemCombatBonus, extractMeleeWeaponTiers } from './extractors/combat.ts';
+import { extractDuelRuleButtons, extractDuelZones } from './extractors/duel.ts';
 import { consumptionRule, parseConsumeMessageDelays, parseConsumptionEffects } from './extractors/consumption.ts';
 import { extractNpcNamesFacts, npcNamesContentFiles } from './extractors/npc-names.ts';
 import { extractLocNamesFacts } from './extractors/loc-names.ts';
@@ -86,6 +87,14 @@ const combatContentFiles = [
     'scripts/skill_combat/configs/combat_damagestyles.constant',
     'scripts/skill_combat/configs/combat.dbrow',
     'scripts/skill_combat/configs/combat.dbtable',
+    // PvP V0: specwep/sa_energy defaults, destroy_death, melee tiers, duel
+    // rule bits and duel zone bounds. The tier and duel scripts are .rs2
+    // files already covered by the parsed-script closure; the param, dbrow
+    // and constant files join the pinned inputs here.
+    'scripts/skill_combat/configs/combat.param',
+    'scripts/player/configs/death.param',
+    'scripts/minigames/game_duelarena/configs/duelarena.dbrow',
+    'scripts/minigames/game_duelarena/configs/duelarena.constant',
     'pack/category.pack',
     'pack/enum.pack',
     'pack/seq.pack',
@@ -336,8 +345,14 @@ export function categoryName(obj: ObjType, categories: ReadonlyMap<number, strin
     return name;
 }
 
-function row(obj: ObjType, piles: ReadonlySet<number>, categories: ReadonlyMap<number, string>) {
+function row(obj: ObjType, piles: ReadonlySet<number>, categories: ReadonlyMap<number, string>, destroyDeathParam: number | undefined) {
     if (typeof obj.tradeable !== 'boolean') throw new Error(`obj ${obj.id}: engine decode has no tradeable flag`);
+    // PvP V0 `GameItem.destroy_death`: true when the obj carries
+    // `param=destroy_death,^true` (`player/configs/death.param:1-3`), through
+    // the same param reader the combat extractor uses (combat.ts
+    // `parameterValue`). Absent before V0 data; the Rust field defaults it.
+    const destroyDeathValue = destroyDeathParam !== undefined ? obj.params?.get(destroyDeathParam) : undefined;
+    const destroyDeath = destroyDeathValue === 1 || destroyDeathValue === '1';
     return {
         alias: obj.debugname,
         id: obj.id,
@@ -354,6 +369,7 @@ function row(obj: ObjType, piles: ReadonlySet<number>, categories: ReadonlyMap<n
         category: categoryName(obj, categories),
         tradeable: obj.tradeable,
         stack_variant: piles.has(obj.id),
+        destroy_death: destroyDeath,
     };
 }
 function pileModels(objs: readonly ObjType[]) { const piles = new Set<number>(); for (const obj of objs) for (const pile of Array.from(obj.countobj ?? [])) if (pile > 0) piles.add(pile); return piles; }
@@ -3032,7 +3048,8 @@ async function generate(spec: Revision) {
         categoriesById.set(id, name);
     }
     const piles = pileModels(objModule.default.configs);
-    const items = objModule.default.configs.map((obj) => row(obj, piles, categoriesById));
+    const destroyDeathParam = parsePack(fs.readFileSync(path.join(spec.content, 'pack/param.pack'), 'utf8')).get('destroy_death');
+    const items = objModule.default.configs.map((obj) => row(obj, piles, categoriesById, destroyDeathParam));
     const aliases = items.filter((item) => item.alias !== null).map((item) => item.alias as string);
     if (new Set(items.map((item) => item.id)).size !== items.length || new Set(aliases).size !== aliases.length) {
         throw new Error(`${spec.revision}: duplicate ids or aliases`);
@@ -3113,6 +3130,21 @@ async function generate(spec: Revision) {
     const spellMaxHits = buildSpellMaxHits(spec.content);
     const npcNames = extractNpcNamesFacts(spec.content, spec.revision, combatScripts, spellMaxHits);
     const combatStyles = extractCombatStyleFacts(spec.content, objModule.default.configs, npcNames.combatNpcs, combatScripts);
+    // PvP V0 facts (PVP-DESIGN-1026 §3.3, §11 row V0). Alias maps join the
+    // decoded obj configs to the content aliases the extractors read.
+    const aliasToId = new Map(items.filter((item) => item.alias !== null).map((item) => [item.alias as string, item.id]));
+    const idToAlias = new Map(items.filter((item) => item.alias !== null).map((item) => [item.id, item.alias as string]));
+    const specialWeapons = extractSpecialWeaponFacts(spec.content, objModule.default.configs, combatStyles.weapon_styles, aliasToId);
+    if (specialWeapons.length !== 14) throw new Error(`${spec.revision}: expected 14 specwep rows, got ${specialWeapons.length}`);
+    const itemCombatBonus = extractItemCombatBonus(spec.content, objModule.default.configs);
+    const meleeWeaponTiers = extractMeleeWeaponTiers(spec.content, combatStyles.weapon_styles, idToAlias);
+    const duelRuleButtons = extractDuelRuleButtons(spec.content);
+    if (duelRuleButtons.length !== 14) throw new Error(`${spec.revision}: expected 14 duel rule buttons, got ${duelRuleButtons.length}`);
+    if (!duelRuleButtons.every((row, index) => row.bit === index)) throw new Error(`${spec.revision}: duel rule bits are not 0-13`);
+    // `DuelControls.rule_buttons[bit]` (§3.3): the settings-script buttons in
+    // duelarena.constant bit order join the `duel` controls here.
+    Object.assign(duel, { rule_buttons: duelRuleButtons.map((row) => row.component) });
+    const duelZones = extractDuelZones(spec.content);
     Object.assign(facts, {
         style_seqs: combatStyles.style_seqs,
         style_spotanims: combatStyles.style_spotanims,
@@ -3124,6 +3156,10 @@ async function generate(spec: Revision) {
         ranged_ammo: combatStyles.ranged_ammo,
         ranged_modes: combatStyles.ranged_modes,
         ranged_mode_varp: combatStyles.ranged_mode_varp,
+        special_weapons: specialWeapons,
+        item_combat_bonus: itemCombatBonus,
+        melee_weapon_tiers: meleeWeaponTiers,
+        duel_zones: duelZones,
     });
     const locNames = extractLocNamesFacts(spec.content);
     const npcPlacements = extractNpcPlacementsFacts(spec.content);

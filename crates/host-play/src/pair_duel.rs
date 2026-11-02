@@ -55,6 +55,7 @@ pub fn duel_controls_match(controls: &DuelControls) -> bool {
         && controls.select_partner == EXPECTED_DUEL_CONTROLS.select_partner
         && controls.select_status == EXPECTED_DUEL_CONTROLS.select_status
         && controls.confirm_status == EXPECTED_DUEL_CONTROLS.confirm_status
+        && controls.rule_buttons == EXPECTED_DUEL_CONTROLS.rule_buttons
         && controls.available()
 }
 
@@ -65,6 +66,29 @@ pub fn verify_generated_duel_controls(data: &SelectedGameData) -> Result<(), Str
             data.revision()
         ));
     };
+    if data.revision() == 274 {
+        // Revision 274 predates PvP V0: its `rule_buttons` default to zeros
+        // and `rule_button` reports `None`. The witness locks the pre-V0
+        // modals and the `None` rule buttons here; the V0 rule buttons are
+        // locked on revision 289 below.
+        let pre_v0 = controls.select_modal == EXPECTED_DUEL_CONTROLS.select_modal
+            && controls.confirm_modal == EXPECTED_DUEL_CONTROLS.confirm_modal
+            && controls.win_modal == EXPECTED_DUEL_CONTROLS.win_modal
+            && controls.select_accept == EXPECTED_DUEL_CONTROLS.select_accept
+            && controls.confirm_accept == EXPECTED_DUEL_CONTROLS.confirm_accept
+            && controls.select_partner == EXPECTED_DUEL_CONTROLS.select_partner
+            && controls.select_status == EXPECTED_DUEL_CONTROLS.select_status
+            && controls.confirm_status == EXPECTED_DUEL_CONTROLS.confirm_status
+            && controls.available()
+            && (0..14u8).all(|bit| controls.rule_button(bit).is_none());
+        if !pre_v0 {
+            return Err(format!(
+                "generated duel controls mismatch on revision {}: {controls:?}",
+                data.revision()
+            ));
+        }
+        return Ok(());
+    }
     if !duel_controls_match(controls) {
         return Err(format!(
             "generated duel controls mismatch on revision {}: {controls:?}",

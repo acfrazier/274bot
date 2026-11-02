@@ -21,6 +21,7 @@ impl Scripts {
             script::ScriptSel::Compiled(id) => script::compiled_card(*id)
                 .map(|_| Some(script::compiled_assignment(*id)))
                 .ok_or_else(|| "unavailable card".to_string()),
+            #[cfg(feature = "js")]
             script::ScriptSel::Loaded(source, lookup) => {
                 if *source == script::ScriptSource::Catalog {
                     if self.catalog_work_pending() {
@@ -41,6 +42,14 @@ impl Scripts {
                     Some(reason) => Err(format!("unloadable import: {reason}")),
                     None => Ok(Some(card.assignment())),
                 }
+            }
+            #[cfg(not(feature = "js"))]
+            script::ScriptSel::Loaded(..) => {
+                let _ = catalog_root;
+                Err(
+                    script::surface::SurfaceError::NoFactory(script::surface::SurfaceKind::Js)
+                        .to_string(),
+                )
             }
         }
     }

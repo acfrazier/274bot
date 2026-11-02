@@ -89,10 +89,12 @@ impl Session {
     /// Open the profile picker on `name` (or a blank new row). Any dirty
     /// form waits behind the Discard / Keep editing prompt.
     pub fn begin_edit_profile(&mut self, name: Option<&str>) {
+        #[cfg(feature = "js")]
         if self.import_writing() {
             self.wall.chooser_open = true;
             return;
         }
+        #[cfg(feature = "js")]
         if self.profile_import_open {
             self.close_profile_import();
         }
@@ -108,6 +110,7 @@ impl Session {
         self.wall.chooser_open = true;
     }
 
+    #[cfg(feature = "js")]
     /// Open the rs2b0t import in the editor pane, in place of the edit
     /// form. With unsaved changes on the form, or its save still being
     /// written, the Discard / Keep editing prompt asks first.
@@ -128,11 +131,13 @@ impl Session {
         }
     }
 
+    #[cfg(feature = "js")]
     fn open_import(&mut self) {
         self.profile_import_open = true;
         self.refresh_profile_import();
     }
 
+    #[cfg(feature = "js")]
     /// Whether a confirmed rs2b0t import's writes are still being saved:
     /// the editor pane stays on its report until they settle.
     pub fn import_writing(&self) -> bool {
@@ -168,6 +173,7 @@ impl Session {
             FormLeave::MultiBoxOff => {
                 self.set_multibox(false);
             }
+            #[cfg(feature = "js")]
             FormLeave::OpenImport => self.open_import(),
         }
     }
@@ -249,6 +255,7 @@ impl Session {
         self.profile_editor.saving(&self.core)
     }
 
+    #[cfg(feature = "js")]
     /// Rebuild the rs2b0t import text from its flow: after each step, and
     /// each frame while a confirmed import's writes are still settling.
     pub fn refresh_profile_import(&mut self) {
@@ -262,6 +269,7 @@ impl Session {
         self.profile_import_settled = flow.settled(&self.core);
     }
 
+    #[cfg(feature = "js")]
     /// Close the rs2b0t import, dropping its parsed file (and passwords).
     pub fn close_profile_import(&mut self) {
         self.profile_import = frontend_core::rs2b0t_import::ProfileImport::new();

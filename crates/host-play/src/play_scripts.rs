@@ -177,6 +177,7 @@ pub struct ScriptStartHandle {
 }
 
 pub(crate) enum StartRequest<'a> {
+    #[cfg(feature = "js")]
     Load {
         source: String,
         shape: script_js::LoadShape,
@@ -187,9 +188,10 @@ pub(crate) enum StartRequest<'a> {
     Compiled {
         id: script::CompiledId,
         bag: serde_json::Map<String, serde_json::Value>,
+        #[cfg(not(feature = "js"))]
+        _lifetime: std::marker::PhantomData<&'a ()>,
     },
 }
-
 fn validate_script_loadout_setting(
     rows: &[api::loadout::Loadout],
     bag: Option<&serde_json::Map<String, serde_json::Value>>,
@@ -210,6 +212,7 @@ impl ScriptStartHandle {
         }
     }
 
+    #[cfg(feature = "js")]
     /// Start a loaded JS bot on `name`'s slot. Same isolate spawn as
     /// [`Play::script_start_load`], without the control-thread wake
     /// (the slot thread is already pumping). Operator loadouts come from
@@ -238,6 +241,7 @@ impl ScriptStartHandle {
         .map_err(|error| error.to_string())
     }
 
+    #[cfg(feature = "js")]
     /// Harness catalog Start with caller-owned loadouts. It validates the
     /// saved setting against those rows before starting, then posts the bag.
     /// Does not affect [`Play::script_start_load_typed`].
@@ -272,8 +276,17 @@ impl ScriptStartHandle {
         id: script::CompiledId,
         bag: serde_json::Map<String, serde_json::Value>,
     ) -> Result<(), String> {
-        self.dispatch_start(name, || StartRequest::Compiled { id, bag }, || Ok(()))
-            .map_err(|error| error.to_string())
+        self.dispatch_start(
+            name,
+            || StartRequest::Compiled {
+                id,
+                bag,
+                #[cfg(not(feature = "js"))]
+                _lifetime: std::marker::PhantomData,
+            },
+            || Ok(()),
+        )
+        .map_err(|error| error.to_string())
     }
 
     /// The single admission point for operator, coordinator and scenario Starts.
@@ -302,6 +315,7 @@ impl ScriptStartHandle {
             "start script"
         );
         let slot = match &request {
+            #[cfg(feature = "js")]
             StartRequest::Load { .. } => script_slot_or_insert(&self.scripts, name),
             StartRequest::Compiled { .. } => script_slot(&self.scripts, name)
                 .ok_or_else(|| Refused(format!("no slot: {name}")))?,
@@ -310,7 +324,7 @@ impl ScriptStartHandle {
             .lock()
             .map_err(|_| Refused(format!("script slot retiring: {name}")))?;
         let result = match request {
-            StartRequest::Compiled { id, bag } => {
+            StartRequest::Compiled { id, bag, .. } => {
                 // Every compiled Start reads the operator's loadouts file
                 // again, so the run's later leases (a quester compiling a
                 // Path, the progress page) see the rows the frontend's form
@@ -357,6 +371,7 @@ impl ScriptStartHandle {
                     Err(Refused("selected game data unavailable".into()))
                 }
             }
+            #[cfg(feature = "js")]
             StartRequest::Load {
                 source,
                 shape,
@@ -596,7 +611,12 @@ impl Play {
         script_slot_or_insert(&self.scripts, name);
         self.script_start_handle().dispatch_start(
             name,
-            || StartRequest::Compiled { id, bag },
+            || StartRequest::Compiled {
+                id,
+                bag,
+                #[cfg(not(feature = "js"))]
+                _lifetime: std::marker::PhantomData,
+            },
             || Ok(()),
         )?;
         self.wake(name);
@@ -932,6 +952,7 @@ impl Play {
         Ok(())
     }
 
+    #[cfg(feature = "js")]
     /// Start a loaded JS bot on `name`'s slot: the isolate is spawned here,
     /// on Start (never at Load). Same slot gating as
     /// [`Play::script_start`].
@@ -947,6 +968,7 @@ impl Play {
             .map_err(|e| e.to_string())
     }
 
+    #[cfg(feature = "js")]
     /// Initial load result with operational refusals separate from loader errors.
     pub fn script_start_load_typed(
         &self,

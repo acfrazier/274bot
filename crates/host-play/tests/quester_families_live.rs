@@ -15,17 +15,18 @@
 #[path = "common/quester_live.rs"]
 mod quester_live;
 
+use std::sync::atomic::{AtomicI32, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
 use api::game_data::SelectedGameData;
 use api::quest_facts::QuestCatalog;
 use api::selected::{ClientRevision, FactKey, RunKey};
-use api::snapshot::{ActorKind, ActorTargetView, GameSnapshot, WorldTile};
+use api::snapshot::{ActorKind, ActorTargetView, ChatLineView, GameSnapshot, WorldTile};
 use quester_live::{Cell, Mode, ObserveFamily, StartFamily};
-use scenario::quester::{quester_stage, FixtureLoadout, QuesterStage};
+use scenario::quester::{quester_stage_with_seeds, FixtureLoadout, QuesterStage};
 use scenario::{Proof, Step, StepKind, Wait};
-use script::native::{NativePhase, ScriptStatus, StatusValue};
+use script::native::{ScriptStatus, StatusValue};
 use script::quester::compile::compile_path;
 use script::quester::path::{
     PathDocument, PredicateDocument, ProgressColourDocument, ProgressDocument,
@@ -37,7 +38,13 @@ use serde_json::{json, Value};
 const COOK_PATH_JSON: &str = include_str!("../../script/paths/289/cook.json");
 const CAPTAIN_TAUNT: &str = "Very well, if you're challenging me, let's get on with it!";
 const BLACKCOG_SOURCE: &str = "live Clock Tower spawn observed at [2613,9639,0] before Start";
-const DESERT_ITEMS: &[(&str, i32)] = &[("lobster", 6)];
+// desert_heat.rs2 drains water every 60 ticks in this iron kit. Twelve
+// drinks cover the fixture's 300-second deadline without random thirst damage.
+const DESERT_ITEMS: &[(&str, i32)] = &[("lobster", 6), ("water_skin4", 3)];
+const DESERT_STAGE_REPLY: &str = "get desertrescue: 3";
+const PRIEST_STAGE_REPLY: &str = "get priestperil: 1";
+const COG_STAGE_REPLY: &str = "get cogquest: 1";
+const PRIEST_DIALOGUE_COMPLETE: &str = "Okey-dokey, one dead dog coming up.";
 
 const DEATH_IOU_ITEMS: &[(&str, i32)] = &[("death_iou", 1)];
 const CLOCK_TOWER_ITEMS: &[(&str, i32)] = &[("bucket_water", 1)];
@@ -151,17 +158,20 @@ fn make_cell(
         .iter()
         .find(|row| row.id == "cook")
         .expect("selected R289 Cook identity");
-    let mut fixture = quester_stage(QuesterStage {
-        name,
-        quest_display: "Cook's Assistant",
-        path: &path,
-        identity,
-        selected: &selected,
-        stage: "cook:0",
-        loadout,
-        extra_items: items,
-        stand,
-    })
+    let mut fixture = quester_stage_with_seeds(
+        QuesterStage {
+            name,
+            quest_display: "Cook's Assistant",
+            path: &path,
+            identity,
+            selected: &selected,
+            stage: "cook:0",
+            loadout,
+            extra_items: items,
+            stand,
+        },
+        &[(identity.varp.as_str(), 0)],
+    )
     .unwrap_or_else(|error| panic!("build Cook-profile family fixture: {error}"));
     fixture.scenario.settings.deadline = Duration::from_secs(300);
     fixture
@@ -171,7 +181,13 @@ fn make_cell(
         assert_eq!(quest_stage, 0, "Cook-profile path already seeds stage zero");
     } else {
         let (_, target_varp) = quest_varp(&selected, quest);
-        insert_target_quest_seed(&mut fixture, &target_varp, quest_stage);
+        // quest_cog.rs2:9-13 stores this computed progress in cogquest bits 0-3.
+        let target_varp = if target_varp == "~get_cog_progress" {
+            "cogquest"
+        } else {
+            target_varp.as_str()
+        };
+        insert_target_quest_seed(&mut fixture, target_varp, quest_stage);
     }
     let seed = fixture.seed;
     let seed_commands = fixture.seed_commands;
@@ -240,13 +256,9 @@ fn family_path(
             in_progress: stage_key.clone(),
             complete: stage_key.clone(),
         },
-        rules: vec![ProgressRuleDocument {
-            stage: stage_key.clone(),
-            all: Vec::new(),
-            any: Vec::new(),
-            not: Vec::new(),
-            varp: Some(0),
-        }],
+        // Like the released Cook Path, use journal colour when no text rule is
+        // needed. Every colour maps to this fixture's single authored stage.
+        rules: Vec::new(),
         flags: Vec::new(),
         monotonic: false,
     });
@@ -260,6 +272,102 @@ fn family_path(
         steps,
     }];
     document
+}
+
+#[test]
+fn family_path_uses_valid_colour_fallback_instead_of_empty_text_rule() {
+    let (selected, quests) = live_data();
+    let compile = |document: &PathDocument| {
+        let bytes = serde_json::to_vec(document).unwrap();
+        let selected = Arc::clone(&selected);
+        let quests = Arc::clone(&quests);
+        api::selected::FamilyPreparation::run(move |cap| {
+            compile_path(
+                &bytes,
+                &selected,
+                &quests,
+                cap,
+                &script::local_state::OperatorLoadouts::absent(),
+            )
+        })
+        .unwrap()
+        .join()
+        .unwrap()
+    };
+    let mut document = family_path(
+        "cook",
+        "Family progress regression",
+        "cook:0",
+        vec![step(
+            "wait-in-combat",
+            "wait",
+            json!({"until": fact("in_combat", json!({})), "max_ticks": 10}),
+            false,
+            empty_any(),
+            empty_all(),
+        )],
+        true,
+    );
+    assert!(compile(&document).is_ok());
+    document.roles[0]
+        .progress
+        .as_mut()
+        .unwrap()
+        .rules
+        .push(ProgressRuleDocument {
+            stage: FactKey::new("cook:0"),
+            all: Vec::new(),
+            any: Vec::new(),
+            not: Vec::new(),
+            varp: Some(0),
+        });
+    let error = compile(&document)
+        .err()
+        .expect("empty text rule must stay invalid");
+    assert_eq!(error.code.as_ref(), "invalid-progress-rule");
+}
+
+#[test]
+fn family_fixture_keeps_the_explicit_cook_seed_without_progress_rules() {
+    let (selected, _) = live_data();
+    let (_, _, commands) = make_cell(
+        "family-fixture-seed-regression",
+        ("desertrescue", "The Tourist Trap"),
+        3,
+        DESERT_ITEMS,
+        DESERT_STAND,
+        None,
+        selected,
+    );
+    assert!(commands
+        .iter()
+        .any(|command| command == "setvar cookquest 0"));
+    assert!(commands
+        .iter()
+        .any(|command| command == "setvar desertrescue 3"));
+    assert!(commands
+        .iter()
+        .any(|command| command == "give water_skin4 3"));
+}
+
+#[test]
+fn computed_cog_progress_seeds_the_backing_varp() {
+    let (selected, _) = live_data();
+    let (_, _, commands) = make_cell(
+        "computed-cog-seed-regression",
+        ("cog", "Clock Tower"),
+        1,
+        CLOCK_TOWER_ITEMS,
+        BLACKCOG_TILE,
+        None,
+        selected,
+    );
+    assert!(commands
+        .iter()
+        .any(|command| command == "setvar cogquest 1"));
+    assert!(!commands
+        .iter()
+        .any(|command| command.contains("~get_cog_progress")));
 }
 
 fn step(
@@ -377,6 +485,121 @@ fn varp_value(snapshot: &GameSnapshot, id: i32) -> Option<i32> {
         .map(|varp| varp.value)
 }
 
+fn quest_stage_witness<'a>(
+    lines: &'a [ChatLineView],
+    after: i32,
+    expected: &str,
+) -> Option<&'a ChatLineView> {
+    lines.iter().find(|line| {
+        line.sequence > after && line.type_ == 0 && line.username.is_none() && line.text == expected
+    })
+}
+
+fn insert_quest_stage_query(
+    cell: &mut Cell,
+    command: &'static str,
+    expected: &'static str,
+    ground: Option<(i32, WorldTile)>,
+) -> Arc<AtomicI32> {
+    // Permanent server-only quest variables do not survive in the client
+    // cache. Query the retained server value after relog, before native Start.
+    let query_baseline = Arc::new(AtomicI32::new(i32::MAX));
+    let send_baseline = Arc::clone(&query_baseline);
+    let send = Box::new(move |client: &mut _, snapshot: &GameSnapshot| {
+        // Repeat only observes the real spawn. It sends the query once.
+        if send_baseline.load(Ordering::Relaxed) != i32::MAX {
+            return true;
+        }
+        if ground.is_some_and(|(id, tile)| {
+            !snapshot
+                .ground_items()
+                .iter()
+                .any(|item| item.def.id == id && item.tile == tile)
+        }) {
+            return true;
+        }
+        send_baseline.store(
+            snapshot
+                .chat_lines()
+                .iter()
+                .map(|line| line.sequence)
+                .max()
+                .unwrap_or(0),
+            Ordering::Relaxed,
+        );
+        api::interact::cheat(client, command).is_sent()
+    });
+    let kind = if ground.is_some() {
+        StepKind::Repeat { send }
+    } else {
+        StepKind::Perform { send }
+    };
+    let start_step = cell
+        .scenario
+        .steps
+        .iter()
+        .position(|step| matches!(step.kind, StepKind::StartScript))
+        .expect("family fixture has a native Start");
+    cell.scenario.steps.insert(
+        start_step,
+        Step {
+            name: "read retained quest stage before Start",
+            kind,
+            wait: Wait {
+                arm: Proof::FreshChat { needle: expected },
+                // Static objects respawn after 100 ticks (ObjType.ts:182).
+                // Allow that interval plus the normal 100-tick query budget.
+                budget_ticks: if ground.is_some() { 200 } else { 100 },
+            },
+        },
+    );
+    query_baseline
+}
+
+#[test]
+fn quest_stage_oracle_requires_fresh_exact_server_reply() {
+    for expected in [DESERT_STAGE_REPLY, PRIEST_STAGE_REPLY, COG_STAGE_REPLY] {
+        let reply = ChatLineView {
+            type_: 0,
+            username: None,
+            text: expected.to_owned(),
+            sequence: 11,
+        };
+        assert!(quest_stage_witness(std::slice::from_ref(&reply), 10, expected).is_some());
+        assert!(quest_stage_witness(std::slice::from_ref(&reply), 11, expected).is_none());
+        assert!(quest_stage_witness(std::slice::from_ref(&reply), 12, expected).is_none());
+        assert!(quest_stage_witness(&[], 10, expected).is_none());
+        for text in [
+            "get desertrescue: 0",
+            "get desertrescue: 30",
+            "get desertrescue_map_mechanisms: 3",
+            "get priestperil: 0",
+            "get priestperil: 10",
+            "set desertrescue: to 3",
+            "Please finish what you are doing first.",
+        ] {
+            let wrong = ChatLineView {
+                text: text.to_owned(),
+                ..reply.clone()
+            };
+            assert!(
+                quest_stage_witness(&[wrong], 10, expected).is_none(),
+                "{text}"
+            );
+        }
+        let public = ChatLineView {
+            type_: 2,
+            ..reply.clone()
+        };
+        assert!(quest_stage_witness(&[public], 10, expected).is_none());
+        let named = ChatLineView {
+            username: Some("another player".to_owned()),
+            ..reply
+        };
+        assert!(quest_stage_witness(&[named], 10, expected).is_none());
+    }
+}
+
 fn require_item(
     snapshot: &GameSnapshot,
     id: i32,
@@ -401,13 +624,30 @@ fn inventory_receipt(snapshot: &GameSnapshot) -> Vec<Value> {
 }
 
 fn dialogue_texts(snapshot: &GameSnapshot) -> Vec<String> {
-    snapshot
+    let mut texts: Vec<_> = snapshot
         .chat_options()
         .iter()
-        .map(|option| option.text.as_str())
-        .chain(snapshot.chat_lines().iter().map(|line| line.text.as_str()))
-        .map(str::to_owned)
-        .collect()
+        .map(|option| option.text.clone())
+        .chain(snapshot.chat_lines().iter().map(|line| line.text.clone()))
+        .collect();
+    // chat.rs2 splits one speech across adjacent chat widgets. Preserve the
+    // rendered page as well as individual choices and system messages.
+    let mut page = String::new();
+    for text in snapshot
+        .widgets()
+        .iter()
+        .filter(|widget| widget.root == api::snapshot::WidgetRoot::Chat)
+        .filter_map(|widget| widget.text.as_deref())
+    {
+        if !page.is_empty() {
+            page.push(' ');
+        }
+        page.push_str(text);
+    }
+    if !page.is_empty() {
+        texts.push(page);
+    }
+    texts
 }
 
 fn remember_dialogue_texts(snapshot: &GameSnapshot, seen: &mut Vec<String>) {
@@ -419,7 +659,58 @@ fn remember_dialogue_texts(snapshot: &GameSnapshot, seen: &mut Vec<String>) {
 }
 
 fn saw_text(seen: &[String], expected: &str) -> bool {
-    seen.iter().any(|text| text.eq_ignore_ascii_case(expected))
+    seen.iter()
+        .any(|text| text.eq_ignore_ascii_case(expected) || text.contains(expected))
+}
+
+#[test]
+fn dialogue_oracle_requires_the_complete_rendered_message() {
+    let page = [
+        "Mercenary Captain",
+        "Very well, if you're challenging me,",
+        "let's get on with it!",
+        "Click here to continue",
+    ]
+    .join(" ");
+    assert!(saw_text(&[page], CAPTAIN_TAUNT));
+    assert!(!saw_text(
+        &["Very well, if you're challenging me,".to_owned()],
+        CAPTAIN_TAUNT,
+    ));
+}
+
+fn priest_dialogue_witness(seen: &[String]) -> bool {
+    [
+        "Roald sent me to check on Drezel.",
+        "Sure.",
+        PRIEST_DIALOGUE_COMPLETE,
+    ]
+    .iter()
+    .all(|text| saw_text(seen, text))
+}
+
+#[test]
+fn priest_dialogue_oracle_requires_the_post_stage_assignment_line() {
+    let complete = [
+        "Roald sent me to check on Drezel.".to_owned(),
+        "Sure.".to_owned(),
+        PRIEST_DIALOGUE_COMPLETE.to_owned(),
+    ];
+    assert!(priest_dialogue_witness(&complete));
+    for missing in 0..complete.len() {
+        let incomplete = complete
+            .iter()
+            .enumerate()
+            .filter(|(index, _)| *index != missing)
+            .map(|(_, text)| text.clone())
+            .collect::<Vec<_>>();
+        assert!(!priest_dialogue_witness(&incomplete));
+    }
+    assert!(!priest_dialogue_witness(&[
+        "Roald sent me to check on Drezel.".to_owned(),
+        "Sure.".to_owned(),
+        "Nope. Something about all this is very suspicious...".to_owned(),
+    ]));
 }
 
 fn status_text<'a>(status: &'a ScriptStatus, key: &str) -> Option<&'a str> {
@@ -431,6 +722,34 @@ fn status_text<'a>(status: &'a ScriptStatus, key: &str) -> Option<&'a str> {
             StatusValue::Text(value) => Some(value.as_ref()),
             _ => None,
         })
+}
+
+fn completed_lifecycle(lifecycle: Option<&script::ScriptLifecycleReceipt>) -> bool {
+    lifecycle.is_some_and(|receipt| receipt.state == script::ScriptTerminalState::Completed)
+}
+
+#[test]
+fn completion_oracle_requires_a_retained_completed_lifecycle() {
+    use script::{ScriptLifecycleReceipt, ScriptTerminalState};
+
+    assert!(!completed_lifecycle(None));
+    for state in [
+        ScriptTerminalState::Completed,
+        ScriptTerminalState::Stopped,
+        ScriptTerminalState::Failed,
+        ScriptTerminalState::Cancelled,
+    ] {
+        let receipt = ScriptLifecycleReceipt {
+            runtime_generation: 1,
+            state,
+            tick: 35,
+            reason: "oracle regression".to_owned(),
+        };
+        assert_eq!(
+            completed_lifecycle(Some(&receipt)),
+            state == ScriptTerminalState::Completed,
+        );
+    }
 }
 
 fn native_status_receipt(status: Option<&ScriptStatus>) -> Value {
@@ -475,17 +794,19 @@ fn live_quester_families_expected_combat() {
         Some(FixtureLoadout::Path("family_melee")),
         Arc::clone(&selected),
     );
+    let query_baseline =
+        insert_quest_stage_query(&mut cell, "getvar desertrescue", DESERT_STAGE_REPLY, None);
     let start_seed = seed;
     let start_selected = Arc::clone(&selected);
     cell.observe_start = Some(Box::new(move |snapshot| {
         let seed_receipt = start_seed.observe_start(snapshot)?;
         let here = common_observe_start(snapshot, DESERT_STAND)?;
-        if quest_varp_id >= 0 && varp_value(snapshot, quest_varp_id) != Some(3) {
-            return Err(format!(
-                "desertrescue fixture varp {quest_varp_id} was {:?}, expected 3",
-                varp_value(snapshot, quest_varp_id)
-            ));
-        }
+        let stage_witness = quest_stage_witness(
+            snapshot.chat_lines(),
+            query_baseline.load(Ordering::Relaxed),
+            DESERT_STAGE_REPLY,
+        )
+        .ok_or("Tourist Trap fixture needs a fresh server reply: get desertrescue: 3")?;
         let local = snapshot
             .local_player()
             .ok_or("pre-Start combat snapshot has no local player")?;
@@ -499,7 +820,10 @@ fn live_quester_families_expected_combat() {
             "profile_seed": seed_receipt,
             "seed_commands": seed_commands,
             "tile": here,
-            "quest_varp": [quest_varp_id, varp_value(snapshot, quest_varp_id)],
+            "quest_varp": [quest_varp_id, 3],
+            "quest_varp_source": "post-relog getvar desertrescue",
+            "quest_varp_witness": stage_witness,
+            "client_varp_diagnostic": varp_value(snapshot, quest_varp_id),
             "local_in_combat_before_talk": local.player.actor.in_combat,
             "captain_type_id": captain_target_id,
             "stats": [
@@ -620,16 +944,18 @@ fn live_quester_families_loc_dialogue() {
         None,
         Arc::clone(&selected),
     );
+    let query_baseline =
+        insert_quest_stage_query(&mut cell, "getvar priestperil", PRIEST_STAGE_REPLY, None);
     let start_seed = seed;
     cell.observe_start = Some(Box::new(move |snapshot| {
         let seed_receipt = start_seed.observe_start(snapshot)?;
         let here = common_observe_start(snapshot, PRIEST_DOOR_STAND)?;
-        if quest_varp_id >= 0 && varp_value(snapshot, quest_varp_id) != Some(1) {
-            return Err(format!(
-                "priestperil fixture varp {quest_varp_id} was {:?}, expected 1",
-                varp_value(snapshot, quest_varp_id)
-            ));
-        }
+        let stage_witness = quest_stage_witness(
+            snapshot.chat_lines(),
+            query_baseline.load(Ordering::Relaxed),
+            PRIEST_STAGE_REPLY,
+        )
+        .ok_or("Priest in Peril fixture needs a fresh server reply: get priestperil: 1")?;
         let door = snapshot
             .locs()
             .iter()
@@ -651,7 +977,10 @@ fn live_quester_families_loc_dialogue() {
             "profile_seed": seed_receipt,
             "seed_commands": seed_commands,
             "tile": here,
-            "quest_varp": [quest_varp_id, varp_value(snapshot, quest_varp_id)],
+            "quest_varp": [quest_varp_id, 1],
+            "quest_varp_source": "post-relog getvar priestperil",
+            "quest_varp_witness": stage_witness,
+            "client_varp_diagnostic": varp_value(snapshot, quest_varp_id),
             "loc": {"config": "priestperiltempledoorl", "id": door.id, "name": &door.name,
                     "tile": door.tile, "distance": door.distance, "actions": &door.actions},
         }))
@@ -686,11 +1015,9 @@ fn live_quester_families_loc_dialogue() {
     let mut dialogue_seen = Vec::new();
     let observe: ObserveFamily = Box::new(move |snapshot, status, _lifecycle| {
         remember_dialogue_texts(snapshot, &mut dialogue_seen);
-        let value = varp_value(snapshot, quest_varp_id);
-        if value != Some(2)
-            || !saw_text(&dialogue_seen, "Roald sent me to check on Drezel.")
-            || !saw_text(&dialogue_seen, "Sure.")
-        {
+        // temple_doors.rs2:79 assigns stage 2 before this branch's final line.
+        // The server never transmits priestperil, so its client cache stays 0.
+        if !priest_dialogue_witness(&dialogue_seen) || snapshot.modals().chat != -1 {
             return Ok(None);
         }
         Ok(Some(json!({
@@ -701,7 +1028,10 @@ fn live_quester_families_loc_dialogue() {
                 "Roald sent me to check on Drezel.", "Sure."
             ],
             "dialogue_text_seen": &dialogue_seen,
-            "quest_varp": [quest_varp_id, value],
+            "quest_stage": "priestperil_agree_to_kill_dog",
+            "quest_stage_source": "temple_doors.rs2:77-82",
+            "quest_stage_witness": PRIEST_DIALOGUE_COMPLETE,
+            "client_varp_diagnostic": [quest_varp_id, varp_value(snapshot, quest_varp_id)],
             "native_status": native_status_receipt(status),
         })))
     });
@@ -787,12 +1117,12 @@ fn live_quester_families_held() {
     );
     let start = family_start(document, Arc::clone(&selected), Arc::clone(&quests));
     let mut saw_retaliate_off = false;
-    let observe: ObserveFamily = Box::new(move |snapshot, status, _lifecycle| {
+    let observe: ObserveFamily = Box::new(move |snapshot, status, lifecycle| {
         let retaliate = varp_value(snapshot, script::combat::OPTION_NODEF);
         saw_retaliate_off |= retaliate == Some(1);
         let source_count = item_count(snapshot, iou_id);
         let result_count = item_count(snapshot, combination_id);
-        let path_completed = status.is_some_and(|status| status.phase == NativePhase::Complete);
+        let path_completed = completed_lifecycle(lifecycle);
         if !path_completed
             || source_count != 0
             || result_count != 1
@@ -813,6 +1143,7 @@ fn live_quester_families_held() {
             "setting": {"observed_off": saw_retaliate_off, "option_nodef_after": retaliate},
             "main_modal_after": snapshot.modals().main,
             "native_status": native_status_receipt(status),
+            "lifecycle": lifecycle,
         })))
     });
     quester_live::run_family(cell, start, observe)
@@ -824,8 +1155,9 @@ fn live_quester_families_held() {
 fn live_quester_families_ground_use_on() {
     let (selected, quests) = live_data();
     let water_id = item_id(&selected, "bucket_water");
+    let empty_bucket_id = item_id(&selected, "bucket_empty");
     let cog_id = item_id(&selected, "blackcog");
-    let (cog_varp_id, cog_varp) = quest_varp(&selected, "cog");
+    let (_, cog_varp) = quest_varp(&selected, "cog");
     assert_eq!(
         cog_varp, "~get_cog_progress",
         "selected Clock Tower varp alias"
@@ -839,12 +1171,25 @@ fn live_quester_families_ground_use_on() {
         None,
         Arc::clone(&selected),
     );
+    let query_baseline = insert_quest_stage_query(
+        &mut cell,
+        "getvar cogquest",
+        COG_STAGE_REPLY,
+        Some((cog_id, BLACKCOG_TILE)),
+    );
     let start_seed = seed;
     let observe_selected = Arc::clone(&selected);
     cell.observe_start = Some(Box::new(move |snapshot| {
         let seed_receipt = start_seed.observe_start(snapshot)?;
         let here = common_observe_start(snapshot, BLACKCOG_TILE)?;
+        let stage_witness = quest_stage_witness(
+            snapshot.chat_lines(),
+            query_baseline.load(Ordering::Relaxed),
+            COG_STAGE_REPLY,
+        )
+        .ok_or("Clock Tower fixture needs a fresh server reply: get cogquest: 1")?;
         require_item(snapshot, water_id, 1, "bucket_water")?;
+        require_item(snapshot, empty_bucket_id, 0, "bucket_empty")?;
         require_item(snapshot, cog_id, 0, "blackcog")?;
         // Selected R289 exports blackcog's exact item identity but no
         // source-map spawn row. Fail closed unless the real pre-Start scene
@@ -870,7 +1215,10 @@ fn live_quester_families_ground_use_on() {
             "profile_seed": seed_receipt,
             "seed_commands": seed_commands,
             "tile": here,
-            "quest_varp": [cog_varp_id, if cog_varp_id >= 0 { varp_value(snapshot, cog_varp_id) } else { None }],
+            "quest_progress": 1,
+            "quest_varp_config": "cogquest",
+            "quest_varp_source": "post-relog getvar cogquest",
+            "quest_varp_witness": stage_witness,
             "bucket_water": {"id": water_id, "count": item_count(snapshot, water_id)},
             "target": {"config": "blackcog", "id": ground.def.id, "count": ground.count,
                        "tile": ground.tile, "distance": ground.distance, "actions": &ground.actions},
@@ -896,8 +1244,8 @@ fn live_quester_families_ground_use_on() {
                     "dialogue": "continue"
                 }),
                 false,
-                empty_any(),
-                empty_all(),
+                fact("has_item", json!({"obj": "bucket_empty"})),
+                fact("has_item", json!({"obj": "bucket_empty"})),
             ),
             step(
                 "take-blackcog",

@@ -58,14 +58,68 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.7` 
   discarded the error and the bot saw a plain end of stream.
 - HTTPS configuration-generation observer arguments compile only with
   `test-support`; feature-off builds contain no placeholder observer arguments.
+### Panel and terminal app
+
+- Source builds can now omit the JavaScript runtime with
+  `--no-default-features`. These builds keep Gatherer, Grinch and Quester,
+  their settings, and native Start, Pause, Stop and paint controls. They do
+  not offer Load, Reload, catalog or rs2b0t profile import. Default builds
+  still include JavaScript. Sherlock needs the JS-runtime build until its
+  native clue rewrite, although Sherlock itself creates no V8 isolate.
+- The terminal app's script pane now marks the selected compiled (native)
+  script card with `>` the same way as a selected JavaScript card.
 
 ### Combat
 
+- Bots now drink their boost potion before the first hit even when the target
+  starts out of reach.
 - Bots now know how hard common monsters such as cows, chickens, rats and
   imps hit. The eat line and the no-food stop line follow each monster's
   real max hit. A cow's max hit is 1, so a bot eats at 3 hitpoints and
   stops for lack of food at 2. Imps cannot damage the bot at all (max hit
   0), so the bot does not raise Protect from Melee against them.
+- When a quest fight cannot attack its attacker, the bot now asks the route
+  planner for a safe place to walk to. It offers the quest's own stand first,
+  then places beyond the attacker's chase range, then places that are only
+  farther away. The planner picks the nearest place it can reach. Before, the
+  bot could pick a spot it could not reach, stand still, eat all its food and
+  die. The static hostile tree near Draynor Manor is one such attacker. If a
+  route fails, the bot plans again from where it stands and prefers the next
+  kind of place. A route that neither arrives nor fails also ends: the bot
+  counts game ticks, and when the walk takes longer than the measured walk
+  distance plus a margin of 12 ticks, it gives up on that route and starts
+  the next. When the walk distance cannot be measured, the limit is the
+  planner's own limit on route length, and the walk machine's ten-minute
+  deadline ends the walk first. A pass makes one request for each kind of
+  place that has candidates, so up to three requests (two when the quest
+  names no stand). The places of different kinds can overlap. A second pass
+  can follow the first when the food runs out, so the bot makes at most six
+  requests. While food remains, the first pass keeps eating as it walks; the
+  second pass, after the food is gone, does not eat. The quest's own walk
+  starts only after the bot sees that the attacker is gone. If every route
+  fails, the quest stops with the last route failure. This does not promise
+  that an escape exists.
+
+### Navigation
+
+- Bots now wait and try again when another player is using a shortcut,
+  instead of giving up. The Yanille dungeon ledge ("The ledge is being
+  used") stays held for at most 9 game ticks after a refusal, so the bot
+  waits that long and crosses again. A busy rope swing works the same way
+  with a wait of 5 game ticks. The bot stops after 60 game ticks in total
+  for one crossing (refused tries, waits, the crossing itself and the pause
+  after landing) and never tries again after that limit. The failure then
+  reports how many times it tried and the last refusal.
+  Transport time limits now count game ticks instead of polls, so a burst
+  of polls inside one tick no longer ends a crossing early, and a slow
+  poll that misses several ticks no longer extends it.
+
+### Scripting
+
+- The script API documentation now states that moving the bot by hand during a
+  fight ends `api.combat.fight` as `aborted` with reason `user-input`. The host
+  has settled it that way since 0.2.4; the declarations and pages still
+  described an `interrupted` result.
 
 ### Fixed during development
 

@@ -266,6 +266,7 @@ enum ScriptStartKind {
         id: script::CompiledId,
         bag: serde_json::Map<String, serde_json::Value>,
     },
+    #[cfg(feature = "js")]
     Load {
         js: String,
         shape: script_js::LoadShape,
@@ -288,6 +289,7 @@ impl ScriptStart {
         Self(ScriptStartKind::Compiled { id, bag })
     }
 
+    #[cfg(feature = "js")]
     /// Start a loaded JS/TS card.
     pub fn load(
         js: String,
@@ -1326,6 +1328,7 @@ impl<Io> OperatorSession<Io> {
         self.script_settings_logs.insert(op, audit);
     }
 
+    #[cfg(feature = "js")]
     pub(crate) fn log_legacy_script_settings(
         &mut self,
         card: &str,
@@ -2839,6 +2842,7 @@ impl<Io> OperatorSession<Io> {
         let compiled = start.is_compiled();
         match start.0 {
             ScriptStartKind::Compiled { id, bag } => play.script_start_typed(name, id, bag)?,
+            #[cfg(feature = "js")]
             ScriptStartKind::Load {
                 js,
                 shape,

@@ -504,9 +504,13 @@ The terminal is the nested `value` of the `done` envelope:
   `protectSwitches`).
 - `stopped`: `api.combat.stop()` ended it.
 - `interrupted` with `cause`: `pause` (operator Pause; the session settles
-  after Resume), `user-input` (manual movement, whether or not the bot was
-  walking), `died` (the host saw the death before Combat did; a death Combat
-  sees first is `fought` with `report.end: 'died'`) or `reconnect`.
+  after Resume), `died` (the host saw the death before Combat did; a death
+  Combat sees first is `fought` with `report.end: 'died'`) or `reconnect`.
+- manual movement mid-fight is never `done`: it cancels the session while
+  the host prepares it, once it is installed but before Combat begins, or
+  mid-fight, and the bot clears only the prayers it raised before the
+  promise settles the top-level `{ kind: 'aborted', reason: 'user-input' }`
+  (whether or not the bot was walking).
 - `refused`: the host refused the admitted request before any fight — a name
   it could not resolve, `busy`, `unavailable:<why>` (for example missing
   selected game data), or Combat refusing to begin.
@@ -515,8 +519,8 @@ The terminal is the nested `value` of the `done` envelope:
 `refused` appears at two levels, as for Gather: a top-level
 `{ kind: 'refused', reason }` is a synchronous refusal before any session
 (nothing reached the host), while `done` with `end: 'refused'` is the host
-refusing a session it had admitted. Resets, supersessions and terminations
-are `aborted`.
+refusing a session it had admitted. Resets, supersessions, terminations and
+manual moves are `aborted`.
 
 ### Lifecycle and prayer ownership
 
@@ -535,9 +539,11 @@ The session follows the native combat prayer ownership rules
   Combat begins, or mid-fight. Manual movement counts whether or not the bot is
   walking; with “Pause script on manual movement” on, the script is also
   paused. On the next eligible tick (after Resume for a Pause, in the new
-  session for a reconnect) the bot turns off the prayers it raised, then the
-  session settles `interrupted` with that cause. A session cancelled before
-  Combat began raised nothing, so nothing is clicked.
+  session for a reconnect) the bot turns off the prayers it raised. A Pause or
+  a reconnect then settles `interrupted` with that cause; a manual move
+  revokes the session, so the promise settles `aborted` with reason
+  `user-input`. A session cancelled before Combat began raised nothing, so
+  nothing is clicked.
 - Death retires the obligation (the game cleared every prayer), so nothing is
   clicked afterwards, even if the user turns a prayer on after respawning.
 - `api.combat.stop()`, operator Stop and any script stop end the session at
