@@ -770,6 +770,8 @@ check(
         }) === 'nearest-fallback',
     'root bank helper exports mismatch'
 );
+// Upstream `rs2b0t/src/bot/api/trade/drivePartnerTrade.ts:77-90` reads the live screen;
+// `GatheringBotTasks.ts:482,557` call it without a state argument.
 const tradeState = globalThis.__rs2b0t_partner_trade;
 check(
     tradeState('tradeScreenState') === 'closed',
