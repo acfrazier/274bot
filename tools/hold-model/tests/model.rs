@@ -134,22 +134,26 @@ fn a_paused_dialogue_loses_a_tick_bounded_gap_hold() {
 /// A known limit, finding F2: the journal read sends its click in a frame
 /// where the lease's own 10 s wall bound passes between the owner's poll and
 /// the host's sample. The hold ends in the same frame and the press follows
-/// the click.
+/// the click. The read needs a pause first: its own bound on the active clock
+/// (8 s) is shorter than the wall bound (10 s), unless the clock stopped.
 #[test]
 fn the_journal_click_can_lose_its_hold_to_the_wall_bound_in_its_own_frame() {
     let model = model();
     let mut state = model.initial_state();
-    let frames = [
-        frame(true, false, true, OwnerAct::Begin(Begin::Quiet)),
-        frame(false, false, true, OwnerAct::NoPoll),
-        frame(false, false, true, OwnerAct::NoPoll),
+    let steps = [
+        frame(true, false, false, OwnerAct::Begin(Begin::Quiet)),
+        Action::Pause,
+        Action::Wait,
+        Action::Wait,
+        Action::Wait,
+        Action::Resume,
         frame(false, true, true, OwnerAct::Poll),
     ];
-    for (index, action) in frames.iter().enumerate() {
+    for (index, action) in steps.iter().enumerate() {
         match model.step_detail(&state, action) {
             Ok((next, _)) => state = next,
             Err(violation) => {
-                assert_eq!(index, 3);
+                assert_eq!(index, 6);
                 assert_eq!(violation.name, "S6-press-after-send");
                 return;
             }
