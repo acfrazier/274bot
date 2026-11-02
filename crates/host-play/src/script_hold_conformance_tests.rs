@@ -316,7 +316,7 @@ impl Rig {
         let probe_scripts = Arc::clone(&self.scripts);
         let probe_control = Arc::clone(&self.control);
 
-        let run_policy = Host::run_client(
+        let _final_policy = Host::run_client(
             &mut self.client,
             "alice",
             vault::ProfileSettings::default(),
@@ -440,7 +440,6 @@ impl Rig {
             },
             |_: &api::DetectedRandom| RandomClaim::Host,
         );
-        drop(run_policy);
         let seen = seen.lock().unwrap();
         assert_eq!(seen.len(), frames.len() + 1, "every frame was observed");
         // `seen[i + 1].0` is the press count when frame `i + 1` began: frame
