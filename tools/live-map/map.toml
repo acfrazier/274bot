@@ -362,6 +362,16 @@ cells = [
   "scenario.gatherer-live|LIVE=1 BOT_LIVE_NAME_PREFIX=${BOT_LIVE_NAME_PREFIX:?} BOT_CPU=1 BOT_NAV_BUILD=skip BOT_GAME_PORT=44594 BOT_HTTP_PORT=1080 ENGINE_DIR=${ENGINE_A_DIR:?} NAV_PACK=${NAV_PACK_289:?} NAV_FLAGS=${NAV_FLAGS_289:?} WORLD_ENGINE_DIR=${ENGINE_A_DIR:?} WORLD_NAV_PACK=${NAV_PACK_289:?} RS2B0T=${CATALOG_ROOT:?} CATALOG_ROOT=${CATALOG_ROOT:?} LIVE_EVIDENCE_DIR=${LIVE_EVIDENCE_DIR:?} ${ISOHOME:?} nice -n 10 cargo run --release -p tui --bin tui-play -- --profile local-289 --revision 289 --host 127.0.0.1 --port 44594 --asset-host 127.0.0.1 --http-port 1080 --engine ${ENGINE_A_DIR:?} --nav-pack ${NAV_PACK_289:?} --nav-flags ${NAV_FLAGS_289:?} --catalog ${CATALOG_ROOT:?} --live script_gatherer|--locked -p scenario --lib scenarios::gatherer::tests::start_stands_in_draynor_with_a_proved_tree_in_reach"
 ]
 
+# The death-recovery return: a real death, a real respawn and the walk back
+# to the gathering area. The bank-cost and scenario cells above never die;
+# this cell kills the account twice and requires fresh products and XP after
+# each recovery. See README.md "Death recovery".
+[[cover]]
+globs = ["crates/script/src/gatherer/runner.rs", "crates/script/src/gatherer/recover.rs", "crates/script/src/gatherer/mod.rs"]
+cells = [
+  "host.gatherer-death-return|LIVE=1 BOT_LIVE_NAME_PREFIX=${BOT_LIVE_NAME_PREFIX:?} BOT_CPU=1 BOT_NAV_BUILD=skip GATHERER_GAME_PORT=44594 GATHERER_HTTP_PORT=1080 GATHERER_NAV_PACK=${NAV_PACK_289:?} GATHERER_NAV_FLAGS=${NAV_FLAGS_289:?} GATHERER_ENGINE_DIR=${ENGINE_A_DIR:?} GATHERER_CATALOG_ROOT=${CATALOG_ROOT:?} GATHERER_WC_BANK_TILE=3017,3170,0 BOT_CACHE_DIR=${BOT_CACHE_DIR:?} CLIENT_UNPACK_DIR=${CLIENT_UNPACK_DIR:?} LIVE_EVIDENCE_DIR=${LIVE_EVIDENCE_DIR:?} ${ISOHOME:?} nice -n 10 cargo test --locked -p host-play --features live-harness,test-support,live-probe --test gatherer_live -- --ignored --exact gatherer_death_return --nocapture --test-threads=1",
+]
+
 # The four-account Kalphite Queen fleet witness and its coordinated
 # finish live in pair.rs (the KQ parts); the jive-kq cell is the live
 # proof for them. INT-BATCH-1024E found the map selected no cell for a

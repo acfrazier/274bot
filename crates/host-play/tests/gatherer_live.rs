@@ -28,8 +28,7 @@
 //! precede the progression baseline; proof gains come from the running script.
 //! G4a cells exercise guardian-owned random-event holds and verified death
 //! recovery, including terminal return refusals and watchdog recreation;
-//! they require the
-//! `BOT_LIVE_NAME_PREFIX=g4a` namespace.
+//! each requires an own `BOT_LIVE_NAME_PREFIX`, like the other live cells.
 //! Fixture helpers alter locations only; they never inject products or XP.
 //! Every live account uses the configured `BOT_LIVE_NAME_PREFIX` and a
 //! suffix. Each cell uses an isolated HOME plus absolute paths for
@@ -5959,9 +5958,9 @@ fn run_cell(cell: Cell, case: LiveCase) -> Result<(), String> {
         );
     }
     if (case == LiveCase::RandomEvent || case.is_death_recovery())
-        && std::env::var("BOT_LIVE_NAME_PREFIX").as_deref() != Ok("g4a")
+        && std::env::var_os("BOT_LIVE_NAME_PREFIX").is_none()
     {
-        return Err("G4a live cells require BOT_LIVE_NAME_PREFIX=g4a".into());
+        return Err("G4a live cells require an own BOT_LIVE_NAME_PREFIX".into());
     }
     let cell_name = cell.name_for_case(case);
     let _home = script::IsolatedEnv::enter(cell_name);
@@ -8044,7 +8043,7 @@ fn gatherer_bank_reconnect_return() {
     run_cell(Cell::Woodcutting, LiveCase::ReconnectReturn).unwrap();
 }
 #[test]
-#[ignore = "requires LIVE=1, BOT_LIVE_NAME_PREFIX=g4a, GATHERER_WC_TILE, and local 289 engine"]
+#[ignore = "requires LIVE=1, an own BOT_LIVE_NAME_PREFIX, GATHERER_WC_TILE, and local 289 engine"]
 fn gatherer_random() {
     run_cell(Cell::Woodcutting, LiveCase::RandomEvent).unwrap();
 }
@@ -8067,39 +8066,39 @@ fn maze_random_complete(witness: &Witness) -> bool {
 }
 
 #[test]
-#[ignore = "requires LIVE=1, BOT_LIVE_NAME_PREFIX=g4a, GATHERER_WC_BANK_TILE, and local 289 engine"]
+#[ignore = "requires LIVE=1, an own BOT_LIVE_NAME_PREFIX, GATHERER_WC_BANK_TILE, and local 289 engine"]
 fn gatherer_death_return() {
     run_cell(Cell::Woodcutting, LiveCase::DeathReturn).unwrap();
 }
 
 #[test]
-#[ignore = "requires LIVE=1, BOT_LIVE_NAME_PREFIX=g4a, and local 289 engine; defaults to the Lumbridge respawn-region fixture"]
+#[ignore = "requires LIVE=1, an own BOT_LIVE_NAME_PREFIX, and local 289 engine; defaults to the Lumbridge respawn-region fixture"]
 fn gatherer_death_return_respawn_region() {
     run_cell(Cell::Woodcutting, LiveCase::DeathRespawnRegion).unwrap();
 }
 
 #[test]
-#[ignore = "requires LIVE=1, BOT_LIVE_NAME_PREFIX=g4a, and local 289 engine"]
+#[ignore = "requires LIVE=1, an own BOT_LIVE_NAME_PREFIX, and local 289 engine"]
 fn gatherer_death_return_no_stock() {
     run_cell(Cell::Woodcutting, LiveCase::DeathNoStock).unwrap();
 }
 
 #[test]
-#[ignore = "requires LIVE=1, BOT_LIVE_NAME_PREFIX=g4a, GATHERER_DEATH_RETURN_REFUSE_TILE, and local 289 engine"]
+#[ignore = "requires LIVE=1, an own BOT_LIVE_NAME_PREFIX, GATHERER_DEATH_RETURN_REFUSE_TILE, and local 289 engine"]
 fn gatherer_death_return_refused_stops() {
     run_cell(Cell::Woodcutting, LiveCase::DeathReturnRefused).unwrap();
 }
 
 #[cfg(feature = "live-probe")]
 #[test]
-#[ignore = "requires LIVE=1, BOT_LIVE_NAME_PREFIX=g4a, GATHERER_WC_BANK_TILE, live-probe, and local 289 engine"]
+#[ignore = "requires LIVE=1, an own BOT_LIVE_NAME_PREFIX, GATHERER_WC_BANK_TILE, live-probe, and local 289 engine"]
 fn gatherer_death_watchdog_pending5() {
     run_cell(Cell::Woodcutting, LiveCase::DeathWatchdogPending).unwrap();
 }
 
 #[cfg(feature = "live-probe")]
 #[test]
-#[ignore = "requires LIVE=1, BOT_LIVE_NAME_PREFIX=g4a, GATHERER_WC_BANK_TILE, live-probe, and local 289 engine"]
+#[ignore = "requires LIVE=1, an own BOT_LIVE_NAME_PREFIX, GATHERER_WC_BANK_TILE, live-probe, and local 289 engine"]
 fn gatherer_death_watchdog_proving() {
     run_cell(Cell::Woodcutting, LiveCase::DeathWatchdogProving).unwrap();
 }
