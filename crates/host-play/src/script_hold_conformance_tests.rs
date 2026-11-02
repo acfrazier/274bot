@@ -451,9 +451,9 @@ fn frames_of(model: &Model, trace: &[ModelAction], unit_ms: u64) -> (Vec<RealFra
     let mut frames = Vec::new();
     let mut expected = Vec::new();
     for action in trace {
-        let (post, info) = model
-            .step_detail(&state, action)
-            .unwrap_or_else(|v| panic!("the trace is not clean: {} {}", v.name, v.detail));
+        // A counterexample trace ends in a violating step: its state and
+        // decision still count.
+        let (post, info, _) = model.step_unchecked(&state, action);
         match action {
             ModelAction::Wait => ops.push(Op::Wait),
             ModelAction::Pause => ops.push(Op::Pause),
@@ -546,7 +546,7 @@ fn frames_of(model: &Model, trace: &[ModelAction], unit_ms: u64) -> (Vec<RealFra
 fn needs_wall_scale(model: &Model, trace: &[ModelAction]) -> bool {
     let mut state = model.initial();
     for action in trace {
-        let (post, _) = model.step_detail(&state, action).expect("clean trace");
+        let (post, _, _) = model.step_unchecked(&state, action);
         if let Lease::Quiet(q) = post.lease {
             if post.wall.saturating_sub(q.since) + 1 >= model.bounds.quiet_wall {
                 return true;
@@ -671,5 +671,40 @@ fn the_real_hold_matches_the_model_on_the_shortest_trace_of_each_release() {
             releases.iter().any(|((k, _), _)| *k == kind),
             "the model reaches releases of {kind:?}"
         );
+    }
+}
+
+/// Finding F1 of the model at the head commit: an acknowledgement wait that
+/// the owner leaves unpolled past its bound is ended by the host, and the
+/// end gap that follows is the same lease renewed, so the host does not hold
+/// it. The model's counterexample ends in a press while the gap lease is
+/// live. The real code must decide the same at every frame, the press
+/// included. This test records the defect; it fails when the product ends it.
+#[test]
+fn the_end_gap_hold_defect_of_the_model_reproduces_on_the_real_code() {
+    let bounds = Bounds {
+        quiet: false,
+        ..conformance_bounds()
+    };
+    let run = hold_model::explore_profile(
+        &hold_model::Profile {
+            name: "conformance-modal",
+            bounds,
+        },
+        Mutation::None,
+        Some(bounds.horizon),
+        hold_model::Limits::default(),
+        true,
+    );
+    let model = Model::new(bounds, Mutation::None);
+    for name in ["S1-press-while-live", "S4-released-state-carried"] {
+        let (_, trace) = run
+            .failures
+            .iter()
+            .find(|(violation, _)| violation.name == name)
+            .unwrap_or_else(|| panic!("the model finds {name}"));
+        let (held, pressed) = check_trace(&model, trace)
+            .unwrap_or_else(|report| panic!("{name}: the real code differs from the model: {report}"));
+        assert!(held > 0 && pressed > 0, "{name}: the counterexample holds, then presses");
     }
 }

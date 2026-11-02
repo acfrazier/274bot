@@ -1083,7 +1083,7 @@ impl Model {
 
     // ---- one frame ----
 
-    fn frame(&self, pre: &State, f: FrameInput, info: &mut Info) -> Result<State, Violation> {
+    fn frame(&self, pre: &State, f: FrameInput, info: &mut Info) -> (State, Option<Violation>) {
         let mut s = pre.clone();
         let owed_stop = std::mem::take(&mut s.stopped_since_frame);
         let old_txn = s.txn;
@@ -1168,8 +1168,10 @@ impl Model {
             s.run_on = true;
             info.pressed = true;
         }
-        self.check_frame(&s, info, old_txn, owed_stop || boundary || death_cancel)?;
-        Ok(s)
+        let violation = self
+            .check_frame(&s, info, old_txn, owed_stop || boundary || death_cancel)
+            .err();
+        (s, violation)
     }
 
     // ---- the other actions ----
@@ -1236,14 +1238,25 @@ impl Model {
         s
     }
 
+    /// One transition with its observation record, and the violation that it
+    /// proves, if any. A violating transition still returns its state and
+    /// record: the conformance test needs the model's decision at the
+    /// frame of a counterexample.
+    pub fn step_unchecked(&self, pre: &State, action: &Action) -> (State, Info, Option<Violation>) {
+        let mut info = Info::default();
+        let (next, violation) = match action {
+            Action::Frame(f) => self.frame(pre, *f, &mut info),
+            other => (self.other(pre, *other, &mut info), None),
+        };
+        (next, info, violation)
+    }
+
     /// One transition with its observation record.
     pub fn step_detail(&self, pre: &State, action: &Action) -> Result<(State, Info), Violation> {
-        let mut info = Info::default();
-        let next = match action {
-            Action::Frame(f) => self.frame(pre, *f, &mut info)?,
-            other => self.other(pre, *other, &mut info),
-        };
-        Ok((next, info))
+        match self.step_unchecked(pre, action) {
+            (next, info, None) => Ok((next, info)),
+            (_, _, Some(violation)) => Err(violation),
+        }
     }
 
     fn frames(&self, s: &State, out: &mut Vec<Action>) {
