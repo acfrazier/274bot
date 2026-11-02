@@ -529,3 +529,103 @@ cells = [
   "scenario.chicken-killer-live|LIVE=1 BOT_LIVE_NAME_PREFIX=${BOT_LIVE_NAME_PREFIX:?} BOT_CPU=1 BOT_NAV_BUILD=skip BOT_GAME_PORT=44594 BOT_HTTP_PORT=1080 ENGINE_DIR=${ENGINE_A_DIR:?} NAV_PACK=${NAV_PACK_289:?} NAV_FLAGS=${NAV_FLAGS_289:?} WORLD_ENGINE_DIR=${ENGINE_A_DIR:?} WORLD_NAV_PACK=${NAV_PACK_289:?} RS2B0T=${CATALOG_ROOT:?} CATALOG_ROOT=${CATALOG_ROOT:?} LIVE_EVIDENCE_DIR=${LIVE_EVIDENCE_DIR:?} ${ISOHOME:?} nice -n 10 cargo run --release -p tui --bin tui-play -- --profile local-289 --revision 289 --host 127.0.0.1 --port 44594 --asset-host 127.0.0.1 --http-port 1080 --engine ${ENGINE_A_DIR:?} --nav-pack ${NAV_PACK_289:?} --nav-flags ${NAV_FLAGS_289:?} --catalog ${CATALOG_ROOT:?} --live script_chicken_killer|--locked -p scenario --lib gold_scripts_start_the_catalog_after_the_last_seed_wait",
   "host.api-combat-native-lines|LIVE=1 BOT_LIVE_NAME_PREFIX=${BOT_LIVE_NAME_PREFIX:?} BOT_CPU=1 BOT_NAV_BUILD=skip BOT_GAME_PORT=44594 BOT_HTTP_PORT=1080 BOT_NAV_PACK=${NAV_PACK_289:?} BOT_ENGINE_DIR=${ENGINE_A_DIR:?} BOT_CACHE_DIR=${BOT_CACHE_DIR:?} CLIENT_UNPACK_DIR=${CLIENT_UNPACK_DIR:?} LIVE_EVIDENCE_DIR=${LIVE_EVIDENCE_DIR:?} ${ISOHOME:?} nice -n 10 cargo test --locked -p host-play --features live-harness,test-support,live-probe --lib -- --ignored --exact api_combat_live_tests::live_api_combat_native_lines_skip_zero_danger_and_hold_the_cow_food_line --nocapture --test-threads=1",
 ]
+
+# Compatibility-family imports and the host runtime wiring they cross. The
+# three Engine L cells exercise the selected real surfaces; the load cells
+# check the shared runtime/import path.
+[[cover]]
+globs = [
+  "crates/script-js/Cargo.toml",
+  "crates/script-js/compat-js/abi-contract.json",
+  "crates/script-js/compat-js/family-predecessors.json",
+  "crates/script-js/compat-js/index.d.ts",
+  "crates/script-js/compat-js/modules.json",
+  "crates/script-js/compat-js/overlay-native.json",
+  "crates/script-js/compat-js/overlay-not-impl.json",
+  "crates/script-js/compat-js/overlay.json",
+  "crates/script-js/host-js/index.d.ts",
+  "crates/script-js/schema/generated/isolate_generated.rs",
+  "crates/script-js/schema/isolate.fbs",
+  "crates/script-js/src/library/library_tests.rs",
+  "crates/script-js/src/machine/mod.rs",
+  "crates/script-js/src/runtime/bindings.rs",
+  "crates/script-js/src/runtime/isolate.rs",
+  "crates/script-js/src/runtime/isolate/thread.rs",
+  "crates/script-js/src/shim/declared_surface.js",
+  "crates/script-js/src/shim/mod.rs",
+  "crates/script-js/src/shim/source_catalog.rs",
+  "crates/script-js/src/surface.rs",
+  "crates/script-js/src/tooling/declared_abi.rs",
+  "crates/host-play/src/lib.rs",
+  "crates/host-play/src/play_scripts.rs",
+  "crates/host-play/src/script_runtime.rs",
+  "crates/host-play/src/script_snapshot.rs",
+  "crates/script/src/surface.rs",
+]
+cells = [
+  "compat_v1_walking_probeable|LIVE=1 BOT_LIVE_NAME_PREFIX=${BOT_LIVE_NAME_PREFIX:?} BOT_CPU=1 BOT_NAV_BUILD=skip WORLD_ENGINE_DIR=${ENGINE_A_DIR:?} WORLD_NAV_PACK=${NAV_PACK_289:?} BOT_CACHE_DIR=${BOT_CACHE_DIR:?} RS2B0T=${CATALOG_ROOT:?} COMPAT_W2_PRODUCT_COMMIT=af0be9662 LIVE_EVIDENCE_DIR=${LIVE_EVIDENCE_DIR:?} ${ISOHOME:?} nice -n 10 cargo test --locked -p host-play --features live-harness,test-support,live-probe --test compat_v1_walking_live -- --ignored --exact compat_v1_walking_probeable --nocapture --test-threads=1",
+  "compat_v1_shop_buy_by_id_engine_l|LIVE=1 BOT_LIVE_NAME_PREFIX=${BOT_LIVE_NAME_PREFIX:?} BOT_CPU=1 BOT_NAV_BUILD=skip WORLD_ENGINE_DIR=${ENGINE_A_DIR:?} WORLD_NAV_PACK=${NAV_PACK_289:?} BOT_CACHE_DIR=${BOT_CACHE_DIR:?} RS2B0T=${CATALOG_ROOT:?} COMPAT_W2_PRODUCT_COMMIT=af0be9662 LIVE_EVIDENCE_DIR=${LIVE_EVIDENCE_DIR:?} ${ISOHOME:?} nice -n 10 cargo test --locked -p host-play --features live-harness,test-support,live-probe --test compat_v1_shop_trade_live -- --ignored --exact compat_v1_shop_buy_by_id_engine_l --nocapture --test-threads=1",
+  "compat_v1_trade_engine_l|LIVE=1 BOT_LIVE_NAME_PREFIX=${BOT_LIVE_NAME_PREFIX:?} BOT_CPU=1 BOT_NAV_BUILD=skip WORLD_ENGINE_DIR=${ENGINE_A_DIR:?} WORLD_NAV_PACK=${NAV_PACK_289:?} BOT_CACHE_DIR=${BOT_CACHE_DIR:?} RS2B0T=${CATALOG_ROOT:?} COMPAT_W2_PRODUCT_COMMIT=af0be9662 LIVE_EVIDENCE_DIR=${LIVE_EVIDENCE_DIR:?} ${ISOHOME:?} nice -n 10 cargo test --locked -p host-play --features live-harness,test-support,live-probe --test compat_v1_trade_live -- --ignored --exact compat_v1_trade_engine_l --nocapture --test-threads=1",
+  "host.script-runtime-load|LIVE=1 BOT_LIVE_NAME_PREFIX=${BOT_LIVE_NAME_PREFIX:?} BOT_CPU=1 BOT_NAV_BUILD=skip BOT_GAME_PORT=44594 BOT_HTTP_PORT=1080 WORLD_ENGINE_DIR=${ENGINE_A_DIR:?} WORLD_NAV_PACK=${NAV_PACK_289:?} NAV_PACK=${NAV_PACK_289:?} NAV_FLAGS=${NAV_FLAGS_289:?} BOT_CACHE_DIR=${BOT_CACHE_DIR:?} BOT_EVIDENCE_DIR=${LIVE_EVIDENCE_DIR:?} ${ISOHOME:?} nice -n 10 cargo test --locked -p host-play --features live-harness,test-support,live-probe --test script_api_live -- --ignored --exact script_runtime_load --nocapture --test-threads=1",
+  "script.load-headless|${ISOHOME:?} nice -n 10 cargo test --locked -p script-js --lib",
+]
+
+# The walking witness checks the production v17 wilderness handoff, probeDest,
+# Traversal's current-tile walk path, and live scene availability.
+[[cover]]
+globs = [
+  "crates/host-play/src/play_bootstrap.rs",
+  "crates/host-play/src/route_inspect.rs",
+  "crates/nav-planner/src/world.rs",
+  "crates/script-js/src/compat/boat_fare.rs",
+  "crates/script-js/src/compat/walk.rs",
+  "crates/script-js/src/scene/inspect_wait.rs",
+  "crates/script-js/src/scene/observed.rs",
+  "crates/script-js/src/scene/walk_wait.rs",
+  "crates/script-js/src/shim/navigator.js",
+  "crates/script-js/src/shim/reachability.js",
+  "crates/script-js/src/shim/regions.js",
+  "crates/script-js/src/shim/traversal.js",
+  "crates/script-js/src/shim/walk_destinations.js",
+  "crates/script-js/src/shim/walk_executor.js",
+  "crates/script-js/src/shim/wilderness.js",
+  "crates/script/src/native/walk.rs",
+  "crates/script/src/native/walk_wait.rs",
+]
+cells = [
+  "compat_v1_walking_probeable|LIVE=1 BOT_LIVE_NAME_PREFIX=${BOT_LIVE_NAME_PREFIX:?} BOT_CPU=1 BOT_NAV_BUILD=skip WORLD_ENGINE_DIR=${ENGINE_A_DIR:?} WORLD_NAV_PACK=${NAV_PACK_289:?} BOT_CACHE_DIR=${BOT_CACHE_DIR:?} RS2B0T=${CATALOG_ROOT:?} COMPAT_W2_PRODUCT_COMMIT=af0be9662 LIVE_EVIDENCE_DIR=${LIVE_EVIDENCE_DIR:?} ${ISOHOME:?} nice -n 10 cargo test --locked -p host-play --features live-harness,test-support,live-probe --test compat_v1_walking_live -- --ignored --exact compat_v1_walking_probeable --nocapture --test-threads=1",
+  "nav.route-search-live|LIVE=1 BOT_LIVE_NAME_PREFIX=${BOT_LIVE_NAME_PREFIX:?} BOT_CPU=1 BOT_NAV_BUILD=skip BOT_GAME_PORT=44594 BOT_HTTP_PORT=1080 ENGINE_DIR=${ENGINE_A_DIR:?} NAV_PACK=${NAV_PACK_289:?} NAV_FLAGS=${NAV_FLAGS_289:?} WORLD_ENGINE_DIR=${ENGINE_A_DIR:?} WORLD_NAV_PACK=${NAV_PACK_289:?} RS2B0T=${CATALOG_ROOT:?} CATALOG_ROOT=${CATALOG_ROOT:?} LIVE_EVIDENCE_DIR=${LIVE_EVIDENCE_DIR:?} ${ISOHOME:?} nice -n 10 cargo run --release -p tui --bin tui-play -- --profile local-289 --revision 289 --host 127.0.0.1 --port 44594 --asset-host 127.0.0.1 --http-port 1080 --engine ${ENGINE_A_DIR:?} --nav-pack ${NAV_PACK_289:?} --nav-flags ${NAV_FLAGS_289:?} --catalog ${CATALOG_ROOT:?} --live script_nav_routes|--locked -p scenario --lib tests::nav_routes_is_ten_borrowed_ods_with_item_seed",
+]
+
+# Exact buy-by-id price, stock, slot and machine behavior on Engine L.
+[[cover]]
+globs = [
+  "crates/api/src/shop_facts.rs",
+  "crates/script/src/registry.rs",
+  "crates/script/src/slot/shop.rs",
+  "crates/script-js/src/shim/shop_price.js",
+  "crates/script-js/src/shim/stock_model.js",
+]
+cells = [
+  "compat_v1_shop_buy_by_id_engine_l|LIVE=1 BOT_LIVE_NAME_PREFIX=${BOT_LIVE_NAME_PREFIX:?} BOT_CPU=1 BOT_NAV_BUILD=skip WORLD_ENGINE_DIR=${ENGINE_A_DIR:?} WORLD_NAV_PACK=${NAV_PACK_289:?} BOT_CACHE_DIR=${BOT_CACHE_DIR:?} RS2B0T=${CATALOG_ROOT:?} COMPAT_W2_PRODUCT_COMMIT=af0be9662 LIVE_EVIDENCE_DIR=${LIVE_EVIDENCE_DIR:?} ${ISOHOME:?} nice -n 10 cargo test --locked -p host-play --features live-harness,test-support,live-probe --test compat_v1_shop_trade_live -- --ignored --exact compat_v1_shop_buy_by_id_engine_l --nocapture --test-threads=1",
+]
+
+# Native trade polling and the cached stableClosedPoll wrapper run on two
+# real Engine L accounts.
+[[cover]]
+globs = [
+  "crates/script/src/native/snapshot_source.rs",
+  "crates/script/src/trade_screen.rs",
+  "crates/script-js/src/materialize/partner_trade_v8.rs",
+  "crates/script-js/src/shim/drive_partner_trade.js",
+]
+cells = [
+  "compat_v1_trade_engine_l|LIVE=1 BOT_LIVE_NAME_PREFIX=${BOT_LIVE_NAME_PREFIX:?} BOT_CPU=1 BOT_NAV_BUILD=skip WORLD_ENGINE_DIR=${ENGINE_A_DIR:?} WORLD_NAV_PACK=${NAV_PACK_289:?} BOT_CACHE_DIR=${BOT_CACHE_DIR:?} RS2B0T=${CATALOG_ROOT:?} COMPAT_W2_PRODUCT_COMMIT=af0be9662 LIVE_EVIDENCE_DIR=${LIVE_EVIDENCE_DIR:?} ${ISOHOME:?} nice -n 10 cargo test --locked -p host-play --features live-harness,test-support,live-probe --test compat_v1_trade_live -- --ignored --exact compat_v1_trade_engine_l --nocapture --test-threads=1",
+]
+
+# This real memory-profile cell crosses the host's per-slot measurements.
+[[cover]]
+globs = ["crates/host-play/src/memory.rs"]
+cells = [
+  "host.api-gather-wire-shadow|LIVE=1 BOT_LIVE_NAME_PREFIX=${BOT_LIVE_NAME_PREFIX:?} BOT_CPU=1 BOT_NAV_BUILD=skip BOT_GAME_PORT=44594 BOT_HTTP_PORT=1080 GATHERER_NAV_PACK=${NAV_PACK_289:?} GATHERER_NAV_FLAGS=${NAV_FLAGS_289:?} GATHERER_ENGINE_DIR=${ENGINE_A_DIR:?} GATHERER_WC_TILE=3197,3209,0 BOT_CACHE_DIR=${BOT_CACHE_DIR:?} BOT_EVIDENCE_DIR=${LIVE_EVIDENCE_DIR:?} ${ISOHOME:?} nice -n 10 cargo test --locked -p host-play --features live-harness,test-support,live-probe,memory-profile --lib -- --ignored --exact api_gather_live_tests::live_gather_api_receipt_tracks_memory_reconnect_and_wire_shadow --nocapture --test-threads=1",
+]
