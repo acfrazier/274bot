@@ -170,15 +170,15 @@ It asks the current product planner and admission code to evaluate each candidat
 The result reports the first admitted lobster count and the product refusal below it.
 It also reports the declared-zone result and the ungranted survivability result.
 The ungranted result uses no danger grants.
-Do not use declared-zone admission as proof that the crossing is survivable.
-Current product admission can accept a fully granted crossing even when its risk assessment refuses it.
+Declared zones permit route planning through those zones; they do not bypass risk.
+Both results still require a survivable product risk assessment.
 
 The crossing result is a product admission verdict.
 It does not contain a statistical death probability.
 It does not replace the product risk replay with the fight solver.
-The current risk input uses the worn shield flag but not other worn armour.
-Defence does not enter the risk input directly.
-Defence can affect route planning through combat-level exemptions.
+The risk input uses the queried Defence and the worn kit's signed stab, slash, crush, and ranged defence bonuses.
+Only the selected anti-dragon shield sets the dragonfire shield flag; a rune kiteshield does not.
+Defence also affects route planning through combat-level exemptions.
 Unknown facts remain unknown and do not become zero risk.
 When `lobster_search_limit` is absent, the tool retains the original level search without food.
 
@@ -235,4 +235,4 @@ Paths below are relative to the lostcity-289 content or engine roots.
 - `engine/src/engine/script/handlers/PlayerOps.ts:359-379,591-600`: arrival delay, `p_delay`, and `STAT_RANDOM`.
 - `content/scripts/skill_combat/scripts/combat.rs2:14-39,63-71`, `configs/combat.dbrow:140-148`, `content/scripts/player/scripts/equip.rs2:244-285`, and `player_melee.rs2:52-57`: unarmed styles, crush damage, zero worn bonuses, and attack interval.
 - Product `crates/host-play/src/admission.rs:419-420`: crossing admission accepts a survivable assessment.
-- Product `crates/script/src/combat/risk/replay.rs:1124`: a fully granted route returns as survivable.
+- Product `crates/script/src/combat/risk/replay.rs`: named zone grants do not bypass the survivability bound.

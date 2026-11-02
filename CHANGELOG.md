@@ -68,6 +68,10 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.8` 
   The tool reports unsupported combat instead of assigning a guessed seed.
 - The `seed-calc` food model supplies an empty avoid list to its food-only
   walk guard, so it builds with the current native walk request.
+- Crossing seeds now bind queried Defence and signed worn-armour bonuses to
+  the current product risk input. A rune kiteshield no longer counts as an
+  anti-dragon shield. The developer-output verdict format removes the obsolete
+  `fixable_with` kind; named zone grants still require a survivable assessment.
 - The route-corpus exporter and navigation regression fixtures now use
   stamped quest observations from the current evidence API. A stale
   observation keeps its original timestamp and does not authorize a gate.

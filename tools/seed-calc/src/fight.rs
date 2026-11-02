@@ -375,7 +375,7 @@ fn unsupported(
     if row.poison_severity != Some(0) || weapon.poisoned {
         reasons.push("poison changes survival and timing; its probability is not modelled".into());
     }
-    if let Some(unknown) = risk.unknown_for(true) {
+    if let Some(unknown) = risk.unknown_for() {
         reasons.push(format!("product risk class: {unknown:?}"));
     }
     reasons
