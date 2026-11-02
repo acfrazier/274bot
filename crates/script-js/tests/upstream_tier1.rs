@@ -860,6 +860,7 @@ export default class RefreezeProbe extends LoopingBot { loop() {} }
     let isolate = LoadIsolate::spawn_with_game_data(js, LoadShape::CompatClass, vec![], game_data)
         .expect("spawn refreeze probe with selected game data");
     let ready = wait_ready(&isolate);
+    assert!(ready.is_ok(), "initial readiness: {ready:?}");
     let inventory_rows = [ItemRowInput {
         name: Some("Shark"),
         id: 385,
