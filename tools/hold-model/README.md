@@ -151,8 +151,10 @@ LAB_HOST=chardonnay /Volumes/dev-scratch/274bot-evidence/OVERNIGHT-1027/aubaine.
 Options: `--profile NAME|all-profiles`, `--mutation NAME`, `--horizon N`,
 `--state-cap N`, `--frontier-cap N`, `--byte-cap N`, `--all-violations`. The
 exit code is 0 for a complete clean run, 1 for a violation and 3 when a cap
-stopped the run. The profiles are `smoke`, `modal`, `quiet`, `compat`, `all`
-and `alt`.
+stopped the run. The profiles are `smoke`, `modal`, `quiet`, `compat`, `all`,
+`alt` and `handoff` (an owner may begin a read in the frame that revokes the
+old one). `--mutation` takes `none`, the seven `check-*` self-checks and the
+earlier designs `m1-hold-two-ticks` to `m6-compat-no-renew`.
 
 Tests: `cargo test -p hold-model`.
 
