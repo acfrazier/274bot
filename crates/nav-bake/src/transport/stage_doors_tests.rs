@@ -2114,7 +2114,7 @@ if(~check_axis(coord, loc_coord, loc_angle) = true) { return; }
 }
 
 #[test]
-fn completed_journal_does_not_prove_exact_progress_after_a_possible_later_write() {
+fn exact_progress_after_a_possible_later_write_requires_an_observed_value() {
     for later_write in [
         "%heroquest = 16;",
         "%heroquest = calc(%heroquest + 1);",
@@ -2131,19 +2131,75 @@ p_teleport(0_44_53_5_46);
 "#,
         );
         // These later writes exceed the selected Hero domain (0..=15).
-        // An unbounded, non-authoritative colour cannot prove exact progress.
+        // Preserve the exact-value route, not a colour-only permission.
         fx.write(
             "scripts/later.rs2",
             &format!("[queue,later]\n{later_write}\n"),
         );
         with_journal_only_hero(|quests| {
             let (graph, _) = derive_entrance_fixture_with_quests(&fx, quests);
-            assert!(
-                !graph.edges.iter().any(|edge| edge.loc_id == 6000),
-                "green means at least completion, not equality: {later_write}"
-            );
+            let edges: Vec<_> = graph
+                .edges
+                .iter()
+                .filter(|edge| edge.loc_id == 6000)
+                .collect();
+            assert!(!edges.is_empty(), "observed exact progress: {later_write}");
+            for edge in edges {
+                let gates = edge.quest_gates.as_ref().expect("typed exact-value gate");
+                let [api::selected::QuestGate::Window(window)] = gates.gates() else {
+                    panic!("colour cannot prove exact progress: {gates:?}");
+                };
+                assert_eq!(window.values.min, Some(15));
+                assert_eq!(window.values.max, Some(15));
+                for (min, max, expected) in [
+                    (Some(15), Some(15), api::selected::Truth::True),
+                    (Some(16), Some(16), api::selected::Truth::False),
+                    (None, None, api::selected::Truth::Unknown),
+                ] {
+                    assert_eq!(
+                        window
+                            .values
+                            .test(&api::selected::InclusiveRange { min, max }),
+                        expected
+                    );
+                }
+            }
         });
     }
+}
+
+#[test]
+fn no_domain_completion_exit_keeps_npc_checks_universal() {
+    let fx = Fixture::new();
+    write_forced_fixture(
+        &fx,
+        r#"
+[oploc2,obstacle]
+if(npc_find(coord, guard, 4, 2) = true) {
+    if(%heroquest ! ^hero_complete) { return; }
+}
+p_teleport(0_44_53_5_46);
+[queue,later]
+%heroquest = 16;
+"#,
+    );
+    with_journal_only_hero(|quests| {
+        let (graph, _) = derive_entrance_fixture_with_quests(&fx, quests);
+        let edges: Vec<_> = graph
+            .edges
+            .iter()
+            .filter(|edge| edge.loc_id == 6000)
+            .collect();
+        assert!(!edges.is_empty(), "the exact-completion exit remains usable");
+        for edge in edges {
+            let gates = edge.quest_gates.as_ref().expect("NPC-independent proof");
+            assert!(matches!(
+                gates.gates(),
+                [api::selected::QuestGate::Window(window)]
+                    if window.values.min == Some(15) && window.values.max == Some(15)
+            ));
+        }
+    });
 }
 
 #[test]

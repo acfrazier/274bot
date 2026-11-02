@@ -528,6 +528,7 @@ impl Motion<'_> {
                     };
                     let Some(values) =
                         comparison_window(op, branch_value, threshold, i32::MIN, i32::MAX)
+                            .or_else(|| comparison_window(op, branch_value, threshold, min, max))
                     else {
                         return Some(Cond::unknown());
                     };
@@ -763,7 +764,7 @@ struct TrajectoryInputs<'a> {
     above: &'a [String],
     complete: bool,
     stage_ranges: Option<&'a [StagePartition]>,
-    above_mask: Option<usize>,
+    above_mask: usize,
 }
 
 fn trajectory(input: TrajectoryInputs<'_>) -> Option<Trajectory> {
@@ -784,7 +785,7 @@ fn trajectory(input: TrajectoryInputs<'_>) -> Option<Trajectory> {
         above,
         complete,
         stage_ranges: selected_stages,
-        above_mask: selected_above,
+        above_mask,
     } = input;
     let at = WorldTile {
         x: placement.x,
@@ -793,17 +794,9 @@ fn trajectory(input: TrajectoryInputs<'_>) -> Option<Trajectory> {
     };
     let mut result: Option<Trajectory> = None;
     let above = if complete { above } else { &[] };
-    // NPC presence is always universally quantified. A typed stage window
-    // can distinguish completion from a later stage; legacy completion
-    // evidence cannot, so it still proves every above-completion variant.
-    let above_bits = if selected_stages.is_some() || selected_above.is_some() {
-        0
-    } else {
-        above.len()
-    };
-    for mask in 0..(1usize << (npc.len() + above_bits)) {
-        let npc_mask = mask & ((1usize << npc.len()) - 1);
-        let above_mask = selected_above.unwrap_or(mask >> npc.len());
+    // NPC presence is universally quantified within one typed progress
+    // alternative. Disjoint progress windows are admitted separately.
+    for npc_mask in 0..(1usize << npc.len()) {
         let mut motion = Motion {
             base: Eval {
                 src,
@@ -973,7 +966,7 @@ pub(super) fn edges(input: EntranceInputs<'_>) {
                 );
                 continue;
             }
-            // Otherwise retain the universal completion/above-stage analysis.
+            // Otherwise retain separately gated completion/above-stage alternatives.
             let stage_dimensions = match stage_dimensions(&reads, src) {
                 Ok(dimensions) => dimensions,
                 Err(()) => {
@@ -1115,7 +1108,7 @@ pub(super) fn edges(input: EntranceInputs<'_>) {
                             above: &above,
                             complete: true,
                             stage_ranges: None,
-                            above_mask: None,
+                            above_mask: 0,
                         };
                         {
                             let mut admit = |result: Trajectory| {
@@ -1150,23 +1143,28 @@ pub(super) fn edges(input: EntranceInputs<'_>) {
                                     }
                                 }
                             } else {
-                                let complete = trajectory(trajectory_inputs);
-                                let incomplete = (reads.quests.len() == 1)
-                                    .then(|| {
-                                        trajectory(TrajectoryInputs {
-                                            complete: false,
-                                            ..trajectory_inputs
+                                for above_mask in 0..(1usize << above.len()) {
+                                    let complete = trajectory(TrajectoryInputs {
+                                        above_mask,
+                                        ..trajectory_inputs
+                                    });
+                                    let incomplete = (above_mask == 0 && reads.quests.len() == 1)
+                                        .then(|| {
+                                            trajectory(TrajectoryInputs {
+                                                complete: false,
+                                                ..trajectory_inputs
+                                            })
                                         })
-                                    })
-                                    .flatten();
-                                let incomplete = incomplete.filter(|candidate| {
-                                    complete.as_ref().is_some_and(|other| {
-                                        other.to == candidate.to
-                                            && weaker_than(&other.needs, &candidate.needs)
-                                    })
-                                });
-                                for result in [complete, incomplete].into_iter().flatten() {
-                                    admit(result);
+                                        .flatten()
+                                        .filter(|candidate| {
+                                            complete.as_ref().is_some_and(|other| {
+                                                other.to == candidate.to
+                                                    && weaker_than(&other.needs, &candidate.needs)
+                                            })
+                                        });
+                                    for result in [complete, incomplete].into_iter().flatten() {
+                                        admit(result);
+                                    }
                                 }
                             }
                         }

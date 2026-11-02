@@ -512,6 +512,10 @@ change after completion. Their quest colour is not stage authority. When no
 stage domain is proved, a content varp comparison stays a typed `StageWindow`,
 not a `Complete` substitute. A fresh, selected-family progress observation
 must decide that comparison; colour alone leaves it `Unknown`.
+Completion and above-completion trajectories retain separate windows when
+their raw-value conditions differ. NPC presence is still universally checked
+within each trajectory, so an observed exact completion value can preserve a
+valid exit without granting it to unknown or later progress.
 
 
 `WorldState::quest_gates(edge)` is three-valued. `True` (every value still

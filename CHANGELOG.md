@@ -45,7 +45,8 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.8` 
   no longer fails the dialogue.
 - A green quest row no longer grants a stage-gated crossing when content can
   change progress after completion. Crossings with an unknown stage domain
-  require progress evidence instead of assuming quest completion.
+  require progress evidence instead of assuming quest completion. Exact-value
+  exits remain available when that progress is observed.
 
 ### Developer tools
 
