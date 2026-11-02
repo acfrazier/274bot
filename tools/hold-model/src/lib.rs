@@ -60,6 +60,23 @@ pub fn profiles() -> Vec<Profile> {
             name: "all",
             bounds: all,
         },
+        // Other ratios between the bounds, so that no finding depends on one choice.
+        Profile {
+            name: "alt",
+            bounds: Bounds {
+                page_active: 2,
+                ack_active: 2,
+                quiet_window: 1,
+                quiet_overall: 4,
+                quiet_wall: 4,
+                compat_hold: 3,
+                compat_acquire: 2,
+                max_gap: 3,
+                rearms: 2,
+                horizon: 10,
+                ..all
+            },
+        },
     ]
 }
 

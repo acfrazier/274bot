@@ -6295,6 +6295,26 @@
       "owner": "T1"
     },
     {
+      "path": "tools/hold-model/src/explorer.rs",
+      "owner": "T1"
+    },
+    {
+      "path": "tools/hold-model/src/lib.rs",
+      "owner": "T1"
+    },
+    {
+      "path": "tools/hold-model/src/main.rs",
+      "owner": "T1"
+    },
+    {
+      "path": "tools/hold-model/src/model.rs",
+      "owner": "T1"
+    },
+    {
+      "path": "tools/hold-model/tests/model.rs",
+      "owner": "T1"
+    },
+    {
       "path": "tools/known-issues/known_issues.py",
       "owner": "T1"
     },

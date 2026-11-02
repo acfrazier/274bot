@@ -172,6 +172,9 @@ pub struct Bounds {
     pub quiet: bool,
     pub compat: bool,
     pub env: Env,
+    /// Offer drift only in frames where the owner polls. The conformance
+    /// test uses this: the product's poll is where a test can pass time.
+    pub drift_polls_only: bool,
 }
 
 impl Bounds {
@@ -185,18 +188,19 @@ impl Bounds {
             max_pages: 4,
             max_epochs: 2,
             page_active: 3,
-            ack_active: 2,
+            ack_active: 1,
             quiet_window: 2,
-            quiet_overall: 4,
+            quiet_overall: 3,
             quiet_wall: 4,
-            compat_hold: 3,
-            compat_acquire: 2,
+            compat_hold: 4,
+            compat_acquire: 1,
             max_gap: 2,
             rearms: 1,
             modal: true,
             quiet: true,
             compat: true,
             env: Env::ALL,
+            drift_polls_only: false,
         }
     }
 }
@@ -1270,7 +1274,11 @@ impl Model {
                 }
                 for &drift in drifts {
                     for &act in &acts {
-                        if drift && s.lease == Lease::None && !matches!(act, OwnerAct::Begin(_)) {
+                        let polls = !matches!(act, OwnerAct::NoPoll);
+                        if drift
+                            && ((s.lease == Lease::None && !matches!(act, OwnerAct::Begin(_)))
+                                || (b.drift_polls_only && !polls))
+                        {
                             continue;
                         }
                         out.push(Action::Frame(FrameInput {

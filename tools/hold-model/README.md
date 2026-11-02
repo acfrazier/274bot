@@ -1,0 +1,152 @@
+# hold-model
+
+A checked model of the auto-run hold. It is a developer tool. No product crate
+depends on it, except as a dev-dependency of the conformance test in
+`crates/host-play`.
+
+The model follows the product at commit `178a00200`. The explorer searches it
+breadth first inside caps. A violation prints its shortest trace, step by step,
+in the product's terms.
+
+## What the model covers
+
+A script can hold the host's auto-run press while it waits for the page of its
+own interaction. The model has one slot with one script and at most one wait
+lease. The lease kinds are:
+
+| Kind | Owner | Bound |
+|---|---|---|
+| `Modal` | native `Dialogue` modal wait (`quester/families/dialogue.rs`) | page and acknowledgement waits on the active clock. End gap on observed ticks. |
+| `Quiet` | native quest-journal quiet read (`quest_journal/native.rs`) | a window of observed ticks per phase, renewed at each phase. A 10 s wall bound on the lease. |
+| `Compat` | compatibility (JS) quest-journal read (`script-js/.../quest_journal/isolate.rs`) | a wall bound from the begin, renewed at the click. A separate paint cap. |
+
+Each frame has the product's order (`crates/host/src/lib.rs:739,758`):
+
+1. The drain. A PLAYER_INFO is one game tick.
+2. The host's session-boundary release (`host/src/lib.rs:1536-1546`).
+3. The observe hook: the session reset, the clock sync
+   (`host-play/src/script_observe.rs:608`) and the owner's poll (`:815-827`).
+   The poll runs only while the slot is `Running`, on a tick edge or an
+   evidence wake.
+4. The host samples the lease (`script/src/slot.rs:2259-2294`, also while
+   paused) and applies its wait policy (`host/src/lib.rs:225-267`).
+5. The press decision (`host/src/lib.rs:1548-1588`).
+
+The inputs are Pause, Resume, Stop, Start, a disconnect, a connect, a relog,
+a modal that opens, closes or changes page, a guardian hold, a prayer-cleanup
+hold, a death, a run echo, and the passing of time.
+
+## Properties
+
+Each property has a plain statement and an invariant in `model.rs`
+(`check_frame`). The invariants are frozen. A mutation changes transitions
+only.
+
+| Name | In plain words |
+|---|---|
+| S0 | The host holds the press only while the sample of this frame returned a wait. |
+| S1 | No press goes out while a lease is live and its owner's own deadline, in the owner's own clock, has not passed. |
+| S2 | After Stop, a session boundary or a death cancel, no older lease or hold stays (bound: see below). |
+| S3 | The host ends a hold without the script only as a logged terminal failure, and not before the owner's deadline plus the margin of one tick. |
+| S4 | A lease's identity never carries a released state to a new transaction. |
+| S5 | The journal page stops being hidden at the wall cap from its begin. |
+| S6 | An owner that sends a verb (Talk, Continue, answer, click, close) gets no press in the same frame. The press would close the page that the verb opens (`docs/api/nav.md`: the click never goes out without a live hold). |
+| L | Bounded liveness: a hold that is live at tick T has an owner deadline that did not pass at tick T minus the margin. The deadline is counted in the owner's clock (active clock, ticks or wall). |
+
+### The bound of S2, in frames
+
+- Stop. `SlotScript::stop` revokes the native runtime
+  (`script/src/slot.rs:1654`) between frames. The runtime generation is no
+  longer reported (`host-play/src/script_observe.rs:1317-1321`), so the host
+  clears its hold at once (`host/src/lib.rs:203-209`). The bound is **0 frames
+  after the next sample**: the first frame after the Stop holds nothing.
+- Relog, disconnect, session change. The host releases in the drain
+  (`host/src/lib.rs:1536-1546`). The observe hook calls
+  `reset_session_work` before the poll (`host-play/src/play_slots.rs:1551`),
+  which revokes the native runtime (`script/src/slot.rs:1757`) and the compat
+  lease (`script-js/src/runtime/isolate.rs:1274-1279`). The bound is **0
+  frames**: the frame that sees the boundary holds nothing from the old
+  session.
+- Death. The runner cancels its step when it reads the death line
+  (`script/src/quester/runner.rs:3010`). Between zero hitpoints and that line it
+  does not poll its step (`:3039`). The bound is **the first owner poll after
+  the death line**. If no owner poll comes, the hold ends at the owner's
+  deadline plus the margin (property L).
+
+## Abstractions
+
+Each abstraction is on purpose. The reason says why it is safe, or what it
+cannot show.
+
+1. **Time is three small counters.** Ticks (`tick`), wall units (`wall`) and the
+   owner's active clock (`active`). The active clock moves with wall time
+   only while the slot is eligible. Every comparison in the product is `<` or
+   `>=` between a bound and a clock, so the model keeps the order of the
+   events and drops the values. One unit is about 2.5 s: a Dialogue page wait is 3
+   units, an acknowledgement wait 1, the 10 s wall bounds 4.
+   The profile `alt` uses other ratios. A bound that is longer in the product
+   is longer in the model, so an ordering race between two bounds stays visible.
+2. **Time between the poll and the sample is one unit.** The product reads
+   `Instant::now()` after the poll (`script_observe.rs:1141`). The model lets
+   a unit pass there (`drift`). A real gap is smaller than a unit. The
+   orderings are the same: the sample sees a bound that the poll did not.
+3. **One lease at a time.** The ledger has one foreground owner. A runner
+   runs one step, and the compat read belongs to a JS run. Two native leases
+   at once, and a compat read next to a native one, are not reachable.
+4. **The owner is a small machine.** The `Dialogue` phases are collapsed to
+   `Page`, `Ack` and `Gap`. A poll does one phase. The product continues in
+   the same tick after a begin or a completion (`may_continue_this_tick`).
+   The model needs a second frame for that. The owner may also do nothing at
+   any poll (`Stall`): a snapshot without chat facts, a spent budget. A stall at
+   an expired wait is the case that drives finding F1.
+5. **A new send, a re-armed gap and a new read are new leases.** A change of
+   phase that keeps the lease (acknowledgement to gap, each journal phase) is a
+   renewal of the same lease and the same key
+   (`dialogue.rs:361-380`). Keys come from counters. The product's tag
+   bits and the compat key's XOR of generation and token (`slot.rs:2285-2287`)
+   would collide only at a token above 2^32.
+6. **The modal is one flag.** The host's press check and the script see the same
+   modal state: both read the drain of the frame. A page change is a counter.
+   An acknowledgement is a page that differs from the page at the send.
+7. **The press is the policy.** Energy and the run echo are one event
+   (`RunOff`). A session boundary clears the run latch.
+8. **Death, guardian hold and prayer-cleanup hold are three flags.** Zero
+   hitpoints stalls the owner until the death line. A guardian hold stops the
+   clock and the poll. A prayer-cleanup hold stops the poll only.
+9. **Caps.** Ticks at most 4, wall at most 5 units, ids 4, pages 4, epochs 2,
+   gaps 1 to 2 ticks (the product allows 30), one re-arm. Each run is bounded by
+   a horizon in actions, a state cap, a frontier cap and a byte cap.
+10. **The JS isolate thread is one poll.** The product posts a snapshot and the
+    isolate steps on its own thread. The model steps it in the host's poll.
+
+The model cannot show a defect that needs two leases, more than one tick per
+frame, a gap larger than the caps, or the real owner's phase logic. The real
+`Dialogue` and `JournalMachine` are not in the conformance test: see below.
+
+## Run it
+
+Every run is bounded, and it runs on chardonnay only, in a memory scope:
+
+```sh
+LAB_HOST=chardonnay /Volumes/dev-scratch/274bot-evidence/OVERNIGHT-1027/aubaine.sh run hold-model \
+  'cargo build --release -p hold-model && systemd-run --user --scope -p MemoryMax=16G -p MemorySwapMax=0 -- ionice -c2 -n7 \
+   target/release/hold-model --profile modal --horizon 14 --all-violations'
+```
+
+Options: `--profile NAME|all-profiles`, `--mutation NAME`, `--horizon N`,
+`--state-cap N`, `--frontier-cap N`, `--byte-cap N`, `--all-violations`. The
+exit code is 0 for a complete clean run, 1 for a violation and 3 when a cap
+stopped the run. The profiles are `smoke`, `modal`, `quiet`, `compat`, `all`
+and `alt`.
+
+Tests: `cargo test -p hold-model`. The conformance test is in `host-play`.
+
+## When the hold changes
+
+1. Change the transition that matches the product code in `model.rs`. The
+   comments name the product function.
+2. If a property changed, change the invariant and say why in the commit.
+3. Run the profiles. A new finding is a product defect, a model defect or a
+   known limit. Write each in the findings test.
+4. Run the conformance test. It drives the product code with traces from the
+   model and compares the press and hold decisions at every frame.
