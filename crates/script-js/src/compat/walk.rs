@@ -82,6 +82,7 @@ use api::query::{SceneQuery, SceneReachOptions};
 use api::snapshot::{SceneView, WorldTile};
 use script::shim::{InspectAvoidWire, InteractReq};
 use serde_json::{json, Value};
+use serde::Deserialize;
 use std::collections::VecDeque;
 use std::time::{Duration, Instant};
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

@@ -155,7 +155,7 @@ fn stable_closed_poll<'s>(
         v8::Number::new(scope, -1.0).into(),
     );
     let context = scope.get_current_context();
-    let global = context.open(scope).global(scope);
+    let global = context.global(scope);
     let name = v8::String::new(scope, "__rs2b0t_partner_trade")
         .ok_or_else(|| "partner trade name".to_string())?;
     let partner_trade = global
@@ -184,12 +184,13 @@ fn stable_closed_poll_callback<'s>(
     mut rv: v8::ReturnValue,
 ) {
     let result = (|| {
-        let state: v8::Local<v8::Value> = args.this().into();
-        let min_ms = field(scope, state, "minMs")?;
-        let now_fn = field(scope, state, "nowFn")?;
-        let inactive_since_ms_value = field(scope, state, "inactiveSinceMs")?;
+        let state_value: v8::Local<v8::Value> = args.this().into();
+        let state = state_value.to_object(scope).ok_or_else(|| PENDING.to_string())?;
+        let min_ms = field(scope, state_value, "minMs")?;
+        let now_fn = field(scope, state_value, "nowFn")?;
+        let inactive_since_ms_value = field(scope, state_value, "inactiveSinceMs")?;
         let inactive_since_ms = number(scope, inactive_since_ms_value);
-        let inactive_since_tick_value = field(scope, state, "inactiveSinceTick")?;
+        let inactive_since_tick_value = field(scope, state_value, "inactiveSinceTick")?;
         let inactive_since_tick = number(scope, inactive_since_tick_value);
         let (screen, tick) = observed_trade_screen_and_tick();
         let explicit_clock = !now_fn.is_null_or_undefined();
