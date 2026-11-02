@@ -290,14 +290,14 @@ pub(super) fn with_mapping_failure<R>(f: impl FnOnce() -> R) -> R {
 
 #[cfg(test)]
 #[derive(Clone, Copy)]
-struct SyscallCounts {
-    mmap: usize,
-    munmap: usize,
-    successful_munmap: usize,
+pub(super) struct SyscallCounts {
+    pub(super) mmap: usize,
+    pub(super) munmap: usize,
+    pub(super) successful_munmap: usize,
 }
 
 #[cfg(test)]
-fn syscall_counts() -> SyscallCounts {
+pub(super) fn syscall_counts() -> SyscallCounts {
     SyscallCounts {
         mmap: MMAP_CALLS.with(|calls| calls.get()),
         munmap: MUNMAP_CALLS.with(|calls| calls.get()),

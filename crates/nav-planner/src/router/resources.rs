@@ -2163,4 +2163,16 @@ mod packed_search_tests {
         );
         assert!(packed_search_storage_bound(usize::MAX).is_none());
     }
+
+    #[cfg(unix)]
+    #[test]
+    fn packed_heap_large_scratch_releases_its_mapping() {
+        let before = super::super::zeroed_buffer::syscall_counts();
+        let heap = PackedMinMaxHeap::try_new(20_000).unwrap();
+        let mapped = super::super::zeroed_buffer::syscall_counts();
+        assert!(mapped.mmap > before.mmap, "large heap bypasses glibc arenas");
+        drop(heap);
+        let released = super::super::zeroed_buffer::syscall_counts();
+        assert!(released.successful_munmap > before.successful_munmap);
+    }
 }
