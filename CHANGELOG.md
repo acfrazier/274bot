@@ -182,6 +182,18 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.7` 
   now renders every wall member only when the acknowledgement is saved; if
   the save fails, **only render focused** stays on.
 
+### Fixed during development
+
+- A conversation script's pause after a page now keeps the run button held
+  when the host had already ended the hold on the wait before it. The host
+  ends a hold one game tick after the script's time limit when the script
+  stopped checking it (for example while the script was paused). Before, the
+  pause that follows the conversation page was the same wait with a later time
+  limit, so the host did not hold it and could press the run button while the
+  script still waited. The host now holds a wait again when the script moves
+  its time limit later. A repeat of the same time limit and a relog do not
+  hold it again.
+
 ## [0.2.7] — 2026-10-26 — Beta 2
 
 ### Panel and terminal app

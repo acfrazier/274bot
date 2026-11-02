@@ -4,9 +4,10 @@ A checked model of the auto-run hold. It is a developer tool. No product crate
 depends on it, except as a dev-dependency of the conformance test in
 `crates/host-play`.
 
-The model follows the product at commit `178a00200`. The explorer searches it
-breadth first inside caps. A violation prints its shortest trace, step by step,
-in the product's terms.
+The model follows the product at commit `178a00200` and the fix of finding F1
+(`HOLD-MODEL-MERGE`: the host holds a renewed wait again). The explorer
+searches it breadth first inside caps. A violation prints its shortest trace,
+step by step, in the product's terms.
 
 ## What the model covers
 
@@ -41,7 +42,7 @@ hold, a death, a run echo, and the passing of time.
 | Model function (`model.rs`) | Product code |
 |---|---|
 | `frame` | `host/src/lib.rs` `client_frame_observed` (`:739` observe, `:758` press), `script_observe.rs` |
-| `observe_wait`, `deferred` | `host::ScriptRunPolicy::observe_script_wait`, `should_defer_auto_run` (`host/src/lib.rs:225-274`) |
+| `observe_wait`, `deferred` | `host::ScriptRunPolicy::observe_script_wait`, `should_defer_auto_run` (`host/src/lib.rs:240-318`); the re-arm at a renewal is in the same-key arm |
 | `sample` | `SlotScript::script_interaction_wait` (`script/src/slot.rs:2259-2294`) |
 | `sample`, Modal arm | `WaitDeadline::owner_tick` (`script/src/native.rs:922`), `Ledger::modal_wait_tick` |
 | `quiet_wall_release`, `sample`, Quiet arm | `Ledger::quiet_read`, `quiet_read_wait` (`script/src/native/ledger.rs:349-410`) |
@@ -113,13 +114,17 @@ cannot show.
    the same tick after a begin or a completion (`may_continue_this_tick`).
    The model needs a second frame for that. The owner may also do nothing at
    any poll (`Stall`): a snapshot without chat facts, a spent budget. A stall at
-   an expired wait is the case that drives finding F1.
+   an expired wait is the case that drove finding F1, now fixed.
 5. **A new send, a re-armed gap and a new read are new leases.** A change of
    phase that keeps the lease (acknowledgement to gap, each journal phase) is a
    renewal of the same lease and the same key
-   (`dialogue.rs:361-380`). Keys come from counters. The product's tag
-   bits and the compat key's XOR of generation and token (`slot.rs:2285-2287`)
-   would collide only at a token above 2^32.
+   (`dialogue.rs:361-380`). The host cannot tell a renewal from a new send
+   that kept its key; it sees the same key and a later deadline. After the
+   terminal release, such a sample holds again (`HostHold::deadline`,
+   `boundary`). A boundary release, and a repeat of the deadline, do not. Keys
+   come from counters. The product's tag bits and the compat key's XOR of
+   generation and token (`slot.rs:2285-2287`) would collide only at a token
+   above 2^32.
 6. **The modal is one flag.** The host's press check and the script see the same
    modal state: both read the drain of the frame. A page change is a counter.
    An acknowledgement is a page that differs from the page at the send.
@@ -153,8 +158,19 @@ Options: `--profile NAME|all-profiles`, `--mutation NAME`, `--horizon N`,
 exit code is 0 for a complete clean run, 1 for a violation and 3 when a cap
 stopped the run. The profiles are `smoke`, `modal`, `quiet`, `compat`, `all`,
 `alt` and `handoff` (an owner may begin a read in the frame that revokes the
-old one). `--mutation` takes `none`, the seven `check-*` self-checks and the
-earlier designs `m1-hold-two-ticks` to `m6-compat-no-renew`.
+old one). `--mutation` takes `none`, the seven `check-*` self-checks, the
+earlier designs `m1-hold-two-ticks` to `m6-compat-no-renew` and
+`f1-renewal-keeps-release` (the host at `0a3e700f8`, before the fix of F1).
+
+## Findings at the head
+
+| | State |
+|---|---|
+| F1 | Fixed. The host ended the acknowledgement hold, and the end gap that follows is the same lease renewed, so the press went out during the gap. The host now holds a renewal that moves the deadline later (`f1-renewal-keeps-release` is the old host; S1 and S4 find it in 6 steps). |
+| F2 | Known limit, S6, profile `quiet`: the journal click loses its hold in its own frame when the lease's wall bound passes between the owner's poll and the host's sample. |
+| K1 | A wait that the owner bounds in ticks is not on the active clock. A paused owner loses its end-gap hold. |
+| K2 | The terminal release is only as good as the owner's polls. |
+| K3 | The compat read never gets a terminal release. |
 
 Tests: `cargo test -p hold-model`.
 
@@ -185,9 +201,13 @@ release or the lease's wall bound).
 `HOLD_CONFORMANCE_TRACES=N` sets the number of traces per release (the default
 is 3 for host-play and 6 for script-js). A run with 200 covers all the shortest
 traces of every native release except the page release of the quiet read.
-`the_end_gap_hold_defect_of_the_model_reproduces_on_the_real_code` runs the
-model's counterexample (finding F1) on the real host code. It passes while the
-defect exists.
+`the_renewed_end_gap_is_held_on_the_real_code_where_the_earlier_host_pressed`
+runs the counterexample of the earlier host (finding F1, mutation
+`f1-renewal-keeps-release`) on the real host code. The real code must hold the
+renewed wait like the head model. The test fails on host code that has the
+earlier behaviour. The script-js test does not reach the host's policy, so a
+change of the host cannot fail it; the host policy for the compat lease is
+trivial (K3).
 
 ## When the hold changes
 

@@ -1051,8 +1051,8 @@ impl Model {
             self.mutation,
             Mutation::F1RenewalKeepsRelease | Mutation::CheckSendKeepsKey
         );
-        // Only the earlier designs read the start tick; the head design keeps
-        // it at 0 so that its state space is unchanged.
+        // Only the earlier design M3 reads the start tick; the other designs
+        // keep it at 0 so that their states carry no extra value.
         let start = if self.mutation == Mutation::M3FixedTerminal {
             s.tick
         } else {
