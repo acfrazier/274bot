@@ -656,7 +656,18 @@ it, so a paused script keeps its hold for the whole pause, and after Resume its
 own bound decides. A journal read holds the press for 10 s from its begin, and
 again for 10 s from each click it sends (the native reader also from its
 capture), so its click never goes out without a live hold, also after a long
-pause. Its page stays hidden for at most 10 s from its begin.
+pause. Its page stays hidden for at most 10 s from its begin. An expired hold
+makes the interaction that it covered stale: the process can stall (a
+suspended or sleeping machine) between the owner's step, which queues the
+click or the close and renews the hold, and the host's reading of the wall
+clock in the same frame. When that reading ends the hold by expiry, the click
+or close that is still queued is dropped, never dispatched, and the owner's
+next poll finds its read expired and fails it (the native reader: `journal
+quiet lease expired`; the compatibility reader: `modal-timeout`), so the
+script's own retry and time limits apply. A click that was dispatched before
+the expiry keeps its receipt. A dialogue's waits have no wall bound: the host
+ends them only a tick after the owner's deadline, in a later frame, so a stall
+cannot strand a dialogue's click.
 The host ends a hold that is still live one tick after that deadline (the
 owner checks its deadline before the host reads the wait in the same frame),
 and logs that as a failure. A new send, a re-armed gap or a new journal read

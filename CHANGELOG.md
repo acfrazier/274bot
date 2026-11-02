@@ -199,7 +199,13 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.7` 
   from its start ran out; the host then no longer held the run button, pressed
   it right after the click, and the press closed the journal page the click
   had opened. The page still stops being hidden 10 seconds after the read
-  starts.
+  starts. A click (or close) that is still waiting to be sent when the 10
+  seconds of its hold run out is never sent: the computer may have been
+  suspended or asleep between the script's step and the host's reading of the
+  clock, and the click would have gone out with no hold. The read then fails as
+  expired and the script's own retry applies. This holds for the native reader
+  and for the compatibility reader; a click that was already sent is not
+  changed.
 
 ## [0.2.7] — 2026-10-26 — Beta 2
 

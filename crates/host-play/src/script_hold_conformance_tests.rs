@@ -87,6 +87,8 @@ struct Control {
     pending: Mutex<Option<Cmd>>,
     /// Real milliseconds that pass at the end of the script tick.
     drift_ms: AtomicU64,
+    /// Clicks that the owner queued.
+    sent: AtomicU64,
     /// Clicks that the owner saw dispatched: their receipt came back.
     dispatched: AtomicU64,
     /// Polls that found the owner's quiet read expired.
@@ -175,8 +177,15 @@ impl NativeMachine for DrivenMachine {
                 send,
             } => {
                 if send {
+                    // A wake frame shares the begin's tick and its spent
+                    // interaction event: the real machine tries again at its
+                    // next poll, and the double only renews.
                     match cx.emit(script::shim::InteractReq::IfButton { component_id: 42 }) {
-                        Ok(request) => self.click = Some(request),
+                        Ok(request) => {
+                            self.click = Some(request);
+                            self.control.sent.fetch_add(1, Ordering::Relaxed);
+                        }
+                        Err(ActionError::BudgetExhausted) => {}
                         Err(error) => return Poll::Ready(Err(error)),
                     }
                 }
@@ -1090,6 +1099,11 @@ fn an_expired_hold_makes_the_queued_click_stale_on_the_real_code() {
         let real = rig.run(WALL_UNIT_MS, &frames);
         compare(&head, trace, &real, &head_expected)
             .unwrap_or_else(|report| panic!("{name}: the real code differs from the head model: {report}"));
+        assert_eq!(
+            rig.control.sent.load(Ordering::Relaxed),
+            1,
+            "{name}: the owner queued its click"
+        );
         assert_eq!(
             rig.control.dispatched.load(Ordering::Relaxed),
             0,
