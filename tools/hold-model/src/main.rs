@@ -36,7 +36,11 @@ fn main() -> ExitCode {
 
 /// Print one run. Returns the exit code: 0 clean and complete, 1 violation,
 /// 3 a cap stopped the run.
-fn report(profile: &Profile, mutation: Mutation, result: &Exploration<hold_model::State, hold_model::Action>) -> u8 {
+fn report(
+    profile: &Profile,
+    mutation: Mutation,
+    result: &Exploration<hold_model::State, hold_model::Action>,
+) -> u8 {
     println!(
         "profile={} mutation={} horizon={} states={} transitions={} deepest={} max_frontier={} est_bytes={} elapsed_ms={}",
         profile.name,

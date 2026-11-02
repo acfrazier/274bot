@@ -136,10 +136,7 @@ pub fn release_traces(
     horizon: usize,
     limits: Limits,
     cap: usize,
-) -> (
-    Exploration<State, Action>,
-    Vec<(Release, Vec<Vec<Action>>)>,
-) {
+) -> (Exploration<State, Action>, Vec<(Release, Vec<Vec<Action>>)>) {
     let model = Model::new(bounds, mutation);
     let goal = |pre: &State, action: &Action, _post: &State, out: &mut Vec<u32>| {
         if let Ok((_, info)) = model.step_detail(pre, action) {

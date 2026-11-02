@@ -2,8 +2,8 @@
 //! head commit, and the model builder's self-check mutations.
 
 use hold_model::{
-    Action, Begin, Bounds, Cause, Env, Info, Kind, Key, Limits, Machine, Model, Mutation,
-    OwnerAct, State, Violation, explore_profile, profile, release_traces,
+    Action, Begin, Bounds, Cause, Env, Info, Key, Kind, Limits, Machine, Model, Mutation, OwnerAct,
+    State, Violation, explore_profile, profile, release_traces,
 };
 
 fn frame(tick: bool, wake: bool, drift: bool, act: OwnerAct) -> Action {
@@ -98,7 +98,10 @@ fn a_paused_dialogue_keeps_its_active_clock_hold() {
             frame(true, false, false, OwnerAct::NoPoll),
         ],
     );
-    assert!(infos[6].deferred && infos[7].deferred, "Pause stops the clock");
+    assert!(
+        infos[6].deferred && infos[7].deferred,
+        "Pause stops the clock"
+    );
     assert_eq!(infos[7].expired, None);
 }
 
@@ -155,10 +158,7 @@ fn the_head_findings_are_the_two_known_ones_in_the_smoke_profile() {
     found.sort_unstable();
     assert_eq!(
         found,
-        [
-            ("S1-press-while-live", 7),
-            ("S4-released-state-carried", 7)
-        ],
+        [("S1-press-while-live", 7), ("S4-released-state-carried", 7)],
         "the end gap that follows an acknowledgement is the same lease renewed, so a host release of the acknowledgement wait stays on it"
     );
 }
@@ -180,13 +180,38 @@ fn each_self_check_mutation_fails_its_invariant() {
         ..base
     };
     let cases = [
-        (Mutation::CheckMarginZero, "S3-early-terminal-release", 3, base),
-        (Mutation::CheckMarginTwo, "L-hold-outlives-deadline", 4, base),
+        (
+            Mutation::CheckMarginZero,
+            "S3-early-terminal-release",
+            3,
+            base,
+        ),
+        (
+            Mutation::CheckMarginTwo,
+            "L-hold-outlives-deadline",
+            4,
+            base,
+        ),
         (Mutation::CheckStopKeepsLease, "S2-hold-after-end", 4, base),
-        (Mutation::CheckCompatClickNoRenew, "S6-press-after-send", 3, base),
-        (Mutation::CheckSendKeepsKey, "S4-released-state-carried", 6, base),
+        (
+            Mutation::CheckCompatClickNoRenew,
+            "S6-press-after-send",
+            3,
+            base,
+        ),
+        (
+            Mutation::CheckSendKeepsKey,
+            "S4-released-state-carried",
+            6,
+            base,
+        ),
         (Mutation::CheckStaleHold, "S0-hold-without-wait", 2, base),
-        (Mutation::CheckQuietNoWall, "S5-paint-hidden-past-cap", 6, quiet_only),
+        (
+            Mutation::CheckQuietNoWall,
+            "S5-paint-hidden-past-cap",
+            6,
+            quiet_only,
+        ),
     ];
     for (mutation, expected, horizon, bounds) in cases {
         let run = explore_profile(

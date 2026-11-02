@@ -1248,11 +1248,7 @@ impl Model {
         let running = Self::running(s);
         let poll_possible = running && !s.hold && !s.cleanup;
         let may_drift = s.wall < b.max_wall;
-        let drifts: &[bool] = if may_drift {
-            &[false, true]
-        } else {
-            &[false]
-        };
+        let drifts: &[bool] = if may_drift { &[false, true] } else { &[false] };
         let ticks: &[bool] = if s.tick < b.max_tick {
             &[false, true]
         } else {
@@ -1385,7 +1381,10 @@ fn lease_text(lease: Lease) -> String {
                 }
                 ModalPhase::Gap { due } => format!("end gap due tick {due}"),
             };
-            format!("Dialogue modal wait #{} {phase}, ledger {:?}", m.id, m.ledger)
+            format!(
+                "Dialogue modal wait #{} {phase}, ledger {:?}",
+                m.id, m.ledger
+            )
         }
         Lease::Quiet(q) => format!(
             "journal quiet read action {} {:?}, window tick {}, ledger {}, held {}",
@@ -1439,13 +1438,23 @@ impl Action {
                 parts.push(match f.act {
                     OwnerAct::NoPoll => "no owner poll".to_string(),
                     OwnerAct::Stall => "owner polls, changes nothing".to_string(),
-                    OwnerAct::Begin(Begin::Modal) => "owner begins a Dialogue modal wait".to_string(),
-                    OwnerAct::Begin(Begin::Quiet) => "owner begins a journal quiet read".to_string(),
-                    OwnerAct::Begin(Begin::Compat) => "owner begins a compat journal read".to_string(),
+                    OwnerAct::Begin(Begin::Modal) => {
+                        "owner begins a Dialogue modal wait".to_string()
+                    }
+                    OwnerAct::Begin(Begin::Quiet) => {
+                        "owner begins a journal quiet read".to_string()
+                    }
+                    OwnerAct::Begin(Begin::Compat) => {
+                        "owner begins a compat journal read".to_string()
+                    }
                     OwnerAct::Poll => "owner polls".to_string(),
                     OwnerAct::Send => "owner sends again (new acknowledgement wait)".to_string(),
-                    OwnerAct::ToGap(g) => format!("owner renews its wait as an end gap of {g} tick(s)"),
-                    OwnerAct::Rearm(g) => format!("owner re-arms its gap by {g} tick(s) (new lease)"),
+                    OwnerAct::ToGap(g) => {
+                        format!("owner renews its wait as an end gap of {g} tick(s)")
+                    }
+                    OwnerAct::Rearm(g) => {
+                        format!("owner re-arms its gap by {g} tick(s) (new lease)")
+                    }
                     OwnerAct::Drop => "owner drops its lease".to_string(),
                 });
                 parts.join(", ")
@@ -1492,7 +1501,11 @@ pub fn describe_trace(model: &Model, trace: &[Action]) -> String {
                 state = next;
             }
             Err(violation) => {
-                let _ = writeln!(out, "        VIOLATION {}: {}", violation.name, violation.detail);
+                let _ = writeln!(
+                    out,
+                    "        VIOLATION {}: {}",
+                    violation.name, violation.detail
+                );
                 break;
             }
         }
