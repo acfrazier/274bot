@@ -29,10 +29,10 @@ use script::native::{
     ActionContext, ActionError, ActionHandle, ModalWaitLease, NativeMachine, NativeTick,
     QuietReadLease, Script, ScriptFailure, ScriptFlow, WaitDeadline,
 };
-use std::sync::atomic::AtomicU64;
-use std::task::Poll;
 use script::surface::test_support::{StubSurfaceCard, StubSurfaceFactory};
 use script::surface::{JournalWait, SurfaceReady, SurfaceStart};
+use std::sync::atomic::AtomicU64;
+use std::task::Poll;
 
 /// Real time of one model time unit.
 const UNIT_MS: u64 = 150;
@@ -967,9 +967,8 @@ fn the_journal_click_is_held_on_the_real_code_where_the_earlier_ledger_pressed()
         head_expected[last].deferred && !head_expected[last].pressed,
         "the head ledger holds the click's frame"
     );
-    check_trace(&head, trace).unwrap_or_else(|report| {
-        panic!("the real code differs from the head model: {report}")
-    });
+    check_trace(&head, trace)
+        .unwrap_or_else(|report| panic!("the real code differs from the head model: {report}"));
 }
 
 /// Shortest compat traces per release in the default run. A compat trace takes
@@ -1091,7 +1090,9 @@ fn the_counterexamples_of_the_earlier_compat_designs_run_on_the_real_host() {
             }
         }
     }
-    eprintln!("conformance: {checked} counterexample traces of the compat designs on the real host");
+    eprintln!(
+        "conformance: {checked} counterexample traces of the compat designs on the real host"
+    );
 }
 
 /// A compat read that the surface still reports after its own bound: the

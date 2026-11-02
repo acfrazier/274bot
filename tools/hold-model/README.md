@@ -4,10 +4,11 @@ A checked model of the auto-run hold. It is a developer tool. No product crate
 depends on it, except as a dev-dependency of the conformance tests in
 `crates/host-play` and `crates/script-js`.
 
-The model follows the product at commit `178a00200` and the fix of finding F1
-(`HOLD-MODEL-MERGE`: the host holds a renewed wait again). The explorer
-searches it breadth first inside caps. A violation prints its shortest trace,
-step by step, in the product's terms.
+The model follows the product at commit `178a00200` with the fixes of finding F1
+(the host holds a renewed wait again) and finding F2 (the journal click renews
+the quiet lease's hold bound). The explorer searches it breadth first inside
+caps. A violation prints its shortest trace, step by step, in the product's
+terms.
 
 ## What the model covers
 
@@ -18,7 +19,7 @@ lease. The lease kinds are:
 | Kind | Owner | Bound |
 |---|---|---|
 | `Modal` | native `Dialogue` modal wait (`quester/families/dialogue.rs`) | page and acknowledgement waits on the active clock. End gap on observed ticks. |
-| `Quiet` | native quest-journal quiet read (`quest_journal/native.rs`) | a window of observed ticks per phase, renewed at each phase. A 10 s wall bound on the lease. |
+| `Quiet` | native quest-journal quiet read (`quest_journal/native.rs`) | a window of observed ticks per phase, renewed at each phase. A 10 s wall bound on the hold: from the begin, and from each window the owner arms (its click, its capture, its close). The page is hidden for at most 10 s from the begin (the paint cap). |
 | `Compat` | compatibility (JS) quest-journal read (`script-js/.../quest_journal/isolate.rs`) | a wall bound from the begin, renewed at the click. A separate paint cap. |
 
 Each frame has the product's order (`crates/host/src/lib.rs:739,758`):
@@ -45,10 +46,10 @@ hold, a death, a run echo, and the passing of time.
 | `observe_wait`, `deferred` | `host::ScriptRunPolicy::observe_script_wait`, `should_defer_auto_run` (`host/src/lib.rs:240-318`); the re-arm at a renewal is in the same-key arm |
 | `sample` | `SlotScript::script_interaction_wait` (`script/src/slot.rs:2259-2294`) |
 | `sample`, Modal arm | `WaitDeadline::owner_tick` (`script/src/native.rs:922`), `Ledger::modal_wait_tick` |
-| `quiet_wall_release`, `sample`, Quiet arm | `Ledger::quiet_read`, `quiet_read_wait` (`script/src/native/ledger.rs:349-410`) |
+| `quiet_wall_release`, `quiet_hold_until`, `sample`, Quiet arm | `Ledger::quiet_read`, `quiet_paint_hidden`, `quiet_read_wait` (`script/src/native/ledger.rs:367-416`), `ActionContext::renew_quiet_read` (`script/src/native/actions.rs:52-68`) |
 | `sample`, Compat arm, `poll`, Compat arm | `CompatJournalLease::wait`, `renew_hold` (`script-js/.../quest_journal/isolate.rs:146-190`), `JournalRuntime::click` |
 | `begin`, `send`, `to_gap`, `rearm` | `Dialogue::sync_modal_wait` (`dialogue.rs:361-380`), `ActionContext::begin_modal_wait`, `renew_modal_wait` |
-| `poll`, Quiet arm | `JournalMachine::poll`, `arm_window` (`quest_journal/native.rs`) |
+| `poll`, Quiet arm | `JournalMachine::poll`, `arm_window` (`quest_journal/native.rs`); each window renews the lease's hold bound |
 | the press in `frame` | `SlotLoop::apply_auto_run` (`host/src/lib.rs:1548-1588`) |
 | the boundary in `frame` | `SlotLoop::after_drain` (`host/src/lib.rs:1536-1546`), `SlotScript::session_boundary` |
 
@@ -124,7 +125,12 @@ cannot show.
    `boundary`). A boundary release, and a repeat of the deadline, do not. Keys
    come from counters. The product's tag bits and the compat key's XOR of
    generation and token (`slot.rs:2285-2287`) would collide only at a token
-   above 2^32.
+   above 2^32. The quiet lease's hold bound is renewed at each window the
+   owner arms (`renew_quiet_read`), from the wall time of that poll, so the
+   verb that the window follows cannot meet a hold that ends in the same frame
+   (finding F2). The paint cap stays at the begin. The model keeps the hold
+   bound at most one unit past its last wall unit: a later value is never
+   reached.
 6. **The modal is one flag.** The host's press check and the script see the same
    modal state: both read the drain of the frame. A page change is a counter.
    An acknowledgement is a page that differs from the page at the send.
@@ -145,7 +151,8 @@ frame, a gap larger than the caps, or the real owner's phase logic. The real
 
 ## Run it
 
-Every run is bounded, and it runs on chardonnay only, in a memory scope:
+Every run is bounded, and it runs on Linux in a memory scope (chardonnay for
+the lab; `nightly.sh` below for all the profiles):
 
 ```sh
 LAB_HOST=chardonnay /Volumes/dev-scratch/274bot-evidence/OVERNIGHT-1027/aubaine.sh run hold-model \
@@ -159,61 +166,71 @@ exit code is 0 for a complete clean run, 1 for a violation and 3 when a cap
 stopped the run. The profiles are `smoke`, `modal`, `quiet`, `compat`, `all`,
 `alt` and `handoff` (an owner may begin a read in the frame that revokes the
 old one). `--mutation` takes `none`, the seven `check-*` self-checks, the
-earlier designs `m1-hold-two-ticks` to `m6-compat-no-renew` and
-`f1-renewal-keeps-release` (the host at `0a3e700f8`, before the fix of F1).
+earlier designs `m1-hold-two-ticks` to `m6-compat-no-renew`,
+`f1-renewal-keeps-release` (the host at `0a3e700f8`, before the fix of F1) and
+`f2-quiet-click-no-renew` (the ledger at `aa5e8bf2c`, before the fix of F2).
 
 ## Findings at the head
 
 | | State |
 |---|---|
 | F1 | Fixed. The host ended the acknowledgement hold, and the end gap that follows is the same lease renewed, so the press went out during the gap. The host now holds a renewal that moves the deadline later (`f1-renewal-keeps-release` is the old host; S1 and S4 find it in 6 steps). |
-| F2 | Known limit, S6, profile `quiet`: the journal click loses its hold in its own frame when the lease's wall bound passes between the owner's poll and the host's sample. |
+| F2 | Fixed. The journal click lost its hold in its own frame when the lease's wall bound passed between the owner's poll and the host's sample (S6). Each window the owner arms, the click first, now renews the hold bound from its poll; the paint cap stays at the begin. `f2-quiet-click-no-renew` is the old ledger; S6 finds it in 6 steps in `quiet` and 4 in `alt`. |
 | K1 | A wait that the owner bounds in ticks is not on the active clock. A paused owner loses its end-gap hold. |
 | K2 | The terminal release is only as good as the owner's polls. |
 | K3 | The compat read never gets a terminal release. |
 
 ## Expected results of the profiles
 
-Release build on chardonnay, `--all-violations`, no cap reached (HOLD-MODEL-MERGE,
-2026-11-02). "S6 (6)" is finding F2 with a trace of 6 steps. No run shows a
-violation of S0 to S5 or L. A run that differs from this table is a finding.
+Release build on chardonnay, `--all-violations`, no cap reached
+(HOLD-MODEL-NITS, 2026-11-02, `nightly.sh`). Every profile ends clean and
+complete at its horizon: no violation of S0 to S6 or L. A run that differs
+from this table is a finding. The `quiet` run is the longest: 92.4 M of the
+100 M states of the default cap.
 
 | Profile | Horizon | States | Time | Peak RSS | Result |
 |---|---|---|---|---|---|
-| `smoke` | 8 | 1 410 765 | 1.3 s | 0.13 GB | clean |
-| `modal` | 14 | 48 187 697 | 80.0 s | 4.01 GB | clean |
-| `quiet` | 14 | 79 665 442 | 135.3 s | 7.03 GB | S6 (6) |
-| `compat` | 14 | 78 047 719 | 121.3 s | 6.93 GB | clean |
-| `all` | 11 | 35 451 083 | 51.8 s | 3.46 GB | S6 (6) |
-| `alt` | 10 | 16 666 098 | 20.0 s | 1.74 GB | S6 (4) |
-| `handoff` | 11 | 40 156 047 | 50.3 s | 3.58 GB | S6 (6) |
+| `smoke` | 8 | 1 410 765 | 0.9 s | 0.13 GB | clean |
+| `modal` | 14 | 48 187 697 | 71.4 s | 4.00 GB | clean |
+| `quiet` | 14 | 92 396 722 | 138.6 s | 7.78 GB | clean |
+| `compat` | 14 | 78 047 719 | 133.7 s | 6.90 GB | clean |
+| `all` | 11 | 37 430 466 | 51.5 s | 3.41 GB | clean |
+| `alt` | 10 | 17 344 503 | 16.9 s | 1.71 GB | clean |
+| `handoff` | 11 | 42 427 339 | 48.0 s | 3.70 GB | clean |
 
 ## Where the runs go
 
-- The model's tests and both conformance tests run in the existing lanes. CI
-  `cargo test --workspace` and the Windows nightly's `test-workspace` lane build and run
-  `hold-model`, the `host-play` library tests (`script_hold_conformance`) and
-  the `script-js` library tests (`hold_conformance_tests`). The same host-play
-  tests also run in `cargo test -p host-play --no-default-features --lib`.
-  Together they take about 27 s (host-play) and 8 s (script-js) after the
-  build.
-- The full profiles do not belong in those lanes: the longest needs 7 GB and
-  2 minutes, and the seven together about 8 minutes. `tools/nightly` has no
-  step for them. Its steps (`lanes`, `build`, `panel`, `tui`, `latency`) run
-  cargo lanes and live cells, and the Linux nightly box (`malbec`) has 15 GiB.
-  Run the profiles on chardonnay, one run at a time in a 16 GB scope, after a
-  change to the hold or to its model: the command in "Run it", once for each
-  row of the table, with the horizon of the row. Compare the result with the
-  table.
+- The model's tests and the conformance tests of host-play and script-js run
+  in the existing lanes of the default workspace: CI `cargo test --workspace`
+  and the Windows nightly's `test-workspace` lane build and run `hold-model`,
+  the `host-play` library tests (`script_hold_conformance`) and the
+  `script-js` library tests (`hold_conformance_tests`). The host-play
+  conformance module is behind the `js` feature (`lib_tests.rs`), so
+  `cargo test -p host-play --no-default-features --lib` does **not** run it:
+  that native-only lane runs no conformance test. Together they take about
+  27 s (host-play, of which the F2 trace takes about 10 s of real time) and
+  8 s (script-js) after the build.
+- The full profiles do not belong in those lanes: the longest needs 8 GB and
+  2.5 minutes, and the seven together about 8 minutes. `tools/nightly` has no
+  step for them, and the Linux nightly box (`malbec`) has 15 GiB. They run
+  nightly on chardonnay (ADR 0017): `nightly.sh` builds the release binary,
+  runs every profile one at a time in its own
+  `systemd-run --user --scope -p MemoryMax=16G -p MemorySwapMax=0` scope,
+  writes one summary line per profile (exit code, states, time, peak
+  memory, result) and exits non-zero when any run does not end clean and
+  complete. `systemd/274bot-hold-model-nightly.service` and `.timer` start it
+  at 02:30 local time as a user unit; the header of the service says how to
+  install it. After a change to the hold or to its model, run
+  `tools/hold-model/nightly.sh` by hand and compare the lines with the table.
 
 Tests: `cargo test -p hold-model`.
 
 ## Conformance
 
-Two product tests drive the real code with traces from the model. Each trace
-is a shortest trace that ends a lease of one kind for one cause (its page, its
-own bound, a drop, Stop, a session change, a death, the host's terminal
-release or the lease's wall bound).
+Three product tests drive the real code with traces from the model. Each
+trace is a shortest trace that ends a lease of one kind for one cause (its
+page, its own bound, a drop, Stop, a session change, a death, the host's
+terminal release or the lease's wall bound).
 
 - `crates/host-play/src/script_hold_conformance_tests.rs` runs the native
   kinds on the production frame path: `Host::run_client`,
@@ -224,24 +241,49 @@ release or the lease's wall bound).
   through the real lease API (`begin_modal_wait`, `renew_modal_wait`,
   `begin_quiet_read`, `renew_quiet_read`). The real `Dialogue` and
   `JournalMachine` phase logic is not driven. One model unit is 150 ms of
-  real time; a trace that keeps a quiet lease to its 10 s wall bound runs at
-  2.5 s per unit, and at most two such traces run.
+  real time; a trace that brings a quiet lease to its 10 s wall bound runs at
+  2.5 s per unit.
+- The same file runs the compat traces on the real host. A stub
+  compatibility surface reports, at each frame, the lease output that the
+  model chose (its key, from the token and the work generation, and its
+  wait). The real slot translation (`script_interaction_wait`), the real host
+  policy with its session-boundary release and the real press decision must
+  decide like the model's host at every frame. No trace needs real time.
 - `crates/script-js/src/compat/quest_journal/hold_conformance_tests.rs` runs the
   compat read: the real journal runtime and the real `CompatJournalLease`,
   with `backdate` for wall time. It compares the lease's hold and paint-hide
-  state with the model. The host policy for this lease is the host-play
-  seam.
+  state with the model. It cannot reach the host policy: the compat lease
+  reports a deadline equal to the current tick (K3), so the host never ends it.
 
-`HOLD_CONFORMANCE_TRACES=N` sets the number of traces per release (the default
-is 3 for host-play and 6 for script-js). A run with 200 covers all the shortest
-traces of every native release except the page release of the quiet read.
-`the_renewed_end_gap_is_held_on_the_real_code_where_the_earlier_host_pressed`
-runs the counterexample of the earlier host (finding F1, mutation
-`f1-renewal-keeps-release`) on the real host code. The real code must hold the
-renewed wait like the head model. The test fails on host code that has the
-earlier behaviour. The script-js test does not reach the host's policy, so a
-change of the host cannot fail it; the host policy for the compat lease is
-trivial (K3).
+`HOLD_CONFORMANCE_TRACES=N` sets the number of traces per release (the
+default is 3 for the native kinds of host-play, 40 for the compat traces of
+host-play and 6 for script-js). A native trace that brings a quiet lease to
+its 10 s wall bound runs in real seconds (the bound is the product's
+constant). The default run drives at most two such traces and prints how many
+it skipped; `HOLD_CONFORMANCE_SLOW_TRACES=N` raises the limit. A full run,
+`HOLD_CONFORMANCE_TRACES=100000 HOLD_CONFORMANCE_SLOW_TRACES=100000`, drives
+every shortest trace of every release.
+
+Three tests run a counterexample of a retained mutation on the real code. The
+real code must decide like the head model at every frame, and each test
+fails on code that has the old behaviour:
+
+- `the_renewed_end_gap_is_held_on_the_real_code_where_the_earlier_host_pressed`
+  (finding F1, mutation `f1-renewal-keeps-release`, the host at `0a3e700f8`).
+- `a_compat_read_renewed_at_its_click_after_the_terminal_release_is_held_again`
+  is the same rule on a compat stream, with the real slot translation. A
+  generated compat trace cannot reach it: the real compat lease never reports a
+  read past its bound (K3), so no generated trace has a terminal release to
+  renew. The directed test feeds a read that the surface reports past its bound.
+- `the_journal_click_is_held_on_the_real_code_where_the_earlier_ledger_pressed`
+  (finding F2, mutation `f2-quiet-click-no-renew`, the ledger at `aa5e8bf2c`).
+  It runs in real seconds.
+
+The generated compat traces fail on a host that lets a new key inherit the
+phase of the old hold, on one that keeps its hold at a session boundary, and
+on one with no margin. The direct host tests (`crates/host/src/lib_tests.rs`)
+cover the other wrong versions of the F1 fix: a re-arm at any change of the
+deadline, and a re-arm after a boundary.
 
 ## When the hold changes
 
