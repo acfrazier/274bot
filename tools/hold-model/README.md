@@ -192,7 +192,8 @@ use it). The mutations `f2-quiet-click-no-renew`, `m6-compat-no-renew` and
 | | State |
 |---|---|
 | F1 | Fixed. The host ended the acknowledgement hold, and the end gap that follows is the same lease renewed, so the press went out during the gap. The host now holds a renewal that moves the deadline later (`f1-renewal-keeps-release` is the old host; S1 and S4 find it in 6 steps). |
-| F2 | Fixed. The journal click lost its hold in its own frame when the lease's wall bound passed between the owner's poll and the host's sample (S6). Each window the owner arms, the click first, now renews the hold bound from its poll; the paint cap stays at the begin. `f2-quiet-click-no-renew` is the old ledger; S6 finds it in 6 steps in `quiet` and 4 in `alt`. |
+| F2 | Fixed. The journal click lost its hold in its own frame when the lease's wall bound passed between the owner's poll and the host's sample (S6). Each window the owner arms, the click first, now renews the hold bound from its poll; the paint cap stays at the begin. `f2-quiet-click-no-renew` is the old ledger; S6 finds it in 6 steps in `quiet` and 4 in `alt` (without the stall, `--no-stall`; with the stall it is shorter). |
+| N1 | Fixed. Renewal fixes the old-origin crossing, not every expiry before dispatch: a stall of the process (a suspended or sleeping machine) between the owner's poll and the host's sample can pass the whole renewed bound. The sample ended the hold, and the host still dispatched the click that the poll had queued, with no hold. Now an expired hold makes its queued verb stale: the native ledger cancels the owner's undispatched click or close when it releases the lease by expiry, and the compat journal's drain drops its verb; the owner's next poll finds its read expired and fails it (`journal quiet lease expired`; `modal-timeout`), so its own retry applies. `n1-expired-click-dispatched` is the product at `c2ca4cf66`; S7 (and S6 when a press follows) finds it in 2 to 3 steps. The modal lease has no wall bound and cannot reach it. |
 | K1 | A wait that the owner bounds in ticks is not on the active clock. A paused owner loses its end-gap hold. |
 | K2 | The terminal release is only as good as the owner's polls. |
 | K3 | The compat read never gets a terminal release. |
@@ -200,20 +201,35 @@ use it). The mutations `f2-quiet-click-no-renew`, `m6-compat-no-renew` and
 ## Expected results of the profiles
 
 Release build on chardonnay, `--all-violations`, no cap reached
-(HOLD-MODEL-NITS, 2026-11-02, `nightly.sh`). Every profile ends clean and
-complete at its horizon: no violation of S0 to S6 or L. A run that differs
-from this table is a finding. The `quiet` run is the longest: 92.4 M of the
-100 M states of the default cap.
+(HOLD-MODEL-N1, 2026-11-02, `nightly.sh` at `da29b51ed`). Every profile ends
+clean and complete at its horizon: no violation of S0 to S7 or L. A run that
+differs from this table is a finding. The profiles include the stall event.
+The `quiet` run is the longest: 104.5 M of the 115 M states of the default
+cap (see the note below the table).
 
 | Profile | Horizon | States | Time | Peak RSS | Result |
 |---|---|---|---|---|---|
-| `smoke` | 8 | 1 410 765 | 0.9 s | 0.13 GB | clean |
-| `modal` | 14 | 48 187 697 | 71.4 s | 4.00 GB | clean |
-| `quiet` | 14 | 92 396 722 | 138.6 s | 7.78 GB | clean |
-| `compat` | 14 | 78 047 719 | 133.7 s | 6.90 GB | clean |
-| `all` | 11 | 37 430 466 | 51.5 s | 3.41 GB | clean |
-| `alt` | 10 | 17 344 503 | 16.9 s | 1.71 GB | clean |
-| `handoff` | 11 | 42 427 339 | 48.0 s | 3.70 GB | clean |
+| `smoke` | 8 | 1 712 070 | 1.4 s | 0.15 GB | clean |
+| `modal` | 14 | 62 567 854 | 97.0 s | 6.81 GB | clean |
+| `quiet` | 14 | 104 492 969 | 159.6 s | 8.58 GB | clean |
+| `compat` | 14 | 98 653 431 | 139.0 s | 8.21 GB | clean |
+| `all` | 11 | 44 884 064 | 49.9 s | 3.86 GB | clean |
+| `alt` | 10 | 20 660 086 | 19.7 s | 1.83 GB | clean |
+| `handoff` | 11 | 50 783 058 | 56.7 s | 4.22 GB | clean |
+
+The stall event raised the state counts by 13 % (`quiet`) to 30 % (`modal`):
+before it, the table (HOLD-MODEL-NITS) was 1.41 M, 48.2 M, 92.4 M, 78.0 M,
+37.4 M, 17.3 M and 42.4 M states. `quiet` no longer fitted the old cap of
+100 M states (it stopped at the cap, incomplete). The default state cap is
+now 115 M and the byte cap 12 GiB (`explorer.rs` says why): the measured peak
+of `quiet` is 8.58 GiB, inside the 16 GiB scope of `nightly.sh`, and the
+remaining state allowance is 10.5 M states, 9 % of the cap. The horizons stay.
+With `--no-stall` the head reproduces the old counts exactly (1 410 765,
+17 344 503, 92 396 722 and 48 187 697 states in `smoke`, `alt`, `quiet` and
+`modal`), so the new invariant and the new fields change nothing without the
+stall.
+A model change that passes the cap makes the nightly fail: measure the peak,
+then raise the cap or lower the horizon, and say why.
 
 ## Where the runs go
 
@@ -227,8 +243,8 @@ from this table is a finding. The `quiet` run is the longest: 92.4 M of the
   that native-only lane runs no conformance test. Together they take about
   27 s (host-play, of which the F2 trace takes about 10 s of real time) and
   8 s (script-js) after the build.
-- The full profiles do not belong in those lanes: the longest needs 8 GB and
-  2.5 minutes, and the seven together about 8 minutes. `tools/nightly` has no
+- The full profiles do not belong in those lanes: the longest needs 9 GB and
+  2.7 minutes, and the seven together about 9 minutes. `tools/nightly` has no
   step for them, and the Linux nightly box (`malbec`) has 15 GiB. They run
   nightly on chardonnay (ADR 0017): `nightly.sh` builds the release binary,
   runs every profile one at a time in its own
@@ -282,7 +298,7 @@ it skipped; `HOLD_CONFORMANCE_SLOW_TRACES=N` raises the limit. A full run,
 every shortest trace of every release: 519 native traces (none skipped) and 805
 compat traces, in about 6 minutes (HOLD-MODEL-NITS, chardonnay).
 
-Three tests run a counterexample of a retained mutation on the real code. The
+Four tests run a counterexample of a retained mutation on the real code. The
 real code must decide like the head model at every frame, and each test
 fails on code that has the old behaviour:
 
@@ -296,6 +312,23 @@ fails on code that has the old behaviour:
 - `the_journal_click_is_held_on_the_real_code_where_the_earlier_ledger_pressed`
   (finding F2, mutation `f2-quiet-click-no-renew`, the ledger at `aa5e8bf2c`).
   It runs in real seconds.
+- `an_expired_hold_makes_the_queued_click_stale_on_the_real_code`
+  (finding N1, mutation `n1-expired-click-dispatched`, the ledger at
+  `c2ca4cf66`). The owner double queues a real click through
+  `ActionContext::emit` and the process stalls (the double sleeps 10.5 s) past
+  the renewed hold before the host's sample. The real code must decide like
+  the head model at every frame, the click's receipt must never come back (the
+  host did not dispatch it), and the owner's next poll must find its read
+  expired. It runs two model traces (one where a press follows, one where the
+  run is already on and only S7 sees the dispatch), about 11 s each.
+
+The compat side of N1 is tested in `script-js`: the lease-level tests
+`a_click_queued_before_a_stall_that_outlasts_its_hold_is_dropped_at_the_drain`
+and `a_close_queued_...` (`CompatJournalLease::drop_expired_verb`), and the
+isolate-level `v2_journal_click_queued_before_a_stall_past_its_hold_is_not_drained`
+(the real `LoadIsolate` drain). The native side has three tests in
+`quest_journal/native_tests.rs` (click, close, and a dispatched click that keeps
+its receipt). None of them can reach the host policy.
 
 The generated compat traces fail on a host that lets a new key inherit the
 phase of the old hold, on one that keeps its hold at a session boundary, and
