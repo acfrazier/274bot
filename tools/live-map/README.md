@@ -314,10 +314,11 @@ does not replace or gate the 289 cell.
 
 ## Navigation generator inputs
 
-The `not_live` entries for `nav-bake/src/bake.rs`, `transport.rs` and
-`transport/static_routes.rs` identify generator code, not a live runtime
-path. They do not exempt a change to the generated navigation from proof.
-This includes the Entrana restricted-item list in `static_routes.rs`.
+The explicit `not_live` entries for `crates/nav-bake/src/` generator code,
+its command-line producer and its embedded `.rs2` templates are not live
+runtime paths. They do not exempt a change to the generated navigation
+from proof. This includes the Entrana restricted-item list in
+`transport/static_routes.rs` and the staged-door and Legends generators.
 
 After a generator change, bake the navigation pack from the composed
 generator head, compare the route corpus with the accepted reference, and
@@ -329,6 +330,15 @@ content. For the Entrana list, run `host.nav-zanaris-entrana`,
 
 For a batch, do this after the final generator-source merge. An interim
 source-only check is not the combined-pack corpus or live proof.
+
+## Offline build metadata
+
+The exact `not_live` entries for `.cargo/audit.toml`, `rust-toolchain.toml`,
+`vendor/fr-client-rust/Cargo.lock` and
+`vendor/fr-client-rust/rust-toolchain.toml` select audit, toolchain or
+dependency checks, not gameplay routes. They retain full CI and vendor
+verification. This classification does not replace the required
+same-toolchain and same-engine performance qualification.
 
 ## Input values
 
