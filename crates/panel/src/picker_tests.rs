@@ -713,19 +713,20 @@ fn probability_admission_checkbox_and_default_escape_use_the_real_picker() {
         !session.route_through_zones,
         "the checkbox grant is consumed"
     );
-    let arms = session.core.walk_arms();
-    let arm = Arc::clone(&arms.lock().unwrap()["alice"]);
-    let arm = arm.lock().unwrap();
-    let assessment = arm.assessment.as_ref().unwrap();
-    assert_eq!(format!("{:?}", assessment.verdict), "Unsurvivable");
-    assert!(assessment.bound > 0.0);
-    assert!(!assessment.plan.crossings.is_empty());
-    assert!(arm.admission.as_ref().unwrap().grants.is_all());
-    assert!(
-        arm.route.is_some(),
-        "explicit UI opt-in retains the honest bound"
-    );
-    drop(arm);
+    session
+        .core
+        .with_walk_arm("alice", |arm| {
+            let assessment = arm.assessment.as_ref().unwrap();
+            assert_eq!(format!("{:?}", assessment.verdict), "Unsurvivable");
+            assert!(assessment.bound > 0.0);
+            assert!(!assessment.plan.crossings.is_empty());
+            assert!(arm.admission.as_ref().unwrap().grants.is_all());
+            assert!(
+                arm.route.is_some(),
+                "explicit UI opt-in retains the honest bound"
+            );
+        })
+        .expect("confirmed picker walk retains its arm");
 
     let inside = Tile {
         x: 11,
@@ -739,22 +740,24 @@ fn probability_admission_checkbox_and_default_escape_use_the_real_picker() {
     assert!(!escape.route_through_zones);
     escape.select_picker_tile(&world, outside);
     assert!(escape.confirm_picker_walk(&world));
-    let arms = escape.core.walk_arms();
-    let arm = Arc::clone(&arms.lock().unwrap()["alice"]);
-    let arm = arm.lock().unwrap();
-    let assessment = arm.assessment.as_ref().unwrap();
-    assert!(assessment.plan.complete);
-    assert!(assessment.plan.crossings.is_empty());
-    assert!(assessment.plan.intervals.iter().any(|row| row.escaping()));
-    assert!(!format!("{:?}", assessment.verdict).starts_with("Unknown"));
-    assert_eq!(
-        arm.admission.as_ref().unwrap().grants,
-        nav_planner::zones::ZoneExempt::NONE
-    );
-    assert!(
-        arm.route.is_some(),
-        "default UI escape needs no checkbox grant"
-    );
+    escape
+        .core
+        .with_walk_arm("alice", |arm| {
+            let assessment = arm.assessment.as_ref().unwrap();
+            assert!(assessment.plan.complete);
+            assert!(assessment.plan.crossings.is_empty());
+            assert!(assessment.plan.intervals.iter().any(|row| row.escaping()));
+            assert!(!format!("{:?}", assessment.verdict).starts_with("Unknown"));
+            assert_eq!(
+                arm.admission.as_ref().unwrap().grants,
+                nav_planner::zones::ZoneExempt::NONE
+            );
+            assert!(
+                arm.route.is_some(),
+                "default UI escape needs no checkbox grant"
+            );
+        })
+        .expect("default escape retains its walk arm");
 }
 
 /// A peer frontend sets the durable global danger-zone grant, through a
