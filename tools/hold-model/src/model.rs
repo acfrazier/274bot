@@ -19,19 +19,51 @@ use std::fmt::Write as _;
 /// value, even for a mutation that changes the margin of the transitions.
 pub const MARGIN_TICKS: u8 = 1;
 
-/// Permanent seeded earlier designs. Production exploration uses `None`.
+/// Permanent seeded regressions. Production exploration uses `None`. The
+/// `Check*` mutations are the model builder's own checks that each frozen
+/// invariant can fail; they are not earlier designs of the product.
 #[derive(Clone, Copy, Debug, Default, Eq, Hash, PartialEq)]
 pub enum Mutation {
     #[default]
     None,
+    /// The host ends a hold at the deadline, with no margin.
+    CheckMarginZero,
+    /// The host ends a hold two ticks after the deadline.
+    CheckMarginTwo,
+    /// Stop leaves the native lease alive.
+    CheckStopKeepsLease,
+    /// The compat click does not take a fresh hold bound.
+    CheckCompatClickNoRenew,
+    /// A new send keeps the key of the lease it replaces.
+    CheckSendKeepsKey,
+    /// The host keeps its hold when the sample returns no wait.
+    CheckStaleHold,
+    /// The journal quiet lease has no wall bound.
+    CheckQuietNoWall,
 }
 
 impl Mutation {
-    pub const ALL: [Mutation; 1] = [Mutation::None];
+    pub const ALL: [Mutation; 8] = [
+        Mutation::None,
+        Mutation::CheckMarginZero,
+        Mutation::CheckMarginTwo,
+        Mutation::CheckStopKeepsLease,
+        Mutation::CheckCompatClickNoRenew,
+        Mutation::CheckSendKeepsKey,
+        Mutation::CheckStaleHold,
+        Mutation::CheckQuietNoWall,
+    ];
 
     pub fn name(self) -> &'static str {
         match self {
             Mutation::None => "none",
+            Mutation::CheckMarginZero => "check-margin-zero",
+            Mutation::CheckMarginTwo => "check-margin-two",
+            Mutation::CheckStopKeepsLease => "check-stop-keeps-lease",
+            Mutation::CheckCompatClickNoRenew => "check-compat-click-no-renew",
+            Mutation::CheckSendKeepsKey => "check-send-keeps-key",
+            Mutation::CheckStaleHold => "check-stale-hold",
+            Mutation::CheckQuietNoWall => "check-quiet-no-wall",
         }
     }
 
@@ -402,6 +434,8 @@ pub struct Info {
     pub boundary: bool,
     pub expired: Option<(Key, u8, u8)>,
     pub wait: Option<(Key, u8)>,
+    /// The owner sent a verb this frame (a Talk, Continue, answer, click or close).
+    pub emitted: bool,
 }
 
 struct Wait {
@@ -518,10 +552,11 @@ impl Model {
 
     // ---- the owner's side ----
 
-    fn begin(&self, s: &mut State, kind: Begin) {
+    fn begin(&self, s: &mut State, kind: Begin, info: &mut Info) {
         let b = &self.bounds;
         match kind {
             Begin::Modal => {
+                info.emitted = true;
                 let id = Self::fresh_id(s);
                 let until = s.active + b.page_active;
                 s.lease = Lease::Modal(Modal {
@@ -619,6 +654,7 @@ impl Model {
                                 return;
                             }
                             q.phase = QuietPhase::Acquire;
+                            info.emitted = true;
                             renew(&mut q, s.tick, window);
                         }
                         QuietPhase::Acquire => {
@@ -630,6 +666,7 @@ impl Model {
                         QuietPhase::Close => {
                             if s.modal {
                                 q.phase = QuietPhase::Closing;
+                                info.emitted = true;
                                 renew(&mut q, s.tick, window);
                             } else {
                                 Self::end_lease(s, info, Cause::Bound);
@@ -651,7 +688,10 @@ impl Model {
                 match c.phase {
                     CompatPhase::Ready => {
                         // The click takes a fresh hold bound; the paint cap stays.
-                        c.hold_until = s.wall + self.bounds.compat_hold;
+                        if self.mutation != Mutation::CheckCompatClickNoRenew {
+                            c.hold_until = s.wall + self.bounds.compat_hold;
+                        }
+                        info.emitted = true;
                         c.phase = CompatPhase::Awaiting;
                         c.acquire = s.active + acquire;
                     }
@@ -670,6 +710,7 @@ impl Model {
                     CompatPhase::Acquired { page } => {
                         if s.modal && s.page == page {
                             c.phase = CompatPhase::Closing { page };
+                            info.emitted = true;
                             c.acquire = s.active + acquire;
                         } else {
                             Self::end_lease(s, info, Cause::Bound);
@@ -691,11 +732,16 @@ impl Model {
         }
     }
 
-    fn send(&self, s: &mut State) {
+    fn send(&self, s: &mut State, info: &mut Info) {
         let Lease::Modal(old) = s.lease else {
             return;
         };
-        let id = Self::fresh_id(s);
+        info.emitted = true;
+        let id = if self.mutation == Mutation::CheckSendKeepsKey {
+            old.id
+        } else {
+            Self::fresh_id(s)
+        };
         let until = s.active + self.bounds.ack_active;
         s.lease = Lease::Modal(Modal {
             id,
@@ -805,7 +851,10 @@ impl Model {
     /// `quiet_read(now)`: the lease's own wall bound. True when it released.
     fn quiet_wall_release(&self, s: &mut State) -> bool {
         if let Lease::Quiet(mut q) = s.lease {
-            if q.held && s.wall.saturating_sub(q.since) >= self.bounds.quiet_wall {
+            if q.held
+                && self.mutation != Mutation::CheckQuietNoWall
+                && s.wall.saturating_sub(q.since) >= self.bounds.quiet_wall
+            {
                 q.held = false;
                 s.lease = Lease::Quiet(q);
                 return true;
@@ -869,6 +918,7 @@ impl Model {
     /// key, the reported deadline and the tick.
     fn observe_wait(&self, s: &mut State, wait: Option<&Wait>) -> Option<(Key, u8, u8)> {
         s.hold_rec = match (wait, s.hold_rec) {
+            (None, held) if self.mutation == Mutation::CheckStaleHold => held,
             (None, _) => None,
             (Some(w), Some(h)) if h.key == w.key => Some(h),
             (Some(w), _) => Some(HostHold {
@@ -879,7 +929,12 @@ impl Model {
         let (Some(w), Some(h)) = (wait, s.hold_rec.as_mut()) else {
             return None;
         };
-        if h.released || s.tick < w.deadline.saturating_add(MARGIN_TICKS) {
+        let margin = match self.mutation {
+            Mutation::CheckMarginZero => 0,
+            Mutation::CheckMarginTwo => 2,
+            _ => MARGIN_TICKS,
+        };
+        if h.released || s.tick < w.deadline.saturating_add(margin) {
             return None;
         }
         h.released = true;
@@ -924,6 +979,17 @@ impl Model {
                 format!(
                     "the host pressed run while {:?} was live and its own deadline had not passed (tick {}, active {}, wall {})",
                     post.lease, post.tick, post.active, post.wall
+                ),
+            ));
+        }
+        // S6: a verb that the owner sends is never followed by a press in the
+        // same frame: the press would close the page the verb opens.
+        if info.emitted && info.pressed {
+            return Err(Self::violation(
+                "S6-press-after-send",
+                format!(
+                    "the owner sent a verb in this frame and the host pressed run after it (lease {:?}, host {:?})",
+                    post.lease, post.hold_rec
                 ),
             ));
         }
@@ -1057,9 +1123,9 @@ impl Model {
             } else {
                 match f.act {
                     OwnerAct::NoPoll | OwnerAct::Stall => {}
-                    OwnerAct::Begin(kind) => self.begin(&mut s, kind),
+                    OwnerAct::Begin(kind) => self.begin(&mut s, kind, info),
                     OwnerAct::Poll => self.poll(&mut s, info),
-                    OwnerAct::Send => self.send(&mut s),
+                    OwnerAct::Send => self.send(&mut s, info),
                     OwnerAct::ToGap(gap) => Self::to_gap(&mut s, gap),
                     OwnerAct::Rearm(gap) => self.rearm(&mut s, gap),
                     OwnerAct::Drop => Self::end_lease(&mut s, info, Cause::Dropped),
@@ -1117,7 +1183,7 @@ impl Model {
             }
             Action::Resume => s.want_run = true,
             Action::Stop => {
-                if s.lease != Lease::None {
+                if s.lease != Lease::None && self.mutation != Mutation::CheckStopKeepsLease {
                     Self::end_lease(&mut s, info, Cause::Stop);
                 }
                 s.runtime_live = false;

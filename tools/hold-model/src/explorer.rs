@@ -12,9 +12,9 @@ use std::hash::{DefaultHasher, Hash, Hasher};
 use std::mem::size_of;
 use std::time::{Duration, Instant};
 
-pub const DEFAULT_STATE_CAP: usize = 20_000_000;
-pub const DEFAULT_FRONTIER_CAP: usize = 10_000_000;
-pub const DEFAULT_BYTE_CAP: usize = 8 * 1024 * 1024 * 1024;
+pub const DEFAULT_STATE_CAP: usize = 100_000_000;
+pub const DEFAULT_FRONTIER_CAP: usize = 60_000_000;
+pub const DEFAULT_BYTE_CAP: usize = 10 * 1024 * 1024 * 1024;
 /// Most hit edges one goal keeps; a goal with more hits at its shortest depth
 /// reports the cap, not the count.
 pub const GOAL_EDGE_CAP: usize = 4096;
