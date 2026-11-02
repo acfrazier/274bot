@@ -360,7 +360,17 @@ fn the_earlier_ledger_fails_s6_in_the_quiet_profiles() {
             .iter()
             .map(|(v, trace)| (v.name, trace.len()))
             .collect();
-        assert_eq!(found, [("S6-press-after-send", steps)], "{name}");
+        assert!(
+            found.contains(&("S6-press-after-send", steps)),
+            "{name}: {found:?}"
+        );
+        // The dispatched click without a hold is also S7, one step later: a
+        // trace with the run already on.
+        assert!(
+            found.iter().any(|(name, _)| *name == "S7-dispatch-without-hold"),
+            "{name}: {found:?}"
+        );
+        assert_eq!(found.len(), 2, "{name}: {found:?}");
     }
 }
 
@@ -631,17 +641,20 @@ fn n1_quiet_steps(run_on: bool) -> Vec<Action> {
 }
 
 /// The same for the compat read: its click is the first poll.
-fn n1_compat_steps() -> Vec<Action> {
-    vec![
-        frame(true, false, false, OwnerAct::Begin(Begin::Compat)),
-        Action::Frame(hold_model::FrameInput {
-            tick: true,
-            wake: false,
-            drift: false,
-            stall: true,
-            act: OwnerAct::Poll,
-        }),
-    ]
+fn n1_compat_steps(run_on: bool) -> Vec<Action> {
+    let mut steps = Vec::new();
+    if run_on {
+        steps.push(frame(true, false, false, OwnerAct::Stall));
+    }
+    steps.push(frame(true, false, false, OwnerAct::Begin(Begin::Compat)));
+    steps.push(Action::Frame(hold_model::FrameInput {
+        tick: true,
+        wake: false,
+        drift: false,
+        stall: true,
+        act: OwnerAct::Poll,
+    }));
+    steps
 }
 
 fn stalled_model(mutation: Mutation) -> Model {
@@ -662,7 +675,8 @@ fn an_expired_hold_makes_the_queued_click_stale() {
     for steps in [
         n1_quiet_steps(false),
         n1_quiet_steps(true),
-        n1_compat_steps(),
+        n1_compat_steps(false),
+        n1_compat_steps(true),
     ] {
         let (_, infos) = run(&stalled_model(Mutation::None), &steps);
         let last = infos.last().expect("a frame");
@@ -681,7 +695,7 @@ fn the_earlier_product_dispatches_after_expiry_and_s7_catches_it() {
     let model = stalled_model(Mutation::N1ExpiredClickDispatched);
     for (steps, kind) in [
         (n1_quiet_steps(true), "quiet"),
-        (n1_compat_steps(), "compat"),
+        (n1_compat_steps(true), "compat"),
     ] {
         let mut state = model.initial_state();
         let last = steps.len() - 1;
@@ -691,9 +705,7 @@ fn the_earlier_product_dispatches_after_expiry_and_s7_catches_it() {
                 let violation = violation.unwrap_or_else(|| panic!("{kind}: S7 must fire"));
                 assert_eq!(violation.name, "S7-dispatch-without-hold", "{kind}");
                 assert!(info.dispatched() && !info.deferred, "{kind}: {info:?}");
-                if kind == "quiet" {
-                    assert!(!info.pressed, "run is on: no press, so S6 cannot see it");
-                }
+                assert!(!info.pressed, "{kind}: run is on, so S6 cannot see it");
             } else {
                 assert!(violation.is_none(), "{kind}: step {index}");
             }
