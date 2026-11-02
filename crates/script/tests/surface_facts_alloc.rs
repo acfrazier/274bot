@@ -343,8 +343,17 @@ fn slot_native_input_authority_survives_run_context_replacement() {
 fn slot_size_stays_within_the_full_build_parent_layout() {
     let actual = std::mem::size_of::<SlotScript>();
     println!("S0d SlotScript layout: {actual} bytes");
+    let expected = if cfg!(all(
+        target_os = "linux",
+        target_arch = "x86_64",
+        target_env = "gnu"
+    )) {
+        1640
+    } else {
+        1648
+    };
     assert_eq!(
-        actual, 1640,
+        actual, expected,
         "the surface slot changed from its measured size"
     );
 }
