@@ -113,7 +113,7 @@ impl StableClosedPoll {
         if self.inactive_since_tick < 0.0 {
             self.inactive_since_tick = tick;
         }
-        tick - self.inactive_since_tick >= observed_ticks_for_min_ms(min_ms)
+        tick - self.inactive_since_tick >= Self::observed_ticks_for_min_ms(min_ms)
     }
 
     fn observed_ticks_for_min_ms(min_ms: f64) -> f64 {
