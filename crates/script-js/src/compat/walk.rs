@@ -2708,10 +2708,22 @@ pub(crate) mod tests {
             level: 0,
         };
         post_here(from.x, from.z);
-        let h = start_with_tile(to, json!({ "radius": 0, "maxBudget": 120_000 }));
-        ladder_no_progress_passes_to(h, 1, UNREACHABLE_PASSES, 0, to);
+        let args = serde_json::from_value::<WalkResilientArgs>(json!({
+            "tile": { "x": to.x, "z": to.z, "level": to.level },
+            "opts": { "radius": 0, "maxBudget": 120_000 }
+        }))
+        .expect("the walk options deserialize with the caller budget");
+        let mut ops = Vec::new();
+        let mut clock = crate::scene::task_clock::InstantTaskClock::new();
+        let mut cx = crate::machine::Cx::test(&mut ops, &mut clock, None);
+        let crate::machine::Begin::Run(mut row) =
+            <WalkResilient as crate::machine::Family>::begin(args, &mut cx)
+        else {
+            panic!("the long-route walk starts");
+        };
+        row.drive.kick_verify(&mut cx);
+        drop(cx);
 
-        let ops = machine::merge_ops(Vec::new());
         let [InteractReq::InspectRoute {
             x,
             z,
