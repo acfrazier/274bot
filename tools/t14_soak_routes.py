@@ -97,8 +97,8 @@ def fixture(source):
     area = re.search(r"const NORMAL_SAFE_WALK[^=]*= &(\[.*?\]);", text, re.S)[1]
     rectangles = [tuple(map(int, match)) for match in re.findall(
         r"min_x: (\d+),\s*max_x: (\d+),\s*min_z: (\d+),\s*max_z: (\d+)", area)]
-    if len(starts) != 10 or len(set(starts)) != 10 or not rectangles:
-        raise ValueError("fixture requires ten distinct Start anchors and explicit route areas")
+    if len(starts) != 5 or len(set(starts)) != 5 or not rectangles:
+        raise ValueError("fixture requires five distinct Start anchors and explicit route areas")
     if normal_radius < 0 or second_radius < 0:
         raise ValueError("fixture radii must be nonnegative")
     return starts, second_start, rectangles, normal_radius, second_radius

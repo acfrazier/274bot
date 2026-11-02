@@ -148,9 +148,9 @@ class RouteSafetyTests(unittest.TestCase):
     def test_fixture_reads_second_tier_constants_and_key(self):
         with tempfile.TemporaryDirectory() as folder:
             source = Path(folder) / "fixture.rs"
-            starts = [(100 + index, 200) for index in range(10)]
+            starts = [(100 + index, 200) for index in range(5)]
             source.write_text(
-                "const NORMAL_STARTS: [(i32, i32); 10] = [\n"
+                "const NORMAL_STARTS: [(i32, i32); 5] = [\n"
                 f"    {', '.join(map(str, starts))},\n];\n"
                 "const SECOND_TIER_START: (i32, i32) = (120, 220);\n"
                 "const SECOND_TIER_KEY: &str = \"willow\";\n"
@@ -225,9 +225,9 @@ class RouteSafetyTests(unittest.TestCase):
     def test_route_audit_reads_normal_and_second_tier_radii(self):
         with tempfile.TemporaryDirectory() as folder:
             source = Path(folder) / "fixture.rs"
-            starts = [(100 + index, 200) for index in range(10)]
+            starts = [(100 + index, 200) for index in range(5)]
             source.write_text(
-                f"const NORMAL_STARTS: [(i32, i32); 10] = {starts!r};\n"
+                f"const NORMAL_STARTS: [(i32, i32); 5] = {starts!r};\n"
                 "const SECOND_TIER_START: (i32, i32) = (120, 220);\n"
                 "const SECOND_TIER_KEY: &str = \"oak\";\n"
                 "const NORMAL_RADIUS: i32 = 5;\n"
