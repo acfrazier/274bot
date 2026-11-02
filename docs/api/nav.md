@@ -649,6 +649,15 @@ Alfonse the password proves the eligible stage range without starting
 dialogue or changing quest progress. This keeps the kitchen available
 before Heroes' Quest completion as well as after it.
 
+Before adding a journal row, either use a generator check that proves its
+stage implication or retain a hand proof with the change's evidence.
+The proof must cite the handler guards and exact title and text at a pinned
+content revision. It must show that every matching page implies the claimed
+signal range and justify the stored preservation range. Check the nearest
+non-qualifying page and other branches that can emit the same text.
+Keep the row's exact content citations with that proof. Schema and text
+validation alone do not prove a stage range.
+
 Prerequisite-aware walks retain their original request and bounded step state.
 On x86_64 Linux, `Dialogue` measures 472 B, including its 72 B last-send receipt,
 and `TalkRun` measures 856 B, including its retained `PrereqWalk`.
