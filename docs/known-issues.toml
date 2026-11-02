@@ -595,4 +595,4 @@ text = """The serialization and date libraries retain compatibility versions
 first = "0.2.9"
 target = "0.3.0"
 severity = "low"
-owner = "runtime track: deno_ast >=0.50.2 needs a rustyscript move; lift the serde hold, the client serde_json =1.0.143 development pin (vendor/fr-client-rust/crates/client/Cargo.toml) and the RUSTSEC-2026-0009 exception that crates/tui/tests/audit_exception.rs guards"
+owner = "runtime track: deno_ast >=0.50.2 needs a rustyscript move; lift the serde =1.0.219 hold, the client serde_json =1.0.143 development pin (vendor/fr-client-rust/crates/client/Cargo.toml) and the seed-calc serde_json =1.0.143 pin (tools/seed-calc/Cargo.toml) together, along with the RUSTSEC-2026-0009 exception that crates/tui/tests/audit_exception.rs guards"
