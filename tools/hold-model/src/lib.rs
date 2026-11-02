@@ -156,7 +156,6 @@ pub fn release_traces(
             retain_dag: true,
             all_violations: true,
             goal: Some(&goal),
-            ..Options::default()
         },
     );
     let mut found = Vec::new();
