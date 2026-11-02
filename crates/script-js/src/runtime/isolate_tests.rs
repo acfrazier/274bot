@@ -2314,6 +2314,74 @@ fn v2_journal_read_hides_paint_until_observed_close_and_reset() {
     iso.join();
 }
 
+/// N1 of `HOLD-MODEL-AB`, on the real isolate. The journal machine renews its
+/// hold at its click and queues the click; the process then stalls past the
+/// renewed bound before the host's drain (the lease is backdated by the
+/// stall). The drain does not return the click: an expired hold makes its
+/// queued verb stale. The read ends with `modal-timeout` at its next step, so
+/// the script sees a failure and its own retry applies.
+#[test]
+fn v2_journal_click_queued_before_a_stall_past_its_hold_is_not_drained() {
+    use crate::wire::{IsolateBuf, MainModalTextsInput, NativeFactsInput, QuestStatusInput};
+
+    let iso = LoadIsolate::spawn(
+        r#"export const apiVersion = 2;
+           export async function tick(api) {
+             if (globalThis.__started) return;
+             globalThis.__started = true;
+             const begin = api.questJournalBegin({ name: "Cook's Assistant" });
+             globalThis.__begin = begin;
+             if (begin.ok) globalThis.__out = await api.questJournalRun(begin.value);
+           }"#
+        .into(),
+        LoadShape::NativeTick,
+        vec![],
+    )
+    .unwrap();
+    let rows = [QuestStatusInput {
+        name: "Cook's Assistant",
+        status: "notStarted",
+        component_id: Some(1234),
+    }];
+    let mut buf = IsolateBuf::new();
+    let mut post = |tick, root, texts: &[String]| {
+        let mut snapshot = crate::wire::tests::empty_input(tick);
+        snapshot.scene_state = 2;
+        snapshot.side_tab = 2;
+        snapshot.main_modal_id = root;
+        let facts = NativeFactsInput {
+            quest_statuses: Some(&rows),
+            main_modal_texts: Some(MainModalTextsInput { root, texts }),
+            ..Default::default()
+        };
+        let (bytes, _) = buf.encode_snapshot_delta_with_native(None, &snapshot, facts, false);
+        iso.post_snapshot(bytes);
+        machine_tick(&iso, tick);
+    };
+    post(1, -1, &[]);
+    assert_eq!(iso.probe("globalThis.__begin.ok").unwrap(), true);
+    // The process stalls: the click is queued, and the whole hold passes
+    // before the host drains.
+    iso.compat_journal
+        .as_ref()
+        .expect("the compat lease")
+        .backdate(Duration::from_secs(11));
+    assert!(
+        iso.drain_interacts().is_empty(),
+        "the click under an expired hold is not dispatched"
+    );
+    post(2, -1, &[]);
+    assert!(
+        iso.probe("JSON.stringify(globalThis.__out)")
+            .unwrap()
+            .as_str()
+            .is_some_and(|out| out.contains("modal-timeout")),
+        "the read fails with modal-timeout: {:?}",
+        iso.probe("JSON.stringify(globalThis.__out)")
+    );
+    iso.join();
+}
+
 fn post_execution_seat_page<'a>(
     isolate: &LoadIsolate,
     buffer: &mut crate::wire::IsolateBuf,

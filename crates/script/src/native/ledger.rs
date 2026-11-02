@@ -366,13 +366,27 @@ impl Ledger {
 
     /// The live quiet read. The lease ends at its wall bound: the begin's, or
     /// the last window the owner armed.
+    ///
+    /// An expired hold makes its queued interaction stale (finding N1 of
+    /// `HOLD-MODEL-AB`). The owner renews the bound from its poll, but the
+    /// host reads the wall time later in the same frame, and a stall of the
+    /// process (a suspended or sleeping machine) can put the whole bound
+    /// between the two. The click that the poll queued is then still live in
+    /// the interaction authority, which this lease does not own. The sample
+    /// that releases the lease by expiry therefore also cancels the click or
+    /// close that the owner queued and the host has not yet dispatched: it
+    /// never goes out without a hold. A dispatched one is unchanged, and so is
+    /// its receipt. The owner learns of it at its next poll, where the lease
+    /// is no longer live ([`QuietReadLease::live`]): it fails its read, and
+    /// its own retry and timeout apply.
     pub fn quiet_read(&mut self, now: Instant) -> Option<QuietReadOwner> {
         let quiet = self.quiet_lease?;
-        let owner = self.owner.as_ref()?;
+        let owner = Arc::clone(self.owner.as_ref()?);
         // Independent of the active action clock: a paused or stranded
         // reader must not keep hiding a modal indefinitely.
-        if now >= quiet.hold_until {
+        if now >= quiet.hold_until && owner.quiet(quiet.lease) {
             owner.release_quiet(quiet.lease);
+            self.cancel_undispatched_interaction(&owner);
         }
         if !owner.quiet(quiet.lease) {
             self.quiet_lease = None;
@@ -384,6 +398,20 @@ impl Ledger {
             action_id: owner.id,
             request_id: quiet.request,
         })
+    }
+
+    /// Cancel the owner's interaction that is queued and not yet dispatched:
+    /// the host's fence ([`HostAction::live`], [`HostAuthority::live`]) then
+    /// drops it, wherever it waits. A dispatched interaction has its receipt
+    /// (`complete_interaction`) and is not touched.
+    fn cancel_undispatched_interaction(&mut self, owner: &Owner) {
+        let Some(request) = self.interaction_request else {
+            return;
+        };
+        if self.interaction.is_none() && owner.interaction_live(request) {
+            owner.cancel_interaction(request);
+            self.outbox.retain(|action| action.request_id != request);
+        }
     }
 
     /// Whether the live quiet read still hides the journal page: the lease is

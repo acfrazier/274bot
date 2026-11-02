@@ -20,7 +20,12 @@ pub struct Profile {
 
 /// The named profiles. Every run uses one of them, with a horizon.
 pub fn profiles() -> Vec<Profile> {
-    let all = Bounds::standard();
+    // Every profile offers the stall (finding N1); the conformance tests and
+    // the hand-written scenarios use `Bounds::standard()`, which does not.
+    let all = Bounds {
+        stall: true,
+        ..Bounds::standard()
+    };
     vec![
         Profile {
             name: "smoke",

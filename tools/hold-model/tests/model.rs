@@ -11,6 +11,7 @@ fn frame(tick: bool, wake: bool, drift: bool, act: OwnerAct) -> Action {
         tick,
         wake,
         drift,
+        stall: false,
         act,
     })
 }

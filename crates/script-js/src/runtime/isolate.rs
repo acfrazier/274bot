@@ -1133,6 +1133,14 @@ impl LoadIsolate {
             releases.append(&mut interacts);
             interacts = releases;
         }
+        // An expired hold makes its queued verb stale: the compatibility
+        // journal's click or close never goes out without its hold.
+        if let Some(lease) = &self.compat_journal {
+            let generation = self
+                .work_generation
+                .load(std::sync::atomic::Ordering::Acquire);
+            lease.drop_expired_verb(generation, Instant::now(), &mut interacts);
+        }
         interacts
     }
 

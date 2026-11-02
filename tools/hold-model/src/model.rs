@@ -77,10 +77,16 @@ pub enum Mutation {
     /// `aa5e8bf2c`; the head model renews the bound at each window, as the
     /// compat read does at its click.
     F2QuietClickNoRenew,
+    /// N1 (the finding of `HOLD-MODEL-NITS`, fixed in `script` and `script-js`):
+    /// a hold that the host's sample ends by expiry does not make the verb that
+    /// its owner queued in the same frame stale; the host dispatches it. This
+    /// is the product at `c2ca4cf66`; the head model drops the verb at the
+    /// sample.
+    N1ExpiredClickDispatched,
 }
 
 impl Mutation {
-    pub const ALL: [Mutation; 16] = [
+    pub const ALL: [Mutation; 17] = [
         Mutation::None,
         Mutation::CheckMarginZero,
         Mutation::CheckMarginTwo,
@@ -97,6 +103,7 @@ impl Mutation {
         Mutation::M6CompatNoRenew,
         Mutation::F1RenewalKeepsRelease,
         Mutation::F2QuietClickNoRenew,
+        Mutation::N1ExpiredClickDispatched,
     ];
 
     pub fn name(self) -> &'static str {
@@ -117,6 +124,7 @@ impl Mutation {
             Mutation::M6CompatNoRenew => "m6-compat-no-renew",
             Mutation::F1RenewalKeepsRelease => "f1-renewal-keeps-release",
             Mutation::F2QuietClickNoRenew => "f2-quiet-click-no-renew",
+            Mutation::N1ExpiredClickDispatched => "n1-expired-click-dispatched",
         }
     }
 
@@ -240,6 +248,13 @@ pub struct Bounds {
     /// that abstraction. Added in phase 2 (default off, the head runs are
     /// unchanged).
     pub same_frame_begin: bool,
+    /// Offer a stall: the process stops between the owner's poll and the
+    /// host's sample for longer than any hold (a suspended or sleeping
+    /// machine; merlot slept for 8 hours on 2026-11-01). Without it the gap
+    /// is at most one unit (`drift`), which is shorter than a hold. Offered
+    /// only in a frame where a live lease's owner acts (a poll or a send), so
+    /// the state count grows little. Default off; the profiles turn it on.
+    pub stall: bool,
 }
 
 impl Bounds {
@@ -267,7 +282,19 @@ impl Bounds {
             env: Env::ALL,
             drift_polls_only: false,
             same_frame_begin: false,
+            stall: false,
         }
+    }
+
+    /// The wall unit that a stall reaches: past every hold bound that a run
+    /// can set (`quiet_hold_until` and a compat hold from the last wall unit).
+    pub const fn stall_wall(&self) -> u8 {
+        let hold = if self.quiet_wall > self.compat_hold {
+            self.quiet_wall
+        } else {
+            self.compat_hold
+        };
+        self.max_wall + hold
     }
 }
 
@@ -484,6 +511,9 @@ pub struct FrameInput {
     pub wake: bool,
     /// Time passes between the owner's poll and the host's sample.
     pub drift: bool,
+    /// The process stalls between the poll and the sample for longer than any
+    /// hold ([`Bounds::stall`]).
+    pub stall: bool,
     pub act: OwnerAct,
 }
 
@@ -523,6 +553,17 @@ pub struct Info {
     pub wait: Option<(Key, u8)>,
     /// The owner sent a verb this frame (a Talk, Continue, answer, click or close).
     pub emitted: bool,
+    /// The host's sample ended the hold of the verb's lease by expiry in this
+    /// frame, so the host did not dispatch the verb: it is stale
+    /// (`Ledger::quiet_read`, `CompatJournalLease::drop_expired_verb`).
+    pub dropped: bool,
+}
+
+impl Info {
+    /// The owner sent a verb and the host dispatched it in this frame.
+    pub fn dispatched(&self) -> bool {
+        self.emitted && !self.dropped
+    }
 }
 
 struct Wait {
@@ -1020,6 +1061,17 @@ impl Model {
         false
     }
 
+    /// An expired hold makes its queued verb stale: the sample that ends a
+    /// lease's hold by expiry drops the verb that the owner sent in this frame
+    /// (`Ledger::quiet_read` cancels the queued interaction; the compat
+    /// journal's drain drops its verb). The earlier product
+    /// (`N1ExpiredClickDispatched`) dispatched it.
+    fn stale_verb(&self, info: &mut Info) {
+        if info.emitted && self.mutation != Mutation::N1ExpiredClickDispatched {
+            info.dropped = true;
+        }
+    }
+
     /// `SlotScript::script_interaction_wait`: the three leases in order. It
     /// reads the owner's clocks at the sample and converts an active-clock
     /// bound to a tick when it first sees it reached (`WaitDeadline::owner_tick`).
@@ -1029,6 +1081,7 @@ impl Model {
         }
         if self.quiet_wall_release(s) {
             info.releases.push((Kind::Quiet, Cause::Wall));
+            self.stale_verb(info);
         }
         match s.lease {
             Lease::None => None,
@@ -1072,6 +1125,7 @@ impl Model {
                     if s.hold_rec.is_some_and(|h| !h.released) {
                         info.releases.push((Kind::Compat, Cause::Wall));
                     }
+                    self.stale_verb(info);
                     None
                 }
             }
@@ -1178,14 +1232,28 @@ impl Model {
                 ),
             ));
         }
-        // S6: a verb that the owner sends is never followed by a press in the
-        // same frame: the press would close the page the verb opens.
-        if info.emitted && info.pressed {
+        // S6: a verb that the host dispatches is never followed by a press in
+        // the same frame: the press would close the page the verb opens.
+        if info.dispatched() && info.pressed {
             return Err(Self::violation(
                 "S6-press-after-send",
                 format!(
                     "the owner sent a verb in this frame and the host pressed run after it (lease {:?}, host {:?})",
                     post.lease, post.hold_rec
+                ),
+            ));
+        }
+        // S7: no verb is dispatched without a live hold. A verb that reaches
+        // the dispatcher in a frame has the host's hold at the end of that
+        // frame; a hold that the sample ended by expiry made the verb stale,
+        // and the host dropped it (finding N1). S6 sees this only when a
+        // press follows; S7 also when the run is already on.
+        if info.dispatched() && !info.deferred {
+            return Err(Self::violation(
+                "S7-dispatch-without-hold",
+                format!(
+                    "the host dispatched the owner's verb in a frame whose sample ended the hold (lease {:?}, host {:?}, tick {}, wall {})",
+                    post.lease, post.hold_rec, post.tick, post.wall
                 ),
             ));
         }
@@ -1332,7 +1400,14 @@ impl Model {
             }
         }
         // Time passes between the poll and the sample.
-        if f.drift {
+        if f.stall {
+            // The process stalls past every hold bound.
+            let to = self.bounds.stall_wall().max(s.wall);
+            if s.eligible {
+                s.active = s.active.saturating_add(to - s.wall);
+            }
+            s.wall = to;
+        } else if f.drift {
             s.wall = s.wall.saturating_add(1);
             if s.eligible {
                 s.active = s.active.saturating_add(1);
@@ -1501,8 +1576,23 @@ impl Model {
                             tick,
                             wake,
                             drift,
+                            stall: false,
                             act,
                         }));
+                    }
+                }
+                // A stall, where a live lease's owner acts.
+                if b.stall && s.lease != Lease::None && s.wall < b.stall_wall() {
+                    for &act in &acts {
+                        if matches!(act, OwnerAct::Poll | OwnerAct::Send) {
+                            out.push(Action::Frame(FrameInput {
+                                tick,
+                                wake,
+                                drift: false,
+                                stall: true,
+                                act,
+                            }));
+                        }
                     }
                 }
             }
@@ -1654,7 +1744,12 @@ impl Action {
                 } else if f.wake {
                     parts.push("with an evidence wake".to_string());
                 }
-                if f.drift {
+                if f.stall {
+                    parts.push(
+                        "(the process stalls between poll and sample for longer than any hold)"
+                            .to_string(),
+                    );
+                } else if f.drift {
                     parts.push("(time passes between poll and sample)".to_string());
                 }
                 parts.push(match f.act {
@@ -1713,6 +1808,12 @@ pub fn describe_trace(model: &Model, trace: &[Action]) -> String {
             Ok((next, info)) => {
                 for (kind, cause) in &info.releases {
                     let _ = writeln!(out, "        released: {kind:?} lease, {cause:?}");
+                }
+                if info.dropped {
+                    let _ = writeln!(
+                        out,
+                        "        the host DROPPED the owner's verb: its hold expired at the sample"
+                    );
                 }
                 if info.pressed {
                     let _ = writeln!(out, "        the host PRESSED run");

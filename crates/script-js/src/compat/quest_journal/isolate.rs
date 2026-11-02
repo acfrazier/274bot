@@ -48,6 +48,23 @@ struct CompatJournalKey {
     generation: u64,
 }
 
+/// The verb of a read that its machine has emitted and the host may not have
+/// dispatched yet. The host's drain finds it in the queue by its request.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum PendingVerb {
+    Click { component_id: i32 },
+    Close,
+}
+
+impl PendingVerb {
+    fn request(self) -> InteractReq {
+        match self {
+            PendingVerb::Click { component_id } => InteractReq::IfButton { component_id },
+            PendingVerb::Close => InteractReq::CloseModal,
+        }
+    }
+}
+
 struct CompatJournalLeaseState {
     key: CompatJournalKey,
     /// The begin. The paint-hide cap runs from here.
@@ -56,6 +73,10 @@ struct CompatJournalLeaseState {
     /// the click. A read that was paused before its click sends the click
     /// with a live hold.
     hold_until: std::time::Instant,
+    /// The latest verb of this read that the host's drain has not shown to be
+    /// stale: it is dropped there when the hold has expired (finding N1 of
+    /// `HOLD-MODEL-AB`).
+    verb: Option<PendingVerb>,
 }
 
 /// Shared Rust-only quiet state for a compatibility journal machine. The
@@ -117,6 +138,7 @@ impl CompatJournalLease {
             key: CompatJournalKey { token, generation },
             since,
             hold_until: since + COMPAT_HOLD_BOUND,
+            verb: None,
         });
         self.active
             .store(true, std::sync::atomic::Ordering::Release);
@@ -150,6 +172,55 @@ impl CompatJournalLease {
                 return false;
             }
             state.hold_until = now + COMPAT_HOLD_BOUND;
+            true
+        })
+        .unwrap_or(false)
+    }
+
+    /// The machine emitted `verb` for the live read `token`: the host's drain
+    /// checks it against the hold ([`Self::drop_expired_verb`]).
+    pub(crate) fn note_verb(&self, token: u64, generation: u64, verb: Option<PendingVerb>) {
+        let key = CompatJournalKey { token, generation };
+        let _ = self.with_state(generation, |state| {
+            if state.key == key {
+                state.verb = verb;
+            }
+        });
+    }
+
+    /// An expired hold makes its queued verb stale (finding N1 of
+    /// `HOLD-MODEL-AB`). The machine renews the hold from its own step and
+    /// queues its click or close, and the host reads the wall time in the
+    /// drain that follows. A stall of the process between the two (a suspended
+    /// or sleeping machine) can put the whole bound there, and the host's
+    /// sample then ends the hold while the verb is still queued. The drain
+    /// calls this with `queued`: when the read's hold has passed at `now`, the
+    /// verb that the read emitted last is removed from `queued`, so that it is
+    /// never dispatched. The read ends its own token with `modal-timeout` at
+    /// its next step (its hold is not live), and the script's own retry
+    /// applies. A live hold changes nothing; the verb stays marked, so that a
+    /// batch that the host restores (Pause won its dispatch fence) is checked
+    /// again. Returns whether a verb was dropped.
+    pub(crate) fn drop_expired_verb(
+        &self,
+        generation: u64,
+        now: std::time::Instant,
+        queued: &mut Vec<script::interact::QueuedInteract>,
+    ) -> bool {
+        self.with_state(generation, |state| {
+            let Some(verb) = state.verb else {
+                return false;
+            };
+            let request = verb.request();
+            let Some(index) = queued.iter().rposition(|queued| queued.req == request) else {
+                // Not queued yet (still on its way from the isolate thread).
+                return false;
+            };
+            if now < state.hold_until {
+                return false;
+            }
+            queued.remove(index);
+            state.verb = None;
             true
         })
         .unwrap_or(false)
@@ -218,7 +289,7 @@ impl CompatJournalLease {
     /// Test-only: move the read's begin and hold bound `by` into the past,
     /// as a pause of that length does.
     #[cfg(test)]
-    fn backdate(&self, by: std::time::Duration) {
+    pub(crate) fn backdate(&self, by: std::time::Duration) {
         if let Some(state) = self.state.lock().as_mut() {
             state.since -= by;
             state.hold_until -= by;
@@ -326,9 +397,19 @@ impl JournalRuntime {
         if !held {
             return Err(self.aborted("modal-timeout"));
         }
+        self.note_verb(Some(PendingVerb::Click {
+            component_id: self.component_id,
+        }));
         self.phase = Phase::AwaitingAcquire;
         self.clock.arm(ACQUIRE_TIMEOUT_MS);
         Ok(Some(self.component_id))
+    }
+
+    /// Mark the verb that this read just emitted, for the host's drain.
+    fn note_verb(&self, verb: Option<PendingVerb>) {
+        if let Some(lease) = &self.compat_lease {
+            lease.note_verb(self.token, self.generation, verb);
+        }
     }
 
     fn frozen(&self) -> bool {
@@ -492,6 +573,8 @@ impl JournalRuntime {
                     self.sequence = sequence;
                     self.phase = Phase::Acquired;
                     self.clock.deadline = None;
+                    // The click was dispatched: the page is its answer.
+                    self.note_verb(None);
                     return json!({
                         "kind": "done",
                         "token": self.token,
@@ -569,6 +652,7 @@ impl JournalRuntime {
                     // the acquired root and the acquired texts.
                     self.phase = Phase::Closing;
                     self.clock.arm(ACQUIRE_TIMEOUT_MS);
+                    self.note_verb(Some(PendingVerb::Close));
                     json!({ "kind": "close-modal", "token": self.token })
                 } else {
                     self.aborted("stale")
@@ -1193,12 +1277,117 @@ mod tests {
         assert_eq!(call("next", token, 7)["kind"], "done");
     }
 
-    /// The hold bound is one more `Instant` in the per-slot lease state.
+    /// N1 of `HOLD-MODEL-AB`: an expired hold makes its queued verb stale. The
+    /// machine renewed the hold at its click and queued the click, and the
+    /// process stalled past the renewed bound before the host's drain. The
+    /// drain drops the click, and the read ends with `modal-timeout` at its
+    /// next step (the script's own retry). A live hold keeps the verb, and so
+    /// does a later drain of a restored batch.
     #[test]
-    fn the_lease_state_is_its_key_and_two_instants() {
+    fn a_click_queued_before_a_stall_that_outlasts_its_hold_is_dropped_at_the_drain() {
+        use script::interact::QueuedInteract;
+        reset_closed();
+        let lease = std::sync::Arc::new(CompatJournalLease::default());
+        lease.set_generation(7);
+        lease.set_host_generation(7);
+        bind_compat_runtime(std::sync::Arc::clone(&lease));
+        let queued = |req| QueuedInteract {
+            req,
+            observed_walk_outcome_seq: 0,
+        };
+        let begun = dispatch(&json!({
+            "op": "begin",
+            "name": "Cook's Assistant",
+            "generation": 0,
+        }));
+        let token = begun["token"].as_u64().expect("the read begins");
+        // Nothing was emitted yet: a drain has nothing to drop.
+        let mut batch = vec![queued(InteractReq::IfButton { component_id: 1234 })];
+        let now = std::time::Instant::now();
+        let after_bound = now + COMPAT_HOLD_BOUND + std::time::Duration::from_secs(1);
+        assert!(!lease.drop_expired_verb(7, after_bound, &mut batch));
+        assert_eq!(batch.len(), 1);
+        // The machine's click renews the hold and marks its verb.
+        assert_eq!(RUNTIME.with(|rt| rt.borrow_mut().click()), Ok(Some(1234)));
+        let mut batch = vec![
+            queued(InteractReq::CloseModal),
+            queued(InteractReq::IfButton { component_id: 1234 }),
+        ];
+        let clicked_at = std::time::Instant::now();
+        // A drain while the hold is live keeps the click, and keeps it marked.
+        assert!(!lease.drop_expired_verb(7, clicked_at, &mut batch));
+        assert_eq!(batch.len(), 2, "a live hold keeps its verb");
+        // The stall outlasts the hold: the drain drops the click, the last
+        // one that matches, and only it.
+        assert!(lease.drop_expired_verb(7, clicked_at + COMPAT_HOLD_BOUND, &mut batch));
+        assert_eq!(
+            batch.iter().map(|queued| queued.req.clone()).collect::<Vec<_>>(),
+            vec![InteractReq::CloseModal],
+            "the expired click is not dispatched"
+        );
+        assert!(
+            !lease.drop_expired_verb(7, clicked_at + COMPAT_HOLD_BOUND, &mut batch),
+            "the verb is dropped once"
+        );
+        // The read ends its own token at its next step: the failure that the
+        // script's retry handles.
+        lease.backdate(COMPAT_HOLD_BOUND);
+        assert_eq!(call("next", token, 7)["reason"], "modal-timeout");
+    }
+
+    /// The close of a read is a verb under the same hold, and a click that
+    /// the page answered is no longer pending.
+    #[test]
+    fn a_close_queued_before_a_stall_that_outlasts_its_hold_is_dropped_at_the_drain() {
+        use script::interact::QueuedInteract;
+        reset_closed();
+        let lease = std::sync::Arc::new(CompatJournalLease::default());
+        lease.set_generation(7);
+        lease.set_host_generation(7);
+        bind_compat_runtime(std::sync::Arc::clone(&lease));
+        let begun = dispatch(&json!({
+            "op": "begin",
+            "name": "Cook's Assistant",
+            "generation": 0,
+        }));
+        let token = begun["token"].as_u64().expect("the read begins");
+        assert_eq!(RUNTIME.with(|rt| rt.borrow_mut().click()), Ok(Some(1234)));
+        post_tab(
+            8,
+            77,
+            &["@dre@The Cook's Quest"],
+            vec![cook_row(), waterfall_row()],
+        );
+        assert_eq!(call("next", token, 7)["kind"], "done");
+        let click = || QueuedInteract {
+            req: InteractReq::IfButton { component_id: 1234 },
+            observed_walk_outcome_seq: 0,
+        };
+        let mut batch = vec![click()];
+        let later = std::time::Instant::now() + COMPAT_HOLD_BOUND * 2;
+        assert!(
+            !lease.drop_expired_verb(7, later, &mut batch),
+            "the page answered the click: it is no longer pending"
+        );
+        assert_eq!(call("close", token, 7)["kind"], "close-modal");
+        let mut batch = vec![QueuedInteract {
+            req: InteractReq::CloseModal,
+            observed_walk_outcome_seq: 0,
+        }];
+        assert!(lease.drop_expired_verb(7, later, &mut batch));
+        assert!(batch.is_empty(), "the expired close is not dispatched");
+    }
+
+    /// The hold bound is one more `Instant` in the per-slot lease state, and
+    /// the verb that the host's drain checks against it is one more word
+    /// (finding N1 of `HOLD-MODEL-AB`).
+    #[test]
+    fn the_lease_state_is_its_key_two_instants_and_the_pending_verb() {
         assert_eq!(
             std::mem::size_of::<CompatJournalLeaseState>(),
-            std::mem::size_of::<CompatJournalKey>() + 2 * std::mem::size_of::<std::time::Instant>()
+            std::mem::size_of::<CompatJournalKey>()
+                + 2 * std::mem::size_of::<std::time::Instant>()
+                + std::mem::size_of::<Option<PendingVerb>>()
         );
     }
 }
