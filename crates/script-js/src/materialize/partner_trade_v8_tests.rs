@@ -6,6 +6,8 @@ const TEST_NAME: &str =
     "partner_trade_v8::tests::stable_closed_poll_wrapper_has_fast_properties_and_bounded_heap";
 const CLOSURE_COUNT: usize = 512;
 const REPEAT_COUNT: usize = 1_000;
+// 512 wrappers measured 58,784 bytes; retain 8 KiB for V8/allocator variance.
+const RETAINED_HEAP_LIMIT: usize = 66_976;
 const TEST_KERNEL: &str = r#"
 export function notImpl() { throw new Error('not used by stableClosedPoll tests'); }
 export function runMachine() { throw new Error('not used by stableClosedPoll tests'); }
@@ -195,8 +197,7 @@ fn stable_closed_poll_wrapper_has_fast_properties_and_bounded_heap() {
 
     let after_kept = collected_used_heap(&mut runtime);
     let retained_growth = after_kept.saturating_sub(baseline);
-    // The provisional limit allows one measurement before it is set from the new wrapper cost.
-    let retained_limit = CLOSURE_COUNT * 2_048 + 32_768;
+    let retained_limit = RETAINED_HEAP_LIMIT;
     println!(
         "stableClosedPoll retained wrappers={CLOSURE_COUNT} baseline={baseline} after={after_kept} growth={retained_growth} limit={retained_limit}"
     );
