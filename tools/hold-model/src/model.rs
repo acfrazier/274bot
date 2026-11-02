@@ -555,7 +555,8 @@ pub struct Info {
     pub emitted: bool,
     /// The host's sample ended the hold of the verb's lease by expiry in this
     /// frame, so the host did not dispatch the verb: it is stale
-    /// (`Ledger::quiet_read`, `CompatJournalLease::drop_expired_verb`).
+    /// (`Ledger::quiet_read`; `SlotScript::drain_host_interacts` drops the
+    /// compat read's rows by their owner).
     pub dropped: bool,
 }
 
@@ -1063,13 +1064,14 @@ impl Model {
 
     /// An expired hold makes its queued verb stale: the sample that ends a
     /// lease's hold by expiry drops the verb that the owner sent in this frame
-    /// (`Ledger::quiet_read` cancels the queued interaction; the compat
-    /// journal's drain drops its verb). The products before the rule
-    /// dispatched it: `N1ExpiredClickDispatched` is the product at
-    /// `c2ca4cf66`, and the earlier journal designs that lose the click's
-    /// hold in its own frame (`F2QuietClickNoRenew`, `M6CompatNoRenew`,
-    /// `CheckCompatClickNoRenew`) are older still. Their counterexample is
-    /// the press after the dispatched click (S6), so they keep that behaviour.
+    /// (`Ledger::quiet_read` cancels the queued interaction; the host's drain
+    /// drops every queued row of the compat read's owner). The products
+    /// before the rule dispatched it: `N1ExpiredClickDispatched` is the
+    /// product at `c2ca4cf66`, and the earlier journal designs that lose the
+    /// click's hold in its own frame (`F2QuietClickNoRenew`,
+    /// `M6CompatNoRenew`, `CheckCompatClickNoRenew`) are older still. Their
+    /// counterexample is the press after the dispatched click (S6), so they
+    /// keep that behaviour.
     fn stale_verb(&self, info: &mut Info) {
         let before_the_rule = matches!(
             self.mutation,

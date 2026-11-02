@@ -8,7 +8,7 @@ use crate::native::seat_rows::QueuedSeatBatch;
 use crate::native::snapshot_source::{BankSelectionInput, NativeFactsInput, SnapshotInput};
 use crate::native::{recovery_hints::RecoveryHintsCell, ActionContext, ActionError, SettingsBag};
 use crate::paint::ScriptPaint;
-use api::identity::ExecutionId;
+use api::identity::{ExecutionId, RequestId};
 use api::interact::server_ordered::ServerOrderedRequest;
 use api::prot::Send as PacketSend;
 use api::selected::RunKey;
@@ -285,6 +285,10 @@ pub trait SurfaceRun: Send {
     /// Return the live compatibility journal read at `now`: its transaction
     /// identity and its lease's own wall bound.
     fn journal_wait(&self, now: Instant) -> Option<JournalWait>;
+    /// Return the in-isolate owners whose interaction hold has expired at
+    /// `now` (finding N1 of `HOLD-MODEL-AB`): every queued row whose
+    /// `mirror_owner` is one of them is stale, and the host's drain drops it.
+    fn expired_hold_owners(&self, now: Instant) -> [Option<RequestId>; 2];
     /// Evaluate a probe expression.
     fn probe(&self, expr: &str) -> Result<serde_json::Value, SurfaceError>;
     /// Drain log lines.

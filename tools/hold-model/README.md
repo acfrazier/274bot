@@ -52,7 +52,7 @@ hold, a death, a run echo, and the passing of time.
 | `quiet_wall_release`, `quiet_hold_until`, `sample`, Quiet arm | `Ledger::quiet_read`, `quiet_paint_hidden`, `quiet_read_wait` (`script/src/native/ledger.rs`), `ActionContext::renew_quiet_read` (`script/src/native/actions.rs`) |
 | `stale_verb` (Quiet) | `Ledger::quiet_read` cancels the owner's queued interaction when it releases the lease by expiry (`cancel_undispatched_interaction`); the host's fence (`HostAction::live`) then drops it |
 | `sample`, Compat arm, `poll`, Compat arm | `CompatJournalLease::wait`, `renew_hold` (`script-js/.../quest_journal/isolate.rs`), `JournalRuntime::click` |
-| `stale_verb` (Compat) | `CompatJournalLease::drop_expired_verb`, called by `LoadIsolate::drain_interacts_stamped` (`script-js/src/runtime/isolate.rs`) |
+| `stale_verb` (Compat) | `SlotScript::drain_host_interacts` (`drop_expired_hold_rows`, `script/src/slot.rs`): every queued row whose `mirror_owner` is a read's machine row that `CompatJournalLease::expired_owners` names (`script-js/.../quest_journal/isolate.rs`) is dropped, in the drained seat batches and in the seat's custody (`GameplaySeat::drop_expired_hold_rows`) |
 | `begin`, `send`, `to_gap`, `rearm` | `Dialogue::sync_modal_wait` (`dialogue.rs:361-380`), `ActionContext::begin_modal_wait`, `renew_modal_wait` |
 | `poll`, Quiet arm | `JournalMachine::poll`, `arm_window` (`quest_journal/native.rs`); each window renews the lease's hold bound |
 | the press in `frame` | `SlotLoop::apply_auto_run` (`host/src/lib.rs:1548-1588`) |
@@ -121,7 +121,14 @@ cannot show.
    that the state count grows little. A stall is the case of finding N1.
 3. **One lease at a time.** The ledger has one foreground owner. A runner
    runs one step, and the compat read belongs to a JS run. Two native leases
-   at once, and a compat read next to a native one, are not reachable.
+   at once, and a compat read next to a native one, are not reachable. The
+   lease's owner is also the only sender of verbs: the model cannot put
+   another family's rows in the same batch (a compat read's close and a
+   `Modals.close()` of the same script, two equal requests). Every verb in
+   the model is the owner's, and S7 checks that verb, so the rule needs no
+   second invariant; the product finds the read's rows by their owner
+   (`mirror_owner`), never by their request, and `script-js` tests that on
+   the production queue (see Conformance).
 4. **The owner is a small machine.** The `Dialogue` phases are collapsed to
    `Page`, `Ack` and `Gap`. A poll does one phase. The product continues in
    the same tick after a begin or a completion (`may_continue_this_tick`).
@@ -193,7 +200,7 @@ use it). The mutations `f2-quiet-click-no-renew`, `m6-compat-no-renew` and
 |---|---|
 | F1 | Fixed. The host ended the acknowledgement hold, and the end gap that follows is the same lease renewed, so the press went out during the gap. The host now holds a renewal that moves the deadline later (`f1-renewal-keeps-release` is the old host; S1 and S4 find it in 6 steps). |
 | F2 | Fixed. The journal click lost its hold in its own frame when the lease's wall bound passed between the owner's poll and the host's sample (S6). Each window the owner arms, the click first, now renews the hold bound from its poll; the paint cap stays at the begin. `f2-quiet-click-no-renew` is the old ledger; S6 finds it in 6 steps in `quiet` and 4 in `alt` (without the stall, `--no-stall`; with the stall it is shorter). |
-| N1 | Fixed. Renewal fixes the old-origin crossing, not every expiry before dispatch: a stall of the process (a suspended or sleeping machine) between the owner's poll and the host's sample can pass the whole renewed bound. The sample ended the hold, and the host still dispatched the click that the poll had queued, with no hold. Now an expired hold makes its queued verb stale: the native ledger cancels the owner's undispatched click or close when it releases the lease by expiry, and the compat journal's drain drops its verb; the owner's next poll finds its read expired and fails it (`journal quiet lease expired`; `modal-timeout`), so its own retry applies. `n1-expired-click-dispatched` is the product at `c2ca4cf66`; S7 (and S6 when a press follows) finds it in 2 to 3 steps. The modal lease has no wall bound and cannot reach it. |
+| N1 | Fixed. Renewal fixes the old-origin crossing, not every expiry before dispatch: a stall of the process (a suspended or sleeping machine) between the owner's poll and the host's sample can pass the whole renewed bound. The sample ended the hold, and the host still dispatched the click that the poll had queued, with no hold. Now an expired hold makes its queued verb stale: the native ledger cancels the owner's undispatched click or close when it releases the lease by expiry, and the host's drain drops every queued row of the compat read's machine row (found by its `mirror_owner`, not by its request); the owner's next poll finds its read expired and fails it (`journal quiet lease expired`; `modal-timeout`), so its own retry applies. `n1-expired-click-dispatched` is the product at `c2ca4cf66`; S7 (and S6 when a press follows) finds it in 2 to 3 steps. The modal lease has no wall bound and cannot reach it. |
 | K1 | A wait that the owner bounds in ticks is not on the active clock. A paused owner loses its end-gap hold. |
 | K2 | The terminal release is only as good as the owner's polls. |
 | K3 | The compat read never gets a terminal release. |
@@ -322,13 +329,20 @@ fails on code that has the old behaviour:
   expired. It runs two model traces (one where a press follows, one where the
   run is already on and only S7 sees the dispatch), about 11 s each.
 
-The compat side of N1 is tested in `script-js`: the lease-level tests
-`a_click_queued_before_a_stall_that_outlasts_its_hold_is_dropped_at_the_drain`
-and `a_close_queued_...` (`CompatJournalLease::drop_expired_verb`), and the
-isolate-level `v2_journal_click_queued_before_a_stall_past_its_hold_is_not_drained`
-(the real `LoadIsolate` drain). The native side has three tests in
-`quest_journal/native_tests.rs` (click, close, and a dispatched click that keeps
-its receipt). None of them can reach the host policy.
+The compat side of N1 is tested in `script-js` on the production queue: a
+slot whose real `JsSurfaceFactory` spawns the isolate with the slot's
+execution identity, so the click and close travel in seat batches to the
+host's one drain (`SlotScript::drain_host_interacts`).
+`production_queue_drops_a_journal_click_whose_hold_expired_before_the_drain`
+and `..._whose_read_failed_before_the_drain` (the read's `modal-timeout` step
+comes first) drop the click; `production_queue_drops_only_the_journal_close_of_an_expired_hold`
+drops the read's close and keeps an equal close of `Modals.close()` from the
+same script (identity, not equality). The lease-level
+`an_expired_hold_names_the_owner_of_its_queued_verb` and the seat-level
+`an_expired_hold_drops_only_its_owners_rows_in_custody` cover the parts. The
+native side has three tests in `quest_journal/native_tests.rs` (click, close,
+and a dispatched click that keeps its receipt). None of them can reach the
+host policy.
 
 The generated compat traces fail on a host that lets a new key inherit the
 phase of the old hold, on one that keeps its hold at a session boundary, and

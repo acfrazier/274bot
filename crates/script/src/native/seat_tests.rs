@@ -690,6 +690,32 @@ fn seat_mirror_cascade_revokes_each_descendant_wire_lease() {
     assert_eq!(seat.dropped(), 2);
 }
 
+/// N1 of `HOLD-MODEL-AB`: an owner whose interaction hold expired loses the
+/// rows that still wait in the seat, taken or not; another owner's row is
+/// dispatched.
+#[test]
+fn an_expired_hold_drops_only_its_owners_rows_in_custody() {
+    let mut seat = GameplaySeat::<u32>::new(run());
+    let mirror = |owner| EmissionSource::Mirror {
+        owner: id(owner),
+        parent: None,
+    };
+    seat.push(1, EmissionClass::Gameplay, mirror(2), None)
+        .unwrap();
+    seat.take();
+    seat.push(2, EmissionClass::Gameplay, mirror(2), None)
+        .unwrap();
+    seat.push(3, EmissionClass::Gameplay, mirror(3), None)
+        .unwrap();
+    seat.drop_expired_hold_rows(id(2));
+    let mut delivered = Vec::new();
+    seat.dispatch_into(&mut delivered);
+    seat.take();
+    seat.dispatch_into(&mut delivered);
+    assert_eq!(delivered, [3]);
+    assert_eq!(seat.dropped(), 2);
+}
+
 #[test]
 fn seat_mirror_revoke_level_retries_and_rejects_gaps_atomically() {
     let mut seat = GameplaySeat::<u32>::new(run());
