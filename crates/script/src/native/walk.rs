@@ -11,7 +11,6 @@ use std::num::NonZeroU64;
 use std::task::Poll;
 use std::time::Duration;
 
-
 /// Level at a tile under the selected pack’s inclusive wilderness zones.
 pub fn wilderness_level_at(rules: &WildernessRules, tile: WorldTile) -> i32 {
     rules.level(tile)
@@ -34,7 +33,6 @@ pub fn resolve_destination(name: &str) -> Option<&'static WalkDestination> {
         .iter()
         .find(|destination| destination.name.eq_ignore_ascii_case(key))
 }
-
 
 /// Eligible time a native walk may stay unsettled before it ends `Failed`
 /// and revokes its host follow. The host owes every walk a terminal receipt;

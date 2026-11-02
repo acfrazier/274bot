@@ -81,8 +81,8 @@ use api::line_of_sight::CollisionQuery;
 use api::query::{SceneQuery, SceneReachOptions};
 use api::snapshot::{SceneView, WorldTile};
 use script::shim::{InspectAvoidWire, InteractReq};
-use serde_json::{json, Value};
 use serde::Deserialize;
+use serde_json::{json, Value};
 use std::collections::VecDeque;
 use std::time::{Duration, Instant};
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -109,7 +109,6 @@ impl WalkExecutorOutcome {
         }
     }
 }
-
 
 thread_local! {
     static LAST_OUTCOME: std::cell::Cell<Option<WalkExecutorOutcome>> =
@@ -1833,10 +1832,8 @@ fn probe_dest_tile(value: &Value) -> Option<WorldTile> {
 
 fn probe_dest_max_expansions(value: &Value) -> Option<u64> {
     let number = value.as_f64()?;
-    (number.is_finite()
-        && number.fract() == 0.0
-        && (1.0..=MAX_SAFE_JS_INTEGER).contains(&number))
-    .then_some(number as u64)
+    (number.is_finite() && number.fract() == 0.0 && (1.0..=MAX_SAFE_JS_INTEGER).contains(&number))
+        .then_some(number as u64)
 }
 
 pub(crate) struct ProbeDest {
@@ -1912,7 +1909,6 @@ impl Family for ProbeDest {
         Step::Done(json!({"ok": ok, "terminal": terminal}))
     }
 }
-
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -2639,12 +2635,7 @@ pub(crate) mod tests {
 
     /// `passes` no-progress ladder passes (baked fail, scene, unstick),
     /// with the backoff between them. Returns the next walk-outcome seq.
-    fn ladder_no_progress_passes(
-        h: machine::Handle,
-        seq: u64,
-        passes: u32,
-        radius: i32,
-    ) -> u64 {
+    fn ladder_no_progress_passes(h: machine::Handle, seq: u64, passes: u32, radius: i32) -> u64 {
         ladder_no_progress_passes_to(
             h,
             seq,

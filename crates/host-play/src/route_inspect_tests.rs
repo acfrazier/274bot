@@ -464,10 +464,12 @@ fn route_needing_more_than_120k_settles_succeeds_with_default_budget() {
         None,
     );
     let routed = calculate(&default_budget);
-    assert!(routed.ok, "the default router bound must reach the destination");
+    assert!(
+        routed.ok,
+        "the default router bound must reach the destination"
+    );
     assert_eq!(routed.terminal, Some(to));
 }
-
 
 #[test]
 fn pre_state_stand_proof_rejects_post_only_stand() {

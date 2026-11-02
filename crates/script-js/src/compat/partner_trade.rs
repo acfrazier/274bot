@@ -64,7 +64,6 @@ pub fn parse_trade_partner_header(header: &str) -> Option<String> {
     (!name.is_empty()).then(|| name.to_owned())
 }
 
-
 fn strip_trading_with(name: &str) -> Option<&str> {
     const PREFIX: &str = "trading with";
     let prefix = name.get(..PREFIX.len())?;
@@ -252,7 +251,6 @@ mod tests {
             Some("one:two".into())
         );
     }
-
 
     #[test]
     fn offer_count_sums_at_least_one_per_matching_slot() {

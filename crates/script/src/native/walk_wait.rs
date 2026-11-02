@@ -97,7 +97,6 @@ impl WalkSlot {
             .is_some_and(|wait| wait.token == token && wait.no_path)
     }
 
-
     pub fn observe_outcome(&mut self, outcome: HostOutcome) {
         if let Some(wait) = self.wait.as_mut() {
             if Self::outcome_matches(outcome, wait) {

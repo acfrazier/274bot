@@ -20,8 +20,8 @@ pub(super) fn install(runtime: &mut Runtime) -> Result<(), String> {
     let predicate = v8::FunctionTemplate::new(&mut scope, stable_closed_poll_callback)
         .get_function(&mut scope)
         .ok_or_else(|| "stableClosedPoll predicate template".to_string())?;
-    let bind_name =
-        v8::String::new(&mut scope, "bind").ok_or_else(|| "stableClosedPoll bind name".to_string())?;
+    let bind_name = v8::String::new(&mut scope, "bind")
+        .ok_or_else(|| "stableClosedPoll bind name".to_string())?;
     let bind = predicate
         .get(&mut scope, bind_name.into())
         .and_then(|value| v8::Local::<v8::Function>::try_from(value).ok())
@@ -182,7 +182,9 @@ fn stable_closed_poll_callback<'s>(
 ) {
     let result = (|| {
         let state_value: v8::Local<v8::Value> = args.this().into();
-        let state = state_value.to_object(scope).ok_or_else(|| PENDING.to_string())?;
+        let state = state_value
+            .to_object(scope)
+            .ok_or_else(|| PENDING.to_string())?;
         let min_ms = field(scope, state_value, "minMs")?;
         let now_fn = field(scope, state_value, "nowFn")?;
         let inactive_since_ms_value = field(scope, state_value, "inactiveSinceMs")?;
@@ -231,7 +233,6 @@ fn stable_closed_poll_callback<'s>(
         Err(error) => throw_error(scope, &error),
     }
 }
-
 
 /// `{ partnerHeader, partners, myOfferSlots, theirProductCount }` to the
 /// frozen `{ action, reason? }` shape.
@@ -413,10 +414,7 @@ fn field<'s>(
         .ok_or_else(|| PENDING.to_string())
 }
 
-fn private_key<'s>(
-    scope: &mut v8::HandleScope<'s>,
-    name: &str,
-) -> v8::Local<'s, v8::Private> {
+fn private_key<'s>(scope: &mut v8::HandleScope<'s>, name: &str) -> v8::Local<'s, v8::Private> {
     let name = v8::String::new(scope, name).unwrap_or_else(|| v8::String::empty(scope));
     v8::Private::for_api(scope, Some(name))
 }

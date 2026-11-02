@@ -82,15 +82,22 @@ fn stable_closed_poll_reads_scene_and_calls_clock_once_per_closed_poll() {
         )
         .unwrap();
 
-    assert_eq!(runtime.eval::<String>("__tradeScreenState()").unwrap(), "offer");
+    assert_eq!(
+        runtime.eval::<String>("__tradeScreenState()").unwrap(),
+        "offer"
+    );
     assert_eq!(runtime.eval::<u32>("__nativePartnerCalls").unwrap(), 1);
-    runtime.eval::<()>("globalThis.__nativePartnerCalls = 0").unwrap();
+    runtime
+        .eval::<()>("globalThis.__nativePartnerCalls = 0")
+        .unwrap();
     assert!(!runtime.eval::<bool>("__poll()").unwrap());
     assert_eq!(runtime.eval::<u32>("__nativePartnerCalls").unwrap(), 1);
     assert_eq!(runtime.eval::<u32>("__clockCalls").unwrap(), 0);
 
     post_trade_screen(20, false, false);
-    runtime.eval::<()>("globalThis.__nativePartnerCalls = 0").unwrap();
+    runtime
+        .eval::<()>("globalThis.__nativePartnerCalls = 0")
+        .unwrap();
     assert!(!runtime.eval::<bool>("__poll()").unwrap());
     assert_eq!(runtime.eval::<u32>("__nativePartnerCalls").unwrap(), 1);
     runtime.eval::<()>("globalThis.__clockNow = 2100").unwrap();
@@ -100,7 +107,10 @@ fn stable_closed_poll_reads_scene_and_calls_clock_once_per_closed_poll() {
     assert_eq!(runtime.eval::<u32>("__clockCalls").unwrap(), 3);
 
     post_trade_screen(21, false, true);
-    assert_eq!(runtime.eval::<String>("__tradeScreenState()").unwrap(), "confirm");
+    assert_eq!(
+        runtime.eval::<String>("__tradeScreenState()").unwrap(),
+        "confirm"
+    );
     assert!(!runtime.eval::<bool>("__poll()").unwrap());
     assert_eq!(runtime.eval::<u32>("__clockCalls").unwrap(), 3);
     post_trade_screen(22, false, false);
@@ -108,7 +118,10 @@ fn stable_closed_poll_reads_scene_and_calls_clock_once_per_closed_poll() {
     assert!(!runtime.eval::<bool>("__poll()").unwrap());
     runtime.eval::<()>("globalThis.__clockNow = 6200").unwrap();
     assert!(runtime.eval::<bool>("__poll()").unwrap());
-    assert_eq!(runtime.eval::<String>("__tradeScreenState()").unwrap(), "closed");
+    assert_eq!(
+        runtime.eval::<String>("__tradeScreenState()").unwrap(),
+        "closed"
+    );
 
     post_trade_screen(30, false, false);
     runtime

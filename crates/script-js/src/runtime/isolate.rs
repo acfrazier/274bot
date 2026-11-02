@@ -856,7 +856,10 @@ impl LoadIsolate {
         validation::validate_batch(cards)
     }
 
-    #[expect(clippy::too_many_arguments, reason = "isolate per-run inputs cross this constructor together")]
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "isolate per-run inputs cross this constructor together"
+    )]
     fn spawn_inner(
         js: String,
         card_name: std::sync::Arc<str>,

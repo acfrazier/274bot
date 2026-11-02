@@ -3698,9 +3698,7 @@ fn native_seat_start_context(
 
 fn ensure_native_seat_start_capacity() -> Result<(), Started> {
     if HOST.with(|host| host.borrow().pending_starts.len() >= MAX_PENDING_SEAT_STARTS) {
-        Err(Started::Refused(
-            "native seat start carry is full".into(),
-        ))
+        Err(Started::Refused("native seat start carry is full".into()))
     } else {
         Ok(())
     }
@@ -3710,9 +3708,8 @@ fn allocate_native_seat_identity(family: &str) -> Result<(Handle, RequestId), St
     let Some(handle) = HOST.with(|host| host.borrow_mut().allocate_handle()) else {
         return Err(Started::Refused("machine handle exhausted".into()));
     };
-    let id = RequestId::isolate(handle).map_err(|_| {
-        Started::Refused(format!("native {family} seat identity exhausted"))
-    })?;
+    let id = RequestId::isolate(handle)
+        .map_err(|_| Started::Refused(format!("native {family} seat identity exhausted")))?;
     Ok((handle, id))
 }
 
@@ -3916,7 +3913,6 @@ fn start_bank_family(
         at,
     )
 }
-
 
 struct BankSeatMachine(NativeBankChild);
 
