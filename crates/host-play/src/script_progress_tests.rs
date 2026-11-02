@@ -11,6 +11,10 @@ thread_local! {
     static OWNER_EVENTS: std::cell::RefCell<Vec<String>> = const { std::cell::RefCell::new(Vec::new()) };
 }
 
+/// One rig frame's trace: the script tick, the hold after the update, and the
+/// owner's lease events of that frame.
+type FrameTrace = (u64, bool, Vec<String>);
+
 fn trace_owner(event: String) {
     OWNER_EVENTS.with(|events| events.borrow_mut().push(event));
 }
@@ -525,7 +529,7 @@ impl HoldRig {
         let observe_expired = Arc::clone(&self.expired);
         let observe_expired_after = Arc::clone(&self.expired_after);
         observe_expired_after.lock().unwrap().clear();
-        let frame_log: Arc<Mutex<Vec<(u64, bool, Vec<String>)>>> = Arc::default();
+        let frame_log: Arc<Mutex<Vec<FrameTrace>>> = Arc::default();
         let observe_log = Arc::clone(&frame_log);
 
         let probe_plan = Arc::clone(&plan);
