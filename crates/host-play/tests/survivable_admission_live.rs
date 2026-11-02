@@ -150,7 +150,6 @@ fn selected_template() -> (Arc<host_play::ServerProfile>, Arc<SharedClientTempla
     (profile, template)
 }
 
-
 #[cfg(feature = "js")]
 fn compat_corridor_fixture(
     world: &NavWorld,

@@ -547,9 +547,11 @@ fn probability_picker_session(
     let mut session = Session::new();
     session.preferences.reload().unwrap();
     session.poll_panel_preferences();
-    session.launcher.install_template(
-        frontend_core::launch::ProfileTemplate::from_host(Arc::clone(&fixture.template)),
-    );
+    session
+        .launcher
+        .install_template(frontend_core::launch::ProfileTemplate::from_host(
+            Arc::clone(&fixture.template),
+        ));
     session.set_focus_for_test("alice");
     session.core.set_play(Some(fixture.play(origin)));
     session.statuses.refresh_from_play(&session.core);
@@ -707,7 +709,10 @@ fn probability_admission_checkbox_and_default_escape_use_the_real_picker() {
     assert!(session.route_through_zones);
     session.select_picker_tile(&world, destination);
     assert!(session.confirm_picker_walk(&world));
-    assert!(!session.route_through_zones, "the checkbox grant is consumed");
+    assert!(
+        !session.route_through_zones,
+        "the checkbox grant is consumed"
+    );
     let arms = session.core.walk_arms();
     let arm = Arc::clone(&arms.lock().unwrap()["alice"]);
     let arm = arm.lock().unwrap();
@@ -716,7 +721,10 @@ fn probability_admission_checkbox_and_default_escape_use_the_real_picker() {
     assert!(assessment.bound > 0.0);
     assert!(!assessment.plan.crossings.is_empty());
     assert!(arm.admission.as_ref().unwrap().grants.is_all());
-    assert!(arm.route.is_some(), "explicit UI opt-in retains the honest bound");
+    assert!(
+        arm.route.is_some(),
+        "explicit UI opt-in retains the honest bound"
+    );
     drop(arm);
 
     let inside = Tile {
@@ -739,8 +747,14 @@ fn probability_admission_checkbox_and_default_escape_use_the_real_picker() {
     assert!(assessment.plan.crossings.is_empty());
     assert!(assessment.plan.intervals.iter().any(|row| row.escaping()));
     assert!(!format!("{:?}", assessment.verdict).starts_with("Unknown"));
-    assert_eq!(arm.admission.as_ref().unwrap().grants, nav_planner::zones::ZoneExempt::NONE);
-    assert!(arm.route.is_some(), "default UI escape needs no checkbox grant");
+    assert_eq!(
+        arm.admission.as_ref().unwrap().grants,
+        nav_planner::zones::ZoneExempt::NONE
+    );
+    assert!(
+        arm.route.is_some(),
+        "default UI escape needs no checkbox grant"
+    );
 }
 
 /// A peer frontend sets the durable global danger-zone grant, through a

@@ -11,7 +11,8 @@ use nav_planner::WorldState;
 
 use crate::admission::{Admission, RouteBasis};
 use crate::script_runtime::{
-    session_freezes_follow, step_bank_fetch_on_bot, step_poison_hold_on_bot, NavBot, RoutePrereqContent,
+    session_freezes_follow, step_bank_fetch_on_bot, step_poison_hold_on_bot, NavBot,
+    RoutePrereqContent,
 };
 use crate::walk_plan::{route_or_bank_fetch, PendingBankFetch, RouteOutcome};
 use script::combat::risk::RouteAssessment;
