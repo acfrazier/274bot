@@ -105,7 +105,7 @@ impl StableClosedPoll {
         now_ms - self.inactive_since_ms >= min_ms
     }
 
-    pub fn poll_tick(&mut self, screen: ScreenKind, tick: f64) -> bool {
+    pub fn poll_tick(&mut self, screen: ScreenKind, tick: f64, min_ms: f64) -> bool {
         if screen.active() {
             self.reset();
             return false;
@@ -113,7 +113,11 @@ impl StableClosedPoll {
         if self.inactive_since_tick < 0.0 {
             self.inactive_since_tick = tick;
         }
-        tick - self.inactive_since_tick >= 1.0
+        tick - self.inactive_since_tick >= observed_ticks_for_min_ms(min_ms)
+    }
+
+    fn observed_ticks_for_min_ms(min_ms: f64) -> f64 {
+        (min_ms / 600.0).ceil().max(1.0)
     }
 }
 
@@ -196,6 +200,14 @@ mod tests {
             driver.poll(ScreenKind::Closed, now + Duration::from_millis(1300), false),
             WaitEnd::Closed
         );
+    }
+
+    #[test]
+    fn tick_clock_covers_non_default_minimum_ms() {
+        let mut poll = StableClosedPoll::default();
+        assert!(!poll.poll_tick(ScreenKind::Closed, 7.0, 1_201.0));
+        assert!(!poll.poll_tick(ScreenKind::Closed, 9.0, 1_201.0));
+        assert!(poll.poll_tick(ScreenKind::Closed, 10.0, 1_201.0));
     }
 
     #[test]

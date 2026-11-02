@@ -190,7 +190,7 @@ fn stable_closed_poll_callback<'s>(
         } else if explicit_clock {
             poll.poll_at(screen, now, number(scope, min_ms))
         } else {
-            poll.poll_tick(screen, now)
+            poll.poll_tick(screen, now, number(scope, min_ms))
         };
         let (inactive_since_ms, inactive_since_tick) = poll.baselines();
         let inactive_since_ms = v8::Number::new(scope, inactive_since_ms).into();
