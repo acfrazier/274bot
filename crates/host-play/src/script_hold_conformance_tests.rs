@@ -293,7 +293,6 @@ impl Rig {
             let slot = script_slot_or_insert(&scripts, "alice");
             let mut slot = slot.lock().unwrap();
             if let Some(factory) = &factory {
-                slot.bind_incarnation(44);
                 slot.bind_surface_factory(factory.clone());
                 start_compat_surface(&mut slot, factory);
             } else {
