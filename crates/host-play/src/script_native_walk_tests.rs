@@ -6092,7 +6092,7 @@ fn s2b_admission_per_bot_layouts() {
     // Prerequisite hop tracking and captured logical-walk ownership add 240 B
     // to NavBot, including 24 B for physical takeoff/destination identity;
     // the slot's manual-run alias and exact bank policy add 32 B.
-    // Linux x86_64 actually measures 4056 B / 1576 B in the composed tree.
+    // Before nav-hop, Linux x86_64 measured 4056 B / 1576 B in this composed tree.
     // Separately measured macOS aarch64 on e560b8222 (Rust 1.98.1, same lib-test
     // features) also gives 4056 B / 1576 B; the old 1656 B slot pin was stale.
     // Pre-FLOOR and per-bot memory A/B remain separate, still-owed proofs.
@@ -6116,6 +6116,7 @@ fn s2b_admission_per_bot_layouts() {
         target_env = "gnu",
         not(feature = "memory-profile")
     ))]
+    // Linux NavBot: +32 B WalkNoProgress, +8 B TickCount already counted; no heap.
     assert_eq!(
         (
             std::mem::size_of::<NavBot>(),
@@ -6123,7 +6124,7 @@ fn s2b_admission_per_bot_layouts() {
             std::mem::size_of::<script::combat::Combat>(),
             std::mem::size_of::<script::combat::WalkGuard>()
         ),
-        (4056, 1576, 520, 264)
+        (4096, 1576, 520, 264)
     );
     // Combat is 520 B with bounded approach retries; retain 8 B of headroom.
     assert!(std::mem::size_of::<script::combat::Combat>() <= 528);
