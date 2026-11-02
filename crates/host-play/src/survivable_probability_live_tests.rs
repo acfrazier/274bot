@@ -772,7 +772,9 @@ fn exercise(rig: &mut Rig, mut cell: Cell, receipt: &mut Value) {
             let navs = rig.navs.lock().unwrap();
             let bot = &navs[&rig.name];
             (
-                bot.risk_refusal.as_deref().map(|(_, refusal)| *refusal),
+                bot.risk_refusal
+                    .as_deref()
+                    .map(|(_, refusal)| refusal.clone()),
                 bot.poison_hold.as_ref().and_then(|hold| hold.wait),
                 bot.condition.published().poison,
             )

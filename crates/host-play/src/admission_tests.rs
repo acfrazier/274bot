@@ -2923,15 +2923,25 @@ fn poison_deadline_without_world_preserves_the_typed_refusal() {
         waited: 18,
         cause: api::condition::WindowReset::FrameGap,
     };
+    let expected_detail = refusal.to_string();
     refuse(&mut bot, None, tile(23, 1), refusal);
     assert!(bot.route.is_none());
-    assert_eq!(bot.risk_refusal.as_deref(), Some(&(19, refusal)));
+    assert!(matches!(
+        bot.risk_refusal.as_deref(),
+        Some((
+            19,
+            WalkRefusal::PoisonUnsettled {
+                waited: 18,
+                cause: api::condition::WindowReset::FrameGap
+            }
+        ))
+    ));
     assert!(Arc::ptr_eq(
         bot.last_assessment.as_ref().unwrap(),
         &assessment
     ));
     assert_eq!(
         bot.walk_outcome_detail.as_deref(),
-        Some(refusal.to_string().as_str())
+        Some(expected_detail.as_str())
     );
 }

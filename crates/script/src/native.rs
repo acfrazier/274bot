@@ -1446,6 +1446,8 @@ mod walk_receipt_tests {
         let risk_reason: Arc<str> = Arc::from("survivable route assessment");
         let assessment = Arc::new(crate::combat::risk::RouteAssessment {
             verdict: crate::combat::risk::Verdict::Survivable,
+            bound: 0.0,
+            poison_test: crate::combat::risk::PoisonTest::NotNeeded,
             plan: crate::combat::risk::RoutePlan::default(),
             crossings: Box::new([]),
             more: 0,

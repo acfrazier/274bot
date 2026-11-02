@@ -85,6 +85,9 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.8` 
   and confirmation through the host's probability assessment. It checks
   checkbox off and on, the request-local grant, and escape from a danger zone
   with the checkbox off. Real Engine L probability cells remain separate.
+- Admission fixture callers now retain the current typed poison refusal and
+  its detail without copying prerequisite ownership. Bank-access search
+  refusals also retain their available world through the admission cutover.
 - The bank ownership probes finish only after observing the withdrawn rune.
   Their terminal recipe no longer repeats an already-settled wait until the
   no-progress guard fires.

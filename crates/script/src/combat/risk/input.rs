@@ -814,6 +814,7 @@ mod tests {
                 in_combat: false,
                 target: None,
             },
+            reach: None,
         };
         RiskInput::capture(
             &frame,

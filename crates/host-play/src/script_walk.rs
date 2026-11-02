@@ -1997,7 +1997,7 @@ fn step_walk(
         log_walk_arm_bot(|| {
             format!("bank access route search_result={search_result} destination={dest:?}")
         });
-        crate::admission::refuse(bot, w, dest, refusal);
+        crate::admission::refuse(bot, Some(w), dest, refusal);
         return (false, StepEnd::Abort("bank access route search incomplete"));
     }
     if let Some(refusal) = refusal {

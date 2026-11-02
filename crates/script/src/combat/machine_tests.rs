@@ -3969,7 +3969,10 @@ fn default_combat_stand_approach_stops_for_each_terminal_class() {
             maximum_bytes: 1,
         },
         WalkRefusal::Unsurvivable,
-        WalkRefusal::FixableWith,
+        WalkRefusal::PoisonUnsettled {
+            waited: 18,
+            cause: api::condition::WindowReset::FrameGap,
+        },
         WalkRefusal::Unknown(crate::combat::risk::UnknownWhy::AlreadyEngaged),
         WalkRefusal::EscapeInProgress,
     ] {

@@ -745,7 +745,7 @@ fn poison_hold_reassesses_a_kind_two_hit_as_poisoned() {
     );
     assert!(navs[ALICE].poison_hold.is_none());
     assert!(matches!(
-        navs[ALICE].risk_refusal.as_deref().map(|entry| entry.1),
+        navs[ALICE].risk_refusal.as_deref().map(|entry| &entry.1),
         Some(WalkRefusal::Unsurvivable)
     ));
 }
@@ -761,7 +761,7 @@ fn poison_hold_reset_ends_at_deadline_and_retry_gets_a_new_hold() {
     {
         let navs = rig.bot();
         assert!(matches!(
-            navs[ALICE].risk_refusal.as_deref().map(|entry| entry.1),
+            navs[ALICE].risk_refusal.as_deref().map(|entry| &entry.1),
             Some(WalkRefusal::PoisonUnsettled { .. })
         ));
         assert!(navs[ALICE].poison_hold.is_none());
@@ -825,7 +825,7 @@ fn known_clear_or_poisoned_fact_with_no_world_never_becomes_unsettled() {
         clear.bot()[ALICE]
             .risk_refusal
             .as_deref()
-            .map(|entry| entry.1),
+            .map(|entry| &entry.1),
         Some(WalkRefusal::PoisonUnsettled { .. })
     ));
 
@@ -847,7 +847,7 @@ fn known_clear_or_poisoned_fact_with_no_world_never_becomes_unsettled() {
         poisoned.bot()[ALICE]
             .risk_refusal
             .as_deref()
-            .map(|entry| entry.1),
+            .map(|entry| &entry.1),
         Some(WalkRefusal::PoisonUnsettled { .. })
     ));
 }
