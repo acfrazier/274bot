@@ -6,16 +6,13 @@ const TEST_NAME: &str =
     "partner_trade_v8::tests::stable_closed_poll_wrapper_has_fast_properties_and_bounded_heap";
 const CLOSURE_COUNT: usize = 512;
 const REPEAT_COUNT: usize = 1_000;
+const TEST_KERNEL: &str = r#"
+export function notImpl() { throw new Error('not used by stableClosedPoll tests'); }
+export function runMachine() { throw new Error('not used by stableClosedPoll tests'); }
+"#;
 
 fn load_trade_shim(runtime: &mut Runtime) {
-    let kernel = Module::new(
-        "/rs2b0t/bot/shim/_kernel.js",
-        include_str!("../shim/_kernel.js"),
-    );
-    let execution = Module::new(
-        "/rs2b0t/bot/api/execution/Execution.js",
-        "export function parkMachine() {}",
-    );
+    let kernel = Module::new("/rs2b0t/bot/shim/_kernel.js", TEST_KERNEL);
     let drive = Module::new(
         "/rs2b0t/bot/api/drive/drive_partner_trade.js",
         include_str!("../shim/drive_partner_trade.js"),
@@ -28,9 +25,7 @@ globalThis.__stableClosedPoll = stableClosedPoll;
 globalThis.__tradeScreenState = tradeScreenState;
 "#,
     );
-    runtime
-        .load_modules(&entry, vec![&kernel, &execution, &drive])
-        .unwrap();
+    runtime.load_modules(&entry, vec![&kernel, &drive]).unwrap();
 }
 
 fn setup() -> Runtime {
