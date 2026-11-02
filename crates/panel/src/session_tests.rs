@@ -65,9 +65,7 @@ use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
 
-#[path = "../../host-play/tests/support/map_fixture.rs"]
-pub(super) mod map_fixture;
-use map_fixture::MapFixture;
+use crate::test_support::map_fixture::MapFixture;
 #[path = "../../host-play/tests/support/upgrade_home.rs"]
 mod upgrade_home;
 use upgrade_home::UpgradeHome;

@@ -9,21 +9,9 @@ use dear_imgui_rs::{sys, Condition, Context, FramePrepareOptions, MouseButton, U
 
 use super::PanelState;
 use crate::session::{PanelWindow, Session};
-use crate::test_support::TestDir;
+use crate::test_support::{map_fixture, TestDir};
 use frontend_core::launch::ProfileTemplate;
 use frontend_core::scripts::{CardSource, CompiledCardId, ScriptChoice};
-
-use host_play as map_host;
-
-// The shared host-play fixture (also loaded by `session_tests`), for a
-// Local server profile: Debug draws only on one.
-#[path = "../../host-play/tests/support/map_fixture.rs"]
-#[allow(
-    dead_code,
-    clippy::duplicate_mod,
-    reason = "shared host-play map fixture also loaded by session_tests; duplicate_mod for the shared path include"
-)]
-mod map_fixture;
 
 const OPENER_HOST: &str = "Opener harness";
 const DISPLAY: [f32; 2] = [1440.0, 900.0];

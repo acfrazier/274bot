@@ -21,16 +21,12 @@ use super::{
 };
 use crate::rail::{BASE_WINDOW_H, BASE_WINDOW_W};
 use crate::session::Session;
-use crate::test_support::TestDir;
+use crate::test_support::{map_fixture, TestDir};
 use crate::theme::PANEL_WIDTH;
 use crate::walk_map::{overlay_colors, WalkMapRenderer};
 use dear_imgui_rs::WindowFlags;
 use frontend_core::test_support::IsolatedStores;
 use frontend_core::walk_map::{WalkMap, WalkRouteSource};
-use host_play as map_host;
-
-#[path = "../../host-play/tests/support/map_fixture.rs"]
-mod map_fixture;
 
 // REACH/FLOOD/FLAGS/PACK/ROUTE_TILES share FLAGS_TEST_LOCK — one process-global
 // lock for every test that mutates picker statics (incl. Session drop →

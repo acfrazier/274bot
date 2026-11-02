@@ -4,7 +4,11 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, LazyLock, Mutex, MutexGuard, PoisonError};
 
 use frontend_core::scripts::{LoadoutForm, Loadouts, LoadoutsErrorKind};
+use host_play as map_host;
 use host_play::local_state::{LocalStateService, StateRoot};
+
+#[path = "../../host-play/tests/support/map_fixture.rs"]
+pub(crate) mod map_fixture;
 
 static NEXT_DIR: AtomicU64 = AtomicU64::new(0);
 
