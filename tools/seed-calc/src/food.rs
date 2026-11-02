@@ -131,6 +131,7 @@ fn request(tick: u16) -> WalkRequest {
         required_after: stamp(tick),
         evidence: None,
         cross: Box::default(),
+        avoid: Box::default(),
         protect: false,
         food_guard: true,
         allow,
