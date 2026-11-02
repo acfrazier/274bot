@@ -441,7 +441,7 @@ fn route_needing_more_than_120k_settles_succeeds_with_default_budget() {
         Arc::clone(&world),
         from,
         to,
-        options.clone(),
+        options,
         101,
         BankRows::default(),
         None,
