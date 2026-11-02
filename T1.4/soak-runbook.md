@@ -54,9 +54,14 @@ These failures do not justify a transport threshold change.
 ## Workload route check
 
 The fixture uses normal logs from `woodcutting.falador_west.n` and oak logs
-from the distinct `woodcutting.falador_west.2` site, with Falador West bank.
-The second site starts at `(2925,3367,0)` with radius 12; the selected content
-has three oaks there (`crates/api/data/game-data/289.json:112059-112107`).
+from the distinct `woodcutting.dwarven_mine` site. Both use Falador West bank.
+The five normal Starts are `(2946,3399)`, `(2955,3399)`, `(2952,3417)`,
+`(2955,3407)`, and `(2958,3415)`, all inside the authored `.n` region
+`x=2946..2958, z=3399..3417`. Their deterministic revision-289 selection
+and native bank-route witnesses are in
+`qualify-1102/start-selection-v2/selection.json`. The oak Start is
+`(3007,3411,0)` with radius 12 and three reachable oaks in the Dwarven Mine
+site (`content/maps/m46_53.jm2:5371`, `m47_53.jm2:4278,4458`).
 The outer bound remains `x=2840..3065, z=3262..3527`.
 The selected workload audit must pass before the new diagnostics.
 The two earlier diagnostics did not complete thirty minutes and do not satisfy this requirement.
@@ -70,22 +75,27 @@ The route-safety proof covers workload movement only:
 Random-event movement is outside this proof.
 This exclusion includes Guardian flee routes and their later ordinary replans, with or without stairs.
 The earlier Guardian-derived staircase counterexample is not a workload-route failure.
-Do not search additional regions for this correction.
+The alternate oak site is selected from the same revision-289 content.
 
-Ten accounts gather normal logs from the configured real content site.
-Each account retains one radius-five Start anchor from `NORMAL_STARTS`.
-The normal Start `(2947,3402)` replaces the blocked `(2947,3404)` tile inside a tree footprint.
-Both arms receive this two-tile correction.
-Resource memberships, radii, route bounds, faults, and thresholds do not change.
-The checker requires at least two eligible normal trees for each account.
-The host router must reach at least two trees from each normal Start.
-Reachable resources must admit ten distinct trees as a capacity witness, not a product assignment.
-Actual Gatherers choose their own trees, so shared selection and contention remain possible.
-The fixture does not change the product's bounded-wait policy.
-The other ten accounts gather `SECOND_TIER_KEY` within radius twelve of `SECOND_TIER_START`.
-The shared second-tier patch also needs at least two eligible, reachable trees.
-Both groups use Start selection and the configured bank.
-Each account receives Woodcutting 99, one rune axe, and 64 banked spare rune axes.
+Five accounts gather normal logs at the authored `.n` site. Each radius-five
+Start has at least two reachable in-site trees; the five Starts admit a
+distinct-tree capacity matching. The selection ranks least resource overlap,
+nearest prior Start, widest spacing, then coordinates. Actual Gatherers choose
+their trees, so shared selection and contention remain possible.
+
+Fifteen accounts gather oaks at Dwarven Mine within radius twelve of
+`(3007,3411,0)`; the selected patch has three accessible oaks. Falador West
+bank routes and oak interaction faces are evidenced in
+`qualify-1102/site-probe-dwarven_mine/result.json` and
+`site-access-dwarven_mine/result.json`. The oak square has a static
+danger-envelope margin of 27 tiles. The nearer Taverley SE and Druids Circle 2
+sites had bank-reachable Starts but no routes to their owned oaks; the
+Falador West 2 oak patch failed its bank route. These failed candidates do
+not change the route oracle. Each account gets one Lobster in inventory and
+one in its own bank. Gatherer keeps one food ready and eats below half base
+HP. The fixture records HP, hitmarks, observed damage targets, death chat,
+and death events before checking route boundaries. It does not infer a
+killer from a target relation or a respawn tile.
 
 `NORMAL_SAFE_WALK` defines both resource-census rectangles.
 It is not a movement stop condition.
@@ -206,5 +216,11 @@ The authenticated-control fixture assigns a unique connection ID to each WSS con
 The raw TLS peer retains the initial client traffic secret only in memory. After it authenticates a TLS 1.3 KeyUpdate, it derives the next receive key and resets the record sequence. The G5-E recovery check permits authenticated queued application records after the reply, but rejects another handshake reply or a decryption error. A fixture regression checks the updated-key decoder's sequence, tag and inner-padding handling. The direct `ring` dependency is test-only; release products do not gain a dependency edge.
 
 The proxy keeps raw terminal socket/TLS errors in each connection receipt; the comparator does **not** discard them. A post-response HTTPS TLS BrokenPipe is an accounted close only when headers/body and both ciphertext/plaintext transfer byte counts agree. A WSS `SSLEOFError` or proxy-A BrokenPipe is an accounted close only when both zero-payload WebSocket Close frames were forwarded, both game-binary cumulative hashes agree, client-to-engine bytes all match, and any unmatched TLS1.3 server-to-client tail is at most the two-byte WS Close or 24-byte encrypted final record. Every other error, larger deficit, missing Close or game hash mismatch fails. A Play actor's in-window exit fails separately; this teardown accounting is never permission to reconnect during the soak.
+
+After a completed workload, the shared fixture requests ordinary logout and
+waits for the final receive and bidirectional empty WebSocket Close receipts.
+Only then does it finalize candidate payload observations. An incomplete
+workload or missing Close receipt remains a failure; this does not relax the
+unchanged transport evaluator.
 
 Reject missing/corrupt/short receipts. The qualifying comparator must enforce zero unexpected exits, zero proxy B read/write binary-payload hash divergences, zero candidate/client-vs-proxy payload hash divergences, every active WSS connection's five-compartment reservation ≤250,760 bytes at each sample and no known occupancy overrun, candidate RSS slope ≤ baseline slope +1 MiB/hour after warmup, and candidate final RSS ≤ baseline final RSS + 20×250,760 bytes +5% of baseline final. The census uses §21 §1 plus F0 ADR 0007 amendment 7: total Linux tasks are `T = N + J + V + F + H + A + B + G + E + E_v + L_T + R`, with `N = 20`, named singletons `F ≤ 14` and the newly explicit request threads `R ≤ 64` (`nav-find-`, `nav-inspect-`, `bank-pick-`, `card-prepare`); each other category and the test-harness main task are classified by `comm`. Raw task count is **not** capped at 14. Any unclassified task fails. Check all four latency phases, both traffic directions, the required segment and frame-fault counts, all twenty real per-slot bank cycles and uninterrupted two-hour residency. A failed, unobserved or ambiguous oracle blocks the gate; the smoke may only check infrastructure and must be labeled nonqualifying.

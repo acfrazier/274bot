@@ -127,14 +127,18 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.7` 
   mappings when a search finishes, rather than leaving freed pages resident in
   glibc arenas. Search ordering and admission limits are unchanged.
 
-- The T1.4 transport soak uses western Falador normal and oak logs at two
-  distinct content sites, with Falador West bank, radius-five normal Starts,
-  and one radius-twelve oak Start. Each account needs two eligible, reachable
-  trees. Host-router reachability must admit five distinct normal trees as a
-  capacity witness, not a product assignment. Both arms use the same two sites,
-  tree tiers, bank, and outer bound. An earlier normal Start correction at
-  `(2947,3402)` replaced a blocked tile inside a tree footprint.
-  Shared tree selection and contention remain possible. No Gatherer policy changes.
+- The T1.4 transport soak uses normal logs at the authored western Falador
+  `.n` site and oaks at Dwarven Mine, with Falador West bank, radius-five
+  normal Starts, and one radius-twelve oak Start. Each account needs two
+  eligible, reachable trees. Host-router reachability must admit five
+  distinct normal trees as a capacity witness, not a product assignment.
+  Both arms use the same two sites,
+  tree tiers, bank, and outer bound. The five normal Starts are inside the
+  authored `.n` site, chosen from in-site trees and native bank-route
+  witnesses. Shared tree selection and contention remain possible. Each
+  account carries one Lobster, banks a spare, and records HP, hitmarks,
+  observed damage targets, death chat, and death events before route checks.
+  No Gatherer policy changes.
   The route proof covers workload bank travel, Gatherer retreats and
   re-approaches, and ordinary recovery during faults. It checks actual
   host-router routes and client BFS. Random-event routes and their later
