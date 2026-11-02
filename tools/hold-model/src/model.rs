@@ -18,6 +18,11 @@ use std::fmt::Write as _;
 /// `host::SCRIPT_WAIT_MARGIN_TICKS`: the invariants are stated with the real
 /// value, even for a mutation that changes the margin of the transitions.
 pub const MARGIN_TICKS: u8 = 1;
+/// The fixed terminal bound of mutation M3, in model ticks. The product's
+/// earlier design used 25 ticks, shorter than the longest authored wait (30).
+/// The model's waits and ticks are small, so this is a bound that is shorter
+/// than a legal wait here too.
+pub const M3_FIXED_TERMINAL_TICKS: u8 = 3;
 
 /// Permanent seeded regressions. Production exploration uses `None`. The
 /// `Check*` mutations are the model builder's own checks that each frozen
@@ -40,10 +45,27 @@ pub enum Mutation {
     CheckStaleHold,
     /// The journal quiet lease has no wall bound.
     CheckQuietNoWall,
+    /// M1 (round 2): no leases. The host ends its hold when a modal opens, or
+    /// 2 observed ticks after the owner's click, whichever is first.
+    M1HoldTwoTicks,
+    /// M2 (round 3): as M1 with 3 ticks.
+    M2HoldThreeTicks,
+    /// M3 (round 4): the host's terminal release is a fixed number of ticks
+    /// from the first sample of the lease key, whatever the owner's deadline.
+    M3FixedTerminal,
+    /// M4 (round 4): every compat journal lease has one constant key. The host
+    /// keeps its start tick and released flag while the key does not change.
+    M4CompatConstantKey,
+    /// M5 (round 5): an active-clock deadline is converted once, when it is
+    /// installed, to a fixed wall deadline and never recomputed.
+    M5ActiveToWall,
+    /// M6 (round 5): the compat hold has one wall bound from the begin; the
+    /// click does not renew it.
+    M6CompatNoRenew,
 }
 
 impl Mutation {
-    pub const ALL: [Mutation; 8] = [
+    pub const ALL: [Mutation; 14] = [
         Mutation::None,
         Mutation::CheckMarginZero,
         Mutation::CheckMarginTwo,
@@ -52,6 +74,12 @@ impl Mutation {
         Mutation::CheckSendKeepsKey,
         Mutation::CheckStaleHold,
         Mutation::CheckQuietNoWall,
+        Mutation::M1HoldTwoTicks,
+        Mutation::M2HoldThreeTicks,
+        Mutation::M3FixedTerminal,
+        Mutation::M4CompatConstantKey,
+        Mutation::M5ActiveToWall,
+        Mutation::M6CompatNoRenew,
     ];
 
     pub fn name(self) -> &'static str {
@@ -64,6 +92,12 @@ impl Mutation {
             Mutation::CheckSendKeepsKey => "check-send-keeps-key",
             Mutation::CheckStaleHold => "check-stale-hold",
             Mutation::CheckQuietNoWall => "check-quiet-no-wall",
+            Mutation::M1HoldTwoTicks => "m1-hold-two-ticks",
+            Mutation::M2HoldThreeTicks => "m2-hold-three-ticks",
+            Mutation::M3FixedTerminal => "m3-fixed-terminal",
+            Mutation::M4CompatConstantKey => "m4-compat-constant-key",
+            Mutation::M5ActiveToWall => "m5-active-to-wall",
+            Mutation::M6CompatNoRenew => "m6-compat-no-renew",
         }
     }
 
@@ -327,6 +361,9 @@ impl Lease {
 pub struct HostHold {
     pub key: Key,
     pub released: bool,
+    /// The tick of the first sample of this key. The head design does not
+    /// read it; the earlier designs M1 to M4 do.
+    pub start: u8,
 }
 
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
@@ -572,7 +609,7 @@ impl Model {
                     id,
                     txn: Self::fresh_txn(s),
                     phase: ModalPhase::Page { until },
-                    ledger: LedgerBound::Active(until),
+                    ledger: Self::ledger_for(self.mutation, s.wall, s.active, until),
                     rearms: b.rearms,
                     rearm_tick: None,
                 });
@@ -697,7 +734,10 @@ impl Model {
                 match c.phase {
                     CompatPhase::Ready => {
                         // The click takes a fresh hold bound; the paint cap stays.
-                        if self.mutation != Mutation::CheckCompatClickNoRenew {
+                        if !matches!(
+                            self.mutation,
+                            Mutation::CheckCompatClickNoRenew | Mutation::M6CompatNoRenew
+                        ) {
                             c.hold_until = s.wall + self.bounds.compat_hold;
                         }
                         info.emitted = true;
@@ -759,7 +799,7 @@ impl Model {
                 base: s.page,
                 until,
             },
-            ledger: LedgerBound::Active(until),
+            ledger: Self::ledger_for(self.mutation, s.wall, s.active, until),
             rearms: old.rearms,
             rearm_tick: old.rearm_tick,
         });
@@ -858,6 +898,46 @@ impl Model {
 
     // ---- the host's side ----
 
+    /// M5: the ledger copy of an active-clock deadline. The head design keeps
+    /// the owner's active-clock deadline. M5 converts it once, when it is
+    /// installed, to a wall deadline (`wall_now + (deadline - active_now)`),
+    /// kept in the same field.
+    fn ledger_for(mutation: Mutation, wall: u8, active: u8, until: u8) -> LedgerBound {
+        if mutation == Mutation::M5ActiveToWall {
+            LedgerBound::Active(wall.saturating_add(until.saturating_sub(active)))
+        } else {
+            LedgerBound::Active(until)
+        }
+    }
+
+    /// Whether an active-clock ledger bound is not yet reached at the sample.
+    fn active_before(&self, s: &State, at: u8) -> bool {
+        if self.mutation == Mutation::M5ActiveToWall {
+            s.wall < at
+        } else {
+            s.active < at
+        }
+    }
+
+    /// M1 and M2: the host has no leases. Its hold starts at the owner's click
+    /// and ends when a modal opens or `ticks` observed ticks after the click.
+    fn host_without_leases(&self, s: &mut State, info: &mut Info, ticks: u8) {
+        if info.emitted {
+            s.hold_rec = Some(HostHold {
+                key: Key::Modal(0),
+                released: false,
+                start: s.tick,
+            });
+        }
+        if let Some(h) = s.hold_rec
+            && !h.released
+            && (s.modal || s.tick >= h.start.saturating_add(ticks))
+        {
+            s.hold_rec = None;
+        }
+        info.wait = s.hold_rec.map(|h| (h.key, h.start));
+    }
+
     /// `quiet_read(now)`: the lease's own wall bound. True when it released.
     fn quiet_wall_release(&self, s: &mut State) -> bool {
         if let Lease::Quiet(mut q) = s.lease
@@ -887,7 +967,7 @@ impl Model {
             Lease::Modal(mut m) => {
                 let deadline = match m.ledger {
                     LedgerBound::Tick(d) => d,
-                    LedgerBound::Active(at) if s.active < at => s.tick,
+                    LedgerBound::Active(at) if self.active_before(s, at) => s.tick,
                     LedgerBound::Active(_) => {
                         m.ledger = LedgerBound::Tick(s.tick);
                         s.tick
@@ -906,9 +986,16 @@ impl Model {
             Lease::Compat(c) => {
                 if s.wall < c.hold_until {
                     Some(Wait {
-                        key: Key::Compat {
-                            token: c.token,
-                            generation: c.generation,
+                        key: if self.mutation == Mutation::M4CompatConstantKey {
+                            Key::Compat {
+                                token: u8::MAX,
+                                generation: u8::MAX,
+                            }
+                        } else {
+                            Key::Compat {
+                                token: c.token,
+                                generation: c.generation,
+                            }
                         },
                         // `self_ending_tick`: a live read is not yet due.
                         deadline: s.tick,
@@ -933,6 +1020,7 @@ impl Model {
             (Some(w), _) => Some(HostHold {
                 key: w.key,
                 released: false,
+                start: s.tick,
             }),
         };
         let (Some(w), Some(h)) = (wait, s.hold_rec.as_mut()) else {
@@ -943,7 +1031,12 @@ impl Model {
             Mutation::CheckMarginTwo => 2,
             _ => MARGIN_TICKS,
         };
-        if h.released || s.tick < w.deadline.saturating_add(margin) {
+        let early = if self.mutation == Mutation::M3FixedTerminal {
+            s.tick < h.start.saturating_add(M3_FIXED_TERMINAL_TICKS)
+        } else {
+            s.tick < w.deadline.saturating_add(margin)
+        };
+        if h.released || early {
             return None;
         }
         h.released = true;
@@ -1147,21 +1240,33 @@ impl Model {
             }
         }
         // The host samples the lease (also while paused) and applies its policy.
-        let wait = self.sample(&mut s, info);
+        let ticks_without_leases = match self.mutation {
+            Mutation::M1HoldTwoTicks => Some(2),
+            Mutation::M2HoldThreeTicks => Some(3),
+            _ => None,
+        };
+        let wait = if ticks_without_leases.is_some() {
+            None
+        } else {
+            self.sample(&mut s, info)
+        };
         let generation = s.runtime_live.then_some(s.rgen);
         if s.host_generation != generation {
             s.host_generation = generation;
             s.hold_rec = None;
         }
-        info.wait = wait.as_ref().map(|w| (w.key, w.deadline));
         Self::update_due(&mut s);
-        if let Some((key, deadline, tick)) = self.observe_wait(&mut s, wait.as_ref()) {
-            info.expired = Some((key, deadline, tick));
-            if let Some(kind) = s.lease.kind() {
-                info.releases.push((kind, Cause::HostTerminal));
+        if let Some(ticks) = ticks_without_leases {
+            self.host_without_leases(&mut s, info, ticks);
+        } else {
+            info.wait = wait.as_ref().map(|w| (w.key, w.deadline));
+            if let Some((key, deadline, tick)) = self.observe_wait(&mut s, wait.as_ref()) {
+                info.expired = Some((key, deadline, tick));
+                if let Some(kind) = s.lease.kind() {
+                    info.releases.push((kind, Cause::HostTerminal));
+                }
             }
         }
-        // The press decision.
         let defer = Self::deferred(&s);
         info.deferred = defer;
         if s.up && !s.modal && !s.run_on && !defer {
