@@ -472,17 +472,13 @@ function parseWriter(file: string, line: number, rhs: string, variable: string, 
     return { kind: 'constant' as const, value: literal };
 }
 
-function buildGraph(content: string, variable: string, constants: ReadonlyMap<string, number>): ScriptGraph {
-    const files = walkContentFiles(path.join(content, 'scripts'), '.rs2').filter(isProductionScript);
-    const blocks: BlockRef[] = [];
-    for (const file of files) {
-        const relative = path.relative(content, file).split(path.sep).join('/');
-        const parsed = parseRs2Blocks(relative, fs.readFileSync(file, 'utf8'));
-        parsed.forEach((block, index) => {
-            const id = `${relative}#${index}`;
-            blocks.push({ id, block, statements: parseStatements(block, variable, constants), entry: block.kind !== 'label' && block.kind !== 'proc' });
-        });
-    }
+function controlGraph(sourceBlocks: readonly Rs2Block[], variable: string, constants: ReadonlyMap<string, number>) {
+    const blocks = sourceBlocks.map((block, index): BlockRef => ({
+        id: `${block.span.file}#${index}`,
+        block,
+        statements: parseStatements(block, variable, constants),
+        entry: block.kind !== 'label' && block.kind !== 'proc',
+    }));
     const labels = new Map<string, BlockRef[]>();
     const procs = new Map<string, BlockRef[]>();
     const kinds = new Map<string, BlockRef[]>();
@@ -499,9 +495,18 @@ function buildGraph(content: string, variable: string, constants: ReadonlyMap<st
             (reverse.get(target.id) ?? reverse.set(target.id, []).get(target.id)!).push({ caller: block.id, guards: statement.guards });
         }
     }
-    const byId = new Map(blocks.map((block) => [block.id, block]));
+    return { byId: new Map(blocks.map((block) => [block.id, block])), reverse };
+}
+
+function buildGraph(content: string, variable: string, constants: ReadonlyMap<string, number>): ScriptGraph {
+    const blocks: Rs2Block[] = [];
+    for (const file of walkContentFiles(path.join(content, 'scripts'), '.rs2').filter(isProductionScript)) {
+        const relative = path.relative(content, file).split(path.sep).join('/');
+        blocks.push(...parseRs2Blocks(relative, fs.readFileSync(file, 'utf8')));
+    }
+    const { byId, reverse } = controlGraph(blocks, variable, constants);
     const writers: Writer[] = [];
-    for (const block of blocks) for (const statement of block.statements) {
+    for (const block of byId.values()) for (const statement of block.statements) {
         const assignment = new RegExp(`^%${variable}\\s*=\\s*(.+?)\\s*;?$`).exec(statement.text);
         if (!assignment) continue;
         const file = block.block.span.file;
@@ -511,7 +516,7 @@ function buildGraph(content: string, variable: string, constants: ReadonlyMap<st
     return { byId, reverse, writers };
 }
 
-function hasEntryPath(writer: Writer, graph: ScriptGraph) {
+function hasEntryPath(writer: Pick<Writer, 'block'>, graph: ScriptGraph) {
     const visit = (blockId: string, seen: Set<string>): boolean => {
         const block = graph.byId.get(blockId)!;
         if (block.entry) return true;
@@ -522,7 +527,7 @@ function hasEntryPath(writer: Writer, graph: ScriptGraph) {
     return visit(writer.block.id, new Set());
 }
 
-function feasiblePaths(writer: Writer, graph: ScriptGraph, variable: string, range: RangeWire, constants: ReadonlyMap<string, number>) {
+function feasiblePaths(writer: Pick<Writer, 'block' | 'guards' | 'reviewed'>, graph: ScriptGraph, variable: string, range: RangeWire, constants: ReadonlyMap<string, number>) {
     const out: Guard[][] = [];
     const reviewedGuard: Guard[] = writer.reviewed ? [{ expression: writer.reviewed.guard_text, polarity: false }] : [];
     const hasPath = hasEntryPath(writer, graph);
@@ -546,6 +551,41 @@ function feasiblePaths(writer: Writer, graph: ScriptGraph, variable: string, ran
         if (guardsCanHold(guards, variable, range, constants)) out.push(guards);
     }
     return out;
+}
+
+/** Possible non-idempotent writes from completion; unresolved callers stay possible. */
+export function postCompletionProgressWriters(
+    blocks: readonly Rs2Block[],
+    variable: string,
+    completed: RangeWire,
+    constants: ReadonlyMap<string, number>,
+    candidates: readonly { block: Rs2Block; line: number; right: string }[],
+) {
+    const graph: ScriptGraph = { ...controlGraph(blocks, variable, constants), writers: [] };
+    const byBlock = new Map([...graph.byId.values()].map((block) => [block.block, block]));
+    const assignment = new RegExp(`^%${variable}\\s*=\\s*(.+?)\\s*;?$`);
+    const possible: { file: string; line: number; right: string }[] = [];
+    for (const candidate of candidates) {
+        if (completed.min === completed.max && constantValue(candidate.right, constants) === completed.min) continue;
+        const site = { file: candidate.block.span.file, line: candidate.line, right: candidate.right };
+        const block = byBlock.get(candidate.block);
+        const statement = block?.statements.find((statement) => {
+            const match = assignment.exec(statement.text);
+            return statement.line === candidate.line && match?.[1].trim() === candidate.right;
+        });
+        if (!block || !statement) {
+            possible.push(site);
+            continue;
+        }
+        const writer = { block, guards: statement.guards };
+        // Expression calls may not have an edge. Missing callers cannot prove
+        // that a writer is dead, just as for journal preservation.
+        if (!hasEntryPath(writer, graph)) block.entry = true;
+        if (feasiblePaths(writer, graph, variable, completed, constants).length > 0) {
+            possible.push(site);
+        }
+    }
+    return possible;
 }
 
 function verifyReviewedWrites(content: string, row: Pick<PrereqRowWire, 'reviewed_writes'>, writers: Writer[]) {

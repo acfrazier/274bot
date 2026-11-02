@@ -3,6 +3,7 @@ import fs from 'node:fs';
 import { integer, parsePack, requireGatherText, walkContentFiles } from './common.ts';
 import { parseRs2Blocks, stripComment, walkContent, type Rs2Block } from './gathering-content.ts';
 import { parseBody, walkStatements, type Node } from './gathering-rs2.ts';
+import { postCompletionProgressWriters } from './prereq-preservation.ts';
 export const questIdentityContentFiles = [
     'scripts/general/scripts/quests.rs2',
     'scripts/general/configs/quest.constant',
@@ -365,8 +366,9 @@ function progressConstants(content: string, sourceFiles: readonly string[]) {
 
 type ProgressWriter = { block: Rs2Block; line: number; right: string; nodes: Node[] | null };
 
-function progressWriters(content: string, sourceFiles: readonly string[]) {
+export function questProgressWriters(content: string, sourceFiles: readonly string[]) {
     const byVariable = new Map<string, ProgressWriter[]>();
+    const blocks: Rs2Block[] = [];
     const add = (variable: string, block: Rs2Block, line: number, right: string, nodes: Node[] | null) => {
         const writers = byVariable.get(variable) ?? [];
         if (!writers.some((writer) => writer.block === block && writer.line === line && writer.right === right)) {
@@ -374,28 +376,35 @@ function progressWriters(content: string, sourceFiles: readonly string[]) {
             byVariable.set(variable, writers);
         }
     };
+    const addAssignment = (block: Rs2Block, line: number, text: string, nodes: Node[] | null) => {
+        const code = text.trim().replace(/;$/, '').trim();
+        const assignment = /^([%$][A-Za-z0-9_]+(?:\s*,\s*[%$][A-Za-z0-9_]+)*)\s*=\s*(.+)$/.exec(code);
+        if (!assignment) return;
+        // Multiple outputs do not prove which RHS value reaches this varp.
+        const right = assignment[1].includes(',') ? code : assignment[2].trim();
+        for (const target of assignment[1].matchAll(/%([A-Za-z0-9_]+)/g)) {
+            add(target[1], block, line, right, nodes);
+        }
+    };
     for (const file of sourceFiles) {
         if (!file.endsWith('.rs2') || !productionScriptPath(file)) continue;
         const text = fs.readFileSync(`${content}/${file}`, 'utf8');
         for (const block of parseRs2Blocks(file, text)) {
+            blocks.push(block);
             let nodes: Node[] | null = null;
             try {
                 nodes = parseBody(block.body);
-                walkStatements(nodes, (stmt) => {
-                    const assignment = /^%([A-Za-z0-9_]+)\s*=\s*(.+)$/.exec(stmt.text);
-                    if (assignment) add(assignment[1], block, stmt.line, assignment[2].trim(), nodes);
-                });
+                walkStatements(nodes, (stmt) => addAssignment(block, stmt.line, stmt.text, nodes));
             } catch {
                 // Physical assignment lines below still cover unparsed switch bodies.
             }
             for (const { line, text: raw } of block.body) {
-                const code = stripComment(raw).trim();
-                const assignment = /^(?:case\s+[^:]+:\s*)?%([A-Za-z0-9_]+)\s*=\s*(.+?)\s*;?$/.exec(code);
-                if (assignment) add(assignment[1], block, line, assignment[2].trim().replace(/;$/, '').trim(), nodes);
+                const code = stripComment(raw).trim().replace(/^case\s+[^:]+:\s*/, '');
+                addAssignment(block, line, code, nodes);
             }
         }
     }
-    return byVariable;
+    return { byVariable, blocks };
 }
 
 function varpTransmission(content: string, varp: string, sourceFiles: readonly string[]): ProgressMetadata['transmission'] {
@@ -557,7 +566,8 @@ export function extractQuestIdentityFacts(content: string, revision: number) {
     const constants = parseQuestConstants(requireGatherText(content, 'scripts/general/configs/quest.constant'));
     const sourceFiles = questIdentityAnalysisFiles(content);
     const progressConstantMap = progressConstants(content, sourceFiles);
-    const progressWriterIndex = progressWriters(content, sourceFiles);
+    const progressSources = questProgressWriters(content, sourceFiles);
+    const progressWriterIndex = progressSources.byVariable;
     const questlistText = requireGatherText(content, 'scripts/player/interfaces/questlist.if');
     const displays = parseQuestListText(questlistText);
     const listEntries = parseQuestListEntries(questlistText);
@@ -726,6 +736,29 @@ export function extractQuestIdentityFacts(content: string, revision: number) {
         });
     }
     if (rows.length === 0) throw new Error('quest_identity: no extracted rows');
+    const postWriterConstants = new Map<string, number>();
+    for (const [name, value] of progressConstantMap) {
+        if (value !== null) postWriterConstants.set(name, value);
+    }
+    const checked = new Set<string>();
+    const postCompletionVariables = new Set<string>();
+    for (const row of rows) {
+        if (row.varp_id < 0 || row.complete <= 0 || postCompletionVariables.has(row.varp)) continue;
+        const key = `${row.varp}:${row.complete}`;
+        if (checked.has(key)) continue;
+        checked.add(key);
+        const writers = progressWriterIndex.get(row.varp) ?? [];
+        if (writers.length > 0 && postCompletionProgressWriters(
+            progressSources.blocks,
+            row.varp,
+            { min: row.complete, max: row.stage_domain?.max ?? 2147483647 },
+            postWriterConstants,
+            writers,
+        ).length > 0) postCompletionVariables.add(row.varp);
+    }
+    for (const row of rows) {
+        if (postCompletionVariables.has(row.varp)) row.colour_authoritative = false;
+    }
     if (rows.some((row) => row.requirements.qualification !== 'partial' || row.requirements.unknown_as_satisfied)) {
         throw new Error('quest_identity: requirements must stay partial');
     }

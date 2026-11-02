@@ -1662,6 +1662,64 @@ for (const [writer, expected] of [
         fs.rmSync(root, { recursive: true, force: true });
     }
 }
+
+for (const targets of ['%cookquest, $other', '$other, %cookquest']) {
+    const root = questFixture((files) => {
+        files['scripts/quests/quest_cook/scripts/quest_cook_progress.rs2'] = `[proc,quest_cook_progress]
+${targets} = ~two_values;
+`;
+    });
+    try {
+        const row = extractQuestIdentityFacts(root, 289).rows.find((entry) => entry.id === 'cook');
+        assert.equal(row?.stage_domain, null, `an unresolved multi-output write stays unknown: ${targets}`);
+    } finally {
+        fs.rmSync(root, { recursive: true, force: true });
+    }
+}
+
+for (const [entry, writer, maximum, authoritative] of [
+    ['if (%cookquest < ^cook_complete) { @cook_revisit; }', '1', 2, true],
+    ['if (%cookquest >= 1) { @cook_revisit; }', '1', 2, false],
+    ['if (%cookquest >= ^cook_complete) { return; }\n@cook_revisit;', '1', 2, true],
+    ['', '1', 2, false],
+    ['@cook_revisit;', '^cook_complete', 2, true],
+    ['if (%cookquest = 5) { @cook_revisit; }', '1', 5, false],
+] as const) {
+    const root = questFixture((files) => {
+        files['scripts/general/scripts/quests.rs2'] += `[proc,send_quest_progress_colour](component $component, int $progress, int $complete_progress)
+if ($progress = 0) {
+    if_setcolour($component, ^red_rgb);
+} else if ($progress >= $complete_progress) {
+    if_setcolour($component, ^green_rgb);
+} else {
+    if_setcolour($component, ^yellow_rgb);
+}
+`;
+        files['scripts/quests/quest_cook/configs/quest_cook.varp'] = '[cookquest]\ntransmit=no\n';
+        files['scripts/quests/quest_cook/scripts/quest_cook_progress.rs2'] = `[oploc1,cook_start]
+${entry}
+[label,cook_revisit]
+~update_questlist;
+%cookquest = ${writer};
+`;
+        if (maximum > 2) {
+            files['scripts/quests/quest_cook/scripts/quest_cook_progress.rs2'] += `[oploc2,cook_start]
+if (%cookquest = 0) { %cookquest = ${maximum}; }
+`;
+        }
+    });
+    try {
+        const row = extractQuestIdentityFacts(root, 289).rows.find((entry) => entry.id === 'cook');
+        assert.deepEqual(row?.stage_domain, { min: 0, max: maximum }, 'post-completion reachability is independent of the value domain');
+        assert.equal(
+            row?.colour_authoritative,
+            authoritative,
+            `colour authority follows the content caller guards, not a hand-maintained varp list: ${entry} / ${writer}`,
+        );
+    } finally {
+        fs.rmSync(root, { recursive: true, force: true });
+    }
+}
 const questStarts = extractQuestStartFacts(questRoot, quest289.rows, 289, 'fixture-content');
 assert.equal(questStarts.schema, 1);
 assert.equal(questStarts.revision, 289);

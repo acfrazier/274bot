@@ -298,7 +298,7 @@ fn with_journal_only_hero(check: impl FnOnce(&QuestSource<'_>)) {
         .iter_mut()
         .find(|row| row.varp == "heroquest")
         .unwrap();
-    row.colour_authoritative = true;
+    row.colour_authoritative = false;
     row.stage_domain = None;
     row.transmission = api::quest_facts::Transmission::NotTransmitted;
     check(&QuestSource {
@@ -2130,9 +2130,8 @@ if(%heroquest ! ^hero_complete) { return; }
 p_teleport(0_44_53_5_46);
 "#,
         );
-        // These later writes exceed the selected Hero domain (0..=15), so
-        // this synthetic uncertainty uses an authoritative journal colour
-        // with no bounded stage-domain claim.
+        // These later writes exceed the selected Hero domain (0..=15).
+        // An unbounded, non-authoritative colour cannot prove exact progress.
         fx.write(
             "scripts/later.rs2",
             &format!("[queue,later]\n{later_write}\n"),
@@ -2148,7 +2147,7 @@ p_teleport(0_44_53_5_46);
 }
 
 #[test]
-fn completion_lower_bound_proves_an_earlier_threshold_without_claiming_its_exact_stage() {
+fn no_domain_threshold_keeps_a_varp_window_after_a_post_completion_write() {
     let fx = Fixture::new();
     write_forced_fixture(
         &fx,
@@ -2157,12 +2156,11 @@ fn completion_lower_bound_proves_an_earlier_threshold_without_claiming_its_exact
 if(%heroquest < ^hero_phoenix_talked_charlie) { return; }
 p_teleport(0_44_53_5_46);
 [queue,later]
-%heroquest = calc(%heroquest + 1);
+%heroquest = 1;
 "#,
     );
-    // The synthetic queue write can advance beyond the selected 0..=15
-    // domain. Journal-only facts still prove completion, hence the earlier
-    // threshold, without claiming exact progress after a possible later write.
+    // A later content write may lower progress without refreshing the colour.
+    // Only an observed varp range, not a completed row, decides the threshold.
     with_journal_only_hero(|quests| {
         let (graph, _) = derive_entrance_fixture_with_quests(&fx, quests);
         let edges: Vec<_> = graph
@@ -2171,8 +2169,26 @@ p_teleport(0_44_53_5_46);
             .filter(|edge| edge.loc_id == 6000)
             .collect();
         assert!(!edges.is_empty());
-        assert!(edges.iter().all(|edge| edge.quest_gates.as_ref().is_some_and(|gates|
-            matches!(gates.gates(), [api::selected::QuestGate::Complete(quest)] if quest.0.as_ref() == "hero"))));
+        for edge in edges {
+            let gates = edge.quest_gates.as_ref().expect("typed varp threshold");
+            let [api::selected::QuestGate::Window(window)] = gates.gates() else {
+                panic!("a no-domain threshold must not become Complete: {gates:?}");
+            };
+            assert_eq!(window.quest.0.as_ref(), "hero");
+            assert_eq!(window.signal.0.as_ref(), "heroquest");
+            assert_eq!(window.values.min, Some(6));
+            assert_eq!(window.values.max, Some(i32::MAX));
+            for (min, max, expected) in [
+                (Some(1), Some(1), api::selected::Truth::False),
+                (Some(15), Some(15), api::selected::Truth::True),
+                (None, None, api::selected::Truth::Unknown),
+            ] {
+                assert_eq!(
+                    window.values.test(&api::selected::InclusiveRange { min, max }),
+                    expected
+                );
+            }
+        }
     });
 }
 

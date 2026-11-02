@@ -500,13 +500,19 @@ typed `api::selected::QuestGate`s — a completed quest, or a closed
 threshold. Only resolved progress evidence decides a gate:
 `WorldState::with_quest_evidence(QuestEvidence::new(provider, family,
 required_after))` attaches the caller's immutable `EvidenceProvider` snapshot,
-the family it was prepared from and its causal freshness floor. Snapshot varps
-and green quest rows never open a stage gate, and nav reads no journal.
+the family it was prepared from and its causal freshness floor. An opaque
+snapshot varp or an unqualified green row is not stage evidence.
 
 The producer starts a progress variable's legal upper bound at quest completion
 and extends it only from that variable's actual writers. An unsupported writer
 leaves the domain unknown. Other constants with the quest's name prefix, such as
 Underground Pass's `ibanmulti` bit indices, do not widen the progress bound.
+The same writer index and guarded call analysis derive variables that may
+change after completion. Their quest colour is not stage authority. When no
+stage domain is proved, a content varp comparison stays a typed `StageWindow`,
+not a `Complete` substitute. A fresh, selected-family progress observation
+must decide that comparison; colour alone leaves it `Unknown`.
+
 
 `WorldState::quest_gates(edge)` is three-valued. `True` (every value still
 possible lies inside every window) alone lets `find`/`find_with` take the edge.
@@ -541,11 +547,12 @@ Ordinary quest-list evidence is shared with the Quester.
 from a frame: it takes the prepared `QuestCatalog`, the catalog family that
 verified it, the currently selected family, and the `SnapshotView`. Both
 family identities (digest plus extractor schema) must be present and equal,
-so a different revision family fails closed. It proves `QuestGate::Complete`
-only — `Complete` reads `True`, `NotStarted`/`InProgress` read `False` — and
-every `StageWindow` stays `Unknown`, however far the quest has progressed.
-Snapshot varps and green quest rows never establish a `StageWindow`,
-and nav reads no journal: there is no server-only raw-varp inference.
+so a different revision family fails closed. For `QuestGate::Complete`,
+`Complete` reads `True` and `NotStarted`/`InProgress` read `False`. A
+`StageWindow` can use colour only when the catalog proves an authoritative,
+bounded, non-transmitted signal with no possible post-completion writer.
+Other rows leave the window `Unknown`. The provider never infers a
+server-only progress value from an opaque snapshot varp.
 
 The two diagnoses see across each other. When the BankBudget diagnosis
 (`find_missing_item_reqs`, which ignores only carry/wear gates) finds no route,

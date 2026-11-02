@@ -522,14 +522,31 @@ impl Motion<'_> {
                         quest_family: Some(quest_family),
                         ..Needs::default()
                     }
-                } else if input.complete {
+                } else {
+                    let Some(branch_value) = value else {
+                        return Some(Cond::unknown());
+                    };
+                    let Some(values) =
+                        comparison_window(op, branch_value, threshold, i32::MIN, i32::MAX)
+                    else {
+                        return Some(Cond::unknown());
+                    };
+                    let Some(quest_family) = self.base.src.quest_family else {
+                        return Some(Cond::unknown());
+                    };
+                    // Content can change a progress varp after publishing a
+                    // green row. Keep its actual comparison, never a colour
+                    // completion substitute, when no stage domain is proved.
+                    let window = api::selected::StageWindow {
+                        quest: quest.clone(),
+                        signal: api::selected::FactKey::new(quest_varp),
+                        values,
+                    };
                     Needs {
-                        quests: vec![api::selected::QuestGate::Complete(quest.clone())],
-                        quest_family: self.base.src.quest_family,
+                        quests: vec![api::selected::QuestGate::Window(window)],
+                        quest_family: Some(quest_family),
                         ..Needs::default()
                     }
-                } else {
-                    Needs::default()
                 };
                 return Some(Cond { value, needs });
             }
