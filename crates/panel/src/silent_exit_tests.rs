@@ -24,7 +24,9 @@ use frontend_core::test_support::session::{install_vault, with_tutorial_skipped}
 use frontend_core::test_support::{FixtureProfile, VaultFixture};
 
 use super::{script_pause_enabled, script_stop_enabled, PanelWindow, Session};
-use crate::test_support::{map_fixture::MapFixture, save_store_patiently, scratch_service, TestDir};
+use crate::test_support::{
+    map_fixture::MapFixture, save_store_patiently, scratch_service, TestDir,
+};
 
 const HARNESS: &str = "Silent exits harness";
 const DISPLAY: [f32; 2] = [1440.0, 900.0];
