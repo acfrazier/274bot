@@ -28,6 +28,11 @@ impl ZeroedElement for [u8; 3] {
     const ZERO: Self = [0; 3];
 }
 
+impl sealed::Sealed for super::resources::PackedHeapEntry {}
+impl ZeroedElement for super::resources::PackedHeapEntry {
+    const ZERO: Self = super::resources::PackedHeapEntry::ZERO;
+}
+
 enum Backing<T: ZeroedElement> {
     Vec(Vec<T>),
     Mapping { bytes: usize },

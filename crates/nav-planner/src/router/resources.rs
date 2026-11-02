@@ -11,6 +11,65 @@ use super::zeroed_buffer::ZeroedBuffer as SearchBuffer;
 #[cfg(not(unix))]
 type SearchBuffer<T> = Vec<T>;
 
+#[cfg(unix)]
+struct HeapEntries {
+    values: SearchBuffer<PackedHeapEntry>,
+    len: usize,
+}
+
+#[cfg(unix)]
+impl HeapEntries {
+    fn try_new(capacity: usize) -> Option<Self> {
+        let values = if capacity == 0 {
+            SearchBuffer::empty()
+        } else {
+            SearchBuffer::try_new(capacity).ok()?
+        };
+        Some(Self { values, len: 0 })
+    }
+
+    fn capacity(&self) -> usize {
+        self.values.len()
+    }
+
+    fn try_grow_to(&mut self, capacity: usize) -> Result<(), SearchCursorError> {
+        self.values.try_grow(capacity, self.len)
+    }
+
+    fn push(&mut self, entry: PackedHeapEntry) {
+        debug_assert!(self.len < self.capacity());
+        self.values[self.len] = entry;
+        self.len += 1;
+    }
+
+    fn pop(&mut self) -> Option<PackedHeapEntry> {
+        if self.len == 0 {
+            return None;
+        }
+        self.len -= 1;
+        Some(self.values[self.len])
+    }
+}
+
+#[cfg(unix)]
+impl std::ops::Deref for HeapEntries {
+    type Target = [PackedHeapEntry];
+
+    fn deref(&self) -> &Self::Target {
+        &self.values[..self.len]
+    }
+}
+
+#[cfg(unix)]
+impl std::ops::DerefMut for HeapEntries {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.values[..self.len]
+    }
+}
+
+#[cfg(not(unix))]
+type HeapEntries = Vec<PackedHeapEntry>;
+
 pub(super) const RESOURCE_LIMIT: usize = 64;
 pub(super) const BALANCE_LIMIT: usize = 4096;
 
@@ -627,21 +686,27 @@ pub(super) fn packed_predecessor_storage_bound(settle_budget: usize) -> Option<u
 }
 
 pub(super) fn packed_search_storage_bound(settle_budget: usize) -> Option<usize> {
-    packed_predecessor_storage_bound(settle_budget)?.checked_add(
-        settle_budget
-            .checked_add(2)?
-            .checked_mul(std::mem::size_of::<PackedHeapEntry>())?,
-    )
+    let capacity = settle_budget.checked_add(2)?;
+    #[cfg(unix)]
+    let heap_bytes = super::zeroed_buffer::storage_bound::<PackedHeapEntry>(capacity)?;
+    #[cfg(not(unix))]
+    let heap_bytes = capacity.checked_mul(std::mem::size_of::<PackedHeapEntry>())?;
+    packed_predecessor_storage_bound(settle_budget)?.checked_add(heap_bytes)
 }
 
 #[repr(C)]
 #[derive(Clone, Copy)]
-struct PackedHeapEntry {
+pub(super) struct PackedHeapEntry {
     node: [u8; 3],
     parent: [u8; 3],
 }
 
 impl PackedHeapEntry {
+    pub(super) const ZERO: Self = Self {
+        node: [0; 3],
+        parent: [0; 3],
+    };
+
     fn new(node: u32, parent: u32) -> Self {
         Self {
             node: write_u24(node),
@@ -659,7 +724,7 @@ impl PackedHeapEntry {
 }
 
 pub(super) struct PackedMinMaxHeap {
-    entries: Vec<PackedHeapEntry>,
+    entries: HeapEntries,
     // Ordinary searches need only the minimum. Build the min-max ordering
     // in place only when bounded-frontier admission first needs eviction.
     min_max: bool,
@@ -667,8 +732,14 @@ pub(super) struct PackedMinMaxHeap {
 
 impl PackedMinMaxHeap {
     pub(super) fn try_new(capacity: usize) -> Option<Self> {
-        let mut entries = Vec::new();
-        entries.try_reserve_exact(capacity).ok()?;
+        #[cfg(unix)]
+        let entries = HeapEntries::try_new(capacity)?;
+        #[cfg(not(unix))]
+        let entries = {
+            let mut entries = HeapEntries::new();
+            entries.try_reserve_exact(capacity).ok()?;
+            entries
+        };
         Some(Self {
             entries,
             min_max: false,
@@ -682,12 +753,17 @@ impl PackedMinMaxHeap {
         if capacity <= self.entries.capacity() {
             return Ok(());
         }
-        let mut entries = Vec::new();
-        entries
-            .try_reserve_exact(capacity)
-            .map_err(|_| SearchCursorError::Allocation)?;
-        entries.extend_from_slice(&self.entries);
-        self.entries = entries;
+        #[cfg(unix)]
+        self.entries.try_grow_to(capacity)?;
+        #[cfg(not(unix))]
+        {
+            let mut entries = Vec::new();
+            entries
+                .try_reserve_exact(capacity)
+                .map_err(|_| SearchCursorError::Allocation)?;
+            entries.extend_from_slice(&self.entries);
+            self.entries = entries;
+        }
         Ok(())
     }
 
@@ -2153,7 +2229,7 @@ mod packed_search_tests {
             )
         );
         #[cfg(unix)]
-        let expected_full_backing = 149_042_700;
+        let expected_full_backing = 149_094_400;
         #[cfg(not(unix))]
         let expected_full_backing = 149_000_076;
         assert_eq!(
