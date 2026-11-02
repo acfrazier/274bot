@@ -97,18 +97,6 @@ impl WalkSlot {
             .is_some_and(|wait| wait.token == token && wait.no_path)
     }
 
-    pub fn failed(&self, token: u64) -> bool {
-        self.wait
-            .as_ref()
-            .is_some_and(|wait| wait.token == token && wait.matched == Some(false))
-    }
-
-    pub fn settled(&self, token: u64) -> Option<bool> {
-        self.wait
-            .as_ref()
-            .filter(|wait| wait.token == token)
-            .and_then(|wait| wait.settled)
-    }
 
     pub fn observe_outcome(&mut self, outcome: HostOutcome) {
         if let Some(wait) = self.wait.as_mut() {

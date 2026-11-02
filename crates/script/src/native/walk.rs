@@ -64,39 +64,6 @@ pub fn resolve_destination(name: &str) -> Option<&'static WalkDestination> {
         .find(|destination| destination.name.eq_ignore_ascii_case(key))
 }
 
-fn is_barrier_name(name: &str) -> bool {
-    let bytes = name.as_bytes();
-    bytes
-        .windows(4)
-        .any(|part| part.eq_ignore_ascii_case(b"door"))
-        || bytes
-            .windows(4)
-            .any(|part| part.eq_ignore_ascii_case(b"gate"))
-}
-
-fn has_operation_prefix<'a>(ops: impl IntoIterator<Item = Option<&'a str>>, prefix: &str) -> bool {
-    ops.into_iter().flatten().any(|op| {
-        op.as_bytes()
-            .get(..prefix.len())
-            .is_some_and(|part| part.eq_ignore_ascii_case(prefix.as_bytes()))
-    })
-}
-
-/// Whether a named loc is a closed door or gate with an `Open` operation.
-pub fn is_openable_barrier<'a>(
-    name: Option<&str>,
-    ops: impl IntoIterator<Item = Option<&'a str>>,
-) -> bool {
-    name.is_some_and(is_barrier_name) && has_operation_prefix(ops, "open")
-}
-
-/// Whether a named loc is an open door or gate with a `Close` operation.
-pub fn is_open_barrier_leaf<'a>(
-    name: Option<&str>,
-    ops: impl IntoIterator<Item = Option<&'a str>>,
-) -> bool {
-    name.is_some_and(is_barrier_name) && has_operation_prefix(ops, "close")
-}
 
 /// Eligible time a native walk may stay unsettled before it ends `Failed`
 /// and revokes its host follow. The host owes every walk a terminal receipt;
@@ -331,23 +298,6 @@ mod tests {
     use api::quest_progress::EvidenceStamp;
     use api::selected::RunKey;
     use api::snapshot::{GameSnapshot, WorldTile};
-
-    #[test]
-    fn barrier_detection_matches_name_and_operation_prefix_contract() {
-        assert!(is_openable_barrier(
-            Some("WOODEN GATE"),
-            [Some("Examine"), Some("Open-quietly")]
-        ));
-        assert!(!is_openable_barrier(Some("Wardrobe"), [Some("Open")]));
-        assert!(!is_openable_barrier(Some("Door"), [None, Some("Close")]));
-        assert!(!is_openable_barrier(None, [Some("Open")]));
-        assert!(is_open_barrier_leaf(
-            Some("Large door"),
-            [None, Some("Close-quietly")]
-        ));
-        assert!(!is_open_barrier_leaf(Some("Chest"), [Some("Close")]));
-        assert!(!is_open_barrier_leaf(Some("Gate"), [Some("Open")]));
-    }
 
     #[test]
     fn moving_radius_arrival_uses_network_origin_and_rejects_stale_flood() {

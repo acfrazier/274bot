@@ -107,20 +107,8 @@ impl WalkExecutorOutcome {
             Self::Unreachable => "unreachable",
         }
     }
-
-    fn parse(value: &str) -> Option<Self> {
-        match value {
-            "arrived" => Some(Self::Arrived),
-            "closest" => Some(Self::Closest),
-            "blocked" => Some(Self::Blocked),
-            "budget" => Some(Self::Budget),
-            "interrupted" => Some(Self::Interrupted),
-            "failed" => Some(Self::Failed),
-            "unreachable" => Some(Self::Unreachable),
-            _ => None,
-        }
-    }
 }
+
 
 thread_local! {
     static LAST_OUTCOME: std::cell::Cell<Option<WalkExecutorOutcome>> =
@@ -135,14 +123,6 @@ pub(crate) fn set_last_outcome(outcome: Option<WalkExecutorOutcome>) {
     LAST_OUTCOME.with(|last| last.set(outcome));
 }
 
-pub(crate) fn set_last_outcome_name(value: Option<&str>) -> Result<(), &'static str> {
-    let outcome = match value {
-        None => None,
-        Some(value) => Some(WalkExecutorOutcome::parse(value).ok_or("invalid walk outcome")?),
-    };
-    set_last_outcome(outcome);
-    Ok(())
-}
 pub(crate) fn reset_executor_status() {
     set_last_outcome(None);
 }

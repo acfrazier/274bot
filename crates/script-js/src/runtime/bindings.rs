@@ -368,72 +368,12 @@ pub(super) fn wire_runtime(
                 "in-ess-mine" => Ok(serde_json::json!(json_i32(args.get(1))
                     .zip(json_i32(args.get(2)))
                     .is_some_and(|(x, z)| script::native::walk::in_ess_mine(x, z)))),
-                "is-openable-barrier" => {
-                    let name = args.get(1).and_then(serde_json::Value::as_str);
-                    let ops = args
-                        .get(2)
-                        .and_then(serde_json::Value::as_array)
-                        .into_iter()
-                        .flatten()
-                        .map(serde_json::Value::as_str);
-                    Ok(serde_json::json!(
-                        script::native::walk::is_openable_barrier(name, ops)
-                    ))
-                }
-                "is-open-barrier-leaf" => {
-                    let name = args.get(1).and_then(serde_json::Value::as_str);
-                    let ops = args
-                        .get(2)
-                        .and_then(serde_json::Value::as_array)
-                        .into_iter()
-                        .flatten()
-                        .map(serde_json::Value::as_str);
-                    Ok(serde_json::json!(
-                        script::native::walk::is_open_barrier_leaf(name, ops)
-                    ))
-                }
                 "remaining" => Ok(serde_json::json!(crate::walk_wait::remaining())),
                 "request-repath" => {
                     crate::walk_wait::request_repath();
                     Ok(serde_json::Value::Null)
                 }
                 "last-outcome" => Ok(serde_json::json!(crate::walk::last_outcome())),
-                "set-last-outcome" => {
-                    let value = match args.get(1) {
-                        None | Some(serde_json::Value::Null) => None,
-                        Some(serde_json::Value::String(value)) => Some(value.as_str()),
-                        _ => {
-                            return Err(rustyscript::Error::Runtime(
-                                "lastOutcome must be a valid string or null".into(),
-                            ));
-                        }
-                    };
-                    crate::walk::set_last_outcome_name(value)
-                        .map_err(|error| rustyscript::Error::Runtime(error.into()))?;
-                    Ok(serde_json::Value::Null)
-                }
-                "last-missing-gate-items" => {
-                    if crate::walk::last_outcome() != Some("unreachable") {
-                        return Ok(serde_json::Value::Array(Vec::new()));
-                    }
-                    let rows = crate::observed::with(|scene| {
-                        scene
-                            .latest()
-                            .walk_missing_carry()
-                            .map(|rows| {
-                                rows.iter()
-                                    .map(|row| {
-                                        serde_json::json!({
-                                            "name": row.name.as_deref(),
-                                            "count": row.count,
-                                        })
-                                    })
-                                    .collect::<Vec<_>>()
-                            })
-                            .unwrap_or_default()
-                    });
-                    Ok(serde_json::Value::Array(rows))
-                }
                 _ => Err(rustyscript::Error::Runtime(format!(
                     "unsupported walking API operation: {op}"
                 ))),
