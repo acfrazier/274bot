@@ -6093,7 +6093,9 @@ fn s2b_admission_per_bot_layouts() {
     // to NavBot, including 24 B for physical takeoff/destination identity;
     // the slot's manual-run alias and exact bank policy add 32 B.
     // Linux x86_64 actually measures 4056 B / 1576 B in the composed tree.
-    // The macOS tuple must be measured separately; pre-FLOOR and memory A/B remain owed.
+    // Separately measured macOS aarch64 on e560b8222 (Rust 1.98.1, same lib-test
+    // features) also gives 4056 B / 1576 B; the old 1656 B slot pin was stale.
+    // Pre-FLOOR and per-bot memory A/B remain separate, still-owed proofs.
     #[cfg(all(
         target_os = "macos",
         target_arch = "aarch64",
@@ -6106,7 +6108,7 @@ fn s2b_admission_per_bot_layouts() {
             std::mem::size_of::<script::combat::Combat>(),
             std::mem::size_of::<script::combat::WalkGuard>()
         ),
-        (4056, 1656, 520, 264)
+        (4056, 1576, 520, 264)
     );
     #[cfg(all(
         target_os = "linux",
