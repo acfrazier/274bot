@@ -2920,6 +2920,60 @@ fn death_return_refused_stops_terminally_with_reason() {
     assert!(slot.restart_from_identity(Instant::now()).is_err());
 }
 
+/// AGENTS.md: a walk failure is never terminal until its bounded retries are
+/// spent. The ordinary return trip retries one transient Stalled(Expired |
+/// Dropped) with a fresh plan (`ReturnStallRecovery`); the death-recovery
+/// return (retained step 5) must get the same retry, not fail the run on the
+/// first stalled hop (`runner.rs:1535` diverts step 5 to `finish_recovery_return`
+/// before the stall check at `:1552`).
+#[test]
+fn death_return_retries_one_transient_stall_before_failing() {
+    let selected = selected();
+    let mut initial = depleted_snapshot(&selected);
+    lifecycle_hitpoints(&mut initial, 10, 10);
+    initial.seed_chat_lines(Vec::new());
+    let anchor = initial.local_player().unwrap().player.actor.tile;
+    let mut slot = started(4414, &selected);
+    let mut now = 1;
+    tick(&mut slot, &initial, now);
+    let death = lifecycle_death_frame(&initial, 1, LUMBRIDGE_RESPAWN_EDGE, 10, 10);
+    now += 1;
+    tick(&mut slot, &death, now);
+
+    let (authority, request_id, effect) = next_trip_effect(&mut slot, &death, &mut now);
+    let HostEffect::Walk(request) = effect else {
+        panic!("recovery step 5 must return to resources in the retained area")
+    };
+    assert_resource_return(&selected, &request, anchor);
+    assert_eq!(lifecycle_status_integer(&slot, "recovery_step"), 5);
+    complete_lifecycle_walk(
+        &mut slot,
+        &authority,
+        request_id,
+        now,
+        script::native::WalkEnd::Stalled(Arc::new(script::native::WalkStall {
+            at: LUMBRIDGE_RESPAWN_EDGE,
+            aiming: request.target,
+            why: script::native::WalkStallReason::Expired,
+            tries: 60,
+        })),
+    );
+
+    now += 1;
+    tick(&mut slot, &death, now);
+    let status = slot.native_status().unwrap();
+    assert_ne!(
+        status.phase,
+        NativePhase::Blocked,
+        "one transient stalled hop must be retried with a fresh plan, not terminal: {:?}",
+        status.failure
+    );
+    assert_eq!(lifecycle_status_integer(&slot, "recovery_step"), 5);
+    let (_, _, effect) = next_trip_effect(&mut slot, &death, &mut now);
+    assert!(matches!(effect, HostEffect::Walk(_)), "fresh return walk");
+    slot.stop();
+}
+
 #[test]
 fn default_max_deaths_allows_two_recoveries_with_a_haul_and_blocks_the_third_death() {
     let selected = selected();
