@@ -173,12 +173,8 @@ impl<S: Clone, A: Clone> Exploration<S, A> {
 }
 
 /// A goal function: it appends the goals that one transition reaches.
-pub type GoalFn<'a, M> = dyn Fn(
-        &<M as Machine>::State,
-        &<M as Machine>::Action,
-        &<M as Machine>::State,
-        &mut Vec<u32>,
-    ) + 'a;
+pub type GoalFn<'a, M> = dyn Fn(&<M as Machine>::State, &<M as Machine>::Action, &<M as Machine>::State, &mut Vec<u32>)
+    + 'a;
 
 /// What a run records besides the state graph.
 pub struct Options<'a, M: Machine> {
