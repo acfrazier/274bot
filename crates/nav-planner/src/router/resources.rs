@@ -702,6 +702,7 @@ pub(super) struct PackedHeapEntry {
 }
 
 impl PackedHeapEntry {
+    #[cfg(unix)]
     pub(super) const ZERO: Self = Self {
         node: [0; 3],
         parent: [0; 3],
