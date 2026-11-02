@@ -139,7 +139,38 @@ exit code is 0 for a complete clean run, 1 for a violation and 3 when a cap
 stopped the run. The profiles are `smoke`, `modal`, `quiet`, `compat`, `all`
 and `alt`.
 
-Tests: `cargo test -p hold-model`. The conformance test is in `host-play`.
+Tests: `cargo test -p hold-model`.
+
+## Conformance
+
+Two product tests drive the real code with traces from the model. Each trace
+is a shortest trace that ends a lease of one kind for one cause (its page, its
+own bound, a drop, Stop, a session change, a death, the host's terminal
+release or the lease's wall bound).
+
+- `crates/host-play/src/script_hold_conformance_tests.rs` runs the native
+  kinds on the production frame path: `Host::run_client`,
+  `script_observe_cached_with_channels`, the real `host::ScriptRunPolicy`,
+  the ledger's lease sampling, the owner's revocation, the active clock and
+  `apply_auto_run`. After each frame it compares the host's hold and press
+  with the model. The owner is a test double that does what the model says
+  through the real lease API (`begin_modal_wait`, `renew_modal_wait`,
+  `begin_quiet_read`, `renew_quiet_read`). The real `Dialogue` and
+  `JournalMachine` phase logic is not driven. One model unit is 150 ms of
+  real time; a trace that keeps a quiet lease to its 10 s wall bound runs at
+  2.5 s per unit, and at most two such traces run.
+- `crates/script-js/src/compat/quest_journal/hold_conformance_tests.rs` runs the
+  compat read: the real journal runtime and the real `CompatJournalLease`,
+  with `backdate` for wall time. It compares the lease's hold and paint-hide
+  state with the model. The host policy for this lease is the host-play
+  seam.
+
+`HOLD_CONFORMANCE_TRACES=N` sets the number of traces per release (the default
+is 3 for host-play and 6 for script-js). A run with 200 covers all the shortest
+traces of every native release except the page release of the quiet read.
+`the_end_gap_hold_defect_of_the_model_reproduces_on_the_real_code` runs the
+model's counterexample (finding F1) on the real host code. It passes while the
+defect exists.
 
 ## When the hold changes
 
