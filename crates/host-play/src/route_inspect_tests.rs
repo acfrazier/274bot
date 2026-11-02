@@ -455,7 +455,9 @@ fn route_needing_more_than_120k_settles_succeeds_with_default_budget() {
         None,
         None,
     );
+    // `calculate` consumes this explicit bound in its test-only route path.
     limited.max_expansions = 120_000;
+    limited.search_budget_strict = Some(120_000);
     let capped = calculate(&limited);
     assert!(!capped.ok, "the route must exceed the caller's 120,000 cap");
 
