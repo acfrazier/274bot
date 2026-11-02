@@ -3,10 +3,10 @@
 //! first of them.
 use super::*;
 
-/// Test-only trace for the TLA+ trace validation in `tools/hold-model-tla`:
-/// the page-click machine records its own lease events here, and
-/// `HoldRig::run` writes one JSON line per frame to
-/// `$HOLD_TRACE_DIR/holdrig-<test thread>.jsonl` when that variable is set.
+// Test-only trace for the TLA+ trace validation in `tools/hold-model-tla`:
+// the page-click machine records its own lease events here, and
+// `HoldRig::run` writes one JSON line per frame to
+// `$HOLD_TRACE_DIR/holdrig-<test thread>.jsonl` when that variable is set.
 thread_local! {
     static OWNER_EVENTS: std::cell::RefCell<Vec<String>> = const { std::cell::RefCell::new(Vec::new()) };
 }

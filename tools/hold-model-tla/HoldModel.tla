@@ -78,6 +78,17 @@
 (*   KeyReuseModal     every modal lease takes the same key                  *)
 (*   NoTerminal        the host never releases a hold on its own (no        *)
 (*                     deadline-plus-margin release)                        *)
+(* Phase 2 (earlier designs, transitions only; "+Fix" adds FixRearm):      *)
+(*   M1, M2   no leases: the hold ends at a modal or 2 / 3 ticks after the  *)
+(*            click, whichever is first                                     *)
+(*   M3       fixed release 2 ticks (code analogue: 25) from the first      *)
+(*            sample of a key, whatever the owner's deadline                *)
+(*   M4       M3 plus one constant key for every compat lease (and a        *)
+(*            compat read may end and the next begin in one poll)           *)
+(*   M5       the active-clock bound is converted once to a wall deadline   *)
+(*   M6       the compat hold is not renewed at the click                   *)
+(*   BackToBackC  head plus a compat read that ends and the next one       *)
+(*            begins in one poll (a transition M4 needs; head must pass)    *)
 (*   FixRearm          proposed fix of D1: a renewed deadline re-arms a     *)
 (*                     terminally released hold of the same key             *)
 (* A margin of 0 is the constant Margin = 0.                                *)
@@ -110,8 +121,8 @@ ASSUME /\ MaxTick \in Nat /\ MaxWall \in Nat /\ MaxAct \in Nat /\ Margin \in Nat
 NoKey   == <<"-", 0>>
 NoBound == [k |-> "-", v |-> 0]
 NoLease == [kind |-> "-", key |-> NoKey, txn |-> 0, ph |-> "-",
-            own |-> NoBound, st |-> NoBound, since |-> 0]
-NoHold  == [key |-> NoKey, rel |-> FALSE, txn |-> 0, reldt |-> 0]  \* reldt: deadline at release (read only by Mut = "FixRearm")
+            own |-> NoBound, st |-> NoBound, since |-> 0, wdl |-> 0]
+NoHold  == [key |-> NoKey, rel |-> FALSE, txn |-> 0, reldt |-> 0, st |-> 0]  \* reldt: deadline at release (read only by Mut = "FixRearm")
 NoSmp   == [key |-> NoKey, dt |-> 0, txn |-> 0, opass |-> FALSE]
 NoPress == [blocked |-> FALSE]     \* ghost: the last press went out with a live lease
 NoTerm  == [bad |-> FALSE]         \* ghost: the last terminal release broke S3
@@ -172,12 +183,26 @@ OwnerPassed(l) ==
       [] l.kind = "Q" -> tick >= l.own.v \/ wall - l.since >= QW
       [] l.kind = "C" -> wall >= l.own.v
 
+\* Phase 2 mutation groups (see the header).
+FixOn      == Mut \in {"FixRearm", "BackToBackC+Fix", "M5+Fix", "M6+Fix"}
+NoLeaseHost == Mut \in {"M1", "M2"}            \* M1, M2: no leases; the host counts ticks from the click
+FixedHost  == Mut \in {"M3", "M4"}              \* M3, M4: fixed release counted from the first sample
+WallConv   == Mut \in {"M5", "M5+Fix"}          \* M5: the active bound is converted to wall time once
+NoClickRenew == Mut \in {"M6", "M6+Fix"}        \* M6: the compat hold is not renewed at the click
+ConstC     == Mut = "M4"                        \* M4: every compat lease has one key
+BackToBackC == Mut \in {"M4", "BackToBackC", "BackToBackC+Fix"}    \* a compat read may end and the next begin in one poll
+M1Ticks == IF Mut = "M1" THEN 2 ELSE 3         \* M1 releases 2 ticks after the click, M2 3 ticks
+M3Limit == 2                                    \* M3, M4: fixed release after 2 ticks (code analogue: 25 against gaps up to 30)
+
 MkKey(kind) ==
-    IF Mut = "KeyReuseModal" /\ kind = "M" THEN <<kind, 0>> ELSE <<kind, kc[kind] + 1>>
+    IF Mut = "KeyReuseModal" /\ kind = "M" THEN <<kind, 0>>
+    ELSE IF ConstC /\ kind = "C" THEN <<kind, 0>>
+    ELSE <<kind, kc[kind] + 1>>
 
 NewLease(kind, ph, own) ==
     [kind |-> kind, key |-> MkKey(kind), txn |-> txnN + 1, ph |-> ph,
-     own |-> own, st |-> own, since |-> wall]
+     own |-> own, st |-> own, since |-> wall,
+     wdl |-> IF WallConv /\ own.k = "A" THEN wall + (own.v - actV) ELSE 0]
 
 \* Updates for a lease begin: the lease, the kind's key counter, the ghost counter.
 BeginU(l) == [L |-> l, kc |-> [kc EXCEPT ![l.kind] = kc[l.kind] + 1], txnN |-> txnN + 1]
@@ -209,7 +234,7 @@ Init ==
          hrt |-> 0, hw |-> NoHold, smp |-> NoSmp, smpRt |-> 0,
          lastPress |-> NoPress, lastTerm |-> NoTerm,
          pendStop |-> NoPend, pendBnd |-> NoPend, pendDead |-> NoPend, pendDeadAny |-> NoPend,
-         polled |-> FALSE,
+         polled |-> FALSE, clickBad |-> FALSE,
          nRelogs |-> 0, nStops |-> 0, nDeaths |-> 0, nToggles |-> 0,
          act |-> "init"]
 
@@ -374,11 +399,18 @@ COpts ==
     IF L.ph = "R"
     THEN {EndU}   \* abort before the click
          \cup When(RoomW,  \* click: a fresh hold bound from now, also after the old one
-                   RenewU([L EXCEPT !.ph = "A",
-                                    !.own = [k |-> "W", v |-> wall + HB],
-                                    !.st = [k |-> "W", v |-> wall + HB]]))
-    ELSE IF wall >= L.own.v THEN {EndU}   \* modal-timeout
-    ELSE {EndU, Nop}                      \* read done, or still reading
+                   IF NoClickRenew   \* M6: the bound stays the one from the begin
+                   THEN [L |-> [L EXCEPT !.ph = "A"],
+                         clickBad |-> (wall >= L.st.v)]
+                   ELSE [L |-> [L EXCEPT !.ph = "A",
+                                         !.own = [k |-> "W", v |-> wall + HB],
+                                         !.st = [k |-> "W", v |-> wall + HB]],
+                         clickBad |-> FALSE])
+    ELSE (IF wall >= L.own.v THEN {EndU}   \* modal-timeout
+          ELSE {EndU, Nop})                \* read done, or still reading
+         \cup (IF BackToBackC /\ txnN < MaxTxn /\ RoomW /\ ~modal
+               THEN {BeginU(NewLease("C", "R", [k |-> "W", v |-> wall + HB]))}  \* read done, next begins at once
+               ELSE {})
 
 BeginOpts ==
     IF txnN >= MaxTxn THEN {}
@@ -414,7 +446,7 @@ SampleResult ==
     IF L = NoLease THEN [lease |-> NoLease, s |-> NoSmp]
     ELSE CASE L.kind = "M" ->
            LET dt == IF L.st.k = "T" THEN L.st.v ELSE tick
-               st2 == IF L.st.k = "A" /\ actV >= L.st.v
+               st2 == IF L.st.k = "A" /\ (IF WallConv THEN wall >= L.wdl ELSE actV >= L.st.v)
                       THEN [k |-> "T", v |-> tick] ELSE L.st
            IN [lease |-> [L EXCEPT !.st = st2],
                s |-> [key |-> L.key, dt |-> dt, txn |-> L.txn, opass |-> OwnerPassed(L)]]
@@ -438,15 +470,25 @@ Obs2 ==
 Update ==
     /\ pc = "Update"
     /\ LET hw0 == IF hrt # smpRt /\ ~(Mut = "StopKeeps" /\ smpRt = 0) THEN NoHold ELSE hw
-           hw1 == IF smp = NoSmp THEN NoHold
+           fresh == [key |-> smp.key, rel |-> FALSE, txn |-> smp.txn, reldt |-> 0,
+                     st |-> IF NoLeaseHost \/ FixedHost THEN tick ELSE 0]
+           hw1 == IF NoLeaseHost
+                  THEN \* M1, M2: no leases.  A new key is a new click; the hold stays until it ends.
+                       (IF smp # NoSmp /\ (hw0 = NoHold \/ hw0.key # smp.key) THEN fresh ELSE hw0)
+                  ELSE IF smp = NoSmp THEN NoHold
                   ELSE IF hw0 # NoHold /\ hw0.key = smp.key
-                       THEN (IF Mut = "FixRearm" /\ hw0.rel /\ smp.dt > hw0.reldt
+                       THEN (IF FixOn /\ hw0.rel /\ smp.dt > hw0.reldt
                              THEN [hw0 EXCEPT !.rel = FALSE] ELSE hw0)
-                  ELSE [key |-> smp.key, rel |-> FALSE, txn |-> smp.txn, reldt |-> 0]
-           terminal == smp # NoSmp /\ ~hw1.rel /\ tick >= smp.dt + Margin
+                  ELSE fresh
+           \* M1, M2: ends when a modal is open or M1Ticks ticks after the click.
+           hw2 == IF NoLeaseHost /\ hw1 # NoHold /\ ~hw1.rel /\ (modal \/ tick >= hw1.st + M1Ticks)
+                  THEN [hw1 EXCEPT !.rel = TRUE] ELSE hw1
+           terminal == /\ ~NoLeaseHost /\ smp # NoSmp /\ ~hw2.rel
+                       /\ (IF FixedHost THEN tick >= hw2.st + M3Limit
+                            ELSE tick >= smp.dt + Margin)
                        /\ Mut # "NoTerminal"
        IN Set([pc |-> "Press", hrt |-> smpRt,
-               hw |-> IF terminal THEN [hw1 EXCEPT !.rel = TRUE, !.reldt = smp.dt] ELSE hw1,
+               hw |-> IF terminal THEN [hw2 EXCEPT !.rel = TRUE, !.reldt = smp.dt] ELSE hw2,
                lastTerm |-> IF terminal
                             THEN [bad |-> ~(smp.opass /\ tick >= smp.dt + 1)]
                             ELSE s.lastTerm,
@@ -540,6 +582,10 @@ S4a == (hw # NoHold /\ L # NoLease /\ hw.key = L.key) => hw.txn = L.txn
 S4b == (pc \in {"Press", "Drain"} /\ hw # NoHold /\ L # NoLease /\ hw.key = L.key /\ hw.rel
         /\ L.kind # "C" /\ ~(L.kind = "Q" /\ wall - L.since >= QW))
        => OwnerPassed(L)
+
+\* S5Click (extra, added in phase 2, NOT one of the frozen S1 to S4/LB).  A compat
+\*      journal click never goes out with its hold already past its bound.
+S5Click == ~s.clickBad
 
 \* LB (bounded liveness, as a state invariant).  An effective hold on a
 \* lease whose stored bound is in ticks does not outlive that bound plus the margin.
