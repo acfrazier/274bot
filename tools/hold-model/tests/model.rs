@@ -105,6 +105,59 @@ fn a_paused_dialogue_keeps_its_active_clock_hold() {
     assert_eq!(infos[7].expired, None);
 }
 
+/// A known limit, not a defect: a wait that the owner bounds in ticks (the end
+/// gap, the journal window) is not on the active clock, so Pause does not stop
+/// it. The host ends the hold one tick after the deadline and logs a failure,
+/// although the owner is only paused.
+#[test]
+fn a_paused_dialogue_loses_a_tick_bounded_gap_hold() {
+    let (_, infos) = run(
+        &model(),
+        &[
+            frame(true, false, false, OwnerAct::Begin(Begin::Modal)),
+            Action::ModalOpen,
+            frame(false, true, false, OwnerAct::Send),
+            Action::ModalClose,
+            // The acknowledgement arrived and the chat closed: the same
+            // lease becomes a one-tick end gap, due at tick 2.
+            frame(false, true, false, OwnerAct::ToGap(1)),
+            Action::Pause,
+            frame(true, false, false, OwnerAct::NoPoll),
+            frame(true, false, false, OwnerAct::NoPoll),
+        ],
+    );
+    assert!(infos[6].deferred, "the gap is held until its deadline");
+    assert_eq!(infos[7].expired, Some((Key::Modal(2), 2, 3)));
+    assert_eq!(infos[7].releases, vec![(Kind::Modal, Cause::HostTerminal)]);
+}
+
+/// A known limit, finding F2: the journal read sends its click in a frame
+/// where the lease's own 10 s wall bound passes between the owner's poll and
+/// the host's sample. The hold ends in the same frame and the press follows
+/// the click.
+#[test]
+fn the_journal_click_can_lose_its_hold_to_the_wall_bound_in_its_own_frame() {
+    let model = model();
+    let mut state = model.initial_state();
+    let frames = [
+        frame(true, false, true, OwnerAct::Begin(Begin::Quiet)),
+        frame(false, false, true, OwnerAct::NoPoll),
+        frame(false, false, true, OwnerAct::NoPoll),
+        frame(false, true, true, OwnerAct::Poll),
+    ];
+    for (index, action) in frames.iter().enumerate() {
+        match model.step_detail(&state, action) {
+            Ok((next, _)) => state = next,
+            Err(violation) => {
+                assert_eq!(index, 3);
+                assert_eq!(violation.name, "S6-press-after-send");
+                return;
+            }
+        }
+    }
+    panic!("the last frame must violate S6");
+}
+
 #[test]
 fn stop_and_a_session_boundary_end_the_hold_at_the_next_frame() {
     for end in [Action::Stop, Action::Relog] {
