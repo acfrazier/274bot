@@ -245,17 +245,13 @@ enum WaitBound {
 }
 
 impl WaitBound {
-    fn deadline(self, cx: &ActionContext<'_>) -> WaitDeadline {
+    /// The bound in this machine's own clock. The host samples an
+    /// active-clock bound against the same clock (`ActiveMs` is checked
+    /// against `cx.active_now()`), so a paused machine's bound is not spent.
+    fn deadline(self) -> WaitDeadline {
         match self {
             WaitBound::Tick(tick) => WaitDeadline::Tick(tick),
-            // The active clock never runs faster than wall time, so this wall
-            // deadline is never earlier than the machine's own.
-            WaitBound::ActiveMs(ms) => WaitDeadline::Wall(
-                cx.wall_now()
-                    + std::time::Duration::from_millis(
-                        ms.saturating_sub(cx.active_now().as_millis() as u64),
-                    ),
-            ),
+            WaitBound::ActiveMs(ms) => WaitDeadline::Active(std::time::Duration::from_millis(ms)),
         }
     }
 }
@@ -374,12 +370,12 @@ impl Dialogue {
             WaitBound::ActiveMs(self.deadline_ms)
         };
         if self.modal_wait.is_none() || self.modal_wait_epoch != epoch {
-            self.modal_wait = Some(cx.begin_modal_wait(bound.deadline(cx))?);
+            self.modal_wait = Some(cx.begin_modal_wait(bound.deadline())?);
             self.modal_wait_epoch = epoch;
             self.modal_wait_bound = bound;
         } else if self.modal_wait_bound != bound {
             if let Some(lease) = &self.modal_wait {
-                cx.renew_modal_wait(lease, bound.deadline(cx));
+                cx.renew_modal_wait(lease, bound.deadline());
             }
             self.modal_wait_bound = bound;
         }

@@ -217,10 +217,17 @@ const PAGE_WAIT_TICKS: u64 = 12;
 /// own bound expires. The lease carries that bound. Afterwards it stays
 /// pending, as the journal machine does while it closes the page. A `hung`
 /// machine never checks its bound: its owner stopped running its wait.
+///
+/// With `active_bound`, the bound is on the owner's active clock, as a
+/// `Dialogue` page or acknowledgement wait is (`cx.active_now()`, which
+/// Pause stops). With `ack`, the click is a send on an open page: the wait
+/// ends only at a page seen after that page closed (its acknowledgement).
 struct PageClickMachine {
     page: Arc<AtomicBool>,
     wait: Option<script::native::ModalWaitLease>,
     deadline: u64,
+    active_deadline: Option<std::time::Duration>,
+    seen_closed: bool,
     hung: bool,
 }
 
@@ -228,6 +235,8 @@ struct PageClickMachine {
 struct PageClickArgs {
     page: Arc<AtomicBool>,
     wait_ticks: u64,
+    active_bound: Option<std::time::Duration>,
+    ack: bool,
     hung: bool,
 }
 
@@ -240,11 +249,18 @@ impl script::native::NativeMachine for PageClickMachine {
         cx: &mut script::native::ActionContext<'_>,
     ) -> Result<Self, script::native::ActionError> {
         cx.emit(script::shim::InteractReq::IfButton { component_id: 601 })?;
-        let deadline = cx.evidence().tick + args.wait_ticks;
+        let deadline = cx.evidence().tick.saturating_add(args.wait_ticks);
+        let active_deadline = args.active_bound.map(|bound| cx.active_now() + bound);
+        let lease = match active_deadline {
+            Some(at) => script::native::WaitDeadline::Active(at),
+            None => script::native::WaitDeadline::Tick(deadline),
+        };
         Ok(Self {
             page: args.page,
-            wait: Some(cx.begin_modal_wait(script::native::WaitDeadline::Tick(deadline))?),
+            wait: Some(cx.begin_modal_wait(lease)?),
             deadline,
+            active_deadline,
+            seen_closed: !args.ack,
             hung: args.hung,
         })
     }
@@ -256,11 +272,19 @@ impl script::native::NativeMachine for PageClickMachine {
         if self.hung {
             return std::task::Poll::Pending;
         }
-        if self.wait.is_some() && self.page.load(Ordering::Relaxed) {
-            // The script observed its page: its wait ends here.
-            self.wait = None;
+        if self.page.load(Ordering::Relaxed) {
+            if self.wait.is_some() && self.seen_closed {
+                // The script observed its page: its wait ends here.
+                self.wait = None;
+            }
+        } else {
+            self.seen_closed = true;
         }
-        if self.wait.is_some() && cx.evidence().tick >= self.deadline {
+        let expired = match self.active_deadline {
+            Some(at) => cx.active_now() >= at,
+            None => cx.evidence().tick >= self.deadline,
+        };
+        if self.wait.is_some() && expired {
             return std::task::Poll::Ready(Err(script::native::ActionError::Failed(Arc::from(
                 "page wait expired",
             ))));
@@ -303,13 +327,17 @@ impl script::native::Script for ClickWhenArmed {
 
 /// One host frame: `drain` PLAYER_INFO packets arrive with `modal` as the
 /// client's main modal, the script clicks on this frame when `click`, and
-/// the operator stops the script before this frame when `stop`.
+/// the operator stops, pauses or resumes the script before this frame when
+/// `stop`, `pause` or `resume`. `sleep_ms` of wall time pass before it.
 #[derive(Clone, Copy)]
 struct Frame {
     drain: u32,
     modal: i32,
     click: bool,
     stop: bool,
+    pause: bool,
+    resume: bool,
+    sleep_ms: u64,
 }
 
 const JOURNAL_ROOT: i32 = 8134;
@@ -320,6 +348,9 @@ fn frame(drain: u32, modal: i32) -> Frame {
         modal,
         click: false,
         stop: false,
+        pause: false,
+        resume: false,
+        sleep_ms: 0,
     }
 }
 
@@ -350,6 +381,8 @@ struct HoldRig {
     armed: Arc<AtomicBool>,
     page: Arc<AtomicBool>,
     expired: Arc<AtomicBool>,
+    /// The script's `expired` record after each frame of the last run.
+    expired_after: Arc<Mutex<Vec<bool>>>,
     script_tick: Arc<std::sync::atomic::AtomicU64>,
     run_policy: Option<host::ScriptRunPolicy>,
 }
@@ -362,6 +395,21 @@ impl HoldRig {
     /// A rig whose click waits `wait_ticks` for its page; a `hung` owner
     /// never checks that bound.
     fn with_wait(wait_ticks: u64, hung: bool) -> Self {
+        Self::with_args(wait_ticks, None, false, hung)
+    }
+
+    /// A rig whose click waits `bound` of the owner's active time: a page
+    /// wait, or with `ack` an acknowledgement wait.
+    fn with_active_wait(bound: std::time::Duration, ack: bool) -> Self {
+        Self::with_args(u64::MAX, Some(bound), ack, false)
+    }
+
+    fn with_args(
+        wait_ticks: u64,
+        active_bound: Option<std::time::Duration>,
+        ack: bool,
+        hung: bool,
+    ) -> Self {
         let scripts: ScriptWall = Arc::new(Mutex::new(HashMap::new()));
         let cheats = Arc::new(Mutex::new(HashMap::new()));
         let mut client = bank_fetch_client();
@@ -389,6 +437,8 @@ impl HoldRig {
                     args: PageClickArgs {
                         page: Arc::clone(&page),
                         wait_ticks,
+                        active_bound,
+                        ack,
                         hung,
                     },
                     expired: Arc::clone(&expired),
@@ -407,6 +457,7 @@ impl HoldRig {
             armed,
             page,
             expired,
+            expired_after: Arc::new(Mutex::new(Vec::new())),
             script_tick: Arc::new(std::sync::atomic::AtomicU64::new(0)),
             run_policy: Some(host::ScriptRunPolicy::default()),
         }
@@ -437,6 +488,9 @@ impl HoldRig {
         let observe_names = Arc::clone(&self.names);
         let observe_snapshot = Arc::clone(&self.snapshot);
         let observe_cache = Arc::clone(&self.client.cache);
+        let observe_expired = Arc::clone(&self.expired);
+        let observe_expired_after = Arc::clone(&self.expired_after);
+        observe_expired_after.lock().unwrap().clear();
 
         let probe_plan = Arc::clone(&plan);
         let probe_index = Arc::clone(&index);
@@ -489,6 +543,10 @@ impl HoldRig {
                     Some(Arc::clone(&observe_names)),
                     Some(run_policy),
                 );
+                observe_expired_after
+                    .lock()
+                    .unwrap()
+                    .push(observe_expired.load(Ordering::Relaxed));
                 observe_index.fetch_add(1, Ordering::Relaxed);
                 true
             },
@@ -501,12 +559,21 @@ impl HoldRig {
                     c.gens.player += 1;
                 }
                 c.main_modal_id = step.modal;
-                if step.stop {
-                    script_slot(&probe_scripts, "alice")
-                        .unwrap()
-                        .lock()
-                        .unwrap()
-                        .stop();
+                if step.sleep_ms > 0 {
+                    std::thread::sleep(std::time::Duration::from_millis(step.sleep_ms));
+                }
+                if step.stop || step.pause || step.resume {
+                    let slot = script_slot(&probe_scripts, "alice").unwrap();
+                    let mut slot = slot.lock().unwrap();
+                    if step.stop {
+                        slot.stop();
+                    }
+                    if step.pause {
+                        slot.pause();
+                    }
+                    if step.resume {
+                        slot.resume();
+                    }
                 }
                 probe_page.store(step.modal != -1, Ordering::Relaxed);
                 probe_edge.store(step.drain > 0, Ordering::Relaxed);
@@ -684,6 +751,100 @@ fn auto_run_hold_of_a_hung_owner_ends_after_its_deadline_plus_the_margin() {
         !rig.expired.load(Ordering::Relaxed),
         "the hung owner never ended its own wait"
     );
+}
+
+/// The owner's active-clock bound in the paused-wait tests below.
+const ACTIVE_BOUND: std::time::Duration = std::time::Duration::from_millis(500);
+/// The pause: 12 frames of 100 ms wall time, more than twice the bound, with
+/// game ticks still observed on every frame.
+const PAUSE_FRAMES: usize = 12;
+const PAUSE_FRAME_MS: u64 = 100;
+/// After Resume: frames of 25 ms until the owner's own bound ends its wait.
+const RESUMED_FRAMES: usize = 60;
+const RESUMED_FRAME_MS: u64 = 25;
+
+/// `before`, then Pause, the pause, Resume and the resumed frames, all with
+/// main modal `modal`. Returns the frames and the index of the Resume frame.
+fn paused_wait_frames(before: &[Frame], modal: i32) -> (Vec<Frame>, usize) {
+    let mut frames = before.to_vec();
+    frames.push(Frame {
+        pause: true,
+        ..frame(1, modal)
+    });
+    frames.extend(std::iter::repeat_n(
+        Frame {
+            sleep_ms: PAUSE_FRAME_MS,
+            ..frame(1, modal)
+        },
+        PAUSE_FRAMES,
+    ));
+    let resume = frames.len();
+    frames.push(Frame {
+        resume: true,
+        ..frame(1, modal)
+    });
+    frames.extend(std::iter::repeat_n(
+        Frame {
+            sleep_ms: RESUMED_FRAME_MS,
+            ..frame(1, modal)
+        },
+        RESUMED_FRAMES,
+    ));
+    (frames, resume)
+}
+
+/// No press from the click to the frame where the owner ends its wait on its
+/// own active-clock bound, which is after Resume; the press on that frame.
+fn assert_held_until_the_owner_ends_its_wait(rig: &HoldRig, presses: &[u32], resume: usize) {
+    let expired_after = rig.expired_after.lock().unwrap().clone();
+    let end = expired_after
+        .iter()
+        .position(|&expired| expired)
+        .expect("the owner's own bound ends its wait after Resume");
+    assert!(
+        end > resume,
+        "the pause did not spend the owner's bound: it ended its wait on frame {end}, \
+         Resume was frame {resume}"
+    );
+    assert!(
+        presses[..end].iter().all(|&count| count == 0),
+        "held for the whole pause and to the owner's own deadline: {presses:?}"
+    );
+    assert_eq!(
+        presses[end], 1,
+        "the press goes out on the frame where the owner ends its wait"
+    );
+}
+
+/// R4S-1, active clock, on the production frame path: a page wait whose
+/// owner is paused (real `SlotScript::pause`) for longer than its bound
+/// keeps the hold for the whole pause, while the host samples it on every
+/// frame. After Resume, the owner's own active-clock deadline decides.
+/// Converting the bound to wall time when the lease is taken fails here.
+#[test]
+fn auto_run_hold_of_a_paused_page_wait_lasts_to_the_owners_own_deadline() {
+    let mut rig = HoldRig::with_active_wait(ACTIVE_BOUND, false);
+    let (frames, resume) = paused_wait_frames(&[click_frame(1, -1), frame(1, -1)], -1);
+    let presses = rig.run(&frames);
+    assert_held_until_the_owner_ends_its_wait(&rig, &presses, resume);
+}
+
+/// The same for an acknowledgement wait: the click is a send on an open
+/// page, the page closes, and the script waits for its acknowledgement with
+/// no modal up, so only its hold keeps the press back.
+#[test]
+fn auto_run_hold_of_a_paused_acknowledgement_wait_lasts_to_the_owners_own_deadline() {
+    let mut rig = HoldRig::with_active_wait(ACTIVE_BOUND, true);
+    let (frames, resume) = paused_wait_frames(
+        &[
+            click_frame(1, JOURNAL_ROOT),
+            frame(1, JOURNAL_ROOT),
+            frame(1, -1),
+        ],
+        -1,
+    );
+    let presses = rig.run(&frames);
+    assert_held_until_the_owner_ends_its_wait(&rig, &presses, resume);
 }
 
 /// R4S-2: each compatibility journal read has its own key (token and work

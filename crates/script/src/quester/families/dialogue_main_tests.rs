@@ -608,51 +608,201 @@ fn a_thirty_tick_quiet_end_gap_lease_reports_the_gap_deadline() {
     }));
     snapshot.seed_chat_modal(100, vec!["Follow me.".into()]);
     snapshot.seed_chat_options(vec![], 101);
-    let mut ledger = None;
-    let wait = |ledger: &mut Option<Box<ledger::Ledger>>, tick| {
-        ledger
-            .as_mut()
-            .unwrap()
-            .modal_wait_tick(std::time::Instant::now(), tick)
+    let mut runtime = ledger::Runtime::default();
+    let wait = |runtime: &mut ledger::Runtime, tick| {
+        runtime.modal_wait_tick(std::time::Instant::now(), tick)
     };
-    let handle = with_tick(&snapshot, &mut ledger, 1, |tick| {
+    let handle = with_tick(&snapshot, &mut runtime.ledger, 1, |tick| {
         tick.actions
             .begin::<Dialogue>(continuation_args_with_gap(30), &mut tick.cx)
             .unwrap()
     });
-    assert!(with_tick(&snapshot, &mut ledger, 2, |tick| {
+    assert!(with_tick(&snapshot, &mut runtime.ledger, 2, |tick| {
         tick.actions.poll(&handle, &mut tick.cx)
     })
     .is_pending());
-    let (continue_key, _) = wait(&mut ledger, 2).expect("the Continue waits for its result");
+    let (continue_key, _) = wait(&mut runtime, 2).expect("the Continue waits for its result");
     // The chat closes: the Continue is acknowledged and the end gap starts on
     // tick 3, with its deadline on tick 3 + 30.
     snapshot.seed_chat_modal(-1, vec![]);
     snapshot.seed_chat_options(vec![], -1);
     for game_tick in 3..33 {
         assert!(
-            with_tick(&snapshot, &mut ledger, game_tick, |tick| {
+            with_tick(&snapshot, &mut runtime.ledger, game_tick, |tick| {
                 tick.actions.poll(&handle, &mut tick.cx)
             })
             .is_pending(),
             "the quiet gap is still open at tick {game_tick}"
         );
         assert_eq!(
-            wait(&mut ledger, game_tick),
+            wait(&mut runtime, game_tick),
             Some((continue_key, 33)),
             "the gap holds with its own deadline at tick {game_tick}"
         );
     }
     assert!(matches!(
-        with_tick(&snapshot, &mut ledger, 33, |tick| {
+        with_tick(&snapshot, &mut runtime.ledger, 33, |tick| {
             tick.actions.poll(&handle, &mut tick.cx)
         }),
         Poll::Ready(Ok(DialogueOutcome::Completed))
     ));
     assert_eq!(
-        wait(&mut ledger, 33),
+        wait(&mut runtime, 33),
         None,
         "the gap ends on its deadline tick, before the host's sample of it"
+    );
+}
+
+/// One frame of the dialogue on the runtime's own clocks at wall time `at`:
+/// the owner reads the runtime's active clock, as on the production frame
+/// path (`slot/compiled.rs:411`).
+fn on_clock<R>(
+    snapshot: &GameSnapshot,
+    runtime: &mut ledger::Runtime,
+    tick: u64,
+    at: std::time::Instant,
+    f: impl FnOnce(&mut crate::native::NativeTick<'_>) -> R,
+) -> R {
+    let active = runtime.clock.now(at).as_duration();
+    with_tick(snapshot, &mut runtime.ledger, tick, |native| {
+        native.cx.active_now = active;
+        native.cx.wall_now = at;
+        f(native)
+    })
+}
+
+/// The paused owner's hold, sampled as the host does on every tick of the
+/// pause (`script_observe.rs:1323-1338`, the owner is not polled). The wall
+/// clock runs far past the bound: the bound stays not due (its deadline is
+/// the current tick), so the host never ends the hold.
+fn assert_held_through_pause(
+    runtime: &mut ledger::Runtime,
+    key: std::num::NonZeroU64,
+    paused_at: std::time::Instant,
+    ticks: std::ops::RangeInclusive<u64>,
+) {
+    let first = *ticks.start();
+    for tick in ticks {
+        let at = paused_at + std::time::Duration::from_millis(600 * (tick - first + 1));
+        assert_eq!(
+            runtime.modal_wait_tick(at, tick),
+            Some((key, tick)),
+            "held for the whole pause: the bound is not due at tick {tick}"
+        );
+    }
+}
+
+/// R4S-1, active clock: a page wait (`Open`, `DIALOGUE_OPEN_MS`) whose owner
+/// is paused for longer than its bound keeps its hold for the whole pause.
+/// After Resume, the owner's own active-clock deadline decides. Converting
+/// the bound to wall time when the lease is taken fails here.
+#[test]
+fn a_paused_page_wait_holds_through_the_pause_and_its_own_clock_decides() {
+    use std::time::Duration;
+    let snapshot = snapshot();
+    let start = std::time::Instant::now();
+    let mut runtime = ledger::Runtime::default();
+    runtime.clock.observe(start, true);
+    let handle = on_clock(&snapshot, &mut runtime, 1, start, |tick| {
+        tick.actions
+            .begin::<Dialogue>(continuation_args(), &mut tick.cx)
+            .unwrap()
+    });
+    let polled = start + Duration::from_millis(600);
+    assert!(on_clock(&snapshot, &mut runtime, 2, polled, |tick| {
+        tick.actions.poll(&handle, &mut tick.cx)
+    })
+    .is_pending());
+    let (key, deadline) = runtime
+        .modal_wait_tick(polled, 2)
+        .expect("the page wait holds");
+    assert_eq!(deadline, 2, "not due before its bound");
+
+    // Pause after one active second; the wall clock runs 24 s past it.
+    let paused_at = start + Duration::from_secs(1);
+    runtime.clock.observe(paused_at, false);
+    assert_held_through_pause(&mut runtime, key, paused_at, 3..=42);
+
+    // Resume: 7 s of the 8 s bound are left on the owner's own clock.
+    let resumed_at = start + Duration::from_secs(30);
+    runtime.clock.observe(resumed_at, true);
+    let before = resumed_at + Duration::from_millis(6_900);
+    assert!(on_clock(&snapshot, &mut runtime, 43, before, |tick| {
+        tick.actions.poll(&handle, &mut tick.cx)
+    })
+    .is_pending());
+    assert_eq!(runtime.modal_wait_tick(before, 43), Some((key, 43)));
+    let due = resumed_at + Duration::from_secs(7);
+    assert!(matches!(
+        on_clock(&snapshot, &mut runtime, 44, due, |tick| {
+            tick.actions.poll(&handle, &mut tick.cx)
+        }),
+        Poll::Ready(Err(ActionError::Failed(reason)))
+            if reason.as_ref() == "expected dialogue did not open"
+    ));
+    assert_eq!(
+        runtime.modal_wait_tick(due, 44),
+        None,
+        "the owner ends its wait at its own deadline, before the host's sample"
+    );
+}
+
+/// R4S-1, active clock: the same for an acknowledgement wait
+/// (`WaitContinueAck`, `PAGE_ACK_MS`).
+#[test]
+fn a_paused_acknowledgement_wait_holds_through_the_pause_and_its_own_clock_decides() {
+    use std::time::Duration;
+    let mut snapshot = snapshot();
+    snapshot.seed_chat_modal(100, vec!["Follow me.".into()]);
+    snapshot.seed_chat_options(vec![], 101);
+    let start = std::time::Instant::now();
+    let mut runtime = ledger::Runtime::default();
+    runtime.clock.observe(start, true);
+    let handle = on_clock(&snapshot, &mut runtime, 1, start, |tick| {
+        tick.actions
+            .begin::<Dialogue>(continuation_args(), &mut tick.cx)
+            .unwrap()
+    });
+    // The Continue goes out at 600 ms of active time: its acknowledgement
+    // bound is at 3.6 s. The page stays unchanged (not acknowledged).
+    let sent = start + Duration::from_millis(600);
+    assert!(on_clock(&snapshot, &mut runtime, 2, sent, |tick| {
+        tick.actions.poll(&handle, &mut tick.cx)
+    })
+    .is_pending());
+    assert!(matches!(
+        last_interaction(&runtime.ledger),
+        InteractReq::ContinueDialog { .. }
+    ));
+    let (key, deadline) = runtime
+        .modal_wait_tick(sent, 2)
+        .expect("the Continue waits for its acknowledgement");
+    assert_eq!(deadline, 2, "not due before its bound");
+
+    let paused_at = start + Duration::from_secs(1);
+    runtime.clock.observe(paused_at, false);
+    assert_held_through_pause(&mut runtime, key, paused_at, 3..=42);
+
+    // Resume: 2.6 s of the bound are left on the owner's own clock.
+    let resumed_at = start + Duration::from_secs(30);
+    runtime.clock.observe(resumed_at, true);
+    let before = resumed_at + Duration::from_millis(2_500);
+    assert!(on_clock(&snapshot, &mut runtime, 43, before, |tick| {
+        tick.actions.poll(&handle, &mut tick.cx)
+    })
+    .is_pending());
+    assert_eq!(runtime.modal_wait_tick(before, 43), Some((key, 43)));
+    let due = resumed_at + Duration::from_millis(2_600);
+    assert!(matches!(
+        on_clock(&snapshot, &mut runtime, 44, due, |tick| {
+            tick.actions.poll(&handle, &mut tick.cx)
+        }),
+        Poll::Ready(Ok(DialogueOutcome::Failed))
+    ));
+    assert_eq!(
+        runtime.modal_wait_tick(due, 44),
+        None,
+        "the owner ends its wait at its own deadline, before the host's sample"
     );
 }
 

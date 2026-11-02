@@ -2244,13 +2244,18 @@ impl SlotScript {
     /// new wait. Three owner-fenced leases count: a native modal wait
     /// (`Dialogue`), the native quiet read (the journal machine, from before
     /// its click to its observed close) and the compatibility journal. Stop,
-    /// replacement and a session boundary revoke the native leases; both
-    /// journal leases also end at their own 10 s wall bound.
+    /// replacement and a session boundary revoke the native leases. The
+    /// native quiet read also ends at its own 10 s wall bound; the
+    /// compatibility journal's hold ends at its own 10 s wall bound from its
+    /// begin, renewed at its click.
     ///
     /// Each wait carries the deadline its owner enforces itself, as an
-    /// observed tick. A wall-time bound is not a tick until it has passed:
-    /// until then the deadline is the current tick, and the first sample past
-    /// it fixes the deadline at that tick.
+    /// observed tick, in the owner's own clock at this sample. A native
+    /// active-clock bound is read against the runtime's active clock at
+    /// `now`, which Pause, hold, not-ready and Blocked stop: it is not due
+    /// until that clock reaches it, and the first sample that sees it reached
+    /// fixes the deadline at that tick. A wall bound is not due until it has
+    /// passed.
     pub fn script_interaction_wait(
         &mut self,
         now: std::time::Instant,
@@ -2261,19 +2266,17 @@ impl SlotScript {
         // journal keys have the top bit.
         const MODAL_WAIT_KEY_TAG: u64 = 1 << 62;
         const COMPAT_JOURNAL_KEY_TAG: u64 = 1 << 63;
-        if let Some(ledger) = self.native_runtime.ledger.as_mut() {
-            if let Some((lease, deadline_tick)) = ledger.modal_wait_tick(now, tick) {
-                return Some(InteractionWait {
-                    key: lease.get() | MODAL_WAIT_KEY_TAG,
-                    deadline_tick,
-                });
-            }
-            if let Some((quiet, deadline_tick)) = ledger.quiet_read_wait(now, tick) {
-                return Some(InteractionWait {
-                    key: quiet.request_id.get(),
-                    deadline_tick,
-                });
-            }
+        if let Some((lease, deadline_tick)) = self.native_runtime.modal_wait_tick(now, tick) {
+            return Some(InteractionWait {
+                key: lease.get() | MODAL_WAIT_KEY_TAG,
+                deadline_tick,
+            });
+        }
+        if let Some((quiet, deadline_tick)) = self.native_runtime.quiet_read_wait(now, tick) {
+            return Some(InteractionWait {
+                key: quiet.request_id.get(),
+                deadline_tick,
+            });
         }
         let journal = self.surface.as_ref()?.journal_wait(now)?;
         // The read's transaction identity: the token counts every begin of the

@@ -887,34 +887,43 @@ pub struct ModalWaitLease {
     lease_id: NonZeroU64,
 }
 
-/// The bound that the owner of a script wait enforces itself. The host ends
-/// its auto-run hold only when the owner ends the wait, or, as a logged
-/// failure, after this deadline plus a stated margin (an owner that stopped
-/// polling). A renewed wait carries its new deadline.
+/// The bound that the owner of a script wait enforces itself, in the
+/// owner's own clock. The host ends its auto-run hold only when the owner
+/// ends the wait, or, as a logged failure, after this deadline plus a stated
+/// margin (an owner that stopped polling). A renewed wait carries its new
+/// deadline.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum WaitDeadline {
     /// The observed game tick (`ActionContext::evidence().tick`) on which
     /// the owner ends the wait (`tick >= deadline`).
     Tick(u64),
-    /// The wall time from which the owner ends the wait at its next poll.
-    /// An active-clock bound converts to wall time when it is set: the active
-    /// clock never runs faster than wall time, so this is never earlier.
-    Wall(Instant),
+    /// The active time (`ActionContext::active_now`) from which the owner
+    /// ends the wait at its next poll. Pause, hold, not-ready and Blocked
+    /// stop the active clock, so they do not spend this bound.
+    Active(Duration),
 }
 
 impl WaitDeadline {
     /// The observed tick by which a polled owner has ended its wait, read in
-    /// the host sample of `tick`. The owner checks its bound in that frame's
-    /// poll, before the sample. A wall bound is not a tick until it has
-    /// passed: until then the answer is the current tick (not yet due), and
-    /// the first sample past it fixes the deadline at that tick. The owner's
-    /// poll in that frame read its clock before the sample, so it sees the
-    /// bound at its next poll; the host's margin covers that one tick.
-    pub fn owner_tick(&mut self, now: Instant, tick: u64) -> u64 {
+    /// the host sample of `tick`. `active_now` is the owner's active clock at
+    /// that sample. The owner checks its bound in that frame's poll, before
+    /// the sample.
+    ///
+    /// An active-clock bound is converted at each sample, from the owner's
+    /// remaining active time then: its wall equivalent is `now + (deadline -
+    /// active_now)`. While that is still ahead, the answer is the current
+    /// tick (not yet due). While the owner is paused, its active clock does
+    /// not advance, so the bound moves forward with wall time and stays not
+    /// due. The first sample with `active_now >= deadline` fixes the deadline
+    /// at that tick: the owner's own deadline has then passed in its own
+    /// clock. The owner's poll in that frame read its clock before the
+    /// sample, so it sees the bound at its next poll; the host's margin
+    /// covers that one tick.
+    pub fn owner_tick(&mut self, active_now: Duration, tick: u64) -> u64 {
         match *self {
             WaitDeadline::Tick(deadline) => deadline,
-            WaitDeadline::Wall(at) if now < at => tick,
-            WaitDeadline::Wall(_) => {
+            WaitDeadline::Active(at) if active_now < at => tick,
+            WaitDeadline::Active(_) => {
                 *self = WaitDeadline::Tick(tick);
                 tick
             }

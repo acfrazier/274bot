@@ -151,7 +151,7 @@ fn the_quiet_read_lease_carries_the_machine_window_and_renews_it() {
         ledger
             .as_mut()
             .unwrap()
-            .quiet_read_wait(now(), tick)
+            .quiet_read_wait(now(), std::time::Duration::ZERO, tick)
             .map(|(_, deadline)| deadline)
     };
     let handle: ActionHandle<JournalMachine> = with_tick(&snapshot, &mut ledger, 1, |t| {

@@ -41,6 +41,21 @@ impl Runtime {
     pub fn take_note_progress(&mut self, run: RunKey) -> bool {
         self.pending_note_progress.take() == Some(run)
     }
+
+    /// The live modal wait of this runtime's owner, sampled at `now` on the
+    /// owner's own active clock: the clock its machines read as
+    /// `ActionContext::active_now` (`slot/compiled.rs:411`).
+    pub fn modal_wait_tick(&mut self, now: Instant, tick: u64) -> Option<(NonZeroU64, u64)> {
+        let active_now = self.clock.now(now).as_duration();
+        self.ledger.as_mut()?.modal_wait_tick(active_now, tick)
+    }
+
+    /// The live quiet read of this runtime's owner, sampled at `now` on the
+    /// owner's own clocks, as [`Self::modal_wait_tick`].
+    pub fn quiet_read_wait(&mut self, now: Instant, tick: u64) -> Option<(QuietReadOwner, u64)> {
+        let active_now = self.clock.now(now).as_duration();
+        self.ledger.as_mut()?.quiet_read_wait(now, active_now, tick)
+    }
 }
 
 /// The host walk outcome the slot observed last: its sequence and its cancel
@@ -353,12 +368,18 @@ impl Ledger {
 
     /// The live quiet read and the observed tick by which its owner ends it:
     /// the window the owner armed last, or else the lease's own wall bound,
-    /// which [`Self::quiet_read`] enforces itself.
-    pub fn quiet_read_wait(&mut self, now: Instant, tick: u64) -> Option<(QuietReadOwner, u64)> {
+    /// which [`Self::quiet_read`] enforces itself. `active_now` is the
+    /// owner's active clock at `now` ([`Runtime::quiet_read_wait`]).
+    pub(crate) fn quiet_read_wait(
+        &mut self,
+        now: Instant,
+        active_now: Duration,
+        tick: u64,
+    ) -> Option<(QuietReadOwner, u64)> {
         let quiet = self.quiet_read(now)?;
         let (_, lease, since) = self.quiet_since?;
         let deadline_tick = match self.quiet_deadline.as_mut() {
-            Some((id, deadline)) if *id == lease => deadline.owner_tick(now, tick),
+            Some((id, deadline)) if *id == lease => deadline.owner_tick(active_now, tick),
             _ => super::WaitDeadline::self_ending_tick(since + QUIET_READ_WALL_BOUND, now, tick),
         };
         Some((quiet, deadline_tick))
@@ -372,11 +393,16 @@ impl Ledger {
 
     /// The live modal wait and the observed tick by which its owner ends it.
     /// Every lease is taken with its deadline
-    /// (`ActionContext::begin_modal_wait`).
-    pub fn modal_wait_tick(&mut self, now: Instant, tick: u64) -> Option<(NonZeroU64, u64)> {
+    /// (`ActionContext::begin_modal_wait`). `active_now` is the owner's
+    /// active clock at the sample ([`Runtime::modal_wait_tick`]).
+    pub(crate) fn modal_wait_tick(
+        &mut self,
+        active_now: Duration,
+        tick: u64,
+    ) -> Option<(NonZeroU64, u64)> {
         let lease = self.modal_wait()?;
         let deadline_tick = match self.modal_wait_deadline.as_mut() {
-            Some((id, deadline)) if *id == lease => deadline.owner_tick(now, tick),
+            Some((id, deadline)) if *id == lease => deadline.owner_tick(active_now, tick),
             // Unreachable: a lease without its deadline ends at the host's margin.
             _ => 0,
         };

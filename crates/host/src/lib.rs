@@ -140,14 +140,16 @@ pub struct Host;
 /// Derivation from the frame order. On each frame the owner's poll
 /// (`host-play/src/script_observe.rs:827`, with the frame's tick) runs
 /// before the sample of its wait (`script_observe.rs:1325`), and the sample
-/// runs before the press decision (`lib.rs:740` before `lib.rs:759`). So an
+/// runs before the press decision (`lib.rs:739` before `lib.rs:758`). So an
 /// owner with a tick deadline `d` has ended its wait before the sample of
-/// tick `d`: 0 ticks. For a wall-time bound, the script reports as its
-/// deadline the first tick whose sample saw the bound passed. The owner's
-/// poll on that frame read its clock earlier (`script/src/slot/compiled.rs:391`
-/// before `script_observe.rs:1141`), so it can first see the bound on its next
-/// poll, at the next tick, before that tick's sample: 1 tick. The margin is
-/// the larger of the two. Counts are observed game ticks, not wall time.
+/// tick `d`: 0 ticks. For an active-clock bound, the script reports as its
+/// deadline the first tick whose sample saw the owner's own active clock
+/// reach the bound; until then the bound is not due, also while a pause has
+/// stopped that clock. The owner's poll on that frame read its clock earlier
+/// (`script/src/slot/compiled.rs:391` before `script_observe.rs:1141`), so it
+/// can first see the bound on its next poll, at the next tick, before that
+/// tick's sample: 1 tick. The margin is the larger of the two. Counts are
+/// observed game ticks, not wall time.
 pub const SCRIPT_WAIT_MARGIN_TICKS: u64 = 1;
 
 /// The script's own wait for the result of its own interaction, as sampled on
