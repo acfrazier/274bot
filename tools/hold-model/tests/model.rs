@@ -358,15 +358,60 @@ fn each_earlier_design_fails_a_frozen_invariant() {
         ..Bounds::standard()
     };
     let cases = [
-        (Mutation::M1HoldTwoTicks, "S1-press-while-live", 3, modal_only),
-        (Mutation::M1HoldTwoTicks, "L-hold-outlives-deadline", 4, modal_only),
-        (Mutation::M2HoldThreeTicks, "S1-press-while-live", 4, modal_only),
-        (Mutation::M3FixedTerminal, "S3-early-terminal-release", 4, modal_only),
-        (Mutation::M3FixedTerminal, "S1-press-while-live", 4, modal_only),
-        (Mutation::M5ActiveToWall, "S1-press-while-live", 5, modal_only),
-        (Mutation::M5ActiveToWall, "S3-early-terminal-release", 6, modal_only),
-        (Mutation::M6CompatNoRenew, "S6-press-after-send", 4, compat_only),
-        (Mutation::M4CompatConstantKey, "S1-press-while-live", 3, compat_only),
+        (
+            Mutation::M1HoldTwoTicks,
+            "S1-press-while-live",
+            3,
+            modal_only,
+        ),
+        (
+            Mutation::M1HoldTwoTicks,
+            "L-hold-outlives-deadline",
+            4,
+            modal_only,
+        ),
+        (
+            Mutation::M2HoldThreeTicks,
+            "S1-press-while-live",
+            4,
+            modal_only,
+        ),
+        (
+            Mutation::M3FixedTerminal,
+            "S3-early-terminal-release",
+            4,
+            modal_only,
+        ),
+        (
+            Mutation::M3FixedTerminal,
+            "S1-press-while-live",
+            4,
+            modal_only,
+        ),
+        (
+            Mutation::M5ActiveToWall,
+            "S1-press-while-live",
+            5,
+            modal_only,
+        ),
+        (
+            Mutation::M5ActiveToWall,
+            "S3-early-terminal-release",
+            6,
+            modal_only,
+        ),
+        (
+            Mutation::M6CompatNoRenew,
+            "S6-press-after-send",
+            4,
+            compat_only,
+        ),
+        (
+            Mutation::M4CompatConstantKey,
+            "S1-press-while-live",
+            3,
+            compat_only,
+        ),
     ];
     for (mutation, expected, steps, bounds) in cases {
         let run = explore_profile(
