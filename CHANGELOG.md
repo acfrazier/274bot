@@ -5,6 +5,13 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.8` 
 
 ## Unreleased
 
+### Gatherer
+
+- After a death, the Gatherer no longer stops on the first blocked step of its
+  way back to the resource area. It plans that return again once, as on a
+  normal return trip, and stops only if the retry also fails, with the last
+  failure's reason.
+
 ### Music
 
 - Negative attenuation in a SoundFont no longer causes extreme music volume.

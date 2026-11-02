@@ -478,6 +478,15 @@ impl Gatherer {
         }
     }
 
+    /// The typed Traveller terminal includes its current server tile; rebuild
+    /// the content-derived observation stand from the fresh snapshot, not from
+    /// the route that stalled. Shared by the ordinary return trip and the
+    /// death-recovery return.
+    fn replan_return_after_stall(&mut self, tick: &mut NativeTick<'_>) {
+        self.target = None;
+        self.return_to_resources(tick);
+    }
+
     fn return_to_resources(&mut self, tick: &mut NativeTick<'_>) {
         let now = tick.cx.evidence().tick;
         if self.wait_until.is_some_and(|until| now < until)
@@ -1533,6 +1542,14 @@ impl Gatherer {
             );
         }
         if self.retained.recovery == (RecoveryState::Pending { step: 5 }) {
+            // The death-recovery return shares the ordinary return trip's one
+            // bounded replan for a transient Traveller stall (AGENTS.md: a
+            // walk failure is never terminal until its retries are spent).
+            // The budget restarts with each latched death (recover.rs).
+            if self.scratch.return_stall_recovery.observe(&result.end) {
+                self.replan_return_after_stall(tick);
+                return;
+            }
             self.finish_recovery_return(result, tick);
             return;
         }
@@ -1551,11 +1568,7 @@ impl Gatherer {
         }
         if self.trip == TripStep::Return && self.scratch.return_stall_recovery.observe(&result.end)
         {
-            // The typed Traveller terminal includes its current server tile;
-            // rebuild the content-derived observation stand from the fresh
-            // snapshot, not from the route that stalled.
-            self.target = None;
-            self.return_to_resources(tick);
+            self.replan_return_after_stall(tick);
             return;
         }
         if result.end == WalkEnd::RouteEnded && self.trip == TripStep::Idle {
