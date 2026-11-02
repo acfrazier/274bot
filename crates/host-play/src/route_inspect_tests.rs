@@ -411,8 +411,8 @@ fn bank_false_fare_is_nopath() {
 }
 #[test]
 fn route_needing_more_than_120k_settles_succeeds_with_default_budget() {
-    const WIDTH: usize = 512;
-    const HEIGHT: usize = 512;
+    const WIDTH: usize = 1024;
+    const HEIGHT: usize = 1024;
     const WALL_X: usize = WIDTH / 2;
     let mut flags = vec![0u32; WIDTH * HEIGHT * 4];
     for z in 0..HEIGHT - 1 {
