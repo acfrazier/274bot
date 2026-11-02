@@ -411,12 +411,19 @@ fn bank_false_fare_is_nopath() {
 }
 #[test]
 fn route_needing_more_than_120k_settles_succeeds_with_default_budget() {
-    const WIDTH: usize = 1024;
-    const HEIGHT: usize = 1024;
-    const WALL_X: usize = WIDTH / 2;
-    let mut flags = vec![0u32; WIDTH * HEIGHT * 4];
-    for z in 0..HEIGHT - 1 {
-        flags[z * WIDTH + WALL_X] = client::dash3d::CollisionFlag::SQ_BLOCKED as u32;
+    const WIDTH: usize = 512;
+    const HEIGHT: usize = 512;
+    let sq_blocked = client::dash3d::CollisionFlag::SQ_BLOCKED as u32;
+    // Isolate the route in a serpentine corridor longer than the caller cap.
+    let mut flags = vec![sq_blocked; WIDTH * HEIGHT * 4];
+    for z in (0..HEIGHT).step_by(2) {
+        for x in 0..WIDTH {
+            flags[z * WIDTH + x] = 0;
+        }
+        if z + 1 < HEIGHT {
+            let connector_x = if (z / 2) % 2 == 0 { WIDTH - 1 } else { 0 };
+            flags[(z + 1) * WIDTH + connector_x] = 0;
+        }
     }
     let (walk, blocked) = pack_walk(&flags);
     let world = Arc::new(NavWorld::from_parts(
@@ -432,7 +439,7 @@ fn route_needing_more_than_120k_settles_succeeds_with_default_budget() {
         vec![],
     ));
     let from = tile(0, 0, 0);
-    let to = tile(WIDTH as i32 - 1, 0, 0);
+    let to = tile(0, HEIGHT as i32 - 2, 0);
     let options = FindOptions {
         allow_wilderness: true,
         ..FindOptions::default()
