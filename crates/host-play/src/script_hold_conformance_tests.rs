@@ -14,6 +14,11 @@
 //! `begin_quiet_read`, `renew_quiet_read`). The real `Dialogue` and
 //! `JournalMachine` phase logic is not in this test. One model time unit is
 //! `UNIT_MS` of real time.
+//!
+//! The compat traces drive the same host through a stub compatibility
+//! surface: the model's compat lease output (its key and its wait) is what the
+//! surface reports at each frame. The real compat lease is covered by the
+//! script-js conformance test, which cannot reach the host.
 
 use super::*;
 use hold_model::{
@@ -720,11 +725,14 @@ fn conformance_bounds() -> Bounds {
     }
 }
 
-fn traces_per_release() -> usize {
+/// Shortest traces driven per release. `HOLD_CONFORMANCE_TRACES=N` sets it;
+/// the default is `default` (3 for the native kinds, whose traces take real
+/// time; more for compat, whose traces take none).
+fn traces_per_release(default: usize) -> usize {
     std::env::var("HOLD_CONFORMANCE_TRACES")
         .ok()
         .and_then(|value| value.parse().ok())
-        .unwrap_or(3)
+        .unwrap_or(default)
 }
 
 /// A trace that keeps a journal quiet lease to its 10 s wall bound runs in
@@ -747,7 +755,7 @@ fn the_real_hold_matches_the_model_on_the_shortest_trace_of_each_release() {
         Mutation::None,
         bounds.horizon,
         hold_model::Limits::default(),
-        traces_per_release(),
+        traces_per_release(3),
     );
     let model = Model::new(bounds, Mutation::None);
     let mut failures = Vec::new();
@@ -964,6 +972,10 @@ fn the_journal_click_is_held_on_the_real_code_where_the_earlier_ledger_pressed()
     });
 }
 
+/// Shortest compat traces per release in the default run. A compat trace takes
+/// about 0.1 s of real time (the model decides every bound).
+const COMPAT_TRACES: usize = 40;
+
 /// The bounds of the compat traces: the model's compat lease only, every
 /// event that a test can drive, and a new read that may begin in the frame
 /// that revokes the old one (the product's hook resets the session before the
@@ -1011,7 +1023,7 @@ fn the_real_host_decides_like_the_model_on_the_compat_traces() {
         Mutation::None,
         bounds.horizon,
         hold_model::Limits::default(),
-        traces_per_release(),
+        traces_per_release(COMPAT_TRACES),
     );
     let model = Model::new(bounds, Mutation::None);
     let mut failures = Vec::new();
@@ -1080,4 +1092,71 @@ fn the_counterexamples_of_the_earlier_compat_designs_run_on_the_real_host() {
         }
     }
     eprintln!("conformance: {checked} counterexample traces of the compat designs on the real host");
+}
+
+/// A compat read that the surface still reports after its own bound: the
+/// slot reports a deadline one tick behind (`WaitDeadline::self_ending_tick`),
+/// so the host ends the hold as a logged failure. The real compat lease never
+/// reports a read past its bound (`CompatJournalLease::wait` returns `None`
+/// there, K3), so no generated compat trace reaches this rule; the stream is
+/// still what the host must decide on if a surface reports it. The click then
+/// renews the read's bound (same token and work generation, a deadline later):
+/// the host holds the renewed read again, as it holds a renewed dialogue gap
+/// (finding F1). The test fails on the host as it was at `0a3e700f8`, which
+/// kept the read released.
+#[test]
+fn a_compat_read_renewed_at_its_click_after_the_terminal_release_is_held_again() {
+    let mut slot = script::SlotScript::new();
+    slot.bind_incarnation(44);
+    let factory = Arc::new(StubSurfaceFactory::new());
+    slot.bind_surface_factory(factory.clone());
+    start_compat_surface(&mut slot, &factory);
+    let run = factory.last_run().expect("the stub surface run");
+    let mut policy = host::ScriptRunPolicy::default();
+    // The production seam (`script_observe.rs`): the slot's wait, then the
+    // host policy, on the frame's tick.
+    let mut sample = |slot: &mut script::SlotScript, now: Instant, tick: u64| {
+        let wait = slot
+            .script_interaction_wait(now, tick)
+            .map(|wait| host::ScriptWait {
+                key: wait.key,
+                deadline_tick: wait.deadline_tick,
+            });
+        let expired = policy.observe_script_wait(wait, tick);
+        (expired.is_some(), policy.should_defer_auto_run())
+    };
+    let start = Instant::now();
+    let bound = Duration::from_secs(10);
+    let wait = |deadline| {
+        Some(JournalWait {
+            token: 1,
+            generation: 3,
+            deadline,
+        })
+    };
+    run.set_journal_wait(wait(start + bound));
+    assert_eq!(sample(&mut slot, start, 1), (false, true), "the read holds");
+    // The read is reported past its bound: one tick later the host ends it.
+    let late = start + bound;
+    assert_eq!(
+        sample(&mut slot, late, 2),
+        (true, false),
+        "the host ends the stuck read's hold as a failure"
+    );
+    // The click renews the bound: the same read, a deadline later.
+    run.set_journal_wait(wait(late + bound));
+    assert_eq!(
+        sample(&mut slot, late, 3),
+        (false, true),
+        "the renewed read has a hold of its own"
+    );
+    assert_eq!(
+        sample(&mut slot, late, 4),
+        (false, true),
+        "and keeps it while its bound is open"
+    );
+    // The renewed bound passes: its own terminal release ends it.
+    let (ended, held) = sample(&mut slot, late + bound, 5);
+    assert!(ended && !held, "the renewed read's own bound ends it");
+    slot.stop();
 }
