@@ -32,7 +32,12 @@ assert.deepEqual(quests.rows.find((row) => row.id === 'priestperil')!.stage_doma
 assert.equal(quests.rows.find((row) => row.id === 'priestperil')!.transmission, 'not_transmitted');
 assert.deepEqual(quests.rows.find((row) => row.id === 'druidspirit')!.stage_domain, { min: 0, max: 110 });
 assert.equal(quests.rows.find((row) => row.id === 'druidspirit')!.transmission, 'not_transmitted');
-assert.equal(quests.rows.find((row) => row.id === 'priestperil')!.colour_authoritative, true);
+// Completion is 60, but scripts/areas/area_mausoleum/scripts/drezel.rs2:147
+// writes priestperil_access_holy_barrier=61 after completion. Colour cannot
+// select between those stages; the explicit observation windows below still can.
+assert.equal(quests.rows.find((row) => row.id === 'priestperil')!.colour_authoritative, false);
+// Keep the positive control: quest_druidspirit/scripts/quest_druidspirit.rs2:422
+// writes completion=110; its earlier-stage writers remain guarded.
 assert.equal(quests.rows.find((row) => row.id === 'druidspirit')!.colour_authoritative, true);
 assert.deepEqual(facts.rows[0].after, [
     { proves: { min: 61, max: 61 }, after: { min: 61, max: 61 } },
