@@ -653,10 +653,10 @@ game ticks: the dialogue's end gap tick, the journal reader's five-tick window
 first tick at which the script's own active clock has reached the wait's time
 bound. The host reads that clock at each frame. Pause, hold and not-ready stop
 it, so a paused script keeps its hold for the whole pause, and after Resume its
-own bound decides. A compatibility journal read holds the press for 10 s from
-its begin, and again for 10 s from its click, so its click never goes out
-without a live hold, also after a long pause. Its page stays hidden for at most
-10 s from its begin.
+own bound decides. A journal read holds the press for 10 s from its begin, and
+again for 10 s from each click it sends (the native reader also from its
+capture), so its click never goes out without a live hold, also after a long
+pause. Its page stays hidden for at most 10 s from its begin.
 The host ends a hold that is still live one tick after that deadline (the
 owner checks its deadline before the host reads the wait in the same frame),
 and logs that as a failure. A new send, a re-armed gap or a new journal read

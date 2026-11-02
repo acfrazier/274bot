@@ -191,6 +191,138 @@ fn the_quiet_read_lease_carries_the_machine_window_and_renews_it() {
     assert_eq!(deadline(&mut ledger, 3 + WINDOW_TICKS), None);
 }
 
+/// F2 of `HOLD-MODEL-AB` (model property S6). The journal machine checks its
+/// lease, queues its click, and only then does the host read the wall time
+/// and sample the lease. The lease's own 10 s wall bound used to run from the
+/// begin only: when it passed between the poll and the sample, the sample
+/// returned no wait, the host pressed run, and the click's page closed at
+/// once. The click now takes a fresh bound from its own poll, so the click
+/// never goes out against a hold that ends in the frame that sends it.
+#[test]
+fn a_click_sent_in_the_frame_where_the_begin_bound_passes_keeps_its_hold() {
+    let (snapshot, request) = fixture();
+    let mut ledger = None;
+    let t0 = std::time::Instant::now();
+    let at = |seconds: f64| t0 + Duration::from_secs_f64(seconds);
+    let handle: ActionHandle<JournalMachine> = with_tick(&snapshot, &mut ledger, 1, |t| {
+        t.cx.wall_now = t0;
+        t.actions.begin(request, &mut t.cx).unwrap()
+    });
+    // The owner polls just before the begin's 10 s bound, and queues its click.
+    with_tick(&snapshot, &mut ledger, 2, |t| {
+        t.cx.wall_now = at(9.9);
+        assert!(t.actions.poll(&handle, &mut t.cx).is_pending())
+    });
+    let click = ledger.as_ref().unwrap().outbox.first().expect("the click");
+    assert!(matches!(
+        click.effect,
+        HostEffect::Interaction(InteractReq::IfButton { component_id: 42 })
+    ));
+    // The host reads the wall time after the poll, past the begin's bound.
+    let sampled = ledger
+        .as_mut()
+        .unwrap()
+        .quiet_read_wait(at(10.1), Duration::ZERO, 2);
+    assert_eq!(
+        sampled.map(|(_, deadline)| deadline),
+        Some(2 + WINDOW_TICKS),
+        "the click goes out with a live hold: the sample returns the wait"
+    );
+    assert!(
+        ledger.as_ref().unwrap().outbox[0].live(),
+        "the click keeps its authority with the hold"
+    );
+    // The hold's bound is the click's, not the begin's: it ends 10 s after the
+    // poll that sent the click when the owner arms no later window.
+    assert!(ledger
+        .as_mut()
+        .unwrap()
+        .quiet_read_wait(at(19.8), Duration::ZERO, 2)
+        .is_some());
+    assert!(ledger
+        .as_mut()
+        .unwrap()
+        .quiet_read_wait(at(19.9), Duration::ZERO, 2)
+        .is_none());
+}
+
+/// The close click of the page takes a fresh hold bound as well.
+#[test]
+fn a_close_sent_in_the_frame_where_the_hold_bound_passes_keeps_its_hold() {
+    let (mut snapshot, request) = fixture();
+    let mut ledger = None;
+    let t0 = std::time::Instant::now();
+    let at = |seconds: f64| t0 + Duration::from_secs_f64(seconds);
+    let handle: ActionHandle<JournalMachine> = with_tick(&snapshot, &mut ledger, 1, |t| {
+        t.cx.wall_now = t0;
+        t.actions.begin(request, &mut t.cx).unwrap()
+    });
+    with_tick(&snapshot, &mut ledger, 2, |t| {
+        t.cx.wall_now = at(1.0);
+        assert!(t.actions.poll(&handle, &mut t.cx).is_pending())
+    });
+    acknowledge(&mut ledger, 2);
+    snapshot.seed_main_modal(
+        ROOT_289,
+        vec![
+            widget(8145, "@str@First body"),
+            widget(TITLE_289, "@dre@The Cook's Quest"),
+        ],
+    );
+    // The capture and the close share a poll, just before the click's bound.
+    with_tick(&snapshot, &mut ledger, 3, |t| {
+        t.cx.wall_now = at(10.9);
+        assert!(t.actions.poll(&handle, &mut t.cx).is_pending())
+    });
+    assert!(matches!(
+        ledger
+            .as_ref()
+            .unwrap()
+            .outbox
+            .first()
+            .map(|action| &action.effect),
+        Some(HostEffect::Interaction(InteractReq::CloseModal))
+    ));
+    let sampled = ledger
+        .as_mut()
+        .unwrap()
+        .quiet_read_wait(at(11.1), Duration::ZERO, 3);
+    assert_eq!(
+        sampled.map(|(_, deadline)| deadline),
+        Some(3 + WINDOW_TICKS),
+        "the close goes out with a live hold"
+    );
+    assert!(ledger.as_ref().unwrap().outbox[0].live());
+}
+
+/// The paint cap is the begin's 10 s and a later window does not move it:
+/// the page stops being hidden there, while the hold of the click goes on.
+#[test]
+fn the_paint_cap_stays_at_the_begin_when_a_click_renews_the_hold() {
+    let (snapshot, request) = fixture();
+    let mut ledger = None;
+    let t0 = std::time::Instant::now();
+    let at = |seconds: f64| t0 + Duration::from_secs_f64(seconds);
+    let handle: ActionHandle<JournalMachine> = with_tick(&snapshot, &mut ledger, 1, |t| {
+        t.cx.wall_now = t0;
+        t.actions.begin(request, &mut t.cx).unwrap()
+    });
+    with_tick(&snapshot, &mut ledger, 2, |t| {
+        t.cx.wall_now = at(9.9);
+        assert!(t.actions.poll(&handle, &mut t.cx).is_pending())
+    });
+    let ledger = ledger.as_mut().unwrap();
+    assert!(ledger.quiet_paint_hidden(at(9.95)), "hidden before the cap");
+    assert!(
+        !ledger.quiet_paint_hidden(at(10.0)),
+        "the page stops being hidden at the cap from the begin"
+    );
+    assert!(
+        ledger.quiet_read(at(10.1)).is_some(),
+        "the hold outlives the paint cap"
+    );
+}
+
 #[test]
 fn foreign_modal_busy_wrong_title_never_closed_and_cancel_revokes_click() {
     let (mut snapshot, request) = fixture();
@@ -387,7 +519,7 @@ fn journal_quiet_lease_expiry_is_failure_not_cancellation() {
     });
     let (lease, owner) = {
         let ledger = ledger.as_ref().unwrap();
-        let (_, lease, _) = ledger.quiet_since.unwrap();
+        let lease = ledger.quiet_lease.unwrap().lease;
         (lease, Arc::clone(ledger.owner.as_ref().unwrap()))
     };
     owner.release_quiet(lease);

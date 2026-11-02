@@ -26,6 +26,8 @@ use script::native::{
 };
 use std::sync::atomic::AtomicU64;
 use std::task::Poll;
+use script::surface::test_support::{StubSurfaceCard, StubSurfaceFactory};
+use script::surface::{JournalWait, SurfaceReady, SurfaceStart};
 
 /// Real time of one model time unit.
 const UNIT_MS: u64 = 150;
@@ -215,6 +217,9 @@ struct RealFrame {
     hold: bool,
     cmd: Option<Cmd>,
     drift_ms: u64,
+    /// The compat journal read's wait that the surface reports at this frame:
+    /// its token and work generation. `None`: no wait. Used by compat rigs.
+    journal: Option<(u64, u64)>,
 }
 
 /// What the real code decided at one frame, and what the model says.
@@ -234,10 +239,45 @@ struct Rig {
     snapshot: Arc<GameSnapshot>,
     client: Client,
     control: Arc<Control>,
+    /// The stub compatibility surface, when the slot runs one: its journal
+    /// wait is the lease's output that the model chose.
+    compat: Option<Arc<StubSurfaceFactory>>,
+}
+
+/// Start (or restart) the stub compatibility surface of a slot.
+fn start_compat_surface(slot: &mut script::SlotScript, factory: &Arc<StubSurfaceFactory>) {
+    slot.start_surface(SurfaceStart {
+        card: Arc::new(StubSurfaceCard),
+        settings_bag: None,
+        game_data: None,
+        named_banks: Arc::default(),
+        loadouts: Arc::default(),
+    })
+    .expect("the stub compatibility surface starts");
+    factory
+        .last_run()
+        .expect("the stub surface run")
+        .set_readiness(SurfaceReady::Ready);
+    assert_eq!(
+        slot.poll_start(),
+        script::StartPoll::Settled(script::StartOutcome::Ready)
+    );
 }
 
 impl Rig {
     fn new() -> Self {
+        Self::build(false)
+    }
+
+    /// A slot that runs a compatibility surface. The model's compat lease
+    /// output (its wait, key included) is what the surface reports at each
+    /// frame, so the real slot translation and the real host policy decide
+    /// on it. The lease itself is covered by the script-js conformance test.
+    fn compat() -> Self {
+        Self::build(true)
+    }
+
+    fn build(compat: bool) -> Self {
         let scripts: ScriptWall = Arc::new(Mutex::new(HashMap::new()));
         let mut client = bank_fetch_client();
         let mut snapshot = GameSnapshot::new();
@@ -248,17 +288,25 @@ impl Rig {
         client.runenergy = 20;
         let names = Arc::new(api::obj_names::ObjNames::from_objs(&client.cache.objs));
         let control = Arc::new(Control::default());
-        script_slot_or_insert(&scripts, "alice")
-            .lock()
-            .unwrap()
-            .start_test_script(
-                Box::new(DrivenScript {
-                    control: Arc::clone(&control),
-                    handle: None,
-                }),
-                None,
-            )
-            .expect("native script starts");
+        let factory = compat.then(|| Arc::new(StubSurfaceFactory::new()));
+        {
+            let slot = script_slot_or_insert(&scripts, "alice");
+            let mut slot = slot.lock().unwrap();
+            if let Some(factory) = &factory {
+                slot.bind_incarnation(44);
+                slot.bind_surface_factory(factory.clone());
+                start_compat_surface(&mut slot, factory);
+            } else {
+                slot.start_test_script(
+                    Box::new(DrivenScript {
+                        control: Arc::clone(&control),
+                        handle: None,
+                    }),
+                    None,
+                )
+                .expect("native script starts");
+            }
+        }
         Self {
             scripts,
             cheats: Arc::new(Mutex::new(HashMap::new())),
@@ -267,6 +315,7 @@ impl Rig {
             snapshot: Arc::new(snapshot),
             client,
             control,
+            compat: factory,
         }
     }
 
@@ -283,6 +332,7 @@ impl Rig {
             hold: frames.last().is_some_and(|last| last.hold),
             cmd: None,
             drift_ms: 0,
+            journal: None,
         });
         let plan = Arc::new(plan);
         let index = Arc::new(std::sync::atomic::AtomicUsize::new(0));
@@ -315,6 +365,7 @@ impl Rig {
         let probe_boundary = Arc::clone(&boundary);
         let probe_scripts = Arc::clone(&self.scripts);
         let probe_control = Arc::clone(&self.control);
+        let probe_compat = self.compat.clone();
 
         let _final_policy = Host::run_client(
             &mut self.client,
@@ -405,18 +456,22 @@ impl Rig {
                             .lock()
                             .unwrap()
                             .stop(),
-                        Op::Start => script_slot(&probe_scripts, "alice")
-                            .unwrap()
-                            .lock()
-                            .unwrap()
-                            .start_test_script(
-                                Box::new(DrivenScript {
-                                    control: Arc::clone(&probe_control),
-                                    handle: None,
-                                }),
-                                None,
-                            )
-                            .expect("the script starts again"),
+                        Op::Start => {
+                            let slot = script_slot(&probe_scripts, "alice").unwrap();
+                            let mut slot = slot.lock().unwrap();
+                            if let Some(factory) = &probe_compat {
+                                start_compat_surface(&mut slot, factory);
+                            } else {
+                                slot.start_test_script(
+                                    Box::new(DrivenScript {
+                                        control: Arc::clone(&probe_control),
+                                        handle: None,
+                                    }),
+                                    None,
+                                )
+                                .expect("the script starts again");
+                            }
+                        }
                         Op::Relog => {
                             c.gens.session += 1;
                             c.gens.player += 1;
@@ -436,6 +491,15 @@ impl Rig {
                 probe_control
                     .drift_ms
                     .store(step.drift_ms, Ordering::Relaxed);
+                if let Some(run) = probe_compat.as_ref().and_then(|factory| factory.last_run()) {
+                    run.set_journal_wait(step.journal.map(|(token, generation)| JournalWait {
+                        token,
+                        generation,
+                        // The model's lease reports a wait only while its
+                        // bound has not passed; its own bound is far away.
+                        deadline: Instant::now() + Duration::from_secs(3600),
+                    }));
+                }
                 false
             },
             |_: &api::DetectedRandom| RandomClaim::Host,
@@ -503,7 +567,8 @@ fn frames_of(
                             (Lease::None, _) => None,
                             (_, Lease::None) => Some(Cmd::End),
                             (Lease::Quiet(before), Lease::Quiet(after))
-                                if before.window != after.window =>
+                                if before.window != after.window
+                                    || before.hold_until != after.hold_until =>
                             {
                                 Some(Cmd::RenewQuiet {
                                     deadline_tick: u64::from(after.window),
@@ -543,6 +608,13 @@ fn frames_of(
                     hold: state.hold,
                     cmd,
                     drift_ms: if f.drift { unit_ms } else { 0 },
+                    // The compat lease's output at this frame's sample.
+                    journal: match info.wait {
+                        Some((hold_model::Key::Compat { token, generation }, _)) => {
+                            Some((u64::from(token), u64::from(generation)))
+                        }
+                        _ => None,
+                    },
                 });
                 expected.push(Decision {
                     deferred: info.deferred,
@@ -556,20 +628,45 @@ fn frames_of(
     (frames, expected)
 }
 
-/// Whether the model's trace keeps a journal quiet lease for a wall time that
-/// reaches its 10 s bound.
+/// Whether the model's trace brings a journal quiet lease within one unit of
+/// its wall bound, so that the real code needs real seconds. A bound past the
+/// last wall unit of the run is never reached.
 fn needs_wall_scale(model: &Model, trace: &[ModelAction]) -> bool {
     let mut state = model.initial();
     for action in trace {
         let (post, _, _) = model.step_unchecked(&state, action);
         if let Lease::Quiet(q) = post.lease {
-            if post.wall.saturating_sub(q.since) + 1 >= model.bounds.quiet_wall {
+            if q.hold_until <= model.bounds.max_wall && post.wall.saturating_add(1) >= q.hold_until
+            {
                 return true;
             }
         }
         state = post;
     }
     false
+}
+
+/// Compare the decisions of `real` with those that the model expects, at every
+/// frame. Returns the number of frames where the model holds the press and
+/// where it presses, or a report of the first frame that differs.
+fn compare(
+    model: &Model,
+    trace: &[ModelAction],
+    real: &[Decision],
+    expected: &[Decision],
+) -> Result<(usize, usize), String> {
+    for (i, (real, expected)) in real.iter().zip(expected).enumerate() {
+        if real != expected {
+            return Err(format!(
+                "frame {i}: real {real:?}, model {expected:?}\ntrace:\n{}",
+                describe_trace(model, trace)
+            ));
+        }
+    }
+    Ok((
+        expected.iter().filter(|d| d.deferred).count(),
+        expected.iter().filter(|d| d.pressed).count(),
+    ))
 }
 
 /// Drive the real code with `trace` and compare it with the model at every
@@ -583,18 +680,18 @@ fn check_trace(model: &Model, trace: &[ModelAction]) -> Result<(usize, usize), S
     };
     let (frames, expected) = frames_of(model, trace, unit_ms);
     let real = Rig::new().run(unit_ms, &frames);
-    for (i, (real, expected)) in real.iter().zip(&expected).enumerate() {
-        if real != expected {
-            return Err(format!(
-                "frame {i}: real {real:?}, model {expected:?}\ntrace:\n{}",
-                describe_trace(model, trace)
-            ));
-        }
-    }
-    Ok((
-        expected.iter().filter(|d| d.deferred).count(),
-        expected.iter().filter(|d| d.pressed).count(),
-    ))
+    compare(model, trace, &real, &expected)
+}
+
+/// The same for a compat trace: the slot runs a stub compatibility surface
+/// that reports the lease's wait that the model chose at each frame. The
+/// real slot translation (`script_interaction_wait`), the real host policy,
+/// its session-boundary release and the real press decision decide on that
+/// stream. No frame needs real time: the lease's bound is the model's.
+fn check_compat_trace(model: &Model, trace: &[ModelAction]) -> Result<(usize, usize), String> {
+    let (frames, expected) = frames_of(model, trace, 0);
+    let real = Rig::compat().run(0, &frames);
+    compare(model, trace, &real, &expected)
 }
 
 /// The conformance bounds: the native lease kinds, the events that a test
@@ -631,6 +728,18 @@ fn traces_per_release() -> usize {
         .unwrap_or(3)
 }
 
+/// A trace that keeps a journal quiet lease to its 10 s wall bound runs in
+/// real seconds (the bound is the product's constant), about 10 to 20 s each.
+/// The default run drives at most this many such traces; the others are
+/// counted and reported as skipped. `HOLD_CONFORMANCE_SLOW_TRACES=N` raises it
+/// (a full run uses a large `N`).
+fn slow_trace_limit() -> usize {
+    std::env::var("HOLD_CONFORMANCE_SLOW_TRACES")
+        .ok()
+        .and_then(|value| value.parse().ok())
+        .unwrap_or(2)
+}
+
 #[test]
 fn the_real_hold_matches_the_model_on_the_shortest_trace_of_each_release() {
     let bounds = conformance_bounds();
@@ -644,13 +753,15 @@ fn the_real_hold_matches_the_model_on_the_shortest_trace_of_each_release() {
     let model = Model::new(bounds, Mutation::None);
     let mut failures = Vec::new();
     let mut checked = 0;
-    let mut slow = 0;
+    let slow_limit = slow_trace_limit();
+    let (mut slow, mut skipped) = (0, 0);
     let (mut held_frames, mut press_frames) = (0, 0);
     for ((kind, cause), traces) in &releases {
         for trace in traces {
             if needs_wall_scale(&model, trace) {
                 slow += 1;
-                if slow > 2 {
+                if slow > slow_limit {
+                    skipped += 1;
                     continue;
                 }
             }
@@ -671,7 +782,7 @@ fn the_real_hold_matches_the_model_on_the_shortest_trace_of_each_release() {
         );
     }
     eprintln!(
-        "conformance: {checked} traces over {} releases; the model held the press on {held_frames} frames and pressed on {press_frames}",
+        "conformance: {checked} traces over {} releases, {skipped} slow traces skipped (limit {slow_limit}); the model held the press on {held_frames} frames and pressed on {press_frames}",
         releases.len()
     );
     assert!(
@@ -797,4 +908,179 @@ fn the_counterexamples_of_the_earlier_designs_run_on_the_real_code_like_the_head
         failures.len(),
         failures.join("\n---\n")
     );
+}
+
+/// Defect F2 of `HOLD-MODEL-AB`, fixed. The journal machine checks its lease,
+/// queues its click, and the host reads the wall time and samples the lease
+/// after that poll. The lease's wall bound used to run from the begin only:
+/// when it passed between the poll and the sample (the read had been paused
+/// first, so its own bound on the active clock was still open), the sample
+/// returned no wait and the host pressed right after the click
+/// (`Mutation::F2QuietClickNoRenew`, the ledger at `aa5e8bf2c`). The click now
+/// takes a fresh bound from its own poll. The real code must decide like the
+/// head model at every frame, and the trace must separate the two ledgers at
+/// its last frame. The test fails on the earlier ledger: the real code then
+/// presses where the head model holds. It runs in real seconds: the bound is
+/// the product's 10 s.
+#[test]
+fn the_journal_click_is_held_on_the_real_code_where_the_earlier_ledger_pressed() {
+    let bounds = Bounds {
+        modal: false,
+        ..conformance_bounds()
+    };
+    let run = hold_model::explore_profile(
+        &hold_model::Profile {
+            name: "conformance-quiet",
+            bounds,
+        },
+        Mutation::F2QuietClickNoRenew,
+        Some(bounds.horizon),
+        hold_model::Limits::default(),
+        true,
+    );
+    let head = Model::new(bounds, Mutation::None);
+    let earlier = Model::new(bounds, Mutation::F2QuietClickNoRenew);
+    let (_, trace) = run
+        .failures
+        .iter()
+        .find(|(violation, _)| violation.name == "S6-press-after-send")
+        .expect("the earlier ledger fails S6");
+    assert!(
+        needs_wall_scale(&head, trace),
+        "the trace runs the lease to its wall bound, in real seconds"
+    );
+    let (_, head_expected) = frames_of(&head, trace, WALL_UNIT_MS);
+    let (_, earlier_expected) = frames_of(&earlier, trace, WALL_UNIT_MS);
+    let last = head_expected.len() - 1;
+    assert!(
+        earlier_expected[last].pressed,
+        "the earlier ledger presses at the click's frame"
+    );
+    assert!(
+        head_expected[last].deferred && !head_expected[last].pressed,
+        "the head ledger holds the click's frame"
+    );
+    check_trace(&head, trace).unwrap_or_else(|report| {
+        panic!("the real code differs from the head model: {report}")
+    });
+}
+
+/// The bounds of the compat traces: the model's compat lease only, every
+/// event that a test can drive. A compat lease has no real-time dependence
+/// here: the model decides when its bound has passed.
+fn compat_bounds() -> Bounds {
+    Bounds {
+        horizon: 9,
+        max_tick: 3,
+        max_wall: 5,
+        max_ids: 4,
+        max_pages: 3,
+        max_epochs: 1,
+        modal: false,
+        quiet: false,
+        env: Env {
+            pause: true,
+            stop: true,
+            session: true,
+            disconnect: false,
+            hold: true,
+            cleanup: false,
+            death: true,
+            run_off: false,
+            page_change: true,
+        },
+        ..Bounds::standard()
+    }
+}
+
+/// The compat traces on the real host. The real compat lease is covered by
+/// the script-js conformance test (it cannot reach the host). Here the model's
+/// compat lease output, its key (token and work generation) and its presence,
+/// is what a stub surface reports at each frame. The real slot translation
+/// (`script_interaction_wait`), the real host policy and its session-boundary
+/// release, and the real press decision must decide like the model's host at
+/// every frame: moving deadlines (a compat wait reports the current tick),
+/// token and work-generation changes, and renewals after a boundary.
+#[test]
+fn the_real_host_decides_like_the_model_on_the_compat_traces() {
+    let bounds = compat_bounds();
+    let (_, releases) = release_traces(
+        bounds,
+        Mutation::None,
+        bounds.horizon,
+        hold_model::Limits::default(),
+        traces_per_release(),
+    );
+    let model = Model::new(bounds, Mutation::None);
+    let mut failures = Vec::new();
+    let mut checked = 0;
+    let (mut held_frames, mut press_frames) = (0, 0);
+    for ((kind, cause), traces) in &releases {
+        assert_eq!(*kind, Kind::Compat);
+        for trace in traces {
+            checked += 1;
+            match check_compat_trace(&model, trace) {
+                Ok((held, pressed)) => {
+                    held_frames += held;
+                    press_frames += pressed;
+                }
+                Err(report) => failures.push(format!("{kind:?} {cause:?}: {report}")),
+            }
+        }
+    }
+    eprintln!(
+        "conformance: {checked} compat traces over {} releases on the real host; the model held the press on {held_frames} frames and pressed on {press_frames}",
+        releases.len()
+    );
+    assert!(
+        held_frames > 0 && press_frames > 0,
+        "the traces exercise both decisions"
+    );
+    assert!(
+        failures.is_empty(),
+        "{} of {checked} traces differ:\n{}",
+        failures.len(),
+        failures.join("\n---\n")
+    );
+}
+
+/// The counterexample traces of the earlier compat designs (M4, one constant
+/// key; M6, no renewal at the click) on the real host. The lease output is the
+/// earlier design's, so M4 gives the host one key across reads and a session
+/// boundary, with a deadline that moves later at every tick: the host must
+/// keep a boundary release (no re-arm) and decide like the model's host.
+#[test]
+fn the_counterexamples_of_the_earlier_compat_designs_run_on_the_real_host() {
+    // M4 shows only when the owner begins a new read in the frame that revokes
+    // the old one (the product's hook resets the session before the poll).
+    let bounds = Bounds {
+        same_frame_begin: true,
+        ..compat_bounds()
+    };
+    let mut checked = 0;
+    for mutation in [Mutation::M6CompatNoRenew, Mutation::M4CompatConstantKey] {
+        let run = hold_model::explore_profile(
+            &hold_model::Profile {
+                name: "compat",
+                bounds,
+            },
+            mutation,
+            Some(bounds.horizon),
+            hold_model::Limits::default(),
+            true,
+        );
+        assert!(
+            !run.failures.is_empty(),
+            "{} has a counterexample",
+            mutation.name()
+        );
+        let model = Model::new(bounds, mutation);
+        for (violation, trace) in &run.failures {
+            checked += 1;
+            if let Err(report) = check_compat_trace(&model, trace) {
+                panic!("{} {}: {report}", mutation.name(), violation.name);
+            }
+        }
+    }
+    eprintln!("conformance: {checked} counterexample traces of the compat designs on the real host");
 }

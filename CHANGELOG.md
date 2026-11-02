@@ -193,6 +193,13 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.7` 
   script still waited. The host now holds a wait again when the script moves
   its time limit later. A repeat of the same time limit and a relog do not
   hold it again.
+  A script's quest-journal read (the native reader) holds the run button for
+  10 seconds from each click it sends, not only from its start. Before, a read
+  that had been paused could send its click in the frame where the 10 seconds
+  from its start ran out; the host then no longer held the run button, pressed
+  it right after the click, and the press closed the journal page the click
+  had opened. The page still stops being hidden 10 seconds after the read
+  starts.
 
 ## [0.2.7] — 2026-10-26 — Beta 2
 

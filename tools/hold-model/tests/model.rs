@@ -131,16 +131,13 @@ fn a_paused_dialogue_loses_a_tick_bounded_gap_hold() {
     assert_eq!(infos[7].releases, vec![(Kind::Modal, Cause::HostTerminal)]);
 }
 
-/// A known limit, finding F2: the journal read sends its click in a frame
-/// where the lease's own 10 s wall bound passes between the owner's poll and
-/// the host's sample. The hold ends in the same frame and the press follows
-/// the click. The read needs a pause first: its own bound on the active clock
-/// (8 s) is shorter than the wall bound (10 s), unless the clock stopped.
-#[test]
-fn the_journal_click_can_lose_its_hold_to_the_wall_bound_in_its_own_frame() {
-    let model = model();
-    let mut state = model.initial_state();
-    let steps = [
+/// The steps of finding F2: the journal read sends its click in a frame where
+/// the lease's own 10 s wall bound passes between the owner's poll and the
+/// host's sample. The read needs a pause first: its own bound on the active
+/// clock (8 s) is shorter than the wall bound (10 s), unless the clock
+/// stopped. The last step is the frame of the click.
+fn f2_steps() -> [Action; 7] {
+    [
         frame(true, false, false, OwnerAct::Begin(Begin::Quiet)),
         Action::Pause,
         Action::Wait,
@@ -148,8 +145,30 @@ fn the_journal_click_can_lose_its_hold_to_the_wall_bound_in_its_own_frame() {
         Action::Wait,
         Action::Resume,
         frame(false, true, true, OwnerAct::Poll),
-    ];
-    for (index, action) in steps.iter().enumerate() {
+    ]
+}
+
+/// F2 of `HOLD-MODEL-AB`, fixed: the click takes a fresh wall bound from its
+/// own poll, so it never goes out against a hold that ends in the same frame.
+#[test]
+fn the_journal_click_keeps_its_hold_when_the_begin_bound_passes_in_its_own_frame() {
+    let model = model();
+    let (state, infos) = run(&model, &f2_steps());
+    assert!(
+        infos[6].emitted && infos[6].deferred && !infos[6].pressed,
+        "the click goes out with a live hold: {:?}",
+        infos[6]
+    );
+    assert!(state.hold_rec.is_some_and(|hold| !hold.released));
+}
+
+/// The ledger as it was at `aa5e8bf2c` is a mutation that the frozen
+/// invariants catch: the same steps end in a press after the click (S6).
+#[test]
+fn the_earlier_ledger_loses_the_click_hold_to_the_wall_bound_in_its_own_frame() {
+    let model = Model::new(Bounds::standard(), Mutation::F2QuietClickNoRenew);
+    let mut state = model.initial_state();
+    for (index, action) in f2_steps().iter().enumerate() {
         match model.step_detail(&state, action) {
             Ok((next, _)) => state = next,
             Err(violation) => {
@@ -160,6 +179,18 @@ fn the_journal_click_can_lose_its_hold_to_the_wall_bound_in_its_own_frame() {
         }
     }
     panic!("the last frame must violate S6");
+}
+
+/// The paint cap stays at the begin when the click renews the hold: at the
+/// frame of the click the page has stopped being hidden (wall 4, cap 4), and
+/// the lease goes on with a hold bound after the cap.
+#[test]
+fn the_paint_cap_does_not_follow_the_renewed_hold() {
+    let (state, _) = run(&model(), &f2_steps());
+    assert!(matches!(
+        state.lease,
+        hold_model::Lease::Quiet(q) if q.held && q.paint_until == 4 && q.hold_until > q.paint_until
+    ));
 }
 
 #[test]
@@ -282,6 +313,49 @@ fn the_head_has_no_finding_in_the_smoke_profile() {
             .map(|(v, trace)| (v.name, trace.len()))
             .collect::<Vec<_>>()
     );
+}
+
+/// F2 is fixed: the quiet profiles have no finding. The shortest trace of
+/// the earlier ledger, in the profile where the bounds are equal, is 4 steps.
+#[test]
+fn the_head_has_no_finding_in_the_quiet_profiles() {
+    for (name, horizon) in [("quiet", 7), ("alt", 7), ("handoff", 6)] {
+        let run = explore_profile(
+            &profile(name).expect("profile"),
+            Mutation::None,
+            Some(horizon),
+            Limits::default(),
+            true,
+        );
+        assert!(run.complete, "{name}");
+        assert!(
+            run.failures.is_empty(),
+            "{name}: F2 is fixed: {:?}",
+            run.failures
+                .iter()
+                .map(|(v, trace)| (v.name, trace.len()))
+                .collect::<Vec<_>>()
+        );
+    }
+}
+
+#[test]
+fn the_earlier_ledger_fails_s6_in_the_quiet_profiles() {
+    for (name, horizon, steps) in [("alt", 5, 4), ("quiet", 7, 6)] {
+        let run = explore_profile(
+            &profile(name).expect("profile"),
+            Mutation::F2QuietClickNoRenew,
+            Some(horizon),
+            Limits::default(),
+            true,
+        );
+        let found: Vec<_> = run
+            .failures
+            .iter()
+            .map(|(v, trace)| (v.name, trace.len()))
+            .collect();
+        assert_eq!(found, [("S6-press-after-send", steps)], "{name}");
+    }
 }
 
 /// The earlier host (the product at `0a3e700f8`) is a mutation that the

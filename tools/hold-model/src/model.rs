@@ -71,10 +71,16 @@ pub enum Mutation {
     /// renews the same key to a later deadline. This is the host as it was at
     /// `0a3e700f8`; the head model re-arms the hold at such a renewal.
     F1RenewalKeepsRelease,
+    /// F2 (the defect of `HOLD-MODEL-AB`, fixed in `script`): the journal
+    /// quiet lease has one wall bound from the begin; the owner's click and
+    /// its other windows do not renew it. This is the ledger as it was at
+    /// `aa5e8bf2c`; the head model renews the bound at each window, as the
+    /// compat read does at its click.
+    F2QuietClickNoRenew,
 }
 
 impl Mutation {
-    pub const ALL: [Mutation; 15] = [
+    pub const ALL: [Mutation; 16] = [
         Mutation::None,
         Mutation::CheckMarginZero,
         Mutation::CheckMarginTwo,
@@ -90,6 +96,7 @@ impl Mutation {
         Mutation::M5ActiveToWall,
         Mutation::M6CompatNoRenew,
         Mutation::F1RenewalKeepsRelease,
+        Mutation::F2QuietClickNoRenew,
     ];
 
     pub fn name(self) -> &'static str {
@@ -109,6 +116,7 @@ impl Mutation {
             Mutation::M5ActiveToWall => "m5-active-to-wall",
             Mutation::M6CompatNoRenew => "m6-compat-no-renew",
             Mutation::F1RenewalKeepsRelease => "f1-renewal-keeps-release",
+            Mutation::F2QuietClickNoRenew => "f2-quiet-click-no-renew",
         }
     }
 
@@ -314,7 +322,14 @@ pub struct Quiet {
     pub txn: u8,
     /// Wall unit of the begin.
     pub since: u8,
-    /// The ledger still holds the lease (the wall bound has not released it).
+    /// The paint-hide cap: from the begin, never renewed
+    /// (`QUIET_READ_WALL_BOUND` from `since`).
+    pub paint_until: u8,
+    /// The lease's wall bound for the hold (`QuietRead::hold_until`): from the
+    /// begin, and from each window the owner arms. Kept at most one past the
+    /// largest wall unit: a later value is never reached.
+    pub hold_until: u8,
+    /// The ledger still holds the lease (its wall bound has not released it).
     pub held: bool,
     /// The owner's window, in ticks.
     pub window: u8,
@@ -647,6 +662,12 @@ impl Model {
                     action,
                     txn: Self::fresh_txn(s),
                     since: s.wall,
+                    paint_until: if self.mutation == Mutation::CheckQuietNoWall {
+                        u8::MAX
+                    } else {
+                        s.wall + b.quiet_wall
+                    },
+                    hold_until: self.quiet_hold_until(s.wall),
                     held: true,
                     window,
                     ledger_tick: window,
@@ -714,9 +735,17 @@ impl Model {
                 } else if s.active >= q.overall || s.tick >= q.window {
                     Self::end_lease(s, info, Cause::Bound);
                 } else {
+                    // The window renews the lease's wall bound from this poll
+                    // (`renew_quiet_read`). The ledger of `aa5e8bf2c` kept
+                    // the begin's bound.
+                    let renewed_hold = (self.mutation != Mutation::F2QuietClickNoRenew)
+                        .then(|| self.quiet_hold_until(s.wall));
                     let renew = |q: &mut Quiet, tick: u8, window: u8| {
                         q.window = tick + window;
                         q.ledger_tick = q.window;
+                        if let Some(hold_until) = renewed_hold {
+                            q.hold_until = hold_until;
+                        }
                     };
                     let window = self.bounds.quiet_window;
                     match q.phase {
@@ -971,12 +1000,18 @@ impl Model {
         info.wait = s.hold_rec.map(|h| (h.key, h.start));
     }
 
+    /// The wall bound of a quiet lease armed at wall unit `from`: one bound
+    /// later, never past the first unit that the run cannot reach.
+    fn quiet_hold_until(&self, from: u8) -> u8 {
+        (from + self.bounds.quiet_wall).min(self.bounds.max_wall + 1)
+    }
+
     /// `quiet_read(now)`: the lease's own wall bound. True when it released.
     fn quiet_wall_release(&self, s: &mut State) -> bool {
         if let Lease::Quiet(mut q) = s.lease
             && q.held
             && self.mutation != Mutation::CheckQuietNoWall
-            && s.wall.saturating_sub(q.since) >= self.bounds.quiet_wall
+            && s.wall >= q.hold_until
         {
             q.held = false;
             s.lease = Lease::Quiet(q);
@@ -1217,7 +1252,11 @@ impl Model {
         }
         // S5: the page stops being hidden at the lease's wall cap from its begin.
         let (hidden, since, cap) = match post.lease {
-            Lease::Quiet(q) => (q.held, q.since, self.bounds.quiet_wall),
+            Lease::Quiet(q) => (
+                q.held && post.wall < q.paint_until,
+                q.since,
+                self.bounds.quiet_wall,
+            ),
             Lease::Compat(c) => (post.wall < c.paint_until, c.since, self.bounds.compat_hold),
             _ => (false, 0, 0),
         };
@@ -1570,8 +1609,8 @@ fn lease_text(lease: Lease) -> String {
             )
         }
         Lease::Quiet(q) => format!(
-            "journal quiet read action {} {:?}, window tick {}, ledger {}, held {}",
-            q.action, q.phase, q.window, q.ledger_tick, q.held
+            "journal quiet read action {} {:?}, window tick {}, ledger {}, held {}, hold until wall {}",
+            q.action, q.phase, q.window, q.ledger_tick, q.held, q.hold_until
         ),
         Lease::Compat(c) => format!(
             "compat journal read token {} {:?}, hold until wall {}",

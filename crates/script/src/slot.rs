@@ -2225,12 +2225,18 @@ impl SlotScript {
     }
 
     /// Whether a native or compatibility journal currently owns the hidden
-    /// paint lease. Both paths are wall-clock revalidated on every read.
+    /// paint lease. Both paths are wall-clock revalidated on every read. The
+    /// native read hides the page for at most its 10 s paint cap from the
+    /// begin, however long its hold lasts.
     pub fn journal_paint_hidden(&mut self, now: std::time::Instant) -> bool {
-        if self.native_quiet_read(now).is_some() {
+        if self
+            .native_runtime
+            .ledger
+            .as_mut()
+            .is_some_and(|ledger| ledger.quiet_paint_hidden(now))
+        {
             return true;
         }
-
         {
             self.surface
                 .as_ref()
@@ -2245,9 +2251,10 @@ impl SlotScript {
     /// (`Dialogue`), the native quiet read (the journal machine, from before
     /// its click to its observed close) and the compatibility journal. Stop,
     /// replacement and a session boundary revoke the native leases. The
-    /// native quiet read also ends at its own 10 s wall bound; the
-    /// compatibility journal's hold ends at its own 10 s wall bound from its
-    /// begin, renewed at its click.
+    /// native quiet read also ends at its own 10 s wall bound, from its begin
+    /// and renewed at each window its owner arms (its click, its capture, its
+    /// close); the compatibility journal's hold ends at its own 10 s wall
+    /// bound from its begin, renewed at its click.
     ///
     /// Each wait carries the deadline its owner enforces itself, as an
     /// observed tick, in the owner's own clock at this sample. A native
