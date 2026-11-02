@@ -825,11 +825,12 @@ impl Model {
                 if sees_page && s.next_id < b.max_ids {
                     out.push(OwnerAct::Send);
                 }
-                if let ModalPhase::Ack { base, .. } = m.phase {
-                    if s.page != base && !s.modal {
-                        for gap in 1..=b.max_gap {
-                            out.push(OwnerAct::ToGap(gap));
-                        }
+                if let ModalPhase::Ack { base, .. } = m.phase
+                    && s.page != base
+                    && !s.modal
+                {
+                    for gap in 1..=b.max_gap {
+                        out.push(OwnerAct::ToGap(gap));
                     }
                 }
                 if matches!(m.phase, ModalPhase::Gap { .. })
@@ -854,15 +855,14 @@ impl Model {
 
     /// `quiet_read(now)`: the lease's own wall bound. True when it released.
     fn quiet_wall_release(&self, s: &mut State) -> bool {
-        if let Lease::Quiet(mut q) = s.lease {
-            if q.held
-                && self.mutation != Mutation::CheckQuietNoWall
-                && s.wall.saturating_sub(q.since) >= self.bounds.quiet_wall
-            {
-                q.held = false;
-                s.lease = Lease::Quiet(q);
-                return true;
-            }
+        if let Lease::Quiet(mut q) = s.lease
+            && q.held
+            && self.mutation != Mutation::CheckQuietNoWall
+            && s.wall.saturating_sub(q.since) >= self.bounds.quiet_wall
+        {
+            q.held = false;
+            s.lease = Lease::Quiet(q);
+            return true;
         }
         false
     }
@@ -1014,18 +1014,17 @@ impl Model {
             }
         }
         // L: bounded liveness: no hold outlives its owner's deadline plus the margin.
-        if info.deferred {
-            if let Some(due) = post.due {
-                if post.tick >= due.saturating_add(MARGIN_TICKS) {
-                    return Err(Self::violation(
-                        "L-hold-outlives-deadline",
-                        format!(
-                            "the hold is live at tick {}: its owner's deadline passed at tick {due} (margin {MARGIN_TICKS})",
-                            post.tick
-                        ),
-                    ));
-                }
-            }
+        if info.deferred
+            && let Some(due) = post.due
+            && post.tick >= due.saturating_add(MARGIN_TICKS)
+        {
+            return Err(Self::violation(
+                "L-hold-outlives-deadline",
+                format!(
+                    "the hold is live at tick {}: its owner's deadline passed at tick {due} (margin {MARGIN_TICKS})",
+                    post.tick
+                ),
+            ));
         }
         // S0: no stale hold: a hold is live only while the sample returned a wait.
         if info.deferred && info.wait.is_none() {
@@ -1035,20 +1034,19 @@ impl Model {
             ));
         }
         // S4: a released state never carries over to a new transaction.
-        if let (Some(h), Some(txn)) = (post.hold_rec, post.lease.txn()) {
-            if h.released
-                && live
-                && Self::key_of(post.lease) == Some(h.key)
-                && post.released_txn != Some(txn)
-            {
-                return Err(Self::violation(
-                    "S4-released-state-carried",
-                    format!(
-                        "the host's released flag for {:?} belongs to transaction {:?}, but the live lease is transaction {txn}",
-                        h.key, post.released_txn
-                    ),
-                ));
-            }
+        if let (Some(h), Some(txn)) = (post.hold_rec, post.lease.txn())
+            && h.released
+            && live
+            && Self::key_of(post.lease) == Some(h.key)
+            && post.released_txn != Some(txn)
+        {
+            return Err(Self::violation(
+                "S4-released-state-carried",
+                format!(
+                    "the host's released flag for {:?} belongs to transaction {:?}, but the live lease is transaction {txn}",
+                    h.key, post.released_txn
+                ),
+            ));
         }
         // S2: after Stop, a session boundary or a death, no older hold stays.
         if owed_end && post.lease.txn().is_some_and(|txn| txn <= old_txn) {

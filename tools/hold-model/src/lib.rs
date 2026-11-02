@@ -127,6 +127,12 @@ fn goal_id(kind: Kind, cause: Cause) -> u32 {
 /// A release that a trace reaches: one lease kind ending for one cause.
 pub type Release = (Kind, Cause);
 
+/// A run, and its releases with every shortest trace of each.
+pub type ReleaseTraces = (
+    Exploration<State, Action>,
+    Vec<(Release, Vec<Vec<Action>>)>,
+);
+
 /// Every shortest trace to each release of each lease kind, up to `cap`
 /// traces per release. The goal of a release is any transition that ends a
 /// lease of that kind with that cause. The run records every parent edge.
@@ -136,7 +142,7 @@ pub fn release_traces(
     horizon: usize,
     limits: Limits,
     cap: usize,
-) -> (Exploration<State, Action>, Vec<(Release, Vec<Vec<Action>>)>) {
+) -> ReleaseTraces {
     let model = Model::new(bounds, mutation);
     let goal = |pre: &State, action: &Action, _post: &State, out: &mut Vec<u32>| {
         if let Ok((_, info)) = model.step_detail(pre, action) {

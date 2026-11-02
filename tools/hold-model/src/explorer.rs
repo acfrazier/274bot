@@ -172,6 +172,14 @@ impl<S: Clone, A: Clone> Exploration<S, A> {
     }
 }
 
+/// A goal function: it appends the goals that one transition reaches.
+pub type GoalFn<'a, M> = dyn Fn(
+        &<M as Machine>::State,
+        &<M as Machine>::Action,
+        &<M as Machine>::State,
+        &mut Vec<u32>,
+    ) + 'a;
+
 /// What a run records besides the state graph.
 pub struct Options<'a, M: Machine> {
     /// Keep every parent edge at the shortest depth, so that
@@ -182,7 +190,7 @@ pub struct Options<'a, M: Machine> {
     pub all_violations: bool,
     /// Called for each transition that did not fail; it appends the goals
     /// that the edge reaches to the vector.
-    pub goal: Option<&'a dyn Fn(&M::State, &M::Action, &M::State, &mut Vec<u32>)>,
+    pub goal: Option<&'a GoalFn<'a, M>>,
 }
 
 impl<M: Machine> Default for Options<'_, M> {
