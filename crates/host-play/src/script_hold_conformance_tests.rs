@@ -543,10 +543,10 @@ fn needs_wall_scale(model: &Model, trace: &[ModelAction]) -> bool {
     let mut state = model.initial();
     for action in trace {
         let (post, _) = model.step_detail(&state, action).expect("clean trace");
-        if let Lease::Quiet(q) = post.lease
-            && post.wall.saturating_sub(q.since) + 1 >= model.bounds.quiet_wall
-        {
-            return true;
+        if let Lease::Quiet(q) = post.lease {
+            if post.wall.saturating_sub(q.since) + 1 >= model.bounds.quiet_wall {
+                return true;
+            }
         }
         state = post;
     }
