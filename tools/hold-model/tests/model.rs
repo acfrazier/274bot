@@ -158,7 +158,7 @@ fn the_head_findings_are_the_two_known_ones_in_the_smoke_profile() {
     found.sort_unstable();
     assert_eq!(
         found,
-        [("S1-press-while-live", 7), ("S4-released-state-carried", 7)],
+        [("S1-press-while-live", 6), ("S4-released-state-carried", 6)],
         "the end gap that follows an acknowledgement is the same lease renewed, so a host release of the acknowledgement wait stays on it"
     );
 }
@@ -196,7 +196,7 @@ fn each_self_check_mutation_fails_its_invariant() {
         (
             Mutation::CheckCompatClickNoRenew,
             "S6-press-after-send",
-            3,
+            6,
             base,
         ),
         (

@@ -154,6 +154,7 @@ pub fn release_traces(
         limits,
         &Options {
             retain_dag: true,
+            all_violations: true,
             goal: Some(&goal),
             ..Options::default()
         },
