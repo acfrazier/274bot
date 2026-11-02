@@ -664,10 +664,12 @@ clock in the same frame. When that reading ends the hold by expiry, the click
 or close that is still queued is dropped, never dispatched, and the owner's
 next poll finds its read expired and fails it (the native reader: `journal
 quiet lease expired`; the compatibility reader: `modal-timeout`), so the
-script's own retry and time limits apply. A click that was dispatched before
-the expiry keeps its receipt. A dialogue's waits have no wall bound: the host
-ends them only a tick after the owner's deadline, in a later frame, so a stall
-cannot strand a dialogue's click.
+script's own retry and time limits apply. Only the read's own click or close
+is dropped: the host finds it by the machine that sent it, so an equal request
+of another call (a `Modals.close()` in the same script) still goes out. A
+click that was dispatched before the expiry keeps its receipt. A dialogue's
+waits have no wall bound: the host ends them only a tick after the owner's
+deadline, in a later frame, so a stall cannot strand a dialogue's click.
 The host ends a hold that is still live one tick after that deadline (the
 owner checks its deadline before the host reads the wait in the same frame),
 and logs that as a failure. A new send, a re-armed gap or a new journal read

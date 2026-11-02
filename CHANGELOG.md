@@ -205,7 +205,8 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.7` 
   clock, and the click would have gone out with no hold. The read then fails as
   expired and the script's own retry applies. This holds for the native reader
   and for the compatibility reader; a click that was already sent is not
-  changed.
+  changed, and only the read's own click or close is held back, not an equal
+  one that another call of the same script sends (such as `Modals.close()`).
 
 ## [0.2.7] — 2026-10-26 — Beta 2
 
