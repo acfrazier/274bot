@@ -268,8 +268,13 @@ pub(crate) fn test_full_pack_fixture(
 
 use api::snapshot::WorldTile;
 
-/// Recovery is retained now so the slot cell has a stable shape for later
-/// stages. G1 only ever uses `Idle`; a latched death is a terminal block.
+/// Retained death recovery, polled one step per tick by `poll_recovery`:
+/// `Pending { step: 1 }` waits for restored HP at the respawn square; 2
+/// re-validates the pack; 3 admits a due supply trip; 4 waits for that trip and
+/// goes back to step 3 once to reprovision, or moves on; 5 returns to the
+/// resource area. `Proving` then requires a
+/// fresh product and XP gain before the run returns to `Idle` and counts the
+/// recovery.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum RecoveryState {
     #[default]

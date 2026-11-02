@@ -2926,6 +2926,376 @@ fn death_return_refused_stops_terminally_with_reason() {
     assert!(slot.restart_from_identity(Instant::now()).is_err());
 }
 
+/// AGENTS.md: a walk failure is never terminal until its bounded retries are
+/// spent. The ordinary return trip retries one transient Stalled(Expired |
+/// Dropped) with a fresh plan (`ReturnStallRecovery`); the death-recovery
+/// return (retained step 5) must get the same retry, not fail the run on the
+/// first stalled hop (`runner.rs:1535` diverts step 5 to `finish_recovery_return`
+/// before the stall check at `:1552`).
+#[test]
+fn death_return_retries_one_transient_stall_before_failing() {
+    let selected = selected();
+    let mut initial = depleted_snapshot(&selected);
+    lifecycle_hitpoints(&mut initial, 10, 10);
+    initial.seed_chat_lines(Vec::new());
+    let anchor = initial.local_player().unwrap().player.actor.tile;
+    let mut slot = started(4414, &selected);
+    let mut now = 1;
+    tick(&mut slot, &initial, now);
+    let death = lifecycle_death_frame(&initial, 1, LUMBRIDGE_RESPAWN_EDGE, 10, 10);
+    now += 1;
+    tick(&mut slot, &death, now);
+
+    let (authority, request_id, effect) = next_trip_effect(&mut slot, &death, &mut now);
+    let HostEffect::Walk(request) = effect else {
+        panic!("recovery step 5 must return to resources in the retained area")
+    };
+    assert_resource_return(&selected, &request, anchor);
+    assert_eq!(lifecycle_status_integer(&slot, "recovery_step"), 5);
+    complete_lifecycle_walk(
+        &mut slot,
+        &authority,
+        request_id,
+        now,
+        script::native::WalkEnd::Stalled(Arc::new(script::native::WalkStall {
+            at: LUMBRIDGE_RESPAWN_EDGE,
+            aiming: request.target,
+            why: script::native::WalkStallReason::Expired,
+            tries: 60,
+        })),
+    );
+
+    now += 1;
+    tick(&mut slot, &death, now);
+    let status = slot.native_status().unwrap();
+    assert_ne!(
+        status.phase,
+        NativePhase::Blocked,
+        "one transient stalled hop must be retried with a fresh plan, not terminal: {:?}",
+        status.failure
+    );
+    assert_eq!(lifecycle_status_integer(&slot, "recovery_step"), 5);
+    let (_, _, effect) = next_trip_effect(&mut slot, &death, &mut now);
+    assert!(matches!(effect, HostEffect::Walk(_)), "fresh return walk");
+    slot.stop();
+}
+
+/// AGENTS.md: a walk failure is never terminal until its bounded retries are
+/// spent. Once the death return's one shared replan is spent, the run stops
+/// with the last stall's own cause, ticks and tiles.
+#[test]
+fn death_return_after_the_retry_budget_keeps_the_last_stall_detail() {
+    let selected = selected();
+    let mut initial = depleted_snapshot(&selected);
+    lifecycle_hitpoints(&mut initial, 10, 10);
+    initial.seed_chat_lines(Vec::new());
+    let anchor = initial.local_player().unwrap().player.actor.tile;
+    let mut slot = started(4415, &selected);
+    let mut now = 1;
+    tick(&mut slot, &initial, now);
+    let death = lifecycle_death_frame(&initial, 1, LUMBRIDGE_RESPAWN_EDGE, 10, 10);
+    now += 1;
+    tick(&mut slot, &death, now);
+
+    let (authority, request_id, effect) = next_trip_effect(&mut slot, &death, &mut now);
+    let HostEffect::Walk(request) = effect else {
+        panic!("recovery step 5 must return to resources in the retained area")
+    };
+    assert_resource_return(&selected, &request, anchor);
+    complete_lifecycle_walk(
+        &mut slot,
+        &authority,
+        request_id,
+        now,
+        script::native::WalkEnd::Stalled(Arc::new(script::native::WalkStall {
+            at: LUMBRIDGE_RESPAWN_EDGE,
+            aiming: request.target,
+            why: script::native::WalkStallReason::Expired,
+            tries: 60,
+        })),
+    );
+    now += 1;
+    tick(&mut slot, &death, now);
+    assert_eq!(lifecycle_status_integer(&slot, "recovery_step"), 5);
+
+    // Spend the one shared replan, then stall its successor.
+    let (authority, request_id, effect) = next_trip_effect(&mut slot, &death, &mut now);
+    let HostEffect::Walk(retry) = effect else {
+        panic!("the retried death return must submit a fresh walk")
+    };
+    let last = script::native::WalkStall {
+        at: WorldTile {
+            x: 3219,
+            z: 3221,
+            level: 0,
+        },
+        aiming: retry.target,
+        why: script::native::WalkStallReason::Dropped,
+        tries: 61,
+    };
+    complete_lifecycle_walk(
+        &mut slot,
+        &authority,
+        request_id,
+        now,
+        script::native::WalkEnd::Stalled(Arc::new(last)),
+    );
+    now += 1;
+    tick(&mut slot, &death, now);
+    let status = slot.native_status().unwrap();
+    assert_eq!(status.phase, NativePhase::Blocked);
+    let failure = status.failure.as_ref().unwrap();
+    assert_eq!(failure.code.as_ref(), "return-failed");
+    assert!(
+        failure.message.contains("Dropped")
+            && failure.message.contains("tries: 61")
+            && failure.message.contains("x: 3219")
+            && failure.message.contains("z: 3221")
+            && failure
+                .message
+                .contains("arrival at the resource observation stand must be observed"),
+        "the spent budget keeps the last stall's detail: {}",
+        failure.message
+    );
+    assert_eq!(lifecycle_status_integer(&slot, "recovery_step"), 5);
+    assert!(!slot.has_native_actions());
+    slot.stop();
+}
+
+/// A stall that arrives with an operator Stop pending never starts the retried
+/// return: Stop drops the run together with its queued walk result.
+#[test]
+fn death_return_stall_after_stop_submits_no_retry() {
+    let selected = selected();
+    let mut initial = depleted_snapshot(&selected);
+    lifecycle_hitpoints(&mut initial, 10, 10);
+    initial.seed_chat_lines(Vec::new());
+    let anchor = initial.local_player().unwrap().player.actor.tile;
+    let mut slot = started(4416, &selected);
+    let mut now = 1;
+    tick(&mut slot, &initial, now);
+    let death = lifecycle_death_frame(&initial, 1, LUMBRIDGE_RESPAWN_EDGE, 10, 10);
+    now += 1;
+    tick(&mut slot, &death, now);
+
+    let (authority, request_id, effect) = next_trip_effect(&mut slot, &death, &mut now);
+    let HostEffect::Walk(request) = effect else {
+        panic!("recovery step 5 must return to resources in the retained area")
+    };
+    assert_resource_return(&selected, &request, anchor);
+    complete_lifecycle_walk(
+        &mut slot,
+        &authority,
+        request_id,
+        now,
+        script::native::WalkEnd::Stalled(Arc::new(script::native::WalkStall {
+            at: LUMBRIDGE_RESPAWN_EDGE,
+            aiming: request.target,
+            why: script::native::WalkStallReason::Expired,
+            tries: 60,
+        })),
+    );
+    slot.stop();
+    for _ in 0..3 {
+        now += 1;
+        tick(&mut slot, &death, now);
+        assert!(
+            !slot.has_native_actions(),
+            "a stopped death return submits no retry"
+        );
+    }
+    assert!(slot.native_run().is_none());
+    assert!(!slot.want_run);
+}
+
+/// A second death during the retried return latches recovery from its first
+/// step again. Docs: a second death before a recovered haul blocks with
+/// `died-again`; the return retry budget does not carry over.
+#[test]
+fn second_death_during_the_retried_return_latches_its_first_step() {
+    let selected = selected();
+    let mut initial = depleted_snapshot(&selected);
+    lifecycle_hitpoints(&mut initial, 10, 10);
+    initial.seed_chat_lines(Vec::new());
+    let anchor = initial.local_player().unwrap().player.actor.tile;
+    let mut slot = started(4417, &selected);
+    let mut now = 1;
+    tick(&mut slot, &initial, now);
+    let death = lifecycle_death_frame(&initial, 1, LUMBRIDGE_RESPAWN_EDGE, 10, 10);
+    now += 1;
+    tick(&mut slot, &death, now);
+
+    let (authority, request_id, effect) = next_trip_effect(&mut slot, &death, &mut now);
+    let HostEffect::Walk(request) = effect else {
+        panic!("recovery step 5 must return to resources in the retained area")
+    };
+    assert_resource_return(&selected, &request, anchor);
+    complete_lifecycle_walk(
+        &mut slot,
+        &authority,
+        request_id,
+        now,
+        script::native::WalkEnd::Stalled(Arc::new(script::native::WalkStall {
+            at: LUMBRIDGE_RESPAWN_EDGE,
+            aiming: request.target,
+            why: script::native::WalkStallReason::Expired,
+            tries: 60,
+        })),
+    );
+    now += 1;
+    tick(&mut slot, &death, now);
+    assert_eq!(lifecycle_status_integer(&slot, "recovery_step"), 5);
+    let (_, _, effect) = next_trip_effect(&mut slot, &death, &mut now);
+    assert!(
+        matches!(effect, HostEffect::Walk(_)),
+        "the retried return must be in flight"
+    );
+
+    let second = lifecycle_death_frame(&death, 2, LUMBRIDGE_RESPAWN_EDGE, 10, 10);
+    now += 1;
+    tick(&mut slot, &second, now);
+    let status = slot.native_status().unwrap();
+    assert_eq!(status.phase, NativePhase::Blocked);
+    let failure = status.failure.as_ref().unwrap();
+    assert_eq!(failure.code.as_ref(), "died-again");
+    assert_eq!(lifecycle_status_integer(&slot, "deaths"), 2);
+    assert_eq!(lifecycle_status_integer(&slot, "recovery_step"), 1);
+    assert!(!slot.has_native_actions());
+    slot.stop();
+}
+
+/// Each death's return has its own one-replan budget: a first recovery that
+/// spent its retry must not deny the next recovery's return.
+#[test]
+fn second_recovery_return_gets_a_fresh_retry_budget() {
+    let selected = selected();
+    let mut initial = depleted_snapshot(&selected);
+    lifecycle_hitpoints(&mut initial, 10, 10);
+    initial.seed_chat_lines(Vec::new());
+    let anchor = initial.local_player().unwrap().player.actor.tile;
+    let mut slot = started(4418, &selected);
+    let mut now = 1;
+    tick(&mut slot, &initial, now);
+    let mut first_death = lifecycle_death_frame(&initial, 1, LUMBRIDGE_RESPAWN_EDGE, 10, 10);
+    now += 1;
+    tick(&mut slot, &first_death, now);
+
+    // Spend the first recovery's return retry, then arrive.
+    let (authority, request_id, effect) = next_trip_effect(&mut slot, &first_death, &mut now);
+    let HostEffect::Walk(return_request) = effect else {
+        panic!("recovery must return to resources")
+    };
+    assert_resource_return(&selected, &return_request, anchor);
+    complete_lifecycle_walk(
+        &mut slot,
+        &authority,
+        request_id,
+        now,
+        script::native::WalkEnd::Stalled(Arc::new(script::native::WalkStall {
+            at: LUMBRIDGE_RESPAWN_EDGE,
+            aiming: return_request.target,
+            why: script::native::WalkStallReason::Expired,
+            tries: 60,
+        })),
+    );
+    now += 1;
+    tick(&mut slot, &first_death, now);
+    assert_eq!(lifecycle_status_integer(&slot, "recovery_step"), 5);
+    let (authority, request_id, effect) = next_trip_effect(&mut slot, &first_death, &mut now);
+    let HostEffect::Walk(retry_request) = effect else {
+        panic!("the stalled death return must be retried")
+    };
+    trip_position(&mut first_death, retry_request.target);
+    complete_lifecycle_walk(
+        &mut slot,
+        &authority,
+        request_id,
+        now,
+        script::native::WalkEnd::Arrived,
+    );
+    for _ in 0..2 {
+        now += 1;
+        tick(&mut slot, &first_death, now);
+    }
+    assert_eq!(lifecycle_status_integer(&slot, "recovery_step"), 6);
+
+    let mut product_and_xp = lifecycle_frame_copy(&first_death);
+    product_and_xp.seed_inventory(vec![log(0)], 28);
+    let mut stats = product_and_xp.stats().to_vec();
+    let woodcutting = stats
+        .iter_mut()
+        .find(|stat| stat.name.eq_ignore_ascii_case("woodcutting"))
+        .unwrap();
+    woodcutting.xp += 50;
+    product_and_xp.seed_stats(stats);
+    now += 1;
+    tick(&mut slot, &product_and_xp, now);
+    assert_eq!(lifecycle_status_integer(&slot, "recovery_step"), 0);
+    assert_eq!(lifecycle_status_integer(&slot, "recoveries"), 1);
+
+    // Complete one observed disposal so the next death starts a new recovery.
+    let mut full_pack = lifecycle_frame_copy(&product_and_xp);
+    let mut present: Vec<i32> = (0..28).collect();
+    full_pack.seed_inventory(present.iter().copied().map(log).collect(), 28);
+    let mut hauled = false;
+    for _ in 0..12 {
+        now += 1;
+        full_pack.seed_inventory(present.iter().copied().map(log).collect(), 28);
+        tick(&mut slot, &full_pack, now);
+        let sent = drain(&mut slot, now);
+        present.retain(|slot| !sent.contains(slot));
+        if present.is_empty() {
+            now += 1;
+            full_pack.seed_inventory(Vec::new(), 28);
+            tick(&mut slot, &full_pack, now);
+            assert!(drain(&mut slot, now).is_empty());
+            hauled = true;
+            break;
+        }
+    }
+    assert!(hauled, "the first post-recovery disposal must complete");
+
+    let second_death = lifecycle_death_frame(&full_pack, 2, LUMBRIDGE_RESPAWN_EDGE, 10, 10);
+    now += 1;
+    tick(&mut slot, &second_death, now);
+    assert_eq!(lifecycle_status_integer(&slot, "deaths"), 2);
+    assert_eq!(lifecycle_status_integer(&slot, "recovery_step"), 1);
+
+    let (authority, request_id, effect) = next_trip_effect(&mut slot, &second_death, &mut now);
+    let HostEffect::Walk(second_return) = effect else {
+        panic!("the second recovery must return to resources")
+    };
+    assert_resource_return(&selected, &second_return, anchor);
+    complete_lifecycle_walk(
+        &mut slot,
+        &authority,
+        request_id,
+        now,
+        script::native::WalkEnd::Stalled(Arc::new(script::native::WalkStall {
+            at: LUMBRIDGE_RESPAWN_EDGE,
+            aiming: second_return.target,
+            why: script::native::WalkStallReason::Expired,
+            tries: 60,
+        })),
+    );
+    now += 1;
+    tick(&mut slot, &second_death, now);
+    let status = slot.native_status().unwrap();
+    assert_ne!(
+        status.phase,
+        NativePhase::Blocked,
+        "the second recovery's return must not inherit the spent budget: {:?}",
+        status.failure
+    );
+    assert_eq!(lifecycle_status_integer(&slot, "recovery_step"), 5);
+    let (_, _, effect) = next_trip_effect(&mut slot, &second_death, &mut now);
+    assert!(
+        matches!(effect, HostEffect::Walk(_)),
+        "the second recovery's return gets its own retry"
+    );
+    slot.stop();
+}
+
 #[test]
 fn default_max_deaths_allows_two_recoveries_with_a_haul_and_blocks_the_third_death() {
     let selected = selected();

@@ -28,8 +28,7 @@
 //! precede the progression baseline; proof gains come from the running script.
 //! G4a cells exercise guardian-owned random-event holds and verified death
 //! recovery, including terminal return refusals and watchdog recreation;
-//! they require the
-//! `BOT_LIVE_NAME_PREFIX=g4a` namespace.
+//! each requires an own `BOT_LIVE_NAME_PREFIX`, like the other live cells.
 //! Fixture helpers alter locations only; they never inject products or XP.
 //! Every live account uses the configured `BOT_LIVE_NAME_PREFIX` and a
 //! suffix. Each cell uses an isolated HOME plus absolute paths for
@@ -1090,12 +1089,16 @@ struct InvRow {
     count: i32,
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 struct UnsettledItem {
     since: Instant,
     /// `Observation::captured_at` of the observation the item left the pack
     /// in: the cohort a genie-lamp wish confirmation must match.
     left_in: Instant,
+    /// Loaded-bank counts from the last observation before the item left the
+    /// pack. A later increase conserves it when a non-bank cell's supply trip
+    /// deposits it.
+    bank_before: Option<BTreeMap<i32, i32>>,
 }
 
 /// How long an item that left the pack may stay unaccounted (not back in
@@ -1982,6 +1985,10 @@ struct GatherSlot {
     baseline: Option<Observation>,
     latest: Option<Observation>,
     unsettled_items: BTreeMap<(i32, i32), UnsettledItem>,
+    /// The loaded bank counts from the previous observation. A non-bank cell
+    /// (a death recovery's supply trip) can deposit a non-product item, and
+    /// that deposit must conserve it.
+    bank_counts_before: Option<BTreeMap<i32, i32>>,
     bank_config: Option<Arc<script::native::PreparedConfig>>,
     last_observed_dropped: i64,
     last_observed_product_drops: u32,
@@ -2025,6 +2032,7 @@ impl GatherSlot {
             baseline: None,
             latest: None,
             unsettled_items: BTreeMap::new(),
+            bank_counts_before: None,
             bank_config: None,
             last_observed_dropped: 0,
             last_observed_product_drops: 0,
@@ -3044,10 +3052,7 @@ impl GatherSlot {
         // Inventory, equipment and bank counts arrive in separate packets.
         // Every banked item settles only after its expected bank increase;
         // protected tools still must reappear in inventory or equipment.
-        let bank_counts = if !self.unsettled_items.is_empty()
-            && self.witness.pending_bank_trip.is_some()
-            && self.snapshot.bank_loaded()
-        {
+        let bank_counts = if !self.unsettled_items.is_empty() && self.snapshot.bank_loaded() {
             self.snapshot_bank_counts()
         } else {
             BTreeMap::new()
@@ -3079,6 +3084,15 @@ impl GatherSlot {
                             receipt.expected_items.contains_key(&id)
                                 && receipt.bank_increased_for(id, &bank_counts)
                         }))
+                && !(!bank_active
+                    && unsettled.bank_before.as_ref().is_some_and(|before| {
+                        bank_counts
+                            .get(&id)
+                            .copied()
+                            .unwrap_or(0)
+                            .saturating_sub(before.get(&id).copied().unwrap_or(0))
+                            >= count
+                    }))
                 && !(id == GENIE_LAMP_ID
                     && wish_granted
                         .take_if(|granted| *granted >= unsettled.left_in)
@@ -3131,6 +3145,7 @@ impl GatherSlot {
                                 UnsettledItem {
                                     since: Instant::now(),
                                     left_in: observation.captured_at,
+                                    bank_before: self.bank_counts_before.clone(),
                                 },
                             );
                         } else {
@@ -3149,6 +3164,7 @@ impl GatherSlot {
                             .or_insert(UnsettledItem {
                                 since: Instant::now(),
                                 left_in: observation.captured_at,
+                                bank_before: self.bank_counts_before.clone(),
                             });
                     }
                 }
@@ -3265,6 +3281,9 @@ impl GatherSlot {
             {
                 return Err("unwieldable rune axe was equipped".into());
             }
+        }
+        if self.snapshot.bank_loaded() {
+            self.bank_counts_before = Some(self.snapshot_bank_counts());
         }
         self.latest = Some(observation);
         Ok(())
@@ -5959,9 +5978,9 @@ fn run_cell(cell: Cell, case: LiveCase) -> Result<(), String> {
         );
     }
     if (case == LiveCase::RandomEvent || case.is_death_recovery())
-        && std::env::var("BOT_LIVE_NAME_PREFIX").as_deref() != Ok("g4a")
+        && std::env::var_os("BOT_LIVE_NAME_PREFIX").is_none()
     {
-        return Err("G4a live cells require BOT_LIVE_NAME_PREFIX=g4a".into());
+        return Err("G4a live cells require an own BOT_LIVE_NAME_PREFIX".into());
     }
     let cell_name = cell.name_for_case(case);
     let _home = script::IsolatedEnv::enter(cell_name);
@@ -8044,7 +8063,7 @@ fn gatherer_bank_reconnect_return() {
     run_cell(Cell::Woodcutting, LiveCase::ReconnectReturn).unwrap();
 }
 #[test]
-#[ignore = "requires LIVE=1, BOT_LIVE_NAME_PREFIX=g4a, GATHERER_WC_TILE, and local 289 engine"]
+#[ignore = "requires LIVE=1, an own BOT_LIVE_NAME_PREFIX, GATHERER_WC_TILE, and local 289 engine"]
 fn gatherer_random() {
     run_cell(Cell::Woodcutting, LiveCase::RandomEvent).unwrap();
 }
@@ -8067,39 +8086,39 @@ fn maze_random_complete(witness: &Witness) -> bool {
 }
 
 #[test]
-#[ignore = "requires LIVE=1, BOT_LIVE_NAME_PREFIX=g4a, GATHERER_WC_BANK_TILE, and local 289 engine"]
+#[ignore = "requires LIVE=1, an own BOT_LIVE_NAME_PREFIX, GATHERER_WC_BANK_TILE, and local 289 engine"]
 fn gatherer_death_return() {
     run_cell(Cell::Woodcutting, LiveCase::DeathReturn).unwrap();
 }
 
 #[test]
-#[ignore = "requires LIVE=1, BOT_LIVE_NAME_PREFIX=g4a, and local 289 engine; defaults to the Lumbridge respawn-region fixture"]
+#[ignore = "requires LIVE=1, an own BOT_LIVE_NAME_PREFIX, and local 289 engine; defaults to the Lumbridge respawn-region fixture"]
 fn gatherer_death_return_respawn_region() {
     run_cell(Cell::Woodcutting, LiveCase::DeathRespawnRegion).unwrap();
 }
 
 #[test]
-#[ignore = "requires LIVE=1, BOT_LIVE_NAME_PREFIX=g4a, and local 289 engine"]
+#[ignore = "requires LIVE=1, an own BOT_LIVE_NAME_PREFIX, and local 289 engine"]
 fn gatherer_death_return_no_stock() {
     run_cell(Cell::Woodcutting, LiveCase::DeathNoStock).unwrap();
 }
 
 #[test]
-#[ignore = "requires LIVE=1, BOT_LIVE_NAME_PREFIX=g4a, GATHERER_DEATH_RETURN_REFUSE_TILE, and local 289 engine"]
+#[ignore = "requires LIVE=1, an own BOT_LIVE_NAME_PREFIX, GATHERER_DEATH_RETURN_REFUSE_TILE, and local 289 engine"]
 fn gatherer_death_return_refused_stops() {
     run_cell(Cell::Woodcutting, LiveCase::DeathReturnRefused).unwrap();
 }
 
 #[cfg(feature = "live-probe")]
 #[test]
-#[ignore = "requires LIVE=1, BOT_LIVE_NAME_PREFIX=g4a, GATHERER_WC_BANK_TILE, live-probe, and local 289 engine"]
+#[ignore = "requires LIVE=1, an own BOT_LIVE_NAME_PREFIX, GATHERER_WC_BANK_TILE, live-probe, and local 289 engine"]
 fn gatherer_death_watchdog_pending5() {
     run_cell(Cell::Woodcutting, LiveCase::DeathWatchdogPending).unwrap();
 }
 
 #[cfg(feature = "live-probe")]
 #[test]
-#[ignore = "requires LIVE=1, BOT_LIVE_NAME_PREFIX=g4a, GATHERER_WC_BANK_TILE, live-probe, and local 289 engine"]
+#[ignore = "requires LIVE=1, an own BOT_LIVE_NAME_PREFIX, GATHERER_WC_BANK_TILE, live-probe, and local 289 engine"]
 fn gatherer_death_watchdog_proving() {
     run_cell(Cell::Woodcutting, LiveCase::DeathWatchdogProving).unwrap();
 }
@@ -8728,6 +8747,40 @@ mod bank_conservation_tests {
         assert_eq!(slot.witness.bank_trips.len(), 1);
         assert!(slot.witness.bank_trips[0].deposit_verified);
         assert_eq!(slot.witness.bank_trips[0].deposited_count, 27);
+    }
+
+    /// A death recovery's supply trip opens the bank even though the cell is
+    /// Power, not bank mode. Depositing a seeded non-product item there is
+    /// conservation, not a loss: the item's bank increase settles it.
+    #[test]
+    fn death_recovery_bank_deposit_conserves_a_seeded_filler() {
+        let filler = DEATH_FILLERS[1].0;
+        let mut slot = GatherSlot::new(
+            Cell::Woodcutting,
+            LiveCase::DeathReturn,
+            OAK_RESPAWN_START,
+            FixturePlan::default(),
+            None,
+            false,
+        );
+        slot.snapshot
+            .seed_inventory(inventory_rows(&[(LOG_ID, 1), (filler, 1)]), 28);
+        slot.snapshot
+            .seed_bank_observation(5292, 1, Some(bank_rows(&[])), vec![]);
+        let before = slot.capture();
+        slot.observe_running(None, before.clone()).unwrap();
+        slot.snapshot
+            .seed_inventory(inventory_rows(&[(LOG_ID, 1)]), 28);
+        slot.snapshot
+            .seed_bank_observation(5292, 2, Some(bank_rows(&[(filler, 1)])), vec![]);
+        let after = slot.capture();
+        slot.observe_running(Some(before), after.clone()).unwrap();
+        slot.observe_running(Some(after.clone()), after).unwrap();
+        assert!(
+            slot.unsettled_items.is_empty(),
+            "the deposited filler settles against its bank increase: {:?}",
+            slot.unsettled_items
+        );
     }
 
     /// The incidental fruit left the pack but never reached the bank: the
