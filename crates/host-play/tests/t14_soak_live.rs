@@ -18,10 +18,13 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use api::game_data::{self, GatherSiteOption};
 use api::interact::cheat;
 use api::selected::ClientRevision;
-use api::snapshot::{GameSnapshot, WorldTile};
+use api::snapshot::{
+    ActorKind, ActorTargetView, ChatLineView, GameSnapshot, HitmarksView, ProjectileView, WorldTile,
+};
 use host::Pump;
 use host_play::{ProfileOptions, SharedClientTemplate};
 use scenario::{Proof, RunnerStatus, Scenario, ScenarioRunner, Step, StepKind, Wait};
+use script::native::death::{hitpoints_zero, is_death_line, DeathLatch, RESPAWN_SQUARE};
 use script::native::{ScriptStatus, StatusValue};
 use serde_json::{json, Map, Value};
 use vault::{Profile, ProfileSettings};
@@ -32,9 +35,17 @@ const TICK_MS: u64 = 100;
 const NORMAL_LOG_ID: i32 = 1511;
 const WOODCUTTING_STAT_ID: i32 = 8;
 const GATHERER_PREP_STEP: &str = "prepare Woodcutting 1 and a real bronze axe before Start";
+const GATHERER_SOAK_PREP_STEP: &str =
+    "prepare Woodcutting 99, a rune axe, lobster and spare supplies before Start";
+const GATHERER_FOOD_PROOF_STEP: &str =
+    "observe the seeded lobster in the account inventory before Start";
 const GATHERER_SITE_STEP: &str = "stand at the live Draynor normal tree before Start";
 const GATHERER_TREE_PROOF_STEP: &str = "confirm the selected-289 normal tree is live before Start";
 const GATHERER_RELOG_STEP: &str = "relog successfully so the inventory tab binds before Start";
+const SURVIVAL_FOOD_ALIAS: &str = "lobster";
+const SURVIVAL_FOOD_NAME: &str = "Lobster";
+const SURVIVAL_FOOD_ID: i32 = 379;
+const SURVIVAL_FOOD_TARGET: i32 = 1;
 
 // Five normal slots each use a disjoint radius-five patch; fifteen slots use oak.
 // The offline audit covers workload routes and ordinary recovery only.
@@ -49,8 +60,8 @@ const NORMAL_STARTS: [(i32, i32); 5] = [
 ];
 const NORMAL_RADIUS: i32 = 5;
 const NORMAL_SITE_ID: &str = "woodcutting.falador_west.n";
-const SECOND_TIER_SITE_ID: &str = "woodcutting.falador_west.n";
-const SECOND_TIER_START: (i32, i32) = (2946, 3399);
+const SECOND_TIER_SITE_ID: &str = "woodcutting.falador_west.2";
+const SECOND_TIER_START: (i32, i32) = (2925, 3367);
 const SECOND_TIER_KEY: &str = "oak";
 const SECOND_TIER_LOG_ID: i32 = 1521;
 const SECOND_TIER_LEVEL: i32 = 15;
@@ -84,10 +95,10 @@ const NORMAL_SAFE_WALK: &[SafeWalk] = &[
         max_z: 3422,
     },
     SafeWalk {
-        min_x: 2934,
-        max_x: 2958,
-        min_z: 3387,
-        max_z: 3411,
+        min_x: 2913,
+        max_x: 2937,
+        min_z: 3355,
+        max_z: 3379,
     },
 ];
 
@@ -153,10 +164,9 @@ fn work_route_escape(outer_bounds: &[SafeWalk], tile: (i32, i32, i32)) -> bool {
     }) || !safe_walk_contains(outer_bounds, tile)
 }
 
-fn normal_patch_is_safe((x, z, level): (i32, i32, i32)) -> bool {
-    (-NORMAL_RADIUS..=NORMAL_RADIUS).all(|dx| {
-        (-NORMAL_RADIUS..=NORMAL_RADIUS)
-            .all(|dz| !work_route_escape(OUTER_WALK_BOUNDS, (x + dx, z + dz, level)))
+fn worksite_patch_is_safe((x, z, level): (i32, i32, i32), radius: i32) -> bool {
+    (-radius..=radius).all(|dx| {
+        (-radius..=radius).all(|dz| !work_route_escape(OUTER_WALK_BOUNDS, (x + dx, z + dz, level)))
     })
 }
 
@@ -566,34 +576,49 @@ fn resumed_work_progress_clears_evade_attribution_at_safe_work_tile() {
 fn worksite_census_and_bank_guard_use_distinct_bounds() {
     for (x, z) in NORMAL_STARTS {
         assert!(safe_walk_contains(NORMAL_SAFE_WALK, (x, z, 0)));
-        assert!(normal_patch_is_safe((x, z, 0)));
+        assert!(worksite_patch_is_safe((x, z, 0), NORMAL_RADIUS));
     }
     assert!(!safe_walk_contains(NORMAL_SAFE_WALK, (2944, 3366, 0)));
     assert!(!work_route_escape(OUTER_WALK_BOUNDS, (2944, 3366, 0)));
+    assert!(safe_walk_contains(
+        NORMAL_SAFE_WALK,
+        (SECOND_TIER_START.0, SECOND_TIER_START.1, 0)
+    ));
+    assert!(worksite_patch_is_safe(
+        (SECOND_TIER_START.0, SECOND_TIER_START.1, 0),
+        SECOND_TIER_RADIUS
+    ));
     for dx in -SECOND_TIER_RADIUS..=SECOND_TIER_RADIUS {
         for dz in -SECOND_TIER_RADIUS..=SECOND_TIER_RADIUS {
-            assert!(safe_walk_contains(
-                NORMAL_SAFE_WALK,
-                (SECOND_TIER_START.0 + dx, SECOND_TIER_START.1 + dz, 0)
-            ));
+            let tile = (SECOND_TIER_START.0 + dx, SECOND_TIER_START.1 + dz, 0);
+            assert!(safe_walk_contains(NORMAL_SAFE_WALK, tile), "{tile:?}");
+            assert!(!work_route_escape(OUTER_WALK_BOUNDS, tile), "{tile:?}");
         }
     }
+    assert!(!safe_walk_contains(
+        NORMAL_SAFE_WALK,
+        (
+            SECOND_TIER_START.0 + SECOND_TIER_RADIUS + 1,
+            SECOND_TIER_START.1,
+            0
+        )
+    ));
 }
 
 #[test]
-fn normal_patch_rejects_outer_boundary_and_danger_crossings() {
+fn worksite_patch_rejects_outer_boundary_and_danger_crossings() {
     let bounds = OUTER_WALK_BOUNDS[0];
     let (_, z) = NORMAL_STARTS[0];
-    assert!(!normal_patch_is_safe((bounds.max_x, z, 0)));
-    assert!(!normal_patch_is_safe((bounds.min_x, z, 0)));
+    assert!(!worksite_patch_is_safe((bounds.max_x, z, 0), NORMAL_RADIUS));
+    assert!(!worksite_patch_is_safe((bounds.min_x, z, 0), NORMAL_RADIUS));
     let (x, _) = NORMAL_STARTS[0];
-    assert!(!normal_patch_is_safe((x, bounds.max_z, 0)));
-    assert!(!normal_patch_is_safe((x, bounds.min_z, 0)));
+    assert!(!worksite_patch_is_safe((x, bounds.max_z, 0), NORMAL_RADIUS));
+    assert!(!worksite_patch_is_safe((x, bounds.min_z, 0), NORMAL_RADIUS));
     let mut crossings = 0;
     for (spawn, radius) in danger_envelopes() {
         let anchor = (spawn.x + radius + 1, spawn.z, spawn.level);
         if !work_route_escape(OUTER_WALK_BOUNDS, anchor) {
-            assert!(!normal_patch_is_safe(anchor));
+            assert!(!worksite_patch_is_safe(anchor, NORMAL_RADIUS));
             crossings += 1;
         }
     }
@@ -605,8 +630,8 @@ fn normal_patch_rejects_outer_boundary_and_danger_crossings() {
 
 #[test]
 fn worksite_departure_is_recorded_without_failing_the_route_guard() {
-    let inside = (2963, 3400, 0);
-    let outside = (2964, 3400, 0);
+    let inside = (2937, 3367, 0);
+    let outside = (2938, 3367, 0);
     assert!(worksite_exit(NORMAL_SAFE_WALK, Some(inside), outside));
     assert!(!work_route_escape(OUTER_WALK_BOUNDS, outside));
     assert!(!worksite_exit(NORMAL_SAFE_WALK, Some(outside), inside));
@@ -687,6 +712,15 @@ struct Actor {
     runner: ScenarioRunner,
     snapshot: GameSnapshot,
     pump: Pump,
+    death_latch: DeathLatch,
+    last_life_tick: Option<u32>,
+    last_life_tile: Option<(i32, i32, i32)>,
+    last_life_hitpoints: Option<(i32, i32)>,
+    last_life_hitmarks: Option<HitmarksView>,
+    last_life_death_watermark: Option<i32>,
+    last_damage_sources: DamageSourceSnapshot,
+    death_events_observed: u64,
+    last_death_sequence: Option<i32>,
     scene2_since: Option<Instant>,
     scene2_unix_ms: Option<u128>,
     script_requested: bool,
@@ -1071,6 +1105,12 @@ fn cohort_keeps_five_lowest_normal_slots_and_moves_the_rest_to_oak() {
         "workload": {"site_names": [NORMAL_SITE_ID, SECOND_TIER_SITE_ID]}
     }))
     .expect("selected content sites");
+    assert_eq!(sites[1].id, "woodcutting.falador_west.2");
+    assert_eq!(
+        (sites[1].start.x, sites[1].start.z, sites[1].start.level),
+        (2925, 3367, 0)
+    );
+    assert_eq!(SECOND_TIER_RADIUS, 12);
     let mut counts = [0, 0];
     for slot in 0..20 {
         let site = site_for_slot(slot, &sites);
@@ -1096,10 +1136,15 @@ fn make_site(site: &GatherSiteOption, resource: &'static str) -> Result<BankSite
             site.id
         ));
     }
-    let (anchor, product_id, level) = if resource == "normal" {
-        (NORMAL_STARTS[0], NORMAL_LOG_ID, 1)
+    let (anchor, product_id, level, radius) = if resource == "normal" {
+        (NORMAL_STARTS[0], NORMAL_LOG_ID, 1, NORMAL_RADIUS)
     } else if resource == SECOND_TIER_KEY {
-        (SECOND_TIER_START, SECOND_TIER_LOG_ID, SECOND_TIER_LEVEL)
+        (
+            SECOND_TIER_START,
+            SECOND_TIER_LOG_ID,
+            SECOND_TIER_LEVEL,
+            SECOND_TIER_RADIUS,
+        )
     } else {
         return Err(format!("no reviewed live bank seed for {resource}"));
     };
@@ -1110,16 +1155,17 @@ fn make_site(site: &GatherSiteOption, resource: &'static str) -> Result<BankSite
     };
     let region = &site.region;
     // Normal anchors use the approved census union, not the authored Site box.
-    // Oak retains the one-tile resource-access allowance around its Site.
+    // Oak starts inside their distinct Site and require a safe radius-12 patch.
     let allowed = if resource == "normal" {
         safe_walk_contains(NORMAL_SAFE_WALK, (start.x, start.z, start.level))
-            && normal_patch_is_safe((start.x, start.z, start.level))
+            && worksite_patch_is_safe((start.x, start.z, start.level), NORMAL_RADIUS)
     } else {
-        start.x >= region.min_x - 1
-            && start.x <= region.max_x + 1
-            && start.z >= region.min_z - 1
-            && start.z <= region.max_z + 1
+        start.x >= region.min_x
+            && start.x <= region.max_x
+            && start.z >= region.min_z
+            && start.z <= region.max_z
             && start.level == region.level
+            && worksite_patch_is_safe((start.x, start.z, start.level), radius)
     };
     if !allowed {
         return Err(format!(
@@ -1332,12 +1378,16 @@ fn scenario_for(site: &BankSite, duration: Duration) -> Result<Scenario, String>
         .iter_mut()
         .find(|step| step.name == GATHERER_PREP_STEP)
         .ok_or("Gatherer scenario has no existing account/tool seed step")?;
-    prep.name = "prepare Woodcutting 99, a rune axe and banked spare axes before Start";
+    prep.name = GATHERER_SOAK_PREP_STEP;
+    let inventory_food_seed = format!("give {SURVIVAL_FOOD_ALIAS} {SURVIVAL_FOOD_TARGET}");
+    let bank_food_seed = format!("givebank {SURVIVAL_FOOD_ALIAS} {SURVIVAL_FOOD_TARGET}");
     prep.kind = StepKind::Perform {
         send: Box::new(move |client, _| {
             cheat(client, &format!("setstat woodcutting {skill_level}")).is_sent()
                 && cheat(client, "give rune_axe 1").is_sent()
                 && cheat(client, "givebank rune_axe 64").is_sent()
+                && cheat(client, &inventory_food_seed).is_sent()
+                && cheat(client, &bank_food_seed).is_sent()
         }),
     };
     prep.wait.arm = Proof::ItemId { id: 1359, count: 1 };
@@ -1365,12 +1415,26 @@ fn scenario_for(site: &BankSite, duration: Duration) -> Result<Scenario, String>
     let prep_index = scenario
         .steps
         .iter()
-        .position(|step| {
-            step.name == "prepare Woodcutting 99, a rune axe and banked spare axes before Start"
-        })
+        .position(|step| step.name == GATHERER_SOAK_PREP_STEP)
         .ok_or("updated Gatherer preparation step disappeared")?;
     scenario.steps.insert(
         prep_index + 1,
+        Step {
+            name: GATHERER_FOOD_PROOF_STEP,
+            kind: StepKind::Perform {
+                send: Box::new(|_, _| true),
+            },
+            wait: Wait {
+                arm: Proof::ItemId {
+                    id: SURVIVAL_FOOD_ID,
+                    count: SURVIVAL_FOOD_TARGET,
+                },
+                budget_ticks: 120,
+            },
+        },
+    );
+    scenario.steps.insert(
+        prep_index + 2,
         Step {
             name: "observe the selected skill reached its real resource requirement",
             kind: StepKind::Perform {
@@ -1396,7 +1460,7 @@ fn scenario_for(site: &BankSite, duration: Duration) -> Result<Scenario, String>
 }
 
 #[test]
-fn soak_seed_proves_rune_axe_without_inherited_bronze_equipment() {
+fn soak_seed_proves_rune_axe_and_lobster_without_inherited_bronze_equipment() {
     let sites = select_sites(&json!({
         "workload": {"site_names": [NORMAL_SITE_ID, SECOND_TIER_SITE_ID]}
     }))
@@ -1406,15 +1470,26 @@ fn soak_seed_proves_rune_axe_without_inherited_bronze_equipment() {
         let prep = scenario
             .steps
             .iter()
-            .find(|step| {
-                step.name == "prepare Woodcutting 99, a rune axe and banked spare axes before Start"
-            })
+            .find(|step| step.name == GATHERER_SOAK_PREP_STEP)
             .expect("soak seed step");
         assert!(matches!(
             prep.wait.arm,
             Proof::ItemId { id: 1359, count: 1 }
         ));
         assert_eq!(prep.wait.budget_ticks, 120);
+        let food = scenario
+            .steps
+            .iter()
+            .find(|step| step.name == GATHERER_FOOD_PROOF_STEP)
+            .expect("soak food proof step");
+        assert!(matches!(
+            food.wait.arm,
+            Proof::ItemId {
+                id: SURVIVAL_FOOD_ID,
+                count: SURVIVAL_FOOD_TARGET
+            }
+        ));
+        assert_eq!(food.wait.budget_ticks, 120);
         assert!(!scenario.steps.iter().any(|step| {
             step.name == "equip the observed bronze axe before Start"
                 || matches!(step.wait.arm, Proof::ItemId { id: 1351, .. })
@@ -1453,6 +1528,9 @@ fn bank_settings(site: &BankSite) -> Map<String, Value> {
     settings.insert("allowWilderness".into(), json!(false));
     settings.insert("deathPolicy".into(), json!("Stop"));
     settings.insert("maxDeaths".into(), json!(2));
+    settings.insert("food".into(), json!(SURVIVAL_FOOD_NAME));
+    settings.insert("foodTarget".into(), json!(SURVIVAL_FOOD_TARGET));
+    settings.insert("eatBelow".into(), json!(0));
     settings
 }
 
@@ -1471,6 +1549,9 @@ fn bank_settings_pin_both_tree_tiers_to_their_start_radius() {
         assert_eq!(settings["disposition"], json!("Bank"));
         assert_eq!(settings["allowTeleports"], json!(false));
         assert_eq!(settings["allowWilderness"], json!(false));
+        assert_eq!(settings["food"], json!(SURVIVAL_FOOD_NAME));
+        assert_eq!(settings["foodTarget"], json!(SURVIVAL_FOOD_TARGET));
+        assert_eq!(settings["eatBelow"], json!(0));
     }
 }
 
@@ -1683,6 +1764,15 @@ fn make_actor(
         runner,
         snapshot: GameSnapshot::new(),
         pump: Pump::new(),
+        death_latch: DeathLatch::default(),
+        last_life_tick: None,
+        last_life_tile: None,
+        last_life_hitpoints: None,
+        last_life_hitmarks: None,
+        last_life_death_watermark: None,
+        last_damage_sources: DamageSourceSnapshot::default(),
+        death_events_observed: 0,
+        last_death_sequence: None,
         scene2_since: None,
         scene2_unix_ms: None,
         scene2_monotonic_ns: None,
@@ -1770,6 +1860,275 @@ fn record_random_route_observation(
     }
 }
 
+#[derive(Debug, Default, PartialEq, Eq)]
+struct DamageSourceSnapshot {
+    local_player_index: Option<usize>,
+    npc_targets_local: Vec<(usize, Option<usize>, WorldTile)>,
+    player_targets_local: Vec<(usize, i32, WorldTile)>,
+    projectiles_targeting_local: Vec<ProjectileView>,
+}
+
+impl DamageSourceSnapshot {
+    fn matches(&self, snapshot: &GameSnapshot) -> bool {
+        let local_player_index = snapshot.local_player().map(|local| local.player.index);
+        if self.local_player_index != local_player_index {
+            return false;
+        }
+        let Some(local_player_index) = local_player_index else {
+            return self.npc_targets_local.is_empty()
+                && self.player_targets_local.is_empty()
+                && self.projectiles_targeting_local.is_empty();
+        };
+        let target = ActorTargetView {
+            kind: ActorKind::Player,
+            index: local_player_index,
+        };
+        let mut npcs = snapshot
+            .npcs()
+            .iter()
+            .filter(|npc| npc.target == Some(target));
+        for (index, npc_type, tile) in &self.npc_targets_local {
+            let Some(npc) = npcs.next() else {
+                return false;
+            };
+            if (npc.index, npc.r#type, npc.tile) != (*index, *npc_type, *tile) {
+                return false;
+            }
+        }
+        if npcs.next().is_some() {
+            return false;
+        }
+
+        let mut players = snapshot
+            .players()
+            .iter()
+            .filter(|player| player.actor.target == Some(target));
+        for (index, combat_level, tile) in &self.player_targets_local {
+            let Some(player) = players.next() else {
+                return false;
+            };
+            if (player.index, player.combat_level, player.actor.tile)
+                != (*index, *combat_level, *tile)
+            {
+                return false;
+            }
+        }
+        if players.next().is_some() {
+            return false;
+        }
+
+        let mut projectiles = snapshot
+            .projectiles()
+            .iter()
+            .filter(|projectile| projectile.target == Some(target));
+        for expected in &self.projectiles_targeting_local {
+            if projectiles.next() != Some(expected) {
+                return false;
+            }
+        }
+        projectiles.next().is_none()
+    }
+
+    fn capture(snapshot: &GameSnapshot) -> Self {
+        let local_player_index = snapshot.local_player().map(|local| local.player.index);
+        let Some(local_player_index) = local_player_index else {
+            return Self::default();
+        };
+        let target = ActorTargetView {
+            kind: ActorKind::Player,
+            index: local_player_index,
+        };
+        Self {
+            local_player_index: Some(local_player_index),
+            npc_targets_local: snapshot
+                .npcs()
+                .iter()
+                .filter(|npc| npc.target == Some(target))
+                .map(|npc| (npc.index, npc.r#type, npc.tile))
+                .collect(),
+            player_targets_local: snapshot
+                .players()
+                .iter()
+                .filter(|player| player.actor.target == Some(target))
+                .map(|player| (player.index, player.combat_level, player.actor.tile))
+                .collect(),
+            projectiles_targeting_local: snapshot
+                .projectiles()
+                .iter()
+                .filter(|projectile| projectile.target == Some(target))
+                .copied()
+                .collect(),
+        }
+    }
+
+    fn as_json(&self, snapshot: &GameSnapshot) -> Value {
+        let local_player_index = self.local_player_index;
+        let target = local_player_index.map(|index| ActorTargetView {
+            kind: ActorKind::Player,
+            index,
+        });
+        let npcs: Vec<Value> = target.map_or_else(Vec::new, |target| {
+            snapshot
+                .npcs()
+                .iter()
+                .filter(|npc| npc.target == Some(target))
+                .map(|npc| {
+                    json!({
+                        "index": npc.index,
+                        "npc_type_id": npc.r#type,
+                        "name": npc.name,
+                        "tile": npc.tile,
+                        "in_combat": npc.in_combat,
+                        "target": npc.target
+                    })
+                })
+                .collect()
+        });
+        let players: Vec<Value> = target.map_or_else(Vec::new, |target| {
+            snapshot
+                .players()
+                .iter()
+                .filter(|player| player.actor.target == Some(target))
+                .map(|player| {
+                    json!({
+                        "index": player.index,
+                        "combat_level": player.combat_level,
+                        "tile": player.actor.tile,
+                        "in_combat": player.actor.in_combat,
+                        "target": player.actor.target
+                    })
+                })
+                .collect()
+        });
+        let projectiles: Vec<Value> = target.map_or_else(Vec::new, |target| {
+            snapshot
+                .projectiles()
+                .iter()
+                .filter(|projectile| projectile.target == Some(target))
+                .map(|projectile| {
+                    json!({
+                        "spotanim": projectile.spotanim,
+                        "source_tile": projectile.src,
+                        "target": projectile.target,
+                        "t1": projectile.t1,
+                        "t2": projectile.t2
+                    })
+                })
+                .collect()
+        });
+        json!({
+            "attribution": "observed target relations, not confirmed damage causation",
+            "local_player_index": local_player_index,
+            "npc_targets_local": npcs,
+            "player_targets_local": players,
+            "projectiles_targeting_local": projectiles
+        })
+    }
+}
+
+fn record_life_frame(actor: &mut Actor, writer: &EventWriter, run_started: Instant) {
+    let tick = actor.snapshot.tick();
+    let tile = actor.snapshot.tile();
+    let hitpoints = actor
+        .snapshot
+        .stats()
+        .iter()
+        .find(|stat| stat.name == "hitpoints")
+        .map(|stat| (stat.effective, stat.base));
+    let hitmarks = actor.snapshot.hitmarks().copied();
+    let chat_lines: &[ChatLineView] = actor.snapshot.chat_lines();
+    let previous_watermark = actor.death_latch.watermark();
+    let death_observed = actor.death_latch.observe_lines(|| {
+        chat_lines
+            .iter()
+            .map(|line| (line.sequence, line.text.as_str()))
+    });
+    let death_watermark = actor.death_latch.watermark();
+    let damage_sources_match = actor.last_damage_sources.matches(&actor.snapshot);
+    if actor.last_life_tick == Some(tick)
+        && actor.last_life_tile == tile
+        && actor.last_life_hitpoints == hitpoints
+        && actor.last_life_hitmarks == hitmarks
+        && actor.last_life_death_watermark == death_watermark
+        && damage_sources_match
+        && !death_observed
+    {
+        return;
+    }
+
+    let death_chat_lines = if death_observed {
+        chat_lines
+            .iter()
+            .filter(|line| is_death_line(&line.text))
+            .map(|line| json!({"sequence": line.sequence, "text": line.text}))
+            .collect::<Vec<_>>()
+    } else {
+        Vec::new()
+    };
+    let death_sequence = death_chat_lines
+        .iter()
+        .filter_map(|line| line["sequence"].as_i64())
+        .max()
+        .and_then(|sequence| i32::try_from(sequence).ok());
+    let respawn_square =
+        tile.is_some_and(|(x, z, level)| RESPAWN_SQUARE.contains(WorldTile { x, z, level }));
+    let hp_zero = hitpoints_zero(Some(actor.snapshot.stats()));
+    let current_damage_sources =
+        (!damage_sources_match).then(|| DamageSourceSnapshot::capture(&actor.snapshot));
+    let damage_source_evidence = current_damage_sources
+        .as_ref()
+        .unwrap_or(&actor.last_damage_sources)
+        .as_json(&actor.snapshot);
+    let wall_ms = match time_ms() {
+        Ok(wall_ms) => wall_ms,
+        Err(error) => {
+            actor.failure = Some(error);
+            return;
+        }
+    };
+    let mut event = event_base("life-frame", actor, run_started, wall_ms);
+    event["tick"] = json!(tick);
+    event["tile"] = json!(tile);
+    event["hitpoints"] = json!({
+        "effective": hitpoints.map(|(effective, _)| effective),
+        "base": hitpoints.map(|(_, base)| base),
+        "zero": hp_zero
+    });
+    event["hitmarks"] = json!(hitmarks);
+    event["taking_damage"] = json!(actor.snapshot.taking_damage());
+    event["damage_source_evidence"] = damage_source_evidence;
+    event["death_chat_lines"] = json!(death_chat_lines);
+    event["death_event_observed"] = json!(death_observed);
+    event["death_chat_watermark_before"] = json!(previous_watermark);
+    event["death_chat_watermark_after"] = json!(death_watermark);
+    event["respawn_square"] = json!(respawn_square);
+    if let Err(error) = writer.write(&event) {
+        actor.failure = Some(error);
+        return;
+    }
+    if let Some(current) = current_damage_sources {
+        actor.last_damage_sources = current;
+    }
+
+    actor.last_life_tick = Some(tick);
+    actor.last_life_tile = tile;
+    actor.last_life_hitpoints = hitpoints;
+    actor.last_life_hitmarks = hitmarks;
+    actor.last_life_death_watermark = death_watermark;
+    if death_observed {
+        actor.death_events_observed = actor.death_events_observed.saturating_add(1);
+        actor.last_death_sequence = death_sequence;
+        let mut event = event_base("death-observed", actor, run_started, wall_ms);
+        event["life_frame_game_tick"] = json!(tick);
+        event["death_sequence"] = json!(death_sequence);
+        event["death_chat_watermark_before"] = json!(previous_watermark);
+        event["death_chat_watermark_after"] = json!(death_watermark);
+        if let Err(error) = writer.write(&event) {
+            actor.failure = Some(error);
+        }
+    }
+}
+
 fn drive_frame(
     actor: &mut Actor,
     client: &mut client::client::Client,
@@ -1780,6 +2139,7 @@ fn drive_frame(
     let drain = actor.pump.drain_client(client);
     host::publish_snapshot(&mut actor.snapshot, client, drain);
     record_scene2(actor, writer, run_started);
+    record_life_frame(actor, writer, run_started);
 
     let tile = actor.snapshot.tile();
     let route_escape = tile.map(|tile| work_route_escape(actor.site.outer_bounds, tile));
@@ -1938,6 +2298,8 @@ fn slot_sample_json(
             .map(|elapsed| elapsed / 1_000_000_000),
         "script_started_unix_ms": actor.script_started_unix_ms,
         "bank_cycles": actor.bank_cycles,
+        "death_events_observed": actor.death_events_observed,
+        "last_death_sequence": actor.last_death_sequence,
         "walk_tile_changes": actor.walk_tile_changes,
         "warmup_qualified": actor.warmup_qualified,
         "slot_ready_monotonic_ns": actor.slot_ready_monotonic_ns,
@@ -1992,6 +2354,8 @@ fn actor_summaries(
                 "script_running_monotonic_ns": actor.script_running_monotonic_ns,
                 "script_state": format!("{script_state:?}"),
                 "bank_cycles": actor.bank_cycles,
+                "death_events_observed": actor.death_events_observed,
+                "last_death_sequence": actor.last_death_sequence,
                 "first_bank_cycle_process_elapsed_seconds": actor.first_bank_cycle_elapsed_seconds,
                 "first_bank_cycle_monotonic_ns": actor.first_bank_cycle_monotonic_ns,
                 "first_bank_cycle_phase_zero_elapsed_seconds": bank_cycle_elapsed_seconds,
