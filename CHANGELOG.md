@@ -50,6 +50,11 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.8` 
 
 ### Developer tools
 
+- The shared live-cell runner now copies each pass's cache into that pass's
+  evidence directory. Native navigation tests no longer refuse the runner's
+  cache path before login. Each pass gets its own copy; the throwaway-cache
+  guard, selected commands, goals and budgets are unchanged.
+
 - World-probe preservation checks accept a known server-only progress domain
   even when quest colour cannot prove progress. They still reject missing
   domains, transmitted variables, and ranges or writers outside the domain.

@@ -435,9 +435,12 @@ python3 -B tools/live-map/live_map.py run --repo <lab clone> \
 ```
 
 The runner refuses to start when the clone has uncommitted tracked changes. It runs
-cells one at a time and never stops on a failure. It creates one `BOT_CACHE_DIR` per
-cell, one `LIVE_EVIDENCE_DIR` per cell and pass, plus per-cell unpack dirs and a kept
-panel home. It sets `BOT_LIVE_NAME_PREFIX`, `BOT_NAV_BUILD=skip`,
+cells one at a time and never stops on a failure. Populate `<cell>/cache-289` with
+the copied cache seed. For each pass, the runner copies that seed without symlinks
+to `<cell>/passN/evidence/cache-289`. This copy is `BOT_CACHE_DIR`, inside that
+pass's `LIVE_EVIDENCE_DIR`; writes in one pass do not change the seed or another
+pass's cache. The runner also creates per-cell unpack dirs and a kept panel home.
+It sets `BOT_LIVE_NAME_PREFIX`, `BOT_NAV_BUILD=skip`,
 `WORLD_GAME_PORT`/`WORLD_HTTP_PORT` from the selected engine ports. Explicit caller
 engine and nav paths take precedence over discovered reference-v17 defaults.
 It sets `ISOHOME_DIR` to `<LIVE_EVIDENCE_DIR>/home`

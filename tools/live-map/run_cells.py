@@ -563,6 +563,8 @@ def run_all(
             panel_home.mkdir(parents=True, exist_ok=True)
             (live_dir / "tui").mkdir(parents=True, exist_ok=True)
             (live_dir / "home").mkdir(parents=True, exist_ok=True)
+            pass_cache_dir = live_dir / "cache-289"
+            shutil.copytree(cache_dir, pass_cache_dir, symlinks=False)
             log_path = pass_dir / "cell.log"
             receipt_path = pass_dir / "receipt.txt"
             unpack_record: str | None = None
@@ -573,7 +575,7 @@ def run_all(
                 cell_command=cell.command,
                 prefix=prefix,
                 live_evidence_dir=str(live_dir),
-                bot_cache_dir=str(cache_dir),
+                bot_cache_dir=str(pass_cache_dir),
                 client_unpack_dir=str(client_dir),
                 bot_unpack_dir=str(client_dir),
                 panel_home=str(panel_home),
@@ -919,6 +921,61 @@ class RunCellsTests(unittest.TestCase):
                 self.assertEqual([item.exit_code for item in results], [3, 0])
                 self.assertTrue((evidence / "first" / "pass1" / "receipt.txt").is_file())
                 self.assertTrue((evidence / "second" / "pass1" / "receipt.txt").is_file())
+
+    def test_each_pass_copies_cache_inside_its_evidence(self) -> None:
+        import tempfile
+
+        cell = live_map.Cell(
+            "host.fixture-cache",
+            "LIVE=1 BOT_EVIDENCE_DIR=${LIVE_EVIDENCE_DIR:?} true",
+            "--locked",
+        )
+        seen_caches: list[Path] = []
+
+        def observe_cache(**kwargs) -> tuple[int, str, str, int]:
+            env = kwargs["env"]
+            cache = Path(env["BOT_CACHE_DIR"])
+            self.assertEqual(cache.parent.resolve(), Path(env["LIVE_EVIDENCE_DIR"]).resolve())
+            self.assertFalse(cache.is_symlink())
+            data = cache / "nested" / "data.bin"
+            self.assertFalse(data.is_symlink())
+            self.assertEqual(data.read_bytes(), b"seed")
+            data.write_bytes(b"changed in this pass")
+            seen_caches.append(cache)
+            kwargs["log_path"].write_text("ok\n", encoding="utf-8")
+            return 0, "s", "e", 0
+
+        with tempfile.TemporaryDirectory() as temp:
+            repo = Path(temp) / "repo"
+            repo.mkdir()
+            evidence = Path(temp) / "evidence"
+            seed_cache = evidence / cell.name / "cache-289"
+            (seed_cache / "nested").mkdir(parents=True)
+            seed_data = seed_cache / "nested" / "data.bin"
+            seed_data.write_bytes(b"seed")
+            with unittest.mock.patch(f"{__name__}.repo_head", return_value="deadbeef"):
+                results = run_all(
+                    [cell],
+                    repo=repo,
+                    evidence_root=evidence,
+                    prefix="abc",
+                    passes=2,
+                    engine_game_port=1,
+                    engine_http_port=2,
+                    quest_game_port=3,
+                    quest_http_port=4,
+                    defaults={},
+                    runner=observe_cache,
+                )
+            self.assertEqual([item.exit_code for item in results], [0, 0])
+            self.assertEqual(
+                seen_caches,
+                [
+                    evidence / cell.name / "pass1" / "evidence" / "cache-289",
+                    evidence / cell.name / "pass2" / "evidence" / "cache-289",
+                ],
+            )
+            self.assertEqual(seed_data.read_bytes(), b"seed")
 
     def test_unknown_cell_is_rejected(self) -> None:
         config = live_map.validate_map(
