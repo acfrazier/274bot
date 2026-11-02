@@ -105,6 +105,6 @@
     "max_request_threads": 64
   },
   "workload": {
-    "site_names": ["woodcutting.park.2", "woodcutting.falador_west.2"]
+    "site_names": ["woodcutting.falador_west.n", "woodcutting.falador_west.2"]
   }
 }
