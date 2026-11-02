@@ -3759,7 +3759,11 @@ mod tests {
             label: "Block",
             value: StatusValue::Text("expected refusal".into()),
         }]);
-        assert!(family_parked_error(&status, FamilyBlockedPolicy::Observe).is_some());
+        assert!(
+            family_parked_error(&status, FamilyBlockedPolicy::Observe).is_none(),
+            "block_reason precedes native Blocked publication"
+        );
+        assert!(family_parked_error(&status, FamilyBlockedPolicy::Reject).is_none());
     }
 
     fn settings(gang: &str) -> Map<String, Value> {
