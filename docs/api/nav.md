@@ -660,7 +660,10 @@ without a live hold, also after a long pause. Its page stays hidden for at most
 The host ends a hold that is still live one tick after that deadline (the
 owner checks its deadline before the host reads the wait in the same frame),
 and logs that as a failure. A new send, a re-armed gap or a new journal read
-has its own key and deadline.
+has its own key and deadline. A renewal that keeps the key and moves the
+deadline later (the dialogue's acknowledgement wait renewed as its end gap)
+is a wait of its own: if the host had ended the earlier hold, it holds again
+to the new deadline. A session boundary is never undone this way.
 The journal content opens the page without a delay (`quest_journal.rs2:1-55`).
 If the retry fails, the walk blocks with the terminal failure detail. The live
 proof receipt records each attempt, its start and terminal ticks, and its

@@ -197,11 +197,103 @@ fn the_compat_click_renews_the_hold_after_a_long_pause() {
     assert!(infos[7].emitted && infos[7].deferred && !infos[7].pressed);
 }
 
+/// F1 of `HOLD-MODEL-AB`: the host ended the acknowledgement hold at its
+/// terminal release (the owner was not polled while its clock ran), and the
+/// end gap that follows is the same lease renewed to a later deadline. The
+/// head host holds the renewed wait. The shortest trace of the earlier host
+/// is these six steps.
+fn f1_trace() -> [Action; 6] {
+    [
+        frame(true, false, false, OwnerAct::Begin(Begin::Modal)),
+        Action::ModalOpen,
+        frame(false, true, true, OwnerAct::Send),
+        frame(true, false, false, OwnerAct::Stall),
+        Action::ModalClose,
+        frame(false, true, false, OwnerAct::ToGap(1)),
+    ]
+}
+
 #[test]
-fn the_head_findings_are_the_two_known_ones_in_the_smoke_profile() {
+fn a_renewed_end_gap_holds_again_after_the_host_ended_the_acknowledgement_hold() {
+    let (state, infos) = run(&model(), &f1_trace());
+    assert_eq!(
+        infos[3].expired,
+        Some((Key::Modal(2), 1, 2)),
+        "the host ended the acknowledgement hold at the deadline plus the margin"
+    );
+    assert!(
+        infos[5].deferred && !infos[5].pressed && infos[5].wait.is_some(),
+        "the renewed wait has a hold of its own"
+    );
+    assert!(state.hold_rec.is_some_and(|hold| !hold.released));
+}
+
+#[test]
+fn the_earlier_host_presses_during_the_renewed_end_gap() {
+    let earlier = Model::new(Bounds::standard(), Mutation::F1RenewalKeepsRelease);
+    let mut state = earlier.initial_state();
+    let steps = f1_trace();
+    for action in &steps[..5] {
+        state = earlier
+            .step_detail(&state, action)
+            .expect("the first five steps are clean")
+            .0;
+    }
+    let (_, info, violation) = earlier.step_unchecked(&state, &steps[5]);
+    assert!(info.pressed && !info.deferred, "the earlier host presses");
+    let names: Vec<_> = violation.iter().map(|v| v.name).collect();
+    assert_eq!(names, ["S1-press-while-live"]);
+}
+
+/// A repeat of the deadline after the terminal release is no renewal: the
+/// hold stays ended. The host re-arms only for a later deadline.
+#[test]
+fn the_head_does_not_rearm_a_hold_for_a_repeat_of_the_deadline() {
+    let model = model();
+    let mut state = model.initial_state();
+    for action in &f1_trace()[..5] {
+        state = model.step_detail(&state, action).expect("clean").0;
+    }
+    let released = state.hold_rec.expect("the hold exists");
+    assert!(released.released && !released.boundary);
+    // The owner changes nothing at its next poll: the same key and deadline.
+    let (state, info) = model
+        .step_detail(
+            &state,
+            &frame(true, false, false, OwnerAct::Stall),
+        )
+        .expect("clean");
+    assert!(!info.deferred && info.pressed, "the key holds no more");
+    assert!(state.hold_rec.is_some_and(|hold| hold.released));
+}
+
+#[test]
+fn the_head_has_no_finding_in_the_smoke_profile() {
     let run = explore_profile(
         &profile("smoke").expect("smoke profile"),
         Mutation::None,
+        Some(7),
+        Limits::default(),
+        true,
+    );
+    assert!(run.complete);
+    assert!(
+        run.failures.is_empty(),
+        "F1 is fixed: {:?}",
+        run.failures
+            .iter()
+            .map(|(v, trace)| (v.name, trace.len()))
+            .collect::<Vec<_>>()
+    );
+}
+
+/// The earlier host (the product at `0a3e700f8`) is a mutation that the
+/// frozen invariants catch: S1 and S4, in the six steps of F1.
+#[test]
+fn the_earlier_host_fails_s1_and_s4_in_the_smoke_profile() {
+    let run = explore_profile(
+        &profile("smoke").expect("smoke profile"),
+        Mutation::F1RenewalKeepsRelease,
         Some(7),
         Limits::default(),
         true,

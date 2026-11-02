@@ -62,10 +62,15 @@ pub enum Mutation {
     /// M6 (round 5): the compat hold has one wall bound from the begin; the
     /// click does not renew it.
     M6CompatNoRenew,
+    /// F1 (the defect of `HOLD-MODEL-AB`, fixed in `host`): the host's hold of
+    /// a key that it ended as the terminal failure stays ended when the owner
+    /// renews the same key to a later deadline. This is the host as it was at
+    /// `0a3e700f8`; the head model re-arms the hold at such a renewal.
+    F1RenewalKeepsRelease,
 }
 
 impl Mutation {
-    pub const ALL: [Mutation; 14] = [
+    pub const ALL: [Mutation; 15] = [
         Mutation::None,
         Mutation::CheckMarginZero,
         Mutation::CheckMarginTwo,
@@ -80,6 +85,7 @@ impl Mutation {
         Mutation::M4CompatConstantKey,
         Mutation::M5ActiveToWall,
         Mutation::M6CompatNoRenew,
+        Mutation::F1RenewalKeepsRelease,
     ];
 
     pub fn name(self) -> &'static str {
@@ -98,6 +104,7 @@ impl Mutation {
             Mutation::M4CompatConstantKey => "m4-compat-constant-key",
             Mutation::M5ActiveToWall => "m5-active-to-wall",
             Mutation::M6CompatNoRenew => "m6-compat-no-renew",
+            Mutation::F1RenewalKeepsRelease => "f1-renewal-keeps-release",
         }
     }
 
@@ -369,8 +376,15 @@ impl Lease {
 pub struct HostHold {
     pub key: Key,
     pub released: bool,
-    /// The tick of the first sample of this key. The head design does not
-    /// read it; the earlier designs M1 to M4 do.
+    /// A session boundary ended the hold (`released` is set too). Only a new
+    /// key holds again; the terminal release is the one that a renewal undoes.
+    pub boundary: bool,
+    /// The deadline of the latest sample of this key (`ScriptWaitHold::
+    /// deadline_tick`). A later one after the terminal release is a renewal.
+    /// The earlier host (`F1RenewalKeepsRelease`) did not keep it: it stays 0.
+    pub deadline: u8,
+    /// The tick at which this hold began: the first sample of its key, or the
+    /// renewal that re-armed it. Only the earlier designs M1 to M4 read it.
     pub start: u8,
 }
 
@@ -939,6 +953,8 @@ impl Model {
             s.hold_rec = Some(HostHold {
                 key: Key::Modal(0),
                 released: false,
+                boundary: false,
+                deadline: 0,
                 start: s.tick,
             });
         }
@@ -1026,20 +1042,36 @@ impl Model {
     /// `ScriptRunPolicy::observe_script_wait`: the expiry it returns, as the
     /// key, the reported deadline and the tick.
     fn observe_wait(&self, s: &mut State, wait: Option<&Wait>) -> Option<(Key, u8, u8)> {
+        let f1 = self.mutation == Mutation::F1RenewalKeepsRelease;
+        // Only the earlier designs read the start tick; the head design keeps
+        // it at 0 so that its state space is unchanged.
+        let start = if self.mutation == Mutation::M3FixedTerminal {
+            s.tick
+        } else {
+            0
+        };
         s.hold_rec = match (wait, s.hold_rec) {
             (None, held) if self.mutation == Mutation::CheckStaleHold => held,
             (None, _) => None,
-            (Some(w), Some(h)) if h.key == w.key => Some(h),
+            (Some(w), Some(mut h)) if h.key == w.key => {
+                // A renewal that moves the deadline later after the terminal
+                // release is a wait of its own: it holds again. A boundary
+                // release and a repeat of the deadline do not.
+                if !f1 && h.released && !h.boundary && w.deadline > h.deadline {
+                    h.released = false;
+                    h.start = start;
+                }
+                if !f1 {
+                    h.deadline = w.deadline;
+                }
+                Some(h)
+            }
             (Some(w), _) => Some(HostHold {
                 key: w.key,
                 released: false,
-                // Only the earlier designs read the start tick; the head
-                // design keeps it at 0 so that its state space is unchanged.
-                start: if self.mutation == Mutation::M3FixedTerminal {
-                    s.tick
-                } else {
-                    0
-                },
+                boundary: false,
+                deadline: if f1 { 0 } else { w.deadline },
+                start,
             }),
         };
         let (Some(w), Some(h)) = (wait, s.hold_rec.as_mut()) else {
@@ -1206,6 +1238,7 @@ impl Model {
         if s.session_pending {
             if let Some(h) = s.hold_rec.as_mut() {
                 h.released = true;
+                h.boundary = true;
                 s.released_txn = s.lease.txn();
             }
             s.run_on = false;

@@ -190,11 +190,34 @@ pub struct ScriptRunPolicy {
     script_wait: Option<ScriptWaitHold>,
 }
 
+/// Where one hold stands.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum HoldPhase {
+    /// The press is held.
+    Held,
+    /// A session boundary ended the hold. Only a new key holds again.
+    EndedAtBoundary,
+    /// The terminal release ended the hold at the deadline sampled last. A
+    /// renewal of the same key that moves the deadline later holds again.
+    EndedAtDeadline,
+}
+
 #[derive(Debug, Clone, Copy)]
 struct ScriptWaitHold {
     key: u64,
-    /// A session boundary or the terminal release ended the hold for this key.
-    released: bool,
+    /// The deadline of the latest sample of this key, to tell a renewal from
+    /// a repeat. A deadline above `u32::MAX` observed ticks (about 81 years
+    /// of game time) saturates there, so a renewal between two such deadlines
+    /// is not seen. The 4 bytes keep [`ScriptRunPolicy`] within its per-slot
+    /// size budget.
+    deadline_tick: u32,
+    phase: HoldPhase,
+}
+
+impl ScriptWaitHold {
+    fn deadline_of(wait: ScriptWait) -> u32 {
+        u32::try_from(wait.deadline_tick).unwrap_or(u32::MAX)
+    }
 }
 
 impl ScriptRunPolicy {
@@ -219,9 +242,12 @@ impl ScriptRunPolicy {
     /// before the press decision. `tick` is the frame's observed game tick on
     /// the script's clock. `None` ends the hold at once. A new key starts a
     /// new hold. The deadline is the owner's latest, read on every frame, so a
-    /// renewed wait moves it. A hold still live at `deadline_tick +
-    /// SCRIPT_WAIT_MARGIN_TICKS` ends here, is logged as a failure and is
-    /// returned.
+    /// renewed wait moves it. A renewal that moves the deadline later after
+    /// the terminal release is a wait of its own and holds again (the
+    /// dialogue renews its acknowledgement wait as its end gap); a repeat of
+    /// the same deadline does not, and a session boundary is never undone.
+    /// A hold still live at `deadline_tick + SCRIPT_WAIT_MARGIN_TICKS` ends
+    /// here, is logged as a failure and is returned.
     pub fn observe_script_wait(
         &mut self,
         wait: Option<ScriptWait>,
@@ -230,10 +256,26 @@ impl ScriptRunPolicy {
         let before = self.script_wait.map(|hold| hold.key);
         self.script_wait = match (wait, self.script_wait) {
             (None, _) => None,
-            (Some(wait), Some(hold)) if hold.key == wait.key => Some(hold),
+            (Some(wait), Some(mut hold)) if hold.key == wait.key => {
+                let deadline = ScriptWaitHold::deadline_of(wait);
+                if hold.phase == HoldPhase::EndedAtDeadline && deadline > hold.deadline_tick {
+                    hold.phase = HoldPhase::Held;
+                    host_log!(
+                        Category::InteractTrace,
+                        Level::Debug,
+                        "auto-run hold key={} renewed deadline_tick={} was={} tick={tick}",
+                        hold.key,
+                        wait.deadline_tick,
+                        hold.deadline_tick
+                    );
+                }
+                hold.deadline_tick = deadline;
+                Some(hold)
+            }
             (Some(wait), _) => Some(ScriptWaitHold {
                 key: wait.key,
-                released: false,
+                deadline_tick: ScriptWaitHold::deadline_of(wait),
+                phase: HoldPhase::Held,
             }),
         };
         let after = self.script_wait.map(|hold| hold.key);
@@ -248,10 +290,12 @@ impl ScriptRunPolicy {
         let (Some(wait), Some(hold)) = (wait, self.script_wait.as_mut()) else {
             return None;
         };
-        if hold.released || tick < wait.deadline_tick.saturating_add(SCRIPT_WAIT_MARGIN_TICKS) {
+        if hold.phase != HoldPhase::Held
+            || tick < wait.deadline_tick.saturating_add(SCRIPT_WAIT_MARGIN_TICKS)
+        {
             return None;
         }
-        hold.released = true;
+        hold.phase = HoldPhase::EndedAtDeadline;
         host_log!(
             Category::InteractTrace,
             Level::Warn,
@@ -270,15 +314,16 @@ impl ScriptRunPolicy {
     /// result of its own interaction. The modal check holds the press
     /// separately while a modal is open.
     pub fn should_defer_auto_run(&self) -> bool {
-        self.script_wait.is_some_and(|hold| !hold.released)
+        self.script_wait
+            .is_some_and(|hold| hold.phase == HoldPhase::Held)
     }
 
     /// A session boundary ends the current hold: no page of the old session
     /// can arrive. A wait that outlives the boundary holds again only with a
-    /// new key.
+    /// new key, also when it renews its deadline.
     fn release_at_session_boundary(&mut self) {
         if let Some(hold) = self.script_wait.as_mut() {
-            hold.released = true;
+            hold.phase = HoldPhase::EndedAtBoundary;
         }
     }
 
