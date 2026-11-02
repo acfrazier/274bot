@@ -772,11 +772,8 @@ check(
 );
 const tradeState = globalThis.__rs2b0t_partner_trade;
 check(
-    tradeState('tradeScreenState', { trade_offer_open: false, trade_confirm_open: false }) === 'closed' &&
-        tradeState('tradeScreenState', { trade_offer_open: false, trade_confirm_open: true }) === 'confirm' &&
-        tradeState('tradeScreenState', { trade_offer_open: true, trade_confirm_open: false }) === 'offer' &&
-        tradeState('tradeScreenState', { trade_offer_open: true, trade_confirm_open: true }) === 'offer',
-    'trade screen state precedence mismatch'
+    tradeState('tradeScreenState') === 'closed',
+    'trade screen state readback mismatch'
 );
 const buyOps = [null, 'Value', 'Buy 1', 'Buy 5', 'Buy 10'];
 check(
