@@ -1064,10 +1064,21 @@ impl Model {
     /// An expired hold makes its queued verb stale: the sample that ends a
     /// lease's hold by expiry drops the verb that the owner sent in this frame
     /// (`Ledger::quiet_read` cancels the queued interaction; the compat
-    /// journal's drain drops its verb). The earlier product
-    /// (`N1ExpiredClickDispatched`) dispatched it.
+    /// journal's drain drops its verb). The products before the rule
+    /// dispatched it: `N1ExpiredClickDispatched` is the product at
+    /// `c2ca4cf66`, and the earlier journal designs that lose the click's
+    /// hold in its own frame (`F2QuietClickNoRenew`, `M6CompatNoRenew`,
+    /// `CheckCompatClickNoRenew`) are older still. Their counterexample is
+    /// the press after the dispatched click (S6), so they keep that behaviour.
     fn stale_verb(&self, info: &mut Info) {
-        if info.emitted && self.mutation != Mutation::N1ExpiredClickDispatched {
+        let before_the_rule = matches!(
+            self.mutation,
+            Mutation::N1ExpiredClickDispatched
+                | Mutation::F2QuietClickNoRenew
+                | Mutation::M6CompatNoRenew
+                | Mutation::CheckCompatClickNoRenew
+        );
+        if info.emitted && !before_the_rule {
             info.dropped = true;
         }
     }

@@ -10,6 +10,9 @@ struct Cli {
     horizon: Option<usize>,
     limits: Limits,
     all_violations: bool,
+    /// Run the profiles without the stall (the bounds of the runs before
+    /// finding N1, for their state counts).
+    no_stall: bool,
 }
 
 fn main() -> ExitCode {
@@ -22,6 +25,11 @@ fn main() -> ExitCode {
     };
     let mut worst = 0u8;
     for profile in &cli.profiles {
+        let mut profile = *profile;
+        if cli.no_stall {
+            profile.bounds.stall = false;
+        }
+        let profile = &profile;
         let result = explore_profile(
             profile,
             cli.mutation,
@@ -42,7 +50,7 @@ fn report(
     result: &Exploration<hold_model::State, hold_model::Action>,
 ) -> u8 {
     println!(
-        "profile={} mutation={} horizon={} states={} transitions={} deepest={} max_frontier={} est_bytes={} elapsed_ms={}",
+        "profile={} mutation={} horizon={} states={} transitions={} deepest={} max_frontier={} est_bytes={} elapsed_ms={} stall={}",
         profile.name,
         mutation.name(),
         result.horizon,
@@ -51,7 +59,8 @@ fn report(
         result.deepest,
         result.max_frontier,
         result.estimated_peak_bytes,
-        result.elapsed.as_millis()
+        result.elapsed.as_millis(),
+        if profile.bounds.stall { "on" } else { "off" }
     );
     let peak_rss = std::fs::read_to_string("/proc/self/status")
         .ok()
@@ -96,6 +105,7 @@ fn parse_args() -> Result<Cli, String> {
         mutation: Mutation::None,
         horizon: None,
         all_violations: false,
+        no_stall: false,
         limits: Limits {
             state_cap: DEFAULT_STATE_CAP,
             frontier_cap: DEFAULT_FRONTIER_CAP,
@@ -124,6 +134,10 @@ fn parse_args() -> Result<Cli, String> {
             }
             "--all-violations" => {
                 cli.all_violations = true;
+                index += 1;
+            }
+            "--no-stall" => {
+                cli.no_stall = true;
                 index += 1;
             }
             "--horizon" => {
@@ -159,5 +173,5 @@ fn parse_number(args: &[String], index: usize, option: &str) -> Result<usize, St
 }
 
 fn usage() -> &'static str {
-    "usage: hold-model --profile NAME|all-profiles [--mutation NAME] [--horizon N] [--state-cap N] [--frontier-cap N] [--byte-cap N]\nEvery run is bounded: a horizon, a state cap, a frontier cap and a byte cap. Run it on chardonnay inside a memory scope."
+    "usage: hold-model --profile NAME|all-profiles [--mutation NAME] [--horizon N] [--state-cap N] [--frontier-cap N] [--byte-cap N] [--all-violations] [--no-stall]\nEvery run is bounded: a horizon, a state cap, a frontier cap and a byte cap. Run it on chardonnay inside a memory scope."
 }

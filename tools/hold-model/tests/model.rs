@@ -340,11 +340,16 @@ fn the_head_has_no_finding_in_the_quiet_profiles() {
     }
 }
 
+/// The earlier ledger is counted without the stall, as before finding N1:
+/// the stall finds a shorter trace of the same kind (see
+/// `the_earlier_product_dispatches_after_expiry_and_s7_catches_it`).
 #[test]
 fn the_earlier_ledger_fails_s6_in_the_quiet_profiles() {
     for (name, horizon, steps) in [("alt", 5, 4), ("quiet", 7, 6)] {
+        let mut quiet = profile(name).expect("profile");
+        quiet.bounds.stall = false;
         let run = explore_profile(
-            &profile(name).expect("profile"),
+            &quiet,
             Mutation::F2QuietClickNoRenew,
             Some(horizon),
             Limits::default(),
@@ -599,4 +604,174 @@ fn each_earlier_design_fails_a_frozen_invariant() {
                 .collect::<Vec<_>>()
         );
     }
+}
+
+// ---- finding N1: an expired hold makes its queued verb stale ----
+
+/// The steps of finding N1 for the journal read: the owner begins, and in a
+/// later frame it polls (its click goes out, and the poll renews the hold to
+/// four wall units from there), and the process stalls past every hold before
+/// the host's sample. `run_on` says whether the run is already on, so that no
+/// press follows. The last step is the frame of the click.
+fn n1_quiet_steps(run_on: bool) -> Vec<Action> {
+    let mut steps = Vec::new();
+    if run_on {
+        // No lease yet: the host presses and the run is on.
+        steps.push(frame(true, false, false, OwnerAct::Stall));
+    }
+    steps.push(frame(true, false, false, OwnerAct::Begin(Begin::Quiet)));
+    steps.push(Action::Frame(hold_model::FrameInput {
+        tick: true,
+        wake: false,
+        drift: false,
+        stall: true,
+        act: OwnerAct::Poll,
+    }));
+    steps
+}
+
+/// The same for the compat read: its click is the first poll.
+fn n1_compat_steps() -> Vec<Action> {
+    vec![
+        frame(true, false, false, OwnerAct::Begin(Begin::Compat)),
+        Action::Frame(hold_model::FrameInput {
+            tick: true,
+            wake: false,
+            drift: false,
+            stall: true,
+            act: OwnerAct::Poll,
+        }),
+    ]
+}
+
+fn stalled_model(mutation: Mutation) -> Model {
+    Model::new(
+        Bounds {
+            stall: true,
+            ..Bounds::standard()
+        },
+        mutation,
+    )
+}
+
+/// The head drops the click that the owner queued when the sample ends its
+/// hold by expiry. The press is the host's ordinary decision after an expired
+/// hold; it cannot close the page of a click that never went out.
+#[test]
+fn an_expired_hold_makes_the_queued_click_stale() {
+    for steps in [
+        n1_quiet_steps(false),
+        n1_quiet_steps(true),
+        n1_compat_steps(),
+    ] {
+        let (_, infos) = run(&stalled_model(Mutation::None), &steps);
+        let last = infos.last().expect("a frame");
+        assert!(last.emitted, "the owner sent its click");
+        assert!(last.dropped && !last.dispatched(), "the click is stale");
+        assert!(!last.deferred, "the hold expired at the sample");
+    }
+}
+
+/// S1 to S6 cannot see a dispatch after expiry when the run is already on:
+/// no press follows, so S6 is silent, and no lease is live at the press
+/// decision, so S1 is silent. S7 catches the product at `c2ca4cf66`, and
+/// the dispatch of the click is the only wrong thing in the frame.
+#[test]
+fn the_earlier_product_dispatches_after_expiry_and_s7_catches_it() {
+    let model = stalled_model(Mutation::N1ExpiredClickDispatched);
+    for (steps, kind) in [
+        (n1_quiet_steps(true), "quiet"),
+        (n1_compat_steps(), "compat"),
+    ] {
+        let mut state = model.initial_state();
+        let last = steps.len() - 1;
+        for (index, action) in steps.iter().enumerate() {
+            let (next, info, violation) = model.step_unchecked(&state, action);
+            if index == last {
+                let violation = violation.unwrap_or_else(|| panic!("{kind}: S7 must fire"));
+                assert_eq!(violation.name, "S7-dispatch-without-hold", "{kind}");
+                assert!(info.dispatched() && !info.deferred, "{kind}: {info:?}");
+                if kind == "quiet" {
+                    assert!(!info.pressed, "run is on: no press, so S6 cannot see it");
+                }
+            } else {
+                assert!(violation.is_none(), "{kind}: step {index}");
+            }
+            state = next;
+        }
+    }
+    // With the press, S6 sees it too (it is checked before S7).
+    let mut state = model.initial_state();
+    let mut last = None;
+    for action in &n1_quiet_steps(false) {
+        let (next, _, violation) = model.step_unchecked(&state, action);
+        last = violation;
+        state = next;
+    }
+    assert_eq!(
+        last.map(|violation| violation.name),
+        Some("S6-press-after-send")
+    );
+}
+
+/// The shortest trace of N1 in each profile that has a lease with a wall
+/// bound, found by the explorer.
+#[test]
+fn the_earlier_product_fails_s7_in_the_profiles() {
+    for (name, horizon, steps) in [("smoke", 4, 3), ("alt", 4, 3), ("quiet", 4, 3)] {
+        let run = explore_profile(
+            &profile(name).expect("profile"),
+            Mutation::N1ExpiredClickDispatched,
+            Some(horizon),
+            Limits::default(),
+            true,
+        );
+        let found = run
+            .failures
+            .iter()
+            .find(|(v, _)| v.name == "S7-dispatch-without-hold");
+        assert!(
+            found.is_some_and(|(_, trace)| trace.len() == steps),
+            "{name}: S7 in {steps} steps; found {:?}",
+            run.failures
+                .iter()
+                .map(|(v, t)| (v.name, t.len()))
+                .collect::<Vec<_>>()
+        );
+    }
+}
+
+/// The modal lease cannot reach the case. It has no wall bound: the owner's
+/// deadline is on the active clock or in ticks, and the host ends such a hold
+/// only a tick after the owner's deadline, in a later frame. A stall in the
+/// frame of a send leaves the hold live, and the head has no finding in the
+/// modal profile for any stall.
+#[test]
+fn a_stall_never_strands_a_dialogue_verb() {
+    let model = stalled_model(Mutation::None);
+    let (_, infos) = run(
+        &model,
+        &[
+            frame(true, false, false, OwnerAct::Begin(Begin::Modal)),
+            Action::ModalOpen,
+            Action::Frame(hold_model::FrameInput {
+                tick: false,
+                wake: true,
+                drift: false,
+                stall: true,
+                act: OwnerAct::Send,
+            }),
+        ],
+    );
+    let send = &infos[2];
+    assert!(send.emitted && send.dispatched(), "the send goes out");
+    assert!(send.deferred, "with a live hold");
+    let run = explore_profile(
+        &profile("modal").expect("profile"),
+        Mutation::None,
+        Some(9),
+        Limits::default(),
+        true,
+    );
+    assert!(run.complete && run.failures.is_empty(), "{:?}", run.failures.iter().map(|(v, _)| v.name).collect::<Vec<_>>());
 }
