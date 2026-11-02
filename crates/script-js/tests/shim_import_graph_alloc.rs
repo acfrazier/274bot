@@ -1,7 +1,14 @@
 #![cfg(feature = "test-hooks")]
 
+use std::collections::BTreeSet;
+
 use rustyscript::Module;
-use script_js::shim::{filter_gated_modules_for_test, shim_modules, BOT_MODULE};
+use script::{ScriptKind, ScriptSource};
+use script_js::shim::{
+    filter_gated_modules_for_card_test, filter_gated_modules_for_test, shim_modules, BOT_MODULE,
+    MAIN_MODULE,
+};
+use script_js::{CacheMeta, JsCache, JsLibrary};
 const SIBLING_MODULE: &str = "/rs2b0t/bot/scripts/bot/sibling.js";
 
 const THIEVER_SOURCE: &str = r#"
@@ -63,7 +70,6 @@ fn thiever_modules() -> Vec<Module> {
 fn small_import_source_closure_allocation_is_bounded() {
     let mut warm_modules = thiever_modules();
     filter_gated_modules_for_test(&mut warm_modules, [SIBLING_MODULE, BOT_MODULE]);
-
     let mut modules = thiever_modules();
     let allocated = allocation_counter::measure(|| {
         filter_gated_modules_for_test(&mut modules, [SIBLING_MODULE, BOT_MODULE]);
@@ -77,6 +83,254 @@ fn small_import_source_closure_allocation_is_bounded() {
         allocated.bytes_total <= LIMIT,
         "per-start import closure allocated {} bytes, above {LIMIT}",
         allocated.bytes_total
+    );
+}
+#[test]
+fn frozen_bright_catalog_cards_gate_with_bounded_per_start_allocations() {
+    const FROZEN_REVISION: &str = "ae56ccc95ba5681b12f1f66ec2adea14427fe497";
+    const THIEVER_C_PRIME_SHIMS: &[&str] = &[
+        "/rs2b0t/bot/adapter/ClientAdapter.js",
+        "/rs2b0t/bot/api/bank/Bank.js",
+        "/rs2b0t/bot/api/bank/BankLocations.js",
+        "/rs2b0t/bot/api/bank/Banking.js",
+        "/rs2b0t/bot/api/bot/Bot.js",
+        "/rs2b0t/bot/api/combat/food.js",
+        "/rs2b0t/bot/api/execution/Execution.js",
+        "/rs2b0t/bot/api/game/Game.js",
+        "/rs2b0t/bot/api/grounditems/GroundItems.js",
+        "/rs2b0t/bot/api/inventory/Inventory.js",
+        "/rs2b0t/bot/api/loadout/loadoutPlan.js",
+        "/rs2b0t/bot/api/loadout/loadoutSetting.js",
+        "/rs2b0t/bot/api/npcs/Npcs.js",
+        "/rs2b0t/bot/api/query/Query.js",
+        "/rs2b0t/bot/api/skills/Skills.js",
+        "/rs2b0t/bot/api/sustain/Sustain.js",
+        "/rs2b0t/bot/api/tasks/Anchor.js",
+        "/rs2b0t/bot/api/tasks/ContinueDialog.js",
+        "/rs2b0t/bot/api/thieving/stealRules.js",
+        "/rs2b0t/bot/api/thieving/targets.js",
+        "/rs2b0t/bot/api/ui/dialogue/ChatDialog.js",
+        "/rs2b0t/bot/api/walking/Traversal.js",
+        "/rs2b0t/bot/data/pickpocketTargets.js",
+        "/rs2b0t/bot/event/webwalk/geometry/Reachability.js",
+        "/rs2b0t/bot/event/webwalk/walkOpening.js",
+        "/rs2b0t/bot/geometry/Tile.js",
+        "/rs2b0t/bot/paint/Paint.js",
+        "/rs2b0t/bot/paint/paintLogic.js",
+        "/rs2b0t/bot/runtime/ScriptRunner.js",
+        "/rs2b0t/bot/runtime/Settings.js",
+        "/rs2b0t/bot/shim/_kernel.js",
+    ];
+    let Some(root) =
+        script::ctx::test_support::local_asset_path("RS2B0T", "", "frozen ae56ccc95 catalog")
+    else {
+        return;
+    };
+    let revision = std::process::Command::new("git")
+        .arg("-C")
+        .arg(&root)
+        .args(["rev-parse", "HEAD"])
+        .output()
+        .expect("read frozen catalog revision");
+    assert!(
+        revision.status.success(),
+        "RS2B0T must be a git checkout: {}",
+        String::from_utf8_lossy(&revision.stderr)
+    );
+    assert_eq!(
+        String::from_utf8(revision.stdout).unwrap().trim(),
+        FROZEN_REVISION,
+        "RS2B0T must be the pinned frozen catalog"
+    );
+    let scratch =
+        std::env::temp_dir().join(format!("274bot-shim-import-graph-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&scratch);
+    std::fs::create_dir_all(&scratch).expect("create catalog probe directory");
+    let mut library =
+        JsLibrary::with_cache(scratch.join("js-scripts.json"), scratch.join("js-cache"));
+    library
+        .register_rs2b0t(&root, &scratch.join("rs2b0t-path"))
+        .expect("register frozen catalog");
+    let cache = JsCache::new(scratch.join("siblings"));
+
+    let mut bright_names = library
+        .cards()
+        .iter()
+        .filter(|card| {
+            card.source == ScriptSource::Catalog
+                && card.unloadable.is_none()
+                && !script_js::is_catalog_dim(&card.name)
+        })
+        .map(|card| card.name.clone())
+        .collect::<Vec<_>>();
+    bright_names.sort_unstable();
+    assert_eq!(bright_names.len(), 59, "frozen bright catalog card count");
+
+    let formerly_ungated = [
+        "Duel Arena Combat Trainer",
+        "ChaosDruidKiller",
+        "MossGiant",
+        "BrimhavenMossGiants",
+        "GnomeMagicChopper",
+        "Alcher",
+        "TannerBot",
+        "LeatherCrafter",
+    ];
+    for name in formerly_ungated {
+        assert!(
+            bright_names.iter().any(|bright| bright == name),
+            "reviewed bright card {name} is missing from the pinned catalog"
+        );
+    }
+
+    let shim_paths = shim_modules()
+        .iter()
+        .map(|module| module.filename().to_path_buf())
+        .collect::<BTreeSet<_>>();
+    let shim_count = shim_paths.len();
+    let mut warm = shim_modules();
+    warm.push(Module::new(BOT_MODULE, "export default class T {}"));
+    warm.push(script_js::main_module_for_import_gate_test(
+        script_js::LoadShape::CompatClass,
+        script_js::ApiFamily::Unversioned,
+    ));
+    filter_gated_modules_for_card_test(
+        &mut warm,
+        [BOT_MODULE, MAIN_MODULE],
+        "catalog allocation warm-up",
+    );
+
+    let mut failures = Vec::new();
+    let mut ungated = Vec::new();
+    let mut max_bytes = 0u64;
+    let mut max_name = String::new();
+    let mut thiever_modules = None;
+    let mut jive_dragons_measured = false;
+    for name in bright_names {
+        if let Err(error) = library.ensure_js(ScriptSource::Catalog, &name) {
+            failures.push(format!("{name}: transpile {error}"));
+            continue;
+        }
+        let Some(card) = library.get(ScriptSource::Catalog, &name).cloned() else {
+            failures.push(format!("{name}: missing after transpile"));
+            continue;
+        };
+        let siblings = match script_js::resolve_sibling_modules(
+            &card.path,
+            &card.origin,
+            &cache,
+            CacheMeta {
+                kind: ScriptKind::Compat,
+                source: ScriptSource::Catalog,
+                shape: Some(format!("{:?}", card.shape)),
+                api_family: None,
+            },
+        ) {
+            Ok(siblings) => siblings,
+            Err(error) => {
+                failures.push(format!("{name}: siblings {error}"));
+                continue;
+            }
+        };
+        let siblings = siblings
+            .into_iter()
+            .map(|(url, source)| (url, script_js::shim::remap_catalog_imports(&source)))
+            .collect::<Vec<_>>();
+        let source = script_js::shim::remap_catalog_imports(&card.js);
+        let source_bytes = source.len()
+            + siblings
+                .iter()
+                .map(|(_, source)| source.len())
+                .sum::<usize>();
+
+        let mut modules = shim_modules();
+        for (url, source) in &siblings {
+            modules.push(Module::new(url, source));
+        }
+        modules.push(Module::new(BOT_MODULE, source.as_str()));
+        modules.push(script_js::main_module_for_import_gate_test(
+            card.shape,
+            card.api_family,
+        ));
+        let before = modules.len();
+        let roots = siblings
+            .iter()
+            .map(|(url, _)| url.as_str())
+            .chain([BOT_MODULE, MAIN_MODULE])
+            .collect::<Vec<_>>();
+        let allocation = allocation_counter::measure(|| {
+            filter_gated_modules_for_card_test(&mut modules, roots, &name);
+        });
+        let gated = modules.len() < before;
+        modules
+            .pop()
+            .expect("temporary main module root is retained");
+        let retained_shims = modules
+            .iter()
+            .filter(|module| shim_paths.contains(module.filename()))
+            .count();
+        if name == "JiveDragons" {
+            jive_dragons_measured = true;
+        }
+        if !gated {
+            ungated.push(name.clone());
+        }
+        eprintln!(
+            "FROZEN_CATALOG {name}: siblings={} source_bytes={source_bytes} per_start_alloc={} retained_shims={retained_shims}/{shim_count} gated={gated}",
+            siblings.len(),
+            allocation.bytes_total
+        );
+        if name == "Thiever" {
+            let mut paths = modules
+                .iter()
+                .filter(|module| shim_paths.contains(module.filename()))
+                .map(|module| module.filename().display().to_string())
+                .collect::<Vec<_>>();
+            paths.sort_unstable();
+            let expected: BTreeSet<_> = THIEVER_C_PRIME_SHIMS.iter().copied().collect();
+            let actual: BTreeSet<_> = paths.iter().map(String::as_str).collect();
+            let added = actual.difference(&expected).copied().collect::<Vec<_>>();
+            let missing = expected.difference(&actual).copied().collect::<Vec<_>>();
+            eprintln!(
+                "C-prime to C-double-prime Thiever shim diff: added={added:?}, missing={missing:?}"
+            );
+            assert!(
+                added.is_empty() && missing.is_empty(),
+                "Thiever shim set differs from C-prime: added={added:?}, missing={missing:?}"
+            );
+            eprintln!("FROZEN_CATALOG Thiever shim modules: {paths:#?}");
+            thiever_modules = Some(paths);
+        }
+        if allocation.bytes_total > max_bytes {
+            max_bytes = allocation.bytes_total;
+            max_name = name.clone();
+        }
+        const PER_START_LIMIT: u64 = 2 * 1024 * 1024;
+        if allocation.bytes_total > PER_START_LIMIT {
+            failures.push(format!(
+                "{name}: per-start allocation {} exceeds {PER_START_LIMIT}",
+                allocation.bytes_total
+            ));
+        }
+        if !gated {
+            failures.push(format!("{name}: no shim was gated"));
+        }
+    }
+
+    assert!(
+        thiever_modules.is_some(),
+        "pinned Thiever card was not measured"
+    );
+    assert!(
+        jive_dragons_measured,
+        "pinned JiveDragons card was not measured"
+    );
+    eprintln!("FROZEN_CATALOG maximum per_start_alloc={max_bytes} card={max_name} limit=2MiB");
+    eprintln!("FROZEN_CATALOG ungated cards: {ungated:?}");
+    assert!(
+        failures.is_empty(),
+        "frozen catalog import-closure failures:\n{}",
+        failures.join("\n")
     );
 }
 

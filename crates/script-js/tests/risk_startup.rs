@@ -14,6 +14,7 @@ fn u9_normal_slot_start_does_not_construct_risk_tables() {
     slot.bind_surface_factory(Arc::new(surface::JsSurfaceFactory));
     slot.start_surface(SurfaceStart {
         card: Arc::new(surface::JsStartCard {
+            card_name: "risk startup test".into(),
             source,
             shape: LoadShape::NativeTick,
             siblings: Arc::default(),

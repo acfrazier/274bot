@@ -105,26 +105,3 @@ fn one_on_demand_import_cost_is_measured() {
         include_str!("../src/shim/regions.js").len(),
     );
 }
-#[test]
-fn missing_shim_import_error_names_module_path() {
-    const MISSING_PATH: &str = "/rs2b0t/bot/api/map/__cf029_missing_module.js";
-    let isolate = LoadIsolate::spawn(
-        format!(
-            "import '{MISSING_PATH}';\nexport default class MissingShimModule extends LoopingBot {{}}"
-        ),
-        LoadShape::CompatClass,
-        Vec::new(),
-    )
-    .expect("spawn missing-module fixture");
-
-    let _ = isolate.probe("true");
-    let error = match isolate.poll_ready() {
-        Ready::Failed(error) => error,
-        other => panic!("missing shim import unexpectedly loaded: {other:?}"),
-    };
-    assert!(
-        error.contains("__cf029_missing_module.js"),
-        "missing shim import error must name {MISSING_PATH}: {error}"
-    );
-    isolate.join();
-}

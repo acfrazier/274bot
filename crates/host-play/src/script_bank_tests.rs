@@ -97,7 +97,12 @@ export async function tick(api) {{
         slot.bind_surface_factory(Arc::new(script_js::surface::JsSurfaceFactory));
         let settings = serde_json::json!({"useMageBank": defaults, "useZanarisBank": defaults});
         let start = crate::script_runtime::js_surface_start(
-            crate::script_runtime::js_start_card(source, script_js::LoadShape::NativeTick, vec![]),
+            crate::script_runtime::js_start_card(
+                "bank test",
+                source,
+                script_js::LoadShape::NativeTick,
+                vec![],
+            ),
             settings.as_object().cloned().map(Arc::new),
             Some(api::game_data::for_revision(client::io::ClientRevision::R289).unwrap()),
             Arc::new(NamedBankFacts::from_banks(banks.clone())),
@@ -2723,6 +2728,7 @@ export default class T extends LoopingBot {
         let mut slot = slot.lock().unwrap();
         let start = crate::script_runtime::js_surface_start(
             crate::script_runtime::js_start_card(
+                "bank test",
                 source.into(),
                 script_js::LoadShape::CompatClass,
                 vec![],

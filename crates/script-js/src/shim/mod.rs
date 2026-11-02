@@ -10,7 +10,7 @@ mod rows;
 mod source_catalog;
 
 pub use content::content_json;
-pub(crate) use modules::{filter_gated_modules, shim_import_provider};
+pub(crate) use modules::{filter_gated_modules_for_card, shim_import_provider};
 #[cfg(feature = "test-hooks")]
 #[doc(hidden)]
 pub use modules::{filter_gated_modules_for_card_test, filter_gated_modules_for_test};

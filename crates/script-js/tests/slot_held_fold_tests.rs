@@ -22,6 +22,7 @@ fn paint_slot(source: &str, incarnation: u64) -> SlotScript {
     slot.bind_surface_factory(Arc::new(JsSurfaceFactory));
     slot.start_surface(SurfaceStart {
         card: Arc::new(JsStartCard {
+            card_name: "held fold test".into(),
             source,
             shape: script_js::LoadShape::CompatClass,
             siblings: Arc::from(Vec::<(String, String)>::new()),

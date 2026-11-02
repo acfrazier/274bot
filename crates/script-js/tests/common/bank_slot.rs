@@ -99,6 +99,7 @@ impl BankSlot {
         slot.bind_surface_factory(Arc::new(script_js::surface::JsSurfaceFactory));
         slot.start_surface_with_settings(script::surface::SurfaceStart {
             card: Arc::new(script_js::surface::JsStartCard {
+                card_name: "bank slot test".into(),
                 source,
                 shape,
                 siblings: Arc::<[(String, String)]>::from([]),

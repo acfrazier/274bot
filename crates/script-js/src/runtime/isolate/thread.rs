@@ -186,6 +186,7 @@ impl Drop for RuntimeLifetime {
 #[allow(clippy::too_many_arguments)] // channel endpoints plus optional diagnostics
 pub(super) fn isolate_main(
     source: String,
+    card_name: std::sync::Arc<str>,
     shape: LoadShape,
     siblings: Vec<(String, String)>,
     game_data: Option<std::sync::Arc<api::game_data::SelectedGameData>>,
@@ -278,6 +279,7 @@ pub(super) fn isolate_main(
             local_state,
             std::sync::Arc::clone(&frame_interest),
             loc_projection_interest,
+            card_name.as_ref(),
         )
     });
     if let Err(e) = wired {

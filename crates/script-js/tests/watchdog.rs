@@ -45,6 +45,7 @@ fn test_surface_start(
         .ok()
         .map(|(_, family)| family);
     let card: Arc<dyn script::surface::SurfaceCard> = Arc::new(script_js::surface::JsStartCard {
+        card_name: "watchdog test".into(),
         source,
         shape,
         siblings: Arc::from(siblings),

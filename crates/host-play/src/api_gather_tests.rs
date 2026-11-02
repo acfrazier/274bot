@@ -254,6 +254,7 @@ fn start_source(
         }
         let start = crate::script_runtime::js_surface_start(
             crate::script_runtime::js_start_card(
+                "test card",
                 source.into(),
                 script_js::LoadShape::NativeTick,
                 vec![],

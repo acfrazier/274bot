@@ -212,6 +212,7 @@ pub(super) fn wire_runtime(
     local_state: Option<std::sync::Arc<script::local_state::SlotState>>,
     frame_interest: std::sync::Arc<std::sync::atomic::AtomicUsize>,
     loc_projection_interest: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    card_name: &str,
 ) -> Result<(), String> {
     if shape == LoadShape::Reject {
         return Err("not a bot shape".to_string());
@@ -903,21 +904,7 @@ pub(super) fn wire_runtime(
     super::lineage_v8::eval::<()>(runtime, content.as_str())
         .map_err(|e| format!("content: {e}"))?;
     let bot = rustyscript::Module::new(crate::shim::BOT_MODULE, source);
-    let main = match shape {
-        LoadShape::NativeTick if family == super::shape::ApiFamily::V2 => {
-            rustyscript::Module::new(crate::shim::MAIN_MODULE, NATIVE_V2_MAIN)
-        }
-        LoadShape::NativeTick => rustyscript::Module::new(crate::shim::MAIN_MODULE, NATIVE_MAIN),
-        LoadShape::CompatDefineBot => rustyscript::Module::new(
-            crate::shim::MAIN_MODULE,
-            format!("{COMPAT_MAIN}{COMPAT_RUNNER}"),
-        ),
-        LoadShape::CompatClass => rustyscript::Module::new(
-            crate::shim::MAIN_MODULE,
-            format!("{COMPAT_CLASS_MAIN}{COMPAT_RUNNER}"),
-        ),
-        LoadShape::Reject => unreachable!("rejected above"),
-    };
+    let main = main_module(shape, family);
     // Side modules load in order, so the shim modules (which the bot imports)
     // must precede the bot's own module.
     let mut side = crate::shim::shim_modules();
@@ -929,15 +916,23 @@ pub(super) fn wire_runtime(
         side.push(rustyscript::Module::new(url, src));
     }
     side.push(bot);
-    // Keep gated modules if the bot, one of its siblings, or any other
-    // always-loaded side module imports them.
-    crate::shim::filter_gated_modules(
+    // Keep gated modules if the bot, its siblings, or the shape main module
+    // imports them. The main module is analyzed as a root but is not supplied
+    // to `load_modules`, which loads it separately.
+    side.push(rustyscript::Module::new(
+        crate::shim::MAIN_MODULE,
+        main.contents(),
+    ));
+    crate::shim::filter_gated_modules_for_card(
         &mut side,
         siblings
             .iter()
             .map(|(url, _)| url.as_str())
-            .chain(std::iter::once(crate::shim::BOT_MODULE)),
+            .chain(std::iter::once(crate::shim::BOT_MODULE))
+            .chain(std::iter::once(crate::shim::MAIN_MODULE)),
+        card_name,
     );
+    side.pop();
     let side: Vec<&rustyscript::Module> = side.iter().collect();
     // Loading evaluates the modules, so a missing `tick`/default
     // export, an unresolvable import, or a syntax error surfaces
@@ -1781,3 +1776,29 @@ globalThis.__rs2b0t_compat_loop = () => __rs2b0t_invoke('loop');
 globalThis.__rs2b0t_compat_on_pause = () => __rs2b0t_invoke_sync('onPause');
 globalThis.__rs2b0t_compat_on_resume = () => __rs2b0t_invoke_sync('onResume');
 "#;
+fn main_module(shape: LoadShape, family: super::shape::ApiFamily) -> rustyscript::Module {
+    match shape {
+        LoadShape::NativeTick if family == super::shape::ApiFamily::V2 => {
+            rustyscript::Module::new(crate::shim::MAIN_MODULE, NATIVE_V2_MAIN)
+        }
+        LoadShape::NativeTick => rustyscript::Module::new(crate::shim::MAIN_MODULE, NATIVE_MAIN),
+        LoadShape::CompatDefineBot => rustyscript::Module::new(
+            crate::shim::MAIN_MODULE,
+            format!("{COMPAT_MAIN}{COMPAT_RUNNER}"),
+        ),
+        LoadShape::CompatClass => rustyscript::Module::new(
+            crate::shim::MAIN_MODULE,
+            format!("{COMPAT_CLASS_MAIN}{COMPAT_RUNNER}"),
+        ),
+        LoadShape::Reject => unreachable!("rejected above"),
+    }
+}
+
+#[cfg(feature = "test-hooks")]
+#[doc(hidden)]
+pub fn main_module_for_import_gate_test(
+    shape: LoadShape,
+    family: super::shape::ApiFamily,
+) -> rustyscript::Module {
+    main_module(shape, family)
+}

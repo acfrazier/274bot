@@ -53,6 +53,7 @@ fn start_js_surface(
     slot.bind_surface_factory(Arc::new(script_js::surface::JsSurfaceFactory));
     slot.start_surface(script::surface::SurfaceStart {
         card: Arc::new(script_js::surface::JsStartCard {
+            card_name: "native api v2 test".into(),
             source,
             shape,
             siblings: Arc::<[(String, String)]>::from([]),

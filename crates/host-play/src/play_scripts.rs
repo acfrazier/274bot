@@ -396,7 +396,7 @@ impl ScriptStartHandle {
                 match resolved_loadouts {
                     Ok(loadouts) => slot.start_surface_with_settings(
                         script_runtime::js_surface_start_with_wilderness(
-                            script_runtime::js_start_card(source, shape, siblings),
+                            script_runtime::js_start_card(name, source, shape, siblings),
                             bag.map(Arc::new),
                             self.game_data.clone(),
                             Arc::clone(&self.named_banks),

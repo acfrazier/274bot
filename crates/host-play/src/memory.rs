@@ -2132,6 +2132,7 @@ fn q4_accountleveler_probe_card(arm: Q4FrameArm, cell: Q4FrameCell) -> Result<Sc
     let bag = script::settings_store::merge_bag(&[], &serde_json::Map::new(), None);
     Ok(ScriptCard {
         catalog: Some(crate::script_runtime::js_start_card(
+            "Q4 Accountleveler Probe",
             js,
             script_js::LoadShape::CompatClass,
             Vec::new(),
@@ -2398,7 +2399,10 @@ impl Run {
                     )?;
                     Some(ScriptCard {
                         catalog: Some(crate::script_runtime::js_start_card(
-                            card.js, card.shape, siblings,
+                            card.name.clone(),
+                            card.js,
+                            card.shape,
+                            siblings,
                         )),
                         bag: Arc::new(bag),
                         loadouts: scenario_loadouts(&benchmark.settings),
@@ -5003,6 +5007,7 @@ mod tests {
             .clone();
         run.card = Some(ScriptCard {
             catalog: Some(crate::script_runtime::js_start_card(
+                card.name,
                 card.js,
                 card.shape,
                 vec![],

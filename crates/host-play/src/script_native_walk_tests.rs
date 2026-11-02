@@ -4399,6 +4399,7 @@ fn in_place_load_rig() -> Rig {
     rig.slot().lock().unwrap().stop();
     let start = crate::script_runtime::js_surface_start(
         crate::script_runtime::js_start_card(
+            "native walk test",
             "export function tick(api) { globalThis.s2Ticks = (globalThis.s2Ticks || 0) + 1; }"
                 .into(),
             script_js::LoadShape::NativeTick,
@@ -6533,6 +6534,7 @@ mod s2b_admission_contract {
 
         let start = crate::script_runtime::js_surface_start(
             crate::script_runtime::js_start_card(
+                "native walk test",
                 "export function tick(api) {}".into(),
                 script_js::LoadShape::NativeTick,
                 Vec::new(),

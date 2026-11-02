@@ -3173,6 +3173,7 @@ export function tick() {{}}
             None,
             std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0)),
             std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            "test card",
         )
     })
     .unwrap();
@@ -3226,6 +3227,7 @@ export default class RuntimeShapeProbe extends LoopingBot {}
             None,
             std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0)),
             std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            "test card",
         )
     })
     .unwrap();

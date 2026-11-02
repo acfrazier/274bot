@@ -9707,6 +9707,7 @@ fn t23_bank_start_compat_slot(scripts: &ScriptWall, name: &str, source: &str) {
         api::game_data::for_revision(api::selected::ClientRevision::R289).expect("R289 game data");
     let start = crate::script_runtime::js_surface_start(
         crate::script_runtime::js_start_card(
+            name,
             source.to_string(),
             script_js::LoadShape::CompatClass,
             vec![],
@@ -22925,6 +22926,7 @@ impl ReconnectRig {
             let mut slot = slot.lock().unwrap();
             let start = crate::script_runtime::js_surface_start(
                 crate::script_runtime::js_start_card(
+                    "bank wake test",
                     source,
                     script_js::LoadShape::CompatClass,
                     vec![],
@@ -32037,6 +32039,7 @@ export default class T extends LoopingBot {
 "#;
         let start = crate::script_runtime::js_surface_start(
             crate::script_runtime::js_start_card(
+                "test card",
                 source.to_owned(),
                 script_js::LoadShape::CompatClass,
                 vec![],

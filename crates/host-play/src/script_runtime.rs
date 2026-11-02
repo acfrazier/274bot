@@ -180,6 +180,7 @@ fn bind_js_surface_factory(slot: &mut SlotScript) {
 
 #[cfg(feature = "js")]
 pub(super) fn js_start_card(
+    card_name: impl Into<Arc<str>>,
     source: String,
     shape: script_js::LoadShape,
     siblings: Vec<(String, String)>,
@@ -189,6 +190,7 @@ pub(super) fn js_start_card(
         .ok()
         .map(|(_, family)| family);
     Arc::new(script_js::surface::JsStartCard {
+        card_name: card_name.into(),
         source,
         shape,
         siblings: Arc::from(siblings),
@@ -332,7 +334,7 @@ impl SettledStart for SlotScript {
     ) -> Result<(), String> {
         bind_js_surface_factory(self);
         let start = js_surface_start(
-            js_start_card(source, shape, siblings),
+            js_start_card("test card", source, shape, siblings),
             None,
             None,
             Arc::new(api::named_banks::NamedBankFacts::default()),
@@ -352,7 +354,7 @@ impl SettledStart for SlotScript {
     ) -> Result<(), String> {
         bind_js_surface_factory(self);
         let start = js_surface_start(
-            js_start_card(source, shape, siblings),
+            js_start_card("test card", source, shape, siblings),
             None,
             None,
             Arc::new(api::named_banks::NamedBankFacts::default()),

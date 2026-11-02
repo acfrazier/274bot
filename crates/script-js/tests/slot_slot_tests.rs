@@ -28,6 +28,7 @@ fn surface_start(
     let source = source.into();
     let family = resolve_api_family(&source).ok().map(|(_, family)| family);
     let card: Arc<dyn SurfaceCard> = Arc::new(JsStartCard {
+        card_name: "slot test".into(),
         source,
         shape,
         siblings: Arc::from(Vec::<(String, String)>::new()),

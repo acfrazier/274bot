@@ -680,6 +680,7 @@ impl GameplayFactory {
     ) -> Result<LoadIsolate, LoadIsolateError> {
         Self::spawn_with_content_and_state(
             js,
+            "test card".into(),
             shape,
             siblings,
             game_data,
@@ -693,6 +694,7 @@ impl GameplayFactory {
     #[allow(clippy::too_many_arguments)] // the slot's per-run inputs plus its local state
     pub(crate) fn spawn_with_content_and_state(
         js: String,
+        card_name: std::sync::Arc<str>,
         shape: LoadShape,
         siblings: Vec<(String, String)>,
         game_data: Option<std::sync::Arc<api::game_data::SelectedGameData>>,
@@ -703,6 +705,7 @@ impl GameplayFactory {
     ) -> Result<LoadIsolate, LoadIsolateError> {
         LoadIsolate::spawn_inner(
             js,
+            card_name,
             shape,
             siblings,
             game_data,
@@ -728,6 +731,7 @@ impl LoadIsolate {
     ) -> Result<Self, LoadIsolateError> {
         Self::spawn_inner(
             js,
+            "test card".into(),
             shape,
             siblings,
             None,
@@ -747,6 +751,7 @@ impl LoadIsolate {
     ) -> Result<Self, LoadIsolateError> {
         Self::spawn_inner(
             js,
+            "test card".into(),
             shape,
             siblings,
             None,
@@ -767,6 +772,7 @@ impl LoadIsolate {
     ) -> Result<Self, LoadIsolateError> {
         Self::spawn_inner(
             js,
+            "test card".into(),
             shape,
             siblings,
             None,
@@ -787,6 +793,7 @@ impl LoadIsolate {
     ) -> Result<Self, LoadIsolateError> {
         Self::spawn_inner(
             js,
+            "test card".into(),
             shape,
             siblings,
             Some(game_data),
@@ -808,6 +815,7 @@ impl LoadIsolate {
     ) -> Result<Self, LoadIsolateError> {
         Self::spawn_inner(
             js,
+            "test card".into(),
             shape,
             siblings,
             game_data,
@@ -829,6 +837,7 @@ impl LoadIsolate {
     ) -> Result<Self, LoadIsolateError> {
         Self::spawn_inner(
             js,
+            "test card".into(),
             shape,
             siblings,
             None,
@@ -850,6 +859,7 @@ impl LoadIsolate {
     #[allow(clippy::too_many_arguments)] // the isolate's per-run inputs
     fn spawn_inner(
         js: String,
+        card_name: std::sync::Arc<str>,
         shape: LoadShape,
         siblings: Vec<(String, String)>,
         game_data: Option<std::sync::Arc<api::game_data::SelectedGameData>>,
@@ -912,6 +922,7 @@ impl LoadIsolate {
                 let _permit = permit;
                 isolate_main(
                     js,
+                    card_name,
                     shape,
                     siblings,
                     game_data,

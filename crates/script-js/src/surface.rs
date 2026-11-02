@@ -22,6 +22,7 @@ use std::time::Instant;
 /// Frozen JavaScript inputs retained by the slot across run restarts.
 #[derive(Debug)]
 pub struct JsStartCard {
+    pub card_name: Arc<str>,
     pub source: Arc<str>,
     pub shape: LoadShape,
     pub siblings: Arc<[(String, String)]>,
@@ -65,6 +66,7 @@ impl JsSurfaceFactory {
             .ok_or(SurfaceError::ForeignCard(SurfaceKind::Js))?;
         let isolate = GameplayFactory::spawn_with_content_and_state(
             card.source.to_string(),
+            card.card_name.clone(),
             card.shape,
             card.siblings.iter().cloned().collect(),
             start.game_data.clone(),

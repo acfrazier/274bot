@@ -280,6 +280,10 @@ pub use isolate::{
 
 pub use platform::bootstrap_v8_platform;
 
+#[cfg(feature = "test-hooks")]
+#[doc(hidden)]
+pub use bindings::main_module_for_import_gate_test;
+
 pub(crate) use recovery_hints_v8::{
     post as post_recovery_hints, startup_complete as recovery_startup_complete,
 };

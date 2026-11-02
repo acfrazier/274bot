@@ -2980,6 +2980,7 @@ export default class NativeStop extends LoopingBot {{
             .map(|(_, family)| family);
         slot.start_surface(script::surface::SurfaceStart {
             card: Arc::new(script_js::surface::JsStartCard {
+                card_name: "NativeStop".into(),
                 source: source.into(),
                 shape: script_js::LoadShape::CompatClass,
                 siblings: Arc::from([]),

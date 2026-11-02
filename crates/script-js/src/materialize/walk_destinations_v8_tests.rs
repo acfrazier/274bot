@@ -160,7 +160,8 @@ fn loaded_declared_surface_materializes_walk_catalog() {
         crate::platform::bootstrap_test_v8_platform();
         CALLBACK_COUNT.store(0, std::sync::atomic::Ordering::Relaxed);
         let isolate = crate::LoadIsolate::spawn(
-            "export default class T extends LoopingBot { loop() {} }".into(),
+            "import './declared_surface.js'; export default class T extends LoopingBot { loop() {} }"
+                .into(),
             crate::LoadShape::CompatClass,
             vec![],
         )
@@ -178,8 +179,8 @@ fn loaded_declared_surface_materializes_walk_catalog() {
         isolate.join();
         assert_eq!(ready, crate::Ready::Ready);
         assert_eq!(
-            callbacks, 0,
-            "an unimported declared surface must not materialize WalkDestinations"
+            callbacks, 1,
+            "the imported declared surface imports WalkDestinations"
         );
         return;
     }
@@ -188,12 +189,12 @@ fn loaded_declared_surface_materializes_walk_catalog() {
         .args(["--exact", TEST_NAME, "--nocapture"])
         .env(CHILD_ENV, "1")
         .output()
-        .expect("run isolated unused walk catalog test");
+        .expect("run isolated declared-surface walk catalog test");
     let stdout = String::from_utf8_lossy(&output.stdout);
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
         output.status.success(),
-        "isolated unused walk catalog test failed\nstdout: {stdout}\nstderr: {stderr}"
+        "isolated declared-surface walk catalog test failed\nstdout: {stdout}\nstderr: {stderr}"
     );
     assert!(
         stdout.contains(&format!("test {TEST_NAME} ... ok")) && stdout.contains("1 passed"),
