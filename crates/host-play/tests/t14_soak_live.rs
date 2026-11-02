@@ -65,8 +65,8 @@ const NORMAL_STARTS: [(i32, i32); 5] = [
 ];
 const NORMAL_RADIUS: i32 = 5;
 const NORMAL_SITE_ID: &str = "woodcutting.falador_west.n";
-const SECOND_TIER_SITE_ID: &str = "woodcutting.falador_west.2";
-const SECOND_TIER_START: (i32, i32) = (2925, 3367);
+const SECOND_TIER_SITE_ID: &str = "woodcutting.dwarven_mine";
+const SECOND_TIER_START: (i32, i32) = (3007, 3411);
 const SECOND_TIER_KEY: &str = "oak";
 const SECOND_TIER_LOG_ID: i32 = 1521;
 const SECOND_TIER_LEVEL: i32 = 15;
@@ -100,10 +100,10 @@ const NORMAL_SAFE_WALK: &[SafeWalk] = &[
         max_z: 3422,
     },
     SafeWalk {
-        min_x: 2913,
-        max_x: 2937,
-        min_z: 3355,
-        max_z: 3379,
+        min_x: 2995,
+        max_x: 3019,
+        min_z: 3399,
+        max_z: 3423,
     },
 ];
 
@@ -1121,10 +1121,10 @@ fn cohort_keeps_five_lowest_normal_slots_and_moves_the_rest_to_oak() {
             (2958, 3415),
         ]
     );
-    assert_eq!(sites[1].id, "woodcutting.falador_west.2");
+    assert_eq!(sites[1].id, "woodcutting.dwarven_mine");
     assert_eq!(
         (sites[1].start.x, sites[1].start.z, sites[1].start.level),
-        (2925, 3367, 0)
+        (3007, 3411, 0)
     );
     assert_eq!(SECOND_TIER_RADIUS, 12);
     let mut counts = [0, 0];
