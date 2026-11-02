@@ -1,4 +1,5 @@
 use super::*;
+use api::prereq_knowledge::Observation;
 use api::quest_progress::{EvidenceProvider, EvidenceStamp};
 use api::selected::{InclusiveRange, QuestGate, RunKey, Truth};
 use nav_planner::quest_gates::{QuestEvidence, QuestFamilyId};
@@ -87,36 +88,44 @@ fn obstacle_graph(fx: &Fixture) -> TransportGraph {
     derive_transports_with_audit(fx.path(), &defs, &collision, None, Some(&quests)).0
 }
 
-struct ObstacleSignals(&'static str, i32);
+struct ObstacleSignals(&'static str, i32, EvidenceStamp);
 impl EvidenceProvider for ObstacleSignals {
-    fn test_gate(&self, gate: &QuestGate, _: EvidenceStamp) -> Truth {
-        match gate {
-            QuestGate::Window(window) if window.signal.0.as_ref() == self.0 => {
-                window.values.test(&InclusiveRange {
-                    min: Some(self.1),
-                    max: Some(self.1),
-                })
-            }
-            QuestGate::Complete(quest)
-                if quest.0.as_ref() == "biohazard" && self.0 == "biohazard" =>
-            {
-                if self.1 == 16 {
-                    Truth::True
-                } else {
-                    Truth::False
+    fn observe_gate(&self, gate: &QuestGate, required_after: EvidenceStamp) -> Option<Observation> {
+        let truth = if !self.2.meets(required_after) {
+            Truth::Unknown
+        } else {
+            match gate {
+                QuestGate::Window(window) if window.signal.0.as_ref() == self.0 => {
+                    window.values.test(&InclusiveRange {
+                        min: Some(self.1),
+                        max: Some(self.1),
+                    })
                 }
-            }
-            QuestGate::Complete(quest)
-                if quest.0.as_ref() == "itwatchtower" && self.0 == "itwatchtower" =>
-            {
-                if self.1 >= 13 {
-                    Truth::True
-                } else {
-                    Truth::False
+                QuestGate::Complete(quest)
+                    if quest.0.as_ref() == "biohazard" && self.0 == "biohazard" =>
+                {
+                    if self.1 == 16 {
+                        Truth::True
+                    } else {
+                        Truth::False
+                    }
                 }
+                QuestGate::Complete(quest)
+                    if quest.0.as_ref() == "itwatchtower" && self.0 == "itwatchtower" =>
+                {
+                    if self.1 >= 13 {
+                        Truth::True
+                    } else {
+                        Truth::False
+                    }
+                }
+                _ => Truth::Unknown,
             }
-            _ => Truth::Unknown,
-        }
+        };
+        Some(Observation {
+            truth,
+            observed: Some(self.2),
+        })
     }
 }
 
@@ -131,7 +140,7 @@ fn obstacle_state(graph: &TransportGraph, signal: &'static str, value: i32) -> W
         sequence: 1,
     };
     WorldState::empty().with_quest_evidence(QuestEvidence::new(
-        Arc::new(ObstacleSignals(signal, value)),
+        Arc::new(ObstacleSignals(signal, value, stamp)),
         graph.quest_family.unwrap(),
         stamp,
     ))

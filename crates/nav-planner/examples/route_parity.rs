@@ -1,6 +1,7 @@
 //! Deterministic full route witnesses for the retained 289 corpus.
 //! This is not a timing benchmark. It records costs and complete leg sequences.
 
+use api::prereq_knowledge::Observation;
 use api::quest_facts::QuestCatalog;
 use api::quest_progress::{EvidenceProvider, EvidenceStamp, QuestListEvidenceProvider};
 use api::selected::{InclusiveRange, QuestGate, RunKey, Truth};
@@ -55,24 +56,29 @@ struct CorpusEvidence {
 }
 
 impl EvidenceProvider for CorpusEvidence {
-    fn test_gate(&self, gate: &QuestGate, required_after: EvidenceStamp) -> Truth {
+    fn observe_gate(&self, gate: &QuestGate, required_after: EvidenceStamp) -> Option<Observation> {
         let QuestGate::Window(window) = gate else {
-            return self.completion.test_gate(gate, required_after);
+            return self.completion.observe_gate(gate, required_after);
         };
-        if !self.stamp.meets(required_after) {
-            return Truth::Unknown;
-        }
-        self.signals
-            .iter()
-            .find(|(quest, signal, _)| {
-                window.quest.0.as_ref() == *quest && window.signal.0.as_ref() == *signal
-            })
-            .map_or(Truth::Unknown, |(_, _, value)| {
-                window.values.test(&InclusiveRange {
-                    min: Some(*value),
-                    max: Some(*value),
+        let truth = if !self.stamp.meets(required_after) {
+            Truth::Unknown
+        } else {
+            self.signals
+                .iter()
+                .find(|(quest, signal, _)| {
+                    window.quest.0.as_ref() == *quest && window.signal.0.as_ref() == *signal
                 })
-            })
+                .map_or(Truth::Unknown, |(_, _, value)| {
+                    window.values.test(&InclusiveRange {
+                        min: Some(*value),
+                        max: Some(*value),
+                    })
+                })
+        };
+        Some(Observation {
+            truth,
+            observed: Some(self.stamp),
+        })
     }
 }
 

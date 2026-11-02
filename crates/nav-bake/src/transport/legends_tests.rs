@@ -1,6 +1,7 @@
 use std::sync::Arc;
 
 use super::*;
+use api::prereq_knowledge::Observation;
 use api::quest_progress::{EvidenceProvider, EvidenceStamp};
 use api::selected::{FactKey, InclusiveRange, QuestGate, RunKey, Truth};
 const GATE_LOC_IDS: [i32; 2] = [2391, 2392];
@@ -15,22 +16,27 @@ struct LegendsStageEvidence {
 }
 
 impl EvidenceProvider for LegendsStageEvidence {
-    fn test_gate(&self, gate: &QuestGate, required_after: EvidenceStamp) -> Truth {
-        if !self.stamp.meets(required_after) {
-            return Truth::Unknown;
-        }
-        match gate {
-            QuestGate::Window(window)
-                if window.quest.0.as_ref() == "legends"
-                    && window.signal.0.as_ref() == "legendsquest" =>
-            {
-                window.values.test(&InclusiveRange {
-                    min: Some(self.value),
-                    max: Some(self.value),
-                })
+    fn observe_gate(&self, gate: &QuestGate, required_after: EvidenceStamp) -> Option<Observation> {
+        let truth = if !self.stamp.meets(required_after) {
+            Truth::Unknown
+        } else {
+            match gate {
+                QuestGate::Window(window)
+                    if window.quest.0.as_ref() == "legends"
+                        && window.signal.0.as_ref() == "legendsquest" =>
+                {
+                    window.values.test(&InclusiveRange {
+                        min: Some(self.value),
+                        max: Some(self.value),
+                    })
+                }
+                _ => Truth::Unknown,
             }
-            _ => Truth::Unknown,
-        }
+        };
+        Some(Observation {
+            truth,
+            observed: Some(self.stamp),
+        })
     }
 }
 
@@ -52,6 +58,36 @@ fn legends_progress_evidence(
         family,
         stamp,
     )
+}
+
+#[test]
+fn legends_stage_observation_retains_its_own_stamp_and_refuses_a_later_floor() {
+    let stamp = EvidenceStamp {
+        run: RunKey {
+            slot: 1,
+            run: 1,
+            session: 1,
+        },
+        tick: 7,
+        sequence: 3,
+    };
+    let provider = LegendsStageEvidence { value: 1, stamp };
+    let gate = QuestGate::Window(api::selected::StageWindow {
+        quest: FactKey::new("legends"),
+        signal: FactKey::new("legendsquest"),
+        values: InclusiveRange {
+            min: Some(1),
+            max: None,
+        },
+    });
+    let observed = provider.observe_gate(&gate, stamp).unwrap();
+    assert_eq!(observed.truth, Truth::True);
+    assert_eq!(observed.observed, Some(stamp));
+    let later = EvidenceStamp { tick: 8, ..stamp };
+    let stale = provider.observe_gate(&gate, later).unwrap();
+    assert_eq!(stale.truth, Truth::Unknown);
+    assert_eq!(stale.observed, Some(stamp));
+    assert_eq!(provider.test_gate(&gate, later), Truth::Unknown);
 }
 
 #[test]

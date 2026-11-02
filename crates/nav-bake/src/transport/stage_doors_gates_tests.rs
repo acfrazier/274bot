@@ -1,4 +1,5 @@
 use super::*;
+use api::prereq_knowledge::Observation;
 use api::quest_progress::{EvidenceProvider, EvidenceStamp};
 use api::selected::{InclusiveRange, QuestGate, RunKey, Truth};
 use nav_planner::quest_gates::{QuestEvidence, QuestFamilyId};
@@ -14,27 +15,32 @@ struct StageEvidence {
 }
 
 impl EvidenceProvider for StageEvidence {
-    fn test_gate(&self, gate: &QuestGate, required_after: EvidenceStamp) -> Truth {
-        if !self.observed.meets(required_after) {
-            return Truth::Unknown;
-        }
-        match gate {
-            QuestGate::Complete(quest) if quest.0.as_ref() == self.quest => {
-                if self.complete {
-                    Truth::True
-                } else {
-                    Truth::False
+    fn observe_gate(&self, gate: &QuestGate, required_after: EvidenceStamp) -> Option<Observation> {
+        let truth = if !self.observed.meets(required_after) {
+            Truth::Unknown
+        } else {
+            match gate {
+                QuestGate::Complete(quest) if quest.0.as_ref() == self.quest => {
+                    if self.complete {
+                        Truth::True
+                    } else {
+                        Truth::False
+                    }
                 }
+                QuestGate::Window(window)
+                    if window.quest.0.as_ref() == self.quest
+                        && window.signal.0.as_ref() == self.signal =>
+                {
+                    self.stage
+                        .map_or(Truth::Unknown, |possible| window.values.test(&possible))
+                }
+                _ => Truth::Unknown,
             }
-            QuestGate::Window(window)
-                if window.quest.0.as_ref() == self.quest
-                    && window.signal.0.as_ref() == self.signal =>
-            {
-                self.stage
-                    .map_or(Truth::Unknown, |possible| window.values.test(&possible))
-            }
-            _ => Truth::Unknown,
-        }
+        };
+        Some(Observation {
+            truth,
+            observed: Some(self.observed),
+        })
     }
 }
 

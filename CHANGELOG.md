@@ -68,6 +68,9 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.8` 
   The tool reports unsupported combat instead of assigning a guessed seed.
 - The `seed-calc` food model supplies an empty avoid list to its food-only
   walk guard, so it builds with the current native walk request.
+- The route-corpus exporter and navigation regression fixtures now use
+  stamped quest observations from the current evidence API. A stale
+  observation keeps its original timestamp and does not authorize a gate.
 - Quester's live bank ownership checks now use the selected revision's law-rune
   alias for both the item check and bank seed. The three real-bank fixtures
   also construct in the normal test suite, so a fixture alias error cannot

@@ -1,4 +1,5 @@
 use super::*;
+use api::prereq_knowledge::Observation;
 use api::quest_progress::{EvidenceProvider, EvidenceStamp};
 use api::selected::{InclusiveRange, QuestGate, RunKey, Truth};
 use nav_planner::quest_gates::{QuestEvidence, QuestFamilyId};
@@ -151,23 +152,30 @@ fn content_gate_graph(script: &str, shipyard: bool) -> TransportGraph {
     derive_transports_with_audit(fx.path(), &defs, &collision, None, Some(&quests)).0
 }
 
-struct ExactSignals(Vec<(&'static str, &'static str, i32)>);
+struct ExactSignals(Vec<(&'static str, &'static str, i32)>, EvidenceStamp);
 impl EvidenceProvider for ExactSignals {
-    fn test_gate(&self, gate: &QuestGate, _: EvidenceStamp) -> Truth {
-        let QuestGate::Window(window) = gate else {
-            return Truth::Unknown;
-        };
-        self.0
-            .iter()
-            .find(|(quest, signal, _)| {
-                window.quest.0.as_ref() == *quest && window.signal.0.as_ref() == *signal
-            })
-            .map_or(Truth::Unknown, |(_, _, value)| {
-                window.values.test(&InclusiveRange {
-                    min: Some(*value),
-                    max: Some(*value),
+    fn observe_gate(&self, gate: &QuestGate, required_after: EvidenceStamp) -> Option<Observation> {
+        let truth = if !self.1.meets(required_after) {
+            Truth::Unknown
+        } else if let QuestGate::Window(window) = gate {
+            self.0
+                .iter()
+                .find(|(quest, signal, _)| {
+                    window.quest.0.as_ref() == *quest && window.signal.0.as_ref() == *signal
                 })
-            })
+                .map_or(Truth::Unknown, |(_, _, value)| {
+                    window.values.test(&InclusiveRange {
+                        min: Some(*value),
+                        max: Some(*value),
+                    })
+                })
+        } else {
+            Truth::Unknown
+        };
+        Some(Observation {
+            truth,
+            observed: Some(self.1),
+        })
     }
 }
 
@@ -182,11 +190,14 @@ fn content_state(graph: &TransportGraph, grandtree: i32, mm: i32, biohazard: i32
         sequence: 1,
     };
     let mut state = WorldState::empty().with_quest_evidence(QuestEvidence::new(
-        Arc::new(ExactSignals(vec![
-            ("grandtree", "grandtree", grandtree),
-            ("mm", "mm_main", mm),
-            ("biohazard", "biohazard", biohazard),
-        ])),
+        Arc::new(ExactSignals(
+            vec![
+                ("grandtree", "grandtree", grandtree),
+                ("mm", "mm_main", mm),
+                ("biohazard", "biohazard", biohazard),
+            ],
+            stamp,
+        )),
         graph.quest_family.unwrap(),
         stamp,
     ));
