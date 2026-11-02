@@ -1109,11 +1109,10 @@ fn a_renewed_wait_after_the_terminal_release_gets_a_hold_of_its_own() {
     // the press.
     client.main_modal_id = 8134;
     observe_drain(&mut slot, &mut client, 1);
-    assert!(
-        slot.run_policy
-            .observe_script_wait(Some(wait(9, 1)), 2)
-            .is_some()
-    );
+    assert!(slot
+        .run_policy
+        .observe_script_wait(Some(wait(9, 1)), 2)
+        .is_some());
     slot.apply_auto_run(&mut client);
     assert_eq!(slot.run_sends, 0, "the modal check holds the press");
     // The page closed. The owner resumes and renews the same key to its end gap.
@@ -1146,7 +1145,10 @@ fn a_renewed_wait_after_the_terminal_release_gets_a_hold_of_its_own() {
         "the renewed deadline is the one that counts"
     );
     slot.apply_auto_run(&mut client);
-    assert_eq!(slot.run_sends, 1, "the renewed wait ended: the press goes out");
+    assert_eq!(
+        slot.run_sends, 1,
+        "the renewed wait ended: the press goes out"
+    );
 }
 
 /// The terminal release ends one wait. A sample of the same key with the same
@@ -1190,20 +1192,16 @@ fn a_new_key_after_the_terminal_release_gets_a_fresh_hold() {
     let mut slot = held_slot(&mut client, wait(9, 4));
     client.main_modal_id = 8134;
     observe_drain(&mut slot, &mut client, 1);
-    assert!(
-        slot.run_policy
-            .observe_script_wait(Some(wait(9, 4)), 4 + SCRIPT_WAIT_MARGIN_TICKS)
-            .is_some()
-    );
+    assert!(slot
+        .run_policy
+        .observe_script_wait(Some(wait(9, 4)), 4 + SCRIPT_WAIT_MARGIN_TICKS)
+        .is_some());
     assert!(!slot.run_policy.should_defer_auto_run());
     client.main_modal_id = -1;
     observe_drain(&mut slot, &mut client, 1);
     slot.run_policy
         .observe_script_wait(Some(wait(10, 9)), 4 + SCRIPT_WAIT_MARGIN_TICKS);
-    assert!(
-        slot.run_policy.should_defer_auto_run(),
-        "a new key holds"
-    );
+    assert!(slot.run_policy.should_defer_auto_run(), "a new key holds");
     slot.apply_auto_run(&mut client);
     assert_eq!(slot.run_sends, 0, "the new wait holds the press");
 }

@@ -258,10 +258,7 @@ fn the_head_does_not_rearm_a_hold_for_a_repeat_of_the_deadline() {
     assert!(released.released && !released.boundary);
     // The owner changes nothing at its next poll: the same key and deadline.
     let (state, info) = model
-        .step_detail(
-            &state,
-            &frame(true, false, false, OwnerAct::Stall),
-        )
+        .step_detail(&state, &frame(true, false, false, OwnerAct::Stall))
         .expect("clean");
     assert!(!info.deferred && info.pressed, "the key holds no more");
     assert!(state.hold_rec.is_some_and(|hold| hold.released));
