@@ -456,14 +456,14 @@ fn observed_web_cut_failure(snapshot: &GameSnapshot, after: i32) -> bool {
 /// ([`WALK_STALL_RECOVER_IDLE_TICKS`]): a burst of polls inside one game
 /// tick cannot lapse a hop budget.
 #[derive(Clone, Copy, Debug, Default)]
-pub(super) struct TickCount {
+pub struct TickCount {
     count: u32,
     last: Option<u32>,
 }
 
 impl TickCount {
     /// A count that starts after `tick`, the tick an interaction was sent on.
-    pub(super) fn sent_at(tick: u32) -> Self {
+    pub fn sent_at(tick: u32) -> Self {
         Self {
             count: 0,
             last: Some(tick),
@@ -474,26 +474,26 @@ impl TickCount {
     /// ticks counted so far. The first read credits one tick, as does a
     /// tick that moved backwards (a replaced snapshot), so the count
     /// always advances.
-    pub(super) fn observe(&mut self, tick: u32) -> u32 {
-        let credit = match self.last {
-            Some(last) if last == tick => 0,
-            Some(last) => {
-                let ahead = tick.wrapping_sub(last);
-                if ahead < (1u32 << 31) {
-                    ahead
-                } else {
-                    1
-                }
-            }
-            None => 1,
-        };
+    pub fn observe(&mut self, tick: u32) -> u32 {
+        let credit = self.last.map_or(1, |last| Self::credit_since(last, tick));
         self.last = Some(tick);
         self.count = self.count.saturating_add(credit);
         self.count
     }
 
-    pub(super) fn get(self) -> u32 {
+    pub fn get(self) -> u32 {
         self.count
+    }
+
+    /// Observed ticks since `last`. Repeated reads credit none. A replaced
+    /// snapshot that moves backwards credits one, as [`Self::observe`] does.
+    pub fn credit_since(last: u32, tick: u32) -> u32 {
+        let ahead = tick.wrapping_sub(last);
+        if ahead < (1u32 << 31) {
+            ahead
+        } else {
+            1
+        }
     }
 }
 

@@ -1,8 +1,8 @@
 //! Ignored live proof that a native Walk settles with its retained receipt.
 //!
-//! Run once per scenario with `NAV_ARRIVAL_SCENARIO=return` and
-//! `NAV_ARRIVAL_SCENARIO=yew`; both runs require the copied cache and the
-//! caller-supplied throwaway HOME under `BOT_EVIDENCE_DIR`.
+//! Run with `NAV_ARRIVAL_SCENARIO` set to `return`, `yew`, `tower-top`,
+//! `tower-basement`, `lumbridge-door`, or `gnome-maze`. Each run requires the
+//! copied cache and the caller-supplied throwaway HOME under `BOT_EVIDENCE_DIR`.
 
 use super::*;
 use api::snapshot::{GameSnapshot, WorldTile};
@@ -35,6 +35,43 @@ const YEW_SCENE_SEED: WorldTile = WorldTile {
     z: 3230,
     level: 0,
 };
+// content/maps/m50_50.jm2 places closed door 1533 at 0_50_50_38_10 (shape 0, angle 0).
+// doors/configs/doors.loc pairs ids 1533 and 1534 on basic_wall.
+// doors/scripts/doors.rs2 opens it for 500 ticks; door_procs moves it one tile west.
+const LUMBRIDGE_DOOR_TILE: WorldTile = WorldTile {
+    x: 3238,
+    z: 3210,
+    level: 0,
+};
+const LUMBRIDGE_DOOR_OPEN_TILE: WorldTile = WorldTile {
+    x: 3237,
+    z: 3210,
+    level: 0,
+};
+const LUMBRIDGE_DOOR_START: WorldTile = WorldTile {
+    x: 3237,
+    z: 3210,
+    level: 0,
+};
+const LUMBRIDGE_DOOR_TARGET: WorldTile = WorldTile {
+    x: 3239,
+    z: 3210,
+    level: 0,
+};
+const LUMBRIDGE_DOOR_CLOSED_ID: i32 = 1533;
+const LUMBRIDGE_DOOR_OPEN_ID: i32 = 1534;
+const LUMBRIDGE_DOOR_CLOSE_TICKS: u32 = 500;
+const LUMBRIDGE_DOOR_WAIT_TIMEOUT: Duration = Duration::from_secs(6 * 60);
+const GNOME_MAZE_START: WorldTile = WorldTile {
+    x: 2517,
+    z: 3179,
+    level: 0,
+};
+const GNOME_MAZE_TARGET: WorldTile = WorldTile {
+    x: 2515,
+    z: 3160,
+    level: 0,
+};
 const SETUP_TIMEOUT: Duration = Duration::from_secs(180);
 const WALK_TIMEOUT: Duration = Duration::from_secs(12 * 60);
 
@@ -42,6 +79,10 @@ const WALK_TIMEOUT: Duration = Duration::from_secs(12 * 60);
 enum Scenario {
     Return,
     Yew,
+    TowerTop,
+    TowerBasement,
+    LumbridgeDoor,
+    GnomeMaze,
 }
 
 impl Scenario {
@@ -49,7 +90,11 @@ impl Scenario {
         match std::env::var("NAV_ARRIVAL_SCENARIO").as_deref() {
             Ok("return") => Self::Return,
             Ok("yew") => Self::Yew,
-            other => panic!("NAV_ARRIVAL_SCENARIO must be return or yew, got {other:?}"),
+            Ok("tower-top") => Self::TowerTop,
+            Ok("tower-basement") => Self::TowerBasement,
+            Ok("lumbridge-door") => Self::LumbridgeDoor,
+            Ok("gnome-maze") => Self::GnomeMaze,
+            other => panic!("unknown NAV_ARRIVAL_SCENARIO: {other:?}"),
         }
     }
 
@@ -57,6 +102,10 @@ impl Scenario {
         match self {
             Self::Return => "return",
             Self::Yew => "yew",
+            Self::TowerTop => "tower-top",
+            Self::TowerBasement => "tower-basement",
+            Self::LumbridgeDoor => "lumbridge-door",
+            Self::GnomeMaze => "gnome-maze",
         }
     }
 
@@ -64,6 +113,21 @@ impl Scenario {
         match self {
             Self::Return => RETURN_ORIGIN,
             Self::Yew => YEW_SCENE_SEED,
+            // ladders.rs2:114-119 lands at 0_48_49_33_26.
+            Self::TowerTop => WorldTile {
+                x: 3105,
+                z: 3162,
+                level: 0,
+            },
+            // One tile east of the real basement ladder at 0_48_149_31_40.
+            Self::TowerBasement => WorldTile {
+                x: 3104,
+                z: 9576,
+                level: 0,
+            },
+            // Ordinary closed door 1533 at 0_50_50_38_10.
+            Self::LumbridgeDoor => LUMBRIDGE_DOOR_START,
+            Self::GnomeMaze => GNOME_MAZE_START,
         }
     }
 }
@@ -72,6 +136,7 @@ impl Scenario {
 struct WalkSpec {
     target: WorldTile,
     radius: u16,
+    allow_danger_zones: bool,
     loc_id: Option<i32>,
     loc_name: Option<String>,
     loc_actions: Vec<String>,
@@ -82,6 +147,22 @@ impl WalkSpec {
         Self {
             target: RETURN_TARGET,
             radius: 12,
+            allow_danger_zones: false,
+            loc_id: None,
+            loc_name: None,
+            loc_actions: Vec::new(),
+        }
+    }
+
+    fn crypt_walk() -> Self {
+        Self {
+            target: WorldTile {
+                x: 3249,
+                z: 3192,
+                level: 0,
+            },
+            radius: 3,
+            allow_danger_zones: false,
             loc_id: None,
             loc_name: None,
             loc_actions: Vec::new(),
@@ -95,7 +176,10 @@ impl WalkSpec {
             radius: self.radius,
             arrival: nav_planner::arrival::ArrivalKind::Reach,
             loc_id: self.loc_id,
-            options: script::native::WalkOptions::default(),
+            options: script::native::WalkOptions {
+                allow_danger_zones: self.allow_danger_zones.then_some(true).into(),
+                ..script::native::WalkOptions::default()
+            },
             required_after,
             evidence: None,
             cross: Box::default(),
@@ -107,6 +191,16 @@ impl WalkSpec {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct DoorObservation {
+    id: i32,
+    tile: WorldTile,
+    shape: i32,
+    angle: i32,
+    open_action: bool,
+    close_action: bool,
+}
+
 #[derive(Debug, Clone, Copy, Default)]
 struct SceneProof {
     ingame: bool,
@@ -114,18 +208,25 @@ struct SceneProof {
     player_tile: Option<WorldTile>,
     target_loc_visible: bool,
     target_operable: Option<bool>,
+    lumbridge_door: Option<DoorObservation>,
 }
 
 #[derive(Default)]
 struct LiveState {
     teleport_sent: bool,
+    prime_seed_sent: bool,
+    prime_open_sent: bool,
+    prime_complete: bool,
+    first_sample_at: Option<Instant>,
     ready: bool,
     setup_error: Option<String>,
+    door_close_wait: Option<Value>,
     target: Option<WalkSpec>,
     scene: SceneProof,
     walk_started: bool,
     start_error: Option<String>,
     receipt: Option<Result<WalkReceipt, ActionError>>,
+    samples: Vec<Value>,
 }
 
 struct NativeWalkScript {
@@ -217,6 +318,99 @@ fn chebyshev(from: WorldTile, to: WorldTile) -> u32 {
     from.x.abs_diff(to.x).max(from.z.abs_diff(to.z))
 }
 
+/// Returns the observed closed or normal open state of the selected door.
+fn lumbridge_door_observation(snapshot: &GameSnapshot) -> Option<DoorObservation> {
+    snapshot
+        .locs()
+        .iter()
+        .find(|loc| {
+            (loc.id == LUMBRIDGE_DOOR_CLOSED_ID && loc.tile == LUMBRIDGE_DOOR_TILE)
+                || (loc.id == LUMBRIDGE_DOOR_OPEN_ID && loc.tile == LUMBRIDGE_DOOR_OPEN_TILE)
+        })
+        .map(|loc| DoorObservation {
+            id: loc.id,
+            tile: loc.tile,
+            shape: loc.shape,
+            angle: loc.angle,
+            open_action: loc
+                .actions
+                .iter()
+                .flatten()
+                .any(|action| action.eq_ignore_ascii_case("Open")),
+            close_action: loc
+                .actions
+                .iter()
+                .flatten()
+                .any(|action| action.eq_ignore_ascii_case("Close")),
+        })
+}
+
+fn door_observation_json(door: Option<DoorObservation>) -> Value {
+    door.map_or(Value::Null, |door| {
+        json!({
+            "id": door.id,
+            "tile": door.tile,
+            "shape": door.shape,
+            "angle": door.angle,
+            "open_action": door.open_action,
+            "close_action": door.close_action,
+        })
+    })
+}
+
+fn lumbridge_door_is_closed(door: Option<DoorObservation>) -> bool {
+    door.is_some_and(|door| {
+        door.id == LUMBRIDGE_DOOR_CLOSED_ID
+            && door.tile == LUMBRIDGE_DOOR_TILE
+            && door.shape == 0
+            && door.angle == 0
+            && door.open_action
+    })
+}
+
+fn lumbridge_door_is_open(door: Option<DoorObservation>) -> bool {
+    door.is_some_and(|door| {
+        door.id == LUMBRIDGE_DOOR_OPEN_ID
+            && door.tile == LUMBRIDGE_DOOR_OPEN_TILE
+            && door.shape == 0
+            && door.angle == 1
+            && door.close_action
+    })
+}
+
+#[derive(Debug, Clone, Copy, Default)]
+struct LumbridgeDoorWalkEvidence {
+    opened_during_walk: bool,
+    player_on_door_tile_after_open: bool,
+    player_at_target_after_door_tile: bool,
+}
+
+fn lumbridge_door_walk_evidence(samples: &[Value]) -> LumbridgeDoorWalkEvidence {
+    let mut evidence = LumbridgeDoorWalkEvidence::default();
+    for sample in samples {
+        if !sample["walking"].as_bool().unwrap_or(false) {
+            continue;
+        }
+        let door = &sample["lumbridge_door"];
+        if door["id"].as_i64() == Some(i64::from(LUMBRIDGE_DOOR_OPEN_ID))
+            && door["tile"] == json!(LUMBRIDGE_DOOR_OPEN_TILE)
+            && door["shape"].as_i64() == Some(0)
+            && door["angle"].as_i64() == Some(1)
+            && door["close_action"].as_bool() == Some(true)
+        {
+            evidence.opened_during_walk = true;
+        }
+        if evidence.opened_during_walk && sample["tile"] == json!(LUMBRIDGE_DOOR_TILE) {
+            evidence.player_on_door_tile_after_open = true;
+        }
+        if evidence.player_on_door_tile_after_open && sample["tile"] == json!(LUMBRIDGE_DOOR_TARGET)
+        {
+            evidence.player_at_target_after_door_tile = true;
+        }
+    }
+    evidence
+}
+
 /// The approximate Lumbridge point only opens the live scene. The destination
 /// is always selected from the scene's loaded loc facts, never from a guessed id.
 fn yew_walk(snapshot: &GameSnapshot, origin: WorldTile) -> Option<WalkSpec> {
@@ -243,6 +437,7 @@ fn yew_walk(snapshot: &GameSnapshot, origin: WorldTile) -> Option<WalkSpec> {
                 WalkSpec {
                     target: loc.tile,
                     radius: 1,
+                    allow_danger_zones: false,
                     loc_id: Some(loc.id),
                     loc_name: Some(name.to_owned()),
                     loc_actions: loc.actions.iter().flatten().cloned().collect(),
@@ -257,7 +452,9 @@ fn frame_hook(
     state: Arc<parking_lot::Mutex<LiveState>>,
     account: String,
     scenario: Scenario,
+    door_state_changed: Arc<parking_lot::Condvar>,
 ) -> impl Fn(&mut client::client::Client, &str, crate::SlotFrameInput) + Send + Sync + 'static {
+    let prime_tower_door = std::env::var("NAV_ARRIVAL_PRIME_TOWER_DOOR").as_deref() == Ok("1");
     move |client, username, _hold| {
         if username != account {
             return;
@@ -279,6 +476,11 @@ fn frame_hook(
         {
             state.target = yew_walk(&snapshot, seed);
         }
+        let lumbridge_door = if scenario == Scenario::LumbridgeDoor {
+            lumbridge_door_observation(&snapshot)
+        } else {
+            None
+        };
         state.scene = SceneProof {
             ingame: client.ingame,
             scene_state: client.scene_state,
@@ -301,11 +503,105 @@ fn frame_hook(
                     api::query::loc_approach::can_operate_from(loc, snapshot.scene(), from)
                 })
             }),
+            lumbridge_door,
         };
+        if scenario == Scenario::LumbridgeDoor {
+            door_state_changed.notify_all();
+        }
+        if state.samples.last().and_then(|row| row["tick"].as_u64())
+            != Some(u64::from(snapshot.tick()))
+        {
+            let walking = state.walk_started;
+            let elapsed_ms = state
+                .first_sample_at
+                .get_or_insert_with(Instant::now)
+                .elapsed()
+                .as_millis();
+            let mut sample = json!({
+                "tick": snapshot.tick(),
+                "elapsed_ms": elapsed_ms,
+                "tile": tile,
+                "scene": client.scene_state,
+                "walking": walking,
+                "map_flag": snapshot.map_flag(),
+                "actor_moving": snapshot.local_player().map(|p| p.player.actor.moving),
+                "last_movement": snapshot.last_server_movement_tick(),
+                // content/pack/obj.pack:554 selects ghostskull.
+                "ghostskull": snapshot.inv().iter().filter(|(id, _)| *id == 553).map(|(_, qty)| qty).sum::<i32>(),
+                "tower_door": snapshot.locs().iter()
+                    .filter(|loc| matches!(loc.id, 1536 | 1537)
+                        && loc.tile.level == 0
+                        && loc.tile.x.abs_diff(3107) <= 1
+                        && loc.tile.z.abs_diff(3162) <= 1)
+                    .collect::<Vec<_>>(),
+            });
+            if scenario == Scenario::LumbridgeDoor {
+                sample["lumbridge_door"] = door_observation_json(lumbridge_door);
+            }
+            state.samples.push(sample);
+        }
         if !(client.ingame && client.scene_state == 2) || state.setup_error.is_some() {
             return;
         }
+        if prime_tower_door
+            && matches!(scenario, Scenario::TowerTop | Scenario::TowerBasement)
+            && !state.prime_complete
+        {
+            if !state.prime_seed_sent {
+                api::interact::seed_at(client, 0, 3106, 3161);
+                state.prime_seed_sent = true;
+                return;
+            }
+            if snapshot.locs().iter().any(|loc| {
+                loc.id == 1537
+                    && loc.tile
+                        == (WorldTile {
+                            x: 3106,
+                            z: 3162,
+                            level: 0,
+                        })
+            }) {
+                // Preserve the prior tower-entry door state, as in the quest.
+                // Never Close or reset a shared-engine door.
+                state.prime_complete = true;
+            } else if !state.prime_open_sent
+                && tile
+                    == Some(WorldTile {
+                        x: 3106,
+                        z: 3161,
+                        level: 0,
+                    })
+            {
+                if let Some(door) = snapshot.locs().iter().find(|loc| {
+                    loc.id == 1536
+                        && loc.tile
+                            == (WorldTile {
+                                x: 3107,
+                                z: 3162,
+                                level: 0,
+                            })
+                }) {
+                    state.prime_open_sent = matches!(
+                        api::interact::Interactions::new(&snapshot, client).interact(
+                            api::interact::OpTarget::Loc(door),
+                            api::interact::ActionSpec::Label("Open".into()),
+                        ),
+                        api::interact::SendResult::Sent { .. }
+                    );
+                }
+            }
+            return;
+        }
         if !state.teleport_sent {
+            if matches!(scenario, Scenario::TowerTop | Scenario::TowerBasement) {
+                for command in [
+                    "setvar priest 4",
+                    "give ghostskull 1",
+                    "setstat hitpoints 30",
+                ] {
+                    assert!(api::interact::cheat(client, command).is_sent());
+                }
+            }
             api::interact::seed_at(client, seed.level, seed.x, seed.z);
             state.teleport_sent = true;
             return;
@@ -314,7 +610,9 @@ fn frame_hook(
             state.ready = false;
             return;
         }
-        state.ready = state.target.is_some();
+        state.ready = state.target.is_some()
+            && (!matches!(scenario, Scenario::TowerTop | Scenario::TowerBasement)
+                || snapshot.inv().iter().any(|&(id, qty)| id == 553 && qty > 0));
     }
 }
 
@@ -361,6 +659,104 @@ fn wait_for_setup(
             ));
         }
         std::thread::sleep(Duration::from_millis(100));
+    }
+}
+
+fn wait_for_lumbridge_door_closed(
+    state: &Arc<parking_lot::Mutex<LiveState>>,
+    door_state_changed: &parking_lot::Condvar,
+) -> Result<(), String> {
+    let deadline = Instant::now() + LUMBRIDGE_DOOR_WAIT_TIMEOUT;
+    let mut state = state.lock();
+    let mut open_since: Option<(u32, DoorObservation)> = None;
+    loop {
+        let door = state.scene.lumbridge_door;
+        let tick = state
+            .samples
+            .last()
+            .and_then(|sample| sample["tick"].as_u64())
+            .and_then(|tick| u32::try_from(tick).ok());
+        if lumbridge_door_is_closed(door) {
+            state.door_close_wait = Some(match open_since {
+                Some((opened_tick, opened_door)) => json!({
+                    "waited_for_normal_closure": true,
+                    "opened_tick": opened_tick,
+                    "closed_tick": tick,
+                    "observed_ticks": tick.map(|tick| tick.wrapping_sub(opened_tick)),
+                    "opened_door": door_observation_json(Some(opened_door)),
+                    "closed_door": door_observation_json(door),
+                }),
+                None => json!({
+                    "waited_for_normal_closure": false,
+                    "observed_ticks": 0,
+                    "closed_door": door_observation_json(door),
+                }),
+            });
+            return Ok(());
+        }
+        if let Some(door) = door {
+            if !lumbridge_door_is_open(Some(door)) {
+                state.door_close_wait = Some(json!({
+                    "waited_for_normal_closure": open_since.is_some(),
+                    "unexpected_door": door_observation_json(Some(door)),
+                }));
+                return Err(format!(
+                    "expected ordinary door {LUMBRIDGE_DOOR_CLOSED_ID} at {LUMBRIDGE_DOOR_TILE:?} or its open state at {LUMBRIDGE_DOOR_OPEN_TILE:?}, observed {door:?}"
+                ));
+            }
+            if let Some(tick) = tick {
+                let (opened_tick, _) = *open_since.get_or_insert((tick, door));
+                let elapsed = tick.wrapping_sub(opened_tick);
+                if elapsed >= LUMBRIDGE_DOOR_CLOSE_TICKS {
+                    state.door_close_wait = Some(json!({
+                        "waited_for_normal_closure": true,
+                        "opened_tick": opened_tick,
+                        "last_open_tick": tick,
+                        "observed_ticks": elapsed,
+                        "maximum_content_ticks": LUMBRIDGE_DOOR_CLOSE_TICKS,
+                        "last_open_door": door_observation_json(Some(door)),
+                    }));
+                    return Err(format!(
+                        "ordinary door {LUMBRIDGE_DOOR_OPEN_ID} stayed open for {elapsed} observed game ticks"
+                    ));
+                }
+            }
+        } else {
+            state.door_close_wait = Some(json!({
+                "waited_for_normal_closure": open_since.is_some(),
+                "expected_closed_door_id": LUMBRIDGE_DOOR_CLOSED_ID,
+                "expected_closed_door_tile": LUMBRIDGE_DOOR_TILE,
+                "observed_door": Value::Null,
+            }));
+            return Err(format!(
+                "ordinary door {LUMBRIDGE_DOOR_CLOSED_ID} was not observed at {LUMBRIDGE_DOOR_TILE:?} before native Walk"
+            ));
+        }
+        let remaining = deadline.saturating_duration_since(Instant::now());
+        if remaining.is_zero() {
+            state.door_close_wait = Some(match open_since {
+                Some((opened_tick, opened_door)) => json!({
+                    "waited_for_normal_closure": true,
+                    "opened_tick": opened_tick,
+                    "last_observed_tick": tick,
+                    "observed_ticks": tick.map(|tick| tick.wrapping_sub(opened_tick)),
+                    "maximum_content_ticks": LUMBRIDGE_DOOR_CLOSE_TICKS,
+                    "opened_door": door_observation_json(Some(opened_door)),
+                    "last_open_door": door_observation_json(door),
+                    "wall_watchdog": LUMBRIDGE_DOOR_WAIT_TIMEOUT,
+                }),
+                None => json!({
+                    "waited_for_normal_closure": false,
+                    "last_observed_tick": tick,
+                    "observed_door": door_observation_json(door),
+                    "wall_watchdog": LUMBRIDGE_DOOR_WAIT_TIMEOUT,
+                }),
+            });
+            return Err(format!(
+                "ordinary door did not close within {LUMBRIDGE_DOOR_CLOSE_TICKS} observed game ticks or {LUMBRIDGE_DOOR_WAIT_TIMEOUT:?}"
+            ));
+        }
+        let _ = door_state_changed.wait_for(&mut state, remaining);
     }
 }
 
@@ -476,13 +872,17 @@ fn target_json(walk: Option<&WalkSpec>) -> Value {
 }
 
 fn scene_json(scene: SceneProof) -> Value {
-    json!({
+    let mut value = json!({
         "ingame": scene.ingame,
         "scene_state": scene.scene_state,
         "player_tile": scene.player_tile,
         "target_loc_visible": scene.target_loc_visible,
         "target_operable": scene.target_operable,
-    })
+    });
+    if let Some(door) = scene.lumbridge_door {
+        value["lumbridge_door"] = door_observation_json(Some(door));
+    }
+    value
 }
 
 fn receipt_json(result: Option<&Result<WalkReceipt, ActionError>>) -> Value {
@@ -546,6 +946,7 @@ impl EvidenceContext<'_> {
                 "target": walk.target,
                 "radius": walk.radius,
                 "loc_id": walk.loc_id,
+                "allow_danger_zones": walk.allow_danger_zones,
                 "allow_teleports": false,
                 "allow_wilderness": false,
                 "allow_bank_fetch": false,
@@ -774,12 +1175,35 @@ fn live_native_walk_arrival_retains_arrived_receipt() {
         .prepare_template()
         .expect("prepare local-289 live template with copied cache");
     let state = Arc::new(parking_lot::Mutex::new(LiveState {
-        target: (scenario == Scenario::Return).then(WalkSpec::return_walk),
+        target: match scenario {
+            Scenario::Return => Some(WalkSpec::return_walk()),
+            Scenario::TowerTop | Scenario::TowerBasement => Some(WalkSpec::crypt_walk()),
+            Scenario::LumbridgeDoor => Some(WalkSpec {
+                target: LUMBRIDGE_DOOR_TARGET,
+                radius: 0,
+                allow_danger_zones: false,
+                loc_id: None,
+                loc_name: None,
+                loc_actions: Vec::new(),
+            }),
+            Scenario::GnomeMaze => Some(WalkSpec {
+                target: GNOME_MAZE_TARGET,
+                radius: 0,
+                // This fixture tests walk timing, not fresh-account danger admission.
+                allow_danger_zones: true,
+                loc_id: None,
+                loc_name: None,
+                loc_actions: Vec::new(),
+            }),
+            Scenario::Yew => None,
+        },
         ..LiveState::default()
     }));
     let mailbox = FrameBuf::new();
     let frame_mailbox = Arc::clone(&mailbox);
     let frame_state = Arc::clone(&state);
+    let door_state_changed = Arc::new(parking_lot::Condvar::new());
+    let frame_door_state_changed = Arc::clone(&door_state_changed);
     let frame_account = account.clone();
     let play = run_with_template(
         template,
@@ -792,15 +1216,26 @@ fn live_native_walk_arrival_retains_arrived_receipt() {
                 (None, None)
             }
         },
-        frame_hook(frame_state, account.clone(), scenario),
+        frame_hook(
+            frame_state,
+            account.clone(),
+            scenario,
+            frame_door_state_changed,
+        ),
     )
     .expect("start one-slot live Play");
 
-    let setup_result = wait_for_setup(&play, &account, &state);
+    let setup_result = wait_for_setup(&play, &account, &state).and_then(|()| {
+        if scenario == Scenario::LumbridgeDoor {
+            wait_for_lumbridge_door_closed(&state, &door_state_changed)
+        } else {
+            Ok(())
+        }
+    });
     if let Err(error) = &setup_result {
         state.lock().setup_error = Some(error.clone());
     }
-    let (target, scene, setup_error) = {
+    let (target, setup_scene, setup_error) = {
         let state = state.lock();
         (state.target.clone(), state.scene, state.setup_error.clone())
     };
@@ -815,19 +1250,25 @@ fn live_native_walk_arrival_retains_arrived_receipt() {
     let setup_ok = setup_result.is_ok()
         && setup_error.is_none()
         && target.is_some()
-        && scene.ingame
-        && scene.scene_state == 2
-        && scene.player_tile == Some(scenario.seed())
-        && (scenario != Scenario::Yew || scene.target_loc_visible)
+        && setup_scene.ingame
+        && setup_scene.scene_state == 2
+        && setup_scene.player_tile == Some(scenario.seed())
+        && (scenario != Scenario::Yew || setup_scene.target_loc_visible)
+        && (scenario != Scenario::LumbridgeDoor
+            || lumbridge_door_is_closed(setup_scene.lumbridge_door))
         && slot_is_ready(&play, &account);
-    let setup_report = evidence.document(
+    let mut setup_report = evidence.document(
         "ready-before-native-script",
         target.as_ref(),
-        scene,
+        setup_scene,
         None,
         None,
         setup_error.as_deref(),
     );
+    if scenario == Scenario::LumbridgeDoor {
+        setup_report["lumbridge_door_close_wait"] =
+            state.lock().door_close_wait.clone().unwrap_or(Value::Null);
+    }
     let setup_png = write_capture(
         &run_dir,
         &timestamp,
@@ -900,7 +1341,22 @@ fn live_native_walk_arrival_retains_arrived_receipt() {
         )
     };
     let arrived = matches!(result.as_ref(), Some(Ok(receipt)) if receipt.end == WalkEnd::Arrived);
-    let final_report = evidence.document(
+    let samples = state.lock().samples.clone();
+    std::fs::write(
+        run_dir.join("tick-samples.json"),
+        serde_json::to_vec_pretty(&samples).unwrap(),
+    )
+    .expect("write observed game ticks");
+    let door_walk =
+        (scenario == Scenario::LumbridgeDoor).then(|| lumbridge_door_walk_evidence(&samples));
+    let door_crossing_proven = scenario != Scenario::LumbridgeDoor
+        || (lumbridge_door_is_closed(setup_scene.lumbridge_door)
+            && door_walk.is_some_and(|proof| {
+                proof.opened_during_walk
+                    && proof.player_on_door_tile_after_open
+                    && proof.player_at_target_after_door_tile
+            }));
+    let mut final_report = evidence.document(
         if arrived {
             "native-walk-terminal"
         } else {
@@ -912,11 +1368,29 @@ fn live_native_walk_arrival_retains_arrived_receipt() {
         result.as_ref(),
         start_error.as_deref(),
     );
+    if let Some(proof) = door_walk {
+        final_report["lumbridge_door_crossing"] = json!({
+            "source": "observed GameSnapshot::locs() and per-game-tick player tiles",
+            "driver": "native Walk; harness sends no door interaction",
+            "closed_door_id": LUMBRIDGE_DOOR_CLOSED_ID,
+            "closed_door_tile": LUMBRIDGE_DOOR_TILE,
+            "closed_door_before_walk": door_observation_json(setup_scene.lumbridge_door),
+            "open_door_id": LUMBRIDGE_DOOR_OPEN_ID,
+            "open_door_tile": LUMBRIDGE_DOOR_OPEN_TILE,
+            "walk_start": scenario.seed(),
+            "walk_target": walk.target,
+            "opened_during_walk": proof.opened_during_walk,
+            "player_on_door_tile_after_open": proof.player_on_door_tile_after_open,
+            "player_at_target_after_door_tile": proof.player_at_target_after_door_tile,
+            "passed": door_crossing_proven,
+            "content_timed_close_wait": state.lock().door_close_wait.clone(),
+        });
+    }
     let final_png = write_capture(
         &run_dir,
         &timestamp,
         "02-final-walk",
-        !arrived || timed_out || start_error.is_some(),
+        !arrived || timed_out || start_error.is_some() || !door_crossing_proven,
         final_report,
         &mailbox,
     );
@@ -936,6 +1410,10 @@ fn live_native_walk_arrival_retains_arrived_receipt() {
     assert!(
         arrived,
         "the native Walk receipt must end at WalkEnd::Arrived, not another host/Traveller terminal: {result:?}"
+    );
+    assert!(
+        door_crossing_proven,
+        "lumbridge-door requires the native Walk to observe the closed door, its opened state, the door tile, and the target in order"
     );
     assert!(
         scene.ingame && scene.scene_state == 2 && scene.player_tile.is_some(),

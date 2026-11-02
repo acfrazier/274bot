@@ -9,6 +9,13 @@ pub(super) const WALK_STALL_RECOVER_IDLE_TICKS: u32 = 5;
 /// Frozen `DEFAULT_PATH_STALL_TICKS` (`pathFollowPolicy.ts:6`).
 const END_BLOCKED_STALL_TICKS: u32 = 5;
 
+/// Moving walks get 25% beyond their original planned allowance. Nine
+/// completed maze/Priest walks measured at most 149/145 = 1.0276 of their
+/// budget: WALK-STALL-1029/r1/budget-ratios.json. A 5/4 cap leaves 21.64%
+/// above that observed maximum for server-path turns and recovery delays.
+/// This is a finite policy margin, not another engine timing constant.
+const WALK_MOVEMENT_MARGIN_DIVISOR: u32 = 4;
+
 /// The client is still walking an accepted click: its actor has queued
 /// route steps and the map flag of that click is still set.
 pub(super) fn walk_is_live(snapshot: &GameSnapshot) -> bool {
@@ -51,21 +58,46 @@ pub(super) fn report_walk(
     }
 }
 
-/// The next walk-hop target: the leg's last tile when it is within ~20
-/// tiles, otherwise a tile ~15 steps ahead of the player (or the last
-/// uncleared tile when the leg is shorter), so each hop re-routes a fresh
-/// short path and never aims back toward the leg start.
-pub(super) fn pick_aim(tiles: &[WorldTile], here: WorldTile, cursor: usize) -> (WorldTile, usize) {
+pub(super) fn player_path_index(
+    tiles: &[WorldTile],
+    here: WorldTile,
+    cursor: usize,
+) -> Option<usize> {
+    tiles
+        .iter()
+        .enumerate()
+        .skip(cursor)
+        .find_map(|(index, tile)| (*tile == here).then_some(index))
+}
+
+/// Fifteen-step aims and the 20-step end cutoff keep each walk request within
+/// `Client::tryMove`'s 25-turn cap
+/// (`vendor/fr-client-rust/crates/client/src/client/client.rs`). The
+/// revision-289 engine caps MoveClick paths at 25 waypoints in
+/// `MoveClickDecoder.decode`
+/// (`src/network/game/client/codec/MoveClickDecoder.ts`) and allocates 25 in
+/// `PathingEntity.waypoints` (`src/engine/entity/PathingEntity.ts`).
+/// `PathingEntity.processMovement` advances one tile per walking tick in that
+/// engine file. The `CLICK_AHEAD` radius is 2 and
+/// `DEFAULT_HOP_BUDGET_TICKS` is 60, so 20 steps plus the click-ahead radius
+/// stay within both limits.
+pub(super) fn pick_aim(
+    tiles: &[WorldTile],
+    here_index: Option<usize>,
+    cursor: usize,
+) -> (WorldTile, usize) {
     let last = *tiles.last().expect("walk legs are non-empty");
-    if cheb(here, last) <= 20 {
-        (last, tiles.len() - 1)
+    let last_index = tiles.len() - 1;
+    let base = here_index.unwrap_or(cursor);
+    let steps_left = if here_index.is_some() {
+        last_index - base
     } else {
-        let base = tiles
-            .iter()
-            .position(|t| *t == here)
-            .filter(|&i| i >= cursor)
-            .unwrap_or(cursor);
-        let idx = (base + 15).min(tiles.len() - 1).max(base + 1);
+        tiles.len() - base
+    };
+    if steps_left <= 20 {
+        (last, last_index)
+    } else {
+        let idx = (base + 15).min(last_index).max(base + 1);
         (tiles[idx], idx)
     }
 }
@@ -74,19 +106,15 @@ pub(super) fn pick_aim(tiles: &[WorldTile], here: WorldTile, cursor: usize) -> (
 /// loaded scene, so click-ahead cannot `OffScene` at the 104-edge.
 pub(super) fn pick_aim_in_scene(
     tiles: &[WorldTile],
-    here: WorldTile,
+    here_index: Option<usize>,
     cursor: usize,
     scene: &api::snapshot::SceneView,
 ) -> (WorldTile, usize) {
-    let (aim, mut idx) = pick_aim(tiles, here, cursor);
+    let (aim, mut idx) = pick_aim(tiles, here_index, cursor);
     if tile_in_scene(scene, aim) {
         return (aim, idx);
     }
-    let here_i = tiles
-        .iter()
-        .position(|t| *t == here)
-        .filter(|&i| i >= cursor)
-        .unwrap_or(cursor);
+    let here_i = here_index.unwrap_or(cursor);
     while idx > here_i && !tile_in_scene(scene, tiles[idx]) {
         idx -= 1;
     }
@@ -122,8 +150,8 @@ impl FollowRun {
         let arms = [("arrived", arrived(hop.aim, radius))];
         if api::hostlog::debug_enabled() {
             api::host_log!(Category::NavTrace, Level::Debug,
-                "walk tick={} here={here:?} aim={:?} radius={radius} ticks_waited={} sent_tile={:?} actor={:?} map_flag={:?}",
-                snapshot.tick(), hop.aim, hop.ticks_waited, hop.sent_tile,
+                "walk tick={} here={here:?} aim={:?} radius={radius} ticks_waited={} budget_ticks={} sent_tile={:?} actor={:?} map_flag={:?}",
+                snapshot.tick(), hop.aim, hop.ticks_waited.get(), hop.budget_ticks, hop.sent_tile,
                 snapshot.local_player().map(|p| (p.player.actor.moving, p.player.actor.running, p.player.actor.in_combat, &p.player.actor.target)),
                 snapshot.map_flag()
             );
@@ -173,8 +201,15 @@ impl FollowRun {
                 Poll::Watching
             }
             None => {
-                hop.ticks_waited += 1;
-                if hop.ticks_waited > self.budget {
+                let counted = hop.ticks_waited.get();
+                let spent = hop.ticks_waited.observe(snapshot.tick());
+                let moved = hop.stall_idle_at.is_some_and(|last| last != here);
+                let moving_budget = hop
+                    .budget_ticks
+                    .saturating_add(hop.budget_ticks.div_ceil(WALK_MOVEMENT_MARGIN_DIVISOR))
+                    .max(DEFAULT_HOP_BUDGET_TICKS);
+                if spent != counted && spent > hop.budget_ticks && (!moved || spent > moving_budget)
+                {
                     let why = if hop.sent_tile == Some(here) {
                         HopFailure::Dropped
                     } else {
@@ -212,13 +247,14 @@ impl FollowRun {
         api::host_log!(
             Category::NavEvent,
             Level::Info,
-            "walk-stall why={why:?} start={:?} end={end:?} aim={:?} first_send_tick={} last_send_tick={} tries={} waited_calls={} idle_ticks={} last_scene_rebuild_tick={:?} run_energy={} run_mode={} last_server_movement_tick={:?}",
+            "walk-stall why={why:?} start={:?} end={end:?} aim={:?} first_send_tick={} last_send_tick={} tries={} waited_ticks={} budget_ticks={} idle_ticks={} last_scene_rebuild_tick={:?} run_energy={} run_mode={} last_server_movement_tick={:?}",
             hop.start_tile,
             hop.aim,
             hop.first_sent_tick,
             hop.sent_tick,
             hop.tries.max(1),
-            hop.ticks_waited,
+            hop.ticks_waited.get(),
+            hop.budget_ticks,
             hop.stall_idle_ticks,
             snapshot.last_scene_rebuild_tick(),
             snapshot.runenergy(),
@@ -274,8 +310,8 @@ impl FollowRun {
     ) {
         if hop.sent_tile.is_none() || walk_is_live(snapshot) {
             hop.stall_idle_ticks = 0;
-            hop.stall_idle_last_tick = None;
-            hop.stall_idle_at = None;
+            hop.stall_idle_last_tick = Some(snapshot.tick());
+            hop.stall_idle_at = Some(here);
             return;
         }
         if hop.stall_idle_at != Some(here) {
@@ -370,6 +406,48 @@ impl FollowRun {
         refused.0 >= END_BLOCKED_STALL_TICKS
     }
 
+    /// A swing door can move its open leaf onto the packed approach stand.
+    /// That stand is no longer required: the next door leg already walks
+    /// through an observed open door without sending its Close operation.
+    fn open_door_occupies_walk_end(
+        &self,
+        snapshot: &GameSnapshot,
+        end: WorldTile,
+        here: WorldTile,
+    ) -> bool {
+        if end.level != here.level || cheb(end, here) > 1 {
+            return false;
+        }
+        let matches = |edge: &TransportEdge| {
+            edge.kind == TransportKind::Door
+                && edge.takeoff.is_none()
+                && find_door_loc(snapshot, edge)
+                    .is_some_and(|loc| loc.id != edge.loc_id && loc.tile == end)
+                && SceneQuery::new(snapshot.scene(), Some(here))
+                    .can_reach(edge.to, &api::query::SceneReachOptions::default())
+        };
+        let plan_matches = |plan: &RoutePlanLease, index| match plan_retained_leg(plan, index) {
+            Some(nav_planner::router::CompactRouteLeg::Transport(step)) => {
+                step.source().is_some_and(matches)
+            }
+            _ => false,
+        };
+        if let Some(leg) = &self.pending_leg {
+            return match leg {
+                FollowLeg::Legacy(Leg::Transport { edge }) => matches(edge),
+                FollowLeg::Legacy(Leg::Walk { .. }) => false,
+                FollowLeg::Plan { plan, index } => plan_matches(plan, *index),
+            };
+        }
+        match &self.legs {
+            RouteLegSource::Legacy(legs) => match legs.front() {
+                Some(Leg::Transport { edge }) => matches(edge),
+                _ => false,
+            },
+            RouteLegSource::Plan { plan, next_leg, .. } => plan_matches(plan, *next_leg),
+        }
+    }
+
     pub(super) fn send_walk_hop<D: Driver>(
         &mut self,
         d: &mut D,
@@ -397,12 +475,9 @@ impl FollowRun {
         let end = hop.tiles().last().copied();
         let mut refused = (hop.end_refused_ticks, hop.end_refused_last_tick);
         let tiles = hop.tiles();
-        let here_i = tiles
-            .iter()
-            .position(|t| *t == here)
-            .filter(|&i| i >= hop.cursor)
-            .unwrap_or(hop.cursor);
-        let (mut aim, mut idx) = pick_aim_in_scene(tiles, here, hop.cursor, snapshot.scene());
+        let here_index = player_path_index(tiles, here, hop.cursor);
+        let here_i = here_index.unwrap_or(hop.cursor);
+        let (mut aim, mut idx) = pick_aim_in_scene(tiles, here_index, hop.cursor, snapshot.scene());
         loop {
             if aim == here {
                 (hop.end_refused_ticks, hop.end_refused_last_tick) = refused;
@@ -414,20 +489,40 @@ impl FollowRun {
             report_walk(options, snapshot, here, aim, &result);
             match result {
                 SendResult::Sent { .. } => {
+                    // Walk speed consumes one route step per game tick:
+                    // engine/src/engine/entity/PathingEntity.ts:144-149.
+                    // Click-ahead can put the player behind the cursor. Count
+                    // those remaining steps from the player's actual route tile.
+                    let planned_start = here_index
+                        .or_else(|| tiles.iter().position(|tile| *tile == here))
+                        .unwrap_or(here_i);
+                    let planned_steps = idx.saturating_sub(planned_start);
+                    hop.budget_ticks = self
+                        .budget
+                        .max(u32::try_from(planned_steps).unwrap_or(u32::MAX));
                     self.hops += 1;
                     hop.aim = aim;
                     hop.aim_index = idx;
                     hop.sent = true;
+                    hop.send_refusal = None;
                     hop.sent_tick = snapshot.tick();
                     hop.start_tile = here;
                     hop.first_sent_tick = snapshot.tick();
-                    hop.ticks_waited = 0;
+                    hop.ticks_waited = TickCount::sent_at(snapshot.tick());
                     hop.sent_tile = Some(here);
                     hop.stall_idle_ticks = 0;
-                    hop.stall_idle_last_tick = None;
-                    hop.stall_idle_at = None;
+                    hop.stall_idle_last_tick = Some(snapshot.tick());
+                    hop.stall_idle_at = Some(here);
                     self.walk = Some(hop);
                     return Poll::Watching;
+                }
+                SendResult::Refused {
+                    reason: SendReason::Unreachable,
+                    ..
+                } if end == Some(aim) && self.open_door_occupies_walk_end(snapshot, aim, here) => {
+                    fire_leg(options, &hop.leg(), LegPhase::Done);
+                    self.leg_index += 1;
+                    return Poll::LegDone;
                 }
                 SendResult::Refused {
                     reason: SendReason::Unreachable,
@@ -455,12 +550,17 @@ impl FollowRun {
                 }
                 SendResult::Refused {
                     reason:
-                        SendReason::OffScene | SendReason::Unreachable | SendReason::SceneUnavailable,
+                        reason @ (SendReason::OffScene
+                        | SendReason::Unreachable
+                        | SendReason::SceneUnavailable),
                     ..
                 } => {
                     // Rebuild (`scene_state != 2`) refuses the walk before
                     // a packet goes out — wait, do not fail the follow.
                     (hop.end_refused_ticks, hop.end_refused_last_tick) = refused;
+                    hop.aim = aim;
+                    hop.aim_index = idx;
+                    hop.send_refusal = Some(reason);
                     self.walk = Some(hop);
                     return Poll::Watching;
                 }

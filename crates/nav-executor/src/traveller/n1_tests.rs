@@ -118,7 +118,7 @@ fn walk_stall_writes_one_info_nav_line_with_hop_facts() {
                         assert_eq!(logs[0].1, api::hostlog::Source::Nav);
                         assert_eq!(logs[0].2, api::hostlog::Level::Info);
                         assert_eq!(logs[0].3, format!(
-                            "walk-stall why={why:?} start={start:?} end={end:?} aim={aim:?} first_send_tick=1 last_send_tick=6 tries=2 waited_calls={} idle_ticks=4 last_scene_rebuild_tick=Some(4) run_energy=17 run_mode={moved} last_server_movement_tick={:?}",
+                            "walk-stall why={why:?} start={start:?} end={end:?} aim={aim:?} first_send_tick=1 last_send_tick=6 tries=2 waited_ticks={} budget_ticks=8 idle_ticks=4 last_scene_rebuild_tick=Some(4) run_energy=17 run_mode={moved} last_server_movement_tick={:?}",
                             if disconnected { 8 } else { 9 },
                             moved.then_some(7),
                         ));

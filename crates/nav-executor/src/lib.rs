@@ -3,9 +3,9 @@
 mod traveller;
 
 pub use traveller::{
-    BlockedWhy, CrossingPass, HopFailure, LegPhase, NpcHopBlockReason, RefusalMatch,
-    TransportRefusal, TravelEvent, TravelLegCallback, TravelOptions, TravelOutcome, Traveller,
-    WebCutFailure,
+    BlockedWhy, CrossingPass, HopFailure, LegPhase, LocId, NpcHopBlockReason, RefusalMatch,
+    TickCount, TransportRefusal, TravelEvent, TravelLegCallback, TravelOptions, TravelOutcome,
+    TravelWaitReason, Traveller, WebCutFailure,
 };
 
 #[cfg(test)]
