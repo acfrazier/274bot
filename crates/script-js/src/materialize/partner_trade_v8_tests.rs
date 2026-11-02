@@ -67,9 +67,17 @@ fn stable_closed_poll_reads_scene_and_calls_clock_once_per_closed_poll() {
             r#"
             globalThis.__nativePartnerTrade = globalThis.__rs2b0t_partner_trade;
             globalThis.__nativePartnerCalls = 0;
+            globalThis.__nativePollCalls = 0;
             globalThis.__rs2b0t_partner_trade = (...args) => {
                 globalThis.__nativePartnerCalls++;
-                return __nativePartnerTrade(...args);
+                const result = __nativePartnerTrade(...args);
+                if (args[0] === 'stableClosedPoll' && typeof result === 'function') {
+                    return (...pollArgs) => {
+                        globalThis.__nativePollCalls++;
+                        return result(...pollArgs);
+                    };
+                }
+                return result;
             };
             globalThis.__clockCalls = 0;
             globalThis.__clockNow = 1000;
@@ -77,6 +85,7 @@ fn stable_closed_poll_reads_scene_and_calls_clock_once_per_closed_poll() {
                 globalThis.__clockCalls++;
                 return globalThis.__clockNow;
             });
+            globalThis.__pollFactoryCalls = globalThis.__nativePartnerCalls;
             globalThis.__nativePartnerCalls = 0;
             "#,
         )
@@ -87,23 +96,24 @@ fn stable_closed_poll_reads_scene_and_calls_clock_once_per_closed_poll() {
         "offer"
     );
     assert_eq!(runtime.eval::<u32>("__nativePartnerCalls").unwrap(), 1);
+    assert_eq!(runtime.eval::<u32>("__pollFactoryCalls").unwrap(), 1);
     runtime
         .eval::<()>("globalThis.__nativePartnerCalls = 0")
         .unwrap();
     assert!(!runtime.eval::<bool>("__poll()").unwrap());
-    assert_eq!(runtime.eval::<u32>("__nativePartnerCalls").unwrap(), 1);
+    assert_native_poll_once(&mut runtime);
     assert_eq!(runtime.eval::<u32>("__clockCalls").unwrap(), 0);
 
     post_trade_screen(20, false, false);
-    runtime
-        .eval::<()>("globalThis.__nativePartnerCalls = 0")
-        .unwrap();
     assert!(!runtime.eval::<bool>("__poll()").unwrap());
-    assert_eq!(runtime.eval::<u32>("__nativePartnerCalls").unwrap(), 1);
+    assert_native_poll_once(&mut runtime);
+    assert_eq!(runtime.eval::<u32>("__clockCalls").unwrap(), 1);
     runtime.eval::<()>("globalThis.__clockNow = 2100").unwrap();
     assert!(!runtime.eval::<bool>("__poll()").unwrap());
+    assert_native_poll_once(&mut runtime);
     runtime.eval::<()>("globalThis.__clockNow = 2200").unwrap();
     assert!(runtime.eval::<bool>("__poll()").unwrap());
+    assert_native_poll_once(&mut runtime);
     assert_eq!(runtime.eval::<u32>("__clockCalls").unwrap(), 3);
 
     post_trade_screen(21, false, true);
@@ -111,13 +121,21 @@ fn stable_closed_poll_reads_scene_and_calls_clock_once_per_closed_poll() {
         runtime.eval::<String>("__tradeScreenState()").unwrap(),
         "confirm"
     );
+    assert_eq!(runtime.eval::<u32>("__nativePartnerCalls").unwrap(), 1);
+    runtime
+        .eval::<()>("globalThis.__nativePartnerCalls = 0")
+        .unwrap();
     assert!(!runtime.eval::<bool>("__poll()").unwrap());
+    assert_native_poll_once(&mut runtime);
     assert_eq!(runtime.eval::<u32>("__clockCalls").unwrap(), 3);
+
     post_trade_screen(22, false, false);
     runtime.eval::<()>("globalThis.__clockNow = 5000").unwrap();
     assert!(!runtime.eval::<bool>("__poll()").unwrap());
+    assert_native_poll_once(&mut runtime);
     runtime.eval::<()>("globalThis.__clockNow = 6200").unwrap();
     assert!(runtime.eval::<bool>("__poll()").unwrap());
+    assert_native_poll_once(&mut runtime);
     assert_eq!(
         runtime.eval::<String>("__tradeScreenState()").unwrap(),
         "closed"
@@ -127,9 +145,23 @@ fn stable_closed_poll_reads_scene_and_calls_clock_once_per_closed_poll() {
     runtime
         .eval::<()>("globalThis.__tickPoll = __stableClosedPoll(600)")
         .unwrap();
+    assert_eq!(runtime.eval::<u32>("__nativePartnerCalls").unwrap(), 1);
+    runtime
+        .eval::<()>("globalThis.__nativePartnerCalls = 0")
+        .unwrap();
     assert!(!runtime.eval::<bool>("__tickPoll()").unwrap());
+    assert_native_poll_once(&mut runtime);
     post_trade_screen(31, false, false);
     assert!(runtime.eval::<bool>("__tickPoll()").unwrap());
+    assert_native_poll_once(&mut runtime);
+}
+
+fn assert_native_poll_once(runtime: &mut Runtime) {
+    assert_eq!(runtime.eval::<u32>("__nativePartnerCalls").unwrap(), 0);
+    assert_eq!(runtime.eval::<u32>("__nativePollCalls").unwrap(), 1);
+    runtime
+        .eval::<()>("globalThis.__nativePollCalls = 0")
+        .unwrap();
 }
 
 fn in_child(name: &str) -> bool {
