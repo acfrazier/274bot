@@ -524,6 +524,12 @@ These window edges therefore wait for runtime stage evidence. The unconditional
 stile, skill-only upper rocks and window climb, worn-glove gates, and proven
 completed-Biohazard gate can operate with current runtime evidence.
 
+Kharazi jungle crossings retain the first successful roll's minimum delay:
+3 game ticks for bushes and 5 for trees
+(`quest_legends/scripts/jungle_tree.rs2:61-69,115-118`).
+The complete pinned handler still controls admission. These costs do not
+include failed Woodcutting or depletion rolls.
+
 
 Footprint-backed loc transports use the same face/wall predicate as live
 `api::query::loc_approach` interactions. Their rotated rectangle and blocked

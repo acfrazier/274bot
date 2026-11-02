@@ -40,6 +40,8 @@ const LEGENDS_GATE_LOCATIONS: [GateLoc; 2] = [
     },
 ];
 
+// jungle_tree.rs2:61-69 delays the first roll by 3 ticks for bushes and 5 for
+// trees; 115-118 permits that roll only at the selected action-delay tick.
 const JUNGLE_LOCS: [JungleLoc; 5] = [
     JungleLoc {
         name: "kharazi_jungle_tree_logs",
@@ -47,6 +49,7 @@ const JUNGLE_LOCS: [JungleLoc; 5] = [
         category: "jungle_tree",
         next_stage: "junglestump_kharazi",
         next_stage_id: 2891,
+        ticks: 5,
     },
     JungleLoc {
         name: "kharazi_jungle_tree1",
@@ -54,6 +57,7 @@ const JUNGLE_LOCS: [JungleLoc; 5] = [
         category: "jungle_tree",
         next_stage: "junglestump_kharazi",
         next_stage_id: 2891,
+        ticks: 5,
     },
     JungleLoc {
         name: "kharazi_jungle_tree2",
@@ -61,6 +65,7 @@ const JUNGLE_LOCS: [JungleLoc; 5] = [
         category: "jungle_tree",
         next_stage: "junglestump_kharazi",
         next_stage_id: 2891,
+        ticks: 5,
     },
     JungleLoc {
         name: "kharazi_jungle_plant1",
@@ -68,6 +73,7 @@ const JUNGLE_LOCS: [JungleLoc; 5] = [
         category: "jungle_bush",
         next_stage: "kharazi_jungle_plant1_slashed",
         next_stage_id: 2894,
+        ticks: 3,
     },
     JungleLoc {
         name: "kharazi_jungle_plant2",
@@ -75,6 +81,7 @@ const JUNGLE_LOCS: [JungleLoc; 5] = [
         category: "jungle_bush",
         next_stage: "kharazi_jungle_plant1_slashed",
         next_stage_id: 2894,
+        ticks: 3,
     },
 ];
 
@@ -114,6 +121,7 @@ struct JungleLoc {
     category: &'static str,
     next_stage: &'static str,
     next_stage_id: i32,
+    ticks: i32,
 }
 #[derive(Clone, Copy)]
 struct JungleCrossing {
@@ -121,6 +129,7 @@ struct JungleCrossing {
     at: WorldTile,
     takeoff: WorldTile,
     to: WorldTile,
+    ticks: i32,
 }
 
 #[derive(Clone, Copy)]
@@ -518,6 +527,7 @@ fn jungle_edges(
                     at,
                     takeoff,
                     to,
+                    ticks: loc.ticks,
                 };
                 emit_jungle_variants(graph, crossing, tools, &map_ids, quest.as_ref());
                 emitted |= graph.edges.len() > before;
@@ -629,7 +639,7 @@ fn push_jungle_edge(
         player_delta: None,
         loc_id: crossing.loc_id,
         option: 1,
-        ticks: 1,
+        ticks: crossing.ticks,
         dir: None,
         open_loc_id: None,
         skill_req: vec![],

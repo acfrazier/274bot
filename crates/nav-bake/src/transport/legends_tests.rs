@@ -217,7 +217,12 @@ fn every_mature_jungle_loc_has_map_or_completion_tool_and_takeoff_gates() {
             assert_eq!(edge.option, 1);
             assert_eq!(edge.player_delta, None);
             assert_eq!(edge.open_loc_id, None);
-            assert_eq!(edge.ticks, 1);
+            // jungle_tree.rs2:61-69,115-118: every tool/unlock variant
+            // retains the first successful roll's content minimum.
+            assert_eq!(
+                edge.ticks,
+                if matches!(loc_id, 2892 | 2893) { 3 } else { 5 }
+            );
             assert!(edge.skill_req.is_empty(), "axes have no level gate");
             let has_map = edge
                 .item_req

@@ -571,9 +571,9 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.8` 
   Legends unlocks each crossing. The player must also have a machete and an
   axe. Both tools can be carried. The player can also wear one tool in the right
   hand and carry the other.
-  The script also uses a Woodcutting roll and a tree-depletion roll. The pack
-  records a successful crossing, but it does not model the chance of either
-  roll.
+  A successful bush crossing costs at least 3 game ticks; a tree crossing
+  costs at least 5. The script also uses a Woodcutting roll and a
+  tree-depletion roll. The pack does not model the chance of either roll.
 
 
 - Walk failure details and debug logs now name the search result. A walk
