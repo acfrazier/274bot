@@ -178,8 +178,8 @@ fn loaded_declared_surface_materializes_walk_catalog() {
         isolate.join();
         assert_eq!(ready, crate::Ready::Ready);
         assert_eq!(
-            callbacks, 1,
-            "the always-loaded declared surface imports WalkDestinations"
+            callbacks, 0,
+            "an unimported declared surface must not materialize WalkDestinations"
         );
         return;
     }

@@ -531,12 +531,15 @@ globalThis.document = {
 /// the only cross-root projections are `src/client/config/worlds.ts` and
 /// `src/client/shell/Skill.ts`, which AccountLeveler imports. No other client
 /// modules are served.
+const DECLARED_SURFACE_MODULE: &str = "/rs2b0t/bot/scripts/bot/declared_surface.js";
+const RS2B0T_API_MODULE: &str = "/rs2b0t/bot/scripts/bot/rs2b0t-api.js";
 const WALK_DESTINATIONS_MODULE: &str = "/rs2b0t/bot/api/map/WalkDestinations.js";
 const REGIONS_MODULE: &str = "/rs2b0t/bot/api/map/regions.js";
 const WILDERNESS_MODULE: &str = "/rs2b0t/bot/event/webwalk/wilderness.js";
 const WALK_EXECUTOR_MODULE: &str = "/rs2b0t/bot/event/webwalk/WalkExecutor.js";
 const STOCK_MODEL_MODULE: &str = "/rs2b0t/bot/api/shop/StockModel.js";
 const SHOP_PRICE_MODULE: &str = "/rs2b0t/bot/api/shop/shopPrice.js";
+#[cfg(test)]
 const WAVE_THREE_MODULE_PATHS: [&str; 6] = [
     WALK_DESTINATIONS_MODULE,
     REGIONS_MODULE,
@@ -545,7 +548,16 @@ const WAVE_THREE_MODULE_PATHS: [&str; 6] = [
     STOCK_MODEL_MODULE,
     SHOP_PRICE_MODULE,
 ];
-const GATED_MODULE_PATHS: &[&str] = &WAVE_THREE_MODULE_PATHS;
+const GATED_MODULE_PATHS: [&str; 8] = [
+    WALK_DESTINATIONS_MODULE,
+    REGIONS_MODULE,
+    WILDERNESS_MODULE,
+    WALK_EXECUTOR_MODULE,
+    STOCK_MODEL_MODULE,
+    SHOP_PRICE_MODULE,
+    DECLARED_SURFACE_MODULE,
+    RS2B0T_API_MODULE,
+];
 
 pub fn shim_modules() -> Vec<Module> {
     super::source_catalog::SHIM_MODULE_SOURCES
@@ -1000,11 +1012,44 @@ pub fn remap_catalog_imports(source: &str) -> String {
 mod wave_three_tests {
     use super::*;
 
+    const THIEVER_IMPORTS: &str = r#"import '../../api/combat/food.js';
+import '../../api/tasks/Anchor.js';
+import '../../api/bot/Bot.js';
+import '../../api/execution/Execution.js';
+import '../../api/game/Game.js';
+import '../../event/webwalk/geometry/Reachability.js';
+import '../../geometry/Tile.js';
+import '../../api/ui/dialogue/ChatDialog.js';
+import '../../api/bank/Bank.js';
+import '../../api/bank/Banking.js';
+import '../../api/bank/BankLocations.js';
+import '../../event/webwalk/walkOpening.js';
+import '../../api/inventory/Inventory.js';
+import '../../api/skills/Skills.js';
+import '../../api/grounditems/GroundItems.js';
+import '../../api/npcs/Npcs.js';
+import '../../paint/Paint.js';
+import '../../paint/paintLogic.js';
+import '../../runtime/ScriptRunner.js';
+import '../../runtime/Settings.js';
+import '../../api/walking/Traversal.js';
+import '../../data/pickpocketTargets.js';
+import '../../api/thieving/targets.js';
+import '../../api/thieving/stealRules.js';
+import '../../api/loadout/loadoutPlan.js';
+import '../../api/loadout/loadoutSetting.js';
+export default class T {}"#;
+
     fn gated_module_paths() -> Vec<String> {
-        GATED_MODULE_PATHS
+        shim_modules()
             .iter()
-            .map(|path| (*path).to_string())
+            .filter(|module| is_gated_module(module.filename()))
+            .map(|module| module.filename().display().to_string())
             .collect()
+    }
+
+    fn baseline_gated_paths() -> Vec<String> {
+        retained_gated("export default class T {}")
     }
 
     fn retained_gated(source: &str) -> Vec<String> {
@@ -1031,10 +1076,7 @@ mod wave_three_tests {
 
     #[test]
     fn wave_three_modules_follow_static_import_and_reexport_closures() {
-        assert_eq!(
-            retained_wave_three("export default class T {}"),
-            [WALK_DESTINATIONS_MODULE]
-        );
+        assert!(retained_wave_three("export default class T {}").is_empty());
         assert_eq!(
             retained_wave_three("import '../../api/map/WalkDestinations.js';"),
             [WALK_DESTINATIONS_MODULE]
@@ -1054,10 +1096,8 @@ mod wave_three_tests {
             [WALK_DESTINATIONS_MODULE]
         );
         assert_eq!(
-            retained_wave_three(
-                "export async function load(specifier) { return import(specifier); }"
-            ),
-            WAVE_THREE_MODULE_PATHS
+            retained_gated("export async function load(specifier) { return import(specifier); }"),
+            gated_module_paths()
         );
     }
 
@@ -1186,7 +1226,7 @@ globalThis.__q = f < typeof import('../../api/map/regions.js') > (x);"#,
 
     #[test]
     fn import_text_in_non_code_does_not_create_edges() {
-        let baseline = retained_wave_three("export default class T {}");
+        let baseline = baseline_gated_paths();
         for source in [
             "const s = \"import('../../api/map/regions.js')\";",
             "const s = `import('../../api/map/regions.js')`;",
@@ -1194,7 +1234,7 @@ globalThis.__q = f < typeof import('../../api/map/regions.js') > (x);"#,
             r"const r = /import\('..\/..\/api\/map\/regions.js'\)/;",
         ] {
             assert_eq!(
-                retained_wave_three(source),
+                retained_gated(source),
                 baseline,
                 "text without an import edge changed the baseline closure: {source}"
             );
@@ -1214,8 +1254,8 @@ globalThis.__q = f < typeof import('../../api/map/regions.js') > (x);"#,
             "await new Function(\"return import('/rs2b0t/bot/api/map/regions.js')\")();",
         ] {
             assert_eq!(
-                retained_wave_three(source),
-                WAVE_THREE_MODULE_PATHS,
+                retained_gated(source),
+                gated_module_paths(),
                 "fallback did not retain the gated set for {source}"
             );
         }
@@ -1223,7 +1263,7 @@ globalThis.__q = f < typeof import('../../api/map/regions.js') > (x);"#,
 
     #[test]
     fn escaped_dynamic_code_is_not_an_eager_gate_fallback() {
-        let baseline = retained_wave_three("export default class T {}");
+        let baseline = baseline_gated_paths();
         let sources = [
             "await (0, eval)(\"import('/rs2b0t/bot/api/map/regions.js')\");",
             "await globalThis.eval(\"import('/rs2b0t/bot/api/map/regions.js')\");",
@@ -1238,7 +1278,7 @@ globalThis.__q = f < typeof import('../../api/map/regions.js') > (x);"#,
         ];
         for source in sources {
             assert_eq!(
-                retained_wave_three(source),
+                retained_gated(source),
                 baseline,
                 "escaped syntax changed the eager closure: {source}"
             );
@@ -1278,7 +1318,174 @@ globalThis.__q = f < typeof import('../../api/map/regions.js') > (x);"#,
                 })
                 .copied()
                 .collect::<Vec<_>>(),
-            [WALK_DESTINATIONS_MODULE, REGIONS_MODULE]
+            [REGIONS_MODULE]
+        );
+    }
+
+    #[test]
+    fn thiever_style_card_does_not_keep_api_barrel_modules() {
+        let retained = retained_gated(THIEVER_IMPORTS);
+        assert!(
+            retained
+                .iter()
+                .all(|path| path != DECLARED_SURFACE_MODULE && path != RS2B0T_API_MODULE),
+            "Thiever-style card kept the API barrel modules"
+        );
+    }
+
+    #[test]
+    fn importing_public_api_barrel_retains_its_module_closure() {
+        let source = remap_catalog_imports("import '@rs2b0t/api'; export default class T {}");
+        let retained = retained_gated(&source);
+        for path in [DECLARED_SURFACE_MODULE, RS2B0T_API_MODULE] {
+            assert!(
+                retained.iter().any(|retained| retained == path),
+                "public API barrel closure omitted {path}"
+            );
+        }
+    }
+
+    #[test]
+    fn literal_template_imports_keep_their_wave_three_targets() {
+        assert_eq!(
+            retained_wave_three(
+                "export async function load() { return import(`../../api/map/regions.js`); }"
+            ),
+            [REGIONS_MODULE]
+        );
+    }
+
+    #[test]
+    fn comments_strings_and_templates_do_not_create_import_edges() {
+        let source = r#"const text = "import('../../api/map/regions.js') eval('x') new Function('x')";
+// import '../../api/map/regions.js'; eval('x'); new Function('x');
+const template = `import('../../api/map/regions.js') eval("x") new Function("x")`;
+export default class T {}"#;
+        assert!(retained_gated(source).is_empty());
+    }
+
+    #[test]
+    fn regex_literals_do_not_hide_following_static_imports() {
+        let source = r#"
+const pattern = /`\/\* import\(['"]Regions/;
+import '../../api/map/regions.js';
+export default class T {}
+"#;
+        assert_eq!(retained_wave_three(source), [REGIONS_MODULE]);
+    }
+
+    #[test]
+    fn dynamic_code_construction_keeps_all_gated_modules() {
+        for source in [
+            "const dynamicImport = new Function('u', 'return import(u)');",
+            r#"eval("import('/rs2b0t/bot/api/map/regions.js')");"#,
+            r#"Function("return import('/rs2b0t/bot/api/map/regions.js')")();"#,
+        ] {
+            assert_eq!(retained_gated(source), gated_module_paths());
+        }
+    }
+
+    #[test]
+    fn dynamic_code_in_a_sibling_keeps_all_gated_modules() {
+        const SIBLING_MODULE: &str = "/rs2b0t/bot/scripts/bot/sibling.js";
+        let mut modules = shim_modules();
+        modules.push(Module::new(
+            SIBLING_MODULE,
+            "const dynamicImport = new Function('u', 'return import(u)');",
+        ));
+        modules.push(Module::new(BOT_MODULE, "export default class T {}"));
+        filter_gated_modules(&mut modules, [BOT_MODULE, SIBLING_MODULE]);
+        let gated_paths = gated_module_paths();
+        let retained = gated_paths
+            .iter()
+            .filter(|path| {
+                modules
+                    .iter()
+                    .any(|module| module.filename() == Path::new(path))
+            })
+            .cloned()
+            .collect::<Vec<_>>();
+        assert_eq!(retained, gated_paths);
+    }
+
+    #[test]
+    fn dynamic_code_in_a_served_shim_fails_closed() {
+        let module = Module::new(REGIONS_MODULE, "eval('load another module');");
+        let referrer = module_specifier(module.filename()).expect("absolute shim URL");
+        let modules = [module];
+        let edges =
+            module_edges(modules[0].contents(), &referrer, &modules).expect("shim source parses");
+        let mut pending = VecDeque::new();
+        assert_eq!(
+            enqueue_imports(&edges, &mut pending),
+            Err("dynamic code construction")
+        );
+    }
+
+    #[test]
+    fn api_barrel_is_retained_when_a_sibling_imports_it() {
+        const SIBLING_MODULE: &str = "/rs2b0t/bot/scripts/bot/sibling.js";
+        let gated_paths = gated_module_paths();
+        let mut modules = shim_modules();
+        modules.push(Module::new(SIBLING_MODULE, "import './rs2b0t-api.js';"));
+        modules.push(Module::new(BOT_MODULE, "export default class T {}"));
+        filter_gated_modules(&mut modules, [BOT_MODULE, SIBLING_MODULE]);
+        let retained = gated_paths
+            .into_iter()
+            .filter(|path| {
+                modules
+                    .iter()
+                    .any(|module| module.filename() == Path::new(path))
+            })
+            .collect::<Vec<_>>();
+        for path in [DECLARED_SURFACE_MODULE, RS2B0T_API_MODULE] {
+            assert!(
+                retained.iter().any(|retained| retained == path),
+                "sibling API barrel closure omitted {path}"
+            );
+        }
+    }
+
+    #[test]
+    fn main_module_is_an_import_closure_root() {
+        let mut modules = shim_modules();
+        modules.push(Module::new(BOT_MODULE, "export default class T {}"));
+        modules.push(Module::new(
+            MAIN_MODULE,
+            "import '../../api/map/regions.js';",
+        ));
+        filter_gated_modules(&mut modules, [MAIN_MODULE]);
+        assert!(
+            modules
+                .iter()
+                .any(|module| module.filename() == Path::new(REGIONS_MODULE)),
+            "main module imports must retain their served shims"
+        );
+    }
+}
+#[cfg(test)]
+mod shim_import_graph_memory_tests {
+    use super::build_shim_import_graph;
+
+    #[test]
+    fn process_graph_retained_allocation_stays_below_36_kib() {
+        let mut graph = None;
+        let allocation = allocation_counter::measure(|| {
+            graph = Some(build_shim_import_graph());
+        });
+        let graph = graph.expect("graph builder ran");
+        assert!(graph.complete, "shim import graph must parse completely");
+        assert_eq!(graph.edges.len(), graph.paths.len());
+
+        const RETAINED_LIMIT: i64 = 36 * 1024;
+        eprintln!(
+            "process shim import graph retained={} bytes; limit={RETAINED_LIMIT}",
+            allocation.bytes_current
+        );
+        assert!(
+            allocation.bytes_current <= RETAINED_LIMIT,
+            "process shim import graph retains {} bytes, above {RETAINED_LIMIT}",
+            allocation.bytes_current
         );
     }
 }

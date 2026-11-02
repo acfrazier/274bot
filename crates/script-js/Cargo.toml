@@ -289,6 +289,9 @@ name = "broadcast_channel"
 [[test]]
 name = "gather_gas_alloc"
 [[test]]
+name = "shim_import_graph_alloc"
+required-features = ["test-hooks"]
+[[test]]
 name = "gather_gas_set"
 [[test]]
 name = "gather_lazy_ownership"
