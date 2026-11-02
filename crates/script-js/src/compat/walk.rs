@@ -2714,7 +2714,7 @@ pub(crate) mod tests {
         }))
         .expect("the walk options deserialize with the caller budget");
         let mut ops = Vec::new();
-        let mut clock = crate::scene::task_clock::InstantTaskClock::new();
+        let mut clock = crate::task_clock::InstantTaskClock::new();
         let mut cx = crate::machine::Cx::test(&mut ops, &mut clock, None);
         let crate::machine::Begin::Run(mut row) =
             <WalkResilient as crate::machine::Family>::begin(args, &mut cx)
