@@ -618,9 +618,17 @@ globs = [
   "crates/script/src/trade_screen.rs",
   "crates/script-js/src/materialize/partner_trade_v8.rs",
   "crates/script-js/src/shim/drive_partner_trade.js",
+  "crates/script-js/src/compat/partner_trade.rs",
 ]
 cells = [
   "compat_v1_trade_engine_l|LIVE=1 BOT_LIVE_NAME_PREFIX=${BOT_LIVE_NAME_PREFIX:?} BOT_CPU=1 BOT_NAV_BUILD=skip WORLD_ENGINE_DIR=${ENGINE_A_DIR:?} WORLD_NAV_PACK=${NAV_PACK_289:?} BOT_CACHE_DIR=${BOT_CACHE_DIR:?} RS2B0T=${CATALOG_ROOT:?} COMPAT_W2_PRODUCT_COMMIT=af0be9662 LIVE_EVIDENCE_DIR=${LIVE_EVIDENCE_DIR:?} ${ISOHOME:?} nice -n 10 cargo test --locked -p host-play --features live-harness,test-support,live-probe --test compat_v1_trade_live -- --ignored --exact compat_v1_trade_engine_l --nocapture --test-threads=1",
+]
+
+# The real quest-journal cell loads Quests.journal from the compatibility shim.
+[[cover]]
+globs = ["crates/script-js/src/shim/quests.js"]
+cells = [
+  "compat_v1_quest_journal_live|LIVE=1 BOT_LIVE_NAME_PREFIX=${BOT_LIVE_NAME_PREFIX:?} BOT_CPU=1 BOT_NAV_BUILD=skip WORLD_ENGINE_DIR=${ENGINE_A_DIR:?} WORLD_NAV_PACK=${NAV_PACK_289:?} BOT_CACHE_DIR=${BOT_CACHE_DIR:?} RS2B0T=${CATALOG_ROOT:?} COMPAT_W2_PRODUCT_COMMIT=af0be9662 LIVE_EVIDENCE_DIR=${LIVE_EVIDENCE_DIR:?} ${ISOHOME:?} nice -n 10 cargo test --locked -p host-play --features live-harness,test-support,live-probe --test compat_v1_dialogue_game_questlog_live -- --ignored --exact compat_v1_quest_journal_live --nocapture --test-threads=1",
 ]
 
 # This real memory-profile cell crosses the host's per-slot measurements.
