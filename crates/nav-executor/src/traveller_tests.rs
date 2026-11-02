@@ -8502,8 +8502,10 @@ fn executor_state_size_pins() {
         std::mem::size_of::<Traveller>(),
         std::mem::size_of::<FollowRun>()
     );
-    assert_eq!(std::mem::size_of::<Traveller>(), 1048);
-    assert_eq!(std::mem::size_of::<FollowRun>(), 1008);
+    // Traveller: incoming TickCount at traveller.rs:1571 adds 8 B per bot, no heap.
+    assert_eq!(std::mem::size_of::<Traveller>(), 1056);
+    // FollowRun: incoming TickCount at traveller.rs:1571 adds 8 B per bot, no heap.
+    assert_eq!(std::mem::size_of::<FollowRun>(), 1016);
 }
 const BLOCKED_DISPLAY_TILE: WorldTile = WorldTile {
     x: 12,
