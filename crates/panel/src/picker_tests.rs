@@ -27,6 +27,10 @@ use crate::walk_map::{overlay_colors, WalkMapRenderer};
 use dear_imgui_rs::WindowFlags;
 use frontend_core::test_support::IsolatedStores;
 use frontend_core::walk_map::{WalkMap, WalkRouteSource};
+use host_play as map_host;
+
+#[path = "../../host-play/tests/support/map_fixture.rs"]
+mod map_fixture;
 
 // REACH/FLOOD/FLAGS/PACK/ROUTE_TILES share FLAGS_TEST_LOCK — one process-global
 // lock for every test that mutates picker statics (incl. Session drop →
@@ -528,6 +532,215 @@ fn route_through_zones_checkbox_toggles_and_resets_on_each_picker_open() {
             "the next open resets the per-WalkTo choice"
         );
     }
+}
+
+fn probability_picker_session(
+    world: &NavWorld,
+    origin: Tile,
+) -> (map_fixture::MapFixture, Session) {
+    use api::snapshot::{
+        ActorView, GameSnapshot, HitmarkView, HitmarksView, LocalPlayerView, PlayerView, StatView,
+        VarpView, WorldStateView,
+    };
+
+    let fixture = map_fixture::MapFixture::new(world, "local-289");
+    let mut session = Session::new();
+    session.preferences.reload().unwrap();
+    session.poll_panel_preferences();
+    session.launcher.install_template(
+        frontend_core::launch::ProfileTemplate::from_host(Arc::clone(&fixture.template)),
+    );
+    session.set_focus_for_test("alice");
+    session.core.set_play(Some(fixture.play(origin)));
+    session.statuses.refresh_from_play(&session.core);
+    let at = WorldTile {
+        x: origin.x,
+        z: origin.z,
+        level: origin.level,
+    };
+    let mut snapshot = GameSnapshot::new();
+    snapshot.seed_ingame(2);
+    snapshot.seed_tile(at);
+    snapshot.seed_local_player(LocalPlayerView {
+        player: PlayerView {
+            index: 0,
+            network: at,
+            actor: ActorView {
+                name: Some("alice".into()),
+                actions: Vec::new(),
+                tile: at,
+                distance: 0,
+                animation: -1,
+                animation_frame: 0,
+                pose_animation: -1,
+                orientation: 0,
+                target_orientation: 0,
+                overhead_text: None,
+                spot_animation: -1,
+                spot_animation_stamp: 0,
+                health: 1,
+                total_health: 1,
+                face_entity: -1,
+                target: None,
+                moving: false,
+                running: false,
+                in_combat: false,
+            },
+            combat_level: 3,
+            skill_level: 1,
+            headicons: 0,
+            weapon: None,
+        },
+        energy: 100,
+        weight: 0,
+        animation_update: None,
+    });
+    snapshot.seed_stats(
+        [1, 3, 5]
+            .into_iter()
+            .map(|index| StatView {
+                index,
+                name: api::snapshot::stat_name(index as usize).into(),
+                effective: 1,
+                base: 1,
+                xp: 0,
+                used: true,
+            })
+            .collect(),
+    );
+    snapshot.seed_varps(vec![VarpView {
+        index: 173,
+        value: 0,
+    }]);
+    snapshot.seed_inventory(Vec::new(), 28);
+    snapshot.seed_equipment(Vec::new());
+    snapshot.seed_npcs(Vec::new());
+    snapshot.seed_players(Vec::new());
+    snapshot.seed_projectiles(Vec::new());
+    snapshot.seed_world(WorldStateView {
+        level: at.level,
+        player_count: 1,
+        ..WorldStateView::default()
+    });
+    snapshot.seed_hitmarks(HitmarksView {
+        marks: [HitmarkView {
+            value: 0,
+            kind: 0,
+            cycle: 0,
+        }; 4],
+        loop_cycle: 0,
+    });
+    let input = host_play::admission::capture(&snapshot, false, None, false);
+    assert_eq!(input.hp, 1);
+    assert!(!input.missing_facts(), "{input:?}");
+    let state = nav_planner::WorldState::from_snapshot(&snapshot);
+    session.core.publish_test_snapshot("alice", snapshot, state);
+    (fixture, session)
+}
+
+#[test]
+fn probability_admission_checkbox_and_default_escape_use_the_real_picker() {
+    let _guard = crate::test_support::imgui_context_guard();
+    let _stores = IsolatedStores::enter("picker-probability-admission");
+    let mut ctx = crate::test_support::imgui_context();
+    let mut world = open_world(24, 3);
+    let selected = api::game_data::for_revision(api::selected::ClientRevision::R289).unwrap();
+    let ice = selected.npc_by_config("icewarrior").unwrap();
+    world.graph.zones = Some(
+        nav_planner::zones::ZoneTable::from_parts(
+            vec![nav_planner::zones::Zone::npc(
+                WorldTile {
+                    x: 11,
+                    z: 1,
+                    level: 0,
+                },
+                1,
+                nav_planner::zones::ZoneClass::Always,
+                u16::MAX,
+                0,
+            )],
+            vec![nav_planner::zones::ZoneKind::new(
+                "ice",
+                "Ice warrior",
+                ice.id,
+                57,
+                false,
+                false,
+            )],
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+            world.collision.origin,
+            24,
+            3,
+            &world.graph.wilderness,
+        )
+        .unwrap(),
+    );
+    let outside = Tile {
+        x: 1,
+        z: 1,
+        level: 0,
+    };
+    let destination = Tile {
+        x: 22,
+        z: 1,
+        level: 0,
+    };
+    let (_profile, mut session) = probability_picker_session(&world, outside);
+    super::note_closed();
+    session.walkto_open = true;
+    picker_click_frame(&mut ctx, &mut session, &world, [0.0, 0.0], false);
+    assert!(!session.route_through_zones);
+    session.select_picker_tile(&world, destination);
+    assert!(!session.confirm_picker_walk(&world));
+    assert!(!session.core.walk_route_armed("alice"));
+
+    let rect = last_picker_layout().route_zones_rect;
+    assert_ne!(rect, [[0.0, 0.0], [0.0, 0.0]]);
+    let checkbox = [
+        (rect[0][0] + rect[1][0]) * 0.5,
+        (rect[0][1] + rect[1][1]) * 0.5,
+    ];
+    picker_click_frame(&mut ctx, &mut session, &world, checkbox, true);
+    picker_click_frame(&mut ctx, &mut session, &world, checkbox, false);
+    assert!(session.route_through_zones);
+    session.select_picker_tile(&world, destination);
+    assert!(session.confirm_picker_walk(&world));
+    assert!(!session.route_through_zones, "the checkbox grant is consumed");
+    let arms = session.core.walk_arms();
+    let arm = Arc::clone(&arms.lock().unwrap()["alice"]);
+    let arm = arm.lock().unwrap();
+    let assessment = arm.assessment.as_ref().unwrap();
+    assert_eq!(format!("{:?}", assessment.verdict), "Unsurvivable");
+    assert!(assessment.bound > 0.0);
+    assert!(!assessment.plan.crossings.is_empty());
+    assert!(arm.admission.as_ref().unwrap().grants.is_all());
+    assert!(arm.route.is_some(), "explicit UI opt-in retains the honest bound");
+    drop(arm);
+
+    let inside = Tile {
+        x: 11,
+        z: 1,
+        level: 0,
+    };
+    let (_escape_profile, mut escape) = probability_picker_session(&world, inside);
+    super::note_closed();
+    escape.walkto_open = true;
+    picker_click_frame(&mut ctx, &mut escape, &world, [0.0, 0.0], false);
+    assert!(!escape.route_through_zones);
+    escape.select_picker_tile(&world, outside);
+    assert!(escape.confirm_picker_walk(&world));
+    let arms = escape.core.walk_arms();
+    let arm = Arc::clone(&arms.lock().unwrap()["alice"]);
+    let arm = arm.lock().unwrap();
+    let assessment = arm.assessment.as_ref().unwrap();
+    assert!(assessment.plan.complete);
+    assert!(assessment.plan.crossings.is_empty());
+    assert!(assessment.plan.intervals.iter().any(|row| row.escaping()));
+    assert!(!format!("{:?}", assessment.verdict).starts_with("Unknown"));
+    assert_eq!(arm.admission.as_ref().unwrap().grants, nav_planner::zones::ZoneExempt::NONE);
+    assert!(arm.route.is_some(), "default UI escape needs no checkbox grant");
 }
 
 /// A peer frontend sets the durable global danger-zone grant, through a

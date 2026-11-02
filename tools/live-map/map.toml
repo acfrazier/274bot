@@ -505,7 +505,7 @@ cells = [
 [[cover]]
 globs = ["crates/host-play/src/admission.rs", "crates/host-play/src/play_slots.rs", "crates/host-play/src/play_status.rs", "crates/host-play/src/walk_arm.rs", "crates/host-play/src/walk_map/**", "crates/host-play/src/walk_plan.rs"]
 cells = [
-  "host.survivable-admission|LIVE=1 BOT_LIVE_NAME_PREFIX=${BOT_LIVE_NAME_PREFIX:?} BOT_CPU=1 BOT_NAV_BUILD=skip BOT_GAME_PORT=44594 BOT_HTTP_PORT=1080 WORLD_ENGINE_DIR=${ENGINE_A_DIR:?} WORLD_NAV_PACK=${NAV_PACK_289:?} BOT_UNPACK_DIR=${BOT_UNPACK_DIR:?} BOT_CACHE_DIR=${BOT_CACHE_DIR:?} LIVE_EVIDENCE_DIR=${LIVE_EVIDENCE_DIR:?} ${ISOHOME:?} nice -n 10 cargo test --locked -p host-play --features live-harness,test-support,live-probe --test survivable_admission_live -- --ignored --exact real_unknown_poison_explicit_forbid_then_opt_in_and_default_escape --nocapture --test-threads=1",
+  "host.survivable-admission|LIVE=1 BOT_LIVE_NAME_PREFIX=${BOT_LIVE_NAME_PREFIX:?} BOT_CPU=1 BOT_NAV_BUILD=skip BOT_GAME_PORT=47594 BOT_HTTP_PORT=3080 WORLD_ENGINE_DIR=${ENGINE_A_DIR:?} WORLD_NAV_PACK=${NAV_PACK_289:?} BOT_UNPACK_DIR=${BOT_UNPACK_DIR:?} BOT_CACHE_DIR=${BOT_CACHE_DIR:?} LIVE_EVIDENCE_DIR=${LIVE_EVIDENCE_DIR:?} ${ISOHOME:?} nice -n 10 cargo test --locked -p host-play --features live-harness,test-support,live-probe --lib -- --ignored --exact admission::probability_live_tests::probability_admission_engine_l --nocapture --test-threads=1",
 ]
 
 # The qualified release Path and the focused draft harness probes exercise
@@ -675,7 +675,6 @@ cells = [
 [[cover]]
 globs = ["crates/host-play/tests/survivable_admission_live.rs"]
 cells = [
-  "host.survivable-admission|LIVE=1 BOT_LIVE_NAME_PREFIX=${BOT_LIVE_NAME_PREFIX:?} BOT_CPU=1 BOT_NAV_BUILD=skip BOT_GAME_PORT=44594 BOT_HTTP_PORT=1080 WORLD_ENGINE_DIR=${ENGINE_A_DIR:?} WORLD_NAV_PACK=${NAV_PACK_289:?} BOT_UNPACK_DIR=${BOT_UNPACK_DIR:?} BOT_CACHE_DIR=${BOT_CACHE_DIR:?} LIVE_EVIDENCE_DIR=${LIVE_EVIDENCE_DIR:?} ${ISOHOME:?} nice -n 10 cargo test --locked -p host-play --features live-harness,test-support,live-probe --test survivable_admission_live -- --ignored --exact real_unknown_poison_explicit_forbid_then_opt_in_and_default_escape --nocapture --test-threads=1",
   "host.survivable-compat-v1-crossing|LIVE=1 BOT_LIVE_NAME_PREFIX=${BOT_LIVE_NAME_PREFIX:?} BOT_CPU=1 BOT_NAV_BUILD=skip WORLD_ENGINE_DIR=${ENGINE_A_DIR:?} WORLD_NAV_PACK=${NAV_PACK_289:?} BOT_UNPACK_DIR=${BOT_UNPACK_DIR:?} BOT_CACHE_DIR=${BOT_CACHE_DIR:?} LIVE_EVIDENCE_DIR=${LIVE_EVIDENCE_DIR:?} ${ISOHOME:?} nice -n 10 cargo test --locked -p host-play --features live-harness,test-support,live-probe --test survivable_admission_live -- --ignored --exact real_compat_v1_crossing_and_own_sustain_at_45_and_14_hp --nocapture --test-threads=1",
 ]
 
@@ -989,12 +988,12 @@ cells = [
   "panel.profiles-close-headless|${ISOHOME:?} nice -n 10 cargo test --locked -p panel --lib session::tests::close_profiles_closes_with_no_form_and_with_a_clean_form -- --exact --nocapture --test-threads=1|--locked -p panel --lib session::tests::close_profiles_closes_with_no_form_and_with_a_clean_form -- --exact",
 ]
 
-# This real admission cell reads both helpers at its profile boundary
-# (tests/survivable_admission_live.rs:258-259). The runner supplies WORLD_*.
+# The remaining compat-v1 fixture reads both port helpers at its profile
+# boundary. The probability fixture uses fixed Engine L ports instead.
 [[cover]]
 globs = ["crates/host-play/src/live_ports.rs"]
 cells = [
-  "host.survivable-admission|LIVE=1 BOT_LIVE_NAME_PREFIX=${BOT_LIVE_NAME_PREFIX:?} BOT_CPU=1 BOT_NAV_BUILD=skip BOT_GAME_PORT=44594 BOT_HTTP_PORT=1080 WORLD_ENGINE_DIR=${ENGINE_A_DIR:?} WORLD_NAV_PACK=${NAV_PACK_289:?} BOT_UNPACK_DIR=${BOT_UNPACK_DIR:?} BOT_CACHE_DIR=${BOT_CACHE_DIR:?} LIVE_EVIDENCE_DIR=${LIVE_EVIDENCE_DIR:?} ${ISOHOME:?} nice -n 10 cargo test --locked -p host-play --features live-harness,test-support,live-probe --test survivable_admission_live -- --ignored --exact real_unknown_poison_explicit_forbid_then_opt_in_and_default_escape --nocapture --test-threads=1",
+  "host.survivable-compat-v1-crossing|LIVE=1 BOT_LIVE_NAME_PREFIX=${BOT_LIVE_NAME_PREFIX:?} BOT_CPU=1 BOT_NAV_BUILD=skip WORLD_ENGINE_DIR=${ENGINE_A_DIR:?} WORLD_NAV_PACK=${NAV_PACK_289:?} BOT_UNPACK_DIR=${BOT_UNPACK_DIR:?} BOT_CACHE_DIR=${BOT_CACHE_DIR:?} LIVE_EVIDENCE_DIR=${LIVE_EVIDENCE_DIR:?} ${ISOHOME:?} nice -n 10 cargo test --locked -p host-play --features live-harness,test-support,live-probe --test survivable_admission_live -- --ignored --exact real_compat_v1_crossing_and_own_sustain_at_45_and_14_hp --nocapture --test-threads=1",
 ]
 
 # Controlled real Play/map proof, not a live incomplete-search witness.
@@ -1073,4 +1072,13 @@ cells = [
   "host.prereq-authoritative-bank-unknown-full-pack|LIVE=1 BOT_LIVE_NAME_PREFIX=${BOT_LIVE_NAME_PREFIX:?} BOT_CPU=1 BOT_NAV_BUILD=skip WORLD_GAME_PORT=44694 WORLD_HTTP_PORT=1180 WORLD_ENGINE_DIR=${WORLD_ENGINE_DIR:?} WORLD_NAV_PACK=${NAV_PACK_289:?} RS2B0T=${CATALOG_ROOT:?} CATALOG_ROOT=${CATALOG_ROOT:?} BOT_CACHE_DIR=${BOT_CACHE_DIR:?} LIVE_EVIDENCE_DIR=${LIVE_EVIDENCE_DIR:?} NAV_PREREQ_REPO_ROOT=${NAV_PREREQ_REPO_ROOT:?} bash /Volumes/dev-scratch/274bot-evidence/NAV-PREREQ-RUNNER/live/run-owner-cells.sh quester_families_live live_quester_prereq_authoritative_bank_unknown_full_pack|--locked -p host-play --features live-harness,test-support,live-probe,js --test quester_families_live -- --ignored --exact live_quester_prereq_authoritative_bank_unknown_full_pack",
   "host.prereq-mort-myre-already-started|LIVE=1 BOT_LIVE_NAME_PREFIX=${BOT_LIVE_NAME_PREFIX:?} BOT_CPU=1 BOT_NAV_BUILD=skip WORLD_GAME_PORT=44694 WORLD_HTTP_PORT=1180 WORLD_ENGINE_DIR=${WORLD_ENGINE_DIR:?} WORLD_NAV_PACK=${NAV_PACK_289:?} RS2B0T=${CATALOG_ROOT:?} CATALOG_ROOT=${CATALOG_ROOT:?} BOT_CACHE_DIR=${BOT_CACHE_DIR:?} LIVE_EVIDENCE_DIR=${LIVE_EVIDENCE_DIR:?} NAV_PREREQ_REPO_ROOT=${NAV_PREREQ_REPO_ROOT:?} bash /Volumes/dev-scratch/274bot-evidence/NAV-PREREQ-RUNNER/live/run-owner-cells.sh quester_families_live live_quester_prereq_mort_myre_already_started|--locked -p host-play --features live-harness,test-support,live-probe,js --test quester_families_live -- --ignored --exact live_quester_prereq_mort_myre_already_started",
   "host.prereq-mort-myre-request-forbid|LIVE=1 BOT_LIVE_NAME_PREFIX=${BOT_LIVE_NAME_PREFIX:?} BOT_CPU=1 BOT_NAV_BUILD=skip WORLD_GAME_PORT=44694 WORLD_HTTP_PORT=1180 WORLD_ENGINE_DIR=${WORLD_ENGINE_DIR:?} WORLD_NAV_PACK=${NAV_PACK_289:?} RS2B0T=${CATALOG_ROOT:?} CATALOG_ROOT=${CATALOG_ROOT:?} BOT_CACHE_DIR=${BOT_CACHE_DIR:?} LIVE_EVIDENCE_DIR=${LIVE_EVIDENCE_DIR:?} NAV_PREREQ_REPO_ROOT=${NAV_PREREQ_REPO_ROOT:?} bash /Volumes/dev-scratch/274bot-evidence/NAV-PREREQ-RUNNER/live/run-owner-cells.sh quester_families_live live_quester_prereq_mort_myre_request_forbid|--locked -p host-play --features live-harness,test-support,live-probe,js --test quester_families_live -- --ignored --exact live_quester_prereq_mort_myre_request_forbid",
+]
+
+# Actual ImGui checkbox events flow through the panel's confirmation command
+# into a profile-bound Play and probability assessment, including default
+# escape. Synthetic snapshots isolate the UI seam; this is not engine-arrival proof.
+[[cover]]
+globs = ["crates/panel/src/picker.rs", "crates/panel/src/picker_tests.rs", "crates/panel/src/session.rs", "crates/frontend-core/src/session/map.rs", "crates/host-play/src/walk_arm.rs"]
+cells = [
+  "panel.survivable-checkbox-default-escape|${ISOHOME:?} nice -n 10 cargo test --locked -p panel --lib -- --exact picker::tests::probability_admission_checkbox_and_default_escape_use_the_real_picker --nocapture --test-threads=1",
 ]

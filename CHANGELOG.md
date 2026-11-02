@@ -81,6 +81,10 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.8` 
 - Admission regression tests distinguish an all-zone grant from endpoint
   completion on a crossing with no on-foot exit. Covering every zone removes
   only the no-exit refusal, not the probability-bound check.
+- A headless WalkTo regression drives the panel's actual danger-zone checkbox
+  and confirmation through the host's probability assessment. It checks
+  checkbox off and on, the request-local grant, and escape from a danger zone
+  with the checkbox off. Real Engine L probability cells remain separate.
 - The bank ownership probes finish only after observing the withdrawn rune.
   Their terminal recipe no longer repeats an already-settled wait until the
   no-progress guard fires.

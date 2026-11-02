@@ -998,6 +998,12 @@ retain death-bound refusal when an all-zone grant covers a lethal crossing.
 
 Permission layers above the router stay separate: the global Danger routing level in Nav config, the WalkTo-only **Route through danger zones** checkbox (one admission for the current picker opening, never persisted), per-script Script prefs (**Allow teleports**, **Allow wilderness**, **Allow danger zones**, each granting that script's own walks when the global switch is off), and per-walk Path overrides (`cross` names, `guard`, `allow_*`). The prerequisite grants (Nav config **Allow dialogue steps on walks** and **Allow starting quests on walks**, both default on) compose the same way: the global switch or the script's own grant allows the step, and only a per-request Forbid narrows it.
 
+The headless `panel.survivable-checkbox-default-escape` cell drives the actual
+ImGui checkbox and panel confirmation into a profile-bound host. It checks
+checkbox-off refusal, request-local opt-in with an honest probability bound,
+and default escape without a grant. Its synthetic snapshot and map isolate
+this UI seam; the Engine L probability cell separately checks real movement.
+
 Refusals distinguish `NoRouteWithinBounds { tried, last }`, `Unsurvivable`,
 `Unknown`, `PoisonUnsettled`, and `EscapeInProgress`; an ordinary hard no-path
 does not invent an assessment. A found route carries an assessment even
