@@ -4,8 +4,10 @@
 use crate::partner_trade::{self as pt, MuleMode, OfferSlot, ReceiverOfferDecision};
 use rustyscript::Runtime;
 use script::trade_screen::{ScreenKind, StableClosedPoll};
-
 const PENDING: &str = "__pending__";
+
+const PREDICATE_FUNCTION_KEY: &str = "rs2b0t.trade.stableClosedPoll.predicate";
+const PREDICATE_BIND_KEY: &str = "rs2b0t.trade.stableClosedPoll.bind";
 
 pub(super) fn install(runtime: &mut Runtime) -> Result<(), String> {
     let context = runtime.deno_runtime().main_context();
@@ -15,6 +17,21 @@ pub(super) fn install(runtime: &mut Runtime) -> Result<(), String> {
         .ok_or_else(|| "partner trade name".to_string())?;
     let func = v8::Function::new(&mut scope, partner_trade_callback)
         .ok_or_else(|| "partner trade fn".to_string())?;
+    let predicate = v8::FunctionTemplate::new(&mut scope, stable_closed_poll_callback)
+        .get_function(&mut scope)
+        .ok_or_else(|| "stableClosedPoll predicate template".to_string())?;
+    let bind_name =
+        v8::String::new(&mut scope, "bind").ok_or_else(|| "stableClosedPoll bind name".to_string())?;
+    let bind = predicate
+        .get(&mut scope, bind_name.into())
+        .and_then(|value| v8::Local::<v8::Function>::try_from(value).ok())
+        .ok_or_else(|| "stableClosedPoll bind function".to_string())?;
+    let predicate_key = private_key(&mut scope, PREDICATE_FUNCTION_KEY);
+    func.set_private(&mut scope, predicate_key, predicate.into())
+        .ok_or_else(|| "stableClosedPoll predicate cache".to_string())?;
+    let bind_key = private_key(&mut scope, PREDICATE_BIND_KEY);
+    func.set_private(&mut scope, bind_key, bind.into())
+        .ok_or_else(|| "stableClosedPoll bind cache".to_string())?;
     global
         .set(&mut scope, name.into(), func.into())
         .ok_or_else(|| "partner trade set".to_string())?;
@@ -130,22 +147,35 @@ fn stable_closed_poll<'s>(
     let state = v8::Object::new(scope);
     set_key(scope, state, "minMs", min_ms);
     set_key(scope, state, "nowFn", now_fn);
-    let inactive_since_ms = v8::Number::new(scope, -1.0).into();
-    set_key(scope, state, "inactiveSinceMs", inactive_since_ms);
-    let inactive_since_tick = v8::Number::new(scope, -1.0).into();
-    set_key(scope, state, "inactiveSinceTick", inactive_since_tick);
-    let function = v8::Function::builder(stable_closed_poll_callback)
-        .data(state.into())
-        .length(0)
-        .build(scope)
-        .ok_or_else(|| "could not create stableClosedPoll predicate".to_string())?;
-    let key_name = v8::String::new(scope, "rs2b0t.trade.stableClosedPoll.state")
-        .ok_or_else(|| "stableClosedPoll state key".to_string())?;
-    let key = v8::Private::for_api(scope, Some(key_name));
-    function
-        .set_private(scope, key, state.into())
-        .ok_or_else(|| "could not retain stableClosedPoll state".to_string())?;
-    Ok(function.into())
+    set_key(scope, state, "inactiveSinceMs", v8::Number::new(scope, -1.0).into());
+    set_key(
+        scope,
+        state,
+        "inactiveSinceTick",
+        v8::Number::new(scope, -1.0).into(),
+    );
+    let context = scope.get_current_context();
+    let global = context.open(scope).global(scope);
+    let name = v8::String::new(scope, "__rs2b0t_partner_trade")
+        .ok_or_else(|| "partner trade name".to_string())?;
+    let partner_trade = global
+        .get(scope, name.into())
+        .and_then(|value| v8::Local::<v8::Function>::try_from(value).ok())
+        .ok_or_else(|| "partner trade function is unavailable".to_string())?;
+    let predicate_key = private_key(scope, PREDICATE_FUNCTION_KEY);
+    let predicate = partner_trade
+        .get_private(scope, predicate_key)
+        .and_then(|value| v8::Local::<v8::Function>::try_from(value).ok())
+        .ok_or_else(|| "stableClosedPoll predicate template is unavailable".to_string())?;
+    let bind_key = private_key(scope, PREDICATE_BIND_KEY);
+    let bind = partner_trade
+        .get_private(scope, bind_key)
+        .and_then(|value| v8::Local::<v8::Function>::try_from(value).ok())
+        .ok_or_else(|| "stableClosedPoll bind function is unavailable".to_string())?;
+    bind.call(scope, predicate.into(), &[state.into()])
+        .and_then(|value| v8::Local::<v8::Function>::try_from(value).ok())
+        .map(Into::into)
+        .ok_or_else(|| "could not bind stableClosedPoll state".to_string())
 }
 
 fn stable_closed_poll_callback<'s>(
@@ -154,14 +184,12 @@ fn stable_closed_poll_callback<'s>(
     mut rv: v8::ReturnValue,
 ) {
     let result = (|| {
-        let Some(state) = args.data().to_object(scope) else {
-            return Err("stableClosedPoll state is unavailable".to_string());
-        };
-        let min_ms = field(scope, state.into(), "minMs")?;
-        let now_fn = field(scope, state.into(), "nowFn")?;
-        let inactive_since_ms_value = field(scope, state.into(), "inactiveSinceMs")?;
+        let state: v8::Local<v8::Value> = args.this().into();
+        let min_ms = field(scope, state, "minMs")?;
+        let now_fn = field(scope, state, "nowFn")?;
+        let inactive_since_ms_value = field(scope, state, "inactiveSinceMs")?;
         let inactive_since_ms = number(scope, inactive_since_ms_value);
-        let inactive_since_tick_value = field(scope, state.into(), "inactiveSinceTick")?;
+        let inactive_since_tick_value = field(scope, state, "inactiveSinceTick")?;
         let inactive_since_tick = number(scope, inactive_since_tick_value);
         let (screen, tick) = observed_trade_screen_and_tick();
         let explicit_clock = !now_fn.is_null_or_undefined();
@@ -385,6 +413,14 @@ fn field<'s>(
     let key = v8::String::new(scope, name).ok_or_else(|| "string".to_string())?;
     obj.get(scope, key.into())
         .ok_or_else(|| PENDING.to_string())
+}
+
+fn private_key<'s>(
+    scope: &mut v8::HandleScope<'s>,
+    name: &str,
+) -> v8::Local<'s, v8::Private> {
+    let name = v8::String::new(scope, name).unwrap_or_else(|| v8::String::empty(scope));
+    v8::Private::for_api(scope, Some(name))
 }
 
 fn v8_str<'s>(

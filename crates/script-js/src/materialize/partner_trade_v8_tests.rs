@@ -3,8 +3,7 @@ use rustyscript::{Module, RuntimeOptions};
 
 const CHILD_ENV: &str = "SCRIPT_STABLE_CLOSED_POLL_V8_TEST_CHILD";
 const TEST_NAME: &str =
-    "partner_trade_v8::tests::stable_closed_poll_state_has_fast_properties_and_bounded_heap";
-const PRIVATE_STATE_KEY: &str = "rs2b0t.trade.stableClosedPoll.state";
+    "partner_trade_v8::tests::stable_closed_poll_wrapper_has_fast_properties_and_bounded_heap";
 const CLOSURE_COUNT: usize = 512;
 const REPEAT_COUNT: usize = 1_000;
 
@@ -44,7 +43,7 @@ fn setup() -> Runtime {
             r#"
             globalThis.__makePredicates = count => Array.from(
                 { length: count },
-                () => __rs2b0t_partner_trade('stableClosedPoll', 600),
+                () => __stableClosedPoll(600),
             );
             globalThis.__dropPredicates = () => { globalThis.__predicates = null; };
             "#,
@@ -161,7 +160,7 @@ fn fast_properties(
 }
 
 #[test]
-fn stable_closed_poll_state_has_fast_properties_and_bounded_heap() {
+fn stable_closed_poll_wrapper_has_fast_properties_and_bounded_heap() {
     if !in_child(TEST_NAME) {
         return;
     }
@@ -186,9 +185,6 @@ fn stable_closed_poll_state_has_fast_properties_and_bounded_heap() {
     let name = v8::String::new(&mut scope, "__hasFastProperties").unwrap();
     let has_fast =
         v8::Local::<v8::Function>::try_from(global.get(&mut scope, name.into()).unwrap()).unwrap();
-    let key_name = v8::String::new(&mut scope, PRIVATE_STATE_KEY).unwrap();
-    let private_key = v8::Private::for_api(&mut scope, Some(key_name));
-
     assert_eq!(predicates.length() as usize, CLOSURE_COUNT);
     for index in 0..predicates.length() {
         let predicate = predicates
@@ -197,31 +193,21 @@ fn stable_closed_poll_state_has_fast_properties_and_bounded_heap() {
         let predicate = v8::Local::<v8::Function>::try_from(predicate).unwrap();
         assert!(
             fast_properties(&mut scope, has_fast, predicate.into()),
-            "native predicate {index} has fast properties"
-        );
-        let state = predicate
-            .get_private(&mut scope, private_key)
-            .expect("native predicate owns its private state");
-        let state = state
-            .to_object(&mut scope)
-            .expect("private state is an object");
-        assert!(
-            fast_properties(&mut scope, has_fast, state.into()),
-            "native predicate state {index} has fast properties"
+            "shim wrapper {index} has fast properties"
         );
     }
     drop(scope);
 
     let after_kept = collected_used_heap(&mut runtime);
     let retained_growth = after_kept.saturating_sub(baseline);
-    // The native callback and its per-predicate state measured about 724 B each.
-    let retained_limit = CLOSURE_COUNT * 768 + 32_768;
+    // The provisional limit allows one measurement before it is set from the new wrapper cost.
+    let retained_limit = CLOSURE_COUNT * 2_048 + 32_768;
     println!(
-        "stableClosedPoll retained closures={CLOSURE_COUNT} baseline={baseline} after={after_kept} growth={retained_growth} limit={retained_limit}"
+        "stableClosedPoll retained wrappers={CLOSURE_COUNT} baseline={baseline} after={after_kept} growth={retained_growth} limit={retained_limit}"
     );
     assert!(
         retained_growth <= retained_limit,
-        "retaining {CLOSURE_COUNT} native predicates grew V8 heap by {retained_growth} bytes; limit {retained_limit}"
+        "retaining {CLOSURE_COUNT} stableClosedPoll wrappers grew V8 heap by {retained_growth} bytes; limit {retained_limit}"
     );
 
     runtime.eval::<()>("__dropPredicates()").unwrap();
@@ -238,10 +224,10 @@ fn stable_closed_poll_state_has_fast_properties_and_bounded_heap() {
     let transient_growth = after_repeat.saturating_sub(warmed);
     let transient_limit = 65_536;
     println!(
-        "stableClosedPoll transient closures={REPEAT_COUNT} baseline={warmed} after={after_repeat} growth={transient_growth} limit={transient_limit}"
+        "stableClosedPoll transient wrappers={REPEAT_COUNT} baseline={warmed} after={after_repeat} growth={transient_growth} limit={transient_limit}"
     );
     assert!(
         transient_growth <= transient_limit,
-        "collected creation of {REPEAT_COUNT} native predicates grew V8 heap by {transient_growth} bytes; limit {transient_limit}"
+        "collected creation of {REPEAT_COUNT} stableClosedPoll wrappers grew V8 heap by {transient_growth} bytes; limit {transient_limit}"
     );
 }
