@@ -7,10 +7,14 @@
 #[path = "support/t14_candidate_observers.rs"]
 mod candidate_observers;
 
+#[path = "support/t14_final_barrier.rs"]
+mod final_barrier;
+
 use std::collections::BTreeMap;
 use std::fs::{self, File, OpenOptions};
 use std::io::{BufWriter, Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, LazyLock, Mutex};
 use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
@@ -47,16 +51,17 @@ const SURVIVAL_FOOD_NAME: &str = "Lobster";
 const SURVIVAL_FOOD_ID: i32 = 379;
 const SURVIVAL_FOOD_TARGET: i32 = 1;
 
-// Five normal slots each use a disjoint radius-five patch; fifteen slots use oak.
+// Five normal slots use distinct in-site Starts and a five-tree reachability
+// witness; fifteen slots use oak. Nearby normal resources can still overlap.
 // The offline audit covers workload routes and ordinary recovery only.
 // Random-event movement is outside this proof.
 const NORMAL_SLOTS: [usize; 5] = [0, 2, 4, 6, 8];
 const NORMAL_STARTS: [(i32, i32); 5] = [
-    (2943, 3402),
-    (2948, 3398),
-    (2954, 3419),
-    (2960, 3400),
-    (2960, 3411),
+    (2946, 3399),
+    (2955, 3399),
+    (2952, 3417),
+    (2955, 3407),
+    (2958, 3415),
 ];
 const NORMAL_RADIUS: i32 = 5;
 const NORMAL_SITE_ID: &str = "woodcutting.falador_west.n";
@@ -1105,6 +1110,17 @@ fn cohort_keeps_five_lowest_normal_slots_and_moves_the_rest_to_oak() {
         "workload": {"site_names": [NORMAL_SITE_ID, SECOND_TIER_SITE_ID]}
     }))
     .expect("selected content sites");
+    assert_eq!(sites[0].id, "woodcutting.falador_west.n");
+    assert_eq!(
+        NORMAL_STARTS,
+        [
+            (2946, 3399),
+            (2955, 3399),
+            (2952, 3417),
+            (2955, 3407),
+            (2958, 3415),
+        ]
+    );
     assert_eq!(sites[1].id, "woodcutting.falador_west.2");
     assert_eq!(
         (sites[1].start.x, sites[1].start.z, sites[1].start.level),
@@ -2584,6 +2600,8 @@ fn run_live(config_path: &Path, output: &Path) -> Result<(), String> {
     }
     let frame_actors = actors.clone();
     let frame_writer = Arc::clone(&event_writer);
+    let finalizing = Arc::new(AtomicBool::new(false));
+    let frame_finalizing = Arc::clone(&finalizing);
 
     // This receipt is the external sampler's handshake; publish it atomically
     // immediately before production Play starts its slot workers.
@@ -2594,6 +2612,9 @@ fn run_live(config_path: &Path, output: &Path) -> Result<(), String> {
         profiles,
         |_| (None, None),
         move |client, username, frame| {
+            if frame_finalizing.load(Ordering::Acquire) {
+                return;
+            }
             let Some(actor) = frame_actors.get(username) else {
                 return;
             };
@@ -3155,10 +3176,64 @@ fn run_live(config_path: &Path, output: &Path) -> Result<(), String> {
         outcome,
         unexpected_exits,
     );
-    // Play::drop signals and joins every client. Its final requested logout
-    // is a real outbound game message; finish the candidate SHA only after
-    // that message, never at the earlier end-of-window sample.
+    // Keep receive processing alive through the server's logout and Close.
+    // Dropping Play first suspends the endpoint reader and is not a drain.
+    finalizing.store(true, Ordering::Release);
+    let completed = loop_result.is_ok() && outcome != "incomplete" && outcome != "failed";
+    let mut barrier_result = Ok(None);
+    if completed {
+        barrier_result = (|| -> Result<Option<u64>, String> {
+            for account in &names {
+                let arm = play.arm(account).ok_or("final logout lacks slot arm")?;
+                arm.request_logout();
+                play.wake(account);
+            }
+            // Same logout bound as the host-play relog live proof.
+            let deadline = Instant::now() + Duration::from_secs(30);
+            loop {
+                #[cfg(feature = "soak-observers")]
+                _network_driver.maintain_services(Instant::now());
+                let statuses = account_status_rows(&play);
+                if names
+                    .iter()
+                    .all(|name| statuses.get(name).is_some_and(|row| !row.connected))
+                {
+                    break;
+                }
+                if Instant::now() >= deadline {
+                    return Err("final receive barrier timed out awaiting ordinary logout".into());
+                }
+                thread::sleep(Duration::from_millis(TICK_MS));
+            }
+            Ok(None)
+        })();
+    }
     drop(play);
+    if completed && barrier_result.is_ok() {
+        barrier_result = (|| -> Result<Option<u64>, String> {
+            let mut barrier =
+                final_barrier::CloseBarrier::new(output.join("proxy").join("connections.jsonl"));
+            let deadline = Instant::now() + Duration::from_secs(30);
+            loop {
+                #[cfg(feature = "soak-observers")]
+                _network_driver.maintain_services(Instant::now());
+                if barrier.poll()? {
+                    return monotonic_now_ns().map(Some);
+                }
+                if Instant::now() >= deadline {
+                    return Err(
+                        "final receive barrier lacks complete bidirectional empty Close receipts"
+                            .into(),
+                    );
+                }
+                thread::sleep(Duration::from_millis(TICK_MS));
+            }
+        })();
+    }
+    #[cfg(feature = "soak-observers")]
+    if let Ok(network) = client_adapter::service::NetworkService::current_started() {
+        network.shutdown();
+    }
     #[cfg(feature = "soak-observers")]
     let observer_finish = {
         let finish_elapsed_seconds = phase_zero
@@ -3183,6 +3258,19 @@ fn run_live(config_path: &Path, output: &Path) -> Result<(), String> {
     }
     if let Err(error) = observer_finish {
         errors.push(format!("candidate observer finalization failed: {error}"));
+    }
+    let barrier_ns = match barrier_result {
+        Ok(value) => value,
+        Err(error) => {
+            errors.push(error);
+            None
+        }
+    };
+    let final_error = (!errors.is_empty()).then(|| errors.join("; "));
+    if let Err(error) =
+        final_barrier::publish(&output, completed, barrier_ns, final_error.as_deref())
+    {
+        errors.push(error);
     }
     if errors.is_empty() {
         Ok(())
