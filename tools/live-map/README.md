@@ -97,6 +97,22 @@ The four scenario cells advance routes through the live slot loop at
 `crates/host-play/src/play_slots.rs:1909-1929` and
 `crates/host-play/src/script_walk.rs:867-885`.
 
+## Death recovery
+
+`host.gatherer-death-return` runs the `gatherer_death_return` test in
+`crates/host-play/tests/gatherer_live.rs`. It starts the compiled Gatherer on
+an authored oak at `3017,3170,0`, then sends the engine's `~death` debugproc
+(`content/scripts/_test/scripts/cheats/cheat_other.rs2:25-26`, a real
+`damage_self(999)`). Each death must recover through respawn, supply, worn
+tool, return and fresh product and XP; the cell kills twice with a haul
+between and pauses over the first death. The fixture seeds only the account's
+own bronze axe in the bank and its inventory fillers, and never injects a
+product or XP. Inputs: `LIVE=1`, `BOT_LIVE_NAME_PREFIX`, `GATHERER_NAV_PACK`,
+`GATHERER_NAV_FLAGS`, `GATHERER_ENGINE_DIR`, `GATHERER_CATALOG_ROOT`,
+`BOT_CACHE_DIR`, `CLIENT_UNPACK_DIR`, and `LIVE_EVIDENCE_DIR`;
+`GATHERER_WC_BANK_TILE` pins the fixture tile. Run it on Engine L (aubaine or
+its 44594/1080 relay).
+
 ## State-gap and refusal paths
 
 `panel.state-gap-stop-live` runs
