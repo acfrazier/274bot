@@ -2190,7 +2190,10 @@ p_teleport(0_44_53_5_46);
             .iter()
             .filter(|edge| edge.loc_id == 6000)
             .collect();
-        assert!(!edges.is_empty(), "the exact-completion exit remains usable");
+        assert!(
+            !edges.is_empty(),
+            "the exact-completion exit remains usable"
+        );
         for edge in edges {
             let gates = edge.quest_gates.as_ref().expect("NPC-independent proof");
             assert!(matches!(
