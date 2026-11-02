@@ -12,9 +12,16 @@ use std::hash::{DefaultHasher, Hash, Hasher};
 use std::mem::size_of;
 use std::time::{Duration, Instant};
 
-pub const DEFAULT_STATE_CAP: usize = 100_000_000;
+/// The `quiet` profile at horizon 14 reaches 104.5 M states since the stall
+/// event of finding N1 (92.4 M before it, 13 % more). The cap was 100 M and
+/// the byte cap 10 GiB. Both are raised for it: 115 M states leave 10 % of
+/// headroom, 12 GiB of estimate is 128 M states, and the measured peak of the
+/// run is 8.6 GiB, inside the 16 GiB scope of `nightly.sh`. A model change
+/// that passes the cap is a coverage and memory decision again: measure the
+/// peak, then raise the cap or lower the horizon, and say why.
+pub const DEFAULT_STATE_CAP: usize = 115_000_000;
 pub const DEFAULT_FRONTIER_CAP: usize = 60_000_000;
-pub const DEFAULT_BYTE_CAP: usize = 10 * 1024 * 1024 * 1024;
+pub const DEFAULT_BYTE_CAP: usize = 12 * 1024 * 1024 * 1024;
 /// Most hit edges one goal keeps; a goal with more hits at its shortest depth
 /// reports the cap, not the count.
 pub const GOAL_EDGE_CAP: usize = 4096;

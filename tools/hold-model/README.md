@@ -5,8 +5,9 @@ depends on it, except as a dev-dependency of the conformance tests in
 `crates/host-play` and `crates/script-js`.
 
 The model follows the product at commit `178a00200` with the fixes of finding F1
-(the host holds a renewed wait again) and finding F2 (the journal click renews
-the quiet lease's hold bound). The explorer searches it breadth first inside
+(the host holds a renewed wait again), finding F2 (the journal click renews
+the quiet lease's hold bound) and finding N1 (an expired hold makes the verb
+that it covered stale: the host does not dispatch it). The explorer searches it breadth first inside
 caps. A violation prints its shortest trace, step by step, in the product's
 terms.
 
@@ -19,8 +20,8 @@ lease. The lease kinds are:
 | Kind | Owner | Bound |
 |---|---|---|
 | `Modal` | native `Dialogue` modal wait (`quester/families/dialogue.rs`) | page and acknowledgement waits on the active clock. End gap on observed ticks. |
-| `Quiet` | native quest-journal quiet read (`quest_journal/native.rs`) | a window of observed ticks per phase, renewed at each phase. A 10 s wall bound on the hold: from the begin, and from each window the owner arms (its click, its capture, its close). The page is hidden for at most 10 s from the begin (the paint cap). |
-| `Compat` | compatibility (JS) quest-journal read (`script-js/.../quest_journal/isolate.rs`) | a wall bound from the begin, renewed at the click. A separate paint cap. |
+| `Quiet` | native quest-journal quiet read (`quest_journal/native.rs`) | a window of observed ticks per phase, renewed at each phase. A 10 s wall bound on the hold: from the begin, and from each window the owner arms (its click, its capture, its close). The page is hidden for at most 10 s from the begin (the paint cap). When the host's sample ends the hold by expiry, the click or close that the owner queued and the host has not dispatched is dropped (N1). |
+| `Compat` | compatibility (JS) quest-journal read (`script-js/.../quest_journal/isolate.rs`) | a wall bound from the begin, renewed at the click. A separate paint cap. The same drop (N1), in the isolate's drain. |
 
 Each frame has the product's order (`crates/host/src/lib.rs:739,758`):
 
@@ -31,7 +32,9 @@ Each frame has the product's order (`crates/host/src/lib.rs:739,758`):
    The poll runs only while the slot is `Running`, on a tick edge or an
    evidence wake.
 4. The host samples the lease (`script/src/slot.rs:2259-2294`, also while
-   paused) and applies its wait policy (`host/src/lib.rs:225-267`).
+   paused) and applies its wait policy (`host/src/lib.rs:225-267`). A sample
+   that ends a hold by expiry also drops the verb that the owner queued in
+   this frame (N1).
 5. The press decision (`host/src/lib.rs:1548-1588`).
 
 The inputs are Pause, Resume, Stop, Start, a disconnect, a connect, a relog,
@@ -46,8 +49,10 @@ hold, a death, a run echo, and the passing of time.
 | `observe_wait`, `deferred` | `host::ScriptRunPolicy::observe_script_wait`, `should_defer_auto_run` (`host/src/lib.rs:240-318`); the re-arm at a renewal is in the same-key arm |
 | `sample` | `SlotScript::script_interaction_wait` (`script/src/slot.rs:2259-2294`) |
 | `sample`, Modal arm | `WaitDeadline::owner_tick` (`script/src/native.rs:922`), `Ledger::modal_wait_tick` |
-| `quiet_wall_release`, `quiet_hold_until`, `sample`, Quiet arm | `Ledger::quiet_read`, `quiet_paint_hidden`, `quiet_read_wait` (`script/src/native/ledger.rs:367-416`), `ActionContext::renew_quiet_read` (`script/src/native/actions.rs:52-68`) |
-| `sample`, Compat arm, `poll`, Compat arm | `CompatJournalLease::wait`, `renew_hold` (`script-js/.../quest_journal/isolate.rs:146-190`), `JournalRuntime::click` |
+| `quiet_wall_release`, `quiet_hold_until`, `sample`, Quiet arm | `Ledger::quiet_read`, `quiet_paint_hidden`, `quiet_read_wait` (`script/src/native/ledger.rs`), `ActionContext::renew_quiet_read` (`script/src/native/actions.rs`) |
+| `stale_verb` (Quiet) | `Ledger::quiet_read` cancels the owner's queued interaction when it releases the lease by expiry (`cancel_undispatched_interaction`); the host's fence (`HostAction::live`) then drops it |
+| `sample`, Compat arm, `poll`, Compat arm | `CompatJournalLease::wait`, `renew_hold` (`script-js/.../quest_journal/isolate.rs`), `JournalRuntime::click` |
+| `stale_verb` (Compat) | `CompatJournalLease::drop_expired_verb`, called by `LoadIsolate::drain_interacts_stamped` (`script-js/src/runtime/isolate.rs`) |
 | `begin`, `send`, `to_gap`, `rearm` | `Dialogue::sync_modal_wait` (`dialogue.rs:361-380`), `ActionContext::begin_modal_wait`, `renew_modal_wait` |
 | `poll`, Quiet arm | `JournalMachine::poll`, `arm_window` (`quest_journal/native.rs`); each window renews the lease's hold bound |
 | the press in `frame` | `SlotLoop::apply_auto_run` (`host/src/lib.rs:1548-1588`) |
@@ -67,7 +72,8 @@ only.
 | S3 | The host ends a hold without the script only as a logged terminal failure, and not before the owner's deadline plus the margin of one tick. |
 | S4 | A lease's identity never carries a released state to a new transaction. |
 | S5 | The journal page stops being hidden at the wall cap from its begin. |
-| S6 | An owner that sends a verb (Talk, Continue, answer, click, close) gets no press in the same frame. The press would close the page that the verb opens (`docs/api/nav.md`: the click never goes out without a live hold). |
+| S6 | A verb that the host dispatches (Talk, Continue, answer, click, close) gets no press in the same frame. The press would close the page that the verb opens. |
+| S7 | No verb is dispatched without a live hold: a verb that reaches the dispatcher in a frame has the host's hold at the end of that frame. A hold that the frame's sample ended by expiry made the verb stale, and the host dropped it (`docs/api/nav.md`: an expired hold makes its queued interaction stale). S6 sees a dispatch after expiry only when a press follows; S7 also when the run is already on. |
 | L | Bounded liveness: a hold that is live at tick T has an owner deadline that did not pass at tick T minus the margin. The deadline is counted in the owner's clock (active clock, ticks or wall). |
 
 ### The bound of S2, in frames
@@ -103,10 +109,16 @@ cannot show.
    units, an acknowledgement wait 1, the 10 s wall bounds 4.
    The profile `alt` uses other ratios. A bound that is longer in the product
    is longer in the model, so an ordering race between two bounds stays visible.
-2. **Time between the poll and the sample is one unit.** The product reads
-   `Instant::now()` after the poll (`script_observe.rs:1141`). The model lets
-   a unit pass there (`drift`). A real gap is smaller than a unit. The
-   orderings are the same: the sample sees a bound that the poll did not.
+2. **Time between the poll and the sample is one unit, or a stall.** The
+   product reads `Instant::now()` after the poll (`script_observe.rs:1141`).
+   The model lets a unit pass there (`drift`). A real gap is usually smaller
+   than a unit, and the orderings are the same: the sample sees a bound that
+   the poll did not. The gap is not bounded, though: a suspended or sleeping
+   machine stalls the process for any time (merlot slept for 8 hours on
+   2026-11-01). The `stall` event (`Bounds::stall`, on in every profile)
+   moves the wall clock past every hold bound between the poll and the sample.
+   It is offered only in a frame where a live lease's owner polls or sends, so
+   that the state count grows little. A stall is the case of finding N1.
 3. **One lease at a time.** The ledger has one foreground owner. A runner
    runs one step, and the compat read belongs to a JS run. Two native leases
    at once, and a compat read next to a native one, are not reachable.
@@ -167,8 +179,13 @@ stopped the run. The profiles are `smoke`, `modal`, `quiet`, `compat`, `all`,
 `alt` and `handoff` (an owner may begin a read in the frame that revokes the
 old one). `--mutation` takes `none`, the seven `check-*` self-checks, the
 earlier designs `m1-hold-two-ticks` to `m6-compat-no-renew`,
-`f1-renewal-keeps-release` (the host at `0a3e700f8`, before the fix of F1) and
-`f2-quiet-click-no-renew` (the ledger at `aa5e8bf2c`, before the fix of F2).
+`f1-renewal-keeps-release` (the host at `0a3e700f8`, before the fix of F1),
+`f2-quiet-click-no-renew` (the ledger at `aa5e8bf2c`, before the fix of F2) and
+`n1-expired-click-dispatched` (the product at `c2ca4cf66`, before the fix of
+N1). `--no-stall` runs a profile without the stall, as the profiles were
+before the fix of N1 (the state counts of the retained mutations of F2 and M6
+use it). The mutations `f2-quiet-click-no-renew`, `m6-compat-no-renew` and
+`check-compat-click-no-renew` model products that did not drop a stale verb.
 
 ## Findings at the head
 
