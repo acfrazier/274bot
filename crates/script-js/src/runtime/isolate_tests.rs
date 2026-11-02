@@ -2562,7 +2562,11 @@ export function tick(api) {
     let queued = closes(&mut slot);
     assert_eq!(queued.len(), 2, "two closes wait: {queued:?}");
     assert_eq!(queued[0].1, Some(journal), "the journal's close is first");
-    assert_ne!(queued[1].1, Some(journal), "the other close has another owner");
+    assert_ne!(
+        queued[1].1,
+        Some(journal),
+        "the other close has another owner"
+    );
     stall_journal_hold(&mut slot, STALL_PAST_THE_HOLD);
     let dropped = slot.slot_metrics().dropped;
     slot.pause();
