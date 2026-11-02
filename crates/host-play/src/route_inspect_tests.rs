@@ -3404,9 +3404,9 @@ fn real_content_inspection_capture_bytes() {
     // (after ClientAdapter 304, `taking_damage` 306 and
     // `guardian_active_event` 308). This capture writes the three walk scalars
     // and the previous inspection's terminal (318); the latest inspection has
-    // no terminal. The old capture predates them all. These fields moved the
-    // new capture from 1,440 to 1,448 bytes and its digest from 7812896a… to
-    // the value above.
+    // no terminal. The old capture predates them all (1,376 bytes, digest
+    // 886f2db7…). The separate 1,440-byte walking-branch capture is not this
+    // baseline; the new capture is 1,448 bytes (digest asserted above).
     for added_field in [298_u16, 300, 302, 310, 312, 314, 318] {
         assert_eq!(
             old_vtable.get(added_field),
