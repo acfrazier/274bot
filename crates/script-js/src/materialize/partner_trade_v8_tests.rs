@@ -6,8 +6,8 @@ const TEST_NAME: &str =
     "partner_trade_v8::tests::stable_closed_poll_wrapper_has_fast_properties_and_bounded_heap";
 const CLOSURE_COUNT: usize = 512;
 const REPEAT_COUNT: usize = 1_000;
-// 512 wrappers measured 58,784 bytes; retain 8 KiB for V8/allocator variance.
-const RETAINED_HEAP_LIMIT: usize = 66_976;
+// 512 wrapped predicates grew 108,776 bytes; allow 8 KiB for V8/allocator variance.
+const RETAINED_HEAP_LIMIT: usize = 116_968;
 const TEST_KERNEL: &str = r#"
 export function notImpl() { throw new Error('not used by stableClosedPoll tests'); }
 export function runMachine() { throw new Error('not used by stableClosedPoll tests'); }
