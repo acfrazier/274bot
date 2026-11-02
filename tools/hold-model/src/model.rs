@@ -105,7 +105,10 @@ pub enum Cause {
 pub struct Env {
     pub pause: bool,
     pub stop: bool,
+    /// A relog in one drain (a session change).
     pub session: bool,
+    /// The connection drops and the session connects again.
+    pub disconnect: bool,
     pub hold: bool,
     pub cleanup: bool,
     pub death: bool,
@@ -118,6 +121,7 @@ impl Env {
         pause: false,
         stop: false,
         session: false,
+        disconnect: false,
         hold: false,
         cleanup: false,
         death: false,
@@ -128,6 +132,7 @@ impl Env {
         pause: true,
         stop: true,
         session: true,
+        disconnect: true,
         hold: true,
         cleanup: true,
         death: true,
@@ -1319,7 +1324,9 @@ impl Machine for Model {
         }
         if env.session && s.work_gen <= b.max_epochs {
             if s.up {
-                out.push(Action::Disconnect);
+                if env.disconnect {
+                    out.push(Action::Disconnect);
+                }
                 out.push(Action::Relog);
             } else {
                 out.push(Action::Connect);

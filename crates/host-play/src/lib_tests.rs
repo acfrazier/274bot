@@ -30675,6 +30675,10 @@ mod server_ordered;
 #[path = "script_progress_tests.rs"]
 mod script_progress;
 
+#[cfg(feature = "js")]
+#[path = "script_hold_conformance_tests.rs"]
+mod script_hold_conformance;
+
 #[cfg(test)]
 mod read_journal_tests {
     use super::*;

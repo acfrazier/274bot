@@ -1259,6 +1259,10 @@
       "owner": "T1"
     },
     {
+      "path": "crates/host-play/src/script_hold_conformance_tests.rs",
+      "owner": "T1"
+    },
+    {
       "path": "crates/host-play/src/script_interact.rs",
       "owner": "T1"
     },
