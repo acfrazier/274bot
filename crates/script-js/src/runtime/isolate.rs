@@ -1251,7 +1251,8 @@ impl LoadIsolate {
     }
 
     /// The live compatibility journal read with its transaction identity
-    /// (token and work generation) and its lease's own wall bound.
+    /// (token and work generation) and its hold's own wall bound (from its
+    /// begin, renewed at its click).
     pub(crate) fn compat_journal_wait(&self, now: Instant) -> Option<script::surface::JournalWait> {
         let lease = self.compat_journal.as_ref()?;
         let generation = self

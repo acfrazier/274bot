@@ -101,7 +101,10 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.7` 
   quest journal that a walk just opened, however late the page arrives. Actions
   that open no window, such as walks, do not delay the run button. If a script
   stops checking its own time limit, the host waits only until one game tick
-  after that limit, and logs a failure.
+  after that limit, and logs a failure. A paused script keeps the run button
+  held for the whole pause, because its time limit does not run while it is
+  paused. A compatibility quest journal read sends its click only while the
+  run button is held, also after a long pause.
 - A prerequisite conversation that the server cancels with "I can't reach
   that!" no longer waits out its page bound. The bot ends the wait at once,
   walks to the NPC again if it is more than two tiles away, and talks again.
