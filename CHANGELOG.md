@@ -50,6 +50,9 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.8` 
 
 ### Developer tools
 
+- World-probe preservation checks accept a known server-only progress domain
+  even when quest colour cannot prove progress. They still reject missing
+  domains, transmitted variables, and ranges or writers outside the domain.
 - A separate benchmark adapter records the full frozen NPR proof workload's
   search-only timing and committed memory. It compares with the development
   base only when that base has the proof path; otherwise it supplies an

@@ -166,6 +166,55 @@ withContent({
     /after \[1,1\] is \[0,1\]/,
 ));
 
+withContent({
+    [constants]: '^priestperil_complete = 60\n^priestperil_access_holy_barrier = 61\n',
+    'scripts/drezel.rs2': [
+        '[opnpc1,drezel]',
+        'if (%priestperil = ^priestperil_complete) { @advice; }',
+        '[label,advice] %priestperil = ^priestperil_access_holy_barrier;',
+    ].join('\n'),
+}, (content) => {
+    const fact: PrereqRowWire = {
+        ...row([60, 60], [60, 61]),
+        establishes: { quest: 'priestperil', signal: 'priestperil', values: { min: 61, max: 61 } },
+    };
+    const stage = {
+        id: 'priestperil',
+        colour_authoritative: false,
+        transmission: 'not_transmitted',
+        stage_domain: { min: 0, max: 61 },
+    };
+    assertPrereqPreservation(content, [fact], [stage]);
+    assert.throws(() => assertPrereqPreservation(
+        content, [fact], [{ ...stage, stage_domain: { min: 0, max: 60 } }],
+    ), /leaves stage domain/);
+    assert.throws(() => assertPrereqPreservation(
+        content, [fact], [{ ...stage, stage_domain: null }],
+    ), /lacks server-only stage metadata/);
+    for (const transmission of ['posted_by_content', 'unknown']) {
+        assert.throws(() => assertPrereqPreservation(
+            content, [fact], [{ ...stage, transmission }],
+        ), /lacks server-only stage metadata/);
+    }
+});
+
+withContent({
+    [constants]: '^outside = 62\n',
+    'scripts/drezel.rs2': '[opnpc1,drezel] %priestperil = ^outside;\n',
+}, (content) => {
+    const fact: PrereqRowWire = {
+        ...row([60, 60], [60, 61]),
+        establishes: { quest: 'priestperil', signal: 'priestperil', values: { min: 61, max: 61 } },
+    };
+    const stage = {
+        id: 'priestperil',
+        colour_authoritative: false,
+        transmission: 'not_transmitted',
+        stage_domain: { min: 0, max: 61 },
+    };
+    assert.throws(() => assertPrereqPreservation(content, [fact], [stage]), /leaves stage domain/);
+});
+
 function journal(proves: [number, number], after: [number, number]): PrereqJournalWire {
     return {
         id: 'fixture:journal',

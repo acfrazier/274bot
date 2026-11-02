@@ -517,6 +517,12 @@ their raw-value conditions differ. NPC presence is still universally checked
 within each trajectory, so an observed exact completion value can preserve a
 valid exit without granting it to unknown or later progress.
 
+World-probe preservation checks use a known, bounded server-only progress
+domain independently of quest-colour authority, as journal checks do. Every
+authored range and reachable writer must still stay inside that domain.
+Legal post-completion writes, such as Priest in Peril's 60 to 61, do not
+invalidate an otherwise checked domain.
+
 
 `WorldState::quest_gates(edge)` is three-valued. `True` (every value still
 possible lies inside every window) alone lets `find`/`find_with` take the edge.

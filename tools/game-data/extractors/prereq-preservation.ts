@@ -655,8 +655,8 @@ function computedAfter(row: { id: string }, initial: RangeWire, graph: ScriptGra
 
 function productionStageDomain(questRows: readonly { id: string; colour_authoritative: boolean; transmission: string; stage_domain: RangeWire | null }[], row: PrereqRowWire) {
     const quest = questRows.find((candidate) => candidate.id === row.establishes.quest);
-    if (!quest || !quest.colour_authoritative || quest.transmission !== 'not_transmitted' || !quest.stage_domain) {
-        throw new Error(`prereq preservation: ${row.id} lacks authoritative, server-only stage metadata`);
+    if (!quest || quest.transmission !== 'not_transmitted' || !quest.stage_domain) {
+        throw new Error(`prereq preservation: ${row.id} lacks server-only stage metadata`);
     }
     return quest.stage_domain;
 }
