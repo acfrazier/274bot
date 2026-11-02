@@ -3,6 +3,18 @@
 //! first of them.
 use super::*;
 
+/// Test-only trace for the TLA+ trace validation in `tools/hold-model-tla`:
+/// the page-click machine records its own lease events here, and
+/// `HoldRig::run` writes one JSON line per frame to
+/// `$HOLD_TRACE_DIR/holdrig-<test thread>.jsonl` when that variable is set.
+thread_local! {
+    static OWNER_EVENTS: std::cell::RefCell<Vec<String>> = const { std::cell::RefCell::new(Vec::new()) };
+}
+
+fn trace_owner(event: String) {
+    OWNER_EVENTS.with(|events| events.borrow_mut().push(event));
+}
+
 fn observe(
     c: &mut Client,
     snap: &GameSnapshot,
@@ -255,6 +267,18 @@ impl script::native::NativeMachine for PageClickMachine {
             Some(at) => script::native::WaitDeadline::Active(at),
             None => script::native::WaitDeadline::Tick(deadline),
         };
+        trace_owner(match args.active_bound {
+            Some(bound) => format!(
+                "{{\"ev\":\"begin\",\"k\":\"A\",\"ms\":{},\"ack\":{},\"hung\":{}}}",
+                bound.as_millis(),
+                args.ack,
+                args.hung
+            ),
+            None => format!(
+                "{{\"ev\":\"begin\",\"k\":\"T\",\"ticks\":{},\"ack\":{},\"hung\":{}}}",
+                args.wait_ticks, args.ack, args.hung
+            ),
+        });
         Ok(Self {
             page: args.page,
             wait: Some(cx.begin_modal_wait(lease)?),
@@ -276,6 +300,7 @@ impl script::native::NativeMachine for PageClickMachine {
             if self.wait.is_some() && self.seen_closed {
                 // The script observed its page: its wait ends here.
                 self.wait = None;
+                trace_owner("{\"ev\":\"end\",\"why\":\"page\"}".to_owned());
             }
         } else {
             self.seen_closed = true;
@@ -285,11 +310,20 @@ impl script::native::NativeMachine for PageClickMachine {
             None => cx.evidence().tick >= self.deadline,
         };
         if self.wait.is_some() && expired {
+            trace_owner("{\"ev\":\"end\",\"why\":\"expired\"}".to_owned());
             return std::task::Poll::Ready(Err(script::native::ActionError::Failed(Arc::from(
                 "page wait expired",
             ))));
         }
         std::task::Poll::Pending
+    }
+}
+
+impl Drop for PageClickMachine {
+    fn drop(&mut self) {
+        if self.wait.is_some() {
+            trace_owner("{\"ev\":\"drop\"}".to_owned());
+        }
     }
 }
 
@@ -491,6 +525,8 @@ impl HoldRig {
         let observe_expired = Arc::clone(&self.expired);
         let observe_expired_after = Arc::clone(&self.expired_after);
         observe_expired_after.lock().unwrap().clear();
+        let frame_log: Arc<Mutex<Vec<(u64, bool, Vec<String>)>>> = Arc::default();
+        let observe_log = Arc::clone(&frame_log);
 
         let probe_plan = Arc::clone(&plan);
         let probe_index = Arc::clone(&index);
@@ -541,12 +577,17 @@ impl HoldRig {
                     None,
                     Some(Arc::clone(&observe_cache)),
                     Some(Arc::clone(&observe_names)),
-                    Some(run_policy),
+                    Some(&mut *run_policy),
                 );
                 observe_expired_after
                     .lock()
                     .unwrap()
                     .push(observe_expired.load(Ordering::Relaxed));
+                observe_log.lock().unwrap().push((
+                    tick,
+                    run_policy.should_defer_auto_run(),
+                    OWNER_EVENTS.with(|events| std::mem::take(&mut *events.borrow_mut())),
+                ));
                 observe_index.fetch_add(1, Ordering::Relaxed);
                 true
             },
@@ -587,6 +628,38 @@ impl HoldRig {
         // that is, after frame `i`'s press.
         let seen = seen.lock().unwrap();
         assert_eq!(seen.len(), frames.len() + 1, "every frame was observed");
+        if let Some(dir) = std::env::var_os("HOLD_TRACE_DIR") {
+            use std::io::Write;
+            let name = std::thread::current()
+                .name()
+                .unwrap_or("unnamed")
+                .replace("::", ".");
+            let path = std::path::Path::new(&dir).join(format!("holdrig-{name}.jsonl"));
+            let mut file = std::fs::OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(path)
+                .expect("the trace file opens");
+            let log = frame_log.lock().unwrap();
+            for (i, step) in frames.iter().enumerate() {
+                let (tick, eff, owner) = &log[i];
+                writeln!(
+                    file,
+                    "{{\"i\":{i},\"drain\":{},\"edge\":{},\"modal\":{},\"click\":{},\"stop\":{},\"pause\":{},\"resume\":{},\"sleep_ms\":{},\"tick\":{tick},\"eff\":{eff},\"press\":{},\"owner\":[{}]}}",
+                    step.drain,
+                    step.drain > 0,
+                    step.modal != -1,
+                    step.click,
+                    step.stop,
+                    step.pause,
+                    step.resume,
+                    step.sleep_ms,
+                    seen[i + 1] > seen[i],
+                    owner.join(",")
+                )
+                .expect("the trace line is written");
+            }
+        }
         seen[1..].to_vec()
     }
 }
@@ -884,7 +957,31 @@ fn compat_journal_read_to_read_hand_off_takes_a_fresh_hold() {
                 deadline_tick: wait.deadline_tick,
             });
         let expired = policy.observe_script_wait(wait, tick);
-        (expired, policy.should_defer_auto_run())
+        let held = policy.should_defer_auto_run();
+        if let Some(dir) = std::env::var_os("HOLD_TRACE_DIR") {
+            use std::io::Write;
+            let name = std::thread::current()
+                .name()
+                .unwrap_or("unnamed")
+                .replace("::", ".");
+            let path = std::path::Path::new(&dir).join(format!("compat-{name}.jsonl"));
+            let mut file = std::fs::OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(path)
+                .expect("the trace file opens");
+            writeln!(
+                file,
+                "{{\"ev\":\"sample\",\"wait\":{},\"tick\":{tick},\"expired\":{},\"held\":{held}}}",
+                wait.map_or("null".to_owned(), |wait| format!(
+                    "{{\"key\":{},\"dl\":{}}}",
+                    wait.key, wait.deadline_tick
+                )),
+                expired.is_some()
+            )
+            .expect("the trace line is written");
+        }
+        (expired, held)
     };
     let start = Instant::now();
     let bound = std::time::Duration::from_secs(10);

@@ -1093,6 +1093,41 @@ fn a_renewed_wait_moves_its_deadline() {
     assert_eq!(slot.run_sends, 1);
 }
 
+/// HOLD-MODEL-AB, candidate defect D1, pinned as observed at 178a00200. A hold
+/// that the host released as the terminal failure stays released when the
+/// owner renews the SAME key to a later deadline (the dialogue renews its
+/// lease from an active-clock bound to its end-gap tick bound,
+/// `dialogue.rs:372-381`). The press then goes out while the renewed wait is
+/// live. This test records the behaviour for the TLA+ trace validation
+/// (`tools/hold-model-tla`); it is expected to change when D1 is fixed.
+#[test]
+fn d1_a_renewed_wait_after_the_terminal_release_stays_released() {
+    let mut client = test_client();
+    let mut slot = held_slot(&mut client, wait(9, 1));
+    frame(&mut slot, &mut client, Some(wait(9, 1)), 1);
+    assert_eq!(slot.run_sends, 0, "held on tick 1");
+    // The acknowledgement page is up while the owner does not poll (paused),
+    // so its deadline passes: the terminal release, and the modal check holds
+    // the press.
+    client.main_modal_id = 8134;
+    observe_drain(&mut slot, &mut client, 1);
+    assert!(slot
+        .run_policy
+        .observe_script_wait(Some(wait(9, 1)), 2)
+        .is_some());
+    slot.apply_auto_run(&mut client);
+    assert_eq!(slot.run_sends, 0, "the modal check holds the press");
+    // The page closed. The owner resumes and renews the same key to its end gap.
+    client.main_modal_id = -1;
+    observe_drain(&mut slot, &mut client, 1);
+    slot.run_policy.observe_script_wait(Some(wait(9, 5)), 3);
+    slot.apply_auto_run(&mut client);
+    assert_eq!(
+        slot.run_sends, 1,
+        "D1: the press goes out although the renewed wait is live until tick 5"
+    );
+}
+
 #[test]
 fn a_session_change_releases_the_script_wait() {
     let mut client = test_client();

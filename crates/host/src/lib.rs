@@ -152,6 +152,33 @@ pub struct Host;
 /// observed game ticks, not wall time.
 pub const SCRIPT_WAIT_MARGIN_TICKS: u64 = 1;
 
+/// Test-only trace of the hold's host half, for the TLA+ trace validation in
+/// `tools/hold-model-tla`. It writes one JSON line per event to
+/// `$HOLD_TRACE_DIR/host-<test thread>.jsonl` when that variable is set, and
+/// does nothing otherwise. It is compiled only for this crate's own tests.
+#[cfg(test)]
+mod hold_trace {
+    use std::io::Write;
+
+    pub(super) fn emit(line: &str) {
+        let Some(dir) = std::env::var_os("HOLD_TRACE_DIR") else {
+            return;
+        };
+        let name = std::thread::current()
+            .name()
+            .unwrap_or("unnamed")
+            .replace("::", ".");
+        let path = std::path::Path::new(&dir).join(format!("host-{name}.jsonl"));
+        if let Ok(mut file) = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(path)
+        {
+            let _ = writeln!(file, "{line}");
+        }
+    }
+}
+
 /// The script's own wait for the result of its own interaction, as sampled on
 /// one host frame.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -206,6 +233,11 @@ impl ScriptRunPolicy {
             self.policy_override = None;
             self.script_wait = None;
         }
+        #[cfg(test)]
+        hold_trace::emit(&format!(
+            "{{\"ev\":\"sync\",\"rt\":{}}}",
+            runtime_generation.map_or("null".to_owned(), |generation| generation.to_string())
+        ));
     }
 
     /// Apply one decoded isolate update only to the runtime that produced it.
@@ -223,6 +255,28 @@ impl ScriptRunPolicy {
     /// SCRIPT_WAIT_MARGIN_TICKS` ends here, is logged as a failure and is
     /// returned.
     pub fn observe_script_wait(
+        &mut self,
+        wait: Option<ScriptWait>,
+        tick: u64,
+    ) -> Option<ScriptWaitExpired> {
+        let expired = self.observe_script_wait_impl(wait, tick);
+        #[cfg(test)]
+        hold_trace::emit(&format!(
+            "{{\"ev\":\"observe\",\"wait\":{},\"tick\":{tick},\"expired\":{},\"hold\":{}}}",
+            wait.map_or("null".to_owned(), |wait| format!(
+                "{{\"key\":{},\"dl\":{}}}",
+                wait.key, wait.deadline_tick
+            )),
+            expired.is_some(),
+            self.script_wait.map_or("null".to_owned(), |hold| format!(
+                "{{\"key\":{},\"released\":{}}}",
+                hold.key, hold.released
+            )),
+        ));
+        expired
+    }
+
+    fn observe_script_wait_impl(
         &mut self,
         wait: Option<ScriptWait>,
         tick: u64,
@@ -280,6 +334,8 @@ impl ScriptRunPolicy {
         if let Some(hold) = self.script_wait.as_mut() {
             hold.released = true;
         }
+        #[cfg(test)]
+        hold_trace::emit("{\"ev\":\"boundary\"}");
     }
 
     fn resolved(&self) -> RunPolicy {
@@ -1546,6 +1602,8 @@ impl SlotLoop {
     }
 
     fn apply_auto_run(&mut self, client: &mut Client) {
+        #[cfg(test)]
+        let sends_before = self.run_sends;
         // Live client field: UPDATE_RUNENERGY writes here. Snapshot energy
         // can stay 0 if a stat-family rebuild ran before the energy packet.
         let energy = client.runenergy;
@@ -1585,6 +1643,12 @@ impl SlotLoop {
                 self.run_sends
             );
         }
+        #[cfg(test)]
+        hold_trace::emit(&format!(
+            "{{\"ev\":\"press\",\"sent\":{},\"defer\":{defer_auto_run},\"modal_free\":{modal_free},\"run_on\":{}}}",
+            self.run_sends > sends_before,
+            self.run_on
+        ));
     }
 }
 
