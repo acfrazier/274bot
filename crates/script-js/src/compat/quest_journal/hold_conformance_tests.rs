@@ -14,8 +14,8 @@
 use super::*;
 use crate::observed::{ModalTexts, QuestStatusRow, QuestTab};
 use hold_model::{
-    Action as ModelAction, Begin, Bounds, Env, Lease, Machine as _, Model, Mutation, OwnerAct,
-    release_traces,
+    release_traces, Action as ModelAction, Begin, Bounds, Env, Lease, Machine as _, Model,
+    Mutation, OwnerAct,
 };
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -196,7 +196,8 @@ fn check_trace(model: &Model, trace: &[ModelAction]) -> Result<(usize, usize), S
                 let now = Instant::now();
                 let real_wait = real.lease.wait(real.generation, now);
                 let real_hidden = real.lease.live(real.generation, now);
-                let model_hidden = matches!(post_state.lease, Lease::Compat(c) if post_state.wall < c.paint_until);
+                let model_hidden =
+                    matches!(post_state.lease, Lease::Compat(c) if post_state.wall < c.paint_until);
                 let model_wait = info.wait.is_some();
                 if real_wait.is_some() != model_wait || real_hidden != model_hidden {
                     return Err(format!(

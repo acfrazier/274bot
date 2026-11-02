@@ -17,8 +17,8 @@
 
 use super::*;
 use hold_model::{
-    Action as ModelAction, Begin, Bounds, Cause, Env, Kind, Lease, Machine as _, Model, Mutation,
-    OwnerAct, describe_trace, release_traces,
+    describe_trace, release_traces, Action as ModelAction, Begin, Bounds, Cause, Env, Kind, Lease,
+    Machine as _, Model, Mutation, OwnerAct,
 };
 use script::native::{
     ActionContext, ActionError, ActionHandle, ModalWaitLease, NativeMachine, NativeTick,
@@ -36,12 +36,24 @@ const WALL_UNIT_MS: u64 = 2500;
 /// What the owner double does at one poll, as the model chose it.
 #[derive(Clone, Copy, Debug)]
 enum Cmd {
-    BeginModal { page: Duration },
-    BeginQuiet { deadline_tick: u64 },
-    Send { ack: Duration },
-    ToGap { deadline_tick: u64 },
-    Rearm { deadline_tick: u64 },
-    RenewQuiet { deadline_tick: u64 },
+    BeginModal {
+        page: Duration,
+    },
+    BeginQuiet {
+        deadline_tick: u64,
+    },
+    Send {
+        ack: Duration,
+    },
+    ToGap {
+        deadline_tick: u64,
+    },
+    Rearm {
+        deadline_tick: u64,
+    },
+    RenewQuiet {
+        deadline_tick: u64,
+    },
     /// The machine completes: its leases end.
     End,
     /// The script cancels its step: the handle drops.
@@ -82,13 +94,12 @@ impl NativeMachine for DrivenMachine {
         };
         match args.begin {
             Cmd::BeginModal { page } => {
-                machine.modal = Some(cx.begin_modal_wait(WaitDeadline::Active(cx.active_now() + page))?);
+                machine.modal =
+                    Some(cx.begin_modal_wait(WaitDeadline::Active(cx.active_now() + page))?);
             }
             Cmd::BeginQuiet { deadline_tick } => {
-                machine.quiet = Some(cx.begin_quiet_read(
-                    cx.action_id(),
-                    WaitDeadline::Tick(deadline_tick),
-                )?);
+                machine.quiet =
+                    Some(cx.begin_quiet_read(cx.action_id(), WaitDeadline::Tick(deadline_tick))?);
             }
             other => panic!("not a begin command: {other:?}"),
         }
@@ -422,7 +433,9 @@ impl Rig {
                 probe_wake.store(step.wake, Ordering::Relaxed);
                 probe_hold.store(step.hold, Ordering::Relaxed);
                 *probe_control.cmd.lock().unwrap() = step.cmd;
-                probe_control.drift_ms.store(step.drift_ms, Ordering::Relaxed);
+                probe_control
+                    .drift_ms
+                    .store(step.drift_ms, Ordering::Relaxed);
                 false
             },
             |_: &api::DetectedRandom| RandomClaim::Host,
@@ -443,7 +456,11 @@ impl Rig {
 
 /// The frames of a model trace, and the decision that the model expects at
 /// each frame.
-fn frames_of(model: &Model, trace: &[ModelAction], unit_ms: u64) -> (Vec<RealFrame>, Vec<Decision>) {
+fn frames_of(
+    model: &Model,
+    trace: &[ModelAction],
+    unit_ms: u64,
+) -> (Vec<RealFrame>, Vec<Decision>) {
     let bounds = model.bounds;
     let unit = Duration::from_millis(unit_ms);
     let mut state = model.initial();
@@ -462,7 +479,10 @@ fn frames_of(model: &Model, trace: &[ModelAction], unit_ms: u64) -> (Vec<RealFra
             ModelAction::Start => ops.push(Op::Start),
             ModelAction::Relog => ops.push(Op::Relog),
             ModelAction::Frame(f) => {
-                let died = info.releases.iter().any(|(_, cause)| *cause == Cause::Death);
+                let died = info
+                    .releases
+                    .iter()
+                    .any(|(_, cause)| *cause == Cause::Death);
                 let cmd = if died {
                     Some(Cmd::Drop)
                 } else if !info.polled {
@@ -497,22 +517,18 @@ fn frames_of(model: &Model, trace: &[ModelAction], unit_ms: u64) -> (Vec<RealFra
                         }),
                         OwnerAct::ToGap(_) => match post.lease {
                             Lease::Modal(m) => match m.ledger {
-                                hold_model::LedgerBound::Tick(deadline_tick) => {
-                                    Some(Cmd::ToGap {
-                                        deadline_tick: u64::from(deadline_tick),
-                                    })
-                                }
+                                hold_model::LedgerBound::Tick(deadline_tick) => Some(Cmd::ToGap {
+                                    deadline_tick: u64::from(deadline_tick),
+                                }),
                                 hold_model::LedgerBound::Active(_) => None,
                             },
                             _ => None,
                         },
                         OwnerAct::Rearm(_) => match post.lease {
                             Lease::Modal(m) => match m.ledger {
-                                hold_model::LedgerBound::Tick(deadline_tick) => {
-                                    Some(Cmd::Rearm {
-                                        deadline_tick: u64::from(deadline_tick),
-                                    })
-                                }
+                                hold_model::LedgerBound::Tick(deadline_tick) => Some(Cmd::Rearm {
+                                    deadline_tick: u64::from(deadline_tick),
+                                }),
                                 hold_model::LedgerBound::Active(_) => None,
                             },
                             _ => None,
@@ -659,7 +675,10 @@ fn the_real_hold_matches_the_model_on_the_shortest_trace_of_each_release() {
         "conformance: {checked} traces over {} releases; the model held the press on {held_frames} frames and pressed on {press_frames}",
         releases.len()
     );
-    assert!(held_frames > 0 && press_frames > 0, "the traces exercise both decisions");
+    assert!(
+        held_frames > 0 && press_frames > 0,
+        "the traces exercise both decisions"
+    );
     assert!(
         failures.is_empty(),
         "{} of {checked} traces differ:\n{}",
@@ -703,8 +722,12 @@ fn the_end_gap_hold_defect_of_the_model_reproduces_on_the_real_code() {
             .iter()
             .find(|(violation, _)| violation.name == name)
             .unwrap_or_else(|| panic!("the model finds {name}"));
-        let (held, pressed) = check_trace(&model, trace)
-            .unwrap_or_else(|report| panic!("{name}: the real code differs from the model: {report}"));
-        assert!(held > 0 && pressed > 0, "{name}: the counterexample holds, then presses");
+        let (held, pressed) = check_trace(&model, trace).unwrap_or_else(|report| {
+            panic!("{name}: the real code differs from the model: {report}")
+        });
+        assert!(
+            held > 0 && pressed > 0,
+            "{name}: the counterexample holds, then presses"
+        );
     }
 }
