@@ -583,3 +583,16 @@ listed = "0.2.9"
 target = "0.3.0"
 severity = "low"
 owner = "T1 shared audio resource admission"
+
+[[item]]
+id = "runtime-serialization-upgrade-held"
+kind = "not-in-release"
+area = "Source builds"
+text = """The serialization and date libraries retain compatibility versions
+  until the JavaScript runtime libraries can be updated together. The recorded
+  date-parser advisory is not reachable: the calendar dependency does not
+  enable date parsing or formatting."""
+first = "0.2.9"
+target = "0.3.0"
+severity = "low"
+owner = "runtime track: deno_ast >=0.50.2 needs a rustyscript move; lift the serde hold, the client serde_json =1.0.143 development pin (vendor/fr-client-rust/crates/client/Cargo.toml) and the RUSTSEC-2026-0009 exception that crates/tui/tests/audit_exception.rs guards"

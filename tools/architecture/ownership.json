@@ -2375,6 +2375,10 @@
       "owner": "T5"
     },
     {
+      "path": "crates/nav-planner/tests/codec_versions.rs",
+      "owner": "T5"
+    },
+    {
       "path": "crates/nav-planner/tests/death_plateau_real_pack.rs",
       "owner": "T5"
     },
@@ -5979,6 +5983,10 @@
       "owner": "T3"
     },
     {
+      "path": "crates/tui/tests/audit_exception.rs",
+      "owner": "T3"
+    },
+    {
       "path": "crates/tui/tests/settings_notice_alloc.rs",
       "owner": "T3"
     },
@@ -6871,6 +6879,10 @@
       "owner": "T1"
     },
     {
+      "path": "vendor/fr-client-rust/crates/client/tests/cache_decode_differential.rs",
+      "owner": "T1"
+    },
+    {
       "path": "vendor/fr-client-rust/crates/client/tests/cache_prepare.rs",
       "owner": "T1"
     },
@@ -7072,6 +7084,10 @@
     },
     {
       "path": "vendor/fr-client-rust/crates/client/tests/midi_first_song_stall.rs",
+      "owner": "T1"
+    },
+    {
+      "path": "vendor/fr-client-rust/crates/client/tests/midi_pcm_differential.rs",
       "owner": "T1"
     },
     {

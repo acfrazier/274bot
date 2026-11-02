@@ -8,7 +8,7 @@ publish = false
 api = { path = "../api" }
 client = { workspace = true }
 num-bigint = "0.4"
-thiserror = "=2.0.20"
+thiserror = "2.0.20"
 vault = { path = "../vault" }
 parking_lot = { version = "0.12", optional = true }
 
@@ -34,7 +34,7 @@ windows-sys = { version = "0.59", features = [
 ] }
 
 [dev-dependencies]
-allocation-counter = "=0.8.1"
+allocation-counter = "0.8.1"
 api = { path = "../api", features = ["test-support"] }
 client = { workspace = true, features = ["test-support"] }
 tungstenite = "0.24"

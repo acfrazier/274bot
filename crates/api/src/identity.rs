@@ -139,7 +139,7 @@ fn checked_next(kind: IdentityKind, value: u64) -> Result<u64, IdentityError> {
 /// value minted, so the whole space up to `u64::MAX` is usable.
 fn mint_atomic(kind: IdentityKind, last: &AtomicU64) -> Result<NonZeroU64, IdentityError> {
     let previous = last
-        .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |last| {
+        .try_update(Ordering::Relaxed, Ordering::Relaxed, |last| {
             last.checked_add(1)
         })
         .map_err(|_| IdentityError::Exhausted(kind))?;

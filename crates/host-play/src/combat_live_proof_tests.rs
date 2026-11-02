@@ -3062,7 +3062,7 @@ fn ranged_dart_count_steps(
                             .as_i64()
                             .is_some_and(|frame_tick| frame_tick < tick)
                     })
-                    .map(&ammo_count)
+                    .map(ammo_count)
             });
             let after = snapshot_tick.and_then(|tick| {
                 capture
@@ -3076,7 +3076,7 @@ fn ranged_dart_count_steps(
                                 .is_some_and(|frame_tick| frame_tick > tick)
                         })
                     })
-                    .map(&ammo_count)
+                    .map(ammo_count)
             });
             let decrement = before.zip(after).map(|(before, after)| before - after);
             json!({

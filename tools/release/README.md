@@ -80,6 +80,10 @@ prepare removes its partial directory automatically.
 
 ### Builders and parameters
 
+The host and client pin Rust **1.98.1** with Clippy and rustfmt. Prepare that exact
+toolchain in each builder's Rustup home before a release build. Do not use
+unqualified `stable` to qualify a release.
+
 - macOS arm64 builds locally. `--sign-identity` (or
   `RELEASE_SIGN_IDENTITY`) is required for a real release build. The macOS
   worker never builds with the operator's login environment: the Mac's
@@ -99,7 +103,7 @@ prepare removes its partial directory automatically.
   toolchain through it; any other value is dropped), plus the keys the
   worker itself pins. Everything else -- `LIBRARY_PATH`, `PKG_CONFIG*`,
   `DYLD_*`, compiler/flag overrides, `RUSTFLAGS`, and in particular
-  `CARGO_HOME` and `RUSTUP_TOOLCHAIN` (the toolchain comes from
+  `CARGO_HOME`, `RUSTUP_HOME` and `RUSTUP_TOOLCHAIN` (the toolchain comes from
   `rust-toolchain.toml`) -- is not inherited. None of the dropped
   variables was set in the environment that produced the known-good
   0.2.1 package. Linux and Windows environment construction is

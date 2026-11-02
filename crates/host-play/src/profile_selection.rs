@@ -232,7 +232,7 @@ impl ProfileOptions {
                 working_dir.join(path)
             }
         };
-        let engine_dir = engine_dir.map(&absolute).unwrap_or_default();
+        let engine_dir = engine_dir.map(absolute).unwrap_or_default();
         let content_dir = absolute(content_dir);
         let unpack_dir = absolute(unpack_dir);
         validate_unpack_root(&unpack_dir, &engine_dir, &content_dir)?;
