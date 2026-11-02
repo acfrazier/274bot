@@ -268,7 +268,12 @@ fn the_real_compat_lease_matches_the_model_on_the_shortest_trace_of_each_release
 /// click (M6): see `arm-r/report.md`.
 #[test]
 fn the_counterexamples_of_the_earlier_compat_designs_run_on_the_real_lease() {
-    let bounds = bounds();
+    // M4 shows only when the owner begins a new read in the frame that revokes
+    // the old one (the product's hook resets the session before the poll).
+    let bounds = Bounds {
+        same_frame_begin: true,
+        ..bounds()
+    };
     let head = Model::new(bounds, Mutation::None);
     let mut checked = 0;
     for mutation in [Mutation::M6CompatNoRenew, Mutation::M4CompatConstantKey] {
