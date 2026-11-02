@@ -6101,6 +6101,7 @@ fn s2b_admission_per_bot_layouts() {
         target_arch = "aarch64",
         not(feature = "memory-profile")
     ))]
+    // macOS tuple: BATCH-029-INT/w3-nav-hop-mac-layout-1/test.log (+40 B, no heap).
     assert_eq!(
         (
             std::mem::size_of::<NavBot>(),
@@ -6108,7 +6109,7 @@ fn s2b_admission_per_bot_layouts() {
             std::mem::size_of::<script::combat::Combat>(),
             std::mem::size_of::<script::combat::WalkGuard>()
         ),
-        (4056, 1576, 520, 264)
+        (4096, 1576, 520, 264)
     );
     #[cfg(all(
         target_os = "linux",
