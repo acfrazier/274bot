@@ -71,7 +71,7 @@ impl JsSurfaceFactory {
             card.siblings.iter().cloned().collect(),
             start.game_data.clone(),
             Arc::clone(&start.named_banks),
-            Arc::clone(&start.wilderness_zones),
+            Arc::clone(&start.wilderness_rules),
             Some(execution),
             local_state,
         )

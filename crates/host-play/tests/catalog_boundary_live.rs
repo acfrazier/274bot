@@ -2990,7 +2990,7 @@ export default class NativeStop extends LoopingBot {{
             game_data: None,
             named_banks: Arc::new(api::named_banks::NamedBankFacts::empty()),
             loadouts: Arc::from([]),
-            wilderness_zones: std::sync::Arc::from([]),
+            wilderness_rules: std::sync::Arc::default(),
         })
         .unwrap();
         let mut client = client::client::Client::new(client::client::ClientConfig {

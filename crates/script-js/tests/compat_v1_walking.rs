@@ -1,7 +1,6 @@
 //! Compat v1 walking table and map helper contracts.
 
-use nav_planner::transport::WildernessZone;
-use script::native::walk::WildernessZonePair;
+use nav_planner::transport::{WildernessRules, WildernessZone};
 use script_js::{LoadIsolate, LoadShape};
 use serde_json::{json, Value};
 use std::sync::Arc;
@@ -127,8 +126,8 @@ fn compat_v1_walking__wildernesslevelat__contract() {
             "globalThis.__levels = [wildernessLevelAt({ x: 100, z: 200, level: 0 }), wildernessLevelAt({ x: 110, z: 239, level: 3 }), wildernessLevelAt({ x: 100, z: 240, level: 0 }), wildernessLevelAt({ x: 111, z: 200, level: 0 }), wildernessLevelAt({ x: 100, z: 200, level: 4 })];"
         )
     );
-    let zones: Arc<[WildernessZonePair]> = vec![WildernessZonePair {
-        zone: WildernessZone {
+    let rules = Arc::new(WildernessRules {
+        zones: vec![WildernessZone {
             x1: 100,
             z1: 200,
             x2: 110,
@@ -136,13 +135,13 @@ fn compat_v1_walking__wildernesslevelat__contract() {
             level1: 0,
             level2: 3,
             origin_z: 200,
-        },
+        }],
         divisor: 8,
         offset: 1,
-    }]
-    .into();
+    });
     let iso =
-        LoadIsolate::spawn_with_wilderness(source, LoadShape::CompatClass, vec![], zones).unwrap();
+        LoadIsolate::spawn_with_wilderness_rules(source, LoadShape::CompatClass, vec![], rules)
+            .unwrap();
     iso.on_game_tick(1);
     let levels = iso.probe("globalThis.__levels").unwrap();
     iso.join();

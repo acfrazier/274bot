@@ -25,11 +25,35 @@ const LOG_PREFIX: &str = "WALK_PROBE_RESULT:";
 const PROBE_SOURCE: &str = r#"
 import { reader } from '../../adapter/ClientAdapter.js';
 import { Reachability } from '../../event/webwalk/geometry/Reachability.js';
+import { wildernessLevelAt } from '../../event/webwalk/wilderness.js';
+import { WalkExecutor } from '../../event/webwalk/WalkExecutor.js';
+import { Traversal } from '../../api/walking/Traversal.js';
 export default class CompatWalkingProbe extends LoopingBot {
     async loop() {
         if (this.done || !reader.ingame() || reader.sceneState() !== 2) return;
         const here = reader.worldTile();
         if (!here) return;
+        const routeProbe = await WalkExecutor.probeDest(here, 23);
+        if (!routeProbe.ok || routeProbe.terminal?.x !== here.x
+            || routeProbe.terminal?.z !== here.z
+            || routeProbe.terminal?.level !== here.level) {
+            throw new Error(`current-tile probe failed: ${JSON.stringify(routeProbe)}`);
+        }
+        const resilientCompleted = await Traversal.walkResilient(
+            here,
+            { radius: 0, attempts: 1, maxBudget: 120000 },
+        );
+        if (!resilientCompleted) throw new Error('walkResilient did not accept the current tile');
+        const walkCompleted = await Traversal.walkTo(here, { radius: 0 });
+        if (!walkCompleted) throw new Error('walkTo did not accept the current tile');
+        const lastOutcome = WalkExecutor.lastOutcome;
+        if (lastOutcome !== 'arrived') throw new Error(`unexpected lastOutcome: ${lastOutcome}`);
+        const remaining = Traversal.remaining();
+        if (!Number.isInteger(remaining) || remaining < 0) {
+            throw new Error(`invalid walking remaining count: ${remaining}`);
+        }
+        Traversal.requestRepath('compatibility probe live coverage');
+
 
         let blocked = null;
         for (let radius = 0; radius <= 52 && !blocked; radius++) {
@@ -70,6 +94,12 @@ export default class CompatWalkingProbe extends LoopingBot {
             throw new Error('the tile before the scene edge is not in the local scene');
         }
 
+        const wildernessTile = { x: 3000, z: 3600, level: 0 };
+        const wildernessLevel = wildernessLevelAt(wildernessTile);
+        if (wildernessLevel !== 11) {
+            throw new Error(`v17 wilderness tile ${JSON.stringify(wildernessTile)} returned ${wildernessLevel}, expected 11`);
+        }
+
         this.done = true;
         this.log('WALK_PROBE_RESULT:' + JSON.stringify({
             player: here,
@@ -84,6 +114,13 @@ export default class CompatWalkingProbe extends LoopingBot {
             sceneEdgeProbeable: Reachability.probeable(edge),
             insideLocal: reader.toLocal(inside.x, inside.z),
             edgeLocal: reader.toLocal(edge.x, edge.z),
+            routeProbe,
+            walkCompleted,
+            resilientCompleted,
+            lastOutcome,
+            remaining,
+            wildernessTile,
+            wildernessLevel,
         }));
     }
 }

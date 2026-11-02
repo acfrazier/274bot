@@ -675,7 +675,7 @@ impl GameplayFactory {
         siblings: Vec<(String, String)>,
         game_data: Option<std::sync::Arc<api::game_data::SelectedGameData>>,
         named_banks: std::sync::Arc<api::named_banks::NamedBankFacts>,
-        wilderness_zones: std::sync::Arc<[script::native::walk::WildernessZonePair]>,
+        wilderness_rules: std::sync::Arc<nav_planner::transport::WildernessRules>,
         execution: Option<api::identity::ExecutionId>,
     ) -> Result<LoadIsolate, LoadIsolateError> {
         Self::spawn_with_content_and_state(
@@ -685,7 +685,7 @@ impl GameplayFactory {
             siblings,
             game_data,
             named_banks,
-            wilderness_zones,
+            wilderness_rules,
             execution,
             None,
         )
@@ -699,7 +699,7 @@ impl GameplayFactory {
         siblings: Vec<(String, String)>,
         game_data: Option<std::sync::Arc<api::game_data::SelectedGameData>>,
         named_banks: std::sync::Arc<api::named_banks::NamedBankFacts>,
-        wilderness_zones: std::sync::Arc<[script::native::walk::WildernessZonePair]>,
+        wilderness_rules: std::sync::Arc<nav_planner::transport::WildernessRules>,
         execution: Option<api::identity::ExecutionId>,
         local_state: Option<std::sync::Arc<script::local_state::SlotState>>,
     ) -> Result<LoadIsolate, LoadIsolateError> {
@@ -710,7 +710,7 @@ impl GameplayFactory {
             siblings,
             game_data,
             named_banks,
-            wilderness_zones,
+            wilderness_rules,
             execution,
             local_state,
         )
@@ -736,18 +736,18 @@ impl LoadIsolate {
             siblings,
             None,
             std::sync::Arc::new(api::named_banks::NamedBankFacts::empty()),
-            std::sync::Arc::from([]),
+            std::sync::Arc::default(),
             None,
             None,
         )
     }
-    /// Spawn with selected wilderness geometry for read-only contract tests.
+    /// Spawn with selected wilderness rules for read-only contract tests.
     #[cfg(any(test, feature = "test-hooks"))]
-    pub fn spawn_with_wilderness(
+    pub fn spawn_with_wilderness_rules(
         js: String,
         shape: LoadShape,
         siblings: Vec<(String, String)>,
-        wilderness_zones: std::sync::Arc<[script::native::walk::WildernessZonePair]>,
+        wilderness_rules: std::sync::Arc<nav_planner::transport::WildernessRules>,
     ) -> Result<Self, LoadIsolateError> {
         Self::spawn_inner(
             js,
@@ -756,7 +756,7 @@ impl LoadIsolate {
             siblings,
             None,
             std::sync::Arc::new(api::named_banks::NamedBankFacts::empty()),
-            wilderness_zones,
+            wilderness_rules,
             None,
             None,
         )
@@ -864,7 +864,7 @@ impl LoadIsolate {
         siblings: Vec<(String, String)>,
         game_data: Option<std::sync::Arc<api::game_data::SelectedGameData>>,
         named_banks: std::sync::Arc<api::named_banks::NamedBankFacts>,
-        wilderness_zones: std::sync::Arc<[script::native::walk::WildernessZonePair]>,
+        wilderness_rules: std::sync::Arc<nav_planner::transport::WildernessRules>,
         execution: Option<api::identity::ExecutionId>,
         local_state: Option<std::sync::Arc<script::local_state::SlotState>>,
     ) -> Result<Self, LoadIsolateError> {
@@ -927,7 +927,7 @@ impl LoadIsolate {
                     siblings,
                     game_data,
                     named_banks,
-                    wilderness_zones,
+                    wilderness_rules,
                     runtime_handle,
                     CmdQueue {
                         rx,

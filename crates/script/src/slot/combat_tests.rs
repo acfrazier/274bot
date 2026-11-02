@@ -25,7 +25,7 @@ fn load_slot(incarnation: u64, data: bool) -> SlotScript {
         game_data: data.then(selected),
         named_banks: Arc::default(),
         loadouts: Arc::default(),
-        wilderness_zones: std::sync::Arc::from([]),
+        wilderness_rules: std::sync::Arc::default(),
     })
     .unwrap();
     factory

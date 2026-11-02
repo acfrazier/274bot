@@ -71,8 +71,8 @@ pub struct SurfaceStart {
     pub game_data: Option<Arc<api::game_data::SelectedGameData>>,
     /// Immutable named-bank facts for this start.
     pub named_banks: Arc<api::named_banks::NamedBankFacts>,
-    /// Selected wilderness-zone pairs for synchronous read-only queries.
-    pub wilderness_zones: Arc<[crate::native::walk::WildernessZonePair]>,
+    /// Shared wilderness rules for synchronous read-only queries.
+    pub wilderness_rules: Arc<nav_planner::transport::WildernessRules>,
     /// Shared loadouts for this start.
     pub loadouts: Arc<[api::loadout::Loadout]>,
 }

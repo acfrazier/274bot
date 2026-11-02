@@ -24,7 +24,7 @@ fn u9_normal_slot_start_does_not_construct_risk_tables() {
         game_data: None,
         named_banks: Arc::default(),
         loadouts: Arc::default(),
-        wilderness_zones: std::sync::Arc::from([]),
+        wilderness_rules: std::sync::Arc::default(),
     })
     .unwrap();
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);

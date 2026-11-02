@@ -273,7 +273,7 @@ fn failed_surface_start() -> script::StartLoadError {
         game_data: None,
         named_banks: Arc::default(),
         loadouts: Arc::default(),
-        wilderness_zones: std::sync::Arc::from([]),
+        wilderness_rules: std::sync::Arc::default(),
     })
     .expect_err("injected spawn failure must err")
 }

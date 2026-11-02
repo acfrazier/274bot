@@ -171,7 +171,7 @@ pub struct ScriptStartHandle {
     game_data: Option<Arc<api::game_data::SelectedGameData>>,
     named_banks: Arc<api::named_banks::NamedBankFacts>,
     #[cfg(feature = "js")]
-    wilderness_zones: Arc<[script::native::walk::WildernessZonePair]>,
+    wilderness_rules: Arc<nav_planner::transport::WildernessRules>,
     /// The Play's state composition: a Start without caller-owned loadouts
     /// leases the operator's rows from it. `None` for the legacy direct
     /// connection, whose Starts post no operator rows.
@@ -395,13 +395,13 @@ impl ScriptStartHandle {
                     });
                 match resolved_loadouts {
                     Ok(loadouts) => slot.start_surface_with_settings(
-                        script_runtime::js_surface_start_with_wilderness(
+                        script_runtime::js_surface_start_with_wilderness_rules(
                             script_runtime::js_start_card(name, source, shape, siblings),
                             bag.map(Arc::new),
                             self.game_data.clone(),
                             Arc::clone(&self.named_banks),
                             loadouts,
-                            Arc::clone(&self.wilderness_zones),
+                            Arc::clone(&self.wilderness_rules),
                         ),
                     ),
                     Err(error) => Err(Refused(error)),
@@ -1016,7 +1016,7 @@ impl Play {
             game_data: self.game_data.clone(),
             named_banks: Arc::clone(&self.named_banks),
             #[cfg(feature = "js")]
-            wilderness_zones: Arc::clone(&self.wilderness_zones),
+            wilderness_rules: Arc::clone(&self.wilderness_rules),
             state: self.local_state.clone(),
         }
     }

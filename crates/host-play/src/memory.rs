@@ -2636,13 +2636,13 @@ impl Run {
             let mut slot = slot.lock().unwrap();
             let loadouts: Arc<[api::loadout::Loadout]> =
                 vec![api::loadout::Loadout::new("Memory food").with_carry("Lobster", 1)].into();
-            let start = crate::script_runtime::js_surface_start_with_wilderness(
+            let start = crate::script_runtime::js_surface_start_with_wilderness_rules(
                 Arc::clone(card),
                 Some(Arc::new(bag)),
                 play.game_data(),
                 play.named_banks(),
                 loadouts,
-                Arc::clone(&play.wilderness_zones),
+                Arc::clone(&play.wilderness_rules),
             );
             slot.start_surface(start)
                 .map_err(|error| error.to_string())?;
@@ -2653,13 +2653,13 @@ impl Run {
         // Fixtures must not read the operator's saved loadouts.
         let slot = crate::script_slot_or_insert(&play.scripts, name);
         let mut slot = slot.lock().unwrap();
-        let start = crate::script_runtime::js_surface_start_with_wilderness(
+        let start = crate::script_runtime::js_surface_start_with_wilderness_rules(
             Arc::clone(card),
             Some(Arc::clone(card_bag)),
             play.game_data(),
             play.named_banks(),
             Arc::clone(loadouts),
-            Arc::clone(&play.wilderness_zones),
+            Arc::clone(&play.wilderness_rules),
         );
         slot.start_surface(start)
             .map_err(|error| error.to_string())?;

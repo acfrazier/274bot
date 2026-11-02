@@ -23,7 +23,7 @@ use crate::collision::WorldCollision;
 use crate::contract::{NavIdentity, PackDigest, SearchGraphEnvelope};
 use crate::grid::StepGrid;
 use crate::pack::{decode, decode_any_reader, decode_grid, BankStand, PackError};
-use crate::transport::{TransportEdge, TransportGraph, TransportKind};
+use crate::transport::{TransportEdge, TransportGraph, TransportKind, WildernessRules};
 
 /// A fully-blocked stamp: every directional `PL_WALK_*` mask, so the
 /// router's directional step test rejects the tile from any direction
@@ -39,6 +39,8 @@ pub struct NavWorld {
     named_banks: OnceLock<Arc<api::named_banks::NamedBankFacts>>,
     transport_item_names: OnceLock<TransportItemNames>,
     risk_facts: OnceLock<Box<dyn Any + Send + Sync>>,
+    /// Shared compatibility lookup rules, cloned once and retained per world.
+    wilderness_rules: OnceLock<Arc<WildernessRules>>,
     /// The pack bytes' digest: set by [`Self::from_bytes`], or by the host's
     /// loader from the verified manifest (`crate::producer::bind`). Unset on
     /// a synthetic world until a view is first served.
@@ -64,6 +66,14 @@ impl NavWorld {
             .get_or_init(|| Box::new(build()))
             .downcast_ref()
             .expect("one admission fact type per navigation world")
+    }
+
+    /// Shared compatibility rules derived from this world's packed graph.
+    pub fn wilderness_rules(&self) -> Arc<WildernessRules> {
+        Arc::clone(
+            self.wilderness_rules
+                .get_or_init(|| Arc::new(self.graph.wilderness.clone())),
+        )
     }
 
     /// Cached once per immutable world. `producer::bind` pins production
@@ -202,6 +212,7 @@ impl NavWorld {
             named_banks: OnceLock::new(),
             transport_item_names: OnceLock::new(),
             risk_facts: OnceLock::new(),
+            wilderness_rules: OnceLock::new(),
             content: OnceLock::new(),
             lease_identity: OnceLock::new(),
             search_envelope: OnceLock::new(),

@@ -208,7 +208,7 @@ pub(super) fn wire_runtime(
     siblings: &[(String, String)],
     game_data: Option<std::sync::Arc<api::game_data::SelectedGameData>>,
     named_banks: std::sync::Arc<api::named_banks::NamedBankFacts>,
-    wilderness_zones: std::sync::Arc<[script::native::walk::WildernessZonePair]>,
+    wilderness_rules: std::sync::Arc<nav_planner::transport::WildernessRules>,
     local_state: Option<std::sync::Arc<script::local_state::SlotState>>,
     frame_interest: std::sync::Arc<std::sync::atomic::AtomicUsize>,
     loc_projection_interest: std::sync::Arc<std::sync::atomic::AtomicBool>,
@@ -361,7 +361,7 @@ pub(super) fn wire_runtime(
                 }
                 "wilderness-level-at" => {
                     let level = json_tile(args.get(1)).map_or(0, |tile| {
-                        script::native::walk::wilderness_level_at(&wilderness_zones, tile)
+                        script::native::walk::wilderness_level_at(&wilderness_rules, tile)
                     });
                     Ok(serde_json::json!(level))
                 }
