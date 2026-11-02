@@ -165,7 +165,11 @@ impl Script for DrivenScript {
         }
         if let Some(handle) = &self.handle {
             if let Poll::Ready(result) = ctx.actions.poll(handle, &mut ctx.cx) {
-                result.expect("the owner double's command succeeds");
+                // A revoked owner (Stop, a session boundary) fails its poll.
+                match result {
+                    Ok(()) | Err(ActionError::Stale | ActionError::Cancelled) => {}
+                    Err(error) => panic!("the owner double's command failed: {error:?}"),
+                }
                 self.handle = None;
             }
         }
@@ -553,9 +557,10 @@ fn needs_wall_scale(model: &Model, trace: &[ModelAction]) -> bool {
     false
 }
 
-/// Drive the real code with `trace` and return the first frame where the
-/// real decision differs from the model's, with a report.
-fn check_trace(model: &Model, trace: &[ModelAction]) -> Result<(), String> {
+/// Drive the real code with `trace` and compare it with the model at every
+/// frame. Returns the number of frames where the model holds the press and
+/// where it presses, or a report of the first frame that differs.
+fn check_trace(model: &Model, trace: &[ModelAction]) -> Result<(usize, usize), String> {
     let unit_ms = if needs_wall_scale(model, trace) {
         WALL_UNIT_MS
     } else {
@@ -571,7 +576,10 @@ fn check_trace(model: &Model, trace: &[ModelAction]) -> Result<(), String> {
             ));
         }
     }
-    Ok(())
+    Ok((
+        expected.iter().filter(|d| d.deferred).count(),
+        expected.iter().filter(|d| d.pressed).count(),
+    ))
 }
 
 /// The conformance bounds: the native lease kinds, the events that a test
@@ -622,6 +630,7 @@ fn the_real_hold_matches_the_model_on_the_shortest_trace_of_each_release() {
     let mut failures = Vec::new();
     let mut checked = 0;
     let mut slow = 0;
+    let (mut held_frames, mut press_frames) = (0, 0);
     for ((kind, cause), traces) in &releases {
         for trace in traces {
             if needs_wall_scale(&model, trace) {
@@ -631,12 +640,26 @@ fn the_real_hold_matches_the_model_on_the_shortest_trace_of_each_release() {
                 }
             }
             checked += 1;
-            if let Err(report) = check_trace(&model, trace) {
-                failures.push(format!("{kind:?} {cause:?}: {report}"));
+            match check_trace(&model, trace) {
+                Ok((held, pressed)) => {
+                    held_frames += held;
+                    press_frames += pressed;
+                }
+                Err(report) => failures.push(format!("{kind:?} {cause:?}: {report}")),
             }
         }
     }
-    eprintln!("conformance: {checked} traces over {} releases", releases.len());
+    for ((kind, cause), traces) in &releases {
+        eprintln!(
+            "conformance: {kind:?} {cause:?}: {} shortest traces",
+            traces.len()
+        );
+    }
+    eprintln!(
+        "conformance: {checked} traces over {} releases; the model held the press on {held_frames} frames and pressed on {press_frames}",
+        releases.len()
+    );
+    assert!(held_frames > 0 && press_frames > 0, "the traces exercise both decisions");
     assert!(
         failures.is_empty(),
         "{} of {checked} traces differ:\n{}",
