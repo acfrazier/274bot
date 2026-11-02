@@ -71,6 +71,9 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.8` 
 - The route-corpus exporter and navigation regression fixtures now use
   stamped quest observations from the current evidence API. A stale
   observation keeps its original timestamp and does not authorize a gate.
+- Obstacle regression fixtures now check every content-bounded progress
+  alternative. A synthetic future varp writer also updates that fixture's
+  test-side domain; it does not change the generated content facts.
 - Quester's live bank ownership checks now use the selected revision's law-rune
   alias for both the item check and bank seed. The three real-bank fixtures
   also construct in the normal test suite, so a fixture alias error cannot

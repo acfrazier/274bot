@@ -66,6 +66,20 @@ fn obstacle_fixture(script: &str) -> Fixture {
 }
 
 fn obstacle_graph(fx: &Fixture) -> TransportGraph {
+    let selected = api::game_data::for_revision(client::io::ClientRevision::R289).unwrap();
+    let (facts, identity) = selected.quest_identity_for_bake().unwrap();
+    obstacle_graph_with_facts(
+        fx,
+        &facts,
+        QuestFamilyId::new(identity.sha256, identity.schema),
+    )
+}
+
+fn obstacle_graph_with_facts(
+    fx: &Fixture,
+    facts: &api::game_data::QuestIdentityFacts,
+    family: QuestFamilyId,
+) -> TransportGraph {
     let defs = loc_defs(&[
         (3730, 1, 2),
         (3748, 1, 1),
@@ -79,12 +93,7 @@ fn obstacle_graph(fx: &Fixture) -> TransportGraph {
         (2866, 1, 1),
     ]);
     let collision = bake_collision(fx, &defs, &HashSet::new());
-    let selected = api::game_data::for_revision(client::io::ClientRevision::R289).unwrap();
-    let (facts, identity) = selected.quest_identity_for_bake().unwrap();
-    let quests = QuestSource {
-        family: QuestFamilyId::new(identity.sha256, identity.schema),
-        facts: &facts,
-    };
+    let quests = QuestSource { family, facts };
     derive_transports_with_audit(fx.path(), &defs, &collision, None, Some(&quests)).0
 }
 
@@ -100,6 +109,16 @@ impl EvidenceProvider for ObstacleSignals {
                         min: Some(self.1),
                         max: Some(self.1),
                     })
+                }
+                QuestGate::Complete(quest)
+                    if quest.0.as_ref() == "troll" && self.0 == "troll_quest" =>
+                {
+                    // The fixture uses the selected finite domain0..50.
+                    match self.1 {
+                        50 => Truth::True,
+                        0..=49 => Truth::False,
+                        _ => Truth::Unknown,
+                    }
                 }
                 QuestGate::Complete(quest)
                     if quest.0.as_ref() == "biohazard" && self.0 == "biohazard" =>
@@ -172,38 +191,59 @@ fn obstacle_stile_has_exact_ungated_final_landings() {
 
 #[test]
 fn obstacle_lower_rocks_require_started_progress_skill_and_south_only_worn_boots() {
+    // At7dac,289.json:128978-990 proves the finite Troll domain0..50.
+    // death_ig_commander.rs2:82 writes start10; quest_troll.rs2:367 writes
+    // complete50. F-C may emit several windows and a terminal Complete gate.
     let graph = obstacle_graph(&obstacle_fixture(HANDLERS));
-    let mut state = obstacle_state(&graph, "troll_quest", 10);
-    state.stats.insert(16, 15);
-    state.worn.insert(3105);
     for x in [2856, 2857] {
         for (from, to) in [
             (tile(x, 3611), tile(x, 3613)),
             (tile(x, 3613), tile(x, 3611)),
         ] {
-            let edge = crossing(&graph, 3748, from, to);
-            assert_eq!(edge.skill_req, [(16, 15)]);
-            assert!(edge.varp_req.is_empty() && edge.quest_req.is_empty());
-            assert!(state.allows(edge));
-            let mut low = obstacle_state(&graph, "troll_quest", 9);
-            low.stats.insert(16, 15);
-            low.worn.insert(3105);
-            assert!(!low.allows(edge));
-            state.stats.insert(16, 14);
-            assert!(!state.allows(edge));
-            state.stats.insert(16, 15);
-            state.worn.clear();
-            state.inv.insert(3105, 1);
-            assert_eq!(
-                state.allows(edge),
-                from.z == 3613,
-                "carried boots do not satisfy worn boots"
-            );
-            assert_eq!(
-                edge.worn_all_req.as_slice(),
-                if from.z == 3611 { &[3105][..] } else { &[] }
-            );
-            state.worn.insert(3105);
+            let matches_crossing = |edge: &&TransportEdge| {
+                edge.loc_id == 3748 && edge.takeoff == Some(from) && edge.to == to
+            };
+            for edge in graph.edges.iter().filter(matches_crossing) {
+                assert_eq!(edge.skill_req, [(16, 15)]);
+                assert!(edge.varp_req.is_empty() && edge.quest_req.is_empty());
+                assert_eq!(
+                    edge.worn_all_req.as_slice(),
+                    if from.z == 3611 { &[3105][..] } else { &[] }
+                );
+            }
+            let allows = |state: &WorldState| {
+                graph
+                    .edges
+                    .iter()
+                    .filter(matches_crossing)
+                    .any(|edge| state.allows(edge))
+            };
+            for value in 0..=50 {
+                let mut state = obstacle_state(&graph, "troll_quest", value);
+                state.stats.insert(16, 15);
+                state.worn.insert(3105);
+                assert_eq!(allows(&state), value >= 10, "Troll value {value}");
+                state.stats.insert(16, 14);
+                assert!(!allows(&state), "low skill at Troll value {value}");
+                state.stats.insert(16, 15);
+                state.worn.clear();
+                state.inv.insert(3105, 1);
+                assert_eq!(
+                    allows(&state),
+                    value >= 10 && from.z == 3613,
+                    "carried boots at Troll value {value}"
+                );
+            }
+            for value in [i32::MIN, -1, 51, i32::MAX] {
+                let mut state = obstacle_state(&graph, "troll_quest", value);
+                state.stats.insert(16, 15);
+                state.worn.insert(3105);
+                assert!(!allows(&state), "out-of-domain Troll value {value}");
+            }
+            let mut unknown = WorldState::empty();
+            unknown.stats.insert(16, 15);
+            unknown.worn.insert(3105);
+            assert!(!allows(&unknown));
         }
     }
 }
@@ -363,9 +403,42 @@ fn obstacle_wall_equality_stays_a_window_without_the_completion_upper_bound() {
         "scripts/future.rs2",
         "[proc,future_stage]\n%biohazard = 17;\n",
     );
-    let graph = obstacle_graph(&fx);
+    let selected = api::game_data::for_revision(client::io::ClientRevision::R289).unwrap();
+    let (mut facts, identity) = selected.quest_identity_for_bake().unwrap();
+    let row = facts
+        .rows
+        .iter_mut()
+        .find(|row| row.id == "biohazard")
+        .unwrap();
+    // At7dac,289.json:128138-150 and real quest_biohazard.rs2:160 prove
+    // completion16/domain0..16. Only this synthetic future writer adds17;
+    // its in-memory family must say so too. Actual generated facts stay intact.
+    assert_eq!(row.stage_domain.unwrap().max, Some(16));
+    row.stage_domain = Some(InclusiveRange {
+        min: Some(0),
+        max: Some(17),
+    });
+    let graph = obstacle_graph_with_facts(
+        &fx,
+        &facts,
+        QuestFamilyId::new(identity.sha256, identity.schema),
+    );
     let edge = crossing(&graph, 2049, tile(2556, 3299), tile(2559, 3299));
-    assert!(obstacle_state(&graph, "biohazard", 16).allows(edge));
-    assert!(!obstacle_state(&graph, "biohazard", 17).allows(edge));
-    assert!(format!("{:?}", edge.quest_gates).contains("Window"));
+    let gates = edge.quest_gates.as_ref().expect("exact signal gate");
+    let [QuestGate::Window(window)] = gates.gates() else {
+        panic!("the future writer forbids a completion-only proof");
+    };
+    assert_eq!(window.values.min, Some(16));
+    assert_eq!(window.values.max, Some(16));
+    for value in 0..=17 {
+        assert_eq!(
+            obstacle_state(&graph, "biohazard", value).allows(edge),
+            value == 16,
+            "Biohazard value {value}"
+        );
+    }
+    for value in [i32::MIN, -1, 18, i32::MAX] {
+        assert!(!obstacle_state(&graph, "biohazard", value).allows(edge));
+    }
+    assert!(!WorldState::empty().allows(edge));
 }
