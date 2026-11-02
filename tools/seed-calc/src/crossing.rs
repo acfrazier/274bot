@@ -338,10 +338,8 @@ fn calculate_in_world(
         let evaluated =
             match router::find_with(&world.collision, &world.graph, from, to, options, &state) {
                 Ok(route) => {
-                    let admission = product_admission(
-                        input,
-                        if consent { zones } else { ZoneExempt::NONE },
-                    );
+                    let admission =
+                        product_admission(input, if consent { zones } else { ZoneExempt::NONE });
                     let assessment = admission::assess(&route, world, &admission);
                     let admitted = admission::permits(&route, world, &admission, &assessment);
                     EvaluatedCandidate {
@@ -708,13 +706,7 @@ fn player_combat_level_base40() -> u8 {
     ((10 * sum + 13 * style) / 40) as u8
 }
 
-fn risk_input(
-    from: WorldTile,
-    hp: u8,
-    defence: u8,
-    combat_level: u8,
-    free_slots: u8,
-) -> RiskInput {
+fn risk_input(from: WorldTile, hp: u8, defence: u8, combat_level: u8, free_slots: u8) -> RiskInput {
     let mut input = RiskInput::default();
     input.pos = from;
     input.poison = PoisonState::Clear;
@@ -1018,10 +1010,22 @@ mod tests {
     #[test]
     fn crossing_output_serializes_only_current_product_verdicts() {
         for (verdict, expected) in [
-            (CrossVerdict::Survivable, serde_json::json!({"kind": "survivable"})),
-            (CrossVerdict::Unsurvivable, serde_json::json!({"kind": "unsurvivable"})),
-            (CrossVerdict::Unknown("Input".into()), serde_json::json!({"kind": "unknown", "reason": "Input"})),
-            (CrossVerdict::NoRoute("Blocked".into()), serde_json::json!({"kind": "no_route", "reason": "Blocked"})),
+            (
+                CrossVerdict::Survivable,
+                serde_json::json!({"kind": "survivable"}),
+            ),
+            (
+                CrossVerdict::Unsurvivable,
+                serde_json::json!({"kind": "unsurvivable"}),
+            ),
+            (
+                CrossVerdict::Unknown("Input".into()),
+                serde_json::json!({"kind": "unknown", "reason": "Input"}),
+            ),
+            (
+                CrossVerdict::NoRoute("Blocked".into()),
+                serde_json::json!({"kind": "no_route", "reason": "Blocked"}),
+            ),
         ] {
             assert_eq!(serde_json::to_value(verdict).unwrap(), expected);
         }
@@ -1075,7 +1079,10 @@ mod tests {
         let world = fixture_world();
         let result = calculate_in_world(&fixture_query(declared_fixture_zones()), &world, true)
             .expect("named-cross product admission");
-        assert_eq!(result.at_floor.as_ref().unwrap().verdict, CrossVerdict::Survivable);
+        assert_eq!(
+            result.at_floor.as_ref().unwrap().verdict,
+            CrossVerdict::Survivable
+        );
         assert_real_floor(result);
     }
 
