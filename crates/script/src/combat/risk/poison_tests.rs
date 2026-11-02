@@ -134,7 +134,7 @@ fn same_value_silent_refresh_and_more_marks_never_clear_positive_server_poison()
     assert_eq!(assessment.verdict, super::Verdict::Survivable);
     assert!(assessment.plan.crossings.is_empty());
     assert_eq!(assessment.input.poison, memory.state);
-    assert_eq!(assessment.hp_after, 89, "the copied reserve is replayed");
+    assert_eq!(assessment.hp_after, 90, "assessment does not replay damage");
 }
 
 #[test]

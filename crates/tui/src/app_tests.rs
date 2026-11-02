@@ -771,19 +771,11 @@ fn settings_survivable_notice_ack_is_independent_and_reaches_the_shared_projecti
     let mut app = TuiApp::new("274bot headless");
     app.settings_state.open = true;
     app.script_scope_notice_ack = true;
-    assert!(find(
-        &draw(&mut app, 100, 24),
-        "Danger routing now has three levels"
-    )
-    .is_some());
+    assert!(find(&draw(&mut app, 100, 24), "Danger routing has three levels").is_some());
     assert_eq!(app.on_key(key(KeyCode::Char('n'))), AppAction::None);
     assert!(app.script_scope_notice_ack && app.survivable_routing_notice_ack);
     assert!(app.walk_permissions.survivable_routing_notice_ack());
-    assert!(find(
-        &draw(&mut app, 100, 24),
-        "Danger routing now has three levels"
-    )
-    .is_none());
+    assert!(find(&draw(&mut app, 100, 24), "Danger routing has three levels").is_none());
 }
 
 /// The settings popup owns the keyboard: global letters do not leak out

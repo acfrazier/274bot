@@ -193,8 +193,9 @@ async function verifyRevision(revision: number) {
     assertServerOrderedPinned(spec);
     verifyCacheIdentity(revision, pin.engineRoot, pin.cache);
     const baseContentFiles = baseProvenanceInputs(pin.engineRoot, pin.contentRoot).content_inputs.map((input) => input.path);
-    const npcNames = extractNpcNamesFacts(pin.contentRoot, revision);
     const combatScripts = parseCombatScripts(pin.contentRoot);
+    const npcTypeSource = fs.readFileSync(path.join(pin.engineRoot, 'src/cache/config/NpcType.ts'), 'utf8');
+    const npcNames = extractNpcNamesFacts(pin.contentRoot, revision, npcTypeSource, combatScripts);
     const expectedContentFiles = [...new Set([
         ...baseContentFiles,
         ...(payload.quest_starts === undefined ? [] : questStartContentFiles(pin.contentRoot)),
@@ -202,6 +203,11 @@ async function verifyRevision(revision: number) {
         ...combatScripts.files.map((script) => script.relative),
     ])].sort();
     assertEqual(JSON.stringify(payload.provenance.content_inputs.map((input: { path: string }) => input.path)), JSON.stringify(expectedContentFiles), `${revision} complete content provenance`);
+    assertEqual(
+        JSON.stringify(payload.npc_names),
+        JSON.stringify({ combat_facts_version: npcNames.combat_facts_version, rows: npcNames.rows }),
+        `${revision} source-proven NPC combat facts`,
+    );
     if (payload.debug_commands !== undefined || payload.debug_names !== undefined) throw new Error(`${revision}: the debug catalog lives in the debug family, not the core asset`);
     assertEqual(JSON.stringify(payload.dialogue_ui), JSON.stringify(extractDialogueUiFacts(pin.contentRoot)), `${revision} source-proven dialogue UI`);
     const contentId = spec.cacheIdentity.content_id;

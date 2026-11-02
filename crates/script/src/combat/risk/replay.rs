@@ -11,7 +11,7 @@ use api::snapshot::{
     ActorView, CombatView, HitmarkView, ItemActionFamily, ItemContainer, ItemView, LocalPlayerView,
     PlayerView, WorldStateView,
 };
-use nav_planner::contract::{BoundZoneExempt, BoundZoneKey, LegView, RouteView, WildernessView};
+use nav_planner::contract::{BoundZoneExempt, LegView, RouteView, WildernessView};
 use std::fmt::{self, Write};
 use std::future::Future;
 
@@ -26,7 +26,19 @@ pub struct Estimate<'a> {
     pub combat: &'a CombatTables,
     pub allow: WalkAllow,
     pub generation: u64,
+    pub grants: Option<Grants<'a>>,
 }
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum PoisonTest {
+    NotNeeded,
+    PassesCharged { charged: f64 },
+    WaitForClear { charged: f64, until_index: u16 },
+    NoSafeTile { charged: f64 },
+}
+
+const _: () = assert!(std::mem::size_of::<PoisonTest>() <= 24);
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ReplayResult {
     pub passed: bool,
@@ -46,27 +58,6 @@ fn ceil(n: i32, d: i32) -> Result<i32, UnknownWhy> {
     }
     Ok(add(n, d - 1)? / d)
 }
-/// Empty ranges keep granted unknown crossings index-aligned but out of physics.
-async fn crossing_with_index_at<'a, F, U>(
-    plan: &'a RoutePlan,
-    index: u16,
-    checkpoint: &mut F,
-) -> Option<(usize, &'a CrossingGeom)>
-where
-    F: FnMut() -> U,
-    U: Future<Output = ()>,
-{
-    for (crossing_index, crossing) in plan.crossings.iter().enumerate() {
-        let found = crossing.intervals.0 != crossing.intervals.1
-            && crossing.first <= index
-            && index <= crossing.last;
-        super::checkpoint(checkpoint).await;
-        if found {
-            return Some((crossing_index, crossing));
-        }
-    }
-    None
-}
 async fn crossing_at<'a, F, U>(
     plan: &'a RoutePlan,
     index: u16,
@@ -76,9 +67,16 @@ where
     F: FnMut() -> U,
     U: Future<Output = ()>,
 {
-    crossing_with_index_at(plan, index, checkpoint)
-        .await
-        .map(|(_, crossing)| crossing)
+    for crossing in &plan.crossings {
+        let found = crossing.intervals.0 != crossing.intervals.1
+            && crossing.first <= index
+            && index <= crossing.last;
+        super::checkpoint(checkpoint).await;
+        if found {
+            return Some(crossing);
+        }
+    }
+    None
 }
 
 fn rows<'a>(plan: &'a RoutePlan, c: &CrossingGeom) -> &'a [ZoneInterval] {
@@ -117,7 +115,7 @@ where
     F: FnMut() -> U,
     U: Future<Output = ()>,
 {
-    if !allow.prayer || input.other_prayers_on || input.off_debt {
+    if !allow.prayer || input.other_prayers_on() || input.off_debt() {
         return false;
     }
     let intervals = rows(plan, c);
@@ -451,9 +449,13 @@ fn exposure(path: RoutePath<'_>, row: &ZoneInterval) -> Result<(i32, i32), Unkno
     Ok((start, end))
 }
 fn origin_duration(live: &LiveRow, tables: &CombatTables) -> Result<i32, UnknownWhy> {
-    let npc = tables.npc(live.ident).ok_or(UnknownWhy::AlreadyEngaged)?;
-    let r = super::facts::npc_envelope_radius(npc).ok_or(UnknownWhy::Overflow)?;
-    add(mul(i32::from(r), 2)?, LAG)
+    let npc =
+        super::facts::effective_npc_row(live.ident, tables).ok_or(UnknownWhy::AlreadyEngaged)?;
+    let kind = KindRisk::from_npc(npc, tables);
+    if kind.r == 0 {
+        return Err(UnknownWhy::Overflow);
+    }
+    add(mul(i32::from(kind.r), 2)?, LAG)
 }
 
 async fn hits<F, U>(
@@ -539,10 +541,10 @@ where
 }
 
 fn input_problem(input: &RiskInput, tables: &CombatTables) -> Option<UnknownWhy> {
-    if input.overflow || input.live_len > 4 || input.food_len > 6 {
+    if input.overflow() || input.live_len > 4 || input.food_len > 6 {
         return Some(UnknownWhy::Overflow);
     }
-    if input.unattributed
+    if input.unattributed()
         || input
             .live
             .iter()
@@ -550,19 +552,16 @@ fn input_problem(input: &RiskInput, tables: &CombatTables) -> Option<UnknownWhy>
             .any(|live| {
                 live.actor.kind != crate::combat::ActorKind::Npc
                     || live.rate == 0
-                    || tables.npc(live.ident).is_none_or(|row| {
-                        KindRisk::from_npc(row, tables)
-                            .unknown_for(input.map_members)
-                            .is_some()
-                    })
+                    || super::facts::effective_npc_row(live.ident, tables)
+                        .is_none_or(|row| KindRisk::from_npc(row, tables).unknown_for().is_some())
             })
     {
         return Some(UnknownWhy::AlreadyEngaged);
     }
-    if input.missing_facts || input.hp == 0 || input.hp_max == 0 {
+    if input.missing_facts() || input.hp == 0 || input.hp_max == 0 {
         return Some(UnknownWhy::MissingFacts);
     }
-    if input.input_locked {
+    if input.input_locked() {
         return Some(UnknownWhy::InputLock);
     }
     None
@@ -581,30 +580,27 @@ pub fn replay(
     observe: impl FnMut(i32, u16, i32, i32, Option<i32>),
 ) -> Result<ReplayResult, UnknownWhy> {
     let mut checkpoint = || std::future::ready(());
-    super::drive_synchronously(replay_with_admission_cooperative(
+    super::drive_synchronously(replay_cooperative(
         path,
         plan,
         input,
         tables,
         allow,
         extra,
-        |_, _| true,
         observe,
         &mut checkpoint,
     ))
 }
 
-/// Reuse the physical timeline while only requiring ungranted crossings to
-/// pass. Grants bless admission, never remove their damage or food consumption.
+/// Replays the public, complete route plan and never skips crossing physics.
 #[allow(clippy::too_many_arguments)]
-async fn replay_with_admission_cooperative<F, U>(
+async fn replay_cooperative<F, U>(
     path: RoutePath<'_>,
     plan: &RoutePlan,
     input: &RiskInput,
     tables: &CombatTables,
     allow: WalkAllow,
     extra: Option<(i32, u8)>,
-    must_pass: impl Fn(usize, &CrossingGeom) -> bool,
     mut observe: impl FnMut(i32, u16, i32, i32, Option<i32>),
     checkpoint: &mut F,
 ) -> Result<ReplayResult, UnknownWhy>
@@ -723,11 +719,8 @@ where
         let floor =
             estimated_floor_cooperative(path, plan, i, input, tables, allow, checkpoint).await?;
         let mut entry_obligation = false;
-        for (index, crossing) in plan.crossings.iter().enumerate() {
-            if must_pass(index, crossing)
-                && crossing.first == i
-                && point.is_some_and(|point| point.tick == tick)
-            {
+        for crossing in &plan.crossings {
+            if crossing.first == i && point.is_some_and(|point| point.tick == tick) {
                 entry_obligation = true;
             }
             super::checkpoint(checkpoint).await;
@@ -745,9 +738,8 @@ where
         }
         let landed = hits(path, plan, tick, input, tables, allow, checkpoint).await?;
         hp -= landed;
-        let active_crossing = crossing_with_index_at(plan, i, checkpoint).await;
-        if active_crossing.is_some_and(|(index, crossing)| must_pass(index, crossing))
-            && (hp <= 0 || floor.is_none_or(|floor| hp <= floor))
+        let active_crossing = crossing_at(plan, i, checkpoint).await;
+        if active_crossing.is_some() && (hp <= 0 || floor.is_none_or(|floor| hp <= floor))
             || (active_crossing.is_none() && hp <= 0)
         {
             observe(tick, i, hp, landed, None);
@@ -866,13 +858,6 @@ where
     })
 }
 
-/// The one sentence a person sees when the route's poison state is unknown.
-const POISON_UNKNOWN_REASON: &str = "Poison status is unknown until the bot can track it";
-/// Why that is, for the debug log only.
-const POISON_UNKNOWN_DETAIL: &str = "poison state unknown: a refused crossing is not armed and \
-     cannot clear its own poison uncertainty, and waiting alone does not clear it; a separate \
-     safe-only walk can provide recovery evidence once the runtime observer is available";
-
 struct Reason {
     bytes: [u8; 1536],
     len: usize,
@@ -898,287 +883,31 @@ impl Write for Reason {
         Ok(())
     }
 }
-fn bounded_hp(hp: i32) -> Result<u8, UnknownWhy> {
-    u8::try_from(hp.max(0)).map_err(|_| UnknownWhy::Overflow)
-}
-
-/// Whether every row of `crossing` is granted (`zone_granted` is fallible:
-/// a key from another pack refuses the whole admission).
-async fn crossing_granted_cooperative<F, U>(
-    plan: &RoutePlan,
-    crossing: &CrossingGeom,
-    zone_granted: &impl Fn(BoundZoneKey) -> Result<bool, UnknownWhy>,
-    checkpoint: &mut F,
-) -> Result<bool, UnknownWhy>
-where
-    F: FnMut() -> U,
-    U: Future<Output = ()>,
-{
-    for row in rows(plan, crossing) {
-        let granted = zone_granted(row.zone)?;
-        super::checkpoint(checkpoint).await;
-        if !granted {
-            return Ok(false);
-        }
-    }
-    Ok(true)
-}
-
-/// Copies the plan only when granted unknown rows must be omitted from replay.
-/// The retained assessment stays complete and the all-known path stays borrowed.
-async fn omit_granted_unknowns_cooperative<F, U>(
-    plan: &RoutePlan,
-    zone_granted: &impl Fn(BoundZoneKey) -> Result<bool, UnknownWhy>,
-    checkpoint: &mut F,
-) -> Result<Option<RoutePlan>, UnknownWhy>
-where
-    F: FnMut() -> U,
-    U: Future<Output = ()>,
-{
-    let mut has_granted_unknown = false;
-    for crossing in &plan.crossings {
-        if crossing_granted_cooperative(plan, crossing, zone_granted, checkpoint).await? {
-            for row in rows(plan, crossing) {
-                if row.unknown() {
-                    has_granted_unknown = true;
-                }
-                super::checkpoint(checkpoint).await;
-                if has_granted_unknown {
-                    break;
-                }
-            }
-        }
-        super::checkpoint(checkpoint).await;
-        if has_granted_unknown {
-            break;
-        }
-    }
-    if !has_granted_unknown {
-        return Ok(None);
-    }
-
-    let escape_end = plan
-        .crossings
-        .first()
-        .map_or(plan.intervals.len(), |c| usize::from(c.intervals.0));
-    let mut interval_count = escape_end;
-    for crossing in &plan.crossings {
-        let granted =
-            crossing_granted_cooperative(plan, crossing, zone_granted, checkpoint).await?;
-        let _ = u16::try_from(interval_count).map_err(|_| UnknownWhy::Overflow)?;
-        for row in rows(plan, crossing) {
-            if !granted || !row.unknown() {
-                interval_count += 1;
-            }
-            super::checkpoint(checkpoint).await;
-        }
-        let _ = u16::try_from(interval_count).map_err(|_| UnknownWhy::Overflow)?;
-        super::checkpoint(checkpoint).await;
-    }
-
-    let mut intervals = Vec::with_capacity(interval_count);
-    let mut crossings = Vec::with_capacity(plan.crossings.len());
-    for row in &plan.intervals[..escape_end] {
-        intervals.push(*row);
-        super::checkpoint(checkpoint).await;
-    }
-    for crossing in &plan.crossings {
-        let granted =
-            crossing_granted_cooperative(plan, crossing, zone_granted, checkpoint).await?;
-        let start = u16::try_from(intervals.len()).map_err(|_| UnknownWhy::Overflow)?;
-        for row in rows(plan, crossing) {
-            if !granted || !row.unknown() {
-                intervals.push(*row);
-            }
-            super::checkpoint(checkpoint).await;
-        }
-        let end = u16::try_from(intervals.len()).map_err(|_| UnknownWhy::Overflow)?;
-        let mut projected = *crossing;
-        projected.intervals = (start, end);
-        crossings.push(projected);
-        super::checkpoint(checkpoint).await;
-    }
-
-    Ok(Some(RoutePlan {
-        complete: plan.complete,
-        pack: plan.pack,
-        intervals: intervals.into_boxed_slice(),
-        crossings: crossings.into_boxed_slice(),
-    }))
-}
 
 /// The zones enforcing admission treats as granted for one found route.
 #[derive(Clone, Copy)]
 pub struct Grants<'a> {
-    /// The request's router exemptions, bound to the route's pack: named
-    /// `cross` keys, or `all()`.
+    /// Request-bound named exemptions (`cross` keys or an explicit `all()`).
     pub named: BoundZoneExempt,
-    /// When set, and the request named grants, zones engaged at the route's
-    /// endpoint are granted as well.
+    /// Router endpoint completion is retained as request context but is never
+    /// an admission exemption; only `named` affects the NoWayOut exception.
     pub endpoint: Option<WildernessView<'a>>,
 }
 impl<'a> Grants<'a> {
-    /// Only the request's exemptions; an endpoint crossing is judged.
+    /// Only the request's explicit exemptions.
     pub const fn named(named: BoundZoneExempt) -> Self {
         Self {
             named,
             endpoint: None,
         }
     }
-    /// A walk that names grants (Path `cross`) relies on the router's
-    /// endpoint completion for the zone it ends in: its destination zones
-    /// are admitted with its named ones. Without named grants, endpoint
-    /// crossings stay judged; transit through any unnamed zone always is.
-    /// (Whether grants were named is decided against the pack's table in
-    /// [`admission_passes`]; a bound exemption does not expose its keys.)
+    /// Retain router request context; endpoint completion does not grant risk.
     pub const fn request(named: BoundZoneExempt, wilderness: WildernessView<'a>) -> Self {
         Self {
             named,
             endpoint: Some(wilderness),
         }
     }
-}
-
-/// Admission checks the complete plan, not the eight display rows. A fully
-/// granted crossing is exempt from refusal; unknown physics in a mixed
-/// crossing is not. Known granted damage remains in every subsequent floor.
-/// A failed assessment's incomplete plan is never admitted: replaying its
-/// empty plan would certify nothing. The route, plan and grants must all
-/// belong to `zones`'s pack ([`UnknownWhy::NavIdentity`] otherwise).
-pub fn admission_passes(
-    route: RouteView<'_>,
-    assessment: &RouteAssessment,
-    zones: ZoneTableView<'_>,
-    tables: &CombatTables,
-    allow: WalkAllow,
-    grants: Grants<'_>,
-) -> Result<bool, UnknownWhy> {
-    let mut checkpoint = || std::future::ready(());
-    super::drive_synchronously(admission_passes_cooperative(
-        route,
-        assessment,
-        zones,
-        tables,
-        allow,
-        grants,
-        &mut checkpoint,
-    ))
-}
-
-/// Cooperative form of admission replay. The callback is awaited after each
-/// bounded geometry, grant, projection, scan, or replay unit.
-pub async fn admission_passes_cooperative<F, U>(
-    route: RouteView<'_>,
-    assessment: &RouteAssessment,
-    zones: ZoneTableView<'_>,
-    tables: &CombatTables,
-    allow: WalkAllow,
-    grants: Grants<'_>,
-    checkpoint: &mut F,
-) -> Result<bool, UnknownWhy>
-where
-    F: FnMut() -> U + Send,
-    U: Future<Output = ()> + Send,
-{
-    let plan = &assessment.plan;
-    if !plan.complete {
-        return Err(match assessment.verdict {
-            Verdict::Unknown(why) => why,
-            _ => UnknownWhy::MissingFacts,
-        });
-    }
-    if plan.pack != Some(zones.pack())
-        || route.pack() != zones.pack()
-        || grants.named.pack() != zones.pack()
-    {
-        return Err(UnknownWhy::NavIdentity);
-    }
-    // Endpoint grants apply only when the request named any exemption.
-    let none = zones.exempt(&[]).map_err(nav_identity)?;
-    let endpoint = grants.endpoint.filter(|_| grants.named != none);
-    let zone_granted = |zone: BoundZoneKey| -> Result<bool, UnknownWhy> {
-        if zones
-            .exemption_contains(grants.named, zone)
-            .map_err(nav_identity)?
-        {
-            return Ok(true);
-        }
-        let Some(wilderness) = endpoint else {
-            return Ok(false);
-        };
-        let view = zones.zone(zone).map_err(nav_identity)?;
-        Ok(super::geometry::engaged_at(
-            view,
-            &assessment.input,
-            wilderness,
-            route.destination(),
-        ))
-    };
-    let mut all_granted = true;
-    for crossing in &plan.crossings {
-        if !crossing_granted_cooperative(plan, crossing, &zone_granted, checkpoint).await? {
-            all_granted = false;
-            break;
-        }
-        super::checkpoint(checkpoint).await;
-    }
-    if all_granted {
-        return Ok(true);
-    }
-    if let Some(why) = input_problem(&assessment.input, tables) {
-        return Err(why);
-    }
-    let words = plan.crossings.len().div_ceil(64);
-    let mut must_pass = Vec::with_capacity(words);
-    for _ in 0..words {
-        must_pass.push(0u64);
-        super::checkpoint(checkpoint).await;
-    }
-    for (index, crossing) in plan.crossings.iter().enumerate() {
-        let granted =
-            crossing_granted_cooperative(plan, crossing, &zone_granted, checkpoint).await?;
-        if !granted {
-            must_pass[index / 64] |= 1u64 << (index % 64);
-            let mut unknown = None;
-            for row in rows(plan, crossing) {
-                unknown = row.unknown_kind();
-                super::checkpoint(checkpoint).await;
-                if unknown.is_some() {
-                    break;
-                }
-            }
-            if let Some(class) = unknown {
-                return Err(UnknownWhy::Kind(class));
-            }
-            if matches!(assessment.input.poison, PoisonState::Unknown { .. }) {
-                return Err(UnknownWhy::Poison);
-            }
-            if !crossing.has_way_out() {
-                return Ok(false);
-            }
-        }
-        super::checkpoint(checkpoint).await;
-    }
-    let projected = omit_granted_unknowns_cooperative(plan, &zone_granted, checkpoint).await?;
-    let replay_plan = projected.as_ref().unwrap_or(plan);
-    let path = RoutePath::new(route)?;
-    replay_with_admission_cooperative(
-        path,
-        replay_plan,
-        &assessment.input,
-        tables,
-        allow,
-        None,
-        |index, _| {
-            must_pass
-                .get(index / 64)
-                .is_some_and(|word| word & (1u64 << (index % 64)) != 0)
-        },
-        |_, _, _, _, _| {},
-        checkpoint,
-    )
-    .await
-    .map(|result| result.passed)
 }
 
 /// Typed computation only. No routing retry, movement, guard, or slot ownership.
@@ -1191,9 +920,83 @@ pub fn assess(
     let mut checkpoint = || std::future::ready(());
     super::drive_synchronously(assess_cooperative(route, context, input, &mut checkpoint))
 }
+fn timeline_bound(
+    path: RoutePath<'_>,
+    plan: &RoutePlan,
+    input: &RiskInput,
+    context: &Estimate<'_>,
+    poison: super::timeline::PoisonCharge,
+) -> Result<(super::timeline::TimelineSummary, super::odds::DeathBound), UnknownWhy> {
+    super::timeline::with_event_buffer(|events| {
+        let summary = super::timeline::build_timeline(
+            path,
+            plan,
+            input,
+            context.combat,
+            context.risks,
+            poison,
+            events,
+        )?;
+        let bound = super::odds::death_bound(events.events(), input.hp)?;
+        Ok((summary, bound))
+    })
+}
 
-/// Cooperative route-risk assessment over borrowed facade views. Each
-/// checkpoint follows one bounded geometry, report, replay, or food unit.
+async fn timeline_bound_cooperative<F, U>(
+    path: RoutePath<'_>,
+    plan: &RoutePlan,
+    input: &RiskInput,
+    context: &Estimate<'_>,
+    poison: super::timeline::PoisonCharge,
+    checkpoint: &mut F,
+) -> Result<(super::timeline::TimelineSummary, super::odds::DeathBound), UnknownWhy>
+where
+    F: FnMut() -> U,
+    U: Future<Output = ()>,
+{
+    // The thread-owned event buffer and convolution form one atomic unit.
+    // Checkpoint on each side of its borrow so another assessment cannot
+    // replace its events during the solve.
+    super::checkpoint(checkpoint).await;
+    let result = timeline_bound(path, plan, input, context, poison);
+    // The event buffer borrow ended with `timeline_bound`.
+    super::checkpoint(checkpoint).await;
+    result
+}
+
+async fn crossing_named<F, U>(
+    plan: &RoutePlan,
+    crossing: &CrossingGeom,
+    zones: ZoneTableView<'_>,
+    grants: Option<Grants<'_>>,
+    checkpoint: &mut F,
+) -> Result<bool, UnknownWhy>
+where
+    F: FnMut() -> U,
+    U: Future<Output = ()>,
+{
+    let Some(grants) = grants else {
+        return Ok(false);
+    };
+    for row in rows(plan, crossing) {
+        let named = zones
+            .exemption_contains(grants.named, row.zone)
+            .map_err(nav_identity)?;
+        super::checkpoint(checkpoint).await;
+        if !named {
+            return Ok(false);
+        }
+    }
+    Ok(true)
+}
+
+fn display_u8(value: u64) -> u8 {
+    u8::try_from(value).unwrap_or(u8::MAX)
+}
+
+/// Cooperative route-risk assessment over borrowed facade views. Each atomic
+/// timeline/convolution pass has checkpoints immediately before its event
+/// buffer borrow and after the synchronous pass releases it.
 pub async fn assess_cooperative<F, U>(
     route: RouteView<'_>,
     context: &Estimate<'_>,
@@ -1209,7 +1012,7 @@ where
     match result {
         Ok(value) => Arc::new(value),
         Err(why) => {
-            let _ = write!(reason, "Route assessment unknown: {why:?}");
+            let _ = write!(reason, "Route assessment unknown ({why:?}): {why}");
             Arc::new(RouteAssessment {
                 verdict: Verdict::Unknown(why),
                 plan: RoutePlan::default(),
@@ -1218,6 +1021,8 @@ where
                 supplies: Box::new([]),
                 hp_after: input.hp,
                 volley: u8::MAX,
+                bound: 1.0,
+                poison_test: PoisonTest::NotNeeded,
                 input,
                 generation: context.generation,
                 reason: reason.arc(),
@@ -1248,14 +1053,25 @@ where
         checkpoint,
     )
     .await?;
+    // Incomplete geometry cannot support numeric risk or no-way-out decisions.
+    if !plan.complete {
+        return Err(UnknownWhy::Overflow);
+    }
+
     let mut unknown = input_problem(&input, context.combat);
+    if unknown.is_none()
+        && context
+            .grants
+            .is_some_and(|grants| grants.named.pack() != zones.pack())
+    {
+        unknown = Some(UnknownWhy::NavIdentity);
+    }
     for row in &plan.intervals {
         if let Some(class) = row.unknown_kind() {
             let _ = write!(
                 reason,
-                "{}: {:?}; ",
+                "{}: {class:?}; ",
                 zones.zone(row.zone).map_err(nav_identity)?.kind().label(),
-                Some(class)
             );
             if unknown.is_none() {
                 unknown = Some(match class {
@@ -1268,43 +1084,128 @@ where
         }
         super::checkpoint(checkpoint).await;
     }
-    if unknown.is_none()
-        && !plan.crossings.is_empty()
-        && matches!(input.poison, PoisonState::Unknown { .. })
-    {
-        unknown = Some(UnknownWhy::Poison);
+
+    let unknown_poison =
+        matches!(input.poison, PoisonState::Unknown { .. }) && !plan.crossings.is_empty();
+    let mut unknown_poison_q = None;
+    let mut known_poison = super::timeline::PoisonCharge::None;
+    if unknown.is_none() {
+        if unknown_poison {
+            let q = context.risks.poison_unknown_v;
+            if q == u8::MAX {
+                unknown = Some(UnknownWhy::Poison);
+            } else {
+                unknown_poison_q = Some(q);
+            }
+        } else {
+            match super::timeline::known_poison_charge(
+                input.poison,
+                input.tick,
+                context.risks.poison_unknown_v,
+            ) {
+                Ok(charge) => known_poison = charge,
+                Err(why) => unknown = Some(why),
+            }
+        }
     }
 
-    // Validate report bounds before replay, so a huge transport hold cannot
-    // turn a bounded Unknown(Overflow) assessment into a billion-tick replay.
+    let mut verdict = unknown.map_or(Verdict::Survivable, Verdict::Unknown);
+    let mut bound = 1.0;
+    let mut poison_test = PoisonTest::NotNeeded;
+    if unknown.is_none() {
+        if let Some(q) = unknown_poison_q {
+            let (_, clear) = timeline_bound_cooperative(
+                path,
+                &plan,
+                &input,
+                context,
+                super::timeline::PoisonCharge::None,
+                checkpoint,
+            )
+            .await?;
+            let (_, charged) = timeline_bound_cooperative(
+                path,
+                &plan,
+                &input,
+                context,
+                super::timeline::PoisonCharge::Unknown { q },
+                checkpoint,
+            )
+            .await?;
+            bound = clear.bound;
+            if charged.admits(super::consts::DEATH_BOUND) {
+                bound = charged.bound;
+                poison_test = PoisonTest::PassesCharged {
+                    charged: charged.bound,
+                };
+            } else if clear.admits(super::consts::DEATH_BOUND) {
+                if let Some(crossing) = plan.crossings.first() {
+                    if crossing.retreat != CrossingGeom::NONE {
+                        poison_test = PoisonTest::WaitForClear {
+                            charged: charged.bound,
+                            until_index: crossing.retreat,
+                        };
+                    } else {
+                        poison_test = PoisonTest::NoSafeTile {
+                            charged: charged.bound,
+                        };
+                    }
+                }
+            } else {
+                verdict = Verdict::Unsurvivable;
+            }
+        } else {
+            let (_, result) =
+                timeline_bound_cooperative(path, &plan, &input, context, known_poison, checkpoint)
+                    .await?;
+            bound = result.bound;
+            if !result.admits(super::consts::DEATH_BOUND) {
+                verdict = Verdict::Unsurvivable;
+            }
+        }
+    }
+
+    let mut no_way_out = None;
+    if unknown.is_none() {
+        for crossing in &plan.crossings {
+            if !crossing.has_way_out()
+                && !crossing_named(&plan, crossing, zones, context.grants, checkpoint).await?
+            {
+                no_way_out = Some(*crossing);
+                break;
+            }
+            super::checkpoint(checkpoint).await;
+        }
+    }
+    if no_way_out.is_some() {
+        verdict = Verdict::Unsurvivable;
+    }
+
     let mut display = Vec::with_capacity(plan.crossings.len().min(8));
-    let mut origin_volley = 0;
-    let mut origin_worst = 0;
+    let mut origin_volley = 0u64;
+    let mut origin_worst = 0u64;
     let mut unaffordable_floor = None;
     if unknown.is_none() {
-        for live in input.live.iter().take(usize::from(input.live_len)) {
+        for live in input.live_iter() {
             let duration = origin_duration(live, context.combat)?;
-            origin_volley = add(origin_volley, i32::from(live.max_hit))?;
-            origin_worst = add(
-                origin_worst,
-                mul(
-                    i32::from(live.max_hit),
-                    ceil(duration, i32::from(live.rate))?,
-                )?,
-            )?;
+            origin_volley = origin_volley.saturating_add(u64::from(live.max_hit));
+            let events = u64::try_from(ceil(duration, i32::from(live.rate))?)
+                .map_err(|_| UnknownWhy::Overflow)?;
+            origin_worst =
+                origin_worst.saturating_add(u64::from(live.max_hit).saturating_mul(events));
             if live.due().is_some() {
-                origin_worst = add(origin_worst, i32::from(live.max_hit))?;
+                origin_worst = origin_worst.saturating_add(u64::from(live.max_hit));
             }
             super::checkpoint(checkpoint).await;
         }
     }
     let mut max_volley = origin_volley;
-    for (index, c) in plan.crossings.iter().enumerate() {
-        let mut v = 0;
-        let mut deep = 0;
+    for (index, crossing) in plan.crossings.iter().enumerate() {
+        let mut volley_max = 0u64;
+        let mut floor_deep = 0u64;
         let credited = if unknown.is_none() {
             protect(
-                c,
+                crossing,
                 &plan,
                 path,
                 &input,
@@ -1316,8 +1217,11 @@ where
         } else {
             false
         };
-        for i in c.first..=c.last {
-            v = v.max(volley(&plan, i, false, checkpoint).await?);
+        for i in crossing.first..=crossing.last {
+            volley_max = volley_max.max(
+                u64::try_from(volley(&plan, i, false, checkpoint).await?)
+                    .map_err(|_| UnknownWhy::Overflow)?,
+            );
             if unknown.is_none() {
                 let floor = estimated_floor_cooperative(
                     path,
@@ -1329,7 +1233,8 @@ where
                     checkpoint,
                 )
                 .await?;
-                deep = deep.max(floor.unwrap_or(255));
+                floor_deep =
+                    floor_deep.max(u64::try_from(floor.unwrap_or(255).max(0)).unwrap_or(u64::MAX));
                 if unaffordable_floor.is_none()
                     && floor.is_some_and(|cost| cost >= i32::from(input.hp_max))
                 {
@@ -1338,34 +1243,33 @@ where
             }
             super::checkpoint(checkpoint).await;
         }
-        let mut worst = if credited { v } else { 0 };
+        let mut worst = if credited { volley_max } else { 0 };
         if unknown.is_none() && !credited {
-            for row in rows(&plan, c) {
+            for row in rows(&plan, crossing) {
                 let (start, end) = exposure(path, row)?;
                 let count = if row.hazard() {
                     1
                 } else {
-                    ceil(end - start, i32::from(row.rate))?
+                    u64::try_from(ceil(end - start, i32::from(row.rate))?)
+                        .map_err(|_| UnknownWhy::Overflow)?
                 };
-                worst = add(worst, mul(i32::from(row.max_hit), count)?)?;
+                worst = worst.saturating_add(u64::from(row.max_hit).saturating_mul(count));
                 super::checkpoint(checkpoint).await;
             }
         }
         if index == 0 {
-            v = add(v, origin_volley)?;
-            worst = add(worst, origin_worst)?;
+            volley_max = volley_max.saturating_add(origin_volley);
+            worst = worst.saturating_add(origin_worst);
         }
-        max_volley = max_volley.max(v);
-        if v > 255 || deep > 255 {
-            return Err(UnknownWhy::Overflow);
-        }
-        let ticks = u16::try_from(path.exposure_ticks(c.first, c.last)?)
-            .map_err(|_| UnknownWhy::Overflow)?;
-        let worst = u16::try_from(worst).map_err(|_| UnknownWhy::Overflow)?;
+        max_volley = max_volley.max(volley_max);
+        let ticks = path.exposure_ticks(crossing.first, crossing.last)?;
+        let ticks = u16::try_from(ticks).unwrap_or(u16::MAX);
         if display.len() < 8 {
-            let intervals = rows(&plan, c);
-            let first = intervals[0];
-            let max_hit = margin(&plan, c, checkpoint).await as u8;
+            let intervals = rows(&plan, crossing);
+            let first = intervals.first().ok_or(UnknownWhy::Overflow)?;
+            let max_hit = display_u8(
+                u64::try_from(margin(&plan, crossing, checkpoint).await).unwrap_or(u64::MAX),
+            );
             let mut rate = u8::MAX;
             let mut has_unknown = false;
             for row in intervals {
@@ -1375,15 +1279,15 @@ where
             }
             display.push(Crossing {
                 key: first.key(zones)?,
-                first: c.first,
-                last: c.last,
+                first: crossing.first,
+                last: crossing.last,
                 ticks,
-                worst,
-                volley: v as u8,
+                worst: u16::try_from(worst).unwrap_or(u16::MAX),
+                volley: display_u8(volley_max),
                 max_hit,
                 rate: if intervals.is_empty() { 0 } else { rate },
                 style: first.style,
-                floor_deep: deep as u8,
+                floor_deep: display_u8(floor_deep),
                 bites: 0,
                 single: false,
                 protect_credited: credited,
@@ -1393,115 +1297,16 @@ where
         super::checkpoint(checkpoint).await;
     }
 
-    let mut no_way_out = None;
-    for crossing in &plan.crossings {
-        if !crossing.has_way_out() {
-            no_way_out = Some(crossing);
-            break;
-        }
-        super::checkpoint(checkpoint).await;
-    }
-    let mut verdict = unknown.map_or(Verdict::Survivable, Verdict::Unknown);
-    let mut hp_after = input.hp;
-    let mut bites = 0;
-    let mut extra_food = None;
-    if unknown.is_none() {
-        if no_way_out.is_some() || unaffordable_floor.is_some() {
-            verdict = Verdict::Unsurvivable;
-        } else {
-            let baseline = replay_with_admission_cooperative(
-                path,
-                &plan,
-                &input,
-                context.combat,
-                context.allow,
-                None,
-                |_, _| true,
-                |_, _, _, _, _| {},
-                checkpoint,
-            )
-            .await?;
-            hp_after = bounded_hp(baseline.hp_after)?;
-            bites = baseline.bites;
-            if !baseline.passed
-                && (!plan.intervals.is_empty()
-                    || input.live_len != 0
-                    || poison_charged(input.poison))
-            {
-                verdict = Verdict::Unsurvivable;
-                let mut carried = None;
-                for (id, count) in input.food_iter() {
-                    if count > 0 {
-                        if let Some(food) = context.combat.food(id).filter(|food| ordinary(food)) {
-                            if carried.is_none_or(|best: &FoodFact| food.heal >= best.heal) {
-                                carried = Some(food);
-                            }
-                        }
-                    }
-                    super::checkpoint(checkpoint).await;
-                }
-                let reference = carried.or_else(|| {
-                    context
-                        .combat
-                        .selected()
-                        .item_by_alias("lobster")
-                        .and_then(|item| context.combat.food(item.id))
-                });
-                if context.allow.food {
-                    if let Some(food) = reference {
-                        for count in 1..=input.free_slots.min(28) {
-                            let candidate = replay_with_admission_cooperative(
-                                path,
-                                &plan,
-                                &input,
-                                context.combat,
-                                context.allow,
-                                Some((food.item_id, count)),
-                                |_, _| true,
-                                |_, _, _, _, _| {},
-                                checkpoint,
-                            )
-                            .await?;
-                            super::checkpoint(checkpoint).await;
-                            if candidate.passed {
-                                verdict = Verdict::FixableWith;
-                                extra_food = Some((food, count));
-                                break;
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
-    let bites_display = u8::try_from(bites).map_err(|_| UnknownWhy::Overflow)?;
-    for row in &mut display {
-        row.bites = bites_display;
-        super::checkpoint(checkpoint).await;
-    }
-
-    // Assemble informational rows on the stack, then allocate exactly once.
-    // Protection and points remain suggestions; only ordinary food is fetched.
     let mut needs = [None; 6];
     let mut need_count = 0;
-    if let Some((food, count)) = extra_food {
-        let heal = u8::try_from(food.heal).map_err(|_| UnknownWhy::Overflow)?;
-        needs[need_count] = Some(SupplyNeed::Food {
-            heal_at_least: heal,
-            heal_at_most: heal,
-            count,
-            item: Some(food.item_id),
-        });
-        need_count += 1;
-    }
     for style in [Style::Melee, Style::Ranged] {
         let Some(prayer) = select::protect_fact(context.combat, style.into()) else {
             continue;
         };
         let mut needed = None;
-        for c in &plan.crossings {
+        for crossing in &plan.crossings {
             let mut same_style = true;
-            for row in rows(&plan, c) {
+            for row in rows(&plan, crossing) {
                 if row.unknown() || row.style != style {
                     same_style = false;
                 }
@@ -1512,7 +1317,7 @@ where
             }
             if same_style
                 && !protect(
-                    c,
+                    crossing,
                     &plan,
                     path,
                     &input,
@@ -1522,7 +1327,7 @@ where
                 )
                 .await
             {
-                if let Some(points) = prayer_points_needed(path, c) {
+                if let Some(points) = prayer_points_needed(path, crossing) {
                     needed = Some(needed.map_or(points, |old: i32| old.max(points)));
                 }
             }
@@ -1544,53 +1349,97 @@ where
             }
         }
     }
-    let poison_need = match input.poison {
-        PoisonState::Onset { .. } => Some((context.risks.poison_unknown_v, true)),
-        PoisonState::Poisoned {
-            per_tick,
-            hit_since_mark,
-            ..
-        } => Some((
-            if hit_since_mark {
-                per_tick.max(context.risks.poison_unknown_v)
+    if unknown.is_none() {
+        let poison_need = match input.poison {
+            PoisonState::Onset { .. } => Some((context.risks.poison_unknown_v, true)),
+            PoisonState::Poisoned {
+                per_tick,
+                hit_since_mark,
+                ..
+            } => Some((
+                if hit_since_mark {
+                    per_tick.max(context.risks.poison_unknown_v)
+                } else {
+                    per_tick
+                },
+                false,
+            )),
+            PoisonState::Unknown { .. } | PoisonState::Clear | PoisonState::Immune { .. } => None,
+        };
+        if let Some((pulse, onset)) = poison_need.filter(|(pulse, _)| *pulse != 0) {
+            needs[need_count] = Some(SupplyNeed::Info(InfoNeed::Antipoison));
+            need_count += 1;
+            if onset {
+                let _ = write!(
+                    reason,
+                    "poisoned (onset, up to {pulse} per 30 ticks): drink an antipoison to clear; "
+                );
             } else {
-                per_tick
-            },
-            false,
-        )),
-        PoisonState::Unknown { .. } | PoisonState::Clear | PoisonState::Immune { .. } => None,
-    };
-    if let Some((pulse, onset)) = poison_need {
-        needs[need_count] = Some(SupplyNeed::Info(InfoNeed::Antipoison));
-        need_count += 1;
-        if onset {
-            let _ = write!(
-                reason,
-                "poisoned (onset, up to {pulse} per 30 ticks): drink an antipoison to clear; "
-            );
-        } else {
-            let _ = write!(
-                reason,
-                "poisoned ({pulse} per 30 ticks): drink an antipoison to clear; "
-            );
+                let _ = write!(
+                    reason,
+                    "poisoned ({pulse} per 30 ticks): drink an antipoison to clear; "
+                );
+            }
         }
     }
     let mut supplies = Vec::with_capacity(need_count);
     supplies.extend(needs.into_iter().flatten());
-    if matches!(verdict, Verdict::Unknown(UnknownWhy::Poison)) {
-        // What the operator reads, in the panel, the TUI and the session log.
-        let _ = write!(reason, "{POISON_UNKNOWN_REASON}; ");
-        api::host_log!(
-            api::hostlog::Category::NavTrace,
-            api::hostlog::Level::Debug,
-            "{POISON_UNKNOWN_DETAIL}"
-        );
+
+    match verdict {
+        Verdict::Survivable => {
+            let _ = write!(
+                reason,
+                "chance of death at most {:.1}% (bound {:.0}%), without eating, prayer or escape counted; ",
+                bound * 100.0,
+                super::consts::DEATH_BOUND * 100.0,
+            );
+        }
+        Verdict::Unsurvivable => {
+            let _ = write!(
+                reason,
+                "the model's upper bound on the chance of death is {:.1}%; at most {:.0}% is admitted (no eating, prayer or escape counted); ",
+                bound * 100.0,
+                super::consts::DEATH_BOUND * 100.0,
+            );
+        }
+        Verdict::Unknown(why) => {
+            let _ = write!(reason, "Route assessment unknown: {why}; ");
+        }
     }
-    if let Some(c) = no_way_out {
-        let ending = rows(&plan, c).last().ok_or(UnknownWhy::Overflow)?;
+    match poison_test {
+        PoisonTest::NotNeeded => {}
+        PoisonTest::PassesCharged { charged } => {
+            let _ = write!(
+                reason,
+                "unknown poison charged bound {:.1}% passes; ",
+                charged * 100.0
+            );
+        }
+        PoisonTest::WaitForClear {
+            charged,
+            until_index,
+        } => {
+            let _ = write!(
+                reason,
+                "unknown poison charged bound {:.1}% fails; wait for Clear at retreat index {until_index} (clear bound {:.1}%); ",
+                charged * 100.0,
+                bound * 100.0,
+            );
+        }
+        PoisonTest::NoSafeTile { charged } => {
+            let _ = write!(
+                reason,
+                "poison state unknown; the route starts inside a crossing, so there is no tile to wait on; admitted on the poison-Clear bound {:.1}% (charged {:.1}%); ",
+                bound * 100.0,
+                charged * 100.0,
+            );
+        }
+    }
+    if let Some(crossing) = no_way_out {
+        let ending = rows(&plan, &crossing).last().ok_or(UnknownWhy::Overflow)?;
         let kind = zones.zone(ending.zone).map_err(nav_identity)?.kind();
         let _ = write!(reason, "NoWayOut: ends inside {}; ", kind.label());
-        if let Some(LegView::Transport(hop)) = usize::from(c.leg)
+        if let Some(LegView::Transport(hop)) = usize::from(crossing.leg)
             .checked_sub(1)
             .and_then(|leg| route.leg(leg).ok())
         {
@@ -1604,7 +1453,7 @@ where
         let point = path.point(index).ok_or(UnknownWhy::Overflow)?;
         let _ = write!(
             reason,
-            "way out at {},{} costs {cost}, at least max HP {}; ",
+            "way out at {},{} costs {cost}, max HP {}; ",
             point.tile.x, point.tile.z, input.hp_max
         );
     }
@@ -1623,41 +1472,19 @@ where
             row.spawn.tile().z
         );
     }
-    if let Some((food, count)) = extra_food {
-        let name = context
-            .combat
-            .selected()
-            .item_by_id(food.item_id)
-            .and_then(|item| item.name.as_deref())
-            .unwrap_or("ordinary food");
-        let _ = write!(reason, "needs {count} {name}; ");
-    }
-    if input.more_food {
-        let _ = write!(reason, "only six largest carried food kinds replayed; ");
-    }
-    for (id, count) in input.food_iter() {
-        if count > 0 && context.combat.food(id).is_some_and(|food| !ordinary(food)) {
-            let name = context
-                .combat
-                .selected()
-                .item_by_id(id)
-                .and_then(|item| item.name.as_deref())
-                .unwrap_or("non-ordinary food");
-            let _ = write!(reason, "{name}: message-delay/non-ordinary food excluded; ");
-        }
-        super::checkpoint(checkpoint).await;
-    }
-    let _ = write!(reason, "{verdict:?}; HP {} with {bites} bites, estimated {hp_after} HP at arrival; {} summed crossings", input.hp, plan.crossings.len());
+
     let more =
-        u8::try_from(plan.crossings.len().saturating_sub(8)).map_err(|_| UnknownWhy::Overflow)?;
+        display_u8(u64::try_from(plan.crossings.len().saturating_sub(8)).unwrap_or(u64::MAX));
     Ok(RouteAssessment {
         verdict,
         plan,
         crossings: display.into_boxed_slice(),
         more,
         supplies: supplies.into_boxed_slice(),
-        hp_after,
-        volley: bounded_hp(max_volley)?,
+        hp_after: input.hp,
+        volley: display_u8(max_volley),
+        bound,
+        poison_test,
         input,
         generation: context.generation,
         reason: reason.arc(),

@@ -2707,53 +2707,104 @@ fn cancelling_and_rewalking_the_same_destination_arms_the_new_walk() {
 
 #[test]
 fn native_cross_exemption_is_scoped_to_one_walk() {
-    let mut rig = rig(Some(Arc::new(zoned_open_world())), false);
+    let mut rig = rig(Some(Arc::new(s2b_admission_contract::ice_world())), false);
+    s2b_admission_contract::observed_loadout_with_hp(&mut rig.snapshot, 99);
+    let goal = WorldTile {
+        x: 255,
+        z: 0,
+        level: 0,
+    };
     {
         let mut shared = rig.shared.lock();
         shared.walks = 2;
-        shared.cross_first = vec![Arc::from("test-barrier@2,0,0")];
+        shared.target = Some(goal);
+        shared.later_target = Some(goal);
+        shared.cross_first = vec![Arc::from("ice@120,0,0")];
     }
 
     rig.observe(1);
     rig.wait_routed();
+    assert_ne!(
+        rig.navs.lock().unwrap()["alice"].requested_route.unwrap().5,
+        nav_planner::zones::ZoneExempt::NONE
+    );
+    {
+        let navs = rig.navs.lock().unwrap();
+        let bot = &navs["alice"];
+        let grants = bot.requested_route.expect("first native route request").5;
+        assert!(
+            !grants.is_all(),
+            "the first route receives a named, not global, grant"
+        );
+        let assessment = bot.assessment.as_ref().expect("first route assessment");
+        assert!(bot.risk_refusal.is_none());
+        assert_eq!(
+            assessment.verdict,
+            script::combat::risk::Verdict::Survivable
+        );
+        assert!(assessment.bound <= script::combat::risk::consts::DEATH_BOUND);
+        assert!(assessment.plan.complete);
+        assert_eq!(assessment.plan.crossings.len(), 1);
+        assert!(matches!(
+            assessment.input.poison,
+            api::condition::PoisonState::Unknown { .. }
+        ));
+        assert!(matches!(
+            assessment.poison_test,
+            script::combat::risk::PoisonTest::WaitForClear { charged, until_index }
+                if charged > script::combat::risk::consts::DEATH_BOUND
+                    && until_index == assessment.plan.crossings[0].retreat
+        ));
+        assert!(bot.has_route());
+    }
     crate::script_runtime::apply_nav_follow_outcome(
         rig.navs.lock().unwrap().get_mut("alice").unwrap(),
         Some(nav_executor::TravelOutcome::Arrived {
             at: WorldTile {
-                x: 4,
+                x: 255,
                 z: 0,
                 level: 0,
             },
         }),
         false,
     );
-    rig.observe(2);
+    rig.rebuild_snapshot_at(goal);
+    s2b_admission_contract::observed_loadout_with_hp(&mut rig.snapshot, 99);
+    rig.observe_with_here(2, goal);
     assert_eq!(rig.shared.lock().results.len(), 1);
     rig.shared.lock().options.allow_danger_zones = script::native::WalkBit::Forbid;
 
-    rig.observe(3);
-    assert!(rig.wait_for_route(5_000, || {
-        rig.navs
-            .lock()
-            .unwrap()
-            .get("alice")
-            .is_some_and(|bot| bot.native_walk_failure.is_some())
-    }));
-    rig.observe(4);
-
+    let origin = WorldTile {
+        x: 0,
+        z: 0,
+        level: 0,
+    };
+    rig.rebuild_snapshot_at(origin);
+    s2b_admission_contract::observed_loadout_with_hp(&mut rig.snapshot, 99);
+    rig.observe_with_here(3, origin);
+    assert!(
+        rig.wait_for_route(5_000, || !rig.navs.lock().unwrap()["alice"]
+            .route_work_pending()),
+        "the planner completes the second, explicitly forbidden request"
+    );
+    {
+        let navs = rig.navs.lock().unwrap();
+        let bot = &navs["alice"];
+        assert!(
+            !bot.has_route(),
+            "the second request does not inherit the first request's named grant"
+        );
+        assert!(bot.native_walk_failure.is_some());
+        assert!(
+            bot.requested_route.is_none(),
+            "the refused request is retired"
+        );
+    }
+    rig.observe_with_here(4, origin);
     let shared = rig.shared.lock();
     assert_eq!(shared.results.len(), 2);
-    assert!(shared.results[0].as_ref().unwrap().blocked.is_none());
-    let second = shared.results[1].as_ref().unwrap();
-    assert_eq!(second.end, WalkEnd::Refused);
-    assert_eq!(
-        second.blocked.as_deref(),
-        Some(&[nav_planner::zones::ZoneKey::Zone(0)][..])
-    );
-    assert!(second
-        .detail
-        .as_deref()
-        .is_some_and(|detail| detail.contains("test-barrier@2,0,0")));
+    assert_eq!(shared.results[0].as_ref().unwrap().end, WalkEnd::Arrived);
+    assert_eq!(shared.results[1].as_ref().unwrap().end, WalkEnd::Refused);
 }
 
 #[test]
@@ -6136,14 +6187,14 @@ mod s2b_admission_contract {
     use super::*;
     use api::condition::PoisonState;
     use script::combat::guard::{Escape, EscapeAction, EscapeOwner, EscapeState};
-    use script::combat::risk::{UnknownWhy, Verdict};
+    use script::combat::risk::Verdict;
     use script::native::{AssessReceipt, WalkBit};
 
     fn tile(x: i32) -> WorldTile {
         WorldTile { x, z: 0, level: 0 }
     }
 
-    fn ice_world() -> NavWorld {
+    pub(super) fn ice_world() -> NavWorld {
         let mut world = open_world(256, 1);
         let data = api::game_data::for_revision(api::selected::ClientRevision::R289).unwrap();
         let npc = data.npc_by_config("icewarrior").unwrap();
@@ -6177,15 +6228,27 @@ mod s2b_admission_contract {
         world
     }
 
-    fn observed_loadout(snapshot: &mut GameSnapshot) {
+    pub(super) fn observed_loadout(snapshot: &mut GameSnapshot) {
+        observed_loadout_with_hp(snapshot, 50);
+    }
+
+    pub(super) fn observed_loadout_with_hp(snapshot: &mut GameSnapshot, hitpoints: i32) {
         snapshot.seed_inventory(Vec::new(), 28);
         snapshot.seed_equipment(Vec::new());
         snapshot.seed_stats(vec![
             api::snapshot::StatView {
+                index: 1,
+                name: "defence".into(),
+                base: 1,
+                effective: 1,
+                xp: 0,
+                used: true,
+            },
+            api::snapshot::StatView {
                 index: 3,
                 name: "hitpoints".into(),
-                base: 50,
-                effective: 50,
+                base: hitpoints,
+                effective: hitpoints,
                 xp: 0,
                 used: true,
             },
@@ -6208,69 +6271,42 @@ mod s2b_admission_contract {
     }
 
     #[test]
-    fn first_native_crossing_with_explicit_forbid_refuses_poison_unknown_without_arming_or_waiting_it_clear(
-    ) {
+    fn first_native_crossing_with_explicit_forbid_keeps_a_bounded_poison_hold() {
         let mut rig = rig(Some(Arc::new(ice_world())), false);
         rig.shared.lock().options.allow_danger_zones = WalkBit::Forbid;
         observed_loadout(&mut rig.snapshot);
         rig.shared.lock().target = Some(tile(120));
         rig.observe(1);
-        assert!(
-            rig.wait_for_route(5_000, || rig.navs.lock().unwrap()["alice"]
-                .risk_refusal
-                .is_some())
-        );
-        {
+        rig.wait_routed();
+        let until_index = {
             let bots = rig.navs.lock().unwrap();
             let bot = &bots["alice"];
-            assert!(!bot.has_route() && bot.bank_fetch.is_none());
-            assert!(!bot.route_work_pending() && bot.pending_route.is_none());
-        }
+            let assessment = bot.assessment.as_ref().unwrap();
+            assert_eq!(assessment.verdict, Verdict::Survivable);
+            assert!(assessment.bound <= script::combat::risk::consts::DEATH_BOUND);
+            assert!(matches!(
+                assessment.input.poison,
+                PoisonState::Unknown { .. }
+            ));
+            let script::combat::risk::PoisonTest::WaitForClear { until_index, .. } =
+                assessment.poison_test
+            else {
+                panic!("expected a clear-passing, charged-failing route: {assessment:?}");
+            };
+            assert!(bot.risk_refusal.is_none());
+            assert!(bot.has_route() && bot.bank_fetch.is_none());
+            until_index
+        };
         rig.step();
-        assert!(rig.driver.walked.is_none());
-        rig.observe(2);
-        let first = rig
-            .shared
-            .lock()
-            .result
-            .as_ref()
-            .unwrap()
-            .as_ref()
-            .unwrap()
-            .clone();
-        assert_eq!(first.end, WalkEnd::Refused);
+        assert!(rig
+            .driver
+            .walked
+            .is_some_and(|(x, _)| x <= i32::from(until_index)));
         assert_eq!(
-            first.refusal,
-            Some(script::native::WalkRefusal::Unknown(UnknownWhy::Poison))
+            rig.end(),
+            None,
+            "the crossing waits, rather than refusing Unknown alone"
         );
-        assert_eq!(
-            first.assessment.as_ref().unwrap().verdict,
-            Verdict::Unknown(UnknownWhy::Poison)
-        );
-        let reason = first.detail.as_deref().unwrap();
-        assert!(
-            reason.contains("Poison status is unknown until the bot can track it"),
-            "{reason}"
-        );
-        assert!(!reason.contains("S2c"), "{reason}");
-        let request = rig.navs.lock().unwrap()["alice"].walk_outcome_request_id;
-        rig.snapshot.seed_tick(32);
-        rig.shared.lock().rewalk = true;
-        rig.observe(32);
-        assert!(
-            rig.wait_for_route(5_000, || rig.navs.lock().unwrap()["alice"]
-                .walk_outcome_request_id
-                != request)
-        );
-        rig.observe(33);
-        let shared = rig.shared.lock();
-        let second = shared.result.as_ref().unwrap().as_ref().unwrap();
-        assert_eq!(second.end, WalkEnd::Refused);
-        assert_eq!(second.refusal, first.refusal);
-        assert!(matches!(
-            second.assessment.as_ref().unwrap().input.poison,
-            PoisonState::Unknown { .. }
-        ));
     }
 
     #[test]
@@ -6294,7 +6330,7 @@ mod s2b_admission_contract {
     }
 
     #[test]
-    fn explicit_native_opt_in_proceeds_and_returns_its_honest_unknown_assessment() {
+    fn explicit_native_opt_in_proceeds_and_returns_its_probability_assessment() {
         let mut rig = rig(Some(Arc::new(ice_world())), false);
         observed_loadout(&mut rig.snapshot);
         {
@@ -6314,7 +6350,7 @@ mod s2b_admission_contract {
         assert!(receipt.refusal.is_none());
         assert_eq!(
             receipt.assessment.as_ref().unwrap().verdict,
-            Verdict::Unknown(UnknownWhy::Poison)
+            Verdict::Survivable
         );
     }
 
@@ -6330,6 +6366,14 @@ mod s2b_admission_contract {
             nav_snapshot_at(&mut rig.client, &mut rig.snap, 0, 0);
             observed_loadout(&mut rig.snap);
             rig.snap.seed_stats(vec![
+                api::snapshot::StatView {
+                    index: 1,
+                    name: "defence".into(),
+                    base: 1,
+                    effective: 1,
+                    xp: 0,
+                    used: true,
+                },
                 api::snapshot::StatView {
                     index: 3,
                     name: "hitpoints".into(),
@@ -6369,9 +6413,15 @@ mod s2b_admission_contract {
                 );
                 assert!(bot.has_route() && bot.risk_refusal.is_none());
                 assert!(bot.walk_guard.is_none() && bot.slot_escape().is_none());
+                let assessment = bot.assessment.as_ref().unwrap();
+                assert!(matches!(
+                    assessment.verdict,
+                    Verdict::Survivable | Verdict::Unsurvivable
+                ));
                 assert_eq!(
-                    bot.assessment.as_ref().unwrap().verdict,
-                    Verdict::Unknown(UnknownWhy::Poison)
+                    assessment.verdict == Verdict::Survivable,
+                    assessment.bound <= script::combat::risk::consts::DEATH_BOUND,
+                    "the informational verdict keeps the probability result at HP {hp}"
                 );
                 assert!(!bot.route_basis.as_ref().unwrap().options.allow_teleports);
             }
@@ -7185,5 +7235,22 @@ fn a_stop_between_the_walk_read_and_its_publication_is_not_overwritten() {
         rig.statuses.lock().unwrap()[0].script_walk(),
         None,
         "an in-flight publication restored the retired run's destination"
+    );
+}
+
+#[test]
+fn p1c_probability_retained_layouts() {
+    eprintln!(
+        "P1C retained layout NavBot={} SlotCondition={} BotCondition={} PoisonWindow={} PoisonHold={} HoldWait={} OptionalPoisonHold={} WalkArm={} RouteAssessment={} RiskInput={}",
+        std::mem::size_of::<NavBot>(),
+        std::mem::size_of::<crate::slot_condition::SlotCondition>(),
+        std::mem::size_of::<api::condition::BotCondition>(),
+        std::mem::size_of::<api::condition::PoisonWindow>(),
+        std::mem::size_of::<crate::poison_hold::PoisonHold>(),
+        std::mem::size_of::<crate::poison_hold::HoldWait>(),
+        std::mem::size_of::<Option<crate::poison_hold::PoisonHold>>(),
+        std::mem::size_of::<crate::walk_arm::WalkArm>(),
+        std::mem::size_of::<script::combat::risk::RouteAssessment>(),
+        std::mem::size_of::<script::combat::risk::RiskInput>(),
     );
 }

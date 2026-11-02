@@ -8244,7 +8244,7 @@ fn pick_aim_in_scene_clips_a_hop_that_would_leave_the_104() {
         collision_flags: vec![],
     };
     let here_index = super::player_path_index(&tiles, here, 0);
-    let (aim, _) = super::pick_aim_in_scene(&tiles, here_index, 0, &scene);
+    let (aim, _) = super::pick_aim_in_scene(&tiles, here_index, 0, &scene, tiles.len() - 1);
     let lz = aim.z - scene.base_z;
     assert!(
         (0..104).contains(&lz),
@@ -8745,4 +8745,130 @@ fn blocked_why_npc_reach_retries_exhausted_display_is_unchanged() {
         .to_string(),
         "npc hop 378 gave up after 3 attempts: reach failure"
     );
+}
+
+#[test]
+fn follow_clips_and_reclips_walks_at_the_route_index_limit() {
+    let mut c = scene_client();
+    let mut snap = snap_at(&mut c, 0, 0);
+    let mut rec = FollowRec {
+        route: Some((0, 0)),
+        ..FollowRec::default()
+    };
+    let mut traveller = Traveller::new();
+    let tiles: Vec<(i32, i32)> = (0..40).map(|z| (3200, 3200 + z)).collect();
+    let route = Route {
+        legs: vec![walk_leg(&tiles)],
+        dest: WorldTile {
+            x: 3200,
+            z: 3239,
+            level: 0,
+        },
+        ticks: 19.5,
+    };
+    let mut options = TravelOptions {
+        route_index_limit: Some(20),
+        ..TravelOptions::default()
+    };
+
+    assert!(traveller
+        .follow(&mut rec, &snap, route.clone(), &mut options)
+        .is_none());
+    assert_eq!(rec.walked, vec![(0, 15)]);
+
+    options.route_index_limit = Some(10);
+    assert!(traveller
+        .follow(&mut rec, &snap, route.clone(), &mut options)
+        .is_none());
+    assert_eq!(
+        rec.walked,
+        vec![(0, 15), (0, 10)],
+        "an already queued hop is re-aimed inside the reduced limit"
+    );
+
+    plant_player(&mut c, 0, 10);
+    bump_rebuild(&mut c, &mut snap);
+    assert!(traveller
+        .follow(&mut rec, &snap, route.clone(), &mut options)
+        .is_none());
+    assert_eq!(rec.walked.len(), 2, "the limit tile is an exact stop");
+    bump_rebuild(&mut c, &mut snap);
+    assert!(traveller
+        .follow(&mut rec, &snap, route, &mut options)
+        .is_none());
+    assert_eq!(rec.walked.len(), 2, "a settled hold does not click onward");
+}
+
+#[test]
+fn follow_does_not_execute_unattached_transport_at_the_limit_point() {
+    let mut c = scene_client();
+    let snap = snap_at(&mut c, 0, 0);
+    let mut rec = FollowRec {
+        route: Some((0, 0)),
+        ..FollowRec::default()
+    };
+    let edge = ladder_edge();
+    let route = Route {
+        dest: edge.to,
+        legs: vec![Leg::Transport {
+            edge: Box::new(edge),
+        }],
+        ticks: 2.0,
+    };
+    let mut traveller = Traveller::new();
+    let mut options = TravelOptions {
+        route_index_limit: Some(0),
+        ..TravelOptions::default()
+    };
+
+    assert!(traveller
+        .follow(&mut rec, &snap, route, &mut options)
+        .is_none());
+    assert!(rec.walked.is_empty());
+    assert_eq!(rec.loc_ops, 0);
+}
+
+#[test]
+fn follow_does_not_cross_attached_transport_at_the_limit_tile() {
+    let mut c = scene_client();
+    let mut snap = snap_at(&mut c, 0, 0);
+    let mut rec = FollowRec {
+        route: Some((0, 0)),
+        ..FollowRec::default()
+    };
+    let edge = ladder_edge();
+    let route = Route {
+        dest: edge.to,
+        legs: vec![
+            walk_leg(&[
+                (3200, 3200),
+                (3201, 3201),
+                (3202, 3202),
+                (3202, 3203),
+                (3202, 3204),
+            ]),
+            Leg::Transport {
+                edge: Box::new(edge),
+            },
+        ],
+        ticks: 4.0,
+    };
+    let mut traveller = Traveller::new();
+    let mut options = TravelOptions {
+        route_index_limit: Some(4),
+        ..TravelOptions::default()
+    };
+
+    assert!(traveller
+        .follow(&mut rec, &snap, route.clone(), &mut options)
+        .is_none());
+    assert_eq!(rec.walked, vec![(2, 4)]);
+
+    plant_player(&mut c, 2, 4);
+    bump_rebuild(&mut c, &mut snap);
+    assert!(traveller
+        .follow(&mut rec, &snap, route, &mut options)
+        .is_none());
+    assert_eq!(rec.loc_ops, 0);
+    assert_eq!(rec.walked.len(), 1);
 }

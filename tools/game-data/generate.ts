@@ -89,6 +89,7 @@ const combatContentFiles = [
     'scripts/skill_combat/scripts/player/player_attackstyles.rs2',
     'scripts/skill_combat/configs/combat_damagestyles.constant',
     'scripts/skill_combat/configs/combat.dbrow',
+    'scripts/skill_combat/configs/combat_damagetypes.constant',
     'scripts/skill_combat/configs/combat.dbtable',
     // PvP V0: specwep/sa_energy defaults, destroy_death, melee tiers, duel
     // rule bits and duel zone bounds. The tier and duel scripts are .rs2
@@ -3136,7 +3137,8 @@ async function generate(spec: Revision) {
     }
     const combatScripts = parseCombatScripts(spec.content);
     const spellMaxHits = buildSpellMaxHits(spec.content);
-    const npcNames = extractNpcNamesFacts(spec.content, spec.revision, combatScripts, spellMaxHits);
+    const npcTypeSource = fs.readFileSync(path.join(spec.engine, 'src/cache/config/NpcType.ts'), 'utf8');
+    const npcNames = extractNpcNamesFacts(spec.content, spec.revision, npcTypeSource, combatScripts, spellMaxHits);
     const combatStyles = extractCombatStyleFacts(spec.content, objModule.default.configs, npcNames.combatNpcs, combatScripts, pvpV0);
     // PvP V0 facts (PVP-DESIGN-1026 §3.3, §11 row V0). Alias maps join the
     // decoded obj configs to the content aliases the extractors read. Revision
@@ -3240,7 +3242,7 @@ async function generate(spec: Revision) {
     const gatherSiteResult = gatherSites(gathering.payload, gatherResourceRows, spec.content, bankCatalog);
     hiddenSites.set(spec.revision, gatherSiteResult.hidden);
     Object.assign(facts, { gather_resources: gatherResourceRows, gather_sites: gatherSiteResult.rows });
-    const payload = { schema_version: 5, revision: spec.revision, provenance: { engine_commit: pinned.engineCommit, content_commit: pinned.contentCommit, inputs, content_inputs: contentInputs, talk_key_inputs: talkKey.inputs, trio_givers_inputs: trioGivers.inputs, decoder_sources: sources, cache_identity: spec.cacheIdentity, bank_inputs: bankInputs, cook_inputs: cookInputs }, items, ...facts, drop_tables: drops, ...magic, ...herbs, ...prayer, nurmof_essence: nurmofEssence, flour_six: flourSix, equipment_names: equipmentNames, quest_identity: questIdentity, npc_names: { rows: npcNames.rows }, loc_names: { rows: locNames.rows }, npc_placements: { rows: npcPlacements.rows }, trails, talk_key: talkKey.facts, trio_givers: trioGivers.facts, autocast, duel, special, teleports, bank_placements: bankPlacements.facts, cook_surfaces: cookSurfaces.facts, mining_hazards: miningHazards(gathering.payload) };
+    const payload = { schema_version: 5, revision: spec.revision, provenance: { engine_commit: pinned.engineCommit, content_commit: pinned.contentCommit, inputs, content_inputs: contentInputs, talk_key_inputs: talkKey.inputs, trio_givers_inputs: trioGivers.inputs, decoder_sources: sources, cache_identity: spec.cacheIdentity, bank_inputs: bankInputs, cook_inputs: cookInputs }, items, ...facts, drop_tables: drops, ...magic, ...herbs, ...prayer, nurmof_essence: nurmofEssence, flour_six: flourSix, equipment_names: equipmentNames, quest_identity: questIdentity, npc_names: { combat_facts_version: npcNames.combat_facts_version, rows: npcNames.rows }, loc_names: { rows: locNames.rows }, npc_placements: { rows: npcPlacements.rows }, trails, talk_key: talkKey.facts, trio_givers: trioGivers.facts, autocast, duel, special, teleports, bank_placements: bankPlacements.facts, cook_surfaces: cookSurfaces.facts, mining_hazards: miningHazards(gathering.payload) };
     Object.assign(payload.provenance, { karamja_inputs: karamja.inputs });
     if (serverOrdered) Object.assign(payload.provenance, {
         server_ordered_inputs: serverOrderedProvenanceInputs(spec.engine, spec.content, npcEvidence!.source_inputs),

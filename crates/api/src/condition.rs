@@ -22,10 +22,45 @@ pub struct BotCondition {
     pub hp_known: bool,
     /// The current poison-state fact.
     pub poison: PoisonState,
+    /// Published only while `poison` is `Unknown`; `None` otherwise.
+    pub poison_window: Option<PoisonWindow>,
     /// Aggregate held ordinary food facts.
     pub food: FoodSummary,
     /// Held cure-dose facts.
     pub cures: CureDoses,
+}
+
+/// Progress toward proving that an unknown poison state is clear.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PoisonWindow {
+    /// Clean observed edges still needed before the observer can declare Clear.
+    ///
+    /// This is `max(31.saturating_sub(clean), u8::from(!accepted))`.
+    pub remaining: u8,
+    /// Whether an interaction or movement has accepted the current window.
+    pub accepted: bool,
+    /// The cause of the most recent reset since this window began.
+    pub last_reset: WindowReset,
+}
+
+/// Cause recorded when the unknown-poison clean window resets.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[repr(u8)]
+pub enum WindowReset {
+    /// No reset has occurred since the window began.
+    NotReset,
+    /// A main or chat modal was observed.
+    Modal,
+    /// A guardian hold was active.
+    GuardianHold,
+    /// An interaction packet was dispatched.
+    Interaction,
+    /// The outgoing packet trace was incomplete.
+    IncompleteTrace,
+    /// A PLAYER_INFO edge was skipped or duplicated.
+    FrameGap,
+    /// A complete condition fact was unavailable.
+    IncompleteFact,
 }
 
 impl Default for BotCondition {
@@ -37,6 +72,7 @@ impl Default for BotCondition {
             hp_max: 0,
             hp_known: false,
             poison: PoisonState::default(),
+            poison_window: None,
             food: FoodSummary::default(),
             cures: CureDoses::default(),
         }

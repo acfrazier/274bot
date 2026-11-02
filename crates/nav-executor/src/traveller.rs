@@ -514,6 +514,9 @@ pub struct TravelOptions<'a> {
     /// When present for a gated edge, both the fresh message and exact
     /// landing are required to settle the hop.
     pub crossing_passes: Arc<[CrossingPass]>,
+    /// Last route-path index the follow may enter. `None` preserves the
+    /// ordinary full-route behavior.
+    pub route_index_limit: Option<u16>,
     /// Per-leg phase callback; fired during the poll that crosses the
     /// transition. May borrow the caller (like `Evidence<'a>` in settle).
     pub on_leg: Option<TravelLegCallback<'a>>,
@@ -535,6 +538,7 @@ impl Default for TravelOptions<'_> {
             quest_evidence: None,
             refusal_texts: Arc::default(),
             crossing_passes: Arc::default(),
+            route_index_limit: None,
             on_leg: None,
         }
     }
@@ -835,6 +839,20 @@ impl FollowLeg {
         }
     }
 
+    fn transport_takeoff(&self) -> Option<WorldTile> {
+        match self {
+            Self::Legacy(Leg::Transport { edge }) => Some(edge.takeoff.unwrap_or(edge.at)),
+            Self::Legacy(Leg::Walk { .. }) => None,
+            Self::Plan { plan, index } => match plan_retained_leg(plan, *index)? {
+                nav_planner::router::CompactRouteLeg::Walk(_) => None,
+                nav_planner::router::CompactRouteLeg::Transport(step) => Some(
+                    step.source()
+                        .map_or(step.anchor(), |edge| edge.takeoff.unwrap_or(edge.at)),
+                ),
+            },
+        }
+    }
+
     fn into_transport(self) -> Leg {
         match self {
             Self::Legacy(leg @ Leg::Transport { .. }) => leg,
@@ -886,6 +904,12 @@ struct FollowRun {
     /// The index (in the original route) of the leg being worked, reported
     /// in `Blocked`; grows as legs complete.
     leg_index: usize,
+    /// First route-path index after the leg currently being worked.
+    route_index_next: usize,
+    /// Route-path index of the current leg, cached while a transport retries.
+    current_route_index: Option<usize>,
+    /// End of the preceding walk, used to match risk geometry's attached hop.
+    previous_walk_end: Option<WorldTile>,
     /// Walk hops performed so far (the m8aq `hops` counter).
     hops: u32,
     max_hops: u32,
@@ -926,6 +950,9 @@ impl FollowRun {
             legs,
             pending_leg: None,
             leg_index: 0,
+            route_index_next: 0,
+            current_route_index: None,
+            previous_walk_end: None,
             hops: 0,
             max_hops: options.max_hops,
             close_enough: options.close_enough,
@@ -939,25 +966,51 @@ impl FollowRun {
     }
 
     fn next_leg(&mut self) -> Option<FollowLeg> {
-        if let Some(leg) = self.pending_leg.take() {
-            return Some(leg);
-        }
-        match &mut self.legs {
-            RouteLegSource::Legacy(legs) => legs.pop_front().map(FollowLeg::Legacy),
-            RouteLegSource::Plan {
-                plan,
-                next_leg,
-                leg_count,
-            } => {
-                if *next_leg >= *leg_count {
-                    return None;
+        let leg = if let Some(leg) = self.pending_leg.take() {
+            leg
+        } else {
+            match &mut self.legs {
+                RouteLegSource::Legacy(legs) => legs.pop_front().map(FollowLeg::Legacy)?,
+                RouteLegSource::Plan {
+                    plan,
+                    next_leg,
+                    leg_count,
+                } => {
+                    if *next_leg >= *leg_count {
+                        return None;
+                    }
+                    let index = *next_leg;
+                    *next_leg += 1;
+                    FollowLeg::Plan {
+                        plan: plan.clone(),
+                        index,
+                    }
                 }
-                let index = *next_leg;
-                *next_leg += 1;
-                Some(FollowLeg::Plan {
-                    plan: plan.clone(),
-                    index,
-                })
+            }
+        };
+        if self.current_route_index.is_none() {
+            self.current_route_index = Some(self.index_route_leg(&leg));
+        }
+        Some(leg)
+    }
+
+    fn index_route_leg(&mut self, leg: &FollowLeg) -> usize {
+        if let Some(tiles) = leg.walk_tiles() {
+            let start = self.route_index_next;
+            self.route_index_next = self.route_index_next.saturating_add(tiles.len());
+            self.previous_walk_end = tiles.last().copied();
+            start
+        } else {
+            let attached = leg
+                .transport_takeoff()
+                .is_some_and(|takeoff| self.previous_walk_end == Some(takeoff));
+            self.previous_walk_end = None;
+            if attached {
+                self.route_index_next.saturating_sub(1)
+            } else {
+                let start = self.route_index_next;
+                self.route_index_next = self.route_index_next.saturating_add(1);
+                start
             }
         }
     }
@@ -1041,14 +1094,20 @@ impl FollowRun {
                 match self.poll_walk(d, snapshot, options) {
                     Poll::Terminal(outcome) => return Some(outcome),
                     Poll::Watching => return None,
-                    Poll::LegDone => continue,
+                    Poll::LegDone => {
+                        self.current_route_index = None;
+                        continue;
+                    }
                 }
             }
             if self.transport.is_some() {
                 match self.poll_transport(d, snapshot, options, essence) {
                     Poll::Terminal(outcome) => return Some(outcome),
                     Poll::Watching => return None,
-                    Poll::LegDone => continue,
+                    Poll::LegDone => {
+                        self.current_route_index = None;
+                        continue;
+                    }
                 }
             }
             // No active hop: work the next leg (or finish).
@@ -1062,11 +1121,13 @@ impl FollowRun {
                 if tiles.len() <= 1 {
                     fire_follow_leg(options, &route_leg, LegPhase::Done);
                     self.leg_index += 1;
+                    self.current_route_index = None;
                     continue;
                 }
                 let here = here(snapshot);
                 let hop = WalkHop {
                     leg: route_leg,
+                    route_index_start: self.current_route_index.expect("route leg has an index"),
                     cursor: 0,
                     aim: here,
                     aim_index: 0,
@@ -1088,8 +1149,21 @@ impl FollowRun {
                 match self.send_walk_hop(d, snapshot, options, hop, here) {
                     Poll::Watching => return None,
                     Poll::Terminal(outcome) => return Some(outcome),
-                    Poll::LegDone => continue,
+                    Poll::LegDone => {
+                        self.current_route_index = None;
+                        continue;
+                    }
                 }
+            }
+            let route_index = self
+                .current_route_index
+                .expect("route leg has a route-path index");
+            if options
+                .route_index_limit
+                .is_some_and(|limit| route_index >= usize::from(limit))
+            {
+                self.pending_leg = Some(route_leg);
+                return None;
             }
             let leg = route_leg.into_transport();
             match leg {
@@ -1556,6 +1630,8 @@ enum Poll {
 /// One walk-leg hop: the leg's tiles, the aim tile, and the stall clock.
 struct WalkHop {
     leg: FollowLeg,
+    /// First route-path index represented by this walk leg.
+    route_index_start: usize,
     /// Index into the leg tiles of the last cleared tile.
     cursor: usize,
     aim: WorldTile,

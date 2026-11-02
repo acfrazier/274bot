@@ -4968,6 +4968,7 @@ pub(crate) struct NavBot {
     pub(crate) runtime_gate_logged: bool,
     pub(crate) admission: Option<Box<crate::admission::Admission>>,
     pub(crate) assessment: Option<Arc<script::combat::risk::RouteAssessment>>,
+    pub(crate) poison_hold: Option<crate::poison_hold::PoisonHold>,
     pub(crate) last_assessment: Option<Arc<script::combat::risk::RouteAssessment>>,
     pub(crate) route_basis: Option<Arc<crate::admission::RouteBasis>>,
     pub(crate) admission_pending: bool,
@@ -6337,7 +6338,7 @@ impl ScriptWalkArm {
             }
             let displaced = bot.pending_route.take();
             let displaced_kind = displaced.as_ref().and_then(|demand| demand.kind());
-            admission.input.off_debt = bot.walk_guard_off.is_some();
+            admission.input.set_off_debt(bot.walk_guard_off.is_some());
             admission.grants = opts.zones;
             admission.generation = bot.route_generation.wrapping_add(1);
             match bot.admission.as_deref_mut() {
@@ -7632,6 +7633,7 @@ impl NavBot {
     }
 
     pub(crate) fn install_route_path(&mut self, route: RoutePath) {
+        self.poison_hold = None;
         match route {
             RoutePath::Legacy(route) => {
                 self.route = Some(route);
@@ -7729,6 +7731,7 @@ impl NavBot {
     pub(crate) fn clear_route(&mut self) {
         self.route = None;
         self.compact_route = None;
+        self.poison_hold = None;
     }
 
     /// A plain increment from 1. It never wraps in practice: see the 63-bit
@@ -8280,6 +8283,7 @@ impl NavBot {
             }
         };
         self.traveller.clear();
+        self.poison_hold = None;
         self.route = Some(route);
         self.compact_route = None;
         self.map_route_generation = crate::walk_map::next_map_route_generation();

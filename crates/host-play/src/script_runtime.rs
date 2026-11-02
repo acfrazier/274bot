@@ -70,7 +70,7 @@ mod script_walk;
 use script_walk::apply_watchdog_nav_action;
 pub(super) use script_walk::{
     abort_script_walk, observe_compat_walk, pause_script, session_freezes_follow,
-    step_bank_fetch_on_bot, step_nav_bot, take_manual_walk_ownership,
+    step_bank_fetch_on_bot, step_nav_bot, step_poison_hold_on_bot, take_manual_walk_ownership,
 };
 #[cfg(test)]
 pub(super) use script_walk::{

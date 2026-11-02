@@ -76,6 +76,11 @@ assert.deepEqual(
 function pinContentRoot(revision: 274 | 289): string {
     return revisions.find((spec) => spec.revision === revision)!.content;
 }
+/** The stat defaults must come from the engine source pinned for this build. */
+function pinNpcTypeSource(revision: 274 | 289): string {
+    const engine = revisions.find((spec) => spec.revision === revision)!.engine;
+    return fs.readFileSync(path.join(engine, 'src/cache/config/NpcType.ts'), 'utf8');
+}
 
 const rows = parseRows(`
 // repeated aliases and typed tuples
@@ -129,7 +134,10 @@ fs.writeFileSync(path.join(pack, 'param.pack'), [
     '0=next_obj_stage', '1=decant_potion_enum', '2=dose_count',
     '3=stabattack_anim', '4=slashattack_anim', '5=crushattack_anim',
     '6=rangeattack_anim', '7=proj_launch', '8=proj_travel', '9=attackrate',
-    '10=levelrequire', '11=attackrange',
+    '10=levelrequire', '11=attackrange', '12=stabattack', '13=slashattack',
+    '14=crushattack', '15=magicattack', '16=rangeattack', '17=stabdefence',
+    '18=slashdefence', '19=crushdefence', '20=magicdefence', '21=rangedefence',
+    '22=strengthbonus', '23=rangebonus',
 ].join('\n') + '\n');
 fs.writeFileSync(path.join(pack, 'obj.pack'), '50=ogre_bow\n62=bronze_bow\n63=bronze_arrow\n');
 fs.writeFileSync(path.join(consumeScript, 'consume.rs2'), `[opheld1,_food]
@@ -278,8 +286,60 @@ const magic = path.join(content, 'scripts/skill_magic/configs');
 fs.mkdirSync(combat, { recursive: true });
 fs.mkdirSync(magic, { recursive: true });
 const combatParamFile = path.join(content, 'scripts/skill_combat/configs/combat.param');
-const combatParams = '[strengthbonus]\ntype=int\ndefault=0\n[rangebonus]\ntype=int\ndefault=0\n[attackrate]\ntype=int\ndefault=4\n[poison_severity]\ntype=int\ndefault=0\n[npc_forcemulti]\ntype=int\ndefault=0\n';
+const combatParams = `[strengthbonus]
+type=int
+default=0
+[rangebonus]
+type=int
+default=0
+[attackbonus]
+type=int
+default=0
+[stabattack]
+type=int
+default=0
+[slashattack]
+type=int
+default=0
+[crushattack]
+type=int
+default=0
+[magicattack]
+type=int
+default=0
+[rangeattack]
+type=int
+default=0
+[stabdefence]
+type=int
+default=0
+[slashdefence]
+type=int
+default=0
+[crushdefence]
+type=int
+default=0
+[magicdefence]
+type=int
+default=0
+[rangedefence]
+type=int
+default=0
+[attackrate]
+type=int
+default=4
+[poison_severity]
+type=int
+default=0
+[npc_forcemulti]
+type=int
+default=0
+[max_dealt]
+type=int
+default=1000
+`;
 fs.writeFileSync(combatParamFile, combatParams);
+fs.writeFileSync(path.join(content, 'scripts/skill_combat/configs/npc_combat.param'), '[damagetype]\ntype=int\ndefault=2\n');
 fs.writeFileSync(path.join(combat, 'magic_combat_spells.dbrow'), `[magic_spell_wind_strike]
 data=name,Wind Strike
 data=spellcom,wind_strike_button
@@ -424,8 +484,11 @@ category=dagannoth_mother
 headicon=8
 param=strengthbonus,8
 param=rangebonus,4
+param=attackbonus,6
+param=stabdefence,-1
 param=undead,^true
 param=attackrate,6
+param=max_dealt,3
 param=poison_severity,15
 param=npc_forcemulti,^true
 param=attack_anim,test_attack_seq
@@ -438,6 +501,7 @@ wanderrange=0
 op1=Attack
 hitpoints=60
 param=attackrate,4
+param=max_dealt,0
 [zamorak_like]
 name=Zamorak Like
 wanderrange=6
@@ -522,22 +586,47 @@ fs.writeFileSync(path.join(modeConfigDir, 'combat_damagestyles.constant'), [
     '^style_ranged_accurate = 4',
     '^style_ranged_rapid = 5',
     '^style_ranged_longrange = 6',
+    '^style_magic_normal = 7',
+    '^style_magic_defensive = 8',
 ].join('\n') + '\n');
-fs.writeFileSync(path.join(modeConfigDir, 'combat.dbtable'), '[combat_style_table]\ncolumn=damagestyle,int,LIST\n');
-const meleeStyleRow = (name: string, styles: string[]) =>
-    `[${name}]\ntable=combat_style_table\n${styles.map((style) => `data=damagestyle,^style_melee_${style}`).join('\n')}\n`;
+fs.writeFileSync(path.join(modeConfigDir, 'combat_damagetypes.constant'), [
+    '^damagetype_stab = 0',
+    '^damagetype_slash = 1',
+    '^damagetype_crush = 2',
+    '^damagetype_ranged = 3',
+    '^damagetype_magic = 4',
+    '^damagetype_melee = 5',
+].join('\n') + '\n');
+fs.writeFileSync(path.join(modeConfigDir, 'combat.dbtable'), '[combat_style_table]\ncolumn=damagestyle,int,LIST\ncolumn=damagetype,int,LIST\n');
+const styleRow = (name: string, styles: string[], type: string) =>
+    `[${name}]\ntable=combat_style_table\n${styles.map((style) => `data=damagestyle,^${style}`).join('\n')}\n${styles.map(() => `data=damagetype,^damagetype_${type}`).join('\n')}\n`;
 fs.writeFileSync(path.join(modeConfigDir, 'combat.dbrow'), [
-    meleeStyleRow('weapon_2h_sword_table', ['accurate', 'aggressive', 'aggressive', 'defensive']),
-    meleeStyleRow('weapon_slash_table', ['accurate', 'aggressive', 'controlled', 'defensive']),
-    meleeStyleRow('weapon_unarmed_table', ['accurate', 'aggressive', 'defensive']),
-    '[weapon_bow_table]\ntable=combat_style_table\ndata=damagestyle,^style_ranged_accurate\ndata=damagestyle,^style_ranged_rapid\ndata=damagestyle,^style_ranged_longrange\n',
+    styleRow('weapon_2h_sword_table', ['style_melee_accurate', 'style_melee_aggressive', 'style_melee_aggressive', 'style_melee_defensive'], 'slash'),
+    styleRow('weapon_slash_table', ['style_melee_accurate', 'style_melee_aggressive', 'style_melee_controlled', 'style_melee_defensive'], 'slash'),
+    styleRow('weapon_unarmed_table', ['style_melee_accurate', 'style_melee_aggressive', 'style_melee_defensive'], 'crush'),
+    styleRow('weapon_bow_table', ['style_ranged_accurate', 'style_ranged_rapid', 'style_ranged_longrange'], 'ranged'),
+    styleRow('weapon_staff_table', ['style_magic_normal', 'style_magic_defensive'], 'magic'),
 ].join('\n'));
 fs.writeFileSync(path.join(content, 'scripts/skill_combat/scripts/combat.rs2'), `[proc,combat_get_weapon_style_data](obj $weapon)(dbrow)
 switch_category(oc_category($weapon)) {
 case weapon_2h_sword : return(weapon_2h_sword_table);
 case weapon_slash : return(weapon_slash_table);
-case weapon_bow : return(weapon_bow_table);
+case weapon_bow, weapon_crossbow, weapon_thrown, weapon_javelin : return(weapon_bow_table);
+case weapon_staff : return(weapon_staff_table);
 case default : return(weapon_unarmed_table);
+}
+[proc,combat_get_damagestyle_bonuses](int $damagestyle)(int,int,int,int)
+switch_int($damagestyle) {
+case ^style_melee_accurate : return(0,0,0,0);
+case ^style_melee_aggressive : return(0,3,0,0);
+case ^style_melee_defensive : return(0,0,3,0);
+case ^style_melee_controlled : return(1,1,1,0);
+case ^style_ranged_accurate : return(0,0,0,0);
+case ^style_ranged_rapid : return(0,1,0,0);
+case ^style_ranged_longrange : return(0,0,3,0);
+case ^style_magic_normal : return(0,0,0,0);
+case ^style_magic_defensive : return(0,0,3,0);
+case default : return(0,0,0,0);
 }
 `);
 fs.appendFileSync(path.join(attackStylesDir, 'player_attackstyles.rs2'), [
@@ -556,11 +645,40 @@ fs.appendFileSync(path.join(attackStylesDir, 'player_attackstyles.rs2'), [
     '[if_button,combat_bow:bow1] ~set_attackstyle(1);',
     '[if_button,combat_bow:bow2] ~set_attackstyle(2);',
 ].join('\n') + '\n');
+const npcTypeSource274 = pinNpcTypeSource(274);
+const npcTypeSource289 = pinNpcTypeSource(289);
 const combatScripts = parseCombatScripts(content);
 assert.equal(combatScripts.triggers.has('phantom'), false);
 assert.equal(combatScripts.triggers.has('ghost'), false);
-const npcFacts274 = extractNpcNamesFacts(content, 274, combatScripts);
-const npcFacts = extractNpcNamesFacts(content, 289, combatScripts);
+const npcFacts274 = extractNpcNamesFacts(content, 274, npcTypeSource274, combatScripts);
+const npcFacts = extractNpcNamesFacts(content, 289, npcTypeSource289, combatScripts);
+assert.equal(npcFacts274.combat_facts_version, 2);
+assert.equal(npcFacts.combat_facts_version, 2);
+const pinnedContent289 = pinContentRoot(289);
+const pinnedCombatScripts289 = parseCombatScripts(pinnedContent289);
+const pinnedNpcFacts289 = extractNpcNamesFacts(pinnedContent289, 289, npcTypeSource289, pinnedCombatScripts289);
+const pinnedTransform = (config: string) => pinnedNpcFacts289.rows.find((row) => row.config === config)?.combat_transform;
+assert.deepEqual(pinnedTransform('horror_rockcrab_inactive'), { kind: 'known', npc_id: 1265 }, 'content source proves the large dormant Rock Crab target');
+assert.deepEqual(pinnedTransform('horror_rockcrab_small_inactive'), { kind: 'known', npc_id: 1267 }, 'content source proves the small dormant Rock Crab target');
+for (const config of [
+    'ghast_invis',
+    'gnomeballer_red',
+    'gnomeballer_orange',
+    'gnomeballer_yellow',
+    'shadeshadow_level1',
+    'shade_level1',
+    'shadeshadow_level2',
+    'shade_level2',
+    'shadeshadow_level3',
+    'shade_level3',
+    'shadeshadow_level4',
+    'shade_level4',
+    'shadeshadow_level5',
+    'shade_level5',
+]) {
+    assert.deepEqual(pinnedTransform(config), { kind: 'unknown' }, `${config}: noncanonical attack-trigger change is fail-closed`);
+}
+assert.equal(pinnedTransform('khazard_warlord'), null, 'ordinary NPCs have no attack-approach transformation');
 for (const [facts, expected] of [
     [npcFacts274, [['test_npc', 5, 7], ['khazard_warlord', 5, 7], ['dragon_npc', 0, 7], ['zamorak_like', 6, 0], ['saradomin_like', 9, 7]]],
     [npcFacts, [['test_npc', 5, 7], ['khazard_warlord', 5, 7], ['dragon_npc', 0, 2], ['zamorak_like', 6, 6], ['saradomin_like', 9, 11]]],
@@ -571,12 +689,41 @@ for (const [facts, expected] of [
         assert.equal(row.maxrange, maxrange, `${config}: pinned runtime maxrange derivation/clamp`);
     }
 }
-assert.throws(() => extractNpcNamesFacts(content, 275, combatScripts), /unsupported revision 275/);
+assert.throws(() => extractNpcNamesFacts(content, 275, npcTypeSource289, combatScripts), /unsupported revision 275/);
 const testNpc = npcFacts.rows.find((row) => row.config === 'test_npc')!;
 assert.equal(testNpc.attackrate, 6);
+assert.equal(testNpc.max_dealt, 3);
+assert.equal(npcFacts.rows.find((row) => row.config === 'dragon_npc')?.max_dealt, 0);
+assert.equal(npcFacts.rows.find((row) => row.config === 'khazard_warlord')?.max_dealt, 1000);
 assert.equal(testNpc.headicon, 8);
 assert.equal(npcFacts.rows.find((row) => row.config === 'dragon_npc')?.headicon, undefined);
+assert.deepEqual(
+    [
+        npcFacts.rows.find((row) => row.config === 'dragon_npc')?.attack,
+        npcFacts.rows.find((row) => row.config === 'dragon_npc')?.defence,
+        npcFacts.rows.find((row) => row.config === 'dragon_npc')?.magic,
+    ],
+    [1, 1, 1],
+    'omitted combat levels use the pinned NpcType defaults',
+);
+const dragonNpc = npcFacts.rows.find((row) => row.config === 'dragon_npc')!;
+assert.deepEqual(
+    [
+        dragonNpc.attackbonus,
+        dragonNpc.rangeattack,
+        dragonNpc.magicattack,
+        dragonNpc.stabdefence,
+        dragonNpc.slashdefence,
+        dragonNpc.crushdefence,
+        dragonNpc.magicdefence,
+        dragonNpc.rangedefence,
+    ],
+    [0, 0, 0, 0, 0, 0, 0, 0],
+    'omitted NPC bonuses use the combat.param defaults',
+);
 assert.equal(testNpc.strength, 24);
+assert.equal(testNpc.attackbonus, 6);
+assert.equal(testNpc.stabdefence, -1);
 assert.equal(testNpc.ranged, 3);
 assert.equal(testNpc.strengthbonus, 8);
 assert.equal(testNpc.rangebonus, 4);
@@ -597,20 +744,24 @@ assert.equal(zamorakLike.counter_protect, false);
 const saradominLike = npcFacts.rows.find((row) => row.config === 'saradomin_like')!;
 assert.equal(saradominLike.attack_kind, 'mixed');
 assert.equal(saradominLike.counter_protect, true);
-fs.writeFileSync(combatParamFile, combatParams.replace('default=0', 'default=7'));
-const changedDefaults = extractNpcNamesFacts(content, 289, combatScripts);
+fs.writeFileSync(combatParamFile, combatParams
+    .replace('[strengthbonus]\ntype=int\ndefault=0', '[strengthbonus]\ntype=int\ndefault=7')
+    .replace('[attackbonus]\ntype=int\ndefault=0', '[attackbonus]\ntype=int\ndefault=9'));
+const changedDefaults = extractNpcNamesFacts(content, 289, npcTypeSource289, combatScripts);
 assert.equal(changedDefaults.rows.find((row) => row.config === 'dragon_npc')?.strengthbonus, 7);
+assert.equal(changedDefaults.rows.find((row) => row.config === 'dragon_npc')?.attackbonus, 9);
+assert.equal(changedDefaults.rows.find((row) => row.config === 'test_npc')?.attackbonus, 6, 'an explicit NPC attack bonus overrides the content default');
 assert.equal(changedDefaults.rows.find((row) => row.config === 'test_npc')?.strengthbonus, 8, 'an explicit NPC bonus overrides the content default');
 fs.writeFileSync(combatParamFile, combatParams
     .replace('[poison_severity]\ntype=int\ndefault=0', '[poison_severity]\ntype=int\ndefault=35')
     .replace('[npc_forcemulti]\ntype=int\ndefault=0', '[npc_forcemulti]\ntype=int\ndefault=1'));
-const changedPoisonDefaults = extractNpcNamesFacts(content, 289, combatScripts);
+const changedPoisonDefaults = extractNpcNamesFacts(content, 289, npcTypeSource289, combatScripts);
 assert.equal(changedPoisonDefaults.rows.find((row) => row.config === 'dragon_npc')?.poison_severity, 35);
 assert.equal(changedPoisonDefaults.rows.find((row) => row.config === 'dragon_npc')?.forcemulti, true);
 fs.writeFileSync(combatParamFile, combatParams);
 const npcSourceBytes = fs.readFileSync(npcSource);
 fs.writeFileSync(npcSource, npcSourceBytes.toString().replace('param=attackrate,6', 'param=attackrate,300'));
-assert.throws(() => extractNpcNamesFacts(content, 289, combatScripts), /attackrate is out of range/);
+assert.throws(() => extractNpcNamesFacts(content, 289, npcTypeSource289, combatScripts), /attackrate is out of range/);
 fs.writeFileSync(npcSource, npcSourceBytes);
 // combat_axe is intentionally absent so a recognized but unresolved root must stay null.
 fs.writeFileSync(path.join(content, 'pack/interface.pack'), `328=combat_staff_2\n349=combat_staff_2:auto_toggle\n352=combat_staff_2:auto_spell\n353=combat_staff_2:auto_choose\n900=combat_bow\n901=combat_heavysword\n902=combat_hacksword\n903=combat_stabsword\n904=combat_unarmed\n910=combat_crossbow\n911=combat_thrown\n1829=staff_spells\n1830=staff_spells:ssb0\n6575=duel_select_type\n6412=duel_confirm\n6733=duel_win\n6674=duel_select_type:accept\n6520=duel_confirm:accept\n6671=duel_select_type:otherplayer\n6684=duel_select_type:status\n6571=duel_confirm:status\n6700=duel_select_type:inv\n6701=duel_select_type:otherinv\n6500=duel_confirm:inv\n6501=duel_confirm:otherinv\n6676=duel_select_type:obstacles\n`);
@@ -667,15 +818,81 @@ assert.equal(sequenceStyle('shared_seq'), 3, 'melee and ranged object facts merg
 assert.equal(sequenceStyle('staff_seq'), 1);
 assert.equal(sequenceStyle('test_magic_seq'), 4);
 assert.equal(sequenceStyle('dragon_seq'), 8);
-assert.deepEqual(styleFacts.weapon_styles.map((row) => [
-    row.obj_id, row.style, row.attackrate, row.category, row.tab,
-]), [
+const weaponMetadata = new Map(styleFacts.weapon_styles.map((row) => [
+    row.obj_id, [row.obj_id, row.style, row.attackrate, row.category, row.tab] as const,
+] as const));
+assert.deepEqual([...weaponMetadata.values()], [
     [50, 2, 5, 1, 12], [51, 4, 7, 5, 15], [52, 1, 4, 0, 0],
     [53, 1, 4, 0, 1], [54, 1, 4, 0, 6], [55, 1, 4, 0, 9],
     [56, 1, 4, 0, null], [57, 1, 4, 0, 0], [58, 2, 4, 2, 13],
     [59, 2, 4, 3, 14], [60, 2, 4, 4, 14], [61, 1, 4, 0, null],
     [62, 2, 4, 1, 12],
 ]);
+const weaponSlotsFor = (obj_id: number) => styleFacts.weapon_styles
+    .filter((row) => row.obj_id === obj_id)
+    .map((row) => [row.style_slot, row.damagetype, row.damagestyle, row.style_bonus]);
+assert.equal(styleFacts.weapon_styles.length, 40, 'weapon style facts retain each content slot');
+assert.deepEqual(weaponSlotsFor(50), [
+    [0, 3, 4, [0, 0, 0]], [1, 3, 5, [0, 1, 0]], [2, 3, 6, [0, 0, 3]],
+]);
+assert.deepEqual(weaponSlotsFor(51), [
+    [0, 4, 7, [0, 0, 0]], [1, 4, 8, [0, 0, 3]],
+]);
+assert.deepEqual(weaponSlotsFor(53), [
+    [0, 1, 0, [0, 0, 0]], [1, 1, 1, [0, 3, 0]],
+    [2, 1, 1, [0, 3, 0]], [3, 1, 2, [0, 0, 3]],
+]);
+// Old: an omitted weapon rate was always 4. New: only the declared default applies.
+const defaultRateStyles = () => extractCombatStyleFacts(
+    content, [{ id: 64, category: 13, params: new Map() }], npcFacts.combatNpcs, combatScripts,
+).weapon_styles;
+const declaredRate = '[attackrate]\ntype=int\ndefault=4';
+assert.ok(combatParams.includes(declaredRate), 'weapon-rate fixture has a declared default');
+try {
+    fs.writeFileSync(combatParamFile, combatParams.replace(declaredRate, '[attackrate]\ntype=int\ndefault=6'));
+    const rows = defaultRateStyles();
+    assert.ok(rows.length > 0, 'the fixture has selected weapon style slots');
+    assert.ok(rows.every((row) => row.attackrate === 6), 'omitted weapon attackrate uses declared 6, not product 4');
+    for (const badDefault of ['[attackrate]\ntype=int', '[attackrate]\ntype=int\ndefault=', '[attackrate]\ntype=int\ndefault=300']) {
+        fs.writeFileSync(combatParamFile, combatParams.replace(declaredRate, badDefault));
+        assert.throws(defaultRateStyles, /attackrate has no valid content default/);
+    }
+} finally {
+    fs.writeFileSync(combatParamFile, combatParams);
+}
+const combatParamIds = parsePack(fs.readFileSync(path.join(pack, 'param.pack'), 'utf8'));
+const itemCombatBonuses = extractItemCombatBonus(content, [
+    {
+        id: 70, wearpos: 1,
+        params: new Map([
+            [combatParamIds.get('stabattack')!, -12],
+            [combatParamIds.get('slashattack')!, 8],
+            [combatParamIds.get('rangeattack')!, 6],
+            [combatParamIds.get('rangedefence')!, -7],
+        ]),
+    },
+    { id: 71, wearpos: 0, params: new Map() },
+    { id: 72, params: new Map([[combatParamIds.get('stabattack')!, 30]]) },
+]);
+assert.deepEqual(itemCombatBonuses, [
+    {
+        obj_id: 70, strengthbonus: 0, rangebonus: 0,
+        stabattack: -12, slashattack: 8, crushattack: 0, magicattack: 0, rangeattack: 6,
+        stabdefence: 0, slashdefence: 0, crushdefence: 0, magicdefence: 0, rangedefence: -7,
+    },
+    {
+        obj_id: 71, strengthbonus: 0, rangebonus: 0,
+        stabattack: 0, slashattack: 0, crushattack: 0, magicattack: 0, rangeattack: 0,
+        stabdefence: 0, slashdefence: 0, crushdefence: 0, magicdefence: 0, rangedefence: 0,
+    },
+], 'one signed-bonus row is emitted for each wearable; non-wearable objects are skipped');
+assert.throws(
+    () => extractItemCombatBonus(content, [{
+        id: 73, wearpos: 0,
+        params: new Map([[combatParamIds.get('stabattack')!, -32769]]),
+    }]),
+    /out of i16 range/,
+);
 assert.deepEqual(styleFacts.combat_tabs.map((row) => [row.tab, row.root_id]), [
     [0, 904], [1, 901], [6, 902], [9, 903], [12, 900], [13, 910], [14, 911], [15, 328],
 ]);
@@ -4263,10 +4480,21 @@ const noOverrides: readonly SiteOverride[] = [];
     // an untyped fact.
     const fixture = fs.mkdtempSync(path.join(os.tmpdir(), 'pvp-facts-fixture-'));
     for (const [name, bytes] of [
-        ['pack/param.pack', '136=specwep\n137=sa_energy\n138=strengthbonus\n139=rangebonus\n'],
+        ['pack/param.pack', [
+            '136=specwep', '137=sa_energy', '138=strengthbonus', '139=rangebonus',
+            '140=stabattack', '141=slashattack', '142=crushattack', '143=magicattack', '144=rangeattack',
+            '145=stabdefence', '146=slashdefence', '147=crushdefence', '148=magicdefence', '149=rangedefence',
+        ].join('\n') + '\n'],
         ['pack/seq.pack', '1=puncture\n'],
         ['pack/spotanim.pack', '2=sp_attack_puncture_spotanim\n'],
-        ['scripts/skill_combat/configs/combat.param', '[specwep]\ntype=int\ndefault=0\n\n[sa_energy]\ntype=int\ndefault=1000\n'],
+        ['scripts/skill_combat/configs/combat.param', `${combatParams}[specwep]
+type=int
+default=0
+
+[sa_energy]
+type=int
+default=1000
+`],
     ] as const) {
         fs.mkdirSync(path.join(fixture, path.dirname(name)), { recursive: true });
         fs.writeFileSync(path.join(fixture, name), bytes);

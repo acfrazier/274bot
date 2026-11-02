@@ -103,14 +103,18 @@ pub(super) fn pick_aim(
 }
 
 /// [`pick_aim`] then walk the index back until the tile is inside the
-/// loaded scene, so click-ahead cannot `OffScene` at the 104-edge.
+/// loaded scene and no farther than `last_allowed`.
+/// Click-ahead cannot `OffScene` at the 104-edge.
 pub(super) fn pick_aim_in_scene(
     tiles: &[WorldTile],
     here_index: Option<usize>,
     cursor: usize,
     scene: &api::snapshot::SceneView,
+    last_allowed: usize,
 ) -> (WorldTile, usize) {
-    let (aim, mut idx) = pick_aim(tiles, here_index, cursor);
+    let (_, idx) = pick_aim(tiles, here_index, cursor);
+    let mut idx = idx.min(last_allowed);
+    let aim = tiles[idx];
     if tile_in_scene(scene, aim) {
         return (aim, idx);
     }
@@ -119,6 +123,16 @@ pub(super) fn pick_aim_in_scene(
         idx -= 1;
     }
     (tiles[idx], idx)
+}
+
+fn max_walk_index(hop: &WalkHop, limit: Option<u16>) -> Option<usize> {
+    let last = hop.tiles().len() - 1;
+    match limit {
+        Some(limit) => usize::from(limit)
+            .checked_sub(hop.route_index_start)
+            .map(|index| index.min(last)),
+        None => Some(last),
+    }
 }
 
 impl FollowRun {
@@ -134,14 +148,22 @@ impl FollowRun {
     ) -> Poll {
         let mut hop = self.walk.take().expect("walk hop present");
         let here = here(snapshot);
+        let last_allowed = max_walk_index(&hop, options.route_index_limit);
         if !hop.sent {
+            return self.send_walk_hop(d, snapshot, options, hop, here);
+        }
+        if options.route_index_limit.is_some()
+            && last_allowed.is_none_or(|last_allowed| hop.aim_index > last_allowed)
+        {
+            hop.sent = false;
             return self.send_walk_hop(d, snapshot, options, hop, here);
         }
         // Last tile of the walk is the dest: exact stand. Mid-hops
         // click-ahead at Chebyshev 2 (at least `close_enough`) so the
         // next walk goes out while the player is still moving.
         const CLICK_AHEAD: i32 = 2;
-        let last = hop.aim_index + 1 >= hop.tiles().len();
+        let at_limit = options.route_index_limit.is_some() && last_allowed == Some(hop.aim_index);
+        let last = hop.aim_index + 1 >= hop.tiles().len() || at_limit;
         let radius = if last {
             0
         } else {
@@ -169,12 +191,14 @@ impl FollowRun {
         match settle.poll(ReadContext::new(snapshot)) {
             Some(Outcome::Matched { .. }) => {
                 // The hop completed: the leg is done exactly when the aim
-                // was its last tile (the hop's arrival already proved the
-                // player is within `close_enough` of the aim).
                 if hop.aim_index + 1 >= hop.tiles().len() {
                     fire_leg(options, &hop.leg(), LegPhase::Done);
                     self.leg_index += 1;
                     return Poll::LegDone;
+                }
+                if at_limit {
+                    self.walk = Some(hop);
+                    return Poll::Watching;
                 }
                 // Mid-leg click-ahead: send the next hop on this poll.
                 hop.cursor = hop.aim_index + 1;
@@ -465,6 +489,11 @@ impl FollowRun {
             self.leg_index += 1;
             return Poll::LegDone;
         }
+        let last_allowed = max_walk_index(&hop, options.route_index_limit);
+        if last_allowed.is_none_or(|last_allowed| last_allowed <= hop.cursor) {
+            self.walk = Some(hop);
+            return Poll::Watching;
+        }
         if self.hops >= self.max_hops {
             fire_leg(options, &hop.leg(), LegPhase::Failed);
             return Poll::Terminal(TravelOutcome::GaveUp {
@@ -472,12 +501,18 @@ impl FollowRun {
                 hops: self.hops,
             });
         }
-        let end = hop.tiles().last().copied();
+        let end = last_allowed.map(|index| hop.tiles()[index]);
         let mut refused = (hop.end_refused_ticks, hop.end_refused_last_tick);
         let tiles = hop.tiles();
         let here_index = player_path_index(tiles, here, hop.cursor);
         let here_i = here_index.unwrap_or(hop.cursor);
-        let (mut aim, mut idx) = pick_aim_in_scene(tiles, here_index, hop.cursor, snapshot.scene());
+        let (mut aim, mut idx) = pick_aim_in_scene(
+            tiles,
+            here_index,
+            hop.cursor,
+            snapshot.scene(),
+            last_allowed.expect("available walk cap"),
+        );
         loop {
             if aim == here {
                 (hop.end_refused_ticks, hop.end_refused_last_tick) = refused;

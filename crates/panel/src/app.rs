@@ -3734,7 +3734,8 @@ fn routing_group(ui: &Ui, nav: &mut crate::nav_settings::NavSettings) -> bool {
         record_test_routing_item(ui);
     }
     if danger_level == frontend_core::DangerLevel::Always {
-        ui.text_colored(ERROR, frontend_core::GLOBAL_DANGER_WARNING);
+        let _warning = ui.push_style_color(StyleColor::Text, ERROR);
+        ui.text_wrapped(frontend_core::GLOBAL_DANGER_WARNING);
         #[cfg(test)]
         record_test_routing_item(ui);
     }

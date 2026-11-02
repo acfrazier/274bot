@@ -126,6 +126,14 @@ fn owner() -> SlotCondition {
     owner
 }
 
+fn poison_window(owner: &SlotCondition) -> PoisonWindow {
+    owner
+        .current()
+        .expect("complete live condition")
+        .poison_window
+        .expect("unknown poison publishes its window")
+}
+
 fn chat(snapshot: &mut GameSnapshot, sequence: i32, text: &str) {
     snapshot.seed_chat_lines(vec![ChatLineView {
         type_: 0,
@@ -849,73 +857,244 @@ fn newer_poison_line_cancels_waiting_fruit_chat() {
 }
 
 #[test]
-fn accepted_click_settle_covers_last_login_mark_tick_and_lag() {
-    // Login is session tick 1. The timer fires 30 ticks later, damage is
-    // queued for the following tick, and LAG retains two observation ticks.
-    let mut owner = SlotCondition::default();
-    owner.session_started(
-        1,
-        0,
-        Some((script::combat::guard::shared_tables().unwrap(), 11)),
-    );
-    owner.observe_frame(&frame(1), &drain(true, true), false);
+fn poison_window_clear_on_the_31st_clean_edge() {
+    let mut owner = owner();
     owner.accepted_click();
-    for tick in 2..=34 {
+    for tick in 1..=30 {
         owner.observe_frame(&frame(tick), &drain(true, true), false);
-        assert_eq!(
-            owner.current().unwrap().poison,
-            PoisonState::Unknown { since: 1 },
-            "tick {tick} must still cover the login fire's possible mark"
-        );
     }
-    owner.observe_frame(&frame(35), &drain(true, true), false);
-    assert_eq!(owner.current().unwrap().poison, PoisonState::Clear);
+    assert_eq!(
+        owner.current().unwrap().poison,
+        PoisonState::Unknown { since: 0 },
+        "old: `> 33` cleared on clean edge 34; new: clean edge 30 is still Unknown"
+    );
+    assert_eq!(
+        poison_window(&owner),
+        PoisonWindow {
+            remaining: 1,
+            accepted: true,
+            last_reset: WindowReset::Interaction,
+        },
+        "old: no window remainder was published; new: one clean edge remains"
+    );
+
+    owner.observe_frame(&frame(31), &drain(true, true), false);
+    assert_eq!(
+        owner.current().unwrap().poison,
+        PoisonState::Clear,
+        "old: `> 33` cleared on clean edge 34; new: `>= 31` clears on clean edge 31"
+    );
+    assert_eq!(owner.current().unwrap().poison_window, None);
 }
 
 #[test]
-fn login_poison_mark_at_last_settle_tick_prevents_clear() {
-    let mut owner = SlotCondition::default();
-    owner.session_started(
-        1,
-        0,
-        Some((script::combat::guard::shared_tables().unwrap(), 11)),
-    );
-    owner.observe_frame(&frame(1), &drain(true, true), false);
+fn poison_window_remaining_counts_down() {
+    let mut owner = owner();
     owner.accepted_click();
-    for tick in 2..34 {
+    for tick in 1..=12 {
         owner.observe_frame(&frame(tick), &drain(true, true), false);
     }
-    let mut snapshot = frame(34);
+    assert_eq!(
+        poison_window(&owner).remaining,
+        19,
+        "old: clean 12 reported 18 remaining; new: a 31-tick window reports 19"
+    );
+    owner.observe_frame(&frame(13), &drain(true, true), false);
+    assert_eq!(
+        poison_window(&owner).remaining,
+        18,
+        "old: clean 13 reported 17 remaining; new: a 31-tick window reports 18"
+    );
+}
+
+#[test]
+fn poison_window_not_accepted_needs_one_edge() {
+    let mut owner = owner();
+    for tick in 1..=31 {
+        owner.observe_frame(&frame(tick), &drain(true, true), false);
+    }
+    assert_eq!(
+        owner.current().unwrap().poison,
+        PoisonState::Unknown { since: 0 },
+        "old: acceptance was not exposed; new: 31 clean edges still need an accepted dispatch"
+    );
+    assert_eq!(
+        poison_window(&owner),
+        PoisonWindow {
+            remaining: 1,
+            accepted: false,
+            last_reset: WindowReset::NotReset,
+        },
+        "old: missing acceptance was indistinguishable; new: exactly one edge remains"
+    );
+
+    let mut client = outgoing_client(client::io::ClientRevision::R289);
+    let checkpoint = owner.dispatch_checkpoint(&client).unwrap();
+    queue_packet(&mut client, ClientProt::MOVE_GAMECLICK);
+    owner.observe_dispatch(&client, checkpoint);
+    assert_eq!(
+        owner.window.clean, 31,
+        "movement accepts without resetting clean"
+    );
+    assert!(owner.window.accepted);
+    owner.observe_frame(&frame(32), &drain(true, true), false);
+    assert_eq!(
+        owner.current().unwrap().poison,
+        PoisonState::Clear,
+        "old: no acceptance boundary was tested; new: one clean edge after movement proves Clear"
+    );
+}
+
+#[test]
+fn poison_window_interaction_restarts() {
+    let mut owner = owner();
+    owner.accepted_click();
+    for tick in 1..=20 {
+        owner.observe_frame(&frame(tick), &drain(true, true), false);
+    }
+    assert_eq!(poison_window(&owner).remaining, 11);
+
+    let mut client = outgoing_client(client::io::ClientRevision::R289);
+    let checkpoint = owner.dispatch_checkpoint(&client).unwrap();
+    queue_packet(&mut client, ClientProt::OPLOC1);
+    owner.observe_dispatch(&client, checkpoint);
+    owner.observe_frame(&frame(20), &drain(false, true), false);
+    assert_eq!(
+        poison_window(&owner),
+        PoisonWindow {
+            remaining: 31,
+            accepted: true,
+            last_reset: WindowReset::Interaction,
+        },
+        "old: a door retained 11 clean edges; new: OPLOC restarts with an accepted 31-edge window"
+    );
+    for tick in 21..=40 {
+        owner.observe_frame(&frame(tick), &drain(true, true), false);
+    }
+    assert_eq!(
+        poison_window(&owner),
+        PoisonWindow {
+            remaining: 11,
+            accepted: true,
+            last_reset: WindowReset::Interaction,
+        },
+        "old: 20 clean approach edges left 10; new: a 31-edge door window leaves 11 at tick 40"
+    );
+}
+
+#[test]
+fn poison_window_modal_resets_and_names_cause() {
+    let mut owner = owner();
+    owner.accepted_click();
+    for tick in 1..=12 {
+        owner.observe_frame(&frame(tick), &drain(true, true), false);
+    }
+
+    let mut snapshot = frame(12);
+    snapshot.seed_chat_modal(1, Vec::new());
+    owner.observe_frame(&snapshot, &drain(false, true), false);
+    assert_eq!(
+        poison_window(&owner),
+        PoisonWindow {
+            remaining: 31,
+            accepted: false,
+            last_reset: WindowReset::Modal,
+        },
+        "old: the modal reset was unlabelled; new: it resets and records Modal"
+    );
+}
+
+#[test]
+fn poison_window_frame_gap_resets() {
+    let mut owner = owner();
+    owner.accepted_click();
+    for tick in 1..=12 {
+        owner.observe_frame(&frame(tick), &drain(true, true), false);
+    }
+
+    owner.observe_frame(&frame(14), &drain(true, true), false);
+    assert_eq!(
+        poison_window(&owner),
+        PoisonWindow {
+            remaining: 31,
+            accepted: false,
+            last_reset: WindowReset::FrameGap,
+        },
+        "old: a skipped PLAYER_INFO edge had no cause; new: it restarts and records FrameGap"
+    );
+}
+
+#[test]
+fn poison_window_incomplete_trace_resets() {
+    let mut owner = owner();
+    owner.accepted_click();
+    for tick in 1..=12 {
+        owner.observe_frame(&frame(tick), &drain(true, true), false);
+    }
+
+    let mut client = outgoing_client(client::io::ClientRevision::R289);
+    let checkpoint = owner.dispatch_checkpoint(&client).unwrap();
+    let packet = map_client_prot(client.revision(), ClientProt::IF_BUTTON);
+    client.out.p1_enc(packet.id);
+    owner.observe_dispatch(&client, checkpoint);
+    owner.observe_frame(&frame(12), &drain(false, true), false);
+    assert_eq!(
+        poison_window(&owner),
+        PoisonWindow {
+            remaining: 31,
+            accepted: false,
+            last_reset: WindowReset::IncompleteTrace,
+        },
+        "old: an undecodable dispatch only cleared progress; new: it records IncompleteTrace"
+    );
+}
+
+#[test]
+fn poison_window_incomplete_fact_resets() {
+    let mut owner = owner();
+    owner.accepted_click();
+    for tick in 1..=12 {
+        owner.observe_frame(&frame(tick), &drain(true, true), false);
+    }
+
+    let mut incomplete = frame(12);
+    incomplete.seed_inventory(Vec::new(), 0);
+    owner.observe_frame(&incomplete, &drain(false, true), false);
+    assert!(owner.current().is_none());
+    owner.observe_frame(&frame(12), &drain(false, true), false);
+    assert_eq!(
+        poison_window(&owner),
+        PoisonWindow {
+            remaining: 31,
+            accepted: false,
+            last_reset: WindowReset::IncompleteFact,
+        },
+        "old: a missing condition fact hid the reset cause; new: it restarts and records IncompleteFact"
+    );
+}
+
+#[test]
+fn poison_mark_on_31st_clean_edge_prevents_clear() {
+    let mut owner = owner();
+    owner.accepted_click();
+    for tick in 1..=30 {
+        owner.observe_frame(&frame(tick), &drain(true, true), false);
+    }
+    assert_eq!(poison_window(&owner).remaining, 1);
+
+    let mut snapshot = frame(31);
     hit(&mut snapshot, 2, 6, 1);
     owner.observe_frame(&snapshot, &drain(true, true), false);
     assert_eq!(
         owner.current().unwrap().poison,
         PoisonState::Poisoned {
             per_tick: 6,
-            last_mark: 34,
-            hit_since_mark: false
-        }
+            last_mark: 31,
+            hit_since_mark: false,
+        },
+        "old: a 30-tick clear could hide the 31st-edge mark; new: the poison mark wins"
     );
-}
-
-#[test]
-fn interaction_at_clean_tick_30_restarts_login_settle() {
-    let mut owner = owner();
-    owner.accepted_click();
-    for tick in 1..=30 {
-        owner.observe_frame(&frame(tick), &drain(true, true), false);
-    }
-    owner.accepted_click();
-    for tick in 31..=63 {
-        owner.observe_frame(&frame(tick), &drain(true, true), false);
-        assert_eq!(
-            owner.current().unwrap().poison,
-            PoisonState::Unknown { since: 0 },
-            "tick {tick} must cover the delayed login fire"
-        );
-    }
-    owner.observe_frame(&frame(64), &drain(true, true), false);
-    assert_eq!(owner.current().unwrap().poison, PoisonState::Clear);
+    assert_eq!(owner.current().unwrap().poison_window, None);
 }
 
 #[test]
@@ -927,7 +1106,8 @@ fn delayed_login_mark_never_follows_false_clear() {
     }
     owner.accepted_click();
     // A content delay covers the original timer fire. Its mark arrives
-    // after the old window would clear, but inside the restarted window.
+    // after an uninterrupted 31-edge window would clear, but inside the restarted
+    // window.
     for tick in 31..=39 {
         owner.observe_frame(&frame(tick), &drain(true, true), false);
         assert_eq!(
@@ -1013,16 +1193,20 @@ fn outgoing_interactions_restart_only_unknown_login_poison() {
         let checkpoint = owner.dispatch_checkpoint(&client).unwrap();
         queue_packet(&mut client, packet);
         owner.observe_dispatch(&client, checkpoint);
-        for tick in 31..=63 {
+        for tick in 31..=60 {
             owner.observe_frame(&frame(tick), &drain(true, true), false);
             assert_eq!(
                 owner.current().unwrap().poison,
                 PoisonState::Unknown { since: 0 },
-                "packet {packet:?} at tick 30 must extend the window through {tick}"
+                "packet {packet:?} at clean 30 resets the window; it remains Unknown through clean 30 of the new window"
             );
         }
-        owner.observe_frame(&frame(64), &drain(true, true), false);
-        assert_eq!(owner.current().unwrap().poison, PoisonState::Clear);
+        owner.observe_frame(&frame(61), &drain(true, true), false);
+        assert_eq!(
+            owner.current().unwrap().poison,
+            PoisonState::Clear,
+            "old: interaction needed the 34th edge; new: it clears on edge 31 after dispatch"
+        );
         assert!(owner.dispatch_checkpoint(&client).is_none());
 
         let mut snapshot = frame(65);
@@ -1037,7 +1221,7 @@ fn outgoing_interactions_restart_only_unknown_login_poison() {
 }
 
 #[test]
-fn walk_only_packets_finish_login_settle_without_restarting() {
+fn walk_only_packets_accept_without_restarting_the_31_tick_window() {
     for packet in [
         ClientProt::MOVE_GAMECLICK,
         ClientProt::MOVE_MINIMAPCLICK,
@@ -1045,7 +1229,7 @@ fn walk_only_packets_finish_login_settle_without_restarting() {
     ] {
         let mut client = outgoing_client(client::io::ClientRevision::R289);
         let mut owner = owner();
-        for tick in 1..=33 {
+        for tick in 1..=30 {
             let checkpoint = owner.dispatch_checkpoint(&client).unwrap();
             queue_packet(&mut client, packet);
             owner.observe_dispatch(&client, checkpoint);
@@ -1055,21 +1239,21 @@ fn walk_only_packets_finish_login_settle_without_restarting() {
                 PoisonState::Unknown { since: 0 }
             );
         }
-        owner.observe_frame(&frame(34), &drain(true, true), false);
+        owner.observe_frame(&frame(31), &drain(true, true), false);
         assert_eq!(
             owner.current().unwrap().poison,
             PoisonState::Clear,
-            "movement {packet:?} must not postpone the clean run"
+            "old: `>33` delayed Clear until edge 34; new: movement accepts without resetting and clears at 31"
         );
     }
 }
 
 #[test]
-fn empty_dispatch_and_telemetry_do_not_restart_login_settle() {
+fn empty_dispatch_and_telemetry_do_not_restart_login_window() {
     let mut client = outgoing_client(client::io::ClientRevision::R289);
     let mut owner = owner();
     owner.accepted_click();
-    for tick in 1..=34 {
+    for tick in 1..=31 {
         let checkpoint = owner.dispatch_checkpoint(&client).unwrap();
         if tick % 2 == 0 {
             queue_packet(&mut client, ClientProt::EVENT_CAMERA_POSITION);
@@ -1078,7 +1262,11 @@ fn empty_dispatch_and_telemetry_do_not_restart_login_settle() {
         owner.observe_dispatch(&client, checkpoint);
         owner.observe_frame(&frame(tick), &drain(true, true), false);
     }
-    assert_eq!(owner.current().unwrap().poison, PoisonState::Clear);
+    assert_eq!(
+        owner.current().unwrap().poison,
+        PoisonState::Clear,
+        "old: telemetry was tested against the delayed edge; new: clean edge 31 clears"
+    );
 }
 
 #[test]
@@ -1113,35 +1301,51 @@ fn condition_dispatch_checkpoint_and_trace_allocate_nothing() {
 }
 
 #[test]
-fn guardian_hold_on_wake_resets_clean_window_and_click() {
+fn guardian_hold_resets_and_records_the_clean_window_cause() {
     let mut owner = owner();
     owner.accepted_click();
     for tick in 1..=14 {
         owner.observe_frame(&frame(tick), &drain(true, true), false);
     }
     owner.observe_frame(&frame(14), &drain(false, true), true);
-    for tick in 15..=48 {
+    assert_eq!(
+        poison_window(&owner),
+        PoisonWindow {
+            remaining: 31,
+            accepted: false,
+            last_reset: WindowReset::GuardianHold,
+        },
+        "old: guardian reset had no published cause; new: it starts an unaccepted 31-edge window"
+    );
+    for tick in 15..=45 {
         owner.observe_frame(&frame(tick), &drain(true, true), false);
     }
-    assert!(matches!(
-        owner.current().unwrap().poison,
-        PoisonState::Unknown { .. }
-    ));
+    assert_eq!(
+        poison_window(&owner),
+        PoisonWindow {
+            remaining: 1,
+            accepted: false,
+            last_reset: WindowReset::GuardianHold,
+        }
+    );
     owner.accepted_click();
-    owner.observe_frame(&frame(49), &drain(true, true), false);
-    assert!(matches!(
-        owner.current().unwrap().poison,
-        PoisonState::Unknown { .. }
-    ));
-    // The new interaction also restarts the run after the hold.
-    for tick in 50..=81 {
+    owner.observe_frame(&frame(45), &drain(false, true), false);
+    assert_eq!(
+        poison_window(&owner),
+        PoisonWindow {
+            remaining: 31,
+            accepted: true,
+            last_reset: WindowReset::Interaction,
+        }
+    );
+    for tick in 46..=75 {
         owner.observe_frame(&frame(tick), &drain(true, true), false);
-        assert!(matches!(
+        assert_eq!(
             owner.current().unwrap().poison,
-            PoisonState::Unknown { .. }
-        ));
+            PoisonState::Unknown { since: 0 }
+        );
     }
-    owner.observe_frame(&frame(82), &drain(true, true), false);
+    owner.observe_frame(&frame(76), &drain(true, true), false);
     assert_eq!(owner.current().unwrap().poison, PoisonState::Clear);
 }
 
@@ -1198,7 +1402,7 @@ fn slot_condition_size_of_pinned() {
             std::mem::size_of::<client::client::ClientGens>(),
             std::mem::size_of::<script::combat::risk::RiskInput>(),
         ),
-        (104, 28, 8, 120, 120),
+        (104, 28, 8, 120, 124),
         "SlotCondition is 104 B: pending fruit uses existing padding; no allocation"
     );
     assert!(

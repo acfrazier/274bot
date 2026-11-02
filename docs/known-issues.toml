@@ -596,3 +596,20 @@ first = "0.2.9"
 target = "0.3.0"
 severity = "low"
 owner = "runtime track: deno_ast >=0.50.2 needs a rustyscript move; lift the serde =1.0.219 hold, the client serde_json =1.0.143 development pin (vendor/fr-client-rust/crates/client/Cargo.toml) and the seed-calc serde_json =1.0.143 pin (tools/seed-calc/Cargo.toml) together, along with the RUSTSEC-2026-0009 exception that crates/tui/tests/audit_exception.rs guards"
+
+[[item]]
+id = "risk-zone-reach-pruning"
+kind = "deferred"
+area = "nav/admission"
+text = """Reach-to-route pruning of risk zones stays deferred. The model sums
+  every exposed zone, including a monster that collision might prevent from
+  reaching the route. Revisit this only when the frozen-route and end-to-end
+  corpora show a realistic quest route at its seed policy's level that is
+  refused solely because of that sum, and that reach pruning would admit.
+  No reach data is stored in the pack. Any future section needs a hard byte
+  budget, bake-reported bytes, a sound collision check, and summed-count
+  fallback for zones that exceed the budget."""
+first = "0.2.9"
+target = "0.2.9"
+severity = "low"
+owner = "Main backlog review"

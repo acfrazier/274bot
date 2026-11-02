@@ -3365,10 +3365,8 @@ fn player_at_plane_one_follow_uses_level() {
         final_route.clone(),
     );
 
-    let mut arm = WalkArm {
-        bank_fetch: Some(pending.clone()),
-        ..Default::default()
-    };
+    let mut arm = WalkArm::default();
+    arm.bank_fetch = Some(pending.clone());
     step_walk_arm_bank_fetch(&mut c, &snap, &mut arm, None, Some(here), false);
     assert_eq!(
         arm.route.as_ref().map(|r| r.dest),
@@ -3380,10 +3378,8 @@ fn player_at_plane_one_follow_uses_level() {
         "stand Walk must clear bank_fetch when here matches plane 1"
     );
 
-    let mut arm_ground = WalkArm {
-        bank_fetch: Some(pending),
-        ..Default::default()
-    };
+    let mut arm_ground = WalkArm::default();
+    arm_ground.bank_fetch = Some(pending);
     step_walk_arm_bank_fetch(
         &mut c,
         &snap,
@@ -3429,28 +3425,26 @@ fn follow_tick_pumps_bank_budget_step() {
         legs: vec![],
         ticks: 0.0,
     });
-    let mut arm = WalkArm {
-        bank_fetch: Some(PendingBankFetch::for_test_with_route(
-            VecDeque::from([BankStep::Withdraw { id: 2, count: 1 }, BankStep::Close]),
-            WorldTile {
-                x: 4,
-                z: 4,
-                level: 0,
-            },
-            FindOptions::default(),
-            final_route.clone(),
-        )),
-        route: Some(Arc::new(Route {
-            dest: WorldTile {
-                x: 0,
-                z: 4,
-                level: 0,
-            },
-            legs: vec![],
-            ticks: 0.0,
-        })),
-        ..Default::default()
-    };
+    let mut arm = WalkArm::default();
+    arm.bank_fetch = Some(PendingBankFetch::for_test_with_route(
+        VecDeque::from([BankStep::Withdraw { id: 2, count: 1 }, BankStep::Close]),
+        WorldTile {
+            x: 4,
+            z: 4,
+            level: 0,
+        },
+        FindOptions::default(),
+        final_route.clone(),
+    ));
+    arm.route = Some(Arc::new(Route {
+        dest: WorldTile {
+            x: 0,
+            z: 4,
+            level: 0,
+        },
+        legs: vec![],
+        ticks: 0.0,
+    }));
     let before = c.out.pos;
     host_play::step_walk_arm_follow(
         &mut c,
@@ -3495,27 +3489,25 @@ fn bank_stand_subroute_does_not_emit_operator_terminal_receipt() {
         }],
         ticks: 1.0,
     });
-    let mut arm = WalkArm {
-        bank_fetch: Some(PendingBankFetch::for_test_with_route(
-            VecDeque::from([BankStep::Walk {
-                x: stand.x,
-                z: stand.z,
-                level: stand.level,
-            }]),
-            destination,
-            FindOptions::default(),
-            final_route.clone(),
-        )),
-        route: Some(Arc::new(Route {
-            dest: stand,
-            legs: vec![Leg::Walk {
-                tiles: vec![at, stand],
-            }],
-            ticks: 1.0,
-        })),
-        route_generation: 103,
-        ..Default::default()
-    };
+    let mut arm = WalkArm::default();
+    arm.bank_fetch = Some(PendingBankFetch::for_test_with_route(
+        VecDeque::from([BankStep::Walk {
+            x: stand.x,
+            z: stand.z,
+            level: stand.level,
+        }]),
+        destination,
+        FindOptions::default(),
+        final_route.clone(),
+    ));
+    arm.route = Some(Arc::new(Route {
+        dest: stand,
+        legs: vec![Leg::Walk {
+            tiles: vec![at, stand],
+        }],
+        ticks: 1.0,
+    }));
+    arm.route_generation = 103;
     let mut snap = api::snapshot::GameSnapshot::new();
     snap.rebuild(&c);
     assert!(!host_play::step_walk_arm_follow(
@@ -3600,11 +3592,9 @@ fn operator_walk_logs_one_terminal_receipt_for_arrival_and_abort() {
         legs: vec![],
         ticks: 0.0,
     };
-    let mut arrived = WalkArm {
-        route: Some(Arc::new(arrived_route)),
-        route_generation: 101,
-        ..Default::default()
-    };
+    let mut arrived = WalkArm::default();
+    arrived.route = Some(Arc::new(arrived_route));
+    arrived.route_generation = 101;
     assert!(host_play::step_walk_arm_follow(
         &mut c,
         &snap,
@@ -3661,11 +3651,9 @@ fn operator_walk_logs_one_terminal_receipt_for_arrival_and_abort() {
         }],
         ticks: 7.0,
     };
-    let mut aborted = WalkArm {
-        route: Some(Arc::new(aborted_route)),
-        route_generation: 102,
-        ..Default::default()
-    };
+    let mut aborted = WalkArm::default();
+    aborted.route = Some(Arc::new(aborted_route));
+    aborted.route_generation = 102;
     let mut finished = 0;
     for _ in 0..70 {
         finished += usize::from(host_play::step_walk_arm_follow(

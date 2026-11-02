@@ -57,6 +57,24 @@ Revision 289 carries every V0 fact. One `generate.ts` pass publishes a
 revision's core, families and manifest row together; regenerate 274 with a
 whole-file pass rather than splicing rows into an older core.
 
+## Combat facts
+
+The NPC extract declares `combat_facts_version`.
+The API refuses older combat data and requests regeneration before it reads required combat fields.
+Do not add runtime defaults for missing combat facts.
+
+The extractor reads all six NPC combat levels and the signed combat bonuses.
+It also reads attack intervals, weapon damage styles, and style bonuses.
+Each wearable item has signed per-style attack/defence bonuses plus strength and range bonuses.
+An omitted parameter uses only its declared content default.
+The extractor reads NPC stat defaults from the pinned engine decoder.
+Missing or malformed required facts stop generation.
+NPC rows also publish `max_dealt` and attack-rate, poison-severity, and multi-combat defaults from `combat.param`.
+NPC damage types use the declared `npc_combat.param` default when omitted.
+The extractor resolves that code through `combat_damagetypes.constant`.
+A missing default or an ambiguous constant stops generation.
+Version-1 rows require attack, defence, magic, the signed attack/defence bonus fields, and `max_dealt`; missing keys fail API decoding rather than becoming zero.
+
 ## Server-ordered content contracts
 
 The revision 289 core includes a generated `server_ordered` catalog.

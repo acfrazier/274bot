@@ -1,5 +1,6 @@
-//! S2b advisory admission on real revision-289 content. No poison-clear
-//! observer, preflight movement or survivability claim is manufactured here.
+//! Compat v1 keeps its own sustain and legacy walk result on real content.
+//! Probability admission and live poison holds are tested in the host module.
+#![cfg(feature = "js")]
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
@@ -7,20 +8,14 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use api::interact;
 use api::snapshot::{GameSnapshot, WorldTile};
 use client::client::Client;
-use host::Pump;
 use host_play::admission::{self, Admission, RiskInput};
-use host_play::walk_map::{ActionError, ActionKind, FocusToken, MapContext, MapModel};
-use host_play::{ProfileOptions, SharedClientTemplate, SlotArm, WalkArms, WalkGlobals};
-use nav_planner::map::identity::Digest;
+use host_play::{ProfileOptions, SharedClientTemplate, WalkGlobals};
 use nav_planner::router::FindOptions;
-use nav_planner::tile::Tile;
 use nav_planner::world::NavWorld;
 use nav_planner::WorldState;
 use scenario::{
     Proof, RunnerStatus, Scenario, ScenarioRunner, ScenarioSettings, Seed, Step, StepKind, Wait,
 };
-use script::combat::risk::{UnknownWhy, Verdict};
-use script::native::{RiskPolicy, WalkBit, WalkOptions, WalkPermissions, WalkRefusal};
 use serde_json::{json, Value};
 
 struct NavLogs(Mutex<Vec<(String, Option<u32>, String)>>);
@@ -63,54 +58,6 @@ fn observed_hitmarks(client: &Client) -> Value {
     })
 }
 
-fn tile(tile: WorldTile) -> Tile {
-    Tile {
-        x: tile.x,
-        z: tile.z,
-        level: tile.level,
-    }
-}
-
-fn pump_once(client: &mut Client, snapshot: &mut GameSnapshot, pump: &mut Pump) {
-    client.mainloop();
-    host::publish_snapshot(snapshot, client, pump.drain_client(client));
-    if snapshot.ingame() && snapshot.attached() {
-        let input = admission::capture(snapshot, false, None, false);
-        if input.hp_max > 0 {
-            assert_ne!(
-                input.hp,
-                0,
-                "death fails the S2b live cell at {:?}",
-                snapshot.tile()
-            );
-        }
-    }
-}
-
-fn wait_for(
-    client: &mut Client,
-    snapshot: &mut GameSnapshot,
-    pump: &mut Pump,
-    ready: impl Fn(&GameSnapshot) -> bool,
-) {
-    let deadline = Instant::now() + Duration::from_secs(90);
-    loop {
-        pump_once(client, snapshot, pump);
-        if ready(snapshot) {
-            return;
-        }
-        assert!(
-            Instant::now() < deadline,
-            "live readiness deadline at {:?}, scene={}, inventory_size={}, captured={:?}",
-            snapshot.tile(),
-            snapshot.scene_state(),
-            snapshot.inventory_size(),
-            admission::capture(snapshot, false, None, false)
-        );
-        std::thread::sleep(Duration::from_millis(20));
-    }
-}
-
 fn mainland_relog_runner() -> ScenarioRunner {
     // A real clean relog posts the mainland inventory/side-tab observations.
     // It neither walks nor supplies poison-clear evidence.
@@ -140,81 +87,6 @@ fn mainland_relog_runner() -> ScenarioRunner {
         },
         None,
     )
-}
-
-// Pick a short actual endpoint crossing using only the selected pack's real
-// geometry and collision. The copied input's position is a fixture coordinate,
-// not live evidence. The receipt is assessed again from the actual seeded scene.
-fn endpoint_fixture(
-    world: &NavWorld,
-    state: &WorldState,
-    input: RiskInput,
-) -> (WorldTile, WorldTile) {
-    let zones = world.graph.zones.as_ref().expect("selected pack has zones");
-    let selected = api::game_data::for_revision(api::selected::ClientRevision::R289)
-        .expect("selected revision-289 facts");
-    let ice_warrior = selected
-        .npc_by_config("icewarrior")
-        .expect("selected Ice warrior identity")
-        .id;
-    for zone in zones.zones().iter().filter(|zone| {
-        zones.kinds()[usize::from(zone.kind)].npc_id == ice_warrior
-            && (3000..3080).contains(&zone.spawn_x)
-            && zone.spawn_z > 9500
-    }) {
-        let level = i32::from(zone.level);
-        let pairs = [
-            (zone.min_x - 3, zone.spawn_z, zone.min_x + 1, zone.spawn_z),
-            (zone.max_x + 3, zone.spawn_z, zone.max_x - 1, zone.spawn_z),
-            (zone.spawn_x, zone.min_z - 3, zone.spawn_x, zone.min_z + 1),
-            (zone.spawn_x, zone.max_z + 3, zone.spawn_x, zone.max_z - 1),
-        ];
-        for (x, z, dx, dz) in pairs {
-            let origin = WorldTile { x, z, level };
-            let destination = WorldTile {
-                x: dx,
-                z: dz,
-                level,
-            };
-            if !world.collision.standable(origin)
-                || !world.collision.standable(destination)
-                || zones.at(origin).next().is_some()
-                || zones.at(destination).next().is_none()
-            {
-                continue;
-            }
-            let options = FindOptions::default();
-            let Ok(route) = nav_planner::router::find_with(
-                &world.collision,
-                &world.graph,
-                origin,
-                destination,
-                options,
-                state,
-            ) else {
-                continue;
-            };
-            if route.ticks > 20.0 {
-                continue;
-            }
-            let context = Admission::manual(
-                options,
-                RiskInput {
-                    pos: origin,
-                    ..input
-                },
-                0,
-                WalkGlobals::default(),
-            );
-            let assessment = admission::assess(&route, world, &context);
-            if assessment.verdict == Verdict::Unknown(UnknownWhy::Poison)
-                && !assessment.plan.intervals.is_empty()
-            {
-                return (origin, destination);
-            }
-        }
-    }
-    panic!("selected real pack has no short ungranted Ice warrior endpoint crossing");
 }
 
 fn capture(client: &mut Client, directory: &Path, label: &str, receipt: &Value) -> PathBuf {
@@ -278,398 +150,6 @@ fn selected_template() -> (Arc<host_play::ServerProfile>, Arc<SharedClientTempla
     (profile, template)
 }
 
-#[test]
-#[ignore = "requires LIVE=1, BOT_CPU=1, BOT_LIVE_NAME_PREFIX, WORLD_ENGINE_DIR, BOT_CACHE_DIR (per-run clone), BOT_UNPACK_DIR, LIVE_EVIDENCE_DIR; a local 289 engine at WORLD_GAME_PORT/WORLD_HTTP_PORT (Engine A 44594/1080 by default)"]
-fn real_unknown_poison_explicit_forbid_then_opt_in_and_default_escape() {
-    assert_eq!(std::env::var("LIVE").as_deref(), Ok("1"));
-    assert_eq!(std::env::var("BOT_CPU").as_deref(), Ok("1"));
-    install_nav_logs();
-    let prefix = std::env::var("BOT_LIVE_NAME_PREFIX").expect("owned account prefix");
-    assert!(!prefix.is_empty() && prefix.len() <= 4);
-    let directory =
-        PathBuf::from(std::env::var_os("LIVE_EVIDENCE_DIR").expect("evidence directory"));
-    std::fs::create_dir_all(&directory).expect("create evidence directory");
-    let (profile, template) = selected_template();
-    let world = template.world().expect("selected actual nav world");
-    let serial = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .expect("clock")
-        .as_millis();
-    let name = host_play::mint_live_names(1)
-        .pop()
-        .expect("one live account");
-    let mut client = template
-        .prepare_client((serial % 1_000_000_000) as i32, true)
-        .expect("prepare actual client");
-    client.draw = false;
-    client.maininit();
-    assert!(!client.error_loading);
-    assert!(interact::login(&mut client, &name, &name, false));
-    let mut snapshot = GameSnapshot::new();
-    let mut pump = Pump::new();
-    wait_for(&mut client, &mut snapshot, &mut pump, |s| {
-        s.ingame() && s.attached() && s.scene_state() == 2
-    });
-    // Account-only initial state. No NPC, collision, map or shared content edits.
-    interact::mainland_hop(&mut client);
-    assert!(interact::cheat(&mut client, "getvar tutorial").is_sent());
-    wait_for(&mut client, &mut snapshot, &mut pump, |s| {
-        s.chat_lines()
-            .iter()
-            .any(|line| line.text.contains("get tutorial: 1000"))
-    });
-    let mut relogger = mainland_relog_runner();
-    let mut login_sent = false;
-    let relog_deadline = Instant::now() + Duration::from_secs(90);
-    loop {
-        pump_once(&mut client, &mut snapshot, &mut pump);
-        if !snapshot.ingame() && !login_sent {
-            assert!(interact::login(&mut client, &name, &name, false));
-            login_sent = true;
-        }
-        relogger.tick(&mut client);
-        match relogger.status() {
-            RunnerStatus::Passed => break,
-            RunnerStatus::Failed(error) => panic!("tutorial relog failed: {error}"),
-            RunnerStatus::Seeding | RunnerStatus::Running { .. } => {}
-        }
-        assert!(
-            Instant::now() < relog_deadline,
-            "manual clean relog deadline"
-        );
-        std::thread::sleep(Duration::from_millis(20));
-    }
-    for command in ["setstat hitpoints 99", "setstat defence 99"] {
-        assert!(interact::cheat(&mut client, command).is_sent());
-    }
-    wait_for(&mut client, &mut snapshot, &mut pump, |s| {
-        let input = admission::capture(s, profile.map_members(), None, false);
-        s.scene_state() == 2 && input.hp == 99 && !input.missing_facts
-    });
-    let state = WorldState::from_snapshot(&snapshot).with_map_members(profile.map_members());
-    let input = admission::capture(&snapshot, state.map_members, None, false);
-    let (origin, destination) = endpoint_fixture(&world, &state, input);
-    interact::seed_at(&mut client, origin.level, origin.x, origin.z);
-    wait_for(&mut client, &mut snapshot, &mut pump, |s| {
-        s.scene_state() == 2 && s.tile() == Some((origin.x, origin.z, origin.level))
-    });
-    let identity = profile.nav_identity().expect("bound navigation identity");
-    let context = MapContext {
-        focus: Some(FocusToken::capture(&SlotArm::new(1, false))),
-        nav: Digest::from_hex(&identity.nav_sha256).expect("nav digest"),
-        overlay: None,
-        generation: 1,
-    };
-    let mut model = MapModel::default();
-    model.bind(context);
-    assert_eq!(
-        model.select_tile(&world, tile(destination)),
-        Some(tile(destination))
-    );
-    let arms = WalkArms::default();
-    let state = WorldState::from_snapshot(&snapshot).with_map_members(profile.map_members());
-    let input = admission::capture(&snapshot, state.map_members, None, false);
-    let strict_options = FindOptions::default();
-    let strict = model
-        .confirm(
-            ActionKind::Walk,
-            &context,
-            Some(tile(origin)),
-            strict_options,
-        )
-        .expect("strict map command");
-    // The held default must retain the router's endpoint completion. Assess it
-    // honestly, but do not follow it before exercising the explicit refusal.
-    let default_walk = strict
-        .walk_on(
-            &world,
-            &context,
-            &name,
-            &state,
-            &nav_planner::bank_fetch::BankRows::default(),
-            Admission::manual(strict_options, input, 1, WalkGlobals::default()),
-            &arms,
-        )
-        .expect("held default preserves endpoint admission");
-    assert_eq!(
-        default_walk.assessment.verdict,
-        Verdict::Unknown(UnknownWhy::Poison)
-    );
-    let arm = Arc::clone(&arms.lock().expect("arms")[&name]);
-    assert!(arm.lock().expect("arm").route.is_some());
-    assert_eq!(snapshot.tile(), Some((origin.x, origin.z, origin.level)));
-    assert_eq!(
-        model.select_tile(&world, tile(destination)),
-        Some(tile(destination))
-    );
-    let strict = model
-        .confirm(
-            ActionKind::Walk,
-            &context,
-            Some(tile(origin)),
-            strict_options,
-        )
-        .expect("explicit forbid map command");
-    // This caller explicitly requests Forbid. Resolve its enforcement from the
-    // same global/tri-state contract as native requests; this is not default UI.
-    let forbid = WalkOptions {
-        allow_danger_zones: WalkBit::Forbid,
-        ..WalkOptions::default()
-    };
-    let globals = WalkGlobals::default();
-    let strict_admission = Admission {
-        policy: globals.risk_policy(WalkPermissions::default(), forbid),
-        enforce: globals.enforces_risk(WalkPermissions::default(), forbid),
-        ..Admission::manual(strict_options, input, 2, globals)
-    };
-    assert_eq!(strict_admission.policy, RiskPolicy::Avoid);
-    let refusal = strict
-        .walk_on(
-            &world,
-            &context,
-            &name,
-            &state,
-            &nav_planner::bank_fetch::BankRows::default(),
-            strict_admission,
-            &arms,
-        )
-        .expect_err("explicit Forbid endpoint must refuse Unknown poison");
-    let ActionError::RiskRefused {
-        refusal: WalkRefusal::Unknown(UnknownWhy::Poison),
-        detail,
-    } = refusal
-    else {
-        panic!("expected visible Unknown(Poison), got {refusal:?}");
-    };
-    let assessment = Arc::clone(
-        arm.lock()
-            .expect("arm")
-            .last_assessment
-            .as_ref()
-            .expect("retained refusal assessment"),
-    );
-    assert_eq!(assessment.verdict, Verdict::Unknown(UnknownWhy::Poison));
-    assert!(!assessment.plan.intervals.is_empty());
-    assert!(arm.lock().expect("arm").route.is_none());
-    assert_eq!(snapshot.tile(), Some((origin.x, origin.z, origin.level)));
-    assert_eq!(detail, assessment.reason.as_ref());
-    let mut receipt = json!({"cell": "S2b-real-admission", "account": name,
-        "engine": format!("127.0.0.1:{}", host_play::live_ports::game_port()), "nav": identity.nav_sha256,
-        "origin": [origin.x, origin.z, origin.level], "destination": [destination.x, destination.z, destination.level],
-        "refused": {"verdict": format!("{:?}", assessment.verdict), "reason": detail,
-            "route_armed": false, "crossings": assessment.plan.intervals.len(), "hp": input.hp,
-            "poison": format!("{:?}", input.poison)},
-        "held_default": {"admitted": true, "route_armed": true,
-            "verdict": format!("{:?}", default_walk.assessment.verdict),
-            "movement_before_explicit_forbid": false},
-        "refusal_policy": "explicit per-walk Forbid (not default/inherited admission)",
-        "poison_scope": "S2b poison remains Unknown for the entire session; only explicit enforcing crossings refuse, held defaults are unchanged.",
-        "deaths": 0});
-    receipt["refused_png"] = json!(capture(
-        &mut client,
-        &directory,
-        "endpoint-refused",
-        &receipt
-    ));
-    // The actual map checkbox is a request-local all-zone Allow; globals remain
-    // at the held middle default. Its assessment remains honestly Unknown.
-    assert_eq!(
-        model.select_tile(&world, tile(destination)),
-        Some(tile(destination))
-    );
-    let allow_options = FindOptions {
-        zones: nav_planner::zones::ZoneExempt::all(),
-        ..strict_options
-    };
-    let command = model
-        .confirm(
-            ActionKind::Walk,
-            &context,
-            Some(tile(origin)),
-            allow_options,
-        )
-        .expect("opt-in map command");
-    let walked = command
-        .walk_on(
-            &world,
-            &context,
-            &name,
-            &state,
-            &nav_planner::bank_fetch::BankRows::default(),
-            Admission::manual(allow_options, input, 2, WalkGlobals::default()),
-            &arms,
-        )
-        .expect("explicit opt-in proceeds");
-    let assessment = walked.assessment;
-    assert_eq!(assessment.verdict, Verdict::Unknown(UnknownWhy::Poison));
-    receipt["opt_in"] = json!({"verdict": format!("{:?}", assessment.verdict),
-        "reason": assessment.reason, "crossings": assessment.plan.intervals.len(), "ticks": walked.route.ticks});
-    let deadline = Instant::now() + Duration::from_secs(60);
-    let mut last_tick = None;
-    let mut path = Vec::new();
-    let mut hitmarks = Vec::new();
-    loop {
-        pump_once(&mut client, &mut snapshot, &mut pump);
-        if Some(snapshot.tick()) != last_tick {
-            last_tick = Some(snapshot.tick());
-            hitmarks.push(json!({"tick": snapshot.tick(), "hitmarks": observed_hitmarks(&client)}));
-            if let Some(here) = snapshot.tile() {
-                if path.last() != Some(&here) {
-                    path.push(here);
-                }
-                host_play::step_walk_arm_follow(
-                    &mut client,
-                    &snapshot,
-                    &mut arm.lock().expect("arm"),
-                    Some(&world),
-                    here,
-                    state.map_members,
-                    Some(&name),
-                );
-                if arm.lock().expect("arm").route.is_none() {
-                    break;
-                }
-            }
-        }
-        assert!(
-            Instant::now() < deadline,
-            "real opt-in crossing deadline at {:?}",
-            snapshot.tile()
-        );
-        std::thread::sleep(Duration::from_millis(20));
-    }
-    receipt["hitmarks"] = json!(hitmarks);
-    receipt["hostlog"] = json!(nav_logs(&name));
-    assert!(
-        receipt["hostlog"]
-            .as_array()
-            .expect("nav logs")
-            .iter()
-            .any(|line| {
-                line["message"]
-                    .as_str()
-                    .is_some_and(|message| message.contains("risk=Unknown(Poison)"))
-            }),
-        "real risk hostlog line must be recorded: {receipt}"
-    );
-    let final_input = admission::capture(&snapshot, state.map_members, None, false);
-    receipt["observed_path"] = json!(path);
-    receipt["final_tile"] = json!(snapshot.tile());
-    receipt["final_hp"] = json!(final_input.hp);
-    receipt["arrived"] =
-        json!(snapshot.tile() == Some((destination.x, destination.z, destination.level)));
-    receipt["arrival_png"] = json!(capture(
-        &mut client,
-        &directory,
-        "explicit-opt-in-arrived",
-        &receipt
-    ));
-    // Added live cell: start inside the actual endpoint zone and leave it using
-    // untouched defaults. No synthetic Clear, preflight or explicit grant.
-    assert!(world
-        .graph
-        .zones
-        .as_ref()
-        .unwrap()
-        .at(destination)
-        .next()
-        .is_some());
-    assert_eq!(model.select_tile(&world, tile(origin)), Some(tile(origin)));
-    let command = model
-        .confirm(
-            ActionKind::Walk,
-            &context,
-            Some(tile(destination)),
-            strict_options,
-        )
-        .expect("default escape map command");
-    let escape_input = admission::capture(&snapshot, state.map_members, None, false);
-    let escaped = command
-        .walk_on(
-            &world,
-            &context,
-            &name,
-            &state,
-            &nav_planner::bank_fetch::BankRows::default(),
-            Admission::manual(strict_options, escape_input, 3, WalkGlobals::default()),
-            &arms,
-        )
-        .expect("default walk out of a real zone is admitted");
-    assert!(escaped.assessment.plan.complete);
-    assert!(escaped.assessment.plan.crossings.is_empty());
-    assert!(escaped
-        .assessment
-        .plan
-        .intervals
-        .iter()
-        .any(|row| row.escaping()));
-    receipt["default_escape"] = json!({"admitted": true, "explicit_grant": false,
-        "origin": [destination.x, destination.z, destination.level],
-        "destination": [origin.x, origin.z, origin.level],
-        "entering_crossings": 0, "escape_intervals": escaped.assessment.plan.intervals.len(),
-        "verdict": format!("{:?}", escaped.assessment.verdict),
-        "poison": format!("{:?}", escape_input.poison)});
-    let escape_deadline = Instant::now() + Duration::from_secs(60);
-    let mut last_tick = None;
-    let mut escape_path = Vec::new();
-    loop {
-        pump_once(&mut client, &mut snapshot, &mut pump);
-        if Some(snapshot.tick()) != last_tick {
-            last_tick = Some(snapshot.tick());
-            if let Some(here) = snapshot.tile() {
-                if escape_path.last() != Some(&here) {
-                    escape_path.push(here);
-                }
-                host_play::step_walk_arm_follow(
-                    &mut client,
-                    &snapshot,
-                    &mut arm.lock().expect("arm"),
-                    Some(&world),
-                    here,
-                    state.map_members,
-                    Some(&name),
-                );
-                if arm.lock().expect("arm").route.is_none() {
-                    break;
-                }
-            }
-        }
-        assert!(
-            Instant::now() < escape_deadline,
-            "default escape deadline at {:?}",
-            snapshot.tile()
-        );
-        std::thread::sleep(Duration::from_millis(20));
-    }
-    let escape_final = admission::capture(&snapshot, state.map_members, None, false);
-    assert_eq!(snapshot.tile(), Some((origin.x, origin.z, origin.level)));
-    assert!(escape_path.len() > 1);
-    assert!(escape_final.hp > 0);
-    receipt["default_escape"]["arrived"] = json!(true);
-    receipt["default_escape"]["observed_path"] = json!(escape_path);
-    receipt["default_escape"]["final_hp"] = json!(escape_final.hp);
-    receipt["default_escape"]["arrival_png"] = json!(capture(
-        &mut client,
-        &directory,
-        "default-real-zone-escape-arrived",
-        &receipt,
-    ));
-    std::fs::write(
-        directory.join("receipt.json"),
-        serde_json::to_vec_pretty(&receipt).expect("receipt JSON"),
-    )
-    .expect("write final evidence");
-    client.logout();
-    assert_eq!(
-        receipt["arrived"], true,
-        "real common-host follow must reach the exact crossing endpoint: {receipt}"
-    );
-    assert!(final_input.hp > 0);
-    assert!(
-        path.len() > 1,
-        "real movement must be observed, not just routing"
-    );
-}
 
 #[cfg(feature = "js")]
 fn compat_corridor_fixture(
@@ -708,18 +188,12 @@ fn compat_corridor_fixture(
         .legs
         .iter()
         .all(|leg| matches!(leg, nav_planner::router::Leg::Walk { .. })));
+    let mut risk_input = input;
+    risk_input.pos = origin;
     let assessment = admission::assess(
         &route,
         world,
-        &Admission::manual(
-            options,
-            RiskInput {
-                pos: origin,
-                ..input
-            },
-            0,
-            WalkGlobals::default(),
-        ),
+        &Admission::manual(options, risk_input, 0, WalkGlobals::default()),
     );
     assert!(
         !assessment.plan.intervals.is_empty(),
@@ -798,7 +272,7 @@ impl CompatLive {
             {
                 self.phase = 2;
             }
-            3 if input.hp == self.base_hp && food == 6 && !input.missing_facts => {
+            3 if input.hp == self.base_hp && food == 6 && !input.missing_facts() => {
                 // Real account-only debug damage. No client/snapshot HP replacement.
                 assert!(interact::cheat(
                     client,

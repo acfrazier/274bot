@@ -608,8 +608,20 @@ mod tests {
             vislevel: 0,
             headicon: None,
             hitpoints: 0,
+            max_dealt: Some(1000),
             damagetype: None,
             dragonfire,
+            attack: 1,
+            defence: 1,
+            magic: 1,
+            attackbonus: 0,
+            rangeattack: 0,
+            magicattack: 0,
+            stabdefence: 0,
+            slashdefence: 0,
+            crushdefence: 0,
+            magicdefence: 0,
+            rangedefence: 0,
             strength,
             ranged: Some(1),
             strengthbonus,
@@ -623,6 +635,7 @@ mod tests {
             counter_protect: false,
             poison_severity: None,
             forcemulti: false,
+            combat_transform: None,
         }
     }
 

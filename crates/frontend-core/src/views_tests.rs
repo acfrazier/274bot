@@ -1018,6 +1018,8 @@ fn focused_manual_assessment_is_retained_shared_and_never_leaks_to_another_slot(
     use script::combat::risk::{RiskInput, RouteAssessment, UnknownWhy, Verdict};
     let assessment = Arc::new(RouteAssessment {
         verdict: Verdict::Unknown(UnknownWhy::Poison),
+        bound: 1.0,
+        poison_test: script::combat::risk::PoisonTest::NotNeeded,
         plan: Default::default(),
         crossings: Box::new([]),
         more: 0,
@@ -1028,10 +1030,9 @@ fn focused_manual_assessment_is_retained_shared_and_never_leaks_to_another_slot(
         generation: 1,
         reason: Arc::from("Route assessment unknown: Poison"),
     });
-    let arm = Arc::new(Mutex::new(host_play::WalkArm {
-        assessment: Some(Arc::clone(&assessment)),
-        ..Default::default()
-    }));
+    let mut arm = host_play::WalkArm::default();
+    arm.assessment = Some(Arc::clone(&assessment));
+    let arm = Arc::new(Mutex::new(arm));
     let walks = Arc::new(Mutex::new(HashMap::from([(
         "vr-alice".into(),
         Arc::clone(&arm),
@@ -1082,16 +1083,15 @@ fn focused_manual_refusal_without_a_route_retains_its_shared_reason() {
     let reason: Arc<str> = Arc::from(
         "NoRouteWithinBounds { tried: 0, last: None }; blocked by danger zones: Sentinel strip",
     );
+    let mut arm = host_play::WalkArm::default();
+    arm.refusal = Some(script::native::WalkRefusal::NoRouteWithinBounds {
+        tried: 0,
+        last: None,
+    });
+    arm.refusal_detail = Some(Arc::clone(&reason));
     let walks = Arc::new(Mutex::new(HashMap::from([(
         "vr-alice".into(),
-        Arc::new(Mutex::new(host_play::WalkArm {
-            refusal: Some(script::native::WalkRefusal::NoRouteWithinBounds {
-                tried: 0,
-                last: None,
-            }),
-            refusal_detail: Some(Arc::clone(&reason)),
-            ..Default::default()
-        })),
+        Arc::new(Mutex::new(arm)),
     )])));
     let mut session = fleet("walk-refusal-retention", &["vr-alice", "vr-bob"], false);
     session.set_walk_arms(walks);

@@ -81,6 +81,7 @@ mod play_bootstrap;
 mod play_login;
 mod play_status;
 mod play_wires;
+pub(crate) mod poison_hold;
 mod resource_view;
 mod rss;
 mod scatter;

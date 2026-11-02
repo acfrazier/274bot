@@ -1561,7 +1561,7 @@ globalThis.__checkEmptyBankResults = () => {
             assert!(
                 stdout.contains("running 1 test")
                     && stdout.contains(&format!("test {BANK_SHAPE_TEST_NAME} ..."))
-                    && stdout.contains("test result: ok. 1 passed"),
+                    && stdout.contains("test result: ok. 1 passed; 0 failed;"),
                 "isolated test did not run exactly once\nstdout: {stdout}\nstderr: {stderr}"
             );
             return;

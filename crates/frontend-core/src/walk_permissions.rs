@@ -180,11 +180,11 @@ impl WalkGlobals {
 pub const SCRIPT_SCOPE_NOTICE: &str = "Teleports and wilderness in Nav config now apply to every walk, including scripts. Bank fetch still applies only to manual WalkTo. rs2b0t-compatible scripts always allow wilderness and bank fetch.";
 
 /// The explanatory copy for the `When survivable` danger-routing level.
-pub const SURVIVABLE_ROUTING_TOOLTIP: &str = "The host applies the active survivability policy to danger routes. Scripts and the map control can still override.";
+pub const SURVIVABLE_ROUTING_TOOLTIP: &str = "Checks a death-probability upper bound of 1% for the whole route, without eating, prayer or escape. Named danger zones still count in the check. Always and rs2b0t-compatible walks proceed without this check.";
 
 /// Explanatory copy while the middle level is held behind the unavailable
 /// runtime net.
-pub const SURVIVABLE_ROUTING_HELD_TOOLTIP: &str = "Stored 'When survivable' is not available yet. Effective level: Never; this setting does not change route admission. Global, one-walk, and script overrides still apply.";
+pub const SURVIVABLE_ROUTING_HELD_TOOLTIP: &str = "Stored 'When survivable' is not available yet. Effective level: Never. This setting does not change route admission. Explicit danger-zone grants still check a death-probability upper bound of 1%, without eating, prayer or escape. Always and rs2b0t-compatible walks proceed without this check.";
 
 /// Return only copy that matches the currently active runtime gate.
 pub const fn survivable_routing_tooltip() -> &'static str {
@@ -200,7 +200,7 @@ pub const SURVIVABLE_ROUTING_NOTICE: &str =
     "Danger routing now has three levels and defaults to 'When survivable'.";
 
 /// Migration notice while the middle level is held behind the runtime net.
-pub const SURVIVABLE_ROUTING_HELD_NOTICE: &str = "Danger routing now has three levels and defaults to 'When survivable'. The stored 'When survivable' setting is not available yet; its effective level is Never and it does not change route admission. Global, one-walk, and script overrides still apply. rs2b0t-compatible scripts keep rs2b0t's own behaviour.";
+pub const SURVIVABLE_ROUTING_HELD_NOTICE: &str = "Danger routing has three levels and defaults to 'When survivable'. The stored 'When survivable' setting is not available yet. Its effective level is Never. Explicit danger-zone grants still check a death-probability upper bound of 1%, without eating, prayer or escape. Always and rs2b0t-compatible walks proceed without this check.";
 
 /// Return a migration notice that reflects whether the held level is usable.
 pub const fn survivable_routing_notice() -> &'static str {
@@ -212,7 +212,7 @@ pub const fn survivable_routing_notice() -> &'static str {
 }
 
 /// Warning shown for the global Always override and in place of the one-shot control.
-pub const GLOBAL_DANGER_WARNING: &str = "Global danger-zone override is enabled.";
+pub const GLOBAL_DANGER_WARNING: &str = "Global danger-zone override is enabled. Walks proceed without the survival check. The model's death-probability bound is information only.";
 
 /// Label for the single-admission danger-zone control.
 pub const DANGER_THIS_WALK_LABEL: &str = "Route through danger zones";
@@ -648,8 +648,9 @@ mod tests {
             super::survivable_routing_tooltip(),
             super::survivable_routing_notice(),
         ] {
-            assert!(!copy.contains("eating"));
-            assert!(!copy.contains("praying"));
+            assert!(copy.contains("upper bound of 1%"));
+            assert!(copy.contains("without eating, prayer or escape"));
+            assert!(copy.contains("proceed without this check"));
             assert!(!copy.contains("turn back"));
             assert!(!copy.contains("rebake"));
             assert!(!copy.contains("274V17"));

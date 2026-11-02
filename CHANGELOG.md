@@ -402,6 +402,8 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.8` 
 - In the panel, **Copy settings** now follows a bot if you rename it in
   **Profiles** before **Confirm**. The copy is still cancelled if the
   target is deleted or the vault becomes unavailable.
+
+- The panel wraps the global danger warning at the docked Nav window width.
 - Source builds can now omit the JavaScript runtime with
   `--no-default-features`. These builds keep Gatherer, Grinch and Quester,
   their settings, and native Start, Pause, Stop and paint controls. They do
@@ -441,6 +443,23 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.8` 
   "Saving…" without end.
 
 ### Combat
+
+- The route-risk model uses normal melee facts for a bespoke NPC only when
+  extracted combat content proves its shared melee routine, damage, and timing,
+  with no poison or multi-hit effect. Other bespoke attacks remain unknown.
+- Selected combat facts now include all NPC combat levels, signed bonuses,
+  player defence inputs, weapon style slots, and declared NPC damage defaults.
+  Missing required defaults stop data generation.
+- Route admission now checks an upper bound on the chance of death. The limit
+  is 1%, without credit for food, prayer or escape. Declared danger-zone grants
+  no longer bypass this check. Unknown poison can hold a walk before exposure
+  for the rest of one 31-tick clean window. Always and rs2b0t-compatible walks
+  keep their existing permission contract and show the bound as information.
+  Known poison remains in the bound and reason when a walk crosses no NPC zone.
+  Admission still permits those walks.
+  Incomplete route geometry stays unassessable.
+  Dormant NPCs use their awake combat facts only when selected content proves
+  the transition. Unresolved transitions stay unassessable.
 
 - Bots now drink their boost potion before the first hit even when the target
   starts out of reach.
