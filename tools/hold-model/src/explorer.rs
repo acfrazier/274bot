@@ -85,6 +85,9 @@ pub struct Exploration<S, A> {
     pub cap: Option<(CapKind, String)>,
     /// The first violation, with the shortest trace that reaches it.
     pub failure: Option<(Violation, Vec<A>)>,
+    /// With `Options::all_violations`: the shortest trace of each violation
+    /// name. Transitions that violate are not expanded.
+    pub failures: Vec<(Violation, Vec<A>)>,
     /// Goal hits by goal id, in the order that goals were first reached.
     pub goals: Vec<(u32, GoalHits<A>)>,
     nodes: Vec<Node<S, A>>,
@@ -174,6 +177,9 @@ pub struct Options<'a, M: Machine> {
     /// Keep every parent edge at the shortest depth, so that
     /// [`Exploration::goal_traces`] can list every shortest trace.
     pub retain_dag: bool,
+    /// Keep exploring after a violation: record the shortest trace of each
+    /// violation name and do not expand the violating transition.
+    pub all_violations: bool,
     /// Called for each transition that did not fail; it appends the goals
     /// that the edge reaches to the vector.
     pub goal: Option<&'a dyn Fn(&M::State, &M::Action, &M::State, &mut Vec<u32>)>,
@@ -183,6 +189,7 @@ impl<M: Machine> Default for Options<'_, M> {
     fn default() -> Self {
         Self {
             retain_dag: false,
+            all_violations: false,
             goal: None,
         }
     }
@@ -218,6 +225,7 @@ pub fn explore<M: Machine>(
         complete: false,
         cap: None,
         failure: None,
+        failures: Vec::new(),
         goals: Vec::new(),
         nodes: Vec::new(),
         preds: HashMap::new(),
@@ -257,9 +265,19 @@ pub fn explore<M: Machine>(
                 Err(violation) => {
                     let mut trace = out.trace_to(index);
                     trace.push(action);
-                    out.failure = Some((violation, trace));
-                    out.elapsed = started.elapsed();
-                    return out;
+                    if !options.all_violations {
+                        out.failure = Some((violation, trace));
+                        out.elapsed = started.elapsed();
+                        return out;
+                    }
+                    if !out
+                        .failures
+                        .iter()
+                        .any(|(known, _)| known.name == violation.name)
+                    {
+                        out.failures.push((violation, trace));
+                    }
+                    continue;
                 }
             };
             if let Some(goal) = options.goal {
@@ -443,6 +461,7 @@ mod tests {
             &Options {
                 retain_dag: true,
                 goal: Some(&goal),
+                ..Options::default()
             },
         );
         // 4 = 2+2 only at depth 2; 1+1+2, 1+2+1, 2+1+1 are depth 3.
@@ -460,6 +479,7 @@ mod tests {
             &Options {
                 retain_dag: true,
                 goal: Some(&goal),
+                ..Options::default()
             },
         );
         let mut traces = result.goal_traces(8, 100);

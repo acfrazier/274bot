@@ -9,6 +9,7 @@ struct Cli {
     mutation: Mutation,
     horizon: Option<usize>,
     limits: Limits,
+    all_violations: bool,
 }
 
 fn main() -> ExitCode {
@@ -21,7 +22,13 @@ fn main() -> ExitCode {
     };
     let mut worst = 0u8;
     for profile in &cli.profiles {
-        let result = explore_profile(profile, cli.mutation, cli.horizon, cli.limits);
+        let result = explore_profile(
+            profile,
+            cli.mutation,
+            cli.horizon,
+            cli.limits,
+            cli.all_violations,
+        );
         worst = worst.max(report(profile, cli.mutation, &result));
     }
     ExitCode::from(worst)
@@ -55,12 +62,9 @@ fn report(profile: &Profile, mutation: Mutation, result: &Exploration<hold_model
         Some(kb) => println!("peak_rss_kb={kb}"),
         None => println!("peak_rss_kb=unavailable"),
     }
-    if let Some((kind, message)) = &result.cap {
-        println!("CAP {kind:?}: {message}; the run is incomplete");
-        return 3;
-    }
-    if let Some((violation, trace)) = &result.failure {
-        let model = Model::new(profile.bounds, mutation);
+    let model = Model::new(profile.bounds, mutation);
+    let failures: Vec<_> = result.failure.iter().chain(&result.failures).collect();
+    for (violation, trace) in &failures {
         println!(
             "VIOLATION {}: {}\nshortest trace ({} steps):\n{}",
             violation.name,
@@ -68,6 +72,13 @@ fn report(profile: &Profile, mutation: Mutation, result: &Exploration<hold_model
             trace.len(),
             describe_trace(&model, trace)
         );
+    }
+    if let Some((kind, message)) = &result.cap {
+        println!("CAP {kind:?}: {message}; the run is incomplete");
+        return if failures.is_empty() { 3 } else { 1 };
+    }
+    if !failures.is_empty() {
+        println!("{} violation name(s) found", failures.len());
         return 1;
     }
     println!("complete: no violation within the horizon");
@@ -80,6 +91,7 @@ fn parse_args() -> Result<Cli, String> {
         profiles: Vec::new(),
         mutation: Mutation::None,
         horizon: None,
+        all_violations: false,
         limits: Limits {
             state_cap: DEFAULT_STATE_CAP,
             frontier_cap: DEFAULT_FRONTIER_CAP,
@@ -105,6 +117,10 @@ fn parse_args() -> Result<Cli, String> {
                 cli.mutation =
                     Mutation::parse(name).ok_or_else(|| format!("unknown mutation {name}"))?;
                 index += 2;
+            }
+            "--all-violations" => {
+                cli.all_violations = true;
+                index += 1;
             }
             "--horizon" => {
                 cli.horizon = Some(parse_number(&args, index, option)?);

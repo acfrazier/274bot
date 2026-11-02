@@ -67,19 +67,25 @@ pub fn profile(name: &str) -> Option<Profile> {
     profiles().into_iter().find(|p| p.name == name)
 }
 
-/// Explore one profile with one mutation.
+/// Explore one profile with one mutation. With `all_violations` the run does
+/// not stop at the first violation: `Exploration::failures` holds the
+/// shortest trace of each violation name.
 pub fn explore_profile(
     profile: &Profile,
     mutation: Mutation,
     horizon: Option<usize>,
     limits: Limits,
+    all_violations: bool,
 ) -> Exploration<State, Action> {
     let model = Model::new(profile.bounds, mutation);
     explore(
         &model,
         horizon.unwrap_or(profile.bounds.horizon),
         limits,
-        &Options::default(),
+        &Options {
+            all_violations,
+            ..Options::default()
+        },
     )
 }
 
@@ -132,6 +138,7 @@ pub fn release_traces(
         &Options {
             retain_dag: true,
             goal: Some(&goal),
+            ..Options::default()
         },
     );
     let mut found = Vec::new();
