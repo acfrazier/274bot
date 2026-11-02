@@ -495,7 +495,7 @@ fn exclusions_require_observed_absence_and_name_the_actual_item_and_entrance() {
     let mut state = WorldState::empty();
     assert!(state.allows(&edge), "an ungated edge needs no observation");
 
-    edge.forbidden_held = vec![1842];
+    edge.forbidden_held = vec![42, 1842, 9999];
     assert_eq!(
         state.exclusion_failure(&edge),
         Some(EntranceRequirement::InventoryNotObserved { at: edge.at })
@@ -522,7 +522,7 @@ fn exclusions_require_observed_absence_and_name_the_actual_item_and_entrance() {
     );
     state.inv.clear();
 
-    edge.forbidden_worn = vec![1277];
+    edge.forbidden_worn = vec![1101, 1277, 2000];
     assert_eq!(
         state.exclusion_failure(&edge),
         Some(EntranceRequirement::EquipmentNotObserved { at: edge.at })

@@ -107,9 +107,9 @@ pub struct TransportEdge {
     /// Unlike `worn_req`, this cannot be satisfied by an alternative, a
     /// carried item, or a banked item.
     pub worn_all_req: Vec<i32>,
-    /// Each listed obj must be absent from an observed held inventory.
+    /// Sorted object ids that must be absent from an observed held inventory.
     pub forbidden_held: Vec<i32>,
-    /// Each listed obj must be absent from observed worn equipment.
+    /// Sorted object ids that must be absent from observed worn equipment.
     /// Carried or banked copies do not violate this gate.
     pub forbidden_worn: Vec<i32>,
     /// WORLD membership required (`MAP_MEMBERS`). Set from the edge's source

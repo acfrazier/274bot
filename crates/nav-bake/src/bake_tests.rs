@@ -15,6 +15,26 @@ fn content_inputs_follow_the_content_root() {
 }
 
 #[test]
+fn bake_revision_selection_defaults_to_274_and_rejects_unknown_revisions() {
+    assert_eq!(
+        selected_game_data(None)
+            .expect("legacy 274 game data is available")
+            .revision(),
+        274
+    );
+    assert_eq!(
+        selected_game_data(Some(289))
+            .expect("revision 289 game data is available")
+            .revision(),
+        289
+    );
+    assert!(matches!(
+        selected_game_data(Some(300)),
+        Err(crate::GenerationError::UnsupportedRevision { revision: 300 })
+    ));
+}
+
+#[test]
 fn the_289_config_jag_is_inside_the_cache_and_274_beside_it() {
     assert_eq!(
         config_jag_for(289, Path::new("/289/engine/data/pack/client")).unwrap(),
@@ -62,6 +82,14 @@ fn movement_sources_invalidate_a_warm_reach_stamp() {
     assert!(
         GENERATOR_SOURCES.contains(&"crates/nav-bake/src/transport/condparse.rs"),
         "the transport condition parser must invalidate generated edges"
+    );
+    assert!(
+        GENERATOR_SOURCES.contains(&"crates/api/data/game-data/274.json"),
+        "legacy 274 item categories affect baked Entrana edges"
+    );
+    assert!(
+        GENERATOR_SOURCES.contains(&"crates/api/data/game-data/289.json"),
+        "revision 289 item categories affect baked Entrana edges"
     );
 
     let baseline: Vec<(&str, &str)> = GENERATOR_SOURCES

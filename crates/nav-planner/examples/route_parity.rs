@@ -211,6 +211,14 @@ fn first(world: &NavWorld, case: Case<'_>) -> Value {
     row
 }
 
+fn observed_item_state() -> WorldState {
+    let mut state = WorldState::empty();
+    state.map_members = true;
+    state.inventory_ready = true;
+    state.equipment_ready = true;
+    state
+}
+
 fn main() -> Result<(), String> {
     let args: Vec<_> = std::env::args().skip(1).collect();
     if args.len() != 2 {
@@ -255,6 +263,19 @@ fn main() -> Result<(), String> {
     live.map_members = true;
     live.combat_level = Some(50);
     live.inv.insert(995, 60);
+    let bronze_axe_id = data
+        .item_by_alias("bronze_axe")
+        .ok_or("missing bronze axe game-data item")?
+        .id;
+    let mut unknown_items = WorldState::empty();
+    unknown_items.map_members = true;
+    let observed_empty = observed_item_state();
+    let mut carried_axe = observed_item_state();
+    carried_axe.inv.insert(bronze_axe_id, 1);
+    let mut worn_axe = observed_item_state();
+    worn_axe.worn.insert(bronze_axe_id);
+    let entrana_approach = [tile(2818, 3352, 0)];
+    let port_sarim = [tile(3092, 3242, 0)];
     let legacy = FindOptions {
         zones: ZoneExempt::all(),
         ..FindOptions::default()
@@ -335,6 +356,63 @@ fn main() -> Result<(), String> {
             },
         ),
     ];
+    cases.extend([
+        many(
+            &world,
+            Case {
+                name: "entrana_outbound_unknown_item_observation",
+                from: tile(3092, 3242, 0),
+                goals: &entrana_approach,
+                options: legacy,
+                state: &unknown_items,
+                account: "items-unobserved",
+            },
+        ),
+        many(
+            &world,
+            Case {
+                name: "entrana_outbound_observed_empty",
+                from: tile(3092, 3242, 0),
+                goals: &entrana_approach,
+                options: legacy,
+                state: &observed_empty,
+                account: "items-observed-empty",
+            },
+        ),
+        many(
+            &world,
+            Case {
+                name: "entrana_outbound_carried_bronze_axe",
+                from: tile(3092, 3242, 0),
+                goals: &entrana_approach,
+                options: legacy,
+                state: &carried_axe,
+                account: "bronze-axe-carried",
+            },
+        ),
+        many(
+            &world,
+            Case {
+                name: "entrana_outbound_worn_bronze_axe",
+                from: tile(3092, 3242, 0),
+                goals: &entrana_approach,
+                options: legacy,
+                state: &worn_axe,
+                account: "bronze-axe-worn",
+            },
+        ),
+        many(
+            &world,
+            Case {
+                name: "entrana_return_with_carried_bronze_axe",
+                from: tile(2818, 3352, 0),
+                goals: &port_sarim,
+                options: legacy,
+                state: &carried_axe,
+                account: "bronze-axe-carried",
+            },
+        ),
+    ]);
     world.graph.zones = zones;
     for (name, account, state) in [
         ("reachable_lumbridge_falador_zones_l126", "rich126", &rich),

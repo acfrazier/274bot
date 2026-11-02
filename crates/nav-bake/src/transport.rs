@@ -98,7 +98,7 @@ pub fn derive_transports(
     loc_defs: &LocDefs,
     collision: &WorldCollision,
 ) -> TransportGraph {
-    derive_transports_with_audit(content_root, loc_defs, collision, None, None).0
+    derive_transports_with_audit(content_root, loc_defs, collision, None, None, None).0
 }
 /// The graph and accounting for source gates the live snapshot cannot prove.
 pub(crate) fn derive_transports_for_bake(
@@ -108,6 +108,7 @@ pub(crate) fn derive_transports_for_bake(
     configured_door_ids: &HashSet<i32>,
     parsed_door_configs: &[PathBuf],
     quests: Option<&QuestSource<'_>>,
+    game_data: &api::game_data::SelectedGameData,
 ) -> (TransportGraph, VarpGateAudit) {
     let (graph, skipped, audit) = derive_transports_with_audit(
         content_root,
@@ -115,6 +116,7 @@ pub(crate) fn derive_transports_for_bake(
         collision,
         Some((configured_door_ids, parsed_door_configs)),
         quests,
+        Some(game_data),
     );
     report(content_root, &graph, &skipped);
     (graph, audit)
@@ -127,7 +129,7 @@ fn derive_transports_with_skips(
     collision: &WorldCollision,
 ) -> (TransportGraph, HashMap<&'static str, usize>) {
     let (graph, skipped, _) =
-        derive_transports_with_audit(content_root, loc_defs, collision, None, None);
+        derive_transports_with_audit(content_root, loc_defs, collision, None, None, None);
     (graph, skipped)
 }
 
@@ -137,6 +139,7 @@ fn derive_transports_with_audit(
     collision: &WorldCollision,
     preloaded_doors: Option<(&HashSet<i32>, &[PathBuf])>,
     quests: Option<&QuestSource<'_>>,
+    game_data: Option<&api::game_data::SelectedGameData>,
 ) -> (TransportGraph, HashMap<&'static str, usize>, VarpGateAudit) {
     let mut graph = TransportGraph {
         quest_family: quests.map(|quests| quests.family),
@@ -220,7 +223,7 @@ fn derive_transports_with_audit(
         collision,
         &mut skipped,
     );
-    boat_edges(&mut graph, &gates, &mut audit);
+    boat_edges(&mut graph, &gates, &mut audit, game_data);
     cart_edges(
         &mut graph,
         gates.completed_quest_name("zombiequeen", "zombiequeen_complete"),

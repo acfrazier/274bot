@@ -349,6 +349,58 @@ pub(super) const BOAT_ROUTES: &[BoatRoute] = &[
     },
 ];
 
+// Content: `monk_of_entrana.rs2:26-50` rejects every listed category from
+// inventory and worn gear, except `cannon_parts`, which it checks in inventory.
+const ENTRANA_RESTRICTED_CATEGORIES: &[&str] = &[
+    "armour_hands",
+    "weapon_staff",
+    "armour_helmet",
+    "armour_body",
+    "armour_legs",
+    "armour_shield",
+    "armour_cape",
+    "armour_godcape",
+    "weapon_slash",
+    "weapon_blunt",
+    "weapon_stab",
+    "weapon_crossbow",
+    "weapon_axe",
+    "weapon_pickaxe",
+    "weapon_javelin",
+    "weapon_2h_sword",
+    "weapon_spear",
+    "weapon_spiked",
+    "weapon_thrown",
+    "weapon_scythe",
+    "weapon_bow",
+    "weapon_claws",
+    "weapon_polearm",
+    "cannon_parts",
+];
+
+fn entrana_restrictions(data: &api::game_data::SelectedGameData) -> (Vec<i32>, Vec<i32>) {
+    let mut forbidden_held = Vec::new();
+    let mut forbidden_worn = Vec::new();
+    for item in data.items() {
+        let Some(category) = item.category.as_deref() else {
+            continue;
+        };
+        if ENTRANA_RESTRICTED_CATEGORIES.contains(&category) {
+            forbidden_held.push(item.id);
+            if category != "cannon_parts" {
+                forbidden_worn.push(item.id);
+            }
+        }
+    }
+    forbidden_held.sort_unstable();
+    forbidden_held.dedup();
+    forbidden_worn.sort_unstable();
+    forbidden_worn.dedup();
+    (forbidden_held, forbidden_worn)
+}
+
+const ENTRANA_SAIL_NPC: i32 = 657;
+
 /// Boat edges from the explicit 2004 route table: one `Talk-to` edge per
 /// journey (NPC tile → `set_sail` deck), plus loc-backed gangplank crossings.
 /// Kind is Ladder: these are level-changing loc ops, not NPCs.
@@ -356,15 +408,22 @@ pub(super) fn boat_edges(
     graph: &mut TransportGraph,
     gates: &ObservableGates,
     audit: &mut VarpGateAudit,
+    game_data: Option<&api::game_data::SelectedGameData>,
 ) {
     for r in BOAT_ROUTES {
+        let (forbidden_held, forbidden_worn) = if r.npc == ENTRANA_SAIL_NPC {
+            game_data.map(entrana_restrictions).unwrap_or_default()
+        } else {
+            (Vec::new(), Vec::new())
+        };
+
         gates.admit_edge(
             graph,
             TransportEdge {
                 takeoff: None,
                 worn_all_req: Vec::new(),
-                forbidden_held: Vec::new(),
-                forbidden_worn: Vec::new(),
+                forbidden_held,
+                forbidden_worn,
                 kind: TransportKind::Boat,
                 player_delta: None,
                 at: r.at,

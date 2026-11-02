@@ -561,6 +561,7 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.8` 
   This lets the server finish turns without letting pacing or movement
   away keep a walk alive forever.
   A stopped walk keeps its original finite budget, including recovery attempts.
+- Routing to Entrana now respects the monks' rule on weapons and armour, and the Zanaris route works.
 - Bots now wait and try again when another player is using a shortcut,
   instead of giving up. The Yanille dungeon ledge ("The ledge is being
   used") stays held for at most 9 game ticks after a refusal, so the bot

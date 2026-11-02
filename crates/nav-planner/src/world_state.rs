@@ -81,10 +81,12 @@ pub struct WorldState {
 /// player's held or worn items to make the entrance acceptable.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, thiserror::Error)]
 pub enum EntranceRequirement {
-    /// The inventory observation cannot establish absence.
+    /// The first inventory observation is pending. A later route request must
+    /// check its contents before the edge can be used.
     #[error("inventory is not observed at entrance {at:?}")]
     InventoryNotObserved { at: api::WorldTile },
-    /// The equipment observation cannot establish absence.
+    /// The first equipment observation is pending. A later route request must
+    /// check its contents before the edge can be used.
     #[error("equipment is not observed at entrance {at:?}")]
     EquipmentNotObserved { at: api::WorldTile },
     /// A forbidden item is held.
@@ -480,8 +482,10 @@ impl WorldState {
             e,
             self.inventory_ready,
             self.equipment_ready,
-            |id| self.inv.get(&id).is_some_and(|&count| count > 0),
-            |id| self.worn.contains(&id),
+            self.inv
+                .iter()
+                .filter_map(|(&id, &count)| (count > 0).then_some(id)),
+            self.worn.iter().copied(),
         )
     }
 
@@ -495,18 +499,15 @@ impl WorldState {
             e,
             snapshot.inventory_packet_generation().is_some(),
             snapshot.equipment_packet_generation().is_some(),
-            |id| {
-                snapshot
-                    .inv()
-                    .iter()
-                    .any(|&(obj, count)| obj == id && count > 0)
-            },
-            |id| {
-                snapshot
-                    .equipment()
-                    .iter()
-                    .any(|item| item.def.id == id && item.count > 0)
-            },
+            snapshot
+                .inv()
+                .iter()
+                .filter_map(|&(id, count)| (count > 0).then_some(id)),
+            snapshot
+                .equipment()
+                .iter()
+                .filter(|item| item.count > 0)
+                .map(|item| item.def.id),
         )
     }
 
@@ -514,14 +515,17 @@ impl WorldState {
         e: &TransportEdge,
         inventory_ready: bool,
         equipment_ready: bool,
-        held: impl Fn(i32) -> bool,
-        worn: impl Fn(i32) -> bool,
+        held_ids: impl Iterator<Item = i32>,
+        worn_ids: impl Iterator<Item = i32>,
     ) -> Option<EntranceRequirement> {
         if !e.forbidden_held.is_empty() {
             if !inventory_ready {
                 return Some(EntranceRequirement::InventoryNotObserved { at: e.at });
             }
-            if let Some(&id) = e.forbidden_held.iter().find(|&&id| held(id)) {
+            if let Some(id) = held_ids
+                .filter(|id| e.forbidden_held.binary_search(id).is_ok())
+                .min()
+            {
                 return Some(EntranceRequirement::ForbiddenHeld { id, at: e.at });
             }
         }
@@ -529,7 +533,10 @@ impl WorldState {
             if !equipment_ready {
                 return Some(EntranceRequirement::EquipmentNotObserved { at: e.at });
             }
-            if let Some(&id) = e.forbidden_worn.iter().find(|&&id| worn(id)) {
+            if let Some(id) = worn_ids
+                .filter(|id| e.forbidden_worn.binary_search(id).is_ok())
+                .min()
+            {
                 return Some(EntranceRequirement::ForbiddenWorn { id, at: e.at });
             }
         }

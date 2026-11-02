@@ -40,6 +40,10 @@ globs = [
   "tools/**",
   "crates/script/paths/path.schema.json",
   "crates/e2e/**",
+  "crates/nav-bake/src/bake.rs",
+  "crates/nav-bake/src/transport.rs",
+  "crates/nav-bake/src/transport/static_routes.rs",
+  "crates/nav-planner/examples/route_parity.rs",
   "crates/script-js/src/tooling/compat_dts.rs",
   "crates/host-play/src/bank_core_live.rs",
   "crates/host-play/src/bank_fetch_closed_live.rs",
@@ -287,6 +291,17 @@ globs = ["crates/nav-planner/src/zones.rs", "crates/nav-planner/src/zones/**", "
 cells = [
   "host.nav-quest-doors|LIVE=1 BOT_LIVE_NAME_PREFIX=${BOT_LIVE_NAME_PREFIX:?} BOT_CPU=1 BOT_NAV_BUILD=skip BOT_CACHE_DIR=${BOT_CACHE_DIR:?} BOT_NAV_SNAPSHOT_ROOT=${NAV_SNAPSHOT_ROOT_289:?} WORLD_ENGINE_DIR=${ENGINE_A_DIR:?} WORLD_NAV_PACK=${NAV_PACK_289:?} NAV_QUEST_DOORS_EVIDENCE=${LIVE_EVIDENCE_DIR:?} ${ISOHOME:?} nice -n 10 cargo test --locked -p host-play --features live-harness,test-support,live-probe --test nav_quest_doors_live -- --ignored --exact live_fortress_disguise_and_secret_wall_use_content_navigation --nocapture --test-threads=1",
   "host.nav-gated-entrances|LIVE=1 BOT_LIVE_NAME_PREFIX=${BOT_LIVE_NAME_PREFIX:?} BOT_CPU=1 BOT_NAV_BUILD=skip BOT_CACHE_DIR=${BOT_CACHE_DIR:?} BOT_NAV_SNAPSHOT_ROOT=${NAV_SNAPSHOT_ROOT_289:?} WORLD_ENGINE_DIR=${ENGINE_A_DIR:?} WORLD_NAV_PACK=${NAV_PACK_289:?} NAV_GATED_ENTRANCES_EVIDENCE=${LIVE_EVIDENCE_DIR:?} ${ISOHOME:?} nice -n 10 cargo test --locked -p host-play --features live-harness,test-support,live-probe --test nav_gated_entrances_live -- --ignored --exact live_grand_tree_mine_requires_quest_completion_and_reaches_resources --nocapture --test-threads=1",
+]
+[[cover]]
+globs = [
+  "crates/nav-planner/src/world_state.rs",
+  "crates/host-play/tests/clue_walk_arrive_live.rs",
+  "crates/host-play/tests/entrana_content_live.rs",
+]
+cells = [
+  "host.nav-zanaris-entrana|LIVE=1 BOT_LIVE_NAME_PREFIX=${BOT_LIVE_NAME_PREFIX:?} BOT_CPU=1 BOT_NAV_BUILD=skip WORLD_GAME_PORT=47594 WORLD_HTTP_PORT=3080 WORLD_ENGINE_DIR=${ENGINE_A_DIR:?} BOT_CACHE_DIR=${BOT_CACHE_DIR:?} BOT_SERVER_PROFILE=local-289 WORLD_NAV_PACK=${NAV_PACK_289:?} NAV_PACK=${NAV_PACK_289:?} NAV_ARRIVAL_PACK=${NAV_PACK_289:?} RS2B0T=${CATALOG_ROOT:?} LIVE_EVIDENCE_DIR=${LIVE_EVIDENCE_DIR:?} QUESTER_PATH_DIR=${QUESTER_PATH_DIR:?} ${ISOHOME:?} nice -n 10 cargo test --locked -p host-play --features live-harness,test-support,live-probe --test zanaris_entrana_live -- --ignored --exact live_zanaris_entrana_dungeon_entry --nocapture --test-threads=1|--locked -p host-play --features live-harness,test-support,live-probe --test zanaris_entrana_live -- --ignored --exact live_zanaris_entrana_dungeon_entry --nocapture --test-threads=1",
+  "host.sherlock-entrana-walk-arrive|LIVE=1 BOT_LIVE_NAME_PREFIX=${BOT_LIVE_NAME_PREFIX:?} BOT_CPU=1 BOT_NAV_BUILD=skip WORLD_GAME_PORT=44594 WORLD_HTTP_PORT=1080 WORLD_ENGINE_DIR=${ENGINE_A_DIR:?} BOT_CACHE_DIR=${BOT_CACHE_DIR:?} WORLD_NAV_PACK=${NAV_PACK_289:?} RS2B0T=${CATALOG_ROOT:?} LIVE_EVIDENCE_DIR=${LIVE_EVIDENCE_DIR:?} ${ISOHOME:?} nice -n 10 cargo test --locked -p host-play --features live-harness,test-support,live-probe --test clue_walk_arrive_live -- --ignored --exact live_sherlock_entrana_walk_arrive --nocapture --test-threads=1|--locked -p host-play --features live-harness,test-support,live-probe --test clue_walk_arrive_live -- --ignored --exact live_sherlock_entrana_walk_arrive --nocapture --test-threads=1",
+  "host.sherlock-entrana-content-categories|LIVE=1 BOT_LIVE_NAME_PREFIX=${BOT_LIVE_NAME_PREFIX:?} BOT_CPU=1 BOT_NAV_BUILD=skip WORLD_GAME_PORT=44594 WORLD_HTTP_PORT=1080 WORLD_ENGINE_DIR=${ENGINE_A_DIR:?} BOT_CACHE_DIR=${BOT_CACHE_DIR:?} WORLD_NAV_PACK=${NAV_PACK_289:?} RS2B0T=${CATALOG_ROOT:?} LIVE_EVIDENCE_DIR=${LIVE_EVIDENCE_DIR:?} ${ISOHOME:?} nice -n 10 cargo test --locked -p host-play --features live-harness,test-support,live-probe --test entrana_content_live -- --ignored --exact live_sherlock_entrana_content_categories --nocapture --test-threads=1|--locked -p host-play --features live-harness,test-support,live-probe --test entrana_content_live -- --ignored --exact live_sherlock_entrana_content_categories --nocapture --test-threads=1",
 ]
 [[cover]]
 globs = ["crates/api/data/game-data/289/quests.json"]
