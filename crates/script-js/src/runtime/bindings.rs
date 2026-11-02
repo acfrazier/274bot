@@ -918,8 +918,8 @@ pub(super) fn wire_runtime(
         ),
         LoadShape::Reject => unreachable!("rejected above"),
     };
-    // Side modules load in order, so the shim modules (which the bot
-    // imports) must precede the bot's own module.
+    // Side modules load in order, so the shim modules (which the bot imports)
+    // must precede the bot's own module.
     let mut side = crate::shim::shim_modules();
     let siblings: Vec<(String, String)> = siblings
         .iter()
@@ -929,6 +929,15 @@ pub(super) fn wire_runtime(
         side.push(rustyscript::Module::new(url, src));
     }
     side.push(bot);
+    // Keep gated modules if the bot, one of its siblings, or any other
+    // always-loaded side module imports them.
+    crate::shim::filter_gated_modules(
+        &mut side,
+        siblings
+            .iter()
+            .map(|(url, _)| url.as_str())
+            .chain(std::iter::once(crate::shim::BOT_MODULE)),
+    );
     let side: Vec<&rustyscript::Module> = side.iter().collect();
     // Loading evaluates the modules, so a missing `tick`/default
     // export, an unresolvable import, or a syntax error surfaces

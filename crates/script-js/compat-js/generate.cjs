@@ -56,8 +56,10 @@ const print = (node, sf) => printer.printNode(ts.EmitHint.Unspecified, node, sf)
 const modifiers = n => (n.modifiers || []).map(m => m.kind);
 const name = n => n.name && (n.name.text || n.name.getText());
 const registryText = fs.readFileSync(path.join(crate, 'src/shim/modules.rs'), 'utf8');
-const registry = [...registryText.matchAll(/Module::new\(\s*"\/rs2b0t\/bot\/([^"]+)",\s*include_str!\("([^"]+)"\)/g)]
-    .map(m => ({ module: m[1], shim: m[2] })).filter(m => !m.module.startsWith('scripts/'));
+const sourceCatalogText = fs.readFileSync(path.join(crate, 'src/shim/source_catalog.rs'), 'utf8');
+const registry = [...sourceCatalogText.matchAll(/\(\s*"(\/rs2b0t\/bot\/[^"]+)",\s*include_str!\("([^"]+)"\)\s*,?\s*\)/g)]
+    .map(([, url, shim]) => ({ module: url.slice('/rs2b0t/bot/'.length), shim }))
+    .filter(m => !m.module.startsWith('scripts/'));
 if (!registry.length) throw new Error('No shim registry modules found');
 const prelude = parse(registryText.match(/const PRELUDE: &str = r#"([\s\S]*?)"#;/)[1], 'prelude.js');
 const preludeClasses = new Map();

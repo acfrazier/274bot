@@ -216,6 +216,12 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.7` 
   `BranchTask` and `LeafTask` and override their hooks.
 - `events.on` and `events.off` deliver chat messages, inventory changes and
   skill XP to the script.
+
+- Rust gates only the six wave-three shim paths and keeps the static and
+  literal-dynamic import closure for each start. Other served shim modules stay
+  eager. Rust loads any requested served shim on demand for dynamic imports;
+  direct `eval` and `Function` calls keep these six gated shims eager as a fast
+  path.
 - Removed unused members that only reported `not impl`:
   `resolveLoopCadence`, `resolveRunPolicy`, `shouldEnableRun`,
   `loopReadyOrDetached`, `stopReasonOf`, `settingOptionLabel`; the settings

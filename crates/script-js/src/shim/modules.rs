@@ -1,3 +1,11 @@
+use std::{borrow::Cow, collections::VecDeque, path::Path, sync::LazyLock};
+
+use deno_ast::swc::{
+    ast::{CallExpr, Callee, Expr, Lit, ModuleDecl, ModuleItem},
+    ecma_visit::{Visit, VisitWith},
+};
+use deno_ast::{MediaType, ParseParams, ProgramRef};
+use rustyscript::module_loader::ImportProvider;
 use rustyscript::Module;
 
 /// Canonical path of the user's bot module. Fixed for every card so
@@ -209,6 +217,8 @@ globalThis.__rs2b0t_invoke_native_event_listener = (callback, payload, hasPayloa
         logError(err);
     }
 };
+
+
 globalThis.TaskBot = class TaskBot extends globalThis.LoopingBot {
     constructor() {
         super();
@@ -521,491 +531,417 @@ globalThis.document = {
 /// the only cross-root projections are `src/client/config/worlds.ts` and
 /// `src/client/shell/Skill.ts`, which AccountLeveler imports. No other client
 /// modules are served.
+const WALK_DESTINATIONS_MODULE: &str = "/rs2b0t/bot/api/map/WalkDestinations.js";
+const REGIONS_MODULE: &str = "/rs2b0t/bot/api/map/regions.js";
+const WILDERNESS_MODULE: &str = "/rs2b0t/bot/event/webwalk/wilderness.js";
+const WALK_EXECUTOR_MODULE: &str = "/rs2b0t/bot/event/webwalk/WalkExecutor.js";
+const STOCK_MODEL_MODULE: &str = "/rs2b0t/bot/api/shop/StockModel.js";
+const SHOP_PRICE_MODULE: &str = "/rs2b0t/bot/api/shop/shopPrice.js";
+const WAVE_THREE_MODULE_PATHS: [&str; 6] = [
+    WALK_DESTINATIONS_MODULE,
+    REGIONS_MODULE,
+    WILDERNESS_MODULE,
+    WALK_EXECUTOR_MODULE,
+    STOCK_MODEL_MODULE,
+    SHOP_PRICE_MODULE,
+];
+const GATED_MODULE_PATHS: &[&str] = &WAVE_THREE_MODULE_PATHS;
+
 pub fn shim_modules() -> Vec<Module> {
-    vec![
-        // Exact cross-root client projections required by AccountLeveler.
-        Module::new("/rs2b0t/client/config/worlds.js", include_str!("worlds.js")),
-        Module::new(
-            "/rs2b0t/client/shell/Skill.js",
-            include_str!("client_skill.js"),
-        ),
-        // `_kernel.js` imports the Execution park for `runMachine`.
-        Module::new(
-            "/rs2b0t/bot/api/execution/Execution.js",
-            include_str!("execution.js"),
-        ),
-        Module::new("/rs2b0t/bot/shim/_kernel.js", include_str!("_kernel.js")),
-        Module::new("/rs2b0t/bot/geometry/Tile.js", include_str!("tile.js")),
-        Module::new("/rs2b0t/bot/geometry/Area.js", include_str!("area.js")),
-        Module::new("/rs2b0t/bot/api/query/Query.js", include_str!("query.js")),
-        Module::new(
-            "/rs2b0t/bot/api/execution/EventSignal.js",
-            include_str!("event_signal.js"),
-        ),
-        Module::new(
-            "/rs2b0t/bot/client/shell/Skill.js",
-            include_str!("client_skill.js"),
-        ),
-        Module::new(
-            "/rs2b0t/bot/client/config/worlds.js",
-            include_str!("worlds.js"),
-        ),
-        Module::new(
-            "/rs2b0t/bot/adapter/ClientAdapter.js",
-            include_str!("client_adapter.js"),
-        ),
-        Module::new("/rs2b0t/bot/input/Input.js", include_str!("input.js")),
-        Module::new("/rs2b0t/bot/api/game/Game.js", include_str!("game.js")),
-        Module::new(
-            "/rs2b0t/bot/api/inventory/Inventory.js",
-            include_str!("inventory.js"),
-        ),
-        // food before packRules: packRules.shouldEat forwards to shouldEatToUseFood
-        Module::new("/rs2b0t/bot/api/combat/food.js", include_str!("food.js")),
-        Module::new(
-            "/rs2b0t/bot/api/inventory/packRules.js",
-            include_str!("pack_rules.js"),
-        ),
-        Module::new(
-            "/rs2b0t/bot/api/acquisition/Tools.js",
-            include_str!("tools.js"),
-        ),
-        Module::new(
-            "/rs2b0t/bot/api/skills/Skills.js",
-            include_str!("skills.js"),
-        ),
-        Module::new(
-            "/rs2b0t/bot/api/prayer/Prayer.js",
-            include_str!("prayer.js"),
-        ),
-        Module::new("/rs2b0t/bot/api/bank/Bank.js", include_str!("bank.js")),
-        Module::new(
-            "/rs2b0t/bot/api/bank/bankOps.js",
-            include_str!("bank_ops.js"),
-        ),
-        Module::new(
-            "/rs2b0t/bot/api/bank/bankSortRules.js",
-            include_str!("bank_sort_rules.js"),
-        ),
-        Module::new(
-            "/rs2b0t/bot/api/bank/Banking.js",
-            include_str!("banking.js"),
-        ),
-        Module::new(
-            "/rs2b0t/bot/api/bank/bankRules.js",
-            include_str!("bank_rules.js"),
-        ),
-        Module::new(
-            "/rs2b0t/bot/api/bank/bankSort.js",
-            include_str!("bank_sort.js"),
-        ),
-        Module::new(
-            "/rs2b0t/bot/api/bank/bankQuestJunk.js",
-            include_str!("bank_quest_junk.js"),
-        ),
-        Module::new("/rs2b0t/bot/api/npcs/Npcs.js", include_str!("npcs.js")),
-        Module::new("/rs2b0t/bot/api/model/Npc.js", include_str!("model_npc.js")),
-        Module::new("/rs2b0t/bot/api/locs/Locs.js", include_str!("locs.js")),
-        Module::new("/rs2b0t/bot/api/model/Loc.js", include_str!("model_loc.js")),
-        Module::new(
-            "/rs2b0t/bot/api/players/Players.js",
-            include_str!("players.js"),
-        ),
-        Module::new(
-            "/rs2b0t/bot/api/model/Player.js",
-            include_str!("model_player.js"),
-        ),
-        Module::new(
-            "/rs2b0t/bot/api/grounditems/GroundItems.js",
-            include_str!("grounditems.js"),
-        ),
-        Module::new(
-            "/rs2b0t/bot/api/equipment/Equipment.js",
-            include_str!("equipment.js"),
-        ),
-        Module::new("/rs2b0t/bot/api/trade/Trade.js", include_str!("trade.js")),
-        Module::new(
-            "/rs2b0t/bot/api/trade/drivePartnerTrade.js",
-            include_str!("drive_partner_trade.js"),
-        ),
-        Module::new(
-            "/rs2b0t/bot/api/trade/PartnerTrade.js",
-            include_str!("partner_trade.js"),
-        ),
-        Module::new("/rs2b0t/bot/api/shop/Shop.js", include_str!("shop.js")),
-        Module::new(
-            "/rs2b0t/bot/api/shop/types.js",
-            include_str!("shop_types.js"),
-        ),
-        Module::new(
-            "/rs2b0t/bot/api/shop/BuyoutLogic.js",
-            include_str!("buyout_logic.js"),
-        ),
-        Module::new(
-            "/rs2b0t/bot/api/ui/dialogue/ChatDialog.js",
-            include_str!("chat_dialog.js"),
-        ),
-        Module::new(
-            "/rs2b0t/bot/api/ui/widgets/Modals.js",
-            include_str!("modals.js"),
-        ),
-        Module::new(
-            "/rs2b0t/bot/api/ui/questlog/Quests.js",
-            include_str!("quests.js"),
-        ),
-        Module::new(
-            "/rs2b0t/bot/api/tasks/ContinueDialog.js",
-            include_str!("continue_dialog.js"),
-        ),
-        Module::new(
-            "/rs2b0t/bot/api/tasks/DeathRecovery.js",
-            include_str!("death_recovery.js"),
-        ),
-        Module::new(
-            "/rs2b0t/bot/api/tasks/PeriodicBank.js",
-            include_str!("periodic_bank.js"),
-        ),
-        Module::new(
-            "/rs2b0t/bot/api/combat/CombatStyle.js",
-            include_str!("combat_style.js"),
-        ),
-        Module::new(
-            "/rs2b0t/bot/data/spelldb.js",
-            include_str!("data/spelldb.js"),
-        ),
-        Module::new("/rs2b0t/bot/data/itemdb.js", include_str!("data/itemdb.js")),
-        Module::new("/rs2b0t/bot/data/herbs.js", include_str!("data/herbs.js")),
-        Module::new("/rs2b0t/bot/data/dropdb.js", include_str!("dropdb.js")),
-        Module::new(
-            "/rs2b0t/bot/data/cowKillerLocations.js",
-            include_str!("cow_killer_locations.js"),
-        ),
-        Module::new("/rs2b0t/bot/data/shopdb.js", include_str!("shopdb.js")),
-        Module::new(
-            "/rs2b0t/bot/data/miningRocks.js",
-            include_str!("mining_rocks.js"),
-        ),
-        Module::new(
-            "/rs2b0t/bot/data/runeCraftLocations.js",
-            include_str!("rune_craft_locations.js"),
-        ),
-        Module::new(
-            "/rs2b0t/bot/data/pickpocketTargets.js",
-            include_str!("data/pickpocket_targets.js"),
-        ),
-        Module::new(
-            "/rs2b0t/bot/shim/gathering_locations.js",
-            include_str!("gathering_locations.js"),
-        ),
-        Module::new(
-            "/rs2b0t/bot/data/woodcuttingLocations.js",
-            include_str!("data/woodcutting_locations.js"),
-        ),
-        Module::new(
-            "/rs2b0t/bot/data/miningLocations.js",
-            include_str!("data/mining_locations.js"),
-        ),
-        Module::new(
-            "/rs2b0t/bot/data/gatheringLocations.js",
-            include_str!("data/gathering_locations.js"),
-        ),
-        Module::new(
-            "/rs2b0t/bot/data/fishingMethods.js",
-            include_str!("data/fishing_methods.js"),
-        ),
-        Module::new(
-            "/rs2b0t/bot/data/fishingLocations.js",
-            include_str!("data/fishing_locations.js"),
-        ),
-        Module::new(
-            "/rs2b0t/bot/data/cookingRanges.js",
-            include_str!("data/cooking_ranges.js"),
-        ),
-        Module::new(
-            "/rs2b0t/bot/shim/fishing_gear.js",
-            include_str!("fishing_gear.js"),
-        ),
-        Module::new(
-            "/rs2b0t/bot/api/combat/CombatStyleLogic.js",
-            include_str!("combat_style_logic.js"),
-        ),
-        // food.js registered earlier (before packRules)
-        Module::new(
-            "/rs2b0t/bot/api/combat/Special.js",
-            include_str!("special.js"),
-        ),
-        Module::new(
-            "/rs2b0t/bot/api/combat/rangedSettings.js",
-            include_str!("ranged_settings.js"),
-        ),
-        Module::new(
-            "/rs2b0t/bot/api/combat/fightUpkeep.js",
-            include_str!("fight_upkeep.js"),
-        ),
-        Module::new(
-            "/rs2b0t/bot/api/combat/eatTiming.js",
-            include_str!("eat_timing.js"),
-        ),
-        Module::new(
-            "/rs2b0t/bot/api/combat/boostPotions.js",
-            include_str!("boost_potions.js"),
-        ),
-        Module::new(
-            "/rs2b0t/bot/api/combat/keepList.js",
-            include_str!("keep_list.js"),
-        ),
-        Module::new(
-            "/rs2b0t/bot/api/combat/equipment.js",
-            include_str!("combat_equipment.js"),
-        ),
-        Module::new(
-            "/rs2b0t/bot/api/combat/meleeWeapons.js",
-            include_str!("melee_weapons.js"),
-        ),
-        Module::new(
-            "/rs2b0t/bot/api/combat/ranged.js",
-            include_str!("ranged.js"),
-        ),
-        Module::new(
-            "/rs2b0t/bot/api/sustain/Sustain.js",
-            include_str!("sustain.js"),
-        ),
-        Module::new(
-            "/rs2b0t/bot/api/combat/hunting/combat.js",
-            include_str!("hunting_combat.js"),
-        ),
-        Module::new(
-            "/rs2b0t/bot/api/combat/hunting/sites.js",
-            include_str!("hunting_sites.js"),
-        ),
-        Module::new(
-            "/rs2b0t/bot/api/combat/hunting/logic.js",
-            include_str!("hunting_logic.js"),
-        ),
-        Module::new(
-            "/rs2b0t/bot/api/combat/hunting/guarded.js",
-            include_str!("hunting_guarded.js"),
-        ),
-        Module::new(
-            "/rs2b0t/bot/api/combat/hunting/supply.js",
-            include_str!("hunting_supply.js"),
-        ),
-        Module::new(
-            "/rs2b0t/bot/api/firemaking/LightFire.js",
-            include_str!("light_fire.js"),
-        ),
-        Module::new(
-            "/rs2b0t/bot/api/firemaking/Firemaking.js",
-            include_str!("firemaking.js"),
-        ),
-        Module::new(
-            "/rs2b0t/bot/api/magic/Autocast.js",
-            include_str!("autocast.js"),
-        ),
-        Module::new(
-            "/rs2b0t/bot/api/chatbox/gameMessages.js",
-            include_str!("game_messages.js"),
-        ),
-        Module::new(
-            "/rs2b0t/bot/runtime/defineBot.js",
-            include_str!("define_bot.js"),
-        ),
-        Module::new(
-            "/rs2b0t/bot/runtime/RecoveryHints.js",
-            include_str!("recovery_hints.js"),
-        ),
-        Module::new(
-            "/rs2b0t/bot/runtime/Supervisor.js",
-            include_str!("supervisor.js"),
-        ),
-        Module::new(
-            "/rs2b0t/bot/api/bank/BankLocations.js",
-            include_str!("bank_locations.js"),
-        ),
-        Module::new(
-            "/rs2b0t/bot/data/cookLocations.js",
-            include_str!("cook_locations_data.js"),
-        ),
-        Module::new(
-            "/rs2b0t/bot/api/cooking/CookLocations.js",
-            include_str!("cook_locations.js"),
-        ),
-        Module::new(
-            "/rs2b0t/bot/api/thieving/targets.js",
-            include_str!("thieving_targets.js"),
-        ),
-        Module::new(
-            "/rs2b0t/bot/api/thieving/stealRules.js",
-            include_str!("steal_rules.js"),
-        ),
-        Module::new(
-            "/rs2b0t/bot/api/walking/Traversal.js",
-            include_str!("traversal.js"),
-        ),
-        Module::new(
-            "/rs2b0t/bot/api/thieving/cakeStallData.js",
-            include_str!("cake_stall_data.js"),
-        ),
-        Module::new(
-            "/rs2b0t/bot/api/thieving/CakeStall.js",
-            include_str!("cake_stall.js"),
-        ),
-        Module::new(
-            "/rs2b0t/bot/api/loadout/loadoutSetting.js",
-            include_str!("loadout_setting.js"),
-        ),
-        Module::new(
-            "/rs2b0t/bot/api/loadout/loadoutPlan.js",
-            include_str!("loadout_plan.js"),
-        ),
-        Module::new(
-            "/rs2b0t/bot/paint/levelProgress.js",
-            include_str!("level_progress.js"),
-        ),
-        Module::new(
-            "/rs2b0t/bot/api/market/catalog.js",
-            include_str!("catalog.js"),
-        ),
-        Module::new(
-            "/rs2b0t/bot/api/market/MarketMaker.js",
-            include_str!("market_maker.js"),
-        ),
-        Module::new(
-            "/rs2b0t/bot/runtime/RunManager.js",
-            include_str!("run_manager.js"),
-        ),
-        Module::new(
-            "/rs2b0t/bot/runtime/Settings.js",
-            include_str!("settings.js"),
-        ),
-        Module::new(
-            "/rs2b0t/bot/runtime/randomevents/eventEvade.js",
-            include_str!("event_evade.js"),
-        ),
-        Module::new(
-            "/rs2b0t/bot/api/ai/quests/engine/QuestEngine.js",
-            include_str!("quest_engine.js"),
-        ),
-        Module::new(
-            "/rs2b0t/bot/api/ai/quests/defs/murder/areas.js",
-            include_str!("murder_areas.js"),
-        ),
-        Module::new("/rs2b0t/bot/api/duel/Duel.js", include_str!("duel.js")),
-        Module::new(
-            "/rs2b0t/bot/api/duel/ClueDuel.js",
-            include_str!("clue_duel.js"),
-        ),
-        Module::new(
-            "/rs2b0t/bot/api/ai/clues/bankAccess.js",
-            include_str!("clue_bank_access.js"),
-        ),
-        Module::new(
-            "/rs2b0t/bot/api/ai/clues/ClueExecutor.js",
-            include_str!("clue_executor.js"),
-        ),
-        Module::new(
-            "/rs2b0t/bot/api/ai/clues/duelTravel.js",
-            include_str!("clue_duel_travel.js"),
-        ),
-        Module::new(
-            "/rs2b0t/bot/api/ai/clues/SolveClue.js",
-            include_str!("solve_clue.js"),
-        ),
-        Module::new(
-            "/rs2b0t/bot/api/ai/clues/cluePaint.js",
-            include_str!("clue_paint.js"),
-        ),
-        Module::new(
-            "/rs2b0t/bot/api/ai/clues/data/cluedb.js",
-            include_str!("cluedb.js"),
-        ),
-        Module::new(
-            "/rs2b0t/bot/api/ai/clues/data/toolAcquire.js",
-            include_str!("clue_tool_acquire.js"),
-        ),
-        Module::new(
-            "/rs2b0t/bot/api/ai/quests/exec/primitives.js",
-            include_str!("primitives.js"),
-        ),
-        Module::new(
-            "/rs2b0t/bot/api/walking/DirectNavigator.js",
-            include_str!("direct_navigator.js"),
-        ),
-        Module::new(
-            "/rs2b0t/bot/event/webwalk/DirectNavigator.js",
-            include_str!("direct_navigator.js"),
-        ),
-        Module::new("/rs2b0t/bot/api/walking/Reach.js", include_str!("reach.js")),
-        Module::new(
-            "/rs2b0t/bot/event/webwalk/geometry/Reachability.js",
-            include_str!("reachability.js"),
-        ),
-        Module::new(
-            "/rs2b0t/bot/event/webwalk/walkOpening.js",
-            include_str!("walk_opening.js"),
-        ),
-        Module::new(
-            "/rs2b0t/bot/event/webwalk/Navigator.js",
-            include_str!("navigator.js"),
-        ),
-        Module::new("/rs2b0t/bot/api/tasks/Anchor.js", include_str!("anchor.js")),
-        Module::new("/rs2b0t/bot/api/bot/Bot.js", include_str!("bot.js")),
-        Module::new("/rs2b0t/bot/paint/Paint.js", include_str!("paint.js")),
-        Module::new("/rs2b0t/bot/paint/jive.js", include_str!("jive.js")),
-        Module::new(
-            "/rs2b0t/bot/paint/paintLogic.js",
-            include_str!("paintLogic.js"),
-        ),
-        Module::new(
-            "/rs2b0t/bot/runtime/ScriptRunner.js",
-            include_str!("script_runner.js"),
-        ),
-        Module::new(
-            "/rs2b0t/bot/runtime/ScriptRegistry.js",
-            include_str!("script_registry.js"),
-        ),
-        Module::new(
-            "/rs2b0t/bot/runtime/BotHost.js",
-            include_str!("bot_host.js"),
-        ),
-        Module::new(
-            "/rs2b0t/bot/runtime/Scheduler.js",
-            include_str!("scheduler.js"),
-        ),
-        Module::new(
-            "/rs2b0t/bot/runtime/ScriptActivity.js",
-            include_str!("script_activity.js"),
-        ),
-        Module::new(
-            "/rs2b0t/bot/api/map/WalkDestinations.js",
-            include_str!("walk_destinations.js"),
-        ),
-        Module::new(
-            "/rs2b0t/bot/scripts/bot/declared_surface.js",
-            include_str!("declared_surface.js"),
-        ),
-        Module::new(
-            "/rs2b0t/bot/scripts/bot/rs2b0t-api.js",
-            include_str!("rs2b0t_api.js"),
-        ),
-        Module::new("/rs2b0t/bot/api/map/regions.js", include_str!("regions.js")),
-        Module::new(
-            "/rs2b0t/bot/event/webwalk/wilderness.js",
-            include_str!("wilderness.js"),
-        ),
-        Module::new(
-            "/rs2b0t/bot/event/webwalk/WalkExecutor.js",
-            include_str!("walk_executor.js"),
-        ),
-        Module::new(
-            "/rs2b0t/bot/api/shop/StockModel.js",
-            include_str!("stock_model.js"),
-        ),
-        Module::new(
-            "/rs2b0t/bot/api/shop/shopPrice.js",
-            include_str!("shop_price.js"),
-        ),
-    ]
+    super::source_catalog::SHIM_MODULE_SOURCES
+        .iter()
+        .map(|(filename, source)| Module::new(*filename, *source))
+        .collect()
+}
+
+#[derive(Default)]
+struct ModuleEdges {
+    imports: Vec<usize>,
+    dynamic_imports: Vec<usize>,
+    has_unknown_dependency: bool,
+    has_dynamic_code: bool,
+}
+
+#[derive(Default)]
+struct ShimImportGraph {
+    edges: Vec<ModuleEdges>,
+    paths: Vec<std::path::PathBuf>,
+    gated: Vec<bool>,
+    complete: bool,
+}
+
+fn shim_import_graph() -> &'static ShimImportGraph {
+    static GRAPH: LazyLock<ShimImportGraph> = LazyLock::new(build_shim_import_graph);
+    &GRAPH
+}
+
+fn build_shim_import_graph() -> ShimImportGraph {
+    let modules = shim_modules();
+    let mut graph = ShimImportGraph {
+        paths: modules
+            .iter()
+            .map(|module| module.filename().to_path_buf())
+            .collect(),
+        gated: modules
+            .iter()
+            .map(|module| is_gated_module(module.filename()))
+            .collect(),
+        complete: true,
+        ..ShimImportGraph::default()
+    };
+    for module in &modules {
+        let Some(url) = module_specifier(module.filename()) else {
+            graph.complete = false;
+            continue;
+        };
+        let Some(edges) = module_edges(module.contents(), &url, &modules) else {
+            graph.complete = false;
+            continue;
+        };
+        graph.edges.push(edges);
+    }
+    graph
+}
+
+fn is_gated_module(path: &Path) -> bool {
+    GATED_MODULE_PATHS
+        .iter()
+        .any(|gated| Path::new(gated) == path)
+}
+
+fn module_specifier(path: &Path) -> Option<deno_ast::ModuleSpecifier> {
+    let path = rustyscript::deno_core::normalize_path(Cow::Borrowed(path));
+    rustyscript::deno_core::url::Url::from_file_path(path.as_ref()).ok()
+}
+
+fn module_edges(
+    source: &str,
+    referrer: &deno_ast::ModuleSpecifier,
+    modules: &[Module],
+) -> Option<ModuleEdges> {
+    let parsed = deno_ast::parse_module(ParseParams {
+        specifier: referrer.clone(),
+        text: source.into(),
+        media_type: MediaType::JavaScript,
+        capture_tokens: false,
+        scope_analysis: false,
+        maybe_syntax: None,
+    })
+    .ok()?;
+    if !parsed.diagnostics().is_empty() {
+        return None;
+    }
+    let ProgramRef::Module(module) = parsed.program_ref() else {
+        return None;
+    };
+
+    let mut edges = ModuleEdges::default();
+    for item in &module.body {
+        let ModuleItem::ModuleDecl(decl) = item else {
+            continue;
+        };
+        match decl {
+            ModuleDecl::Import(import) => add_import_edge(
+                &mut edges,
+                import.src.value.as_ref(),
+                false,
+                referrer,
+                modules,
+            ),
+            ModuleDecl::ExportAll(export) => add_import_edge(
+                &mut edges,
+                export.src.value.as_ref(),
+                false,
+                referrer,
+                modules,
+            ),
+            ModuleDecl::ExportNamed(export) => {
+                if let Some(specifier) = export.src.as_ref() {
+                    add_import_edge(
+                        &mut edges,
+                        specifier.value.as_ref(),
+                        false,
+                        referrer,
+                        modules,
+                    );
+                }
+            }
+            _ => {}
+        }
+    }
+
+    let mut visitor = DynamicDependencyVisitor::default();
+    module.visit_with(&mut visitor);
+    edges.has_unknown_dependency |= visitor.has_unknown_dependency;
+    edges.has_dynamic_code = visitor.has_dynamic_code;
+    for specifier in visitor.dynamic_imports {
+        add_import_edge(&mut edges, &specifier, true, referrer, modules);
+    }
+    Some(edges)
+}
+
+#[derive(Default)]
+struct DynamicDependencyVisitor {
+    dynamic_imports: Vec<String>,
+    has_unknown_dependency: bool,
+    has_dynamic_code: bool,
+}
+
+impl Visit for DynamicDependencyVisitor {
+    fn visit_call_expr(&mut self, call: &CallExpr) {
+        match &call.callee {
+            Callee::Import(_) => match call
+                .args
+                .first()
+                .filter(|argument| argument.spread.is_none())
+                .map(|argument| &*argument.expr)
+            {
+                Some(Expr::Lit(Lit::Str(specifier))) => {
+                    self.dynamic_imports.push(specifier.value.to_string());
+                }
+                Some(Expr::Tpl(template)) if template.exprs.is_empty() => {
+                    match template.quasis.as_slice() {
+                        [quasi] => match &quasi.cooked {
+                            Some(specifier) => self.dynamic_imports.push(specifier.to_string()),
+                            None => self.has_unknown_dependency = true,
+                        },
+                        _ => self.has_unknown_dependency = true,
+                    }
+                }
+                _ => self.has_unknown_dependency = true,
+            },
+            Callee::Expr(callee)
+                if is_identifier(callee, "eval") || is_identifier(callee, "Function") =>
+            {
+                // Keep the existing direct-call fallback as a fast path.
+                // The import provider below handles every served module that
+                // dynamic code reaches but this narrow scan cannot see.
+                self.has_dynamic_code = true;
+            }
+            _ => {}
+        }
+        call.visit_children_with(self);
+    }
+
+    fn visit_new_expr(&mut self, expression: &deno_ast::swc::ast::NewExpr) {
+        if is_identifier(&expression.callee, "Function") {
+            self.has_dynamic_code = true;
+        }
+        expression.visit_children_with(self);
+    }
+}
+
+fn is_identifier(expression: &Expr, expected: &str) -> bool {
+    match expression {
+        Expr::Ident(identifier) => identifier.sym.as_ref() == expected,
+        Expr::Paren(paren) => is_identifier(&paren.expr, expected),
+        _ => false,
+    }
+}
+
+fn add_import_edge(
+    edges: &mut ModuleEdges,
+    specifier: &str,
+    dynamic: bool,
+    referrer: &deno_ast::ModuleSpecifier,
+    modules: &[Module],
+) {
+    match rustyscript::deno_core::resolve_import(specifier, referrer.as_str()) {
+        Ok(url) => match url.to_file_path() {
+            Ok(path) => match modules
+                .iter()
+                .position(|module| module.filename() == path.as_path())
+            {
+                Some(index) => {
+                    if dynamic {
+                        edges.dynamic_imports.push(index);
+                    } else {
+                        edges.imports.push(index);
+                    }
+                }
+                None => edges.has_unknown_dependency = true,
+            },
+            Err(_) => edges.has_unknown_dependency = true,
+        },
+        Err(_) => edges.has_unknown_dependency = true,
+    }
+}
+
+fn enqueue_imports(edges: &ModuleEdges, pending: &mut VecDeque<usize>) -> Result<(), &'static str> {
+    if edges.has_dynamic_code {
+        return Err("dynamic code construction");
+    }
+    if edges.has_unknown_dependency {
+        return Err("unresolved module import");
+    }
+    pending.extend(edges.imports.iter().chain(&edges.dynamic_imports).copied());
+    Ok(())
+}
+
+fn log_import_gate_disabled(card_name: &str, reason: &str) {
+    let card_name = card_name.replace(['\r', '\n'], " ");
+    api::host_log!(
+        api::hostlog::Category::ScriptLifecycle,
+        api::hostlog::Level::Warn,
+        slot = card_name.as_str(),
+        "import-closure gating disabled: {reason}"
+    );
+}
+
+fn filter_gated_modules_for_card<'a>(
+    modules: &mut Vec<Module>,
+    roots: impl IntoIterator<Item = &'a str>,
+    card_name: &str,
+) {
+    let graph = shim_import_graph();
+    if !graph.complete
+        || graph.paths.len() > modules.len()
+        || graph.gated.len() != graph.paths.len()
+        || graph.edges.len() != graph.paths.len()
+    {
+        log_import_gate_disabled(card_name, "incomplete shim import graph");
+        return;
+    }
+    if graph
+        .paths
+        .iter()
+        .zip(modules.iter())
+        .any(|(path, module)| module.filename() != path.as_path())
+    {
+        log_import_gate_disabled(card_name, "served module set differs from graph");
+        return;
+    }
+
+    let mut pending = VecDeque::with_capacity(modules.len());
+    for root in roots {
+        let Some(index) = modules
+            .iter()
+            .position(|module| module.filename() == Path::new(root))
+        else {
+            log_import_gate_disabled(card_name, "root module is missing");
+            return;
+        };
+        pending.push_back(index);
+    }
+    // load_modules evaluates every supplied side module. Include all modules
+    // that remain eager as roots, as well as the script and its siblings.
+    pending.extend(
+        graph
+            .gated
+            .iter()
+            .enumerate()
+            .filter_map(|(index, &is_gated)| (!is_gated).then_some(index)),
+    );
+
+    let mut visited = vec![false; modules.len()];
+    let mut needed = vec![false; modules.len()];
+    while let Some(index) = pending.pop_front() {
+        if visited[index] {
+            continue;
+        }
+        visited[index] = true;
+        if graph.gated.get(index).copied().unwrap_or(false) {
+            needed[index] = true;
+        }
+        let edges = if let Some(edges) = graph.edges.get(index) {
+            edges
+        } else {
+            let module = &modules[index];
+            let Some(referrer) = module_specifier(module.filename()) else {
+                log_import_gate_disabled(card_name, "module URL could not be resolved");
+                return;
+            };
+            let Some(edges) = module_edges(module.contents(), &referrer, modules) else {
+                log_import_gate_disabled(card_name, "module parse failed");
+                return;
+            };
+            if let Err(reason) = enqueue_imports(&edges, &mut pending) {
+                log_import_gate_disabled(card_name, reason);
+                return;
+            }
+            continue;
+        };
+        if let Err(reason) = enqueue_imports(edges, &mut pending) {
+            log_import_gate_disabled(card_name, reason);
+            return;
+        }
+    }
+
+    let mut index = 0;
+    modules.retain(|_| {
+        let current_index = index;
+        index += 1;
+        !graph.gated.get(current_index).copied().unwrap_or(false) || needed[current_index]
+    });
+}
+
+pub(crate) fn filter_gated_modules<'a>(
+    modules: &mut Vec<Module>,
+    roots: impl IntoIterator<Item = &'a str>,
+) {
+    filter_gated_modules_for_card(modules, roots, "test card");
+}
+
+#[cfg(feature = "test-hooks")]
+#[doc(hidden)]
+pub fn filter_gated_modules_for_test<'a>(
+    modules: &mut Vec<Module>,
+    roots: impl IntoIterator<Item = &'a str>,
+) {
+    filter_gated_modules_for_card(modules, roots, "test card");
+}
+
+#[cfg(feature = "test-hooks")]
+#[doc(hidden)]
+pub fn filter_gated_modules_for_card_test<'a>(
+    modules: &mut Vec<Module>,
+    roots: impl IntoIterator<Item = &'a str>,
+    card_name: &str,
+) {
+    filter_gated_modules_for_card(modules, roots, card_name);
+}
+
+fn shim_source(specifier: &rustyscript::deno_core::ModuleSpecifier) -> Option<&'static str> {
+    let path = specifier.to_file_path().ok()?;
+    super::source_catalog::SHIM_MODULE_SOURCES
+        .iter()
+        .find_map(|(served_path, source)| {
+            (Path::new(served_path) == path.as_path()).then_some(*source)
+        })
+}
+
+#[derive(Default)]
+struct ShimImportProvider;
+
+impl ImportProvider for ShimImportProvider {
+    fn resolve(
+        &mut self,
+        specifier: &rustyscript::deno_core::ModuleSpecifier,
+        _referrer: &str,
+        _kind: rustyscript::deno_core::ResolutionKind,
+    ) -> Option<
+        Result<
+            rustyscript::deno_core::ModuleSpecifier,
+            rustyscript::deno_core::error::ModuleLoaderError,
+        >,
+    > {
+        shim_source(specifier)?;
+        Some(Ok(specifier.clone()))
+    }
+
+    fn import(
+        &mut self,
+        specifier: &rustyscript::deno_core::ModuleSpecifier,
+        _referrer: Option<&rustyscript::deno_core::ModuleSpecifier>,
+        _is_dyn_import: bool,
+        _requested_module_type: rustyscript::deno_core::RequestedModuleType,
+    ) -> Option<Result<String, rustyscript::deno_core::error::ModuleLoaderError>> {
+        shim_source(specifier).map(|source| Ok(source.to_owned()))
+    }
+}
+
+pub(crate) fn shim_import_provider() -> Box<dyn ImportProvider> {
+    Box::<ShimImportProvider>::default()
 }
 
 /// Rewrite bare `@rs2b0t/api` import specifiers (quoted) to
@@ -1059,4 +995,290 @@ pub(crate) fn remap_hash_bot(source: &str) -> String {
 /// the bot (and any scripts-folder siblings).
 pub fn remap_catalog_imports(source: &str) -> String {
     remap_hash_bot(&remap_rs2b0t_api(source))
+}
+#[cfg(test)]
+mod wave_three_tests {
+    use super::*;
+
+    fn gated_module_paths() -> Vec<String> {
+        GATED_MODULE_PATHS
+            .iter()
+            .map(|path| (*path).to_string())
+            .collect()
+    }
+
+    fn retained_gated(source: &str) -> Vec<String> {
+        let gated_paths = gated_module_paths();
+        let mut modules = shim_modules();
+        modules.push(Module::new(BOT_MODULE, source));
+        filter_gated_modules(&mut modules, std::iter::once(BOT_MODULE));
+        gated_paths
+            .into_iter()
+            .filter(|path| {
+                modules
+                    .iter()
+                    .any(|module| module.filename() == Path::new(path))
+            })
+            .collect()
+    }
+
+    fn retained_wave_three(source: &str) -> Vec<String> {
+        retained_gated(source)
+            .into_iter()
+            .filter(|path| WAVE_THREE_MODULE_PATHS.contains(&path.as_str()))
+            .collect()
+    }
+
+    #[test]
+    fn wave_three_modules_follow_static_import_and_reexport_closures() {
+        assert_eq!(
+            retained_wave_three("export default class T {}"),
+            [WALK_DESTINATIONS_MODULE]
+        );
+        assert_eq!(
+            retained_wave_three("import '../../api/map/WalkDestinations.js';"),
+            [WALK_DESTINATIONS_MODULE]
+        );
+        assert_eq!(
+            retained_wave_three("export { WALK_DESTINATIONS } from './declared_surface.js';"),
+            [WALK_DESTINATIONS_MODULE]
+        );
+    }
+
+    #[test]
+    fn dynamic_imports_keep_their_wave_three_targets() {
+        assert_eq!(
+            retained_wave_three(
+                "export async function load() { return import('../../api/map/WalkDestinations.js'); }"
+            ),
+            [WALK_DESTINATIONS_MODULE]
+        );
+        assert_eq!(
+            retained_wave_three(
+                "export async function load(specifier) { return import(specifier); }"
+            ),
+            WAVE_THREE_MODULE_PATHS
+        );
+    }
+
+    #[test]
+    fn javascript_parser_keeps_all_reviewed_regex_and_import_cases() {
+        let cases: &[(&str, &str)] = &[
+            (
+                "regex-backtick-static",
+                r#"const clean = (s) => s.replace(/`/g, '');
+import * as regions from '../../api/map/regions.js';
+// one backtick: `"#,
+            ),
+            (
+                "regex-backtick-dynamic",
+                r#"const clean = (s) => s.replace(/`/g, '');
+const mod = await import('../../api/map/regions.js');
+// `"#,
+            ),
+            (
+                "regex-comment-dynamic",
+                r#"const split = (s) => s.split(/[/*]/);
+const mod = await import('../../api/map/regions.js');
+/** doc */"#,
+            ),
+            (
+                "regex-backslash",
+                r#"const clean = (s) => s.replace(/\s+/g, ' ');
+const mod = await import('../../api/map/regions.js');"#,
+            ),
+            (
+                "regex-optchain-backtick",
+                r#"const c = (s) => s?.replace(/`/g, '');
+await import('../../api/map/regions.js');
+// `"#,
+            ),
+            (
+                "regex-after-if-paren",
+                r#"if (true) /`/.test('x');
+await import('../../api/map/regions.js');
+// `"#,
+            ),
+            (
+                "regex-quote",
+                r#"const q = (s) => s.replace(/'/g, '');
+await import('../../api/map/regions.js');
+// '"#,
+            ),
+            (
+                "regex-class-slash-star",
+                r#"const r = /[*/]+/;
+await import('../../api/map/regions.js');
+/* x */"#,
+            ),
+            (
+                "template-substitution-import",
+                r#"const t = `${(await import('../../api/map/regions.js')) ? 'y' : 'n'}`;"#,
+            ),
+            (
+                "template-nested-template",
+                r#"const t = `a${`b${(await import('../../api/map/regions.js')) ? 1 : 0}`}`;"#,
+            ),
+            (
+                "nested-function-dynamic",
+                r#"async function f() { return import('../../api/map/regions.js'); }
+await f();"#,
+            ),
+            (
+                "class-static-block",
+                r#"class Q { static { globalThis.__p = import('../../api/map/regions.js'); } }
+await globalThis.__p;"#,
+            ),
+            (
+                "comments-inside-import-call",
+                r#"await import(/* ` */ '../../api/map/regions.js' /* */);"#,
+            ),
+            (
+                "no-subst-template",
+                r#"await import(`../../api/map/regions.js`);"#,
+            ),
+            (
+                "escaped-specifier",
+                r#"await import('\u002e./../api/map/regions.js');"#,
+            ),
+            (
+                "export-star-from",
+                r#"export * from '../../api/map/regions.js';"#,
+            ),
+            (
+                "export-star-as",
+                r#"export * as R from '../../api/map/regions.js';"#,
+            ),
+            (
+                "string-then-import",
+                r#"const s = "import('x') /* `";
+await import('../../api/map/regions.js');"#,
+            ),
+            (
+                "comment-backtick-then-import",
+                "// ` /*
+await import('../../api/map/regions.js');",
+            ),
+            (
+                "hashbang",
+                "#!/usr/bin/env node
+await import('../../api/map/regions.js');",
+            ),
+            (
+                "trailing-comma-arg",
+                r#"await import('../../api/map/regions.js',);"#,
+            ),
+            (
+                "javascript-typeof-import-comparison",
+                r#"const f = 1, x = 2;
+globalThis.__q = f < typeof import('../../api/map/regions.js') > (x);"#,
+            ),
+        ];
+        let mut expected = retained_wave_three("export default class T {}");
+        expected.push(REGIONS_MODULE.to_string());
+        expected.sort_unstable();
+        for (name, source) in cases {
+            let mut retained = retained_wave_three(source);
+            retained.sort_unstable();
+            assert_eq!(retained, expected, "parser failed case {name}");
+        }
+    }
+
+    #[test]
+    fn import_text_in_non_code_does_not_create_edges() {
+        let baseline = retained_wave_three("export default class T {}");
+        for source in [
+            "const s = \"import('../../api/map/regions.js')\";",
+            "const s = `import('../../api/map/regions.js')`;",
+            "// import '../../api/map/regions.js';\n/* await import('../../api/map/regions.js') */",
+            r"const r = /import\('..\/..\/api\/map\/regions.js'\)/;",
+        ] {
+            assert_eq!(
+                retained_wave_three(source),
+                baseline,
+                "text without an import edge changed the baseline closure: {source}"
+            );
+        }
+    }
+
+    #[test]
+    fn unresolved_imports_and_existing_direct_code_fallback_keep_all_gated_modules() {
+        for source in [
+            "export default class {",
+            "await import('../../api/map/__nope.js').catch(() => 0);",
+            "const specifier = '../../api/map/' + 'regions.js'; await import(specifier);",
+            "import type { Regions } from '../../api/map/regions.js';",
+            "import { type Regions } from '../../api/map/regions.js';",
+            "export type { Regions } from '../../api/map/regions.js';",
+            "await eval(\"import('/rs2b0t/bot/api/map/regions.js')\");",
+            "await new Function(\"return import('/rs2b0t/bot/api/map/regions.js')\")();",
+        ] {
+            assert_eq!(
+                retained_wave_three(source),
+                WAVE_THREE_MODULE_PATHS,
+                "fallback did not retain the gated set for {source}"
+            );
+        }
+    }
+
+    #[test]
+    fn escaped_dynamic_code_is_not_an_eager_gate_fallback() {
+        let baseline = retained_wave_three("export default class T {}");
+        let sources = [
+            "await (0, eval)(\"import('/rs2b0t/bot/api/map/regions.js')\");",
+            "await globalThis.eval(\"import('/rs2b0t/bot/api/map/regions.js')\");",
+            "const e = eval; await e(\"import('/rs2b0t/bot/api/map/regions.js')\");",
+            "await eval?.(\"import('/rs2b0t/bot/api/map/regions.js')\");",
+            "await Function`return import('/rs2b0t/bot/api/map/regions.js')`();",
+            "await new globalThis.Function(\"return import('/rs2b0t/bot/api/map/regions.js')\")();",
+            "await Function.call(null, \"return import('/rs2b0t/bot/api/map/regions.js')\")();",
+            "await Reflect.construct(Function, [\"return import('/rs2b0t/bot/api/map/regions.js')\"])();",
+            "await (async () => {}).constructor(\"return import('/rs2b0t/bot/api/map/regions.js')\")();",
+            "await Function?.(\"return import('/rs2b0t/bot/api/map/regions.js')\")();",
+        ];
+        for source in sources {
+            assert_eq!(
+                retained_wave_three(source),
+                baseline,
+                "escaped syntax changed the eager closure: {source}"
+            );
+        }
+    }
+
+    #[test]
+    fn source_catalog_matches_every_registered_shim() {
+        let modules = shim_modules();
+        let sources = super::super::source_catalog::SHIM_MODULE_SOURCES;
+        assert_eq!(modules.len(), sources.len());
+        for (module, (path, source)) in modules.iter().zip(sources) {
+            assert_eq!(module.filename(), Path::new(path));
+            assert_eq!(module.contents(), *source);
+            let specifier = module_specifier(Path::new(path)).expect("absolute shim URL");
+            assert_eq!(shim_source(&specifier), Some(*source));
+        }
+    }
+
+    #[test]
+    fn wave_three_modules_follow_sibling_import_roots() {
+        const SIBLING_MODULE: &str = "/rs2b0t/bot/scripts/bot/sibling.js";
+        let mut modules = shim_modules();
+        modules.push(Module::new(
+            SIBLING_MODULE,
+            "import '../../api/map/regions.js';",
+        ));
+        modules.push(Module::new(BOT_MODULE, "export default class T {}"));
+        filter_gated_modules(&mut modules, [BOT_MODULE, SIBLING_MODULE]);
+        assert_eq!(
+            WAVE_THREE_MODULE_PATHS
+                .iter()
+                .filter(|path| {
+                    modules
+                        .iter()
+                        .any(|module| module.filename() == Path::new(path))
+                })
+                .copied()
+                .collect::<Vec<_>>(),
+            [WALK_DESTINATIONS_MODULE, REGIONS_MODULE]
+        );
+    }
 }

@@ -224,6 +224,7 @@ pub(super) fn isolate_main(
             ],
             timeout: RUNTIME_TIMEOUT,
             max_heap_size: Some(MAX_HEAP),
+            import_provider: Some(crate::shim::shim_import_provider()),
             ..Default::default()
         },
         runtime_handle,

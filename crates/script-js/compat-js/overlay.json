@@ -20,7 +20,7 @@
     "module": "api/walking/DirectNavigator.js",
     "selector": "$module",
     "reason": "Host serves the API alias of its event navigator, absent from the frozen API directory.",
-    "runtime": "crates/script-js/src/shim/modules.rs:847",
+    "runtime": "crates/script-js/src/shim/source_catalog.rs:405",
     "declaration": "export { DirectNavigator } from '../../event/webwalk/DirectNavigator.js';"
   },
   {
@@ -52,7 +52,7 @@
     "module": "@rs2b0t/api",
     "selector": "$add",
     "reason": "The host manifest entry is supplied by the prelude, not by a frozen API module.",
-    "runtime": "crates/script-js/src/shim/modules.rs:95",
+    "runtime": "crates/script-js/src/shim/modules.rs:102",
     "declaration": "export function defineBot<T extends {name: string; create: () => unknown}>(manifest: T): T;"
   },
   {
@@ -92,7 +92,7 @@
     "module": "api/bot/Bot.js",
     "selector": "TaskBot",
     "reason": "The prelude's existing task loop publishes the validated task label while it executes and clears it after the turn.",
-    "runtime": "crates/script-js/src/shim/modules.rs:212",
+    "runtime": "crates/script-js/src/shim/modules.rs:222",
     "declaration": "export class TaskBot extends LoopingBot { activeTaskName: string | null; constructor(); add(...tasks: Task[]): void; loop(): Promise<number | void>; }"
   },
   {
