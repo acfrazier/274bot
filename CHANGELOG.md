@@ -93,8 +93,8 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.8` 
   only the no-exit refusal, not the probability-bound check.
 - A headless WalkTo regression drives the panel's actual danger-zone checkbox
   and confirmation through the host's probability assessment. It checks
-  checkbox off and on, the request-local grant, and escape from a danger zone
-  with the checkbox off. Real Engine L probability cells remain separate.
+  checkbox off and on, reset on the next picker open, and escape from a danger
+  zone with the checkbox off. Real Engine L probability cells remain separate.
 - Admission fixture callers now retain the current typed poison refusal and
   its detail without copying prerequisite ownership. Bank-access search
   refusals also retain their available world through the admission cutover.

@@ -705,10 +705,6 @@ fn probability_admission_checkbox_and_default_escape_use_the_real_picker() {
     assert!(session.route_through_zones);
     session.select_picker_tile(&world, destination);
     assert!(session.confirm_picker_walk(&world));
-    assert!(
-        !session.route_through_zones,
-        "the checkbox grant is consumed"
-    );
     session
         .core
         .with_walk_arm("alice", |arm| {
@@ -723,6 +719,22 @@ fn probability_admission_checkbox_and_default_escape_use_the_real_picker() {
             );
         })
         .expect("confirmed picker walk retains its arm");
+
+    // The footer closes a successful WalkTo; a fresh open resets its choice.
+    session.walkto_open = false;
+    session.map_model.close();
+    super::note_closed();
+    session.walkto_open = true;
+    picker_click_frame(&mut ctx, &mut session, &world, [0.0, 0.0], false);
+    assert!(
+        !session.route_through_zones,
+        "a fresh picker cannot retain the previous WalkTo choice"
+    );
+    session.select_picker_tile(&world, destination);
+    assert!(
+        !session.confirm_picker_walk(&world),
+        "a later strict walk cannot reuse the previous grant"
+    );
 
     let inside = Tile {
         x: 11,
