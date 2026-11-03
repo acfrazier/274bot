@@ -6168,7 +6168,7 @@ fn s2b_admission_per_bot_layouts() {
         target_env = "gnu",
         not(feature = "memory-profile")
     ))]
-    // Linux NavBot: +32 B WalkNoProgress, +8 B TickCount already counted; no heap.
+    // Linux: route-index fields add 48 B to Traveller; Option<PoisonHold> adds 8 B to NavBot.
     assert_eq!(
         (
             std::mem::size_of::<NavBot>(),
@@ -6176,7 +6176,7 @@ fn s2b_admission_per_bot_layouts() {
             std::mem::size_of::<script::combat::Combat>(),
             std::mem::size_of::<script::combat::WalkGuard>()
         ),
-        (4096, 1576, 520, 264)
+        (4152, 1576, 520, 264)
     );
     // Combat is 520 B with bounded approach retries; retain 8 B of headroom.
     assert!(std::mem::size_of::<script::combat::Combat>() <= 528);
