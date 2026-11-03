@@ -69,7 +69,7 @@ pub fn profiles() -> Vec<Profile> {
         Profile {
             name: "alt",
             bounds: Bounds {
-                page_active: 2,
+                page_ticks: 2,
                 ack_active: 2,
                 quiet_window: 1,
                 quiet_overall: 4,

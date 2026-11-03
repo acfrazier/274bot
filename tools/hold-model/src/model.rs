@@ -216,9 +216,9 @@ pub struct Bounds {
     pub max_pages: u8,
     /// Runtime starts and work generations.
     pub max_epochs: u8,
-    /// Dialogue page wait, in active units (the product's 8 s).
-    pub page_active: u8,
-    /// Dialogue acknowledgement wait, in active units (the product's 3 s).
+    /// Dialogue Open and Continue waits, in observed ticks.
+    pub page_ticks: u8,
+    /// Dialogue Choice and Main acknowledgements, in active units.
     pub ack_active: u8,
     /// Journal window, in observed ticks (the product's 5).
     pub quiet_window: u8,
@@ -267,7 +267,7 @@ impl Bounds {
             max_ids: 4,
             max_pages: 4,
             max_epochs: 2,
-            page_active: 3,
+            page_ticks: 3,
             ack_active: 1,
             quiet_window: 2,
             quiet_overall: 3,
@@ -309,16 +309,21 @@ pub enum Key {
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub enum LedgerBound {
+    AwaitingDispatch,
     Tick(u8),
     Active(u8),
 }
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub enum ModalPhase {
-    /// Waits for the first page of a Talk.
-    Page { until: u8 },
-    /// Waits for the acknowledgement of a Continue or an answer.
-    Ack { base: u8, until: u8 },
+    /// A queued Talk has no content deadline before host acceptance.
+    AwaitingDispatch,
+    /// Waits for the first page of an accepted Talk, in observed ticks.
+    Open { until: u8 },
+    /// Waits for a Continue acknowledgement, in observed ticks.
+    Continue { base: u8, until: u8 },
+    /// Waits for a Choice or Main acknowledgement, on the active clock.
+    ActiveAck { base: u8, until: u8 },
     /// The quiet end gap after the chat closed.
     Gap { due: u8 },
 }
@@ -477,7 +482,10 @@ pub struct State {
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub enum Begin {
+    /// The Talk is accepted in this frame.
     Modal,
+    /// The Talk is queued but not yet accepted.
+    QueuedModal,
     Quiet,
     Compat,
 }
@@ -493,7 +501,11 @@ pub enum OwnerAct {
     /// The owner's poll: it ends the wait when it sees its page or when its
     /// own bound expired, and moves a journal or compat read one phase.
     Poll,
-    /// A dialogue sends again: a new acknowledgement lease.
+    /// Host acceptance arms the queued Talk's observed-tick deadline.
+    Accept,
+    /// A Continue takes a fresh observed-tick acknowledgement lease.
+    Continue,
+    /// A Choice or Main answer takes a fresh active-clock lease.
     Send,
     /// A dialogue's acknowledged page closed: the same lease becomes the gap.
     ToGap(u8),
@@ -630,7 +642,9 @@ impl Model {
         match s.lease {
             Lease::None => false,
             Lease::Modal(m) => match m.phase {
-                ModalPhase::Page { until } | ModalPhase::Ack { until, .. } => s.active >= until,
+                ModalPhase::AwaitingDispatch => false,
+                ModalPhase::Open { until } | ModalPhase::Continue { until, .. } => s.tick >= until,
+                ModalPhase::ActiveAck { until, .. } => s.active >= until,
                 ModalPhase::Gap { due } => s.tick >= due,
             },
             Lease::Quiet(q) => s.tick >= q.window,
@@ -684,15 +698,21 @@ impl Model {
     fn begin(&self, s: &mut State, kind: Begin, info: &mut Info) {
         let b = &self.bounds;
         match kind {
-            Begin::Modal => {
-                info.emitted = true;
+            Begin::Modal | Begin::QueuedModal => {
+                let queued = kind == Begin::QueuedModal;
+                info.emitted = !queued;
                 let id = Self::fresh_id(s);
-                let until = s.active + b.page_active;
+                let (phase, ledger) = if queued {
+                    (ModalPhase::AwaitingDispatch, LedgerBound::AwaitingDispatch)
+                } else {
+                    let until = s.tick + b.page_ticks;
+                    (ModalPhase::Open { until }, LedgerBound::Tick(until))
+                };
                 s.lease = Lease::Modal(Modal {
                     id,
                     txn: Self::fresh_txn(s),
-                    phase: ModalPhase::Page { until },
-                    ledger: Self::ledger_for(self.mutation, s.wall, s.active, until),
+                    phase,
+                    ledger,
                     rearms: b.rearms,
                     rearm_tick: None,
                 });
@@ -733,22 +753,47 @@ impl Model {
         }
     }
 
+    fn accept(&self, s: &mut State, info: &mut Info) {
+        let Lease::Modal(mut modal) = s.lease else {
+            return;
+        };
+        if modal.phase != ModalPhase::AwaitingDispatch {
+            return;
+        }
+        let until = s.tick + self.bounds.page_ticks;
+        modal.phase = ModalPhase::Open { until };
+        modal.ledger = LedgerBound::Tick(until);
+        s.lease = Lease::Modal(modal);
+        info.emitted = true;
+        s.due = None;
+    }
+
     /// The owner's poll of its own lease.
     fn poll(&self, s: &mut State, info: &mut Info) {
         match s.lease {
             Lease::None => {}
             Lease::Modal(m) => {
                 let ended = match m.phase {
-                    ModalPhase::Page { until } => {
+                    ModalPhase::AwaitingDispatch => None,
+                    ModalPhase::Open { until } => {
                         if s.modal {
                             Some(Cause::Page)
-                        } else if s.active >= until {
+                        } else if s.tick >= until {
                             Some(Cause::Bound)
                         } else {
                             None
                         }
                     }
-                    ModalPhase::Ack { base, until } => {
+                    ModalPhase::Continue { base, until } => {
+                        if s.page != base {
+                            Some(Cause::Page)
+                        } else if s.tick >= until {
+                            Some(Cause::Bound)
+                        } else {
+                            None
+                        }
+                    }
+                    ModalPhase::ActiveAck { base, until } => {
                         if s.page != base {
                             Some(Cause::Page)
                         } else if s.active >= until {
@@ -878,7 +923,7 @@ impl Model {
         }
     }
 
-    fn send(&self, s: &mut State, info: &mut Info) {
+    fn send(&self, s: &mut State, info: &mut Info, bound: LedgerBound) {
         let Lease::Modal(old) = s.lease else {
             return;
         };
@@ -888,15 +933,30 @@ impl Model {
         } else {
             Self::fresh_id(s)
         };
-        let until = s.active + self.bounds.ack_active;
+        let (phase, ledger) = match bound {
+            LedgerBound::Tick(until) => (
+                ModalPhase::Continue {
+                    base: s.page,
+                    until,
+                },
+                LedgerBound::Tick(until),
+            ),
+            LedgerBound::Active(until) => (
+                ModalPhase::ActiveAck {
+                    base: s.page,
+                    until,
+                },
+                Self::ledger_for(self.mutation, s.wall, s.active, until),
+            ),
+            LedgerBound::AwaitingDispatch => {
+                unreachable!("a sent acknowledgement has an owner deadline")
+            }
+        };
         s.lease = Lease::Modal(Modal {
             id,
             txn: Self::fresh_txn(s),
-            phase: ModalPhase::Ack {
-                base: s.page,
-                until,
-            },
-            ledger: Self::ledger_for(self.mutation, s.wall, s.active, until),
+            phase,
+            ledger,
             rearms: old.rearms,
             rearm_tick: old.rearm_tick,
         });
@@ -953,6 +1013,7 @@ impl Model {
                 if s.next_id < b.max_ids {
                     if b.modal && !s.modal {
                         out.push(OwnerAct::Begin(Begin::Modal));
+                        out.push(OwnerAct::Begin(Begin::QueuedModal));
                     }
                     if b.quiet && !s.modal {
                         out.push(OwnerAct::Begin(Begin::Quiet));
@@ -966,13 +1027,21 @@ impl Model {
                 out.push(OwnerAct::Poll);
                 out.push(OwnerAct::Drop);
                 let sees_page = match m.phase {
-                    ModalPhase::Page { .. } | ModalPhase::Gap { .. } => s.modal,
-                    ModalPhase::Ack { base, .. } => s.page != base && s.modal,
+                    ModalPhase::AwaitingDispatch => {
+                        out.push(OwnerAct::Accept);
+                        false
+                    }
+                    ModalPhase::Open { .. } | ModalPhase::Gap { .. } => s.modal,
+                    ModalPhase::Continue { base, .. } | ModalPhase::ActiveAck { base, .. } => {
+                        s.page != base && s.modal
+                    }
                 };
                 if sees_page && s.next_id < b.max_ids {
+                    out.push(OwnerAct::Continue);
                     out.push(OwnerAct::Send);
                 }
-                if let ModalPhase::Ack { base, .. } = m.phase
+                if let ModalPhase::Continue { base, .. } | ModalPhase::ActiveAck { base, .. } =
+                    m.phase
                     && s.page != base
                     && !s.modal
                 {
@@ -1100,6 +1169,7 @@ impl Model {
             Lease::None => None,
             Lease::Modal(mut m) => {
                 let deadline = match m.ledger {
+                    LedgerBound::AwaitingDispatch => s.tick,
                     LedgerBound::Tick(d) => d,
                     LedgerBound::Active(at) if self.active_before(s, at) => s.tick,
                     LedgerBound::Active(_) => {
@@ -1405,7 +1475,15 @@ impl Model {
                     OwnerAct::NoPoll | OwnerAct::Stall => {}
                     OwnerAct::Begin(kind) => self.begin(&mut s, kind, info),
                     OwnerAct::Poll => self.poll(&mut s, info),
-                    OwnerAct::Send => self.send(&mut s, info),
+                    OwnerAct::Accept => self.accept(&mut s, info),
+                    OwnerAct::Continue => {
+                        let until = s.tick + self.bounds.page_ticks;
+                        self.send(&mut s, info, LedgerBound::Tick(until));
+                    }
+                    OwnerAct::Send => {
+                        let until = s.active + self.bounds.ack_active;
+                        self.send(&mut s, info, LedgerBound::Active(until));
+                    }
                     OwnerAct::ToGap(gap) => Self::to_gap(&mut s, gap),
                     OwnerAct::Rearm(gap) => self.rearm(&mut s, gap),
                     OwnerAct::Drop => Self::end_lease(&mut s, info, Cause::Dropped),
@@ -1597,7 +1675,10 @@ impl Model {
                 // A stall, where a live lease's owner acts.
                 if b.stall && s.lease != Lease::None && s.wall < b.stall_wall() {
                     for &act in &acts {
-                        if matches!(act, OwnerAct::Poll | OwnerAct::Send) {
+                        if matches!(
+                            act,
+                            OwnerAct::Poll | OwnerAct::Accept | OwnerAct::Continue | OwnerAct::Send
+                        ) {
                             out.push(Action::Frame(FrameInput {
                                 tick,
                                 wake,
@@ -1700,9 +1781,13 @@ fn lease_text(lease: Lease) -> String {
         Lease::None => "no lease".to_string(),
         Lease::Modal(m) => {
             let phase = match m.phase {
-                ModalPhase::Page { until } => format!("page wait until active {until}"),
-                ModalPhase::Ack { base, until } => {
-                    format!("ack wait (page {base}) until active {until}")
+                ModalPhase::AwaitingDispatch => "awaiting Talk dispatch".to_string(),
+                ModalPhase::Open { until } => format!("Open wait until tick {until}"),
+                ModalPhase::Continue { base, until } => {
+                    format!("Continue wait (page {base}) until tick {until}")
+                }
+                ModalPhase::ActiveAck { base, until } => {
+                    format!("Choice/Main wait (page {base}) until active {until}")
                 }
                 ModalPhase::Gap { due } => format!("end gap due tick {due}"),
             };
@@ -1769,7 +1854,10 @@ impl Action {
                     OwnerAct::NoPoll => "no owner poll".to_string(),
                     OwnerAct::Stall => "owner polls, changes nothing".to_string(),
                     OwnerAct::Begin(Begin::Modal) => {
-                        "owner begins a Dialogue modal wait".to_string()
+                        "owner begins an accepted Talk's Open wait".to_string()
+                    }
+                    OwnerAct::Begin(Begin::QueuedModal) => {
+                        "owner queues a Talk (awaiting dispatch)".to_string()
                     }
                     OwnerAct::Begin(Begin::Quiet) => {
                         "owner begins a journal quiet read".to_string()
@@ -1778,7 +1866,11 @@ impl Action {
                         "owner begins a compat journal read".to_string()
                     }
                     OwnerAct::Poll => "owner polls".to_string(),
-                    OwnerAct::Send => "owner sends again (new acknowledgement wait)".to_string(),
+                    OwnerAct::Accept => "the queued Talk is accepted (Open tick bound)".to_string(),
+                    OwnerAct::Continue => "owner sends Continue (new tick-bound lease)".to_string(),
+                    OwnerAct::Send => {
+                        "owner sends Choice/Main (new active-clock lease)".to_string()
+                    }
                     OwnerAct::ToGap(g) => {
                         format!("owner renews its wait as an end gap of {g} tick(s)")
                     }

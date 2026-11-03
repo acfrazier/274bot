@@ -51,13 +51,20 @@ const STALL_MS: u64 = 10_500;
 #[derive(Clone, Copy, Debug)]
 enum Cmd {
     BeginModal {
-        page: Duration,
+        deadline_tick: u64,
     },
+    BeginQueuedModal,
     BeginQuiet {
         deadline_tick: u64,
     },
-    Send {
+    SendActive {
         ack: Duration,
+    },
+    Continue {
+        deadline_tick: u64,
+    },
+    Accept {
+        deadline_tick: u64,
     },
     ToGap {
         deadline_tick: u64,
@@ -121,9 +128,11 @@ impl NativeMachine for DrivenMachine {
             click: None,
         };
         match args.begin {
-            Cmd::BeginModal { page } => {
-                machine.modal =
-                    Some(cx.begin_modal_wait(WaitDeadline::Active(cx.active_now() + page))?);
+            Cmd::BeginModal { deadline_tick } => {
+                machine.modal = Some(cx.begin_modal_wait(WaitDeadline::Tick(deadline_tick))?);
+            }
+            Cmd::BeginQueuedModal => {
+                machine.modal = Some(cx.begin_modal_wait(WaitDeadline::AwaitingDispatch)?);
             }
             Cmd::BeginQuiet { deadline_tick } => {
                 machine.quiet =
@@ -154,19 +163,19 @@ impl NativeMachine for DrivenMachine {
             return Poll::Pending;
         };
         match cmd {
-            Cmd::Send { ack } => {
+            Cmd::SendActive { ack } => {
                 // A new send takes a new lease; the old one ends after.
                 match cx.begin_modal_wait(WaitDeadline::Active(cx.active_now() + ack)) {
                     Ok(lease) => self.modal = Some(lease),
                     Err(error) => return Poll::Ready(Err(error)),
                 }
             }
-            Cmd::ToGap { deadline_tick } => {
+            Cmd::Accept { deadline_tick } | Cmd::ToGap { deadline_tick } => {
                 if let Some(lease) = &self.modal {
                     cx.renew_modal_wait(lease, WaitDeadline::Tick(deadline_tick));
                 }
             }
-            Cmd::Rearm { deadline_tick } => {
+            Cmd::Continue { deadline_tick } | Cmd::Rearm { deadline_tick } => {
                 match cx.begin_modal_wait(WaitDeadline::Tick(deadline_tick)) {
                     Ok(lease) => self.modal = Some(lease),
                     Err(error) => return Poll::Ready(Err(error)),
@@ -217,7 +226,9 @@ impl Script for DrivenScript {
         let cmd = self.control.cmd.lock().unwrap().take();
         match cmd {
             Some(Cmd::Drop) => self.handle = None,
-            Some(begin @ (Cmd::BeginModal { .. } | Cmd::BeginQuiet { .. })) => {
+            Some(
+                begin @ (Cmd::BeginModal { .. } | Cmd::BeginQueuedModal | Cmd::BeginQuiet { .. }),
+            ) => {
                 self.handle = None;
                 self.handle = Some(
                     ctx.actions
@@ -578,6 +589,17 @@ impl Rig {
     }
 }
 
+fn modal_tick_deadline(lease: Lease) -> u64 {
+    let Lease::Modal(hold_model::Modal {
+        ledger: hold_model::LedgerBound::Tick(deadline),
+        ..
+    }) = lease
+    else {
+        panic!("the model's tick-bound modal transition must report its deadline");
+    };
+    u64::from(deadline)
+}
+
 /// The frames of a model trace, and the decision that the model expects at
 /// each frame.
 fn frames_of(
@@ -615,8 +637,9 @@ fn frames_of(
                     match f.act {
                         OwnerAct::NoPoll | OwnerAct::Stall => None,
                         OwnerAct::Begin(Begin::Modal) => Some(Cmd::BeginModal {
-                            page: unit * u32::from(bounds.page_active),
+                            deadline_tick: modal_tick_deadline(post.lease),
                         }),
+                        OwnerAct::Begin(Begin::QueuedModal) => Some(Cmd::BeginQueuedModal),
                         OwnerAct::Begin(Begin::Quiet) => match post.lease {
                             Lease::Quiet(q) => Some(Cmd::BeginQuiet {
                                 deadline_tick: u64::from(q.window),
@@ -639,27 +662,21 @@ fn frames_of(
                             }
                             _ => None,
                         },
-                        OwnerAct::Send => Some(Cmd::Send {
+                        OwnerAct::Accept => Some(Cmd::Accept {
+                            deadline_tick: modal_tick_deadline(post.lease),
+                        }),
+                        OwnerAct::Continue => Some(Cmd::Continue {
+                            deadline_tick: modal_tick_deadline(post.lease),
+                        }),
+                        OwnerAct::Send => Some(Cmd::SendActive {
                             ack: unit * u32::from(bounds.ack_active),
                         }),
-                        OwnerAct::ToGap(_) => match post.lease {
-                            Lease::Modal(m) => match m.ledger {
-                                hold_model::LedgerBound::Tick(deadline_tick) => Some(Cmd::ToGap {
-                                    deadline_tick: u64::from(deadline_tick),
-                                }),
-                                hold_model::LedgerBound::Active(_) => None,
-                            },
-                            _ => None,
-                        },
-                        OwnerAct::Rearm(_) => match post.lease {
-                            Lease::Modal(m) => match m.ledger {
-                                hold_model::LedgerBound::Tick(deadline_tick) => Some(Cmd::Rearm {
-                                    deadline_tick: u64::from(deadline_tick),
-                                }),
-                                hold_model::LedgerBound::Active(_) => None,
-                            },
-                            _ => None,
-                        },
+                        OwnerAct::ToGap(_) => Some(Cmd::ToGap {
+                            deadline_tick: modal_tick_deadline(post.lease),
+                        }),
+                        OwnerAct::Rearm(_) => Some(Cmd::Rearm {
+                            deadline_tick: modal_tick_deadline(post.lease),
+                        }),
                         OwnerAct::Drop => Some(Cmd::Drop),
                     }
                 };
@@ -1308,4 +1325,81 @@ fn a_compat_read_renewed_at_its_click_after_the_terminal_release_is_held_again()
     let (ended, held) = sample(&mut slot, late + bound, 5);
     assert!(ended && !held, "the renewed read's own bound ends it");
     slot.stop();
+}
+
+#[test]
+fn the_real_modal_lease_matches_each_owner_clock_and_queued_acceptance() {
+    let model = Model::new(
+        Bounds {
+            quiet: false,
+            compat: false,
+            ..conformance_bounds()
+        },
+        Mutation::None,
+    );
+    let frame = |tick, wake, act| {
+        ModelAction::Frame(hold_model::FrameInput {
+            tick,
+            wake,
+            drift: false,
+            stall: false,
+            act,
+        })
+    };
+    for (name, begin, send) in [
+        ("queued", Begin::QueuedModal, None),
+        ("open", Begin::Modal, None),
+        ("continue", Begin::Modal, Some(OwnerAct::Continue)),
+        ("choice-main", Begin::Modal, Some(OwnerAct::Send)),
+    ] {
+        let mut trace = vec![frame(true, false, OwnerAct::Begin(begin))];
+        if let Some(send) = send {
+            trace.extend([
+                ModelAction::ModalOpen,
+                frame(false, true, send),
+                ModelAction::ModalClose,
+            ]);
+        }
+        trace.extend([
+            ModelAction::Pause,
+            ModelAction::Wait,
+            ModelAction::Wait,
+            ModelAction::Wait,
+            ModelAction::Wait,
+            frame(true, false, OwnerAct::NoPoll),
+            frame(true, false, OwnerAct::NoPoll),
+            frame(true, false, OwnerAct::NoPoll),
+            frame(true, false, OwnerAct::NoPoll),
+        ]);
+        if begin == Begin::QueuedModal {
+            // No terminal release before acceptance. Its page bound starts here.
+            trace.extend([
+                ModelAction::Resume,
+                frame(false, true, OwnerAct::Accept),
+                frame(true, false, OwnerAct::NoPoll),
+                frame(true, false, OwnerAct::NoPoll),
+                frame(true, false, OwnerAct::NoPoll),
+                frame(true, false, OwnerAct::NoPoll),
+            ]);
+        } else if send == Some(OwnerAct::Send) {
+            // Choice/Main keep their active time through the paused tick tail.
+            trace.extend([
+                ModelAction::Resume,
+                frame(false, true, OwnerAct::Stall),
+                ModelAction::Wait,
+                frame(false, false, OwnerAct::NoPoll),
+                frame(true, false, OwnerAct::NoPoll),
+            ]);
+        }
+        let mut state = model.initial_state();
+        for action in &trace {
+            state = model
+                .step_detail(&state, action)
+                .unwrap_or_else(|violation| panic!("{name}: {violation:?}"))
+                .0;
+        }
+        let (held, pressed) =
+            check_trace(&model, &trace).unwrap_or_else(|report| panic!("{name}: {report}"));
+        assert!(held > 0 && pressed > 0, "{name}: both hold and release run");
+    }
 }

@@ -5,6 +5,36 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.8` 
 
 ## Unreleased
 
+### Fixed during development
+
+- A conversation script's pause after a page now keeps the run button held
+  when the host had already ended the hold on the wait before it. The host
+  ends a hold one game tick after the script's time limit when the script
+  stopped checking it (for example while the script was paused). Before, the
+  pause that follows the conversation page was the same wait with a later time
+  limit, so the host did not hold it and could press the run button while the
+  script still waited. The host now holds a wait again when the script moves
+  its time limit later. A repeat of the same time limit and a relog do not
+  hold it again.
+  A script's quest-journal read (the native reader) holds the run button for
+  10 seconds from each click it sends, not only from its start. Before, a read
+  that had been paused could send its click in the frame where the 10 seconds
+  from its start ran out; the host then no longer held the run button, pressed
+  it right after the click, and the press closed the journal page the click
+  had opened. The page still stops being hidden 10 seconds after the read
+  starts. A click (or close) that is still waiting to be sent when the 10
+  seconds of its hold run out is never sent: the computer may have been
+  suspended or asleep between the script's step and the host's reading of the
+  clock, and the click would have gone out with no hold. The read then fails as
+  expired and the script's own retry applies. This holds for the native reader
+  and for the compatibility reader; a click that was already sent is not
+  changed, and only the read's own click or close is held back, not an equal
+  one that another call of the same script sends (such as `Modals.close()`).
+- The development hold model now represents the conversation's actual clocks:
+  Open and Continue use game ticks, Choice and Main use active time, and a
+  queued Talk has no page deadline before acceptance. Native conformance
+  checks exercise these cases through the real lease API.
+
 ### Combat
 
 - A quest fight with a named fight spot now walks to that spot before it
@@ -832,32 +862,6 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.8` 
   finish lines instead of being dropped after the run's first 32 different
   lines. A new run starts that budget again for the current stage. Repeated
   lines still fold into one line with a count.
-
-### Fixed during development
-
-- A conversation script's pause after a page now keeps the run button held
-  when the host had already ended the hold on the wait before it. The host
-  ends a hold one game tick after the script's time limit when the script
-  stopped checking it (for example while the script was paused). Before, the
-  pause that follows the conversation page was the same wait with a later time
-  limit, so the host did not hold it and could press the run button while the
-  script still waited. The host now holds a wait again when the script moves
-  its time limit later. A repeat of the same time limit and a relog do not
-  hold it again.
-  A script's quest-journal read (the native reader) holds the run button for
-  10 seconds from each click it sends, not only from its start. Before, a read
-  that had been paused could send its click in the frame where the 10 seconds
-  from its start ran out; the host then no longer held the run button, pressed
-  it right after the click, and the press closed the journal page the click
-  had opened. The page still stops being hidden 10 seconds after the read
-  starts. A click (or close) that is still waiting to be sent when the 10
-  seconds of its hold run out is never sent: the computer may have been
-  suspended or asleep between the script's step and the host's reading of the
-  clock, and the click would have gone out with no hold. The read then fails as
-  expired and the script's own retry applies. This holds for the native reader
-  and for the compatibility reader; a click that was already sent is not
-  changed, and only the read's own click or close is held back, not an equal
-  one that another call of the same script sends (such as `Modals.close()`).
 
 ## [0.2.7] — 2026-10-26 — Beta 2
 

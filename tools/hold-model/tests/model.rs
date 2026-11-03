@@ -69,27 +69,30 @@ fn the_host_ends_a_hung_hold_one_tick_after_the_owners_deadline() {
         &model,
         &[
             frame(true, false, false, OwnerAct::Begin(Begin::Modal)),
+            Action::ModalOpen,
+            frame(false, true, false, OwnerAct::Send),
+            Action::ModalClose,
             Action::Wait,
-            Action::Wait,
-            Action::Wait,
-            // The active clock reached the bound: the sample fixes the tick.
+            // The active acknowledgement reached its bound; the sample fixes the tick.
             frame(false, false, false, OwnerAct::NoPoll),
             // The next tick: the owner stalls, the host ends the hold.
             frame(true, false, false, OwnerAct::Stall),
         ],
     );
-    assert!(infos[4].deferred, "the bound is reached, the margin is not");
-    assert_eq!(infos[5].expired, Some((Key::Modal(1), 1, 2)));
-    assert_eq!(infos[5].releases, vec![(Kind::Modal, Cause::HostTerminal)]);
-    assert!(infos[5].pressed, "the terminal release lets the press out");
+    assert!(infos[5].deferred, "the bound is reached, the margin is not");
+    assert_eq!(infos[6].expired, Some((Key::Modal(2), 1, 2)));
+    assert_eq!(infos[6].releases, vec![(Kind::Modal, Cause::HostTerminal)]);
+    assert!(infos[6].pressed, "the terminal release lets the press out");
 }
 
 #[test]
-fn a_paused_dialogue_keeps_its_active_clock_hold() {
+fn a_paused_choice_or_main_acknowledgement_keeps_its_active_clock_hold() {
     let (_, infos) = run(
         &model(),
         &[
             frame(true, false, false, OwnerAct::Begin(Begin::Modal)),
+            Action::ModalOpen,
+            frame(false, true, false, OwnerAct::Send),
             Action::Pause,
             Action::Wait,
             Action::Wait,
@@ -100,15 +103,15 @@ fn a_paused_dialogue_keeps_its_active_clock_hold() {
         ],
     );
     assert!(
-        infos[6].deferred && infos[7].deferred,
+        infos[8].deferred && infos[9].deferred,
         "Pause stops the clock"
     );
-    assert_eq!(infos[7].expired, None);
+    assert_eq!(infos[9].expired, None);
 }
 
-/// A known limit, not a defect: a wait that the owner bounds in ticks (the end
-/// gap, the journal window) is not on the active clock, so Pause does not stop
-/// it. The host ends the hold one tick after the deadline and logs a failure,
+/// A known limit, not a defect: Open, Continue, the end gap and the journal
+/// window use observed ticks. Pause does not stop those deadlines.
+/// The host ends the hold one tick after the deadline and logs a failure,
 /// although the owner is only paused.
 #[test]
 fn a_paused_dialogue_loses_a_tick_bounded_gap_hold() {
@@ -130,6 +133,88 @@ fn a_paused_dialogue_loses_a_tick_bounded_gap_hold() {
     assert!(infos[6].deferred, "the gap is held until its deadline");
     assert_eq!(infos[7].expired, Some((Key::Modal(2), 2, 3)));
     assert_eq!(infos[7].releases, vec![(Kind::Modal, Cause::HostTerminal)]);
+}
+
+#[test]
+fn open_and_continue_waits_keep_their_tick_deadline_through_pause() {
+    for continuation in [false, true] {
+        let mut actions = vec![frame(true, false, false, OwnerAct::Begin(Begin::Modal))];
+        if continuation {
+            actions.extend([
+                Action::ModalOpen,
+                frame(false, true, false, OwnerAct::Continue),
+                Action::ModalClose,
+            ]);
+        }
+        actions.extend([
+            Action::Pause,
+            Action::Wait,
+            Action::Wait,
+            Action::Wait,
+            Action::Wait,
+            frame(true, false, false, OwnerAct::NoPoll),
+            frame(true, false, false, OwnerAct::NoPoll),
+            frame(true, false, false, OwnerAct::NoPoll),
+            frame(true, false, false, OwnerAct::NoPoll),
+        ]);
+        let (_, infos) = run(&model(), &actions);
+        let last = infos.last().unwrap();
+        assert!(
+            infos[infos.len() - 2].deferred,
+            "the deadline retains its margin"
+        );
+        let id = if continuation { 2 } else { 1 };
+        assert_eq!(last.expired, Some((Key::Modal(id), Some(4), 5)));
+        assert!(last.pressed && !last.deferred);
+    }
+}
+
+#[test]
+fn a_queued_modal_has_no_deadline_until_its_talk_is_accepted() {
+    let model = model();
+    let (state, infos) = run(
+        &model,
+        &[
+            frame(true, false, false, OwnerAct::Begin(Begin::QueuedModal)),
+            Action::Pause,
+            Action::Wait,
+            Action::Wait,
+            Action::Wait,
+            Action::Wait,
+            frame(true, false, false, OwnerAct::NoPoll),
+            frame(true, false, false, OwnerAct::NoPoll),
+            frame(true, false, false, OwnerAct::NoPoll),
+            frame(true, false, false, OwnerAct::NoPoll),
+        ],
+    );
+    for info in infos.iter().filter(|info| info.wait.is_some()) {
+        assert!(info.deferred && !info.pressed && info.expired.is_none());
+    }
+    assert_eq!(infos[0].wait, Some((Key::Modal(1), 1)));
+    assert_eq!(infos[9].wait, Some((Key::Modal(1), 5)));
+    assert!(matches!(
+        state.lease,
+        hold_model::Lease::Modal(hold_model::Modal {
+            phase: hold_model::ModalPhase::AwaitingDispatch,
+            ledger: hold_model::LedgerBound::AwaitingDispatch,
+            ..
+        })
+    ));
+    assert_eq!(state.due, None);
+    let (resumed, _) = model.step_detail(&state, &Action::Resume).unwrap();
+    let (accepted, info) = model
+        .step_detail(&resumed, &frame(false, true, false, OwnerAct::Accept))
+        .unwrap();
+    assert!(matches!(
+        accepted.lease,
+        hold_model::Lease::Modal(hold_model::Modal {
+            phase: hold_model::ModalPhase::Open { until: 8 },
+            ledger: hold_model::LedgerBound::Tick(8),
+            ..
+        })
+    ));
+    assert_eq!(info.wait, Some((Key::Modal(1), 8)));
+    assert!(info.deferred && info.expired.is_none());
 }
 
 /// The steps of finding F2: the journal read sends its click in a frame where
@@ -196,17 +281,19 @@ fn the_paint_cap_does_not_follow_the_renewed_hold() {
 
 #[test]
 fn stop_and_a_session_boundary_end_the_hold_at_the_next_frame() {
-    for end in [Action::Stop, Action::Relog] {
-        let (_, infos) = run(
-            &model(),
-            &[
-                frame(true, false, false, OwnerAct::Begin(Begin::Modal)),
-                end,
-                frame(true, false, false, OwnerAct::NoPoll),
-            ],
-        );
-        assert!(!infos[2].deferred, "{end:?}");
-        assert!(infos[2].wait.is_none(), "{end:?}");
+    for begin in [Begin::Modal, Begin::QueuedModal] {
+        for end in [Action::Stop, Action::Relog] {
+            let (_, infos) = run(
+                &model(),
+                &[
+                    frame(true, false, false, OwnerAct::Begin(begin)),
+                    end,
+                    frame(true, false, false, OwnerAct::NoPoll),
+                ],
+            );
+            assert!(!infos[2].deferred, "{begin:?}: {end:?}");
+            assert!(infos[2].wait.is_none(), "{begin:?}: {end:?}");
+        }
     }
 }
 

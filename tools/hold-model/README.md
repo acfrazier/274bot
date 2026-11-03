@@ -4,12 +4,11 @@ A checked model of the auto-run hold. It is a developer tool. No product crate
 depends on it, except as a dev-dependency of the conformance tests in
 `crates/host-play` and `crates/script-js`.
 
-The model follows the product at commit `178a00200` with the fixes of finding F1
-(the host holds a renewed wait again), finding F2 (the journal click renews
-the quiet lease's hold bound) and finding N1 (an expired hold makes the verb
-that it covered stale: the host does not dispatch it). The explorer searches it breadth first inside
-caps. A violation prints its shortest trace, step by step, in the product's
-terms.
+The model follows the merged native and compatibility wait contracts.
+It includes F1 (the host holds a renewed wait again), F2 (each journal window
+renews its quiet hold) and N1 (the host drops an expired hold's queued verb).
+The explorer searches breadth first inside fixed caps.
+A violation prints its shortest trace in the product's terms.
 
 ## What the model covers
 
@@ -19,7 +18,7 @@ lease. The lease kinds are:
 
 | Kind | Owner | Bound |
 |---|---|---|
-| `Modal` | native `Dialogue` modal wait (`quester/families/dialogue.rs`) | page and acknowledgement waits on the active clock. End gap on observed ticks. |
+| `Modal` | native `Dialogue` modal wait (`quester/families/dialogue.rs`) | explicit `AwaitingDispatch` before acceptance, without a content deadline. Open, Continue and end gap use observed ticks. Choice and Main acknowledgements use the active clock. |
 | `Quiet` | native quest-journal quiet read (`quest_journal/native.rs`) | a window of observed ticks per phase, renewed at each phase. A 10 s wall bound on the hold: from the begin, and from each window the owner arms (its click, its capture, its close). The page is hidden for at most 10 s from the begin (the paint cap). When the host's sample ends the hold by expiry, the click or close that the owner queued and the host has not dispatched is dropped (N1). |
 | `Compat` | compatibility (JS) quest-journal read (`script-js/.../quest_journal/isolate.rs`) | a wall bound from the begin, renewed at the click. A separate paint cap. The same drop (N1), in the isolate's drain. |
 
@@ -74,7 +73,7 @@ only.
 | S5 | The journal page stops being hidden at the wall cap from its begin. |
 | S6 | A verb that the host dispatches (Talk, Continue, answer, click, close) gets no press in the same frame. The press would close the page that the verb opens. |
 | S7 | No verb is dispatched without a live hold: a verb that reaches the dispatcher in a frame has the host's hold at the end of that frame. A hold that the frame's sample ended by expiry made the verb stale, and the host dropped it (`docs/api/nav.md`: an expired hold makes its queued interaction stale). S6 sees a dispatch after expiry only when a press follows; S7 also when the run is already on. |
-| L | Bounded liveness: a hold that is live at tick T has an owner deadline that did not pass at tick T minus the margin. The deadline is counted in the owner's clock (active clock, ticks or wall). |
+| L | Once the owner has a deadline, a live hold cannot outlast that deadline plus the one-tick margin. The deadline uses the owner's clock. `AwaitingDispatch` has no time bound before acceptance, but Stop, session change and death cancellation still release it. |
 
 ### The bound of S2, in frames
 
@@ -105,10 +104,10 @@ cannot show.
    owner's active clock (`active`). The active clock moves with wall time
    only while the slot is eligible. Every comparison in the product is `<` or
    `>=` between a bound and a clock, so the model keeps the order of the
-   events and drops the values. One unit is about 2.5 s: a Dialogue page wait is 3
-   units, an acknowledgement wait 1, the 10 s wall bounds 4.
-   The profile `alt` uses other ratios. A bound that is longer in the product
-   is longer in the model, so an ordering race between two bounds stays visible.
+   events and drops the values. Wall and active units are about 2.5 s:
+   Choice/Main acknowledgements use one unit and the 10 s wall bounds use four.
+   Open and Continue use the separate `page_ticks` bound.
+   The profile `alt` uses other ratios to test different event orderings.
 2. **Time between the poll and the sample is one unit, or a stall.** The
    product reads `Instant::now()` after the poll (`script_observe.rs:1141`).
    The model lets a unit pass there (`drift`). A real gap is usually smaller
@@ -129,12 +128,19 @@ cannot show.
    second invariant; the product finds the read's rows by their owner
    (`mirror_owner`), never by their request, and `script-js` tests that on
    the production queue (see Conformance).
-4. **The owner is a small machine.** The `Dialogue` phases are collapsed to
-   `Page`, `Ack` and `Gap`. A poll does one phase. The product continues in
-   the same tick after a begin or a completion (`may_continue_this_tick`).
-   The model needs a second frame for that. The owner may also do nothing at
-   any poll (`Stall`): a snapshot without chat facts, a spent budget. A stall at
-   an expired wait is the case that drove finding F1, now fixed.
+4. **The owner is a small machine.** Its phases are `AwaitingDispatch`, `Open`,
+   `Continue`, `ActiveAck` and `Gap`. `ActiveAck` combines Choice and Main.
+   `Begin::Modal` collapses queueing and acceptance into one frame.
+   `Begin::QueuedModal` separates them. `Accept` arms the content bound at
+   the acceptance tick. Before that, the explicit `AwaitingDispatch` ledger
+   state samples the current tick, as `WaitDeadline::owner_tick` does.
+
+   No numeric sentinel represents an undispatched owner.
+   The model does not prove that a queued Talk will be accepted.
+   It also does not model a receipt observed after a pause with an older
+   acceptance tick. The accepted tick-bound pause-tail limitation remains.
+   A poll advances one phase. The real owner can continue in the same tick.
+   The owner may also do nothing at a poll (`Stall`), as with a spent budget.
 5. **A new send, a re-armed gap and a new read are new leases.** A change of
    phase that keeps the lease (acknowledgement to gap, each journal phase) is a
    renewal of the same lease and the same key
@@ -201,42 +207,30 @@ use it). The mutations `f2-quiet-click-no-renew`, `m6-compat-no-renew` and
 | F1 | Fixed. The host ended the acknowledgement hold, and the end gap that follows is the same lease renewed, so the press went out during the gap. The host now holds a renewal that moves the deadline later (`f1-renewal-keeps-release` is the old host; S1 and S4 find it in 6 steps). |
 | F2 | Fixed. The journal click lost its hold in its own frame when the lease's wall bound passed between the owner's poll and the host's sample (S6). Each window the owner arms, the click first, now renews the hold bound from its poll; the paint cap stays at the begin. `f2-quiet-click-no-renew` is the old ledger; S6 finds it in 6 steps in `quiet` and 4 in `alt` (without the stall, `--no-stall`; with the stall it is shorter). |
 | N1 | Fixed. Renewal fixes the old-origin crossing, not every expiry before dispatch: a stall of the process (a suspended or sleeping machine) between the owner's poll and the host's sample can pass the whole renewed bound. The sample ended the hold, and the host still dispatched the click that the poll had queued, with no hold. Now an expired hold makes its queued verb stale: the native ledger cancels the owner's undispatched click or close when it releases the lease by expiry, and the host's drain drops every queued row of the compat read's machine row (found by its `mirror_owner`, not by its request); the owner's next poll finds its read expired and fails it (`journal quiet lease expired`; `modal-timeout`), so its own retry applies. `n1-expired-click-dispatched` is the product at `c2ca4cf66`; S7 (and S6 when a press follows) finds it in 2 to 3 steps. The modal lease has no wall bound and cannot reach it. |
-| K1 | A wait that the owner bounds in ticks is not on the active clock. A paused owner loses its end-gap hold. |
+| K1 | Open, Continue and end-gap waits use observed ticks. Pause does not stop those deadlines, so the host can release their holds while the owner is paused. Choice/Main keep their active time. |
 | K2 | The terminal release is only as good as the owner's polls. |
 | K3 | The compat read never gets a terminal release. |
 
 ## Expected results of the profiles
 
-Release build on chardonnay, `--all-violations`, no cap reached
-(HOLD-MODEL-N1, 2026-11-02, `nightly.sh` at `da29b51ed`). Every profile ends
-clean and complete at its horizon: no violation of S0 to S7 or L. A run that
-differs from this table is a finding. The profiles include the stall event.
-The `quiet` run is the longest: 104.5 M of the 115 M states of the default
-cap (see the note below the table).
+Each profile must end clean and complete at its existing horizon.
+The profiles include the process-stall event.
+State counts, elapsed time and peak RSS belong to the source-bound run receipt.
+A cap-reached result is incomplete and fails `nightly.sh`.
 
-| Profile | Horizon | States | Time | Peak RSS | Result |
-|---|---|---|---|---|---|
-| `smoke` | 8 | 1 712 070 | 1.4 s | 0.15 GB | clean |
-| `modal` | 14 | 62 567 854 | 97.0 s | 6.81 GB | clean |
-| `quiet` | 14 | 104 492 969 | 159.6 s | 8.58 GB | clean |
-| `compat` | 14 | 98 653 431 | 139.0 s | 8.21 GB | clean |
-| `all` | 11 | 44 884 064 | 49.9 s | 3.86 GB | clean |
-| `alt` | 10 | 20 660 086 | 19.7 s | 1.83 GB | clean |
-| `handoff` | 11 | 50 783 058 | 56.7 s | 4.22 GB | clean |
+| Profile | Horizon | Required result |
+|---|---|---|
+| `smoke` | 8 | complete, clean |
+| `modal` | 14 | complete, clean |
+| `quiet` | 14 | complete, clean |
+| `compat` | 14 | complete, clean |
+| `all` | 11 | complete, clean |
+| `alt` | 10 | complete, clean |
+| `handoff` | 11 | complete, clean |
 
-The stall event raised the state counts by 13 % (`quiet`) to 30 % (`modal`):
-before it, the table (HOLD-MODEL-NITS) was 1.41 M, 48.2 M, 92.4 M, 78.0 M,
-37.4 M, 17.3 M and 42.4 M states. `quiet` no longer fitted the old cap of
-100 M states (it stopped at the cap, incomplete). The default state cap is
-now 115 M and the byte cap 12 GiB (`explorer.rs` says why): the measured peak
-of `quiet` is 8.58 GiB, inside the 16 GiB scope of `nightly.sh`, and the
-remaining state allowance is 10.5 M states, 9 % of the cap. The horizons stay.
-With `--no-stall` the head reproduces the old counts exactly (1 410 765,
-17 344 503, 92 396 722 and 48 187 697 states in `smoke`, `alt`, `quiet` and
-`modal`), so the new invariant and the new fields change nothing without the
-stall.
-A model change that passes the cap makes the nightly fail: measure the peak,
-then raise the cap or lower the horizon, and say why.
+The state cap remains 115 million. The byte cap remains 12 GiB.
+Every profile runs inside its own 16 GiB, no-swap scope.
+Report an incomplete result before changing a cap or a horizon.
 
 ## Where the runs go
 
@@ -250,10 +244,9 @@ then raise the cap or lower the horizon, and say why.
   that native-only lane runs no conformance test. Together they take about
   27 s (host-play, of which the F2 trace takes about 10 s of real time) and
   8 s (script-js) after the build.
-- The full profiles do not belong in those lanes: the longest needs 9 GB and
-  2.7 minutes, and the seven together about 9 minutes. `tools/nightly` has no
-  step for them, and the Linux nightly box (`malbec`) has 15 GiB. They run
-  nightly on chardonnay (ADR 0017): `nightly.sh` builds the release binary,
+- The full profiles run separately from those test lanes. They can consume
+  most of their 16 GiB scope. `tools/nightly` has no step for them.
+  They run nightly on chardonnay (ADR 0017): `nightly.sh` builds the release binary,
   runs every profile one at a time in its own
   `systemd-run --user --scope -p MemoryMax=16G -p MemorySwapMax=0` scope,
   writes one summary line per profile (exit code, states, time, peak
@@ -261,7 +254,7 @@ then raise the cap or lower the horizon, and say why.
   complete. `systemd/274bot-hold-model-nightly.service` and `.timer` start it
   at 02:30 local time as a user unit; the header of the service says how to
   install it. After a change to the hold or to its model, run
-  `tools/hold-model/nightly.sh` by hand and compare the lines with the table.
+  `tools/hold-model/nightly.sh` by hand and retain each source-bound result.
 
 Tests: `cargo test -p hold-model`.
 
@@ -304,6 +297,14 @@ it skipped; `HOLD_CONFORMANCE_SLOW_TRACES=N` raises the limit. A full run,
 `HOLD_CONFORMANCE_TRACES=100000 HOLD_CONFORMANCE_SLOW_TRACES=100000`, drives
 every shortest trace of every release: 519 native traces (none skipped) and 805
 compat traces, in about 6 minutes (HOLD-MODEL-NITS, chardonnay).
+
+The directed native conformance test
+`the_real_modal_lease_matches_each_owner_clock_and_queued_acceptance`
+checks all three contracts through the real lease API.
+It checks paused Open/Continue tick expiry, paused Choice/Main active time,
+and a queued Talk that holds until acceptance arms its tick deadline.
+The owner remains a test double. These checks do not replace real Dialogue
+or journal phase tests.
 
 Four tests run a counterexample of a retained mutation on the real code. The
 real code must decide like the head model at every frame, and each test
