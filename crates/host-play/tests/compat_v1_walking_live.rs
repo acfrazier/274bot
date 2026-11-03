@@ -306,12 +306,23 @@ fn compat_v1_walking_probeable() {
     assert_eq!(result["edgeLocal"], Value::Null, "scene edge: {result}");
 
     stop_script(&play, account);
+    let head = std::process::Command::new("git")
+        .current_dir(env!("CARGO_MANIFEST_DIR"))
+        .args(["rev-parse", "HEAD"])
+        .output()
+        .expect("read tested tree commit");
+    assert!(head.status.success(), "git rev-parse HEAD failed");
+    let tested_tree = String::from_utf8(head.stdout)
+        .expect("git rev-parse HEAD returns UTF-8")
+        .trim()
+        .to_owned();
     let evidence = required_path("LIVE_EVIDENCE_DIR");
     let receipt = json!({
         "cell": "compat_v1_walking_probeable",
         "product_commit": std::env::var("COMPAT_W2_PRODUCT_COMMIT").expect("product commit"),
         "engine": "Engine L",
         "account": account,
+        "tested_tree": tested_tree,
         "result": result,
     });
     std::fs::write(

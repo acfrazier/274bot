@@ -812,6 +812,9 @@ export default class CompatEventsProbe extends LoopingBot {
             events.on('skill.xp', event => {
                 if (event.name === 'prayer') this.log('XP:PRAYER:' + JSON.stringify(event));
             });
+            events.on('skill.level', event => {
+                if (event.name === 'prayer') this.log('LEVEL:PRAYER:' + JSON.stringify(event));
+            });
         } else {
             const restarted = event => {
                 if (event.text?.startsWith('get tutorial:')) {
@@ -1284,7 +1287,7 @@ fn run_events_cell(receipt: &mut Receipt) -> Result<(), String> {
     request_command(&session, "setstat prayer 2")?;
     wait_command(&mut session, "setstat prayer 2")?;
     wait_for_logs(&mut session, ACTION_DEADLINE, |logs| {
-        count_prefix(logs, "XP:PRAYER:") >= 1
+        count_prefix(logs, "XP:PRAYER:") >= 1 && count_prefix(logs, "LEVEL:PRAYER:") >= 1
     })?;
 
     stop_script(&mut session, "EVENTS:STOP:1", false)?;
@@ -1306,7 +1309,7 @@ fn run_events_cell(receipt: &mut Receipt) -> Result<(), String> {
         || count_prefix(&session.receipt.logs, "CHAT:INSTANCE:") != 2
         || count_prefix(&session.receipt.logs, "INV:OFF:") != 1
         || count_prefix(&session.receipt.logs, "INV:WITNESS:") != 2
-        || count_prefix(&session.receipt.logs, "XP:PRAYER:") != 1
+        || count_prefix(&session.receipt.logs, "LEVEL:PRAYER:") != 1
         || count_prefix(&session.receipt.logs, "RESTART:CHAT:") != 1
         || count_prefix(&session.receipt.logs, "RESTART:INSTANCE:") != 1
         || count_prefix(&session.receipt.logs, "EVENTS:STOP:1") != 1
@@ -1325,6 +1328,7 @@ fn run_events_cell(receipt: &mut Receipt) -> Result<(), String> {
     let inventory = event_payloads(logs, "INV:WITNESS:")?;
     let prayer = event_payloads(logs, "XP:PRAYER:")?;
     let restarted_chat = event_payloads(logs, "RESTART:CHAT:")?;
+    let prayer_level = event_payloads(logs, "LEVEL:PRAYER:")?;
     let restarted_instance = event_payloads(logs, "RESTART:INSTANCE:")?;
     if !first_chat[0]["text"]
         .as_str()
@@ -1347,6 +1351,10 @@ fn run_events_cell(receipt: &mut Receipt) -> Result<(), String> {
         || prayer[0]["name"] != "prayer"
         || prayer[0]["xp"].as_i64().unwrap_or_default() <= 0
         || prayer[0]["delta"].as_i64().unwrap_or_default() <= 0
+        || prayer_level[0]["name"] != "prayer"
+        || prayer_level[0]["level"].as_i64().is_none()
+        || prayer_level[0]["previous"].as_i64().is_none()
+        || prayer_level[0]["level"] == prayer_level[0]["previous"]
         || !restarted_chat[0]["text"]
             .as_str()
             .is_some_and(|text| text.starts_with("get tutorial:"))
