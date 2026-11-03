@@ -42,6 +42,8 @@ struct PaintChromeShapes {
 #[derive(Default)]
 struct ChromeState {
     selections: HashMap<String, String>,
+    // Singleton list offsets persist until the script resets its paint store.
+    scroll_state: HashMap<String, String>,
     reset_instance_stores: bool,
     dock_h: i32,
     consumed: i32,
@@ -71,6 +73,7 @@ impl Default for PanelRect {
 impl ChromeState {
     fn reset_store(&mut self) {
         self.selections.clear();
+        self.scroll_state.clear();
         self.reset_instance_stores = true;
         self.consumed = 0;
         self.dock_h = CHATBOX_H;
@@ -178,8 +181,8 @@ fn object_template(
 }
 pub(super) fn install(runtime: &mut Runtime) -> Result<(), String> {
     let shapes = {
-        let mut scope = runtime.deno_runtime().handle_scope();
         let context = runtime.deno_runtime().main_context();
+        let mut scope = runtime.deno_runtime().handle_scope();
         let global = context.open(&mut scope).global(&mut scope);
         let lowercase_method_key =
             v8::String::new_from_utf8(&mut scope, b"toLowerCase", v8::NewStringType::Internalized)
@@ -853,11 +856,15 @@ fn parse_number(text: Option<&str>, fallback: f64) -> f64 {
 fn list_scroll(state: &mut ChromeState, key: &str, len: usize, rows: f64, focus: f64) -> f64 {
     let manual_key = format!("{key}:manual");
     let focus_key = format!("{key}:focus");
-    let stored_offset = parse_number(state.state_get("0", key), 0.0);
+    let stored_offset = parse_number(state.scroll_state.get(key).map(String::as_str), 0.0);
     let manual = state
-        .state_get("0", &manual_key)
+        .scroll_state
+        .get(&manual_key)
         .is_some_and(|value| value == "1");
-    let old_focus = parse_number(state.state_get("0", &focus_key), -1.0);
+    let old_focus = parse_number(
+        state.scroll_state.get(&focus_key).map(String::as_str),
+        -1.0,
+    );
     let manual = if focus != old_focus { false } else { manual };
     let max = (len as f64 - rows).max(0.0);
     let clamp = |number: f64| number.max(0.0).min(max);
@@ -873,9 +880,15 @@ fn list_scroll(state: &mut ChromeState, key: &str, len: usize, rows: f64, focus:
             offset = clamp(focus - rows + 1.0);
         }
     }
-    state.state_set("0", key.to_owned(), js_number_string(offset));
-    state.state_set("0", manual_key, if manual { "1" } else { "0" }.to_owned());
-    state.state_set("0", focus_key, js_number_string(focus));
+    state
+        .scroll_state
+        .insert(key.to_owned(), js_number_string(offset));
+    state
+        .scroll_state
+        .insert(manual_key, if manual { "1" } else { "0" }.to_owned());
+    state
+        .scroll_state
+        .insert(focus_key, js_number_string(focus));
     offset
 }
 
