@@ -46,9 +46,10 @@ struct PaintChromeShapes {
 
 #[derive(Default)]
 struct ChromeState {
-    // Every paint store lives in the V8 `WeakMap`, keyed by its owner, so the
-    // isolate's heap cap bounds it. Host paint selections wait here until the
-    // next chrome call can reach a handle scope.
+    // Every paint store lives in the V8 heap: the singleton in `chrome_store`,
+    // other owners in the `WeakMap`, so the isolate's heap cap bounds them.
+    // Host paint selections wait here until the next chrome call can reach a
+    // handle scope.
     pending_store: Vec<(String, String)>,
     reset_instance_stores: bool,
     dock_h: i32,
@@ -551,11 +552,6 @@ fn run<'s>(
                 .get_slot::<Rc<PaintChromeShapes>>()
                 .cloned()
                 .ok_or_else(|| "paint chrome object shape cache is not installed".to_string())?;
-            let weak_map = v8::Local::new(scope, &*shapes.state_stores.borrow());
-            let set = v8::Local::new(scope, &shapes.state_store_set);
-            let store = v8::Map::new(scope);
-            set.call(scope, weak_map.into(), &[owner.into(), store.into()])
-                .ok_or_else(|| "paint state weak map set failed".to_string())?;
             if args.get(2).boolean_value(scope) {
                 *shapes.singleton_owner.borrow_mut() = Some(v8::Global::new(scope, owner));
             } else {
