@@ -459,7 +459,7 @@ export default class T extends LoopingBot {
             from_level: 0,
             allow_teleports: false,
             allow_bank_fetch: false,
-            max_expansions: Some(23),
+            max_expansions: None,
             request_id,
             ..
         }] => {
