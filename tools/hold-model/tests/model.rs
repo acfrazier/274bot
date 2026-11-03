@@ -629,19 +629,20 @@ fn each_earlier_design_fails_a_frozen_invariant() {
         (
             Mutation::M1HoldTwoTicks,
             "S1-press-while-live",
-            3,
+            1,
             modal_only,
         ),
+        // Tick Open cutover (35ed129ee): M1 fails S1/S7; CheckMarginTwo still tests L.
         (
             Mutation::M1HoldTwoTicks,
-            "L-hold-outlives-deadline",
-            4,
+            "S7-dispatch-without-hold",
+            3,
             modal_only,
         ),
         (
             Mutation::M2HoldThreeTicks,
             "S1-press-while-live",
-            4,
+            1,
             modal_only,
         ),
         (
@@ -659,7 +660,7 @@ fn each_earlier_design_fails_a_frozen_invariant() {
         (
             Mutation::M5ActiveToWall,
             "S1-press-while-live",
-            5,
+            7,
             modal_only,
         ),
         (
