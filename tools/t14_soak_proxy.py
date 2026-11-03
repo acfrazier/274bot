@@ -806,12 +806,14 @@ class ConnectionState:
             expected = {"proxy_a", "tls_terminator", "proxy_b"}
             if expected.issubset(self.stage_status) and not self.finalized:
                 self.finalized = True
+                closed_monotonic_ns = time.monotonic_ns()
                 final_record = {
                     "connection_id": self.identifier,
                     "client_peer_host": self.peer_host,
                     "client_peer_port": self.peer_port,
                     "started_at_utc": self.started_utc,
                     "started_monotonic_ns": self.started_monotonic_ns,
+                    "closed_monotonic_ns": closed_monotonic_ns,
                     "elapsed_seconds": round(time.monotonic() - self.started, 3),
                     "stage_status": dict(self.stage_status),
                     "failures": list(self.failures),
