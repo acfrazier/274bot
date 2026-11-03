@@ -4,6 +4,8 @@ use rustyscript::{Runtime, RuntimeOptions};
 const CHILD_ENV: &str = "SCRIPT_PAINT_STEPPER_SHAPE_TEST_CHILD";
 const TEST_NAME: &str =
     "paint_chrome::tests::stepper_descriptors_keep_fast_properties_and_heap_growth_is_bounded";
+const SINGLETON_CHILD_ENV: &str = "SCRIPT_PAINT_SINGLETON_STORE_TEST_CHILD";
+const SINGLETON_TEST_NAME: &str = "paint_chrome::tests::singleton_store_lives_in_the_v8_heap";
 
 const SETUP: &str = r#"
 globalThis.__draw = click => {
@@ -77,11 +79,11 @@ fn collected_used_heap(runtime: &mut Runtime) -> usize {
     isolate.get_heap_statistics().used_heap_size()
 }
 
-fn in_child(body: impl FnOnce()) {
-    if std::env::var_os(CHILD_ENV).is_none() {
+fn in_child(env: &str, name: &str, body: impl FnOnce()) {
+    if std::env::var_os(env).is_none() {
         let output = std::process::Command::new(std::env::current_exe().expect("test executable"))
-            .args(["--exact", TEST_NAME, "--nocapture"])
-            .env(CHILD_ENV, "1")
+            .args(["--exact", name, "--nocapture"])
+            .env(env, "1")
             .output()
             .expect("run isolated paint stepper shape test");
         let stdout = String::from_utf8_lossy(&output.stdout);
@@ -98,7 +100,7 @@ fn in_child(body: impl FnOnce()) {
 
 #[test]
 fn stepper_descriptors_keep_fast_properties_and_heap_growth_is_bounded() {
-    in_child(|| {
+    in_child(CHILD_ENV, TEST_NAME, || {
         let mut runtime = setup();
         assert!(runtime.eval::<bool>("__fast()").unwrap());
         assert_eq!(
@@ -192,6 +194,86 @@ fn stepper_descriptors_keep_fast_properties_and_heap_growth_is_bounded() {
                 )
                 .unwrap(),
             "after reset"
+        );
+    });
+}
+
+/// Round-2 review N2 and N6: the exported `paintState` store is the same V8
+/// `Map` that a script writes and Rust reads, so the isolate heap cap bounds
+/// it and the shim sends no store choice.
+#[test]
+fn singleton_store_lives_in_the_v8_heap() {
+    in_child(SINGLETON_CHILD_ENV, SINGLETON_TEST_NAME, || {
+        let mut runtime = setup();
+        runtime
+            .eval::<()>(
+                "globalThis.__singleton = {};
+                 __rs2b0t_paint_chrome('stateNew', __singleton, true);",
+            )
+            .unwrap();
+        // A plain set, as `paintState.set` now makes: Rust keys the store by
+        // the owner it recorded at `stateNew`.
+        runtime
+            .eval::<()>("__rs2b0t_paint_chrome('stateSet', __singleton, 'paint:collapsed', '1')")
+            .unwrap();
+        assert_eq!(
+            runtime
+                .eval::<String>(
+                    "__rs2b0t_paint_chrome('stateGet', __singleton, 'paint:collapsed', '')"
+                )
+                .unwrap(),
+            "1"
+        );
+        // `begin` reads the collapse flag from that same store: an open panel
+        // scrolls to focus 1, a collapsed one lists nothing.
+        runtime
+            .eval::<()>("__rs2b0t_paint_chrome('begin', 'chatbox', null)")
+            .unwrap();
+        assert_eq!(
+            runtime
+                .eval::<f64>(
+                    "__rs2b0t_paint_chrome('list', { lines: [] }, 'q', ['a', 'b', 'c', 'd'], 1, { focus: 1 })"
+                )
+                .unwrap(),
+            0.0,
+            "begin reads the collapse flag from the shared store"
+        );
+        // Rust writes the flag back into the same store the script reads.
+        runtime
+            .eval::<()>("__rs2b0t_paint_chrome('title', { paintClick: 'paint:toggle' })")
+            .unwrap();
+        assert_eq!(
+            runtime
+                .eval::<String>(
+                    "__rs2b0t_paint_chrome('stateGet', __singleton, 'paint:collapsed', '')"
+                )
+                .unwrap(),
+            "0",
+            "the title toggle writes the collapse flag into the script's store"
+        );
+
+        let baseline = collected_used_heap(&mut runtime);
+        let keys = 20_000;
+        let fill = format!(
+            "(() => {{ for (let index = 0; index < {keys}; index++) {{
+                 __rs2b0t_paint_chrome('stateSet', __singleton, 'k' + index, 'v'.repeat(64));
+             }} return {keys}; }})()"
+        );
+        let rust = allocation_counter::measure(|| {
+            assert_eq!(runtime.eval::<usize>(&fill).unwrap(), keys);
+        });
+        let after = collected_used_heap(&mut runtime);
+        let growth = after.saturating_sub(baseline);
+        // Every 64-byte value costs at least its own bytes in the V8 heap.
+        let floor = keys * 64;
+        println!("paint singleton store keys={keys} baseline={baseline} after={after} growth={growth} floor={floor} rust={rust:?}");
+        assert!(
+            growth >= floor,
+            "the singleton store kept {growth} bytes in the V8 heap; floor {floor}"
+        );
+        assert!(
+            rust.bytes_current <= 4 * 1024,
+            "the singleton store retained {rust:?} in Rust"
         );
     });
 }

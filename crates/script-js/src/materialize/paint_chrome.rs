@@ -8,7 +8,6 @@
 use rustyscript::Runtime;
 use std::borrow::Cow;
 use std::cell::RefCell;
-use std::collections::HashMap;
 use std::rc::Rc;
 
 const LINE: i32 = 16;
@@ -37,12 +36,20 @@ struct PaintChromeShapes {
     state_store_get: v8::Global<v8::Function>,
     state_store_set: v8::Global<v8::Function>,
     state_stores: RefCell<v8::Global<v8::Object>>,
+    /// The singleton paint store: one V8 `Map` that holds every chrome key and
+    /// backs the exported `paintState`. Created with the isolate, replaced on
+    /// reset.
+    chrome_store: RefCell<v8::Global<v8::Map>>,
+    /// The exported `paintState` owner, recorded when the shim calls `stateNew`.
+    singleton_owner: RefCell<Option<v8::Global<v8::Object>>>,
 }
 
 #[derive(Default)]
 struct ChromeState {
-    // Only the exported singleton uses this Rust store; instance stores live in V8's WeakMap.
-    singleton_store: HashMap<String, String>,
+    // Every paint store lives in the V8 `WeakMap`, keyed by its owner, so the
+    // isolate's heap cap bounds it. Host paint selections wait here until the
+    // next chrome call can reach a handle scope.
+    pending_store: Vec<(String, String)>,
     reset_instance_stores: bool,
     dock_h: i32,
     consumed: i32,
@@ -71,7 +78,7 @@ impl Default for PanelRect {
 
 impl ChromeState {
     fn reset_store(&mut self) {
-        self.singleton_store.clear();
+        self.pending_store.clear();
         self.reset_instance_stores = true;
         self.consumed = 0;
         self.dock_h = CHATBOX_H;
@@ -81,15 +88,19 @@ impl ChromeState {
         self.collapsed = false;
     }
 
-    fn begin(&mut self, panel: PanelRect, char_w: f64) {
+    fn begin(
+        &mut self,
+        scope: &mut v8::HandleScope,
+        panel: PanelRect,
+        char_w: f64,
+    ) -> Result<(), String> {
         self.panel = panel;
         self.dock_h = panel.h.trunc().clamp(0.0, f64::from(i32::MAX)) as i32;
         self.consumed = 0;
         self.body_x = PAD;
         self.char_w = char_w;
-        self.collapsed = self
-            .state_get("paint:collapsed")
-            .is_some_and(|value| value == "1");
+        self.collapsed = chrome_get(scope, "paint:collapsed")?.is_some_and(|value| value == "1");
+        Ok(())
     }
 
     fn rows_left(&self) -> i32 {
@@ -107,14 +118,6 @@ impl ChromeState {
         self.consume(px.clamp(0, i64::from(i32::MAX)) as i32);
     }
 
-    fn state_get(&self, key: &str) -> Option<&str> {
-        self.singleton_store.get(key).map(String::as_str)
-    }
-
-    fn state_set(&mut self, key: String, value: String) {
-        self.singleton_store.insert(key, value);
-    }
-
     fn cols(&self) -> i32 {
         if self.char_w <= 0.0 {
             return 0;
@@ -124,21 +127,108 @@ impl ChromeState {
             .max(0.0) as i32
     }
 
-    fn resolve(&self, key: &str, names: &[String]) -> String {
-        if let Some(stored) = self.singleton_store.get(key) {
-            if names.iter().any(|name| name == stored) {
-                return stored.clone();
+    fn resolve(
+        &self,
+        scope: &mut v8::HandleScope,
+        key: &str,
+        names: &[String],
+    ) -> Result<String, String> {
+        if let Some(stored) = chrome_get(scope, key)? {
+            if names.iter().any(|name| name == &stored) {
+                return Ok(stored);
             }
         }
-        names.first().cloned().unwrap_or_default()
+        Ok(names.first().cloned().unwrap_or_default())
     }
 
-    fn resolve_rail(&self, key: &str, names: &[String]) -> String {
+    fn resolve_rail(
+        &self,
+        scope: &mut v8::HandleScope,
+        key: &str,
+        names: &[String],
+    ) -> Result<String, String> {
         if names.is_empty() {
-            return self.singleton_store.get(key).cloned().unwrap_or_default();
+            return Ok(chrome_get(scope, key)?.unwrap_or_default());
         }
-        self.resolve(key, names)
+        self.resolve(scope, key, names)
     }
+}
+
+/// The exported singleton's owner, recorded at `stateNew`.
+fn singleton_owner<'s>(
+    scope: &mut v8::HandleScope<'s>,
+) -> Result<Option<v8::Local<'s, v8::Object>>, String> {
+    let shapes = scope
+        .get_slot::<Rc<PaintChromeShapes>>()
+        .cloned()
+        .ok_or_else(|| "paint chrome object shape cache is not installed".to_string())?;
+    let owner = shapes
+        .singleton_owner
+        .borrow()
+        .as_ref()
+        .map(|owner| v8::Local::new(scope, owner));
+    Ok(owner)
+}
+
+/// The singleton paint store. Every chrome key lives here, and the exported
+/// `paintState` reads and writes the same map, so the V8 heap cap bounds it.
+fn chrome_store<'s>(scope: &mut v8::HandleScope<'s>) -> Result<v8::Local<'s, v8::Map>, String> {
+    let shapes = scope
+        .get_slot::<Rc<PaintChromeShapes>>()
+        .cloned()
+        .ok_or_else(|| "paint chrome object shape cache is not installed".to_string())?;
+    let store = v8::Local::new(scope, &*shapes.chrome_store.borrow());
+    Ok(store)
+}
+
+/// The store for one owner: the chrome store for the recorded singleton,
+/// otherwise the owner's own map in the WeakMap.
+fn owner_store<'s>(
+    scope: &mut v8::HandleScope<'s>,
+    owner: v8::Local<'s, v8::Value>,
+    create: bool,
+) -> Result<Option<v8::Local<'s, v8::Map>>, String> {
+    if let Some(singleton) = singleton_owner(scope)? {
+        if owner.strict_equals(singleton.into()) {
+            return Ok(Some(chrome_store(scope)?));
+        }
+    }
+    paint_state_store(scope, owner, create)
+}
+
+/// Read one singleton key. The store is the V8 `Map` that `paintState.get` and
+/// `paintState.set` use, so the heap cap bounds it.
+fn chrome_get(scope: &mut v8::HandleScope, key: &str) -> Result<Option<String>, String> {
+    let store = chrome_store(scope)?;
+    let key = js_string(scope, key)?;
+    let value = store
+        .get(scope, key)
+        .ok_or_else(|| "paint state map get failed".to_string())?;
+    if value.is_undefined() {
+        Ok(None)
+    } else {
+        Ok(Some(js_string_arg(scope, value)))
+    }
+}
+
+fn chrome_set(scope: &mut v8::HandleScope, key: &str, value: &str) -> Result<(), String> {
+    let store = chrome_store(scope)?;
+    let key = js_string(scope, key)?;
+    let value = js_string(scope, value)?;
+    store
+        .set(scope, key, value)
+        .ok_or_else(|| "paint state map set failed".to_string())?;
+    Ok(())
+}
+
+/// Host paint selections wait for a handle scope; apply them before the call
+/// that reads the store.
+fn apply_pending_store_selections(scope: &mut v8::HandleScope) -> Result<(), String> {
+    let pending = STATE.with(|s| std::mem::take(&mut s.borrow_mut().pending_store));
+    for (key, name) in pending {
+        chrome_set(scope, &key, &name)?;
+    }
+    Ok(())
 }
 
 pub(super) fn reset() {
@@ -150,24 +240,34 @@ pub(super) fn store_select(key: &str, name: &str) {
         return;
     }
     STATE.with(|s| {
-        s.borrow_mut().state_set(key.to_owned(), name.to_owned());
+        s.borrow_mut()
+            .pending_store
+            .push((key.to_owned(), name.to_owned()));
     });
 }
 /// Resolve a strip band's selection and spend its title row, for a caller that
 /// records the frame itself (`paint_jive`'s frame plan) instead of marshalling
 /// the call.
-pub(super) fn strip_select(id: &str, names: &[String]) -> String {
+pub(super) fn strip_select(
+    scope: &mut v8::HandleScope,
+    id: &str,
+    names: &[String],
+) -> Result<String, String> {
     STATE.with(|s| {
         let mut st = s.borrow_mut();
         st.consume(TITLE_H);
-        st.resolve(&format!("strip:{id}"), names)
+        st.resolve(scope, &format!("strip:{id}"), names)
     })
 }
 
 /// Resolve a rail band's selection. The rail is vertical, so it spends no
 /// dock rows.
-pub(super) fn rail_select(id: &str, names: &[String]) -> String {
-    STATE.with(|s| s.borrow().resolve_rail(&format!("rail:{id}"), names))
+pub(super) fn rail_select(
+    scope: &mut v8::HandleScope,
+    id: &str,
+    names: &[String],
+) -> Result<String, String> {
+    STATE.with(|s| s.borrow().resolve_rail(scope, &format!("rail:{id}"), names))
 }
 
 fn object_template(
@@ -211,6 +311,7 @@ pub(super) fn install(runtime: &mut Runtime) -> Result<(), String> {
         )?)
         .map_err(|_| "paint state weak map set method".to_string())?;
         let state_stores = new_state_store_weak_map(&mut scope, weak_map_ctor)?;
+        let chrome_store = v8::Map::new(&mut scope);
         Rc::new(PaintChromeShapes {
             stepper_button: object_template(&mut scope, &["id", "label"])?,
             lowercase_method_key: v8::Global::new(&mut scope, lowercase_method_key),
@@ -218,6 +319,8 @@ pub(super) fn install(runtime: &mut Runtime) -> Result<(), String> {
             state_store_get: v8::Global::new(&mut scope, state_store_get),
             state_store_set: v8::Global::new(&mut scope, state_store_set),
             state_stores: RefCell::new(v8::Global::new(&mut scope, state_stores)),
+            chrome_store: RefCell::new(v8::Global::new(&mut scope, chrome_store)),
+            singleton_owner: RefCell::new(None),
         })
     };
     if !runtime.deno_runtime().v8_isolate().set_slot(shapes) {
@@ -256,6 +359,8 @@ fn apply_pending_state_store_reset(scope: &mut v8::HandleScope) -> Result<(), St
     let constructor = v8::Local::new(scope, &shapes.state_store_weak_map_ctor);
     let state_stores = new_state_store_weak_map(scope, constructor)?;
     *shapes.state_stores.borrow_mut() = v8::Global::new(scope, state_stores);
+    let store = v8::Map::new(scope);
+    *shapes.chrome_store.borrow_mut() = v8::Global::new(scope, store);
     Ok(())
 }
 
@@ -315,6 +420,7 @@ fn run<'s>(
     args: &v8::FunctionCallbackArguments<'s>,
 ) -> Result<v8::Local<'s, v8::Value>, String> {
     apply_pending_state_store_reset(scope)?;
+    apply_pending_store_selections(scope)?;
     let op = js_string_arg(scope, args.get(0));
     match op.as_str() {
         "begin" => {
@@ -330,23 +436,24 @@ fn run<'s>(
                 set_property(scope, context, "textBaseline", baseline)?;
             }
             let char_w = measure_char_width(scope, ctx);
-            STATE.with(|s| s.borrow_mut().begin(panel, char_w));
+            STATE.with(|s| s.borrow_mut().begin(scope, panel, char_w))?;
             Ok(v8::undefined(scope).into())
         }
         "title" => {
             let toggle = consume_paint_click(scope, args.get(1), "paint:toggle")?;
-            STATE.with(|s| {
+            let collapsed = STATE.with(|s| {
                 let mut state = s.borrow_mut();
                 state.consume(TITLE_H);
                 if toggle {
                     state.collapsed = !state.collapsed;
-                    let collapsed = state.collapsed;
-                    state.state_set(
-                        "paint:collapsed".to_owned(),
-                        if collapsed { "1" } else { "0" }.to_owned(),
-                    );
+                    Some(state.collapsed)
+                } else {
+                    None
                 }
             });
+            if let Some(collapsed) = collapsed {
+                chrome_set(scope, "paint:collapsed", if collapsed { "1" } else { "0" })?;
+            }
             Ok(v8::undefined(scope).into())
         }
         // Batched body rows: one crossing spends the pending line count.
@@ -381,13 +488,13 @@ fn run<'s>(
         "strip" => {
             let id = js_string_arg(scope, args.get(1));
             let names = js_string_array(scope, args.get(2))?;
-            let selected = strip_select(&id, &names);
+            let selected = strip_select(scope, &id, &names)?;
             js_string(scope, &selected)
         }
         "rail" => {
             let id = js_string_arg(scope, args.get(1));
             let names = js_string_array(scope, args.get(2))?;
-            let selected = rail_select(&id, &names);
+            let selected = rail_select(scope, &id, &names)?;
             if !names.is_empty() {
                 STATE.with(|s| {
                     let mut state = s.borrow_mut();
@@ -404,8 +511,8 @@ fn run<'s>(
             let selected = STATE.with(|s| {
                 let mut st = s.borrow_mut();
                 st.consume(TAB_INSET + TAB_H + TAB_TRAIL);
-                st.resolve(&format!("tabs:{id}"), &names)
-            });
+                st.resolve(scope, &format!("tabs:{id}"), &names)
+            })?;
             js_string(scope, &selected)
         }
         "statGrid" => {
@@ -440,13 +547,18 @@ fn run<'s>(
         "stateNew" => {
             let owner = v8::Local::<v8::Object>::try_from(args.get(1))
                 .map_err(|_| "paint state owner is not an object".to_string())?;
-            if !args.get(2).boolean_value(scope) {
-                let shapes = scope
-                    .get_slot::<Rc<PaintChromeShapes>>()
-                    .cloned()
-                    .ok_or_else(|| {
-                        "paint chrome object shape cache is not installed".to_string()
-                    })?;
+            let shapes = scope
+                .get_slot::<Rc<PaintChromeShapes>>()
+                .cloned()
+                .ok_or_else(|| "paint chrome object shape cache is not installed".to_string())?;
+            let weak_map = v8::Local::new(scope, &*shapes.state_stores.borrow());
+            let set = v8::Local::new(scope, &shapes.state_store_set);
+            let store = v8::Map::new(scope);
+            set.call(scope, weak_map.into(), &[owner.into(), store.into()])
+                .ok_or_else(|| "paint state weak map set failed".to_string())?;
+            if args.get(2).boolean_value(scope) {
+                *shapes.singleton_owner.borrow_mut() = Some(v8::Global::new(scope, owner));
+            } else {
                 let weak_map = v8::Local::new(scope, &*shapes.state_stores.borrow());
                 let set = v8::Local::new(scope, &shapes.state_store_set);
                 let store = v8::Map::new(scope);
@@ -457,14 +569,7 @@ fn run<'s>(
         }
         "stateGet" => {
             let key_text = js_string_arg(scope, args.get(2));
-            if args.get(4).boolean_value(scope) {
-                let value = STATE.with(|s| s.borrow().state_get(&key_text).map(str::to_owned));
-                return match value {
-                    Some(value) => js_string(scope, &value),
-                    None => Ok(args.get(3)),
-                };
-            }
-            let Some(store) = paint_state_store(scope, args.get(1), false)? else {
+            let Some(store) = owner_store(scope, args.get(1), false)? else {
                 return Ok(args.get(3));
             };
             let key = js_string(scope, &key_text)?;
@@ -480,13 +585,7 @@ fn run<'s>(
         "stateSet" => {
             let key_text = js_string_arg(scope, args.get(2));
             let value_text = js_string_arg(scope, args.get(3));
-            if args.get(4).boolean_value(scope) {
-                STATE.with(|s| {
-                    s.borrow_mut().state_set(key_text, value_text);
-                });
-                return Ok(v8::undefined(scope).into());
-            }
-            let store = paint_state_store(scope, args.get(1), true)?
+            let store = owner_store(scope, args.get(1), true)?
                 .ok_or_else(|| "paint state store was not created".to_string())?;
             let key = js_string(scope, &key_text)?;
             let value = js_string(scope, &value_text)?;
@@ -884,14 +983,18 @@ fn parse_number(text: Option<&str>, fallback: f64) -> f64 {
         .map_or(fallback, |text| text.parse().unwrap_or(f64::NAN))
 }
 
-fn list_scroll(state: &mut ChromeState, key: &str, len: usize, rows: f64, focus: f64) -> f64 {
+fn list_scroll(
+    scope: &mut v8::HandleScope,
+    key: &str,
+    len: usize,
+    rows: f64,
+    focus: f64,
+) -> Result<f64, String> {
     let manual_key = format!("{key}:manual");
     let focus_key = format!("{key}:focus");
-    let stored_offset = parse_number(state.state_get(key), 0.0);
-    let manual = state
-        .state_get(&manual_key)
-        .is_some_and(|value| value == "1");
-    let old_focus = parse_number(state.state_get(&focus_key), -1.0);
+    let stored_offset = parse_number(chrome_get(scope, key)?.as_deref(), 0.0);
+    let manual = chrome_get(scope, &manual_key)?.is_some_and(|value| value == "1");
+    let old_focus = parse_number(chrome_get(scope, &focus_key)?.as_deref(), -1.0);
     let manual = if focus != old_focus { false } else { manual };
     let max = (len as f64 - rows).max(0.0);
     let clamp = |number: f64| number.max(0.0).min(max);
@@ -907,10 +1010,10 @@ fn list_scroll(state: &mut ChromeState, key: &str, len: usize, rows: f64, focus:
             offset = clamp(focus - rows + 1.0);
         }
     }
-    state.state_set(key.to_owned(), js_number_string(offset));
-    state.state_set(manual_key, if manual { "1" } else { "0" }.to_owned());
-    state.state_set(focus_key, js_number_string(focus));
-    offset
+    chrome_set(scope, key, &js_number_string(offset))?;
+    chrome_set(scope, &manual_key, if manual { "1" } else { "0" })?;
+    chrome_set(scope, &focus_key, &js_number_string(focus))?;
+    Ok(offset)
 }
 
 fn fill_rows<'s>(
@@ -1093,15 +1196,15 @@ fn list_impl<'s>(
     footer: v8::Local<'s, v8::Value>,
 ) -> Result<v8::Local<'s, v8::Value>, String> {
     let len = lines.length() as usize;
-    let (collapsed, offset, cols) = STATE.with(|s| {
-        let mut state = s.borrow_mut();
+    let (collapsed, offset, cols) = STATE.with(|s| -> Result<(bool, f64, i32), String> {
+        let state = s.borrow();
         if state.collapsed {
-            return (true, 0.0, 0);
+            return Ok((true, 0.0, 0));
         }
         let key = format!("list:{id}");
-        let offset = list_scroll(&mut state, &key, len, rows, focus);
-        (false, offset, state.cols())
-    });
+        let offset = list_scroll(scope, &key, len, rows, focus)?;
+        Ok((false, offset, state.cols()))
+    })?;
     if collapsed {
         return Ok(v8::Number::new(scope, 0.0).into());
     }
@@ -1214,12 +1317,13 @@ fn grid<'s>(
         (js_number(scope, focus_value) / columns).floor()
     };
     let footer = js_property(scope, options, "footer")?;
-    let (offset, char_w, body_x, panel_w) = STATE.with(|s| {
-        let mut state = s.borrow_mut();
-        let key = format!("list:{id}");
-        let offset = list_scroll(&mut state, &key, total.max(0.0) as usize, rows, focus);
-        (offset, state.char_w, state.body_x, state.panel.w)
-    });
+    let (offset, char_w, body_x, panel_w) =
+        STATE.with(|s| -> Result<(f64, f64, f64, f64), String> {
+            let state = s.borrow();
+            let key = format!("list:{id}");
+            let offset = list_scroll(scope, &key, total.max(0.0) as usize, rows, focus)?;
+            Ok((offset, state.char_w, state.body_x, state.panel.w))
+        })?;
     let record_lines = record_lines(scope, record)?;
     let max_offset = (total - rows).max(0.0);
     if len == 0 {
