@@ -231,7 +231,7 @@
     "module": "paint/paintLogic.js",
     "selector": "WHEEL_ROWS",
     "reason": "The scroll-wheel layout constant is unavailable while its paint family refuses.",
-    "runtime": "crates/script-js/src/shim/paintLogic.js:145",
+    "runtime": "crates/script-js/src/shim/paintLogic.js:147",
     "declaration": "export const WHEEL_ROWS: never;"
   },
   {
