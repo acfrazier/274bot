@@ -22,7 +22,8 @@ use client::dash3d::CollisionFlag;
 use crate::collision::WorldCollision;
 use crate::contract::{NavIdentity, PackDigest, SearchGraphEnvelope};
 use crate::grid::StepGrid;
-use crate::pack::{decode, decode_any_reader, decode_grid, BankStand, PackError};
+use crate::pack::{decode_any_reader, decode_full, decode_grid, BankStand, PackError};
+use crate::reachability::ReachabilityAtlas;
 use crate::transport::{TransportEdge, TransportGraph, TransportKind};
 
 /// A fully-blocked stamp: every directional `PL_WALK_*` mask, so the
@@ -35,6 +36,7 @@ const BLOCKED: u32 = CollisionFlag::SQ_BLOCKED as u32 | CollisionFlag::WALK_BLOC
 pub struct NavWorld {
     pub collision: WorldCollision,
     pub graph: TransportGraph,
+    reachability: ReachabilityAtlas,
     banks: Vec<BankStand>,
     named_banks: OnceLock<Arc<api::named_banks::NamedBankFacts>>,
     transport_item_names: OnceLock<TransportItemNames>,
@@ -79,6 +81,11 @@ impl NavWorld {
     /// and opens, ordered by tile.
     pub fn banks(&self) -> &[BankStand] {
         &self.banks
+    }
+
+    /// Borrowed reachability atlas. Unlabeled on synthetic worlds.
+    pub fn reachability(&self) -> &ReachabilityAtlas {
+        &self.reachability
     }
 
     /// The explicitly bound selected-content roster. Reading an unbound world
@@ -161,8 +168,10 @@ impl NavWorld {
     /// rebakes. This never rereads a pathname. The bytes' SHA-256 becomes
     /// the world's facade content identity (`crate::producer`).
     pub fn from_bytes(bytes: &[u8]) -> Result<Self, PackError> {
-        let world = match decode(bytes) {
-            Ok((collision, graph, banks)) => Self::from_parts(collision, graph, banks),
+        let world = match decode_full(bytes) {
+            Ok((collision, graph, banks, atlas)) => {
+                Self::from_decoded(collision, graph, banks, atlas)
+            }
             Err(PackError::BadMagic) => Self::from_grid(&decode_grid(bytes)?),
             Err(e) => return Err(e),
         };
@@ -175,7 +184,7 @@ impl NavWorld {
     /// reported as `BadVersion` rather than falling through to the grid.
     /// Accepted trailing bytes are drained without buffering.
     pub fn from_reader(reader: &mut impl BufRead, length: usize) -> Result<Self, PackError> {
-        decode_any_reader(reader, length, Self::from_parts, |grid| {
+        decode_any_reader(reader, length, Self::from_decoded, |grid| {
             Self::from_grid(&grid)
         })
     }
@@ -195,9 +204,22 @@ impl NavWorld {
         graph: TransportGraph,
         banks: Vec<BankStand>,
     ) -> Self {
+        let atlas = ReachabilityAtlas::unlabeled(&collision)
+            .expect("synthetic world collision geometry is a valid unlabeled atlas");
+        Self::from_decoded(collision, graph, banks, atlas)
+    }
+
+    /// Bind already-decoded pack parts including the reachability atlas.
+    pub fn from_decoded(
+        collision: WorldCollision,
+        graph: TransportGraph,
+        banks: Vec<BankStand>,
+        reachability: ReachabilityAtlas,
+    ) -> Self {
         NavWorld {
             collision,
             graph,
+            reachability,
             banks,
             named_banks: OnceLock::new(),
             transport_item_names: OnceLock::new(),

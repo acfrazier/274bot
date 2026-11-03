@@ -122,6 +122,25 @@ globs = [
   "**/*.cjs",
   ".gitignore",
   ".gitmodules",
+  # The nav-pack baker runs at release time and ships no runtime path. A live
+  # cell meets its output only as the baked pack. The BR2-S3 review round
+  # proves these files with real 274 and 289 bakes (section sizes and a stand
+  # audit against the client reach strategy), the route corpus against the v17
+  # reference, and the nav cells above on the v18 289 pack. Each file is listed
+  # by name, so a later baker change is classified again.
+  "crates/nav-bake/src/bake.rs",
+  "crates/nav-bake/src/canlight.rs",
+  "crates/nav-bake/src/lib.rs",
+  "crates/nav-bake/src/pack.rs",
+  "crates/nav-bake/src/pack/encode.rs",
+  "crates/nav-bake/src/pack/multiway.rs",
+  "crates/nav-bake/src/reachability.rs",
+  "crates/nav-bake/src/transport/static_routes.rs",
+  # Release input inventories: the baker reads every row. The quester path
+  # compiler reads only the `map` rows (`script/src/quester/nav_coverage.rs`),
+  # and the BR2-S3 change adds one non-map row, so no path compiles differently.
+  "crates/nav-planner/src/required-content-274.tsv",
+  "crates/nav-planner/src/required-content-289.tsv",
 ]
 
 exceptions = [
@@ -313,7 +332,11 @@ cells = [
 ]
 
 [[cover]]
-globs = ["crates/nav-planner/Cargo.toml", "crates/nav-planner/src/lib.rs", "crates/nav-planner/src/router.rs", "crates/nav-planner/src/router/**", "crates/nav-planner/src/contract/transport.rs", "crates/nav-planner/src/map/catalogue.rs", "crates/nav-executor/Cargo.toml", "crates/nav-executor/src/lib.rs", "crates/nav-executor/src/traveller.rs", "crates/nav-executor/src/traveller/walk.rs", "crates/nav-bake/src/transport.rs", "crates/nav-bake/src/transport/**", "crates/scenario/src/scenarios/navigation.rs"]
+# The pack decoder, the world binding, the atlas and its validation, the
+# manifest check, the account admission evaluator and the lease contract run
+# when every nav cell loads its v18 pack and routes over it. `loc_approach.rs`
+# holds the live loc-approach test the nav cells use to arrive at a loc.
+globs = ["crates/nav-planner/Cargo.toml", "crates/nav-planner/src/lib.rs", "crates/nav-planner/src/router.rs", "crates/nav-planner/src/router/**", "crates/nav-planner/src/map/catalogue.rs", "crates/nav-planner/src/pack.rs", "crates/nav-planner/src/pack/coord.rs", "crates/nav-planner/src/pack/multiway.rs", "crates/nav-planner/src/pack/reach.rs", "crates/nav-planner/src/reachability.rs", "crates/nav-planner/src/reachability/validate.rs", "crates/nav-planner/src/contract/mod.rs", "crates/nav-planner/src/contract/reachability.rs", "crates/nav-planner/src/manifest.rs", "crates/nav-planner/src/world.rs", "crates/nav-planner/src/world_state.rs", "crates/api/src/query/loc_approach.rs", "crates/nav-executor/Cargo.toml", "crates/nav-executor/src/lib.rs", "crates/nav-executor/src/traveller.rs", "crates/nav-executor/src/traveller/walk.rs", "crates/nav-bake/src/transport.rs", "crates/nav-bake/src/transport/**", "crates/scenario/src/scenarios/navigation.rs"]
 cells = [
   "nav.route-search-live|LIVE=1 BOT_LIVE_NAME_PREFIX=${BOT_LIVE_NAME_PREFIX:?} BOT_CPU=1 BOT_NAV_BUILD=skip BOT_GAME_PORT=44594 BOT_HTTP_PORT=1080 ENGINE_DIR=${ENGINE_A_DIR:?} NAV_PACK=${NAV_PACK_289:?} NAV_FLAGS=${NAV_FLAGS_289:?} WORLD_ENGINE_DIR=${ENGINE_A_DIR:?} WORLD_NAV_PACK=${NAV_PACK_289:?} RS2B0T=${CATALOG_ROOT:?} CATALOG_ROOT=${CATALOG_ROOT:?} LIVE_EVIDENCE_DIR=${LIVE_EVIDENCE_DIR:?} ${ISOHOME:?} nice -n 10 cargo run --release -p tui --bin tui-play -- --profile local-289 --revision 289 --host 127.0.0.1 --port 44594 --asset-host 127.0.0.1 --http-port 1080 --engine ${ENGINE_A_DIR:?} --nav-pack ${NAV_PACK_289:?} --nav-flags ${NAV_FLAGS_289:?} --catalog ${CATALOG_ROOT:?} --live script_nav_routes|--locked -p scenario --lib tests::nav_routes_is_ten_borrowed_ods_with_item_seed",
   "panel.headed-nav-script|LIVE=1 BOT_LIVE_NAME_PREFIX=${BOT_LIVE_NAME_PREFIX:?} BOT_CPU=1 BOT_NAV_BUILD=skip BOT_GAME_PORT=44594 BOT_HTTP_PORT=1080 ENGINE_DIR=${ENGINE_A_DIR:?} WORLD_ENGINE_DIR=${ENGINE_A_DIR:?} NAV_PACK=${NAV_PACK_289:?} WORLD_NAV_PACK=${NAV_PACK_289:?} NAV_FLAGS=${NAV_FLAGS_289:?} WORLD_NAV_FLAGS=${NAV_FLAGS_289:?} RS2B0T=${CATALOG_ROOT:?} CATALOG_ROOT=${CATALOG_ROOT:?} LIVE_EVIDENCE_DIR=${LIVE_EVIDENCE_DIR:?} ${ISOHOME:?} nice -n 10 cargo run --release -p panel --bin panel-play -- --profile local-289 --revision 289 --host 127.0.0.1 --port 44594 --asset-host 127.0.0.1 --http-port 1080 --engine ${ENGINE_A_DIR:?} --nav-pack ${NAV_PACK_289:?} --nav-flags ${NAV_FLAGS_289:?} --catalog ${CATALOG_ROOT:?} --live script_nav_routes|--locked -p panel --lib app::frame_tests::",

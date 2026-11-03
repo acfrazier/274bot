@@ -462,9 +462,10 @@ pub(super) fn boat_edges(
 // Shilo↔Brimhaven cart: the 2004 route pair (`TransportKind::Npc`).
 // ---------------------------------------------------------------------------
 
-/// Hajedy's content has a Zombie Queen completion gate; Vigroy's does not.
-/// Ordering matches the planner's canonical Shilo cart journey slice.
-const CART_REQUIRES_ZOMBIE_QUEEN: [bool; 2] = [true, false];
+/// Hajedy (`pack/npc.pack` id 510). His cart requires Shilo Village complete.
+/// Vigroy (511) has no journal gate. Identify the gated row by NPC id, not
+/// table position.
+const HAJEDY_NPC_ID: i32 = 510;
 
 /// Cart edges from the 2004 route table: one `Talk-to` edge per journey,
 /// keyed from the cart driver NPC's tile.
@@ -473,13 +474,8 @@ pub(super) fn cart_edges(
     zombie_queen_name: Option<&str>,
     skipped: &mut HashMap<&'static str, usize>,
 ) {
-    assert_eq!(
-        SHILO_CART_ROUTES.len(),
-        CART_REQUIRES_ZOMBIE_QUEEN.len(),
-        "every planner cart route must have its bake-time quest policy"
-    );
-    for (r, requires_zombie_queen) in SHILO_CART_ROUTES.iter().zip(CART_REQUIRES_ZOMBIE_QUEEN) {
-        let quest_req = if requires_zombie_queen {
+    for r in SHILO_CART_ROUTES {
+        let quest_req = if r.npc_id() == HAJEDY_NPC_ID {
             let Some(name) = zombie_queen_name else {
                 bump(skipped, SKIP_HAJEDY_JOURNAL_NAME, 1);
                 continue;

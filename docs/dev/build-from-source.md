@@ -9,7 +9,7 @@
 
 A Rust bot host over the bot-host client fork. One OS thread per `Client` on a 20 ms loop, shared unpacked type tables, a login FIFO, AES-256-GCM vaulted profiles, and an agent API (snapshot → query → interact → settle). **`panel-play`** is the first-class operator window (ImGui over a panel-owned winit + wgpu loop): profile picker, status, WalkTo picker, game blit, click-through capture, MultiBox rail/grid, script chrome, `--live` harness. **`tui-play`** is the same `Play` session with raster Off (ratatui; VPS-cheap). **`host-play`** is the headless CLI over the same kernel. A host-scoped **random-event guardian** Talk-to + continues the five dialog randoms (toggle default on).
 
-The headed client draws with a **wgpu GPU** renderer in the submodule (CPU Pix3D is `BOT_CPU=1`). Nav is a baked collision + transport pack (`crates/nav-planner`, magic `274V`, version byte **17**; v16 and older are `BadVersion` and must be rebaked), Dijkstra router (`crates/nav-planner`), and pollable `Traveller::follow` (`crates/nav-executor`) driven from WalkTo and from scripts. Compiled script cards tick on the `PLAYER_INFO` edge; loaded JS/TS runs in an isolate with the host compatibility prelude. The compiled cards in-tree are **Quester**, **Gatherer** and **Sherlock** (see the [README](../../README.md)) — WalkTo itself is host nav, not a farming script.
+The headed client draws with a **wgpu GPU** renderer in the submodule (CPU Pix3D is `BOT_CPU=1`). Nav is a baked collision + transport pack (`crates/nav-planner`, magic `274V`, version byte **18**; v17 and older are `BadVersion` and must be rebaked), Dijkstra router (`crates/nav-planner`), and pollable `Traveller::follow` (`crates/nav-executor`) driven from WalkTo and from scripts. Compiled script cards tick on the `PLAYER_INFO` edge; loaded JS/TS runs in an isolate with the host compatibility prelude. The compiled cards in-tree are **Quester**, **Gatherer** and **Sherlock** (see the [README](../../README.md)) — WalkTo itself is host nav, not a farming script.
 
 ## What it is not
 
@@ -144,8 +144,8 @@ table and the build-time identity rules: [docs/api/nav.md](../api/nav.md).
 NAV_PACK=/absolute/output/274bot.navpack NAV_FLAGS=/absolute/output/274bot.navflags cargo run -p nav-bake --bin nav-pack
 ```
 
-Output: `$NAV_PACK` or `~/.274bot/274bot.navpack` (magic `274V`, version byte **17**).
-Rebake existing v16 and older packs after you update 274bot.
+Output: `$NAV_PACK` or `~/.274bot/274bot.navpack` (magic `274V`, version byte **18**).
+Rebake existing v17 and older packs after you update 274bot.
 
 Version 17 adds count-prefixed `forbidden_held` and `forbidden_worn` vectors after `worn_all_req`.
 These content-derived absence gates block an edge when listed items are held or worn.
@@ -156,11 +156,11 @@ Spell runes and script-deleted fares and passes are consumed.
 Charged jewellery returns its content-declared `next_obj_stage` after a successful rub.
 Resource counts must be positive, and returned items require consumption.
 The v14 kind-byte flag marks content-derived player-relative ladder and stair landings without added wire bytes.
-Version 17 retains the zone table, selected quest-family binding, typed quest-stage gates, and per-edge approach geometry.
-`decode` rejects v16 and older as `BadVersion`.
+Version 18 retains the zone table, selected quest-family binding, typed quest-stage gates, and per-edge approach geometry.
+`decode` rejects v17 and older as `BadVersion`.
 See [the navigation API guide](../api/nav.md) for the full wire format and bake options.
 
-**External v17 packs keep their baked routing data.** The app rebuilds the bundled pack automatically.
+**External v17 and older packs are refused with `BadVersion`.** The app rebuilds the bundled pack automatically.
 It does not derive a pack that you baked yourself from the current content tree.
 Rebake it with `cargo run -p nav-bake --bin nav-pack`, with explicit output paths, after content or format changes.
 

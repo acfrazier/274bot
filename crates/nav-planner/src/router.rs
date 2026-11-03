@@ -4116,7 +4116,7 @@ const SYNC_FIRST_TABLE_INITIAL_SETTLES: usize = 6;
 /// of 3 let Dijkstra "use" a door through a fence (Lumbridge cow pen:
 /// inside tile to the north-west road gate) and the walker then walked
 /// into the wall. The approach is derived at expansion time, never baked.
-const INTERACT_RADIUS: i32 = 1;
+pub const INTERACT_RADIUS: i32 = 1;
 
 /// The eight step deltas (client coordinates: +x east, +z north).
 const STEPS: [(i32, i32); 8] = [

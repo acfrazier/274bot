@@ -291,6 +291,10 @@
       "owner": "T2"
     },
     {
+      "path": "crates/api/tests/loc_approach_reach.rs",
+      "owner": "T2"
+    },
+    {
       "path": "crates/api/tests/native_hint_overhead.rs",
       "owner": "T2"
     },
@@ -1851,6 +1855,14 @@
       "owner": "T5"
     },
     {
+      "path": "crates/nav-bake/src/pack/multiway.rs",
+      "owner": "T5"
+    },
+    {
+      "path": "crates/nav-bake/src/reachability.rs",
+      "owner": "T5"
+    },
+    {
       "path": "crates/nav-bake/src/pack/mapsquare.rs",
       "owner": "T5"
     },
@@ -2143,6 +2155,18 @@
       "owner": "T5"
     },
     {
+      "path": "crates/nav-planner/src/pack/coord.rs",
+      "owner": "T5"
+    },
+    {
+      "path": "crates/nav-planner/src/pack/multiway.rs",
+      "owner": "T5"
+    },
+    {
+      "path": "crates/nav-planner/src/pack/reach.rs",
+      "owner": "T5"
+    },
+    {
       "path": "crates/nav-bake/src/pack/config_parse.rs",
       "owner": "T5"
     },
@@ -2168,6 +2192,14 @@
     },
     {
       "path": "crates/nav-planner/src/paint_tests.rs",
+      "owner": "T5"
+    },
+    {
+      "path": "crates/nav-planner/src/reachability.rs",
+      "owner": "T5"
+    },
+    {
+      "path": "crates/nav-planner/src/reachability/validate.rs",
       "owner": "T5"
     },
     {
@@ -7484,6 +7516,10 @@
     },
     {
       "path": "crates/nav-planner/src/contract/collision.rs",
+      "owner": "T5"
+    },
+    {
+      "path": "crates/nav-planner/src/contract/reachability.rs",
       "owner": "T5"
     },
     {

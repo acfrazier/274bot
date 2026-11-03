@@ -76,6 +76,28 @@ pub struct WorldState {
     /// snapshot's varps and quest list are not stage evidence.
     pub quest_evidence: Option<QuestEvidence>,
 }
+
+/// Tri-state transport admission used by atlas proofs and routing diagnosis.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum EdgeAdmission {
+    /// Every required fact is observed and holds.
+    Allowed,
+    /// An observed fact disproves the edge.
+    Denied,
+    /// A required observation is missing.
+    Unknown(MissingRequirement),
+}
+
+/// Why an edge cannot be proved or disproved.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MissingRequirement {
+    InventoryObservation,
+    EquipmentObservation,
+    SkillObservation { skill: i32 },
+    VarpObservation { varp: i32 },
+    QuestJournalObservation,
+    WorldBinding,
+}
 /// A content entrance requirement that the route state cannot prove.
 /// These are not bank-fetch requirements: diagnosis never changes the
 /// player's held or worn items to make the entrance acceptable.
@@ -395,6 +417,54 @@ impl WorldState {
     /// the edge.
     pub fn allows(&self, e: &TransportEdge) -> bool {
         self.snapshot_allows(e) && self.quest_gates(e) == Truth::True
+    }
+
+    /// Strict tri-state admission. Unknown observations stay unknown.
+    /// `allows` is the Allowed wrapper and still fails closed.
+    pub fn admission(&self, e: &TransportEdge) -> EdgeAdmission {
+        if e.members_req && !self.map_members {
+            return EdgeAdmission::Denied;
+        }
+        if !e.item_req.is_empty() && !self.inventory_ready {
+            return EdgeAdmission::Unknown(MissingRequirement::InventoryObservation);
+        }
+        if !e.consumed_req.is_empty() && !self.inventory_ready {
+            return EdgeAdmission::Unknown(MissingRequirement::InventoryObservation);
+        }
+        if (!e.worn_req.is_empty() || !e.worn_all_req.is_empty() || !e.forbidden_worn.is_empty())
+            && !self.equipment_ready
+        {
+            return EdgeAdmission::Unknown(MissingRequirement::EquipmentObservation);
+        }
+        if !e.forbidden_held.is_empty() && !self.inventory_ready {
+            return EdgeAdmission::Unknown(MissingRequirement::InventoryObservation);
+        }
+        if let Some(&(skill, _)) = e
+            .skill_req
+            .iter()
+            .find(|(skill, _)| !self.stats.contains_key(skill))
+        {
+            return EdgeAdmission::Unknown(MissingRequirement::SkillObservation { skill });
+        }
+        if let Some(&(varp, _)) = e
+            .varp_req
+            .iter()
+            .find(|(varp, _)| !self.varps.contains_key(varp))
+        {
+            return EdgeAdmission::Unknown(MissingRequirement::VarpObservation { varp });
+        }
+        match self.quest_gates(e) {
+            Truth::Unknown => {
+                return EdgeAdmission::Unknown(MissingRequirement::QuestJournalObservation)
+            }
+            Truth::False => return EdgeAdmission::Denied,
+            Truth::True => {}
+        }
+        if self.snapshot_allows(e) {
+            EdgeAdmission::Allowed
+        } else {
+            EdgeAdmission::Denied
+        }
     }
 
     /// The edge's quest-stage gates under [`Self::quest_evidence`]: `True`

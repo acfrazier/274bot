@@ -75,28 +75,51 @@ data=coord_pair,0_50_53_53_33,0_50_53_53_35
 ";
     let zones = parse_bank_zones(text).unwrap();
     assert_eq!(zones.len(), 2);
-    assert!(parse_bank_zones("")
-        .unwrap_err()
-        .to_string()
-        .contains("header"));
-    assert!(parse_bank_zones("[bank_zones]\ntable=coord_pair_table\n")
-        .unwrap_err()
-        .to_string()
-        .contains("no coord_pair"));
-    assert!(
-        parse_bank_zones("[bank_zones]\ndata=coord_pair,not-a-coord,0_0_0_0_0\n")
-            .unwrap_err()
-            .to_string()
-            .contains("packed coord")
-    );
-    assert!(parse_bank_zones("[bank_zones]\ndata=npc,1,2\n")
-        .unwrap_err()
-        .to_string()
-        .contains("coord_pair"));
-    assert!(parse_bank_zones("[bank_zones]\nbanana=1\n")
-        .unwrap_err()
-        .to_string()
-        .contains("unexpected"));
+    assert!(matches!(
+        parse_bank_zones("").unwrap_err(),
+        crate::GenerationError::Canlight(CanlightError::BankZonesHeaderMissing)
+    ));
+    assert!(matches!(
+        parse_bank_zones("[bank_zones]\ntable=coord_pair_table\n").unwrap_err(),
+        crate::GenerationError::Canlight(CanlightError::BankZonesNoPairs)
+    ));
+    assert!(matches!(
+        parse_bank_zones("[bank_zones]\ndata=coord_pair,not-a-coord,0_0_0_0_0\n").unwrap_err(),
+        crate::GenerationError::Canlight(CanlightError::PackedCoordinateComponentInvalid { .. })
+    ));
+    assert!(matches!(
+        parse_bank_zones("[bank_zones]\ndata=npc,1,2\n").unwrap_err(),
+        crate::GenerationError::Canlight(CanlightError::BankZonesDataKindMismatch { .. })
+    ));
+    assert!(matches!(
+        parse_bank_zones("[bank_zones]\nbanana=1\n").unwrap_err(),
+        crate::GenerationError::Canlight(CanlightError::BankZonesUnexpectedRow { .. })
+    ));
+}
+
+/// A source map coordinate that overflows the 32-bit expansion is a typed
+/// error. It does not panic (dev profile) or wrap into another tile (release).
+#[test]
+fn packed_coordinate_expansion_never_panics_or_wraps() {
+    for token in [
+        "0_67108914_0_0_0",
+        "0_2147483647_0_0_0",
+        "0_0_2147483647_0_0",
+        "0_0_67108914_0_0",
+        "0_256_0_0_0",
+        "0_0_256_0_0",
+        "0_-1_0_0_0",
+    ] {
+        assert!(
+            matches!(
+                unpack_packed_coord(token).unwrap_err(),
+                crate::GenerationError::Canlight(CanlightError::PackedCoordinateOutOfRange { .. })
+            ),
+            "{token}"
+        );
+    }
+    let last = unpack_packed_coord("3_255_255_63_63").unwrap();
+    assert_eq!((last.x, last.z, last.level), (16383, 16383, 3));
 }
 
 #[test]

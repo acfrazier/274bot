@@ -466,6 +466,27 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.8` 
 
 - Negative attenuation in a SoundFont no longer causes extreme music volume.
 - Music can load SoundFonts whose sample-loop start is after the loop end.
+### Navigation
+
+- Navigation packs are now `274V18`. They include the multiway combat-cell list
+  and a baked reachability atlas (movement components, directed links, loc
+  stands). An older `274V17` pack is refused with a rebake error. 274bot does
+  not convert an old pack at run time.
+- The baked loc stands follow the game's own reach rules. A wall corner
+  (shapes 1 and 3) and a straight wall decoration (shapes 4 and 5) can be
+  operated only from their own tile, as in the game. The first v18 bake listed
+  stands for them on the far side of the wall (552 on revision 289).
+- A pack bake with overflow checks on no longer stops at a movement label of
+  zero, and a bad packed coordinate in a source table is a typed bake error.
+- Pack-bound searches keep the bounded unreachable-goal proof until a
+  reachability-atlas proof replaces it, so an unreachable goal is refused after
+  the same few thousand nodes as with a `274V17` pack.
+- The pack baker and the pack reader now check every atlas table with the same
+  functions, so the baker cannot write a pack that the reader refuses. This
+  includes a missing or short chunk directory, a chunk bit width above the
+  minimum for its palette, a chunk palette range past the palette, and an empty
+  paint run. Developer and CI test packs use the `274V18` reference bake
+  (`nav-reference-v18`); the `274V17` reference is no longer read.
 
 ## [0.2.8] — 2026-10-29 — Beta 2
 

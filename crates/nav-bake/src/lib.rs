@@ -10,6 +10,7 @@ pub mod canlight;
 pub mod collision;
 pub mod manifest;
 pub mod pack;
+pub mod reachability;
 pub mod services;
 pub mod transport;
 mod zones;
@@ -26,6 +27,9 @@ pub enum GenerationError {
     /// Canlight input or generation failed.
     #[error(transparent)]
     Canlight(#[from] canlight::CanlightError),
+    /// Multiway table input or generation failed.
+    #[error(transparent)]
+    Multiway(#[from] pack::MultiwayError),
     /// A selected release revision is not supported.
     #[error("unsupported revision {revision}; use 274 or 289")]
     UnsupportedRevision { revision: u16 },

@@ -213,6 +213,7 @@ fn completed_prince_ali_rescue_waives_only_the_real_alkharid_toll() {
         wilderness: crate::transport::WildernessRules::default(),
         quest_family: None,
         zones: None,
+        multiway: Box::from([]),
     };
     let from = WorldTile {
         x: 2 * at.x - toll.to.x,
@@ -1027,4 +1028,59 @@ fn world_state_shared_retained_bytes_counts_one_arc_and_owned_buffers() {
     .unwrap();
 
     assert_eq!(state.try_shared_retained_bytes(), Some(expected));
+}
+
+fn bare_edge() -> TransportEdge {
+    TransportEdge {
+        takeoff: None,
+        worn_all_req: Vec::new(),
+        forbidden_held: Vec::new(),
+        forbidden_worn: Vec::new(),
+        kind: TransportKind::Door,
+        player_delta: None,
+        at: WorldTile {
+            x: 1,
+            z: 1,
+            level: 0,
+        },
+        to: WorldTile {
+            x: 2,
+            z: 1,
+            level: 0,
+        },
+        loc_id: 1,
+        option: 1,
+        ticks: 1,
+        dir: None,
+        open_loc_id: None,
+        skill_req: vec![],
+        item_req: vec![],
+        consumed_req: vec![],
+        item_returns: vec![],
+        quest_req: vec![],
+        varp_req: vec![],
+        worn_req: vec![],
+        members_req: false,
+        wildy_cap: None,
+        quest_gates: None,
+    }
+}
+
+#[test]
+fn admission_keeps_unknown_inventory_distinct_from_denied() {
+    let mut edge = bare_edge();
+    edge.item_req = vec![(995, 1)];
+    let unknown = WorldState::default();
+    assert_eq!(
+        unknown.admission(&edge),
+        EdgeAdmission::Unknown(MissingRequirement::InventoryObservation)
+    );
+    assert!(!unknown.allows(&edge));
+    let mut observed = WorldState {
+        inventory_ready: true,
+        ..WorldState::default()
+    };
+    assert_eq!(observed.admission(&edge), EdgeAdmission::Denied);
+    observed.inv.insert(995, 1);
+    assert_eq!(observed.admission(&edge), EdgeAdmission::Allowed);
 }

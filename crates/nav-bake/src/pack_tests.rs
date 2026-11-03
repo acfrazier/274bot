@@ -16,11 +16,12 @@ use nav_planner::collision::{derive_walkable, pack_walk, walk_word_from_parts, W
 use nav_planner::grid::StepGrid;
 use nav_planner::pack::{
     decode, decode_canlight_sidecar, decode_flags_sidecar, decode_grid, decode_reach_sidecar,
-    read_canlight_sidecar, read_flags_sidecar, read_reach_sidecar, read_reach_sidecar_header,
-    sha256_hex, walkable_dots, BankAccess, BankStand, PackError, MAGIC_FLAGS, MAX_GRID, VERSION,
-    VERSION_FLAGS,
+    encode_atlas_sections, encode_multiway_keys, read_canlight_sidecar, read_flags_sidecar,
+    read_reach_sidecar, read_reach_sidecar_header, sha256_hex, walkable_dots, BankAccess,
+    BankStand, PackError, MAGIC_FLAGS, MAX_GRID, VERSION, VERSION_FLAGS,
 };
 use nav_planner::quest_gates::{QuestFamilyId, QuestGates};
+use nav_planner::reachability::{CellRun, Chunk, ReachabilityAtlas};
 use nav_planner::router::AvoidRect;
 use nav_planner::tile::Tile;
 use nav_planner::transport::{
@@ -46,6 +47,25 @@ fn gate_window(quest: &str, signal: &str, min: Option<i32>, max: Option<i32>) ->
         signal: FactKey::new(signal),
         values: api::selected::InclusiveRange { min, max },
     })
+}
+
+/// Bytes after the v17 trailer: empty multiway keys plus an unlabeled atlas.
+fn v18_unlabeled_tail(width: usize, height: usize) -> usize {
+    let (walk, blocked) = pack_walk(&vec![0u32; 4 * width * height]);
+    let collision = WorldCollision {
+        origin: WorldTile {
+            x: 0,
+            z: 0,
+            level: 0,
+        },
+        width,
+        height,
+        walk,
+        blocked,
+        flags: None,
+    };
+    let atlas = ReachabilityAtlas::unlabeled(&collision).unwrap();
+    encode_multiway_keys(&[]).unwrap().len() + encode_atlas_sections(&atlas).unwrap().len()
 }
 
 /// A BufRead that yields at most one byte per fill, exercising all parser
@@ -1294,7 +1314,8 @@ fn v13_shape_rows_preserve_square_and_rectangular_bounds() {
 #[test]
 fn v13_decode_rejects_malformed_zone_rows_and_shapes() {
     let (bytes, table) = zone_table_pack_fixture();
-    let zone_start = bytes.len() - super::zones::wire_size(Some(&table)).unwrap();
+    let zone_end = bytes.len() - v18_unlabeled_tail(4, 4);
+    let zone_start = zone_end - super::zones::wire_size(Some(&table)).unwrap();
     let kind_0_size = 15 + "ranger".len() + "Ranger".len();
     let kind_1_start = zone_start + 4 + kind_0_size;
     let zone_count_at = kind_1_start + 15 + "lava-bridge".len() + "Lava bridge".len();
@@ -1314,7 +1335,7 @@ fn v13_decode_rejects_malformed_zone_rows_and_shapes() {
     ));
 
     let mut bad_shape_index = bytes.clone();
-    let shape_row = bytes.len() - 11;
+    let shape_row = zone_end - 11;
     bad_shape_index[shape_row..shape_row + 2].copy_from_slice(&3u16.to_le_bytes());
     assert!(matches!(
         decode(&bad_shape_index),
@@ -1343,16 +1364,21 @@ fn v13_decode_rejects_malformed_zone_rows_and_shapes() {
         Err(PackError::BadLength(_))
     ));
     assert!(matches!(
-        decode(&bytes[..bytes.len() - 1]),
+        decode(&bytes[..zone_end - 1]),
         Err(PackError::BadLength(_))
     ));
 
     let mut duplicate_shape = bytes;
-    let shape_count_at = duplicate_shape.len() - 15;
+    let shape_count_at = zone_end - 15;
     duplicate_shape[shape_count_at..shape_count_at + 4].copy_from_slice(&2u32.to_le_bytes());
-    duplicate_shape.extend_from_slice(&1u16.to_le_bytes());
-    duplicate_shape.push(1);
-    duplicate_shape.extend_from_slice(&0b0011_1000u64.to_le_bytes());
+    let extra = {
+        let mut extra = Vec::new();
+        extra.extend_from_slice(&1u16.to_le_bytes());
+        extra.push(1);
+        extra.extend_from_slice(&0b0011_1000u64.to_le_bytes());
+        extra
+    };
+    duplicate_shape.splice(zone_end..zone_end, extra);
     assert!(matches!(
         decode(&duplicate_shape),
         Err(PackError::BadLength(_))
@@ -1611,8 +1637,9 @@ fn v9_decode_rejects_invalid_members_req_flag() {
     let mut bytes = encode(&collision, &graph, &[]).unwrap();
     // members_req sits just before wildy_cap (i32), the edge's quest-gate
     // count (u32), the takeoff field (13 B), bank-stand count (u32),
-    // wilderness rules (12 B), and the five zero-count zone tables (20 B).
-    let flag_at = bytes.len() - 20 - 12 - 4 - 4 - 4 - 13 - 1;
+    // wilderness rules (12 B), the five zero-count zone tables (20 B),
+    // and the v18 multiway/atlas tail.
+    let flag_at = bytes.len() - v18_unlabeled_tail(2, 2) - 20 - 12 - 4 - 4 - 4 - 13 - 1;
     bytes[flag_at] = 2;
     assert!(matches!(decode(&bytes), Err(PackError::BadLength(_))));
 }
@@ -2676,7 +2703,7 @@ fn v13_decode_refuses_unbound_or_malformed_quest_gates() {
     let mut graph = TransportGraph::default();
     graph.edges.push(gated_door(None));
     let unbound = encode(&tiny_collision(), &graph, &[]).unwrap();
-    let count_at = unbound.len() - TRAILER - 1 - 13 - 4;
+    let count_at = unbound.len() - v18_unlabeled_tail(2, 2) - TRAILER - 1 - 13 - 4;
     let mut spliced = unbound[..count_at].to_vec();
     spliced.extend_from_slice(&1u32.to_le_bytes());
     spliced.push(0); // a completed-quest gate
@@ -2706,7 +2733,7 @@ fn v13_decode_refuses_unbound_or_malformed_quest_gates() {
     schema_zero[6 + 32..6 + 34].copy_from_slice(&0u16.to_le_bytes());
     assert!(matches!(decode(&schema_zero), Err(PackError::BadLength(_))));
     // The window's bounds close the record: min flag + i32, max flag + i32.
-    let max_at = bytes.len() - TRAILER - 1 - 13 - 4;
+    let max_at = bytes.len() - v18_unlabeled_tail(2, 2) - TRAILER - 1 - 13 - 4;
     let min_at = max_at - 1 - 4;
     let mut empty_window = bytes.clone();
     empty_window[min_at..min_at + 4].copy_from_slice(&4i32.to_le_bytes());
@@ -2790,4 +2817,247 @@ fn encode_returns_errors_for_invalid_edge_model_data() {
         encode(&tiny_collision(), &invalid_approach, &[]),
         Err(PackError::BadLength(_))
     ));
+}
+
+fn narrow_collision() -> WorldCollision {
+    let (walk, blocked) = pack_walk(&[0u32; 4 * 2]);
+    WorldCollision {
+        origin: WorldTile {
+            x: 0,
+            z: 0,
+            level: 0,
+        },
+        width: 2,
+        height: 1,
+        walk,
+        blocked,
+        flags: None,
+    }
+}
+
+/// An atlas built for another collision grid is a malformed pack. The
+/// producer refuses it with a typed error, so no writer output reaches the
+/// reader with the wrong geometry.
+#[test]
+fn encoder_refuses_an_atlas_built_for_another_grid() {
+    let atlas = ReachabilityAtlas::unlabeled(&narrow_collision()).unwrap();
+    let (walk, blocked) = pack_walk(&[0u32; 4 * 3]);
+    let wider = WorldCollision {
+        origin: WorldTile {
+            x: 0,
+            z: 0,
+            level: 0,
+        },
+        width: 3,
+        height: 1,
+        walk,
+        blocked,
+        flags: None,
+    };
+    let error = crate::pack::encode_with_atlas(&wider, &TransportGraph::default(), &[], &atlas)
+        .unwrap_err();
+    assert!(
+        matches!(&error, PackError::BadLength(message) if message.contains("geometry")),
+        "{error}"
+    );
+}
+
+/// A baked atlas with an empty chunk directory is a pack the reader refuses
+/// (`atlas chunk directory count does not match geometry`). The writer
+/// refuses it first, with the same typed error.
+#[test]
+fn encoder_refuses_an_atlas_with_an_empty_chunk_directory() {
+    let collision = narrow_collision();
+    let atlas = ReachabilityAtlas::from_bake(
+        &collision,
+        Box::from([]),
+        Box::from([0]),
+        Box::from([]),
+        Box::from([]),
+        Box::from([]),
+        Box::from([]),
+        Box::from([]),
+        Box::from([]),
+        Box::from([]),
+        Box::from([0]),
+        Box::from([]),
+        Box::from([0]),
+        Box::from([]),
+        Box::from([0]),
+        Box::from([]),
+        Box::from([]),
+        Box::from([]),
+        Box::from([]),
+        Box::from([]),
+    )
+    .unwrap();
+    let error = crate::pack::encode_with_atlas(&collision, &TransportGraph::default(), &[], &atlas)
+        .unwrap_err();
+    assert!(
+        matches!(&error, PackError::BadLength(message) if message.contains("chunk directory")),
+        "{error}"
+    );
+}
+
+/// The reader refuses a pack whose atlas geometry names another grid than the
+/// pack's own collision (here the atlas width field says 3, the grid is 2).
+#[test]
+fn decoder_refuses_an_atlas_for_another_grid() {
+    let collision = narrow_collision();
+    let atlas = ReachabilityAtlas::unlabeled(&collision).unwrap();
+    let tail = encode_atlas_sections(&atlas).unwrap().len();
+    let mut bytes = encode(&collision, &TransportGraph::default(), &[]).unwrap();
+    assert!(decode(&bytes).is_ok());
+    // Labels payload: 4-byte length prefix, a 132-byte directory (count plus
+    // eight 16-byte entries), then the geometry row (x, z, then width).
+    let width_at = bytes.len() - tail + 4 + 132 + 8;
+    assert_eq!(&bytes[width_at..width_at + 4], &2u32.to_le_bytes());
+    bytes[width_at..width_at + 4].copy_from_slice(&3u32.to_le_bytes());
+    let Err(error) = decode(&bytes) else {
+        panic!("the wrong atlas geometry must be refused");
+    };
+    assert!(
+        matches!(&error, PackError::BadLength(message) if message.contains("geometry")),
+        "{error}"
+    );
+}
+
+/// A table directory whose stride differs from the schema is refused, even
+/// when the table bytes happen to parse.
+#[test]
+fn decoder_refuses_a_directory_with_the_wrong_stride() {
+    let collision = narrow_collision();
+    let atlas = ReachabilityAtlas::unlabeled(&collision).unwrap();
+    let tail = encode_atlas_sections(&atlas).unwrap().len();
+    let mut bytes = encode(&collision, &TransportGraph::default(), &[]).unwrap();
+    // Directory entry 8 (scatter runs, kind 8, stride 8): the entry starts at
+    // 4 + 7 * 16 inside the labels payload; its stride is the last field.
+    let stride_at = bytes.len() - tail + 4 + 4 + 7 * 16 + 12;
+    assert_eq!(&bytes[stride_at..stride_at + 4], &8u32.to_le_bytes());
+    bytes[stride_at..stride_at + 4].copy_from_slice(&4u32.to_le_bytes());
+    let Err(error) = decode(&bytes) else {
+        panic!("the wrong stride must be refused");
+    };
+    assert!(
+        matches!(&error, PackError::BadLength(message) if message.contains("stride")),
+        "{error}"
+    );
+}
+
+/// An atlas on `narrow_collision` with the given chunk directory and legacy
+/// paint runs, and every other table empty. Each case below is one the
+/// reader refuses, built through the same entry the baker uses.
+fn atlas_with_chunks_and_paint(
+    collision: &WorldCollision,
+    chunks: Box<[Chunk]>,
+    paint: Box<[CellRun]>,
+) -> ReachabilityAtlas {
+    ReachabilityAtlas::from_bake(
+        collision,
+        chunks,
+        Box::from([0]),
+        Box::from([]),
+        Box::from([]),
+        Box::from([]),
+        paint,
+        Box::from([]),
+        Box::from([]),
+        Box::from([]),
+        Box::from([0]),
+        Box::from([]),
+        Box::from([0]),
+        Box::from([]),
+        Box::from([0]),
+        Box::from([]),
+        Box::from([]),
+        Box::from([]),
+        Box::from([]),
+        Box::from([]),
+    )
+    .unwrap()
+}
+
+/// The producer must refuse `atlas` with exactly `message`, both when it
+/// validates the atlas and when the writer encodes it, and the reader must
+/// refuse the same table with the same message. The reader is fed the
+/// unchecked section bytes spliced into a good pack.
+fn assert_producer_refuses(collision: &WorldCollision, atlas: &ReachabilityAtlas, message: &str) {
+    let graph = TransportGraph::default();
+    let validation = atlas.validate(collision, &graph);
+    assert!(
+        matches!(&validation, Err(PackError::BadLength(got)) if got == message),
+        "validate: {validation:?}"
+    );
+    let written = crate::pack::encode_with_atlas(collision, &graph, &[], atlas);
+    assert!(
+        matches!(&written, Err(PackError::BadLength(got)) if got == message),
+        "writer: {written:?}"
+    );
+    let good_tail = encode_atlas_sections(&ReachabilityAtlas::unlabeled(collision).unwrap())
+        .unwrap()
+        .len();
+    let mut bytes = encode(collision, &graph, &[]).unwrap();
+    bytes.truncate(bytes.len() - good_tail);
+    bytes.extend_from_slice(&encode_atlas_sections(atlas).unwrap());
+    let read = decode(&bytes);
+    assert!(
+        matches!(&read, Err(PackError::BadLength(got)) if got == message),
+        "reader: {:?}",
+        read.err()
+    );
+}
+
+fn uniform_chunk() -> Chunk {
+    Chunk {
+        palette_start: 0,
+        palette_count: 1,
+        index_start: 0,
+        index_len: 0,
+        bit_width: 0,
+    }
+}
+
+/// A uniform palette with a nonzero bit width is not minimal: the reader
+/// refuses it, so the producer must.
+#[test]
+fn producer_refuses_a_chunk_bit_width_that_is_not_minimal() {
+    let collision = narrow_collision();
+    let chunk = Chunk {
+        bit_width: 1,
+        ..uniform_chunk()
+    };
+    let atlas = atlas_with_chunks_and_paint(&collision, Box::from([chunk; 4]), Box::from([]));
+    assert_producer_refuses(
+        &collision,
+        &atlas,
+        "atlas chunk bit width is not the minimum for its palette",
+    );
+}
+
+/// A chunk whose palette range runs past the palette table.
+#[test]
+fn producer_refuses_a_chunk_palette_range_past_the_palette() {
+    let collision = narrow_collision();
+    let chunk = Chunk {
+        palette_start: 1,
+        ..uniform_chunk()
+    };
+    let atlas = atlas_with_chunks_and_paint(&collision, Box::from([chunk; 4]), Box::from([]));
+    assert_producer_refuses(
+        &collision,
+        &atlas,
+        "atlas chunk palette range is out of bounds",
+    );
+}
+
+/// A legacy paint run with a zero count.
+#[test]
+fn producer_refuses_a_zero_count_paint_run() {
+    let collision = narrow_collision();
+    let atlas = atlas_with_chunks_and_paint(
+        &collision,
+        Box::from([uniform_chunk(); 4]),
+        Box::from([CellRun { first: 0, count: 0 }]),
+    );
+    assert_producer_refuses(&collision, &atlas, "atlas run count is zero");
 }

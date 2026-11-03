@@ -22,8 +22,8 @@ The build retains `nav-planner` for manifest schemas, hashes, and format identit
 `nav-bake` is a separate build dependency, not a normal runtime dependency.
 `BOT_NAV_BUILD=skip` skips baking but does not remove nonoptional Cargo build dependencies.
 Release binaries load shipped artifacts without compiling or baking.
-The combined future v18 schema is frozen in the
-[baked reachability contract](../dev/baked-reachability.md). BR1 still produces v17.
+The v18 schema is in the
+[baked reachability contract](../dev/baked-reachability.md). BR2 produces and reads v18 only.
 
 `nav-pack` remains for deliberate developer/custom-input bakes. It calls the
 same baker and reads every Server mapsquare jm2 plus the door/loc/rs2 scripts
@@ -67,7 +67,7 @@ it was baked with. Rebake it after content changes or a format upgrade.
 
 The pack serializes the whole-world `WorldCollision` (four planes, packed
 9-bit walk per tile: `u8` face + `SQ_BLOCKED`, row-major z-then-x) plus
-the derived `TransportGraph`. Magic `b"274V"`, version byte **17**. Each
+the derived `TransportGraph`. Magic `b"274V"`, version byte **18**. Each
 edge's reusable `item_req` remains a held-item gate; v15 added count-prefixed
 `(id, count)` `consumed_req` and `item_returns` vectors after it. Version 16
 added a count-prefixed `worn_all_req` ID vector after the existing any-of
@@ -98,9 +98,11 @@ Door/NPC/teleport admission. Zone data includes stable kind identities/labels,
 NPC/hazard rows, curated groups, carves and shaped masks. A shape row stores a
 zone index u16, north extent u8, and row-major u64 cell mask; the shaped NPC's
 `r` byte stores its east extent.
-Thus shaped bounds up to 8×8 remain self-describing. Decoding any v17 pack
+Thus shaped bounds up to 8×8 remain self-describing. Decoding any v18 pack
 installs `Some(ZoneTable)`, even when its row counts are zero; legacy grids
-and synthetic in-memory graphs use `zones: None`. The decoder rebuilds the zone
+and synthetic in-memory graphs use `zones: None`. After the zone table the
+pack stores sorted unique multiway keys and the reachability atlas. A v17
+pack is a typed rebake failure. The decoder rebuilds the zone
 spatial index. Raw `u32` flags are not on the pack wire. The optional
 `274F` sidecar holds them for collision paint; the paint-reach bitset is a
 separate `274R` sidecar bound to the pack identity.
@@ -144,23 +146,29 @@ the raw flags sidecar.
 
 v14 introduced bit `0x80` in the existing edge-kind byte for player-relative
 Ladder/Stairs landings, including supported gangplank Cross edges encoded as
-Ladder; v17 retains this encoding. The remaining kind value keeps its kind.
+Ladder; v18 retains this encoding. The remaining kind value keeps its kind.
 A flagged edge stores the canonical loc-anchor-derived `to`; decoding recovers
 `player_delta = to - at`. The flag is invalid on other kinds. Absolute
 landings do not set it.
-`decode` accepts version 17 only — v16 and older are `BadVersion` and must be
+`decode` accepts version 18 only — v17 and older are `BadVersion` and must be
 rebaked. The `274N` grid decoder (`decode_grid`) stays for old boolean-walk
 files.
 
-The revision-289 reference is now the v17 entrance bake,
-`274bot-289-v17.navpack`, with its `274bot-289-v17.navflags` sibling.
-Local evidence is in
-`/srv/dev/scratch/274bot-evidence/NAV-GATED-ENTRANCES/reference-v17/`.
+The revision-289 reference is the v18 bake,
+`274bot-289-v18.navpack` (SHA-256
+`81e5ca84568b4e3d9b0e7f428a2d43d5e945c73cd74910645db626c89bd4de36`), with its
+`274bot-289-v18.navflags` sibling (SHA-256
+`67e4094dff06def5cf8abc172ce751f4ca8679532ba04c1ba15ab6bf668c7a4a`). The
+matching 274 files are `274bot-274-v18.navpack` and `274bot-274-v18.navflags`.
+Local evidence, the inputs and the bake command are in
+`/srv/dev/scratch/274bot-evidence/NAV-GATED-ENTRANCES/reference-v18/`
+(on merlot `/Volumes/dev-scratch/274bot-evidence/NAV-GATED-ENTRANCES/reference-v18/`).
+The v17 reference pack is refused by the v18 decoder with `BadVersion(17)`.
 Set `NAV_PACK`, `WORLD_NAV_PACK` and `NAV_ARRIVAL_PACK` to this pack.
 Set `BOT_NAV_BUILD=skip` for tests that use the reference.
 An explicitly selected unreadable or wrong-version pack fails the real-pack
 tests. It does not silently skip the identity and transport-census check.
-CI obtains the same SHA-pinned files from the dedicated `nav-reference-v17`
+CI obtains the same SHA-pinned files from the dedicated `nav-reference-v18`
 release assets. Publishing those assets is an operator action.
 
 
@@ -556,10 +564,11 @@ door opens, so callers must not relax it for door hops. Diagonal doors keep
 their separate content-derived geometry.
 
 The corrected straight-door geometry uses generator version `nav-bake-2`;
-it adds no door-specific wire fields. The v17 pack retains the v12 zone table
-described above, carries the resource-accounting vectors described above, and
+it adds no door-specific wire fields. The v18 pack retains the v12 zone table
+described above, carries the resource-accounting vectors described above,
 appends `worn_all_req` after `worn_req` plus the `forbidden_held` and
-`forbidden_worn` exclusion vectors after that. Generator and producer-source
+`forbidden_worn` exclusion vectors after that, then the multiway key list
+and the reachability atlas. Generator and producer-source
 digests
 invalidate staged bundles and trigger a normal rebake, with refreshed
 pack/reach/canlight/navpois bindings. Explicit custom packs baked with the

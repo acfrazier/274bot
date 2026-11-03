@@ -13,6 +13,10 @@ fn decoder_rejects_stale_pack_version_before_reading_body() {
         decode(b"274V\x10"),
         Err(PackError::BadVersion(16))
     ));
+    assert!(matches!(
+        decode(b"274V\x11"),
+        Err(PackError::BadVersion(17))
+    ));
 }
 
 #[test]

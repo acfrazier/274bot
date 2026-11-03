@@ -5,7 +5,8 @@ Request: `BAKED-REACH-1023`, BR0. Status: accepted integration contract.
 This contract fixes the combined `274V18` format and the BR1 ownership cut.
 It does not enable a partial v18 reader or producer. BR2 changes the version,
 reader, encoder, sizing, fixtures, identities, sidecars, and release bake together.
-Until that cut, the product continues to read and produce `274V17`.
+BR2 publishes `274V18`. The product reads and produces that combined pack.
+A `274V17` pack is a typed rebake failure.
 The nav integrator owns the format and release bake. No consumer track publishes
 another v18. Revision content is immutable. Users do not rebuild its connectivity.
 
@@ -108,10 +109,18 @@ The session selector names the existing essence wizard/return-anchor identity.
 The bake covers all portal placements and return anchors. Runtime activates only
 the bound slot's live essence latch. No account latch or executable closure is
 serialized. Missing session coverage prevents a sealed-mine negative.
+Teleport and session templates name base component ids. A portal loc blocks its
+own tile, so a session template's source is each distinct component among the
+standable tiles within the interact radius (1) of the portal: one row per
+component. An edge with no admissible takeoff in a labelled component is an
+unmatched join. It adds a coverage row at its anchor and an exceptional row
+(reason 2) that names its landing, so a consumer limits "no complete negative"
+to the goals that landing serves.
 
 CSR offsets start at zero, are monotonic, and end at the target table count.
 Each run is nonempty and in bounds. Closure runs are sorted, disjoint, maximal,
-and include the owning component. Every base id maps to an existing condensed id.
+and include the owning component. The condensed count is the largest condensed id
+plus one, so every base id maps to an existing condensed id.
 The empty world has zero base/condensed components and one zero CSR offset.
 Component sizes count covered tiles only. A component id is never a route cost.
 
@@ -136,12 +145,58 @@ Apply `game_plane`, including `link_below`, before recording placements or stand
 Reuse the shared engine reach primitive for walls, decorations, footprints,
 rotation, blocked sides, and exclusive entity rectangles. Never use a radius ring
 as an interaction proof. Live entities retain observed identities and geometry.
+The size-1 stand rules are the engine's (`ReachStrategy.ts:98-173` for walls,
+`:254-280` for wall decorations), as the client `CollisionMap::test_wall`,
+`test_w_decor` and `test_loc` also implement them. A wall corner (shapes 1 and
+3) and a straight wall decoration (shapes 4 and 5) have no neighbour stand:
+the origin tile is their only stand. Shape 7 tests the rotation plus two.
+`crates/api/tests/loc_approach_reach.rs` pins every shape, rotation and flag
+word against a transliteration of the engine code, and the ignored real-content
+test in `crates/nav-bake/src/transport_tests.rs` audits every baked placement.
 
 ### Decoder and publication requirements
 
 Both decoding forms and the sizing path implement this complete layout.
 Malformed lengths, keys, geometry, palettes, ids, ranges, references, or ordering
 produce typed `PackError`. Decode never constructs labels or floods connectivity.
+
+Every table invariant has one definition, in
+`crates/nav-planner/src/reachability/validate.rs`. The reader calls those same
+`check_*` functions while it decodes each table, and `ReachabilityAtlas::validate`
+calls them again with the checks that need the collision grid or transport graph.
+The decoders, the sizing path and the baker all run `validate`, and the writer
+(`encode_with_atlas`) refuses an atlas that fails it, so the writer cannot produce
+a pack that the reader refuses. The table invariants are:
+
+- Geometry: 4 planes, chunk side 64, a nonempty extent, and one chunk directory
+  row per plane and chunk (an empty or short directory is refused).
+- Each chunk: bit width equal to the minimum for its palette count; palette range
+  in bounds and sorted unique; index range in bounds; index length exact for the
+  bit width (zero for a uniform chunk); no stray high bits in the last byte.
+- Legacy paint and scatter runs: nonempty, sorted, disjoint.
+- Coverage rows: valid tile keys, known reasons, sorted unique tile/reason pairs.
+- The component map and the size table have the same length. Each CSR offset
+  table has `rows + 1` monotonic offsets from zero to its run or join count.
+  Closure runs are nonempty.
+- Placements: valid origin keys, angles 0..3, sorted unique. Stand rows: valid
+  tile keys and an existing base component. Each placement's stand range is in
+  bounds, sorted by packed tile, and duplicate-free.
+
+Only `validate` has the checks that need other tables or the grid: the atlas
+geometry equals the collision grid; runs lie inside the grid; palette labels name
+existing components; closure runs are in bounds, sorted, disjoint, maximal and
+include their owner; conditional joins, exceptional rows, teleport templates and
+session templates name existing graph edges, teleports and components; session
+and teleport reasons are known; placements keep known coverage, trigger and
+detail values; and every stand component equals the labels lookup. The reader
+runs these too, through `validate`, after it decodes. The framing checks (the
+table directory kinds, strides, contiguity and length, reserved bytes) belong to
+the reader alone: the writer cannot emit them wrongly.
+The test `validate_and_the_reader_refuse_the_same_tables` in
+`crates/nav-planner/src/pack/reach.rs` breaks 21 selected table invariants, one
+at a time, and requires `validate` and the reader to refuse each with the same
+message. It is a sample, not every invariant: the parity itself comes from the
+shared `check_*` functions that both sides call.
 A v17 pack receives the typed version failure after the BR2 cut. There is no
 v17-to-v18 runtime migration, partial reach-only pack, or straight-line fallback.
 The release bake publishes the combined pack and rebound manifest/sidecars once.
@@ -198,11 +253,19 @@ possible goal under any permitted remedy. Unknown facts are not negative proofs.
 Atlas-positive and incomplete queries immediately preflight the ordinary full
 bounded forward scratch budget. They do not wait for the smaller First cap or a
 static reverse flood. Preferred/fallback sets retain independent proof states.
-A better undecided tier cannot silently lose to a lower tier. Pack-bound v18
-production and diagnosis never start `ReverseClosure`. Synthetic test worlds may
-retain the bounded legacy path. Zones, wilderness admission, avoids, cumulative
-supplies, and dynamic collision still require exact routing. Budget, deadline,
-and storage stops remain `Undecided`, never exhaustive negatives.
+A better undecided tier cannot silently lose to a lower tier. Zones, wilderness
+admission, avoids, cumulative supplies, and dynamic collision still require
+exact routing. Budget, deadline, and storage stops remain `Undecided`, never
+exhaustive negatives.
+
+Status at `274V18` (round 2 of BR2-S3): the planner does not yet mint an atlas
+negative from the closures. Until it does, every query, pack-bound or not, keeps
+the bounded `ReverseClosure` proof that v17 ran. An unreachable goal set is
+refused by that proof in the same bounded work as before, and zone diagnosis
+keeps its own `ReverseClosure`. No code skips the proof because an atlas is
+present. The atlas proof that replaces `ReverseClosure` is a later slice. It
+removes the reverse proof only together with a test that refuses the same
+unreachable goals in bounded work from the atlas.
 
 ## Picker and pass-end results
 

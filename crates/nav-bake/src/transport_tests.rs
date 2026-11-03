@@ -2058,16 +2058,16 @@ fn derive_transports_emits_shilo_brimhaven_cart() {
         );
     }
 
-    let brimhaven_to_shilo = carts
+    let hajedy = carts
         .iter()
-        .find(|edge| edge.at == routes[0].origin())
-        .expect("Brimhaven → Shilo cart");
-    assert_eq!(brimhaven_to_shilo.quest_req, [SHILO_JOURNAL_NAME]);
-    let shilo_to_brimhaven = carts
+        .find(|edge| edge.loc_id == 510)
+        .expect("Hajedy cart identified by NPC id");
+    assert_eq!(hajedy.quest_req, [SHILO_JOURNAL_NAME]);
+    let vigroy = carts
         .iter()
-        .find(|edge| edge.at == routes[1].origin())
-        .expect("Shilo → Brimhaven cart");
-    assert!(shilo_to_brimhaven.quest_req.is_empty());
+        .find(|edge| edge.loc_id == 511)
+        .expect("Vigroy cart identified by NPC id");
+    assert!(vigroy.quest_req.is_empty());
 }
 
 /// Both wilderness levers (`wilderness_lever.rs2` `[oploc1,wildinlever]` /
@@ -10183,4 +10183,167 @@ fn blankrunestone_exit_portal_content_placements_match_mine_portals() {
         actual, expected,
         "all and only selected loc placements match the baked portal set"
     );
+}
+
+/// Rotate the 4-bit force-approach mask by the loc angle (engine
+/// `Rotation.rotateFlags`), written out here so the audit below does not use
+/// the producer's own helper.
+fn rotated_force_approach(flags: i32, angle: u8) -> i32 {
+    if angle == 0 {
+        flags
+    } else {
+        ((flags << angle) & 0xf) | (flags >> (4 - angle))
+    }
+}
+
+/// Real-content stand audit. Every complete wall, wall-decoration and
+/// footprint placement in the baked atlas lists exactly the stands the client
+/// reach strategy accepts (`CollisionMap::test_wall`, `test_w_decor`,
+/// `test_loc`, which match the engine's `ReachStrategy`). No stand is one the
+/// engine refuses, and none the engine accepts is missing. The reviewers'
+/// named stands are absent, every essence-mine session template matches, and
+/// each shape 0 to 9 appears in the content with at least one rotation.
+#[test]
+#[ignore = "NAV_CONTENT_ROOT and NAV_CACHE required; absence fails"]
+fn real_content_atlas_stands_match_the_client_reach_strategy() {
+    use client::dash3d::CollisionMap;
+    use nav_planner::reachability::PLACEMENT_COMPLETE;
+    use std::collections::BTreeSet;
+    let defs = required_qualification_roots();
+    for ((root, graph, collision), (_, loc_defs)) in qualification_worlds().iter().zip(&defs) {
+        let atlas = crate::reachability::bake_atlas(collision, graph, &root.join("maps"), loc_defs)
+            .expect("the real content bakes an atlas");
+        let mut map = CollisionMap::new();
+        let mut seen: BTreeSet<(u8, u8)> = BTreeSet::new();
+        let (mut audited, mut illegal, mut missing, mut stand_total) =
+            (0usize, 0usize, 0usize, 0usize);
+        for row in atlas.placements() {
+            if row.coverage != PLACEMENT_COMPLETE {
+                continue;
+            }
+            let origin = nav_planner::pack::unpack_tile_key(row.origin).unwrap();
+            let recorded: BTreeSet<u32> = atlas
+                .stands_for(row)
+                .unwrap()
+                .iter()
+                .map(|stand| stand.tile)
+                .collect();
+            for tile in &recorded {
+                let stand = nav_planner::pack::unpack_tile_key(*tile).unwrap();
+                assert!(collision.standable(stand), "{origin:?} lists {stand:?}");
+            }
+            stand_total += recorded.len();
+            let (width, length, force) = match row.shape {
+                0..=9 => (1, 1, 0),
+                10 | 11 | 22 => {
+                    let def = loc_defs.loc(row.loc_id).expect("placement has a loc def");
+                    let (w, l) = if row.angle & 1 == 0 {
+                        (def.width, def.length)
+                    } else {
+                        (def.length, def.width)
+                    };
+                    (w, l, rotated_force_approach(def.force_approach, row.angle))
+                }
+                _ => continue,
+            };
+            seen.insert((row.shape, row.angle));
+            for dx in -1..=width {
+                for dz in -1..=length {
+                    let stand = WorldTile {
+                        x: origin.x + dx,
+                        z: origin.z + dz,
+                        level: origin.level,
+                    };
+                    if !collision.standable(stand) {
+                        continue;
+                    }
+                    let (sx, sz) = ((50 + dx) as usize, (50 + dz) as usize);
+                    map.flags[sx][sz] =
+                        collision.walkable_word(stand.x, stand.z, stand.level) as i32;
+                    let (cx, cz) = (50 + dx, 50 + dz);
+                    let engine = match row.shape {
+                        4..=8 => {
+                            map.test_w_decor(cx, cz, 50, 50, row.shape.into(), row.angle.into())
+                        }
+                        0..=3 | 9 => {
+                            map.test_wall(cx, cz, 50, 50, row.shape.into(), row.angle.into())
+                        }
+                        _ => map.test_loc(cx, cz, 50, 50, width, length, force),
+                    };
+                    let key = nav_planner::pack::pack_tile_key(stand).unwrap();
+                    let listed = recorded.contains(&key);
+                    audited += 1;
+                    illegal += usize::from(listed && !engine);
+                    missing += usize::from(!listed && engine);
+                    assert!(
+                        listed == engine,
+                        "{origin:?} loc {} shape {} angle {}: stand {stand:?} listed {listed}, engine {engine}",
+                        row.loc_id,
+                        row.shape,
+                        row.angle
+                    );
+                }
+            }
+        }
+        eprintln!(
+            "atlas stand audit {}: {} placements, {audited} candidate stands audited, {stand_total} stands, {illegal} illegal, {missing} missing, shape/angle pairs {seen:?}",
+            root.display(),
+            atlas.placements().len()
+        );
+        assert_eq!((illegal, missing), (0, 0));
+        // Each unmatched join names its landing, so a consumer can limit "no
+        // complete negative" to the goals the landing serves.
+        let joins: Vec<_> = atlas.unmatched_joins().collect();
+        assert_eq!(joins.len(), atlas.unmatched_join_count());
+        for (anchor, landing, edge) in &joins {
+            eprintln!(
+                "unmatched join edge {edge} at {anchor:?} lands {landing:?} in component {:?}",
+                atlas.base_at(*landing).unwrap()
+            );
+        }
+        // Shapes 6 to 8 (diagonal wall decorations) have no operable
+        // placement in the 274 or 289 maps; the engine-oracle unit test in
+        // `crates/api/tests/loc_approach_reach.rs` covers them. Every other
+        // reach shape appears in all four rotations.
+        for shape in [0u8, 1, 2, 3, 4, 5, 9, 10, 11, 22] {
+            for angle in 0u8..4 {
+                assert!(
+                    seen.contains(&(shape, angle)),
+                    "no complete placement of shape {shape} angle {angle} in {}",
+                    root.display()
+                );
+            }
+        }
+        // The stands the reviewers named were illegal in the first v18 bake.
+        for (origin, id, shape, angle, stand) in [
+            ((2205, 4943), 4642, 5u8, 1u8, (2205, 4944)),
+            ((2313, 9656), 3927, 4, 0, (2312, 9656)),
+        ] {
+            let origin = WorldTile {
+                x: origin.0,
+                z: origin.1,
+                level: 0,
+            };
+            let row = atlas
+                .placement(origin, id, shape, angle)
+                .unwrap_or_else(|| panic!("{} has loc {id} at {origin:?}", root.display()));
+            let stand = nav_planner::pack::pack_tile_key(WorldTile {
+                x: stand.0,
+                z: stand.1,
+                level: 0,
+            })
+            .unwrap();
+            assert!(atlas
+                .stands_for(row)
+                .unwrap()
+                .iter()
+                .all(|listed| listed.tile != stand));
+        }
+        assert_eq!(
+            atlas.unmatched_session_count(),
+            0,
+            "every essence-mine session template matches in {}",
+            root.display()
+        );
+    }
 }

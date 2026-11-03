@@ -39,6 +39,17 @@ pub struct CacheManifest {
     pub archives: BTreeMap<String, String>,
 }
 
+/// Why [`CacheManifest::verify_bytes`] rejected a cache directory.
+#[derive(Debug, thiserror::Error, PartialEq, Eq)]
+pub enum CacheBytesError {
+    /// Hashing or reading an archive failed.
+    #[error("{detail}")]
+    Capture { detail: String },
+    /// The on-disk archives do not match this manifest.
+    #[error("cache manifest does not match cache bytes at {cache_dir}")]
+    Mismatch { cache_dir: std::path::PathBuf },
+}
+
 impl CacheManifest {
     pub const ARCHIVES: [&'static str; 8] = [
         "title",
@@ -73,6 +84,19 @@ impl CacheManifest {
         Ok(Self { revision, archives })
     }
 
+    /// Compare this manifest to the archives currently on disk.
+    /// Revision identity is the caller's check; this is the one archive-byte owner.
+    pub fn verify_bytes(&self, cache_dir: &Path) -> Result<(), CacheBytesError> {
+        let actual = Self::capture(self.revision, cache_dir)
+            .map_err(|detail| CacheBytesError::Capture { detail })?;
+        if actual != *self {
+            return Err(CacheBytesError::Mismatch {
+                cache_dir: cache_dir.to_path_buf(),
+            });
+        }
+        Ok(())
+    }
+
     /// Verify both the asserted revision and all archive bytes.
     pub fn verify(&self, revision: u16, cache_dir: &Path) -> Result<(), String> {
         validate_revision(revision)?;
@@ -82,14 +106,8 @@ impl CacheManifest {
                 self.revision
             ));
         }
-        let actual = Self::capture(revision, cache_dir)?;
-        if actual != *self {
-            return Err(format!(
-                "cache manifest does not match cache bytes at {}",
-                cache_dir.display()
-            ));
-        }
-        Ok(())
+        self.verify_bytes(cache_dir)
+            .map_err(|error| error.to_string())
     }
 
     /// Stable cache identity: revision plus sorted archive name/hash pairs.
