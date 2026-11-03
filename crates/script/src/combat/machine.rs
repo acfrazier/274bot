@@ -12,11 +12,11 @@ use super::style::magic::{self, CastMode, Refusal};
 use super::style::ranged;
 use super::tables::{CombatTab, CombatTables, PotionKind, PrayerRole};
 use super::threats::{StyleObs, ThreatSet};
+use crate::interact::InteractReq;
 use crate::native::{
     ActionContext, ActionError, NativeMachine, ReturnStallRecovery, WalkEnd, WalkRequest,
     QUEST_WALK_MAX_ATTEMPTS,
 };
-use crate::shim::InteractReq;
 use crate::survival::cure::{self, CureDecision, CureInputs};
 use api::prayer::PrayerObservation;
 use api::snapshot::ItemView;

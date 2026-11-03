@@ -7,6 +7,9 @@ This is the release audit for upgrading a real 0.1.8.1 installation in place.
 The rule is that every file a 0.1.8.1 user can have on disk must remain usable
 without loss. The release gate below is mandatory on each packaged platform.
 
+Source links use the current crate layout. The audit pathspecs include the
+historical and current JavaScript module locations.
+
 ## Audited revisions and method
 
 - 0.1.8.1: annotated tag peeled to host commit
@@ -41,9 +44,9 @@ packaging data, not operator-authored state.
 | `loadouts.json` | Array of `{name,worn,carry,unassigned?}`; the 0.1.8.1 writer emits known slots as maps and normalizes unknown/legacy equipment into the explicit `unassigned` array | Wire parser/writer is unchanged by the campaign. 0.1.9 still accepts array-style legacy worn/carry values and preserves unknown slot items as unassigned rather than dropping them. | **Preserved.** Fixture checks named loadouts, known slots, quantities, and explicit legacy unassigned gear, then saves/reopens full equality. Existing `legacy_array_worn_and_carry_are_preserved_without_guessing_slots` coverage, rather than this fixture, protects the older array-style/unknown-key input shapes. Source: `crates/script/src/loadouts_store.rs`. |
 | `script-settings.json` | JSON map keyed by `source:name`, containing arbitrary JSON override bags | Store shape and card keys are unchanged. Unknown setting ids/values remain in the map; schema coercion happens only when constructing a runtime bag. | **Preserved.** Fixture checks bool/number/string values and save/reopen equality. Source: `crates/script/src/settings_store.rs`. |
 | Public world roster | Existing saved rs2b2t world selection data | Reader, writer, validation, and default w1/w2 records are unchanged. Existing valid data is preserved. | **Preserved.** Source comparison plus existing `public_worlds` tests; implementation: `crates/host-play/src/public_worlds.rs`. |
-| `js-scripts.json` and the referenced user `.js`/`.ts` files | JSON array of `{name,path}`; source remains at the operator path | StoreEntry wire is unchanged. Restore rereads each path, reclassifies it, and repopulates the cache. Source files are never migrated or overwritten. | **Preserved.** Source comparison and script library tests. Source: `crates/script/src/load/library.rs`. |
-| `js-cache/{manifest.json,objects/<sha>.js}` | Content-addressed generated transpilation cache | Layout and identity remain content-addressed. Missing/stale cache entries are regenerated from the referenced source. | **Derived; safe to reuse or rebuild.** Source: `crates/script/src/js_cache.rs`. |
-| `rs2b0t-path`, `rs2b0t-import` | Plain path to an imported checkout; or the first-run defer marker | Semantics and paths are unchanged. A successful explicit import replaces the path and clears the defer marker; ordinary startup does not rewrite it. | **Preserved.** Source comparison and registry tests. Source: `crates/script/src/rs2b0t_registry/`. |
+| `js-scripts.json` and the referenced user `.js`/`.ts` files | JSON array of `{name,path}`; source remains at the operator path | StoreEntry wire is unchanged. Restore rereads each path, reclassifies it, and repopulates the cache. Source files are never migrated or overwritten. | **Preserved.** Source comparison and script library tests. Source: `crates/script-js/src/library/store.rs`. |
+| `js-cache/{manifest.json,objects/<sha>.js}` | Content-addressed generated transpilation cache | Layout and identity remain content-addressed. Missing/stale cache entries are regenerated from the referenced source. | **Derived; safe to reuse or rebuild.** Source: `crates/script-js/src/library/js_cache.rs`. |
+| `rs2b0t-path`, `rs2b0t-import` | Plain path to an imported checkout; or the first-run defer marker | Semantics and paths are unchanged. A successful explicit import replaces the path and clears the defer marker; ordinary startup does not rewrite it. | **Preserved.** Source comparison and registry tests. Source: `crates/script-js/src/library/rs2b0t_registry.rs` and `crates/script-js/src/library/rs2b0t_registry/`. |
 | `unpack` / `unpack-289`, including `<version>/versionlist` and `models.bin`, `anims.bin`, `midis.bin`, `maps.bin`, plus copied JAG files | Version-list-derived snapshot directories and fixed length-prefixed archive records | Existing snapshot/JAG readers and record encoding remain compatible. 0.1.9 may add `<version>/ondemand/<archive>/<file>` as a content-identity-bound download overlay. Old readers ignore that additional directory; it does not replace snapshot files. At startup, `sweep_runtime_staging` removes only `.runtime-<pid>-<n>` directories owned by dead processes; these are leaked temporary staging directories, not completed 0.1.8.1 snapshots. | **Derived; preserved and extended.** Source: `vendor/fr-client-rust/crates/client/src/unpack/`, including the deterministic dead/foreign staging sweep test, `content_identity.rs`, and `io/ondemand.rs`. |
 | Operator nav files (`274bot.navpack`, `.navflags`, `.navreach`, `.navcanlight`) and package `nav/<revision>/…` | 0.1.8.1 shipped main pack `274V9`, while an upgraded home can still retain an earlier `274V8`; sidecars are `274F/1`, `274R/1`, `274L/1`, and manifests/stamps bind digests | 0.1.9 uses `274V10`, retains the three sidecar wire versions, and adds `274bot.navpois` (`274P/1`). **Upgrade break found:** at campaign commit `76e9bb245`, an older external pack selected from the home, revision directory, `--nav-pack`, or `NAV_PACK` propagated `BadVersion` and aborted profile binding, so panel/TUI could not start. The compatibility fix recognizes an external `274V` version byte lower than the current format before manifest validation, leaves the file untouched, binds the profile with `NavAvailability::Unavailable`, and logs `navigation pack was built by an older 274bot; rebuild it with nav-pack`. A newer version or garbage header remains a hard error. Bundled resources remain strict release artifacts: missing/stale/corrupt/wrong-version packaged files are blockers. | **Derived format replacement without startup or user-file loss after the fix.** Permanent V8 and V9 tests prove startup continues and bytes are unchanged; boundary coverage proves newer and garbage files still fail. Gate step 7 proves package provenance and the old-pack behavior. Source: `crates/nav-planner/src/pack.rs`, `crates/host-play/src/profile_binding.rs`. |
 | `smoke/<run-id>/…`, `fixtures/<scenario>.json`, and e2e run directories/ledgers | Harness screenshots, identity receipts, and resumable test evidence | No operator settings or credentials are sourced from these paths. Existing receipts remain evidence; new runs use new run ids or validate their bound identity before resume. | **Preserved as evidence; not migrated.** Source: panel scenario and e2e ledger/identity code. |
@@ -114,10 +117,10 @@ For each macOS arm64, Windows x64, and Linux x64 release package:
      crates/script/src/loadouts_store.rs
      crates/script/src/settings_store.rs
      crates/script/src/identity.rs
-     crates/script/src/load/library.rs
-     crates/script/src/js_cache.rs
-     crates/script/src/rs2b0t_registry.rs
-     crates/script/src/rs2b0t_registry
+     ':(glob)crates/script*/src/**/library.rs'
+     ':(glob)crates/script*/src/**/js_cache.rs'
+     ':(glob)crates/script*/src/**/rs2b0t_registry.rs'
+     ':(glob)crates/script*/src/**/rs2b0t_registry/**'
      crates/host-play/src/public_worlds.rs
      crates/host-play/src/profile.rs
      crates/host-play/src/profile_options.rs

@@ -905,11 +905,11 @@ pub(crate) fn pause_script(
 /// newer walk, a nearest-bank walk, an abort) and not when the player
 /// already stands within its arrival radius (`arrived`).
 pub(crate) fn resumed_walk<'a>(
-    carried: Option<script::shim::InteractReq>,
-    queued: impl IntoIterator<Item = &'a script::shim::InteractReq>,
+    carried: Option<script::interact::InteractReq>,
+    queued: impl IntoIterator<Item = &'a script::interact::InteractReq>,
     arrived: impl FnOnce(WorldTile, i32) -> bool,
-) -> Option<script::shim::InteractReq> {
-    use script::shim::InteractReq;
+) -> Option<script::interact::InteractReq> {
+    use script::interact::InteractReq;
     let carried = carried?;
     let superseded = queued.into_iter().any(|op| {
         matches!(

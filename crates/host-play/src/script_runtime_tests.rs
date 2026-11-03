@@ -313,7 +313,7 @@ impl script::native::Script for QueueMove {
         &mut self,
         ctx: &mut script::native::NativeTick<'_>,
     ) -> Result<script::native::ScriptFlow, script::native::ScriptFailure> {
-        ctx.queue_test_interaction(script::shim::InteractReq::PuzzleMove {
+        ctx.queue_test_interaction(script::interact::InteractReq::PuzzleMove {
             id: PIECE_MOVE,
             slot: 0,
             component: MOVE_BOARD as i32,
@@ -591,8 +591,8 @@ fn puzzle_move_client() -> Client {
     c
 }
 
-fn move_req(id: i32, slot: i32, component: i32, generation: u64) -> script::shim::InteractReq {
-    script::shim::InteractReq::PuzzleMove {
+fn move_req(id: i32, slot: i32, component: i32, generation: u64) -> script::interact::InteractReq {
+    script::interact::InteractReq::PuzzleMove {
         id,
         slot,
         component,

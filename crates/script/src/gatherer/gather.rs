@@ -1,8 +1,8 @@
 use super::oneop::{OneOp, OneOpArgs};
 use super::select::TargetPlan;
 use super::supply::method_ready;
+use crate::interact::InteractReq;
 use crate::native::{defer_budget, ActionContext, ActionError, NativeMachine};
-use crate::shim::InteractReq;
 use api::gather_methods::{known_rows, GatherCatalog, GatherMethod, TargetClass};
 use api::selected::{EntityId, Knowledge};
 use std::sync::Arc;

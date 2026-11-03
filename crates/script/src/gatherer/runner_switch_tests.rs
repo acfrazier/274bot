@@ -146,7 +146,7 @@ fn prerequisite_handoff_reissues_original_walk_once_and_cancel_revokes_it() {
                 matches!(
                     &action.effect,
                     crate::native::HostEffect::Interaction(
-                        crate::shim::InteractReq::Loc { id: Some(id), .. }
+                        crate::interact::InteractReq::Loc { id: Some(id), .. }
                     ) if *id == crossing.loc_id
                 )
             })
@@ -518,7 +518,7 @@ fn catherby_wait_deadline_is_not_proof_that_temporary_spots_are_unavailable() {
     assert!(matches!(gatherer.active, Active::Gather(_)));
     assert!(matches!(
         &ledger.as_ref().unwrap().outbox.last().unwrap().effect,
-        crate::native::HostEffect::Interaction(crate::shim::InteractReq::Npc {
+        crate::native::HostEffect::Interaction(crate::interact::InteractReq::Npc {
             index: Some(2171), action, ..
         }) if action == "Net"
     ));
@@ -566,7 +566,7 @@ fn catherby_big_fish_replacement_does_not_prove_permanent_absence() {
     assert!(matches!(gatherer.active, Active::Gather(_)));
     assert!(matches!(
         &ledger.as_ref().unwrap().outbox.last().unwrap().effect,
-        crate::native::HostEffect::Interaction(crate::shim::InteractReq::Npc {
+        crate::native::HostEffect::Interaction(crate::interact::InteractReq::Npc {
             index: Some(2171), action, ..
         }) if action == "Net"
     ));
@@ -1766,7 +1766,7 @@ fn unbankable_items_are_kept_and_the_bank_trip_continues_after_freeing_space() {
         assert!(
             matches!(
                 action.effect,
-                crate::native::HostEffect::Interaction(crate::shim::InteractReq::InvButton {
+                crate::native::HostEffect::Interaction(crate::interact::InteractReq::InvButton {
                     id: 317,
                     ..
                 })
@@ -1872,7 +1872,9 @@ fn tool_fetch_trip_keeps_unbankable_items_and_continues_to_withdraw_the_tool() {
     let mode = ledger.as_mut().unwrap().outbox.remove(0);
     assert!(matches!(
         mode.effect,
-        crate::native::HostEffect::Interaction(crate::shim::InteractReq::SetNoteMode { on: false })
+        crate::native::HostEffect::Interaction(crate::interact::InteractReq::SetNoteMode {
+            on: false
+        })
     ));
     ledger.as_mut().unwrap().complete_interaction(
         &mode.authority(),
@@ -1892,7 +1894,7 @@ fn tool_fetch_trip_keeps_unbankable_items_and_continues_to_withdraw_the_tool() {
     assert_eq!(outbox.len(), 1, "only the required tool is withdrawn");
     assert!(matches!(
         outbox[0].effect,
-        crate::native::HostEffect::Interaction(crate::shim::InteractReq::WithdrawX {
+        crate::native::HostEffect::Interaction(crate::interact::InteractReq::WithdrawX {
             bank_item_id: 303,
             lands_as_id: 303,
             count: 1,

@@ -2158,9 +2158,11 @@ fn publish_overflow_panics_when_held_full() {
 #[cfg(feature = "js")]
 fn encode_inspect_bytes(nav: &InspectNav, tick: u64, hold: bool) -> Vec<u8> {
     use {
-        script_js::wire::encode_snapshot_with_native, script_js::wire::NativeFactsInput,
-        script_js::wire::ReachViewInput, script_js::wire::RouteInspectFactsInput,
-        script_js::wire::SnapshotInput,
+        script::native::snapshot_source::NativeFactsInput,
+        script::native::snapshot_source::ReachViewInput,
+        script::native::snapshot_source::RouteInspectFactsInput,
+        script::native::snapshot_source::SnapshotInput,
+        script_js::wire::encode_snapshot_with_native,
     };
     let latest_hops = nav
         .latest
@@ -2315,7 +2317,9 @@ fn drain_inspect_acks(iso: &script_js::LoadIsolate) -> Vec<(u64, u64)> {
     iso.drain_interacts()
         .into_iter()
         .filter_map(|req| match req {
-            script::shim::InteractReq::InspectAck { seq, generation } => Some((seq, generation)),
+            script::interact::InteractReq::InspectAck { seq, generation } => {
+                Some((seq, generation))
+            }
             _ => None,
         })
         .collect()
@@ -2342,7 +2346,7 @@ fn isolate_begin_and_authorize(
     let forwarded = iso.drain_interacts().into_iter().any(|req| {
         matches!(
             req,
-            script::shim::InteractReq::InspectRoute { request_id, .. } if request_id == token
+            script::interact::InteractReq::InspectRoute { request_id, .. } if request_id == token
         )
     });
     forwarded.then_some(token)
@@ -2621,7 +2625,7 @@ export function tick() {}
     let leaked = iso.drain_interacts().into_iter().any(|req| {
         matches!(
             req,
-            script::shim::InteractReq::InspectRoute { request_id: 99, .. }
+            script::interact::InteractReq::InspectRoute { request_id: 99, .. }
         )
     });
     assert!(!leaked, "invented token must not reach the host queue");

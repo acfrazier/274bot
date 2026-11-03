@@ -189,7 +189,7 @@ impl NativeMachine for DrivenMachine {
                     // A wake frame shares the begin's tick and its spent
                     // interaction event: the real machine tries again at its
                     // next poll, and the double only renews.
-                    match cx.emit(script::shim::InteractReq::IfButton { component_id: 42 }) {
+                    match cx.emit(script::interact::InteractReq::IfButton { component_id: 42 }) {
                         Ok(request) => {
                             self.click = Some(request);
                             self.control.sent.fetch_add(1, Ordering::Relaxed);

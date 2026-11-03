@@ -6,8 +6,8 @@
 //! owns no sequencing, so every assertion is about what the isolate machine
 //! answered and what reached the interact drain.
 use client::io::ClientRevision;
-use script::shim::InteractReq;
-use script_js::wire::{ItemRowInput, SceneEntityInput, SnapshotInput, TileInput};
+use script::interact::InteractReq;
+use script::native::snapshot_source::{ItemRowInput, SceneEntityInput, SnapshotInput, TileInput};
 use script_js::{LoadIsolate, LoadShape};
 use std::time::{Duration, Instant};
 
@@ -15,12 +15,13 @@ use std::time::{Duration, Instant};
 /// `trail_coord` decodes to `(3209, 3218, 1)`.
 const SEARCH_ID: i32 = 2677;
 
-const DEATH_CHAT: [script_js::wire::ChatLineInput<'static>; 1] = [script_js::wire::ChatLineInput {
-    seq: 1,
-    text: "Oh dear, you are dead!",
-    type_: 0,
-    username: None,
-}];
+const DEATH_CHAT: [script::native::snapshot_source::ChatLineInput<'static>; 1] =
+    [script::native::snapshot_source::ChatLineInput {
+        seq: 1,
+        text: "Oh dear, you are dead!",
+        type_: 0,
+        username: None,
+    }];
 /// The packed `access: "constrained"` row whose special runtime crosses the
 /// Duel Arena before digging.
 const CONSTRAINED_ID: i32 = 3554;
@@ -72,9 +73,9 @@ struct Scene<'a> {
     /// Dig and the Open all resolve identity by posted name.
     names: &'a [(i32, &'a str)],
     /// The posted stat page can require waiting, but does not prove death.
-    stats: &'a [script_js::wire::StatInput<'a>],
+    stats: &'a [script::native::snapshot_source::StatInput<'a>],
     /// Rust-decoded game chat supplies the shared native death latch.
-    chat_lines: &'a [script_js::wire::ChatLineInput<'a>],
+    chat_lines: &'a [script::native::snapshot_source::ChatLineInput<'a>],
     main_modal_id: i32,
     hold: bool,
     ours: bool,
@@ -90,7 +91,7 @@ struct Scene<'a> {
     count_dialog_open: bool,
     /// The posted chat choices the trio acquire chain reads, in posted order:
     /// each row's own 1-based slot is its position here.
-    options: &'a [script_js::wire::ChatOptionInput<'a>],
+    options: &'a [script::native::snapshot_source::ChatOptionInput<'a>],
     /// Whether the posted pack carries the held coordinate trio: a dig-row
     /// scene needs it, because the acquire chain owns the row until it does.
     trio: bool,
@@ -99,7 +100,7 @@ struct Scene<'a> {
     equipment: &'a [ItemRowInput<'a>],
     /// The posted nearest Use-quickly booth the strip's and the restore's bank
     /// trip opens.
-    nearest_booth: Option<&'a script_js::wire::NearestBoothInput<'a>>,
+    nearest_booth: Option<&'a script::native::snapshot_source::NearestBoothInput<'a>>,
     /// The posted bank interface: the strip's deposit and the restore's claim
     /// go out only behind a posted open one.
     bank_open: bool,
@@ -147,8 +148,8 @@ fn worn_row(id: i32, name: &str, slot: i32) -> ItemRowInput<'_> {
 /// The posted nearest Use-quickly booth the Entrana bank trip opens: the tile
 /// beside the player, the loc's own id and the two labels the landed bank
 /// helpers queue on `open-booth`.
-const POSTED_BOOTH: script_js::wire::NearestBoothInput<'static> =
-    script_js::wire::NearestBoothInput {
+const POSTED_BOOTH: script::native::snapshot_source::NearestBoothInput<'static> =
+    script::native::snapshot_source::NearestBoothInput {
         x: 2810,
         z: 3350,
         level: 0,
@@ -198,16 +199,16 @@ fn post_scene(iso: &LoadIsolate, tick: u64, page: &[(i32, i32)], scene: &Scene<'
         inv_size: 28,
         stats: scene.stats,
         booths: &[],
-        nearest_booth: scene
-            .nearest_booth
-            .map(|booth| script_js::wire::NearestBoothInput {
+        nearest_booth: scene.nearest_booth.map(|booth| {
+            script::native::snapshot_source::NearestBoothInput {
                 x: booth.x,
                 z: booth.z,
                 level: booth.level,
                 id: booth.id,
                 name: booth.name,
                 op: booth.op,
-            }),
+            }
+        }),
         banks: &[],
         bank: &[],
         bank_side: &[],
@@ -264,7 +265,7 @@ fn post_scene(iso: &LoadIsolate, tick: u64, page: &[(i32, i32)], scene: &Scene<'
         trade_decline_id: -1,
         shop_open: false,
         shop_stock: &[],
-        reach: script_js::wire::ReachViewInput::UNAVAILABLE,
+        reach: script::native::snapshot_source::ReachViewInput::UNAVAILABLE,
         attacked_by_player: false,
         self_target_kind: 0,
         self_target_index: -1,
@@ -1314,11 +1315,11 @@ export default class T extends TaskBot {
     let forfeit = ["Forfeit".to_string()];
     let exit = [scene_loc(3203, 3345, 3243, 0, &forfeit)];
     let yes = [
-        script_js::wire::ChatOptionInput {
+        script::native::snapshot_source::ChatOptionInput {
             text: "Yes",
             com_id: 4883,
         },
-        script_js::wire::ChatOptionInput {
+        script::native::snapshot_source::ChatOptionInput {
             text: "No",
             com_id: 4884,
         },
@@ -1526,7 +1527,7 @@ export default class T extends TaskBot {
 "#;
     let iso = spawn(src);
     let page = [(SEARCH_ID, 1)];
-    let stats = [script_js::wire::StatInput {
+    let stats = [script::native::snapshot_source::StatInput {
         index: 3,
         name: "hitpoints",
         xp: 0,
@@ -1570,7 +1571,7 @@ export default class T extends TaskBot {
     );
 
     // Tick 3: fresh native death chat is authoritative even after HP recovers.
-    let recovered = [script_js::wire::StatInput {
+    let recovered = [script::native::snapshot_source::StatInput {
         index: 3,
         name: "hitpoints",
         xp: 0,
@@ -1903,7 +1904,7 @@ export default class T extends TaskBot {
 
     // Tick 6: fresh native death chat ends the session: the token is gone
     // and nothing was solved.
-    let dead = [script_js::wire::StatInput {
+    let dead = [script::native::snapshot_source::StatInput {
         index: 3,
         name: "hitpoints",
         xp: 0,
@@ -2074,11 +2075,11 @@ export default class T extends TaskBot {
     // Tick 4: the closed handler's option, posted second: that posted 1-based
     // slot is the answer, through the clue adapter's own arm.
     let options = [
-        script_js::wire::ChatOptionInput {
+        script::native::snapshot_source::ChatOptionInput {
             text: "Who are you?",
             com_id: 4883,
         },
-        script_js::wire::ChatOptionInput {
+        script::native::snapshot_source::ChatOptionInput {
             text: "Talk about Treasure Trails.",
             com_id: 4884,
         },

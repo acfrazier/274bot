@@ -1,5 +1,7 @@
-use script::shim::InteractReq;
-use script_js::wire::{ItemRowInput, ReachViewInput, SnapshotInput, StatInput, TileInput};
+use script::interact::InteractReq;
+use script::native::snapshot_source::{
+    ItemRowInput, ReachViewInput, SnapshotInput, StatInput, TileInput,
+};
 use script_js::{LoadIsolate, LoadShape};
 
 fn post_snapshot_input(iso: &LoadIsolate, input: &SnapshotInput<'_>) {

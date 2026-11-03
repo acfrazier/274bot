@@ -25,8 +25,8 @@ struct Probe {
     seen: Vec<(u64, Seen)>,
 }
 
-fn talk_to() -> script::shim::InteractReq {
-    script::shim::InteractReq::Npc {
+fn talk_to() -> script::interact::InteractReq {
+    script::interact::InteractReq::Npc {
         name: "Goblin".into(),
         action: "Talk-to".into(),
         index: Some(0),

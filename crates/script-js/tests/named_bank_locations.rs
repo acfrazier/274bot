@@ -10,11 +10,11 @@ use api::quest_progress::EvidenceStamp;
 use api::snapshot::WorldTile;
 use nav_planner::named_banks::resolve;
 use script::bank::{AccessKind, BankPickReceipt, BankStandAccess, PickKind, SelectedBank};
-use script::native::{HostEffect, InteractionReceipt, WalkEnd, WalkReceipt};
-use script::shim::InteractReq;
-use script_js::wire::{
+use script::interact::InteractReq;
+use script::native::snapshot_source::{
     NativeFactsInput, QuestStatusInput, ReachViewInput, SnapshotInput, StatInput, TileInput,
 };
+use script::native::{HostEffect, InteractionReceipt, WalkEnd, WalkReceipt};
 use script_js::LoadShape;
 
 fn base_snapshot<'a>() -> SnapshotInput<'a> {
@@ -242,7 +242,7 @@ fn air_ties_keep_catalog_order_across_planes_without_isolate_leakage() {
 /// A selected identity controls opening until native facts prove loaded stock.
 #[test]
 fn reachable_bank_continuations_open_npc_access_and_wait_for_loaded_stock() {
-    use script_js::wire::{ChatOptionInput, ItemRowInput, SceneEntityInput};
+    use script::native::snapshot_source::{ChatOptionInput, ItemRowInput, SceneEntityInput};
 
     for (call, after) in [
         ("Banking.open()", 0),

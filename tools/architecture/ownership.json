@@ -3935,7 +3935,7 @@
       "owner": "T1"
     },
     {
-      "path": "crates/script-js/src/library/library.rs",
+      "path": "crates/script-js/src/library/store.rs",
       "owner": "T1"
     },
     {
@@ -4784,10 +4784,6 @@
     },
     {
       "path": "crates/script-js/src/shim/mining_rocks.js",
-      "owner": "T2"
-    },
-    {
-      "path": "crates/script/src/shim/mod.rs",
       "owner": "T2"
     },
     {
@@ -8024,6 +8020,42 @@
     },
     {
       "path": "tools/seed-calc/src/self_damage.rs",
+      "owner": "T2"
+    },
+    {
+      "path": "crates/script-js/src/api_v2/mod.rs",
+      "owner": "T2"
+    },
+    {
+      "path": "crates/script-js/src/compat/mod.rs",
+      "owner": "T2"
+    },
+    {
+      "path": "crates/script-js/src/compat/quest_journal/mod.rs",
+      "owner": "T2"
+    },
+    {
+      "path": "crates/script-js/src/library/mod.rs",
+      "owner": "T2"
+    },
+    {
+      "path": "crates/script-js/src/materialize/mod.rs",
+      "owner": "T2"
+    },
+    {
+      "path": "crates/script-js/src/runtime/mod.rs",
+      "owner": "T2"
+    },
+    {
+      "path": "crates/script-js/src/scene/mod.rs",
+      "owner": "T2"
+    },
+    {
+      "path": "crates/script-js/src/tooling/mod.rs",
+      "owner": "T2"
+    },
+    {
+      "path": "crates/script-js/src/wire/mod.rs",
       "owner": "T2"
     }
   ]

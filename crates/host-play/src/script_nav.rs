@@ -826,7 +826,7 @@ fn route_exclusions_heap_bytes(exclusions: &ScriptRouteExclusions) -> Option<usi
         exclusions
             .avoid_wire
             .capacity()
-            .checked_mul(std::mem::size_of::<script::shim::InspectAvoidWire>())?,
+            .checked_mul(std::mem::size_of::<script::interact::InspectAvoidWire>())?,
         exclusions
             .cross
             .capacity()
@@ -4680,7 +4680,7 @@ pub(crate) struct MissingCarry {
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub(crate) struct ScriptRouteExclusions {
     pub(crate) avoid: Vec<AvoidRect>,
-    pub(crate) avoid_wire: Vec<script::shim::InspectAvoidWire>,
+    pub(crate) avoid_wire: Vec<script::interact::InspectAvoidWire>,
     pub(crate) cross: Vec<Arc<str>>,
 }
 impl ScriptRouteExclusions {
@@ -4706,11 +4706,11 @@ fn native_route_exclusions(
     });
     for name in avoid {
         if !exclusions.avoid_wire.iter().any(|entry| {
-            matches!(entry, script::shim::InspectAvoidWire::Catalog(existing) if existing == name.as_ref())
+            matches!(entry, script::interact::InspectAvoidWire::Catalog(existing) if existing == name.as_ref())
         }) {
             exclusions
                 .avoid_wire
-                .push(script::shim::InspectAvoidWire::Catalog(name.to_string()));
+                .push(script::interact::InspectAvoidWire::Catalog(name.to_string()));
         }
     }
     for name in cross {
@@ -5129,7 +5129,7 @@ pub(crate) struct CarriedWalk {
     runtime_generation: Option<u64>,
     /// Route generation before `hold_script_nav` ends the session's follow.
     route_generation: u64,
-    request: script::shim::InteractReq,
+    request: script::interact::InteractReq,
 }
 
 /// The route-work service handles searches; the slot pump owns follow
@@ -5229,7 +5229,7 @@ pub(crate) fn resolve_route_exclusions(
     let zones = world.graph.zones.as_ref();
     for entry in &exclusions.avoid_wire {
         match entry {
-            script::shim::InspectAvoidWire::Rect {
+            script::interact::InspectAvoidWire::Rect {
                 min_x,
                 max_x,
                 min_z,
@@ -5242,7 +5242,7 @@ pub(crate) fn resolve_route_exclusions(
                 max_z: *max_z,
                 level: *level,
             }),
-            script::shim::InspectAvoidWire::Catalog(id) => {
+            script::interact::InspectAvoidWire::Catalog(id) => {
                 let Some(table) = zones else {
                     return Err(format!(
                         "avoidZones: zone catalog unavailable for {id:?} (legacy grid pack)"
@@ -5286,7 +5286,7 @@ pub(crate) fn resolve_route_exclusions(
                     _ => unreachable!(),
                 }
             }
-            script::shim::InspectAvoidWire::Unsupported => {
+            script::interact::InspectAvoidWire::Unsupported => {
                 return Err(
                     "avoidZones: expected a rectangle or a known catalog zone id".to_string(),
                 );
@@ -7280,7 +7280,7 @@ impl NavBot {
                         .avoid_wire
                         .iter()
                         .filter_map(|entry| match entry {
-                            script::shim::InspectAvoidWire::Catalog(name) => {
+                            script::interact::InspectAvoidWire::Catalog(name) => {
                                 Some(Arc::<str>::from(name.as_str()))
                             }
                             _ => None,
@@ -8145,7 +8145,7 @@ impl NavBot {
             });
         let carried = self.carried_walk.as_deref().and_then(|walk| {
             let (request_id, to, radius, allow_teleports) = match &walk.request {
-                script::shim::InteractReq::Walk {
+                script::interact::InteractReq::Walk {
                     x,
                     z,
                     level,
@@ -8162,7 +8162,7 @@ impl NavBot {
                     0,
                     *allow_teleports,
                 ),
-                script::shim::InteractReq::WalkNear {
+                script::interact::InteractReq::WalkNear {
                     x,
                     z,
                     level,
@@ -8394,7 +8394,7 @@ pub(super) fn preserve_recovery_walk_identity(
     bot.carried_walk = Some(Box::new(CarriedWalk {
         runtime_generation: None,
         route_generation: bot.route_generation,
-        request: script::shim::InteractReq::WalkNear {
+        request: script::interact::InteractReq::WalkNear {
             x: to.x,
             z: to.z,
             level: to.level,
@@ -8443,7 +8443,7 @@ pub(crate) fn hold_script_nav(
             nav.carried_walk = Some(Box::new(CarriedWalk {
                 runtime_generation: Some(runtime_generation),
                 route_generation,
-                request: script::shim::InteractReq::WalkNearestBank,
+                request: script::interact::InteractReq::WalkNearestBank,
             }));
         } else if let (Some(runtime_generation), true, Some(requested), None) =
             (carry, armed, nav.requested_route, &nav.native_walk)
@@ -8474,7 +8474,7 @@ pub(crate) fn hold_script_nav(
                 },
             );
             let request = if radius > 0 {
-                script::shim::InteractReq::WalkNear {
+                script::interact::InteractReq::WalkNear {
                     x: to.x,
                     z: to.z,
                     level: to.level,
@@ -8490,7 +8490,7 @@ pub(crate) fn hold_script_nav(
                     cross,
                 }
             } else {
-                script::shim::InteractReq::Walk {
+                script::interact::InteractReq::Walk {
                     x: to.x,
                     z: to.z,
                     level: to.level,
@@ -8520,7 +8520,7 @@ pub(crate) fn take_carried_walk(
     navs: &Arc<Mutex<HashMap<String, NavBot>>>,
     name: &str,
     runtime_generation: u64,
-) -> Option<script::shim::InteractReq> {
+) -> Option<script::interact::InteractReq> {
     let carried = navs.lock().unwrap().get_mut(name)?.carried_walk.take()?;
     (carried.runtime_generation == Some(runtime_generation)).then_some(carried.request)
 }
@@ -10863,14 +10863,14 @@ mod route_quest_provider_tests {
         };
         let exclusions = ScriptRouteExclusions {
             avoid_wire: vec![
-                script::shim::InspectAvoidWire::Rect {
+                script::interact::InspectAvoidWire::Rect {
                     min_x: 3400,
                     max_x: 3401,
                     min_z: 3480,
                     max_z: 3481,
                     level: Some(0),
                 },
-                script::shim::InspectAvoidWire::Catalog("named-avoid".to_owned()),
+                script::interact::InspectAvoidWire::Catalog("named-avoid".to_owned()),
             ],
             cross: vec![Arc::from("named-cross")],
             ..Default::default()
@@ -11106,7 +11106,7 @@ mod route_quest_provider_tests {
         assert_eq!(exclusions.avoid_wire.len(), 2);
         assert!(matches!(
             exclusions.avoid_wire[0],
-            script::shim::InspectAvoidWire::Rect { .. }
+            script::interact::InspectAvoidWire::Rect { .. }
         ));
         assert_eq!(exclusions.cross.len(), 1);
         assert!(bot.take_compat_walk_handover(handover.here).is_none());
@@ -11311,7 +11311,7 @@ mod route_quest_provider_tests {
         let exclusions = native_route_exclusions(&avoid, &cross, None);
         assert_eq!(
             exclusions.avoid_wire,
-            vec![script::shim::InspectAvoidWire::Catalog(
+            vec![script::interact::InspectAvoidWire::Catalog(
                 "named-avoid".to_owned()
             )],
         );

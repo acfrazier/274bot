@@ -5,7 +5,7 @@
 //! walk; on a `failed`/`unreachable` outcome `recoverBoatFare`
 //! (`karamjaRecovery.ts`), then one more walk. The baked leg of
 //! `walkResilient` is the same `Traversal.walkTo` (`Traversal.ts:160–170`),
-//! so [`crate::walk::Resilient`] embeds [`Recover`] too.
+//! so [`crate::compat::walk::Resilient`] embeds [`Recover`] too.
 //!
 //! `WalkOptions` (`WalkExecutor.ts:113–139, 226–245`): `radius` defaults to
 //! 2 and `timeoutMs` to 300 s; teleports are `resolveWalkUseTeleports` (an
@@ -46,18 +46,17 @@
 //! The host posts no chat-modal text, so the strict talk's no-match line cannot
 //! quote what the NPC said.
 
-use crate::machine::{Begin, Call, Cx, Family, Reply, Step};
-use crate::observed;
-use crate::reach_entity::{
+use crate::compat::reach_entity::{
     chat_mark, chat_state, npc_talkable, talk_row, NpcReach, NpcReachOpts, TalkExpect,
 };
-use crate::supply_v2;
-use crate::walk::{
+use crate::compat::walk::{
     avoid_refusal, here, interrupted, resolve_teleports, teleport_span_allows, Resilient, Walk,
 };
+use crate::machine::{Begin, Call, Cx, Family, Reply, Step};
+use crate::scene::observed;
 use api::query::SceneReachOptions;
 use api::snapshot::WorldTile;
-use script::shim::{InspectAvoidWire, InteractReq};
+use script::interact::{InspectAvoidWire, InteractReq};
 use serde::Deserialize;
 use serde_json::json;
 use std::cell::Cell;
@@ -85,7 +84,7 @@ const PICK_MS: u64 = 4_000;
 const DRIVE_UNTIL_MS: u64 = 30_000;
 /// Frozen `driveChoice` / `talkChoosingBy` loop bounds.
 const CHOICE_PAGES: u32 = 60;
-const TALK_PAGES: u32 = crate::dialog::DRIVE_STEPS;
+const TALK_PAGES: u32 = crate::compat::dialog::DRIVE_STEPS;
 
 thread_local! {
     /// Frozen module-level `recovering` (`karamjaRecovery.ts:22`).
@@ -510,7 +509,7 @@ impl Pages {
         }
         if cont {
             cx.emit(InteractReq::ContinueDialog { component_id: None });
-            cx.clock().arm(crate::dialog::PAGE_ACK_MS);
+            cx.clock().arm(crate::compat::dialog::PAGE_ACK_MS);
             self.phase = PagePhase::Ack {
                 before: modal,
                 then: 1,
@@ -523,7 +522,7 @@ impl Pages {
                 return None;
             }
             Some(
-                crate::dialog::pick_preferred(options, &self.prefer)
+                crate::compat::dialog::pick_preferred(options, &self.prefer)
                     .ok_or_else(|| options.join(" | ")),
             )
         });
@@ -532,7 +531,7 @@ impl Pages {
                 cx.emit(InteractReq::Answer {
                     option: i32::try_from(index + 1).unwrap_or(i32::MAX),
                 });
-                cx.clock().arm(crate::dialog::PAGE_ACK_MS);
+                cx.clock().arm(crate::compat::dialog::PAGE_ACK_MS);
                 self.phase = PagePhase::Ack {
                     before: modal,
                     then: 2,
@@ -577,7 +576,7 @@ impl Talk {
             &facts.luthas_name,
             NpcReachOpts {
                 expect: TalkExpect::DialogReady,
-                expect_ms: crate::dialog::DIALOGUE_OPEN_MS,
+                expect_ms: crate::compat::dialog::DIALOGUE_OPEN_MS,
                 retry_after_timeout: false,
                 probe_unreachable: true,
                 skip_click_when_expected: true,
@@ -1182,10 +1181,10 @@ fn next_orthogonal_stand(
         return Err("the observed player tile is unavailable");
     };
     let options = SceneReachOptions {
-        max_steps: Some(crate::reach_entity::BFS_STEPS),
+        max_steps: Some(crate::compat::reach_entity::BFS_STEPS),
         adjacent_ok: false,
     };
-    crate::reach_query::with_view(|view| {
+    crate::materialize::reach_query::with_view(|view| {
         if !view.available {
             return Err("the posted reach view is unavailable");
         }
@@ -1524,7 +1523,7 @@ impl Recover {
                         Ok(stage) => stage,
                         Err(done) => return Some(done),
                     }
-                } else if settled && crate::reach_query::arrived(*staging_tile, 2) {
+                } else if settled && crate::materialize::reach_query::arrived(*staging_tile, 2) {
                     let detail = "the staging walk ended without Luthas in view";
                     log_staging_failure(logs, *attempt, *staging_tile, detail);
                     Stage::WaitLuthas {

@@ -187,7 +187,7 @@ fn start_api_gather_and_wait(slot: &mut SlotScript, selected: &api::game_data::S
     assert!(
         visible
             .iter()
-            .all(|row| matches!(&row.req, crate::shim::InteractReq::LoopSettled)),
+            .all(|row| matches!(&row.req, crate::interact::InteractReq::LoopSettled)),
         "only surface lifecycle, not delegated gameplay, may reach host: {visible:?}"
     );
     assert!(
@@ -205,7 +205,7 @@ fn start_api_gather_and_wait(slot: &mut SlotScript, selected: &api::game_data::S
         assert!(
             visible
                 .iter()
-                .all(|row| matches!(&row.req, crate::shim::InteractReq::LoopSettled)),
+                .all(|row| matches!(&row.req, crate::interact::InteractReq::LoopSettled)),
             "delegated Gatherer gameplay stays in the seat: {visible:?}"
         );
         std::thread::yield_now();
@@ -1139,7 +1139,7 @@ impl Script for Walker {
         ctx: &mut crate::native::NativeTick<'_>,
     ) -> Result<crate::native::ScriptFlow, crate::native::ScriptFailure> {
         if let Some(sink) = ctx.frame.compiled.interacts.as_mut() {
-            sink.push(crate::shim::InteractReq::Walk {
+            sink.push(crate::interact::InteractReq::Walk {
                 x: 3,
                 z: 4,
                 level: 0,
@@ -1158,8 +1158,8 @@ impl Script for Walker {
 }
 
 /// The walk `Walker` queues, for comparing whole requests.
-fn walker_walk() -> crate::shim::InteractReq {
-    crate::shim::InteractReq::Walk {
+fn walker_walk() -> crate::interact::InteractReq {
+    crate::interact::InteractReq::Walk {
         x: 3,
         z: 4,
         level: 0,
@@ -1636,7 +1636,7 @@ fn surface_watchdog_holds_pen_recovery_until_the_player_leaves() {
 
     let now = Instant::now();
     let inside_pen = (3340, 3250, 0);
-    let settled = [crate::shim::InteractReq::LoopSettled];
+    let settled = [crate::interact::InteractReq::LoopSettled];
     slot.note_game_packet_tick(now);
     slot.feed_watchdog(now, Some(inside_pen), &[], false, true, &settled);
     slot.note_game_packet_tick(now + crate::watchdog::WEDGE);
@@ -1653,12 +1653,12 @@ fn surface_watchdog_holds_pen_recovery_until_the_player_leaves() {
     );
 
     let anchor = [
-        crate::shim::InteractReq::RecoveryAnchor {
+        crate::interact::InteractReq::RecoveryAnchor {
             x: 3368,
             z: 3274,
             level: 0,
         },
-        crate::shim::InteractReq::LoopSettled,
+        crate::interact::InteractReq::LoopSettled,
     ];
     slot.note_game_packet_tick(now + crate::watchdog::WEDGE + Duration::from_secs(1));
     let action = slot.feed_watchdog(
@@ -1736,7 +1736,7 @@ fn surface_watchdog_restarts_hard_stall_while_pen_hold_survives_freeze_and_reset
 
     let now = Instant::now();
     let inside_pen = (3340, 3250, 0);
-    let settled = [crate::shim::InteractReq::LoopSettled];
+    let settled = [crate::interact::InteractReq::LoopSettled];
     slot.note_game_packet_tick(now);
     slot.feed_watchdog(now, Some(inside_pen), &[], false, true, &settled);
     for seconds in (5..=crate::watchdog::WEDGE.as_secs()).step_by(5) {
@@ -1753,7 +1753,7 @@ fn surface_watchdog_restarts_hard_stall_while_pen_hold_survives_freeze_and_reset
         z: 3274,
         level: 0,
     };
-    let anchor_reply = [crate::shim::InteractReq::RecoveryAnchor {
+    let anchor_reply = [crate::interact::InteractReq::RecoveryAnchor {
         x: anchor.x,
         z: anchor.z,
         level: anchor.level,
@@ -1822,7 +1822,7 @@ fn surface_watchdog_still_restarts_a_hard_stall_outside_fight_pens() {
         slot.feed_watchdog(now, Some(here), &[], false, true, &[]),
         crate::watchdog::WatchdogAction::None
     );
-    let outside_anchor = [crate::shim::InteractReq::RecoveryAnchor {
+    let outside_anchor = [crate::interact::InteractReq::RecoveryAnchor {
         x: 3220,
         z: 3274,
         level: 0,
@@ -1830,7 +1830,7 @@ fn surface_watchdog_still_restarts_a_hard_stall_outside_fight_pens() {
     for seconds in (5..crate::watchdog::HARD_STALL.as_secs()).step_by(5) {
         let tick_at = now + Duration::from_secs(seconds);
         slot.note_game_packet_tick(tick_at);
-        let lifecycle: &[crate::shim::InteractReq] =
+        let lifecycle: &[crate::interact::InteractReq] =
             if seconds == crate::watchdog::HARD_STALL.as_secs() - 5 {
                 &outside_anchor
             } else {
@@ -1874,7 +1874,7 @@ fn surface_watchdog_logs_packet_silence_and_clears_it_on_resume() {
 
     let now = Instant::now();
     let here = (3200, 3274, 0);
-    let settled = [crate::shim::InteractReq::LoopSettled];
+    let settled = [crate::interact::InteractReq::LoopSettled];
     slot.note_game_packet_tick(now);
     slot.feed_watchdog(now, Some(here), &[], false, true, &settled);
 

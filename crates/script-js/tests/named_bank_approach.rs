@@ -9,11 +9,11 @@ use bank_slot::BankSlot;
 use api::named_banks::NamedBankFacts;
 use api::quest_progress::EvidenceStamp;
 use api::snapshot::WorldTile;
-use script::native::{HostAction, HostEffect, InteractionReceipt, WalkEnd, WalkReceipt};
-use script::shim::InteractReq;
-use script_js::wire::{
+use script::interact::InteractReq;
+use script::native::snapshot_source::{
     ChatOptionInput, NativeFactsInput, ReachViewInput, SceneEntityInput, SnapshotInput, TileInput,
 };
+use script::native::{HostAction, HostEffect, InteractionReceipt, WalkEnd, WalkReceipt};
 use script_js::LoadShape;
 
 fn spawn(src: &str) -> BankSlot {

@@ -5,6 +5,7 @@
 //! document. Content echoes each dial letter after every click
 //! (`quest_totem.rs2` `tribal_door_combo`: `if_settext(tribal_door2:com_43..46,
 //! enum(alphabet, $stage))`).
+use crate::interact::InteractReq;
 use crate::native::{
     ActionContext, ActionError, ActionHandle, NativeActions, NativeMachine, WalkReceipt,
     WalkRetryState,
@@ -14,7 +15,6 @@ use crate::quester::compile::{
 };
 use crate::quester::families::reach;
 use crate::quester::prereq::{reach::PrereqReach, walk::PrereqWalk};
-use crate::shim::InteractReq;
 use api::WorldTile;
 use serde::Deserialize;
 use std::sync::Arc;
@@ -185,9 +185,11 @@ impl StepRun for Run {
                 // The gate above is the authored anchor radius; any
                 // standable tile inside it is close enough to open the door.
                 request.arrival = nav_planner::contract::ArrivalKind::Area;
-                match crate::native::defer_budget(
-                    PrereqWalk::begin(request, cx.tick.actions, &mut cx.tick.cx),
-                ) {
+                match crate::native::defer_budget(PrereqWalk::begin(
+                    request,
+                    cx.tick.actions,
+                    &mut cx.tick.cx,
+                )) {
                     Poll::Pending => {
                         self.walk_retry.defer_until_next_tick(tick);
                         return Poll::Pending;

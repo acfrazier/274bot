@@ -1,11 +1,13 @@
 //! Bounded Baker stall mapping: posted pins, filtered loc id, honest results.
 
-use script::shim::InteractReq;
-use script_js::wire::{
-    ChatLineInput, IsolateBuf, ItemRowInput, ReachViewInput, SceneEntityInput, SnapshotFingerprint,
-    SnapshotInput, TileInput,
-};
+use script::interact::InteractReq;
 use script_js::{LoadIsolate, LoadShape};
+use {
+    script::native::snapshot_source::{
+        ChatLineInput, ItemRowInput, ReachViewInput, SceneEntityInput, SnapshotInput, TileInput,
+    },
+    script_js::wire::{IsolateBuf, SnapshotFingerprint},
+};
 
 mod common;
 use common::post_snapshot_input;

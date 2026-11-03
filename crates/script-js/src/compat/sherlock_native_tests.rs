@@ -16,7 +16,7 @@ use std::time::{Duration, Instant};
 struct Output;
 impl NativeOutput for Output {
     fn status(&mut self, _: ScriptStatus) {}
-    fn paint(&mut self, _: Arc<script::shim::ScriptPaint>) {}
+    fn paint(&mut self, _: Arc<script::paint::ScriptPaint>) {}
     fn log(&mut self, _: api::hostlog::Level, _: &str) {}
     fn settings_applied(&mut self, _: u64) {}
 }
@@ -1059,7 +1059,7 @@ fn allocation_counts_by_tick_class() {
 
 #[test]
 fn native_chat_death_aborts_a_guard_once_at_restored_hp_even_while_held() {
-    crate::clue::on_reset();
+    crate::compat::clue::on_reset();
     let mut world = World::new(0);
     let mut script = script(&world, false);
     let mut ledger = None;
@@ -1099,7 +1099,7 @@ fn native_chat_death_aborts_a_guard_once_at_restored_hp_even_while_held() {
 
 #[test]
 fn native_hp_zero_without_death_chat_freezes_and_resumes_the_live_guard() {
-    crate::clue::on_reset();
+    crate::compat::clue::on_reset();
     let mut world = World::new(0);
     let mut script = script(&world, false);
     let mut ledger = None;
@@ -1127,7 +1127,7 @@ fn native_hp_zero_without_death_chat_freezes_and_resumes_the_live_guard() {
 
 #[test]
 fn native_hp_zero_with_an_incomplete_stat_page_keeps_the_live_guard() {
-    crate::clue::on_reset();
+    crate::compat::clue::on_reset();
     let mut world = World::new(0);
     let mut script = script(&world, false);
     let mut ledger = None;
@@ -1177,7 +1177,7 @@ fn native_hp_zero_with_an_incomplete_stat_page_keeps_the_live_guard() {
 
 #[test]
 fn native_death_latch_survives_inactive_reconnect_and_replaced_chat_ring() {
-    crate::clue::on_reset();
+    crate::compat::clue::on_reset();
     let mut world = World::new(0);
     world
         .snapshot
@@ -1215,7 +1215,7 @@ fn native_death_latch_survives_inactive_reconnect_and_replaced_chat_ring() {
 }
 
 fn start_sherlock_slot(world: &World) -> script::slot::SlotScript {
-    script::registry::install_cards(&crate::sherlock::CARDS)
+    script::registry::install_cards(&crate::compat::sherlock::CARDS)
         .expect("install canonical Sherlock card for native slot tests");
     let mut slot = script::slot::SlotScript::new();
     slot.bind_incarnation(1);
@@ -1668,7 +1668,7 @@ fn settle_sherlock_restart(slot: &mut script::slot::SlotScript) {
 
 #[test]
 fn native_sherlock_watchdog_recreation_observes_death_from_gap_once() {
-    crate::clue::on_reset();
+    crate::compat::clue::on_reset();
     let mut world = World::new(0);
     world
         .snapshot
@@ -1713,7 +1713,7 @@ fn native_sherlock_watchdog_recreation_observes_death_from_gap_once() {
 
 #[test]
 fn native_sherlock_fresh_start_baselines_stale_death_chat() {
-    crate::clue::on_reset();
+    crate::compat::clue::on_reset();
     let mut world = World::new(0);
     world
         .snapshot

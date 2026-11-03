@@ -5,18 +5,19 @@
 
 use api::game_data::{self, SelectedGameData, TeleportSpell};
 use client::io::ClientRevision;
-use script::shim::InteractReq;
-use script_js::hunt_fight::Tile;
-use script_js::hunt_leave::{
+use script::interact::InteractReq;
+use script_js::compat::hunt_fight::Tile;
+use script_js::compat::hunt_leave::{
     self, leave_deadline_remaining_ms, leave_force_bound_reached, leave_token_alive,
     set_observation, LeaveInv, LeaveLoc, LeaveObservation, DOOR_MS, WALK_LEG_MS,
-};
-use script_js::wire::{
-    encode_snapshot, ItemRowInput, Snapshot, SnapshotInput, StatInput, TileInput,
 };
 use script_js::{LoadIsolate, LoadShape};
 use serde_json::{json, Value};
 use std::sync::Arc;
+use {
+    script::native::snapshot_source::{ItemRowInput, SnapshotInput, StatInput, TileInput},
+    script_js::wire::{encode_snapshot, Snapshot},
+};
 
 fn reset() {
     hunt_leave::on_reset();
@@ -314,7 +315,7 @@ fn magic_gate_reads_base_not_effective() {
     }];
     let bytes = encode_snapshot(&snap_with(inside(), &low, &inv));
     let reader = Snapshot::from_bytes(&bytes).unwrap();
-    script_js::observed::apply(&reader);
+    script_js::scene::observed::apply(&reader);
     let token = begin();
     let short = call(Some(&data), token, site(json!({})), None);
     assert_ne!(
@@ -333,7 +334,7 @@ fn magic_gate_reads_base_not_effective() {
     }];
     let bytes = encode_snapshot(&snap_with(inside(), &high, &inv));
     let reader = Snapshot::from_bytes(&bytes).unwrap();
-    script_js::observed::apply(&reader);
+    script_js::scene::observed::apply(&reader);
     let token = begin();
     let ready = call(Some(&data), token, site(json!({})), None);
     assert_eq!(kind(&ready), "teleport");
@@ -694,8 +695,8 @@ fn enter_pause_does_not_freeze_the_leave_door_window() {
         "proof window must be DOOR_MS {DOOR_MS}, got {before}"
     );
     assert!(before < 120_000, "must not arm FIGHT_MS");
-    script_js::hunt_lair::on_pause();
-    script_js::hunt_fight::on_pause();
+    script_js::compat::hunt_lair::on_pause();
+    script_js::compat::hunt_fight::on_pause();
     std::thread::sleep(std::time::Duration::from_millis(220));
     let stepped = call(Some(&data), token, p.clone(), None);
     assert_ne!(
@@ -1064,7 +1065,7 @@ fn empty_snapshot(tick: u64, here: TileInput) -> SnapshotInput<'static> {
         trade_decline_id: -1,
         shop_open: false,
         shop_stock: &[],
-        reach: script_js::wire::ReachViewInput::UNAVAILABLE,
+        reach: script::native::snapshot_source::ReachViewInput::UNAVAILABLE,
         attacked_by_player: false,
         self_target_kind: 0,
         self_target_index: -1,

@@ -1,5 +1,5 @@
 use client::io::ClientRevision;
-use script_js::wire::{ItemRowInput, SnapshotInput, StatInput};
+use script::native::snapshot_source::{ItemRowInput, SnapshotInput, StatInput};
 use script_js::{LoadIsolate, LoadShape};
 
 fn item(name: &'static str, id: i32, slot: i32, count: i32) -> ItemRowInput<'static> {
@@ -95,7 +95,7 @@ fn snapshot<'a>(
         trade_decline_id: -1,
         shop_open: false,
         shop_stock: &[],
-        reach: script_js::wire::ReachViewInput::UNAVAILABLE,
+        reach: script::native::snapshot_source::ReachViewInput::UNAVAILABLE,
         attacked_by_player: false,
         self_target_kind: 0,
         self_target_index: -1,

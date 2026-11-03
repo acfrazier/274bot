@@ -28,10 +28,10 @@ pub use walk_spot::{
     walk_deadline_remaining_ms, walk_dispatch, walk_force_bound_reached, walk_token_alive,
 };
 
-use crate::hunt::{flag, hook, index, number, strict_true, text, Host, Kind as HuntKind};
+use crate::compat::hunt::{flag, hook, index, number, strict_true, text, Host, Kind as HuntKind};
 use crate::machine::Ended;
-use crate::observed::{self, EntityRow, ItemRow, Scene, Skill, Skills};
-use crate::task_clock::InstantTaskClock;
+use crate::scene::observed::{self, EntityRow, ItemRow, Scene, Skill, Skills};
+use crate::scene::task_clock::InstantTaskClock;
 use api::snapshot::WorldTile;
 use script::combat::{
     policy,
@@ -89,7 +89,7 @@ thread_local! {
     static ANTIFIRE: RefCell<HuntAntifire> = RefCell::new(HuntAntifire::default());
 }
 fn hunt_combat_tables() -> Result<Arc<CombatTables>, ActionError> {
-    crate::supply_v2::combat_tables()
+    crate::scene::supply_v2::combat_tables()
 }
 
 /// Shared across Hunt Fight/Hold tokens, like the account's potion effect.
@@ -700,7 +700,7 @@ pub fn in_area_body(origin: Tile, size: i32, boxes: &[SiteBox]) -> bool {
 
 /// A site's area: its boxes (v2 and data sites), or, when the script's
 /// own `site.inArea(t)` predicate is held, that predicate's answers for
-/// the tiles a decision reads (`crate::hunt` asks for new tiles before
+/// the tiles a decision reads (`crate::compat::hunt` asks for new tiles before
 /// each step).
 #[derive(Clone, Debug, Default)]
 pub struct Area {
@@ -1112,7 +1112,7 @@ fn sighted_from(spot: Tile, n: &FightNpc, obs: &FightObservation) -> bool {
     if let Some(v) = obs.los_override {
         return v;
     }
-    crate::line_of_sight::query_v1(
+    crate::scene::line_of_sight::query_v1(
         WorldTile {
             x: spot.x,
             z: spot.z,
@@ -2297,7 +2297,7 @@ pub(crate) fn interrupt_watch(token: u64) {
 }
 #[cfg(test)]
 fn seed_protect_observation() -> i32 {
-    crate::supply_v2::configure(Some(
+    crate::scene::supply_v2::configure(Some(
         api::game_data::for_revision(api::selected::ClientRevision::R289)
             .expect("R289 combat test data"),
     ));
@@ -2488,7 +2488,7 @@ mod tests {
             "style_spotanims": [{ "spotanim_id": 9, "style": 0, "where": "projectile" }]
         }))
         .unwrap();
-        crate::supply_v2::configure(Some(Arc::new(invalid)));
+        crate::scene::supply_v2::configure(Some(Arc::new(invalid)));
         assert!(hunt_combat_tables().is_err());
         let mut runtime = FightRuntime::new(17, Instant::now());
         let effect = next_effect(&mut runtime, &parse_projection(&json!({})), None);

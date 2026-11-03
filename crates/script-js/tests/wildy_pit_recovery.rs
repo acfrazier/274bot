@@ -3,12 +3,14 @@
 //! until arrived or timeout; a one-shot WalkNear returns and EnterCourse
 //! no longer validates (`southOfRidge` is false in the pit).
 
-use script::shim::InteractReq;
-use script_js::wire::{
-    encode_snapshot, encode_snapshot_with_native, ChatLineInput, NativeFactsInput, ReachViewInput,
-    SceneEntityInput, SnapshotInput, TileInput,
-};
+use script::interact::InteractReq;
 use script_js::{LoadIsolate, LoadShape};
+use {
+    script::native::snapshot_source::{
+        ChatLineInput, NativeFactsInput, ReachViewInput, SceneEntityInput, SnapshotInput, TileInput,
+    },
+    script_js::wire::{encode_snapshot, encode_snapshot_with_native},
+};
 
 mod common;
 use common::FRESH_STATS;
@@ -163,7 +165,7 @@ fn snap<'a>(
     here: TileInput,
     locs: &'a [SceneEntityInput<'a>],
     chat: &'a [ChatLineInput<'a>],
-    stats: &'a [script_js::wire::StatInput<'a>],
+    stats: &'a [script::native::snapshot_source::StatInput<'a>],
 ) -> SnapshotInput<'a> {
     SnapshotInput {
         tick,

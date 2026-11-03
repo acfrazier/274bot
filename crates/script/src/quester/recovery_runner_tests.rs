@@ -152,7 +152,7 @@ fn recovery_r2_watchdog_walks_to_the_last_quest_stand_without_recreating() {
         &[],
         false,
         true,
-        &[crate::shim::InteractReq::LoopSettled],
+        &[crate::interact::InteractReq::LoopSettled],
     );
     assert!(
         matches!(action, crate::WatchdogAction::ArmWalk { x, z, level }

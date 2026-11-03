@@ -5,10 +5,10 @@
 //! the typed result into a V8 object. Not a FlatBuffer RPC: no isolate/host
 //! buffer, no extra JSON op, no `__rs2b0t_shop` planner payload.
 
-use crate::shop::{BuyoutPlanRequest, BuyoutPlanResult};
+use crate::compat::shop::{BuyoutPlanRequest, BuyoutPlanResult};
 use rustyscript::Runtime;
 
-pub(super) fn install(runtime: &mut Runtime) -> Result<(), String> {
+pub(crate) fn install(runtime: &mut Runtime) -> Result<(), String> {
     let context = runtime.deno_runtime().main_context();
     let mut scope = runtime.deno_runtime().handle_scope();
     let global = context.open(&mut scope).global(&mut scope);
@@ -56,7 +56,7 @@ fn run<'s>(
         stock: stock_objs.into_iter().zip(stock_counts).collect(),
         chosen,
     };
-    let result = crate::shop::run_buyout_plan(&req);
+    let result = crate::compat::shop::run_buyout_plan(&req);
     materialize_result(scope, &result)
 }
 

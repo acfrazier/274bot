@@ -1,11 +1,11 @@
 //! Snapshot-driven production adapter shared with compat Make-X sequencing.
 //! The caller triggers production first; this machine selects and settles its output.
+use crate::interact::InteractReq;
 use crate::native::{ActionContext, ActionError, NativeMachine};
 use crate::production::{
     MakeFixedAction, MakeFixedSelection, MakeXCore, MakeXPhase, MakeXProduct, MakeXSelection,
     MakeXStep,
 };
-use crate::shim::InteractReq;
 use api::snapshot::{ItemActionFamily, ItemContainer, ItemView, MakeProductView};
 use std::sync::Arc;
 use std::task::Poll;

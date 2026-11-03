@@ -1,7 +1,7 @@
 //! Per-isolate CPED lineage carrier and Rust-to-JavaScript entry guards.
 
-use crate::callback_v8::{self, Throw};
 use crate::machine::{CapturedLineage, Handle};
+use crate::materialize::callback_v8::{self, Throw};
 use rustyscript::deno_core::v8;
 use rustyscript::{Error, Runtime};
 use serde::de::DeserializeOwned;
@@ -880,7 +880,7 @@ pub(crate) fn load_modules(
         let heap_exhausted = runtime.heap_exhausted_token();
         tokio.block_on(async {
             tokio::select! {
-                result = tokio::time::timeout(super::isolate::SETUP_TIMEOUT, async {
+                result = tokio::time::timeout(crate::runtime::isolate::SETUP_TIMEOUT, async {
                     let loaded = runtime.load_modules_async(main, side).await;
                     runtime
                         .await_event_loop(rustyscript::deno_core::PollEventLoopOptions::default(), None)
@@ -899,7 +899,7 @@ mod tests {
     use rustyscript::RuntimeOptions;
 
     fn gated_runtime() -> Runtime {
-        crate::platform::bootstrap_test_v8_platform();
+        crate::runtime::platform::bootstrap_test_v8_platform();
         let mut runtime = Runtime::new(RuntimeOptions::default()).unwrap();
         install(&mut runtime, true).unwrap();
         enter_root(&mut runtime, install_interact_capture).unwrap();
@@ -907,7 +907,7 @@ mod tests {
     }
     #[test]
     fn finite_async_side_modules_do_not_share_the_tick_timeout() {
-        crate::platform::bootstrap_test_v8_platform();
+        crate::runtime::platform::bootstrap_test_v8_platform();
         let mut runtime = Runtime::new(RuntimeOptions {
             timeout: Duration::from_millis(50),
             ..Default::default()

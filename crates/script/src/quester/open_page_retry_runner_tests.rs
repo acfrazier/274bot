@@ -5,9 +5,9 @@
 //! page stays open.
 use super::tests::status_fixture;
 use super::*;
+use crate::interact::InteractReq;
 use crate::native::{HostEffect, NativeOutput, WalkEnd, WalkReceipt};
 use crate::quester::families::tests::{local_player, with_tick_output};
-use crate::shim::InteractReq;
 use api::quest_progress::EvidenceStamp;
 use api::snapshot::{GameSnapshot, WorldTile};
 use std::collections::HashSet;
@@ -17,7 +17,7 @@ struct Capture(Vec<String>);
 
 impl NativeOutput for Capture {
     fn status(&mut self, _: ScriptStatus) {}
-    fn paint(&mut self, _: Arc<crate::shim::ScriptPaint>) {}
+    fn paint(&mut self, _: Arc<crate::paint::ScriptPaint>) {}
     fn log(&mut self, _: api::hostlog::Level, message: &str) {
         self.0.push(message.to_owned());
     }

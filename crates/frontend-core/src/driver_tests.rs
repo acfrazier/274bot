@@ -4017,7 +4017,7 @@ fn an_ordinary_paint_button_keeps_its_script_click_path() {
     d.models_mut()
         .scripts_mut()
         .stage_paint_input(crate::scripts::PaintInput::click(
-            script::shim::HOST_PAUSE_CONTROL_ID.into(),
+            script::paint::HOST_PAUSE_CONTROL_ID.into(),
             frame.view().generation(),
         ));
     let forged = d
@@ -4060,7 +4060,7 @@ fn paint_controls_follow_the_lifecycle_state() {
 fn publish_native_paint(
     d: &HeadlessDriver,
     name: &str,
-    paint: std::sync::Arc<script::shim::ScriptPaint>,
+    paint: std::sync::Arc<script::paint::ScriptPaint>,
 ) {
     let play = d.session().play().expect("play");
     let mut rows = play.statuses.lock().expect("status rows");
@@ -4075,7 +4075,7 @@ fn publish_native_paint(
 /// host controls are buttons 0 and 1) and check each press through
 /// the lifecycle rows, as the front ends submit them.
 #[cfg(feature = "js")]
-fn native_paint_controls_case(test: &str, paint: std::sync::Arc<script::shim::ScriptPaint>) {
+fn native_paint_controls_case(test: &str, paint: std::sync::Arc<script::paint::ScriptPaint>) {
     let mut d = paint_driver(test, &["alice"]);
     publish_native_paint(&d, "alice", paint);
     d.poll();
@@ -4119,7 +4119,7 @@ fn native_paint_controls_case(test: &str, paint: std::sync::Arc<script::shim::Sc
 fn compiled_paint_controls_case(
     test: &str,
     card: crate::scripts::ScriptChoice,
-    paint: std::sync::Arc<script::shim::ScriptPaint>,
+    paint: std::sync::Arc<script::paint::ScriptPaint>,
 ) {
     let mut d = paint_driver_with_card(test, &["alice"], card);
     d.poll();
@@ -4247,10 +4247,10 @@ fn native_gatherer_paint_controls_pause_resume_and_stop() {
 #[cfg(feature = "js")]
 #[test]
 fn native_sherlock_paint_controls_pause_resume_and_stop() {
-    let paint = std::sync::Arc::new(script::shim::ScriptPaint {
+    let paint = std::sync::Arc::new(script::paint::ScriptPaint {
         title: Some("Sherlock".into()),
         lines: vec!["Waiting for a clue".into(), "Clues solved: 0".into()],
-        buttons: script::shim::host_control_buttons(),
+        buttons: script::paint::host_control_buttons(),
         generation: 7,
         ..Default::default()
     });

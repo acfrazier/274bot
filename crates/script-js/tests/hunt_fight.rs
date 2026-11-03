@@ -1,6 +1,6 @@
 //! Offline Fight isolate policy tests. No V8.
 
-use script_js::hunt_fight::{
+use script_js::compat::hunt_fight::{
     self, engaged, fight_deadline_remaining_ms, gap_sw, last_hp, loot_target, seen_contains,
     skip_contains, skip_remaining_ms, token_alive, FightNpc, FightObservation, Tile, TAVERLEY_BLUE,
 };

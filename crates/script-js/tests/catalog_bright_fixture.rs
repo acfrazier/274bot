@@ -4,7 +4,7 @@
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
-use script_js::wire::StatInput;
+use script::native::snapshot_source::StatInput;
 use script_js::{JsLibrary, LoadIsolate};
 use {script::ScriptKind, script::ScriptSource, script_js::CacheMeta, script_js::JsCache};
 

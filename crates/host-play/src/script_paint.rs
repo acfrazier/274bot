@@ -8,7 +8,7 @@ use super::{script_slot, ScriptWall};
 pub(crate) fn script_paint_of(
     scripts: &ScriptWall,
     name: &str,
-) -> Option<std::sync::Arc<script::shim::ScriptPaint>> {
+) -> Option<std::sync::Arc<script::paint::ScriptPaint>> {
     script_slot(scripts, name).and_then(|slot| slot.lock().ok().and_then(|slot| slot.paint()))
 }
 
@@ -17,7 +17,7 @@ pub(crate) fn script_paint_of(
 /// is a new frame; an equal one is skipped.
 pub(crate) fn publish_script_paint(
     status: &mut SlotStatus,
-    paint: Option<std::sync::Arc<script::shim::ScriptPaint>>,
+    paint: Option<std::sync::Arc<script::paint::ScriptPaint>>,
 ) {
     match (&status.script_paint, &paint) {
         (Some(cur), Some(next)) if std::sync::Arc::ptr_eq(cur, next) => {}
@@ -29,7 +29,7 @@ pub(crate) fn publish_script_paint(
 /// Whether `paint` advertises `select_name` on the persistent chrome store
 /// `key` (`strip:{id}`, `rail:{id}`, or `tabs:{id}`).
 pub(crate) fn script_paint_select_advertised(
-    paint: &script::shim::ScriptPaint,
+    paint: &script::paint::ScriptPaint,
     key: &str,
     select_name: &str,
 ) -> bool {

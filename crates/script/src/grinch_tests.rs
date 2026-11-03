@@ -1,4 +1,5 @@
 use super::CARD;
+use crate::interact::InteractReq;
 use crate::native::{
     ledger, ActionContext, HostEffect, InteractionReceipt, NativeActions, NativeOutput,
     NativePhase, NativeTick, PreparedConfig, RetainedMemory, Script, ScriptFailure, ScriptFlow,
@@ -6,7 +7,6 @@ use crate::native::{
     WalkStallReason,
 };
 use crate::native_bank::{AccessKind, BankPickReceipt, BankStandAccess, PickKind, SelectedBank};
-use crate::shim::InteractReq;
 use api::game_data::SelectedGameData;
 use api::named_banks::{NamedBank, NamedBankFacts};
 use api::quest_progress::EvidenceStamp;
@@ -107,7 +107,7 @@ impl NativeOutput for CaptureOutput {
         self.statuses.push(status);
     }
 
-    fn paint(&mut self, _: Arc<crate::shim::ScriptPaint>) {}
+    fn paint(&mut self, _: Arc<crate::paint::ScriptPaint>) {}
 
     fn log(&mut self, _: api::hostlog::Level, message: &str) {
         self.logs.push(message.to_owned());

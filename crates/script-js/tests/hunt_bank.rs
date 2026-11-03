@@ -5,14 +5,17 @@
 //! walk-near radius 3 with the three allow flags false. They do not mirror
 //! phases.
 
-use script_js::hunt_bank::{
+use script_js::compat::hunt_bank::{
     self, bank_deadline_remaining_ms, bank_force_bound_reached, bank_token_alive, set_observation,
     BankObservation, BankRow, APPROACH_RADIUS, CLOSE_MS, OPEN_MS, WALK_LEG_MS, WITHDRAW_MS,
 };
-use script_js::hunt_fight::Tile;
-use script_js::wire::{encode_snapshot, ItemRowInput, Snapshot, SnapshotInput, TileInput};
+use script_js::compat::hunt_fight::Tile;
 use script_js::LoadShape;
 use serde_json::{json, Value};
+use {
+    script::native::snapshot_source::{ItemRowInput, SnapshotInput, TileInput},
+    script_js::wire::{encode_snapshot, Snapshot},
+};
 
 #[path = "common/bank_slot.rs"]
 mod bank_slot;
@@ -261,7 +264,7 @@ fn snapshot_slot_minus_one_is_not_a_real_held_row() {
     snap.bank_generation = 4;
     let bytes = encode_snapshot(&snap);
     let reader = Snapshot::from_bytes(&bytes).unwrap();
-    script_js::observed::apply(&reader);
+    script_js::scene::observed::apply(&reader);
     let step = call(token, proj, Some(json!({ "opened": true })));
     assert_ne!(kind(&step), "withdraw", "{step}");
     assert!(!step.to_string().contains("Velrak"), "{step}");
@@ -619,7 +622,7 @@ export async function tick(api) {
                     level: 0,
                 },
             ),
-            script_js::wire::NativeFactsInput::default(),
+            script::native::snapshot_source::NativeFactsInput::default(),
         );
     }
     // Inside the lair, the caller's own leave runs; a failed leave ends
@@ -639,15 +642,15 @@ export async function tick(api) {
     let (_, legacy, _) = slot.slot.drain_host_interacts(None);
     assert!(!legacy
         .iter()
-        .any(|row| matches!(row.req, script::shim::InteractReq::WalkNear { .. })));
+        .any(|row| matches!(row.req, script::interact::InteractReq::WalkNear { .. })));
     slot.stop();
 }
 
 #[test]
 fn v2_bank_run_uses_the_native_bank_open_child_and_bounds_a_rejected_dispatch() {
     use api::quest_progress::EvidenceStamp;
+    use script::native::snapshot_source::{NativeFactsInput, ReachViewInput, SceneEntityInput};
     use script::native::{HostEffect, InteractionReceipt};
-    use script_js::wire::{NativeFactsInput, ReachViewInput, SceneEntityInput};
 
     let source = r#"
 export const apiVersion = 2;
@@ -735,7 +738,7 @@ export async function tick(api) {
     let (action, tick) = sent.expect("Hunt bank-open must reach the native seat");
     assert!(matches!(
         action.effect,
-        HostEffect::Interaction(script::shim::InteractReq::OpenBooth { id: 2213, .. })
+        HostEffect::Interaction(script::interact::InteractReq::OpenBooth { id: 2213, .. })
     ));
     assert_eq!(
         slot.probe("typeof globalThis.__done").unwrap(),
@@ -846,7 +849,7 @@ fn empty_snapshot<'a>(tick: u64, here: TileInput) -> SnapshotInput<'a> {
         trade_decline_id: -1,
         shop_open: false,
         shop_stock: &[],
-        reach: script_js::wire::ReachViewInput::UNAVAILABLE,
+        reach: script::native::snapshot_source::ReachViewInput::UNAVAILABLE,
         attacked_by_player: false,
         self_target_kind: 0,
         self_target_index: -1,

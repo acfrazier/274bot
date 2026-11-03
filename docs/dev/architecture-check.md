@@ -58,7 +58,7 @@ last-FBO, and JS-shim policy are review requirements, not this checker.
 
 GitHub Actions runs the same two manifests after installing ALSA + X11
 headers (`libasound2-dev` — panel pulls client `audio` / cpal), plus the
-feature-gated test lanes (script `load` and V8-free `--no-default-features`,
+feature-gated test lanes (`script-js` tests and V8-free `script --no-default-features`,
 host `performance-profile`, host-play/panel/tui `memory-profile`, host-play
 `memory-profile-no-alloc`, panel `render-diagnostics`) and the inline
 architecture check: the step itself clones the checker branch that `ci.yml`

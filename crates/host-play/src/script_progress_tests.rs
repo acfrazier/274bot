@@ -96,7 +96,7 @@ impl script::native::Script for QueueBankButton {
         &mut self,
         ctx: &mut script::native::NativeTick<'_>,
     ) -> Result<script::native::ScriptFlow, script::native::ScriptFailure> {
-        ctx.queue_test_interaction(script::shim::InteractReq::IfButton { component_id: 601 });
+        ctx.queue_test_interaction(script::interact::InteractReq::IfButton { component_id: 601 });
         Ok(script::native::ScriptFlow::Continue)
     }
 }
@@ -180,7 +180,7 @@ impl script::native::NativeMachine for NativeButtonMachine {
         _args: Self::Args,
         cx: &mut script::native::ActionContext<'_>,
     ) -> Result<Self, script::native::ActionError> {
-        cx.emit(script::shim::InteractReq::IfButton { component_id: 601 })?;
+        cx.emit(script::interact::InteractReq::IfButton { component_id: 601 })?;
         Ok(Self)
     }
 
@@ -248,7 +248,7 @@ impl script::native::NativeMachine for PageClickMachine {
         args: Self::Args,
         cx: &mut script::native::ActionContext<'_>,
     ) -> Result<Self, script::native::ActionError> {
-        cx.emit(script::shim::InteractReq::IfButton { component_id: 601 })?;
+        cx.emit(script::interact::InteractReq::IfButton { component_id: 601 })?;
         let deadline = cx.evidence().tick.saturating_add(args.wait_ticks);
         let active_deadline = args.active_bound.map(|bound| cx.active_now() + bound);
         let lease = match active_deadline {

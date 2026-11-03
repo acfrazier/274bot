@@ -5,9 +5,12 @@ use api::quest_progress::EvidenceStamp;
 use api::selected::{Knowledge, RunKey, Truth};
 use api::snapshot::QuestListStatus;
 use script::api_progress::{ProgressPage, QuestProgressRow};
-use script::shim::InteractReq;
-use script_js::wire::{encode_snapshot_delta_with_native, NativeFactsInput, SnapshotInput};
+use script::interact::InteractReq;
 use script_js::{LoadIsolate, LoadShape};
+use {
+    script::native::snapshot_source::{NativeFactsInput, SnapshotInput},
+    script_js::wire::encode_snapshot_delta_with_native,
+};
 
 const BASE_SCRIPT: &str = r#"
 export const apiVersion = 2;
@@ -80,7 +83,7 @@ fn post_snapshot(iso: &LoadIsolate, tick: u64, api_progress: Option<&ProgressPag
         trade_decline_id: -1,
         shop_open: false,
         shop_stock: &[],
-        reach: script_js::wire::ReachViewInput::UNAVAILABLE,
+        reach: script::native::snapshot_source::ReachViewInput::UNAVAILABLE,
         attacked_by_player: false,
         self_target_kind: 0,
         self_target_index: -1,

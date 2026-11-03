@@ -905,7 +905,7 @@ pub(super) fn observe_slot_catalog_and_paired(
     lifecycle_receipt: impl FnOnce() -> Option<script::ScriptLifecycleReceipt>,
     guardian_fact: impl FnOnce() -> catalog_core::BoundedGuardian,
     inspect: Option<catalog_core::RouteInspectPublished>,
-    paint: Option<&script::shim::ScriptPaint>,
+    paint: Option<&script::paint::ScriptPaint>,
     acts: Option<catalog_core::ScriptActsPublished>,
 ) {
     if catalog.configured() {

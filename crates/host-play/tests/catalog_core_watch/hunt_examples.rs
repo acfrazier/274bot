@@ -5,10 +5,11 @@
 //! example must fail its cell.
 
 use host_play::catalog_core::{parse_hunt_receipt_line, LineOfSightTile, ScriptAct};
-use script::shim::InteractReq;
+use script::interact::InteractReq;
 use {
-    script_js::wire::encode_snapshot, script_js::wire::ReachViewInput,
-    script_js::wire::SnapshotInput, script_js::wire::TileInput,
+    script::native::snapshot_source::ReachViewInput,
+    script::native::snapshot_source::SnapshotInput, script::native::snapshot_source::TileInput,
+    script_js::wire::encode_snapshot,
 };
 use {script_js::LoadIsolate, script_js::LoadShape};
 

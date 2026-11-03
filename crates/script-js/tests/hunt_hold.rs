@@ -1,11 +1,11 @@
 //! Offline HoldSafespot isolate policy tests. No LIVE.
 
-use script::shim::InteractReq;
-use script_js::hunt_fight::{
+use script::interact::InteractReq;
+use script::native::snapshot_source::{ItemRowInput, SnapshotInput, StatInput, TileInput};
+use script_js::compat::hunt_fight::{
     self, hold_deadline_remaining_ms, hold_force_bound_reached, hold_token_alive, last_hp,
     seen_contains, skip_contains, token_alive, FightNpc, FightObservation, Tile,
 };
-use script_js::wire::{ItemRowInput, SnapshotInput, StatInput, TileInput};
 use script_js::{LoadIsolate, LoadShape};
 use serde_json::{json, Value};
 use std::thread;
@@ -233,7 +233,7 @@ fn empty_snapshot(tick: u64, here: TileInput) -> SnapshotInput<'static> {
         trade_decline_id: -1,
         shop_open: false,
         shop_stock: &[],
-        reach: script_js::wire::ReachViewInput::UNAVAILABLE,
+        reach: script::native::snapshot_source::ReachViewInput::UNAVAILABLE,
         attacked_by_player: false,
         self_target_kind: 0,
         self_target_index: -1,
@@ -1155,11 +1155,11 @@ export default class T extends LoopingBot {
     assert!(
         !drained.iter().any(|req| matches!(
             req,
-            script::shim::InteractReq::WalkNear {
+            script::interact::InteractReq::WalkNear {
                 x: 2931,
                 z: 9690,
                 ..
-            } | script::shim::InteractReq::Npc { .. }
+            } | script::interact::InteractReq::Npc { .. }
         )),
         "no corridor walk or Jailer after a failed bank stop: {drained:?}"
     );

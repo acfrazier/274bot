@@ -85,7 +85,7 @@ pub(super) fn set_intent_baseline(token: u64, baseline: u64) {
         if let Some(runtime) = runtimes.borrow_mut().get_mut(&token) {
             runtime.intent_baseline = baseline;
             if let Some(walk_token) = runtime.walk_token {
-                crate::walk_wait::update_baseline(walk_token, baseline);
+                crate::scene::walk_wait::update_baseline(walk_token, baseline);
             }
         }
     });
@@ -400,7 +400,7 @@ mod tests {
 
     #[test]
     fn user_input_aborts_walkspot_without_reissuing_a_walk() {
-        crate::observed::on_reset();
+        crate::scene::observed::on_reset();
         set_observation(FightObservation::ready());
         let mut runtime = WalkRuntime::new(7);
 

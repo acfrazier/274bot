@@ -1,4 +1,4 @@
-use script_js::wire::{
+use script::native::snapshot_source::{
     ChatOptionInput, ReachViewInput, SceneEntityInput, SnapshotInput, TileInput, VarpInput,
     WidgetTextInput,
 };
@@ -490,7 +490,7 @@ fn run_handshake(
     partner: &str,
     initiator: bool,
     snapshot: &SnapshotInput<'_>,
-) -> Vec<script::shim::InteractReq> {
+) -> Vec<script::interact::InteractReq> {
     let iso = spawn(&handshake_source(partner, initiator));
     post_snapshot_input(&iso, snapshot);
     iso.on_game_tick(snapshot.tick);
@@ -514,7 +514,7 @@ fn clue_duel_both_roles_challenge_the_named_visible_partner() {
     for initiator in [false, true] {
         assert_eq!(
             run_handshake(" helper name ", initiator, &snapshot),
-            vec![script::shim::InteractReq::Player {
+            vec![script::interact::InteractReq::Player {
                 name: "Helper_Name".into(),
                 action: "Challenge".into(),
             }]
@@ -546,7 +546,7 @@ fn clue_duel_rejects_wrong_partner_and_any_stake() {
     snapshot.widgets = &wrong;
     assert_eq!(
         run_handshake("Helper", true, &snapshot),
-        vec![script::shim::InteractReq::CloseModal]
+        vec![script::interact::InteractReq::CloseModal]
     );
 
     let staked = [
@@ -569,7 +569,7 @@ fn clue_duel_rejects_wrong_partner_and_any_stake() {
     snapshot.widgets = &staked;
     assert_eq!(
         run_handshake("Helper", false, &snapshot),
-        vec![script::shim::InteractReq::CloseModal]
+        vec![script::interact::InteractReq::CloseModal]
     );
 }
 
@@ -598,7 +598,7 @@ fn clue_duel_initiator_sets_obstacle_rules_when_zero_varp_is_not_transmitted() {
     snapshot.varps = &[];
     assert_eq!(
         run_handshake("Helper", true, &snapshot),
-        vec![script::shim::InteractReq::IfButton { component_id: 6732 }]
+        vec![script::interact::InteractReq::IfButton { component_id: 6732 }]
     );
     assert!(
         run_handshake("Helper", false, &snapshot).is_empty(),
@@ -642,7 +642,7 @@ fn clue_duel_helper_accepts_only_after_the_initiator_is_observed_accepted() {
     snapshot.widgets = &initial;
     assert!(matches!(
         run_handshake("Helper", true, &snapshot).as_slice(),
-        [script::shim::InteractReq::DuelAccept { screen, .. }] if screen == "offer"
+            [script::interact::InteractReq::DuelAccept { screen, .. }] if screen == "offer"
     ));
     assert!(
         run_handshake("Helper", false, &snapshot).is_empty(),
@@ -653,7 +653,7 @@ fn clue_duel_helper_accepts_only_after_the_initiator_is_observed_accepted() {
     snapshot.widgets = &accepted;
     assert!(matches!(
         run_handshake("Helper", false, &snapshot).as_slice(),
-        [script::shim::InteractReq::DuelAccept { screen, .. }] if screen == "offer"
+            [script::interact::InteractReq::DuelAccept { screen, .. }] if screen == "offer"
     ));
 }
 
@@ -704,7 +704,7 @@ export default class T extends LoopingBot {
     let _ = isolate.probe("globalThis.__result");
     assert_eq!(
         isolate.drain_interacts(),
-        vec![script::shim::InteractReq::DuelAccept {
+        vec![script::interact::InteractReq::DuelAccept {
             screen: "offer".into(),
             partner: "Helper".into(),
             rules: 1024,
@@ -737,7 +737,7 @@ export default class T extends LoopingBot {
     let _ = isolate.probe("globalThis.__result");
     assert_eq!(
         isolate.drain_interacts(),
-        vec![script::shim::InteractReq::CloseModal],
+        vec![script::interact::InteractReq::CloseModal],
         "a stake inserted after a valid offer must cancel instead of confirming"
     );
     isolate.join();
@@ -767,7 +767,7 @@ fn clue_duel_confirm_without_a_validated_offer_is_rejected() {
     snapshot.varps = &options;
     assert_eq!(
         run_handshake("Helper", true, &snapshot),
-        vec![script::shim::InteractReq::CloseModal]
+        vec![script::interact::InteractReq::CloseModal]
     );
 }
 
@@ -827,7 +827,7 @@ export default class T extends LoopingBot {
     let _ = iso.probe("true");
     assert_eq!(
         iso.drain_interacts(),
-        vec![script::shim::InteractReq::Loc {
+        vec![script::interact::InteractReq::Loc {
             x: 3365,
             z: 3245,
             level: 0,
@@ -927,20 +927,20 @@ export default class T extends LoopingBot {
     assert_eq!(
         requests[..2],
         [
-            script::shim::InteractReq::Loc {
+            script::interact::InteractReq::Loc {
                 x: 3364,
                 z: 3251,
                 level: 0,
                 action: "Forfeit".into(),
                 id: Some(3203),
             },
-            script::shim::InteractReq::Answer { option: 1 },
+            script::interact::InteractReq::Answer { option: 1 },
         ]
     );
     assert!(
         matches!(
             &requests[2..],
-            [script::shim::InteractReq::WalkNear {
+            [script::interact::InteractReq::WalkNear {
                 x: 3382,
                 z: 3269,
                 level: 0,
@@ -1014,7 +1014,7 @@ fn clue_duel_travel_interrupt_cancels_only_an_open_duel() {
         assert_eq!(
             iso.drain_interacts(),
             if offer_open {
-                vec![script::shim::InteractReq::CloseModal]
+                vec![script::interact::InteractReq::CloseModal]
             } else {
                 Vec::new()
             },
@@ -1057,7 +1057,7 @@ export default class T extends LoopingBot {
     let _ = iso.probe("true");
     assert_eq!(
         iso.drain_interacts(),
-        vec![script::shim::InteractReq::CloseModal]
+        vec![script::interact::InteractReq::CloseModal]
     );
     assert_eq!(
         iso.probe("globalThis.__cancelled").unwrap(),

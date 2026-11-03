@@ -1,5 +1,5 @@
 use client::io::ClientRevision;
-use script_js::wire::ItemRowInput;
+use script::native::snapshot_source::ItemRowInput;
 use script_js::{LoadIsolate, LoadShape};
 
 fn item(name: &'static str, id: i32, slot: i32) -> ItemRowInput<'static> {
@@ -20,7 +20,7 @@ fn post_base(iso: &LoadIsolate, tick: u64) {
 }
 
 fn post_inv(iso: &LoadIsolate, tick: u64, inv: &[ItemRowInput<'_>]) {
-    let mut input = script_js::wire::SnapshotInput {
+    let mut input = script::native::snapshot_source::SnapshotInput {
         tick,
         here: None,
         ingame: true,
@@ -85,7 +85,7 @@ fn post_inv(iso: &LoadIsolate, tick: u64, inv: &[ItemRowInput<'_>]) {
         trade_decline_id: -1,
         shop_open: false,
         shop_stock: &[],
-        reach: script_js::wire::ReachViewInput::UNAVAILABLE,
+        reach: script::native::snapshot_source::ReachViewInput::UNAVAILABLE,
         attacked_by_player: false,
         self_target_kind: 0,
         self_target_index: -1,

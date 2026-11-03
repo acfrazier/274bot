@@ -12,12 +12,12 @@ pub use catalog::{CatalogSnapshotError, CatalogWorkerError};
 
 use std::path::{Path, PathBuf};
 
-use crate::js_cache::{default_js_cache_root, CacheMeta, CachedJs, JsCache};
+use crate::library::js_cache::{default_js_cache_root, CacheMeta, CachedJs, JsCache};
 
-use crate::rs2b0t_registry::{
+use crate::library::rs2b0t_registry::{
     absolute_clean, parse_registry_with_sources, persist_rs2b0t_root_at, script_file_path,
 };
-use crate::rs2b0t_registry::{ScriptKind, ScriptSource, SettingDef};
+use script::card::{ScriptKind, ScriptSource, SettingDef};
 
 use super::shape::{
     catalog_unloadable, first_unloadable_for_card, first_unloadable_for_card_bounded, is_reserved,
@@ -376,7 +376,7 @@ impl JsLibrary {
                 Err(_) => continue,
             };
             let settings_schema =
-                match crate::rs2b0t_registry::try_settings_schema_from_source(&origin) {
+                match crate::library::rs2b0t_registry::try_settings_schema_from_source(&origin) {
                     Ok(schema) => schema,
                     Err(reason) => {
                         self.note_err(
@@ -477,8 +477,9 @@ impl JsLibrary {
                 cache_meta(shape, ScriptSource::File, api_family),
             )
             .map_err(|e| format!("{name}: {e}"))?;
-        let settings_schema = crate::rs2b0t_registry::try_settings_schema_from_source(&origin)
-            .map_err(|e| format!("{name}: {e}"))?;
+        let settings_schema =
+            crate::library::rs2b0t_registry::try_settings_schema_from_source(&origin)
+                .map_err(|e| format!("{name}: {e}"))?;
         let unloadable = first_unloadable_for_card(&origin, path);
         let card = JsCard {
             name,
@@ -654,7 +655,7 @@ impl JsLibrary {
                 self.resolve_catalog_settings_schema(&card.name, &card.path, origin)
             }
             ScriptSource::File | ScriptSource::Builtin => {
-                crate::rs2b0t_registry::try_settings_schema_from_source(origin)
+                crate::library::rs2b0t_registry::try_settings_schema_from_source(origin)
                     .map_err(|error| format!("{}: {error}", card.name))
             }
         }
@@ -955,9 +956,9 @@ fn add_setting_bytes(total: &mut usize, setting: &SettingDef) -> Option<()> {
         }
         add_capacity(
             total,
-            spec.candidates.capacity().checked_mul(std::mem::size_of::<
-                crate::rs2b0t_registry::ItemOptionCandidate,
-            >())?,
+            spec.candidates
+                .capacity()
+                .checked_mul(std::mem::size_of::<script::card::ItemOptionCandidate>())?,
         )?;
         for candidate in &spec.candidates {
             add_capacity(total, candidate.key.capacity())?;
@@ -1019,7 +1020,7 @@ impl CardPreparationTemplate {
         }
     }
 
-    fn from_registry_card(card: &crate::rs2b0t_registry::RegistryCard, path: PathBuf) -> Self {
+    fn from_registry_card(card: &script::card::RegistryCard, path: PathBuf) -> Self {
         Self {
             name: card.name.clone(),
             path,
@@ -1298,7 +1299,7 @@ impl CardPreparationSnapshot {
                     source_limit,
                 )?,
                 ScriptSource::File | ScriptSource::Builtin => {
-                    crate::rs2b0t_registry::try_settings_schema_from_source(origin)
+                    crate::library::rs2b0t_registry::try_settings_schema_from_source(origin)
                         .map_err(|error| format!("{}: {error}", self.template.name))?
                 }
             }
@@ -1609,9 +1610,10 @@ impl CardPreparationTask {
                             self.source_limit,
                         ),
                         ScriptSource::File | ScriptSource::Builtin => {
-                            crate::rs2b0t_registry::try_settings_schema_from_source(origin).map_err(
-                                |error| format!("{}: {error}", self.snapshot.template.name),
-                            )
+                            crate::library::rs2b0t_registry::try_settings_schema_from_source(origin)
+                                .map_err(|error| {
+                                    format!("{}: {error}", self.snapshot.template.name)
+                                })
                         }
                     };
                     match result {

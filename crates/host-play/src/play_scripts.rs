@@ -603,7 +603,7 @@ impl ScriptStartHandle {
 
     /// `name`'s latest recorded paint frame (the frame its status row
     /// publishes), for the live pump's File-card receipt watches.
-    pub fn paint(&self, name: &str) -> Option<Arc<script::shim::ScriptPaint>> {
+    pub fn paint(&self, name: &str) -> Option<Arc<script::paint::ScriptPaint>> {
         script_runtime::script_paint_of(&self.scripts, name)
     }
 }
@@ -1009,7 +1009,7 @@ impl Play {
         })
     }
 
-    pub fn script_paint(&self, name: &str) -> Option<Arc<script::shim::ScriptPaint>> {
+    pub fn script_paint(&self, name: &str) -> Option<Arc<script::paint::ScriptPaint>> {
         script_runtime::script_paint_of(&self.scripts, name)
     }
 

@@ -299,7 +299,7 @@ impl NativeOutput for Logs {
     fn status(&mut self, status: ScriptStatus) {
         self.1.push(status);
     }
-    fn paint(&mut self, _: Arc<crate::shim::ScriptPaint>) {}
+    fn paint(&mut self, _: Arc<crate::paint::ScriptPaint>) {}
     fn log(&mut self, _: api::hostlog::Level, message: &str) {
         self.0.push(message.to_owned());
     }
@@ -1109,7 +1109,7 @@ fn terminal_timed_ground_step_publishes_its_receipt() {
         fn status(&mut self, status: ScriptStatus) {
             self.0 = Some(status);
         }
-        fn paint(&mut self, _: Arc<crate::shim::ScriptPaint>) {}
+        fn paint(&mut self, _: Arc<crate::paint::ScriptPaint>) {}
         fn log(&mut self, _: api::hostlog::Level, _: &str) {}
         fn settings_applied(&mut self, _: u64) {}
     }
@@ -1170,7 +1170,7 @@ fn terminal_timed_ground_step_publishes_its_receipt() {
                     .last()
                     .filter(|action| {
                         matches!(&action.effect, crate::native::HostEffect::Interaction(
-                    crate::shim::InteractReq::Obj { id: Some(id), action, .. }
+                    crate::interact::InteractReq::Obj { id: Some(id), action, .. }
                 ) if *id == egg_id && action == "Take")
                     })
                     .map(|action| action.authority())

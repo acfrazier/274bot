@@ -10,10 +10,11 @@ use script::api_combat::{
 };
 use script::api_gather::GatherPhase;
 use script::combat::{MeleeMode, Pick, Style};
+use script::interact::InteractReq;
 use script::native::{NativePhase, ScriptStatus, StatusField, StatusValue};
-use script::shim::InteractReq;
-use script_js::wire::{
-    encode_snapshot_delta_with_native, NativeFactsInput, SnapshotFingerprint, SnapshotInput,
+use {
+    script::native::snapshot_source::{NativeFactsInput, SnapshotInput},
+    script_js::wire::{encode_snapshot_delta_with_native, SnapshotFingerprint},
 };
 use {script::CompiledId, script_js::LoadIsolate, script_js::LoadShape};
 
@@ -94,7 +95,7 @@ fn post_snapshot(
         trade_decline_id: -1,
         shop_open: false,
         shop_stock: &[],
-        reach: script_js::wire::ReachViewInput::UNAVAILABLE,
+        reach: script::native::snapshot_source::ReachViewInput::UNAVAILABLE,
         attacked_by_player: false,
         self_target_kind: 0,
         self_target_index: -1,

@@ -4,13 +4,13 @@
 //! machine families and synthetic posts only.
 
 use super::{grove_anchor, recovery_facts, BoatFacts, Recover};
+use crate::compat::walk::tests::{post_walk_outcome, reset, NoJs};
 use crate::machine::{self, Cx, Outcome, Started, Take};
-use crate::observed::{self, CarryRow, ChatLine, EntityRow, ItemRow, SceneRow};
-use crate::task_clock::InstantTaskClock;
-use crate::walk::tests::{post_walk_outcome, reset, NoJs};
+use crate::scene::observed::{self, CarryRow, ChatLine, EntityRow, ItemRow, SceneRow};
+use crate::scene::task_clock::InstantTaskClock;
 use api::query::ReachQueryView;
 use api::snapshot::WorldTile;
-use script::shim::InteractReq;
+use script::interact::InteractReq;
 use serde_json::json;
 use std::collections::VecDeque;
 use std::rc::Rc;
@@ -59,7 +59,7 @@ fn recovery_skips_fact_selection_off_island_and_logs_selected_fact_errors() {
     reset();
     let mut world = World::new(mainland, 5);
     world.post();
-    crate::supply_v2::configure(None);
+    crate::scene::supply_v2::configure(None);
     let mut logs = VecDeque::new();
     assert!(recovery_facts(PORT_SARIM, &mut logs).unwrap().is_none());
     assert!(
@@ -70,7 +70,7 @@ fn recovery_skips_fact_selection_off_island_and_logs_selected_fact_errors() {
     reset();
     let mut world = World::new(MUSA, 5);
     world.post();
-    crate::supply_v2::configure(None);
+    crate::scene::supply_v2::configure(None);
     assert!(recovery_facts(PORT_SARIM, &mut logs).is_err());
     assert_eq!(logs.len(), 1);
     assert!(
@@ -82,7 +82,7 @@ fn recovery_skips_fact_selection_off_island_and_logs_selected_fact_errors() {
 fn selected_facts() -> Rc<BoatFacts> {
     let data = api::game_data::for_revision(client::io::ClientRevision::R289)
         .expect("selected Karamja game data");
-    crate::supply_v2::configure(Some(data));
+    crate::scene::supply_v2::configure(Some(data));
     BoatFacts::selected().expect("selected Karamja facts")
 }
 
@@ -383,7 +383,7 @@ fn install_luthas_reach_view_with(
     let npc_index = index(npc);
     set_reach_bit(&mut reachable_adj, npc_index);
     adjacent_rank[npc_index] = 1;
-    crate::reach_query::set_view_for_tests(ReachQueryView {
+    crate::materialize::reach_query::set_view_for_tests(ReachQueryView {
         available: true,
         base_x,
         base_z,
@@ -453,7 +453,7 @@ fn install_luthas_staging_reach_view_with_ranks(
             adjacent_rank[i] = 1;
         }
     }
-    crate::reach_query::set_view_for_tests(ReachQueryView {
+    crate::materialize::reach_query::set_view_for_tests(ReachQueryView {
         available: true,
         base_x,
         base_z,
@@ -496,7 +496,7 @@ fn install_ranked_luthas_reach_view(anchor: WorldTile, ranked_stands: &[(WorldTi
         exact_rank[i] = *rank;
         adjacent_rank[i] = *rank;
     }
-    crate::reach_query::set_view_for_tests(ReachQueryView {
+    crate::materialize::reach_query::set_view_for_tests(ReachQueryView {
         available: true,
         base_x,
         base_z,
@@ -777,7 +777,7 @@ fn luthas_stand_selection_uses_search_rank_before_manhattan_distance() {
         max_steps: Some(400),
         adjacent_ok: false,
     };
-    crate::reach_query::with_view(|view| {
+    crate::materialize::reach_query::with_view(|view| {
         let rank = |tile: WorldTile| {
             let lx = (tile.x - view.base_x) as usize;
             let lz = (tile.z - view.base_z) as usize;
@@ -1197,7 +1197,7 @@ fn a_walkable_but_unreachable_luthas_stand_is_not_selected() {
     let fare = world.facts.coin_payout;
     fail_short(&mut world, 1, PORT_SARIM, 2, (coins, fare));
 
-    crate::reach_query::with_view(|view| {
+    crate::materialize::reach_query::with_view(|view| {
         assert!(view.walkable(unreachable));
         assert!(!view.can_reach(
             unreachable,

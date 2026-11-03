@@ -11,7 +11,7 @@
 //! `runMachine`). The family supplies:
 //!
 //! - [`Family::begin`]: validate the typed [`Family::Args`] against the
-//!   isolate scene ([`crate::observed`]) and selected game data, emit the
+//!   isolate scene ([`crate::scene::observed`]) and selected game data, emit the
 //!   first ops through [`Cx::emit`], and return [`Begin::Run`] (a live
 //!   row), [`Begin::Done`] (settled at once, e.g. a refused precondition)
 //!   or [`Begin::Refuse`] (nothing started; ops emitted by a refusing
@@ -137,16 +137,17 @@
 //! `{ kind: 'refused', reason }` or `{ kind: 'aborted', reason }`; a
 //! `Fail` outcome rejects the `runMachine` promise with its [`Thrown`].
 
-use crate::callback_v8::HeldCallback;
-use crate::task_clock::InstantTaskClock;
+use crate::materialize::callback_v8::HeldCallback;
+use crate::scene::task_clock::InstantTaskClock;
 use api::identity::{ExecutionId, RequestId};
 use api::script_contract::{CallbackCancelReason, DecisionSequence, RequestStamp};
+use script::native::seat_rows::{SeatMachineEvent, SeatMachineEventKind};
 use serde::de::DeserializeOwned;
 use serde_json::Value;
 use std::cell::{Cell, RefCell};
 use std::collections::VecDeque;
 use std::rc::Rc;
-use {crate::shim::MaybeInteractReq, script::shim::InteractReq};
+use {crate::shim::MaybeInteractReq, script::interact::InteractReq};
 use {crate::wire as isolate_fb, script::native};
 
 /// Closed bank family descriptor. This table does not depend on the old
@@ -1299,56 +1300,56 @@ const fn entry<F: Family>() -> Entry {
 
 /// Every registered family, by name. The only machine dispatch table.
 const FAMILIES: &[Entry] = &[
-    entry::<crate::teleport::Teleport>(),
-    entry::<crate::prayer::Prayer>(),
-    entry::<crate::autocast::Autocast>(),
-    entry::<crate::special::Special>(),
-    entry::<crate::modals::Modals>(),
-    entry::<crate::fire::LightFire>(),
-    entry::<crate::fight_upkeep::BuryInFight>(),
-    entry::<crate::shop::Shop>(),
-    entry::<crate::cake_stall::CakeStall>(),
-    entry::<crate::production::ChatDialog>(),
-    entry::<crate::reach::NpcDialog>(),
-    entry::<crate::dialog::Dialog>(),
-    entry::<crate::trade::Trade>(),
-    entry::<crate::drive_partner_trade::PartnerTrade>(),
-    entry::<crate::hunt::Hunt<crate::hunt_fight::FightKind>>(),
-    entry::<crate::hunt::Hunt<crate::hunt_fight::HoldKind>>(),
-    entry::<crate::hunt::Hunt<crate::hunt_fight::RetreatKind>>(),
-    entry::<crate::hunt::Hunt<crate::hunt_fight::WalkSpotKind>>(),
-    entry::<crate::hunt::Hunt<crate::hunt_lair::Enter>>(),
-    entry::<crate::hunt::Hunt<crate::hunt_leave::Leave>>(),
-    entry::<crate::hunt::Hunt<crate::hunt_key::Key>>(),
-    entry::<crate::hunt::Hunt<crate::hunt_cell::Cell>>(),
-    entry::<crate::hunt::Hunt<crate::hunt_bank::Bank>>(),
-    entry::<crate::hunt::WaitFed>(),
-    entry::<crate::hunt::TeleportOut>(),
-    entry::<crate::hunt::Acquire>(),
-    entry::<crate::clue::Clue>(),
-    entry::<crate::duel::Handshake>(),
-    entry::<crate::duel::Helper>(),
-    entry::<crate::duel::Travel>(),
-    entry::<crate::duel::Close>(),
-    entry::<crate::api_session::GatherSession>(),
-    entry::<crate::api_session::GatherStop>(),
-    entry::<crate::api_session::CombatSession>(),
-    entry::<crate::api_session::CombatStop>(),
-    entry::<crate::api_session::ProgressQuery>(),
-    entry::<crate::quest_journal::QuestJournal>(),
-    entry::<crate::reach_entity::EntityOp>(),
-    entry::<crate::reach_entity::LocOp>(),
-    entry::<crate::reach_entity::WalkHops>(),
-    entry::<crate::walk::WalkResilient>(),
-    entry::<crate::walk::WalkOpening>(),
-    entry::<crate::walk::DirectWalk>(),
-    entry::<crate::walk::DirectClick>(),
-    entry::<crate::boat_fare::WalkTo>(),
-    entry::<crate::anchor_return::ReturnToAnchor>(),
-    entry::<crate::bank_withdraw::WithdrawTo>(),
-    entry::<crate::bank_withdraw::CloseConfirm>(),
-    entry::<crate::periodic_bank::PeriodicBank>(),
-    entry::<crate::death_recovery::DeathRecovery>(),
+    entry::<crate::compat::teleport::Teleport>(),
+    entry::<crate::compat::prayer::Prayer>(),
+    entry::<crate::compat::autocast::Autocast>(),
+    entry::<crate::compat::special::Special>(),
+    entry::<crate::compat::modals::Modals>(),
+    entry::<crate::compat::fire::LightFire>(),
+    entry::<crate::compat::fight_upkeep::BuryInFight>(),
+    entry::<crate::compat::shop::Shop>(),
+    entry::<crate::compat::cake_stall::CakeStall>(),
+    entry::<crate::compat::production::ChatDialog>(),
+    entry::<crate::compat::reach::NpcDialog>(),
+    entry::<crate::compat::dialog::Dialog>(),
+    entry::<crate::compat::trade::Trade>(),
+    entry::<crate::compat::drive_partner_trade::PartnerTrade>(),
+    entry::<crate::compat::hunt::Hunt<crate::compat::hunt_fight::FightKind>>(),
+    entry::<crate::compat::hunt::Hunt<crate::compat::hunt_fight::HoldKind>>(),
+    entry::<crate::compat::hunt::Hunt<crate::compat::hunt_fight::RetreatKind>>(),
+    entry::<crate::compat::hunt::Hunt<crate::compat::hunt_fight::WalkSpotKind>>(),
+    entry::<crate::compat::hunt::Hunt<crate::compat::hunt_lair::Enter>>(),
+    entry::<crate::compat::hunt::Hunt<crate::compat::hunt_leave::Leave>>(),
+    entry::<crate::compat::hunt::Hunt<crate::compat::hunt_key::Key>>(),
+    entry::<crate::compat::hunt::Hunt<crate::compat::hunt_cell::Cell>>(),
+    entry::<crate::compat::hunt::Hunt<crate::compat::hunt_bank::Bank>>(),
+    entry::<crate::compat::hunt::WaitFed>(),
+    entry::<crate::compat::hunt::TeleportOut>(),
+    entry::<crate::compat::hunt::Acquire>(),
+    entry::<crate::compat::clue::Clue>(),
+    entry::<crate::compat::duel::Handshake>(),
+    entry::<crate::compat::duel::Helper>(),
+    entry::<crate::compat::duel::Travel>(),
+    entry::<crate::compat::duel::Close>(),
+    entry::<crate::api_v2::api_session::GatherSession>(),
+    entry::<crate::api_v2::api_session::GatherStop>(),
+    entry::<crate::api_v2::api_session::CombatSession>(),
+    entry::<crate::api_v2::api_session::CombatStop>(),
+    entry::<crate::api_v2::api_session::ProgressQuery>(),
+    entry::<crate::compat::quest_journal::QuestJournal>(),
+    entry::<crate::compat::reach_entity::EntityOp>(),
+    entry::<crate::compat::reach_entity::LocOp>(),
+    entry::<crate::compat::reach_entity::WalkHops>(),
+    entry::<crate::compat::walk::WalkResilient>(),
+    entry::<crate::compat::walk::WalkOpening>(),
+    entry::<crate::compat::walk::DirectWalk>(),
+    entry::<crate::compat::walk::DirectClick>(),
+    entry::<crate::compat::boat_fare::WalkTo>(),
+    entry::<crate::compat::anchor_return::ReturnToAnchor>(),
+    entry::<crate::compat::bank_withdraw::WithdrawTo>(),
+    entry::<crate::compat::bank_withdraw::CloseConfirm>(),
+    entry::<crate::compat::periodic_bank::PeriodicBank>(),
+    entry::<crate::compat::death_recovery::DeathRecovery>(),
     #[cfg(test)]
     entry::<tests::Probe>(),
     #[cfg(test)]
@@ -1530,10 +1531,6 @@ pub(crate) struct CapturedLineage {
     pub(crate) mirror_owner: Option<RequestId>,
     pub(crate) dropped: bool,
 }
-
-pub(crate) use script::native::seat_rows::{
-    SeatMachineEvent as MachineEvent, SeatMachineEventKind as MachineEventKind,
-};
 
 #[derive(Clone, Copy, Default)]
 struct StartContext {
@@ -2001,10 +1998,10 @@ fn queue_bank_decision(
     answer: Value,
 ) -> Result<(), String> {
     let answer = script::channel::encode(&answer).map_err(|error| error.to_string())?;
-    if answer.len() > isolate_fb::MAX_SEAT_BINARY_BYTES {
+    if answer.len() > native::seat_rows::MAX_SEAT_BINARY_BYTES {
         return Err(format!(
             "native bank decision exceeds {} bytes",
-            isolate_fb::MAX_SEAT_BINARY_BYTES
+            native::seat_rows::MAX_SEAT_BINARY_BYTES
         ));
     }
     HOST.with(|host| {
@@ -2019,7 +2016,7 @@ fn queue_bank_decision(
         {
             return Ok(());
         }
-        if host.pending_decisions.len() >= isolate_fb::MAX_SEAT_DECISIONS {
+        if host.pending_decisions.len() >= native::seat_rows::MAX_SEAT_DECISIONS {
             return Err("native bank decision carry is full".into());
         }
         host.pending_decisions.push(PendingSeatDecision {
@@ -2046,8 +2043,8 @@ pub(crate) struct SeatBatchCarry<'a> {
     pub(crate) starts: Result<Vec<isolate_fb::SeatStartRef<'a>>, String>,
     pub(crate) decisions: Vec<isolate_fb::SeatDecisionRef<'a>>,
     pub(crate) cancels: Vec<isolate_fb::SeatCancelInput>,
-    pub(crate) mirror_revokes: Vec<isolate_fb::SeatMirrorRevoke>,
-    pub(crate) machine_events: Vec<MachineEvent>,
+    pub(crate) mirror_revokes: Vec<native::seat_rows::SeatMirrorRevoke>,
+    pub(crate) machine_events: Vec<SeatMachineEvent>,
 }
 
 impl SeatBatchCarry<'_> {
@@ -2126,7 +2123,7 @@ const MAX_WALK_RELEASES: usize = api::script_contract::MAX_WALK_RELEASES;
 
 #[derive(Clone, Copy)]
 struct MirrorRevokeCarry {
-    wire: isolate_fb::SeatMirrorRevoke,
+    wire: native::seat_rows::SeatMirrorRevoke,
 }
 #[derive(Clone, Copy)]
 struct LocalRevocation {
@@ -2251,7 +2248,7 @@ struct Host {
     pending_cancels: Vec<PendingSeatCancel>,
     bank_mirrors: Vec<BankMirror>,
     mirror_revokes: Vec<MirrorRevokeCarry>,
-    machine_events: Vec<MachineEvent>,
+    machine_events: Vec<SeatMachineEvent>,
     consumed_terminal_seq: u64,
     terminal_ack_pending: bool,
     mirror_revokes_consumed: u64,
@@ -2326,7 +2323,7 @@ fn with_walk_baseline<T>(baseline: Option<u64>, f: impl FnOnce() -> T) -> T {
 }
 
 fn observed_user_move_intent_seq() -> u64 {
-    crate::observed::with(|scene| scene.since_login().user_move_intent_seq().unwrap_or(0))
+    crate::scene::observed::with(|scene| scene.since_login().user_move_intent_seq().unwrap_or(0))
 }
 
 pub(crate) fn user_move_intent_seq() -> u64 {
@@ -2507,23 +2504,21 @@ impl Host {
         self.revoked_local.push_back(row.revoked_record());
     }
 
-    fn queue_machine_event(&mut self, id: RequestId, kind: MachineEventKind, admitted: bool) {
+    fn queue_machine_event(&mut self, id: RequestId, kind: SeatMachineEventKind, admitted: bool) {
         if self.execution.is_none() {
             return;
         }
-        if matches!(kind, MachineEventKind::Phase(_)) {
-            if let Some(event) = self
-                .machine_events
-                .iter_mut()
-                .find(|event| event.id == id && matches!(event.kind, MachineEventKind::Phase(_)))
-            {
+        if matches!(kind, SeatMachineEventKind::Phase(_)) {
+            if let Some(event) = self.machine_events.iter_mut().find(|event| {
+                event.id == id && matches!(event.kind, SeatMachineEventKind::Phase(_))
+            }) {
                 event.kind = kind;
                 event.admitted |= admitted;
                 return;
             }
         } else {
             self.machine_events.retain(|event| {
-                event.id != id || !matches!(event.kind, MachineEventKind::Phase(_))
+                event.id != id || !matches!(event.kind, SeatMachineEventKind::Phase(_))
             });
             if let Some(event) = self
                 .machine_events
@@ -2535,7 +2530,7 @@ impl Host {
             }
         }
         self.machine_events
-            .push(MachineEvent { id, kind, admitted });
+            .push(SeatMachineEvent { id, kind, admitted });
     }
 
     fn set_phase(&mut self, row: &mut Row, phase: native::NativePhase) {
@@ -2547,7 +2542,7 @@ impl Host {
             .ok()
             .filter(|_| row.native_kind.is_some())
         {
-            self.queue_machine_event(id, MachineEventKind::Phase(phase), row.admitted);
+            self.queue_machine_event(id, SeatMachineEventKind::Phase(phase), row.admitted);
         }
     }
 
@@ -2664,7 +2659,7 @@ impl Host {
         };
         self.next_mirror_revoke_seq = next;
         self.mirror_revokes.push(MirrorRevokeCarry {
-            wire: isolate_fb::SeatMirrorRevoke { owner, seq },
+            wire: native::seat_rows::SeatMirrorRevoke { owner, seq },
         });
     }
 
@@ -2749,7 +2744,11 @@ impl Host {
                     AbortReason::Reset | AbortReason::Terminated | AbortReason::Unknown => None,
                     AbortReason::ParentAborted => None,
                 } {
-                    self.queue_machine_event(id, MachineEventKind::Aborted(reason), row.admitted);
+                    self.queue_machine_event(
+                        id,
+                        SeatMachineEventKind::Aborted(reason),
+                        row.admitted,
+                    );
                 }
             } else {
                 self.queue_mirror_revoke(id);
@@ -2764,7 +2763,11 @@ impl Host {
                 self.remember_revoked(row);
                 if let Ok(id) = RequestId::isolate(row.handle) {
                     if row.native_kind.is_some() {
-                        self.queue_machine_event(id, MachineEventKind::ManualWalk, row.admitted);
+                        self.queue_machine_event(
+                            id,
+                            SeatMachineEventKind::ManualWalk,
+                            row.admitted,
+                        );
                     } else {
                         self.queue_mirror_revoke(id);
                     }
@@ -2776,7 +2779,7 @@ impl Host {
                     .ok()
                     .filter(|_| row.native_kind.is_some())
                 {
-                    self.queue_machine_event(id, MachineEventKind::Done, row.admitted);
+                    self.queue_machine_event(id, SeatMachineEventKind::Done, row.admitted);
                 }
             }
             Outcome::Failed(_) => {
@@ -2784,7 +2787,7 @@ impl Host {
                     .ok()
                     .filter(|_| row.native_kind.is_some())
                 {
-                    self.queue_machine_event(id, MachineEventKind::Failed, row.admitted);
+                    self.queue_machine_event(id, SeatMachineEventKind::Failed, row.admitted);
                 }
             }
             Outcome::Aborted(reason) => self.revoke_row(row, *reason, at),
@@ -2997,7 +3000,7 @@ fn settle_seat_result(host: &mut Host, id: RequestId, outcome: Outcome) {
     // that page arrives; an absent page must not settle its JS Promise with
     // the seat's deliberately empty value.
     let product_result = if matches!(&outcome, Outcome::Done(_) | Outcome::Failed(_)) {
-        crate::observed::with(|scene| {
+        crate::scene::observed::with(|scene| {
             let page = scene.since_login();
             match native_kind {
                 Some(native::request::NativeKind::Gather) => page
@@ -3118,7 +3121,7 @@ pub(crate) fn with_seat_batch<R>(f: impl FnOnce(Option<SeatBatchCarry<'_>>) -> R
     })
 }
 
-fn machine_events_for_batch(host: &Host) -> Vec<MachineEvent> {
+fn machine_events_for_batch(host: &Host) -> Vec<SeatMachineEvent> {
     host.machine_events
         .iter()
         .filter(|event| event.admitted)
@@ -3140,7 +3143,7 @@ fn reconcile_machine_events(
         !result_ids.contains(&event.id)
             && !matches!(
                 event.kind,
-                MachineEventKind::Phase(phase)
+                SeatMachineEventKind::Phase(phase)
                     if live_rows.iter().any(|(id, live_phase)| {
                         *id == event.id && *live_phase == phase
                     })
@@ -3755,7 +3758,7 @@ enum Pass {
 /// start another machine; the host is borrowed only between JS calls.
 /// [`Host::stepping`] keeps those rows visible to [`live`].
 fn pass(js: &mut impl Js, pass: Pass) {
-    let entered_scene = crate::observed::with(crate::observed::Scene::entered_scene);
+    let entered_scene = crate::scene::observed::with(crate::scene::observed::Scene::entered_scene);
     let Some(mut rows) = HOST.with(|host| {
         let mut host = host.borrow_mut();
         if host.paused || host.held {
@@ -4158,7 +4161,7 @@ pub(crate) fn on_manual_walk_takeover(seq: u64) {
                         }
                     }
                     if native {
-                        host.queue_machine_event(id, MachineEventKind::ManualWalk, admitted);
+                        host.queue_machine_event(id, SeatMachineEventKind::ManualWalk, admitted);
                     } else {
                         host.queue_mirror_revoke(id);
                     }
@@ -4873,7 +4876,7 @@ pub(crate) mod tests {
 
     impl Family for NotificationOrder {
         const NAME: &'static str = "notification-order";
-        const CALLBACKS: &'static [&'static str] = crate::hunt::HOOKS;
+        const CALLBACKS: &'static [&'static str] = crate::compat::hunt::HOOKS;
         const KICK_ON_START: bool = true;
         type Args = Value;
         type Output = Value;
@@ -4895,7 +4898,7 @@ pub(crate) mod tests {
                 "kind": "eat",
                 "notes": [{"kind": "count-kill"}, {"kind": "count-kill"}],
             });
-            match crate::hunt::characterize_effect(&effect, cx) {
+            match crate::compat::hunt::characterize_effect(&effect, cx) {
                 Ok(Some(step)) => step,
                 Ok(None) | Err(_) => Step::Wait,
             }
@@ -5345,9 +5348,9 @@ pub(crate) mod tests {
         HOST.with(|host| {
             assert_eq!(
                 machine_events_for_batch(&host.borrow()),
-                vec![MachineEvent {
+                vec![SeatMachineEvent {
                     id,
-                    kind: MachineEventKind::Phase(native::NativePhase::Waiting),
+                    kind: SeatMachineEventKind::Phase(native::NativePhase::Waiting),
                     admitted: true,
                 }]
             );
@@ -5372,9 +5375,9 @@ pub(crate) mod tests {
             );
             assert_eq!(
                 machine_events_for_batch(&host),
-                vec![MachineEvent {
+                vec![SeatMachineEvent {
                     id,
-                    kind: MachineEventKind::ManualWalk,
+                    kind: SeatMachineEventKind::ManualWalk,
                     admitted: true,
                 }],
                 "the manual takeover revokes once, before the walk settles"
@@ -5783,28 +5786,28 @@ pub(crate) mod tests {
         let done_id = RequestId::isolate(2).expect("isolate id");
         let failed_id = RequestId::isolate(3).expect("isolate id");
         let manual_walk_id = RequestId::isolate(4).expect("isolate id");
-        let phase = MachineEventKind::Phase(native::NativePhase::Working);
-        let done = MachineEventKind::Done;
-        let failed = MachineEventKind::Failed;
-        let manual_walk = MachineEventKind::ManualWalk;
+        let phase = SeatMachineEventKind::Phase(native::NativePhase::Working);
+        let done = SeatMachineEventKind::Done;
+        let failed = SeatMachineEventKind::Failed;
+        let manual_walk = SeatMachineEventKind::ManualWalk;
         let mut host = Host::new();
         host.machine_events.extend([
-            MachineEvent {
+            SeatMachineEvent {
                 id: phase_id,
                 kind: phase,
                 admitted: false,
             },
-            MachineEvent {
+            SeatMachineEvent {
                 id: done_id,
                 kind: done,
                 admitted: false,
             },
-            MachineEvent {
+            SeatMachineEvent {
                 id: failed_id,
                 kind: failed,
                 admitted: false,
             },
-            MachineEvent {
+            SeatMachineEvent {
                 id: manual_walk_id,
                 kind: manual_walk,
                 admitted: false,
@@ -5837,17 +5840,17 @@ pub(crate) mod tests {
         assert_eq!(
             machine_events_for_batch(&host),
             vec![
-                MachineEvent {
+                SeatMachineEvent {
                     id: done_id,
                     kind: done,
                     admitted: true,
                 },
-                MachineEvent {
+                SeatMachineEvent {
                     id: failed_id,
                     kind: failed,
                     admitted: true,
                 },
-                MachineEvent {
+                SeatMachineEvent {
                     id: manual_walk_id,
                     kind: manual_walk,
                     admitted: true,

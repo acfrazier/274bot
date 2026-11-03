@@ -96,7 +96,7 @@ fn act_tile(x: i32, z: i32, level: i32) -> crate::catalog_core::LineOfSightTile 
 }
 
 fn route_exclusions(
-    avoid: Vec<script::shim::InspectAvoidWire>,
+    avoid: Vec<script::interact::InspectAvoidWire>,
     cross: Vec<String>,
 ) -> ScriptRouteExclusions {
     ScriptRouteExclusions {
@@ -226,7 +226,7 @@ pub(crate) fn dispatch_script_interact(
     world: &Option<Arc<NavWorld>>,
     state: Option<WorldState>,
     name: &str,
-    reqs: Vec<script::shim::InteractReq>,
+    reqs: Vec<script::interact::InteractReq>,
 ) -> bool {
     let bank = RwLock::new(BankMemory::default());
     bank.write().track(snapshot, 0);
@@ -430,7 +430,7 @@ pub(crate) fn dispatch_script_interact_cached<R>(
     obj_names_arc: Option<Arc<api::obj_names::ObjNames>>,
 ) -> bool
 where
-    R: AsRef<[script::shim::InteractReq]> + IntoIterator<Item = script::shim::InteractReq>,
+    R: AsRef<[script::interact::InteractReq]> + IntoIterator<Item = script::interact::InteractReq>,
 {
     dispatch_script_interact_cached_scoped(
         driver,
@@ -480,10 +480,10 @@ pub(crate) fn dispatch_script_interact_cached_scoped<R>(
     reqs: R,
 ) -> bool
 where
-    R: AsRef<[script::shim::InteractReq]> + IntoIterator<Item = script::shim::InteractReq>,
+    R: AsRef<[script::interact::InteractReq]> + IntoIterator<Item = script::interact::InteractReq>,
 {
     use api::interact::{ActionSpec, OpTarget, SendResult};
-    use script::shim::InteractReq;
+    use script::interact::InteractReq;
     let InteractContext {
         snapshot,
         obj_names,

@@ -3088,10 +3088,10 @@ pub(super) fn dispatch_observed_bank_op(
     snapshot: &GameSnapshot,
     obj_names: Option<&api::obj_names::ObjNames>,
     inventory: Option<&[(i32, i32)]>,
-    req: &script::shim::InteractReq,
+    req: &script::interact::InteractReq,
 ) -> Option<script::slot::PendingBankOp> {
     use api::interact::{ActionSpec, Interactions, OpTarget, SendResult};
-    use script::shim::InteractReq;
+    use script::interact::InteractReq;
     use script::slot::{PendingBankOp, PendingBankOpKind};
 
     if snapshot.bank_component_id() < 0 || !snapshot.bank_loaded() {
@@ -3183,10 +3183,10 @@ pub(super) fn dispatch_observed_withdraw_x(
     snapshot: &GameSnapshot,
     obj_names: Option<&api::obj_names::ObjNames>,
     inventory: Option<&[(i32, i32)]>,
-    req: &script::shim::InteractReq,
+    req: &script::interact::InteractReq,
 ) -> Option<script::slot::PendingWithdrawX> {
     use api::interact::{ActionSpec, Interactions, OpTarget, SendResult};
-    let script::shim::InteractReq::WithdrawX {
+    let script::interact::InteractReq::WithdrawX {
         name,
         count,
         bank_item_id,

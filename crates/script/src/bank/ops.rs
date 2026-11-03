@@ -13,7 +13,7 @@
 //! each keeps its own named policy below. They decide alike wherever the
 //! content labels (bank `option1..5`) reach.
 
-use crate::shim::InteractReq;
+use crate::interact::InteractReq;
 use api::snapshot::{ItemView, LocView, NpcView, WorldTile};
 use std::sync::Arc;
 use std::time::Duration;

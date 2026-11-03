@@ -16,9 +16,9 @@
 
 mod compat {
     use crate::machine::{Begin, Cx, Family, Step};
-    use crate::observed::{self, ItemRow, MakeProduct, Scene, Text};
+    use crate::scene::observed::{self, ItemRow, MakeProduct, Scene, Text};
+    use script::interact::InteractReq;
     use script::production::{MakeXCore, MakeXProduct, MakeXSelection, MakeXStep};
-    use script::shim::InteractReq;
     use serde::Deserialize;
     use serde_json::Value;
 
@@ -453,8 +453,8 @@ mod compat {
     mod tests {
         use super::*;
         use crate::machine::Reply;
-        use crate::observed::MakeButton;
-        use crate::task_clock::InstantTaskClock;
+        use crate::scene::observed::MakeButton;
+        use crate::scene::task_clock::InstantTaskClock;
         use script::production::MakeXPhase;
         use std::time::{Duration, Instant};
 

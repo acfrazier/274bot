@@ -6,7 +6,7 @@
 use std::cell::RefCell;
 use std::collections::BTreeMap;
 
-use crate::supply_v2;
+use crate::scene::supply_v2;
 use api::loadout::Loadout;
 use rustyscript::Runtime;
 use script::boost_potions::{
@@ -24,13 +24,13 @@ thread_local! {
 }
 
 /// Replace this isolate's posted loadouts.
-pub(super) fn post(rows: Vec<Loadout>) {
+pub(crate) fn post(rows: Vec<Loadout>) {
     POSTED.with(|posted| *posted.borrow_mut() = rows);
 }
 
 /// `selectedLoadout(bag)`: the resolved saved script loadout, in the persisted
 /// shape (`{ name, worn, carry, unassigned? }`).
-pub(super) fn selected_compat(wanted: &str) -> Result<serde_json::Value, String> {
+pub(crate) fn selected_compat(wanted: &str) -> Result<serde_json::Value, String> {
     POSTED.with(|posted| {
         let rows = posted.borrow();
         let row = script::loadouts_store::resolve_script_loadout(rows.as_slice(), wanted)
@@ -39,7 +39,7 @@ pub(super) fn selected_compat(wanted: &str) -> Result<serde_json::Value, String>
     })
 }
 
-pub(super) fn install(runtime: &mut Runtime) -> Result<(), String> {
+pub(crate) fn install(runtime: &mut Runtime) -> Result<(), String> {
     let context = runtime.deno_runtime().main_context();
     let mut scope = runtime.deno_runtime().handle_scope();
     let global = context.open(&mut scope).global(&mut scope);

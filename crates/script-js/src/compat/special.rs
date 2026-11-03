@@ -4,9 +4,9 @@
 //! are read from the isolate scene, never echoed from a JS page.
 
 use crate::machine::{Begin, Cx, Family, Step};
-use crate::observed::{self, Scene};
+use crate::scene::observed::{self, Scene};
 use api::game_data::{SelectedGameData, SpecialControls};
-use script::shim::InteractReq;
+use script::interact::InteractReq;
 use serde_json::{json, Value};
 
 /// The frozen fallback when a cache posts no confirm window.
@@ -38,9 +38,9 @@ impl Family for Special {
     type Args = Value;
     type Output = bool;
     fn begin(_args: Value, cx: &mut Cx<'_>) -> Begin<Self> {
-        let selected = crate::supply_v2::selected_data();
+        let selected = crate::scene::supply_v2::selected_data();
         let Some(data) = selected.as_deref() else {
-            return Begin::Refuse(crate::supply_v2::GAME_DATA_UNAVAILABLE.into());
+            return Begin::Refuse(crate::scene::supply_v2::GAME_DATA_UNAVAILABLE.into());
         };
         let Some(controls) = SelectedGameData::special_controls(data) else {
             return Begin::Refuse("missing special controls".into());
@@ -167,7 +167,7 @@ mod tests {
 
         fn call(
             &mut self,
-            _hook: Option<&crate::callback_v8::HeldCallback>,
+            _hook: Option<&crate::materialize::callback_v8::HeldCallback>,
             _args: &[Value],
         ) -> Called {
             panic!("the special family calls no script callback");
@@ -208,7 +208,7 @@ mod tests {
         machine::on_reset();
         observed::on_reset();
         let data = data(rev);
-        crate::supply_v2::configure(Some(data.clone()));
+        crate::scene::supply_v2::configure(Some(data.clone()));
         data
     }
 
@@ -268,7 +268,7 @@ mod tests {
     fn missing_controls_do_not_invent_costs_or_bars() {
         machine::on_reset();
         observed::on_reset();
-        crate::supply_v2::configure(None);
+        crate::scene::supply_v2::configure(None);
         assert_eq!(controls_json(None)["available"], false);
         assert_eq!(cost_json(None, "Dragon dagger"), Value::Null);
         assert_eq!(bar_json(None), json!(-1));

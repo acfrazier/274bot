@@ -3,9 +3,11 @@ use std::sync::Arc;
 #[path = "common/bank_slot.rs"]
 mod bank_slot;
 use bank_slot::BankSlot;
+use script::interact::InteractReq;
+use script::native::snapshot_source::{
+    ItemRowInput, NativeFactsInput, ReachViewInput, SnapshotInput, TileInput,
+};
 use script::native::{HostAction, HostEffect};
-use script::shim::InteractReq;
-use script_js::wire::{ItemRowInput, NativeFactsInput, ReachViewInput, SnapshotInput, TileInput};
 use script_js::LoadShape;
 
 fn spawn(source: impl Into<String>) -> BankSlot {
@@ -296,12 +298,12 @@ fn deposit_all(id: i32, slot: i32, generation: u64) -> InteractReq {
     }
 }
 
-fn seers_booth() -> &'static script_js::wire::SceneEntityInput<'static> {
-    static BOOTH: std::sync::LazyLock<script_js::wire::SceneEntityInput<'static>> =
+fn seers_booth() -> &'static script::native::snapshot_source::SceneEntityInput<'static> {
+    static BOOTH: std::sync::LazyLock<script::native::snapshot_source::SceneEntityInput<'static>> =
         std::sync::LazyLock::new(|| {
             static OPS: std::sync::LazyLock<Vec<String>> =
                 std::sync::LazyLock::new(|| vec!["Use-quickly".to_owned()]);
-            script_js::wire::SceneEntityInput {
+            script::native::snapshot_source::SceneEntityInput {
                 index: 0,
                 id: 2213,
                 name: Some("Bank booth"),
@@ -396,7 +398,7 @@ fn stand_ready_reach() -> ReachViewInput<'static> {
     }
 }
 
-fn booth_at(x: i32, z: i32) -> script_js::wire::SceneEntityInput<'static> {
+fn booth_at(x: i32, z: i32) -> script::native::snapshot_source::SceneEntityInput<'static> {
     let mut booth = *seers_booth();
     booth.x = x;
     booth.z = z;
@@ -1076,7 +1078,7 @@ export default class T extends LoopingBot {
 "#;
     let mut iso = spawn(src);
     let actions = ["Open".to_string()];
-    let chest = script_js::wire::SceneEntityInput {
+    let chest = script::native::snapshot_source::SceneEntityInput {
         index: 0,
         id: 2693,
         name: Some("Shantay chest"),

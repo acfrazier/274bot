@@ -1544,7 +1544,7 @@ fn take_gatherer_drop_actions(slot: &mut SlotScript) -> Vec<crate::native::HostA
         assert!(
             matches!(
                 &action.effect,
-                crate::native::HostEffect::Interaction(crate::shim::InteractReq::Held {
+                crate::native::HostEffect::Interaction(crate::interact::InteractReq::Held {
                     action,
                     slot: Some(_),
                     ..
@@ -1601,7 +1601,7 @@ fn gatherer_equips_with_the_observed_tool_action_before_gathering() {
     for tick in 1..17 {
         gatherer_tick(&mut slot, &snapshot, tick);
         if let Some(action) = slot.take_native_action() {
-            let crate::native::HostEffect::Interaction(crate::shim::InteractReq::Held {
+            let crate::native::HostEffect::Interaction(crate::interact::InteractReq::Held {
                 name,
                 action: operation,
                 ..
@@ -1638,7 +1638,7 @@ fn gatherer_equips_with_the_observed_tool_action_before_gathering() {
                     action.effect,
                     crate::native::HostEffect::Walk(_)
                         | crate::native::HostEffect::Interaction(
-                            crate::shim::InteractReq::Loc { .. }
+                            crate::interact::InteractReq::Loc { .. }
                         )
                 ),
                 "observed equipment must advance to a resource, not repeat equip"
@@ -1746,7 +1746,7 @@ fn gatherer_active_gather_allocates_nothing_on_one_thousand_unchanged_polls() {
         if let Some(action) = slot.take_native_action() {
             assert!(matches!(
                 action.effect,
-                crate::native::HostEffect::Interaction(crate::shim::InteractReq::Loc { .. })
+                crate::native::HostEffect::Interaction(crate::interact::InteractReq::Loc { .. })
             ));
             let authority = action.authority();
             slot.complete_native_interaction(
@@ -1804,7 +1804,7 @@ fn gatherer_delayed_drops_replan_after_two_ticks_without_assuming_progress() {
     gatherer_tick(&mut slot, &snapshot, tick + 2);
     let mut resent_slots = Vec::new();
     while let Some(action) = slot.take_native_action() {
-        if let crate::native::HostEffect::Interaction(crate::shim::InteractReq::Held {
+        if let crate::native::HostEffect::Interaction(crate::interact::InteractReq::Held {
             slot: Some(index),
             ..
         }) = action.effect
@@ -1827,7 +1827,7 @@ fn complete_gatherer_drop(
     refused_slot: Option<i32>,
 ) -> i32 {
     let index = match &action.effect {
-        crate::native::HostEffect::Interaction(crate::shim::InteractReq::Held {
+        crate::native::HostEffect::Interaction(crate::interact::InteractReq::Held {
             slot: Some(index),
             ..
         }) => *index,
@@ -1940,7 +1940,7 @@ fn gatherer_full_pack_chat_modal_consumes_one_of_five_packets() {
         assert!(
             matches!(
                 first.effect,
-                crate::native::HostEffect::Interaction(crate::shim::InteractReq::CloseModal)
+                crate::native::HostEffect::Interaction(crate::interact::InteractReq::CloseModal)
             ),
             "mining mesbox must close before disposal"
         );
@@ -1962,7 +1962,7 @@ fn gatherer_rejected_click_observes_missing_target_before_retry() {
         if let Some(action) = slot.take_native_action() {
             assert!(matches!(
                 action.effect,
-                crate::native::HostEffect::Interaction(crate::shim::InteractReq::Loc { .. })
+                crate::native::HostEffect::Interaction(crate::interact::InteractReq::Loc { .. })
             ));
             let authority = action.authority();
             slot.complete_native_interaction(
@@ -2203,11 +2203,11 @@ fn gatherer_exclusive_heap_stays_inside_the_eight_kib_target() {
 mod api_gather_seat {
     use super::*;
     use crate::api_gather::{GatherEnd, GatherPhase};
+    use crate::interact::InteractReq;
     use crate::native::request::NativeKind;
     use crate::native::seat_rows::{
         DecodedSeatBatch, SeatInteractDecoded, SeatStartArgs, SeatStartInput,
     };
-    use crate::shim::InteractReq;
     use api::identity::RequestId;
 
     fn stub_surface_slot(incarnation: u64, data: bool) -> SlotScript {
@@ -3101,7 +3101,7 @@ mod api_gather_seat {
 #[cfg(feature = "test-hooks")]
 #[test]
 fn compiled_walk_decisions_keep_their_observed_epoch_across_later_ticks_and_restore() {
-    use crate::shim::InteractReq;
+    use crate::interact::InteractReq;
 
     struct WalkingRows(i32);
     impl Script for WalkingRows {
@@ -3159,7 +3159,7 @@ impl crate::native::NativeMachine for StopWork {
         cancels: Self::Args,
         cx: &mut ActionContext<'_>,
     ) -> Result<Self, crate::native::ActionError> {
-        cx.emit(crate::shim::InteractReq::Held {
+        cx.emit(crate::interact::InteractReq::Held {
             name: "Logs".into(),
             action: "Drop".into(),
             slot: Some(0),
@@ -4034,7 +4034,7 @@ fn compiled_evidence_wait_requires_a_ready_live_observation() {
 #[cfg(feature = "test-hooks")]
 #[test]
 fn native_interact_note_progress_remains_rejected() {
-    use crate::shim::InteractReq;
+    use crate::interact::InteractReq;
 
     struct EmitsNote;
     impl Script for EmitsNote {
@@ -4290,7 +4290,7 @@ fn compiled_pending_progress_and_wait_clear_at_each_ineligible_boundary() {
 
 #[test]
 fn compiled_queued_seat_row_alone_blocks_evidence_wait() {
-    use crate::shim::InteractReq;
+    use crate::interact::InteractReq;
     use api::script_contract::EmissionClass;
 
     struct Waiting;

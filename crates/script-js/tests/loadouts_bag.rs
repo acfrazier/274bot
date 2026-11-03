@@ -1,6 +1,6 @@
 // Task 6: settings.str('loadout') reads the posted operator bag.
 
-use script_js::wire::ItemRowInput;
+use script::native::snapshot_source::ItemRowInput;
 use {script::SettingDef, script_js::LoadIsolate, script_js::LoadShape};
 
 #[path = "common/bank_slot.rs"]
@@ -253,7 +253,7 @@ export default class T extends LoopingBot {
     snap.bank_generation = 4;
     snap.inv = &inv;
     snap.bank = &bank_rows;
-    let native = script_js::wire::NativeFactsInput {
+    let native = script::native::snapshot_source::NativeFactsInput {
         bank_snapshot_generation: Some(4),
         ..Default::default()
     };
@@ -282,7 +282,7 @@ export default class T extends LoopingBot {
     assert!(
         actions.iter().any(|request| matches!(
             request,
-            script::shim::InteractReq::WithdrawX { name, count, action, .. }
+            script::interact::InteractReq::WithdrawX { name, count, action, .. }
                 if name == "Lobster" && *count == 10 && action == "Withdraw 10"
         )),
         "fresh bank must withdraw the loadout quantity (10): {actions:?}"
@@ -290,7 +290,7 @@ export default class T extends LoopingBot {
     assert!(
         reqs.iter().any(|r| matches!(
             &r.req,
-            script::shim::InteractReq::Wear { name } if name == "Rune scimitar"
+            script::interact::InteractReq::Wear { name } if name == "Rune scimitar"
         )),
         "wear must use righthand, not a queued success: {reqs:?}"
     );

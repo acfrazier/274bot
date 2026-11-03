@@ -12,7 +12,7 @@
 //! The host side is covered by `host-play` (`script_hold_conformance_tests`).
 
 use super::*;
-use crate::observed::{ModalTexts, QuestStatusRow, QuestTab};
+use crate::scene::observed::{ModalTexts, QuestStatusRow, QuestTab};
 use hold_model::{
     release_traces, Action as ModelAction, Begin, Bounds, Env, Lease, Machine as _, Model,
     Mutation, OwnerAct,

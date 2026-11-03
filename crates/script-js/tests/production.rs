@@ -3,13 +3,16 @@
 // and the host re-resolves the exact posted control. A queued click is not
 // a completed make.
 
-use script::shim::InteractReq;
-use script_js::wire::{
-    encode_snapshot_with_native, ChatOptionInput, ItemRowInput, MakeButtonInput, MakeProductInput,
-    NativeFactsInput, ReachViewInput, SnapshotInput, TileInput,
-};
+use script::interact::InteractReq;
 use script_js::{LoadIsolate, LoadShape};
 use serde_json::Value;
+use {
+    script::native::snapshot_source::{
+        ChatOptionInput, ItemRowInput, MakeButtonInput, MakeProductInput, NativeFactsInput,
+        ReachViewInput, SnapshotInput, TileInput,
+    },
+    script_js::wire::encode_snapshot_with_native,
+};
 
 fn spawn(src: &str) -> LoadIsolate {
     LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![]).unwrap()

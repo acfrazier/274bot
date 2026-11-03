@@ -1,9 +1,11 @@
-use script::shim::InteractReq;
-use script_js::wire::{
-    IsolateBuf, ReachViewInput, SideTabIfaceInput, SnapshotFingerprint, SnapshotInput, TileInput,
-    VarpInput,
-};
+use script::interact::InteractReq;
 use script_js::{LoadIsolate, LoadShape};
+use {
+    script::native::snapshot_source::{
+        ReachViewInput, SideTabIfaceInput, SnapshotInput, TileInput, VarpInput,
+    },
+    script_js::wire::{IsolateBuf, SnapshotFingerprint},
+};
 
 mod common;
 use common::post_snapshot_input;
@@ -422,7 +424,7 @@ export default class T extends LoopingBot {
     let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![]).unwrap();
     // The resolution reads the decoded scene, so the rows arrive the way the
     // host sends them (one FlatBuffer post), not as a JS object literal.
-    let styles = [script_js::wire::CombatStyleInput {
+    let styles = [script::native::snapshot_source::CombatStyleInput {
         mode: 1,
         label: "Aggressive",
         component_id: 77,

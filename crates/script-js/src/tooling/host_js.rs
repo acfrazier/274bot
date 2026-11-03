@@ -1,10 +1,10 @@
 //! Generated Host JS types (`host-js/index.d.ts`) from our verb tables.
-//! Snapshot fields, [`crate::shim::InteractReq`] ops, and nav
+//! Snapshot fields, [`script::interact::InteractReq`] ops, and nav
 //! [`crate::FindOptions`] — not rs2b0t names. NativeTick Load is planned for a later release.
 
+use script::card::SettingDef;
 use script::gatherer::settings::schema;
 use script::gatherer::status::{FieldKind, KEYS};
-use script::SettingDef;
 use std::path::{Path, PathBuf};
 
 struct TsField {

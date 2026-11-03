@@ -320,7 +320,7 @@ mod tests {
                 matches!(
                     &interaction.effect,
                     crate::native::HostEffect::Interaction(
-                        crate::shim::InteractReq::Npc {
+                        crate::interact::InteractReq::Npc {
                             name,
                             action,
                             index: Some(index),

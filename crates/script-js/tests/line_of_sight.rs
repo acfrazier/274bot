@@ -1,10 +1,12 @@
 //! Publication → FB → isolate Observation → public flags / v1 / v2.
 
-use script_js::wire::{
-    encode_snapshot, encode_snapshot_delta_with_native, CollisionViewInput, NativeFactsInput,
-    ReachViewInput, SnapshotInput, TileInput,
-};
 use script_js::{LoadIsolate, LoadShape};
+use {
+    script::native::snapshot_source::{
+        CollisionViewInput, NativeFactsInput, ReachViewInput, SnapshotInput, TileInput,
+    },
+    script_js::wire::{encode_snapshot, encode_snapshot_delta_with_native},
+};
 
 fn empty_input(tick: u64) -> SnapshotInput<'static> {
     SnapshotInput {

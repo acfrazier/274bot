@@ -3,11 +3,11 @@
 //! item count grows. Opening the shop follows the rule shared with compat
 //! `Shop.open` ([`crate::shop_open`]): one Trade per attempt with a
 //! route-length tick deadline, and a nav walk to an unreachable keeper.
+use crate::interact::InteractReq;
 use crate::native::walk::Walk;
 use crate::native::{ActionContext, ActionError, NativeMachine, WalkRetryState};
 use crate::quester::families::reach::walk_request;
 use crate::reach_route;
-use crate::shim::InteractReq;
 use crate::shop_open::{self, Decision, Facts, Keeper, OpenCore, Session};
 use std::sync::Arc;
 use std::task::Poll;

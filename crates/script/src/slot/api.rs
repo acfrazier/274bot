@@ -490,25 +490,25 @@ impl SlotScript {
     /// Legacy family-level test injection only. Production starts cross the
     /// typed seat admission path in `SlotScript::consume_seat_batch`.
     #[cfg(test)]
-    pub(super) fn consume_api_control(&mut self, request: &crate::shim::InteractReq) {
+    pub(super) fn consume_api_control(&mut self, request: &crate::interact::InteractReq) {
         match request {
-            crate::shim::InteractReq::GatherRun {
+            crate::interact::InteractReq::GatherRun {
                 request_id,
                 settings,
             } => {
                 self.start_api_gather(*request_id, settings);
             }
-            crate::shim::InteractReq::GatherStop { request_id } => {
+            crate::interact::InteractReq::GatherStop { request_id } => {
                 self.stop_api_gather(*request_id)
             }
-            crate::shim::InteractReq::CombatFight {
+            crate::interact::InteractReq::CombatFight {
                 request_id,
                 request,
             } => self.start_api_combat(*request_id, request),
-            crate::shim::InteractReq::CombatStop { request_id } => {
+            crate::interact::InteractReq::CombatStop { request_id } => {
                 self.stop_api_combat(*request_id)
             }
-            crate::shim::InteractReq::ProgressRead { request_id, name } => {
+            crate::interact::InteractReq::ProgressRead { request_id, name } => {
                 self.start_api_progress(*request_id, name, None);
             }
             _ => unreachable!("API control admission"),
@@ -516,12 +516,12 @@ impl SlotScript {
         self.settle_api_seat_terminals();
     }
 
-    pub(super) fn consume_api_release(&mut self, request: &crate::shim::InteractReq) {
+    pub(super) fn consume_api_release(&mut self, request: &crate::interact::InteractReq) {
         match request {
-            crate::shim::InteractReq::GatherStop { request_id } => {
+            crate::interact::InteractReq::GatherStop { request_id } => {
                 self.stop_api_gather(*request_id)
             }
-            crate::shim::InteractReq::CombatStop { request_id } => {
+            crate::interact::InteractReq::CombatStop { request_id } => {
                 self.stop_api_combat(*request_id)
             }
             _ => unreachable!("only reserved API release reaches this entry"),

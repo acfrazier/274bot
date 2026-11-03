@@ -2851,7 +2851,7 @@ mod tests {
                 ledger.outbox.first().is_some_and(|action| {
                     matches!(
                         &action.effect,
-                        HostEffect::Interaction(crate::shim::InteractReq::OpenStand { .. })
+                        HostEffect::Interaction(crate::interact::InteractReq::OpenStand { .. })
                     )
                 })
             });
@@ -2922,7 +2922,7 @@ mod tests {
             if has_booth {
                 assert!(matches!(
                     &ledger.as_ref().unwrap().outbox[0].effect,
-                    HostEffect::Interaction(crate::shim::InteractReq::OpenStand { .. })
+                    HostEffect::Interaction(crate::interact::InteractReq::OpenStand { .. })
                 ));
                 complete_open_stand(&mut ledger, 2);
             } else {
@@ -3030,7 +3030,7 @@ mod tests {
                         picks += 1;
                         complete_bank_pick(&mut ledger, bank, stand, tick);
                     }
-                    Some(HostEffect::Interaction(crate::shim::InteractReq::OpenStand {
+                    Some(HostEffect::Interaction(crate::interact::InteractReq::OpenStand {
                         ..
                     })) => {
                         complete_open_stand(&mut ledger, tick);
@@ -3041,7 +3041,7 @@ mod tests {
                             side_rows(&pack),
                         );
                     }
-                    Some(HostEffect::Interaction(crate::shim::InteractReq::InvButton {
+                    Some(HostEffect::Interaction(crate::interact::InteractReq::InvButton {
                         id,
                         ..
                     })) => {
@@ -3064,13 +3064,13 @@ mod tests {
                             side_rows(&pack),
                         );
                     }
-                    Some(HostEffect::Interaction(crate::shim::InteractReq::SetNoteMode {
+                    Some(HostEffect::Interaction(crate::interact::InteractReq::SetNoteMode {
                         on: false,
                     })) => {
                         assert_eq!(phase, ProvisionPhase::Withdrawing);
                         complete_open_stand(&mut ledger, tick);
                     }
-                    Some(HostEffect::Interaction(crate::shim::InteractReq::WithdrawX {
+                    Some(HostEffect::Interaction(crate::interact::InteractReq::WithdrawX {
                         bank_item_id,
                         count,
                         ..
@@ -3093,7 +3093,7 @@ mod tests {
                             side_rows(&pack),
                         );
                     }
-                    Some(HostEffect::Interaction(crate::shim::InteractReq::Close)) => {
+                    Some(HostEffect::Interaction(crate::interact::InteractReq::Close)) => {
                         assert_eq!(phase, ProvisionPhase::Closing);
                         closes += 1;
                         complete_open_stand(&mut ledger, tick);
@@ -3297,7 +3297,7 @@ mod tests {
                             HostEffect::BankPick(_)
                                 | HostEffect::Walk(_)
                                 | HostEffect::Interaction(
-                                    crate::shim::InteractReq::OpenStand { .. }
+                                    crate::interact::InteractReq::OpenStand { .. }
                                 )
                         ),
                         "the withdrawal must not start a second bank trip"
@@ -3438,7 +3438,7 @@ mod tests {
                 .as_ref()
                 .and_then(|ledger| ledger.outbox.first())
                 .map(|action| &action.effect),
-            Some(HostEffect::Interaction(crate::shim::InteractReq::Close))
+            Some(HostEffect::Interaction(crate::interact::InteractReq::Close))
         ));
         complete_open_stand(&mut ledger, tick);
         snapshot.seed_bank_observation(-1, tick, None, Vec::new());
@@ -3656,17 +3656,17 @@ mod tests {
                 .and_then(|ledger| ledger.outbox.first())
                 .map(|action| match &action.effect {
                     HostEffect::BankPick(_) => Seen::Pick,
-                    HostEffect::Interaction(crate::shim::InteractReq::OpenStand { .. }) => {
+                    HostEffect::Interaction(crate::interact::InteractReq::OpenStand { .. }) => {
                         Seen::Open
                     }
-                    HostEffect::Interaction(crate::shim::InteractReq::SetNoteMode { .. }) => {
-                        Seen::Note
-                    }
+                    HostEffect::Interaction(crate::interact::InteractReq::SetNoteMode {
+                        ..
+                    }) => Seen::Note,
                     HostEffect::Interaction(
-                        crate::shim::InteractReq::Withdraw { .. }
-                        | crate::shim::InteractReq::WithdrawX { .. },
+                        crate::interact::InteractReq::Withdraw { .. }
+                        | crate::interact::InteractReq::WithdrawX { .. },
                     ) => Seen::Withdraw,
-                    HostEffect::Interaction(crate::shim::InteractReq::Close) => Seen::Close,
+                    HostEffect::Interaction(crate::interact::InteractReq::Close) => Seen::Close,
                     HostEffect::Interaction(request) => {
                         panic!("unexpected interaction {request:?}")
                     }
@@ -3931,7 +3931,7 @@ mod tests {
                 .filter(|action| {
                     matches!(
                         &action.effect,
-                        HostEffect::Interaction(crate::shim::InteractReq::Close)
+                        HostEffect::Interaction(crate::interact::InteractReq::Close)
                     )
                 })
                 .count()
@@ -4372,7 +4372,7 @@ mod tests {
                     Some(HostEffect::BankPick(_)) => {
                         complete_bank_pick(&mut ledger, bank, bank.tile, tick);
                     }
-                    Some(HostEffect::Interaction(crate::shim::InteractReq::OpenStand {
+                    Some(HostEffect::Interaction(crate::interact::InteractReq::OpenStand {
                         ..
                     })) => {
                         complete_open_stand(&mut ledger, tick);
@@ -4384,10 +4384,10 @@ mod tests {
                         );
                         generations.push(snapshot.bank_session_generation());
                     }
-                    Some(HostEffect::Interaction(crate::shim::InteractReq::SetNoteMode {
+                    Some(HostEffect::Interaction(crate::interact::InteractReq::SetNoteMode {
                         ..
                     })) => complete_open_stand(&mut ledger, tick),
-                    Some(HostEffect::Interaction(crate::shim::InteractReq::WithdrawX {
+                    Some(HostEffect::Interaction(crate::interact::InteractReq::WithdrawX {
                         ..
                     })) if !reopened => {
                         reopened = true;
@@ -4404,7 +4404,7 @@ mod tests {
                             generations.push(snapshot.bank_session_generation());
                         }
                     }
-                    Some(HostEffect::Interaction(crate::shim::InteractReq::WithdrawX {
+                    Some(HostEffect::Interaction(crate::interact::InteractReq::WithdrawX {
                         ..
                     })) => {
                         let mut row = item_view(42, "Quest token", 1, ItemContainer::Inventory);
@@ -4420,7 +4420,7 @@ mod tests {
                             Vec::new(),
                         );
                     }
-                    Some(HostEffect::Interaction(crate::shim::InteractReq::Close)) => {
+                    Some(HostEffect::Interaction(crate::interact::InteractReq::Close)) => {
                         closes += 1;
                         closed_generation = Some(snapshot.bank_session_generation());
                         complete_open_stand(&mut ledger, tick);
@@ -4582,7 +4582,9 @@ mod tests {
                     );
                     picked = true;
                 }
-                Some(HostEffect::Interaction(crate::shim::InteractReq::Npc { name, .. })) => {
+                Some(HostEffect::Interaction(crate::interact::InteractReq::Npc {
+                    name, ..
+                })) => {
                     assert!(
                         matches!(
                             start,

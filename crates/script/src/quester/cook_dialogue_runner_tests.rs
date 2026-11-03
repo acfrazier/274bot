@@ -1,8 +1,8 @@
 use super::*;
+use crate::interact::InteractReq;
 use crate::native::ledger::TickBudget;
 use crate::native::{HostEffect, InteractionReceipt, NativeOutput};
 use crate::quester::families::tests::{def, local_player, with_tick_budget_output};
-use crate::shim::InteractReq;
 use api::named_banks::{NamedBank, NamedBankFacts};
 use api::quest_progress::EvidenceStamp;
 use api::selected::ClientRevision;
@@ -18,7 +18,7 @@ struct Capture {
 
 impl NativeOutput for Capture {
     fn status(&mut self, _: ScriptStatus) {}
-    fn paint(&mut self, _: Arc<crate::shim::ScriptPaint>) {}
+    fn paint(&mut self, _: Arc<crate::paint::ScriptPaint>) {}
     fn log(&mut self, _: api::hostlog::Level, message: &str) {
         self.logs.push(message.to_owned());
     }

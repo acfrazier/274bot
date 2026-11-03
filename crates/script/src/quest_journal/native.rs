@@ -1,6 +1,6 @@
 //! One click, selected title/root validation, capture, one close, observed close.
+use crate::interact::InteractReq;
 use crate::native::{ActionContext, ActionError, NativeMachine, QuietReadLease, WaitDeadline};
-use crate::shim::InteractReq;
 use api::quest_facts::QuestCatalog;
 use api::quest_progress::{EvidenceStamp, JournalRead};
 use api::selected::{ClientRevision, FactKey, SelectedPin};

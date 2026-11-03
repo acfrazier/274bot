@@ -5,7 +5,7 @@
 //! boolean (or the frozen `not impl` throw).
 
 use crate::machine::{Begin, Cx, Family, Step};
-use crate::observed;
+use crate::scene::observed;
 use api::game_data::{AutocastControls, SelectedGameData};
 use script::combat::arm::{Arm, ArmFailure, ArmObservation, ArmStep};
 use serde::{Deserialize, Serialize};
@@ -41,7 +41,7 @@ impl Reason {
             Self::UnknownSpell => Some(format!(
                 "'{spell}' is not an autocastable spell — see SPELL_DB (Wind Strike … Fire Wave)"
             )),
-            Self::MissingGameData => Some(crate::supply_v2::GAME_DATA_UNAVAILABLE.into()),
+            Self::MissingGameData => Some(crate::scene::supply_v2::GAME_DATA_UNAVAILABLE.into()),
             Self::MissingControls => Some(format!(
                 "not impl: Autocast.arm needs posted coms for '{spell}'"
             )),
@@ -82,7 +82,7 @@ impl ArmOutcome {
             ok: reason == Reason::Armed,
             message: reason.log(spell).unwrap_or_default(),
             reason: (reason == Reason::MissingGameData)
-                .then(|| crate::supply_v2::GAME_DATA_UNAVAILABLE.to_string()),
+                .then(|| crate::scene::supply_v2::GAME_DATA_UNAVAILABLE.to_string()),
             not_impl: reason.not_impl(),
         }
     }
@@ -122,7 +122,7 @@ impl Family for Autocast {
     type Output = ArmOutcome;
 
     fn begin(args: ArmArgs, cx: &mut Cx<'_>) -> Begin<Self> {
-        let data = crate::supply_v2::selected_data();
+        let data = crate::scene::supply_v2::selected_data();
         if data.is_none() {
             return Begin::Done(ArmOutcome::of(Reason::MissingGameData, &args.spell));
         }
@@ -160,7 +160,7 @@ impl Family for Autocast {
     }
 
     fn step(&mut self, cx: &mut Cx<'_>) -> Step<ArmOutcome> {
-        let data = crate::supply_v2::selected_data();
+        let data = crate::scene::supply_v2::selected_data();
         if data.is_none() {
             return Step::Done(ArmOutcome::of(Reason::MissingGameData, &self.spell));
         }
@@ -287,7 +287,7 @@ mod tests {
     use crate::machine::{self, Called, Js, Outcome, Pending, Reply, Started, Take};
     use client::io::ClientRevision;
     use script::combat::arm::STEP_MS;
-    use script::shim::InteractReq;
+    use script::interact::InteractReq;
     use std::sync::Arc;
     use std::thread;
     use std::time::Duration;
@@ -302,7 +302,7 @@ mod tests {
 
         fn call(
             &mut self,
-            _hook: Option<&crate::callback_v8::HeldCallback>,
+            _hook: Option<&crate::materialize::callback_v8::HeldCallback>,
             _args: &[Value],
         ) -> Called {
             panic!("the autocast family calls no script callback");
@@ -325,7 +325,7 @@ mod tests {
         machine::on_reset();
         observed::on_reset();
         let data = data(rev);
-        crate::supply_v2::configure(Some(data.clone()));
+        crate::scene::supply_v2::configure(Some(data.clone()));
         data
     }
 
@@ -336,7 +336,7 @@ mod tests {
             post.session(true)
                 .side_tab(active_side_tab)
                 .combat_tab_root(combat_tab_root)
-                .varps(vec![crate::observed::VarpRow {
+                .varps(vec![crate::scene::observed::VarpRow {
                     index: magic_varp,
                     value: magic_varp_value,
                 }]);
@@ -422,7 +422,7 @@ mod tests {
     fn missing_selected_data_explains_unverified_content() {
         machine::on_reset();
         observed::on_reset();
-        crate::supply_v2::configure(None);
+        crate::scene::supply_v2::configure(None);
         assert_eq!(
             start("Wind Strike"),
             Started::Settled(Outcome::Done(json!({

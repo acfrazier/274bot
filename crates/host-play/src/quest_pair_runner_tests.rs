@@ -414,7 +414,7 @@ fn assert_admission_watchdog_waits(runner: &mut Runner) {
             &[],
             false,
             true,
-            &[script::shim::InteractReq::LoopSettled],
+            &[script::interact::InteractReq::LoopSettled],
         );
         assert!(
             matches!(
@@ -825,7 +825,7 @@ fn quest_pair_r2_runner_mismatched_queue_waits_for_solo_row_without_reserving_pe
         while let Some(action) = bob.take_native_action() {
             let authority = action.authority();
             match action.effect {
-                script::native::HostEffect::Interaction(script::shim::InteractReq::IfButton {
+                script::native::HostEffect::Interaction(script::interact::InteractReq::IfButton {
                     component_id: 1,
                 }) => snapshot.seed_main_modal(
                     8134,
@@ -842,7 +842,7 @@ fn quest_pair_r2_runner_mismatched_queue_waits_for_solo_row_without_reserving_pe
                         journal_widget(8145, &read(bob_run).lines[0]),
                     ],
                 ),
-                script::native::HostEffect::Interaction(script::shim::InteractReq::CloseModal) => {
+                script::native::HostEffect::Interaction(script::interact::InteractReq::CloseModal) => {
                     snapshot.seed_main_modal(-1, vec![]);
                 }
                 _ => panic!("unexpected solo-to-pair journal input"),

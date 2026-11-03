@@ -11,6 +11,7 @@ use crate::bank::request::{
     HOOK_LOG,
 };
 use crate::bank::seat_transfer::{TransferAnswer, TransferCall, TransferHooks};
+use crate::interact::InteractReq;
 use crate::native::{
     ActionContext, ActionError, NativeMachine, WalkAllow, WalkBit, WalkEnd, WalkOptions,
     WalkRequest,
@@ -19,7 +20,6 @@ use crate::native_bank::{
     nearest_eligible_bank as select_nearest_eligible_bank, BankSelector, PickKind, Select,
     SelectArgs, SelectedBank,
 };
-use crate::shim::InteractReq;
 use api::named_banks::{BankPreferences, NamedBank, NamedBankFacts};
 use api::snapshot::{LocView, WorldTile};
 use nav_planner::contract::ArrivalKind;

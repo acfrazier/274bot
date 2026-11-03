@@ -1,8 +1,8 @@
 //! One process validation coordinator. Its bounded queue and single seat
 //! prevent a refresh from starting an isolate per card or per window.
 
-use super::super::library::PreparedCard;
 use super::{LoadIsolate, LoadIsolateError, LoadShape, Ready, JOIN_TIMEOUT, VALIDATION_TIMEOUT};
+use crate::library::store::PreparedCard;
 use std::cell::RefCell;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{self, Receiver, SyncSender, TryRecvError, TrySendError};

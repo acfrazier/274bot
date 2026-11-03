@@ -1,7 +1,7 @@
 // reader.combatLevel and Player.combatLevel mirror posted native local/peer
 // combat levels. Canonical foreign: raw?.localPlayer?.combatLevel ?? 0.
 
-use script_js::wire::{ReachViewInput, SceneEntityInput, SnapshotInput, TileInput};
+use script::native::snapshot_source::{ReachViewInput, SceneEntityInput, SnapshotInput, TileInput};
 use script_js::{LoadIsolate, LoadShape};
 
 mod common;

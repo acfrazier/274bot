@@ -61,9 +61,9 @@ mod native_bank_seat {
 
     use api::named_banks::NamedBankFacts;
     use api::quest_progress::EvidenceStamp;
+    use script::interact::InteractReq;
+    use script::native::snapshot_source::{ItemRowInput, NativeFactsInput};
     use script::native::{HostEffect, InteractionReceipt};
-    use script::shim::InteractReq;
-    use script_js::wire::{ItemRowInput, NativeFactsInput};
     use script_js::LoadShape;
     use serde_json::{json, Value};
 
@@ -187,7 +187,7 @@ export default class T extends LoopingBot {
                     ..*row
                 })
                 .collect();
-            let input = script_js::wire::SnapshotInput {
+            let input = script::native::snapshot_source::SnapshotInput {
                 tick: self.tick,
                 bank_open: true,
                 bank_loaded: true,

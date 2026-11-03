@@ -2496,7 +2496,7 @@ mod tests {
             type Args = ();
             type Output = ();
             fn begin(_: (), cx: &mut ActionContext<'_>) -> Result<Self, ActionError> {
-                cx.emit(script::shim::InteractReq::CloseModal)?;
+                cx.emit(script::interact::InteractReq::CloseModal)?;
                 Ok(Self)
             }
             fn poll(&mut self, _: &mut ActionContext<'_>) -> Poll<Result<(), ActionError>> {

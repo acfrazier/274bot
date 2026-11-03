@@ -789,7 +789,7 @@ fn make_use_on_request(
     loc: &api::snapshot::LocView,
     menu_id: i32,
     cx: &ActionContext<'_>,
-) -> Result<crate::shim::InteractReq, ActionError> {
+) -> Result<crate::interact::InteractReq, ActionError> {
     let source_item = cx
         .snapshot()
         .inventory()
@@ -805,7 +805,7 @@ fn make_use_on_request(
     let item_name = source_item.def.name.as_ref().ok_or_else(|| {
         ActionError::Unavailable(Arc::from("production trigger item name is unavailable"))
     })?;
-    Ok(crate::shim::InteractReq::UseOn {
+    Ok(crate::interact::InteractReq::UseOn {
         name: item_name.clone(),
         kind: "loc".to_owned(),
         target_name: Some(trigger.loc_name.to_string()),

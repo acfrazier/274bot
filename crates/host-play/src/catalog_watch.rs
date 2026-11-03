@@ -273,7 +273,7 @@ impl CoreWatch {
         guardian: BoundedGuardian,
         session_boundary: bool,
         inspect: Option<RouteInspectPublished>,
-        paint: Option<&script::shim::ScriptPaint>,
+        paint: Option<&script::paint::ScriptPaint>,
         acts: Option<ScriptActsPublished>,
     ) {
         if !self.active.load(Ordering::Acquire) {

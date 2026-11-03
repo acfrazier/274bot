@@ -18,11 +18,11 @@ use thread::isolate_main;
 use thread::{stamp_mouse_gesture_identities, MouseGestureIdentities};
 
 use super::bindings::wire_runtime;
-use super::shape::LoadShape;
 use super::snapshot::{
     dispatch_native_events, key_string, materialize_settings_bag, materialize_snapshot,
 };
-use super::{loadout_v8, machine_v8, paint_chrome, paint_jive, reach_query, run_policy_v8, shape};
+use crate::library::shape::LoadShape;
+use crate::materialize::reach_query;
 use rustyscript::{json_args, Runtime, RuntimeOptions};
 use std::collections::{HashMap, VecDeque};
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize};
@@ -93,7 +93,7 @@ const RECOVERY_ANCHOR_TICK: u64 = u64::MAX;
 const RUNTIME_TIMEOUT: Duration = Duration::from_millis(50);
 /// How long setup waits for V8 creation and startup evaluation before the
 /// owning isolate handle interrupts it.
-pub(super) const SETUP_TIMEOUT: Duration = Duration::from_secs(10);
+pub(crate) const SETUP_TIMEOUT: Duration = Duration::from_secs(10);
 /// Validation uses a shorter independent deadline because it is a
 /// throwaway candidate check, not a live Start.
 const VALIDATION_TIMEOUT: Duration = Duration::from_secs(2);
@@ -119,11 +119,11 @@ const MAX_QUEUED_COMMANDS: usize = 64;
 struct SnapshotMessage {
     bytes: Vec<u8>,
     #[cfg(feature = "memory-profile")]
-    _lease: crate::memory_profile::SnapshotLease,
+    _lease: crate::runtime::memory_profile::SnapshotLease,
 }
-pub use script::interact::QueuedInteract;
-
-pub use script::native::seat_rows::{HeldWaitFacts, QueuedSeatBatch};
+use script::interact::QueuedInteract;
+use script::native::recovery_hints::RecoveryHintsCell;
+use script::native::seat_rows::{HeldWaitFacts, QueuedSeatBatch};
 
 enum IsolateCmd {
     Tick {
@@ -168,7 +168,7 @@ enum IsolateCmd {
     /// Available loadouts. Rust keeps them for `selectedLoadout`.
     Loadouts(Vec<api::loadout::Loadout>),
     /// The slot's recovery hints, which outlive this isolate.
-    RecoveryHints(std::sync::Arc<super::RecoveryHintsCell>),
+    RecoveryHints(std::sync::Arc<RecoveryHintsCell>),
     Pause,
     Resume,
     /// One-shot script-local paint button, tagged with the isolate
@@ -241,7 +241,7 @@ enum ThreadMsg {
     /// must recreate the isolate; in-place single-flight recovery is unsafe.
     ScriptCut,
     /// The tick's shim interact queue (`__rs2b0t_host.interact`), a
-    /// FlatBuffer `InteractBatch` of [`crate::shim::InteractReq`]s
+    /// FlatBuffer `InteractBatch` of [`script::interact::InteractReq`]s
     /// forwarded after the tick's JS finished (parked or not).
     Interact {
         bytes: Vec<u8>,
@@ -253,7 +253,7 @@ enum ThreadMsg {
         bytes: Vec<u8>,
         generation: u64,
         observed_walk_outcome_seq: u64,
-        machine_events: Vec<crate::machine::MachineEvent>,
+        machine_events: Vec<script::native::seat_rows::SeatMachineEvent>,
     },
     IgnoredRandoms(Vec<String>),
     /// The tick whose work has fully finished. `report_errors` is false for
@@ -279,10 +279,10 @@ enum ThreadMsg {
     /// The tick's recorded paint frame. Both ends are this crate in this
     /// process, so the frame crosses as the typed value the recorder built:
     /// no FlatBuffer encode/verify/decode, and every reader shares one frame.
-    Paint(std::sync::Arc<script::shim::ScriptPaint>),
+    Paint(std::sync::Arc<script::paint::ScriptPaint>),
 }
 
-pub(crate) use script::surface::TickOutcome;
+use script::surface::TickOutcome;
 
 /// One JS bot running in its own rustyscript/V8 isolate. Spawned only
 /// on Start; the Runtime lives on the thread and is reached through a
@@ -290,7 +290,7 @@ pub(crate) use script::surface::TickOutcome;
 /// observed game-tick edges; stale ticks are skipped.
 pub struct LoadIsolate {
     #[cfg(feature = "memory-profile")]
-    counters: std::sync::Arc<crate::memory_profile::Counters>,
+    counters: std::sync::Arc<crate::runtime::memory_profile::Counters>,
     #[cfg(feature = "memory-profile")]
     last_completed: std::sync::atomic::AtomicU64,
     #[cfg(feature = "memory-profile")]
@@ -299,7 +299,7 @@ pub struct LoadIsolate {
     walking_ownership: std::sync::Arc<crate::machine::WalkingOwnership>,
     /// Rust-only Load journal lease shared with the isolate thread. Native
     /// v2 tick cards and compatibility cards use the same journal adapter.
-    compat_journal: Option<std::sync::Arc<crate::quest_journal::CompatJournalLease>>,
+    compat_journal: Option<std::sync::Arc<crate::compat::quest_journal::CompatJournalLease>>,
     /// Host-owned identity of forwarded paint frames. Unique per spawn
     /// and bumped on session reset so a stale overlay generation cannot
     /// match a later isolate that advertises the same button id. Shared
@@ -332,7 +332,7 @@ pub struct LoadIsolate {
     /// `Bank`/`Banking` queue), drained by the host like logs.
     interacts: Mutex<Vec<QueuedInteract>>,
     /// Watchdog lifecycle facts are separate from gameplay interactions.
-    lifecycle: Mutex<Vec<script::shim::InteractReq>>,
+    lifecycle: Mutex<Vec<script::interact::InteractReq>>,
     /// Ordered typed seat batches, each retaining its source generation and
     /// one push-time walk outcome stamp for the physical wire batch.
     seat_batches: Mutex<VecDeque<QueuedSeatBatch>>,
@@ -346,9 +346,9 @@ pub struct LoadIsolate {
     /// processed yet, so stale release rows are not exposed before then.
     held_fence: Mutex<Option<u64>>,
     /// The latest paint frame the tick thread forwarded (the
-    /// [`crate::shim::ScriptPaint`] the recorder built after each tick),
+    /// [`script::paint::ScriptPaint`] the recorder built after each tick),
     /// shared with every reader instead of copied per read.
-    paint: Mutex<Option<std::sync::Arc<script::shim::ScriptPaint>>>,
+    paint: Mutex<Option<std::sync::Arc<script::paint::ScriptPaint>>>,
     /// The bot instance's random-ignore list, forwarded by the tick
     /// thread whenever it changes (same source as the old probe path).
     ignored_randoms: Mutex<Vec<String>>,
@@ -373,7 +373,7 @@ pub struct LoadIsolate {
 
 /// ScriptRunner.stop receipt copied off the isolate thread. This is a
 /// single bounded value, independent of the panel's destructive log queue.
-pub use script::surface::ScriptStopReceipt;
+use script::surface::ScriptStopReceipt;
 
 /// Non-blocking isolate boot result. Commands already queue until setup
 /// finishes, so the host never waits on V8 creation on the caller thread.
@@ -493,7 +493,7 @@ impl LoadIsolate {
     /// Queue a whole refresh on the single process ValidationSeat. The
     /// receiver owns the original cards, so the UI can fence the result.
     pub fn validate_prepared_batch(
-        cards: Vec<super::library::PreparedCard>,
+        cards: Vec<crate::library::store::PreparedCard>,
     ) -> Result<ValidationBatch, ValidationError> {
         validation::validate_batch(cards)
     }
@@ -514,13 +514,14 @@ impl LoadIsolate {
         let (setup_tx, setup_rx) = mpsc::channel::<SetupMessage>();
         let (msg_tx, msg_rx) = mpsc::channel::<ThreadMsg>();
         #[cfg(feature = "memory-profile")]
-        let counters = crate::memory_profile::registered();
+        let counters = crate::runtime::memory_profile::registered();
         #[cfg(feature = "memory-profile")]
         let thread_counters = counters.clone();
         let work_generation = std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0));
         let thread_generation = work_generation.clone();
-        let compat_journal = (shape != LoadShape::Reject)
-            .then(|| std::sync::Arc::new(crate::quest_journal::CompatJournalLease::default()));
+        let compat_journal = (shape != LoadShape::Reject).then(|| {
+            std::sync::Arc::new(crate::compat::quest_journal::CompatJournalLease::default())
+        });
         let thread_compat_journal = compat_journal.clone();
         let teardown = std::sync::Arc::new(Mutex::new(TeardownState::new()));
         let thread_teardown = teardown.clone();
@@ -629,7 +630,7 @@ impl LoadIsolate {
         }
         let message = SnapshotMessage {
             #[cfg(feature = "memory-profile")]
-            _lease: crate::memory_profile::SnapshotLease::new(
+            _lease: crate::runtime::memory_profile::SnapshotLease::new(
                 self.counters.clone(),
                 bytes.len(),
                 bytes.capacity(),
@@ -676,7 +677,7 @@ impl LoadIsolate {
 
     /// Use the slot's frozen `RecoveryHints` for this isolate, so a watchdog
     /// restart finds what the previous run latched.
-    pub fn post_recovery_hints(&self, hints: std::sync::Arc<super::RecoveryHintsCell>) {
+    pub fn post_recovery_hints(&self, hints: std::sync::Arc<RecoveryHintsCell>) {
         self.send(IsolateCmd::RecoveryHints(hints));
     }
 
@@ -896,7 +897,9 @@ impl LoadIsolate {
         self.counters.snapshot()
     }
     #[cfg(feature = "memory-profile")]
-    pub fn memory_metrics_handle(&self) -> std::sync::Arc<crate::memory_profile::Counters> {
+    pub fn memory_metrics_handle(
+        &self,
+    ) -> std::sync::Arc<crate::runtime::memory_profile::Counters> {
         self.counters.clone()
     }
 
@@ -1179,7 +1182,7 @@ impl LoadIsolate {
 
     /// Diagnostics/tests only: this drops each row's enqueue stamp and MUST NOT
     /// be used for production walking dispatch.
-    pub fn drain_interacts(&self) -> Vec<script::shim::InteractReq> {
+    pub fn drain_interacts(&self) -> Vec<script::interact::InteractReq> {
         self.drain_interacts_stamped()
             .into_iter()
             .map(|queued| queued.req)
@@ -1201,13 +1204,13 @@ impl LoadIsolate {
         self.interacts
             .lock()
             .unwrap()
-            .retain(|queued| !matches!(&queued.req, script::shim::InteractReq::Mouse { .. }));
+            .retain(|queued| !matches!(&queued.req, script::interact::InteractReq::Mouse { .. }));
     }
 
     /// Drain generation-matched watchdog lifecycle facts (`note-progress`,
     /// loop/wait settle, recoveryAnchor replies) from the same FlatBuffer
     /// batch. Game interacts stay on [`LoadIsolate::drain_interacts`].
-    pub fn drain_lifecycle(&self) -> Vec<script::shim::InteractReq> {
+    pub fn drain_lifecycle(&self) -> Vec<script::interact::InteractReq> {
         self.pump_logs();
         std::mem::take(&mut *self.lifecycle.lock().unwrap())
     }
@@ -1389,7 +1392,7 @@ impl LoadIsolate {
     /// recorder's frame after every tick that painted, shared, not
     /// copied). `None` when the script has not painted yet. No probe
     /// round-trip — the host reads this every frame.
-    pub fn paint(&self) -> Option<std::sync::Arc<script::shim::ScriptPaint>> {
+    pub fn paint(&self) -> Option<std::sync::Arc<script::paint::ScriptPaint>> {
         self.pump_logs();
         self.paint.lock().unwrap().clone()
     }
@@ -1837,10 +1840,10 @@ impl Drop for LoadIsolate {
     }
 }
 
-fn discarded_walk_id(req: &script::shim::InteractReq) -> Option<u64> {
+fn discarded_walk_id(req: &script::interact::InteractReq) -> Option<u64> {
     match req {
-        script::shim::InteractReq::Walk { request_id, .. }
-        | script::shim::InteractReq::WalkNear { request_id, .. }
+        script::interact::InteractReq::Walk { request_id, .. }
+        | script::interact::InteractReq::WalkNear { request_id, .. }
             if *request_id != 0 =>
         {
             Some(*request_id)
@@ -1858,13 +1861,13 @@ fn hold_walk_releases(
     reqs: impl IntoIterator<Item = QueuedInteract>,
 ) {
     for queued in reqs {
-        let script::shim::InteractReq::AbortWalk { request_id } = &queued.req else {
+        let script::interact::InteractReq::AbortWalk { request_id } = &queued.req else {
             continue;
         };
         if held.iter().any(|held| {
             matches!(
                 &held.req,
-                script::shim::InteractReq::AbortWalk { request_id: held_id }
+                script::interact::InteractReq::AbortWalk { request_id: held_id }
                     if held_id == request_id
             )
         }) {
@@ -1882,7 +1885,7 @@ mod tests;
 #[cfg(test)]
 mod kept_reconnect_release_tests {
     use super::*;
-    use script::shim::InteractReq;
+    use script::interact::InteractReq;
 
     #[test]
     fn stale_gameplay_cannot_evict_a_kept_abort_walk_release() {

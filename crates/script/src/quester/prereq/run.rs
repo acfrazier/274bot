@@ -1,5 +1,6 @@
 //! Content-witnessed prerequisite execution under the existing native owners.
 use crate::dialogue_outcome::DialogueOutcome;
+use crate::interact::InteractReq;
 use crate::local_state::SlotState;
 use crate::native::walk::Walk;
 use crate::native::{
@@ -13,7 +14,6 @@ use crate::quester::families::dialogue::{
     LineRule, PageAcknowledgement, DIALOG_GAP_TICKS,
 };
 use crate::quester::families::{reach, InteractRun};
-use crate::shim::InteractReq;
 use api::prereq_knowledge::Observation;
 use api::prereq_knowledge::{Fact, FactSource, RefusalObservation, SessionMemory};
 use api::prereq_steps::{

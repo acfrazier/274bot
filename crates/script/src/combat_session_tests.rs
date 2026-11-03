@@ -1,10 +1,10 @@
 //! Native-ledger checks of the `api.combat` card. These call [`Script::tick`]
 //! with the shared Combat machine over a seeded snapshot.
 use super::*;
+use crate::interact::InteractReq;
 use crate::native::{
     ledger, HostEffect, InteractionReceipt, NativeActions, NativeOutput, RetainedMemory,
 };
-use crate::shim::InteractReq;
 use api::game_data::SelectedGameData;
 use api::quest_progress::EvidenceStamp;
 use api::selected::{ClientRevision, RunKey};
@@ -21,7 +21,7 @@ impl NativeOutput for Statuses {
     fn status(&mut self, status: ScriptStatus) {
         self.0.push(status);
     }
-    fn paint(&mut self, _: Arc<crate::shim::ScriptPaint>) {}
+    fn paint(&mut self, _: Arc<crate::paint::ScriptPaint>) {}
     fn log(&mut self, _: api::hostlog::Level, _: &str) {}
     fn settings_applied(&mut self, _: u64) {}
 }

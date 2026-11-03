@@ -865,7 +865,7 @@ fn the_pump_freezes_and_aborts_the_compiled_clue_machine() {
         .expect("a selected clue row")
         .id;
     let mut slot = start_sherlock(102_419, Arc::clone(&data));
-    let begin = script_js::clue::dispatch(
+    let begin = script_js::compat::clue::dispatch(
         Some(&data),
         &serde_json::json!({ "op": "begin", "generation": 0, "held": [[held_id, 1]] }),
     );
@@ -882,36 +882,36 @@ fn the_pump_freezes_and_aborts_the_compiled_clue_machine() {
 
     slot.sync_compiled_clue(false);
     assert_eq!(
-        script_js::clue::dispatch(Some(&data), &next())["kind"],
+        script_js::compat::clue::dispatch(Some(&data), &next())["kind"],
         "callback.enabled"
     );
 
     slot.pause();
     slot.sync_compiled_clue(false);
     assert_eq!(
-        script_js::clue::dispatch(Some(&data), &next())["kind"],
+        script_js::compat::clue::dispatch(Some(&data), &next())["kind"],
         "wait"
     );
     slot.resume();
     slot.sync_compiled_clue(false);
     assert_eq!(
-        script_js::clue::dispatch(Some(&data), &next())["kind"],
+        script_js::compat::clue::dispatch(Some(&data), &next())["kind"],
         "callback.enabled",
         "a thaw resumes the same session"
     );
 
     slot.sync_compiled_clue(true);
     assert_eq!(
-        script_js::clue::dispatch(Some(&data), &next())["kind"],
+        script_js::compat::clue::dispatch(Some(&data), &next())["kind"],
         "wait"
     );
     slot.sync_compiled_clue(false);
 
     slot.stop();
     slot.sync_compiled_clue(false);
-    let after = script_js::clue::dispatch(Some(&data), &next());
+    let after = script_js::compat::clue::dispatch(Some(&data), &next());
     assert_eq!(after["kind"], "aborted", "{after}");
-    let again = script_js::clue::dispatch(
+    let again = script_js::compat::clue::dispatch(
         Some(&data),
         &serde_json::json!({ "op": "begin", "generation": 0, "held": [[held_id, 1]] }),
     );
@@ -929,7 +929,7 @@ fn a_session_reset_keeps_the_clue_strip_list_and_a_stop_clears_it() {
     const ENTRANA: i32 = 3579;
     const HELM: i32 = 1163;
     let mut slot = start_sherlock(102_420, Arc::clone(&data));
-    let begin = script_js::clue::dispatch(
+    let begin = script_js::compat::clue::dispatch(
         Some(&data),
         &serde_json::json!({ "op": "begin", "generation": 0, "held": [[ENTRANA, 1]] }),
     );
@@ -945,7 +945,7 @@ fn a_session_reset_keeps_the_clue_strip_list_and_a_stop_clears_it() {
         for (key, value) in extra.as_object().expect("extra") {
             call[key] = value.clone();
         }
-        script_js::clue::dispatch(Some(&data), &call)
+        script_js::compat::clue::dispatch(Some(&data), &call)
     };
     assert_eq!(next(serde_json::json!({}))["kind"], "callback.enabled");
     assert_eq!(
@@ -958,14 +958,15 @@ fn a_session_reset_keeps_the_clue_strip_list_and_a_stop_clears_it() {
     }));
     assert_eq!(strip["kind"], "unequip", "{strip}");
     let owns = |data: &Arc<api::game_data::SelectedGameData>| {
-        script_js::clue::dispatch(Some(data), &serde_json::json!({ "op": "ownsEquipment" }))["owns"]
+        script_js::compat::clue::dispatch(Some(data), &serde_json::json!({ "op": "ownsEquipment" }))
+            ["owns"]
             == true
     };
     assert!(owns(&data), "the strip listed the name");
 
     slot.reset_session_work();
     slot.sync_compiled_clue(false);
-    let dead = script_js::clue::dispatch(
+    let dead = script_js::compat::clue::dispatch(
         Some(&data),
         &serde_json::json!({
             "op": "next",

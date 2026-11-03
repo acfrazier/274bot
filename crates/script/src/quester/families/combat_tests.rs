@@ -3352,7 +3352,7 @@ fn failed_abort_walk_holds_protection_at_high_hp_while_attacker_is_live() {
     let raised = ledger.as_ref().unwrap().outbox.iter().find_map(|action| {
         matches!(
             action.effect,
-            crate::native::HostEffect::Interaction(crate::shim::InteractReq::IfButton {
+            crate::native::HostEffect::Interaction(crate::interact::InteractReq::IfButton {
                 component_id
             }) if component_id == protect_button_com
         )
@@ -3369,7 +3369,7 @@ fn failed_abort_walk_holds_protection_at_high_hp_while_attacker_is_live() {
         .filter(|action| {
             matches!(
                 action.effect,
-                crate::native::HostEffect::Interaction(crate::shim::InteractReq::IfButton {
+                crate::native::HostEffect::Interaction(crate::interact::InteractReq::IfButton {
                     component_id
                 }) if component_id == protect_button_com
             )
@@ -3420,7 +3420,7 @@ fn failed_abort_walk_holds_protection_at_high_hp_while_attacker_is_live() {
         ledger.as_ref().unwrap().outbox.iter().all(|action| {
             !matches!(
                 action.effect,
-                crate::native::HostEffect::Interaction(crate::shim::InteractReq::IfButton {
+                crate::native::HostEffect::Interaction(crate::interact::InteractReq::IfButton {
                     component_id
                 }) if component_id == protect_button_com
             )
@@ -5303,7 +5303,7 @@ fn killed_report_enters_loot_and_takes_the_observed_drop() {
     assert!(matches!(run.action.as_ref(), Some(Action::Loot(_))));
     assert!(matches!(
         &ledger.as_ref().unwrap().outbox.last().unwrap().effect,
-        crate::native::HostEffect::Interaction(crate::shim::InteractReq::Obj {
+        crate::native::HostEffect::Interaction(crate::interact::InteractReq::Obj {
             x,
             z,
             id: Some(id),
@@ -5363,7 +5363,7 @@ fn killed_report_waits_for_a_late_drop_before_reengaging() {
     assert!(
         ledger.as_ref().unwrap().outbox.iter().any(|entry| matches!(
             &entry.effect,
-            crate::native::HostEffect::Interaction(crate::shim::InteractReq::Obj {
+            crate::native::HostEffect::Interaction(crate::interact::InteractReq::Obj {
                 id: Some(id),
                 action,
                 ..
@@ -5655,7 +5655,7 @@ fn combat_loot_uses_the_steps_lost_radius() {
     assert!(
         ledger.as_ref().unwrap().outbox.iter().any(|entry| matches!(
             &entry.effect,
-            crate::native::HostEffect::Interaction(crate::shim::InteractReq::Obj {
+            crate::native::HostEffect::Interaction(crate::interact::InteractReq::Obj {
                 x,
                 z,
                 id: Some(id),
@@ -5948,7 +5948,7 @@ fn until_drop_takes_a_late_drop_on_the_final_permitted_kill() {
     assert!(ledger.as_ref().unwrap().outbox.iter().any(|action| {
         matches!(
             &action.effect,
-            crate::native::HostEffect::Interaction(crate::shim::InteractReq::Obj {
+            crate::native::HostEffect::Interaction(crate::interact::InteractReq::Obj {
                 id: Some(id),
                 action,
                 ..
@@ -6310,7 +6310,7 @@ fn same_tick_loot_settle_defers_next_item_without_skipping_it() {
     assert_eq!(run.loot_index, 1);
     assert!(matches!(
         &ledger.as_ref().unwrap().outbox.last().unwrap().effect,
-        crate::native::HostEffect::Interaction(crate::shim::InteractReq::Obj {
+        crate::native::HostEffect::Interaction(crate::interact::InteractReq::Obj {
             id: Some(id),
             name: Some(name),
             ..
@@ -6386,7 +6386,7 @@ fn loot_takes(ledger: &TestLedger, id: i32) -> usize {
             .filter(|action| {
                 matches!(
                     &action.effect,
-                    crate::native::HostEffect::Interaction(crate::shim::InteractReq::Obj {
+                    crate::native::HostEffect::Interaction(crate::interact::InteractReq::Obj {
                         id: Some(taken),
                         action,
                         ..
@@ -6768,7 +6768,7 @@ fn combat_loot_reaches_below_quantity_and_skips_at_the_requested_count() {
         assert!(matches!(run.action.as_ref(), Some(Action::Loot(_))));
         assert!(matches!(
             &ledger.as_ref().unwrap().outbox.last().unwrap().effect,
-            crate::native::HostEffect::Interaction(crate::shim::InteractReq::Obj {
+            crate::native::HostEffect::Interaction(crate::interact::InteractReq::Obj {
                 x, z, id: Some(id), action, ..
             }) if *x == expected_tile.x && *z == expected_tile.z && *id == expected_id && action == "Take"
         ));
@@ -6915,7 +6915,7 @@ fn lifecycle_followups_unreachable_loot_walk_retries_before_skipping_to_the_next
     assert!(matches!(run.action.as_ref(), Some(Action::Loot(_))));
     assert!(matches!(
         &ledger.as_ref().unwrap().outbox.last().unwrap().effect,
-        crate::native::HostEffect::Interaction(crate::shim::InteractReq::Obj {
+        crate::native::HostEffect::Interaction(crate::interact::InteractReq::Obj {
             x,
             z,
             id: Some(id),
@@ -7077,7 +7077,7 @@ fn combat_finish_waits_for_quiet_ready_chat_then_drives_continuation() {
     assert!(matches!(run.action.as_ref(), Some(Action::Dialogue(_))));
     assert!(matches!(
         &ledger.as_ref().unwrap().outbox.last().unwrap().effect,
-        crate::native::HostEffect::Interaction(crate::shim::InteractReq::Answer { option: 4 })
+        crate::native::HostEffect::Interaction(crate::interact::InteractReq::Answer { option: 4 })
     ));
 
     assert!(with_step_context(&snapshot, &mut ledger, 4, |cx| run.poll(cx)).is_pending());
@@ -7088,7 +7088,7 @@ fn combat_finish_waits_for_quiet_ready_chat_then_drives_continuation() {
     assert!(with_step_context(&snapshot, &mut ledger, 5, |cx| run.poll(cx)).is_pending());
     assert!(matches!(
         &ledger.as_ref().unwrap().outbox.last().unwrap().effect,
-        crate::native::HostEffect::Interaction(crate::shim::InteractReq::ContinueDialog {
+        crate::native::HostEffect::Interaction(crate::interact::InteractReq::ContinueDialog {
             component_id: None
         })
     ));
@@ -7096,7 +7096,7 @@ fn combat_finish_waits_for_quiet_ready_chat_then_drives_continuation() {
     assert!(with_step_context(&snapshot, &mut ledger, 7, |cx| run.poll(cx)).is_pending());
     assert!(matches!(
         &ledger.as_ref().unwrap().outbox.last().unwrap().effect,
-        crate::native::HostEffect::Interaction(crate::shim::InteractReq::ContinueDialog {
+        crate::native::HostEffect::Interaction(crate::interact::InteractReq::ContinueDialog {
             component_id: None
         })
     ));
@@ -7118,7 +7118,7 @@ fn combat_finish_waits_for_quiet_ready_chat_then_drives_continuation() {
     assert!(!ledger.as_ref().unwrap().outbox.iter().any(|row| {
         matches!(
             &row.effect,
-            crate::native::HostEffect::Interaction(crate::shim::InteractReq::Npc {
+            crate::native::HostEffect::Interaction(crate::interact::InteractReq::Npc {
                 action, ..
             }) if action.eq_ignore_ascii_case("Talk-to")
         )
@@ -7159,7 +7159,7 @@ fn killed_report_keeps_demon_incantation_under_finish_dialogue() {
     assert!(!ledger.as_ref().unwrap().outbox.iter().any(|row| {
         matches!(
             &row.effect,
-            crate::native::HostEffect::Interaction(crate::shim::InteractReq::Answer { .. })
+            crate::native::HostEffect::Interaction(crate::interact::InteractReq::Answer { .. })
         )
     }));
     snapshot.seed_chat_modal(2480, vec!["Select an Option".into()]);
@@ -7194,9 +7194,9 @@ fn killed_report_keeps_demon_incantation_under_finish_dialogue() {
         .outbox
         .iter()
         .filter_map(|row| match &row.effect {
-            crate::native::HostEffect::Interaction(crate::shim::InteractReq::Answer { option }) => {
-                Some(*option)
-            }
+            crate::native::HostEffect::Interaction(crate::interact::InteractReq::Answer {
+                option,
+            }) => Some(*option),
             _ => None,
         })
         .collect();
@@ -7293,7 +7293,7 @@ fn combat_finish_uses_strict_current_page_line_rules() {
     assert!(with_step_context(&snapshot, &mut ledger, 1, |cx| run.poll(cx)).is_pending());
     assert!(matches!(
         &ledger.as_ref().unwrap().outbox.last().unwrap().effect,
-        crate::native::HostEffect::Interaction(crate::shim::InteractReq::Answer { option: 2 })
+        crate::native::HostEffect::Interaction(crate::interact::InteractReq::Answer { option: 2 })
     ));
     assert!(with_step_context(&snapshot, &mut ledger, 2, |cx| run.poll(cx)).is_pending());
 
@@ -7329,7 +7329,7 @@ fn combat_finish_uses_strict_current_page_line_rules() {
         !unmatched_ledger.as_ref().unwrap().outbox.iter().any(|row| {
             matches!(
                 &row.effect,
-                crate::native::HostEffect::Interaction(crate::shim::InteractReq::Answer { .. })
+                crate::native::HostEffect::Interaction(crate::interact::InteractReq::Answer { .. })
             )
         })
     );

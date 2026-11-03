@@ -4,8 +4,8 @@ use super::super::compile::{
     CompileContext, CompileError, PredicateContext, PredicatePlan, StepContext, StepOutcome,
     StepPlan, StepRun,
 };
+use crate::interact::InteractReq;
 use crate::native::{ActionContext, ActionError, ActionHandle, NativeActions, NativeMachine};
-use crate::shim::InteractReq;
 use api::quest_progress::EvidenceStamp;
 use api::selected::Truth;
 use serde::Deserialize;

@@ -762,6 +762,10 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.8` 
   answers once. If the host itself cancels a live assessment (a pause or a
   relog), the script now gets one refusal that says so.
 
+- Rust integrations now use the native script crate for interaction, paint and
+  snapshot types. JavaScript runtime types stay in the separate JS crate.
+  This removes the temporary import aliases without changing script behavior.
+
 - The script API documentation now states that moving the bot by hand during a
   fight ends `api.combat.fight` as `aborted` with reason `user-input`. The host
   has settled it that way since 0.2.4; the declarations and pages still

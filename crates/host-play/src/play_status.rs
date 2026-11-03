@@ -113,7 +113,7 @@ pub struct SlotStatus {
     /// forwards it after every tick that painted). Disconnect and Pause retain
     /// this shared frame; Stop or slot unload clears it from the lifecycle
     /// owner even when no online observe runs. `None` means no current paint.
-    pub script_paint: Option<std::sync::Arc<script::shim::ScriptPaint>>,
+    pub script_paint: Option<std::sync::Arc<script::paint::ScriptPaint>>,
 }
 
 impl Clone for SlotStatus {

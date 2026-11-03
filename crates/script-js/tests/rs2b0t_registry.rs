@@ -419,7 +419,7 @@ fn targeted_registry_parser_matches_full_parser_for_schema_fixture() {
     let full = script_js::parse_registry_with_sources(CHICKEN_INDEX, &sources)
         .expect("full fixture parse");
     for card in &full {
-        let targeted = script_js::rs2b0t_registry::parse_registry_card_with_sources(
+        let targeted = script_js::library::rs2b0t_registry::parse_registry_card_with_sources(
             CHICKEN_INDEX,
             &sources,
             &card.name,
@@ -428,7 +428,7 @@ fn targeted_registry_parser_matches_full_parser_for_schema_fixture() {
         assert_eq!(&targeted, card);
     }
     assert!(
-        script_js::rs2b0t_registry::parse_registry_card_with_sources(
+        script_js::library::rs2b0t_registry::parse_registry_card_with_sources(
             CHICKEN_INDEX,
             &sources,
             "missing card",
@@ -460,7 +460,7 @@ fn targeted_registry_parser_matches_every_frozen_real_catalogue_card() {
         .expect("full real registry parse");
     assert_eq!(full.len(), registrations.len());
     for card in &full {
-        let targeted = script_js::rs2b0t_registry::parse_registry_card_with_sources(
+        let targeted = script_js::library::rs2b0t_registry::parse_registry_card_with_sources(
             &index_ts, &sources, &card.name,
         )
         .unwrap_or_else(|error| panic!("target real card {}: {error}", card.name));

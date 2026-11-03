@@ -25,7 +25,7 @@ impl NativeOutput for Capture {
     fn status(&mut self, status: ScriptStatus) {
         self.statuses.push(status);
     }
-    fn paint(&mut self, _: Arc<crate::shim::ScriptPaint>) {}
+    fn paint(&mut self, _: Arc<crate::paint::ScriptPaint>) {}
     fn log(&mut self, _: api::hostlog::Level, message: &str) {
         self.logs.push(message.to_owned());
     }
@@ -269,7 +269,7 @@ impl Fixture {
                 );
                 self.picks += 1;
             }
-            HostEffect::Interaction(crate::shim::InteractReq::OpenStand { .. }) => {
+            HostEffect::Interaction(crate::interact::InteractReq::OpenStand { .. }) => {
                 let action = ledger.outbox.remove(0);
                 let authority = action.authority();
                 ledger.complete_interaction(
@@ -293,7 +293,7 @@ impl Fixture {
                 );
                 self.opens += 1;
             }
-            HostEffect::Interaction(crate::shim::InteractReq::Close) => {
+            HostEffect::Interaction(crate::interact::InteractReq::Close) => {
                 let action = ledger.outbox.remove(0);
                 let authority = action.authority();
                 ledger.complete_interaction(

@@ -286,7 +286,7 @@ mod tests {
             assert_eq!(cx.emit_server_ordered(request()), Err(ActionError::Held));
         });
         assert!(frame
-            .with(|cx| cx.emit(crate::shim::InteractReq::CloseModal))
+            .with(|cx| cx.emit(crate::interact::InteractReq::CloseModal))
             .is_ok());
         assert_eq!(
             frame.with(|cx| cx.emit_server_ordered(request())),
@@ -365,7 +365,9 @@ mod tests {
                             custody: HostCustody::owner(Arc::clone(&frame.owner)),
                             request_id: NonZeroU64::new(100 + offset as u64).unwrap(),
                             batch: 0,
-                            effect: HostEffect::Interaction(crate::shim::InteractReq::CloseModal),
+                            effect: HostEffect::Interaction(
+                                crate::interact::InteractReq::CloseModal,
+                            ),
                             observed_walk_outcome_seq: 0,
                             bank_deposit: None,
                         });

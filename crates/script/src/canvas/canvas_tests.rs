@@ -285,7 +285,7 @@ fn compose_keeps_user_onpaint_title() {
     reset();
     onpaint_done(0, None);
     fill_rect(6.0, 6.0, 8.0, 8.0);
-    let user = crate::shim::ScriptPaint {
+    let user = crate::paint::ScriptPaint {
         title: Some("onPaint".into()),
         accent: Some("#ff5555".into()),
         lines: vec!["Paint.end was not called".into()],

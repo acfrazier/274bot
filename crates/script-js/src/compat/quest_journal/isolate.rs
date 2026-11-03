@@ -19,11 +19,11 @@
 //! `onStop`.
 
 use crate::machine::{AbortReason, Begin, Cx, Family, Step};
-use crate::observed::{self, QuestTab};
-use crate::scene_query;
-use crate::task_clock::InstantTaskClock;
+use crate::scene::observed::{self, QuestTab};
+use crate::scene::scene_query;
+use crate::scene::task_clock::InstantTaskClock;
 use api::identity::RequestId;
-use script::shim::InteractReq;
+use script::interact::InteractReq;
 use serde::Deserialize;
 use serde_json::{json, Value};
 use std::cell::RefCell;
@@ -853,7 +853,7 @@ pub fn dispatch(input: &Value) -> Value {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::observed::{ModalTexts, QuestStatusRow, QuestTab};
+    use crate::scene::observed::{ModalTexts, QuestStatusRow, QuestTab};
 
     fn cook_row() -> QuestStatusRow {
         QuestStatusRow {

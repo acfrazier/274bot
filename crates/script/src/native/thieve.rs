@@ -926,7 +926,9 @@ mod tests {
             .filter(|action| {
                 matches!(
                     &action.effect,
-                    crate::native::HostEffect::Interaction(crate::shim::InteractReq::Npc { .. })
+                    crate::native::HostEffect::Interaction(
+                        crate::interact::InteractReq::Npc { .. }
+                    )
                 )
             })
             .count()
@@ -942,7 +944,7 @@ mod tests {
                 matches!(
                     &action.effect,
                     crate::native::HostEffect::Interaction(
-                        crate::shim::InteractReq::ContinueDialog { .. }
+                        crate::interact::InteractReq::ContinueDialog { .. }
                     )
                 )
             })
@@ -1074,7 +1076,9 @@ mod tests {
                 .actions
                 .begin::<Thieve>(args(anchor, 12), &mut tick.cx)
                 .unwrap();
-            tick.cx.emit(crate::shim::InteractReq::CloseModal).unwrap();
+            tick.cx
+                .emit(crate::interact::InteractReq::CloseModal)
+                .unwrap();
             for _ in 0..3 {
                 assert!(tick.actions.poll(&run, &mut tick.cx).is_pending());
             }
@@ -1110,7 +1114,9 @@ mod tests {
                 .actions
                 .begin::<Thieve>(args(anchor, 2), &mut tick.cx)
                 .unwrap();
-            tick.cx.emit(crate::shim::InteractReq::CloseModal).unwrap();
+            tick.cx
+                .emit(crate::interact::InteractReq::CloseModal)
+                .unwrap();
             for _ in 0..3 {
                 assert!(tick.actions.poll(&run, &mut tick.cx).is_pending());
                 assert_eq!(tick.cx.ledger.as_ref().unwrap().outbox.len(), 1);
@@ -1912,7 +1918,7 @@ mod tests {
         assert_eq!(walk_request_count(&ledger), 0);
         assert!(matches!(
             &ledger.as_ref().unwrap().outbox.last().unwrap().effect,
-            crate::native::HostEffect::Interaction(crate::shim::InteractReq::Npc {
+            crate::native::HostEffect::Interaction(crate::interact::InteractReq::Npc {
                 index: Some(19),
                 action,
                 ..
@@ -1939,7 +1945,9 @@ mod tests {
                 .actions
                 .begin::<Thieve>(args(anchor, 2), &mut tick.cx)
                 .unwrap();
-            tick.cx.emit(crate::shim::InteractReq::CloseModal).unwrap();
+            tick.cx
+                .emit(crate::interact::InteractReq::CloseModal)
+                .unwrap();
             for _ in 0..3 {
                 assert!(tick.actions.poll(&run, &mut tick.cx).is_pending());
             }
@@ -2020,7 +2028,9 @@ mod tests {
                 .begin::<Thieve>(args(anchor, 2), &mut tick.cx)
                 .unwrap();
             action_id = tick.cx.action_id;
-            tick.cx.emit(crate::shim::InteractReq::CloseModal).unwrap();
+            tick.cx
+                .emit(crate::interact::InteractReq::CloseModal)
+                .unwrap();
             for _ in 0..3 {
                 assert!(tick.actions.poll(&run, &mut tick.cx).is_pending());
             }
@@ -2146,7 +2156,7 @@ mod tests {
         .is_pending());
         assert!(matches!(
             &ledger.as_ref().unwrap().outbox.last().unwrap().effect,
-            crate::native::HostEffect::Interaction(crate::shim::InteractReq::Npc {
+            crate::native::HostEffect::Interaction(crate::interact::InteractReq::Npc {
                 index: Some(19),
                 action,
                 ..
@@ -2270,7 +2280,7 @@ mod tests {
         assert!(
             matches!(
                 &ledger.as_ref().unwrap().outbox.last().unwrap().effect,
-                crate::native::HostEffect::Interaction(crate::shim::InteractReq::Npc {
+                crate::native::HostEffect::Interaction(crate::interact::InteractReq::Npc {
                     index: Some(22),
                     ..
                 })
@@ -2357,7 +2367,7 @@ mod tests {
         .is_pending());
         assert!(matches!(
             &ledger.as_ref().unwrap().outbox.last().unwrap().effect,
-            crate::native::HostEffect::Interaction(crate::shim::InteractReq::Npc {
+            crate::native::HostEffect::Interaction(crate::interact::InteractReq::Npc {
                 index: Some(19),
                 action,
                 ..
@@ -2613,7 +2623,7 @@ mod tests {
         .is_pending());
         assert!(matches!(
             &ledger.as_ref().unwrap().outbox.last().unwrap().effect,
-            crate::native::HostEffect::Interaction(crate::shim::InteractReq::ContinueDialog {
+            crate::native::HostEffect::Interaction(crate::interact::InteractReq::ContinueDialog {
                 component_id: None
             })
         ));
@@ -2635,7 +2645,7 @@ mod tests {
                     matches!(
                         &action.effect,
                         crate::native::HostEffect::Interaction(
-                            crate::shim::InteractReq::Npc { .. }
+                            crate::interact::InteractReq::Npc { .. }
                         )
                     )
                 })

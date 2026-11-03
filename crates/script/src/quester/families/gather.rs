@@ -926,7 +926,7 @@ mod tests {
             .is_pending()
         );
         assert!(ledger.as_ref().is_some_and(|ledger| ledger.outbox.iter().any(|interaction| {
-            matches!(&interaction.effect, crate::native::HostEffect::Interaction(crate::shim::InteractReq::Loc { action, .. }) if action == "Mine")
+            matches!(&interaction.effect, crate::native::HostEffect::Interaction(crate::interact::InteractReq::Loc { action, .. }) if action == "Mine")
         })));
         snapshot.seed_inventory(
             vec![held(1265, 1, 0), held(438, 99, 1), held(436, 1, 2)],
@@ -981,7 +981,7 @@ mod tests {
                     if request.target.x == anchor.x + 20));
             } else {
                 assert!(matches!(effect, crate::native::HostEffect::Interaction(
-                    crate::shim::InteractReq::Loc { action, .. }) if action == "Mine"));
+                    crate::interact::InteractReq::Loc { action, .. }) if action == "Mine"));
             }
         }
     }
@@ -1054,7 +1054,7 @@ mod tests {
                 .expect("ordinary Gatherer waits for server refusal")
         });
         assert!(ledger.as_ref().unwrap().outbox.iter().any(|op| matches!(
-            &op.effect, crate::native::HostEffect::Interaction(crate::shim::InteractReq::Loc { action, .. })
+            &op.effect, crate::native::HostEffect::Interaction(crate::interact::InteractReq::Loc { action, .. })
                 if action == "Mine"
         )));
         snapshot.seed_chat_lines(vec![api::snapshot::ChatLineView {
@@ -1154,7 +1154,7 @@ mod tests {
             .iter()
             .any(|op| matches!(op.effect, crate::native::HostEffect::Walk(_))));
         assert!(outbox.iter().any(|op| matches!(
-            &op.effect, crate::native::HostEffect::Interaction(crate::shim::InteractReq::Npc { action, index, .. })
+            &op.effect, crate::native::HostEffect::Interaction(crate::interact::InteractReq::Npc { action, index, .. })
                 if action == "Net" && *index == Some(7)
         )));
     }
@@ -1185,7 +1185,9 @@ mod tests {
         .is_pending());
         assert!(ledger.as_ref().unwrap().outbox.iter().any(|op| matches!(
             op.effect,
-            crate::native::HostEffect::Interaction(crate::shim::InteractReq::ContinueDialog { .. })
+            crate::native::HostEffect::Interaction(
+                crate::interact::InteractReq::ContinueDialog { .. }
+            )
         )));
         snapshot.seed_chat_modal(-1, vec![]);
         snapshot.seed_chat_options(vec![], -1);
@@ -1195,7 +1197,7 @@ mod tests {
         .is_pending());
         assert!(ledger.as_ref().unwrap().outbox.iter().any(|op| matches!(
             &op.effect,
-            crate::native::HostEffect::Interaction(crate::shim::InteractReq::Loc { action, .. })
+            crate::native::HostEffect::Interaction(crate::interact::InteractReq::Loc { action, .. })
                 if action == "Mine"
         )));
         snapshot.seed_inventory(vec![held(1265, 1, 0), held(436, 2, 1)], 28);
@@ -1229,7 +1231,7 @@ mod tests {
         .is_pending());
         assert!(ledger.as_ref().unwrap().outbox.iter().any(|op| matches!(
             &op.effect,
-            crate::native::HostEffect::Interaction(crate::shim::InteractReq::Loc { action, .. })
+            crate::native::HostEffect::Interaction(crate::interact::InteractReq::Loc { action, .. })
                 if action == "Mine"
         )));
     }
@@ -1259,7 +1261,7 @@ mod tests {
             .iter()
             .any(|op| matches!(op.effect, crate::native::HostEffect::Walk(_))));
         assert!(outbox.iter().any(|op| matches!(
-            &op.effect, crate::native::HostEffect::Interaction(crate::shim::InteractReq::Loc { action, .. })
+            &op.effect, crate::native::HostEffect::Interaction(crate::interact::InteractReq::Loc { action, .. })
                 if action == "Mine"
         )));
     }
@@ -1359,7 +1361,7 @@ mod tests {
             ledger.outbox.iter().any(|operation| {
             matches!(
                 &operation.effect,
-                crate::native::HostEffect::Interaction(crate::shim::InteractReq::Loc { action, .. })
+                crate::native::HostEffect::Interaction(crate::interact::InteractReq::Loc { action, .. })
                     if action.as_str() == &*op
             )
         })

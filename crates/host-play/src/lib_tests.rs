@@ -436,7 +436,7 @@ fn connected_session_boundary_keeps_the_connection_published() {
 
 #[test]
 fn disconnected_row_drops_session_counters_but_retains_script_paint() {
-    let paint = Arc::new(script::shim::ScriptPaint::default());
+    let paint = Arc::new(script::paint::ScriptPaint::default());
     let statuses = Arc::new(Mutex::new(vec![SlotStatus {
         username: "alice".into(),
         connected: true,
@@ -4994,7 +4994,7 @@ fn park_walk_isolate(
     assert_eq!(iso.probe("__rs_ok").unwrap(), serde_json::Value::Null);
     let drained = iso.drain_interacts();
     let request_id = match &drained[..] {
-        [script::shim::InteractReq::WalkNear {
+        [script::interact::InteractReq::WalkNear {
             x: dx,
             z: dz,
             level: 0,
@@ -5027,7 +5027,7 @@ fn park_two_walks(iso: &script_js::LoadIsolate, x: i32, z: i32, radius: i32) -> 
     assert_eq!(iso.probe("__rs_b").unwrap(), serde_json::Value::Null);
     let drained = iso.drain_interacts();
     match &drained[..] {
-        [script::shim::InteractReq::WalkNear {
+        [script::interact::InteractReq::WalkNear {
             x: dx0,
             z: dz0,
             level: 0,
@@ -5041,7 +5041,7 @@ fn park_two_walks(iso: &script_js::LoadIsolate, x: i32, z: i32, radius: i32) -> 
             request_id: first,
             avoid: _,
             cross: _,
-        }, script::shim::InteractReq::WalkNear {
+        }, script::interact::InteractReq::WalkNear {
             x: dx1,
             z: dz1,
             level: 0,
@@ -7230,7 +7230,7 @@ fn script_stop_clears_offline_published_paint() {
     script_slot_or_insert(&play.scripts, "alice");
     play.statuses.lock().unwrap().push(SlotStatus {
         username: "alice".into(),
-        script_paint: Some(Arc::new(script::shim::ScriptPaint::default())),
+        script_paint: Some(Arc::new(script::paint::ScriptPaint::default())),
         ..SlotStatus::default()
     });
 
@@ -7362,7 +7362,7 @@ fn script_native_stop_retires_only_the_named_runs_rows() {
         play.attach_arm(name, SlotArm::new(7, false));
         let mut row = SlotStatus {
             username: name.into(),
-            script_paint: Some(Arc::new(script::shim::ScriptPaint::default())),
+            script_paint: Some(Arc::new(script::paint::ScriptPaint::default())),
             ..SlotStatus::default()
         };
         row.publish_script_walk(Some(WorldTile {
@@ -7434,7 +7434,7 @@ fn every_other_way_a_run_ends_retires_its_published_rows() {
     for name in names {
         let mut row = SlotStatus {
             username: name.into(),
-            script_paint: Some(Arc::new(script::shim::ScriptPaint::default())),
+            script_paint: Some(Arc::new(script::paint::ScriptPaint::default())),
             ..SlotStatus::default()
         };
         row.publish_script_walk(Some(WorldTile {
@@ -7510,7 +7510,7 @@ fn an_unload_retires_the_run_once_before_it_removes_the_row() {
         play.attach_arm(name, SlotArm::new(7, false));
         let mut row = SlotStatus {
             username: name.into(),
-            script_paint: Some(Arc::new(script::shim::ScriptPaint::default())),
+            script_paint: Some(Arc::new(script::paint::ScriptPaint::default())),
             ..SlotStatus::default()
         };
         row.publish_script_walk(Some(WorldTile {
@@ -8327,7 +8327,7 @@ fn script_paint_select_is_noop_when_idle_paused_or_unadvertised() {
 #[cfg(feature = "js")]
 #[test]
 fn script_paint_select_adverts_fixture_chrome() {
-    use script::shim::{PaintChromeBand, ScriptPaint};
+    use script::paint::{PaintChromeBand, ScriptPaint};
     let paint = ScriptPaint {
         generation: 7,
         strip: Some(PaintChromeBand {
@@ -9173,7 +9173,7 @@ fn bank_side_is_posted_by_the_side_root_through_packets_and_ipc() {
     let mut snap = GameSnapshot::new();
     let mut last = None;
     let mut tick = 0;
-    script_js::observed::on_reset();
+    script_js::scene::observed::on_reset();
     // One host frame: rebuild, post the IPC delta, apply it in the isolate.
     // Returns (native side, isolate side) as `None` / row count, plus the
     // sweep op each representation chooses for the first side row.
@@ -9196,7 +9196,7 @@ fn bank_side_is_posted_by_the_side_root_through_packets_and_ipc() {
         );
         last = Some(fp);
         let view = script_js::wire::decode_snapshot(&bytes).expect("snapshot decodes");
-        script_js::observed::apply(&view);
+        script_js::scene::observed::apply(&view);
         let native = api::snapshot::SnapshotView::new(Some(snap), stamp)
             .bank_side()
             .map(|side| {
@@ -9208,7 +9208,7 @@ fn bank_side_is_posted_by_the_side_root_through_packets_and_ipc() {
                         .and_then(|row| ops::deposit_click(row, ops::DepositRequest::Sweep)),
                 )
             });
-        let isolate = script_js::observed::with(|scene| {
+        let isolate = script_js::scene::observed::with(|scene| {
             let session = scene.since_login();
             ops::side_observation(
                 session.bank_open().unwrap_or(false),
@@ -9268,7 +9268,7 @@ fn bank_side_is_posted_by_the_side_root_through_packets_and_ipc() {
     assert!(snap.bank_side().is_empty(), "the leftover list is empty");
     dispatch_289(&mut c, ServerProt289::IF_OPENMAIN_SIDE, vec![2, 88, 2, 188]);
     assert_eq!(frame(&c, &mut snap), (empty, empty));
-    script_js::observed::on_reset();
+    script_js::scene::observed::on_reset();
 }
 
 #[test]
@@ -9725,7 +9725,7 @@ fn deposit_with_an_item_id_takes_exactly_that_same_name_side_row() {
             .enumerate()
             .map(|(slot, (id, _))| (*id, slot as i32))
         {
-            let req = script::shim::InteractReq::Deposit {
+            let req = script::interact::InteractReq::Deposit {
                 name: "Trout".into(),
                 id: Some(want),
             };
@@ -9780,7 +9780,7 @@ fn deposit_with_an_item_id_takes_exactly_that_same_name_side_row() {
                 701,
             );
         }
-        let absent = script::shim::InteractReq::Deposit {
+        let absent = script::interact::InteractReq::Deposit {
             name: "Trout".into(),
             id: Some(335),
         };
@@ -9848,7 +9848,7 @@ fn dispatch_script_interact_sends_open_deposit_withdraw() {
     for (label, req) in [
         (
             "open-booth",
-            script::shim::InteractReq::OpenBooth {
+            script::interact::InteractReq::OpenBooth {
                 x: 3205,
                 z: 3206,
                 level: 0,
@@ -9859,19 +9859,19 @@ fn dispatch_script_interact_sends_open_deposit_withdraw() {
         ),
         (
             "deposit",
-            script::shim::InteractReq::Deposit {
+            script::interact::InteractReq::Deposit {
                 name: "Bones".into(),
                 id: None,
             },
         ),
         (
             "withdraw",
-            script::shim::InteractReq::Withdraw {
+            script::interact::InteractReq::Withdraw {
                 name: "Bones".into(),
                 action: "Withdraw-All".into(),
             },
         ),
-        ("close", script::shim::InteractReq::Close),
+        ("close", script::interact::InteractReq::Close),
     ] {
         let before = c.out.pos;
         assert!(
@@ -9909,11 +9909,11 @@ fn dispatch_script_interact_sends_open_deposit_withdraw() {
         None,
         "alice",
         vec![
-            script::shim::InteractReq::Deposit {
+            script::interact::InteractReq::Deposit {
                 name: "Lobster".into(),
                 id: None,
             },
-            script::shim::InteractReq::Withdraw {
+            script::interact::InteractReq::Withdraw {
                 name: "Lobster".into(),
                 action: "Withdraw 1".into()
             },
@@ -9969,7 +9969,7 @@ fn shared_deposit_all_sends_one_packet_for_a_full_nonstackable_load() {
         &world,
         None,
         "alice",
-        vec![script::shim::InteractReq::Deposit {
+        vec![script::interact::InteractReq::Deposit {
             name: "bOnEs".into(),
             id: None,
         }],
@@ -10060,7 +10060,7 @@ fn inspect_route_cross_zone_exemption_routes_through_the_named_barrier() {
         if let Some(name) = cross {
             value["cross"] = serde_json::json!([name]);
         }
-        let request: script::shim::InteractReq =
+        let request: script::interact::InteractReq =
             serde_json::from_value(value).expect("inspect request decodes");
         #[cfg(feature = "js")]
         {
@@ -10169,7 +10169,7 @@ fn accepted_open_booth_cancels_only_the_requesting_slot_walk() {
         ),
     ]);
 
-    let open = || script::shim::InteractReq::OpenBooth {
+    let open = || script::interact::InteractReq::OpenBooth {
         x: 3205,
         z: 3206,
         level: 0,
@@ -10244,7 +10244,7 @@ fn rejected_open_booth_does_not_cancel_the_requesting_slot_walk() {
         &world,
         None,
         "alice",
-        vec![script::shim::InteractReq::OpenBooth {
+        vec![script::interact::InteractReq::OpenBooth {
             x: 3205,
             z: 3206,
             level: 0,
@@ -10265,7 +10265,7 @@ fn dispatch_open_stand_booth_honors_name_and_operation_slot() {
     let mut snap = GameSnapshot::new();
     snap.rebuild(&c);
     let (navs, world) = empty_nav();
-    let request = |name: &str, stand_op| script::shim::InteractReq::OpenStand {
+    let request = |name: &str, stand_op| script::interact::InteractReq::OpenStand {
         x: 3205,
         z: 3206,
         level: 0,
@@ -11411,15 +11411,15 @@ export default class T extends LoopingBot {
     );
 }
 
-fn key_req(down: bool, key: &str) -> script::shim::InteractReq {
-    script::shim::InteractReq::Key {
+fn key_req(down: bool, key: &str) -> script::interact::InteractReq {
+    script::interact::InteractReq::Key {
         down,
         key: key.into(),
         code: key.into(),
     }
 }
 
-fn type_amount(chars: &str) -> Vec<script::shim::InteractReq> {
+fn type_amount(chars: &str) -> Vec<script::interact::InteractReq> {
     let mut reqs = Vec::new();
     for ch in chars.chars() {
         let key = ch.to_string();
@@ -11432,7 +11432,7 @@ fn type_amount(chars: &str) -> Vec<script::shim::InteractReq> {
 fn dispatch_keys(
     client: &mut Client,
     snapshot: &GameSnapshot,
-    reqs: Vec<script::shim::InteractReq>,
+    reqs: Vec<script::interact::InteractReq>,
 ) -> bool {
     let (navs, world) = empty_nav();
     dispatch_script_interact(
@@ -12614,15 +12614,20 @@ export default class T extends LoopingBot {
     let decoded = script_js::wire::decode_interact_batch(&bytes).expect("fb mouse batch");
     let old_down = decoded
         .iter()
-        .find(|req| matches!(req, script::shim::InteractReq::Mouse { down: true, .. }))
+        .find(|req| matches!(req, script::interact::InteractReq::Mouse { down: true, .. }))
         .cloned()
         .expect("produced down");
     let old_up = decoded
         .iter()
-        .find(|req| matches!(req, script::shim::InteractReq::Mouse { down: false, .. }))
+        .find(|req| {
+            matches!(
+                req,
+                script::interact::InteractReq::Mouse { down: false, .. }
+            )
+        })
         .cloned()
         .expect("produced up");
-    let script::shim::InteractReq::Mouse {
+    let script::interact::InteractReq::Mouse {
         down,
         x,
         y,
@@ -12645,7 +12650,7 @@ export default class T extends LoopingBot {
     inp.consume_native_frame(&mut c.shell);
     assert_eq!(c.shell.mouse_button, 1);
     assert_eq!(c.shell.mouse_click_x, 50);
-    let script::shim::InteractReq::Mouse {
+    let script::interact::InteractReq::Mouse {
         down,
         x,
         y,
@@ -12698,7 +12703,7 @@ export default class T extends LoopingBot {
     assert!(
         old_down.iter().any(|req| matches!(
             req,
-            script::shim::InteractReq::Mouse {
+            script::interact::InteractReq::Mouse {
                 down: true,
                 identity,
                 ..
@@ -12728,7 +12733,7 @@ export default class T extends LoopingBot {
     assert!(
         fresh_down.iter().any(|req| matches!(
             req,
-            script::shim::InteractReq::Mouse {
+            script::interact::InteractReq::Mouse {
                 down: true,
                 identity,
                 ..
@@ -12748,7 +12753,7 @@ export default class T extends LoopingBot {
     assert!(
         old_up.iter().any(|req| matches!(
             req,
-            script::shim::InteractReq::Mouse {
+            script::interact::InteractReq::Mouse {
                 down: false,
                 identity,
                 ..
@@ -12774,7 +12779,7 @@ export default class T extends LoopingBot {
     assert!(
         fresh_up.iter().any(|req| matches!(
             req,
-            script::shim::InteractReq::Mouse {
+            script::interact::InteractReq::Mouse {
                 down: false,
                 identity,
                 ..
@@ -13176,7 +13181,7 @@ fn dispatch_script_interact_sends_held_item_bury() {
             &world,
             None,
             "alice",
-            vec![script::shim::InteractReq::Held {
+            vec![script::interact::InteractReq::Held {
                 name: "Bones".into(),
                 action: "Bury".into(),
                 slot: None,
@@ -13199,13 +13204,13 @@ fn dispatch_script_interact_sends_held_item_bury() {
         None,
         "alice",
         vec![
-            script::shim::InteractReq::Held {
+            script::interact::InteractReq::Held {
                 name: "Bones".into(),
                 action: "Wear".into(),
                 slot: None,
                 target_item_id: None,
             },
-            script::shim::InteractReq::Held {
+            script::interact::InteractReq::Held {
                 name: "Lobster".into(),
                 action: "Bury".into(),
                 slot: None,
@@ -13230,7 +13235,7 @@ fn dispatch_held_revalidates_exact_id_and_slot_without_name_fallback() {
     }
     let names = api::obj_names::ObjNames::from_objs(&c.cache.objs);
     let (navs, world) = empty_nav();
-    let request = |target_item_id, slot| script::shim::InteractReq::Held {
+    let request = |target_item_id, slot| script::interact::InteractReq::Held {
         name: "Bones".into(),
         action: "Bury".into(),
         slot,
@@ -13346,7 +13351,7 @@ fn native_slot_exact_drops_write_five_distinct_held_packets_and_refuse_changed_s
         None,
         "alice",
         (0..5)
-            .map(|slot| script::shim::InteractReq::Held {
+            .map(|slot| script::interact::InteractReq::Held {
                 name: "Bones".into(),
                 action: "Drop".into(),
                 slot: Some(slot),
@@ -13380,7 +13385,7 @@ fn native_slot_exact_drops_write_five_distinct_held_packets_and_refuse_changed_s
             &world,
             None,
             "alice",
-            vec![script::shim::InteractReq::Held {
+            vec![script::interact::InteractReq::Held {
                 name: "Bones".into(),
                 action: "Drop".into(),
                 slot: Some(slot),
@@ -13394,8 +13399,8 @@ fn native_slot_exact_drops_write_five_distinct_held_packets_and_refuse_changed_s
     );
     c.out.random = Some(client::io::Isaac::new(&[1, 2, 3, 4]));
     let checkpoint = api::interact::Driver::packet_checkpoint(&c).unwrap();
-    let requests = std::iter::once(script::shim::InteractReq::CloseModal)
-        .chain((0..4).map(|slot| script::shim::InteractReq::Held {
+    let requests = std::iter::once(script::interact::InteractReq::CloseModal)
+        .chain((0..4).map(|slot| script::interact::InteractReq::Held {
             name: "Bones".into(),
             action: "Drop".into(),
             slot: Some(slot),
@@ -13489,10 +13494,10 @@ fn dispatch_script_interact_unequip_removes_the_worn_row() {
         None,
         "alice",
         vec![
-            script::shim::InteractReq::Unequip {
+            script::interact::InteractReq::Unequip {
                 name: "Bones".into()
             },
-            script::shim::InteractReq::Unequip {
+            script::interact::InteractReq::Unequip {
                 name: "Lobster".into()
             },
         ],
@@ -13512,7 +13517,7 @@ fn dispatch_script_interact_unequip_removes_the_worn_row() {
             &world,
             None,
             "alice",
-            vec![script::shim::InteractReq::Unequip {
+            vec![script::interact::InteractReq::Unequip {
                 name: "knife".into()
             }],
         ),
@@ -13568,7 +13573,7 @@ fn dispatch_use_on_honors_exact_inventory_identity_and_rejects_stale_slots() {
     );
     let (navs, world) = empty_nav();
     let request = |source_item_id, source_item_slot, target_item_id, target_item_slot| {
-        script::shim::InteractReq::UseOn {
+        script::interact::InteractReq::UseOn {
             name: "Willow shortbow".into(),
             kind: "inv".into(),
             target_name: Some("Bow string".into()),
@@ -13789,7 +13794,7 @@ fn dispatch_use_on_loc_honors_co_located_name_and_exact_id() {
                 &world,
                 None,
                 "alice",
-                vec![script::shim::InteractReq::UseOn {
+                vec![script::interact::InteractReq::UseOn {
                     name: "Chest key".into(),
                     kind: "loc".into(),
                     target_name: target_name.map(str::to_owned),
@@ -13840,7 +13845,7 @@ fn dispatch_use_on_loc_refuses_missing_or_conflicting_identity() {
             &world,
             None,
             "alice",
-            vec![script::shim::InteractReq::UseOn {
+            vec![script::interact::InteractReq::UseOn {
                 name: "Chest key".into(),
                 kind: "loc".into(),
                 target_name: target_name.map(str::to_owned),
@@ -13861,8 +13866,8 @@ fn dispatch_use_on_loc_refuses_missing_or_conflicting_identity() {
     }
 }
 
-fn loc_req(id: Option<i32>, action: &str) -> script::shim::InteractReq {
-    script::shim::InteractReq::Loc {
+fn loc_req(id: Option<i32>, action: &str) -> script::interact::InteractReq {
+    script::interact::InteractReq::Loc {
         x: 5,
         z: 6,
         level: 0,
@@ -13902,7 +13907,7 @@ fn native_loc_click_driver_trace_counts_move_and_operation_packets() {
     );
 }
 
-fn dispatch_loc(snap: &GameSnapshot, req: script::shim::InteractReq) -> GuardRec {
+fn dispatch_loc(snap: &GameSnapshot, req: script::interact::InteractReq) -> GuardRec {
     let (navs, world) = empty_nav();
     let mut rec = GuardRec::default();
     dispatch_script_interact(
@@ -14066,8 +14071,8 @@ fn inv_button_req(
     component: i32,
     operation: i32,
     bank_generation: u64,
-) -> script::shim::InteractReq {
-    script::shim::InteractReq::InvButton {
+) -> script::interact::InteractReq {
+    script::interact::InteractReq::InvButton {
         id,
         slot,
         component,
@@ -14076,7 +14081,7 @@ fn inv_button_req(
     }
 }
 
-fn dispatch_inv_button(snap: &GameSnapshot, req: script::shim::InteractReq) -> GuardRec {
+fn dispatch_inv_button(snap: &GameSnapshot, req: script::interact::InteractReq) -> GuardRec {
     let (navs, world) = empty_nav();
     let mut rec = GuardRec::default();
     dispatch_script_interact(
@@ -14654,7 +14659,7 @@ fn dispatch_script_interact_walk_to_uses_nearest_scene_packet_for_solid_target()
             &world,
             None,
             "alice",
-            vec![script::shim::InteractReq::WalkTo {
+            vec![script::interact::InteractReq::WalkTo {
                 x: 3205,
                 z: 3207,
                 level: 0,
@@ -14749,7 +14754,7 @@ fn dispatch_script_interact_walk_forwards_allow_teleports() {
         &world,
         None,
         "alice",
-        vec![script::shim::InteractReq::Walk {
+        vec![script::interact::InteractReq::Walk {
             x: 4,
             z: 4,
             level: 0,
@@ -14786,7 +14791,7 @@ fn dispatch_script_interact_walk_forwards_allow_teleports() {
         &world,
         None,
         "alice",
-        vec![script::shim::InteractReq::Walk {
+        vec![script::interact::InteractReq::Walk {
             x: 4,
             z: 4,
             level: 0,
@@ -14824,7 +14829,7 @@ fn queued_walk_keeps_the_state_of_the_frame_that_queued_it() {
     frame_b.quests.insert("Frame B".into());
     frame_b.inv.insert(995, 20);
     let walk_near = || {
-        vec![script::shim::InteractReq::WalkNear {
+        vec![script::interact::InteractReq::WalkNear {
             x: 10,
             z: 10,
             level: 0,
@@ -14982,7 +14987,7 @@ fn dispatch_script_interact_walk_honors_wilderness_and_bank_fetch_bits() {
         &world,
         None,
         "alice",
-        vec![script::shim::InteractReq::Walk {
+        vec![script::interact::InteractReq::Walk {
             x: dest.x,
             z: dest.z,
             level: dest.level,
@@ -15019,7 +15024,7 @@ fn dispatch_script_interact_walk_honors_wilderness_and_bank_fetch_bits() {
         &world,
         None,
         "alice",
-        vec![script::shim::InteractReq::Walk {
+        vec![script::interact::InteractReq::Walk {
             x: dest.x,
             z: dest.z,
             level: dest.level,
@@ -15169,7 +15174,7 @@ fn dispatch_v2_walk_near_forwards_plane_radius_and_request_id() {
         &world,
         None,
         "alice",
-        vec![script::shim::InteractReq::WalkNear {
+        vec![script::interact::InteractReq::WalkNear {
             x: dest.x,
             z: dest.z,
             level: dest.level,
@@ -15222,7 +15227,7 @@ fn dispatch_script_interact_held_first_match_only() {
         &world,
         None,
         "alice",
-        vec![script::shim::InteractReq::Held {
+        vec![script::interact::InteractReq::Held {
             name: "Bones".into(),
             action: "Bury".into(),
             slot: None,
@@ -15268,7 +15273,7 @@ fn dispatch_script_interact_held_first_match_only() {
         &world,
         None,
         "alice",
-        vec![script::shim::InteractReq::Held {
+        vec![script::interact::InteractReq::Held {
             name: "Bones".into(),
             action: "Bury".into(),
             slot: None,
@@ -15333,7 +15338,7 @@ fn dispatch_script_interact_sends_npc_pick() {
         &world,
         None,
         "alice",
-        vec![script::shim::InteractReq::Npc {
+        vec![script::interact::InteractReq::Npc {
             name: "Goblin".into(),
             action: "Pick".into(),
             index: None,
@@ -15401,7 +15406,7 @@ fn dispatch_script_interact_npc_index_beats_same_name() {
         &world,
         None,
         "alice",
-        vec![script::shim::InteractReq::Npc {
+        vec![script::interact::InteractReq::Npc {
             name: "Goblin".into(),
             action: "Pick".into(),
             index: Some(7),
@@ -18820,7 +18825,7 @@ fn native_trade_controls_reach_script_accept_through_snapshot() {
         let expected = if hidden {
             vec![]
         } else {
-            vec![script::shim::InteractReq::IfButton {
+            vec![script::interact::InteractReq::IfButton {
                 component_id: button,
             }]
         };
@@ -19259,8 +19264,8 @@ fn script_snapshot_fb_posts_collision_and_los_identity() {
     assert_ne!(flags.get(5 * 104 + 1) & CollisionFlag::V_W, 0);
     assert_eq!(flags.get(104 + 1), CollisionFlag::_OPEN);
 
-    script_js::observed::on_reset();
-    script_js::observed::apply(&view);
+    script_js::scene::observed::on_reset();
+    script_js::scene::observed::apply(&view);
     let here = api::snapshot::WorldTile {
         x: 3201,
         z: 3201,
@@ -19277,20 +19282,24 @@ fn script_snapshot_fb_posts_collision_and_los_identity() {
         level: 0,
     };
     assert_eq!(
-        script_js::line_of_sight::query_v2(here, open_to, Some(1)),
+        script_js::scene::line_of_sight::query_v2(here, open_to, Some(1)),
         Ok(true)
     );
     assert_eq!(
-        script_js::line_of_sight::query_v2(here, blocked_to, Some(1)),
+        script_js::scene::line_of_sight::query_v2(here, blocked_to, Some(1)),
         Ok(false)
     );
-    assert!(script_js::line_of_sight::query_v1(here, open_to, None));
-    assert!(!script_js::line_of_sight::query_v1(here, blocked_to, None));
+    assert!(script_js::scene::line_of_sight::query_v1(
+        here, open_to, None
+    ));
+    assert!(!script_js::scene::line_of_sight::query_v1(
+        here, blocked_to, None
+    ));
     assert_eq!(
-        script_js::line_of_sight::raw_flag_at(104 + 1),
+        script_js::scene::line_of_sight::raw_flag_at(104 + 1),
         Some(CollisionFlag::_OPEN)
     );
-    assert_eq!(script_js::line_of_sight::raw_flag_at(-1), None);
+    assert_eq!(script_js::scene::line_of_sight::raw_flag_at(-1), None);
 
     let iso = script_js::LoadIsolate::spawn(
         r#"
@@ -21131,7 +21140,7 @@ fn force_watchdog_sampling(slot: &mut script::SlotScript, here: (i32, i32, i32))
         &[],
         false,
         true,
-        &[script::shim::InteractReq::NoteProgress],
+        &[script::interact::InteractReq::NoteProgress],
     );
     let until = t + script::watchdog::WEDGE;
     let mut packet_tick = t;
@@ -21160,7 +21169,7 @@ fn force_watchdog_recovering(slot: &mut script::SlotScript, here: (i32, i32, i32
             &[],
             false,
             true,
-            &[script::shim::InteractReq::RecoveryAnchor {
+            &[script::interact::InteractReq::RecoveryAnchor {
                 x: 3200,
                 z: 3200,
                 level: 0
@@ -22498,7 +22507,7 @@ impl script::native::NativeMachine for SnapshotPumpMachine {
             .snapshot()
             .bank_session()
             .is_some_and(|bank| bank.value.open);
-        let emitted = cx.emit(script::shim::InteractReq::CloseModal);
+        let emitted = cx.emit(script::interact::InteractReq::CloseModal);
         self.0
             .lock()
             .unwrap()
@@ -22966,7 +22975,7 @@ impl ReconnectRig {
     }
 
     /// Dispatch `reqs` as the slot's script requests this frame.
-    fn dispatch(&mut self, reqs: Vec<script::shim::InteractReq>) {
+    fn dispatch(&mut self, reqs: Vec<script::interact::InteractReq>) {
         dispatch_script_interact(
             &mut self.client,
             &self.snap,
@@ -23111,7 +23120,7 @@ fn arm_manual_config_recovery(rig: &mut ReconnectRig) {
         &[],
         false,
         true,
-        &[script::shim::InteractReq::RecoveryAnchor {
+        &[script::interact::InteractReq::RecoveryAnchor {
             x: 40,
             z: 40,
             level: 0,
@@ -23224,7 +23233,7 @@ fn manual_config_off_recovery_takeover_restamps_without_wedge_restart() {
         &[],
         false,
         true,
-        &[script::shim::InteractReq::NoteProgress],
+        &[script::interact::InteractReq::NoteProgress],
     );
     assert!(manual_resume_click(&rig, 2));
     {
@@ -23242,7 +23251,7 @@ fn manual_config_off_recovery_takeover_restamps_without_wedge_restart() {
                 &[],
                 false,
                 true,
-                &[script::shim::InteractReq::LoopSettled],
+                &[script::interact::InteractReq::LoopSettled],
             ),
             script::WatchdogAction::None,
             "a non-moving human click gives gameplay a fresh wedge budget"
@@ -23519,7 +23528,7 @@ fn a_rapid_pause_resume_pause_sends_the_walk_once_more() {
     let (to, radius, allow_teleports, allow_wilderness, allow_bank_fetch, _zones) =
         requested.expect("the carry re-armed the walk");
     let compat_tile_intent = rig.navs.lock().unwrap()["alice"].route_compat_tile_intent;
-    rig.dispatch(vec![script::shim::InteractReq::WalkNear {
+    rig.dispatch(vec![script::interact::InteractReq::WalkNear {
         x: to.x,
         z: to.z,
         level: to.level,
@@ -24088,8 +24097,8 @@ fn a_scene_load_hold_keeps_the_script_walk_abort_and_drops_its_gameplay() {
     let (request_id, _) = rig.armed();
     assert_ne!(request_id, 0, "the script walk is armed");
     rig.slot().lock().unwrap().restore_interacts(vec![
-        script::shim::InteractReq::AbortWalk { request_id },
-        script::shim::InteractReq::Walk {
+        script::interact::InteractReq::AbortWalk { request_id },
+        script::interact::InteractReq::Walk {
             x: 50,
             z: 50,
             level: 0,
@@ -24294,7 +24303,7 @@ export default class T extends LoopingBot {
 #[cfg(feature = "js")]
 #[test]
 fn a_reconnect_keeps_the_surviving_isolate_in_its_channel_party() {
-    use script::shim::InteractReq;
+    use script::interact::InteractReq;
     use script_channels::{BrokerWorld, Delivery};
 
     let mut rig =
@@ -25620,7 +25629,7 @@ export default class T extends LoopingBot {
 
 #[test]
 fn identical_script_paint_skips_status_clone() {
-    use script::shim::ScriptPaint;
+    use script::paint::ScriptPaint;
 
     let frame = ScriptPaint {
         title: Some("probe".into()),
@@ -25667,7 +25676,7 @@ fn identical_script_paint_skips_status_clone() {
         title: Some("probe".into()),
         accent: None,
         lines: vec!["different".into()],
-        buttons: vec![script::shim::ScriptPaintButton {
+        buttons: vec![script::paint::ScriptPaintButton {
             id: "gobank".into(),
             label: "Resume".into(),
         }],
@@ -26647,7 +26656,7 @@ impl script::native::Script for WalkProbe {
         ctx: &mut script::native::NativeTick<'_>,
     ) -> Result<script::native::ScriptFlow, script::native::ScriptFailure> {
         let (x, z, level) = *self.0.lock().expect("walk target");
-        ctx.queue_test_interaction(script::shim::InteractReq::Walk {
+        ctx.queue_test_interaction(script::interact::InteractReq::Walk {
             x,
             z,
             level,
@@ -26980,7 +26989,7 @@ fn raw_bank_walk_reaches_resolved_stand_before_native_v2_opens_booth() {
     let requests = iso.drain_interacts();
     assert_eq!(
         requests,
-        vec![script::shim::InteractReq::WalkNearestBank],
+        vec![script::interact::InteractReq::WalkNearestBank],
         "native v2 must select the raw bank-walk path from the initial scene",
     );
     let out_before = c.out.pos;
@@ -27071,7 +27080,7 @@ fn raw_bank_walk_reaches_resolved_stand_before_native_v2_opens_booth() {
     assert!(
         matches!(
             requests.as_slice(),
-            [script::shim::InteractReq::OpenStand {
+            [script::interact::InteractReq::OpenStand {
                 x,
                 z,
                 level,
@@ -27232,7 +27241,7 @@ export function tick(api) {
     let requests = iso.drain_interacts();
     assert_eq!(
         requests,
-        vec![script::shim::InteractReq::Walk {
+        vec![script::interact::InteractReq::Walk {
             x: stand.x,
             z: stand.z,
             level: stand.level,
@@ -27317,7 +27326,7 @@ export function tick(api) {
         &world_opt,
         Some(WorldState::empty()),
         "native-v2",
-        vec![script::shim::InteractReq::OpenStand {
+        vec![script::interact::InteractReq::OpenStand {
             x: booth.x,
             z: booth.z,
             level: booth.level,
@@ -27341,7 +27350,7 @@ export function tick(api) {
     assert!(
         matches!(
             requests.as_slice(),
-            [script::shim::InteractReq::OpenStand {
+            [script::interact::InteractReq::OpenStand {
                 x,
                 z,
                 level,
@@ -27920,7 +27929,7 @@ export default class T extends LoopingBot {{
         assert!(
             matches!(
                 requests.as_slice(),
-                [script::shim::InteractReq::WalkNear {
+                [script::interact::InteractReq::WalkNear {
                     x: 10,
                     z: 10,
                     level: 0,
@@ -28690,8 +28699,8 @@ fn walkable_loc_arrival_uses_footprint_distance_but_plain_tiles_keep_anchor_radi
 #[test]
 fn gatherer_starts_chopping_from_a_valid_far_footprint_perimeter() {
     use api::snapshot::{ItemActionFamily, ItemContainer, ItemView, StatView};
+    use script::interact::InteractReq;
     use script::native::HostEffect;
-    use script::shim::InteractReq;
 
     let target = WorldTile {
         x: 3085,
@@ -30735,7 +30744,7 @@ fn abort_walk_request_stops_only_the_machines_own_follow() {
             &world,
             None,
             "alice",
-            vec![script::shim::InteractReq::AbortWalk { request_id }],
+            vec![script::interact::InteractReq::AbortWalk { request_id }],
         ));
         assert_eq!(c.out.pos, out_before, "abort-walk writes no packet");
     };
@@ -31001,20 +31010,20 @@ mod host_batch_tests {
     }
 
     struct BatchArgs {
-        rows: [Option<script::shim::InteractReq>; 5],
+        rows: [Option<script::interact::InteractReq>; 5],
         order: AdmissionOrder,
-        ordinary: Option<script::shim::InteractReq>,
-        followup: Option<[Option<script::shim::InteractReq>; 5]>,
+        ordinary: Option<script::interact::InteractReq>,
+        followup: Option<[Option<script::interact::InteractReq>; 5]>,
     }
 
-    fn prefix_len(rows: &[Option<script::shim::InteractReq>; 5]) -> usize {
+    fn prefix_len(rows: &[Option<script::interact::InteractReq>; 5]) -> usize {
         rows.iter().take_while(|row| row.is_some()).count()
     }
 
     fn rows(
-        requests: impl IntoIterator<Item = script::shim::InteractReq>,
-    ) -> [Option<script::shim::InteractReq>; 5] {
-        let mut rows: [Option<script::shim::InteractReq>; 5] = std::array::from_fn(|_| None);
+        requests: impl IntoIterator<Item = script::interact::InteractReq>,
+    ) -> [Option<script::interact::InteractReq>; 5] {
+        let mut rows: [Option<script::interact::InteractReq>; 5] = std::array::from_fn(|_| None);
         let mut requests = requests.into_iter();
         for row in &mut rows {
             *row = requests.next();
@@ -31037,7 +31046,7 @@ mod host_batch_tests {
         batch_receipts: Option<Vec<bool>>,
         ordinary: Option<Result<u64, ActionError>>,
         ordinary_receipt: Option<bool>,
-        followup_rows: Option<[Option<script::shim::InteractReq>; 5]>,
+        followup_rows: Option<[Option<script::interact::InteractReq>; 5]>,
         followup: Option<Result<u64, ActionError>>,
         followup_id: Option<u64>,
         followup_len: usize,
@@ -31127,7 +31136,7 @@ mod host_batch_tests {
 
     struct BatchScript {
         args: Option<BatchArgs>,
-        direct: Option<script::shim::InteractReq>,
+        direct: Option<script::interact::InteractReq>,
         handle: Option<ActionHandle<BatchMachine>>,
         report: Arc<Mutex<Option<Result<BatchReport, ActionError>>>>,
     }
@@ -31173,11 +31182,11 @@ mod host_batch_tests {
     }
 
     fn rig(
-        batch: [Option<script::shim::InteractReq>; 5],
+        batch: [Option<script::interact::InteractReq>; 5],
         order: AdmissionOrder,
-        ordinary: Option<script::shim::InteractReq>,
-        followup: Option<[Option<script::shim::InteractReq>; 5]>,
-        direct: Option<script::shim::InteractReq>,
+        ordinary: Option<script::interact::InteractReq>,
+        followup: Option<[Option<script::interact::InteractReq>; 5]>,
+        direct: Option<script::interact::InteractReq>,
         world: Option<Arc<NavWorld>>,
     ) -> BatchRig {
         let scripts: ScriptWall = Arc::new(Mutex::new(HashMap::new()));
@@ -31362,14 +31371,14 @@ mod host_batch_tests {
     fn refused_batch_fails_stops_suffix_and_releases_reservations_without_blocking_direct_work() {
         let mut rig = rig(
             rows([
-                script::shim::InteractReq::IfButton { component_id: 3420 },
-                script::shim::InteractReq::Held {
+                script::interact::InteractReq::IfButton { component_id: 3420 },
+                script::interact::InteractReq::Held {
                     name: "missing food".into(),
                     action: "Eat".into(),
                     slot: Some(0),
                     target_item_id: None,
                 },
-                script::shim::InteractReq::Npc {
+                script::interact::InteractReq::Npc {
                     name: "Goblin".into(),
                     action: "Attack".into(),
                     index: Some(0),
@@ -31377,10 +31386,10 @@ mod host_batch_tests {
             ]),
             AdmissionOrder::BatchThenOrdinary,
             None,
-            Some(rows([script::shim::InteractReq::IfButton {
+            Some(rows([script::interact::InteractReq::IfButton {
                 component_id: 3422,
             }])),
-            Some(script::shim::InteractReq::IfButton { component_id: 3421 }),
+            Some(script::interact::InteractReq::IfButton { component_id: 3421 }),
             None,
         );
 
@@ -31422,9 +31431,9 @@ mod host_batch_tests {
         ] {
             let world = Arc::new(open_world(40, 1));
             let mut rig = rig(
-                rows([script::shim::InteractReq::IfButton { component_id: 3420 }]),
+                rows([script::interact::InteractReq::IfButton { component_id: 3420 }]),
                 order,
-                Some(script::shim::InteractReq::IfButton { component_id: 3421 }),
+                Some(script::interact::InteractReq::IfButton { component_id: 3421 }),
                 None,
                 None,
                 Some(world),
@@ -31477,8 +31486,8 @@ mod host_batch_tests {
     fn host_batch_preserves_builder_component_order() {
         let mut rig = rig(
             rows([
-                script::shim::InteractReq::IfButton { component_id: 3421 },
-                script::shim::InteractReq::IfButton { component_id: 3420 },
+                script::interact::InteractReq::IfButton { component_id: 3421 },
+                script::interact::InteractReq::IfButton { component_id: 3420 },
             ]),
             AdmissionOrder::BatchThenOrdinary,
             None,
@@ -31500,8 +31509,8 @@ mod host_batch_tests {
     fn terminal_batch_freezes_only_its_player_observation_key() {
         let mut rig = rig(
             rows([
-                script::shim::InteractReq::IfButton { component_id: 3420 },
-                script::shim::InteractReq::Npc {
+                script::interact::InteractReq::IfButton { component_id: 3420 },
+                script::interact::InteractReq::Npc {
                     name: "Goblin".into(),
                     action: "Attack".into(),
                     index: Some(0),
@@ -31568,7 +31577,7 @@ mod host_batch_tests {
     #[test]
     fn guardian_and_recovery_holds_dispatch_no_native_batch() {
         let mut guardian = rig(
-            rows([script::shim::InteractReq::IfButton { component_id: 3420 }]),
+            rows([script::interact::InteractReq::IfButton { component_id: 3420 }]),
             AdmissionOrder::BatchThenOrdinary,
             None,
             None,
@@ -31580,7 +31589,7 @@ mod host_batch_tests {
         assert!(guardian.driver.if_button_components.is_empty());
 
         let mut recovering = rig(
-            rows([script::shim::InteractReq::IfButton { component_id: 3420 }]),
+            rows([script::interact::InteractReq::IfButton { component_id: 3420 }]),
             AdmissionOrder::BatchThenOrdinary,
             None,
             None,
@@ -31598,7 +31607,7 @@ mod host_batch_tests {
                 &[],
                 false,
                 true,
-                &[script::shim::InteractReq::NoteProgress],
+                &[script::interact::InteractReq::NoteProgress],
             );
             let until = now + script::watchdog::WEDGE;
             let mut packet_tick = now;
@@ -31623,7 +31632,7 @@ mod host_batch_tests {
     #[test]
     fn changed_work_epoch_revokes_queued_batch_before_host_dispatch() {
         let mut rig = rig(
-            rows([script::shim::InteractReq::IfButton { component_id: 3420 }]),
+            rows([script::interact::InteractReq::IfButton { component_id: 3420 }]),
             AdmissionOrder::BatchThenOrdinary,
             None,
             None,
@@ -32812,7 +32821,7 @@ export default class T extends LoopingBot {
 #[cfg(feature = "js")]
 mod ground_selected_identity_tests {
     use super::*;
-    use script::shim::InteractReq;
+    use script::interact::InteractReq;
     use {script_js::wire::decode_interact_batch, script_js::wire::encode_interact_batch};
 
     fn fixture(ids: &[i32]) -> (GameSnapshot, api::obj_names::ObjNames) {

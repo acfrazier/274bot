@@ -184,7 +184,10 @@ fn test_library(dir: &std::path::Path) -> JsLibrary {
 // a JSON string — a test posting JSON would smuggle the forbidden parse
 // path back in. These helpers build the blob through the same encoder the
 // host uses (`script_js::wire::encode_snapshot`).
-fn post_snapshot_input(iso: &LoadIsolate, input: &script_js::wire::SnapshotInput<'_>) {
+fn post_snapshot_input(
+    iso: &LoadIsolate,
+    input: &script::native::snapshot_source::SnapshotInput<'_>,
+) {
     iso.post_snapshot(script_js::wire::encode_snapshot(input));
 }
 
@@ -197,8 +200,8 @@ fn is_throw_shaped_log(line: &str) -> bool {
         || (line.starts_with("tick ") && line.contains(':'))
 }
 
-fn nc<'a>(name: Option<&'a str>, count: i32) -> script_js::wire::ItemRowInput<'a> {
-    script_js::wire::ItemRowInput::nc(name, count)
+fn nc<'a>(name: Option<&'a str>, count: i32) -> script::native::snapshot_source::ItemRowInput<'a> {
+    script::native::snapshot_source::ItemRowInput::nc(name, count)
 }
 
 fn item_row<'a>(
@@ -209,8 +212,8 @@ fn item_row<'a>(
     noted: bool,
     cert: i32,
     component_id: i32,
-) -> script_js::wire::ItemRowInput<'a> {
-    script_js::wire::ItemRowInput {
+) -> script::native::snapshot_source::ItemRowInput<'a> {
+    script::native::snapshot_source::ItemRowInput {
         name,
         count,
         id,
@@ -233,8 +236,8 @@ fn side_row<'a>(
     count: i32,
     ops: &'a [String],
     slot: i32,
-) -> script_js::wire::ItemRowInput<'a> {
-    script_js::wire::ItemRowInput {
+) -> script::native::snapshot_source::ItemRowInput<'a> {
+    script::native::snapshot_source::ItemRowInput {
         slot,
         ..item_row(id, name, count, ops, false, -1, SIDE_GRID)
     }
@@ -244,8 +247,8 @@ fn pack_row<'a>(
     name: Option<&'a str>,
     count: i32,
     slot: i32,
-) -> script_js::wire::ItemRowInput<'a> {
-    script_js::wire::ItemRowInput {
+) -> script::native::snapshot_source::ItemRowInput<'a> {
+    script::native::snapshot_source::ItemRowInput {
         slot,
         ..item_row(id, name, count, &[], false, -1, 0)
     }
@@ -265,8 +268,8 @@ fn deposit_ops() -> Vec<String> {
 }
 
 /// The empty fail-closed snapshot; tests override the fields they post.
-fn base_snapshot<'a>() -> script_js::wire::SnapshotInput<'a> {
-    script_js::wire::SnapshotInput {
+fn base_snapshot<'a>() -> script::native::snapshot_source::SnapshotInput<'a> {
+    script::native::snapshot_source::SnapshotInput {
         tick: 1,
         here: None,
         ingame: true,
@@ -331,7 +334,7 @@ fn base_snapshot<'a>() -> script_js::wire::SnapshotInput<'a> {
         trade_decline_id: -1,
         shop_open: false,
         shop_stock: &[],
-        reach: script_js::wire::ReachViewInput::UNAVAILABLE,
+        reach: script::native::snapshot_source::ReachViewInput::UNAVAILABLE,
         attacked_by_player: false,
         self_target_kind: 0,
         self_target_index: -1,
@@ -355,7 +358,9 @@ fn empty_named_banks() -> std::sync::Arc<api::named_banks::NamedBankFacts> {
     std::sync::Arc::new(api::named_banks::NamedBankFacts::empty())
 }
 
-fn native_loc_view(row: &script_js::wire::SceneEntityInput<'_>) -> api::snapshot::LocView {
+fn native_loc_view(
+    row: &script::native::snapshot_source::SceneEntityInput<'_>,
+) -> api::snapshot::LocView {
     api::snapshot::LocView {
         typecode: 0,
         info: 0,
@@ -388,7 +393,7 @@ fn native_loc_view(row: &script_js::wire::SceneEntityInput<'_>) -> api::snapshot
 
 fn update_native_bank_snapshot(
     snapshot: &mut api::snapshot::GameSnapshot,
-    input: &script_js::wire::SnapshotInput<'_>,
+    input: &script::native::snapshot_source::SnapshotInput<'_>,
     tick: u64,
     snapshot_generation: i64,
     side_root: i32,
@@ -399,7 +404,7 @@ fn update_native_bank_snapshot(
     bank_slot::update_native_snapshot(
         snapshot,
         input,
-        script_js::wire::NativeFactsInput {
+        script::native::snapshot_source::NativeFactsInput {
             bank_snapshot_generation: Some(snapshot_generation),
             side_modal_id: Some(side_root),
             ..Default::default()
@@ -470,7 +475,7 @@ fn update_native_bank_snapshot(
 
 fn tick_bank_slot_with_component(
     slot: &mut bank_slot::BankSlot,
-    input: &mut script_js::wire::SnapshotInput<'_>,
+    input: &mut script::native::snapshot_source::SnapshotInput<'_>,
     tick: u64,
     snapshot_generation: i64,
     side_root: i32,
@@ -489,7 +494,7 @@ fn tick_bank_slot_with_component(
     slot.tick(
         tick,
         input,
-        script_js::wire::NativeFactsInput {
+        script::native::snapshot_source::NativeFactsInput {
             bank_snapshot_generation: Some(snapshot_generation),
             side_modal_id: Some(side_root),
             ..Default::default()
@@ -500,7 +505,7 @@ fn tick_bank_slot_with_component(
 
 fn tick_bank_slot(
     slot: &mut bank_slot::BankSlot,
-    input: &mut script_js::wire::SnapshotInput<'_>,
+    input: &mut script::native::snapshot_source::SnapshotInput<'_>,
     tick: u64,
     snapshot_generation: i64,
     side_root: i32,
@@ -522,7 +527,7 @@ fn tick_bank_slot(
     );
 }
 
-fn bank_interaction(action: &script::native::HostAction) -> &script::shim::InteractReq {
+fn bank_interaction(action: &script::native::HostAction) -> &script::interact::InteractReq {
     let script::native::HostEffect::Interaction(request) = &action.effect else {
         panic!("expected a native bank interaction");
     };
@@ -581,9 +586,9 @@ fn accept_bank_walk(
 /// An in-game, loaded scene: a tile, scene state 2 and every used stat
 /// posted — the state in which a compat card may paint (rs2b0t
 /// `ScriptRunner.paintBot`).
-fn ready_snapshot<'a>() -> script_js::wire::SnapshotInput<'a> {
-    script_js::wire::SnapshotInput {
-        here: Some(script_js::wire::TileInput {
+fn ready_snapshot<'a>() -> script::native::snapshot_source::SnapshotInput<'a> {
+    script::native::snapshot_source::SnapshotInput {
+        here: Some(script::native::snapshot_source::TileInput {
             x: 3222,
             z: 3222,
             level: 0,
@@ -599,8 +604,8 @@ fn nearest_booth_input<'a>(
     z: i32,
     level: i32,
     name: &'a str,
-) -> script_js::wire::NearestBoothInput<'a> {
-    script_js::wire::NearestBoothInput {
+) -> script::native::snapshot_source::NearestBoothInput<'a> {
+    script::native::snapshot_source::NearestBoothInput {
         x,
         z,
         level,
@@ -1891,7 +1896,7 @@ export default class T extends LoopingBot {
 }
 "#;
     let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![]).unwrap();
-    let lines = [script_js::wire::ChatLineInput {
+    let lines = [script::native::snapshot_source::ChatLineInput {
         seq: 11,
         text: "wishes to trade with you.",
         type_: 4,
@@ -1911,7 +1916,7 @@ export default class T extends LoopingBot {
     );
 
     // Same body, new native sequence is a new event; same sequence is not.
-    let repeat = [script_js::wire::ChatLineInput {
+    let repeat = [script::native::snapshot_source::ChatLineInput {
         seq: 12,
         text: "wishes to trade with you.",
         type_: 4,
@@ -1943,7 +1948,7 @@ export default class T extends LoopingBot {
 }
 "#;
     let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![]).unwrap();
-    let lines = [script_js::wire::ChatLineInput {
+    let lines = [script::native::snapshot_source::ChatLineInput {
         seq: 7,
         text: "retained",
         type_: 0,
@@ -2337,13 +2342,13 @@ fn malformed_interact_rows_are_logged_not_dropped_silently() {
     assert!(
         matches!(
             iso.drain_interacts().as_slice(),
-            [script::shim::InteractReq::Mouse { down: true, .. }]
+            [script::interact::InteractReq::Mouse { down: true, .. }]
         ),
         "the valid sibling is forwarded"
     );
     assert_eq!(
         iso.drain_lifecycle(),
-        vec![script::shim::InteractReq::WaitEnqueued],
+        vec![script::interact::InteractReq::WaitEnqueued],
         "the wait facts survive"
     );
     let logs = iso.drain_logs();
@@ -2642,17 +2647,17 @@ export default class T extends LoopingBot {
     let iso =
         LoadIsolate::spawn_with_game_data(src.to_string(), LoadShape::CompatClass, vec![], data)
             .unwrap();
-    let magic = |xp| script_js::wire::StatInput {
+    let magic = |xp| script::native::snapshot_source::StatInput {
         index: 6,
         name: "magic",
         xp,
         base: 50,
         effective: 50,
     };
-    let button = |id| script::shim::InteractReq::IfButton { component_id: id };
+    let button = |id| script::interact::InteractReq::IfButton { component_id: id };
     let start_stats = [magic(1000)];
     let mut snap = base_snapshot();
-    snap.here = Some(script_js::wire::TileInput {
+    snap.here = Some(script::native::snapshot_source::TileInput {
         x: 3222,
         z: 3222,
         level: 0,
@@ -2677,7 +2682,7 @@ export default class T extends LoopingBot {
 
     let landed = [magic(1480)];
     snap.tick = 2;
-    snap.here = Some(script_js::wire::TileInput {
+    snap.here = Some(script::native::snapshot_source::TileInput {
         x: 2965,
         z: 3379,
         level: 0,
@@ -2730,7 +2735,7 @@ export default class T extends LoopingBot {
     let value = iso
         .probe("__rs2b0t_host.paint")
         .expect("paint record readable");
-    let paint: script::shim::ScriptPaint =
+    let paint: script::paint::ScriptPaint =
         serde_json::from_value(value).expect("decodes as ScriptPaint");
     assert_eq!(paint.title.as_deref(), Some("BoneBurier — digging"));
     assert_eq!(paint.accent.as_deref(), Some("#f3e6a2"));
@@ -2855,10 +2860,10 @@ export default class T extends LoopingBot {
     // An empty frame (the host stamps its own generation on receipt).
     let blank = |iso: &LoadIsolate| {
         iso.paint().is_some_and(|p| {
-            script::shim::ScriptPaint {
+            script::paint::ScriptPaint {
                 generation: 0,
                 ..(*p).clone()
-            } == script::shim::ScriptPaint::default()
+            } == script::paint::ScriptPaint::default()
         })
     };
 
@@ -2872,7 +2877,7 @@ export default class T extends LoopingBot {
     // onStart completes, but the scene is the live pre-stats-load state.
     let loading: Vec<_> = common::FRESH_STATS
         .iter()
-        .map(|row| script_js::wire::StatInput {
+        .map(|row| script::native::snapshot_source::StatInput {
             xp: 0,
             base: 0,
             effective: 0,
@@ -2960,7 +2965,7 @@ export default class T extends LoopingBot {
 "#;
     let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![]).unwrap();
     let mut snap = base_snapshot();
-    snap.here = Some(script_js::wire::TileInput {
+    snap.here = Some(script::native::snapshot_source::TileInput {
         x: 3508,
         z: 9493,
         level: 0,
@@ -2995,7 +3000,7 @@ export default class T extends LoopingBot {
 "#;
     let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![]).unwrap();
     let actions = ["Use".to_string()];
-    let first_locs = [script_js::wire::SceneEntityInput {
+    let first_locs = [script::native::snapshot_source::SceneEntityInput {
         index: 4,
         id: 2783,
         name: Some("Fire"),
@@ -3168,7 +3173,7 @@ export default class T extends LoopingBot {
 "#;
     let mut slot = new_bank_slot(src, LoadShape::CompatClass, empty_named_banks());
     let actions = ["Use-quickly".to_string()];
-    let locs = [script_js::wire::SceneEntityInput {
+    let locs = [script::native::snapshot_source::SceneEntityInput {
         index: 0,
         id: 2213,
         name: Some("Bank booth"),
@@ -3193,7 +3198,7 @@ export default class T extends LoopingBot {
         angle: 0,
     }];
     let mut input = ready_snapshot();
-    input.here = Some(script_js::wire::TileInput {
+    input.here = Some(script::native::snapshot_source::TileInput {
         x: 100,
         z: 100,
         level: 0,
@@ -3206,7 +3211,7 @@ export default class T extends LoopingBot {
     assert_eq!(actions.len(), 1);
     assert!(matches!(
         bank_interaction(&actions[0]),
-        script::shim::InteractReq::OpenBooth { id: 2213, .. }
+        script::interact::InteractReq::OpenBooth { id: 2213, .. }
     ));
     accept_bank_interaction(&mut slot, &actions[0], 1, true);
     assert_eq!(
@@ -3218,7 +3223,7 @@ export default class T extends LoopingBot {
     let listeners = slot.probe("globalThis.__listeners").unwrap();
 
     input.run_energy = 1;
-    let closed_native = script_js::wire::NativeFactsInput {
+    let closed_native = script::native::snapshot_source::NativeFactsInput {
         bank_snapshot_generation: Some(-1),
         side_modal_id: Some(-1),
         ..Default::default()
@@ -3242,7 +3247,7 @@ export default class T extends LoopingBot {
     slot.snapshot_change(
         1,
         &input,
-        script_js::wire::NativeFactsInput {
+        script::native::snapshot_source::NativeFactsInput {
             bank_snapshot_generation: Some(1),
             side_modal_id: Some(SIDE_ROOT),
             ..Default::default()
@@ -3317,7 +3322,7 @@ export default class T extends LoopingBot {
     input.bank_open = true;
     input.bank_generation = 1;
     update_native_bank_snapshot(&mut snapshot, &input, 1, -1, -1, BANK_GAME_COMPONENT);
-    let native = script_js::wire::NativeFactsInput {
+    let native = script::native::snapshot_source::NativeFactsInput {
         bank_snapshot_generation: Some(-1),
         side_modal_id: Some(-1),
         ..Default::default()
@@ -3822,7 +3827,7 @@ export default class T extends LoopingBot {
     let _ = iso.probe("true");
     assert_eq!(
         iso.drain_lifecycle(),
-        vec![script::shim::InteractReq::LoopSettled],
+        vec![script::interact::InteractReq::LoopSettled],
         "fulfilled loop under hold is scheduler progress"
     );
     assert!(
@@ -3882,7 +3887,7 @@ export default class T extends LoopingBot {
 "#;
     let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![]).unwrap();
     let mut snap = base_snapshot();
-    snap.stats = &[script_js::wire::StatInput {
+    snap.stats = &[script::native::snapshot_source::StatInput {
         index: 3,
         name: "hitpoints",
         xp: 1500,
@@ -4117,7 +4122,7 @@ export default class T extends LoopingBot {
     let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![]).unwrap();
     let mut snap = base_snapshot();
     snap.tick = 1;
-    snap.here = Some(script_js::wire::TileInput {
+    snap.here = Some(script::native::snapshot_source::TileInput {
         x: 3200,
         z: 3200,
         level: 0,
@@ -4125,7 +4130,7 @@ export default class T extends LoopingBot {
     snap.ingame = true;
     let inv = [nc(Some("Bones"), 2)];
     snap.inv = &inv;
-    snap.stats = &[script_js::wire::StatInput {
+    snap.stats = &[script::native::snapshot_source::StatInput {
         index: 5,
         name: "prayer",
         xp: 1300,
@@ -4491,7 +4496,7 @@ export default class T extends LoopingBot {
     let reqs = iso.drain_interacts();
     assert_eq!(
         reqs,
-        vec![script::shim::InteractReq::Held {
+        vec![script::interact::InteractReq::Held {
             name: "Bones".into(),
             action: "Bury".into(),
             slot: None,
@@ -4573,7 +4578,7 @@ export default class T extends LoopingBot {
     let mut snap = base_snapshot();
     let inv = [nc(Some("Ordinary inventory"), 1)];
     let ops = ["Deposit-1".to_string()];
-    let side = [script_js::wire::ItemRowInput {
+    let side = [script::native::snapshot_source::ItemRowInput {
         slot: 2,
         ..item_row(1741, Some("Leather"), 3, &ops, false, -1, 2006)
     }];
@@ -4618,7 +4623,7 @@ export default class T extends LoopingBot {
     let mut snap = base_snapshot();
     snap.chat_continue = true;
     snap.bank_open = true;
-    let opts = [script_js::wire::ChatOptionInput {
+    let opts = [script::native::snapshot_source::ChatOptionInput {
         text: "Yes",
         com_id: 2468,
     }];
@@ -4657,11 +4662,11 @@ export default class T extends LoopingBot {
 "#;
     let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![]).unwrap();
     let mut snap = base_snapshot();
-    let buttons = [script_js::wire::MakeButtonInput {
+    let buttons = [script::native::snapshot_source::MakeButtonInput {
         qty: -1,
         com_id: 42,
     }];
-    let products = [script_js::wire::MakeProductInput {
+    let products = [script::native::snapshot_source::MakeProductInput {
         object_id: 2,
         name: "Cannonball",
         buttons: &buttons,
@@ -4673,20 +4678,22 @@ export default class T extends LoopingBot {
     let reqs = iso.drain_interacts();
     assert_eq!(
         reqs.iter()
-            .filter(|r| matches!(r, script::shim::InteractReq::IfButton { .. }))
+            .filter(|r| matches!(r, script::interact::InteractReq::IfButton { .. }))
             .count(),
         1,
         "makeX must not invent comId+1: {reqs:?}"
     );
     assert!(
-        reqs.iter()
-            .any(|r| matches!(r, script::shim::InteractReq::IfButton { component_id: 42 })),
+        reqs.iter().any(|r| matches!(
+            r,
+            script::interact::InteractReq::IfButton { component_id: 42 }
+        )),
         "makeX clicks the posted qty button: {reqs:?}"
     );
     assert!(
         !reqs
             .iter()
-            .any(|r| matches!(r, script::shim::InteractReq::AnswerCount { .. })),
+            .any(|r| matches!(r, script::interact::InteractReq::AnswerCount { .. })),
         "a closed count dialog must not receive Answer-Count: {reqs:?}"
     );
     iso.join();
@@ -4714,7 +4721,7 @@ export default class T extends LoopingBot {
     let _ = iso.probe("1 + 1");
     assert_eq!(
         iso.drain_interacts(),
-        vec![script::shim::InteractReq::Wear {
+        vec![script::interact::InteractReq::Wear {
             name: "Staff of fire".into()
         }],
         "empty posted ops must still name-map onto host Wear"
@@ -4743,7 +4750,7 @@ export default class T extends LoopingBot {
     let _ = iso.probe("1 + 1");
     assert_eq!(
         iso.drain_interacts(),
-        vec![script::shim::InteractReq::Unequip {
+        vec![script::interact::InteractReq::Unequip {
             name: "Iron chainbody".into()
         }],
         "a worn item's unequip is one host Unequip, never a Wear"
@@ -4765,11 +4772,11 @@ export default class T extends LoopingBot {
 "#;
     let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![]).unwrap();
     let mut snap = base_snapshot();
-    let buttons = [script_js::wire::MakeButtonInput {
+    let buttons = [script::native::snapshot_source::MakeButtonInput {
         qty: -1,
         com_id: 42,
     }];
-    let products = [script_js::wire::MakeProductInput {
+    let products = [script::native::snapshot_source::MakeProductInput {
         object_id: 50,
         name: "Willow shortbow",
         buttons: &buttons,
@@ -4780,7 +4787,7 @@ export default class T extends LoopingBot {
     let _ = iso.probe("1 + 1");
     assert_eq!(
         iso.drain_interacts(),
-        vec![script::shim::InteractReq::IfButton { component_id: 42 }],
+        vec![script::interact::InteractReq::IfButton { component_id: 42 }],
         "first tick clicks the posted Make-X button"
     );
     iso.on_game_tick(2);
@@ -4795,7 +4802,7 @@ export default class T extends LoopingBot {
     let _ = iso.probe("1 + 1");
     assert_eq!(
         iso.drain_interacts(),
-        vec![script::shim::InteractReq::AnswerCount { value: 27 }],
+        vec![script::interact::InteractReq::AnswerCount { value: 27 }],
         "Answer-Count waits for the posted count dialog"
     );
     iso.join();
@@ -4838,17 +4845,17 @@ export default class T extends LoopingBot {
 "#;
     let mut slot = new_bank_slot(src, LoadShape::CompatClass, empty_named_banks());
     let mut input = base_snapshot();
-    input.here = Some(script_js::wire::TileInput {
+    input.here = Some(script::native::snapshot_source::TileInput {
         x: 199,
         z: 100,
         level: 0,
     });
-    input.booths = &[script_js::wire::TileInput {
+    input.booths = &[script::native::snapshot_source::TileInput {
         x: 200,
         z: 100,
         level: 0,
     }];
-    input.nearest_booth = Some(script_js::wire::NearestBoothInput {
+    input.nearest_booth = Some(script::native::snapshot_source::NearestBoothInput {
         x: 200,
         z: 100,
         level: 0,
@@ -4866,7 +4873,7 @@ export default class T extends LoopingBot {
     );
     assert!(matches!(
         bank_interaction(&actions[0]),
-        script::shim::InteractReq::OpenBooth {
+        script::interact::InteractReq::OpenBooth {
             x: 200,
             z: 100,
             level: 0,
@@ -4922,7 +4929,7 @@ export default class T extends LoopingBot {
 "#,
     ];
     let use_quickly = ["Use-quickly".to_string()];
-    let locs = [script_js::wire::SceneEntityInput {
+    let locs = [script::native::snapshot_source::SceneEntityInput {
         index: 0,
         id: 2213,
         name: Some("Bank booth"),
@@ -4949,13 +4956,13 @@ export default class T extends LoopingBot {
     for source in sources {
         let mut slot = new_bank_slot(source, LoadShape::CompatClass, empty_named_banks());
         let mut input = base_snapshot();
-        input.here = Some(script_js::wire::TileInput {
+        input.here = Some(script::native::snapshot_source::TileInput {
             x: 100,
             z: 100,
             level: 0,
         });
         input.locs = &locs;
-        input.nearest_booth = Some(script_js::wire::NearestBoothInput {
+        input.nearest_booth = Some(script::native::snapshot_source::NearestBoothInput {
             x: 101,
             z: 100,
             level: 0,
@@ -4969,7 +4976,7 @@ export default class T extends LoopingBot {
         assert_eq!(actions.len(), 1);
         assert!(matches!(
             bank_interaction(&actions[0]),
-            script::shim::InteractReq::OpenBooth {
+            script::interact::InteractReq::OpenBooth {
                 x: 101,
                 z: 100,
                 level: 0,
@@ -5070,7 +5077,7 @@ export default class T extends LoopingBot {
 "#;
     let mut slot = new_bank_slot(src, LoadShape::CompatClass, empty_named_banks());
     let bank = ["Bank".to_string()];
-    let locs = [script_js::wire::SceneEntityInput {
+    let locs = [script::native::snapshot_source::SceneEntityInput {
         index: 0,
         id: 4483,
         name: Some("Bank chest"),
@@ -5095,7 +5102,7 @@ export default class T extends LoopingBot {
         angle: 0,
     }];
     let mut input = base_snapshot();
-    input.here = Some(script_js::wire::TileInput {
+    input.here = Some(script::native::snapshot_source::TileInput {
         x: 100,
         z: 100,
         level: 0,
@@ -5119,7 +5126,7 @@ export default class T extends LoopingBot {
     assert_eq!(request.radius, 2);
     accept_bank_walk(&mut slot, &actions[0], 1);
 
-    input.here = Some(script_js::wire::TileInput {
+    input.here = Some(script::native::snapshot_source::TileInput {
         x: 150,
         z: 150,
         level: 0,
@@ -5129,7 +5136,7 @@ export default class T extends LoopingBot {
     assert_eq!(actions.len(), 1, "the arrived preset opens its live chest");
     assert!(matches!(
         bank_interaction(&actions[0]),
-        script::shim::InteractReq::OpenBooth {
+        script::interact::InteractReq::OpenBooth {
             x: 151,
             z: 150,
             level: 0,
@@ -5184,7 +5191,7 @@ export default class T extends LoopingBot {
     let mut slot = new_bank_slot(src, LoadShape::CompatClass, banks);
     let mut input = base_snapshot();
     input.inv_size = 28;
-    input.here = Some(script_js::wire::TileInput {
+    input.here = Some(script::native::snapshot_source::TileInput {
         x: 100,
         z: 100,
         level: 0,
@@ -5260,7 +5267,7 @@ export default class T extends LoopingBot {
     accept_bank_walk(&mut slot, &actions[0], 2);
 
     let quick = ["Use-quickly".to_string()];
-    let locs = [script_js::wire::SceneEntityInput {
+    let locs = [script::native::snapshot_source::SceneEntityInput {
         index: 0,
         id: 2213,
         name: Some("Bank booth"),
@@ -5284,13 +5291,13 @@ export default class T extends LoopingBot {
         shape: 10,
         angle: 0,
     }];
-    input.here = Some(script_js::wire::TileInput {
+    input.here = Some(script::native::snapshot_source::TileInput {
         x: 299,
         z: 400,
         level: 0,
     });
     input.locs = &locs;
-    input.nearest_booth = Some(script_js::wire::NearestBoothInput {
+    input.nearest_booth = Some(script::native::snapshot_source::NearestBoothInput {
         x: 300,
         z: 400,
         level: 0,
@@ -5307,7 +5314,7 @@ export default class T extends LoopingBot {
     );
     assert!(matches!(
         bank_interaction(&actions[0]),
-        script::shim::InteractReq::OpenBooth {
+        script::interact::InteractReq::OpenBooth {
             x: 300,
             z: 400,
             level: 0,
@@ -5354,7 +5361,7 @@ export default class T extends LoopingBot {
 "#;
     let mut slot = new_bank_slot(src, LoadShape::CompatClass, empty_named_banks());
     let mut input = base_snapshot();
-    input.here = Some(script_js::wire::TileInput {
+    input.here = Some(script::native::snapshot_source::TileInput {
         x: 3200,
         z: 3200,
         level: 0,
@@ -5435,7 +5442,7 @@ export default class T extends LoopingBot {
     slot.tick(
         2,
         &input,
-        script_js::wire::NativeFactsInput {
+        script::native::snapshot_source::NativeFactsInput {
             bank_snapshot_generation: Some(10),
             side_modal_id: Some(SIDE_ROOT),
             ..Default::default()
@@ -5454,7 +5461,7 @@ export default class T extends LoopingBot {
     slot.tick(
         3,
         &input,
-        script_js::wire::NativeFactsInput {
+        script::native::snapshot_source::NativeFactsInput {
             bank_snapshot_generation: Some(11),
             side_modal_id: Some(SIDE_ROOT),
             ..Default::default()
@@ -5486,7 +5493,7 @@ export default class T extends LoopingBot {
 "#;
     let mut slot = new_bank_slot(src, LoadShape::CompatClass, empty_named_banks());
     let mut input = base_snapshot();
-    input.here = Some(script_js::wire::TileInput {
+    input.here = Some(script::native::snapshot_source::TileInput {
         x: 100,
         z: 100,
         level: 0,
@@ -5520,7 +5527,7 @@ export default class T extends LoopingBot {
     assert_eq!(actions.len(), 1);
     assert!(matches!(
         bank_interaction(&actions[0]),
-        script::shim::InteractReq::InvButton {
+        script::interact::InteractReq::InvButton {
             id: 62,
             slot: 0,
             component: SIDE_GRID,
@@ -5605,7 +5612,7 @@ export default class T extends LoopingBot {
     assert_eq!(actions.len(), 1);
     assert!(matches!(
         bank_interaction(&actions[0]),
-        script::shim::InteractReq::InvButton {
+        script::interact::InteractReq::InvButton {
             id: 526,
             slot: 1,
             component: SIDE_GRID,
@@ -5699,7 +5706,7 @@ export default class T extends LoopingBot {
     assert_eq!(actions.len(), 1);
     assert!(matches!(
         bank_interaction(&actions[0]),
-        script::shim::InteractReq::InvButton {
+        script::interact::InteractReq::InvButton {
             id: 526,
             slot: 0,
             component: SIDE_GRID,
@@ -5774,7 +5781,7 @@ export default class T extends LoopingBot {
     assert_eq!(actions.len(), 1);
     assert!(matches!(
         bank_interaction(&actions[0]),
-        script::shim::InteractReq::Close
+        script::interact::InteractReq::Close
     ));
     accept_bank_interaction(&mut slot, &actions[0], 1, true);
 
@@ -5837,7 +5844,7 @@ export default class T extends LoopingBot {
     assert_eq!(actions.len(), 1);
     assert!(matches!(
         bank_interaction(&actions[0]),
-        script::shim::InteractReq::InvButton {
+        script::interact::InteractReq::InvButton {
             id: 526,
             slot: 0,
             component: SIDE_GRID,
@@ -5976,7 +5983,7 @@ export default class T extends LoopingBot {
     assert_eq!(actions.len(), 1);
     assert!(matches!(
         bank_interaction(&actions[0]),
-        script::shim::InteractReq::InvButton {
+        script::interact::InteractReq::InvButton {
             id: 405,
             slot: 0,
             component: SIDE_GRID,
@@ -6175,7 +6182,7 @@ export default class T extends LoopingBot {
     assert_eq!(actions.len(), 1);
     assert!(matches!(
         bank_interaction(&actions[0]),
-        script::shim::InteractReq::WithdrawX {
+        script::interact::InteractReq::WithdrawX {
             name,
             count: 25,
             bank_item_id: 526,
@@ -6250,7 +6257,7 @@ export default class T extends LoopingBot {
     assert_eq!(actions.len(), 1);
     assert!(matches!(
         bank_interaction(&actions[0]),
-        script::shim::InteractReq::WithdrawX {
+        script::interact::InteractReq::WithdrawX {
             name,
             count: 20,
             bank_item_id: 379,
@@ -6266,7 +6273,7 @@ export default class T extends LoopingBot {
     assert_eq!(actions.len(), 1);
     assert!(matches!(
         bank_interaction(&actions[0]),
-        script::shim::InteractReq::Withdraw { name, action }
+        script::interact::InteractReq::Withdraw { name, action }
             if name == "Lobster" && action == "Withdraw-10"
     ));
     accept_bank_interaction(&mut slot, &actions[0], 2, true);
@@ -6277,7 +6284,7 @@ export default class T extends LoopingBot {
     assert_eq!(actions.len(), 1);
     assert!(matches!(
         bank_interaction(&actions[0]),
-        script::shim::InteractReq::Withdraw { name, action }
+        script::interact::InteractReq::Withdraw { name, action }
             if name == "Lobster" && action == "Withdraw-10"
     ));
     accept_bank_interaction(&mut slot, &actions[0], 3, true);
@@ -6290,7 +6297,7 @@ export default class T extends LoopingBot {
     assert_eq!(actions.len(), 1);
     assert!(matches!(
         bank_interaction(&actions[0]),
-        script::shim::InteractReq::Close
+        script::interact::InteractReq::Close
     ));
     accept_bank_interaction(&mut slot, &actions[0], 4, true);
 
@@ -6355,11 +6362,11 @@ export default class T extends LoopingBot {
         "Withdraw-X",
     ]
     .map(String::from);
-    let bank = [script_js::wire::ItemRowInput {
+    let bank = [script::native::snapshot_source::ItemRowInput {
         slot: 3,
         ..item_row(1515, Some("Yew logs"), 80, &ops, false, -1, 601)
     }];
-    let bank_after = [script_js::wire::ItemRowInput {
+    let bank_after = [script::native::snapshot_source::ItemRowInput {
         slot: 3,
         ..item_row(1515, Some("Yew logs"), 52, &ops, false, -1, 601)
     }];
@@ -6384,7 +6391,7 @@ export default class T extends LoopingBot {
         assert_eq!(actions.len(), 1);
         assert!(matches!(
             bank_interaction(&actions[0]),
-            script::shim::InteractReq::InvButton {
+            script::interact::InteractReq::InvButton {
                 id: 1515,
                 slot: 3,
                 component: 601,
@@ -6491,7 +6498,7 @@ export default class T extends LoopingBot {
     assert_eq!(actions.len(), 1);
     assert!(matches!(
         bank_interaction(&actions[0]),
-        script::shim::InteractReq::WithdrawX {
+        script::interact::InteractReq::WithdrawX {
             name,
             count: 5,
             bank_item_id: 100,
@@ -6576,7 +6583,7 @@ export default class T extends LoopingBot {
     assert_eq!(actions.len(), 1);
     assert!(matches!(
         bank_interaction(&actions[0]),
-        script::shim::InteractReq::Close
+        script::interact::InteractReq::Close
     ));
     accept_bank_interaction(&mut slot, &actions[0], 1, true);
     assert_eq!(slot.probe("__ok").unwrap(), serde_json::Value::Null);
@@ -6619,7 +6626,7 @@ export default class T extends LoopingBot {
     assert_eq!(actions.len(), 1);
     assert!(matches!(
         bank_interaction(&actions[0]),
-        script::shim::InteractReq::Close
+        script::interact::InteractReq::Close
     ));
     accept_bank_interaction(&mut slot, &actions[0], 1, true);
     tick_bank_slot(&mut slot, &mut input, 2, 1, SIDE_ROOT, &mut snapshot);
@@ -6667,7 +6674,7 @@ export default class T extends LoopingBot {
     assert_eq!(actions.len(), 1);
     assert!(matches!(
         bank_interaction(&actions[0]),
-        script::shim::InteractReq::InvButton {
+        script::interact::InteractReq::InvButton {
             id: 4242,
             slot: 0,
             component: SIDE_GRID,
@@ -6716,7 +6723,7 @@ export default class T extends LoopingBot {
     let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![]).unwrap();
     let attack = ["Attack".to_string()];
     let npcs = [
-        script_js::wire::SceneEntityInput {
+        script::native::snapshot_source::SceneEntityInput {
             index: 1,
             id: 41,
             name: Some("Chicken"),
@@ -6740,7 +6747,7 @@ export default class T extends LoopingBot {
             shape: 0,
             angle: 0,
         },
-        script_js::wire::SceneEntityInput {
+        script::native::snapshot_source::SceneEntityInput {
             index: 2,
             id: 41,
             name: Some("Chicken"),
@@ -6796,7 +6803,7 @@ export default class T extends LoopingBot {
     let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![]).unwrap();
     let mut snap = base_snapshot();
     let inv = [nc(Some("Steel platebody"), 1)];
-    let spells = [script_js::wire::CombatStyleInput {
+    let spells = [script::native::snapshot_source::CombatStyleInput {
         mode: 0,
         label: "High level alchemy",
         component_id: 1234,
@@ -6809,7 +6816,7 @@ export default class T extends LoopingBot {
     let _ = iso.probe("__probe");
     assert_eq!(
         iso.drain_interacts(),
-        vec![script::shim::InteractReq::UseWidgetOn {
+        vec![script::interact::InteractReq::UseWidgetOn {
             component_id: 1234,
             kind: "held".into(),
             target_name: Some("Steel platebody".into()),
@@ -6843,7 +6850,7 @@ export default class T extends LoopingBot {
     let _ = iso.probe("__probe");
     assert_eq!(
         iso.drain_interacts(),
-        vec![script::shim::InteractReq::ContinueDialog { component_id: None }],
+        vec![script::interact::InteractReq::ContinueDialog { component_id: None }],
         "ChatDialog.continue queues the continue interact op"
     );
     iso.join();
@@ -6915,7 +6922,7 @@ export default class T extends LoopingBot {
 "#;
     let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![]).unwrap();
     let use_actions = ["Use".to_string()];
-    let locs = [script_js::wire::SceneEntityInput {
+    let locs = [script::native::snapshot_source::SceneEntityInput {
         index: 0,
         id: 873,
         name: Some("Tree"),
@@ -6940,7 +6947,7 @@ export default class T extends LoopingBot {
         angle: 0,
     }];
     let mut snap = base_snapshot();
-    let inv = [script_js::wire::ItemRowInput {
+    let inv = [script::native::snapshot_source::ItemRowInput {
         name: Some("Knife"),
         count: 1,
         id: 946,
@@ -6958,7 +6965,7 @@ export default class T extends LoopingBot {
     assert_eq!(value, true, "useOn accepts a loc target");
     assert_eq!(
         iso.drain_interacts(),
-        vec![script::shim::InteractReq::UseOn {
+        vec![script::interact::InteractReq::UseOn {
             name: "Knife".into(),
             kind: "loc".into(),
             target_name: Some("Tree".into()),
@@ -6989,7 +6996,7 @@ export default class T extends LoopingBot {
 "#;
     let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![]).unwrap();
     let inv = [
-        script_js::wire::ItemRowInput {
+        script::native::snapshot_source::ItemRowInput {
             name: Some("Willow shortbow"),
             count: 1,
             id: 849,
@@ -6999,7 +7006,7 @@ export default class T extends LoopingBot {
             component_id: 500,
             slot: 0,
         },
-        script_js::wire::ItemRowInput {
+        script::native::snapshot_source::ItemRowInput {
             name: Some("Willow shortbow"),
             count: 1,
             id: 60,
@@ -7017,7 +7024,7 @@ export default class T extends LoopingBot {
     assert_eq!(iso.probe("__probe").unwrap(), true);
     assert_eq!(
         iso.drain_interacts(),
-        vec![script::shim::InteractReq::UseOn {
+        vec![script::interact::InteractReq::UseOn {
             name: "Willow shortbow".into(),
             kind: "inv".into(),
             target_name: Some("Willow shortbow".into()),
@@ -7135,7 +7142,7 @@ export default class T extends LoopingBot { loop() {} }
 fn isolate_nearest_bank_uses_the_supplied_origin_not_the_player_or_scene_booth() {
     let iso = nearest_bank_isolate();
     let mut snap = base_snapshot();
-    snap.here = Some(script_js::wire::TileInput {
+    snap.here = Some(script::native::snapshot_source::TileInput {
         x: 100,
         z: 100,
         level: 0,
@@ -7302,7 +7309,7 @@ export default class T extends LoopingBot {
     assert_eq!(actions.len(), 1);
     assert!(matches!(
         bank_interaction(&actions[0]),
-        script::shim::InteractReq::SetNoteMode { on: true }
+        script::interact::InteractReq::SetNoteMode { on: true }
     ));
     accept_bank_interaction(&mut slot, &actions[0], 1, true);
     tick_bank_slot(&mut slot, &mut input, 2, 1, SIDE_ROOT, &mut snapshot);
@@ -7358,7 +7365,7 @@ export default class T extends LoopingBot {
     assert_eq!(actions.len(), 1);
     assert!(matches!(
         bank_interaction(&actions[0]),
-        script::shim::InteractReq::SetNoteMode { on: true }
+        script::interact::InteractReq::SetNoteMode { on: true }
     ));
     accept_bank_interaction(&mut slot, &actions[0], 1, false);
     tick_bank_slot(&mut slot, &mut input, 2, 1, SIDE_ROOT, &mut snapshot);
@@ -7575,7 +7582,7 @@ export default class T extends LoopingBot {
 "#;
     let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![]).unwrap();
     let actions = ["Steal".to_string()];
-    let npcs = [script_js::wire::SceneEntityInput {
+    let npcs = [script::native::snapshot_source::SceneEntityInput {
         index: 1,
         id: 9,
         name: Some("Guard"),
@@ -7644,7 +7651,7 @@ export default class T extends LoopingBot {
 "#;
     let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![]).unwrap();
     let mut snap = base_snapshot();
-    snap.here = Some(script_js::wire::TileInput {
+    snap.here = Some(script::native::snapshot_source::TileInput {
         x: 3222,
         z: 3222,
         level: 0,
@@ -7687,8 +7694,8 @@ fn posted_reach<'a>(
     exact_rank: &'a [u16],
     adjacent_rank: &'a [u16],
     step: &'a [u8],
-) -> script_js::wire::ReachViewInput<'a> {
-    script_js::wire::ReachViewInput {
+) -> script::native::snapshot_source::ReachViewInput<'a> {
+    script::native::snapshot_source::ReachViewInput {
         available: true,
         base_x: 3200,
         base_z: 3200,
@@ -7788,7 +7795,7 @@ export default class T extends LoopingBot {
     assert_eq!(value["bit64"], true);
     assert_eq!(
         iso.drain_interacts(),
-        Vec::<script::shim::InteractReq>::new(),
+        Vec::<script::interact::InteractReq>::new(),
         "lookups are sync JS reads, no queued command"
     );
     iso.join();
@@ -7829,7 +7836,7 @@ export default class T extends LoopingBot {
     assert_eq!(value["walkable"], true, "omitted delta keeps last bits");
     assert_eq!(value["canReach"], true);
 
-    snap.reach = script_js::wire::ReachViewInput::UNAVAILABLE;
+    snap.reach = script::native::snapshot_source::ReachViewInput::UNAVAILABLE;
     let (cleared, _) = script_js::wire::encode_snapshot_delta(Some(&fp2), &snap, false);
     iso.post_snapshot(cleared);
     iso.on_game_tick(3);
@@ -7872,7 +7879,7 @@ export default class T extends LoopingBot {
 "#;
     let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![]).unwrap();
     let actions = ["Steal".to_string()];
-    let npcs = [script_js::wire::SceneEntityInput {
+    let npcs = [script::native::snapshot_source::SceneEntityInput {
         index: 1,
         id: 9,
         name: Some("Guard"),
@@ -7896,7 +7903,7 @@ export default class T extends LoopingBot {
         shape: 0,
         angle: 0,
     }];
-    let ground = [script_js::wire::SceneEntityInput {
+    let ground = [script::native::snapshot_source::SceneEntityInput {
         index: 2,
         id: 1779,
         name: Some("Flax"),
@@ -8013,7 +8020,7 @@ export default class T extends LoopingBot {
     assert_eq!(value["bit32"], true);
     assert_eq!(
         iso.drain_interacts(),
-        Vec::<script::shim::InteractReq>::new(),
+        Vec::<script::interact::InteractReq>::new(),
         "lookups are sync JS reads, no queued command"
     );
     iso.join();
@@ -8055,7 +8062,7 @@ export default class T extends LoopingBot {
         "omitted delta keeps last step"
     );
 
-    snap.reach = script_js::wire::ReachViewInput::UNAVAILABLE;
+    snap.reach = script::native::snapshot_source::ReachViewInput::UNAVAILABLE;
     let (cleared, _) = script_js::wire::encode_snapshot_delta(Some(&fp2), &snap, false);
     iso.post_snapshot(cleared);
     iso.on_game_tick(3);
@@ -8097,7 +8104,7 @@ export default class T extends LoopingBot {
 "#;
     let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![]).unwrap();
     let mut snap = base_snapshot();
-    snap.here = Some(script_js::wire::TileInput {
+    snap.here = Some(script::native::snapshot_source::TileInput {
         x: 3222,
         z: 3222,
         level: 0,
@@ -8113,7 +8120,7 @@ export default class T extends LoopingBot {
     assert_eq!(value, "go", "walkOpening parks on its native machine");
     let drained = iso.drain_interacts();
     match &drained[..] {
-        [script::shim::InteractReq::Walk {
+        [script::interact::InteractReq::Walk {
             x: 3222,
             z: 3295,
             level: 0,
@@ -8156,7 +8163,7 @@ export default class T extends TaskBot {
     let _ = iso.probe("__rs_bot");
     assert_eq!(
         iso.drain_interacts(),
-        vec![script::shim::InteractReq::ContinueDialog { component_id: None }],
+        vec![script::interact::InteractReq::ContinueDialog { component_id: None }],
         "awaited execute() queues ContinueDialog.continue"
     );
     iso.join();
@@ -8249,7 +8256,7 @@ export default class T extends LoopingBot {
 }
 "#;
     let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![]).unwrap();
-    let ifaces = [script_js::wire::SideTabIfaceInput { index: 6, id: 192 }];
+    let ifaces = [script::native::snapshot_source::SideTabIfaceInput { index: 6, id: 192 }];
     let mut snap = base_snapshot();
     snap.side_tab_ifaces = &ifaces;
     post_snapshot_input(&iso, &snap);
@@ -8270,7 +8277,7 @@ export default class T extends LoopingBot {
 }
 "#;
     let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![]).unwrap();
-    let lines = [script_js::wire::ChatLineInput {
+    let lines = [script::native::snapshot_source::ChatLineInput {
         seq: 3,
         text: "I can't reach that!",
         type_: 0,
@@ -8309,7 +8316,7 @@ export default class T extends LoopingBot {
 "#;
     let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![]).unwrap();
     let mut snap = base_snapshot();
-    snap.here = Some(script_js::wire::TileInput {
+    snap.here = Some(script::native::snapshot_source::TileInput {
         x: 3222,
         z: 3222,
         level: 0,
@@ -8324,7 +8331,7 @@ export default class T extends LoopingBot {
     );
     let drained = iso.drain_interacts();
     match &drained[..] {
-        [script::shim::InteractReq::Walk {
+        [script::interact::InteractReq::Walk {
             x: 3222,
             z: 3295,
             level: 0,
@@ -8364,7 +8371,7 @@ export default class T extends LoopingBot {
 "#;
     let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![]).unwrap();
     let mut snap = base_snapshot();
-    snap.here = Some(script_js::wire::TileInput {
+    snap.here = Some(script::native::snapshot_source::TileInput {
         x: 3222,
         z: 3222,
         level: 0,
@@ -8379,7 +8386,7 @@ export default class T extends LoopingBot {
     );
     let drained = iso.drain_interacts();
     match &drained[..] {
-        [script::shim::InteractReq::Walk {
+        [script::interact::InteractReq::Walk {
             x: 3222,
             z: 3223,
             level: 0,
@@ -8424,7 +8431,7 @@ export default class T extends LoopingBot {
 "#;
     let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![]).unwrap();
     let mut snap = base_snapshot();
-    snap.here = Some(script_js::wire::TileInput {
+    snap.here = Some(script::native::snapshot_source::TileInput {
         x: 3222,
         z: 3222,
         level: 0,
@@ -8439,7 +8446,7 @@ export default class T extends LoopingBot {
     );
     let drained = iso.drain_interacts();
     match &drained[..] {
-        [script::shim::InteractReq::Walk {
+        [script::interact::InteractReq::Walk {
             x: 3222,
             z: 3295,
             level: 0,
@@ -8662,7 +8669,7 @@ export default class T extends LoopingBot {
 "#;
     let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![]).unwrap();
     let mut snap = base_snapshot();
-    let styles = [script_js::wire::CombatStyleInput {
+    let styles = [script::native::snapshot_source::CombatStyleInput {
         mode: 1,
         label: "Aggressive",
         component_id: 77,
@@ -8673,7 +8680,7 @@ export default class T extends LoopingBot {
     let _ = iso.probe("__probe");
     assert_eq!(
         iso.drain_interacts(),
-        vec![script::shim::InteractReq::IfButton { component_id: 77 }]
+        vec![script::interact::InteractReq::IfButton { component_id: 77 }]
     );
     iso.join();
 }
@@ -8688,7 +8695,7 @@ export default class T extends LoopingBot {
 "#;
     let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![]).unwrap();
     let mut snap = base_snapshot();
-    let styles = [script_js::wire::CombatStyleInput {
+    let styles = [script::native::snapshot_source::CombatStyleInput {
         mode: 1,
         label: "Aggressive",
         component_id: 77,
@@ -8703,7 +8710,7 @@ export default class T extends LoopingBot {
         "Accurate (mode 0, unposted varp) must not count as hasCombatStyle('strength'): {probe:?}"
     );
 
-    let varps = [script_js::wire::VarpInput {
+    let varps = [script::native::snapshot_source::VarpInput {
         index: 43,
         value: 1,
     }];
@@ -8765,7 +8772,7 @@ export default class T extends LoopingBot {
 "#;
     let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![]).unwrap();
     let actions = ["Attack".to_string()];
-    let npcs = [script_js::wire::SceneEntityInput {
+    let npcs = [script::native::snapshot_source::SceneEntityInput {
         index: 1,
         id: 42,
         name: Some("Chicken"),
@@ -8846,7 +8853,7 @@ export default class T extends LoopingBot {
 "#;
     let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![]).unwrap();
     let actions = ["Attack".to_string()];
-    let npcs = [script_js::wire::SceneEntityInput {
+    let npcs = [script::native::snapshot_source::SceneEntityInput {
         index: 1,
         id: 9,
         name: Some("Guard"),
@@ -8898,7 +8905,7 @@ export default class T extends LoopingBot {
 "#;
     let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![]).unwrap();
     let actions = ["Attack".to_string()];
-    let npcs = [script_js::wire::SceneEntityInput {
+    let npcs = [script::native::snapshot_source::SceneEntityInput {
         index: 1,
         id: 9,
         name: Some("Guard"),
@@ -8953,7 +8960,7 @@ export default class T extends LoopingBot {
     snap.weight = 24;
     snap.camera_yaw = 512;
     snap.camera_pitch = 200;
-    snap.varps = &[script_js::wire::VarpInput {
+    snap.varps = &[script::native::snapshot_source::VarpInput {
         index: 43,
         value: 1,
     }];
@@ -8983,7 +8990,7 @@ export default class T extends LoopingBot {
     assert_eq!(iso.probe("__probe").unwrap(), true);
     assert_eq!(
         iso.drain_interacts(),
-        vec![script::shim::InteractReq::SetCameraYaw { yaw: 100 }],
+        vec![script::interact::InteractReq::SetCameraYaw { yaw: 100 }],
         "setCameraYaw queues set-camera-yaw for the host write"
     );
     iso.join();
@@ -9003,7 +9010,7 @@ export default class T extends LoopingBot {
 "#;
     let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![]).unwrap();
     let actions = ["Use".to_string()];
-    let locs = [script_js::wire::SceneEntityInput {
+    let locs = [script::native::snapshot_source::SceneEntityInput {
         index: 0,
         id: 873,
         name: Some("Tree"),
@@ -9027,7 +9034,7 @@ export default class T extends LoopingBot {
         shape: 0,
         angle: 0,
     }];
-    let spells = [script_js::wire::CombatStyleInput {
+    let spells = [script::native::snapshot_source::CombatStyleInput {
         mode: 0,
         label: "High level alchemy",
         component_id: 1234,
@@ -9040,7 +9047,7 @@ export default class T extends LoopingBot {
     let _ = iso.probe("__probe");
     assert_eq!(
         iso.drain_interacts(),
-        vec![script::shim::InteractReq::UseWidgetOn {
+        vec![script::interact::InteractReq::UseWidgetOn {
             component_id: 1234,
             kind: "loc".into(),
             target_name: Some("Tree".into()),
@@ -9099,11 +9106,11 @@ export default class T extends LoopingBot {
 "#;
     let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![]).unwrap();
     let ops = ["Withdraw 1".to_string(), "Deposit-All".to_string()];
-    let first = script_js::wire::ItemRowInput {
+    let first = script::native::snapshot_source::ItemRowInput {
         slot: 4,
         ..item_row(526, Some("Straße"), 3, &ops, true, 105, 701)
     };
-    let second = script_js::wire::ItemRowInput {
+    let second = script::native::snapshot_source::ItemRowInput {
         slot: 5,
         ..item_row(526, Some("Straße"), 2, &ops, false, 106, 702)
     };
@@ -9114,7 +9121,7 @@ export default class T extends LoopingBot {
     snap.bank_loaded = false;
     iso.post_snapshot(script_js::wire::encode_snapshot_with_native(
         &snap,
-        script_js::wire::NativeFactsInput {
+        script::native::snapshot_source::NativeFactsInput {
             bank_snapshot_generation: Some(17),
             ..Default::default()
         },
@@ -9607,7 +9614,7 @@ export default class T extends LoopingBot {
         "Report".to_string(),
         "Trade with".to_string(),
     ];
-    let players = [script_js::wire::SceneEntityInput {
+    let players = [script::native::snapshot_source::SceneEntityInput {
         index: 3,
         id: 3,
         name: Some("bob"),
@@ -9639,7 +9646,7 @@ export default class T extends LoopingBot {
     let reqs = iso.drain_interacts();
     assert_eq!(
         reqs,
-        vec![script::shim::InteractReq::Player {
+        vec![script::interact::InteractReq::Player {
             name: "bob".into(),
             action: "Trade with".into(),
         }],
@@ -9669,7 +9676,7 @@ export default class T extends LoopingBot {
     let _ = iso.probe("1 + 1");
     assert_eq!(
         iso.drain_interacts(),
-        vec![script::shim::InteractReq::IfButton { component_id: 9001 }],
+        vec![script::interact::InteractReq::IfButton { component_id: 9001 }],
         "Trade.accept queues if-button on posted trade_accept_id"
     );
     iso.join();
@@ -9696,7 +9703,7 @@ export default class T extends LoopingBot {
     let _ = iso.probe("1 + 1");
     assert_eq!(
         iso.drain_interacts(),
-        vec![script::shim::InteractReq::IfButton { component_id: 9002 }],
+        vec![script::interact::InteractReq::IfButton { component_id: 9002 }],
         "Trade.decline queues if-button on posted trade_decline_id"
     );
     iso.join();
@@ -9728,7 +9735,7 @@ export default class T extends LoopingBot {
     let _ = iso.probe("1 + 1");
     assert_eq!(
         iso.drain_interacts(),
-        vec![script::shim::InteractReq::InvButton {
+        vec![script::interact::InteractReq::InvButton {
             id: 526,
             slot: 0,
             component: 3322,
@@ -9766,7 +9773,7 @@ export default class T extends LoopingBot {
     let _ = iso.probe("1 + 1");
     assert_eq!(
         iso.drain_interacts(),
-        vec![script::shim::InteractReq::InvButton {
+        vec![script::interact::InteractReq::InvButton {
             id: 526,
             slot: 0,
             component: 3322,
@@ -9804,7 +9811,7 @@ export default class T extends LoopingBot {
     let _ = iso.probe("1 + 1");
     assert_eq!(
         iso.drain_interacts(),
-        vec![script::shim::InteractReq::InvButton {
+        vec![script::interact::InteractReq::InvButton {
             id: 379,
             slot: 0,
             component: 3415,
@@ -9933,7 +9940,7 @@ export default class T extends LoopingBot {
     let _ = iso.probe("1 + 1");
     assert_eq!(
         iso.drain_interacts(),
-        vec![script::shim::InteractReq::ShopButton {
+        vec![script::interact::InteractReq::ShopButton {
             kind: "buy".into(),
             name: "Lobster".into(),
             id: 377,
@@ -9965,7 +9972,7 @@ export default class T extends LoopingBot {
     assert_eq!(
         iso.drain_interacts(),
         vec![
-            script::shim::InteractReq::ShopButton {
+            script::interact::InteractReq::ShopButton {
                 kind: "buy".into(),
                 name: "Lobster".into(),
                 id: 377,
@@ -9973,7 +9980,7 @@ export default class T extends LoopingBot {
                 component: 9201,
                 chunk: 5,
             },
-            script::shim::InteractReq::ShopButton {
+            script::interact::InteractReq::ShopButton {
                 kind: "buy".into(),
                 name: "Lobster".into(),
                 id: 377,
@@ -9981,7 +9988,7 @@ export default class T extends LoopingBot {
                 component: 9201,
                 chunk: 1,
             },
-            script::shim::InteractReq::ShopButton {
+            script::interact::InteractReq::ShopButton {
                 kind: "buy".into(),
                 name: "Lobster".into(),
                 id: 377,
@@ -10023,7 +10030,7 @@ export default class T extends LoopingBot {
     iso.probe("true").unwrap();
     assert!(matches!(
         iso.drain_interacts().as_slice(),
-        [script::shim::InteractReq::ShopButton {
+        [script::interact::InteractReq::ShopButton {
             kind,
             chunk: 1,
             ..
@@ -10079,7 +10086,7 @@ export default class T extends LoopingBot {
         iso.drain_interacts()
             .into_iter()
             .map(|op| match op {
-                script::shim::InteractReq::ShopButton { chunk, .. } => chunk,
+                script::interact::InteractReq::ShopButton { chunk, .. } => chunk,
                 other => panic!("unexpected interaction: {other:?}"),
             })
             .collect::<Vec<_>>(),
@@ -10111,7 +10118,7 @@ export default class T extends LoopingBot {
         iso.drain_interacts()
             .into_iter()
             .map(|op| match op {
-                script::shim::InteractReq::ShopButton { chunk, .. } => chunk,
+                script::interact::InteractReq::ShopButton { chunk, .. } => chunk,
                 other => panic!("unexpected interaction: {other:?}"),
             })
             .collect::<Vec<_>>(),
@@ -10168,7 +10175,7 @@ export default class T extends LoopingBot {
     );
     assert_eq!(
         iso.drain_interacts(),
-        vec![script::shim::InteractReq::UseOn {
+        vec![script::interact::InteractReq::UseOn {
             name: "Tinderbox".into(),
             kind: "inv".into(),
             target_name: Some("Logs".into()),
@@ -10272,7 +10279,7 @@ export default class T extends LoopingBot {
 "#;
     let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![]).unwrap();
     let talk = ["Talk-to".to_string()];
-    let npcs = [script_js::wire::SceneEntityInput {
+    let npcs = [script::native::snapshot_source::SceneEntityInput {
         index: 7,
         id: 1,
         name: Some("Hans"),
@@ -10307,7 +10314,7 @@ export default class T extends LoopingBot {
     );
     assert_eq!(
         iso.drain_interacts(),
-        vec![script::shim::InteractReq::Npc {
+        vec![script::interact::InteractReq::Npc {
             name: "Hans".into(),
             action: "Talk-to".into(),
             index: Some(7),
@@ -10331,7 +10338,7 @@ export default class T extends LoopingBot {
 "#;
     let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![]).unwrap();
     let talk = ["Talk-to".to_string()];
-    let npcs = [script_js::wire::SceneEntityInput {
+    let npcs = [script::native::snapshot_source::SceneEntityInput {
         index: 1,
         id: 1,
         name: Some("Hans"),
@@ -10671,7 +10678,7 @@ export default class T extends LoopingBot {
     assert_eq!(value, true, "heldOp finds the posted id in a sparse inv");
     assert_eq!(
         iso.drain_interacts(),
-        vec![script::shim::InteractReq::Held {
+        vec![script::interact::InteractReq::Held {
             name: "Logs".into(),
             action: "Use".into(),
             slot: None,
@@ -10712,7 +10719,7 @@ export default class T extends LoopingBot {
 }
 "#;
     let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![]).unwrap();
-    let varps = [script_js::wire::VarpInput {
+    let varps = [script::native::snapshot_source::VarpInput {
         index: 300,
         value: 500,
     }];
@@ -10734,11 +10741,11 @@ export default class T extends LoopingBot {
 "#;
     let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![]).unwrap();
     let varps = [
-        script_js::wire::VarpInput {
+        script::native::snapshot_source::VarpInput {
             index: 100,
             value: 7,
         },
-        script_js::wire::VarpInput {
+        script::native::snapshot_source::VarpInput {
             index: 101,
             value: 12,
         },
@@ -10947,7 +10954,7 @@ fn session_reset_discards_unread_old_interactions_and_preserves_the_isolate() {
     );
     assert_eq!(
         iso.drain_interacts(),
-        vec![script::shim::InteractReq::SetCameraYaw { yaw: 2 }]
+        vec![script::interact::InteractReq::SetCameraYaw { yaw: 2 }]
     );
     iso.join();
 }
@@ -11062,8 +11069,11 @@ export default class T extends LoopingBot {
     iso.join();
 }
 
-fn case23_chicken<'a>(actions: &'a [String], index: i32) -> script_js::wire::SceneEntityInput<'a> {
-    script_js::wire::SceneEntityInput {
+fn case23_chicken<'a>(
+    actions: &'a [String],
+    index: i32,
+) -> script::native::snapshot_source::SceneEntityInput<'a> {
+    script::native::snapshot_source::SceneEntityInput {
         index,
         id: 41,
         name: Some("Chicken"),
@@ -11142,7 +11152,7 @@ export default class T extends LoopingBot {
     let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![]).unwrap();
     let actions = ["Attack".to_string()];
     let chickens = [case23_chicken(&actions, 7)];
-    let no_npcs: [script_js::wire::SceneEntityInput<'_>; 0] = [];
+    let no_npcs: [script::native::snapshot_source::SceneEntityInput<'_>; 0] = [];
     let mut interactions = Vec::new();
 
     for tick in 1..=12 {
@@ -11164,7 +11174,7 @@ export default class T extends LoopingBot {
     assert!(
         interactions.iter().any(|request| matches!(
             request,
-            script::shim::InteractReq::Npc {
+            script::interact::InteractReq::Npc {
                 name,
                 action,
                 index: Some(7),
@@ -11254,7 +11264,7 @@ export default class T extends LoopingBot {
     let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![]).unwrap();
     let actions = ["Attack".to_string()];
     let chickens = [case23_chicken(&actions, 7)];
-    let no_npcs: [script_js::wire::SceneEntityInput<'_>; 0] = [];
+    let no_npcs: [script::native::snapshot_source::SceneEntityInput<'_>; 0] = [];
     for tick in 1..=12 {
         let mut snap = ready_snapshot();
         snap.tick = tick;
@@ -11266,7 +11276,7 @@ export default class T extends LoopingBot {
     assert!(
         iso.drain_interacts().iter().any(|request| matches!(
             request,
-            script::shim::InteractReq::Npc {
+            script::interact::InteractReq::Npc {
                 name,
                 action,
                 index: Some(7),
@@ -11483,7 +11493,7 @@ export default class T extends LoopingBot {
     assert_eq!(actions.len(), 1);
     assert!(matches!(
         bank_interaction(&actions[0]),
-        script::shim::InteractReq::InvButton {
+        script::interact::InteractReq::InvButton {
             id: 1963,
             slot: 0,
             component: SIDE_GRID,
@@ -11557,7 +11567,7 @@ export default class T extends LoopingBot {
     ]));
     let mut slot = new_bank_slot(src, LoadShape::CompatClass, banks);
     let mut input = ready_snapshot();
-    input.here = Some(script_js::wire::TileInput {
+    input.here = Some(script::native::snapshot_source::TileInput {
         x: 100,
         z: 100,
         level: 0,
@@ -11620,7 +11630,7 @@ export default class T extends LoopingBot {
             };
             assert_eq!(request.target, bank_tile);
             accept_bank_walk(&mut slot, &action, tick);
-            input.here = Some(script_js::wire::TileInput {
+            input.here = Some(script::native::snapshot_source::TileInput {
                 x: bank_tile.x,
                 z: bank_tile.z,
                 level: bank_tile.level,
@@ -11937,7 +11947,7 @@ export default class T extends LoopingBot {
         assert_eq!(slot.probe("__afterCalls").unwrap(), serde_json::json!(1));
         assert_eq!(slot.probe("__settled").unwrap(), serde_json::json!(0));
         accept_bank_walk(&mut slot, next, 6);
-        input.here = Some(script_js::wire::TileInput {
+        input.here = Some(script::native::snapshot_source::TileInput {
             x: 3252,
             z: 3222,
             level: 0,

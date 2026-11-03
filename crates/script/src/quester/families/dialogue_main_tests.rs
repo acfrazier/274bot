@@ -1,11 +1,11 @@
 use super::dialogue::{Dialogue, DialogueArgs, DialogueOptions, DialogueTarget, PAGE_SETTLE_TICKS};
 use super::tests::{with_tick, with_tick_budget, with_tick_snapshots};
 use crate::dialogue_outcome::DialogueOutcome;
+use crate::interact::InteractReq;
 use crate::native::{
     ledger, ActionContext, ActionError, HostEffect, InteractionReceipt, NativeMachine,
 };
 use crate::quest_journal::{JournalMachine, JournalRequest};
-use crate::shim::InteractReq;
 use api::game_data::DialogueUiIds;
 use api::quest_facts::QuestCatalog;
 use api::quest_progress::EvidenceStamp;

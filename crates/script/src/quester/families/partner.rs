@@ -5,9 +5,9 @@ use super::super::compile::{
 };
 use super::super::pair::*;
 use crate::bank::ops;
+use crate::interact::InteractReq;
 use crate::native::{ActionContext, ActionError, ActionHandle, NativeActions, NativeMachine};
 use crate::quester::prereq::walk::PrereqWalk;
-use crate::shim::InteractReq;
 use crate::trade_screen::{
     CloseDriver, ScreenDriver, ScreenKind, WaitEnd, TRADE_CLOSE_DEBOUNCE_MS, TRADE_CONFIRM_WAIT_MS,
     TRADE_OFFER_WAIT_MS,

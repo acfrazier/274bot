@@ -7,8 +7,8 @@ use crate::bank::request::{
     BankSeatArgs, BankSeatOperation, WithdrawLoadSelector, BANK_NEAREST_HOOK_DEPOSIT,
     BANK_NEAREST_HOOK_LOG, DEPOSIT_MATCH_HOOK_LOG, DEPOSIT_MATCH_HOOK_MATCH, HOOK_LOG,
 };
+use crate::interact::InteractReq;
 use crate::native::{defer_budget, ActionContext, ActionError, NativeMachine};
-use crate::shim::InteractReq;
 use api::snapshot::{ItemView, SnapshotView};
 use serde_json::{json, Value};
 use std::sync::{Arc, Mutex, MutexGuard};

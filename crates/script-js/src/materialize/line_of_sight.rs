@@ -6,7 +6,7 @@ use rustyscript::Runtime;
 
 const PENDING: &str = "__pending__";
 
-pub(super) fn install(runtime: &mut Runtime) -> Result<(), String> {
+pub(crate) fn install(runtime: &mut Runtime) -> Result<(), String> {
     super::lineage_v8::eval::<()>(
         runtime,
         r#"
@@ -80,7 +80,7 @@ fn v2<'s>(
     let to_v = field(scope, input, "to")?;
     let to = required_tile(scope, to_v)?;
     let size = optional_size(scope, input)?;
-    match crate::line_of_sight::query_v2(from, to, size) {
+    match crate::scene::line_of_sight::query_v2(from, to, size) {
         Ok(v) => helper_ok_bool(scope, v),
         Err(e) => helper_err(scope, e.as_str()),
     }
@@ -111,7 +111,7 @@ fn v1<'s>(
         }
         Some(n as i32)
     };
-    bool_val(scope, crate::line_of_sight::query_v1(from, to, size))
+    bool_val(scope, crate::scene::line_of_sight::query_v1(from, to, size))
 }
 
 fn required_tile(

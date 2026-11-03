@@ -1,4 +1,4 @@
-use script_js::wire::{ItemRowInput, ReachViewInput, SnapshotInput};
+use script::native::snapshot_source::{ItemRowInput, ReachViewInput, SnapshotInput};
 use script_js::{LoadIsolate, LoadShape};
 
 fn item(name: &'static str, id: i32, slot: i32) -> ItemRowInput<'static> {

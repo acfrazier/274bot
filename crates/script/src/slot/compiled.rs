@@ -166,7 +166,7 @@ pub enum CompiledDelivery {
 #[derive(Default)]
 pub(super) struct Output {
     pub status: Option<Arc<ScriptStatus>>,
-    pub paint: Option<Arc<crate::shim::ScriptPaint>>,
+    pub paint: Option<Arc<crate::paint::ScriptPaint>>,
     pub applied: Option<std::num::NonZeroU64>,
     pub account: Option<Box<str>>,
 }
@@ -351,7 +351,7 @@ impl NativeOutput for Output {
             self.status = Some(Arc::new(status));
         }
     }
-    fn paint(&mut self, frame: Arc<crate::shim::ScriptPaint>) {
+    fn paint(&mut self, frame: Arc<crate::paint::ScriptPaint>) {
         if self.paint.as_deref() != Some(frame.as_ref()) {
             self.paint = Some(frame);
         }
@@ -504,7 +504,7 @@ impl CompiledRun {
         seat_ports: SeatTickPorts<'tick>,
     ) -> (
         Result<ScriptFlow, ScriptFailure>,
-        Option<Vec<crate::shim::InteractReq>>,
+        Option<Vec<crate::interact::InteractReq>>,
     ) {
         if let Some(port) = pairs {
             let dead = crate::native::death::hitpoints_zero(
@@ -1681,7 +1681,7 @@ impl SlotScript {
 #[derive(Default)]
 pub struct TestOutput {
     pub(crate) statuses: Vec<ScriptStatus>,
-    pub(crate) paints: Vec<Arc<crate::shim::ScriptPaint>>,
+    pub(crate) paints: Vec<Arc<crate::paint::ScriptPaint>>,
     pub(crate) logs: Vec<String>,
 }
 
@@ -1698,7 +1698,7 @@ impl NativeOutput for TestOutput {
     fn status(&mut self, status: ScriptStatus) {
         self.statuses.push(status);
     }
-    fn paint(&mut self, paint: Arc<crate::shim::ScriptPaint>) {
+    fn paint(&mut self, paint: Arc<crate::paint::ScriptPaint>) {
         self.paints.push(paint);
     }
     fn log(&mut self, _level: api::hostlog::Level, message: &str) {

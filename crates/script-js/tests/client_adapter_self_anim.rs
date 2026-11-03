@@ -6,11 +6,12 @@
 
 mod common;
 
-use script_js::wire::{
-    encode_snapshot_with_native, ItemRowInput, NativeFactsInput, SnapshotInput, StatInput,
-};
 use script_js::{LoadIsolate, LoadShape};
 use serde_json::{json, Value};
+use {
+    script::native::snapshot_source::{ItemRowInput, NativeFactsInput, SnapshotInput, StatInput},
+    script_js::wire::encode_snapshot_with_native,
+};
 
 /// One post: `moving` is the host's walking-or-animating flag, `anim` the
 /// posted primary animation id.

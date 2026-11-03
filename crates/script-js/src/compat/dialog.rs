@@ -7,15 +7,15 @@
 //! the frozen log lines and completion stay here. Game actions reuse the
 //! existing FlatBuffer `npc` / `continue` / `answer` verbs.
 
+use crate::compat::reach_entity::{NpcReach, NpcReachOpts, TalkExpect};
 use crate::machine::{Begin, Call, Cx, Family, Reply, Step};
 #[cfg(test)]
-use crate::observed::Ops;
-use crate::observed::{self, Scene, Text};
-use crate::reach_entity::{NpcReach, NpcReachOpts, TalkExpect};
+use crate::scene::observed::Ops;
+use crate::scene::observed::{self, Scene, Text};
 use api::snapshot::AttackMarks;
 use script::dialogue_outcome::DialogueOutcome;
+use script::interact::InteractReq;
 use script::quester::families::dialogue::PageAcknowledgement;
-use script::shim::InteractReq;
 use serde::Deserialize;
 use serde_json::json;
 
@@ -186,7 +186,7 @@ pub(crate) struct Dialog {
     steps: u32,
     due_tick: u64,
     ack_page: PageAcknowledgement,
-    /// [`crate::reach::pending_posts`] when the dialogue began.
+    /// [`crate::compat::reach::pending_posts`] when the dialogue began.
     pending_mark: u64,
     /// A log line to write before `after`.
     log: Option<String>,
@@ -242,7 +242,7 @@ impl Family for Dialog {
             steps: 0,
             due_tick: 0,
             ack_page: PageAcknowledgement::default(),
-            pending_mark: crate::reach::pending_posts(),
+            pending_mark: crate::compat::reach::pending_posts(),
             log: None,
             after: None,
             reach: None,
@@ -276,7 +276,10 @@ impl Family for Dialog {
             };
         }
         let obs = observed::with(NativeObservation::from_scene);
-        if !obs.ingame || crate::reach::pending_posts() != self.pending_mark || obs.pending() {
+        if !obs.ingame
+            || crate::compat::reach::pending_posts() != self.pending_mark
+            || obs.pending()
+        {
             if let Some(op) = self.reach.as_ref().and_then(NpcReach::release) {
                 cx.emit(op);
             }
@@ -332,7 +335,7 @@ impl Dialog {
                     }
                     return self.drive_step(obs, cx);
                 }
-                if !crate::reach_entity::npc_talkable(&self.npc_name) {
+                if !crate::compat::reach_entity::npc_talkable(&self.npc_name) {
                     let line = format!("no '{}' nearby to talk to", self.npc_name);
                     return self.then(Some(line), After::Done(false), cx);
                 }
@@ -834,9 +837,9 @@ mod tests {
             npc("Banker", &["Bank"], 0, 2),
         ]);
         post(&observation);
-        assert!(crate::reach_entity::npc_talkable("gundai"));
-        assert!(!crate::reach_entity::npc_talkable("Banker"));
-        assert!(!crate::reach_entity::npc_talkable(""));
+        assert!(crate::compat::reach_entity::npc_talkable("gundai"));
+        assert!(!crate::compat::reach_entity::npc_talkable("Banker"));
+        assert!(!crate::compat::reach_entity::npc_talkable(""));
     }
 
     /// No script callbacks: no `log` hook is held here.
@@ -849,7 +852,7 @@ mod tests {
 
         fn call(
             &mut self,
-            _hook: Option<&crate::callback_v8::HeldCallback>,
+            _hook: Option<&crate::materialize::callback_v8::HeldCallback>,
             _args: &[serde_json::Value],
         ) -> Called {
             panic!("no log hook is held");

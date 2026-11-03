@@ -3,12 +3,12 @@
 
 use crate::gatherer::WorkArea;
 use crate::ground_take::FailureLedger;
+use crate::interact::InteractReq;
 use crate::native::{
     defer_budget, walk::Walk, ActionContext, ActionError, NativeMachine, WalkEnd, WalkReceipt,
     WalkRefusal, WalkRequest,
 };
 use crate::reach_route as route;
-use crate::shim::InteractReq;
 use api::ground_take::{GroundKey, GroundRefusal, TakeOutcome, TakeSettlement};
 use api::quest_progress::EvidenceStamp;
 use api::WorldTile;

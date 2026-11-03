@@ -7,7 +7,7 @@
 use super::callback_v8::{self as cb, JsResult};
 use rustyscript::Runtime;
 
-pub(super) fn install(runtime: &mut Runtime) -> Result<(), String> {
+pub(crate) fn install(runtime: &mut Runtime) -> Result<(), String> {
     cb::install(runtime, "__rs2b0t_cake_stall", cake_stall)
 }
 
@@ -25,7 +25,7 @@ fn run<'s>(
     args: &v8::FunctionCallbackArguments<'s>,
 ) -> JsResult<'s, v8::Local<'s, v8::Value>> {
     match args.get(0).to_rust_string_lossy(scope).as_str() {
-        "count" => Ok(v8::Integer::new(scope, crate::cake_stall::carried_cakes()).into()),
+        "count" => Ok(v8::Integer::new(scope, crate::compat::cake_stall::carried_cakes()).into()),
         "needs_restock" => {
             let target = args.get(1);
             let target = if target.is_null() || target.is_undefined() {
@@ -36,7 +36,7 @@ fn run<'s>(
             };
             Ok(v8::Boolean::new(
                 scope,
-                crate::cake_stall::needs_cake_restock_from_snapshot(target),
+                crate::compat::cake_stall::needs_cake_restock_from_snapshot(target),
             )
             .into())
         }

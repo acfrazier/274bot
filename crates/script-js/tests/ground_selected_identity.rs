@@ -1,9 +1,9 @@
-use script::shim::InteractReq;
-use script_js::wire::{
-    decode_interact_batch, encode_interact_batch, ReachViewInput, SceneEntityInput, SnapshotInput,
-    TileInput,
-};
+use script::interact::InteractReq;
 use script_js::{LoadIsolate, LoadShape};
+use {
+    script::native::snapshot_source::{ReachViewInput, SceneEntityInput, SnapshotInput, TileInput},
+    script_js::wire::{decode_interact_batch, encode_interact_batch},
+};
 
 fn base_snapshot<'a>() -> SnapshotInput<'a> {
     SnapshotInput {

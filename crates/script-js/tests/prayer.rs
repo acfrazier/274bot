@@ -1,5 +1,7 @@
-use script::shim::InteractReq;
-use script_js::wire::{ReachViewInput, SnapshotInput, StatInput, TileInput, VarpInput};
+use script::interact::InteractReq;
+use script::native::snapshot_source::{
+    ReachViewInput, SnapshotInput, StatInput, TileInput, VarpInput,
+};
 use script_js::{ApiFamily, JsLibrary, LoadIsolate, LoadShape};
 
 mod common;

@@ -6,8 +6,8 @@
 use std::thread::sleep;
 use std::time::{Duration, Instant};
 
-use script::shim::InteractReq;
-use script_js::wire::{ChatLineInput, SceneEntityInput, SnapshotInput, TileInput};
+use script::interact::InteractReq;
+use script::native::snapshot_source::{ChatLineInput, SceneEntityInput, SnapshotInput, TileInput};
 use script_js::{LoadIsolate, LoadShape};
 
 mod common;
@@ -126,8 +126,8 @@ export default class T extends LoopingBot {
 }
 "#;
     use api::snapshot::{GameSnapshot, SceneView, WorldTile};
+    use script::native::snapshot_source::NativeFactsInput;
     use script::native::HostEffect;
-    use script_js::wire::NativeFactsInput;
 
     fn bank_tick(slot: &mut bank_slot::BankSlot, snap: &SnapshotInput<'_>) {
         slot.tick_from_input(snap.tick, snap, NativeFactsInput::default());
@@ -268,8 +268,8 @@ export default class T extends LoopingBot {
 
 #[test]
 fn kept_bank_transfer_steps_take_the_closed_bank_path_without_replay() {
+    use script::native::snapshot_source::{ItemRowInput, NativeFactsInput};
     use script::native::{HostEffect, InteractionReceipt};
-    use script_js::wire::{ItemRowInput, NativeFactsInput};
 
     for (call, terminal_value) in [
         ("Bank.deposit('Bones')", serde_json::json!(false)),

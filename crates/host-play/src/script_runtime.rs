@@ -18,7 +18,7 @@ pub(super) fn dispatch_observed_bank_op_for_test(
     driver: &mut dyn Driver,
     snapshot: &GameSnapshot,
     obj_names: Option<&api::obj_names::ObjNames>,
-    req: &script::shim::InteractReq,
+    req: &script::interact::InteractReq,
 ) -> Option<script::slot::PendingBankOp> {
     dispatch_observed_bank_op(driver, snapshot, obj_names, None, req)
 }

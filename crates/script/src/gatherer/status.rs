@@ -1,7 +1,7 @@
 use crate::native::{
     NativeOutput, NativePhase, ScriptFailure, ScriptStatus, StatusField, StatusValue,
 };
-use crate::shim::{host_control_buttons, ScriptPaint};
+use crate::paint::{host_control_buttons, ScriptPaint};
 use crate::CompiledId;
 use api::selected::RunKey;
 use std::sync::Arc;
@@ -334,8 +334,8 @@ mod tests {
         assert_eq!(
             ids,
             vec![
-                (crate::shim::HOST_PAUSE_CONTROL_ID, "Pause"),
-                (crate::shim::HOST_STOP_CONTROL_ID, "Stop"),
+                (crate::paint::HOST_PAUSE_CONTROL_ID, "Pause"),
+                (crate::paint::HOST_STOP_CONTROL_ID, "Stop"),
             ]
         );
     }
