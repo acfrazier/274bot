@@ -575,6 +575,7 @@ export default class T extends LoopingBot {
     onPaint() {
         const p = Paint.begin(null, {});
         globalThis.__picked = p.stepper('mode', 'Mode', ['one', 'two', 'three'], 'one');
+        globalThis.__clickAfterStep = globalThis.__rs2b0t_host.paintClick;
         p.end();
     }
 }
@@ -604,22 +605,37 @@ export default class T extends LoopingBot {
     tick(&iso, 2);
     assert_eq!(iso.probe("__picked").unwrap().as_str(), Some("two"));
     assert_eq!(
-        iso.probe("__rs2b0t_host.paintClick").unwrap(),
+        iso.probe("__clickAfterStep").unwrap(),
         serde_json::Value::Null,
         "the matching next region consumes its click"
+    );
+    assert_eq!(
+        iso.probe("__rs2b0t_host.paintClick").unwrap(),
+        serde_json::Value::Null,
+        "the host drops any click left after paint"
     );
 
     iso.paint_click("step:mode:mid");
     tick(&iso, 3);
     assert_eq!(iso.probe("__picked").unwrap(), serde_json::Value::Null);
     assert_eq!(
+        iso.probe("__clickAfterStep").unwrap(),
+        serde_json::Value::String("step:mode:mid".into()),
+        "the display-only label does not consume its click"
+    );
+    assert_eq!(
         iso.probe("__rs2b0t_host.paintClick").unwrap(),
         serde_json::Value::Null,
-        "the display-only label consumes the click without cycling"
+        "the host drops the unconsumed click after paint"
     );
 
     iso.paint_click("step:mode:prev");
     tick(&iso, 4);
-    assert_eq!(iso.probe("__picked").unwrap().as_str(), Some("three"));
+    assert_eq!(iso.probe("__picked").unwrap().as_str(), Some("one"));
+    assert_eq!(
+        iso.probe("__clickAfterStep").unwrap(),
+        serde_json::Value::Null,
+        "the matching prev region consumes its click"
+    );
     iso.join();
 }
