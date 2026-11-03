@@ -131,6 +131,14 @@
     "declaration": "/** Per-isolate string settings for paint helpers. */\nexport class PaintState {\n    constructor();\n    get(key: string, fallback: string): string;\n    set(key: string, value: string): void;\n}"
   },
   {
+    "id": "paint-state-singleton-public-api",
+    "module": "paint/paintLogic.js",
+    "selector": "paintState",
+    "reason": "The singleton shares frame store 0; compatibility publishes only its string get/set view.",
+    "runtime": "crates/script-js/src/shim/paintLogic.js:144",
+    "declaration": "export const paintState: Pick<PaintState, 'get' | 'set'>;"
+  },
+  {
     "id": "not-impl-value:api/ai/clues/data/toolAcquire.js:SPADE_SPAWNS",
     "module": "api/ai/clues/data/toolAcquire.js",
     "selector": "SPADE_SPAWNS",

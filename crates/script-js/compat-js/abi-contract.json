@@ -12869,6 +12869,16 @@
       "nav_consuming": false
     },
     {
+      "id": "paint-state-singleton-public-api",
+      "module": "paint/paintLogic.js",
+      "selector": "paintState",
+      "reason": "The singleton shares frame store 0; compatibility publishes only its string get/set view.",
+      "runtime": "crates/script-js/src/shim/paintLogic.js:144",
+      "declaration": "export const paintState: Pick<PaintState, 'get' | 'set'>;",
+      "family_id": "paint",
+      "nav_consuming": false
+    },
+    {
       "id": "not-impl-value:api/ai/clues/data/toolAcquire.js:SPADE_SPAWNS",
       "module": "api/ai/clues/data/toolAcquire.js",
       "selector": "SPADE_SPAWNS",
@@ -22754,7 +22764,7 @@
       "selector": "WHEEL_ROWS",
       "module": "paint/paintLogic.js",
       "state": "not-impl",
-      "source": "crates/script-js/src/shim/paintLogic.js:145",
+      "source": "crates/script-js/src/shim/paintLogic.js:147",
       "reason": "The exported value throws when accessed through notImplValue."
     },
     {

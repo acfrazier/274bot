@@ -4808,10 +4808,7 @@ export class PaintState {
     get(key: string, fallback: string): string;
     set(key: string, value: string): void;
 }
-export const paintState: {
-    get(key: string, fallback: string): string;
-    set(key: string, value: string): void;
-};
+export const paintState: Pick<PaintState, "get" | "set">;
 /** Wrap text to `cols`, indenting continuation lines by `indent` spaces. */
 export function wrapText(text: string, cols: number, indent?: number): string[];
 export const WHEEL_ROWS: never;
