@@ -150,10 +150,8 @@ pub(super) fn store_select(key: &str, name: &str) {
         return;
     }
     STATE.with(|s| {
-        s.borrow_mut()
-            .state_set(key.to_owned(), name.to_owned());
+        s.borrow_mut().state_set(key.to_owned(), name.to_owned());
     });
-
 }
 /// Resolve a strip band's selection and spend its title row, for a caller that
 /// records the frame itself (`paint_jive`'s frame plan) instead of marshalling
@@ -446,7 +444,9 @@ fn run<'s>(
                 let shapes = scope
                     .get_slot::<Rc<PaintChromeShapes>>()
                     .cloned()
-                    .ok_or_else(|| "paint chrome object shape cache is not installed".to_string())?;
+                    .ok_or_else(|| {
+                        "paint chrome object shape cache is not installed".to_string()
+                    })?;
                 let weak_map = v8::Local::new(scope, &*shapes.state_stores.borrow());
                 let set = v8::Local::new(scope, &shapes.state_store_set);
                 let store = v8::Map::new(scope);
@@ -458,8 +458,7 @@ fn run<'s>(
         "stateGet" => {
             let key_text = js_string_arg(scope, args.get(2));
             if args.get(4).boolean_value(scope) {
-                let value =
-                    STATE.with(|s| s.borrow().state_get(&key_text).map(str::to_owned));
+                let value = STATE.with(|s| s.borrow().state_get(&key_text).map(str::to_owned));
                 return match value {
                     Some(value) => js_string(scope, &value),
                     None => Ok(args.get(3)),
