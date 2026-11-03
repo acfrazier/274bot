@@ -34,12 +34,16 @@ Step ids must stay unique across recipes and the selected role's prelude, sequen
 
 ### Prerequisite switches
 
-The optional header `"prereq": {"quest_start": false}` forbids prerequisite quest starts on every walk in the guide.
-Use `"dialogue": false` in that header to forbid prerequisite dialogue steps.
-An omitted field inherits the global and script grants.
-A true header field grants that permission.
-A false header field or a false per-step permission always forbids it.
-For one `walk` step, use `allow_prereq_dialogue` or `allow_quest_start` in its arguments.
+The optional header `"prereq": {"quest_start": true}` adds a path-level grant for
+quest starts on every walk. Use `"dialogue": true` to grant prerequisite
+dialogue steps on every walk.
+An omitted or `false` header field adds no path-level grant; it does not
+revoke global or script grants.
+
+For one `walk` step, use `allow_prereq_dialogue` or `allow_quest_start` in its
+arguments. A per-walk `true` adds a grant; `false` is the request-level
+prohibition. An omitted per-walk field uses the global, script, and header
+grants.
 These switches do not change the guide's explicitly authored quest conversations.
 
 ## Required danger zones

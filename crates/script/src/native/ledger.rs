@@ -41,6 +41,21 @@ impl Runtime {
     pub fn take_note_progress(&mut self, run: RunKey) -> bool {
         self.pending_note_progress.take() == Some(run)
     }
+
+    /// The live modal wait of this runtime's owner, sampled at `now` on the
+    /// owner's own active clock: the clock its machines read as
+    /// `ActionContext::active_now` (`slot/compiled.rs:411`).
+    pub fn modal_wait_tick(&mut self, now: Instant, tick: u64) -> Option<(NonZeroU64, u64)> {
+        let active_now = self.clock.now(now).as_duration();
+        self.ledger.as_mut()?.modal_wait_tick(active_now, tick)
+    }
+
+    /// The live quiet read of this runtime's owner, sampled at `now` on the
+    /// owner's own clocks, as [`Self::modal_wait_tick`].
+    pub fn quiet_read_wait(&mut self, now: Instant, tick: u64) -> Option<(QuietReadOwner, u64)> {
+        let active_now = self.clock.now(now).as_duration();
+        self.ledger.as_mut()?.quiet_read_wait(now, active_now, tick)
+    }
 }
 
 /// The host walk outcome the slot observed last: its sequence and its cancel
@@ -257,6 +272,10 @@ impl HostAction {
     }
 }
 
+/// The quiet-read lease's own wall bound: a paused or stranded reader stops
+/// hiding the page after this, whatever its owner does.
+const QUIET_READ_WALL_BOUND: Duration = Duration::from_secs(10);
+
 /// Allocated only on first native admission. There is one foreground owner,
 /// one outstanding walk and a bounded outbox, not a second navigation runtime.
 pub struct Ledger {
@@ -279,6 +298,13 @@ pub struct Ledger {
     pub(crate) batch_receipts: [Option<InteractionReceipt>; 5],
     next_batch_receipt: usize,
     pub(crate) quiet_since: Option<(NonZeroU64, NonZeroU64, Instant)>,
+    /// The quiet read's lease and the window its owner enforces.
+    pub(crate) quiet_deadline: Option<(NonZeroU64, super::WaitDeadline)>,
+    /// Last modal-wait lease number. A separate sequence, so a lease does not
+    /// shift the request ids that receipts and traces carry.
+    pub(crate) modal_wait_seq: u64,
+    /// The latest modal-wait lease and the bound its owner enforces.
+    pub(crate) modal_wait_deadline: Option<(NonZeroU64, super::WaitDeadline)>,
     /// The latest open bank session a native machine of this account touched.
     /// It outlives one machine, so a later verb in the same session skips the
     /// Item press and a later reader can tell whose open it was.
@@ -321,6 +347,9 @@ impl Default for Ledger {
             batch_receipts: std::array::from_fn(|_| None),
             next_batch_receipt: 0,
             quiet_since: None,
+            quiet_deadline: None,
+            modal_wait_seq: 0,
+            modal_wait_deadline: None,
             bank_session: None,
         }
     }
@@ -397,11 +426,12 @@ impl Ledger {
         let owner = self.owner.as_ref()?;
         // Independent of the active action clock: a paused or stranded
         // reader must not keep hiding a modal indefinitely.
-        if now.saturating_duration_since(since) >= Duration::from_secs(10) {
+        if now.saturating_duration_since(since) >= QUIET_READ_WALL_BOUND {
             owner.release_quiet(lease);
         }
         if !owner.quiet(lease) {
             self.quiet_since = None;
+            self.quiet_deadline = None;
             return None;
         }
         Some(QuietReadOwner {
@@ -409,6 +439,49 @@ impl Ledger {
             action_id: owner.id,
             request_id: request,
         })
+    }
+
+    /// The live quiet read and the observed tick by which its owner ends it:
+    /// the window the owner armed last, or else the lease's own wall bound,
+    /// which [`Self::quiet_read`] enforces itself. `active_now` is the
+    /// owner's active clock at `now` ([`Runtime::quiet_read_wait`]).
+    pub(crate) fn quiet_read_wait(
+        &mut self,
+        now: Instant,
+        active_now: Duration,
+        tick: u64,
+    ) -> Option<(QuietReadOwner, u64)> {
+        let quiet = self.quiet_read(now)?;
+        let (_, lease, since) = self.quiet_since?;
+        let deadline_tick = match self.quiet_deadline.as_mut() {
+            Some((id, deadline)) if *id == lease => deadline.owner_tick(active_now, tick),
+            _ => super::WaitDeadline::self_ending_tick(since + QUIET_READ_WALL_BOUND, now, tick),
+        };
+        Some((quiet, deadline_tick))
+    }
+
+    /// The live foreground owner's modal-wait lease id: it waits for the page
+    /// its own interaction opens. Revocation clears it.
+    pub fn modal_wait(&self) -> Option<NonZeroU64> {
+        self.owner.as_ref()?.modal_wait()
+    }
+
+    /// The live modal wait and the observed tick by which its owner ends it.
+    /// Every lease is taken with its deadline
+    /// (`ActionContext::begin_modal_wait`). `active_now` is the owner's
+    /// active clock at the sample ([`Runtime::modal_wait_tick`]).
+    pub(crate) fn modal_wait_tick(
+        &mut self,
+        active_now: Duration,
+        tick: u64,
+    ) -> Option<(NonZeroU64, u64)> {
+        let lease = self.modal_wait()?;
+        let deadline_tick = match self.modal_wait_deadline.as_mut() {
+            Some((id, deadline)) if *id == lease => deadline.owner_tick(active_now, tick),
+            // Unreachable: a lease without its deadline ends at the host's margin.
+            _ => 0,
+        };
+        Some((lease, deadline_tick))
     }
 
     pub fn revoke_foreground(&mut self) {

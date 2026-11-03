@@ -71,11 +71,37 @@ pub enum PrereqFailure {
         at: u64,
         bound: u16,
     },
+    /// Every attempt of the conversation's reach budget failed. The engine
+    /// cancelled the first Talk: it sent "I can't reach that!" and cleared
+    /// the interaction (`Player.ts:1292-1295`), so waiting longer cannot
+    /// recover it. Each later attempt re-approached the NPC and either sent a
+    /// Talk that the engine also cancelled, or failed its approach. `cause`,
+    /// `since`, `at` and the tiles describe the last failure: the player's
+    /// and the NPC's tiles when it ended.
+    TalkUnreachable {
+        attempts: u8,
+        since: u64,
+        at: u64,
+        from: Option<WorldTile>,
+        npc: Option<WorldTile>,
+        cause: TalkReachCause,
+    },
     /// Used only when the reused machine identifies the expiry cause.
     MachineEnded {
         machine: &'static str,
         reason: Arc<str>,
     },
+}
+
+/// Why one attempt of a prerequisite Talk did not reach the NPC.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum TalkReachCause {
+    /// The engine cancelled the Talk with "I can't reach that!".
+    Cancelled,
+    /// The re-approach ended while the NPC was not ready to talk: its walk
+    /// ended with `walk` (for example `Arrived` at the NPC's earlier tile),
+    /// or the approach deadline passed before a walk receipt (`None`).
+    Approach { walk: Option<WalkEnd> },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
@@ -226,10 +252,10 @@ mod tests {
     }
 
     #[test]
-    fn path_and_request_prerequisite_options_keep_every_forbid() {
+    fn path_grants_are_additive_and_only_request_forbid_narrows() {
         use crate::native::{PrereqOptions, WalkBit};
         assert!(std::mem::size_of::<PrereqOptions>() <= 2);
-        for header in [WalkBit::Inherit, WalkBit::Allow, WalkBit::Forbid] {
+        for header in [false, true] {
             for request in [WalkBit::Inherit, WalkBit::Allow, WalkBit::Forbid] {
                 let mut options = WalkOptions {
                     allow_prereq_dialogue: request,
@@ -241,12 +267,12 @@ mod tests {
                     quest_start: header,
                 }
                 .apply(&mut options);
-                let expected = if header == WalkBit::Forbid || request == WalkBit::Forbid {
+                let expected = if request == WalkBit::Forbid {
                     WalkBit::Forbid
-                } else if request == WalkBit::Inherit {
-                    header
+                } else if header || request == WalkBit::Allow {
+                    WalkBit::Allow
                 } else {
-                    request
+                    WalkBit::Inherit
                 };
                 assert_eq!(options.allow_prereq_dialogue, expected);
                 assert_eq!(options.allow_quest_start, expected);

@@ -436,6 +436,16 @@ pub enum StartPoll {
     NotOwed,
 }
 
+/// The script's own wait for the result of its own interaction, as read on
+/// one host frame ([`SlotScript::script_interaction_wait`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct InteractionWait {
+    /// Changes with each new wait.
+    pub key: u64,
+    /// The observed tick by which a polled owner has ended this wait itself.
+    pub deadline_tick: u64,
+}
+
 /// Per-uid runner. Compiled XOR Load (a JS isolate) — never both.
 pub struct SlotScript {
     pub want_run: bool,
@@ -2253,6 +2263,61 @@ impl SlotScript {
                 .as_ref()
                 .is_some_and(|surface| surface.journal_paint_hidden(now))
         }
+    }
+
+    /// The script's own wait for the result of its own interaction, read once
+    /// per host frame with that frame's observed game tick. While it is
+    /// `Some`, the host holds its auto-run press. The key changes with each
+    /// new wait. Three owner-fenced leases count: a native modal wait
+    /// (`Dialogue`), the native quiet read (the journal machine, from before
+    /// its click to its observed close) and the compatibility journal. Stop,
+    /// replacement and a session boundary revoke the native leases. The
+    /// native quiet read also ends at its own 10 s wall bound; the
+    /// compatibility journal's hold ends at its own 10 s wall bound from its
+    /// begin, renewed at its click.
+    ///
+    /// Each wait carries the deadline its owner enforces itself, as an
+    /// observed tick, in the owner's own clock at this sample. A native
+    /// active-clock bound is read against the runtime's active clock at
+    /// `now`, which Pause, hold, not-ready and Blocked stop: it is not due
+    /// until that clock reaches it, and the first sample that sees it reached
+    /// fixes the deadline at that tick. A wall bound is not due until it has
+    /// passed.
+    pub fn script_interaction_wait(
+        &mut self,
+        now: std::time::Instant,
+        tick: u64,
+    ) -> Option<InteractionWait> {
+        // Modal-wait lease numbers and request ids are separate sequences that
+        // count up from one; the tag keeps their keys apart. Compatibility
+        // journal keys have the top bit.
+        const MODAL_WAIT_KEY_TAG: u64 = 1 << 62;
+        const COMPAT_JOURNAL_KEY_TAG: u64 = 1 << 63;
+        if let Some((lease, deadline_tick)) = self.native_runtime.modal_wait_tick(now, tick) {
+            return Some(InteractionWait {
+                key: lease.get() | MODAL_WAIT_KEY_TAG,
+                deadline_tick,
+            });
+        }
+        if let Some((quiet, deadline_tick)) = self.native_runtime.quiet_read_wait(now, tick) {
+            return Some(InteractionWait {
+                key: quiet.request_id.get(),
+                deadline_tick,
+            });
+        }
+        let journal = self.surface.as_ref()?.journal_wait(now)?;
+        // The read's transaction identity: the token counts every begin of the
+        // run and the generation every work reset, so the next read (even one
+        // that begins before any free sample) has a new key.
+        Some(InteractionWait {
+            key: COMPAT_JOURNAL_KEY_TAG
+                | (((journal.generation << 32) ^ journal.token) & !COMPAT_JOURNAL_KEY_TAG),
+            deadline_tick: crate::native::WaitDeadline::self_ending_tick(
+                journal.deadline,
+                now,
+                tick,
+            ),
+        })
     }
 
     /// Live walk ownership, not a retained destination or reconnect carry.

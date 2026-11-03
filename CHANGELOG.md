@@ -574,10 +574,18 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.8` 
   An on-demand Heroes' Quest page also proves eligibility after Alfonse,
   before quest completion, without starting dialogue or a quest.
   If the page times out, the walker retries once on a later observed game
-  tick. A failed retry keeps the gate closed and reports the last failure.
+  tick. A failed retry keeps the gate closed and reports the terminal failure.
+
+- Navigation keeps quest-gated crossings without a proven stage range (the
+  Legends' Guild barrier, the Desert Rescue mining camp, the Routequest
+  trapdoor) for accounts whose quest list shows the quest complete. A
+  completed-quest gate whose quest-list colour is not proven to follow that
+  quest's own progress stays unknown.
+
 - Two default-on navigation settings allow prerequisite dialogue and quest
-  starts. A global or script grant allows the step. A per-walk `false`
-  forbids it. Combat escapes and other safety walks never stop to talk.
+  starts. Global, script and guide-level `true` grants are additive. A
+  guide-level `false` adds no grant; a per-walk `false` forbids it. Combat
+  escapes and other safety walks never stop to talk.
   Scripted `walkTo` and `walkResilient` preserve these per-walk choices,
   including after the existing boat-fare recovery.
   Scripted walks retain their original walk identity during a prerequisite
@@ -607,6 +615,24 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.8` 
   or wear an item the monks refuse: weapons, armour, axes, pickaxes or
   cannon parts. A bot plans that boat only after it has seen its inventory
   and equipment.
+- While a script waits for the window its own action opens (a quest journal
+  page or a conversation page), the host does not press the run button. The
+  script ends this wait when it sees the result, reaches its own time limit,
+  or stops. A queued Talk holds the press before dispatch; its page deadline
+  starts only when the host accepts the click. A guardian reissue takes a
+  fresh wait. Actions that open no window, such as walks, take no hold.
+  The lease follows its owner's clock: dialogue page, Continue and end-gap
+  waits count observed ticks and can expire during a pause; Choice and Main
+  acknowledgement waits exclude paused time. If an owner stops checking a
+  bound, the host ends the hold one game tick after that bound and logs a
+  failure. A compatibility quest journal read sends its click only while the
+  run button is held, also after a long pause.
+- A prerequisite conversation that the server cancels with "I can't reach
+  that!" no longer waits out its page bound. The bot ends the wait at once,
+  walks to the NPC again if it is more than two tiles away, and talks again.
+  If that walk ends after the NPC has moved on, the bot walks to the NPC
+  again too. One conversation makes up to four attempts in all. If every
+  attempt fails, the step fails and reports the last attempt's cause and tiles.
 - Bots now wait and try again when another player is using a shortcut,
   instead of giving up. The Yanille dungeon ledge ("The ledge is being
   used") stays held for at most 9 game ticks after a refusal, so the bot

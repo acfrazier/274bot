@@ -832,6 +832,311 @@ fn auto_run_20_0_20_sends_twice() {
     assert!(slot.run_on);
 }
 
+#[test]
+fn auto_run_yields_to_script_action_and_recurs_after_energy_and_session_changes() {
+    let mut client = prepare_client(
+        cfg(),
+        1,
+        Arc::new(Cache::default()),
+        Arc::new(vec![]),
+        Vec::new(),
+    );
+    let mut slot = SlotLoop::new();
+    ingame_scene2(&mut client);
+    client.runenergy = 20;
+    client.gens.stat = 1;
+    slot.after_drain(&mut client);
+
+    let action_tick = slot.snapshot.tick();
+    // The script sent an interaction and waits for its page.
+    slot.run_policy.observe_script_wait(Some(wait(1, 100)), 0);
+    slot.apply_auto_run(&mut client);
+    assert_eq!(slot.run_sends, 0, "the host yields during the script tick");
+    assert_eq!(client.out.pos, 0, "the host sends no competing run press");
+
+    client.main_modal_id = 5292;
+    client.gens.player_info += 1;
+    client.gens.player += 1;
+    slot.after_drain(&mut client);
+    // The script observed its page: its wait ends, and the modal holds the press.
+    slot.run_policy.observe_script_wait(None, 1);
+    assert_eq!(slot.snapshot.tick(), action_tick + 1);
+    slot.apply_auto_run(&mut client);
+    assert_eq!(slot.run_sends, 0, "the observed modal keeps the host idle");
+    assert_eq!(client.out.pos, 0);
+
+    client.main_modal_id = -1;
+    client.gens.player_info += 1;
+    client.gens.player += 1;
+    slot.after_drain(&mut client);
+    assert_eq!(slot.snapshot.tick(), action_tick + 2);
+    slot.apply_auto_run(&mut client);
+    assert_eq!(
+        slot.run_sends, 1,
+        "the host acts after the modal is observed closed"
+    );
+
+    client.out.pos = 0;
+    client.runenergy = 0;
+    client.gens.stat += 1;
+    client.gens.player_info += 1;
+    client.gens.player += 1;
+    slot.after_drain(&mut client);
+    slot.apply_auto_run(&mut client);
+    assert!(!slot.run_on);
+    assert_eq!(slot.run_sends, 1);
+
+    client.runenergy = 20;
+    client.gens.stat += 1;
+    client.gens.player_info += 1;
+    client.gens.player += 1;
+    slot.after_drain(&mut client);
+    slot.apply_auto_run(&mut client);
+    assert_eq!(slot.run_sends, 2, "energy recovery permits the next press");
+
+    client.out.pos = 0;
+    slot.run_policy.observe_script_wait(Some(wait(2, 100)), 4);
+    client.ingame = false;
+    slot.after_drain(&mut client);
+    ingame_scene2(&mut client);
+    client.gens.session = client.gens.session.wrapping_add(1);
+    client.runenergy = 20;
+    slot.after_drain(&mut client);
+    slot.run_policy.observe_script_wait(Some(wait(2, 100)), 5);
+    slot.apply_auto_run(&mut client);
+    assert_eq!(
+        slot.run_sends, 3,
+        "a new session ends the old hold, even if the old key is still reported"
+    );
+}
+
+fn wait(key: u64, deadline_tick: u64) -> ScriptWait {
+    ScriptWait { key, deadline_tick }
+}
+
+/// A drain of `packets` packets. The hold reads no packet and no count.
+fn observe_drain(slot: &mut SlotLoop, client: &mut Client, packets: u32) {
+    client.gens.player_info += u64::from(packets);
+    client.gens.player += 1;
+    slot.after_drain(client);
+}
+
+/// One frame: a drain, the script's sample at `tick`, the press decision.
+fn frame(slot: &mut SlotLoop, client: &mut Client, wait: Option<ScriptWait>, tick: u64) {
+    observe_drain(slot, client, 1);
+    slot.run_policy.observe_script_wait(wait, tick);
+    slot.apply_auto_run(client);
+}
+
+fn held_slot(client: &mut Client, held: ScriptWait) -> SlotLoop {
+    let mut slot = SlotLoop::new();
+    ingame_scene2(client);
+    client.runenergy = 20;
+    client.gens.stat = 1;
+    slot.after_drain(client);
+    slot.run_policy.observe_script_wait(Some(held), 0);
+    slot
+}
+
+fn test_client() -> Client {
+    prepare_client(
+        cfg(),
+        1,
+        Arc::new(Cache::default()),
+        Arc::new(vec![]),
+        Vec::new(),
+    )
+}
+
+/// The hold follows the script's wait, not packets: queued updates, a modal
+/// in a later drain than its PLAYER_INFO, and full multi-packet drains do not
+/// end it. Only the script ends it.
+#[test]
+fn script_wait_holds_the_press_through_any_packet_order_until_the_script_ends_it() {
+    let mut client = test_client();
+    let held = wait(9, 12);
+    let mut slot = held_slot(&mut client, held);
+    slot.apply_auto_run(&mut client);
+    assert_eq!(slot.run_sends, 0, "held on the interaction's own frame");
+    for tick in 1..=4 {
+        frame(&mut slot, &mut client, Some(held), tick);
+    }
+    assert_eq!(slot.run_sends, 0, "queued updates without the page");
+    for tick in 5..=6 {
+        observe_drain(&mut slot, &mut client, 5);
+        slot.run_policy.observe_script_wait(Some(held), tick);
+        slot.apply_auto_run(&mut client);
+    }
+    assert_eq!(
+        slot.run_sends, 0,
+        "full five-packet drains without the page"
+    );
+    client.gens.player += 1;
+    slot.after_drain(&mut client);
+    slot.run_policy.observe_script_wait(Some(held), 6);
+    slot.apply_auto_run(&mut client);
+    assert_eq!(slot.run_sends, 0, "a drain with no PLAYER_INFO");
+    assert_eq!(client.out.pos, 0, "no press was written");
+    slot.run_policy.observe_script_wait(None, 6);
+    slot.apply_auto_run(&mut client);
+    assert_eq!(
+        slot.run_sends, 1,
+        "the script ended its wait: the press goes out"
+    );
+}
+
+/// R4S-1: an authored quiet end gap of 30 ticks (`MAX_GAP_TICKS`,
+/// `script/src/quester/families/mod.rs:1312`) is a valid wait. Its lease
+/// reports the gap's own deadline, and the host holds the press to that
+/// deadline. A fixed limit shorter than the gap (the old 25 ticks) fails here.
+#[test]
+fn a_thirty_tick_quiet_end_gap_keeps_the_hold_to_its_deadline() {
+    let mut client = test_client();
+    // The gap starts at tick 0; the dialogue completes on tick 30
+    // (`dialogue.rs:574,590`: `obs.tick >= self.due_tick`).
+    let gap = wait(9, 30);
+    let mut slot = held_slot(&mut client, gap);
+    for tick in 1..=30 {
+        frame(&mut slot, &mut client, Some(gap), tick);
+        assert_eq!(
+            slot.run_sends, 0,
+            "a quiet gap is a valid wait: held on tick {tick}"
+        );
+    }
+    assert_eq!(client.out.pos, 0, "no press was written during the gap");
+    // Tick 30 is the gap's deadline: the dialogue ends its wait.
+    frame(&mut slot, &mut client, None, 30);
+    assert_eq!(slot.run_sends, 1, "the gap ended: the press goes out");
+}
+
+/// A lease whose owner stops ticking (paused, frozen, or hung) is released
+/// after its own deadline plus the margin, with the failure record that the
+/// host logs. That key holds no more; a new wait holds again.
+#[test]
+fn a_hung_owner_is_released_after_its_deadline_plus_the_margin_and_logged() {
+    let mut client = test_client();
+    let hung = wait(9, 10);
+    let mut slot = held_slot(&mut client, hung);
+    for tick in 1..10 + SCRIPT_WAIT_MARGIN_TICKS {
+        observe_drain(&mut slot, &mut client, 1);
+        assert_eq!(slot.run_policy.observe_script_wait(Some(hung), tick), None);
+        slot.apply_auto_run(&mut client);
+    }
+    assert_eq!(
+        slot.run_sends, 0,
+        "held through the deadline and its margin"
+    );
+    observe_drain(&mut slot, &mut client, 1);
+    let tick = 10 + SCRIPT_WAIT_MARGIN_TICKS;
+    assert_eq!(
+        slot.run_policy.observe_script_wait(Some(hung), tick),
+        Some(ScriptWaitExpired {
+            key: 9,
+            deadline_tick: 10,
+            tick,
+        }),
+        "the terminal release is the logged failure"
+    );
+    slot.apply_auto_run(&mut client);
+    assert_eq!(slot.run_sends, 1, "the hung wait no longer holds the press");
+    assert_eq!(
+        slot.run_policy.observe_script_wait(Some(hung), tick + 1),
+        None,
+        "one failure per wait"
+    );
+    assert!(
+        !slot.run_policy.should_defer_auto_run(),
+        "that key holds no more"
+    );
+    slot.run_policy
+        .observe_script_wait(Some(wait(10, tick + 5)), tick + 1);
+    assert!(
+        slot.run_policy.should_defer_auto_run(),
+        "a new wait holds again"
+    );
+}
+
+/// A renewed wait carries its new deadline: under the same key (a journal
+/// read's next window) and under a new key (a new send, a re-armed gap).
+#[test]
+fn a_renewed_wait_moves_its_deadline() {
+    let mut client = test_client();
+    let mut slot = held_slot(&mut client, wait(9, 5));
+    for tick in 1..=4 {
+        frame(&mut slot, &mut client, Some(wait(9, 5)), tick);
+    }
+    // The owner renews its window before the old deadline.
+    for tick in 5..=12 {
+        frame(&mut slot, &mut client, Some(wait(9, 12)), tick);
+    }
+    assert_eq!(
+        slot.run_sends, 0,
+        "the old deadline (5) does not end the renewed wait"
+    );
+    // A new send takes a new key with its own deadline.
+    for tick in 13..=20 {
+        frame(&mut slot, &mut client, Some(wait(10, 20)), tick);
+    }
+    assert_eq!(
+        slot.run_sends, 0,
+        "the first key's deadline does not end the new key"
+    );
+    observe_drain(&mut slot, &mut client, 1);
+    assert_eq!(
+        slot.run_policy
+            .observe_script_wait(Some(wait(10, 20)), 20 + SCRIPT_WAIT_MARGIN_TICKS)
+            .map(|expired| expired.deadline_tick),
+        Some(20),
+        "the new deadline is the one that counts"
+    );
+    slot.apply_auto_run(&mut client);
+    assert_eq!(slot.run_sends, 1);
+}
+
+#[test]
+fn a_session_change_releases_the_script_wait() {
+    let mut client = test_client();
+    let mut slot = held_slot(&mut client, wait(5, 100));
+    slot.apply_auto_run(&mut client);
+    assert_eq!(slot.run_sends, 0);
+    // The relog sequence of `auto_run_yields_to_script_action_and_recurs_after_energy_and_session_changes`.
+    client.ingame = false;
+    slot.after_drain(&mut client);
+    ingame_scene2(&mut client);
+    client.gens.session = client.gens.session.wrapping_add(1);
+    client.runenergy = 20;
+    slot.after_drain(&mut client);
+    slot.run_policy.observe_script_wait(Some(wait(5, 100)), 1);
+    slot.apply_auto_run(&mut client);
+    assert_eq!(
+        slot.run_sends, 1,
+        "no page of the old session can arrive: the hold ends at the boundary"
+    );
+    slot.run_policy.observe_script_wait(None, 2);
+    slot.run_policy.observe_script_wait(Some(wait(5, 100)), 2);
+    assert!(
+        slot.run_policy.should_defer_auto_run(),
+        "a wait seen again after it ended is a new hold"
+    );
+}
+
+#[test]
+fn a_stopped_runtime_releases_the_script_wait() {
+    let mut client = test_client();
+    let mut slot = held_slot(&mut client, wait(5, 100));
+    slot.run_policy.sync_runtime(Some(3));
+    slot.run_policy.observe_script_wait(Some(wait(5, 100)), 1);
+    assert!(slot.run_policy.should_defer_auto_run());
+    slot.run_policy.sync_runtime(None);
+    slot.apply_auto_run(&mut client);
+    assert_eq!(slot.run_sends, 1, "Stop clears the hold at once");
+}
+
+#[test]
+fn script_run_policy_stays_within_per_slot_size_budget() {
+    assert!(std::mem::size_of::<ScriptRunPolicy>() <= 48);
+}
+
 /// HOTFIX-0.2.1: energy crossing the threshold while the bank is open must
 /// not press the run orb — the engine's run-on script `if_close`s the bank
 /// under the deposit (`player_controls.rs2:34-35`, `bank.rs2:16`). The press

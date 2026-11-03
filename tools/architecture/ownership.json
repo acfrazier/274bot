@@ -155,6 +155,22 @@
       "owner": "T2"
     },
     {
+      "path": "crates/api/src/prereq_knowledge.rs",
+      "owner": "T2"
+    },
+    {
+      "path": "crates/api/src/prereq_steps.rs",
+      "owner": "T2"
+    },
+    {
+      "path": "crates/api/src/prereq_steps/cache.rs",
+      "owner": "T2"
+    },
+    {
+      "path": "crates/api/src/prereq_steps/wire.rs",
+      "owner": "T2"
+    },
+    {
       "path": "crates/api/src/prot.rs",
       "owner": "T2"
     },
@@ -288,6 +304,10 @@
     },
     {
       "path": "crates/api/tests/obj_names.rs",
+      "owner": "T2"
+    },
+    {
+      "path": "crates/api/tests/prereq_catalog_alloc.rs",
       "owner": "T2"
     },
     {
@@ -1315,6 +1335,10 @@
       "owner": "T1"
     },
     {
+      "path": "crates/host-play/src/test_support.rs",
+      "owner": "T1"
+    },
+    {
       "path": "crates/host-play/src/walk_arm.rs",
       "owner": "T5"
     },
@@ -1488,6 +1512,10 @@
     },
     {
       "path": "crates/host-play/tests/nav_origin_live.rs",
+      "owner": "T1"
+    },
+    {
+      "path": "crates/host-play/tests/nav_prereq_live.rs",
       "owner": "T1"
     },
     {
@@ -1760,6 +1788,10 @@
     },
     {
       "path": "crates/nav-executor/src/traveller/entrance_exclusion_tests.rs",
+      "owner": "T5"
+    },
+    {
+      "path": "crates/nav-executor/src/traveller/gate_refusal_tests.rs",
       "owner": "T5"
     },
     {
@@ -2372,6 +2404,10 @@
     },
     {
       "path": "crates/nav-planner/tests/arrival_candidate_qualification.rs",
+      "owner": "T5"
+    },
+    {
+      "path": "crates/nav-planner/tests/brimhaven_kitchen.rs",
       "owner": "T5"
     },
     {
@@ -4047,6 +4083,10 @@
       "owner": "T1"
     },
     {
+      "path": "crates/script/src/native/prereq.rs",
+      "owner": "T2"
+    },
+    {
       "path": "crates/script/src/native/recovery_hints.rs",
       "owner": "T2"
     },
@@ -4284,6 +4324,26 @@
     },
     {
       "path": "crates/script/src/quester/probe.rs",
+      "owner": "T2"
+    },
+    {
+      "path": "crates/script/src/quester/prereq/mod.rs",
+      "owner": "T2"
+    },
+    {
+      "path": "crates/script/src/quester/prereq/reach.rs",
+      "owner": "T2"
+    },
+    {
+      "path": "crates/script/src/quester/prereq/run.rs",
+      "owner": "T2"
+    },
+    {
+      "path": "crates/script/src/quester/prereq/run_tests.rs",
+      "owner": "T2"
+    },
+    {
+      "path": "crates/script/src/quester/prereq/walk.rs",
       "owner": "T2"
     },
     {
@@ -4988,6 +5048,14 @@
     },
     {
       "path": "crates/script-js/src/scene/walk_wait.rs",
+      "owner": "T2"
+    },
+    {
+      "path": "crates/script/src/walkto/card.rs",
+      "owner": "T2"
+    },
+    {
+      "path": "crates/script/src/walkto/mod.rs",
       "owner": "T2"
     },
     {
@@ -6148,6 +6216,22 @@
     },
     {
       "path": "tools/game-data/extractors/quests.ts",
+      "owner": "T2"
+    },
+    {
+      "path": "tools/game-data/extractors/prereq-preservation.test.ts",
+      "owner": "T2"
+    },
+    {
+      "path": "tools/game-data/extractors/prereq-preservation.ts",
+      "owner": "T2"
+    },
+    {
+      "path": "tools/game-data/extractors/prereq-steps.test.ts",
+      "owner": "T2"
+    },
+    {
+      "path": "tools/game-data/extractors/prereq-steps.ts",
       "owner": "T2"
     },
     {

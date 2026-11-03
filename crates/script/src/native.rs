@@ -39,7 +39,7 @@ mod server_ordered;
 pub mod thieve;
 pub use prereq::{
     HandoverEntry, OuterIdentity, OuterWalk, PrereqAllow, PrereqFailure, PrereqMissing,
-    PrereqRefusal, PrereqStepIdentity, PrereqSwitch, PrereqWaitName, WalkHandover,
+    PrereqRefusal, PrereqStepIdentity, PrereqSwitch, PrereqWaitName, TalkReachCause, WalkHandover,
 };
 pub mod thieving_core;
 pub use server_ordered::ServerOrderedCompletion;
@@ -136,24 +136,21 @@ pub struct WalkOptions {
     pub allow_quest_start: WalkBit,
 }
 
-/// Path-level request policy. An explicit Forbid at either level wins.
+/// Path-level grants; an explicit walk-request `Forbid` is the only restriction.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub(crate) struct PrereqOptions {
-    pub dialogue: WalkBit,
-    pub quest_start: WalkBit,
+    pub dialogue: bool,
+    pub quest_start: bool,
 }
 
 impl PrereqOptions {
     fn apply(self, options: &mut WalkOptions) {
-        fn merge(header: WalkBit, request: WalkBit) -> WalkBit {
-            match (header, request) {
-                (WalkBit::Forbid, _) | (_, WalkBit::Forbid) => WalkBit::Forbid,
-                (header, WalkBit::Inherit) => header,
-                (_, request) => request,
-            }
+        if self.dialogue && options.allow_prereq_dialogue == WalkBit::Inherit {
+            options.allow_prereq_dialogue = WalkBit::Allow;
         }
-        options.allow_prereq_dialogue = merge(self.dialogue, options.allow_prereq_dialogue);
-        options.allow_quest_start = merge(self.quest_start, options.allow_quest_start);
+        if self.quest_start && options.allow_quest_start == WalkBit::Inherit {
+            options.allow_quest_start = WalkBit::Allow;
+        }
     }
 }
 
@@ -885,6 +882,79 @@ impl ManualTakeoverWatch {
 pub struct QuietReadLease {
     owner: Arc<owner::Owner>,
     lease_id: NonZeroU64,
+}
+
+/// The owner waits for the page its own interaction opens. While one is live
+/// the host holds its auto-run press (the run button's script begins with
+/// `if_close`, `player_controls.rs2:34-35`). Dropping the lease, completing
+/// or dropping the machine, and revoking the owner all release it.
+/// Revocable owner identity; no caller can mint a lease.
+pub struct ModalWaitLease {
+    owner: Arc<owner::Owner>,
+    lease_id: NonZeroU64,
+}
+
+/// The bound that the owner of a script wait enforces itself, in the
+/// owner's own clock. The host ends its auto-run hold only when the owner
+/// ends the wait, or, as a logged failure, after this deadline plus a stated
+/// margin (an owner that stopped polling). A renewed wait carries its new
+/// deadline.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WaitDeadline {
+    /// The request has not been dispatched, so its owner's page deadline
+    /// has not started. Acceptance replaces this with the owner's bound;
+    /// revocation still releases the lease.
+    AwaitingDispatch,
+    /// The observed game tick (`ActionContext::evidence().tick`) on which
+    /// the owner ends the wait (`tick >= deadline`).
+    Tick(u64),
+    /// The active time (`ActionContext::active_now`) from which the owner
+    /// ends the wait at its next poll. Pause, hold, not-ready and Blocked
+    /// stop the active clock, so they do not spend this bound.
+    Active(Duration),
+}
+
+impl WaitDeadline {
+    /// The observed tick by which a polled owner has ended its wait, read in
+    /// the host sample of `tick`. `active_now` is the owner's active clock at
+    /// that sample. The owner checks its bound in that frame's poll, before
+    /// the sample.
+    ///
+    /// An undispatched request has no terminal release yet, so it remains
+    /// not due at every sample until its owner installs the accepted bound.
+    ///
+    /// An active-clock bound is converted at each sample, from the owner's
+    /// remaining active time then: its wall equivalent is `now + (deadline -
+    /// active_now)`. While that is still ahead, the answer is the current
+    /// tick (not yet due). While the owner is paused, its active clock does
+    /// not advance, so the bound moves forward with wall time and stays not
+    /// due. The first sample with `active_now >= deadline` fixes the deadline
+    /// at that tick: the owner's own deadline has then passed in its own
+    /// clock. The owner's poll in that frame read its clock before the
+    /// sample, so it sees the bound at its next poll; the host's margin
+    /// covers that one tick.
+    pub fn owner_tick(&mut self, active_now: Duration, tick: u64) -> u64 {
+        match *self {
+            WaitDeadline::AwaitingDispatch => tick,
+            WaitDeadline::Tick(deadline) => deadline,
+            WaitDeadline::Active(at) if active_now < at => tick,
+            WaitDeadline::Active(_) => {
+                *self = WaitDeadline::Tick(tick);
+                tick
+            }
+        }
+    }
+
+    /// The observed tick for a lease that ends itself at the wall time `at`,
+    /// in the read itself. A live read before `at` is not yet due; a live
+    /// read after it is already past its deadline.
+    pub fn self_ending_tick(at: Instant, now: Instant, tick: u64) -> u64 {
+        if now < at {
+            tick
+        } else {
+            tick.saturating_sub(1)
+        }
+    }
 }
 
 /// Owner allowances for a followed walk. Prayer must be allowed or

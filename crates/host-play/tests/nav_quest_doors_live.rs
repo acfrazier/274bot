@@ -31,7 +31,7 @@ use parking_lot::Mutex;
 use script::local_state::{SlotState, StatePort};
 use script::native::{NativeTick, PrereqAllow, Script, ScriptFailure, ScriptFlow};
 use script::quest_journal::{JournalMachine, ROOT_289, TITLE_289};
-use script::quester::prereq::run::{JournalAttempt, PrereqBudget, PrereqRun, RunEntry};
+use script::quester::prereq::run::{PrereqBudget, PrereqRun, RunEntry};
 use serde::Serialize;
 use serde_json::{json, Value};
 use vault::{Profile, ProfileSettings};
@@ -294,13 +294,16 @@ fn endpoint_observed_after(
 }
 
 #[test]
-#[ignore = "requires LIVE=1, BOT_CPU=1, disposable HOME, BOT_CACHE_DIR, BOT_NAV_SNAPSHOT_ROOT, WORLD_ENGINE_DIR, WORLD_NAV_PACK, NAV_QUEST_DOORS_EVIDENCE, and BOT_LIVE_NAME_PREFIX=nd"]
+#[ignore = "requires LIVE=1, BOT_CPU=1, disposable HOME, BOT_CACHE_DIR, BOT_NAV_SNAPSHOT_ROOT, WORLD_ENGINE_DIR, WORLD_NAV_PACK, NAV_QUEST_DOORS_EVIDENCE, and an owned three-character BOT_LIVE_NAME_PREFIX"]
 fn live_fortress_disguise_and_secret_wall_use_content_navigation() {
     assert_eq!(std::env::var("LIVE").as_deref(), Ok("1"));
     assert_eq!(std::env::var("BOT_CPU").as_deref(), Ok("1"));
     assert!(std::env::var_os("HOME").is_some(), "set a disposable HOME");
     let prefix = std::env::var("BOT_LIVE_NAME_PREFIX").expect("BOT_LIVE_NAME_PREFIX");
-    assert_eq!(prefix, "nd", "use this cell's account namespace");
+    assert!(
+        prefix.len() == 3 && prefix.bytes().all(|byte| byte.is_ascii_lowercase()),
+        "use an owned three-character lowercase account namespace"
+    );
     let evidence_root = required_path("NAV_QUEST_DOORS_EVIDENCE");
     let serial = SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -1113,127 +1116,107 @@ fn evidence_stamp_json(stamp: EvidenceStamp) -> Value {
     })
 }
 
-fn journal_attempt_receipt(
-    before: Option<JournalAttempt>,
-    after: Option<JournalAttempt>,
-    stamp: EvidenceStamp,
-    error: Option<&str>,
-    completed: bool,
-) -> Option<Value> {
-    if before.is_none() && after.is_none() {
-        return None;
-    }
-    let previous = before.map_or(0, |attempt| attempt.attempts_started);
-    let current = after.map_or(0, |attempt| attempt.attempts_started);
-    let started = previous.max(current);
-    let (event, attempt, failure) = if current > previous {
-        ("started", current, None)
-    } else if let Some(error) = error {
-        if after.is_none() {
-            ("failed", started, Some(error))
-        } else {
-            ("begin_failed", started + 1, Some(error))
-        }
-    } else if completed {
-        ("completed", started, None)
-    } else if before.is_some_and(|attempt| attempt.owner_active)
-        && after.is_some_and(|attempt| !attempt.owner_active && attempt.retry_after.is_some())
-    {
-        // The runner sets retry_after only for this exact native failure.
-        ("failed", started, Some("journal modal timeout"))
-    } else {
-        return None;
-    };
-    Some(json!({
-        "attempt": attempt,
-        "event": event,
-        "observed": evidence_stamp_json(stamp),
-        "failure": failure,
-        "retry_after_tick": after.and_then(|attempt| attempt.retry_after),
-    }))
+fn refresh_journal_attempt_receipts<'a>(
+    records: &mut Vec<Value>,
+    run: usize,
+    gate: &Value,
+    attempts: impl IntoIterator<Item = (u8, u64, Option<u64>, Option<&'a str>)>,
+) {
+    let this_run = json!(run);
+    records.retain(|record| record.get("run") != Some(&this_run));
+    records.extend(
+        attempts
+            .into_iter()
+            .map(|(attempt, started_tick, terminal_tick, failure)| {
+                json!({
+                    "run": run,
+                    "gate": gate,
+                    "attempt": attempt,
+                    "started_tick": started_tick,
+                    "terminal_tick": terminal_tick,
+                    "failure": failure,
+                })
+            }),
+    );
 }
 
 #[test]
 fn journal_attempt_receipts_keep_timeout_retry_and_last_error() {
-    let stamp = |tick| EvidenceStamp {
-        run: api::selected::RunKey {
-            slot: 1,
-            run: 1,
-            session: 1,
-        },
-        tick,
-        sequence: tick,
-    };
-    let first = JournalAttempt {
-        attempts_started: 1,
-        owner_active: true,
-        retry_after: None,
-    };
-    let retry = JournalAttempt {
-        attempts_started: 1,
-        owner_active: false,
-        retry_after: Some(6),
-    };
-    let second = JournalAttempt {
-        attempts_started: 2,
-        owner_active: true,
-        retry_after: Some(6),
-    };
-    let started = journal_attempt_receipt(None, Some(first), stamp(1), None, false).unwrap();
-    assert_eq!(started["event"], "started");
-    assert_eq!(started["attempt"], 1);
-    let timeout = journal_attempt_receipt(Some(first), Some(retry), stamp(6), None, false).unwrap();
-    assert_eq!(timeout["event"], "failed");
-    assert_eq!(timeout["failure"], "journal modal timeout");
-    assert_eq!(timeout["observed"]["tick"], 6);
-    assert!(journal_attempt_receipt(Some(retry), Some(retry), stamp(6), None, false).is_none());
-    let restarted =
-        journal_attempt_receipt(Some(retry), Some(second), stamp(7), None, false).unwrap();
-    assert_eq!(restarted["event"], "started");
-    assert_eq!(restarted["attempt"], 2);
-    assert_eq!(restarted["retry_after_tick"], 6);
-    let failure = journal_attempt_receipt(
-        Some(second),
-        None,
-        stamp(8),
-        Some("the native action failed: journal click refused"),
-        false,
-    )
-    .unwrap();
-    assert_eq!(failure["event"], "failed");
-    assert_eq!(failure["attempt"], 2);
+    let gate = json!({"quest": "phoenixgang"});
+    let mut records = Vec::new();
+    refresh_journal_attempt_receipts(&mut records, 1, &gate, [(1, 1, None, None)]);
+    assert_eq!(records.len(), 1);
+    assert_eq!(records[0]["started_tick"], 1);
+    assert!(records[0]["terminal_tick"].is_null());
+    assert!(records[0]["failure"].is_null());
+
+    let timeout = (1, 1, Some(6), Some("journal modal timeout"));
+    let retry = (2, 7, None, None);
+    for _ in 0..2 {
+        refresh_journal_attempt_receipts(&mut records, 1, &gate, [timeout, retry]);
+        assert_eq!(
+            records.len(),
+            2,
+            "a repeated sample does not duplicate attempts"
+        );
+        assert_eq!(records[0]["terminal_tick"], 6);
+        assert_eq!(records[0]["failure"], "journal modal timeout");
+        assert_eq!(records[1]["attempt"], 2);
+        assert_eq!(records[1]["started_tick"], 7);
+        assert!(records[1]["terminal_tick"].is_null());
+    }
+    refresh_journal_attempt_receipts(
+        &mut records,
+        1,
+        &gate,
+        [
+            timeout,
+            (
+                2,
+                7,
+                Some(8),
+                Some("the native action failed: journal click refused"),
+            ),
+        ],
+    );
+    assert_eq!(records[1]["terminal_tick"], 8);
     assert_eq!(
-        failure["failure"],
+        records[1]["failure"],
         "the native action failed: journal click refused"
     );
-    let begin_failed = journal_attempt_receipt(
-        Some(retry),
-        Some(retry),
-        stamp(7),
-        Some("journal facts are not prepared"),
-        false,
-    )
-    .unwrap();
-    assert_eq!(begin_failed["event"], "begin_failed");
-    assert_eq!(begin_failed["attempt"], 2);
-    let revoked = JournalAttempt {
-        owner_active: false,
-        ..second
-    };
-    let cancelled = journal_attempt_receipt(
-        Some(revoked),
-        None,
-        stamp(8),
-        Some("the native action was cancelled"),
-        false,
-    )
-    .unwrap();
-    assert_eq!(cancelled["event"], "failed");
-    assert_eq!(cancelled["attempt"], 2);
-    assert_eq!(cancelled["failure"], "the native action was cancelled");
-    let completed = journal_attempt_receipt(Some(second), None, stamp(9), None, true).unwrap();
-    assert_eq!(completed["event"], "completed");
-    assert_eq!(completed["attempt"], 2);
+
+    refresh_journal_attempt_receipts(
+        &mut records,
+        2,
+        &gate,
+        [(1, 10, Some(10), Some("journal facts are not prepared"))],
+    );
+    assert_eq!(
+        records.len(),
+        3,
+        "the same gate's earlier run stays recorded"
+    );
+    assert_eq!(records[2]["run"], 2);
+    assert_eq!(records[2]["started_tick"], records[2]["terminal_tick"]);
+    assert_eq!(records[2]["failure"], "journal facts are not prepared");
+
+    refresh_journal_attempt_receipts(
+        &mut records,
+        3,
+        &gate,
+        [(1, 12, Some(13), Some("the native action was cancelled"))],
+    );
+    assert_eq!(records[3]["failure"], "the native action was cancelled");
+    refresh_journal_attempt_receipts(&mut records, 4, &gate, [(1, 14, Some(15), None)]);
+    assert_eq!(records.len(), 5);
+    assert_eq!(records[4]["terminal_tick"], 15);
+    assert!(
+        records[4]["failure"].is_null(),
+        "a completed attempt has no error"
+    );
+    assert!(records.iter().all(|record| record["gate"] == gate));
+    assert_eq!(records[0]["run"], 1);
+    assert_eq!(records[1]["run"], 1);
 }
 
 #[derive(Default)]
@@ -1250,6 +1233,9 @@ struct NativePrereqReport {
 struct KitchenPrereqScript {
     remaining: Vec<api::prereq_steps::ActionableGate>,
     active: Option<(api::prereq_steps::ActionableGate, PrereqRun)>,
+    /// PrereqRuns begun so far. Each run's journal attempts carry its number, so
+    /// a second run for the same gate never replaces the first run's records.
+    runs_started: usize,
     budget: PrereqBudget,
     report: Arc<Mutex<NativePrereqReport>>,
     open_page: Option<EvidenceStamp>,
@@ -1302,23 +1288,13 @@ impl Script for KitchenPrereqScript {
         };
 
         if let Some((gate, mut run)) = self.active.take() {
-            let before = run.journal_attempt();
             let result = run.poll(tick.actions, &mut tick.cx, Some(state), &mut self.budget);
-            let after = run.journal_attempt();
-            let error = match &result {
-                Poll::Ready(Err(error)) => Some(format!("{error:?}")),
-                _ => None,
-            };
-            if let Some(mut receipt) = journal_attempt_receipt(
-                before,
-                after,
-                stamp,
-                error.as_deref(),
-                matches!(&result, Poll::Ready(Ok(_))),
-            ) {
-                receipt["gate"] = json!(&gate);
-                self.report.lock().journal_attempts.push(receipt);
-            }
+            refresh_journal_attempt_receipts(
+                &mut self.report.lock().journal_attempts,
+                self.runs_started,
+                &json!(&gate),
+                run.journal_attempts(),
+            );
             match result {
                 Poll::Pending => {
                     self.active = Some((gate, run));
@@ -1360,6 +1336,7 @@ impl Script for KitchenPrereqScript {
             return Ok(ScriptFlow::Complete);
         };
         self.remaining.retain(|candidate| candidate != &gate);
+        self.runs_started += 1;
         self.active = Some((
             gate.clone(),
             PrereqRun::begin(gate, entry, PrereqAllow::default()),
@@ -1897,6 +1874,7 @@ fn run_phoenix_native_and_crossing(
                 Box::new(KitchenPrereqScript {
                     remaining: candidates,
                     active: None,
+                    runs_started: 0,
                     budget: PrereqBudget::default(),
                     report: Arc::clone(&report),
                     open_page: None,
@@ -1916,6 +1894,7 @@ fn run_phoenix_native_and_crossing(
                     "unsupported_gates": &report_guard.unsupported,
                     "session_memory": memory.facts().iter().map(fact_receipt).collect::<Vec<_>>(),
                     "journal_pages": report_guard.journal_pages.iter().map(page_receipt).collect::<Vec<_>>(),
+                    "journal_attempts": &report_guard.journal_attempts,
                 },
                 "error": "production prerequisite journal run timed out",
             });
@@ -1990,6 +1969,13 @@ fn run_phoenix_native_and_crossing(
                 attempts.len(),
                 pages.len()
             ));
+        }
+        if journal_attempts.len() < pages.len()
+            || journal_attempts
+                .iter()
+                .any(|attempt| attempt["terminal_tick"].is_null())
+        {
+            return Err("a journal attempt lacks its terminal outcome".into());
         }
         if pages.iter().any(|page| match page.closed {
             None => true,
@@ -2165,7 +2151,11 @@ fn run_phoenix_native_and_crossing(
 }
 fn run_brimhaven_phoenix_kitchen_journal() {
     assert_eq!(std::env::var("LIVE").as_deref(), Ok("1"));
-    assert_eq!(std::env::var("BOT_LIVE_NAME_PREFIX").as_deref(), Ok("npr3"));
+    let prefix = std::env::var("BOT_LIVE_NAME_PREFIX").expect("BOT_LIVE_NAME_PREFIX");
+    assert!(
+        prefix.len() == 3 && prefix.bytes().all(|byte| byte.is_ascii_lowercase()),
+        "use an owned three-character lowercase account namespace"
+    );
     let evidence = required_path("NAV_KITCHEN_EVIDENCE");
     fs::create_dir_all(&evidence).unwrap();
     let serial = SystemTime::now()
@@ -2283,7 +2273,7 @@ fn run_brimhaven_phoenix_kitchen_journal() {
     );
 }
 #[test]
-#[ignore = "requires Engine Q at 127.0.0.1:44694/http1180, LIVE=1, WORLD_NAV_PACK, BOT_LIVE_NAME_PREFIX=npr3, and NAV_KITCHEN_EVIDENCE"]
+#[ignore = "requires Engine Q at 127.0.0.1:44694/http1180, LIVE=1, WORLD_NAV_PACK, an owned three-character lowercase BOT_LIVE_NAME_PREFIX, and NAV_KITCHEN_EVIDENCE"]
 fn live_brimhaven_phoenix_kitchen_crossing() {
     run_brimhaven_phoenix_kitchen_journal();
 }

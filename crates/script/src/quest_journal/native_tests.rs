@@ -140,6 +140,57 @@ fn journal_owns_click_capture_close_and_releases_after_observed_close() {
         .is_none());
 }
 
+/// R4S-1: the quiet-read lease carries the machine's own window, in observed
+/// ticks, and each new window (the click, the capture) renews it.
+#[test]
+fn the_quiet_read_lease_carries_the_machine_window_and_renews_it() {
+    let (mut snapshot, request) = fixture();
+    let mut ledger = None;
+    let now = std::time::Instant::now;
+    let deadline = |ledger: &mut Option<Box<crate::native::ledger::Ledger>>, tick| {
+        ledger
+            .as_mut()
+            .unwrap()
+            .quiet_read_wait(now(), std::time::Duration::ZERO, tick)
+            .map(|(_, deadline)| deadline)
+    };
+    let handle: ActionHandle<JournalMachine> = with_tick(&snapshot, &mut ledger, 1, |t| {
+        t.actions.begin(request, &mut t.cx).unwrap()
+    });
+    assert_eq!(deadline(&mut ledger, 1), Some(1 + WINDOW_TICKS));
+    with_tick(&snapshot, &mut ledger, 2, |t| {
+        assert!(t.actions.poll(&handle, &mut t.cx).is_pending())
+    });
+    acknowledge(&mut ledger, 2);
+    assert_eq!(
+        deadline(&mut ledger, 2),
+        Some(2 + WINDOW_TICKS),
+        "the click arms a new window"
+    );
+    snapshot.seed_main_modal(
+        ROOT_289,
+        vec![
+            widget(8145, "@str@First body"),
+            widget(TITLE_289, "@dre@The Cook's Quest"),
+        ],
+    );
+    with_tick(&snapshot, &mut ledger, 3, |t| {
+        assert!(t.actions.poll(&handle, &mut t.cx).is_pending())
+    });
+    assert_eq!(
+        deadline(&mut ledger, 3),
+        Some(3 + WINDOW_TICKS),
+        "the capture and its close arm a new window"
+    );
+    // The machine fails its read on its own deadline tick, before the host
+    // sample of that tick; the lease ends with it.
+    let expired = with_tick(&snapshot, &mut ledger, 3 + WINDOW_TICKS, |t| {
+        t.actions.poll(&handle, &mut t.cx)
+    });
+    assert!(matches!(expired, Poll::Ready(Err(_))), "{expired:?}");
+    assert_eq!(deadline(&mut ledger, 3 + WINDOW_TICKS), None);
+}
+
 #[test]
 fn foreign_modal_busy_wrong_title_never_closed_and_cancel_revokes_click() {
     let (mut snapshot, request) = fixture();

@@ -92,6 +92,8 @@ mod script_channels;
 mod script_runtime;
 mod slot_bank_memory;
 mod slot_condition;
+#[cfg(test)]
+pub(crate) mod test_support;
 mod walk_arm;
 mod walk_permissions;
 mod walk_plan;

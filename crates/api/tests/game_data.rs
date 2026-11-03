@@ -36,6 +36,30 @@ fn generated_revision_data_is_static_distinct_and_fail_closed() {
             .is_some()
     );
 }
+
+#[test]
+fn generated_upass_stage_domain_excludes_ibanmulti_bits_for_each_revision() {
+    for revision in [ClientRevision::R274, ClientRevision::R289] {
+        let data = for_revision(revision).expect("selected quest data");
+        let upass = data
+            .quest_identity()
+            .expect("generated quest family")
+            .rows
+            .iter()
+            .find(|row| row.id == "upass")
+            .expect("Underground Pass row");
+        assert_eq!(
+            upass.stage_domain,
+            Some(api::selected::InclusiveRange {
+                min: Some(0),
+                max: Some(10),
+            }),
+            "{}: ibanmulti bit indices are not Underground Pass stages",
+            data.revision()
+        );
+    }
+}
+
 /// A strength-null attackable row publishes the engine default. A bespoke row
 /// keeps the inputs that leave it unknown (`select.rs:91-93` returns before
 /// strength) while still publishing that default. An explicit 0 stays 0.

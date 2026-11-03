@@ -39,10 +39,10 @@ pub struct PathDocument {
 #[cfg_attr(feature = "path-schema", derive(schemars::JsonSchema))]
 #[serde(deny_unknown_fields)]
 pub struct PathPrereqDocument {
-    /// None inherits grants. False forbids dialogue steps throughout the Path.
+    /// None or false adds no path-level grant; true grants dialogue on every walk.
     #[serde(default)]
     pub dialogue: Option<bool>,
-    /// None inherits grants. False forbids quest starts throughout the Path.
+    /// None or false adds no path-level grant; true grants quest starts on every walk.
     #[serde(default)]
     pub quest_start: Option<bool>,
 }
@@ -50,8 +50,8 @@ pub struct PathPrereqDocument {
 impl PathPrereqDocument {
     pub(crate) fn options(self) -> crate::native::PrereqOptions {
         crate::native::PrereqOptions {
-            dialogue: self.dialogue.into(),
-            quest_start: self.quest_start.into(),
+            dialogue: self.dialogue.unwrap_or(false),
+            quest_start: self.quest_start.unwrap_or(false),
         }
     }
 }

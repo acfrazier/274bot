@@ -126,13 +126,75 @@ const WATCH_PARK_MS: Duration = Duration::from_secs(1);
 /// Host: spawns and owns per-client slot threads.
 pub struct Host;
 
+/// Margin, in observed game ticks, between a script wait's own deadline and
+/// the host's terminal release of that hold
+/// ([`ScriptRunPolicy::observe_script_wait`]).
+///
+/// The script ends its hold itself: when it observes the page its own
+/// interaction opened, when its own bound ends the wait with a logged
+/// failure, or when it is dropped. The host releases a hold that is still
+/// live after its deadline plus this margin: its owner did not run its own
+/// deadline check (a hung or frozen owner). That release is a logged failure,
+/// never the normal release.
+///
+/// Derivation from the frame order. On each frame the owner's poll
+/// (`host-play/src/script_observe.rs:827`, with the frame's tick) runs
+/// before the sample of its wait (`script_observe.rs:1325`), and the sample
+/// runs before the press decision (`lib.rs:739` before `lib.rs:758`). So an
+/// owner with a tick deadline `d` has ended its wait before the sample of
+/// tick `d`: 0 ticks. For an active-clock bound, the script reports as its
+/// deadline the first tick whose sample saw the owner's own active clock
+/// reach the bound; until then the bound is not due, also while a pause has
+/// stopped that clock. The owner's poll on that frame read its clock earlier
+/// (`script/src/slot/compiled.rs:391` before `script_observe.rs:1141`), so it
+/// can first see the bound on its next poll, at the next tick, before that
+/// tick's sample: 1 tick. The margin is the larger of the two. Counts are
+/// observed game ticks, not wall time.
+pub const SCRIPT_WAIT_MARGIN_TICKS: u64 = 1;
+
+/// The script's own wait for the result of its own interaction, as sampled on
+/// one host frame.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ScriptWait {
+    /// Changes with each new wait (a new lease, a new send, a re-arm).
+    pub key: u64,
+    /// The observed game tick (the script's tick clock) by which the owner
+    /// ends this wait itself. A renewed wait reports its new deadline.
+    pub deadline_tick: u64,
+}
+
+/// One hold that the host ended at its deadline plus
+/// [`SCRIPT_WAIT_MARGIN_TICKS`]; the host logs it as a failure.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ScriptWaitExpired {
+    pub key: u64,
+    pub deadline_tick: u64,
+    pub tick: u64,
+}
+
 /// Host-owned script auto-run overlay. Host-play identifies the active script
 /// run and applies only generation-matched FlatBuffer updates through this
 /// sink; script Stop/replacement clears the value, while relogs preserve it.
+///
+/// The script also holds the host press while it waits for the result of its
+/// own interaction ([`Self::observe_script_wait`]). The hold follows the
+/// script's own state, not packets: no packet order can end it before the
+/// script has seen its page or ended its wait. The only other release is the
+/// terminal one: a hold still live after its own deadline plus
+/// [`SCRIPT_WAIT_MARGIN_TICKS`], counted on the script's observed-tick clock.
 #[derive(Debug, Default)]
 pub struct ScriptRunPolicy {
     runtime_generation: Option<u64>,
     policy_override: Option<RunPolicyOverride>,
+    /// The script's current wait, if any.
+    script_wait: Option<ScriptWaitHold>,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct ScriptWaitHold {
+    key: u64,
+    /// A session boundary or the terminal release ended the hold for this key.
+    released: bool,
 }
 
 impl ScriptRunPolicy {
@@ -142,6 +204,7 @@ impl ScriptRunPolicy {
         if self.runtime_generation != runtime_generation {
             self.runtime_generation = runtime_generation;
             self.policy_override = None;
+            self.script_wait = None;
         }
     }
 
@@ -149,6 +212,73 @@ impl ScriptRunPolicy {
     pub fn apply_override(&mut self, runtime_generation: u64, policy: Option<RunPolicyOverride>) {
         if self.runtime_generation == Some(runtime_generation) {
             self.policy_override = policy;
+        }
+    }
+
+    /// Read the script's own wait once per frame, after the script tick and
+    /// before the press decision. `tick` is the frame's observed game tick on
+    /// the script's clock. `None` ends the hold at once. A new key starts a
+    /// new hold. The deadline is the owner's latest, read on every frame, so a
+    /// renewed wait moves it. A hold still live at `deadline_tick +
+    /// SCRIPT_WAIT_MARGIN_TICKS` ends here, is logged as a failure and is
+    /// returned.
+    pub fn observe_script_wait(
+        &mut self,
+        wait: Option<ScriptWait>,
+        tick: u64,
+    ) -> Option<ScriptWaitExpired> {
+        let before = self.script_wait.map(|hold| hold.key);
+        self.script_wait = match (wait, self.script_wait) {
+            (None, _) => None,
+            (Some(wait), Some(hold)) if hold.key == wait.key => Some(hold),
+            (Some(wait), _) => Some(ScriptWaitHold {
+                key: wait.key,
+                released: false,
+            }),
+        };
+        let after = self.script_wait.map(|hold| hold.key);
+        if before != after {
+            host_log!(
+                Category::InteractTrace,
+                Level::Debug,
+                "auto-run hold key={after:?} was={before:?} deadline_tick={:?} tick={tick}",
+                wait.map(|wait| wait.deadline_tick)
+            );
+        }
+        let (Some(wait), Some(hold)) = (wait, self.script_wait.as_mut()) else {
+            return None;
+        };
+        if hold.released || tick < wait.deadline_tick.saturating_add(SCRIPT_WAIT_MARGIN_TICKS) {
+            return None;
+        }
+        hold.released = true;
+        host_log!(
+            Category::InteractTrace,
+            Level::Warn,
+            "auto-run hold ended after its deadline key={} deadline_tick={} tick={tick}: the script did not end its wait",
+            hold.key,
+            wait.deadline_tick
+        );
+        Some(ScriptWaitExpired {
+            key: hold.key,
+            deadline_tick: wait.deadline_tick,
+            tick,
+        })
+    }
+
+    /// True while the host must not press run: the script waits for the
+    /// result of its own interaction. The modal check holds the press
+    /// separately while a modal is open.
+    pub fn should_defer_auto_run(&self) -> bool {
+        self.script_wait.is_some_and(|hold| !hold.released)
+    }
+
+    /// A session boundary ends the current hold: no page of the old session
+    /// can arrive. A wait that outlives the boundary holds again only with a
+    /// new key.
+    fn release_at_session_boundary(&mut self) {
+        if let Some(hold) = self.script_wait.as_mut() {
+            hold.released = true;
         }
     }
 
@@ -1409,6 +1539,7 @@ impl SlotLoop {
             self.guardian = Guardian::new();
             self.guardian_status = RandomStatus::default();
             self.run_on = false;
+            self.run_policy.release_at_session_boundary();
         }
         publish_snapshot(&mut self.snapshot, client, result);
         result
@@ -1426,14 +1557,17 @@ impl SlotLoop {
             self.run_on = false;
         }
         let policy = self.run_policy.resolved();
+        let modal_free = auto_run::modal_free(
+            client.main_modal_id,
+            client.chat_modal_id,
+            client.side_modal_id,
+        );
+        let defer_auto_run = self.run_policy.should_defer_auto_run();
         if self.snapshot.local_player().is_some()
             && auto_run_ready(client.ingame, client.scene_state)
-            && auto_run::modal_free(
-                client.main_modal_id,
-                client.chat_modal_id,
-                client.side_modal_id,
-            )
+            && modal_free
             && auto_run_tick(energy, self.run_on, policy)
+            && !defer_auto_run
             && set_run(client, true)
         {
             self.run_on = true;

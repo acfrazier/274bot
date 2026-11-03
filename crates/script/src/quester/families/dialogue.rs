@@ -5,8 +5,8 @@
 use super::reach;
 use crate::dialogue_outcome::DialogueOutcome;
 use crate::native::{
-    ActionContext, ActionError, ActionHandle, HoldResume, InteractionDispatch, NativeActions,
-    NativeMachine,
+    ActionContext, ActionError, ActionHandle, HoldResume, InteractionDispatch, ModalWaitLease,
+    NativeActions, NativeMachine, WaitDeadline,
 };
 use crate::shim::InteractReq;
 use api::snapshot::{chat_page_fingerprint, WidgetRoot, WidgetView};
@@ -78,9 +78,8 @@ pub const DRIVE_STEPS: u32 = 120;
 /// The most close-gap rearms one dialogue grants: one per drive step.
 const GAP_REARMS_MAX: u8 = 120;
 const _: () = assert!(GAP_REARMS_MAX as u32 == DRIVE_STEPS);
-/// Wall-clock bound that the Choice and Main-document acknowledgements still
-/// use. A Continue's acknowledgement counts observed ticks
-/// ([`PAGE_ACK_TICKS`]).
+/// Active-clock bound for Choice and Main-document acknowledgements. A
+/// Continue's acknowledgement counts observed ticks ([`PAGE_ACK_TICKS`]).
 pub const PAGE_ACK_MS: u64 = 3_000;
 /// Observed ticks from a Continue request to the host's dispatch receipt. The
 /// host drains the queued interaction in an observation pass
@@ -375,6 +374,53 @@ enum Phase {
     Failed,
 }
 
+impl Phase {
+    /// The phase waits for the result of this dialogue's own send, or for a
+    /// page that can still arrive: the Talk's first page (or a continuation
+    /// page), a Continue or choice acknowledgement, a Main page forward or
+    /// close, or the end gap after the chat closed. The host holds its
+    /// auto-run press meanwhile: the run button's script begins with
+    /// `if_close` (`player_controls.rs2:34-35`). The approach, an open page
+    /// being driven, and the settle ticks of an open page wait for none of
+    /// these; the host's modal check holds the press while a page is open.
+    fn awaits_page(self) -> bool {
+        matches!(
+            self,
+            Phase::Open
+                | Phase::WaitContinueAck
+                | Phase::WaitChoiceAck
+                | Phase::WaitMainForwardAck
+                | Phase::WaitMainCloseAck
+                | Phase::WaitGap
+        )
+    }
+}
+
+/// The deadline of the current page wait, as this machine checks it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum WaitBound {
+    /// The host has not accepted the Talk, so its page budget has not begun.
+    AwaitingDispatch,
+    /// Open, Continue acknowledgement and end-gap waits use observed ticks.
+    Tick(u64),
+    /// Choice and Main acknowledgements use the owner's active clock
+    /// (`now >= self.deadline_ms`).
+    ActiveMs(u64),
+}
+
+impl WaitBound {
+    /// The bound in this machine's own clock. The host samples an
+    /// active-clock bound against the same clock (`ActiveMs` is checked
+    /// against `cx.active_now()`), so a paused machine's bound is not spent.
+    fn deadline(self) -> WaitDeadline {
+        match self {
+            WaitBound::AwaitingDispatch => WaitDeadline::AwaitingDispatch,
+            WaitBound::Tick(tick) => WaitDeadline::Tick(tick),
+            WaitBound::ActiveMs(ms) => WaitDeadline::Active(std::time::Duration::from_millis(ms)),
+        }
+    }
+}
+
 pub struct Dialogue {
     args: DialogueArgs,
     phase: Phase,
@@ -441,6 +487,13 @@ pub struct Dialogue {
     /// data, so the combat guard keeps its earlier evidence rule.
     attack_baseline: Option<api::snapshot::AttackMarks>,
     last_send: Option<DialogueSend>,
+    /// The wait for the page of the current send; see [`Phase::awaits_page`].
+    modal_wait: Option<ModalWaitLease>,
+    /// `(steps, gap_rearms_left)` when `modal_wait` was taken: each new send
+    /// and each re-armed end gap takes a new lease, so each wait is short.
+    modal_wait_epoch: (u32, u64),
+    /// The bound the lease reports: the phase's own deadline.
+    modal_wait_bound: WaitBound,
 }
 // Keep retained per-action dialogue state within its reviewed size budget.
 // 472 B measured on x86_64 Linux, with 8 B headroom below the 480 B ceiling.
@@ -525,12 +578,136 @@ impl NativeMachine for Dialogue {
             chat_advance_request_id: None,
             attack_baseline: local_attack_marks(cx),
             last_send: None,
+            modal_wait: None,
+            modal_wait_epoch: (0, 0),
+            modal_wait_bound: WaitBound::Tick(0),
         };
         dialogue.open(cx)?;
+        dialogue.sync_modal_wait(cx)?;
         Ok(dialogue)
     }
 
     fn poll(&mut self, cx: &mut ActionContext<'_>) -> Poll<Result<Self::Output, ActionError>> {
+        let result = self.poll_phase(cx);
+        if result.is_pending() {
+            if let Err(error) = self.sync_modal_wait(cx) {
+                return Poll::Ready(Err(error));
+            }
+        }
+        result
+    }
+
+    const RESUMES_AFTER_HOLD: bool = true;
+
+    /// A guardian hold interrupts the opening of a conversation in three ways:
+    /// the host drops the queued Talk-to unsent; the guardian's own
+    /// interaction replaces the one the server accepted (the player never
+    /// reaches this NPC, so no page opens and the first-page deadline would
+    /// end the action as "did not open"); or the walk to the NPC is lost or
+    /// outlasted by the hold, which counts observed ticks. Each re-issues once
+    /// here, and only while no page is open and the NPC is still out of reach
+    /// or unspoken to. An open page, a request the host still holds, a refused
+    /// one and a walk the host still follows are left to [`Self::poll`].
+    fn after_hold(&mut self, cx: &mut ActionContext<'_>) -> Result<HoldResume, ActionError> {
+        let tick = cx.evidence().tick;
+        match self.phase {
+            Phase::Open => {
+                let Some(request_id) = self.talk_request_id else {
+                    return Ok(HoldResume::Kept("no Talk-to is in flight"));
+                };
+                if observe(cx).is_some_and(|obs| obs.ready) {
+                    return Ok(HoldResume::Kept("the dialogue page is open"));
+                }
+                match cx.interaction_dispatch(request_id) {
+                    InteractionDispatch::Queued => {
+                        Ok(HoldResume::Kept("the host still holds the Talk-to"))
+                    }
+                    InteractionDispatch::Settled(receipt) if !receipt.accepted => {
+                        Ok(HoldResume::Kept("the host refused the Talk-to"))
+                    }
+                    InteractionDispatch::Unsent | InteractionDispatch::Settled(_) => {
+                        self.open(cx)?;
+                        Ok(HoldResume::Reissued("Talk-to"))
+                    }
+                }
+            }
+            Phase::Approach | Phase::Plan => {
+                let goal = self
+                    .npc_id()
+                    .and_then(|id| nearest_talk(cx, id))
+                    .map(|target| approach_goal(cx, &target))
+                    .unwrap_or_else(|| held_goal(cx, self.last_seen_tile));
+                if goal.close {
+                    return Ok(HoldResume::Kept("the NPC is already in reach"));
+                }
+                let walk_lost = self.walk_request_id != 0
+                    && cx.walk_unsent(self.walk_request_id)
+                    && cx.walk_receipt(self.walk_request_id).is_none();
+                // The hold's observed ticks are spent against the route's
+                // budget: a route that ran out in it was not slow.
+                let out_of_budget = tick >= self.content_deadline_tick
+                    && (self.phase == Phase::Plan
+                        || (self.walk_request_id != 0
+                            && cx.walk_receipt(self.walk_request_id).is_none()));
+                if !(walk_lost || out_of_budget) {
+                    return Ok(HoldResume::Kept("the approach is still followed"));
+                }
+                self.start_route(cx, goal)?;
+                Ok(HoldResume::Reissued("approach walk"))
+            }
+            _ => Ok(HoldResume::Kept("no request is in flight")),
+        }
+    }
+
+    fn cancel(&mut self) {}
+}
+
+impl Dialogue {
+    /// Hold one modal-wait lease while the phase waits for a page, and none
+    /// otherwise. A new send or re-armed end gap takes a new lease. The lease
+    /// reports its owner's actual bound: observed ticks for Open, Continue
+    /// and the end gap; active time for Choice and Main acknowledgements.
+    /// An undispatched Talk has no page deadline yet. Acceptance installs
+    /// its content bound, and a reissue starts a fresh undispatched lease.
+    /// Completing or dropping the machine releases it.
+    fn sync_modal_wait(&mut self, cx: &mut ActionContext<'_>) -> Result<(), ActionError> {
+        let epoch = (self.steps, self.gap_rearms_left);
+        if !self.phase.awaits_page() {
+            self.modal_wait = None;
+            return Ok(());
+        }
+        let bound = match self.phase {
+            Phase::Open
+                if self.talk_request_id.is_some_and(|request| {
+                    matches!(
+                        cx.interaction_dispatch(request),
+                        InteractionDispatch::Queued | InteractionDispatch::Unsent
+                    )
+                }) =>
+            {
+                WaitBound::AwaitingDispatch
+            }
+            Phase::Open | Phase::WaitContinueAck => WaitBound::Tick(self.content_deadline_tick),
+            Phase::WaitGap => WaitBound::Tick(self.due_tick),
+            _ => WaitBound::ActiveMs(self.deadline_ms),
+        };
+        if self.modal_wait.is_none() || self.modal_wait_epoch != epoch {
+            self.modal_wait = Some(cx.begin_modal_wait(bound.deadline())?);
+            self.modal_wait_epoch = epoch;
+            self.modal_wait_bound = bound;
+        } else if self.modal_wait_bound != bound {
+            if let Some(lease) = &self.modal_wait {
+                cx.renew_modal_wait(lease, bound.deadline());
+            }
+            self.modal_wait_bound = bound;
+        }
+        Ok(())
+    }
+
+    fn poll_phase(
+        &mut self,
+        cx: &mut ActionContext<'_>,
+    ) -> Poll<Result<DialogueOutcome, ActionError>> {
         let now = cx.active_now().as_millis() as u64;
         if self.phase == Phase::Failed {
             return Poll::Ready(Ok(DialogueOutcome::Failed));
@@ -900,75 +1077,26 @@ impl NativeMachine for Dialogue {
             | Phase::Failed => Poll::Ready(Ok(DialogueOutcome::Failed)),
         }
     }
-
-    const RESUMES_AFTER_HOLD: bool = true;
-
-    /// A guardian hold interrupts the opening of a conversation in three ways:
-    /// the host drops the queued Talk-to unsent; the guardian's own
-    /// interaction replaces the one the server accepted (the player never
-    /// reaches this NPC, so no page opens and the first-page deadline would
-    /// end the action as "did not open"); or the walk to the NPC is lost or
-    /// outlasted by the hold, which counts observed ticks. Each re-issues once
-    /// here, and only while no page is open and the NPC is still out of reach
-    /// or unspoken to. An open page, a request the host still holds, a refused
-    /// one and a walk the host still follows are left to [`Self::poll`].
-    fn after_hold(&mut self, cx: &mut ActionContext<'_>) -> Result<HoldResume, ActionError> {
-        let tick = cx.evidence().tick;
-        match self.phase {
-            Phase::Open => {
-                let Some(request_id) = self.talk_request_id else {
-                    return Ok(HoldResume::Kept("no Talk-to is in flight"));
-                };
-                if observe(cx).is_some_and(|obs| obs.ready) {
-                    return Ok(HoldResume::Kept("the dialogue page is open"));
-                }
-                match cx.interaction_dispatch(request_id) {
-                    InteractionDispatch::Queued => {
-                        Ok(HoldResume::Kept("the host still holds the Talk-to"))
-                    }
-                    InteractionDispatch::Settled(receipt) if !receipt.accepted => {
-                        Ok(HoldResume::Kept("the host refused the Talk-to"))
-                    }
-                    InteractionDispatch::Unsent | InteractionDispatch::Settled(_) => {
-                        self.open(cx)?;
-                        Ok(HoldResume::Reissued("Talk-to"))
-                    }
-                }
-            }
-            Phase::Approach | Phase::Plan => {
-                let goal = self
-                    .npc_id()
-                    .and_then(|id| nearest_talk(cx, id))
-                    .map(|target| approach_goal(cx, &target))
-                    .unwrap_or_else(|| held_goal(cx, self.last_seen_tile));
-                if goal.close {
-                    return Ok(HoldResume::Kept("the NPC is already in reach"));
-                }
-                let walk_lost = self.walk_request_id != 0
-                    && cx.walk_unsent(self.walk_request_id)
-                    && cx.walk_receipt(self.walk_request_id).is_none();
-                // The hold's observed ticks are spent against the route's
-                // budget: a route that ran out in it was not slow.
-                let out_of_budget = tick >= self.content_deadline_tick
-                    && (self.phase == Phase::Plan
-                        || (self.walk_request_id != 0
-                            && cx.walk_receipt(self.walk_request_id).is_none()));
-                if !(walk_lost || out_of_budget) {
-                    return Ok(HoldResume::Kept("the approach is still followed"));
-                }
-                self.start_route(cx, goal)?;
-                Ok(HoldResume::Reissued("approach walk"))
-            }
-            _ => Ok(HoldResume::Kept("no request is in flight")),
-        }
-    }
-
-    fn cancel(&mut self) {}
 }
 
 impl Dialogue {
     pub(crate) fn last_send(&self) -> Option<DialogueSend> {
         self.last_send
+    }
+
+    /// `Some` while this dialogue approaches its NPC: the end of its walk's
+    /// receipt, or `None` before the receipt. Read before a poll, because a
+    /// failed machine is dropped with its walk request.
+    pub(crate) fn approach_walk(
+        &self,
+        cx: &ActionContext<'_>,
+    ) -> Option<Option<crate::native::WalkEnd>> {
+        (self.phase == Phase::Approach).then(|| {
+            (self.walk_request_id != 0)
+                .then(|| cx.walk_receipt(self.walk_request_id))
+                .flatten()
+                .map(|receipt| receipt.end.clone())
+        })
     }
 
     /// Quiet ticks this conversation waits after the chat closes, and after
@@ -1463,6 +1591,9 @@ impl Dialogue {
             action: self.npc_action.to_string(),
             index: (self.npc_index >= 0).then_some(self.npc_index),
         })?;
+        // A successful Talk starts a new wait, including after a guardian
+        // reissue. The poll installs its lease before the host dispatches it.
+        self.modal_wait = None;
         self.talk_baseline = talk_baseline;
         self.talk_request_id = Some(talk_request_id);
         self.talk_chat_mark = Some(reach::last_chat_seq(cx));

@@ -497,6 +497,9 @@ pub(crate) fn script_observe_cached_with_channels(
     let mut channel_active = false;
     let mut policy_runtime_generation = None;
     let mut run_policy_update = None;
+    // The script's own wait for the result of its own interaction, read after
+    // this frame's script tick; the host holds its auto-run press meanwhile.
+    let mut script_wait = None;
     'script_slot: {
         let Some(slot) = observed_slot.as_ref() else {
             break 'script_slot;
@@ -1324,12 +1327,21 @@ pub(crate) fn script_observe_cached_with_channels(
         .then_some(slot.runtime_generation());
         has_native_actions = slot.has_native_actions();
         journal_paint_hidden = journal_wall_now.is_some_and(|now| slot.journal_paint_hidden(now));
+        script_wait =
+            slot.script_interaction_wait(journal_wall_now.unwrap_or_else(Instant::now), tick);
     }
     if let Some(run_policy) = run_policy {
         run_policy.sync_runtime(policy_runtime_generation);
         if let Some(update) = run_policy_update {
             update.apply(run_policy);
         }
+        run_policy.observe_script_wait(
+            script_wait.map(|wait| host::ScriptWait {
+                key: wait.key,
+                deadline_tick: wait.deadline_tick,
+            }),
+            tick,
+        );
     }
     #[cfg(feature = "js")]
     if let Some(channels) = channels {

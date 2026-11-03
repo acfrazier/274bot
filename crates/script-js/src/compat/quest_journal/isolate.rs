@@ -34,7 +34,13 @@ use std::cell::RefCell;
 /// `modals::CLOSE_TIMEOUT_MS` — and the public timeout is `modal-timeout`, not
 /// `timeout`.
 pub(crate) const ACQUIRE_TIMEOUT_MS: u64 = 3_000;
+/// The paint-hide cap: the page of a read stops being hidden this long after
+/// its begin, whatever the read does. It is never renewed.
 const COMPAT_PAINT_QUIET_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
+/// The read's own hold bound, in wall time: from its begin, and again from
+/// its click. The host holds its auto-run press while it is live, and the
+/// read ends with `modal-timeout` when it has passed.
+const COMPAT_HOLD_BOUND: std::time::Duration = std::time::Duration::from_secs(10);
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 struct CompatJournalKey {
@@ -44,7 +50,12 @@ struct CompatJournalKey {
 
 struct CompatJournalLeaseState {
     key: CompatJournalKey,
+    /// The begin. The paint-hide cap runs from here.
     since: std::time::Instant,
+    /// The end of the hold: the begin plus [`COMPAT_HOLD_BOUND`], renewed at
+    /// the click. A read that was paused before its click sends the click
+    /// with a live hold.
+    hold_until: std::time::Instant,
 }
 
 /// Shared Rust-only quiet state for a compatibility journal machine. The
@@ -105,6 +116,7 @@ impl CompatJournalLease {
         *state = Some(CompatJournalLeaseState {
             key: CompatJournalKey { token, generation },
             since,
+            hold_until: since + COMPAT_HOLD_BOUND,
         });
         self.active
             .store(true, std::sync::atomic::Ordering::Release);
@@ -128,15 +140,65 @@ impl CompatJournalLease {
             .store(false, std::sync::atomic::Ordering::Release);
     }
 
+    /// The click of the live read `token` takes a fresh hold bound from
+    /// `now`. The paint-hide cap does not move. False when that read has no
+    /// lease any more (cleared, revoked, or fenced by a work generation).
+    pub(crate) fn renew_hold(&self, token: u64, generation: u64, now: std::time::Instant) -> bool {
+        let key = CompatJournalKey { token, generation };
+        self.with_state(generation, |state| {
+            if state.key != key {
+                return false;
+            }
+            state.hold_until = now + COMPAT_HOLD_BOUND;
+            true
+        })
+        .unwrap_or(false)
+    }
+
+    /// The paint lease: the read's page is hidden until the paint-hide cap
+    /// from its begin.
     pub fn live(&self, generation: u64, now: std::time::Instant) -> bool {
+        self.with_state(generation, |state| {
+            now.saturating_duration_since(state.since) < COMPAT_PAINT_QUIET_TIMEOUT
+        })
+        .unwrap_or(false)
+    }
+
+    /// The live hold with its transaction identity (token and generation)
+    /// and its own wall bound: [`COMPAT_HOLD_BOUND`] from the begin, renewed
+    /// at the click. Each new read has its own identity, so the host starts
+    /// a new hold for it even when no sample saw the lease free.
+    pub fn wait(
+        &self,
+        generation: u64,
+        now: std::time::Instant,
+    ) -> Option<script::surface::JournalWait> {
+        self.with_state(generation, |state| {
+            (now < state.hold_until).then_some(script::surface::JournalWait {
+                token: state.key.token,
+                generation: state.key.generation,
+                deadline: state.hold_until,
+            })
+        })
+        .flatten()
+    }
+
+    /// Run `f` on the read of `generation`. A work generation that moved
+    /// clears the lease for good. A passed bound does not clear it: the
+    /// click can renew the hold, and the read itself ends its token.
+    fn with_state<R>(
+        &self,
+        generation: u64,
+        f: impl FnOnce(&mut CompatJournalLeaseState) -> R,
+    ) -> Option<R> {
         if !self.active.load(std::sync::atomic::Ordering::Acquire) {
-            return false;
+            return None;
         }
         let mut state = self.state.lock();
-        let Some(active) = state.as_ref() else {
+        let Some(active) = state.as_mut() else {
             self.active
                 .store(false, std::sync::atomic::Ordering::Release);
-            return false;
+            return None;
         };
         if active.key.generation != generation
             || self.generation() != generation
@@ -144,14 +206,23 @@ impl CompatJournalLease {
                 .host_generation
                 .load(std::sync::atomic::Ordering::Acquire)
                 != generation
-            || now.saturating_duration_since(active.since) >= COMPAT_PAINT_QUIET_TIMEOUT
         {
             *state = None;
             self.active
                 .store(false, std::sync::atomic::Ordering::Release);
-            return false;
+            return None;
         }
-        true
+        Some(f(active))
+    }
+
+    /// Test-only: move the read's begin and hold bound `by` into the past,
+    /// as a pause of that length does.
+    #[cfg(test)]
+    fn backdate(&self, by: std::time::Duration) {
+        if let Some(state) = self.state.lock().as_mut() {
+            state.since -= by;
+            state.hold_until -= by;
+        }
     }
 }
 
@@ -232,10 +303,32 @@ impl JournalRuntime {
         }
     }
 
-    fn compat_live(&self) -> bool {
-        self.compat_lease
-            .as_ref()
-            .is_none_or(|lease| lease.live(self.generation, std::time::Instant::now()))
+    /// The read's hold is live: its own bound has not passed.
+    fn compat_hold_live(&self) -> bool {
+        self.compat_lease.as_ref().is_none_or(|lease| {
+            lease
+                .wait(self.generation, std::time::Instant::now())
+                .is_some()
+        })
+    }
+
+    /// The click of a read in `Ready`. A frozen read sends no verb. Otherwise
+    /// the hold takes a fresh bound from the click, so no click goes out
+    /// without a live hold, also after a pause that outlasted the hold from
+    /// the begin. The paint-hide cap does not move.
+    fn click(&mut self) -> Result<Option<i32>, Value> {
+        if self.frozen() {
+            return Ok(None);
+        }
+        let held = self.compat_lease.as_ref().is_none_or(|lease| {
+            lease.renew_hold(self.token, self.generation, std::time::Instant::now())
+        });
+        if !held {
+            return Err(self.aborted("modal-timeout"));
+        }
+        self.phase = Phase::AwaitingAcquire;
+        self.clock.arm(ACQUIRE_TIMEOUT_MS);
+        Ok(Some(self.component_id))
     }
 
     fn frozen(&self) -> bool {
@@ -363,7 +456,7 @@ impl JournalRuntime {
         if generation != self.generation {
             return self.aborted("stale");
         }
-        if !self.compat_live() {
+        if !self.compat_hold_live() {
             return self.aborted("modal-timeout");
         }
         let Some((root, texts)) = posted_pair() else {
@@ -441,7 +534,7 @@ impl JournalRuntime {
         if generation != self.generation {
             return self.aborted("stale");
         }
-        if !self.compat_live() {
+        if !self.compat_hold_live() {
             return self.aborted("modal-timeout");
         }
         let Some((root, texts)) = posted_pair() else {
@@ -557,18 +650,7 @@ impl Family for QuestJournal {
             match phase {
                 Phase::Idle => return Step::Done(self.stale()),
                 Phase::Ready => {
-                    let component_id = RUNTIME.with(|rt| {
-                        let mut rt = rt.borrow_mut();
-                        if rt.frozen() {
-                            return Ok(None);
-                        }
-                        if !rt.compat_live() {
-                            return Err(rt.aborted("modal-timeout"));
-                        }
-                        rt.phase = Phase::AwaitingAcquire;
-                        rt.clock.arm(ACQUIRE_TIMEOUT_MS);
-                        Ok(Some(rt.component_id))
-                    });
+                    let component_id = RUNTIME.with(|rt| rt.borrow_mut().click());
                     let component_id = match component_id {
                         Ok(Some(component_id)) => component_id,
                         Ok(None) => return Step::Wait,
@@ -995,7 +1077,12 @@ mod tests {
         let wall_expired = begin("Cook's Assistant", 0)["token"].as_u64().unwrap();
         let wall_started = std::time::Instant::now();
         assert!(lease.live(7, wall_started));
-        assert!(!lease.live(7, wall_started + std::time::Duration::from_secs(10),));
+        let ten_seconds = wall_started + std::time::Duration::from_secs(10);
+        assert!(!lease.live(7, ten_seconds), "the paint-hide cap ends");
+        assert!(lease.wait(7, ten_seconds).is_none(), "the hold bound ends");
+        // A passed bound does not clear the lease: the read ends its token
+        // itself when its hold has passed.
+        lease.backdate(std::time::Duration::from_secs(10));
         assert_eq!(call("next", wall_expired, 7)["reason"], "modal-timeout");
 
         let stopped = begin("Cook's Assistant", 0)["token"].as_u64().unwrap();
@@ -1003,5 +1090,115 @@ mod tests {
         on_stop();
         assert!(!lease.live(7, std::time::Instant::now()));
         let _ = stopped;
+    }
+
+    /// R4S-2: a read that begins at once after the previous read completed
+    /// has its own transaction identity and its own wall bound, with no free
+    /// sample of the lease in between.
+    #[test]
+    fn a_read_after_a_completed_read_has_its_own_identity_and_bound() {
+        reset_closed();
+        let lease = std::sync::Arc::new(CompatJournalLease::default());
+        lease.set_generation(7);
+        lease.set_host_generation(7);
+        bind_compat_runtime(std::sync::Arc::clone(&lease));
+
+        let first = begin("Cook's Assistant", 0)["token"].as_u64().unwrap();
+        let first_wait = lease.wait(7, std::time::Instant::now()).unwrap();
+        assert_eq!((first_wait.token, first_wait.generation), (first, 7));
+        post_tab(
+            8,
+            77,
+            &["@dre@The Cook's Quest"],
+            vec![cook_row(), waterfall_row()],
+        );
+        assert_eq!(call("next", first, 7)["kind"], "done");
+        assert_eq!(call("close", first, 7)["kind"], "close-modal");
+        post_tab(9, -1, &[], vec![cook_row(), waterfall_row()]);
+        assert_eq!(call("close", first, 7)["kind"], "done");
+        std::thread::sleep(std::time::Duration::from_millis(2));
+        // The next read begins before anyone samples the free lease.
+        let second = begin("Waterfall Quest", 0)["token"].as_u64().unwrap();
+        let second_wait = lease.wait(7, std::time::Instant::now()).unwrap();
+        assert_ne!(second, first);
+        assert_eq!((second_wait.token, second_wait.generation), (second, 7));
+        assert!(
+            second_wait.deadline > first_wait.deadline,
+            "the second read's bound starts at its own begin"
+        );
+    }
+
+    /// R4S-1 (compatibility journal): a read paused for longer than its
+    /// hold bound before its click sends the click after Resume with a live
+    /// hold, with a fresh bound from the click. The paint-hide cap stays on
+    /// its wall bound from the begin. Without the renewal at the click, the
+    /// click goes out without a hold and this test fails.
+    #[test]
+    fn a_read_paused_before_its_click_clicks_after_resume_with_a_live_hold() {
+        reset_closed();
+        let lease = std::sync::Arc::new(CompatJournalLease::default());
+        lease.set_generation(7);
+        lease.set_host_generation(7);
+        bind_compat_runtime(std::sync::Arc::clone(&lease));
+        // The real begin: the read is `Ready`, before its click.
+        let begun = dispatch(&json!({
+            "op": "begin",
+            "name": "Cook's Assistant",
+            "generation": 0,
+        }));
+        let token = begun["token"].as_u64().expect("the read begins");
+        assert!(lease.wait(7, std::time::Instant::now()).is_some());
+
+        on_pause();
+        // The pause outlasts the hold from the begin and the paint-hide cap.
+        lease.backdate(COMPAT_HOLD_BOUND + std::time::Duration::from_secs(1));
+        assert!(
+            lease.wait(7, std::time::Instant::now()).is_none(),
+            "the hold from the begin ended at its own bound during the pause"
+        );
+        assert_eq!(
+            RUNTIME.with(|rt| rt.borrow_mut().click()),
+            Ok(None),
+            "a frozen read sends no click"
+        );
+        assert!(lease.wait(7, std::time::Instant::now()).is_none());
+
+        on_resume();
+        let clicked_at = std::time::Instant::now();
+        assert_eq!(
+            RUNTIME.with(|rt| rt.borrow_mut().click()),
+            Ok(Some(1234)),
+            "after Resume the read sends its click"
+        );
+        let hold = lease
+            .wait(7, std::time::Instant::now())
+            .expect("the click goes out with a live hold");
+        assert_eq!((hold.token, hold.generation), (token, 7));
+        assert!(
+            hold.deadline >= clicked_at + COMPAT_HOLD_BOUND,
+            "the hold's bound starts at the click"
+        );
+        assert!(
+            !lease.live(7, std::time::Instant::now()),
+            "the paint-hide cap is not renewed"
+        );
+        // The read waits for its page in its own window, under the hold.
+        assert_eq!(call("next", token, 7)["kind"], "wait");
+        post_tab(
+            8,
+            77,
+            &["@dre@The Cook's Quest"],
+            vec![cook_row(), waterfall_row()],
+        );
+        assert_eq!(call("next", token, 7)["kind"], "done");
+    }
+
+    /// The hold bound is one more `Instant` in the per-slot lease state.
+    #[test]
+    fn the_lease_state_is_its_key_and_two_instants() {
+        assert_eq!(
+            std::mem::size_of::<CompatJournalLeaseState>(),
+            std::mem::size_of::<CompatJournalKey>() + 2 * std::mem::size_of::<std::time::Instant>()
+        );
     }
 }

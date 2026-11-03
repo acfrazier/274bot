@@ -37,11 +37,13 @@ ISOHOME=/Users/acfrazier/experiments/274bot/.superpowers/bin/isohome \
   python3 -B tools/live-map/live_map.py --verify-cells
 ```
 
-The verifier extracts each test selector and runs `cargo test ... -- --list`.
-It fails if the selector exits with an error or lists no tests. For a
-`cargo run` cell, the third field is only a proxy selector. The verifier does
-not validate the `cargo run` command, the `--live` name, the input values, or
-the assigned host. It does not run the live cell.
+The verifier extracts a cargo-test selector and runs `cargo test ... -- --list`.
+The cell format is `name|command|selector`. A `cargo test` command may omit the
+third field because the map derives it from the command. A `cargo run` command
+or custom shell wrapper needs an explicit third-field selector.
+It fails if the selector exits with an error or lists no tests. The selector is
+a proxy: verification does not validate the live command, wrapper arguments,
+`--live` name, inputs or assigned host. It does not run the live cell.
 
 ## Clean logout
 
@@ -387,6 +389,7 @@ start, snapshot, tick and Stop boundary. They do not add a second loader.
 | `host.api-gather-wire-shadow` | The v2 Gatherer request enters `SlotScript::start_api_gather`. The real reconnect and wire-shadow checks cross the shared native fact and seat rows. |
 | `scenario.auto-fighter-mage-live` | The registered `auto_fighter_mage` scenario starts the catalog AutoFighter with Fire Strike. Its `Autocast.arm` call enters the Rust `Autocast` family and its observation accessor. |
 | `host.script-progress-journal` | `journal_cell` reads Romeo & Juliet twice. The second read uses `script_api_live_read_again`; the progress requests enter `SlotScript::start_api_progress`. The cell compares the closed-journal stamps and verifies that the quiet paint lease ends. |
+| `host.script-compat-journal-twice` | `compat_journal_twice_cell` loads a v2 script that calls `api.questJournalBegin` and `api.questJournalRun` for Romeo & Juliet twice in a row. The second begin runs in the tick the first read settles. The reads go through the compatibility journal machine and `CompatJournalLease`; each read's token and work generation are the key of its auto-run hold (`SlotScript::script_interaction_wait`). |
 
 Classify compiler-only or test-only changed hunks in the task report when
 they have no game behavior to exercise. Keep their compile or test proof.

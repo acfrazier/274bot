@@ -658,6 +658,13 @@ The standard bake verifies the selected `quests` family artifact before deriving
 content entrances and binds its digest and schema into the graph. Supported
 quest-complete predicates become canonical `QuestGate::Complete` requirements;
 an intermediate or exact hidden quest stage is not inferred from completion.
+When a quest comparison has no authoritative stage domain, the completed
+branch keeps its `Complete` gate only if a green quest-list row proves that
+the varp reached completion: the generated row is colour-authoritative, or the
+content's own colour rule (`send_quest_progress_colour`, green when
+`progress >= complete`) has exactly one row for that varp. The account's
+journal decides at run time. Otherwise the comparison stays unknown. This
+applies to every such varp, transmitted or not.
 
 ### Prerequisite crossing steps
 
@@ -718,22 +725,75 @@ therefore prove Phoenix completion, not Black Arm completion.
 Its Black Arm completion text proves `phoenixgang < 9`.
 The Brimhaven kitchen can therefore
 use real membership evidence rather than guessing from that shared row.
-The runner reads at most twice per prerequisite attempt (one read and one retry), never per tick or search.
-A `journal modal timeout` permits one retry, on the next observed game tick
+The runner reads each prerequisite journal at most twice: one initial read and
+one retry. It does not repeat reads on every tick or search.
+A `journal modal timeout` permits one retry on the first observed game tick
 after the timeout. Each read retains the journal owner's five-tick window.
 The run-on button closes modals once before enabling run
-(`player_controls.rs2:34-46`). The host latches that send until run energy
-reaches 0 or the session changes (`crates/host/src/lib.rs:1411-1439`), so one
-retry covers this login race.
+(`player_controls.rs2:34-46`). The host keeps its run-on latch until energy
+reaches 0 or the session changes (`crates/host/src/lib.rs:1537-1544,1549-1559`). Energy
+recovery or a new session allows another press.
+The host holds its auto-run press while a script waits for the result of its
+own interaction, and the script ends that hold itself. The journal reader holds
+it from before its click until it has read the page and seen it close. A
+dialogue holds it after each Talk, Continue or answer until it sees the result,
+and in the quiet gap after the chat closes. The hold also ends when the
+script's own bound for that wait expires and the script records the failure,
+when the script stops or is replaced, at a relog, and when a runner cancels
+its step after a death. While a modal is open, the modal check holds the
+press as before. An interaction that expects no page (for example a walk or an
+item action) takes no hold. The host adds no fixed packet-count or post-click
+delay. The 274 protocol does not acknowledge client input, so only the script
+can know that its click's page has arrived or will not. Each lease advertises
+the bound its owner enforces, in that owner's clock. Dialogue Open and
+Continue waits use their content deadline in observed game ticks, as do the
+end gap and the journal reader's five-tick window (renewed at each phase).
+Choice and Main acknowledgements use the script's active clock. Pause, hold
+and not-ready stop that clock, so those waits retain their remaining active
+time after Resume. Tick-bound waits can expire during a pause.
+A queued NPC Talk has no page deadline before host acceptance. Its explicit
+`AwaitingDispatch` lease holds the press until acceptance installs the content
+deadline. A guardian reissue takes a fresh undispatched lease. Stop, relog,
+death cancellation and a session change still release the owner and its lease.
+A compatibility journal read holds the press for 10 s from its begin, and
+again for 10 s from its click, so its click never goes out without a live hold,
+also after a long pause. Its page stays hidden for at most 10 s from its begin.
+Once a wait has a deadline, the host ends a hold that is still live one tick
+after that deadline (the owner checks it before the host reads the wait in the
+same frame), and logs that as a failure. A new send, a re-armed gap or a new
+journal read has its own key and deadline state.
 The journal content opens the page without a delay (`quest_journal.rs2:1-55`).
 If the retry fails, the walk blocks with the last failure's detail.
-The live kitchen proof receipt records each journal owner's start, timeout,
-completion or final failure in `journal_attempts`. Its `journal_pages` and
-`read_count` describe page acquisitions, not the number of attempted reads.
+The live kitchen proof receipt records each journal attempt's start and
+terminal ticks and failure detail in `journal_attempts`. Its `journal_pages`
+and `read_count` describe page acquisitions, not the number of attempted reads.
 Later walks in the same run retain the completed Phoenix proof. The Black
 Arm range widens conservatively after acquisition, so it never grants
 Phoenix membership. Neither this read nor the search starts a quest or
 probes a door.
+
+A prerequisite Talk that the engine cancels is not a slow page. When the
+engine cannot move the player to the NPC and makes no step, it sends
+"I can't reach that!" and clears the interaction (`Player.ts:1292-1295`), so no
+page ever opens. The runner ends the Talk wait on that message at once, as a
+reach failure (`prereq wait=W5 … end=unreachable`), and not after the wait
+bound. It then reads the player's and the NPC's tiles again on a later
+observed game tick, walks to the NPC when it is more than two tiles away, and
+sends the Talk again. If that re-approach ends while the NPC is not ready to
+talk (its walk arrived at a tile the NPC has left, or the approach timed out),
+that is also a failed attempt, and the runner approaches again on a later tick.
+One conversation makes at most four attempts, so it sends at most four Talks.
+The limit is per conversation, not per step: the step's own Talk budget counts
+a conversation once, and a later conversation of the same step starts a new
+count. After the fourth failed attempt the step fails with `TalkUnreachable`,
+which keeps the attempt count, the cause of the last failure (a cancel, or an
+approach with its walk's end), its start and end ticks, and the player's and
+the NPC's tiles at that failure. The admission
+of a Talk is unchanged: the dialogue driver sends it when `NpcView.distance`
+is at most two (measured from the player's path head) and the NPC is
+reachable. The bound of a Talk that is not
+cancelled is unchanged: the row's leash plus two ticks of NPC movement, one
+operation tick and two ticks of send allowance, which is 7 for Drezel.
 
 The same page-source mechanism reads the Heroes' Quest journal when the
 required `heroquest >= 3` fact is unknown. The Phoenix text about giving

@@ -57,7 +57,14 @@ impl ActionContext<'_> {
         Ok(Arc::clone(owner))
     }
 
-    pub fn begin_quiet_read(&mut self, request_id: u64) -> Result<QuietReadLease, ActionError> {
+    /// Begin the quiet read of a page this owner opens. `deadline` is the
+    /// bound this owner enforces itself; renew it with
+    /// [`Self::renew_quiet_read`] when the owner arms a new window.
+    pub fn begin_quiet_read(
+        &mut self,
+        request_id: u64,
+        deadline: WaitDeadline,
+    ) -> Result<QuietReadLease, ActionError> {
         let owner = self.owner()?;
         let request_id = NonZeroU64::new(request_id).ok_or(ActionError::Stale)?;
         let ledger = self.ledger.as_mut().expect("owner checked");
@@ -66,11 +73,56 @@ impl ActionContext<'_> {
             return Err(ActionError::Busy);
         }
         ledger.quiet_since = Some((request_id, lease_id, self.wall_now));
+        ledger.quiet_deadline = Some((lease_id, deadline));
         Ok(QuietReadLease { owner, lease_id })
+    }
+
+    /// The owner armed a new window for its quiet read.
+    pub fn renew_quiet_read(&mut self, lease: &QuietReadLease, deadline: WaitDeadline) {
+        if let Some(ledger) = self.ledger.as_mut() {
+            if ledger
+                .quiet_since
+                .is_some_and(|(_, id, _)| id == lease.lease_id)
+            {
+                ledger.quiet_deadline = Some((lease.lease_id, deadline));
+            }
+        }
     }
 
     pub fn end_quiet_read(&mut self, lease: QuietReadLease) {
         drop(lease);
+    }
+
+    /// Begin one wait for the page this owner's own interaction opens. A newer
+    /// lease of the same owner replaces the older one. Lease numbers come from
+    /// their own sequence, so request ids are unchanged. `deadline` is the
+    /// bound this owner enforces itself; renew it with
+    /// [`Self::renew_modal_wait`] when the owner's bound moves.
+    pub fn begin_modal_wait(
+        &mut self,
+        deadline: WaitDeadline,
+    ) -> Result<ModalWaitLease, ActionError> {
+        let owner = self.owner()?;
+        let ledger = self.ledger.as_mut().expect("owner checked");
+        ledger.modal_wait_seq = ledger.modal_wait_seq.wrapping_add(1);
+        let lease_id = NonZeroU64::new(ledger.modal_wait_seq).ok_or(ActionError::Cancelled)?;
+        ledger.modal_wait_deadline = Some((lease_id, deadline));
+        if !owner.set_modal_wait(lease_id) {
+            return Err(ActionError::Cancelled);
+        }
+        Ok(ModalWaitLease { owner, lease_id })
+    }
+
+    /// The owner's bound for its live modal wait moved.
+    pub fn renew_modal_wait(&mut self, lease: &ModalWaitLease, deadline: WaitDeadline) {
+        if let Some(ledger) = self.ledger.as_mut() {
+            if ledger
+                .modal_wait_deadline
+                .is_some_and(|(id, _)| id == lease.lease_id)
+            {
+                ledger.modal_wait_deadline = Some((lease.lease_id, deadline));
+            }
+        }
     }
 
     pub fn charge_transition(&mut self) -> bool {
@@ -744,6 +796,12 @@ impl QuietReadLease {
 impl Drop for QuietReadLease {
     fn drop(&mut self) {
         self.owner.release_quiet(self.lease_id);
+    }
+}
+
+impl Drop for ModalWaitLease {
+    fn drop(&mut self) {
+        self.owner.release_modal_wait(self.lease_id);
     }
 }
 

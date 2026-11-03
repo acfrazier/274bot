@@ -27501,8 +27501,8 @@ fn script_observe_walk_arms_route_and_pump_steps_follow() {
 
 #[test]
 fn host_gated_npc_hop_recovery_uses_retained_route_evidence() {
+    use crate::test_support::{family, range, tbwt_evidence, window};
     use nav_planner::quest_gates::QuestGates;
-    use nav_planner::test_support::{family, range, tbwt_evidence, window};
 
     let mut c = nav_client();
     {

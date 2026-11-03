@@ -5,7 +5,7 @@ use crate::native::walk::Walk;
 use crate::native::{
     ActionContext, ActionError, ActionHandle, NativeActions, NativeMachine, OuterWalk, PrereqAllow,
     PrereqFailure, PrereqMissing, PrereqRefusal, PrereqStepIdentity, PrereqSwitch, PrereqWaitName,
-    WalkAllow, WalkEnd, WalkGoals, WalkOptions, WalkRequest,
+    TalkReachCause, WalkAllow, WalkEnd, WalkGoals, WalkOptions, WalkRequest,
 };
 use crate::quest_journal::{JournalMachine, JournalRequest};
 use crate::quester::families::dialogue::{
@@ -35,12 +35,24 @@ pub(crate) const PAGE_TICKS: u16 = 1;
 pub(crate) const NPC_STEP_TICKS: u16 = 2;
 // Accepted send allowance, not a content guarantee. Live cells pin observed counts.
 pub(crate) const SEND_SLACK_TICKS: u16 = 2;
-// One retry covers the one-shot auto-run press: player_controls.rs2:34-46
-// closes the modal and enables run; host/src/lib.rs:1411-1439 latches it until
-// run energy reaches 0 or the session changes.
-// quest_journal.rs2:1-55 has no delay. After the reader's five observed-tick
-// window, retry on the next observed tick, never again within that same tick.
+// One retry covers the host run-press race after a journal modal timeout.
+// The host run-on latch remains set until energy reaches 0 or the session changes.
+// quest_journal.rs2:1-55 has no delay. Retry only on the next observed tick
+// after the reader's five-tick window, never again within that same tick.
 const JOURNAL_TIMEOUT_RETRIES: u8 = 1;
+// A Talk the engine cancels ("I can't reach that!", Player.ts:1292-1295) is not a
+// slow page: the engine clears the interaction in the cycle after the send, so
+// waiting longer cannot recover it. The runner reads both tiles again on a later
+// observed tick (Drezel starts a wander on one tick in eight, Npc.ts:723, range 5,
+// NpcType.ts:101,110; the wait of a cancelled Talk ends after one tick), walks to
+// the NPC if it is more than two tiles away, and sends the Talk again. A
+// re-approach that ends while the NPC is not ready to talk is a failed attempt
+// of the same budget. The budget is per conversation (one `ChatDrive`): the
+// first attempt and three more, so at most four Talks per conversation.
+// `PrereqBudget::talks` counts the conversation once, so a later conversation of
+// the same step starts a new count. An allowance, not a content guarantee. Then
+// the step fails with the last failure's detail (`PrereqFailure::TalkUnreachable`).
+const TALK_REACH_RETRIES: u8 = 3;
 
 /// Repeated polls and scene changes cannot spend this wait: only observed ticks do.
 #[derive(Clone, Copy)]
@@ -232,6 +244,17 @@ enum CloseResult {
     Refusal(PrereqRefusal),
 }
 
+#[cfg(feature = "test-hooks")]
+const JOURNAL_TRACE_ATTEMPTS: usize = JOURNAL_TIMEOUT_RETRIES as usize + 1;
+
+#[cfg(feature = "test-hooks")]
+#[derive(Default)]
+struct JournalAttemptTrace {
+    started_tick: u64,
+    terminal_tick: Option<u64>,
+    failure: Option<Arc<str>>,
+}
+
 pub struct PrereqRun {
     gate: ActionableGate,
     entry: RunEntry,
@@ -242,6 +265,10 @@ pub struct PrereqRun {
     repeats_left: Option<u8>,
     required_after: Option<EvidenceStamp>,
     explicit: Option<Arc<dyn EvidenceProvider>>,
+    #[cfg(feature = "test-hooks")]
+    journal_attempts: [Option<JournalAttemptTrace>; JOURNAL_TRACE_ATTEMPTS],
+    #[cfg(feature = "test-hooks")]
+    journal_attempts_len: usize,
 }
 impl PrereqRun {
     pub fn begin(gate: ActionableGate, entry: RunEntry, allow: PrereqAllow) -> Self {
@@ -255,11 +282,36 @@ impl PrereqRun {
             repeats_left: None,
             required_after: None,
             explicit: None,
+            #[cfg(feature = "test-hooks")]
+            journal_attempts: std::array::from_fn(|_| None),
+            #[cfg(feature = "test-hooks")]
+            journal_attempts_len: 0,
         }
     }
     pub fn with_evidence(mut self, evidence: Option<Arc<dyn EvidenceProvider>>) -> Self {
         self.explicit = evidence;
         self
+    }
+
+    /// Return the bounded journal-attempt trace used by test receipts.
+    #[cfg(feature = "test-hooks")]
+    pub fn journal_attempts(
+        &self,
+    ) -> impl Iterator<Item = (u8, u64, Option<u64>, Option<&str>)> + '_ {
+        self.journal_attempts
+            .iter()
+            .take(self.journal_attempts_len)
+            .enumerate()
+            .filter_map(|(index, attempt)| {
+                attempt.as_ref().map(|attempt| {
+                    (
+                        index as u8 + 1,
+                        attempt.started_tick,
+                        attempt.terminal_tick,
+                        attempt.failure.as_deref(),
+                    )
+                })
+            })
     }
     pub fn first_supported(
         gates: &[ActionableGate],
@@ -428,9 +480,33 @@ impl PrereqRun {
                     },
                     cx,
                 ) {
-                    Ok(read) => *handle = Some(read),
+                    Ok(read) => {
+                        #[cfg(feature = "test-hooks")]
+                        journal_attempt_started(
+                            &mut self.journal_attempts,
+                            &mut self.journal_attempts_len,
+                            cx.evidence().tick,
+                        );
+                        *handle = Some(read);
+                    }
                     Err(ActionError::BudgetExhausted) => return Poll::Pending,
-                    Err(error) => return Poll::Ready(Err(failed(step, action_failure(error)))),
+                    Err(error) => {
+                        #[cfg(feature = "test-hooks")]
+                        {
+                            journal_attempt_started(
+                                &mut self.journal_attempts,
+                                &mut self.journal_attempts_len,
+                                cx.evidence().tick,
+                            );
+                            journal_attempt_finished(
+                                &mut self.journal_attempts,
+                                self.journal_attempts_len,
+                                cx.evidence().tick,
+                                Some(Arc::<str>::from(error.to_string())),
+                            );
+                        }
+                        return Poll::Ready(Err(failed(step, action_failure(error))));
+                    }
                 }
             }
             let read = match actions.poll(handle.as_ref().expect("journal owner"), cx) {
@@ -438,16 +514,41 @@ impl PrereqRun {
                 Poll::Ready(Err(ActionError::Failed(reason)))
                     if reason.as_ref() == "journal modal timeout" && *retries_left > 0 =>
                 {
+                    #[cfg(feature = "test-hooks")]
+                    journal_attempt_finished(
+                        &mut self.journal_attempts,
+                        self.journal_attempts_len,
+                        cx.evidence().tick,
+                        Some(Arc::<str>::from(
+                            ActionError::Failed(Arc::clone(&reason)).to_string(),
+                        )),
+                    );
                     *retries_left -= 1;
                     *handle = None;
                     *retry_after = Some(cx.evidence().tick);
                     return Poll::Pending;
                 }
                 Poll::Ready(Err(error)) => {
+                    #[cfg(feature = "test-hooks")]
+                    journal_attempt_finished(
+                        &mut self.journal_attempts,
+                        self.journal_attempts_len,
+                        cx.evidence().tick,
+                        Some(Arc::<str>::from(error.to_string())),
+                    );
                     self.phase = Phase::Complete;
                     return Poll::Ready(Err(failed(step, action_failure(error))));
                 }
-                Poll::Ready(Ok(read)) => read,
+                Poll::Ready(Ok(read)) => {
+                    #[cfg(feature = "test-hooks")]
+                    journal_attempt_finished(
+                        &mut self.journal_attempts,
+                        self.journal_attempts_len,
+                        cx.evidence().tick,
+                        None,
+                    );
+                    read
+                }
             };
             self.phase = Phase::Complete;
             if read.quest != journal.quest
@@ -1076,6 +1177,43 @@ impl PrereqRun {
     }
 }
 
+#[cfg(feature = "test-hooks")]
+fn journal_attempt_started(
+    attempts: &mut [Option<JournalAttemptTrace>; JOURNAL_TRACE_ATTEMPTS],
+    attempts_len: &mut usize,
+    tick: u64,
+) {
+    let index = *attempts_len;
+    assert!(
+        index < attempts.len(),
+        "journal retry bound exceeds trace capacity"
+    );
+    attempts[index] = Some(JournalAttemptTrace {
+        started_tick: tick,
+        ..JournalAttemptTrace::default()
+    });
+    *attempts_len += 1;
+}
+
+#[cfg(feature = "test-hooks")]
+fn journal_attempt_finished(
+    attempts: &mut [Option<JournalAttemptTrace>; JOURNAL_TRACE_ATTEMPTS],
+    attempts_len: usize,
+    tick: u64,
+    failure: Option<Arc<str>>,
+) {
+    let attempt = attempts
+        .get_mut(
+            attempts_len
+                .checked_sub(1)
+                .expect("journal attempt started"),
+        )
+        .and_then(Option::as_mut)
+        .expect("journal attempt trace exists");
+    attempt.terminal_tick = Some(tick);
+    attempt.failure = failure;
+}
+
 fn catalog(cx: &ActionContext<'_>) -> Option<Arc<PrereqCatalog>> {
     let data = api::game_data::for_revision(cx.pin().revision).ok()?;
     if data.selected_pin().ok()?.as_ref() != cx.pin() {
@@ -1228,6 +1366,9 @@ impl PendingPage {
         } else {
             PAGE_TICKS + SEND_SLACK_TICKS
         };
+        if send.kind == DialogueSendKind::Talk {
+            talk_log(cx, row, "send", send.evidence.tick);
+        }
         Self {
             send,
             wait: TickWait {
@@ -1243,6 +1384,33 @@ impl PendingPage {
         }
     }
 }
+
+/// The nearest observed NPC of this type: its rendered tile and distance from
+/// the player, and its server-side (path-head) tile.
+fn nearest_npc(cx: &ActionContext<'_>, id: i32) -> Option<(WorldTile, i32, WorldTile)> {
+    let wanted = usize::try_from(id).ok()?;
+    cx.snapshot()
+        .npcs()?
+        .value
+        .iter()
+        .filter(|npc| npc.r#type == Some(wanted))
+        .min_by_key(|npc| npc.distance)
+        .map(|npc| (npc.tile, npc.distance, npc.network))
+}
+
+fn talk_log(cx: &ActionContext<'_>, row: &PrereqStep, what: &str, tick: u64) {
+    api::host_log!(
+        api::hostlog::Category::NavEvent,
+        api::hostlog::Level::Info,
+        "prereq talk {what} npc_type={} tick={tick} from={:?} from_network={:?} npc(tile,distance,network)={:?}",
+        row.target.npc,
+        cx.snapshot().here().map(|here| here.value),
+        cx.snapshot()
+            .local_player()
+            .map(|player| player.value.player.network),
+        nearest_npc(cx, row.target.npc)
+    );
+}
 struct ChatDrive {
     handle: Option<ActionHandle<Dialogue>>,
     probe: bool,
@@ -1252,6 +1420,13 @@ struct ChatDrive {
     last_send: u64,
     effect_seen: bool,
     terminal_seen: bool,
+    /// Failed reach attempts of this conversation: Talks the engine cancelled
+    /// with "I can't reach that!", and failed re-approaches after a cancel.
+    reach_failures: u8,
+    /// A failed attempt is retried only on a later observed tick.
+    retry_after: Option<u64>,
+    /// Observed tick on which the current dialogue began.
+    attempt_since: u64,
 }
 enum ChatDone {
     Close {
@@ -1274,6 +1449,9 @@ impl ChatDrive {
             last_send: 0,
             effect_seen: false,
             terminal_seen: false,
+            reach_failures: 0,
+            retry_after: None,
+            attempt_since: 0,
         }
     }
     fn begin(
@@ -1334,12 +1512,58 @@ impl ChatDrive {
             }
         };
         let handle = actions.begin::<Dialogue>(DialogueArgs { target, options }, cx)?;
+        self.attempt_since = cx.evidence().tick;
         if let Some(send) = handle.inspect(Dialogue::last_send).flatten() {
             self.last_send = send.request_id;
             self.pending = Some(PendingPage::new(send, cx, row, false, false));
         }
         self.handle = Some(handle);
         Ok(())
+    }
+    /// The engine sent "I can't reach that!" and cleared the Talk
+    /// (`Player.ts:1292-1295`). The wait ends at once as a reach failure: a
+    /// cleared interaction never opens a page, so waiting longer cannot help.
+    fn talk_cancelled(
+        &mut self,
+        cx: &ActionContext<'_>,
+        row: &PrereqStep,
+    ) -> Poll<Result<ChatDone, PrereqFailure>> {
+        let pending = self.pending.take().expect("a pending Talk was cancelled");
+        let tick = cx.evidence().tick;
+        wait_log(pending.name, pending.wait, tick, "unreachable");
+        talk_log(cx, row, "cancelled", tick);
+        self.reach_failed(cx, row, TalkReachCause::Cancelled, pending.wait.since)
+    }
+    /// One reach attempt failed: a cancelled Talk, or a re-approach that ended
+    /// while the NPC was not ready to talk. A failed walk is not terminal
+    /// until its bounded retries are spent (AGENTS.md): a new dialogue reads
+    /// both tiles again on a later observed tick, within
+    /// [`TALK_REACH_RETRIES`]. The last failure's detail is kept.
+    fn reach_failed(
+        &mut self,
+        cx: &ActionContext<'_>,
+        row: &PrereqStep,
+        cause: TalkReachCause,
+        since: u64,
+    ) -> Poll<Result<ChatDone, PrereqFailure>> {
+        let tick = cx.evidence().tick;
+        self.reach_failures += 1;
+        if self.reach_failures > TALK_REACH_RETRIES {
+            return Poll::Ready(Err(PrereqFailure::TalkUnreachable {
+                attempts: self.reach_failures,
+                since,
+                at: tick,
+                from: cx.snapshot().here().map(|here| here.value),
+                npc: nearest_npc(cx, row.target.npc).map(|(tile, _, _)| tile),
+                cause,
+            }));
+        }
+        // Dropping the owner revokes the finished attempt's dialogue; the next
+        // `start` approaches from the tiles observed on a later tick.
+        self.handle = None;
+        self.pending = None;
+        self.retry_after = Some(tick);
+        Poll::Pending
     }
     fn poll(
         &mut self,
@@ -1351,6 +1575,12 @@ impl ChatDrive {
         gate: &QuestGate,
     ) -> Poll<Result<ChatDone, PrereqFailure>> {
         if self.handle.is_none() {
+            if self
+                .retry_after
+                .is_some_and(|tick| cx.evidence().tick <= tick)
+            {
+                return Poll::Pending;
+            }
             match self.start(actions, cx, row) {
                 Ok(()) => {}
                 Err(ActionError::BudgetExhausted) => return Poll::Pending,
@@ -1424,6 +1654,14 @@ impl ChatDrive {
                     }
                 }
             }
+            let cancelled = self.pending.as_ref().is_some_and(|pending| {
+                receipt.is_some()
+                    && pending.send.kind == DialogueSendKind::Talk
+                    && reach::saw_cant_reach(cx, pending.wait.chat_mark)
+            });
+            if cancelled {
+                return self.talk_cancelled(cx, row);
+            }
             if let Some(pending) = &self.pending {
                 if pending.wait.spent(cx.evidence().tick) {
                     return Poll::Ready(Err(pending
@@ -1486,6 +1724,17 @@ impl ChatDrive {
                     }));
                 }
                 if !chat_open(cx) {
+                    // After a cancel, a failed re-approach is a reach failure
+                    // of the same budget, not the end of the conversation.
+                    // The walk receipt is read before the poll: a failed
+                    // machine is dropped with its walk request.
+                    let approach = if self.reach_failures > 0 {
+                        handle
+                            .inspect_in(cx, |dialogue, cx| dialogue.approach_walk(cx))
+                            .flatten()
+                    } else {
+                        None
+                    };
                     let result = actions.poll(handle, cx);
                     if let Some(send) = handle
                         .inspect(Dialogue::last_send)
@@ -1497,6 +1746,18 @@ impl ChatDrive {
                     }
                     match result {
                         Poll::Ready(Err(error)) => return Poll::Ready(Err(action_failure(error))),
+                        Poll::Ready(Ok(DialogueOutcome::Failed)) if approach.is_some() => {
+                            let walk = approach.flatten();
+                            let tick = cx.evidence().tick;
+                            talk_log(cx, row, &format!("approach-failed walk={walk:?}"), tick);
+                            let since = self.attempt_since;
+                            return self.reach_failed(
+                                cx,
+                                row,
+                                TalkReachCause::Approach { walk },
+                                since,
+                            );
+                        }
                         Poll::Ready(Ok(_)) => {
                             return Poll::Ready(Err(PrereqFailure::DialogueFailed))
                         }

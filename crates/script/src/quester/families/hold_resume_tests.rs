@@ -949,3 +949,54 @@ fn a_slot_classifies_a_hold_by_the_player_positions_its_frames_show() {
         slot.stop();
     }
 }
+
+#[test]
+fn stopping_a_queued_talk_releases_the_slots_modal_wait() {
+    struct QueuedTalk {
+        handle: Option<ActionHandle<Dialogue>>,
+    }
+    impl crate::native::Script for QueuedTalk {
+        fn tick(
+            &mut self,
+            tick: &mut NativeTick<'_>,
+        ) -> Result<crate::native::ScriptFlow, crate::native::ScriptFailure> {
+            if self.handle.is_none() {
+                self.handle = Some(
+                    tick.actions
+                        .begin::<Dialogue>(
+                            npc_args_for(content_npc_id("cook"), "Cook"),
+                            &mut tick.cx,
+                        )
+                        .unwrap(),
+                );
+            }
+            let _ = tick
+                .actions
+                .poll(self.handle.as_ref().unwrap(), &mut tick.cx);
+            Ok(crate::native::ScriptFlow::Continue)
+        }
+    }
+
+    for session_boundary in [false, true] {
+        let mut slot = test_script_slot(Box::new(QueuedTalk { handle: None }));
+        let snapshot = cook_beside_player();
+        slot_tick(&mut slot, &snapshot, 10);
+        assert!(
+            slot.script_interaction_wait(std::time::Instant::now(), 10)
+                .is_some(),
+            "the real queued Talk owns the auto-run hold"
+        );
+        if session_boundary {
+            slot.reconnect_session_work();
+        } else {
+            slot.stop();
+        }
+        assert_eq!(
+            slot.script_interaction_wait(std::time::Instant::now(), 11),
+            None,
+            "Stop and the session boundary release the queued owner's wait"
+        );
+        assert!(slot.take_native_action().is_none(), "no queued Talk survives");
+    }
+}
+
