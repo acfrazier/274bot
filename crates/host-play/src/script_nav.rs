@@ -9032,7 +9032,12 @@ mod diagnostic_tests {
             RouteSubmission::prepare(&request, &state, &lease, 0, 32).unwrap();
         // A captured buffer stays input in either mode. Its unreachable
         // planning/fetch/post-bank owners must not become scratch or output.
-        request.bank = Vec::with_capacity(ROUTE_WORK_LIMIT_BYTES / 16);
+        // Leave room for the route and diagnostics already reserved above.
+        let baseline_charge =
+            without_bank.input_bytes + without_bank.scratch_bytes + without_bank.result_bytes;
+        let bank_bytes = (ROUTE_WORK_LIMIT_BYTES - baseline_charge) / 2;
+        assert!(bank_bytes > 0);
+        request.bank = Vec::with_capacity(bank_bytes / std::mem::size_of::<(i32, i32)>());
         let (captured_bank, _) =
             RouteSubmission::prepare(&request, &state, &lease, request.bank.capacity(), 32)
                 .unwrap();
