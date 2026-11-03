@@ -271,7 +271,7 @@ fn collect_module_decl(state: &mut ParseState, decl: &ModuleDecl) {
                 state.default_export = Some(name.clone());
                 state.push_export(class_export(&name, &class.class, true));
             }
-            DefaultDecl::Fn(func) => {
+            DefaultDecl::Fn(func) if !method_body_refuses_not_impl(func.function.body.as_ref()) => {
                 let name = func
                     .ident
                     .as_ref()
@@ -280,6 +280,7 @@ fn collect_module_decl(state: &mut ParseState, decl: &ModuleDecl) {
                 state.default_export = Some(name.clone());
                 state.push_export(fn_export(&name, &func.function));
             }
+            DefaultDecl::Fn(_) => {}
             _ => {}
         },
         ModuleDecl::ExportDefaultExpr(expr) => {
@@ -369,9 +370,10 @@ fn bind_export_decl(state: &mut ParseState, decl: &Decl) {
         Decl::Class(class) => {
             state.push_export(class_export(&class.ident.sym, &class.class, false));
         }
-        Decl::Fn(func) => {
+        Decl::Fn(func) if !method_body_refuses_not_impl(func.function.body.as_ref()) => {
             state.push_export(fn_export(&func.ident.sym, &func.function));
         }
+        Decl::Fn(_) => {}
         Decl::Var(var) => {
             for d in &var.decls {
                 if let Some(exp) = var_export(d, &state.locals) {
@@ -394,9 +396,10 @@ fn collect_local_stmt(state: &mut ParseState, stmt: &Stmt) {
                 class_export(&class.ident.sym, &class.class, false),
             );
         }
-        Decl::Fn(func) => {
+        Decl::Fn(func) if !method_body_refuses_not_impl(func.function.body.as_ref()) => {
             state.bind(&func.ident.sym, fn_export(&func.ident.sym, &func.function));
         }
+        Decl::Fn(_) => {}
         Decl::Var(var) => {
             for d in &var.decls {
                 if let Some(exp) = var_export(d, &state.locals) {
@@ -467,13 +470,17 @@ fn expr_as_export(
     match expr {
         Expr::Paren(p) => expr_as_export(name, &p.expr, locals),
         Expr::Class(class) => Some(class_export(name, &class.class, false)),
-        Expr::Fn(func) => Some(fn_export(name, &func.function)),
-        Expr::Arrow(arrow) => Some(CompatExport::Function {
+        Expr::Fn(func) if !method_body_refuses_not_impl(func.function.body.as_ref()) => {
+            Some(fn_export(name, &func.function))
+        }
+        Expr::Fn(_) => None,
+        Expr::Arrow(arrow) if !arrow_body_refuses_not_impl(arrow) => Some(CompatExport::Function {
             name: name.to_string(),
             params: finish_params(pats_to_params(&arrow.params)),
             is_async: arrow.is_async,
             allows_non_promise: !arrow.is_async,
         }),
+        Expr::Arrow(_) => None,
         Expr::New(new_expr) if is_ident(&new_expr.callee, "Proxy") => {
             Some(proxy_export(name, new_expr, locals))
         }
@@ -648,6 +655,9 @@ fn class_members(class: &Class) -> Vec<Member> {
                 }
             }
             ClassMember::Method(method) => {
+                if method_body_refuses_not_impl(method.function.body.as_ref()) {
+                    continue;
+                }
                 let Some(name) = prop_name(&method.key) else {
                     continue;
                 };
@@ -753,6 +763,9 @@ fn object_lit_members(obj: &ObjectLit, locals: &HashMap<String, CompatExport>) -
         };
         match prop.as_ref() {
             Prop::Method(m) => {
+                if method_body_refuses_not_impl(m.function.body.as_ref()) {
+                    continue;
+                }
                 let Some(name) = prop_name(&m.key) else {
                     continue;
                 };
@@ -773,6 +786,9 @@ fn object_lit_members(obj: &ObjectLit, locals: &HashMap<String, CompatExport>) -
                 });
             }
             Prop::Getter(g) => {
+                if method_body_refuses_not_impl(g.body.as_ref()) {
+                    continue;
+                }
                 let Some(name) = prop_name(&g.key) else {
                     continue;
                 };
@@ -787,6 +803,9 @@ fn object_lit_members(obj: &ObjectLit, locals: &HashMap<String, CompatExport>) -
                 });
             }
             Prop::Setter(s) => {
+                if method_body_refuses_not_impl(s.body.as_ref()) {
+                    continue;
+                }
                 let Some(name) = prop_name(&s.key) else {
                     continue;
                 };
@@ -821,6 +840,8 @@ fn object_lit_members(obj: &ObjectLit, locals: &HashMap<String, CompatExport>) -
                     continue;
                 };
                 match kv.value.as_ref() {
+                    Expr::Fn(func) if method_body_refuses_not_impl(func.function.body.as_ref()) => {
+                    }
                     Expr::Fn(func) => out.push(Member {
                         name,
                         kind: MemberKind::Method,
@@ -836,6 +857,7 @@ fn object_lit_members(obj: &ObjectLit, locals: &HashMap<String, CompatExport>) -
                         is_static: false,
                         is_abstract: false,
                     }),
+                    Expr::Arrow(arrow) if arrow_body_refuses_not_impl(arrow) => {}
                     Expr::Arrow(arrow) => out.push(Member {
                         name,
                         kind: MemberKind::Method,
@@ -2562,6 +2584,12 @@ fn method_body_refuses_not_impl(body: Option<&BlockStmt>) -> bool {
         &call.callee,
         Callee::Expr(callee)
             if matches!(callee.as_ref(), Expr::Ident(id) if id.sym.as_ref() == "notImpl")
+    )
+}
+fn arrow_body_refuses_not_impl(arrow: &ArrowExpr) -> bool {
+    matches!(
+        arrow.body.as_ref(),
+        BlockStmtOrExpr::BlockStmt(body) if method_body_refuses_not_impl(Some(body))
     )
 }
 

@@ -446,7 +446,7 @@ fn overlay_runtime_citations_are_current() {
 }
 
 #[test]
-fn unconditional_refusals_have_never_overlays() {
+fn unconditional_refusals_use_compat_surface_policy() {
     let workspace = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
     let entries = compat_overlay_entries(&workspace);
     let mut files = Vec::new();
@@ -495,10 +495,8 @@ fn unconditional_refusals_have_never_overlays() {
                 );
             } else {
                 assert!(
-                    matching
-                        .into_iter()
-                        .any(|entry| entry["operation"] == "not-impl"),
-                    "refused function {relative}:{symbol} lacks a not-impl overlay"
+                    matching.into_iter().all(|entry| entry["operation"] != "not-impl"),
+                    "refused function {relative}:{symbol} must not have a not-impl overlay"
                 );
             }
         }
