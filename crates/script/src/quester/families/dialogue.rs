@@ -1521,7 +1521,8 @@ impl Dialogue {
             .first_page_allowance_ticks
             .map(|ticks| click_tick.saturating_add(u64::from(ticks)));
         let deadline_inclusive = content_deadline.is_some_and(|content| content >= deadline);
-        self.content_deadline_tick = content_deadline.map_or(deadline, |content| deadline.max(content));
+        self.content_deadline_tick =
+            content_deadline.map_or(deadline, |content| deadline.max(content));
         TalkDispatch::Accepted { deadline_inclusive }
     }
 
