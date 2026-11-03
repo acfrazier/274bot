@@ -2599,7 +2599,7 @@
       "symbol": "NativeStatus",
       "classification": "owning",
       "owner": "T3",
-      "reason": "F0-5 frontend seam; register in the introducing commit, no allowance."
+      "reason": "Public fixture facade behind the test/test-support module gate; it owns a private ScriptStatus and provides status construction, view, and slot-detail helpers without exposing script internals."
     },
     {
       "id": "seam_type|crates/frontend-core/src/test_support/scripts.rs|SaturatedAdmission",
@@ -2808,9 +2808,222 @@
       "classification": "borrowed",
       "owner": "T3",
       "reason": "T5.3-S3 saved, pending or failed state of one setting, borrowing the core's retained failure text; register in the introducing commit, no allowance."
+    },
+    {
+      "id": "seam_type|crates/frontend-core/src/live/mod.rs|CombatLogout",
+      "path": "crates/frontend-core/src/live/mod.rs",
+      "symbol": "CombatLogout",
+      "classification": "owning",
+      "owner": "T3",
+      "reason": "Fixture-only public facade owns the private scenario logout gate and exposes retry and escape operations to live Quester cells."
+    },
+    {
+      "id": "seam_type|crates/frontend-core/src/profile_order.rs|ReorderSurface",
+      "path": "crates/frontend-core/src/profile_order.rs",
+      "symbol": "ReorderSurface",
+      "classification": "scalar",
+      "owner": "T3",
+      "reason": "Copy-only Fleet/Profiles discriminator selects reorder semantics and carries no allocated state."
+    },
+    {
+      "id": "seam_type|crates/frontend-core/src/scripts/prestart_zones.rs|QuesterStartZone",
+      "path": "crates/frontend-core/src/scripts/prestart_zones.rs",
+      "symbol": "QuesterStartZone",
+      "classification": "owning",
+      "owner": "T3",
+      "reason": "Public Clone disclosure record owns its exact zone and step ids, names, reasons, and display-label Strings."
+    },
+    {
+      "id": "seam_type|crates/frontend-core/src/scripts/prestart_zones.rs|QuesterStartZoneScope",
+      "path": "crates/frontend-core/src/scripts/prestart_zones.rs",
+      "symbol": "QuesterStartZoneScope",
+      "classification": "owning",
+      "owner": "T3",
+      "reason": "Public Clone scope record owns its quest and stage labels, display label, and Vec of zone declarations."
+    },
+    {
+      "id": "seam_type|crates/frontend-core/src/scripts/prestart_zones.rs|QuesterStartZones",
+      "path": "crates/frontend-core/src/scripts/prestart_zones.rs",
+      "symbol": "QuesterStartZones",
+      "classification": "owning",
+      "owner": "T3",
+      "reason": "Public Clone aggregate owns the Vec of scoped Quester start-zone disclosures."
+    },
+    {
+      "id": "seam_type|crates/frontend-core/src/scripts/prestart_zones.rs|QuesterStartZoneCache",
+      "path": "crates/frontend-core/src/scripts/prestart_zones.rs",
+      "symbol": "QuesterStartZoneCache",
+      "classification": "owning",
+      "owner": "T3",
+      "reason": "Public cache owns profile and generation keys, the settings map, and an Arc-backed cached disclosure result."
     }
   ],
   "violations": [
+    {
+      "id": "owning_derived_clone|crates/frontend-core/src/scripts/prestart_zones.rs|production|QuesterStartZoneScope|derived_Clone_on_owning_view",
+      "category": "owning_derived_clone",
+      "path": "crates/frontend-core/src/scripts/prestart_zones.rs",
+      "symbol": "QuesterStartZoneScope",
+      "cfg_or_target": "production",
+      "owner": "T3",
+      "reason": "Derived Clone duplicates the scope's owned quest/stage strings and Vec<QuesterStartZone>; T3.1 accessor migration is the removal endpoint.",
+      "removal_endpoint": "T3.1",
+      "classification": "derived_Clone_on_owning_view"
+    },
+    {
+      "id": "owning_derived_clone|crates/frontend-core/src/scripts/prestart_zones.rs|production|QuesterStartZones|derived_Clone_on_owning_view",
+      "category": "owning_derived_clone",
+      "path": "crates/frontend-core/src/scripts/prestart_zones.rs",
+      "symbol": "QuesterStartZones",
+      "cfg_or_target": "production",
+      "owner": "T3",
+      "reason": "Derived Clone duplicates the aggregate's Vec<QuesterStartZoneScope>; T3.1 accessor migration is the removal endpoint.",
+      "removal_endpoint": "T3.1",
+      "classification": "derived_Clone_on_owning_view"
+    },
+    {
+      "id": "owning_derived_clone|crates/frontend-core/src/scripts/prestart_zones.rs|production|QuesterStartZone|derived_Clone_on_owning_view",
+      "category": "owning_derived_clone",
+      "path": "crates/frontend-core/src/scripts/prestart_zones.rs",
+      "symbol": "QuesterStartZone",
+      "cfg_or_target": "production",
+      "owner": "T3",
+      "reason": "Derived Clone duplicates the record's owned zone and step ids, names, reasons, and display-label strings; T3.1 accessor migration is the removal endpoint.",
+      "removal_endpoint": "T3.1",
+      "classification": "derived_Clone_on_owning_view"
+    },
+    {
+      "id": "owning_public_field|crates/frontend-core/src/scripts/prestart_zones.rs|production|QuesterStartZone::display_label|public_field_of_owning_view",
+      "category": "owning_public_field",
+      "path": "crates/frontend-core/src/scripts/prestart_zones.rs",
+      "symbol": "QuesterStartZone::display_label",
+      "cfg_or_target": "production",
+      "owner": "T3",
+      "reason": "Public String field exposes the owning disclosure's cached display label; T3.1 accessor migration is the removal endpoint.",
+      "removal_endpoint": "T3.1",
+      "classification": "public_field_of_owning_view"
+    },
+    {
+      "id": "owning_public_field|crates/frontend-core/src/scripts/prestart_zones.rs|production|QuesterStartZone::id|public_field_of_owning_view",
+      "category": "owning_public_field",
+      "path": "crates/frontend-core/src/scripts/prestart_zones.rs",
+      "symbol": "QuesterStartZone::id",
+      "cfg_or_target": "production",
+      "owner": "T3",
+      "reason": "Public String field exposes the owning disclosure's exact zone id; T3.1 accessor migration is the removal endpoint.",
+      "removal_endpoint": "T3.1",
+      "classification": "public_field_of_owning_view"
+    },
+    {
+      "id": "owning_public_field|crates/frontend-core/src/scripts/prestart_zones.rs|production|QuesterStartZone::name|public_field_of_owning_view",
+      "category": "owning_public_field",
+      "path": "crates/frontend-core/src/scripts/prestart_zones.rs",
+      "symbol": "QuesterStartZone::name",
+      "cfg_or_target": "production",
+      "owner": "T3",
+      "reason": "Public String field exposes the owning disclosure's authored zone name; T3.1 accessor migration is the removal endpoint.",
+      "removal_endpoint": "T3.1",
+      "classification": "public_field_of_owning_view"
+    },
+    {
+      "id": "owning_public_field|crates/frontend-core/src/scripts/prestart_zones.rs|production|QuesterStartZone::reason|public_field_of_owning_view",
+      "category": "owning_public_field",
+      "path": "crates/frontend-core/src/scripts/prestart_zones.rs",
+      "symbol": "QuesterStartZone::reason",
+      "cfg_or_target": "production",
+      "owner": "T3",
+      "reason": "Public String field exposes the owning disclosure's authored crossing rationale; T3.1 accessor migration is the removal endpoint.",
+      "removal_endpoint": "T3.1",
+      "classification": "public_field_of_owning_view"
+    },
+    {
+      "id": "owning_public_field|crates/frontend-core/src/scripts/prestart_zones.rs|production|QuesterStartZone::step_id|public_field_of_owning_view",
+      "category": "owning_public_field",
+      "path": "crates/frontend-core/src/scripts/prestart_zones.rs",
+      "symbol": "QuesterStartZone::step_id",
+      "cfg_or_target": "production",
+      "owner": "T3",
+      "reason": "Public Option<String> field exposes the owning disclosure's optional authored step id; T3.1 accessor migration is the removal endpoint.",
+      "removal_endpoint": "T3.1",
+      "classification": "public_field_of_owning_view"
+    },
+    {
+      "id": "owning_public_field|crates/frontend-core/src/scripts/prestart_zones.rs|production|QuesterStartZoneScope::display_label|public_field_of_owning_view",
+      "category": "owning_public_field",
+      "path": "crates/frontend-core/src/scripts/prestart_zones.rs",
+      "symbol": "QuesterStartZoneScope::display_label",
+      "cfg_or_target": "production",
+      "owner": "T3",
+      "reason": "Public String field exposes the owning scope's cached renderer label; T3.1 accessor migration is the removal endpoint.",
+      "removal_endpoint": "T3.1",
+      "classification": "public_field_of_owning_view"
+    },
+    {
+      "id": "owning_public_field|crates/frontend-core/src/scripts/prestart_zones.rs|production|QuesterStartZoneScope::quest_id|public_field_of_owning_view",
+      "category": "owning_public_field",
+      "path": "crates/frontend-core/src/scripts/prestart_zones.rs",
+      "symbol": "QuesterStartZoneScope::quest_id",
+      "cfg_or_target": "production",
+      "owner": "T3",
+      "reason": "Public String field exposes the scope's owning quest id; T3.1 accessor migration is the removal endpoint.",
+      "removal_endpoint": "T3.1",
+      "classification": "public_field_of_owning_view"
+    },
+    {
+      "id": "owning_public_field|crates/frontend-core/src/scripts/prestart_zones.rs|production|QuesterStartZoneScope::quest_name|public_field_of_owning_view",
+      "category": "owning_public_field",
+      "path": "crates/frontend-core/src/scripts/prestart_zones.rs",
+      "symbol": "QuesterStartZoneScope::quest_name",
+      "cfg_or_target": "production",
+      "owner": "T3",
+      "reason": "Public String field exposes the scope's owning quest name; T3.1 accessor migration is the removal endpoint.",
+      "removal_endpoint": "T3.1",
+      "classification": "public_field_of_owning_view"
+    },
+    {
+      "id": "owning_public_field|crates/frontend-core/src/scripts/prestart_zones.rs|production|QuesterStartZoneScope::role_id|public_field_of_owning_view",
+      "category": "owning_public_field",
+      "path": "crates/frontend-core/src/scripts/prestart_zones.rs",
+      "symbol": "QuesterStartZoneScope::role_id",
+      "cfg_or_target": "production",
+      "owner": "T3",
+      "reason": "Public Option<String> field exposes the scope's optional owning role id; T3.1 accessor migration is the removal endpoint.",
+      "removal_endpoint": "T3.1",
+      "classification": "public_field_of_owning_view"
+    },
+    {
+      "id": "owning_public_field|crates/frontend-core/src/scripts/prestart_zones.rs|production|QuesterStartZoneScope::stage_id|public_field_of_owning_view",
+      "category": "owning_public_field",
+      "path": "crates/frontend-core/src/scripts/prestart_zones.rs",
+      "symbol": "QuesterStartZoneScope::stage_id",
+      "cfg_or_target": "production",
+      "owner": "T3",
+      "reason": "Public String field exposes the scope's owning stage or named-subscope id; T3.1 accessor migration is the removal endpoint.",
+      "removal_endpoint": "T3.1",
+      "classification": "public_field_of_owning_view"
+    },
+    {
+      "id": "owning_public_field|crates/frontend-core/src/scripts/prestart_zones.rs|production|QuesterStartZoneScope::zones|public_field_of_owning_view",
+      "category": "owning_public_field",
+      "path": "crates/frontend-core/src/scripts/prestart_zones.rs",
+      "symbol": "QuesterStartZoneScope::zones",
+      "cfg_or_target": "production",
+      "owner": "T3",
+      "reason": "Public Vec<QuesterStartZone> field exposes the scope's owned zone disclosures; T3.1 accessor migration is the removal endpoint.",
+      "removal_endpoint": "T3.1",
+      "classification": "public_field_of_owning_view"
+    },
+    {
+      "id": "owning_public_field|crates/frontend-core/src/scripts/prestart_zones.rs|production|QuesterStartZones::scopes|public_field_of_owning_view",
+      "category": "owning_public_field",
+      "path": "crates/frontend-core/src/scripts/prestart_zones.rs",
+      "symbol": "QuesterStartZones::scopes",
+      "cfg_or_target": "production",
+      "owner": "T3",
+      "reason": "Public Vec<QuesterStartZoneScope> field exposes the aggregate's owned scopes; T3.1 accessor migration is the removal endpoint.",
+      "removal_endpoint": "T3.1",
+      "classification": "public_field_of_owning_view"
+    },
     {
       "id": "test_nav_implementation_import|crates/script/src/combat/guard.rs|cfg(test)::tests|nav_planner::producer::route_view|qualified_path",
       "category": "test_nav_implementation_import",
@@ -2841,6 +3054,72 @@
       "cfg_or_target": "cfg(test)::tests",
       "owner": "T5",
       "reason": "Survival replay-versus-guard oracle retains its exact synthetic route while comparing the two real decisions.",
+      "removal_endpoint": "T5.1",
+      "classification": "qualified_path"
+    },
+    {
+      "id": "test_nav_implementation_import|crates/script/src/native/walk.rs|cfg(test)::tests|nav_planner::world::NavWorld::load_pack|qualified_path",
+      "category": "test_nav_implementation_import",
+      "path": "crates/script/src/native/walk.rs",
+      "symbol": "nav_planner::world::NavWorld::load_pack",
+      "cfg_or_target": "cfg(test)::tests",
+      "owner": "T5",
+      "reason": "The ignored quest-gate oracle loads an explicit NAV_PACK to compare baked graph gates with the observed R289 quest catalog.",
+      "removal_endpoint": "T5.1",
+      "classification": "qualified_path"
+    },
+    {
+      "id": "test_nav_implementation_import|crates/script/src/quester/compile.rs|cfg(test)::function:real_nav_lease|nav_planner::world::NavWorld::from_bytes|qualified_path",
+      "category": "test_nav_implementation_import",
+      "path": "crates/script/src/quester/compile.rs",
+      "symbol": "nav_planner::world::NavWorld::from_bytes",
+      "cfg_or_target": "cfg(test)::function:real_nav_lease",
+      "owner": "T5",
+      "reason": "The test-only real-nav lease constructs an actual R289 world from explicit pack bytes for compiler checks against its zone catalog.",
+      "removal_endpoint": "T5.1",
+      "classification": "qualified_path"
+    },
+    {
+      "id": "test_nav_implementation_import|crates/script/src/quester/compile.rs|cfg(test)::function:stage_cross_lease|nav_planner::router::AvoidRect|qualified_path",
+      "category": "test_nav_implementation_import",
+      "path": "crates/script/src/quester/compile.rs",
+      "symbol": "nav_planner::router::AvoidRect",
+      "cfg_or_target": "cfg(test)::function:stage_cross_lease",
+      "owner": "T5",
+      "reason": "This test-only lease gives its synthetic zone declarations an exact single-tile rectangle unavailable through the public nav contract.",
+      "removal_endpoint": "T5.1",
+      "classification": "qualified_path"
+    },
+    {
+      "id": "test_nav_implementation_import|crates/script/src/quester/compile.rs|cfg(test)::function:stage_cross_lease|nav_planner::zones::Zone::hazard|qualified_path",
+      "category": "test_nav_implementation_import",
+      "path": "crates/script/src/quester/compile.rs",
+      "symbol": "nav_planner::zones::Zone::hazard",
+      "cfg_or_target": "cfg(test)::function:stage_cross_lease",
+      "owner": "T5",
+      "reason": "The stage-cross fixture creates synthetic hazard rows inside its private test lease to check the compiler's declared zone ids.",
+      "removal_endpoint": "T5.1",
+      "classification": "qualified_path"
+    },
+    {
+      "id": "test_nav_implementation_import|crates/script/src/quester/compile.rs|cfg(test)::function:stage_cross_lease|nav_planner::zones::ZoneKind::new|qualified_path",
+      "category": "test_nav_implementation_import",
+      "path": "crates/script/src/quester/compile.rs",
+      "symbol": "nav_planner::zones::ZoneKind::new",
+      "cfg_or_target": "cfg(test)::function:stage_cross_lease",
+      "owner": "T5",
+      "reason": "The stage-cross fixture builds the minimal catalog identity rows needed to test compilation of declared zone ids.",
+      "removal_endpoint": "T5.1",
+      "classification": "qualified_path"
+    },
+    {
+      "id": "test_nav_implementation_import|crates/script/src/quester/compile.rs|cfg(test)::function:stage_cross_lease|nav_planner::zones::ZoneTable::from_parts|qualified_path",
+      "category": "test_nav_implementation_import",
+      "path": "crates/script/src/quester/compile.rs",
+      "symbol": "nav_planner::zones::ZoneTable::from_parts",
+      "cfg_or_target": "cfg(test)::function:stage_cross_lease",
+      "owner": "T5",
+      "reason": "The stage-cross fixture assembles a synthetic table through the test lease because production callers receive only the bound zone-table view.",
       "removal_endpoint": "T5.1",
       "classification": "qualified_path"
     },
@@ -3337,7 +3616,7 @@
       "symbol": "nav_planner::WorldState",
       "cfg_or_target": "integration-test",
       "owner": "T5",
-      "reason": "F0 baseline test-import exception; remove at T5.1.",
+      "reason": "The ignored R289 pack cases build `WorldState` facts to query actual Quester routes, including quest gates, inventory, and world membership.",
       "removal_endpoint": "T5.1",
       "classification": "exact_test_fixture_oracle_import"
     },
@@ -3348,7 +3627,7 @@
       "symbol": "nav_planner::pack::decode_flags_sidecar",
       "cfg_or_target": "integration-test",
       "owner": "T5",
-      "reason": "F0 baseline test-import exception; remove at T5.1.",
+      "reason": "The ignored R289 pack cases decode the `.navflags` sidecar and attach it to the loaded collision map before route assertions.",
       "removal_endpoint": "T5.1",
       "classification": "exact_test_fixture_oracle_import"
     },
@@ -3359,7 +3638,7 @@
       "symbol": "nav_planner::router::FindOptions",
       "cfg_or_target": "integration-test",
       "owner": "T5",
-      "reason": "F0 baseline test-import exception; remove at T5.1.",
+      "reason": "The ignored R289 pack cases use planner options while checking reachability of authored Quester steps against the real collision and transport graph.",
       "removal_endpoint": "T5.1",
       "classification": "exact_test_fixture_oracle_import"
     },
@@ -3370,7 +3649,7 @@
       "symbol": "nav_planner::router::Leg",
       "cfg_or_target": "integration-test",
       "owner": "T5",
-      "reason": "F0 baseline test-import exception; remove at T5.1.",
+      "reason": "The totem descent case inspects each returned `Leg` to prove the route contains the expected transport after the authored stair steps.",
       "removal_endpoint": "T5.1",
       "classification": "exact_test_fixture_oracle_import"
     },
@@ -3381,7 +3660,7 @@
       "symbol": "nav_planner::router::find_with",
       "cfg_or_target": "integration-test",
       "owner": "T5",
-      "reason": "F0 baseline test-import exception; remove at T5.1.",
+      "reason": "The ignored R289 pack cases call `find_with` against real collision and transport data to assert authored walk reachability.",
       "removal_endpoint": "T5.1",
       "classification": "exact_test_fixture_oracle_import"
     },
@@ -3392,7 +3671,18 @@
       "symbol": "nav_planner::transport::TransportKind",
       "cfg_or_target": "integration-test",
       "owner": "T5",
-      "reason": "F0 baseline test-import exception; remove at T5.1.",
+      "reason": "The totem descent assertion distinguishes the boat edge from other transport kinds in the real-pack route.",
+      "removal_endpoint": "T5.1",
+      "classification": "exact_test_fixture_oracle_import"
+    },
+    {
+      "id": "test_import_exception|crates/script/tests/path_schema.rs|integration-test|nav_planner::world::NavWorld::from_bytes|exact_test_fixture_oracle_import",
+      "category": "test_import_exception",
+      "path": "crates/script/tests/path_schema.rs",
+      "symbol": "nav_planner::world::NavWorld::from_bytes",
+      "cfg_or_target": "integration-test",
+      "owner": "T5",
+      "reason": "The ignored R289 pack cases construct the selected real world from explicit pack bytes before attaching flags and querying authored-path reachability.",
       "removal_endpoint": "T5.1",
       "classification": "exact_test_fixture_oracle_import"
     },
@@ -3403,7 +3693,7 @@
       "symbol": "nav_planner::world::NavWorld",
       "cfg_or_target": "integration-test",
       "owner": "T5",
-      "reason": "F0 baseline test-import exception; remove at T5.1.",
+      "reason": "The ignored R289 pack cases load the selected real world before attaching its flags and querying authored-path reachability.",
       "removal_endpoint": "T5.1",
       "classification": "exact_test_fixture_oracle_import"
     },
@@ -3414,7 +3704,7 @@
       "symbol": "nav_planner::zones::ZoneExempt",
       "cfg_or_target": "integration-test",
       "owner": "T5",
-      "reason": "F0 baseline test-import exception; remove at T5.1.",
+      "reason": "The fluffs yard fixture tries `ZoneExempt` search and proves its authored walk endpoint remains outside the unmodeled fence.",
       "removal_endpoint": "T5.1",
       "classification": "exact_test_fixture_oracle_import"
     },

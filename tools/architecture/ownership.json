@@ -7769,6 +7769,226 @@
     {
       "path": "crates/script-js/tests/slot_slot_tests.rs",
       "owner": "T1"
+    },
+    {
+      "path": "crates/api/src/snapshot/attack_marks.rs",
+      "owner": "T1"
+    },
+    {
+      "path": "crates/frontend-core/src/scripts/prestart_zones.rs",
+      "owner": "T3"
+    },
+    {
+      "path": "crates/host-play/src/poison_hold.rs",
+      "owner": "T1"
+    },
+    {
+      "path": "crates/host-play/src/poison_hold_integration_tests.rs",
+      "owner": "T1"
+    },
+    {
+      "path": "crates/host-play/src/quest_watch_live_tests.rs",
+      "owner": "T1"
+    },
+    {
+      "path": "crates/host-play/src/route_diagnostic_corpus_tests.rs",
+      "owner": "T5"
+    },
+    {
+      "path": "crates/host-play/src/script_talk_dispatch_tests.rs",
+      "owner": "T1"
+    },
+    {
+      "path": "crates/host-play/src/script_walk_no_progress_tests.rs",
+      "owner": "T5"
+    },
+    {
+      "path": "crates/host-play/src/survivable_probability_live_tests.rs",
+      "owner": "T1"
+    },
+    {
+      "path": "crates/host-play/tests/quester_bank_ownership_live.rs",
+      "owner": "T1"
+    },
+    {
+      "path": "crates/host-play/tests/quester_danger_live.rs",
+      "owner": "T1"
+    },
+    {
+      "path": "crates/host-play/tests/survivable_corpus.rs",
+      "owner": "T5"
+    },
+    {
+      "path": "crates/host-play/tests/survivable_corpus/qualification.rs",
+      "owner": "T5"
+    },
+    {
+      "path": "crates/host-play/tests/walk_no_route_live.rs",
+      "owner": "T5"
+    },
+    {
+      "path": "crates/host-play/tests/zanaris_entrana_live.rs",
+      "owner": "T1"
+    },
+    {
+      "path": "crates/nav-bake/src/transport/engine_obstacle_procs.rs2",
+      "owner": "T5"
+    },
+    {
+      "path": "crates/nav-bake/src/transport/legends.rs",
+      "owner": "T5"
+    },
+    {
+      "path": "crates/nav-bake/src/transport/legends_axe_template.rs2",
+      "owner": "T5"
+    },
+    {
+      "path": "crates/nav-bake/src/transport/legends_coords_template.rs2",
+      "owner": "T5"
+    },
+    {
+      "path": "crates/nav-bake/src/transport/legends_gate_template.rs2",
+      "owner": "T5"
+    },
+    {
+      "path": "crates/nav-bake/src/transport/legends_jungle_template.rs2",
+      "owner": "T5"
+    },
+    {
+      "path": "crates/nav-bake/src/transport/legends_tests.rs",
+      "owner": "T5"
+    },
+    {
+      "path": "crates/nav-bake/src/transport/obstacle_handlers.rs2",
+      "owner": "T5"
+    },
+    {
+      "path": "crates/nav-bake/src/transport/stage_doors_content_gates_tests.rs",
+      "owner": "T5"
+    },
+    {
+      "path": "crates/nav-bake/src/transport/stage_doors_gates_tests.rs",
+      "owner": "T5"
+    },
+    {
+      "path": "crates/nav-bake/src/transport/stage_doors_obstacles.rs",
+      "owner": "T5"
+    },
+    {
+      "path": "crates/nav-bake/src/transport/stage_doors_obstacles_tests.rs",
+      "owner": "T5"
+    },
+    {
+      "path": "crates/nav-executor/src/traveller/open_door_approach_tests.rs",
+      "owner": "T5"
+    },
+    {
+      "path": "crates/nav-executor/src/traveller/walk_budget_tests.rs",
+      "owner": "T5"
+    },
+    {
+      "path": "crates/nav-planner/src/first_goal_area_tests.rs",
+      "owner": "T5"
+    },
+    {
+      "path": "crates/scenario/src/quest_watch.rs",
+      "owner": "T2"
+    },
+    {
+      "path": "crates/scenario/src/teardown.rs",
+      "owner": "T2"
+    },
+    {
+      "path": "crates/script/src/combat/risk/odds.rs",
+      "owner": "T5"
+    },
+    {
+      "path": "crates/script/src/combat/risk/odds_tests.rs",
+      "owner": "T5"
+    },
+    {
+      "path": "crates/script/src/combat/risk/timeline.rs",
+      "owner": "T5"
+    },
+    {
+      "path": "crates/script/src/quester/families/hold_resume_tests.rs",
+      "owner": "T2"
+    },
+    {
+      "path": "crates/script/src/quester/families/production_state_size_tests.rs",
+      "owner": "T2"
+    },
+    {
+      "path": "crates/script/src/quester/families/timed_ground.rs",
+      "owner": "T2"
+    },
+    {
+      "path": "crates/script/src/quester/families/timed_ground_tests.rs",
+      "owner": "T2"
+    },
+    {
+      "path": "crates/script/src/quester/open_page_retry_runner_tests.rs",
+      "owner": "T2"
+    },
+    {
+      "path": "tools/game-data/extractors/prereq-journal-proof.test.ts",
+      "owner": "T2"
+    },
+    {
+      "path": "tools/game-data/extractors/prereq-journal-proof.ts",
+      "owner": "T2"
+    },
+    {
+      "path": "tools/live-map/release_path_refusal.rs",
+      "owner": "T1"
+    },
+    {
+      "path": "tools/live-map/release_refusal.py",
+      "owner": "T1"
+    },
+    {
+      "path": "tools/live-map/run_cells.py",
+      "owner": "T1"
+    },
+    {
+      "path": "tools/perf/npr-proof/prepare.py",
+      "owner": "T5"
+    },
+    {
+      "path": "tools/perf/npr-proof/src/footprint.rs",
+      "owner": "T5"
+    },
+    {
+      "path": "tools/perf/npr-proof/src/main.rs",
+      "owner": "T5"
+    },
+    {
+      "path": "tools/seed-calc/extract-facts.ts",
+      "owner": "T2"
+    },
+    {
+      "path": "tools/seed-calc/src/crossing.rs",
+      "owner": "T2"
+    },
+    {
+      "path": "tools/seed-calc/src/fight.rs",
+      "owner": "T2"
+    },
+    {
+      "path": "tools/seed-calc/src/food.rs",
+      "owner": "T2"
+    },
+    {
+      "path": "tools/seed-calc/src/lib.rs",
+      "owner": "T2"
+    },
+    {
+      "path": "tools/seed-calc/src/main.rs",
+      "owner": "T2"
+    },
+    {
+      "path": "tools/seed-calc/src/self_damage.rs",
+      "owner": "T2"
     }
   ]
 }
