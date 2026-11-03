@@ -152,8 +152,10 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.7` 
   Both native member-mode fields match the custom WSS profile's
   Unknown-to-false rule. The checker records its own and the native
   executable's SHA-256 hashes.
-  The workload audit and two new thirty-minute Engine L diagnostics precede
-  any authorized Engine A qualification.
+  Every proxy connection Close receipt has a monotonic timestamp, including
+  HTTPS-only connections; the final barrier rejects a missing timestamp.
+  The route proof, both 900-second rate diagnostics and the matched
+  2400-second Engine L memory pair precede any authorized Engine A qualification.
   Unroutable client alternatives count as nonmovement. Each resource and bank
   loc still requires an accepted approach witness. Consumer-only corrections
   can recheck retained native routes with identical inputs and request batches.
