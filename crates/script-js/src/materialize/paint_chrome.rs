@@ -652,8 +652,9 @@ fn push_wrapped_line(lines: &mut Vec<Vec<u16>>, line: &mut Vec<u16>, pad: &[u16]
         lines.push(std::mem::take(line));
         return;
     }
-    let mut output = Vec::with_capacity(pad.len() + line.len());
-    output.extend_from_slice(pad);
+    let pad_len = if lines.is_empty() { 0 } else { pad.len() };
+    let mut output = Vec::with_capacity(pad_len + line.len());
+    output.extend_from_slice(&pad[..pad_len]);
     output.append(line);
     lines.push(output);
 }
