@@ -74,7 +74,8 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.8` 
   `fixable_with` kind; named zone grants still require a survivable assessment.
 - Current-data API regressions keep revision-289 PvP facts distinct from
   their absence on revision274. Quest-window tests retain Unknown for
-  non-authoritative colours and keep authoritative positive/refusal controls.
+  non-authoritative colours and keep authoritative positive/refusal controls
+  through both the API and the host's captured route evidence.
 - The route-corpus exporter and navigation regression fixtures now use
   stamped quest observations from the current evidence API. A stale
   observation keeps its original timestamp and does not authorize a gate.

@@ -10466,39 +10466,39 @@ mod route_quest_provider_tests {
     }
 
     #[test]
-    fn observed_red_quest_row_decides_route_completion_and_window() {
-        use api::selected::{FactKey, InclusiveRange, StageWindow};
+    fn observed_red_quest_rows_gate_windows_only_with_colour_authority() {
+        use api::selected::{InclusiveRange, StageWindow};
 
         let selected = selected_r289();
         let family = family(&selected);
         let observed = stamp(run(), 126, 126);
         let context = context(Arc::clone(&selected), observed);
-        let mut snapshot = GameSnapshot::new();
-        snapshot.seed_ingame(2);
-        snapshot.seed_quest_statuses(
-            vec![QuestStatusView {
-                component_id: 7352,
-                name: "Biohazard".to_owned(),
-                colour: 0xF80000,
-            }],
-            true,
-        );
-        let evidence = captured_route_quests(family, Some(&context), &snapshot, None, observed)
-            .expect("route captures the observed quest-list row");
-        assert_eq!(
-            (
-                evidence.test(&QuestGate::Complete(FactKey::new("biohazard"))),
-                evidence.test(&QuestGate::Window(StageWindow {
-                    quest: FactKey::new("biohazard"),
-                    signal: FactKey::new("biohazard"),
-                    values: InclusiveRange {
-                        min: None,
-                        max: Some(9)
-                    },
-                })),
-            ),
-            (Truth::False, Truth::True),
-        );
+        let quests = selected.try_quests().expect("prepared quest catalog");
+        // elena.rs2:118,126-132 is conservatively analysed without its outer
+        // guard. Keep real authoritative positive and disjoint-window controls.
+        for (quest, authoritative, min, window_truth) in [
+            ("biohazard", false, None, Truth::Unknown),
+            ("druidspirit", true, None, Truth::True),
+            ("druidspirit", true, Some(1), Truth::False),
+        ] {
+            let facts = quests.quest(quest).expect("selected quest facts");
+            assert_eq!(facts.colour_authoritative, authoritative, "{quest}");
+            let snapshot = snapshot(&facts.display, 0xF80000, true);
+            let evidence = captured_route_quests(family, Some(&context), &snapshot, None, observed)
+                .expect("route captures the observed quest-list row");
+            assert_eq!(
+                (
+                    evidence.test(&QuestGate::Complete(facts.id.clone())),
+                    evidence.test(&QuestGate::Window(StageWindow {
+                        quest: facts.id.clone(),
+                        signal: facts.varp.clone(),
+                        values: InclusiveRange { min, max: Some(9) },
+                    })),
+                ),
+                (Truth::False, window_truth),
+                "{quest}",
+            );
+        }
     }
 
     #[test]
