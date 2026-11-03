@@ -30,7 +30,9 @@ struct SelectedFactsObjectShapes {
     catalog: v8::Global<v8::ObjectTemplate>,
     record: v8::Global<v8::ObjectTemplate>,
     alias: v8::Global<v8::ObjectTemplate>,
-    obj_records: RefCell<Option<v8::Global<v8::Array>>>,
+    /// The rebuilt row array and the row count it was built with, so a cache
+    /// check needs no pass over the selected items.
+    obj_records: RefCell<Option<(v8::Global<v8::Array>, u32)>>,
 }
 
 enum SelectedFactsObjectShape {
@@ -474,24 +476,24 @@ fn obj_record_rows<'s>(
     let Some(data) = supply_v2::selected_data() else {
         return Ok(v8::Array::new(scope, 0));
     };
-    let expected = crate::market_catalog::records(data.items()).count();
     {
         let cached = shapes.obj_records.borrow();
-        if let Some(rows) = cached.as_ref() {
+        if let Some((rows, count)) = cached.as_ref() {
             let rows = v8::Local::new(scope, rows);
-            if expected > 0 && rows.length() as usize == expected {
+            if rows.length() == *count {
                 return Ok(rows);
             }
         }
     }
-    let rows = v8::Array::new(scope, i32::try_from(expected).unwrap_or(i32::MAX));
-    for (index, (item, name)) in crate::market_catalog::records(data.items()).enumerate() {
-        let row = obj_record_row(scope, item, name)?;
-        rows.set_index(scope, index as u32, row.into())
-            .ok_or_else(|| "selected facts obj-records".to_string())?;
-    }
-    if rows.length() > 0 {
-        *shapes.obj_records.borrow_mut() = Some(v8::Global::new(scope, rows));
+    // `new_with_elements` writes own elements, so a setter that a script put on
+    // `Array.prototype` cannot drop a row from the rebuild.
+    let rows = crate::market_catalog::records(data.items())
+        .map(|(item, name)| obj_record_row(scope, item, name).map(Into::into))
+        .collect::<Result<Vec<v8::Local<'s, v8::Value>>, String>>()?;
+    let count = u32::try_from(rows.len()).unwrap_or(u32::MAX);
+    let rows = v8::Array::new_with_elements(scope, &rows);
+    if count > 0 {
+        *shapes.obj_records.borrow_mut() = Some((v8::Global::new(scope, rows), count));
     }
     Ok(rows)
 }
@@ -543,6 +545,11 @@ fn obj_catalog<'s>(scope: &mut v8::HandleScope<'s>) -> Result<v8::Local<'s, v8::
         let row = by_id
             .get(scope, id.into())
             .ok_or_else(|| "selected facts catalog item".to_string())?;
+        // `Map::get` gives `undefined` for a missing key: a script rewrote the
+        // `id` of a listed row, so fail here instead of in a later catalog walk.
+        if row.is_undefined() {
+            return Err("selected facts catalog item is not a row".to_string());
+        }
         items
             .set_index(scope, index as u32, row)
             .ok_or_else(|| "selected facts catalog items".to_string())?;

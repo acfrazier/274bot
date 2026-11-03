@@ -8,6 +8,57 @@ const TEST_NAME: &str =
 const MUTATION_CHILD_ENV: &str = "SCRIPT_SELECTED_FACTS_CATALOG_MUTATION_CHILD";
 const MUTATION_TEST_NAME: &str =
     "selected_facts_v8::tests::catalog_ignores_script_mutation_of_the_record_array";
+const SETTER_CHILD_ENV: &str = "SCRIPT_SELECTED_FACTS_CATALOG_SETTER_CHILD";
+const SETTER_TEST_NAME: &str =
+    "selected_facts_v8::tests::catalog_rebuild_ignores_an_array_prototype_setter";
+const REWRITTEN_ID_CHILD_ENV: &str = "SCRIPT_SELECTED_FACTS_CATALOG_REWRITTEN_ID_CHILD";
+const REWRITTEN_ID_TEST_NAME: &str = "selected_facts_v8::tests::catalog_rejects_a_rewritten_row_id";
+/// Round-3 review R3-2 probe: install an index accessor on `Array.prototype`,
+/// empty the cached row array so the next `obj-records` call rebuilds it, and
+/// rebuild with the accessor in place.
+const SETTER_REBUILD: &str = r#"
+(() => {
+    Object.defineProperty(Array.prototype, '0', {
+        configurable: true,
+        get() { return 'evil' },
+        set() {},
+    });
+    facts('obj-records').length = 0;
+    globalThis.__rows = facts('obj-records');
+    globalThis.__everyRowIsPresent = () => {
+        if (__rows.length !== __recordCount) return false;
+        for (let index = 0; index < __rows.length; index++) {
+            if (!Object.prototype.hasOwnProperty.call(__rows, index)) return false;
+            const row = __rows[index];
+            if (!row || typeof row !== 'object' || row.id === undefined) return false;
+        }
+        return true;
+    };
+    globalThis.__setterCatalogWorks = () => {
+        const catalog = facts('obj-catalog');
+        const rows = [...catalog.byId.values()];
+        return catalog.byId.size === __recordCount
+            && rows.every(row => row && catalog.byId.get(row.id) === row);
+    };
+    return __rows.length;
+})()
+"#;
+/// Round-3 review R3-3 probe: rewrite the `id` of one listed row, then ask for
+/// the catalog again. `''` means the call returned without an error.
+const REWRITTEN_ID_REWRITE: &str = r#"
+(() => {
+    const catalog = facts('obj-catalog');
+    const row = catalog.items[0];
+    if (!row || row.id === undefined) return 'no listed row';
+    row.id = -999;
+    try {
+        facts('obj-catalog');
+    } catch (error) {
+        return String(error);
+    }
+    return '';
+})()
+"#;
 /// True while every `byId` entry maps a row to its own id and every listed
 /// item is one of those rows.
 const CATALOG_CHECK: &str = r#"
@@ -172,6 +223,59 @@ fn catalog_ignores_script_mutation_of_the_record_array() {
         assert!(
             runtime.eval::<bool>(CATALOG_CHECK).unwrap(),
             "an emptied row array does not change the catalog"
+        );
+    });
+}
+
+/// Round-3 review R3-2: the rebuild writes own elements, so an index setter
+/// that a script put on `Array.prototype` cannot drop a row.
+#[test]
+fn catalog_rebuild_ignores_an_array_prototype_setter() {
+    in_child(SETTER_CHILD_ENV, SETTER_TEST_NAME, || {
+        let mut runtime = setup();
+        let rows = runtime
+            .eval::<usize>("globalThis.__recordCount = facts('obj-records').length")
+            .unwrap();
+        assert!(rows > 0, "the selected data has obj rows");
+        assert!(
+            runtime.eval::<bool>(CATALOG_CHECK).unwrap(),
+            "the catalog keys every row by its own id"
+        );
+        assert_eq!(
+            runtime.eval::<usize>(SETTER_REBUILD).unwrap(),
+            rows,
+            "the rebuild keeps the row count"
+        );
+        assert!(
+            runtime.eval::<bool>("__everyRowIsPresent()").unwrap(),
+            "an Array.prototype index setter drops no row from the rebuild"
+        );
+        assert!(
+            runtime.eval::<bool>("__setterCatalogWorks()").unwrap(),
+            "obj-catalog still keys every row with the setter installed"
+        );
+        runtime.eval::<()>("delete Array.prototype[0]").unwrap();
+        assert!(
+            runtime.eval::<bool>(CATALOG_CHECK).unwrap(),
+            "obj-catalog builds its items after the accessor is gone"
+        );
+    });
+}
+
+/// Round-3 review R3-3: a script that rewrites a listed row's `id` gets an
+/// error from `obj-catalog`, not an `undefined` entry in `items`.
+#[test]
+fn catalog_rejects_a_rewritten_row_id() {
+    in_child(REWRITTEN_ID_CHILD_ENV, REWRITTEN_ID_TEST_NAME, || {
+        let mut runtime = setup();
+        let rows = runtime
+            .eval::<usize>("facts('obj-records').length")
+            .unwrap();
+        assert!(rows > 0, "the selected data has obj rows");
+        let error = runtime.eval::<String>(REWRITTEN_ID_REWRITE).unwrap();
+        assert!(
+            error.contains("not a row"),
+            "obj-catalog rejects a listed id that no longer resolves; got {error:?}"
         );
     });
 }
