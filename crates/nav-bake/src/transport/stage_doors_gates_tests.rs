@@ -299,7 +299,7 @@ fn window_covers(edge: &TransportEdge, quest: &str, signal: &str, value: i32) ->
 }
 
 #[test]
-fn grand_tree_gate_emits_pre_completion_window_and_completed_gate() {
+fn grand_tree_gate_retains_stage_windows_without_colour_authority() {
     let handler = paired_stage_handler("if (%grandtree < 80) { return; }");
     let (graph, collision) = stage_world(&handler);
     let complete = quest_complete("grandtree");
@@ -317,13 +317,16 @@ fn grand_tree_gate_emits_pre_completion_window_and_completed_gate() {
         .find(|edge| window_covers(edge, "grandtree", "grandtree", 80))
         .expect("Grand Tree's pre-completion gate window");
     assert!(!WorldState::empty().allows(window));
-    assert!(edges.iter().any(|edge| {
+    // Current guarded-writer analysis is conservative, not colour-authoritative.
+    // See BATCH-029-INT/w3-hero-grandtree-colour-guards.md for both actual writers.
+    assert!(edges
+        .iter()
+        .any(|edge| window_covers(edge, "grandtree", "grandtree", 160)));
+    assert!(edges.iter().all(|edge| {
         edge.quest_gates.as_ref().is_some_and(|gates| {
-            gates.gates().len() == 1
-                && matches!(
-                    &gates.gates()[0],
-                    QuestGate::Complete(quest) if quest.0.as_ref() == "grandtree"
-                )
+            matches!(gates.gates(), [QuestGate::Window(window)]
+                if window.quest.0.as_ref() == "grandtree"
+                    && window.signal.0.as_ref() == "grandtree")
         })
     }));
     assert!(edges.iter().all(|edge| {
@@ -359,15 +362,27 @@ fn grand_tree_gate_emits_pre_completion_window_and_completed_gate() {
         crosses(&graph, &collision, from, to, &below_window, 6000),
         Err(RouteError::NoPath)
     );
-    assert!(crosses(
+    let complete_stage = grand_tree_state(
         &graph,
-        &collision,
-        from,
-        to,
-        &grand_tree_state(&graph, None, true),
-        6000
-    )
-    .unwrap());
+        Some(InclusiveRange {
+            min: Some(160),
+            max: Some(160),
+        }),
+        false,
+    );
+    assert!(crosses(&graph, &collision, from, to, &complete_stage, 6000).unwrap());
+    assert_eq!(
+        crosses(
+            &graph,
+            &collision,
+            from,
+            to,
+            &grand_tree_state(&graph, None, true),
+            6000,
+        ),
+        Err(RouteError::NoPath),
+        "colour-only completion cannot prove the guarded stage window"
+    );
     assert_eq!(
         crosses(&graph, &collision, from, to, &WorldState::empty(), 6000),
         Err(RouteError::NoPath)

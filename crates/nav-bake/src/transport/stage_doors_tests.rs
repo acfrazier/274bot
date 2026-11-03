@@ -1926,7 +1926,9 @@ fn derive_entrance_fixture(fx: &Fixture) -> (TransportGraph, WorldCollision) {
 }
 
 #[test]
-fn completed_quest_teleport_entrance_uses_a_typed_canonical_gate() {
+fn completed_quest_teleport_entrance_respects_colour_authority() {
+    use api::selected::{FactKey, InclusiveRange, QuestGate, StageWindow};
+
     let fx = Fixture::new();
     write_forced_fixture(
         &fx,
@@ -1937,33 +1939,58 @@ p_delay(1);
 p_teleport(0_44_53_5_46);
 "#,
     );
-    let (graph, _) = derive_entrance_fixture(&fx);
-    let edges: Vec<_> = graph
-        .edges
-        .iter()
-        .filter(|edge| edge.loc_id == 6000)
-        .collect();
-    assert!(
-        !edges.is_empty(),
-        "the completed-quest teleport must be extracted"
+    let selected =
+        api::game_data::for_revision(client::io::ClientRevision::R289).expect("selected revision");
+    let (mut facts, identity) = selected.quest_identity_for_bake().expect("verified family");
+    let hero = facts.rows.iter().position(|row| row.id == "hero").unwrap();
+    // Actual writers and entry guards: BATCH-029-INT/w3-hero-grandtree-colour-guards.md.
+    assert!(!facts.rows[hero].colour_authoritative);
+    assert_eq!(facts.rows[hero].complete, 15);
+    assert_eq!(
+        facts.rows[hero].stage_domain,
+        Some(InclusiveRange {
+            min: Some(0),
+            max: Some(15),
+        })
     );
-    for edge in edges {
-        let gates = edge.quest_gates.as_ref().expect("typed completion gate");
-        assert_eq!(gates.gates().len(), 1);
-        assert!(
-            matches!(&gates.gates()[0], api::selected::QuestGate::Complete(quest)
-            if quest.0.as_ref() == "hero")
-        );
-        assert!(edge.quest_req.is_empty());
-        assert!(
-            edge.varp_req.is_empty(),
-            "hidden quest varps are not live evidence"
-        );
-        assert_eq!(edge.to, tile(2821, 3438));
-        assert_eq!(
-            edge.ticks, 3,
-            "one operation, one delay tick, and the content yield"
-        );
+    for authoritative in [false, true] {
+        // The true branch is a controlled complete-only positive fixture,
+        // not a change to the selected Hero metadata.
+        facts.rows[hero].colour_authoritative = authoritative;
+        let quests = QuestSource {
+            family: nav_planner::quest_gates::QuestFamilyId::new(identity.sha256, identity.schema),
+            facts: &facts,
+        };
+        let (graph, _) = derive_entrance_fixture_with_quests(&fx, &quests);
+        let expected = if authoritative {
+            QuestGate::Complete(FactKey::new("hero"))
+        } else {
+            QuestGate::Window(StageWindow {
+                quest: FactKey::new("hero"),
+                signal: FactKey::new("heroquest"),
+                values: InclusiveRange {
+                    min: Some(15),
+                    max: Some(15),
+                },
+            })
+        };
+        let mut found = false;
+        for edge in graph.edges.iter().filter(|edge| edge.loc_id == 6000) {
+            found = true;
+            let gates = edge.quest_gates.as_ref().expect("typed quest gate");
+            assert_eq!(gates.gates(), std::slice::from_ref(&expected));
+            assert!(edge.quest_req.is_empty());
+            assert!(
+                edge.varp_req.is_empty(),
+                "hidden quest varps are not live evidence"
+            );
+            assert_eq!(edge.to, tile(2821, 3438));
+            assert_eq!(
+                edge.ticks, 3,
+                "one operation, one delay tick, and the content yield"
+            );
+        }
+        assert!(found, "the completed-quest teleport must be extracted");
     }
 }
 
@@ -2276,7 +2303,9 @@ p_teleport(0_44_53_5_46);
 }
 
 #[test]
-fn animated_completed_quest_force_move_keeps_its_canonical_gate() {
+fn animated_completed_quest_force_move_respects_colour_authority() {
+    use api::selected::{FactKey, InclusiveRange, QuestGate, StageWindow};
+
     let fx = Fixture::new();
     write_forced_fixture(
         &fx,
@@ -2288,18 +2317,48 @@ loc_anim(roots_open);
 loc_anim(roots_close);
 "#,
     );
-    let (graph, _) = derive_entrance_fixture(&fx);
-    let edges: Vec<_> = graph
-        .edges
-        .iter()
-        .filter(|edge| edge.loc_id == 6000)
-        .collect();
-    assert!(
-        !edges.is_empty(),
-        "a loc animation does not move or refuse the player"
+    let selected =
+        api::game_data::for_revision(client::io::ClientRevision::R289).expect("selected revision");
+    let (mut facts, identity) = selected.quest_identity_for_bake().expect("verified family");
+    let hero = facts.rows.iter().position(|row| row.id == "hero").unwrap();
+    // Same guarded-writer classification as the teleport fixture above.
+    assert!(!facts.rows[hero].colour_authoritative);
+    assert_eq!(facts.rows[hero].complete, 15);
+    assert_eq!(
+        facts.rows[hero].stage_domain,
+        Some(InclusiveRange {
+            min: Some(0),
+            max: Some(15),
+        })
     );
-    assert!(edges.iter().all(|edge| edge.quest_gates.as_ref().is_some_and(|gates|
-        matches!(gates.gates(), [api::selected::QuestGate::Complete(quest)] if quest.0.as_ref() == "hero"))));
+    for authoritative in [false, true] {
+        // Preserve the canonical-positive extractor path with controlled facts.
+        facts.rows[hero].colour_authoritative = authoritative;
+        let quests = QuestSource {
+            family: nav_planner::quest_gates::QuestFamilyId::new(identity.sha256, identity.schema),
+            facts: &facts,
+        };
+        let (graph, _) = derive_entrance_fixture_with_quests(&fx, &quests);
+        let expected = if authoritative {
+            QuestGate::Complete(FactKey::new("hero"))
+        } else {
+            QuestGate::Window(StageWindow {
+                quest: FactKey::new("hero"),
+                signal: FactKey::new("heroquest"),
+                values: InclusiveRange {
+                    min: Some(15),
+                    max: Some(15),
+                },
+            })
+        };
+        let mut found = false;
+        for edge in graph.edges.iter().filter(|edge| edge.loc_id == 6000) {
+            found = true;
+            let gates = edge.quest_gates.as_ref().expect("typed quest gate");
+            assert_eq!(gates.gates(), std::slice::from_ref(&expected));
+        }
+        assert!(found, "a loc animation does not move or refuse the player");
+    }
 }
 
 #[test]

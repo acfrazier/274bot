@@ -78,6 +78,9 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.8` 
   through both the API and the host's captured route evidence.
   Paired-duel regressions also keep revision274 admission refused for absent
   rule buttons and preserve all fourteen revision289 positive mappings.
+  Navigation extractor tests retain Hero's exact stage 15 and Grand Tree's
+  stage range 80 to 160, including raw completion and colour-only refusal, while
+  controlled true-authority fixtures keep canonical completion paths covered.
 - The route-corpus exporter and navigation regression fixtures now use
   stamped quest observations from the current evidence API. A stale
   observation keeps its original timestamp and does not authorize a gate.
