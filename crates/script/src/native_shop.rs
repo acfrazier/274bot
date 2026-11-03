@@ -12,9 +12,19 @@ use crate::shop_open::{self, Decision, Facts, Keeper, OpenCore, Session};
 use std::sync::Arc;
 use std::task::Poll;
 
-const ACQUISITION_SETTLE_TICKS: u64 = 7;
-const BUY_BY_ID_SETTLE_TICKS: u64 = 5;
-const CLOSE_TICKS: u64 = 5;
+// Shop content adds no server delay. These are observation bounds.
+// Engine L, 20 native acquisitions: maximum 1 tick from button dispatch to
+// held-count change, plus 3 ticks of margin. See
+// COMPAT-FINISH-029/impl/native-shop-measure/cargo-20-native-cells.log.
+const ACQUISITION_SETTLE_TICKS: u64 = 4;
+// Engine L, 20 byId samples: maximum 1 tick from button dispatch to inventory
+// change, plus 3 ticks of margin. The call-to-change maximum was 2 ticks.
+// See COMPAT-FINISH-029/impl/w3-live-rerun/report.md §4.2.
+const BUY_BY_ID_SETTLE_TICKS: u64 = 4;
+// Engine L, 20 native closes: maximum 1 tick from CloseModal dispatch to the
+// closed snapshot, plus 3 ticks of margin. See
+// COMPAT-FINISH-029/impl/native-shop-measure/cargo-20-native-cells.log.
+const CLOSE_TICKS: u64 = 4;
 
 #[derive(Debug, Clone, Copy, PartialEq, serde::Deserialize)]
 pub struct ShopBuyByIdArgs {
