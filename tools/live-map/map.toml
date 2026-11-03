@@ -465,7 +465,6 @@ globs = [
   "crates/script-js/src/library/rs2b0t_registry/paths.rs",
   "crates/script-js/src/library/rs2b0t_registry/settings.rs",
   "crates/script-js/src/shim/content.rs",
-  "crates/script/src/shim/mod.rs",
   "crates/script-js/src/shim/modules.rs",
   "crates/script-js/src/shim/rows.rs",
   "crates/script/src/slot.rs",
