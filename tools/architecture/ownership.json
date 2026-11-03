@@ -6167,22 +6167,6 @@
       "owner": "T1"
     },
     {
-      "path": "global-region-rank-driver-t14-soak-route-1028.sh",
-      "owner": "T5"
-    },
-    {
-      "path": "global-region-rank-preflight-driver-t14-soak-route-1028.sh",
-      "owner": "T5"
-    },
-    {
-      "path": "global-region-rank-t14-soak-route-1028-preflight.py",
-      "owner": "T5"
-    },
-    {
-      "path": "global-region-rank-t14-soak-route-1028.py",
-      "owner": "T5"
-    },
-    {
       "path": "scripts/fetch-cache.sh",
       "owner": "T1"
     },
