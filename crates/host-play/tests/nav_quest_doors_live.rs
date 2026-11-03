@@ -1316,10 +1316,10 @@ impl Script for KitchenPrereqScript {
                         return Ok(ScriptFlow::Complete);
                     }
                 }
-                Poll::Ready(Err(_)) => {
+                Poll::Ready(Err(error)) => {
                     let mut report = self.report.lock();
                     report.finished = true;
-                    report.error = error;
+                    report.error = Some(format!("{error:?}"));
                     report.current_stamp = Some(stamp);
                     report.unsupported = self.remaining.iter().map(|gate| json!(gate)).collect();
                     return Ok(ScriptFlow::Complete);
