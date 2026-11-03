@@ -53,7 +53,7 @@ use crate::compat::walk::{
     avoid_refusal, here, interrupted, resolve_teleports, teleport_span_allows, Resilient, Walk,
 };
 use crate::machine::{Begin, Call, Cx, Family, Reply, Step};
-use crate::scene::observed;
+use crate::scene::{observed, supply_v2};
 use api::query::SceneReachOptions;
 use api::snapshot::WorldTile;
 use script::interact::{InspectAvoidWire, InteractReq};
