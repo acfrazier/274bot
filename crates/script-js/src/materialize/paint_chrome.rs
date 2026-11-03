@@ -910,6 +910,7 @@ fn list_scroll(state: &mut ChromeState, key: &str, len: usize, rows: f64, focus:
     state.state_set(key.to_owned(), js_number_string(offset));
     state.state_set(manual_key, if manual { "1" } else { "0" }.to_owned());
     state.state_set(focus_key, js_number_string(focus));
+    offset
 }
 
 fn fill_rows<'s>(
