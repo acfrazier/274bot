@@ -46,8 +46,16 @@ def demand(condition: bool, errors: list[str], message: str) -> None:
 def arm_evidence(arm: str, operation, *args):
     try:
         return operation(*args)
-    except (OSError, ValueError, KeyError, TypeError) as error:
+    except (OSError, ValueError, KeyError, TypeError, IndexError) as error:
         raise EvidenceError(f"{arm}: missing or invalid evidence: {error}") from error
+
+
+def check_nav_identity(receipt: dict, errors: list[str]) -> None:
+    source_pack, selected_pack, source_flags, selected_flags = (
+        receipt[key] for key in ("source_pack_sha256", "selected_pack_sha256",
+                                 "source_flags_sha256", "selected_flags_sha256"))
+    demand(source_pack == selected_pack and source_flags == selected_flags,
+           errors, "public-build nav bytes differ from fixed selected source")
 
 
 def rss_slope(samples: list[dict], cutoff_ns: int) -> tuple[float, float]:
@@ -62,6 +70,22 @@ def rss_slope(samples: list[dict], cutoff_ns: int) -> tuple[float, float]:
         raise EvidenceError("post-warmup RSS sample times are identical")
     slope_per_hour = 3600 * sum((x - mean_x) * (y - mean_y) for x, y in points) / denominator
     return slope_per_hour, max(xs) - min(xs)
+
+
+def rss_arm_summary(summary: dict, samples: list[dict]) -> tuple[float, float, int]:
+    cutoff = summary["run"]["warmup_end_monotonic_ns"]
+    if not isinstance(cutoff, int):
+        raise EvidenceError("missing monotonic warmup end for RSS slope fit")
+    slope, window = rss_slope(samples, cutoff)
+    return slope, window, samples[-1]["rss_bytes"]
+
+
+def rss_thresholds(config: dict, baseline_final: int,
+                   baseline_slope: float) -> tuple[float, float]:
+    limits = config["limits"]
+    ceiling = (baseline_final + 20 * limits["rss_final_baseline_extra_bytes_per_connection"]
+               + baseline_final * limits["rss_final_baseline_extra_percent"] / 100)
+    return ceiling, baseline_slope + limits["rss_slope_baseline_slack_bytes_per_hour"]
 
 
 def check_samples(folder: Path, summary: dict, config: dict, errors: list[str]) -> list[dict]:
@@ -186,10 +210,10 @@ def check_scene_samples(folder: Path, events: list[dict], accounts: list[str],
                         first_scene: dict[str, int | None], sample_seconds: int,
                         errors: list[str]) -> None:
     # The client enters scene_state 1 while rebuilding (snapshot.rs:979-993).
-    # Every observed Engine A load returned at the next Play sample, and its
-    # scene2 event followed the loading sample by 17-45 ms. Permit one 10 s
-    # sample interval plus 2 s jitter, and at most 1 s (ten 100 ms harness
-    # ticks) from a sampled load to the directly recorded scene2 return.
+    # Play slot frame callbacks record scene2 transitions (t14_soak_live.rs:
+    # 1824-1853, 2615-2630). Observed Engine A loads returned 17-45 ms
+    # after the loading sample. The 1 s return limit is a policy bound.
+    # Allow the next Play sample one interval plus 2 s of jitter.
     recovery_ns = (sample_seconds + 2) * 1_000_000_000
     return_ns = 1_000_000_000
     epochs: dict[str, int] = {}
@@ -361,12 +385,12 @@ def check_opcode_projection(folder: Path, connection: dict, errors: list[str]) -
 
 
 def accepted_tls_close_error(failure: dict, stage: dict,
-                             deficits: tuple[int, int, int, int]) -> bool:
+                             deficits: tuple[int, int, int, int], before_phase_zero: bool) -> bool:
     # A two-byte deficit in proxy-B-to-client plaintext identifies the failed
     # secure.send of the terminal Close, not a read or TLS shutdown.
     return (isinstance(failure, dict) and failure.get("stage") == "tls_terminator"
             and stage.get("tls_terminator") == "failed" and stage.get("proxy_a") == "closed"
-            and deficits == (0, 0, 0, 2)
+            and before_phase_zero and deficits == (0, 0, 0, 2)
             and isinstance(failure.get("error"), str)
             and re.fullmatch(
                 r"SSLEOFError: EOF occurred in violation of protocol(?: \(_ssl\.c:\d+\))?",
@@ -442,7 +466,8 @@ def check_transport_teardown(folder: Path, event: dict, close_frames: dict[str, 
                        and event["binary_payload_hashes_match_at_proxy_b"].get("client_to_engine") is True
                        and event["binary_payload_hashes_match_at_proxy_b"].get("engine_to_client") is True)
         demand(tls["handshake"].get("tls_version") == "TLSv1.3" and all(
-            accepted_tls_close_error(failure, stage, (a_in, a_out, tls_in, tls_out))
+            accepted_tls_close_error(failure, stage, (a_in, a_out, tls_in, tls_out),
+                                     before_phase_zero)
             or failure == {"stage": "proxy_a", "error": "BrokenPipeError: [Errno 32] Broken pipe"}
             or (setup_reset and failure == {"stage": "proxy_a",
                                              "error": "ConnectionResetError: [Errno 104] Connection reset by peer"})
@@ -642,8 +667,9 @@ def evaluate(baseline: Path, candidate: Path, smoke: bool) -> dict:
     cand_errors: list[str] = []
     lhs = arm_evidence("baseline", document, baseline / "run-manifest.json")
     rhs = arm_evidence("candidate", document, candidate / "run-manifest.json")
-    demand(lhs["build"] == "baseline" and rhs["build"] == "candidate", errors,
-           "comparison must pair dev baseline and T1.4 candidate")
+    for receipt, arm in ((lhs, "baseline"), (rhs, "candidate")):
+        if receipt.get("build") != arm:
+            raise EvidenceError(f"{arm}: run manifest build must be {arm}")
     for key in ("shared_harness_sha256", "proxy_sha256", "seed", "profile", "mode",
                 "nav_build_mode", "nav_build_snapshot_root"):
         demand(lhs.get(key) == rhs.get(key), errors, f"baseline/candidate {key} differ")
@@ -652,10 +678,9 @@ def evaluate(baseline: Path, candidate: Path, smoke: bool) -> dict:
     demand(lhs["profile"] == "release", errors, "both builds must use release profile")
     left_nav = arm_evidence(lhs["build"], document, baseline / "nav-identity.json")
     right_nav = arm_evidence(rhs["build"], document, candidate / "nav-identity.json")
-    for receipt, arm_errors in ((left_nav, base_errors), (right_nav, cand_errors)):
-        demand(receipt["source_pack_sha256"] == receipt["selected_pack_sha256"]
-               and receipt["source_flags_sha256"] == receipt["selected_flags_sha256"],
-               arm_errors, "public-build nav bytes differ from fixed selected source")
+    for receipt, arm, arm_errors in ((left_nav, "baseline", base_errors),
+                                    (right_nav, "candidate", cand_errors)):
+        arm_evidence(arm, check_nav_identity, receipt, arm_errors)
     for key in ("source_pack_sha256", "selected_pack_sha256",
                 "source_flags_sha256", "selected_flags_sha256"):
         demand(left_nav[key] == right_nav[key], errors,
@@ -694,9 +719,9 @@ def evaluate(baseline: Path, candidate: Path, smoke: bool) -> dict:
                                candidate, cand_samples, cand_summary, right_config, cand_errors)
     base_proxy = arm_evidence(lhs["build"], check_proxy, baseline, not smoke, base_errors)
     cand_proxy = arm_evidence(rhs["build"], check_proxy, candidate, not smoke, cand_errors)
+    limit = arm_evidence("candidate", lambda: right_config["limits"]["connection_bytes"])
     candidate_receipts = arm_evidence(
-        rhs["build"], check_candidate, candidate, cand_proxy,
-        right_config["limits"]["connection_bytes"], cand_errors)
+        rhs["build"], check_candidate, candidate, cand_proxy, limit, cand_errors)
     result = {
         "classification": "infrastructure-smoke-nonqualifying" if smoke else "T1.4-local-candidate-gate",
         "baseline_commit": lhs["commit"], "candidate_commit": rhs["commit"],
@@ -706,19 +731,14 @@ def evaluate(baseline: Path, candidate: Path, smoke: bool) -> dict:
         "candidate": {**cand_work, **candidate_receipts, "census": cand_census},
     }
     if not smoke:
-        warmup_left = base_summary["run"]["warmup_end_monotonic_ns"]
-        warmup_right = cand_summary["run"]["warmup_end_monotonic_ns"]
-        if not isinstance(warmup_left, int) or not isinstance(warmup_right, int):
-            raise EvidenceError("missing monotonic warmup end for RSS slope fit")
-        baseline_slope, baseline_window = rss_slope(base_samples, warmup_left)
-        candidate_slope, candidate_window = rss_slope(cand_samples, warmup_right)
-        limits = right_config["limits"]
-        final_base = base_samples[-1]["rss_bytes"]
-        final_candidate = cand_samples[-1]["rss_bytes"]
-        final_ceiling = (final_base + 20 * limits["rss_final_baseline_extra_bytes_per_connection"]
-                         + final_base * limits["rss_final_baseline_extra_percent"] / 100)
-        demand(candidate_slope <= baseline_slope + limits["rss_slope_baseline_slack_bytes_per_hour"],
-               errors, "candidate post-warmup RSS slope exceeded baseline +1 MiB/hour")
+        baseline_slope, baseline_window, final_base = arm_evidence(
+            "baseline", rss_arm_summary, base_summary, base_samples)
+        candidate_slope, candidate_window, final_candidate = arm_evidence(
+            "candidate", rss_arm_summary, cand_summary, cand_samples)
+        final_ceiling, max_slope = arm_evidence(
+            "candidate", rss_thresholds, right_config, final_base, baseline_slope)
+        demand(candidate_slope <= max_slope, errors,
+               "candidate post-warmup RSS slope exceeded baseline +1 MiB/hour")
         demand(final_candidate <= final_ceiling, errors,
                "candidate final RSS exceeded baseline + 20 reservations +5%")
         result["rss"] = {

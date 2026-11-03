@@ -27,9 +27,10 @@ class SceneSamplesTests(unittest.TestCase):
     def scene2(at):
         return {"event": "scene2", "account": "slot", "scene2_monotonic_ns": at}
 
-    def check(self, events):
+    def check(self, events, accounts=("slot",)):
         errors = []
-        summary.check_scene_samples(Path("run"), events, ["slot"], {"slot": 0}, 10, errors)
+        summary.check_scene_samples(Path("run"), events, list(accounts),
+                                    {account: 0 for account in accounts}, 10, errors)
         return errors
 
     def test_connected_map_load_recovers_at_next_sample(self):
@@ -41,6 +42,12 @@ class SceneSamplesTests(unittest.TestCase):
                              self.scene2(60_045_000_000), self.sample(70_000_000_000)])
         self.assertTrue(any("Play sample gap exceeds 12s" in error for error in errors))
 
+    def test_play_gap_must_be_positive_and_within_one_interval_plus_jitter(self):
+        for at in (0, -1_000_000_000, 13_000_000_000):
+            with self.subTest(at=at):
+                errors = self.check([self.sample(0), self.sample(at)])
+                self.assertTrue(any("Play sample gap exceeds 12s" in error for error in errors))
+
     def test_two_consecutive_loading_samples_fail_on_recovery(self):
         errors = self.check([self.sample(0), self.sample(10_000_000_000, state=1),
                              self.sample(20_000_000_000, state=1),
@@ -51,6 +58,29 @@ class SceneSamplesTests(unittest.TestCase):
         errors = self.check([self.sample(0), self.sample(10_000_000_000, state=1),
                              self.scene2(12_000_000_000), self.sample(20_000_000_000)])
         self.assertTrue(any("no scene2 return within 1s" in error for error in errors))
+
+    def test_loading_sample_needs_its_own_later_scene2_event(self):
+        for event in (None, {"event": "scene2", "account": "other",
+                             "scene2_monotonic_ns": 10_045_000_000}):
+            with self.subTest(event=event):
+                events = [self.sample(0), self.sample(10_000_000_000, state=1)]
+                if event is not None:
+                    events.append(event)
+                events.append(self.sample(20_000_000_000))
+                errors = self.check(events)
+                self.assertTrue(any("no scene2 return within 1s" in error for error in errors))
+
+    def test_other_connected_account_scene2_does_not_finish_load(self):
+        samples = [self.sample(0), self.sample(10_000_000_000, state=1),
+                   self.sample(20_000_000_000)]
+        for sample in samples:
+            sample["slots"].append({"account": "other", "connected": True, "stream_epoch": 3,
+                                    "ingame": True, "scene_state": 2})
+        events = [samples[0], samples[1],
+                  {"event": "scene2", "account": "other", "scene2_monotonic_ns": 10_045_000_000},
+                  samples[2]]
+        errors = self.check(events, ("slot", "other"))
+        self.assertTrue(any("slot map load has no scene2 return" in error for error in errors))
 
     def test_long_map_load_fails(self):
         errors = self.check([self.sample(0), self.sample(10_000_000_000, state=1),
@@ -137,7 +167,27 @@ class TeardownTests(unittest.TestCase):
                             self.check(read_site)))
         self.assertFalse(summary.accepted_tls_close_error(
             {"stage": "proxy_a", "error": original["error"]},
-            {"proxy_a": "closed", "tls_terminator": "failed"}, (0, 0, 0, 2)))
+            {"proxy_a": "closed", "tls_terminator": "failed"}, (0, 0, 0, 2), True))
+
+    def test_ssl_eof_rejects_invalid_stage_deficit_or_phase(self):
+        failure = {"stage": "tls_terminator",
+                   "error": "SSLEOFError: EOF occurred in violation of protocol (_ssl.c:2557)"}
+        for stage, status in (("tls_terminator", "closed"), ("proxy_a", "failed")):
+            with self.subTest(stage=stage):
+                invalid = self.event(failure, tls_out=2)
+                invalid["stage_status"][stage] = status
+                self.assertTrue(any("unexpected TLS/segmentation error" in reason for reason in
+                                    self.check(invalid)))
+        partial = self.event(failure, tls_out=2)
+        partial["proxy_a_ciphertext"]["terminator_to_client_ciphertext"] = {
+            "bytes_read": 10, "bytes_written": 0}
+        self.assertTrue(any("unexpected TLS/segmentation error" in reason for reason in
+                            self.check(partial)))
+        self.assertTrue(any("unexpected TLS/segmentation error" in reason for reason in
+                            self.check(self.event(failure, started=35, closed=40, tls_out=2))))
+        self.assertTrue(any("unexpected TLS/segmentation error" in reason for reason in
+                            self.check(self.event(failure, tls_out=2), phase_zero=None)))
+
 
     def test_setup_reset_accepts_only_complete_prephase_relay(self):
         reset = {"stage": "proxy_a",
@@ -231,25 +281,35 @@ class LedgerTests(unittest.TestCase):
 
 
 class ArmReasonTests(unittest.TestCase):
+    @staticmethod
+    def folders(root, *, smoke=True):
+        folders = [Path(root) / arm / "run" for arm in ("baseline", "candidate")]
+        for folder, arm in zip(folders, ("baseline", "candidate")):
+            folder.mkdir(parents=True)
+            (folder / "run-manifest.json").write_text(json.dumps({
+                "build": arm, "commit": arm, "shared_harness_sha256": "x",
+                "proxy_sha256": "p", "seed": 1027, "profile": "release",
+                "mode": "smoke" if smoke else "qualification",
+                "nav_build_mode": "skip", "nav_build_snapshot_root": "r"}))
+            (folder / "nav-identity.json").write_text(json.dumps({
+                key: "x" for key in ("source_pack_sha256", "selected_pack_sha256",
+                                     "source_flags_sha256", "selected_flags_sha256")}))
+            (folder / "effective-config.json").write_text(json.dumps({
+                "fault": {"seed": 1027}, "workload": {},
+                "limits": {"connection_bytes": 250760,
+                           "rss_final_baseline_extra_bytes_per_connection": 250760,
+                           "rss_final_baseline_extra_percent": 5,
+                           "rss_slope_baseline_slack_bytes_per_hour": 1048576},
+                "run": {"slots": 2 if smoke else 20,
+                        "duration_seconds": 180 if smoke else 7200,
+                        "warmup_min_seconds": 0, "sample_seconds": 10, "hash_seconds": 60}}))
+            (folder / "cohort-exit.json").write_text('{"code":0}')
+            (folder / "summary.json").write_text('{"run":{"warmup_end_monotonic_ns":0}}')
+        return folders
+
     def test_same_folder_basename_produces_distinct_manifest_arm_reasons(self):
         with tempfile.TemporaryDirectory() as temporary:
-            folders = [Path(temporary) / arm / "run" for arm in ("baseline", "candidate")]
-            for folder, arm in zip(folders, ("baseline", "candidate")):
-                folder.mkdir(parents=True)
-                (folder / "run-manifest.json").write_text(json.dumps({
-                    "build": arm, "commit": arm, "shared_harness_sha256": "x",
-                    "proxy_sha256": "p", "seed": 1027, "profile": "release",
-                    "mode": "smoke", "nav_build_mode": "skip", "nav_build_snapshot_root": "r"}))
-                (folder / "nav-identity.json").write_text(json.dumps({
-                    key: "x" for key in ("source_pack_sha256", "selected_pack_sha256",
-                                           "source_flags_sha256", "selected_flags_sha256")}))
-                (folder / "effective-config.json").write_text(json.dumps({
-                    "fault": {"seed": 1027}, "workload": {},
-                    "limits": {"connection_bytes": 250760},
-                    "run": {"slots": 2, "duration_seconds": 180, "warmup_min_seconds": 0,
-                            "sample_seconds": 10, "hash_seconds": 60}}))
-                (folder / "cohort-exit.json").write_text('{"code":0}')
-                (folder / "summary.json").write_text('{}')
+            folders = self.folders(temporary)
 
             def fail_workload(folder, _summary, _config, _smoke, errors):
                 errors.append(f"{folder.name}: scene error")
@@ -279,11 +339,8 @@ class ArmReasonTests(unittest.TestCase):
     def test_missing_evidence_exception_names_the_arm(self):
         for missing in ("baseline", "candidate"):
             with self.subTest(missing=missing), tempfile.TemporaryDirectory() as temporary:
-                folders = [Path(temporary) / arm / "run" for arm in ("baseline", "candidate")]
-                for folder in folders:
-                    folder.mkdir(parents=True)
-                if missing == "candidate":
-                    (folders[0] / "run-manifest.json").write_text("{}")
+                folders = self.folders(temporary)
+                (folders[0 if missing == "baseline" else 1] / "run-manifest.json").unlink()
                 output = Path(temporary) / "failure.json"
                 argv = ["t14_soak_summary.py", "--baseline", str(folders[0]),
                         "--candidate", str(folders[1]), "--output", str(output)]
@@ -291,6 +348,93 @@ class ArmReasonTests(unittest.TestCase):
                     self.assertEqual(summary.main(), 1)
                 reason = json.loads(output.read_text())["reasons"][0]
                 self.assertTrue(reason.startswith(f"{missing}: missing or invalid evidence:"), reason)
+
+    def test_candidate_workload_exception_names_candidate(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            folders = self.folders(temporary)
+
+            def fail_candidate(folder, *_args):
+                if folder == folders[1]:
+                    raise KeyError("candidate workload")
+                return {"accounts": 2}
+
+            with mock.patch.object(summary, "check_workload", side_effect=fail_candidate):
+                with self.assertRaisesRegex(summary.EvidenceError, "^candidate: missing or invalid evidence:"):
+                    summary.evaluate(*folders, smoke=True)
+
+    def test_manifest_label_must_match_arm_folder(self):
+        for arm in ("baseline", "candidate"):
+            with self.subTest(arm=arm), tempfile.TemporaryDirectory() as temporary:
+                folders = self.folders(temporary)
+                manifest = folders[0 if arm == "baseline" else 1] / "run-manifest.json"
+                receipt = json.loads(manifest.read_text())
+                receipt["build"] = "candidate" if arm == "baseline" else "baseline"
+                manifest.write_text(json.dumps(receipt))
+                with self.assertRaisesRegex(summary.EvidenceError, f"^{arm}: run manifest build"):
+                    summary.evaluate(*folders, smoke=True)
+
+    def test_missing_nav_key_names_exact_arm(self):
+        for arm in ("baseline", "candidate"):
+            for missing in ("source_pack_sha256", "selected_flags_sha256"):
+                with self.subTest(arm=arm, missing=missing), tempfile.TemporaryDirectory() as temporary:
+                    folders = self.folders(temporary)
+                    nav = folders[0 if arm == "baseline" else 1] / "nav-identity.json"
+                    receipt = json.loads(nav.read_text())
+                    receipt.pop(missing)
+                    if missing == "selected_flags_sha256":
+                        receipt["source_pack_sha256"] = "mismatch"
+                    nav.write_text(json.dumps(receipt))
+                    with self.assertRaisesRegex(summary.EvidenceError, f"^{arm}: missing or invalid evidence:"):
+                        summary.evaluate(*folders, smoke=True)
+
+    def test_missing_candidate_connection_limit_names_candidate(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            folders = self.folders(temporary)
+            for folder in folders:
+                config = folder / "effective-config.json"
+                receipt = json.loads(config.read_text())
+                receipt["limits"].pop("connection_bytes")
+                config.write_text(json.dumps(receipt))
+            with mock.patch.object(summary, "check_workload", return_value={}), \
+                    mock.patch.object(summary, "check_samples", return_value=[]), \
+                    mock.patch.object(summary, "check_census", return_value={}), \
+                    mock.patch.object(summary, "check_proxy", return_value={}):
+                with self.assertRaisesRegex(summary.EvidenceError, "^candidate: missing or invalid evidence:"):
+                    summary.evaluate(*folders, smoke=True)
+
+    def test_rss_exception_names_arm(self):
+        samples = [{"sample_monotonic_ns": 0, "rss_bytes": 100},
+                   {"sample_monotonic_ns": 10_000_000_000, "rss_bytes": 110}]
+        for arm in ("baseline", "candidate"):
+            with self.subTest(arm=arm), tempfile.TemporaryDirectory() as temporary:
+                folders = self.folders(temporary, smoke=False)
+                (folders[0 if arm == "baseline" else 1] / "summary.json").write_text('{"run":{}}')
+                with mock.patch.object(summary, "check_workload", return_value={}), \
+                        mock.patch.object(summary, "check_samples", return_value=samples), \
+                        mock.patch.object(summary, "check_census", return_value={}), \
+                        mock.patch.object(summary, "check_proxy", return_value={}), \
+                        mock.patch.object(summary, "check_candidate", return_value={}):
+                    with self.assertRaisesRegex(summary.EvidenceError, f"^{arm}: missing or invalid evidence:"):
+                        summary.evaluate(*folders, smoke=False)
+
+    def test_missing_candidate_rss_limit_names_candidate(self):
+        samples = [{"sample_monotonic_ns": 0, "rss_bytes": 100},
+                   {"sample_monotonic_ns": 10_000_000_000, "rss_bytes": 110}]
+        for key in ("rss_final_baseline_extra_percent", "rss_slope_baseline_slack_bytes_per_hour"):
+            with self.subTest(key=key), tempfile.TemporaryDirectory() as temporary:
+                folders = self.folders(temporary, smoke=False)
+                for folder in folders:
+                    config = folder / "effective-config.json"
+                    receipt = json.loads(config.read_text())
+                    receipt["limits"].pop(key)
+                    config.write_text(json.dumps(receipt))
+                with mock.patch.object(summary, "check_workload", return_value={}), \
+                        mock.patch.object(summary, "check_samples", return_value=samples), \
+                        mock.patch.object(summary, "check_census", return_value={}), \
+                        mock.patch.object(summary, "check_proxy", return_value={}), \
+                        mock.patch.object(summary, "check_candidate", return_value={}):
+                    with self.assertRaisesRegex(summary.EvidenceError, "^candidate: missing or invalid evidence:"):
+                        summary.evaluate(*folders, smoke=False)
 
 
 if __name__ == "__main__":
