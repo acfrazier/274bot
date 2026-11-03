@@ -582,14 +582,26 @@ mod tests {
         let warm = allocation_counter::measure(|| {
             assert!(Arc::ptr_eq(&built, &market_index(&data)));
         });
-        let limit = 16 * 1024 * 1024;
-        println!("MarketIndex process allocation: size={size} cold={cold:?} warm={warm:?} limit={limit}");
-        assert!(cold.bytes_total <= limit, "cold MarketIndex allocation: {cold:?}");
-        assert!(
-            cold.bytes_current <= limit as i64,
-            "retained MarketIndex allocation: {cold:?}"
+        // The isolated cold build measured 1,097,161 B total, 293,206 B retained,
+        // and 326,622 B peak; each ceiling adds 25% headroom.
+        let total_limit = 1_097_161 + 1_097_161 / 4;
+        let retained_limit = 293_206 + 293_206 / 4;
+        let peak_limit = 326_622 + 326_622 / 4;
+        println!(
+            "MarketIndex process allocation: size={size} cold={cold:?} warm={warm:?} total_limit={total_limit} retained_limit={retained_limit} peak_limit={peak_limit}"
         );
-        assert!(cold.bytes_max <= limit, "peak MarketIndex allocation: {cold:?}");
+        assert!(
+            cold.bytes_total <= total_limit,
+            "total MarketIndex allocation exceeded {total_limit}: {cold:?}"
+        );
+        assert!(
+            cold.bytes_current <= retained_limit as i64,
+            "retained MarketIndex allocation exceeded {retained_limit}: {cold:?}"
+        );
+        assert!(
+            cold.bytes_max <= peak_limit,
+            "peak MarketIndex allocation exceeded {peak_limit}: {cold:?}"
+        );
         assert_eq!(warm, allocation_counter::AllocationInfo::default());
     }
 

@@ -133,7 +133,8 @@ fn stepper_descriptors_keep_fast_properties_and_heap_growth_is_bounded() {
         );
         let after = collected_used_heap(&mut runtime);
         let growth = after.saturating_sub(baseline);
-        let limit = 2 * 1024 * 1024;
+        // 3,000 retained buttons grew 381,552 B on aubaine; 25% headroom covers V8 variance.
+        let limit = 381_552 + 381_552 / 4;
         println!("paint stepper V8 heap rows={rows} iterations={iterations} baseline={baseline} after={after} growth={growth} limit={limit}");
         assert!(
             growth <= limit,
@@ -157,7 +158,8 @@ fn stepper_descriptors_keep_fast_properties_and_heap_growth_is_bounded() {
         });
         let state_after = collected_used_heap(&mut runtime);
         let state_growth = state_after.saturating_sub(state_baseline);
-        let state_limit = 2 * 1024 * 1024;
+        // 1,000 temporary stores grew 291,240 B on aubaine; 25% headroom covers V8 variance.
+        let state_limit = 291_240 + 291_240 / 4;
         println!("paint state stores V8 heap states={state_count} baseline={state_baseline} after={state_after} growth={state_growth} limit={state_limit} rust={rust:?}");
         assert!(
             state_growth <= state_limit,

@@ -94,7 +94,8 @@ fn catalog_rows_keep_fast_properties_and_resolver_heap_is_bounded() {
         assert!(catalog_rows > 0);
         let after_catalog = collected_used_heap(&mut runtime);
         let catalog_growth = after_catalog.saturating_sub(baseline);
-        let catalog_limit = 4 * 1024 * 1024;
+        // 4,436 catalog rows grew 863,808 B on aubaine; 25% headroom covers V8 variance.
+        let catalog_limit = 863_808 + 863_808 / 4;
         println!("selected-facts V8 heap catalog_rows={catalog_rows} baseline={baseline} after={after_catalog} growth={catalog_growth} limit={catalog_limit}");
         assert!(
             catalog_growth <= catalog_limit,
@@ -119,7 +120,8 @@ fn catalog_rows_keep_fast_properties_and_resolver_heap_is_bounded() {
         );
         let after = collected_used_heap(&mut runtime);
         let growth = after.saturating_sub(baseline);
-        let limit = 2 * 1024 * 1024;
+        // 1,000 retained result arrays grew 68,480 B on aubaine; 25% headroom covers V8 variance.
+        let limit = 68_480 + 68_480 / 4;
         println!("catalog resolver V8 heap retained_result_arrays={iterations} baseline={baseline} after={after} growth={growth} limit={limit}");
         assert!(
             growth <= limit,

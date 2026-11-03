@@ -555,6 +555,14 @@ fn set_property<'s>(
         .ok_or_else(|| format!("paint property write failed for `{name}`"))?;
     Ok(())
 }
+fn paint_click_matches(
+    scope: &mut v8::HandleScope,
+    click: v8::Local<v8::Value>,
+    expected: &str,
+) -> bool {
+    click.is_string() && js_string_arg(scope, click) == expected
+}
+
 fn clear_paint_click<'s>(
     scope: &mut v8::HandleScope<'s>,
     host: v8::Local<'s, v8::Object>,
@@ -571,7 +579,7 @@ fn consume_paint_click<'s>(
     let host = v8::Local::<v8::Object>::try_from(host)
         .map_err(|_| "paint click host is not an object".to_string())?;
     let click = js_property(scope, host.into(), "paintClick")?;
-    if js_string_arg(scope, click) != expected {
+    if !paint_click_matches(scope, click, expected) {
         return Ok(false);
     }
     clear_paint_click(scope, host)?;
@@ -1359,11 +1367,11 @@ fn stepper<'s>(
     let host_object = v8::Local::<v8::Object>::try_from(host)
         .map_err(|_| "paint click host is not an object".to_string())?;
     let click = js_property(scope, host_object.into(), "paintClick")?;
-    let click = js_string_arg(scope, click);
-    let delta = if click == prev_id {
+    let click = click.is_string().then(|| js_string_arg(scope, click));
+    let delta = if click.as_deref() == Some(prev_id.as_str()) {
         clear_paint_click(scope, host_object)?;
         -1
-    } else if click == next_id {
+    } else if click.as_deref() == Some(next_id.as_str()) {
         clear_paint_click(scope, host_object)?;
         1
     } else {

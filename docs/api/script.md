@@ -1912,6 +1912,7 @@ those approach endpoints directly.
   teleports or bank fetch; wilderness is allowed) and a 30 s request bound.
   `level` defaults to 0. `maxExpansions` must be a positive safe integer for
   compatibility, but cannot lower the host's full route-search budget.
+  Invalid input returns `{ ok: false, terminal: null }`.
 - The host owns a script's active route. Operator Pause ends the follow
   and keeps the route as carried state, as a reconnect does; the first
   dispatch after Resume sends it once more under its own request id,
